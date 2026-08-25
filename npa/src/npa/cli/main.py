@@ -729,6 +729,8 @@ def _provision_object_storage(
     region: str,
     existing_bucket: str = "",
     interactive: bool = True,
+    bucket_storage_class: str = "",
+    bucket_max_size_bytes: int | None = None,
 ) -> dict[str, str] | None:
     """Auto-create the S3 bucket + access key for the project."""
     if not (project_id and tenant_id):
@@ -771,18 +773,61 @@ def _provision_object_storage(
         )
         return None
 
-    bucket_max_size_bytes = 0
-    bucket_storage_class = DEFAULT_BUCKET_STORAGE_CLASS
+    requested_storage_class = str(bucket_storage_class or "").strip()
+    requested_max_size_bytes = bucket_max_size_bytes
+    create_max_size_bytes = 0
+    create_storage_class = DEFAULT_BUCKET_STORAGE_CLASS
     if exists is True:
+        if requested_storage_class or requested_max_size_bytes is not None:
+            item = nebius_client.get_bucket_by_name(project_id, bucket_name)
+            spec = (item or {}).get("spec", {})
+            actual_storage_class = nebius_client.normalize_bucket_storage_class(
+                str(spec.get("default_storage_class", ""))
+            )
+            actual_max_size_bytes = int(spec.get("max_size_bytes", 0) or 0)
+            expected_storage_class = (
+                nebius_client.normalize_bucket_storage_class(requested_storage_class)
+                if requested_storage_class
+                else actual_storage_class
+            )
+            expected_max_size_bytes = (
+                int(requested_max_size_bytes)
+                if requested_max_size_bytes is not None
+                else actual_max_size_bytes
+            )
+            if (
+                actual_storage_class != expected_storage_class
+                or actual_max_size_bytes != expected_max_size_bytes
+            ):
+                typer.echo(
+                    "Existing object-storage bucket does not match the requested "
+                    "create-only storage class and size; refusing to reuse it."
+                )
+                return None
         typer.echo(f"Reusing existing object-storage bucket '{bucket_name}'.")
     elif exists is False:
         typer.echo(
             f"No existing bucket named '{bucket_name}' found; npa will create it."
         )
-        bucket_storage_class, bucket_max_size_bytes = _prompt_new_bucket_settings(
-            ask,
-            bucket_name=bucket_name,
-        )
+        if interactive:
+            create_storage_class, create_max_size_bytes = _prompt_new_bucket_settings(
+                ask,
+                bucket_name=bucket_name,
+            )
+        else:
+            create_storage_class = nebius_client.normalize_bucket_storage_class(
+                requested_storage_class
+            )
+            create_max_size_bytes = int(requested_max_size_bytes or 0)
+            typer.echo(
+                f"  Will create '{bucket_name}' with {create_storage_class} storage "
+                f"and "
+                + (
+                    f"a {create_max_size_bytes} byte cap."
+                    if create_max_size_bytes
+                    else "no size limit."
+                )
+            )
     # exists is None: existence unknown, so skip the create-only prompts and let
     # provisioning get-or-create with defaults rather than risk creating a
     # duplicate of a bucket that may already exist.
@@ -796,8 +841,8 @@ def _provision_object_storage(
             tenant_id=tenant_id,
             region=region,
             bucket_name=bucket_name,
-            bucket_max_size_bytes=bucket_max_size_bytes,
-            bucket_storage_class=bucket_storage_class,
+            bucket_max_size_bytes=create_max_size_bytes,
+            bucket_storage_class=create_storage_class,
             on_status=lambda msg: typer.echo(f"  - {msg}"),
         )
     except nebius_client.NebiusError as exc:
@@ -819,6 +864,8 @@ def _provision_object_storage(
                 region=region,
                 existing_bucket=alternate,
                 interactive=interactive,
+                bucket_storage_class=requested_storage_class,
+                bucket_max_size_bytes=requested_max_size_bytes,
             )
         if nebius_client.is_permission_denied(str(exc)):
             typer.echo(
@@ -2206,6 +2253,8 @@ def _run_known_project_configure(
     region: str,
     project_alias: str,
     provision: bool,
+    bucket_storage_class: str = "",
+    bucket_size_gb: str = "",
 ) -> None:
     """Configure a known project without profile creation, discovery, or prompts."""
 
@@ -2233,6 +2282,50 @@ def _run_known_project_configure(
             "--project-alias must start with a letter or digit and contain only "
             "letters, digits, '.', '_', or '-' (maximum 64 characters)"
         )
+    requested_storage_class = str(bucket_storage_class or "").strip()
+    requested_size_gb = str(bucket_size_gb or "").strip()
+    if (requested_storage_class or requested_size_gb) and not provision:
+        raise typer.BadParameter(
+            "--bucket-storage-class and --bucket-size-gb require --provision"
+        )
+    if requested_storage_class:
+        normalized_label = (
+            requested_storage_class.lower().replace("-", "_").replace(" ", "_")
+        )
+        if normalized_label not in {
+            "standard",
+            "std",
+            "storage_class_unspecified",
+            "enhanced",
+            "enhanced_throughput",
+            "enhancedthroughput",
+            "intelligent",
+        }:
+            raise typer.BadParameter(
+                "--bucket-storage-class must be standard, enhanced, or intelligent"
+            )
+        requested_storage_class = nebius_client.normalize_bucket_storage_class(
+            requested_storage_class
+        )
+    requested_max_size_bytes: int | None = None
+    if requested_size_gb:
+        from decimal import Decimal, InvalidOperation
+
+        try:
+            parsed_size = Decimal(requested_size_gb)
+        except InvalidOperation as exc:
+            raise typer.BadParameter(
+                "--bucket-size-gb must be a finite non-negative number"
+            ) from exc
+        if not parsed_size.is_finite() or parsed_size < 0:
+            raise typer.BadParameter(
+                "--bucket-size-gb must be a finite non-negative number"
+            )
+        requested_max_size_bytes = _gb_to_bytes(requested_size_gb)
+        if parsed_size > 0 and requested_max_size_bytes == 0:
+            raise typer.BadParameter(
+                "--bucket-size-gb must resolve to at least one byte, or be 0 for unlimited"
+            )
 
     # This path consumes existing local profile/credential material only. It
     # never invokes profile creation or tenant/project discovery, so a valid
@@ -2261,7 +2354,11 @@ def _run_known_project_configure(
     existing_relationship_verified = _storage_relationship_verified(
         existing, values["--project-id"]
     )
-    if existing_complete and existing_relationship_verified:
+    if (
+        existing_complete
+        and existing_relationship_verified
+        and not (requested_storage_class or requested_size_gb)
+    ):
         from npa.clients.storage_validation import probe_storage_write
 
         probe = probe_storage_write(
@@ -2315,6 +2412,8 @@ def _run_known_project_configure(
                 else ""
             ),
             interactive=False,
+            bucket_storage_class=requested_storage_class,
+            bucket_max_size_bytes=requested_max_size_bytes,
         )
         if provisioned is None or provisioned.get("_validated") != "true":
             raise typer.BadParameter(
@@ -2404,6 +2503,8 @@ def _configure_impl(
     project_id: str = "",
     region: str = "",
     project_alias: str = "",
+    bucket_storage_class: str = "",
+    bucket_size_gb: str = "",
 ) -> None:
     if src_s3_uri.strip():
         _store_src_s3_uri(src_s3_uri.strip())
@@ -2466,7 +2567,14 @@ def _configure_impl(
         typer.echo("")
         typer.echo(_SETUP_GUIDANCE)
         return
-    known_project_values = (tenant_id, project_id, region, project_alias)
+    known_project_values = (
+        tenant_id,
+        project_id,
+        region,
+        project_alias,
+        bucket_storage_class,
+        bucket_size_gb,
+    )
     if any(str(value or "").strip() for value in known_project_values):
         if interactive is True:
             raise typer.BadParameter(
@@ -2479,6 +2587,8 @@ def _configure_impl(
             region=region,
             project_alias=project_alias,
             provision=provision,
+            bucket_storage_class=bucket_storage_class,
+            bucket_size_gb=bucket_size_gb,
         )
         return
     preset_tokens: set[str] = set()
@@ -2721,6 +2831,16 @@ def configure(
         "--project-alias",
         help="Local NPA alias to write for the known project (prompt-free configure).",
     ),
+    bucket_storage_class: str = typer.Option(
+        "",
+        "--bucket-storage-class",
+        help="Storage class for a newly created known-project bucket: standard, enhanced, or intelligent.",
+    ),
+    bucket_size_gb: str = typer.Option(
+        "",
+        "--bucket-size-gb",
+        help="GiB cap for a newly created known-project bucket; 0 means unlimited.",
+    ),
 ) -> None:
     """Interactively write ~/.npa credentials and config, or show guidance."""
     _configure_impl(
@@ -2735,6 +2855,8 @@ def configure(
         project_id=project_id,
         region=region,
         project_alias=project_alias,
+        bucket_storage_class=bucket_storage_class,
+        bucket_size_gb=bucket_size_gb,
     )
 
 
@@ -2800,6 +2922,16 @@ def init(
     project_alias: str = typer.Option(
         "", "--project-alias", help="Local NPA alias for prompt-free configure."
     ),
+    bucket_storage_class: str = typer.Option(
+        "",
+        "--bucket-storage-class",
+        help="Storage class for a newly created known-project bucket: standard, enhanced, or intelligent.",
+    ),
+    bucket_size_gb: str = typer.Option(
+        "",
+        "--bucket-size-gb",
+        help="GiB cap for a newly created known-project bucket; 0 means unlimited.",
+    ),
 ) -> None:
     """Interactively write ~/.npa credentials and config, or show guidance."""
     _configure_impl(
@@ -2813,6 +2945,8 @@ def init(
         project_id=project_id,
         region=region,
         project_alias=project_alias,
+        bucket_storage_class=bucket_storage_class,
+        bucket_size_gb=bucket_size_gb,
     )
 
 

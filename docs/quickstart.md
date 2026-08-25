@@ -311,6 +311,19 @@ npa configure --no-interactive \
   --region "$NEBIUS_REGION" --project-alias "$PROJECT_ALIAS"
 ```
 
+For a newly created bucket, automation may also select its create-only storage
+class and size cap without putting credentials on the command line:
+
+```bash
+npa configure --no-interactive \
+  --tenant-id "$YOUR_TENANT_ID" --project-id "$YOUR_PROJECT_ID" \
+  --region "$NEBIUS_REGION" --project-alias "$PROJECT_ALIAS" \
+  --bucket-storage-class enhanced --bucket-size-gb 100
+```
+
+If the deterministic bucket already exists, these options verify its class and
+cap exactly and fail closed on a mismatch; they never alter an existing bucket.
+
 These are non-secret identifiers; do not pass IAM, S3, Token Factory, HF, or NGC
 secrets on the command line. The command reuses existing storage only after the
 same write/read capability probe deployment uses. If none is configured, it

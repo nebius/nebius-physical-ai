@@ -25,6 +25,8 @@ Options
 --project-id  <str>  Known Nebius project ID for prompt-free configure (requires the other known-project flags).
 --region  <str>  Known Nebius project region for prompt-free configure.
 --project-alias  <str>  Local NPA alias to write for the known project (prompt-free configure).
+--bucket-storage-class  <str>  Storage class for a newly created known-project bucket: standard, enhanced, or intelligent.
+--bucket-size-gb  <str>  GiB cap for a newly created known-project bucket; 0 means unlimited.
 --help  Show this message and exit.
 ```
 
@@ -43,6 +45,8 @@ Options
 | `--project-id` | <str>  Known Nebius project ID for prompt-free configure (requires the other known-project flags). |
 | `--region` | <str>  Known Nebius project region for prompt-free configure. |
 | `--project-alias` | <str>  Local NPA alias to write for the known project (prompt-free configure). |
+| `--bucket-storage-class` | <str>  Storage class for a newly created known-project bucket: standard, enhanced, or intelligent. |
+| `--bucket-size-gb` | <str>  GiB cap for a newly created known-project bucket; 0 means unlimited. |
 | `--help` | Show this message and exit. |
 
 ## Subcommands

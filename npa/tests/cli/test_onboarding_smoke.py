@@ -158,6 +158,79 @@ def test_known_project_configure_requires_complete_identity_flags() -> None:
     assert "--project-alias" in result.output
 
 
+def test_known_project_configure_forwards_new_bucket_class_and_size(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.clients import config as config_module
+    from npa.clients import credentials as credentials_module
+
+    monkeypatch.setattr(config_module, "CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr(
+        credentials_module, "CREDENTIALS_PATH", tmp_path / "credentials.yaml"
+    )
+    monkeypatch.setattr("npa.clients.nebius.get_iam_token", lambda: "iam-token")
+    monkeypatch.setattr("npa.clients.nebius.set_profile_project", lambda *a, **k: True)
+    captured: dict[str, object] = {}
+
+    def fake_provision(*_args, **kwargs):
+        captured.update(kwargs)
+        return {
+            "aws_access_key_id": "access",
+            "aws_secret_access_key": "secret",
+            "endpoint_url": "https://storage.invalid",
+            "bucket": "s3://derived-bucket/",
+            "_validated": "true",
+        }
+
+    monkeypatch.setattr("npa.cli.main._provision_object_storage", fake_provision)
+    result = runner.invoke(
+        app,
+        [
+            "configure",
+            "--no-interactive",
+            "--tenant-id",
+            "tenant-known",
+            "--project-id",
+            "project-known",
+            "--region",
+            "us-central1",
+            "--project-alias",
+            "fleet-a",
+            "--bucket-storage-class",
+            "enhanced",
+            "--bucket-size-gb",
+            "100",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert captured["interactive"] is False
+    assert captured["bucket_storage_class"] == "enhanced_throughput"
+    assert captured["bucket_max_size_bytes"] == 100 * 1024**3
+
+
+def test_known_project_bucket_options_reject_invalid_values() -> None:
+    common = [
+        "configure",
+        "--no-interactive",
+        "--tenant-id",
+        "tenant-known",
+        "--project-id",
+        "project-known",
+        "--region",
+        "us-central1",
+        "--project-alias",
+        "fleet-a",
+    ]
+    result = runner.invoke(app, [*common, "--bucket-storage-class", "mystery"])
+    assert result.exit_code != 0
+    assert "must be standard, enhanced, or intelligent" in result.output
+
+    result = runner.invoke(app, [*common, "--bucket-size-gb", "not-a-number"])
+    assert result.exit_code != 0
+    assert "must be a finite non-negative number" in result.output
+
+
 def test_noninteractive_storage_selection_never_prints_prompt_language(
     monkeypatch, capsys
 ) -> None:
@@ -199,6 +272,90 @@ def test_noninteractive_storage_selection_never_prints_prompt_language(
     assert "Object storage (non-interactive): selected 'derived-bucket'" in output
     assert "enter a bucket name" not in output.lower()
     assert "press Enter" not in output
+
+
+def test_noninteractive_storage_creation_forwards_requested_shape(
+    monkeypatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from npa.cli.main import _provision_object_storage
+    from npa.clients.storage_validation import StorageProbeResult
+
+    fake_nebius = SimpleNamespace(
+        bucket_name_for=lambda _tenant, _project: "derived-bucket",
+        bucket_exists=lambda _project, _bucket: False,
+        normalize_bucket_storage_class=lambda value: (
+            "enhanced_throughput" if value == "enhanced_throughput" else "standard"
+        ),
+        NebiusError=RuntimeError,
+        is_permission_denied=lambda _message: False,
+    )
+    captured: dict[str, object] = {}
+
+    def fake_provision(**kwargs):
+        captured.update(kwargs)
+        return (
+            {
+                "nebius_api_key": "access",
+                "nebius_secret_key": "secret",
+                "s3_bucket": "derived-bucket",
+                "s3_endpoint": "https://storage.invalid",
+            },
+            StorageProbeResult(True, "ok", "verified"),
+        )
+
+    monkeypatch.setattr("npa.clients.storage_setup.provision_storage", fake_provision)
+    result = _provision_object_storage(
+        fake_nebius,
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("prompted")),
+        project_id="project",
+        tenant_id="tenant",
+        region="us-central1",
+        interactive=False,
+        bucket_storage_class="enhanced_throughput",
+        bucket_max_size_bytes=100 * 1024**3,
+    )
+
+    assert result is not None
+    assert captured["bucket_storage_class"] == "enhanced_throughput"
+    assert captured["bucket_max_size_bytes"] == 100 * 1024**3
+
+
+def test_noninteractive_storage_reuse_rejects_shape_mismatch(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    from npa.cli.main import _provision_object_storage
+
+    fake_nebius = SimpleNamespace(
+        bucket_name_for=lambda _tenant, _project: "derived-bucket",
+        bucket_exists=lambda _project, _bucket: True,
+        get_bucket_by_name=lambda _project, _bucket: {
+            "spec": {"default_storage_class": "standard", "max_size_bytes": "1"}
+        },
+        normalize_bucket_storage_class=lambda value: str(value).lower(),
+        NebiusError=RuntimeError,
+        is_permission_denied=lambda _message: False,
+    )
+
+    def must_not_provision(**_kwargs):
+        raise AssertionError("mismatched existing bucket must not be provisioned")
+
+    monkeypatch.setattr(
+        "npa.clients.storage_setup.provision_storage", must_not_provision
+    )
+    result = _provision_object_storage(
+        fake_nebius,
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("prompted")),
+        project_id="project",
+        tenant_id="tenant",
+        region="us-central1",
+        interactive=False,
+        bucket_storage_class="enhanced_throughput",
+        bucket_max_size_bytes=100 * 1024**3,
+    )
+
+    assert result is None
 
 
 def test_npa_version_emits_no_syntax_warning(tmp_path) -> None:
