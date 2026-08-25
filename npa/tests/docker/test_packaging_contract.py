@@ -45,6 +45,18 @@ def _runtime_commands(dockerfile_text: str) -> list[str]:
     return _entrypoints(dockerfile_text) or _cmds(dockerfile_text)
 
 
+def _build_contract_text(dockerfile: Path) -> str:
+    """Include copied common installers that materially construct the image."""
+
+    text = dockerfile.read_text(encoding="utf-8")
+    parts = [text]
+    common = WORKBENCH_DOCKER / "common"
+    for script in sorted(common.glob("*.sh")):
+        if script.name in text:
+            parts.append(script.read_text(encoding="utf-8"))
+    return "\n".join(parts)
+
+
 def _normalize_dockerfile(dockerfile_text: str) -> str:
     """Return a Dockerfile's instructions, one logical instruction per line.
 
@@ -285,17 +297,30 @@ def test_declared_skypilot_images_enforce_the_versioned_build_contract() -> None
         if not version:
             continue
         dockerfile = WORKBENCH_DOCKER / item["dockerfile"]
-        text = dockerfile.read_text(encoding="utf-8")
+        dockerfile_text = dockerfile.read_text(encoding="utf-8")
+        text = _build_contract_text(dockerfile)
         assert version == "skypilot-0.12.2-v1", name
-        assert f'org.nebius.npa.skypilot-bootstrap-contract="{version}"' in text, name
+        assert (
+            f'org.nebius.npa.skypilot-bootstrap-contract="{version}"'
+            in dockerfile_text
+        ), name
         for package in ("openssh-server", "rsync", "sudo"):
             assert package in text, f"{name}: missing {package}"
         assert "NOPASSWD" in text or _final_user(text) in {None, "root", "0"}, name
-        entrypoints = _entrypoints(text)
+        entrypoints = _entrypoints(dockerfile_text)
         assert entrypoints, f"{name}: contract images need a forwarding entrypoint"
-        script_matches = re.findall(r'ENTRYPOINT\s+\["([^"]+)"\]', text)
+        script_matches = re.findall(r'ENTRYPOINT\s+\["([^"]+)"\]', dockerfile_text)
         assert script_matches, name
-        script = dockerfile.parent / Path(script_matches[-1]).name
+        entrypoint_path = script_matches[-1]
+        script = dockerfile.parent / Path(entrypoint_path).name
+        if not script.is_file():
+            copy_match = re.search(
+                rf"(?im)^COPY\s+(?:--\S+\s+)*(?P<src>\S+)\s+"
+                rf"{re.escape(entrypoint_path)}\s*$",
+                _normalize_dockerfile(dockerfile_text),
+            )
+            if copy_match:
+                script = ROOT / "npa" / copy_match.group("src")
         assert script.is_file(), f"{name}: entrypoint source not found: {script}"
         entrypoint_text = script.read_text(encoding="utf-8")
         assert (

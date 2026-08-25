@@ -62,6 +62,8 @@ apt-get install -y --no-install-recommends \
   sudo \
   wget
 rm -rf /var/lib/apt/lists/*
+rm -f /etc/ssh/ssh_host_*
+test -z "$(find /etc/ssh -maxdepth 1 -type f -name 'ssh_host_*' -print -quit)"
 
 id -u ubuntu >/dev/null 2>&1
 printf '%s\n' 'ubuntu ALL=(ALL) NOPASSWD:ALL' \

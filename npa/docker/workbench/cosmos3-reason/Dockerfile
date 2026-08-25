@@ -7,7 +7,8 @@ ARG UBUNTU_SNAPSHOT=20260801T053000Z
 
 LABEL npa.tool="cosmos3-reason" \
       npa.version="${COSMOS3_REASON_VERSION}" \
-      org.opencontainers.image.revision="${NPA_SOURCE_SHA}"
+      org.opencontainers.image.revision="${NPA_SOURCE_SHA}" \
+      org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"
 
 ENV PYTHONUNBUFFERED=1 \
     NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA} \
@@ -89,8 +90,10 @@ RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.list \
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-         python3 python3-venv python3-pip rsync curl openssh-client sudo netcat-openbsd \
+         python3 python3-venv python3-pip rsync curl openssh-client openssh-server sudo netcat-openbsd \
     && rm -rf /var/lib/apt/lists/* \
+    && rm -f /etc/ssh/ssh_host_* \
+    && test -z "$(find /etc/ssh -maxdepth 1 -type f -name 'ssh_host_*' -print -quit)" \
     && printf 'ubuntu ALL=(ALL) NOPASSWD:ALL\n' > /etc/sudoers.d/99-npa-runtime-user \
     && chmod 0440 /etc/sudoers.d/99-npa-runtime-user \
     && mkdir -p /home/ubuntu && chown -R ubuntu:ubuntu /home/ubuntu \
