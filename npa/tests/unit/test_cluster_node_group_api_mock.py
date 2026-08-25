@@ -184,7 +184,7 @@ def test_get_node_group_uses_name_fallback_after_id_miss() -> None:
 
 def test_get_node_group_raises_not_found() -> None:
     def run(args, **kwargs):
-        return _result(returncode=1, stderr="not found")
+        return _result(returncode=1, stderr="NotFound: node group is absent")
 
     client = MK8sClient(nebius_bin="nebius", subprocess_runner=run)
 
@@ -197,7 +197,7 @@ def test_delete_node_group_is_idempotent_when_missing() -> None:
 
     def run(args, **kwargs):
         calls.append(args)
-        return _result(returncode=1, stderr="not found")
+        return _result(returncode=1, stderr="NotFound: node group is absent")
 
     client = MK8sClient(nebius_bin="nebius", subprocess_runner=run)
 

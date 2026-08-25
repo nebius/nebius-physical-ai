@@ -1122,7 +1122,10 @@ def test_storage_service_account_list_not_found_reconciles_absent_account(
         nebius_module,
         "list_access_keys_for_service_account",
         lambda *args, **kwargs: (_ for _ in ()).throw(
-            nebius_module.NebiusError("NotFound: service account is absent")
+            nebius_module.NebiusError(
+                "NotFound: service account is absent",
+                provider_status=nebius_module.ProviderStatus.NOT_FOUND,
+            )
         ),
     )
     monkeypatch.setattr(
@@ -1169,7 +1172,10 @@ def test_storage_service_account_list_not_found_requires_confirmation_to_prune(
         nebius_module,
         "list_access_keys_for_service_account",
         lambda *args, **kwargs: (_ for _ in ()).throw(
-            nebius_module.NebiusError("NotFound: service account is absent")
+            nebius_module.NebiusError(
+                "NotFound: service account is absent",
+                provider_status=nebius_module.ProviderStatus.NOT_FOUND,
+            )
         ),
     )
 
@@ -1200,7 +1206,10 @@ def test_storage_service_account_access_key_not_found_is_idempotent(
         nebius_module,
         "delete_access_key",
         lambda key_id, **_kwargs: (_ for _ in ()).throw(
-            nebius_module.NebiusError("NotFound: access key is absent")
+            nebius_module.NebiusError(
+                "NotFound: access key is absent",
+                provider_status=nebius_module.ProviderStatus.NOT_FOUND,
+            )
         ),
     )
     deleted: list[str] = []
@@ -1276,7 +1285,10 @@ def test_storage_service_account_already_absent_is_idempotent(
         nebius_module,
         "delete_service_account",
         lambda sa_id, **_kwargs: (_ for _ in ()).throw(
-            nebius_module.NebiusError("NotFound")
+            nebius_module.NebiusError(
+                "NotFound",
+                provider_status=nebius_module.ProviderStatus.NOT_FOUND,
+            )
         ),
     )
 
@@ -1841,6 +1853,8 @@ def test_receipt_only_storage_iam_verifies_parent_and_access_key_after_forget(
         project_alias="forgotten",
         project_id="project-a",
         identity={"project_id": "project-a"},
+        action={"kind": "bucket_delete", "scheduled": False},
+        verification={"bucket_absent": True},
     )
     record_teardown_event(
         phase="storage_iam",
@@ -1930,6 +1944,7 @@ def test_receipt_reuses_exact_durable_storage_iam_absence_without_credentials(
             "ownership": "npa",
             "iam_key_ids": ["accesskey-storage"],
         },
+        action={"kind": "exact_provider_check"},
         verification={"provider_outcome": "verified_absent"},
     )
     monkeypatch.setattr(
@@ -1944,3 +1959,91 @@ def test_receipt_reuses_exact_durable_storage_iam_absence_without_credentials(
 
     assert observation.verified_absent
     assert observation.account_id == "serviceaccount-storage"
+
+
+def test_newer_conflicting_storage_iam_receipt_blocks_old_absence(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from npa.cli import storage as storage_module
+    from npa.clients import config as config_module
+    from npa.clients import credentials as credentials_module
+    from npa.clients.nebius import NebiusError
+    from npa.teardown_receipts import record_teardown_event
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("NPA_TEARDOWN_RECEIPT_DIR", str(tmp_path / "receipts"))
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("projects: {}\n", encoding="utf-8")
+    monkeypatch.setattr(config_module, "CONFIG_PATH", config_path)
+    monkeypatch.setattr(
+        credentials_module, "CREDENTIALS_PATH", tmp_path / "missing-credentials.yaml"
+    )
+    identity = {
+        "project_id": "project-a",
+        "tenant_id": "tenant-a",
+        "service_account_id": "serviceaccount-storage",
+        "service_account_name": "lerobot-training",
+        "ownership": "npa",
+    }
+    receipt_path = record_teardown_event(
+        phase="storage_iam",
+        resource="serviceaccount-storage",
+        terminal_state="verified_absent",
+        project_id="project-a",
+        identity=identity,
+        action={"kind": "exact_provider_check"},
+        verification={"provider_outcome": "verified_absent"},
+    )
+    record_teardown_event(
+        phase="storage_iam",
+        resource="serviceaccount-storage",
+        terminal_state="verification_failed",
+        project_id="project-a",
+        identity=identity,
+        action={"kind": "exact_provider_check"},
+        verification={"provider_outcome": "verification_failed"},
+        errors=["provider inventory unavailable"],
+    )
+    monkeypatch.setattr(
+        "npa.clients.nebius.get_service_account_identity",
+        lambda *_a, **_k: (_ for _ in ()).throw(NebiusError("authentication failed")),
+    )
+
+    context = storage_module._resolve_storage_iam_context(receipt=receipt_path.stem)
+    observation = storage_module._observe_storage_iam(context)
+
+    assert observation.outcome == "verification_failed"
+    assert not observation.verified_absent
+
+
+def test_newer_bucket_failure_blocks_old_receipt_cleanup_authority(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from npa.cli.storage import _receipt_proves_bucket_cleanup
+    from npa.teardown_receipts import record_teardown_event
+
+    monkeypatch.setenv("NPA_TEARDOWN_RECEIPT_DIR", str(tmp_path / "receipts"))
+    identity = {"project_id": "project-a", "bucket_name": "bucket-a"}
+    receipt_path = record_teardown_event(
+        phase="bucket",
+        resource="bucket-a",
+        terminal_state="verified_absent",
+        project_id="project-a",
+        identity=identity,
+        action={"kind": "bucket_delete"},
+        verification={"bucket_absent": True},
+    )
+    assert _receipt_proves_bucket_cleanup(receipt_path.stem, "project-a")
+
+    record_teardown_event(
+        phase="bucket",
+        resource="bucket-a",
+        terminal_state="verification_failed",
+        project_id="project-a",
+        identity=identity,
+        action={"kind": "bucket_delete"},
+        verification={"bucket_absent": False},
+        errors=["provider verification unavailable"],
+    )
+
+    assert not _receipt_proves_bucket_cleanup(receipt_path.stem, "project-a")

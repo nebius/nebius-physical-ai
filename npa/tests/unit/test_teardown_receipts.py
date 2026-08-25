@@ -122,6 +122,34 @@ def test_retry_does_not_regress_terminal_phase_to_unknown(
     )
 
 
+def test_latest_phase_uses_receipt_sequence_not_wall_clock_text(
+    monkeypatch, tmp_path: Path
+) -> None:  # noqa: ANN001
+    _root(monkeypatch, tmp_path)
+    path = receipts.record_teardown_event(
+        phase="agent",
+        resource="agent",
+        terminal_state="verified_deleted",
+        project_id="project-demo",
+    )
+    receipts.record_teardown_event(
+        phase="agent",
+        resource="agent",
+        terminal_state="verification_failed",
+        project_id="project-demo",
+        errors=["retry remains unresolved"],
+    )
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["events"][0]["recorded_at"] = "2099-01-01T00:00:00Z"
+    payload["events"][1]["recorded_at"] = "2000-01-01T00:00:00Z"
+    receipts._write_atomic(path, payload)
+
+    latest = receipts.latest_phase_states(project_id="project-demo")["agent"]
+
+    assert latest["sequence"] == 2
+    assert latest["terminal_state"] == "verification_failed"
+
+
 def test_global_receipt_never_proves_completion_for_an_explicit_project(
     monkeypatch, tmp_path: Path
 ) -> None:  # noqa: ANN001
@@ -385,3 +413,87 @@ def test_controller_observation_does_not_poison_recreated_cluster_identity(
         ("cluster-first", "cluster-operation-first"),
         ("cluster-retry", "cluster-operation-retry"),
     }
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "unsupported-schema",
+        "bad-root-timestamp",
+        "bad-sequence",
+        "bad-event-timestamp",
+        "bad-action",
+        "bad-action-kind",
+        "bad-verification-bool",
+        "bad-identity-type",
+        "bad-identity-collection",
+        "incomplete-agent-identity",
+        "duplicate-generation-id",
+    ],
+)
+def test_strict_receipt_inventory_rejects_every_invalid_authority_shape(
+    monkeypatch, tmp_path: Path, case: str
+) -> None:  # noqa: ANN001
+    _root(monkeypatch, tmp_path)
+    path = receipts.record_teardown_event(
+        phase="agent",
+        resource="agent",
+        terminal_state="verified_deleted",
+        project_id="project-1",
+        identity={
+            "project_id": "project-1",
+            "agent_name": "agent",
+            "instance_id": "instance-1",
+        },
+        action={"kind": "terraform_agent_destroy"},
+        verification={
+            "exact_instance_absent": True,
+            "terraform_destroy_completed": True,
+            "terraform_dependency_graph": [
+                "compute_instance",
+                "boot_disk",
+                "network",
+                "subnet",
+                "security_group",
+                "public_ip",
+            ],
+        },
+    )
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    event = payload["events"][0]
+    if case == "unsupported-schema":
+        payload["schema_version"] = "npa.teardown.receipt.v999"
+    elif case == "bad-root-timestamp":
+        payload["updated_at"] = "tomorrow"
+    elif case == "bad-sequence":
+        event["sequence"] = 2
+    elif case == "bad-event-timestamp":
+        event["recorded_at"] = "2026-08-24"
+    elif case == "bad-action":
+        event["action"] = []
+    elif case == "bad-action-kind":
+        event["action"]["kind"] = False
+    elif case == "bad-verification-bool":
+        event["verification"]["exact_instance_absent"] = "true"
+    elif case == "bad-identity-type":
+        event["identity"]["instance_id"] = False
+    elif case == "bad-identity-collection":
+        payload["identity"]["agents"] = False
+    elif case == "incomplete-agent-identity":
+        payload["identity"]["agents"][0].pop("agent_name")
+    elif case == "duplicate-generation-id":
+        payload["identity"]["agents"].append(
+            dict(payload["identity"]["agents"][0])
+        )
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(receipts.TeardownReceiptError):
+        receipts.list_teardown_receipts(
+            project_id="project-1", legacy="exclude", strict=True
+        )
+    assert (
+        receipts.list_teardown_receipts(
+            project_id="project-1", legacy="exclude", strict=False
+        )
+        == []
+    )

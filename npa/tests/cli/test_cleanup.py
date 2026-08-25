@@ -173,6 +173,8 @@ def test_full_cleanup_accepts_exact_receipt_scope_after_alias_removal(
         resource="all",
         terminal_state="completed",
         project_id="project-a",
+        action={"kind": "npa_guarded_phase"},
+        verification={"converged": True},
     )
 
     result = runner.invoke(
@@ -195,7 +197,9 @@ def test_full_cleanup_accepts_exact_receipt_scope_after_alias_removal(
     assert __import__("json").loads(result.output)["managed_job_queue_state"] == (
         "SKIPPED_BY_OPERATOR"
     )
-    assert __import__("json").loads(result.output)["verification_unresolved"] is False
+    # The exact receipt scope authorizes the workflow attestation, but the
+    # missing agent/bucket/IAM phase evidence still prevents a full-clean claim.
+    assert __import__("json").loads(result.output)["verification_unresolved"] is True
 
 
 def test_alias_free_full_cleanup_records_not_submitted_audit_for_exact_project(
@@ -255,16 +259,39 @@ def test_alias_free_full_cleanup_records_not_submitted_audit_for_exact_project(
         project_alias="project-a",
         project_id="project-a",
     )
-    for phase, state in (
-        ("agent", "verified_deleted"),
-        ("bucket", "verified_absent"),
-        ("storage_iam", "completed"),
+    for phase, state, action, verification in (
+        (
+            "agent",
+            "verified_deleted",
+            {"kind": "terraform_agent_destroy"},
+            {
+                "exact_instance_absent": True,
+                "terraform_destroy_completed": True,
+                "terraform_dependency_graph": sorted(
+                    cleanup_cli._AGENT_TERRAFORM_GRAPH
+                ),
+            },
+        ),
+        (
+            "bucket",
+            "verified_absent",
+            {"kind": "none"},
+            {"bucket_absent": True},
+        ),
+        (
+            "storage_iam",
+            "completed",
+            {"kind": "exact_provider_check"},
+            {"provider_outcome": "verified_absent"},
+        ),
     ):
         teardown_receipts.record_teardown_event(
             phase=phase,
             resource=f"{phase}-fixture",
             terminal_state=state,
             project_id="project-a",
+            action=action,
+            verification=verification,
         )
 
     result = runner.invoke(
@@ -294,36 +321,98 @@ def test_alias_free_full_cleanup_records_not_submitted_audit_for_exact_project(
     assert workflow["project_id"] == "project-a"
 
 
-def test_newer_terminal_equivalent_phase_supersedes_older_failed_audit() -> None:
+def test_structured_equivalent_phase_supersedes_failed_sibling() -> None:
     terminal_cloud_phases = {
         "workflow": {
+            "phase": "workflow",
+            "sequence": 1,
             "terminal_state": "verification_failed",
-            "recorded_at": "2026-08-22T10:00:00Z",
+            "errors": ["provider inventory failed"],
         },
         "workflow_audit": {
+            "phase": "workflow_audit",
+            "sequence": 2,
             "terminal_state": "not_submitted",
-            "recorded_at": "2026-08-22T10:01:00Z",
+            "action": {"kind": "read_only_managed_job_audit"},
+            "verification": {"nonterminal_job_ids": [], "detail": ""},
+            "errors": [],
         },
         "agent": {
+            "phase": "agent",
+            "sequence": 3,
             "terminal_state": "verified_deleted",
-            "recorded_at": "2026-08-22T10:00:00Z",
+            "action": {"kind": "terraform_agent_destroy"},
+            "verification": {
+                "exact_instance_absent": True,
+                "terraform_destroy_completed": True,
+                "terraform_dependency_graph": sorted(
+                    cleanup_cli._AGENT_TERRAFORM_GRAPH
+                ),
+            },
+            "errors": [],
         },
         "bucket": {
+            "phase": "bucket",
+            "sequence": 4,
             "terminal_state": "verified_absent",
-            "recorded_at": "2026-08-22T10:00:00Z",
+            "action": {"kind": "none"},
+            "verification": {"bucket_absent": True},
+            "errors": [],
         },
         "storage_iam": {
+            "phase": "storage_iam",
+            "sequence": 5,
             "terminal_state": "completed",
-            "recorded_at": "2026-08-22T10:00:00Z",
+            "action": {"kind": "exact_provider_check"},
+            "verification": {"provider_outcome": "verified_absent"},
+            "errors": [],
         },
     }
 
     assert cleanup_cli._cloud_cleanup_receipts_are_terminal(terminal_cloud_phases)
 
-    terminal_cloud_phases["workflow"]["recorded_at"] = "2026-08-22T10:02:00Z"
+    terminal_cloud_phases["workflow_audit"]["action"] = {}
     assert not cleanup_cli._cloud_cleanup_receipts_are_terminal(
         terminal_cloud_phases
     )
+    terminal_cloud_phases["workflow_audit"]["action"] = {
+        "kind": "read_only_managed_job_audit"
+    }
+    terminal_cloud_phases["workflow"]["sequence"] = 2
+    assert not cleanup_cli._cloud_cleanup_receipts_are_terminal(
+        terminal_cloud_phases
+    )
+
+
+def test_full_cleanup_without_cloud_absence_never_claims_fully_cleaned(
+    monkeypatch,
+) -> None:
+    import json
+
+    monkeypatch.setattr(
+        cleanup_cli,
+        "_storage_iam_full_check",
+        lambda *_a, **_k: ("verified absent", False, "fully_cleaned", "owned"),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "cleanup",
+            "--project",
+            "project-a",
+            "--full",
+            "--yes",
+            "--keep-sky",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code != 0, result.output
+    payload = json.loads(result.output)
+    assert payload["result"] == "partial_cloud_cleanup"
+    assert payload["verification_unresolved"] is True
+    assert payload["local_state"] != "fully_cleaned"
 
 
 def test_exact_project_phase_state_prefers_immutable_event_scope() -> None:
@@ -951,11 +1040,37 @@ def test_full_cleanup_accepts_atomic_terminal_receipts_and_forgets_exact_alias(
         },
         alias="prod",
     )
-    for phase, state in (
-        ("workflow_audit", "verified_absent"),
-        ("agent", "verified_deleted"),
-        ("bucket", "verified_absent"),
-        ("storage_iam", "completed"),
+    for phase, state, action, verification in (
+        (
+            "workflow_audit",
+            "verified_absent",
+            {"kind": "read_only_managed_job_audit"},
+            {"nonterminal_job_ids": [], "detail": ""},
+        ),
+        (
+            "agent",
+            "verified_deleted",
+            {"kind": "terraform_agent_destroy"},
+            {
+                "exact_instance_absent": True,
+                "terraform_destroy_completed": True,
+                "terraform_dependency_graph": sorted(
+                    cleanup_cli._AGENT_TERRAFORM_GRAPH
+                ),
+            },
+        ),
+        (
+            "bucket",
+            "verified_absent",
+            {"kind": "none"},
+            {"bucket_absent": True},
+        ),
+        (
+            "storage_iam",
+            "completed",
+            {"kind": "exact_provider_check"},
+            {"provider_outcome": "verified_absent"},
+        ),
     ):
         teardown_receipts.record_teardown_event(
             phase=phase,
@@ -963,6 +1078,8 @@ def test_full_cleanup_accepts_atomic_terminal_receipts_and_forgets_exact_alias(
             terminal_state=state,
             project_alias="prod",
             project_id="project-a",
+            action=action,
+            verification=verification,
         )
     monkeypatch.setattr(cleanup_cli, "_nonterminal_jobs", lambda _sky: ([], ""))
 

@@ -25,8 +25,26 @@ from urllib import request as urllib_request
 from npa.smoke._versions import supported_tool_version
 
 
+class ProviderStatus(str, Enum):
+    """Trustworthy status classified at the provider subprocess boundary."""
+
+    NOT_FOUND = "not_found"
+    UNRESOLVED = "unresolved"
+
+
 class NebiusError(Exception):
-    pass
+    """Nebius failure with optional boundary-classified provider status."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        provider_status: ProviderStatus = ProviderStatus.UNRESOLVED,
+        operation: str = "",
+    ) -> None:
+        super().__init__(message)
+        self.provider_status = provider_status
+        self.operation = str(operation or "")
 
 
 @dataclass(frozen=True)
@@ -236,6 +254,45 @@ def nebius_cli_env(base: "Mapping[str, str] | None" = None) -> dict[str, str]:
     return env
 
 
+_GRPC_STATUS_RE = re.compile(
+    r"\A\s*(?:rpc error:\s*)?code\s*=\s*(?P<code>[A-Za-z_]+)\b",
+    re.IGNORECASE,
+)
+_PLAIN_STATUS_RE = re.compile(
+    r"\A\s*(?P<code>NotFound|NOT_FOUND|ResourceNotFound)\s*(?::|\Z)",
+    re.IGNORECASE,
+)
+
+
+def provider_status_from_cli_stderr(stderr: str) -> ProviderStatus:
+    """Classify only a top-level status emitted by the real CLI process.
+
+    Wrapper prose, nested status text, parse failures, and application-created
+    exceptions never enter this function and therefore cannot become absence.
+    """
+
+    text = str(stderr or "").strip()
+    if not text:
+        return ProviderStatus.UNRESOLVED
+    try:
+        document = json.loads(text)
+    except (TypeError, json.JSONDecodeError):
+        document = None
+    code: object = ""
+    if isinstance(document, Mapping):
+        code = document.get("code") or document.get("reason") or ""
+        if not code:
+            status = document.get("status")
+            code = status.get("code") if isinstance(status, Mapping) else status
+    else:
+        match = _GRPC_STATUS_RE.match(text) or _PLAIN_STATUS_RE.match(text)
+        code = match.group("code") if match is not None else ""
+    normalized = re.sub(r"[^a-z]", "", str(code).lower())
+    if normalized in {"notfound", "resourcenotfound"}:
+        return ProviderStatus.NOT_FOUND
+    return ProviderStatus.UNRESOLVED
+
+
 def _run(args: list[str], *, check: bool = True) -> str:
     """Run a nebius CLI command, return stdout."""
     nebius = _require_nebius()
@@ -247,8 +304,11 @@ def _run(args: list[str], *, check: bool = True) -> str:
     )
     if check and result.returncode != 0:
         stderr = redact_nebius_output(result.stderr.strip())
+        operation = " ".join(args[:3])
         raise NebiusError(
-            f"nebius {' '.join(args[:3])} failed (exit {result.returncode}):\n{stderr}"
+            f"nebius {operation} failed (exit {result.returncode}):\n{stderr}",
+            provider_status=provider_status_from_cli_stderr(result.stderr),
+            operation=operation,
         )
     return result.stdout.strip()
 
@@ -652,7 +712,7 @@ def get_project_identity(
             [*profile_args, "iam", "v2", "project", "get", "--id", exact_id]
         )
     except NebiusError as exc:
-        if _is_not_found(str(exc)):
+        if _is_not_found(exc):
             return None
         raise
     metadata = payload.get("metadata") if isinstance(payload, dict) else None
@@ -660,16 +720,20 @@ def get_project_identity(
     status = payload.get("status") if isinstance(payload, dict) else None
     if not isinstance(metadata, dict) or not isinstance(spec, dict):
         raise NebiusError("Nebius returned schema-invalid project identity")
-    returned_id = str(metadata.get("id") or "").strip()
-    returned_tenant = str(
-        metadata.get("parent_id") or metadata.get("parentId") or ""
-    ).strip()
-    name = str(metadata.get("name") or "").strip()
-    region = (
-        str((status or {}).get("region") or "").strip()
-        if isinstance(status, dict)
-        else ""
-    ) or str(spec.get("region") or "").strip()
+    raw_id = metadata.get("id")
+    raw_tenant = metadata.get("parent_id") or metadata.get("parentId")
+    raw_name = metadata.get("name")
+    status_region = status.get("region") if isinstance(status, dict) else ""
+    raw_region = status_region or spec.get("region")
+    if not all(
+        isinstance(value, str)
+        for value in (raw_id, raw_tenant, raw_name, raw_region)
+    ):
+        raise NebiusError("Nebius returned schema-invalid project identity fields")
+    returned_id = raw_id.strip()
+    returned_tenant = raw_tenant.strip()
+    name = raw_name.strip()
+    region = raw_region.strip()
     if returned_id != exact_id or not returned_tenant or not name or not region:
         raise NebiusError("Nebius returned incomplete or mismatched project identity")
     if expected_tenant and returned_tenant != expected_tenant:
@@ -769,7 +833,7 @@ def delete_project(project_id: str, *, profile: str | None = None) -> None:
     try:
         _run([*profile_args, "iam", "v2", "project", "delete", "--id", exact_id])
     except NebiusError as exc:
-        if _is_not_found(str(exc)):
+        if _is_not_found(exc):
             return
         raise
 
@@ -863,7 +927,7 @@ def delete_project_default_network(
         try:
             _run([*profile_args, *command, "--id", resource_id])
         except NebiusError as exc:
-            if not _is_not_found(str(exc)):
+            if not _is_not_found(exc):
                 raise
 
 
@@ -877,7 +941,7 @@ def delete_subnet(subnet_id: str, *, profile: str | None = None) -> None:
     try:
         _run([*profile_args, "vpc", "subnet", "delete", "--id", exact])
     except NebiusError as exc:
-        if not _is_not_found(str(exc)):
+        if not _is_not_found(exc):
             raise
 
 
@@ -891,7 +955,7 @@ def delete_network(network_id: str, *, profile: str | None = None) -> None:
     try:
         _run([*profile_args, "vpc", "network", "delete", "--id", exact])
     except NebiusError as exc:
-        if not _is_not_found(str(exc)):
+        if not _is_not_found(exc):
             raise
 
 
@@ -1056,68 +1120,19 @@ def is_permission_denied(message: str) -> bool:
     return _is_permission_denied(message)
 
 
-_PROVIDER_NOT_FOUND_CODE = r"(?:not_?found|resourcenotfound)"
-_PROVIDER_UNRESOLVED_CODE = (
-    r"(?:permission_?denied|unauthenticated|unauthorized|access_?denied|forbidden|"
-    r"invalid_?argument|failed_?precondition|unavailable|deadline_?exceeded|internal|"
-    r"unknown|data_?loss|unimplemented|resource_?exhausted|aborted|cancelled)"
-)
-_PROVIDER_NOT_FOUND_PATTERNS = (
-    re.compile(
-        rf"^\s*{_PROVIDER_NOT_FOUND_CODE}\s*(?::|$)",
-        re.IGNORECASE | re.MULTILINE,
-    ),
-    re.compile(
-        rf"\b(?:code|status(?:\.code)?|reason)\s*[:=]\s*[\"']?"
-        rf"{_PROVIDER_NOT_FOUND_CODE}\b",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        rf"[\"'](?:code|status|reason)[\"']\s*:\s*[\"']"
-        rf"{_PROVIDER_NOT_FOUND_CODE}[\"']",
-        re.IGNORECASE,
-    ),
-)
-_PROVIDER_UNRESOLVED_PATTERNS = (
-    re.compile(
-        rf"^\s*{_PROVIDER_UNRESOLVED_CODE}\s*(?::|$)",
-        re.IGNORECASE | re.MULTILINE,
-    ),
-    re.compile(
-        rf"\b(?:code|status(?:\.code)?|reason)\s*[:=]\s*[\"']?"
-        rf"{_PROVIDER_UNRESOLVED_CODE}\b",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        rf"[\"'](?:code|status|reason)[\"']\s*:\s*[\"']"
-        rf"{_PROVIDER_UNRESOLVED_CODE}[\"']",
-        re.IGNORECASE,
-    ),
-)
+def _is_not_found(exc: BaseException) -> bool:
+    """Return true only for boundary-classified exact provider absence."""
+
+    return bool(
+        isinstance(exc, NebiusError)
+        and exc.provider_status is ProviderStatus.NOT_FOUND
+    )
 
 
-def _is_not_found(message: str) -> bool:
-    """Accept only a provider-shaped resource-absence status code.
+def is_not_found(exc: BaseException) -> bool:
+    """Public typed predicate for idempotent exact-resource teardown."""
 
-    Generic prose containing ``not found`` is not trustworthy absence evidence:
-    it also describes missing executables, profiles, credentials, schema fields,
-    and transport dependencies. Exact teardown callers may converge only when
-    the provider exposes its typed NotFound status.
-    """
-
-    text = str(message or "").strip()
-    if any(
-        pattern.search(text) is not None
-        for pattern in _PROVIDER_UNRESOLVED_PATTERNS
-    ):
-        return False
-    return any(pattern.search(text) is not None for pattern in _PROVIDER_NOT_FOUND_PATTERNS)
-
-
-def is_not_found(message: str) -> bool:
-    """Public predicate for idempotent teardown of already-absent resources."""
-
-    return _is_not_found(message)
+    return _is_not_found(exc)
 
 
 @dataclass(frozen=True)
@@ -1148,17 +1163,20 @@ def get_compute_instance_identity(
             [*profile_args, "compute", "instance", "get", "--id", exact_id]
         )
     except NebiusError as exc:
-        if _is_not_found(str(exc)):
+        if _is_not_found(exc):
             return None
         raise
     metadata = payload.get("metadata") if isinstance(payload, dict) else None
     if not isinstance(metadata, dict):
         raise NebiusError("Nebius returned no compute-instance metadata")
-    returned_id = str(metadata.get("id") or "").strip()
-    returned_name = str(metadata.get("name") or "").strip()
-    returned_project = str(
-        metadata.get("parent_id") or metadata.get("parentId") or ""
-    ).strip()
+    raw_id = metadata.get("id")
+    raw_name = metadata.get("name")
+    raw_project = metadata.get("parent_id") or metadata.get("parentId")
+    if not all(isinstance(value, str) for value in (raw_id, raw_name, raw_project)):
+        raise NebiusError("Nebius returned schema-invalid compute identity fields")
+    returned_id = raw_id.strip()
+    returned_name = raw_name.strip()
+    returned_project = raw_project.strip()
     if returned_id != exact_id or not returned_name or not returned_project:
         raise NebiusError("Nebius returned incomplete or mismatched compute identity")
     if returned_project != exact_project:
@@ -1171,11 +1189,19 @@ def get_compute_instance_identity(
             f"Compute instance {exact_id} has name {returned_name!r}, not {wanted_name!r}"
         )
     labels = metadata.get("labels")
+    if labels is not None and (
+        not isinstance(labels, Mapping)
+        or not all(
+            isinstance(key, str) and isinstance(value, str)
+            for key, value in labels.items()
+        )
+    ):
+        raise NebiusError("Nebius returned schema-invalid compute labels")
     return ComputeInstanceIdentity(
         instance_id=returned_id,
         name=returned_name,
         project_id=returned_project,
-        labels={str(key): str(value) for key, value in dict(labels or {}).items()},
+        labels=dict(labels or {}),
         profile=resolved_profile,
     )
 
@@ -1333,7 +1359,7 @@ def ensure_service_account(
                     "a storage account cannot be substituted for the agent account."
                 )
             ) from exc
-        if not _is_not_found(message):
+        if not _is_not_found(exc):
             raise
         # Not found — create below.
 
@@ -1537,7 +1563,7 @@ def ensure_storage_capability_binding(
             ]
         )
     except NebiusError as exc:
-        if not _is_not_found(str(exc)):
+        if not _is_not_found(exc):
             raise NebiusError(
                 "Storage IAM inventory is unreadable; refusing to create a key or probe. "
                 f"Required S3 actions: {', '.join(STORAGE_REQUIRED_S3_ACTIONS)}."
@@ -1713,73 +1739,6 @@ def _validate_access_key_scalar(
     return scalar
 
 
-_EMPTY_ACCESS_KEY_LIST_ERRORS = (
-    re.compile(r"\bitems\s+is\s+not\s+found\b", re.IGNORECASE),
-    re.compile(
-        r"(?:range|iterate).{0,80}\bitems\b.{0,80}\b(?:null|nil)\b", re.IGNORECASE
-    ),
-    re.compile(
-        r"\bitems\b.{0,80}\b(?:null|nil)\b.{0,80}(?:range|iterate)", re.IGNORECASE
-    ),
-)
-
-
-def _empty_access_key_list_error(message: str) -> bool:
-    """Whether JSONPath failed solely because an empty response omitted/null-ed items."""
-
-    safe = redact_nebius_output(str(message or ""))
-    lowered = safe.lower()
-    if any(
-        marker in lowered
-        for marker in (
-            "accessdenied",
-            "access denied",
-            "permissiondenied",
-            "permission denied",
-            "unauthenticated",
-            "unauthorized",
-            "forbidden",
-            "connection refused",
-            "deadline exceeded",
-            "timed out",
-        )
-    ):
-        return False
-    return any(pattern.search(safe) for pattern in _EMPTY_ACCESS_KEY_LIST_ERRORS)
-
-
-def _missing_access_key_field_error(message: str, jsonpath: str) -> bool:
-    """Whether a scalar projection failed solely because its optional field is absent."""
-
-    safe = redact_nebius_output(str(message or ""))
-    lowered = safe.lower()
-    if any(
-        marker in lowered
-        for marker in (
-            "accessdenied",
-            "access denied",
-            "permissiondenied",
-            "permission denied",
-            "unauthenticated",
-            "unauthorized",
-            "forbidden",
-            "connection refused",
-            "deadline exceeded",
-            "timed out",
-        )
-    ):
-        return False
-    leaf = re.escape(jsonpath.rsplit(".", 1)[-1])
-    return (
-        re.search(
-            rf"\b{leaf}\b.{{0,80}}\b(?:is\s+not\s+found|missing|null|nil|no\s+value)\b",
-            safe,
-            re.IGNORECASE,
-        )
-        is not None
-    )
-
-
 def _access_key_metadata_scalar(
     key_id: str,
     field_name: str,
@@ -1804,8 +1763,6 @@ def _access_key_metadata_scalar(
             ]
         )
     except NebiusError as exc:
-        if optional and _missing_access_key_field_error(str(exc), jsonpath):
-            return ""
         raise NebiusError(
             f"Unable to read allowlisted access-key {field_name} for {key_id}: {exc}"
         ) from exc
@@ -1834,31 +1791,21 @@ def _list_access_key_metadata(
 
     if not project_id:
         return []
-    try:
-        profile_args, _resolved_profile = _iam_profile_args(profile)
-        output = _run(
-            [
-                *profile_args,
-                "iam",
-                "v2",
-                "access-key",
-                "list",
-                "--parent-id",
-                project_id,
-                "--all",
-                "--format",
-                _ACCESS_KEY_LIST_JSONPATH,
-            ]
-        )
-    except NebiusError as exc:
-        # CLI 0.12.254 returns `{}` (or `items: null`) for an empty list and its
-        # kubectl-style JSONPath formatter exits non-zero before emitting rows.
-        # This narrow compatibility case is an empty inventory, not a provider
-        # failure. Every other error remains strict, and only allowlisted fields
-        # were requested from the CLI, so no secret-bearing JSON is captured.
-        if _empty_access_key_list_error(str(exc)):
-            return []
-        raise
+    profile_args, _resolved_profile = _iam_profile_args(profile)
+    output = _run(
+        [
+            *profile_args,
+            "iam",
+            "v2",
+            "access-key",
+            "list",
+            "--parent-id",
+            project_id,
+            "--all",
+            "--format",
+            _ACCESS_KEY_LIST_JSONPATH,
+        ]
+    )
     key_ids: list[str] = []
     for line in output.splitlines():
         if not line.strip():
@@ -2117,7 +2064,7 @@ def get_bucket_by_name(project_id: str, bucket_name: str) -> dict[str, Any] | No
             ]
         )
     except NebiusError as exc:
-        if _is_not_found(str(exc)):
+        if _is_not_found(exc):
             return None
         raise
     metadata = item.get("metadata")
@@ -2492,20 +2439,25 @@ def get_service_account_id_by_name(
     except NebiusError as exc:
         message = str(exc)
         if strict:
-            if _is_not_found(message):
+            if _is_not_found(exc):
                 return None
             raise
         sa_id = _resource_id_from_nebius_error(message, prefix="serviceaccount-")
         if sa_id:
             return sa_id
-        if _is_not_found(message):
+        if _is_not_found(exc):
             return None
         if _is_permission_denied(message):
             return None
         raise
     metadata = data.get("metadata") if isinstance(data, dict) else None
     sa_id = metadata.get("id", "") if isinstance(metadata, dict) else ""
-    resolved = str(sa_id).strip()
+    if strict and not isinstance(sa_id, str):
+        raise NebiusError(
+            "Nebius returned a schema-invalid service-account ID while verifying "
+            "the named account"
+        )
+    resolved = sa_id.strip() if isinstance(sa_id, str) else str(sa_id).strip()
     if strict and not resolved:
         raise NebiusError(
             "Nebius returned no service-account ID while verifying the named "
@@ -2552,7 +2504,7 @@ def get_service_account_identity(
             [*profile_args, "iam", "service-account", "get", "--id", account_id]
         )
     except NebiusError as exc:
-        if _is_not_found(str(exc)):
+        if _is_not_found(exc):
             return None
         raise
     metadata = data.get("metadata") if isinstance(data, dict) else None
@@ -2560,11 +2512,17 @@ def get_service_account_identity(
         raise NebiusError(
             "Nebius returned no service-account metadata; presence or scope could not be verified"
         )
-    returned_id = str(metadata.get("id", "") or "").strip()
-    returned_name = str(metadata.get("name", "") or "").strip()
-    returned_project = str(
-        metadata.get("parent_id", "") or metadata.get("parentId", "") or ""
-    ).strip()
+    raw_id = metadata.get("id")
+    raw_name = metadata.get("name")
+    raw_project = metadata.get("parent_id") or metadata.get("parentId")
+    if not all(isinstance(value, str) for value in (raw_id, raw_name, raw_project)):
+        raise NebiusError(
+            "Nebius returned incomplete service-account identity fields or "
+            "schema-invalid field types"
+        )
+    returned_id = raw_id.strip()
+    returned_name = raw_name.strip()
+    returned_project = raw_project.strip()
     if returned_id != account_id:
         raise NebiusError(
             "Nebius returned a different service-account ID while verifying the exact identity"
@@ -2597,12 +2555,14 @@ def get_service_account_identity(
         raise NebiusError(
             f"Nebius returned no project metadata while verifying {account_id}"
         )
-    returned_project_id = str(project_metadata.get("id", "") or "").strip()
-    returned_tenant = str(
-        project_metadata.get("parent_id", "")
-        or project_metadata.get("parentId", "")
-        or ""
-    ).strip()
+    raw_project_id = project_metadata.get("id")
+    raw_tenant = project_metadata.get("parent_id") or project_metadata.get("parentId")
+    if not isinstance(raw_project_id, str) or not isinstance(raw_tenant, str):
+        raise NebiusError(
+            f"Nebius returned schema-invalid project scope for {account_id}"
+        )
+    returned_project_id = raw_project_id.strip()
+    returned_tenant = raw_tenant.strip()
     if returned_project_id != expected_project:
         raise NebiusError(
             "Nebius returned a different project while verifying service-account scope"
@@ -2636,7 +2596,7 @@ def service_account_exists(service_account_id: str) -> bool:
     try:
         data = _run_json(["iam", "service-account", "get", "--id", account_id])
     except NebiusError as exc:
-        if _is_not_found(str(exc)):
+        if _is_not_found(exc):
             return False
         raise
     metadata = data.get("metadata") if isinstance(data, dict) else None
@@ -2758,7 +2718,7 @@ def bootstrap_agent_environment(
                 elif kind == "service_account":
                     delete_service_account(metadata.get("id", ""))
             except NebiusError as rollback_exc:
-                if not _is_not_found(str(rollback_exc)):
+                if not _is_not_found(rollback_exc):
                     rollback_failed = True
                     continue
             try:

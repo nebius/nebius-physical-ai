@@ -16,6 +16,7 @@ silently removed.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 import os
 from pathlib import Path
@@ -142,14 +143,24 @@ def _full_credential_labels() -> list[str]:
 
     from npa.clients.credentials import CREDENTIALS_PATH
 
+    if not CREDENTIALS_PATH.exists():
+        return []
     try:
-        data = yaml.safe_load(CREDENTIALS_PATH.read_text(encoding="utf-8")) or {}
-    except (OSError, yaml.YAMLError):
-        return []
+        loaded = yaml.safe_load(CREDENTIALS_PATH.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError) as exc:
+        raise RuntimeError("local credential inventory is unreadable") from exc
+    data = {} if loaded is None else loaded
     if not isinstance(data, dict):
-        return []
+        raise RuntimeError("local credential inventory root is schema-invalid")
     raw_tokens = data.get("tokens")
+    if "tokens" in data and not isinstance(raw_tokens, dict):
+        raise RuntimeError("local credential token inventory is schema-invalid")
     tokens = raw_tokens if isinstance(raw_tokens, dict) else {}
+    for section_name in _SERVICE_CREDENTIAL_FIELDS:
+        if section_name in data and not isinstance(data[section_name], dict):
+            raise RuntimeError(
+                f"local credential section {section_name!r} is schema-invalid"
+            )
     labels: list[str] = []
     if (
         data.get("HF_TOKEN")
@@ -488,7 +499,7 @@ def _storage_iam_full_check(
                     matching.append(event)
         latest = max(
             matching,
-            key=lambda event: str(event.get("recorded_at") or ""),
+            key=lambda event: int(event.get("sequence") or 0),
             default={},
         )
         action = latest.get("action")
@@ -711,6 +722,53 @@ _AGENT_TERRAFORM_GRAPH = frozenset(
 )
 
 
+def _agent_operational_state_present(
+    project_alias: str, project_id: str
+) -> tuple[bool, str]:
+    """Inventory exact local agent state without treating audit journals as live."""
+
+    from npa.cli.agent_records import resolve_project_agents
+    from npa.deploy import provisioner
+    from npa.provisioning_journal import TERMINAL_PHASES, list_operations
+
+    alias = str(project_alias or "").strip()
+    exact_project = str(project_id or "").strip()
+    if alias and resolve_project_agents(alias):
+        return True, "saved agent record(s) remain"
+    roots: list[Path] = []
+    auth_root = Path.home() / ".npa" / "agents"
+    workbench_root = provisioner.working_dir_path(
+        alias, ".cleanup-inventory"
+    ).parent
+    if alias:
+        roots.extend((auth_root / alias, workbench_root))
+    else:
+        roots.extend((auth_root, workbench_root))
+    for root in roots:
+        if not os.path.lexists(root):
+            continue
+        if root.is_symlink() or not root.is_dir():
+            raise RuntimeError(f"agent local-state root {root} is not a directory")
+        try:
+            if any(root.iterdir()):
+                return True, f"agent local-state tree remains at {root}"
+        except OSError as exc:
+            raise RuntimeError(f"agent local-state inventory failed at {root}") from exc
+    for operation in list_operations(
+        project_alias=alias,
+        project_id=exact_project,
+        resource_type="agent",
+        strict=True,
+    ):
+        payload = operation.read()
+        audit_only = payload.get("audit_only") is True
+        if operation.state_copies() or not (
+            audit_only and str(payload.get("phase") or "") in TERMINAL_PHASES
+        ):
+            return True, f"operational agent journal {operation.operation_id} remains"
+    return False, "no local operational agent state remains"
+
+
 def _phase_group_events(
     phase_states: dict[str, dict[str, object]], names: tuple[str, ...]
 ) -> list[dict[str, object]]:
@@ -723,13 +781,123 @@ def _newest_phase_group_is_terminal(
     events = _phase_group_events(phase_states, names)
     if not events:
         return False
-    newest_at = max(str(event.get("recorded_at") or "") for event in events)
-    return any(
-        str(event.get("recorded_at") or "") == newest_at
-        and str(event.get("terminal_state") or "").lower()
-        in _CLOUD_CLEANUP_TERMINAL_STATES
+    newest_sequence = max(int(event.get("sequence") or 0) for event in events)
+    newest = [
+        event
         for event in events
+        if int(event.get("sequence") or 0) == newest_sequence
+    ]
+    return bool(newest) and all(
+        _event_authorizes_cloud_absence(event) for event in newest
     )
+
+
+def _event_authorizes_cloud_absence(event: Mapping[str, object]) -> bool:
+    """Require phase-specific structured convergence, never a terminal word."""
+
+    phase = str(event.get("phase") or "")
+    state = str(event.get("terminal_state") or "").lower()
+    action = event.get("action")
+    action = action if isinstance(action, Mapping) else {}
+    verification = event.get("verification")
+    verification = verification if isinstance(verification, Mapping) else {}
+    errors = event.get("errors")
+    if not isinstance(errors, list) or errors:
+        return False
+    if phase.startswith("project_destroy_"):
+        return bool(
+            state == "completed"
+            and action.get("kind") == "npa_guarded_phase"
+            and verification.get("converged") is True
+        )
+    if phase == "workflow_audit":
+        return bool(
+            action.get("kind") == "read_only_managed_job_audit"
+            and verification.get("nonterminal_job_ids") == []
+            and (
+                (
+                    state in {"not_submitted", "verified_absent"}
+                    and not verification.get("detail")
+                )
+                or (
+                    state == "operator_attested"
+                    and verification.get("operator_attestation") is True
+                    and verification.get("queue_state") == "SKIPPED_BY_OPERATOR"
+                )
+            )
+        )
+    if phase == "workflow":
+        outcome = str(verification.get("outcome") or "")
+        return bool(
+            (state == "not_submitted" and action.get("kind") == "none" and outcome == "not_submitted")
+            or (
+                state == "verified_absent"
+                and action.get("kind") == "none"
+                and outcome == "already_absent"
+            )
+            or (
+                state == "cancelled"
+                and action.get("kind") == "managed_job_cancel"
+                and outcome == "cancelled"
+            )
+            or (
+                state == "terminal"
+                and action.get("kind") == "none"
+                and outcome in {"terminal", "no_cancellation_needed"}
+            )
+        )
+    if phase == "agent":
+        graph = verification.get("terraform_dependency_graph")
+        return bool(
+            state in {"verified_absent", "verified_deleted"}
+            and action.get("kind") == "terraform_agent_destroy"
+            and verification.get("exact_instance_absent") is True
+            and verification.get("terraform_destroy_completed") is True
+            and isinstance(graph, list)
+            and _AGENT_TERRAFORM_GRAPH.issubset(graph)
+        )
+    if phase == "bucket":
+        return bool(
+            state in {"verified_absent", "verified_deleted"}
+            and action.get("kind")
+            in {"none", "bucket_delete", "scheduled_bucket_purge"}
+            and verification.get("bucket_absent") is True
+        )
+    if phase == "storage_iam":
+        outcome = str(verification.get("provider_outcome") or "")
+        return bool(
+            state in {"completed", "verified_absent", "verified_deleted"}
+            and action.get("kind")
+            in {
+                "none",
+                "exact_provider_check",
+                "remove_verified_absent_local_evidence",
+                "delete_npa_owned_service_account",
+                "preserve_unowned_account_remove_npa_access",
+            }
+            and outcome in {"verified_absent", "present"}
+        )
+    if phase == "cluster":
+        return bool(
+            (
+                state == "verified_absent"
+                and action.get("kind") == "exact_provider_check"
+                and verification.get("provider_absence") == "verified"
+            )
+            or (
+                state == "verified_deleted"
+                and action.get("kind") == "terraform_full_cluster_destroy"
+                and verification.get("terraform_destroy") == "completed"
+            )
+        )
+    if phase == "controller":
+        return bool(
+            state in {"verified_absent", "verified_deleted"}
+            and action.get("kind") == "controller_cleanup"
+            and verification.get("local_state_removed_after_remote_absence") is True
+            and verification.get("remote_controller_pods") == []
+        )
+    return False
 
 
 def _cloud_cleanup_receipts_are_terminal(
@@ -753,7 +921,7 @@ def _cloud_cleanup_receipts_are_terminal(
 
 
 def _agent_lifecycle_allows_project_retirement(
-    project_alias: str, project_id: str
+    project_alias: str, project_id: str, *, retire: bool = False
 ) -> tuple[bool, str]:
     """Reconcile surviving agent generations before forgetting their credentials.
 
@@ -763,14 +931,15 @@ def _agent_lifecycle_allows_project_retirement(
     evidence and an exact provider NotFound may be treated as stale.
     """
 
-    import json
-    from collections.abc import Mapping
-
     from npa.cli import agent as agent_module
     from npa.cli.agent_terraform import AgentTerraformStateIdentityError
     from npa.clients.nebius import NebiusError, get_compute_instance_identity
     from npa.deploy import provisioner
-    from npa.provisioning_journal import operation_root
+    from npa.provisioning_journal import (
+        ProvisioningOperation,
+        list_operations,
+        operation_context,
+    )
     from npa.teardown_receipts import list_teardown_receipts
 
     alias = str(project_alias or "").strip()
@@ -783,46 +952,38 @@ def _agent_lifecycle_allows_project_retirement(
         # proven unrelated to the exact project. Preserve its credentials. A
         # completely absent tree, by contrast, is positive local evidence that
         # there is no surviving alias/name generation to reconcile.
-        workbench_base = provisioner.working_dir_path(
-            "", ".cleanup-inventory"
-        ).parent
+        workbench_base = provisioner.working_dir_path("", ".cleanup-inventory").parent
+        auth_base = Path.home() / ".npa" / "agents"
         try:
-            if workbench_base.exists():
-                if workbench_base.is_symlink() or not workbench_base.is_dir():
-                    return False, "the agent Terraform root is not a regular directory"
-                if any(workbench_base.iterdir()):
+            for local_root in (workbench_base, auth_base):
+                if not local_root.exists():
+                    continue
+                if local_root.is_symlink() or not local_root.is_dir():
+                    return False, "an agent local-state root is not a regular directory"
+                if any(local_root.iterdir()):
                     return False, (
-                        "alias-free agent Terraform state cannot be bound to the "
+                        "alias-free agent local state cannot be bound to the "
                         "exact project"
                     )
         except OSError as exc:
             return False, f"agent Terraform state inventory is unreadable: {exc}"
 
-        root = operation_root()
         try:
-            if root.exists():
-                if root.is_symlink() or not root.is_dir():
+            for operation in list_operations(
+                project_id=exact_project, resource_type="agent", strict=True
+            ):
+                payload = operation.read()
+                if not (
+                    payload.get("audit_only") is True
+                    and str(payload.get("phase") or "")
+                    in {"committed", "destroyed", "rolled-back"}
+                    and not operation.state_copies()
+                ):
                     return False, (
-                        "the provisioning journal root is not a regular directory"
+                        "alias-free agent provisioning state remains for the "
+                        "exact project"
                     )
-                for journal in sorted(root.glob("*/journal.json")):
-                    try:
-                        payload = json.loads(journal.read_text(encoding="utf-8"))
-                    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-                        return False, f"a provisioning journal is unreadable: {exc}"
-                    if not isinstance(payload, Mapping):
-                        return False, "a provisioning journal is schema-invalid"
-                    if (
-                        str(payload.get("resource_type") or "") == "agent"
-                        and str(payload.get("project_id") or "") == exact_project
-                        and str(payload.get("phase") or "")
-                        not in {"destroyed", "rolled-back"}
-                    ):
-                        return False, (
-                            "alias-free agent provisioning state remains for the "
-                            "exact project"
-                        )
-        except OSError as exc:
+        except (OSError, RuntimeError, ValueError) as exc:
             return False, f"provisioning journal inventory is unreadable: {exc}"
         return True, "no alias-bound agent lifecycle evidence survives"
 
@@ -845,52 +1006,52 @@ def _agent_lifecycle_allows_project_retirement(
     local_names: set[str] = set()
     workbench_root = provisioner.working_dir_path(alias, ".cleanup-inventory").parent
     try:
-        if workbench_root.exists():
-            if workbench_root.is_symlink() or not workbench_root.is_dir():
-                return False, "the agent Terraform root is not a regular directory"
-            for child in workbench_root.iterdir():
+        auth_root = Path.home() / ".npa" / "agents" / alias
+        for local_root in (workbench_root, auth_root):
+            if not local_root.exists():
+                continue
+            if local_root.is_symlink() or not local_root.is_dir():
+                return False, "an agent local-state root is not a regular directory"
+            for child in local_root.iterdir():
                 if child.is_symlink():
-                    return False, "an agent Terraform path is a symlink"
-                if child.is_dir() and any(child.iterdir()):
-                    local_names.add(child.name)
+                    return False, "an agent local-state path is a symlink"
+                if not child.is_dir():
+                    return False, "an agent local-state entry is not a directory"
+                # Even an empty per-agent directory is current operational
+                # presence.  It may only be retired after the name is bound to
+                # one exact historical generation and provider absence.
+                local_names.add(child.name)
     except OSError as exc:
         return False, f"agent Terraform state inventory is unreadable: {exc}"
     names.update(local_names)
 
     operations_by_name: dict[str, list[dict[str, object]]] = {}
-    root = operation_root()
     try:
-        if root.exists():
-            if root.is_symlink() or not root.is_dir():
-                return False, "the provisioning journal root is not a regular directory"
-            for journal in sorted(root.glob("*/journal.json")):
-                try:
-                    payload = json.loads(journal.read_text(encoding="utf-8"))
-                except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-                    return False, f"a provisioning journal is unreadable: {exc}"
-                if not isinstance(payload, Mapping):
-                    return False, "a provisioning journal is schema-invalid"
-                if str(payload.get("resource_type") or "") != "agent":
-                    continue
-                saved_alias = str(payload.get("project_alias") or "")
-                saved_project = str(payload.get("project_id") or "")
-                if saved_alias != alias and saved_project != exact_project:
-                    continue
-                if saved_alias and saved_alias != alias:
-                    return False, "an agent journal conflicts with the selected alias"
-                if saved_project and saved_project != exact_project:
-                    return False, "an agent journal conflicts with the selected project"
-                name = str(payload.get("requested_name") or "").strip()
-                if not name:
-                    return False, "an agent journal has no requested deployment name"
-                names.add(name)
-                operations_by_name.setdefault(name, []).append(dict(payload))
-    except OSError as exc:
+        for operation in list_operations(resource_type="agent", strict=True):
+            payload = operation.read()
+            saved_alias = str(payload.get("project_alias") or "")
+            saved_project = str(payload.get("project_id") or "")
+            if saved_alias != alias and saved_project != exact_project:
+                continue
+            if saved_alias and saved_alias != alias:
+                return False, "an agent journal conflicts with the selected alias"
+            if saved_project and saved_project != exact_project:
+                return False, "an agent journal conflicts with the selected project"
+            name = str(payload.get("requested_name") or "").strip()
+            if not name:
+                return False, "an agent journal has no requested deployment name"
+            names.add(name)
+            operations_by_name.setdefault(name, []).append(
+                {**dict(payload), "_operation_id": operation.operation_id}
+            )
+    except (OSError, RuntimeError, ValueError) as exc:
         return False, f"provisioning journal inventory is unreadable: {exc}"
 
     terminal_graphs: dict[tuple[str, str], dict[str, object]] = {}
     try:
-        receipts = list_teardown_receipts(project_id=exact_project, legacy="exclude")
+        receipts = list_teardown_receipts(
+            project_id=exact_project, legacy="exclude", strict=True
+        )
     except (OSError, RuntimeError, ValueError) as exc:
         return False, f"agent teardown receipts are unreadable: {exc}"
     for receipt in receipts:
@@ -903,6 +1064,8 @@ def _agent_lifecycle_allows_project_retirement(
             verification = verification if isinstance(verification, Mapping) else {}
             action = event.get("action")
             action = action if isinstance(action, Mapping) else {}
+            graph = verification.get("terraform_dependency_graph")
+            errors = event.get("errors")
             name = str(identity.get("agent_name") or event.get("resource") or "").strip()
             instance_id = str(identity.get("instance_id") or "").strip()
             if not (
@@ -913,37 +1076,40 @@ def _agent_lifecycle_allows_project_retirement(
                 and action.get("kind") == "terraform_agent_destroy"
                 and verification.get("exact_instance_absent") is True
                 and verification.get("terraform_destroy_completed") is True
-                and _AGENT_TERRAFORM_GRAPH.issubset(
-                    set(verification.get("terraform_dependency_graph") or [])
-                )
+                and isinstance(graph, list)
+                and _AGENT_TERRAFORM_GRAPH.issubset(graph)
+                and isinstance(errors, list)
+                and not errors
             ):
                 continue
             key = (name, instance_id)
             prior = terminal_graphs.get(key, {})
-            if str(event.get("recorded_at") or "") > str(prior.get("recorded_at") or ""):
+            if int(event.get("sequence") or 0) > int(prior.get("sequence") or 0):
                 terminal_graphs[key] = dict(event)
 
+    retirements: list[tuple[str, str, bool, tuple[str, ...], str]] = []
     for name in sorted(names):
         record_present = name in records
-        saved_record = records[name] if record_present else {}
-        if record_present and not isinstance(saved_record, Mapping):
-            return False, f"saved agent record {name!r} is schema-invalid"
-        record = saved_record if isinstance(saved_record, Mapping) else {}
-        if record_present and not record:
-            return False, f"saved agent record {name!r} is empty and incomplete"
+        if record_present:
+            from npa.cli.agent_records import AgentRecordState, decode_agent_record
+
+            try:
+                decoded = decode_agent_record(alias, name)
+            except (OSError, RuntimeError, ValueError) as exc:
+                return False, f"saved agent record {name!r} is unreadable: {exc}"
+            if decoded.state is not AgentRecordState.COMPLETE:
+                return False, (
+                    f"saved agent record {name!r} is {decoded.state.value}: "
+                    f"{decoded.detail}"
+                )
+            record = decoded.record
+        else:
+            record = {}
         saved_project = record.get("project_id")
-        if record_present and (
-            not isinstance(saved_project, str) or not saved_project.strip()
-        ):
-            return False, f"saved agent record {name!r} has no immutable project ID"
         record_project = str(saved_project or "").strip()
-        if record_project and record_project != exact_project:
+        if record_project != exact_project and record_present:
             return False, f"saved agent record {name!r} conflicts with the project"
         saved_instance = record.get("instance_id")
-        if record_present and (
-            not isinstance(saved_instance, str) or not saved_instance.strip()
-        ):
-            return False, f"saved agent record {name!r} has no immutable instance ID"
 
         try:
             state_exists = agent_module._agent_terraform_state_exists(alias, name)
@@ -968,11 +1134,23 @@ def _agent_lifecycle_allows_project_retirement(
             for operation in operations
             if str(operation.get("phase") or "") not in {"destroyed", "rolled-back"}
         ]
+        if len(active_operations) > 1:
+            return False, (
+                f"agent {name!r} has multiple current same-name operation generations"
+            )
         has_local_files = name in local_names
         if not (
             record_present or state_exists or active_operations or has_local_files
         ):
             continue
+        if not instance_ids:
+            receipt_instance_ids = {
+                instance_id
+                for candidate_name, instance_id in terminal_graphs
+                if candidate_name == name
+            }
+            if len(receipt_instance_ids) == 1:
+                instance_ids.update(receipt_instance_ids)
         if len(instance_ids) != 1:
             return False, f"agent {name!r} has no single immutable instance identity"
         instance_id = next(iter(instance_ids))
@@ -982,12 +1160,19 @@ def _agent_lifecycle_allows_project_retirement(
                 f"agent {name!r} has surviving lifecycle state without matching "
                 "complete terminal graph evidence"
             )
-        terminal_at = str(terminal.get("recorded_at") or "")
-        if any(
-            str(operation.get("updated_at") or "") >= terminal_at
-            for operation in active_operations
-        ):
-            return False, f"agent {name!r} has a newer provisioning generation"
+        for operation in active_operations:
+            compute_ids = {
+                str(resource.get("provider_id") or "").strip()
+                for resource in operation.get("resources") or []
+                if isinstance(resource, Mapping)
+                and resource.get("resource_type") == "compute_instance"
+                and str(resource.get("provider_id") or "").strip()
+            }
+            if compute_ids != {instance_id}:
+                return False, (
+                    f"agent {name!r} has a current operation that is not bound "
+                    "to the terminal receipt generation"
+                )
 
         identity = terminal.get("identity")
         identity = identity if isinstance(identity, Mapping) else {}
@@ -1002,6 +1187,113 @@ def _agent_lifecycle_allows_project_retirement(
             return False, f"agent {name!r} provider absence is unresolved: {exc}"
         if remote is not None:
             return False, f"agent {name!r} is still present at the provider"
+
+        retirements.append(
+            (
+                name,
+                instance_id,
+                record_present,
+                tuple(
+                    str(operation.get("_operation_id") or "")
+                    for operation in operations
+                    if str(operation.get("_operation_id") or "")
+                ),
+                str(identity.get("profile") or ""),
+            )
+        )
+
+    if retire:
+        for name, instance_id, expected_record, operation_ids, profile in retirements:
+            transaction = ProvisioningOperation.prepare(
+                command="npa cleanup agent-local-retirement",
+                project_alias=alias,
+                project_id=exact_project,
+                resource_type="agent-teardown",
+                requested_name=name,
+                ownership_source="cleanup-agent-local-retirement",
+                resume_command="",
+                resume_argv=(
+                    "npa",
+                    "cleanup",
+                    "--project",
+                    alias,
+                    "--full",
+                    "--yes",
+                ),
+            )
+            try:
+                with operation_context(transaction):
+                    if str(transaction.read().get("phase") or "") == "prepared":
+                        transaction.transition("mutating")
+                    from npa.cli.agent_records import AgentRecordState
+
+                    current = agent_module.decode_agent_record(alias, name)
+                    if current.present != expected_record:
+                        raise RuntimeError(
+                            "saved agent record presence changed during retirement"
+                        )
+                    if current.present and (
+                        current.state is not AgentRecordState.COMPLETE
+                        or current.record.get("project_id") != exact_project
+                        or current.record.get("instance_id") != instance_id
+                    ):
+                        raise RuntimeError(
+                            "saved agent generation changed during retirement"
+                        )
+                    current_operations = list_operations(
+                        project_alias=alias,
+                        project_id=exact_project,
+                        resource_type="agent",
+                        requested_name=name,
+                        strict=True,
+                    )
+                    current_ids = tuple(
+                        sorted(item.operation_id for item in current_operations)
+                    )
+                    if current_ids != tuple(sorted(operation_ids)):
+                        raise RuntimeError(
+                            "agent operation generation changed during retirement"
+                        )
+                    if agent_module._agent_terraform_state_exists(alias, name):
+                        current_instance = agent_module._agent_terraform_instance_id(
+                            alias, name
+                        )
+                        if current_instance != instance_id:
+                            raise RuntimeError(
+                                "Terraform state generation changed during retirement"
+                            )
+                    remote = get_compute_instance_identity(
+                        instance_id,
+                        project_id=exact_project,
+                        expected_name=f"agent-{alias}-{name}",
+                        profile=profile or None,
+                    )
+                    if remote is not None:
+                        raise RuntimeError(
+                            "exact provider instance reappeared during retirement"
+                        )
+                    agent_module._cleanup_agent_local_files(
+                        alias, name, operation_ids=operation_ids
+                    )
+                    if expected_record:
+                        agent_module._remove_agent_record(alias, name)
+                        if agent_module.decode_agent_record(alias, name).present:
+                            raise RuntimeError(f"saved agent record {name!r} remains")
+                    transaction.transition("destroyed")
+            except (OSError, RuntimeError, ValueError) as exc:
+                phase = str(transaction.read().get("phase") or "")
+                if phase not in {"committed", "destroyed", "rolled-back"}:
+                    transaction.transition(
+                        "recovery-required",
+                        error="exact local agent retirement did not converge",
+                    )
+                return False, f"agent {name!r} local retirement failed: {exc}"
+        try:
+            present, detail = _agent_operational_state_present(alias, exact_project)
+        except (OSError, RuntimeError, ValueError) as exc:
+            return False, f"final agent local-state inventory failed: {exc}"
+        if present:
+            return False, detail
 
     return True, "surviving agent lifecycle evidence is absent or exactly stale"
 
@@ -1063,7 +1355,12 @@ def cleanup_phase_model(
     def completed(phase: str) -> bool:
         from npa.teardown_receipts import TERMINAL_STATES
 
-        state = str((receipt_phases.get(phase) or {}).get("terminal_state") or "")
+        event = receipt_phases.get(phase) or {}
+        if phase in {
+            name for group in _CLOUD_CLEANUP_PHASE_GROUPS for name in group
+        }:
+            return _event_authorizes_cloud_absence(event)
+        state = str(event.get("terminal_state") or "")
         return state in TERMINAL_STATES
 
     def observed(phase: str, fallback: str) -> str:
@@ -1481,7 +1778,9 @@ def cleanup_cmd(
         result: str, local_state: str, *, cleanup_failed: bool = False
     ) -> None:
         receipt_phases = latest_phase_states(
-            project_alias=receipt_alias, project_id=receipt_project_id
+            project_alias=receipt_alias,
+            project_id=receipt_project_id,
+            strict=yes,
         )
         phases = cleanup_phase_model(
             jobs=job_ids,
@@ -1496,6 +1795,7 @@ def cleanup_cmd(
         operational_residue = bool(
             local_state not in {"fully_clean", "fully_cleaned", "preserved_shared_sky"}
             or project_credential_residue_items
+            or agent_operational_state_present
         )
         if receipt_project_id:
             cloud_phase_names = {
@@ -1525,6 +1825,10 @@ def cleanup_cmd(
             or (job_queue_state == "SKIPPED_BY_OPERATOR" and not attestation_safe)
             or cleanup_failed
             or unresolved_receipts
+            or (
+                bool(receipt_project_id)
+                and not _cloud_cleanup_receipts_are_terminal(receipt_phases)
+            )
         )
         retained_receipts = len(
             list_teardown_receipts(
@@ -1558,6 +1862,8 @@ def cleanup_cmd(
                     "audit_receipts_are_operational_residue": False,
                     "preserved_shared_runtime": shared_runtime_preserved,
                     "retained_local_residue": project_credential_residue_items,
+                    "agent_operational_state_present": agent_operational_state_present,
+                    "agent_operational_state_detail": agent_operational_state_detail,
                 },
                 indent=2,
                 sort_keys=True,
@@ -1584,6 +1890,9 @@ def cleanup_cmd(
             iam_ownership_state,
         ) = _storage_iam_full_check(project, prune_verified_absence=yes)
 
+    agent_operational_state_present = False
+    agent_operational_state_detail = "not checked"
+
     if full and receipt_project_id:
         from npa.clients.project_credential_store import project_credential_residue
 
@@ -1604,25 +1913,23 @@ def cleanup_cmd(
                         "class": "project_alias_or_default",
                     }
                 )
+        try:
+            (
+                agent_operational_state_present,
+                agent_operational_state_detail,
+            ) = _agent_operational_state_present(receipt_alias, receipt_project_id)
+        except (OSError, RuntimeError, ValueError) as exc:
+            agent_operational_state_present = True
+            agent_operational_state_detail = f"inventory unresolved: {exc}"
 
     prior_phases = latest_phase_states(
-        project_alias=receipt_alias, project_id=receipt_project_id
+        project_alias=receipt_alias,
+        project_id=receipt_project_id,
+        strict=yes,
     )
-    prior_workflow = (
-        prior_phases.get("workflow_audit")
-        or prior_phases.get("workflow")
-        or prior_phases.get("project_destroy_workflows")
+    prior_workflow_terminal = _newest_phase_group_is_terminal(
+        prior_phases, _CLOUD_CLEANUP_REQUIRED_GROUPS[0]
     )
-    prior_workflow_state = str((prior_workflow or {}).get("terminal_state") or "")
-    prior_workflow_terminal = prior_workflow_state in {
-        "already_absent",
-        "cancelled",
-        "completed",
-        "deleted",
-        "terminal",
-        "verified_absent",
-        "verified_deleted",
-    }
     sky_operational_state_present = any(
         item.label in {"SkyPilot venv", "SkyPilot state (~/.sky)"} for item in residue
     )
@@ -1753,13 +2060,28 @@ def cleanup_cmd(
         and not credential_labels
         and not full_empty_state
         and not project_credential_residue_items
+        and not agent_operational_state_present
     ):
+        phase_states = latest_phase_states(
+            project_alias=receipt_alias,
+            project_id=receipt_project_id,
+            strict=yes,
+        )
+        cloud_incomplete = bool(
+            full
+            and yes
+            and receipt_project_id
+            and not _cloud_cleanup_receipts_are_terminal(phase_states)
+        )
         if output_json:
             emit_json(
                 iam_status
                 if iam_partial
+                else "partial_cloud_cleanup"
+                if cloud_incomplete
                 else ("fully_cleaned" if yes else "fully_clean"),
-                "fully_clean",
+                "partial_cloud_cleanup" if cloud_incomplete else "fully_clean",
+                cleanup_failed=cloud_incomplete,
             )
         else:
             typer.echo("No local NPA/SkyPilot residue to clean up.")
@@ -1772,7 +2094,9 @@ def cleanup_cmd(
                     iam_ownership_state=iam_ownership_state,
                     local_state="fully_clean",
                     receipt_phases=latest_phase_states(
-                        project_alias=receipt_alias, project_id=receipt_project_id
+                        project_alias=receipt_alias,
+                        project_id=receipt_project_id,
+                        strict=yes,
                     ),
                 )
             )
@@ -1792,6 +2116,13 @@ def cleanup_cmd(
                 err=True,
             )
             raise typer.Exit(code=2)
+        if cloud_incomplete:
+            emit(
+                "Full cleanup is partial because complete phase-specific cloud "
+                "absence evidence is missing or unresolved.",
+                err=True,
+            )
+            raise typer.Exit(code=1)
         return
 
     scope = (
@@ -1819,6 +2150,11 @@ def cleanup_cmd(
         emit(f"  {label:<26} {'saved':>8}")
     for path in full_empty_state:
         emit(f"  {'empty local state':<26} {'-':>8}  {path}")
+    if agent_operational_state_present:
+        emit(
+            f"  {'agent operational state':<26} {'saved':>8}  "
+            f"{agent_operational_state_detail}"
+        )
     if residue or terraform_residue:
         emit(f"  {'total':<26} {_human(total):>8}")
 
@@ -1843,7 +2179,9 @@ def cleanup_cmd(
                     iam_ownership_state=iam_ownership_state,
                     local_state="residue_present",
                     receipt_phases=latest_phase_states(
-                        project_alias=receipt_alias, project_id=receipt_project_id
+                        project_alias=receipt_alias,
+                        project_id=receipt_project_id,
+                        strict=yes,
                     ),
                 )
             )
@@ -1972,35 +2310,77 @@ def cleanup_cmd(
     if full:
         agent_retirement_safe = True
         agent_retirement_detail = "no exact-project credential retirement requested"
-        if project_credential_residue_items:
+        if receipt_project_id and agent_operational_state_present:
             agent_retirement_safe, agent_retirement_detail = (
                 _agent_lifecycle_allows_project_retirement(
-                    receipt_alias, receipt_project_id
+                    receipt_alias, receipt_project_id, retire=True
                 )
             )
-        cleared_credentials = _clear_full_credentials()
-        if cleared_credentials:
-            emit("Removed locally stored " + ", ".join(cleared_credentials) + ".")
-        if credential_labels and set(cleared_credentials) != set(credential_labels):
+            if agent_retirement_safe:
+                try:
+                    (
+                        agent_operational_state_present,
+                        agent_operational_state_detail,
+                    ) = _agent_operational_state_present(
+                        receipt_alias, receipt_project_id
+                    )
+                except (OSError, RuntimeError, ValueError) as exc:
+                    agent_retirement_safe = False
+                    agent_operational_state_present = True
+                    agent_retirement_detail = (
+                        f"final agent local-state inventory failed: {exc}"
+                    )
+        credentials_retirement_safe = bool(
+            not receipt_project_id
+            or (agent_retirement_safe and not agent_operational_state_present)
+        )
+        if credentials_retirement_safe:
+            cleared_credentials = _clear_full_credentials()
+            if cleared_credentials:
+                emit(
+                    "Removed locally stored "
+                    + ", ".join(cleared_credentials)
+                    + "."
+                )
+            if credential_labels and set(cleared_credentials) != set(
+                credential_labels
+            ):
+                cleanup_failed = True
+                missing_credentials = sorted(
+                    set(credential_labels) - set(cleared_credentials)
+                )
+                emit(
+                    "Warning: requested shared credential group(s) could not be removed: "
+                    + ", ".join(missing_credentials)
+                    + ". Any groups reported removed above remain removed; unrelated "
+                    "credential data was preserved.",
+                    err=True,
+                )
+        elif credential_labels:
             cleanup_failed = True
-            missing_credentials = sorted(
-                set(credential_labels) - set(cleared_credentials)
-            )
             emit(
-                "Warning: requested shared credential group(s) could not be removed: "
-                + ", ".join(missing_credentials)
-                + ". Any groups reported removed above remain removed; unrelated "
-                "credential data was preserved.",
+                "Preserved shared credentials because exact agent-local retirement "
+                "is unresolved.",
                 err=True,
             )
         phase_states = latest_phase_states(
-            project_alias=receipt_alias, project_id=receipt_project_id
+            project_alias=receipt_alias,
+            project_id=receipt_project_id,
+            strict=True,
         )
         cloud_absent = bool(
             receipt_project_id
             and _cloud_cleanup_receipts_are_terminal(phase_states)
             and agent_retirement_safe
+            and not agent_operational_state_present
         )
+        if receipt_project_id and not cloud_absent:
+            cleanup_failed = True
+            emit(
+                "Warning: full cleanup remains partial because complete "
+                "phase-specific cloud absence evidence is missing or unresolved.",
+                err=True,
+            )
         if project_credential_residue_items and not iam_partial and cloud_absent:
             from npa.clients.config import forget_project, resolve_environment
             from npa.clients.project_credential_store import (
@@ -2037,7 +2417,7 @@ def cleanup_cmd(
                         "class": "project_alias_or_default",
                     }
                 )
-        if project_credential_residue_items and not agent_retirement_safe:
+        if agent_operational_state_present or not agent_retirement_safe:
             cleanup_failed = True
             emit(
                 "Warning: exact-project credentials and alias were preserved because "
@@ -2051,7 +2431,9 @@ def cleanup_cmd(
                 + ", ".join(item["path"] for item in project_credential_residue_items),
                 err=True,
             )
-        pruned_state = _prune_full_empty_state(npa_dir)
+        pruned_state = (
+            _prune_full_empty_state(npa_dir) if credentials_retirement_safe else []
+        )
         for label, path in pruned_state:
             if label == "empty NPA home":
                 emit(f"Removed empty NPA home: {path}")
@@ -2138,7 +2520,9 @@ def cleanup_cmd(
                     "partial_local_cleanup" if cleanup_failed else "fully_cleaned"
                 ),
                 receipt_phases=latest_phase_states(
-                    project_alias=receipt_alias, project_id=receipt_project_id
+                    project_alias=receipt_alias,
+                    project_id=receipt_project_id,
+                    strict=yes,
                 ),
             )
         )

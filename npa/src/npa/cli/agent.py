@@ -49,6 +49,10 @@ from npa.cli.agent_env_files import (  # noqa: F401 - re-exported for tests/call
 from npa.cli.agent_destroy import destroy_cmd as _destroy_cmd_impl
 from npa.cli.agent_auth import auth_profile_cmd
 from npa.cli.agent_inventory import agent_list_cmd
+from npa.cli.agent_local_state import (  # noqa: F401 - compatibility re-exports
+    AgentLocalRetirementError,
+    cleanup_agent_local_files as _cleanup_agent_local_files,
+)
 from npa.cli.agent_preflight import (
     _agent_hard_prereq_results,
     _agent_nebius_auth_result,
@@ -59,6 +63,7 @@ from npa.cli.agent_preflight import (
 )
 from npa.cli.agent_records import (  # noqa: F401 - compatibility re-exports
     agent_record as _agent_record,
+    decode_agent_record,
     remove_agent_record as _remove_agent_record,
     resolve_project_agents,
     store_agent_record as _store_agent_record,
@@ -340,35 +345,6 @@ def _cleanup_agent_ingress(instance_id: str) -> None:
 
 def _auth_secret_path(project_alias: str, name: str) -> Path:
     return Path.home() / ".npa" / "agents" / project_alias / name / "auth.env"
-
-
-def _cleanup_agent_local_files(project_alias: str, name: str) -> None:
-    """Remove the local agent state + Terraform workdir after a destroy.
-
-    Two trees live under ``~/.npa`` for an agent: ``agents/<alias>/<name>/``
-    (auth.env + secrets — live basic-auth credentials, a stale-credential leak
-    if left) and ``workbenches/<alias>/<name>/`` (the Terraform workdir with the
-    provider cache and, in a local backend, ``terraform.tfstate``). Terraform has
-    already destroyed the VM by the time this runs, so both are safe to remove;
-    leaving the workdir behind was the teardown-report leftover.
-    """
-    agent_dir = Path.home() / ".npa" / "agents" / project_alias / name
-    shutil.rmtree(agent_dir, ignore_errors=True)
-
-    from npa.deploy import provisioner
-
-    tf_dir = provisioner.working_dir_path(project_alias, name)
-    shutil.rmtree(tf_dir, ignore_errors=True)
-
-    # Drop the now-empty <alias> parents so tearing down the last agent leaves no
-    # empty ~/.npa/{agents,workbenches}/<alias>/ tree behind (a sibling agent
-    # under the same alias keeps its parent non-empty, so it is preserved).
-    for parent in (agent_dir.parent, tf_dir.parent):
-        try:
-            if parent.is_dir() and not any(parent.iterdir()):
-                parent.rmdir()
-        except OSError:
-            pass
 
 
 def _write_auth_secret(

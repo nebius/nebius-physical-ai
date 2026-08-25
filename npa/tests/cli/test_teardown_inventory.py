@@ -509,10 +509,24 @@ def _iam_stubs(
 ):
     from npa.clients import nebius as nebius_module
 
+    deleted: list[str] = []
     monkeypatch.setattr(
         nebius_module,
         "get_service_account_id_by_name",
         lambda project_id, name, **kwargs: sa_id or None,
+    )
+    monkeypatch.setattr(
+        "npa.cli.agent_iam._owned_agent_account",
+        lambda _project_id: (
+            {
+                "id": sa_id,
+                "name": "npa-agent",
+                "project_id": "project-a",
+                "created_by": "npa",
+            }
+            if sa_id
+            else None
+        ),
     )
     monkeypatch.setattr(
         nebius_module,
@@ -520,6 +534,7 @@ def _iam_stubs(
         lambda project_id, account, **kwargs: [
             {"id": key, "name": "npa-agent-access-key", "state": "ACTIVE"}
             for key in keys
+            if key not in deleted
         ],
     )
     monkeypatch.setattr(
@@ -528,7 +543,21 @@ def _iam_stubs(
     monkeypatch.setattr(
         nebius_module, "get_compute_instance_identity", lambda *args, **kwargs: None
     )
-    deleted: list[str] = []
+    monkeypatch.setattr(
+        nebius_module,
+        "get_service_account_identity",
+        lambda account_id, **_kwargs: (
+            None
+            if account_id in deleted
+            else nebius_module.ServiceAccountIdentity(
+                account_id=account_id,
+                name="npa-agent",
+                project_id="project-a",
+                tenant_id="",
+                profile="",
+            )
+        ),
+    )
     monkeypatch.setattr(
         nebius_module, "delete_access_key", lambda key_id: deleted.append(key_id)
     )

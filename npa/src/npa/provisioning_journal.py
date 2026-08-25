@@ -575,7 +575,7 @@ def _read_unlocked(path: Path) -> dict[str, Any]:
             f"invalid operation journal {path}: expected object"
         )
     schema = payload.get("schema_version")
-    if schema in {1, "1"}:
+    if (type(schema) is int and schema == 1) or schema == "1":
         # The pre-release representation used an integer.  Normalize in memory;
         # the next atomic mutation upgrades it without losing fields.
         payload["schema_version"] = SCHEMA_VERSION
@@ -587,12 +587,198 @@ def _read_unlocked(path: Path) -> dict[str, Any]:
         raise OperationJournalError(
             f"invalid operation journal {path}: resources must be a list"
         )
+    def require_timestamp(value: object, field: str) -> None:
+        if not isinstance(value, str) or not value.strip():
+            raise OperationJournalError(
+                f"invalid operation journal {path}: {field} must be a timestamp"
+            )
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise OperationJournalError(
+                f"invalid operation journal {path}: {field} is not ISO-8601"
+            ) from exc
+        if parsed.tzinfo is None:
+            raise OperationJournalError(
+                f"invalid operation journal {path}: {field} has no timezone"
+            )
+
+    operation_id = payload.get("operation_id")
+    if not isinstance(operation_id, str) or operation_id != path.parent.name:
+        raise OperationJournalError(
+            f"invalid operation journal {path}: operation_id mismatch"
+        )
+    for field in (
+        "command",
+        "project_alias",
+        "project_id",
+        "tenant_id",
+        "region",
+        "resource_type",
+        "requested_name",
+        "ownership_source",
+        "phase",
+        "lifecycle",
+    ):
+        if not isinstance(payload.get(field, ""), str):
+            raise OperationJournalError(
+                f"invalid operation journal {path}: {field} must be a string"
+            )
+    for field in ("command", "resource_type", "requested_name", "phase"):
+        if not str(payload.get(field) or "").strip():
+            raise OperationJournalError(
+                f"invalid operation journal {path}: {field} is required"
+            )
+    if str(payload.get("phase")) not in (RECOVERABLE_PHASES | TERMINAL_PHASES):
+        raise OperationJournalError(
+            f"invalid operation journal {path}: unsupported phase"
+        )
+    for field in ("created_at", "updated_at", "heartbeat_at"):
+        require_timestamp(payload.get(field), field)
+    if "local_state_retired_at" in payload:
+        require_timestamp(
+            payload.get("local_state_retired_at"), "local_state_retired_at"
+        )
+    if "audit_only" in payload and type(payload.get("audit_only")) is not bool:
+        raise OperationJournalError(
+            f"invalid operation journal {path}: audit_only must be a boolean"
+        )
+    revision = payload.get("revision")
+    if type(revision) is not int or revision < 1:
+        raise OperationJournalError(
+            f"invalid operation journal {path}: revision must be a positive integer"
+        )
+    owner_pid = payload.get("owner_pid")
+    if type(owner_pid) is not int or owner_pid < 0:
+        raise OperationJournalError(
+            f"invalid operation journal {path}: owner_pid must be a non-negative integer"
+        )
+    events = payload.get("events")
+    if not isinstance(events, list):
+        raise OperationJournalError(
+            f"invalid operation journal {path}: events must be a list"
+        )
+    for index, event in enumerate(events, start=1):
+        if not isinstance(event, Mapping):
+            raise OperationJournalError(
+                f"invalid operation journal {path}: event {index} is not an object"
+            )
+        if type(event.get("sequence")) is not int or event.get("sequence") != index:
+            raise OperationJournalError(
+                f"invalid operation journal {path}: event sequence is missing, "
+                "duplicated, or non-monotonic"
+            )
+        if not isinstance(event.get("phase"), str) or not event.get("phase"):
+            raise OperationJournalError(
+                f"invalid operation journal {path}: event {index} has no phase"
+            )
+        require_timestamp(event.get("recorded_at"), f"event {index} recorded_at")
+    resource_identities: set[tuple[str, str]] = set()
+    for index, resource in enumerate(payload["resources"], start=1):
+        if not isinstance(resource, Mapping):
+            raise OperationJournalError(
+                f"invalid operation journal {path}: resource {index} is not an object"
+            )
+        for field in (
+            "resource_type",
+            "provider_id",
+            "requested_name",
+            "project_id",
+            "ownership",
+            "ownership_source",
+        ):
+            if not isinstance(resource.get(field, ""), str):
+                raise OperationJournalError(
+                    f"invalid operation journal {path}: resource {index} has invalid {field}"
+                )
+        for field in ("resource_type", "requested_name", "ownership", "ownership_source"):
+            if not str(resource.get(field) or "").strip():
+                raise OperationJournalError(
+                    f"invalid operation journal {path}: resource {index} lacks {field}"
+                )
+        provider_id = str(resource.get("provider_id") or "")
+        identity = (str(resource.get("resource_type") or ""), provider_id)
+        if provider_id and identity in resource_identities:
+            raise OperationJournalError(
+                f"invalid operation journal {path}: duplicate provider resource identity"
+            )
+        if provider_id:
+            resource_identities.add(identity)
+    copies = payload.get("local_state_copies", [])
+    if not isinstance(copies, list):
+        raise OperationJournalError(
+            f"invalid operation journal {path}: local_state_copies must be a list"
+        )
+    copy_paths: set[str] = set()
+    for index, item in enumerate(copies, start=1):
+        if not isinstance(item, Mapping):
+            raise OperationJournalError(
+                f"invalid operation journal {path}: state copy {index} is not an object"
+            )
+        if (
+            not isinstance(item.get("path"), str)
+            or not item.get("path")
+            or not isinstance(item.get("sha256"), str)
+            or not re.fullmatch(r"[0-9a-f]{64}", item.get("sha256", ""))
+            or type(item.get("size_bytes")) is not int
+            or item.get("size_bytes", 0) <= 0
+            or item.get("operation_id") != operation_id
+            or not isinstance(item.get("backend_identity", {}), Mapping)
+        ):
+            raise OperationJournalError(
+                f"invalid operation journal {path}: state copy {index} has incomplete identity"
+            )
+        if item["path"] in copy_paths:
+            raise OperationJournalError(
+                f"invalid operation journal {path}: duplicate state-copy path"
+            )
+        copy_paths.add(item["path"])
+        require_timestamp(item.get("preserved_at"), f"state copy {index} preserved_at")
+    retirement_in_progress = payload.get("local_state_retirement_in_progress", [])
+    if (
+        not isinstance(retirement_in_progress, list)
+        or not all(
+            isinstance(item, str) and item for item in retirement_in_progress
+        )
+        or len(retirement_in_progress) != len(set(retirement_in_progress))
+        or not set(retirement_in_progress).issubset(copy_paths)
+    ):
+        raise OperationJournalError(
+            f"invalid operation journal {path}: local state retirement intent is invalid"
+        )
+    if payload.get("local_state_retired_at") and copies:
+        raise OperationJournalError(
+            f"invalid operation journal {path}: retired local state still has copies"
+        )
+    if payload.get("audit_only") is True and (
+        str(payload.get("phase") or "") not in TERMINAL_PHASES
+        or copies
+        or retirement_in_progress
+        or not payload.get("local_state_retired_at")
+    ):
+        raise OperationJournalError(
+            f"invalid operation journal {path}: audit-only state is incomplete"
+        )
     return payload
 
 
 def _write_atomic(path: Path, payload: Mapping[str, Any]) -> None:
     if operation_contains_secret(payload):
         raise OperationJournalError("refusing to persist secret-bearing operation data")
+    serialized = _sanitize(payload)
+    if isinstance(serialized, dict) and serialized.get("schema_version") == SCHEMA_VERSION:
+        events = serialized.get("events")
+        if isinstance(events, list):
+            serialized["events"] = [
+                {**dict(event), "sequence": index}
+                if isinstance(event, Mapping)
+                else event
+                for index, event in enumerate(events, start=1)
+            ]
+        prior_revision = serialized.get("revision", 0)
+        serialized["revision"] = (
+            prior_revision + 1 if type(prior_revision) is int else 1
+        )
     descriptor, raw_path = tempfile.mkstemp(
         prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
     )
@@ -600,7 +786,7 @@ def _write_atomic(path: Path, payload: Mapping[str, Any]) -> None:
     try:
         os.fchmod(descriptor, 0o600)
         with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
-            json.dump(_sanitize(payload), stream, indent=2, sort_keys=True)
+            json.dump(serialized, stream, indent=2, sort_keys=True)
             stream.write("\n")
             stream.flush()
             os.fsync(stream.fileno())
@@ -882,6 +1068,12 @@ class ProvisioningOperation:
                 payload["lifecycle"] = (
                     "failed" if payload.get("last_error") else "running"
                 )
+            if (
+                cleaned in TERMINAL_PHASES
+                and payload.get("local_state_retired_at")
+                and payload.get("local_state_copies") == []
+            ):
+                payload["audit_only"] = True
             payload.setdefault("events", []).append(event)
             _write_atomic(self.path, payload)
 
@@ -1370,6 +1562,9 @@ class ProvisioningOperation:
                     "preserved_at": utc_now(),
                 }
             )
+            payload.pop("local_state_retired_at", None)
+            payload.pop("local_state_retirement_in_progress", None)
+            payload["audit_only"] = False
             payload["updated_at"] = utc_now()
             _write_atomic(self.path, payload)
             return path
@@ -1386,6 +1581,7 @@ class ProvisioningOperation:
     def state_copies(self) -> list[Path]:
         payload = self.read()
         paths: list[Path] = []
+        retiring = set(payload.get("local_state_retirement_in_progress") or [])
         backend = payload.get("backend")
         backend = dict(backend) if isinstance(backend, Mapping) else {}
         expected_backend = {
@@ -1410,6 +1606,10 @@ class ProvisioningOperation:
                     f"preserved Terraform state path escapes operation "
                     f"{self.operation_id}; no state was adopted"
                 )
+            if candidate.is_symlink():
+                raise OperationIdentityError(
+                    "preserved Terraform state is a symlink; no state was adopted"
+                )
             if str(item.get("operation_id") or self.operation_id) != self.operation_id:
                 raise OperationIdentityError(
                     "preserved Terraform state belongs to another operation; "
@@ -1425,6 +1625,8 @@ class ProvisioningOperation:
                     f"operation {self.operation_id}; no state was adopted"
                 )
             if not candidate.is_file():
+                if raw in retiring and not os.path.lexists(candidate):
+                    continue
                 raise OperationJournalError(
                     f"preserved Terraform state {candidate} is missing; no state was "
                     f"adopted. Safe recovery: {_lease_recovery_hint(payload)}"
@@ -1440,6 +1642,62 @@ class ProvisioningOperation:
                     )
             paths.append(candidate)
         return list(dict.fromkeys(paths))
+
+    def retire_state_copies(self) -> list[Path]:
+        """Remove exact validated state copies and mark the journal audit-only."""
+
+        candidates = self.state_copies()
+        with _locked_operation(self.operation_id):
+            payload = _read_unlocked(self.path)
+            copy_records = payload.get("local_state_copies") or []
+            expected_paths = [
+                self.path.parent / str(item.get("path") or "")
+                for item in copy_records
+                if isinstance(item, Mapping)
+            ]
+            payload["local_state_retirement_in_progress"] = [
+                str(item.get("path") or "")
+                for item in copy_records
+                if isinstance(item, Mapping)
+            ]
+            payload["updated_at"] = utc_now()
+            _write_atomic(self.path, payload)
+            removed: list[Path] = []
+            for candidate in candidates:
+                try:
+                    candidate.unlink()
+                except OSError as exc:
+                    raise OperationJournalError(
+                        f"could not retire preserved Terraform state {candidate}: {exc}"
+                    ) from exc
+                if os.path.lexists(candidate):
+                    raise OperationJournalError(
+                        f"preserved Terraform state {candidate} remains after retirement"
+                    )
+                removed.append(candidate)
+            if any(os.path.lexists(candidate) for candidate in expected_paths):
+                raise OperationJournalError(
+                    f"operation {self.operation_id} still has Terraform state copies"
+                )
+            payload = _read_unlocked(self.path)
+            payload["local_state_copies"] = []
+            payload.pop("local_state_retirement_in_progress", None)
+            payload["local_state_retired_at"] = utc_now()
+            payload["audit_only"] = str(payload.get("phase") or "") in TERMINAL_PHASES
+            payload["updated_at"] = utc_now()
+            _write_atomic(self.path, payload)
+            try:
+                if self.state_dir.is_dir() and not any(self.state_dir.iterdir()):
+                    self.state_dir.rmdir()
+            except OSError as exc:
+                raise OperationJournalError(
+                    f"could not retire empty operation state directory {self.state_dir}: {exc}"
+                ) from exc
+        if self.state_copies():
+            raise OperationJournalError(
+                f"operation {self.operation_id} still has Terraform state copies"
+            )
+        return removed
 
     def recovery_summary(self) -> dict[str, Any]:
         payload = self.reconcile_liveness()
@@ -1523,9 +1781,14 @@ def list_operations(
     project_id: str = "",
     resource_type: str = "",
     requested_name: str = "",
+    strict: bool = True,
 ) -> list[ProvisioningOperation]:
     root = operation_root()
-    if not root.is_dir() or root.is_symlink():
+    if root.is_symlink():
+        if strict:
+            raise OperationJournalError(f"operation journal root {root} is a symlink")
+        return []
+    if not root.is_dir():
         return []
     matches: list[tuple[str, ProvisioningOperation]] = []
     for path in sorted(root.glob("*/journal.json")):
@@ -1533,6 +1796,8 @@ def list_operations(
         try:
             payload = operation.reconcile_liveness()
         except OperationJournalError:
+            if strict:
+                raise
             continue
         if project_alias and payload.get("project_alias") != project_alias:
             continue

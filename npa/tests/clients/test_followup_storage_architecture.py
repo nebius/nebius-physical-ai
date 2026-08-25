@@ -283,7 +283,10 @@ def test_bootstrap_tenant_denial_creates_only_project_scoped_storage_binding(
                     "PermissionDenied: tenant group inventory"
                 )
             if parent == "project-a":
-                raise nebius.NebiusError("NotFound")
+                raise nebius.NebiusError(
+                    "provider verified group absence",
+                    provider_status=nebius.ProviderStatus.NOT_FOUND,
+                )
         if argv[:3] == ["iam", "group", "create"]:
             return {"metadata": {"id": "group-a"}}
         if argv[:3] == ["iam", "access-permit", "list"]:
@@ -361,7 +364,10 @@ def test_failed_editors_grant_has_typed_failed_evidence(monkeypatch) -> None:
 def test_editors_fallback_only_for_provider_unsupported_role(monkeypatch) -> None:
     responses = iter(
         [
-            nebius.NebiusError("NotFound"),
+            nebius.NebiusError(
+                "provider verified group absence",
+                provider_status=nebius.ProviderStatus.NOT_FOUND,
+            ),
             {"metadata": {"id": "group-a"}},
             {"items": []},
             nebius.NebiusError("unknown role storage.object-editor"),

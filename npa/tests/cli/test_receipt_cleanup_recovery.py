@@ -335,6 +335,19 @@ def test_workflow_ambiguous_legacy_state_is_not_claimed_not_submitted(
 def test_controller_terminal_receipt_noops_without_provider_or_skypilot(
     monkeypatch: pytest.MonkeyPatch, terminal_phase: str
 ) -> None:
+    action = (
+        {"kind": "controller_cleanup"}
+        if terminal_phase == "controller"
+        else {"kind": "exact_provider_check"}
+    )
+    verification = (
+        {
+            "local_state_removed_after_remote_absence": True,
+            "remote_controller_pods": [],
+        }
+        if terminal_phase == "controller"
+        else {"provider_absence": "verified"}
+    )
     path = record_teardown_event(
         phase=terminal_phase,
         resource="ctx-1",
@@ -346,6 +359,8 @@ def test_controller_terminal_receipt_noops_without_provider_or_skypilot(
             "cluster_id": "cluster-1",
             "context": "ctx-1",
         },
+        action=action,
+        verification=verification,
     )
     monkeypatch.setattr(
         "npa.cluster.identity.resolve_verified_cluster_identity",

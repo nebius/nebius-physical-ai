@@ -873,21 +873,40 @@ def _observe_storage_iam(
             and saved_account
             and (not context.account_id or context.account_id == saved_account)
         )
-        terminal = [
+        matching = [
             event
             for event in receipt.get("events") or []
             if isinstance(event, dict)
             and event.get("phase") == "storage_iam"
-            and str(event.get("terminal_state") or "").lower()
-            in {"verified_absent", "verified_deleted", "deleted"}
+            and isinstance(event.get("identity"), dict)
+            and str(event["identity"].get("service_account_id") or "").strip()
+            == saved_account
         ]
-        if exact_match and terminal:
-            latest = max(terminal, key=lambda item: str(item.get("recorded_at") or ""))
+        if exact_match and matching:
+            latest = max(
+                matching, key=lambda item: int(item.get("sequence") or 0)
+            )
             verification = latest.get("verification")
             verification = verification if isinstance(verification, dict) else {}
+            action = latest.get("action")
+            action = action if isinstance(action, dict) else {}
+            errors = latest.get("errors")
             if (
-                verification.get("provider_outcome") == "verified_absent"
-                or verification.get("exact_service_account_absent") is True
+                str(latest.get("terminal_state") or "").lower()
+                in {"verified_absent", "verified_deleted"}
+                and action.get("kind")
+                in {
+                    "delete_npa_owned_service_account",
+                    "exact_provider_check",
+                    "none",
+                    "remove_verified_absent_local_evidence",
+                }
+                and isinstance(errors, list)
+                and not errors
+                and (
+                    verification.get("provider_outcome") == "verified_absent"
+                    or verification.get("exact_service_account_absent") is True
+                )
             ):
                 return _StorageIamObservation(
                     outcome="verified_absent",
@@ -1212,17 +1231,27 @@ def _receipt_proves_bucket_cleanup(receipt_id: str, project_id: str) -> bool:
     receipt = load_teardown_receipt(receipt_id)
     if str(receipt.get("project_id") or "") != project_id:
         return False
-    terminal = {
-        "completed",
-        "verified_absent",
-        "verified_deleted",
-        "deleted",
-    }
-    return any(
-        isinstance(event, dict)
-        and str(event.get("phase") or "") in {"bucket", "project_destroy_bucket"}
-        and str(event.get("terminal_state") or "").lower() in terminal
+    matching = [
+        event
         for event in receipt.get("events") or []
+        if isinstance(event, dict) and event.get("phase") == "bucket"
+    ]
+    latest = max(
+        matching, key=lambda item: int(item.get("sequence") or 0), default={}
+    )
+    action = latest.get("action")
+    verification = latest.get("verification")
+    errors = latest.get("errors")
+    return bool(
+        isinstance(action, dict)
+        and isinstance(verification, dict)
+        and isinstance(errors, list)
+        and not errors
+        and str(latest.get("terminal_state") or "").lower()
+        in {"verified_absent", "verified_deleted"}
+        and action.get("kind")
+        in {"none", "bucket_delete", "scheduled_bucket_purge"}
+        and verification.get("bucket_absent") is True
     )
 
 
@@ -1641,7 +1670,7 @@ def delete_service_account_cmd(
             try:
                 delete_access_key(key_id, **profile_kwargs)
             except NebiusError as exc:
-                if not is_not_found(str(exc)):
+                if not is_not_found(exc):
                     failed = True
                     progress(
                         f"Warning: could not delete exact NPA-created access key "
@@ -1652,7 +1681,7 @@ def delete_service_account_cmd(
             try:
                 delete_access_permit(observation.access_permit_id, **profile_kwargs)
             except NebiusError as exc:
-                if not is_not_found(str(exc)):
+                if not is_not_found(exc):
                     failed = True
                     progress(
                         "Warning: could not delete exact NPA-created storage access "
@@ -1663,7 +1692,7 @@ def delete_service_account_cmd(
             try:
                 delete_group(observation.group_id, **profile_kwargs)
             except NebiusError as exc:
-                if not is_not_found(str(exc)):
+                if not is_not_found(exc):
                     failed = True
                     progress(
                         "Warning: could not delete exact NPA-created storage group "
@@ -1893,7 +1922,7 @@ def delete_service_account_cmd(
             profile=context.profile,
         )
     except NebiusError as exc:
-        if is_not_found(str(exc)):
+        if is_not_found(exc):
             # The access-key endpoint's NotFound is not itself authoritative
             # proof that the service account disappeared. Re-run the same exact
             # identity resolver before changing any ownership/residue state.
@@ -2019,7 +2048,7 @@ def delete_service_account_cmd(
         try:
             delete_access_key(key_id, **profile_kwargs)
         except NebiusError as exc:
-            if is_not_found(str(exc)):
+            if is_not_found(exc):
                 progress(f"Access key {key_id} is already absent.")
             else:
                 failed = True
@@ -2033,7 +2062,7 @@ def delete_service_account_cmd(
         try:
             delete_access_permit(record.access_permit_id, **profile_kwargs)
         except NebiusError as exc:
-            if not is_not_found(str(exc)):
+            if not is_not_found(exc):
                 permit_deleted = False
                 failed = True
                 progress(
@@ -2045,7 +2074,7 @@ def delete_service_account_cmd(
             try:
                 delete_group(record.group_id, **profile_kwargs)
             except NebiusError as exc:
-                if not is_not_found(str(exc)):
+                if not is_not_found(exc):
                     failed = True
                     progress(
                         f"Warning: could not delete exact NPA storage group "
@@ -2055,7 +2084,7 @@ def delete_service_account_cmd(
     try:
         delete_service_account(record.account_id, **profile_kwargs)
     except NebiusError as exc:
-        if is_not_found(str(exc)):
+        if is_not_found(exc):
             progress(
                 f"Verified absence: NPA-owned service account {record.name} "
                 f"({record.account_id}) is already absent."

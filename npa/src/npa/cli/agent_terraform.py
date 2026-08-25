@@ -733,6 +733,11 @@ def _destroy_agent_terraform(
         if candidate.read().get("phase")
         not in {"committed", "destroyed", "rolled-back"}
     ]
+    if len(nonterminal_operations) > 1 and not operation_id:
+        raise ProvisionerError(
+            "Agent recovery is ambiguous across multiple nonterminal operation "
+            "journals. Pass the exact --operation-id; no resources were changed."
+        )
     candidate_operations = nonterminal_operations or operations
     candidate_project_ids = {
         str(candidate.read().get("project_id") or "")
@@ -745,7 +750,42 @@ def _destroy_agent_terraform(
             "Nebius projects. Pass the exact recorded project alias; no resources "
             "were changed."
         )
-    operation = candidate_operations[0] if candidate_operations else None
+    record_instance_id = str((record or {}).get("instance_id") or "").strip()
+
+    def operation_instance_ids(candidate: Any) -> set[str]:
+        return {
+            str(resource.get("provider_id") or "").strip()
+            for resource in candidate.read().get("resources") or []
+            if isinstance(resource, Mapping)
+            and resource.get("resource_type") == "compute_instance"
+            and str(resource.get("provider_id") or "").strip()
+        }
+
+    operation = candidate_operations[0] if len(candidate_operations) == 1 else None
+    if len(candidate_operations) > 1:
+        matching = [
+            candidate
+            for candidate in candidate_operations
+            if record_instance_id
+            and operation_instance_ids(candidate) == {record_instance_id}
+        ]
+        if len(matching) != 1:
+            raise ProvisionerError(
+                "Agent recovery is ambiguous across same-name operation generations. "
+                "Pass the exact --operation-id; no resources were changed."
+            )
+        operation = matching[0]
+    if operation is not None:
+        journal_instance_ids = operation_instance_ids(operation)
+        if (
+            record_instance_id
+            and journal_instance_ids
+            and journal_instance_ids != {record_instance_id}
+        ):
+            raise ProvisionerError(
+                "Agent recovery identity mismatch: the selected operation journal "
+                "names a different immutable instance. No resources were changed."
+            )
     operation_payload = operation.read() if operation is not None else {}
     if operation is not None and (
         str(operation_payload.get("resource_type") or "") != "agent"
@@ -906,7 +946,30 @@ def _destroy_agent_terraform(
             provisioner.state_push(copies[0], tf_dir)
     elif copies:
         (tf_dir / "backend.tf").unlink(missing_ok=True)
-        shutil.rmtree(tf_dir / ".terraform", ignore_errors=True)
+        terraform_runtime_dir = tf_dir / ".terraform"
+        if terraform_runtime_dir.is_symlink():
+            raise ProvisionerError(
+                "Agent Terraform runtime path is a symlink; recovery state was "
+                "preserved."
+            )
+        if terraform_runtime_dir.exists():
+            if not terraform_runtime_dir.is_dir():
+                raise ProvisionerError(
+                    "Agent Terraform runtime path is not a regular directory; "
+                    "recovery state was preserved."
+                )
+            try:
+                shutil.rmtree(terraform_runtime_dir)
+            except OSError as exc:
+                raise ProvisionerError(
+                    "Agent Terraform runtime could not be retired before exact "
+                    "state recovery; recovery state was preserved."
+                ) from exc
+        if terraform_runtime_dir.is_symlink() or terraform_runtime_dir.exists():
+            raise ProvisionerError(
+                "Agent Terraform runtime remains after retirement; recovery state "
+                "was preserved."
+            )
         shutil.copy2(copies[0], tf_dir / "terraform.tfstate")
         (tf_dir / "terraform.tfstate").chmod(0o600)
         provisioner.init(tf_dir=tf_dir, disable_backend=True)

@@ -64,6 +64,33 @@ def test_sky_down_constructs_expected_subprocess_invocation(
     assert result.errors == []
 
 
+@pytest.mark.parametrize(
+    "detail",
+    [
+        "cluster not found",
+        "permission denied: cluster not found",
+        "transport failed while reporting ResourceNotFound",
+        "profile not found",
+    ],
+)
+def test_sky_down_does_not_infer_absence_from_cli_text(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, detail: str
+) -> None:
+    sky_bin = _fake_sky(tmp_path)
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(
+            cmd, 1, stdout="", stderr=detail
+        ),
+    )
+
+    result = sky_down("cluster-a", isolated_config_dir=tmp_path, sky_bin=sky_bin)
+
+    assert result.resources_removed == []
+    assert result.errors
+
+
 def test_context_manager_calls_cleanup_on_normal_exit(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

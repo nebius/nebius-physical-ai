@@ -7,7 +7,7 @@ from typer.testing import CliRunner
 
 from npa.cli.main import app
 from npa.clients.network import NetworkIngressError
-from npa.clients.nebius import NebiusError
+from npa.clients.nebius import NebiusError, ProviderStatus
 
 
 runner = CliRunner()
@@ -604,7 +604,10 @@ def test_owned_parent_network_already_absent_is_idempotent(mocker) -> None:
 
     mocker.patch(
         "npa.clients.network.nebius._run",
-        side_effect=NebiusError("NotFound: network is already absent"),
+        side_effect=NebiusError(
+            "NotFound: network is already absent",
+            provider_status=ProviderStatus.NOT_FOUND,
+        ),
     )
     status: list[str] = []
 

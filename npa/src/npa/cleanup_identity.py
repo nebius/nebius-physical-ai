@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import json
-from pathlib import Path
 from typing import Any, Mapping
 
 from npa.teardown_receipts import TERMINAL_STATES, load_teardown_receipt
@@ -184,7 +183,7 @@ def _flatten_receipt_identity(
                 if isinstance(event_identity, Mapping)
                 else ""
             ).strip()
-            if event_instance_id and event_instance_id != selected_instance_id:
+            if event_instance_id != selected_instance_id:
                 return False
         if selected_cluster_id:
             event_identity = item.get("identity")
@@ -193,14 +192,14 @@ def _flatten_receipt_identity(
                 if isinstance(event_identity, Mapping)
                 else ""
             ).strip()
-            if event_cluster_id and event_cluster_id != selected_cluster_id:
+            if event_cluster_id != selected_cluster_id:
                 return False
         return True
 
     matching = [item for item in events if event_matches(item)]
-    latest = max(
-        matching, key=lambda item: str(item.get("recorded_at") or ""), default={}
-    )
+    # Receipt event order is a durable monotonic sequence. Wall-clock strings
+    # are diagnostic data and never select destructive authority.
+    latest = max(matching, key=lambda item: int(item.get("sequence") or 0), default={})
     if latest:
         for key in ("project_alias", "project_id", "context"):
             if _present(latest.get(key)):
@@ -290,6 +289,91 @@ class CleanupIdentity:
     def receipt_is_terminal(self) -> bool:
         return bool(self.terminal_state and self.terminal_state in TERMINAL_STATES)
 
+    @property
+    def receipt_authorizes_noop(self) -> bool:
+        """Whether this exact phase event proves its resource is converged.
+
+        A generic terminal word is status, not destructive authority. Each
+        lifecycle phase must carry the structured action and verification that
+        its own implementation writes at the provider/local boundary.
+        """
+
+        event = self.receipt_event
+        phase = str(event.get("phase") or "")
+        state = self.terminal_state
+        action = event.get("action")
+        action = action if isinstance(action, Mapping) else {}
+        verification = event.get("verification")
+        verification = verification if isinstance(verification, Mapping) else {}
+        errors = event.get("errors")
+        if not isinstance(errors, list) or errors:
+            return False
+        kind = str(action.get("kind") or "")
+        if phase == "agent":
+            graph = verification.get("terraform_dependency_graph")
+            return bool(
+                state in {"verified_absent", "verified_deleted"}
+                and kind == "terraform_agent_destroy"
+                and verification.get("exact_instance_absent") is True
+                and verification.get("terraform_destroy_completed") is True
+                and isinstance(graph, list)
+                and {
+                    "compute_instance",
+                    "boot_disk",
+                    "network",
+                    "subnet",
+                    "security_group",
+                    "public_ip",
+                }.issubset(graph)
+            )
+        if phase == "cluster":
+            exact_check = bool(
+                state == "verified_absent"
+                and kind == "exact_provider_check"
+                and verification.get("provider_absence") == "verified"
+            )
+            terraform_destroy = bool(
+                state == "verified_deleted"
+                and kind == "terraform_full_cluster_destroy"
+                and verification.get("terraform_destroy") == "completed"
+            )
+            inventory_destroy = bool(
+                state == "verified_deleted"
+                and kind == "delete_exact_operation_inventory"
+                and verification.get("state_consumers_absent") is True
+                and verification.get("errors") == []
+            )
+            return exact_check or terraform_destroy or inventory_destroy
+        if phase == "controller":
+            return bool(
+                state in {"verified_absent", "verified_deleted"}
+                and kind == "controller_cleanup"
+                and verification.get("local_state_removed_after_remote_absence")
+                is True
+                and verification.get("remote_controller_pods") == []
+            )
+        if phase == "workflow":
+            outcome = str(verification.get("outcome") or "")
+            return bool(
+                (state == "not_submitted" and kind == "none" and outcome == "not_submitted")
+                or (
+                    state == "verified_absent"
+                    and kind == "none"
+                    and outcome == "already_absent"
+                )
+                or (
+                    state == "cancelled"
+                    and kind == "managed_job_cancel"
+                    and outcome == "cancelled"
+                )
+                or (
+                    state == "terminal"
+                    and kind == "none"
+                    and outcome in {"terminal", "no_cancellation_needed"}
+                )
+            )
+        return False
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "identity_source": self.source,
@@ -366,7 +450,16 @@ def project_cleanup_identity_snapshot(alias: str) -> dict[str, Any]:
     from npa.clients.config import list_projects
 
     cleaned = str(alias or "").strip()
-    stanza = dict((list_projects() or {}).get(cleaned) or {})
+    projects = list_projects()
+    if cleaned not in projects:
+        stanza: dict[str, Any] = {}
+    else:
+        saved_stanza = projects[cleaned]
+        if not isinstance(saved_stanza, Mapping):
+            raise CleanupIdentityError(
+                f"project {cleaned!r} is present but schema-invalid"
+            )
+        stanza = dict(saved_stanza)
     project_id = str(stanza.get("project_id") or "")
     identity: dict[str, Any] = {
         "project_alias": cleaned,
@@ -382,6 +475,10 @@ def project_cleanup_identity_snapshot(alias: str) -> dict[str, Any]:
     except (OSError, RuntimeError, ValueError):
         identity["profile"] = ""
     terraform = stanza.get("terraform_state")
+    if "terraform_state" in stanza and not isinstance(terraform, Mapping):
+        raise CleanupIdentityError(
+            f"project {cleaned!r} Terraform state is present but schema-invalid"
+        )
     if isinstance(terraform, Mapping):
         identity["terraform_backends"] = [
             {
@@ -389,10 +486,26 @@ def project_cleanup_identity_snapshot(alias: str) -> dict[str, Any]:
                 "endpoint": str(terraform.get("endpoint") or ""),
             }
         ]
+    raw_agents = stanza.get("agents")
+    if "agents" in stanza and not isinstance(raw_agents, Mapping):
+        raise CleanupIdentityError(
+            f"project {cleaned!r} agents container is present but schema-invalid"
+        )
     agents: list[dict[str, Any]] = []
-    for name, record in dict(stanza.get("agents") or {}).items():
-        if not isinstance(record, Mapping):
-            continue
+    for name in dict(raw_agents or {}):
+        if not isinstance(name, str) or not name.strip() or name != name.strip():
+            raise CleanupIdentityError(
+                f"project {cleaned!r} has an invalid saved agent key"
+            )
+        from npa.cli.agent_records import AgentRecordState, decode_agent_record
+
+        decoded = decode_agent_record(cleaned, name)
+        if decoded.state is not AgentRecordState.COMPLETE:
+            raise CleanupIdentityError(
+                f"saved agent record {name!r} is {decoded.state.value}: "
+                f"{decoded.detail}"
+            )
+        record = decoded.record
         agents.append(
             {
                 "agent_name": str(name),
@@ -408,6 +521,20 @@ def project_cleanup_identity_snapshot(alias: str) -> dict[str, Any]:
     try:
         from npa.cluster.state import list_local_clusters
 
+        matching_clusters = [
+            item
+            for item in list_local_clusters()
+            if project_id and item.project_id == project_id
+        ]
+        for item in matching_clusters:
+            if not all(
+                isinstance(value, str) and value.strip()
+                for value in (item.name, item.cluster_id, item.project_id)
+            ):
+                raise CleanupIdentityError(
+                    "cluster lifecycle identity is incomplete; project "
+                    "configuration was preserved"
+                )
         identity["clusters"] = [
             {
                 "context": item.name,
@@ -418,11 +545,13 @@ def project_cleanup_identity_snapshot(alias: str) -> dict[str, Any]:
                 "region": item.region,
                 "kubeconfig_path": item.kubeconfig_path,
             }
-            for item in list_local_clusters()
-            if not project_id or item.project_id == project_id
+            for item in matching_clusters
         ]
-    except (OSError, RuntimeError, ValueError):
-        identity["clusters"] = []
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise CleanupIdentityError(
+            "cluster lifecycle inventory is unreadable; project configuration "
+            "was preserved"
+        ) from exc
 
     try:
         from npa.provisioning_journal import list_operations
@@ -443,13 +572,34 @@ def project_cleanup_identity_snapshot(alias: str) -> dict[str, Any]:
                     state_paths=[str(path) for path in operation.state_copies()],
                 )
             )
-    except (OSError, RuntimeError, ValueError):
-        identity["operations"] = []
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise CleanupIdentityError(
+            "operation journal inventory is unreadable; project configuration "
+            "was preserved"
+        ) from exc
 
     marker = stanza.get("storage_iam_verification_required")
+    if "storage_iam_verification_required" in stanza and not isinstance(
+        marker, Mapping
+    ):
+        raise CleanupIdentityError(
+            f"project {cleaned!r} storage IAM marker is present but schema-invalid"
+        )
     if isinstance(marker, Mapping):
+        marker_account = marker.get("service_account_id")
+        marker_project = marker.get("project_id", project_id)
+        if (
+            not isinstance(marker_account, str)
+            or not marker_account.strip()
+            or not isinstance(marker_project, str)
+            or not marker_project.strip()
+            or marker_project.strip() != project_id
+        ):
+            raise CleanupIdentityError(
+                f"project {cleaned!r} storage IAM marker has incomplete identity"
+            )
         identity["storage_iam"] = {
-            "service_account_id": str(marker.get("service_account_id") or ""),
+            "service_account_id": marker_account.strip(),
             "service_account_name": str(marker.get("service_account_name") or ""),
             "project_id": str(marker.get("project_id") or project_id),
             "tenant_id": str(marker.get("tenant_id") or identity["tenant_id"]),
@@ -464,31 +614,70 @@ def project_cleanup_identity_snapshot(alias: str) -> dict[str, Any]:
             else [],
         }
 
+    from npa.orchestration.npa_workflow.submission_state import (
+        SCHEMA_VERSION as SUBMISSION_SCHEMA_VERSION,
+        submission_state_path,
+    )
+
     workflows: list[dict[str, Any]] = []
-    root = Path.home() / ".npa" / "workflow-submissions"
-    if root.is_dir() and not root.is_symlink():
-        for path in sorted(root.glob("*/*.json")):
-            try:
-                payload = json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                continue
-            if (
-                not isinstance(payload, Mapping)
-                or str(payload.get("project") or "") != cleaned
-            ):
-                continue
-            raw_workflow = payload.get("workflow")
-            workflow = dict(raw_workflow) if isinstance(raw_workflow, Mapping) else {}
-            raw_launch = payload.get("launch")
-            launch = dict(raw_launch) if isinstance(raw_launch, Mapping) else {}
-            workflows.append(
-                {
-                    "run_id": str(payload.get("run_id") or ""),
-                    "workflow_s3_uri": str(workflow.get("run_prefix_uri") or ""),
-                    "sky_job_id": str(launch.get("sky_job_id") or ""),
-                    "submission_status": str(launch.get("status") or "planned"),
-                }
+    directory = submission_state_path(cleaned, "placeholder").parent
+    if directory.parent.is_symlink() or directory.is_symlink():
+        raise CleanupIdentityError(
+            "workflow submission journal directory is a symlink; project "
+            "configuration was preserved"
+        )
+    try:
+        entries = sorted(directory.iterdir(), key=lambda item: item.name)
+    except FileNotFoundError:
+        entries = []
+    except OSError as exc:
+        raise CleanupIdentityError(
+            "workflow submission journal inventory is unreadable; project "
+            "configuration was preserved"
+        ) from exc
+    for path in entries:
+        if path.is_symlink() or not path.is_file():
+            raise CleanupIdentityError(
+                "workflow submission journal contains a non-regular entry; project "
+                "configuration was preserved"
             )
+        if path.suffix != ".json":
+            continue
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise CleanupIdentityError(
+                "workflow submission journal is unreadable; project configuration "
+                "was preserved"
+            ) from exc
+        if (
+            not isinstance(payload, Mapping)
+            or payload.get("schema_version") != SUBMISSION_SCHEMA_VERSION
+            or str(payload.get("project") or "") != (cleaned or "default")
+            or not isinstance(payload.get("run_id"), str)
+            or not str(payload.get("run_id") or "").strip()
+        ):
+            raise CleanupIdentityError(
+                "workflow submission journal identity is incomplete; project "
+                "configuration was preserved"
+            )
+        raw_workflow = payload.get("workflow", {})
+        raw_launch = payload.get("launch", {})
+        if not isinstance(raw_workflow, Mapping) or not isinstance(
+            raw_launch, Mapping
+        ):
+            raise CleanupIdentityError(
+                "workflow submission journal schema is invalid; project "
+                "configuration was preserved"
+            )
+        workflows.append(
+            {
+                "run_id": str(payload["run_id"]).strip(),
+                "workflow_s3_uri": str(raw_workflow.get("run_prefix_uri") or ""),
+                "sky_job_id": str(raw_launch.get("sky_job_id") or ""),
+                "submission_status": str(raw_launch.get("status") or "planned"),
+            }
+        )
     identity["workflows"] = workflows
     return identity
 

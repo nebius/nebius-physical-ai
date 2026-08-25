@@ -203,6 +203,220 @@ def _read(path: Path) -> dict[str, Any]:
         raise TeardownReceiptError(
             f"invalid teardown receipt {path}: events must be a list"
         )
+    def require_timestamp(value: object, field: str) -> None:
+        if not isinstance(value, str) or not value.strip():
+            raise TeardownReceiptError(
+                f"invalid teardown receipt {path}: {field} must be a timestamp"
+            )
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise TeardownReceiptError(
+                f"invalid teardown receipt {path}: {field} is not ISO-8601"
+            ) from exc
+        if parsed.tzinfo is None:
+            raise TeardownReceiptError(
+                f"invalid teardown receipt {path}: {field} has no timezone"
+            )
+
+    receipt_id = payload.get("receipt_id")
+    if not isinstance(receipt_id, str) or receipt_id != path.stem:
+        raise TeardownReceiptError(
+            f"invalid teardown receipt {path}: embedded receipt_id mismatch"
+        )
+    for field in ("created_at", "updated_at"):
+        require_timestamp(payload.get(field), field)
+    for field in ("project_alias", "project_id"):
+        if not isinstance(payload.get(field, ""), str):
+            raise TeardownReceiptError(
+                f"invalid teardown receipt {path}: {field} must be a string"
+            )
+    if not isinstance(payload.get("identity", {}), Mapping):
+        raise TeardownReceiptError(
+            f"invalid teardown receipt {path}: identity must be an object"
+        )
+
+    identity_fields = frozenset(
+        {
+            "project_alias",
+            "project_id",
+            "tenant_id",
+            "parent_id",
+            "account_id",
+            "region",
+            "profile",
+            "context",
+            "kubeconfig_path",
+            "cluster_id",
+            "cluster_name",
+            "agent_name",
+            "instance_id",
+            "operation_id",
+            "service_account_id",
+            "run_id",
+            "workflow_s3_uri",
+            "sky_job_id",
+            "controller_context",
+            "resource_type",
+            "requested_name",
+        }
+    )
+
+    def validate_identity(value: object, location: str) -> None:
+        if isinstance(value, Mapping):
+            for key, item in value.items():
+                if not isinstance(key, str) or not key:
+                    raise TeardownReceiptError(
+                        f"invalid teardown receipt {path}: {location} has invalid key"
+                    )
+                if key in identity_fields and not isinstance(item, str):
+                    raise TeardownReceiptError(
+                        f"invalid teardown receipt {path}: {location}.{key} "
+                        "must be a string"
+                    )
+                collection_keys = {
+                    "agents": ("agent_name", "instance_id"),
+                    "clusters": (
+                        "cluster_id",
+                        "context",
+                        "controller_context",
+                        "operation_id",
+                    ),
+                    "workflows": ("run_id",),
+                    "operations": ("operation_id",),
+                    "generations": ("service_account_id",),
+                }
+                if key in collection_keys:
+                    if not isinstance(item, list):
+                        raise TeardownReceiptError(
+                            f"invalid teardown receipt {path}: {location}.{key} "
+                            "must be a list"
+                        )
+                    for index, member in enumerate(item, start=1):
+                        if not isinstance(member, Mapping) or not any(
+                            isinstance(member.get(candidate), str)
+                            and bool(str(member.get(candidate) or "").strip())
+                            for candidate in collection_keys[key]
+                        ):
+                            raise TeardownReceiptError(
+                                f"invalid teardown receipt {path}: {location}.{key}"
+                                f"[{index}] has no complete immutable identity"
+                            )
+                        if key == "agents" and not all(
+                            isinstance(member.get(candidate), str)
+                            and bool(str(member.get(candidate) or "").strip())
+                            for candidate in ("agent_name", "instance_id")
+                        ):
+                            raise TeardownReceiptError(
+                                f"invalid teardown receipt {path}: {location}.agents"
+                                f"[{index}] has no complete agent identity"
+                            )
+                validate_identity(item, f"{location}.{key}")
+        elif isinstance(value, list):
+            for index, item in enumerate(value, start=1):
+                validate_identity(item, f"{location}[{index}]")
+
+    def reject_duplicate_identities(identity: Mapping[str, Any], location: str) -> None:
+        for collection, key in (
+            ("agents", "instance_id"),
+            ("clusters", "cluster_id"),
+            ("workflows", "run_id"),
+            ("operations", "operation_id"),
+            ("generations", "service_account_id"),
+        ):
+            values = identity.get(collection)
+            if not isinstance(values, list):
+                continue
+            identifiers = [
+                item.get(key)
+                for item in values
+                if isinstance(item, Mapping) and item.get(key) not in (None, "")
+            ]
+            if len(identifiers) != len(set(identifiers)):
+                raise TeardownReceiptError(
+                    f"invalid teardown receipt {path}: {location}.{collection} "
+                    f"contains duplicate {key} values"
+                )
+            for index, item in enumerate(values, start=1):
+                if isinstance(item, Mapping):
+                    reject_duplicate_identities(
+                        item, f"{location}.{collection}[{index}]"
+                    )
+
+    root_identity = payload.get("identity", {})
+    validate_identity(root_identity, "identity")
+    reject_duplicate_identities(root_identity, "identity")
+    previous_sequence = 0
+    for index, event in enumerate(events, start=1):
+        if not isinstance(event, Mapping):
+            raise TeardownReceiptError(
+                f"invalid teardown receipt {path}: event {index} is not an object"
+            )
+        for field in ("phase", "resource", "terminal_state"):
+            if not isinstance(event.get(field), str) or not str(event[field]).strip():
+                raise TeardownReceiptError(
+                    f"invalid teardown receipt {path}: event {index} has invalid {field}"
+                )
+        for field in ("project_alias", "project_id", "context"):
+            if not isinstance(event.get(field, ""), str):
+                raise TeardownReceiptError(
+                    f"invalid teardown receipt {path}: event {index} has invalid {field}"
+                )
+        for field in ("precheck", "verification", "identity"):
+            if not isinstance(event.get(field, {}), Mapping):
+                raise TeardownReceiptError(
+                    f"invalid teardown receipt {path}: event {index} has invalid {field}"
+                )
+        action = event.get("action", {})
+        if not isinstance(action, (Mapping, str)):
+            raise TeardownReceiptError(
+                f"invalid teardown receipt {path}: event {index} has invalid action"
+            )
+        if isinstance(action, Mapping) and "kind" in action and (
+            not isinstance(action.get("kind"), str) or not action.get("kind")
+        ):
+            raise TeardownReceiptError(
+                f"invalid teardown receipt {path}: event {index} has invalid action kind"
+            )
+        errors = event.get("errors", [])
+        if not isinstance(errors, list) or not all(
+            isinstance(item, str) for item in errors
+        ):
+            raise TeardownReceiptError(
+                f"invalid teardown receipt {path}: event {index} has invalid errors"
+            )
+        require_timestamp(event.get("recorded_at"), f"event {index} recorded_at")
+        sequence = event.get("sequence")
+        if schema == SCHEMA_VERSION:
+            if type(sequence) is not int or sequence != previous_sequence + 1:
+                raise TeardownReceiptError(
+                    f"invalid teardown receipt {path}: event sequence is missing, "
+                    "duplicated, or non-monotonic"
+                )
+            previous_sequence = sequence
+        verification = event.get("verification", {})
+        event_identity = event.get("identity", {})
+        validate_identity(event_identity, f"event {index} identity")
+        reject_duplicate_identities(event_identity, f"event {index} identity")
+        for field in ("exact_instance_absent", "terraform_destroy_completed"):
+            if field in verification and type(verification[field]) is not bool:
+                raise TeardownReceiptError(
+                    f"invalid teardown receipt {path}: event {index} verification "
+                    f"field {field} must be boolean"
+                )
+        graph = verification.get("terraform_dependency_graph")
+        if graph is not None and (
+            not isinstance(graph, list)
+            or not all(isinstance(item, str) and item for item in graph)
+            or len(set(graph)) != len(graph)
+        ):
+            raise TeardownReceiptError(
+                f"invalid teardown receipt {path}: event {index} has invalid "
+                "terraform dependency graph"
+            )
+    if schema in LEGACY_SCHEMA_VERSIONS:
+        for index, event in enumerate(events, start=1):
+            event["sequence"] = index
     # Normalize additively in memory. The next append durably migrates v1 to v2.
     payload["schema_version"] = SCHEMA_VERSION
     payload.setdefault("identity", {})
@@ -558,6 +772,7 @@ def record_teardown_event(
                 f"receipt identity mismatch at {path}; refusing to mix projects"
             )
         events = list(payload.get("events") or [])
+        event["sequence"] = len(events) + 1
         events.append(event)
         payload["events"] = events
         payload["updated_at"] = now
@@ -594,6 +809,7 @@ def list_teardown_receipts(
     project_alias: str = "",
     project_id: str = "",
     legacy: str = "include",
+    strict: bool = False,
 ) -> list[dict[str, Any]]:
     """List receipts with explicit project and legacy-identity semantics.
 
@@ -611,6 +827,8 @@ def list_teardown_receipts(
         try:
             payload = _read(path)
         except TeardownReceiptError:
+            if strict:
+                raise
             if project_alias or project_id or legacy == "exclude":
                 continue
             receipts.append(
@@ -680,12 +898,12 @@ def list_teardown_receipts(
 
 
 def latest_phase_states(
-    *, project_alias: str = "", project_id: str = ""
+    *, project_alias: str = "", project_id: str = "", strict: bool = False
 ) -> dict[str, dict[str, Any]]:
     """Return latest evidence per phase, including receipts surviving config removal."""
 
     per_receipt: dict[tuple[str, str], dict[str, Any]] = {}
-    for receipt in list_teardown_receipts():
+    for receipt in list_teardown_receipts(strict=strict):
         receipt_project_id = str(receipt.get("project_id") or "")
         receipt_alias = str(receipt.get("project_alias") or "")
         if project_id and receipt_project_id != project_id:
@@ -698,8 +916,8 @@ def latest_phase_states(
             phase = str(event.get("phase") or "")
             key = (str(receipt.get("receipt_id") or ""), phase)
             previous = per_receipt.get(key) or {}
-            if phase and str(event.get("recorded_at") or "") >= str(
-                previous.get("recorded_at") or ""
+            if phase and int(event.get("sequence") or 0) > int(
+                previous.get("sequence") or 0
             ):
                 per_receipt[key] = event
     grouped: dict[str, list[dict[str, Any]]] = {}
@@ -723,11 +941,11 @@ def latest_phase_states(
             for event in events
             if str(event.get("terminal_state") or "").lower() not in TERMINAL_STATES
         ]
-        # Across projects, one unresolved identity must remain actionable; a
-        # newer completed project may not hide it. If every identity is terminal,
-        # report the newest durable convergence evidence.
+        # Across receipts, one unresolved identity must remain actionable; a
+        # completed receipt may not hide it. Receipt-local sequence is durable
+        # ordering authority; wall-clock text is audit metadata only.
         states[phase] = max(
-            unresolved or events, key=lambda event: str(event.get("recorded_at") or "")
+            unresolved or events, key=lambda event: int(event.get("sequence") or 0)
         )
     return states
 

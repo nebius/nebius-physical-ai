@@ -5368,6 +5368,121 @@ def test_cleanup_agent_local_files_removes_auth_env(monkeypatch, tmp_path) -> No
     assert not agent_dir.exists()
 
 
+@pytest.mark.parametrize("agents", [None, False, [], "present", 1])
+def test_present_invalid_agents_container_never_becomes_absence(
+    monkeypatch, tmp_path, agents
+) -> None:
+    from npa.cli.agent_records import AgentRecordError, resolve_project_agents
+    from npa.clients import config as config_module
+
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "projects": {
+                    "p": {"project_id": "project-x", "agents": agents}
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(config_module, "CONFIG_PATH", path)
+
+    with pytest.raises(AgentRecordError, match="present but schema-invalid"):
+        resolve_project_agents("p")
+
+
+def test_cleanup_agent_local_files_refuses_symlink_without_touching_target(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.cli import agent as agent_module
+    from npa.deploy import provisioner
+
+    monkeypatch.setattr(agent_module.Path, "home", staticmethod(lambda: tmp_path))
+    target = tmp_path / "outside"
+    target.mkdir()
+    (target / "keep").write_text("preserve", encoding="utf-8")
+    agent_dir = tmp_path / ".npa" / "agents" / "p" / "agent"
+    agent_dir.parent.mkdir(parents=True)
+    agent_dir.symlink_to(target, target_is_directory=True)
+    tf_dir = provisioner.working_dir_path("p", "agent")
+    tf_dir.mkdir(parents=True)
+
+    with pytest.raises(agent_module.AgentLocalRetirementError, match="escapes|regular"):
+        agent_module._cleanup_agent_local_files("p", "agent")
+
+    assert (target / "keep").read_text(encoding="utf-8") == "preserve"
+    assert tf_dir.exists()
+
+
+def test_cleanup_agent_local_files_failure_preserves_later_targets(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.cli import agent as agent_module
+    from npa.deploy import provisioner
+
+    monkeypatch.setattr(agent_module.Path, "home", staticmethod(lambda: tmp_path))
+    agent_dir = tmp_path / ".npa" / "agents" / "p" / "agent"
+    agent_dir.mkdir(parents=True)
+    (agent_dir / "auth.env").write_text("secret", encoding="utf-8")
+    tf_dir = provisioner.working_dir_path("p", "agent")
+    tf_dir.mkdir(parents=True)
+    (tf_dir / "terraform.tfstate").write_text("state", encoding="utf-8")
+    real_rmtree = agent_module.shutil.rmtree
+
+    def fail_first(path):  # noqa: ANN001, ANN202
+        if Path(path) == agent_dir:
+            raise OSError("permission denied")
+        return real_rmtree(path)
+
+    monkeypatch.setattr(agent_module.shutil, "rmtree", fail_first)
+
+    with pytest.raises(agent_module.AgentLocalRetirementError, match="permission denied"):
+        agent_module._cleanup_agent_local_files("p", "agent")
+
+    assert agent_dir.exists()
+    assert tf_dir.exists()
+
+
+def test_destroy_agent_rejects_multiple_nonterminal_same_name_generations(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.cli import agent as agent_module
+    from npa.deploy.provisioner import ProvisionerError
+    from npa.provisioning_journal import ProvisioningOperation
+
+    monkeypatch.setenv("NPA_OPERATION_JOURNAL_DIR", str(tmp_path / "operations"))
+    common = {
+        "project_alias": "p",
+        "project_id": "project-x",
+        "tenant_id": "tenant-x",
+        "region": "eu-test1",
+        "resource_type": "agent",
+        "requested_name": "agent",
+        "resume_command": "npa agent deploy --project p --name agent",
+    }
+    first = ProvisioningOperation.prepare(command="npa agent deploy", **common)
+    second = ProvisioningOperation.prepare(command="npa agent fresh-setup", **common)
+    first.transition("mutating")
+    second.transition("mutating")
+    calls: list[str] = []
+    monkeypatch.setattr(
+        agent_module,
+        "_resolve_destroy_tf_vars",
+        lambda *_a, **_k: calls.append("resolve") or {},
+    )
+
+    with pytest.raises(ProvisionerError, match="multiple nonterminal"):
+        agent_module._destroy_agent_terraform(
+            "p",
+            "agent",
+            record={"project_id": "project-x", "instance_id": "instance-x"},
+            project_id="project-x",
+        )
+
+    assert calls == []
+
+
 def _owned_orphan_inventory() -> dict:
     return {
         "items": [

@@ -492,6 +492,160 @@ def test_missing_preserved_state_fails_closed_with_executable_recovery(
     assert "npa agent deploy --project prod --name agent" in message
 
 
+def test_retire_state_copies_is_exact_verified_and_marks_terminal_audit_only(
+    journal_root: Path,
+) -> None:
+    operation = _prepare()
+    operation.transition("mutating")
+    state = operation.preserve_state_bytes(b'{"version":4}', name="verified")
+    operation.transition("state-durable")
+    operation.transition("destroyed")
+
+    removed = operation.retire_state_copies()
+
+    assert removed == [state]
+    assert not state.exists()
+    payload = operation.read()
+    assert payload["local_state_copies"] == []
+    assert payload["audit_only"] is True
+    assert payload["local_state_retired_at"].endswith("Z")
+
+
+def test_terminal_transition_marks_previously_retired_state_audit_only(
+    journal_root: Path,
+) -> None:
+    operation = _prepare()
+    operation.transition("mutating")
+    state = operation.preserve_state_bytes(b'{"version":4}', name="verified")
+    operation.transition("state-durable")
+
+    assert operation.retire_state_copies() == [state]
+    assert operation.read()["audit_only"] is False
+
+    operation.transition("destroyed")
+
+    assert operation.read()["audit_only"] is True
+
+
+def test_retire_state_copy_failure_preserves_journal_recovery_evidence(
+    journal_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    operation = _prepare()
+    state = operation.preserve_state_bytes(b'{"version":4}', name="verified")
+    real_unlink = Path.unlink
+
+    def fail_exact(path: Path, *args, **kwargs):  # noqa: ANN002, ANN003, ANN202
+        if path == state:
+            raise OSError("permission denied")
+        return real_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", fail_exact)
+
+    with pytest.raises(OperationJournalError, match="permission denied"):
+        operation.retire_state_copies()
+
+    assert state.exists()
+    assert operation.read()["local_state_copies"]
+
+
+def test_partial_state_copy_retirement_is_retryable_from_durable_intent(
+    journal_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    operation = _prepare()
+    first = operation.preserve_state_bytes(b'{"version":4,"serial":1}', name="a")
+    second = operation.preserve_state_bytes(b'{"version":4,"serial":2}', name="b")
+    real_unlink = Path.unlink
+
+    def fail_second(path: Path, *args, **kwargs):  # noqa: ANN002, ANN003, ANN202
+        if path == first:
+            raise OSError("permission denied")
+        return real_unlink(path, *args, **kwargs)
+
+    with monkeypatch.context() as failing:
+        failing.setattr(Path, "unlink", fail_second)
+        with pytest.raises(OperationJournalError, match="permission denied"):
+            operation.retire_state_copies()
+
+    assert first.exists()
+    assert not second.exists()
+    assert operation.read()["local_state_retirement_in_progress"]
+
+    assert operation.retire_state_copies() == [first]
+    payload = operation.read()
+    assert payload["local_state_copies"] == []
+    assert "local_state_retirement_in_progress" not in payload
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "unsupported-schema",
+        "boolean-legacy-schema",
+        "operation-id-mismatch",
+        "bad-revision",
+        "bad-phase",
+        "bad-event-sequence",
+        "boolean-event-sequence",
+        "bad-event-timestamp",
+        "bad-resource-identity",
+        "duplicate-provider-id",
+        "duplicate-state-copy",
+        "bad-audit-only",
+        "bad-retirement-intent",
+    ],
+)
+def test_strict_operation_inventory_rejects_invalid_journal_shapes(
+    journal_root: Path, case: str
+) -> None:
+    operation = _prepare()
+    operation.record_resource(
+        resource_type="compute_instance",
+        requested_name="agent",
+        provider_id="instance-1",
+        ownership="created_by_this_operation",
+        ownership_source="test",
+        project_id="project-a",
+    )
+    operation.preserve_state_bytes(b'{"version":4}', name="verified")
+    payload = json.loads(operation.path.read_text(encoding="utf-8"))
+    if case == "unsupported-schema":
+        payload["schema_version"] = "npa.provisioning-operation.v999"
+    elif case == "boolean-legacy-schema":
+        payload["schema_version"] = True
+    elif case == "operation-id-mismatch":
+        payload["operation_id"] = "another-operation"
+    elif case == "bad-revision":
+        payload["revision"] = False
+    elif case == "bad-phase":
+        payload["phase"] = "maybe"
+    elif case == "bad-event-sequence":
+        payload["events"][0]["sequence"] = 7
+    elif case == "boolean-event-sequence":
+        payload["events"][0]["sequence"] = True
+    elif case == "bad-event-timestamp":
+        payload["events"][0]["recorded_at"] = "tomorrow"
+    elif case == "bad-resource-identity":
+        payload["resources"][0]["ownership"] = False
+    elif case == "duplicate-provider-id":
+        payload["resources"].append(dict(payload["resources"][0]))
+    elif case == "duplicate-state-copy":
+        payload["local_state_copies"].append(
+            dict(payload["local_state_copies"][0])
+        )
+    elif case == "bad-audit-only":
+        payload["audit_only"] = "true"
+    elif case == "bad-retirement-intent":
+        payload["local_state_retirement_in_progress"] = ["state/unknown.tfstate"]
+    operation.path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(OperationJournalError):
+        list_operations(project_id="project-a", resource_type="agent", strict=True)
+    assert (
+        list_operations(project_id="project-a", resource_type="agent", strict=False)
+        == []
+    )
+
+
 def test_nested_operation_uses_parent_and_rejects_cross_project_context(
     journal_root: Path,
 ) -> None:
