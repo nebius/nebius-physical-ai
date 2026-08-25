@@ -77,6 +77,23 @@ def test_parse_overrides_splits_hydra_string() -> None:
     assert rl_sweep.parse_overrides("") == []
 
 
+def test_cold_runtime_bootstraps_before_source_check(tmp_path: Path) -> None:
+    script = tmp_path / "isaaclab" / "scripts" / "train.py"
+    calls = []
+
+    def bootstrap(argv, **kwargs):
+        calls.append((argv, kwargs))
+        script.parent.mkdir(parents=True)
+        script.write_text("# real pinned source entrypoint\n", encoding="utf-8")
+        return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+
+    rl_sweep.ensure_training_entrypoint(
+        "/isaac-sim/python.sh", str(script), executor=bootstrap
+    )
+    assert calls[0][0] == ["/isaac-sim/python.sh", "-c", "pass"]
+    assert script.is_file()
+
+
 def test_train_variant_passes_overrides_and_publishes_metrics(
     local_storage, tmp_path
 ) -> None:

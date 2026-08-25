@@ -133,7 +133,6 @@ nvidia-nvshmem-cu12==3.4.5
 nvidia-nvtx-cu12==12.8.90
 oauthlib==3.3.1
 omegaconf==2.3.1
-omniverseclient==2.71.1.7015
 onnx==1.21.0
 onnx-ir==1.0.0
 onnxscript==0.7.1

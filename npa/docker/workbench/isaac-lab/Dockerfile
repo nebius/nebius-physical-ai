@@ -64,6 +64,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     ISAAC_LAB_PYTHON=/isaac-sim/python.sh \
     NPA_ISAAC_LAB_OUTPUT_DIR=/workspace/isaaclab/npa-runs \
     NPA_ISAAC_LAB_WORKDIR=/workspace/isaaclab \
+    IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg \
     OMNI_USER_DIR=/tmp/isaac-sim-cache \
     OMNI_LOG_DIR=/tmp/isaac-sim-cache/logs \
     XDG_RUNTIME_DIR=/tmp/xdg-runtime \

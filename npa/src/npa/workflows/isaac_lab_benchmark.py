@@ -14,7 +14,8 @@ from pathlib import Path
 from typing import Any, Iterable
 
 SCHEMA = "npa.isaac_lab.generation_benchmark.v1"
-MATCH_FIELDS = ("task", "num_envs", "max_iterations", "hardware_model")
+MATCH_FIELDS = ("task", "num_envs", "max_iterations", "hardware_model", "gpu_count")
+PAIR_FIELDS = ("seed", "repetition", "cache_state", "driver_version", "runtime_version")
 
 
 def _median(values: Iterable[float]) -> float | None:
@@ -25,7 +26,9 @@ def _median(values: Iterable[float]) -> float | None:
 def compare_records(records: list[dict[str, Any]]) -> dict[str, Any]:
     """Validate matched records and compare Isaac Lab 2 (baseline) with 3."""
 
-    usable = [item for item in records if item.get("status") == "success"]
+    if not records or any(item.get("status") != "success" for item in records):
+        raise ValueError("benchmark campaigns must contain only successful records")
+    usable = records
     generations = {str(item.get("generation")) for item in usable}
     if generations != {"2", "3"}:
         raise ValueError("successful records must contain generations '2' and '3'")
@@ -46,6 +49,18 @@ def compare_records(records: list[dict[str, Any]]) -> dict[str, Any]:
         ]
         for generation in ("2", "3")
     }
+    pair_sets = {
+        generation: {tuple(item.get(field) for field in PAIR_FIELDS) for item in items}
+        for generation, items in by_generation.items()
+    }
+    if len(by_generation["2"]) != len(by_generation["3"]):
+        raise ValueError(
+            "generation campaigns must have equal successful sample counts"
+        )
+    if pair_sets["2"] != pair_sets["3"] or any(
+        any(value in (None, "") for value in pair) for pair in pair_sets["2"]
+    ):
+        raise ValueError(f"records are not paired on {', '.join(PAIR_FIELDS)}")
     baseline_duration = _median(item["duration_seconds"] for item in by_generation["2"])
     candidate_duration = _median(
         item["duration_seconds"] for item in by_generation["3"]
@@ -77,6 +92,10 @@ def compare_records(records: list[dict[str, Any]]) -> dict[str, Any]:
         "comparison": "isaac-lab-3-vs-isaac-lab-2",
         "method": "median wall-clock duration over matched successful runs",
         "workload": signature,
+        "paired_protocol": {
+            "fields": list(PAIR_FIELDS),
+            "pairs": len(pair_sets["2"]),
+        },
         "baseline": {
             "generation": "2",
             "versions": sorted(
@@ -122,4 +141,4 @@ def compare_files(paths: Iterable[str | Path]) -> dict[str, Any]:
     return compare_records(records)
 
 
-__all__ = ["MATCH_FIELDS", "SCHEMA", "compare_files", "compare_records"]
+__all__ = ["MATCH_FIELDS", "PAIR_FIELDS", "SCHEMA", "compare_files", "compare_records"]

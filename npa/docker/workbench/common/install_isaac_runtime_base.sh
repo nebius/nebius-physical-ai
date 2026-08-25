@@ -79,6 +79,7 @@ apt-get update
 system_packages=(
   ca-certificates \
   curl \
+  ffmpeg \
   git \
   git-lfs \
   libegl1 \
@@ -195,6 +196,15 @@ log "OSS dependency closure for Isaac Sim / Isaac Lab"
 "$ISAAC_VENV/bin/python" -m pip install --no-cache-dir \
   --no-deps \
   -r "${OSS_DEPS_FILE}"
+# imageio-ffmpeg's manylinux wheel embeds an FFmpeg executable. Public workbench
+# images use the immutable Ubuntu package instead, so the wheel contributes only
+# its Python launcher and no unaudited nested executable payload.
+IMAGEIO_FFMPEG_BINARIES="$ISAAC_VENV/lib/python${ISAAC_PYTHON_MINOR}/site-packages/imageio_ffmpeg/binaries"
+if [ -d "$IMAGEIO_FFMPEG_BINARIES" ]; then
+  find "$IMAGEIO_FFMPEG_BINARIES" -type f -delete
+  test -z "$(find "$IMAGEIO_FFMPEG_BINARIES" -type f -print -quit)"
+fi
+test -x /usr/bin/ffmpeg
 # wheel is a build tool, not part of the runtime. Removing it resolves the
 # otherwise impossible wheel>=24 / Isaac-Lab<24 packaging constraint without
 # weakening Isaac Lab's declared runtime contract.

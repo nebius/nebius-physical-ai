@@ -1,7 +1,5 @@
 # GENERATED — do not edit by hand.
-#   npa/.venv/bin/python npa/docker/workbench/common/refresh_isaac_wheel_pins.py \
-#     --isaacsim 6.0.1.0 --isaaclab 3.0.0b2.post1 --python-tag cp312 \
-#     --output npa/docker/workbench/common/isaac3-nvidia-wheels.txt
+#   npa/.venv/bin/python npa/docker/workbench/common/refresh_isaac_wheel_pins.py
 #
 # NVIDIA Isaac wheels fetched at FIRST RUN by isaac_bootstrap.sh, never baked into
 # any image layer. Installed with `pip install --no-deps --require-hashes` against
@@ -9,11 +7,13 @@
 # be substituted. Every OSS transitive dependency is baked at build time from PyPI
 # instead (see install_isaac_runtime_base.sh), which is what keeps --no-deps honest.
 #
-# Package set: isaacsim[all,extscache] + isaacsim-kernel + isaaclab (unabridged —
+# Package set: isaacsim[all,extscache] + isaacsim-kernel + isaaclab plus
+# explicitly listed proprietary transitive runtime dependencies (unabridged —
 # see the module docstring for why it is not trimmed).
 # isaacsim  6.0.1.0
 # isaaclab  3.0.0b2.post1
 # python    cp312   platform x86_64
+# runtime   omniverseclient==2.71.1.7015
 
 isaacsim==6.0.1.0 \
     --hash=sha256:d3fea3b40b513482e85c62e552bfdfb73a3ac950662a843c7375cfa8c97941c2
@@ -67,3 +67,5 @@ isaacsim-utils==6.0.1.0 \
     --hash=sha256:588a32a81e430c8f9759c8769f41bd76e6ca5c39351bd0bdb8f9fb5888715b53
 isaaclab==3.0.0b2.post1 \
     --hash=sha256:dd32886588479ffd70f7348019aeac1582eb9ad16c40244f41d9f458f96f73c3
+omniverseclient==2.71.1.7015 \
+    --hash=sha256:57bfb4433b2e44836c6a803107667e4097df868030e8ee321b6847b7ef54aab5

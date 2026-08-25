@@ -146,6 +146,31 @@ def _parse_reward(log_text: str) -> float | None:
         return None
 
 
+def ensure_training_entrypoint(
+    interpreter: str,
+    script: str,
+    *,
+    executor: Any = subprocess.run,
+) -> None:
+    """Trigger the cold runtime fetch before requiring the source entrypoint."""
+
+    if Path(script).is_file():
+        return
+    result = executor(
+        [interpreter, "-c", "pass"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if int(getattr(result, "returncode", 1)) != 0:
+        stderr = str(getattr(result, "stderr", "") or "")[-1000:]
+        raise RuntimeError(f"Isaac runtime bootstrap failed: {stderr}")
+    if not Path(script).is_file():
+        raise FileNotFoundError(
+            f"pinned upstream Isaac Lab training entrypoint not found after bootstrap: {script}"
+        )
+
+
 def train_variant(
     *,
     variant: str,
@@ -170,11 +195,9 @@ def train_variant(
         or os.environ.get("ISAAC_LAB_TRAIN_SCRIPT", "")
         or DEFAULT_TRAIN_SCRIPT
     )
-    if runner is None and not Path(script).is_file():
-        raise FileNotFoundError(
-            f"pinned upstream Isaac Lab training entrypoint not found: {script}"
-        )
     interpreter = python_bin or resolve_python_bin()
+    if runner is None:
+        ensure_training_entrypoint(interpreter, script)
     argv = [
         interpreter,
         script,
@@ -219,8 +242,8 @@ def train_variant(
         "mean_reward": _parse_reward(log_text),
         "isaac_lab_version": os.environ.get("ISAAC_LAB_VERSION", ""),
         "isaac_sim_version": os.environ.get("ISAAC_SIM_VERSION", ""),
-        "source_commit": os.environ.get("ISAAC_LAB_SRC_COMMIT", ""),
-        "image_source_sha": os.environ.get("NPA_SOURCE_SHA", ""),
+        "source_commit": os.environ.get("NPA_ISAAC_LAB_SRC_COMMIT", ""),
+        "image_source_sha": os.environ.get("NPA_IMAGE_SOURCE_SHA", ""),
     }
 
     base = output_uri.rstrip("/")
@@ -333,6 +356,7 @@ __all__ = [
     "METRICS_FILENAME",
     "REPORT_FILENAME",
     "SUMMARY_FILENAME",
+    "ensure_training_entrypoint",
     "parse_overrides",
     "resolve_python_bin",
     "select_best",

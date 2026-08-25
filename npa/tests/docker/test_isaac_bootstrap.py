@@ -554,7 +554,8 @@ def test_isaac3_wheel_manifest_matches_the_image_pins() -> None:
     text = ISAAC3_WHEELS.read_text(encoding="utf-8")
     assert "isaacsim==6.0.1.0" in text
     assert "isaaclab==3.0.0b2.post1" in text
-    assert text.count("--hash=sha256:") == 26
+    assert "omniverseclient==2.71.1.7015" in text
+    assert text.count("--hash=sha256:") == 27
 
 
 def test_isaac3_oss_closure_merges_the_workflow_runtime_security_pins() -> None:
@@ -568,6 +569,14 @@ def test_isaac3_oss_closure_merges_the_workflow_runtime_security_pins() -> None:
         assert requirement in lines
         assert requirement in shared
     assert "msal==1.38.0" in lines
+
+
+def test_baked_imageio_uses_snapshot_ffmpeg_without_nested_executable() -> None:
+    installer = BASE_INSTALLER.read_text(encoding="utf-8")
+    dockerfile = (COMMON.parent / "isaac-lab" / "Dockerfile").read_text(encoding="utf-8")
+    assert "  ffmpeg \\" in installer
+    assert 'find "$IMAGEIO_FFMPEG_BINARIES" -type f -delete' in installer
+    assert "IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg" in dockerfile
 
 
 def test_wheel_manifest_is_fetched_only_from_nvidias_index() -> None:
@@ -597,6 +606,7 @@ def test_oss_deps_carry_no_nvidia_isaac_package(closure: Path) -> None:
         assert not requirement.replace("_", "-").startswith(("isaacsim", "isaaclab")), (
             line
         )
+        assert not requirement.replace("_", "-").startswith("omniverseclient"), line
 
 
 @pytest.mark.parametrize(
