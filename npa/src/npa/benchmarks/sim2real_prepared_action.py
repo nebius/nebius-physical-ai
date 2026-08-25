@@ -17,6 +17,8 @@ from typing import Any, Callable, Mapping, Sequence
 
 import yaml
 
+from npa.orchestration.npa_workflow.runtime import is_terminal_fail
+
 
 RECEIPT_SCHEMA = "npa.sim2real.prepared_workflow_action.v1"
 STATE_SCHEMA = "npa.sim2real.prepared_workflow_action.state.v1"
@@ -926,11 +928,14 @@ def _safe_result(
     if isinstance(payload, dict):
         returned_run_id = payload.get("run_id") or payload.get("workflow_run_id")
         candidate = str(payload.get("status") or "").strip().upper()
-        if (
+        authoritative = (
             returned_run_id == receipt["run"]["run_id"]
             and candidate
             and len(candidate) <= 64
             and re.fullmatch(r"[A-Z0-9_-]+", candidate)
+        )
+        if authoritative and (
+            completed.returncode == 0 or is_terminal_fail(candidate)
         ):
             accepted = True
             status = candidate
@@ -953,12 +958,7 @@ def _safe_result(
             "bounded_view_sha256": canonical_sha256(safe_view),
         },
     }
-    terminal_failure = accepted and (
-        status.startswith("FAILED")
-        or status.startswith("CANCELLED")
-        or status.startswith("CANCELED")
-        or status == "ERROR"
-    )
+    terminal_failure = accepted and is_terminal_fail(status)
     if terminal_failure:
         result["error"] = {
             "classification": "workflow_terminal_failure",

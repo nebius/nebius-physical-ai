@@ -375,14 +375,18 @@ def test_exit_zero_without_authoritative_run_identity_is_indeterminate(
     assert result["error"]["classification"] == "workflow_submit_response_invalid"
 
 
+@pytest.mark.parametrize(
+    "status",
+    ["failed", "FAILED_SETUP", "cancelled", "STOPPED"],
+)
 def test_nonzero_authoritative_terminal_failure_is_an_accepted_submission(
-    prepared: dict[str, object]
+    prepared: dict[str, object], status: str
 ) -> None:
     def runner(argv, **kwargs):
         return subprocess.CompletedProcess(
             argv,
             1,
-            json.dumps({"run_id": "prepared-run-1", "status": "failed"}),
+            json.dumps({"run_id": "prepared-run-1", "status": status}),
             "private terminal failure detail",
         )
 
@@ -397,13 +401,40 @@ def test_nonzero_authoritative_terminal_failure_is_an_accepted_submission(
     assert result["submission_accepted"] is True
     assert result["action_consumed"] is True
     assert result["safe_run_reference"] == "prepared-run-1"
-    assert result["status"] == "FAILED"
+    assert result["status"] == status.upper()
     assert result["error"] == {
         "classification": "workflow_terminal_failure",
         "retryable": False,
         "action": "inspect the terminal workflow failure and private evidence; do not replay this prepared action",
     }
     assert "private terminal failure detail" not in json.dumps(result)
+
+
+@pytest.mark.parametrize("status", ["RUNNING", "PENDING", "SUCCEEDED", "BOGUS_STATUS"])
+def test_nonzero_nonfailure_status_is_indeterminate(
+    prepared: dict[str, object], status: str
+) -> None:
+    def runner(argv, **kwargs):
+        return subprocess.CompletedProcess(
+            argv,
+            1,
+            json.dumps({"run_id": "prepared-run-1", "status": status}),
+            "private contradictory detail",
+        )
+
+    result = execute_prepared_action(
+        prepared["receipt_path"],
+        requested_action_id="submit-prepared-run-1",
+        occurrence_id="contradictory-nonzero",
+        context=prepared["context"],
+        runner=runner,
+    )
+
+    assert result["submission_accepted"] is False
+    assert result["action_consumed"] is True
+    assert result["status"] == "INDETERMINATE"
+    assert result["error"]["classification"] == "workflow_submit_indeterminate"
+    assert "private contradictory detail" not in json.dumps(result)
 
 
 def test_crash_before_and_after_exec_recovery_never_replays(
