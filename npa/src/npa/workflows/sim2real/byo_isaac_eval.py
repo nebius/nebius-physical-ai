@@ -22,7 +22,6 @@ report for unit tests / wiring checks.
 
 from __future__ import annotations
 
-import base64
 import copy
 import hashlib
 import json
@@ -36,7 +35,10 @@ from typing import Any
 from npa.clients.storage import StorageClient
 from npa.workflows.sim2real.camera_views import camera_metadata, camera_views_json
 from npa.workflows.sim2real.capture import capture_settings
-from npa.workflows.sim2real.isaac_job_payload import compressed_bash_launch
+from npa.workflows.sim2real.isaac_job_payload import (
+    compressed_bash_launch,
+    embedded_base64_file_block,
+)
 
 DEFAULT_ISAAC_TASK = "Isaac-Lift-Cube-Franka-v0"
 DEFAULT_GPU_PRODUCT = "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition"
@@ -1061,11 +1063,10 @@ def build_isaac_eval_job_manifest(
             f"--sha256 {_shlex.quote(scenarios_sha256)}\n"
         )
     elif scenarios_jsonl:
-        encoded_scenarios = base64.b64encode(scenarios_jsonl.encode()).decode()
-        scenario_block = (
-            '"$PY" -m npa.workflows.sim2real.isaac_job_io write-base64 '
-            f"--payload {_shlex.quote(encoded_scenarios)} "
-            "--destination /tmp/evalwork/scenarios.jsonl\n"
+        scenario_block = embedded_base64_file_block(
+            scenarios_jsonl,
+            destination="/tmp/evalwork/scenarios.jsonl",
+            marker="NPA_EVAL_SCENARIOS_B64",
         )
     if scenario_block:
         scenario_block += (

@@ -33,7 +33,6 @@ this process downloads them into the local rollout dirs.
 
 from __future__ import annotations
 
-import base64
 import copy
 import json
 import os
@@ -43,7 +42,10 @@ from typing import Any
 
 from npa.workflows.sim2real.camera_views import camera_metadata, camera_views_json
 from npa.workflows.sim2real.capture import capture_settings
-from npa.workflows.sim2real.isaac_job_payload import compressed_bash_launch
+from npa.workflows.sim2real.isaac_job_payload import (
+    compressed_bash_launch,
+    embedded_base64_file_block,
+)
 
 DEFAULT_ISAAC_TASK = "Isaac-Lift-Cube-Franka-v0"
 DEFAULT_GPU_PRODUCT = "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition"
@@ -665,11 +667,11 @@ def build_isaac_rollout_job_manifest(
 
     scenario_block = ""
     if scenarios_jsonl:
-        encoded_scenarios = base64.b64encode(scenarios_jsonl.encode()).decode()
-        scenario_block = (
-            '"$PY" -m npa.workflows.sim2real.isaac_job_io write-base64 '
-            f"--payload {_shlex.quote(encoded_scenarios)} "
-            "--destination /tmp/rollwork/scenarios.jsonl\n"
+        scenario_block = embedded_base64_file_block(
+            scenarios_jsonl,
+            destination="/tmp/rollwork/scenarios.jsonl",
+            marker="NPA_ROLLOUT_SCENARIOS_B64",
+        ) + (
             "export NPA_SIM2REAL_SCENARIOS_JSONL=/tmp/rollwork/scenarios.jsonl\n"
             "export NPA_SIM2REAL_TASK_CONTRACT_DIGEST="
             + _shlex.quote(_env("NPA_SIM2REAL_TASK_CONTRACT_DIGEST"))

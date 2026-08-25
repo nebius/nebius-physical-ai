@@ -218,7 +218,9 @@ def test_rollout_manifest_embeds_scenario_and_byo_robot_contract():
         task_config={"task_id": "Isaac-Lift-Cube-Franka-v0"},
     )
     script = _manifest_script(manifest)
-    assert "npa.workflows.sim2real.isaac_job_io write-base64" in script
+    assert "base64 --decode > /tmp/rollwork/scenarios.jsonl" in script
+    assert "NPA_ROLLOUT_SCENARIOS_B64" in script
+    assert "--payload" not in script
     assert "/opt/npa/isaac-runtime/isaac_rollout.py" in script
     # Scenario and robot application lives in source baked into the immutable
     # runtime image; it must never be copied into the live Job manifest.

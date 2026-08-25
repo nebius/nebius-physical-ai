@@ -5,6 +5,8 @@ from __future__ import annotations
 import base64
 import gzip
 import os
+import re
+import shlex
 import subprocess
 import tempfile
 from pathlib import Path
@@ -50,6 +52,26 @@ def decode_compressed_bash_args(args: list[str]) -> str:
     if len(args) < 3 or args[0] != _DECODE_STUB or args[1] != "npa-isaac-payload":
         raise ValueError("not an NPA compressed Isaac bash payload")
     return gzip.decompress(base64.b64decode("".join(args[2:]))).decode("utf-8")
+
+
+def embedded_base64_file_block(payload: str, *, destination: str, marker: str) -> str:
+    """Materialize embedded text without passing it through a process argv.
+
+    Curated Isaac scenario sets can be several MiB. The generated program is
+    already transported as a compressed script, but invoking Python with that
+    data in ``--payload`` expands it back into one process argument and exceeds
+    Linux ``ARG_MAX``. A quoted here-document keeps the bytes in file transport
+    and gives ``base64`` only fixed-size argv entries.
+    """
+
+    if not re.fullmatch(r"[A-Z][A-Z0-9_]*", marker):
+        raise ValueError("embedded payload marker must be an uppercase shell token")
+    encoded = base64.b64encode(payload.encode("utf-8")).decode("ascii")
+    return (
+        f"base64 --decode > {shlex.quote(destination)} <<'{marker}'\n"
+        f"{encoded}\n"
+        f"{marker}\n"
+    )
 
 
 def _require_isaac_route_enabled(env: dict[str, str]) -> None:

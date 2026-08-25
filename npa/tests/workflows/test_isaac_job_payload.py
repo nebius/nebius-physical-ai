@@ -13,6 +13,7 @@ import pytest
 from npa.workflows.sim2real.isaac_job_payload import (
     compressed_bash_launch,
     decode_compressed_bash_args,
+    embedded_base64_file_block,
     execute_manifest_container_inline,
 )
 
@@ -41,6 +42,34 @@ def test_compressed_launch_executes_reconstructed_script() -> None:
 
     assert result.returncode == 0
     assert result.stdout == "ISAAC_PAYLOAD_EXEC_OK"
+
+
+def test_embedded_base64_file_block_avoids_large_process_argument(
+    tmp_path: Path,
+) -> None:
+    payload = "scenario-record-\n" * 200_000
+    destination = tmp_path / "scenarios.jsonl"
+    script = tmp_path / "materialize.sh"
+    block = embedded_base64_file_block(
+        payload,
+        destination=str(destination),
+        marker="NPA_TEST_SCENARIOS_B64",
+    )
+    script.write_text("set -euo pipefail\n" + block, encoding="utf-8")
+
+    result = subprocess.run(
+        ["/bin/bash", str(script)], check=False, capture_output=True, text=True
+    )
+
+    assert result.returncode == 0
+    assert destination.read_text(encoding="utf-8") == payload
+    assert "--payload" not in block
+    assert "base64 --decode >" in block
+
+
+def test_embedded_base64_file_block_rejects_unsafe_marker() -> None:
+    with pytest.raises(ValueError, match="uppercase shell token"):
+        embedded_base64_file_block("x", destination="/tmp/x", marker="bad-marker")
 
 
 def test_inline_payload_requires_and_attests_exact_workflow_image(
@@ -99,9 +128,7 @@ def test_inline_large_payload_avoids_process_wide_argv_limit(
         "spec": {
             "template": {
                 "spec": {
-                    "containers": [
-                        {"image": image, "command": command, "args": args}
-                    ]
+                    "containers": [{"image": image, "command": command, "args": args}]
                 }
             }
         }
@@ -138,9 +165,7 @@ def test_inline_payload_removes_temp_script_without_masking_execution_failure(
         "spec": {
             "template": {
                 "spec": {
-                    "containers": [
-                        {"image": image, "command": command, "args": args}
-                    ]
+                    "containers": [{"image": image, "command": command, "args": args}]
                 }
             }
         }
@@ -169,17 +194,23 @@ def test_inline_cleanup_error_does_not_mask_execution_failure(
         "spec": {
             "template": {
                 "spec": {
-                    "containers": [
-                        {"image": image, "command": command, "args": args}
-                    ]
+                    "containers": [{"image": image, "command": command, "args": args}]
                 }
             }
         }
     }
     with monkeypatch.context() as context:
         context.setattr(subprocess, "run", _fail)
-        context.setattr(Path, "unlink", lambda *args, **kwargs: (_ for _ in ()).throw(OSError("busy")))
-        context.setattr(os, "write", lambda *args, **kwargs: (_ for _ in ()).throw(OSError("closed")))
+        context.setattr(
+            Path,
+            "unlink",
+            lambda *args, **kwargs: (_ for _ in ()).throw(OSError("busy")),
+        )
+        context.setattr(
+            os,
+            "write",
+            lambda *args, **kwargs: (_ for _ in ()).throw(OSError("closed")),
+        )
         with pytest.raises(subprocess.CalledProcessError) as exc_info:
             execute_manifest_container_inline(manifest)
 
