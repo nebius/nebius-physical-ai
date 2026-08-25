@@ -1507,11 +1507,11 @@ def render_setup_for_tool(
             "fi\n"
             "\"$npa_baked_python\" - <<'PY'\n"
             "import os\n"
-            # The stage shim imports npa.cli.main, not merely the intentionally
-            # lazy package root.  Probing the same path prevents an immutable
-            # image from passing setup and then failing after scheduling because
-            # a CLI dependency (as seen live with Typer) was omitted.
-            "import npa.cli.main\n"
+            # Immutable Sim2Real jobs execute the stage module directly. Probe
+            # that exact import surface instead of the global CLI, whose unrelated
+            # data/viewer commands intentionally require dependencies that these
+            # purpose-built runtime images do not carry.
+            "import npa.workflows.sim2real.workflow_stage\n"
             "actual = os.environ.get('NPA_IMAGE_SOURCE_SHA', '').strip().lower()\n"
             "expected = os.environ.get('NPA_SIM2REAL_SOURCE_SHA', '').strip().lower()\n"
             "if len(actual) != 40 or actual != expected:\n"
