@@ -47,6 +47,22 @@ def test_envgen_removes_unrelated_nonredistributable_parent_binary() -> None:
     assert "IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg" in text
     assert "imageio_ffmpeg/binaries/ffmpeg*" in text
     assert "  ffmpeg \\" in installer
+    assert "FROM ${BASE_IMAGE} AS sanitized" in text
+    assert "FROM scratch AS runtime" in text
+    assert "COPY --from=sanitized / /" in text
+    assert text.index("FROM scratch AS runtime") < text.index(
+        'LABEL npa.tool="envgen"'
+    )
+    for runtime_contract in (
+        "NVIDIA_VISIBLE_DEVICES=all",
+        "NVIDIA_DRIVER_CAPABILITIES=compute,graphics,utility",
+        "CUDA_HOME=/usr/local/cuda",
+        "NPA_GENESIS_HOME=/opt/genesis",
+        "MUJOCO_GL=egl",
+        "IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg",
+        "NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA}",
+    ):
+        assert runtime_contract in text
 
 
 def test_isaac_runtime_uses_system_ffmpeg_without_wheel_bundled_binary() -> None:

@@ -1,10 +1,8 @@
 ARG BASE_IMAGE=ghcr.io/nebius/nebius-physical-ai/npa-genesis@sha256:80cd1c4c7f7a5466533de29ee5cad1213202f348545346fea9ed6746fa03b1ca
-FROM ${BASE_IMAGE}
+FROM ${BASE_IMAGE} AS sanitized
 
 ARG NPA_SOURCE_SHA
 ARG UBUNTU_SNAPSHOT=20260801T053000Z
-LABEL npa.tool="envgen" \
-      org.opencontainers.image.revision="${NPA_SOURCE_SHA}"
 
 WORKDIR /opt/npa
 USER root
@@ -44,10 +42,49 @@ RUN /usr/local/bin/install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}" \
     && python -m pip install --no-deps -e /opt/npa \
     && python -m py_compile /opt/npa/src/npa/workflows/sim2real_envgen.py
 
-ENV PATH=/opt/npa/venv/bin:$PATH \
+# Flatten the sanitized filesystem so the published image does not reference
+# the Genesis parent layer that contained the removed static FFmpeg payload.
+# COPY --from copies the merged filesystem, including whiteouts, while the
+# scratch stage deliberately drops every parent blob from the final manifest.
+FROM scratch AS runtime
+
+ARG NPA_SOURCE_SHA
+LABEL npa.tool="envgen" \
+      org.opencontainers.image.revision="${NPA_SOURCE_SHA}"
+
+COPY --from=sanitized / /
+
+# A scratch stage does not inherit image configuration. Preserve the CUDA,
+# Genesis, cache, and workflow runtime contract explicitly.
+ENV PATH=/opt/npa/venv/bin:/usr/local/cuda/bin:/usr/local/nvidia/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64:/usr/local/cuda/lib64 \
+    LIBRARY_PATH=/usr/local/cuda/lib64/stubs \
+    NVIDIA_VISIBLE_DEVICES=all \
+    NVIDIA_DRIVER_CAPABILITIES=compute,graphics,utility \
+    CUDA_HOME=/usr/local/cuda \
+    CUDA_VERSION=13.0.1 \
+    TORCH_CUDA_ARCH_LIST="8.0 9.0 10.0 10.3 12.0" \
+    DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    HF_HOME=/opt/npa/hf_cache \
+    HF_HUB_CACHE=/opt/npa/hf_cache/hub \
+    TRANSFORMERS_CACHE=/opt/npa/hf_cache/transformers \
+    NPA_INPUT_PATH=/input \
+    NPA_OUTPUT_PATH=/output \
+    INPUT_PATH=/input \
+    OUTPUT_PATH=/output \
+    GENESIS_VERSION=0.4.6 \
+    LEROBOT_VERSION=0.4.4 \
+    MUJOCO_GL=egl \
+    PYOPENGL_PLATFORM=egl \
+    EGL_PLATFORM=device \
+    NPA_GENESIS_HOME=/opt/genesis \
     IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg \
     NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA} \
     PYTHONPATH=/opt/npa/src
 
+WORKDIR /opt/npa
 USER ubuntu
 ENTRYPOINT ["/usr/local/bin/npa-workflow-entrypoint"]
