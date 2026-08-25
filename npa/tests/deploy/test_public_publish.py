@@ -377,9 +377,15 @@ def test_publish_plan_promotes_dev_sha_to_release_tag() -> None:
     assert plan
     accepted_shas = {
         tool: images.accepted_publication_development_sha(tool)
-        for tool in ("ltx2", "wan2-2", "cosmos3-serving", "sonic-mujoco")
+        for tool in (
+            "isaac-lab",
+            "ltx2",
+            "wan2-2",
+            "cosmos3-serving",
+            "sonic-mujoco",
+        )
     }
-    assert len(set(accepted_shas.values())) == 4
+    assert len(set(accepted_shas.values())) == 5
     for item in plan:
         source_image = item.source_ref.rsplit("/", 1)[-1]
         target_image = item.target_ref.rsplit("/", 1)[-1]
@@ -811,11 +817,11 @@ def test_accepted_release_plan_partitions_published_and_pending_tools() -> None:
         target_registry="ghcr.io/nebius/nebius-physical-ai"
     )
 
-    assert len(plan) == 28
+    assert len(plan) == 29
     assert set(manifest["releases"]) | set(manifest["publication_pending"]) == set(
         publicly_publishable_tools()
     )
-    assert set(manifest["publication_pending"]) == {"isaac-lab", "leisaac"}
+    assert set(manifest["publication_pending"]) == {"leisaac"}
     for item in plan:
         recorded = manifest["releases"][item.tool]["published_digest"]
         assert item.source_ref.endswith(f"@{recorded}")

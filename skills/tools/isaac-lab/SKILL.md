@@ -5,9 +5,15 @@ description: Use when working on Isaac Lab RL simulation, deployment, SkyPilot w
 
 # Isaac Lab
 
-Isaac Lab is the RL simulation framework. It requires RT cores: use L40S or RTX Pro 6000 only. It will not run correctly on H100 or H200 because those GPUs do not provide RT cores.
+Isaac Lab is the RL simulation framework. The canonical workbench pins the
+latest published 3.Y beta point, `v3.0.0-beta2.patch1` / wheel
+`3.0.0b2.post1`, with Isaac Sim `6.0.1.0`. Upstream has not labeled this a GA
+release; keep the beta limitation explicit. It requires RT cores: use L40S or
+RTX Pro 6000 only. Do not route this graphics/PhysX path to B200, H100, or H200.
 
-Training must invoke headless mode. Verify training commands do not trigger rendering paths.
+Generation 3 training must invoke `--visualizer none`. A compatibility path
+that can also receive a generation 2 image must select `--headless` only when
+the image's `ISAAC_LAB_VERSION` starts with `2.`.
 
 Before provisioning, building, downloading, or submitting an Isaac workload,
 load `skills/atomic/third-party-eula-preflight/SKILL.md`. NPA defaults the
@@ -17,10 +23,12 @@ spellings normalize case-insensitively; unrecognized values are errors.
 
 ## Runtime Isaac bootstrap (the container ships no Isaac Sim)
 
-The `npa-isaac-lab` image contains **no NVIDIA Isaac Sim or Isaac Lab code**. It used to bake
-Omniverse Kit, which made it non-redistributable; Isaac is now downloaded on first use of
-`/isaac-sim/python.sh` from `https://pypi.nvidia.com`, into a cache volume, under the
-**operator's own EULA acceptance**. Full rationale:
+The `npa-isaac-lab` image contains **no NVIDIA Isaac Sim, Isaac Lab, Omniverse
+Client, or other proprietary NVIDIA runtime code**. It used to bake Omniverse
+Kit, which made it non-redistributable; the exact runtime wheel set is now
+downloaded on first use of `/isaac-sim/python.sh` from
+`https://pypi.nvidia.com`, hash-verified, and installed into a cache volume
+under the **operator's own EULA acceptance**. Full rationale:
 `docs/workbench/container-packaging.md` and `skills/atomic/solution-licensing/SKILL.md`.
 
 What this changes in practice:
@@ -35,16 +43,19 @@ What this changes in practice:
   the bootstrap shim, and it is what every SkyPilot template, the sim2real engine and the
   workbench CLI already use. A bare `python3` is the *system* interpreter and will not
   find Isaac.
-- **Never invoke the shim from a Dockerfile `RUN`.** It would download and bake ~4.5 GB of
-  Isaac into a layer. Build-time work uses the image's own venv python.
-- **Budget the first start.** Measured on RTX PRO 6000: 111 s cold, 32 ms warm, 10.04 GiB
-  of cache. Pre-warm a shared volume once per node/PVC with
-  `npa/docker/workbench/common/warm-isaac-cache.yaml`, then run workload pods with
-  `NPA_ISAAC_CACHE_READONLY=1`. Otherwise every pod pays it, and 8 GPU pods on a node
-  download ~36 GB.
+- **Never invoke the shim from a Dockerfile `RUN`.** It would download and bake
+  the multi-gigabyte Isaac runtime into a layer. Build-time work uses the
+  image's own venv python.
+- **Budget the first start.** Use the generation-specific measurements in
+  `docs/workbench/isaac-lab-3.md`; do not reuse generation 2 cache numbers for
+  generation 3. Pre-warm a shared volume once per node/PVC with
+  `npa/docker/workbench/common/warm-isaac-cache.yaml`, then run workload pods
+  with `NPA_ISAAC_CACHE_READONLY=1`. Otherwise every pod pays the cold fetch.
 - `isaac-bootstrap status` reports what is cached without needing acceptance or network;
   `isaac-bootstrap verify` additionally launches Isaac Sim headless (needs a GPU).
-- No NGC credentials are needed to build or run this image.
+- No NGC credentials are needed to build or run this image. Native
+  `--runtime vm` installation is intentionally unsupported for generation 3;
+  managed and BYOVM deployments use the payload-clean container contract.
 
 ## Interfaces
 
