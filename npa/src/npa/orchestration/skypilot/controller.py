@@ -123,7 +123,13 @@ def _apply_controller_region(
     region = (controller_region or "").strip()
     if not region:
         return
-    resources.setdefault("region", region)
+    # An explicit ``--infra k8s/<context>`` is authoritative for this
+    # submission.  Keeping a region inherited from the operator's global
+    # SkyPilot config can make a later runtime wave address a stale cluster,
+    # even though the generated allowlist and KUBECONFIG both select the new
+    # context.  Override the inherited value so controller placement and task
+    # placement cannot diverge.
+    resources["region"] = region
 
 
 def _controller_resources_for_backend(
