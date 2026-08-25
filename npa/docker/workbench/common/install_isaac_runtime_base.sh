@@ -36,6 +36,8 @@ TORCH_VERSION="${TORCH_VERSION:-2.9.0}"
 TORCHVISION_VERSION="${TORCHVISION_VERSION:-0.24.0}"
 TORCHAUDIO_VERSION="${TORCHAUDIO_VERSION:-2.9.0}"
 UBUNTU_SNAPSHOT="${NPA_UBUNTU_SNAPSHOT:-20260801T053000Z}"
+UBUNTU_SUITE="${NPA_UBUNTU_SUITE:-jammy}"
+ISAAC_PYTHON_MINOR="${NPA_ISAAC_PYTHON_MINOR:-3.11}"
 PYTHON_VERSION="${NPA_ISAAC_PYTHON_VERSION:-3.11.15-1+jammy1}"
 DEADSNAKES_POOL="${NPA_DEADSNAKES_POOL:-https://ppa.launchpadcontent.net/deadsnakes/ppa/ubuntu/pool/main/p/python3.11}"
 # cu128 wheels carry sm_120 kernels, which RTX PRO 6000 Blackwell (compute capability
@@ -66,7 +68,7 @@ rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.list \
 printf '%s\n' \
   'Types: deb' \
   "URIs: https://snapshot.ubuntu.com/ubuntu/${UBUNTU_SNAPSHOT}/" \
-  'Suites: jammy jammy-updates jammy-backports jammy-security' \
+  "Suites: ${UBUNTU_SUITE} ${UBUNTU_SUITE}-updates ${UBUNTU_SUITE}-backports ${UBUNTU_SUITE}-security" \
   'Components: main restricted universe multiverse' \
   'Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg' \
   > /etc/apt/sources.list.d/ubuntu.sources
@@ -74,7 +76,7 @@ apt-get update
 # CUDA's Jammy base retains an old linux-libc-dev build. These are development
 # headers rather than the host kernel, but the fixed immutable-snapshot build is
 # available, so upgrade it explicitly instead of carrying avoidable critical CVEs.
-apt-get install -y --no-install-recommends \
+system_packages=(
   ca-certificates \
   curl \
   git \
@@ -86,23 +88,30 @@ apt-get install -y --no-install-recommends \
   libx11-6 \
   libxext6 \
   libxrender1 \
-  linux-libc-dev=5.15.0-186.196 \
   libxt6 `# MaterialX render libs dlopen libXt.so.6; without it Kit logs three
           # "Could not load the dynamic library ... libMaterialXRender*.so" errors` \
   vulkan-tools
+)
+if [ "$UBUNTU_SUITE" = jammy ]; then
+  system_packages+=(linux-libc-dev=5.15.0-186.196)
+else
+  system_packages+=(linux-libc-dev)
+fi
+apt-get install -y --no-install-recommends "${system_packages[@]}"
 
 # Isaac needs python3.11 exactly; Ubuntu 22.04 ships 3.10. Do not add the
 # moving deadsnakes apt repository. Fetch the reviewed version's immutable
 # package paths and verify every byte against the SHA-256 recorded in the PPA
 # Packages index before apt resolves their Ubuntu dependencies from the fixed
 # snapshot above.
-install -d -m 0755 /tmp/npa-python311
-while IFS='|' read -r filename digest; do
-  curl --fail --location --retry 3 \
-    "${DEADSNAKES_POOL}/${filename}" \
-    --output "/tmp/npa-python311/${filename}"
-  printf '%s  %s\n' "$digest" "/tmp/npa-python311/${filename}" | sha256sum --check --strict
-done <<'PYTHON311_DEBS'
+if [ "$ISAAC_PYTHON_MINOR" = 3.11 ]; then
+  install -d -m 0755 /tmp/npa-python311
+  while IFS='|' read -r filename digest; do
+    curl --fail --location --retry 3 \
+      "${DEADSNAKES_POOL}/${filename}" \
+      --output "/tmp/npa-python311/${filename}"
+    printf '%s  %s\n' "$digest" "/tmp/npa-python311/${filename}" | sha256sum --check --strict
+  done <<'PYTHON311_DEBS'
 libpython3.11_3.11.15-1+jammy1_amd64.deb|1ef8897f4f56b7e90a2c4bc07b68a7074b77567e4b112ded3331365eb3c10fc2
 libpython3.11-dev_3.11.15-1+jammy1_amd64.deb|1adc394918add62fb6e497382046d67b66d4d73cc887cb8be597d9e623db98ad
 libpython3.11-minimal_3.11.15-1+jammy1_amd64.deb|2242dc4450d5ef4bb51aa162229dcae9f921f13c44322aefc1a132631afe9493
@@ -112,9 +121,22 @@ python3.11-dev_3.11.15-1+jammy1_amd64.deb|f50550d76be43a305fa894ab001b76de635738
 python3.11-minimal_3.11.15-1+jammy1_amd64.deb|7de0e5a79cb46d2c017b3a882980d2ff9d943b3cd2a2c6fdccab6010f1fcd736
 python3.11-venv_3.11.15-1+jammy1_amd64.deb|65edd1c51e458d118bee721d0815e0cbcb940ab351d851037a29f5f07a1beef8
 PYTHON311_DEBS
-apt-get install -y --no-install-recommends /tmp/npa-python311/*.deb
-test "$(dpkg-query -W -f='${Version}' python3.11)" = "$PYTHON_VERSION"
-rm -rf /tmp/npa-python311
+  apt-get install -y --no-install-recommends /tmp/npa-python311/*.deb
+  test "$(dpkg-query -W -f='${Version}' python3.11)" = "$PYTHON_VERSION"
+  rm -rf /tmp/npa-python311
+elif [ "$ISAAC_PYTHON_MINOR" = 3.12 ]; then
+  # Isaac Sim 6 / Isaac Lab 3 require Python 3.12. The 3.x image uses the
+  # digest-pinned Ubuntu 24.04 CUDA base and the immutable Noble snapshot, so
+  # these distro packages are reproducible without adding a moving PPA.
+  [ "$UBUNTU_SUITE" = noble ] || {
+    echo "Isaac Python 3.12 requires NPA_UBUNTU_SUITE=noble" >&2
+    exit 2
+  }
+  apt-get install -y --no-install-recommends python3.12 python3.12-dev python3.12-venv
+else
+  echo "Unsupported NPA_ISAAC_PYTHON_MINOR=${ISAAC_PYTHON_MINOR}; expected 3.11 or 3.12" >&2
+  exit 2
+fi
 
 if [ "$INSTALL_SKYPILOT_PREREQS" = "1" ]; then
   # SkyPilot's in-pod Kubernetes bootstrap needs a SYSTEM python3 plus rsync, an SSH
@@ -133,8 +155,8 @@ rm -rf /var/lib/apt/lists/*
 if [ -x "$ISAAC_VENV/bin/python" ]; then
   log "reusing the base image's python venv at ${ISAAC_VENV}"
 else
-  log "python3.11 venv at ${ISAAC_VENV}"
-  python3.11 -m venv "$ISAAC_VENV"
+  log "python${ISAAC_PYTHON_MINOR} venv at ${ISAAC_VENV}"
+  "python${ISAAC_PYTHON_MINOR}" -m venv "$ISAAC_VENV"
 fi
 "$ISAAC_VENV/bin/python" -m pip install --no-cache-dir --no-deps \
   "pip==26.2.1" \
@@ -143,13 +165,15 @@ fi
   "packaging==26.3"
 "$ISAAC_VENV/bin/python" -m pip check
 
-# Isaac requires exactly python3.11; fail here rather than at first run.
-"$ISAAC_VENV/bin/python" - <<'PY'
+# Isaac releases require an exact Python minor; fail here rather than at first run.
+NPA_ISAAC_PYTHON_MINOR="$ISAAC_PYTHON_MINOR" "$ISAAC_VENV/bin/python" - <<'PY'
+import os
 import sys
 
-if sys.version_info[:2] != (3, 11):
+expected = tuple(int(part) for part in os.environ["NPA_ISAAC_PYTHON_MINOR"].split("."))
+if sys.version_info[:2] != expected:
     raise SystemExit(
-        f"Isaac requires python 3.11 (isaacsim/isaaclab declare Requires-Python: ==3.11.*), "
+        f"Isaac requires Python {expected[0]}.{expected[1]}, "
         f"but {sys.executable} is {sys.version_info.major}.{sys.version_info.minor}"
     )
 print(f"python {sys.version.split()[0]} at {sys.executable}")
@@ -170,7 +194,7 @@ fi
 log "OSS dependency closure for Isaac Sim / Isaac Lab"
 "$ISAAC_VENV/bin/python" -m pip install --no-cache-dir \
   --no-deps \
-  -r "${COMMON_DIR}/isaac-oss-deps.txt"
+  -r "${OSS_DEPS_FILE}"
 # wheel is a build tool, not part of the runtime. Removing it resolves the
 # otherwise impossible wheel>=24 / Isaac-Lab<24 packaging constraint without
 # weakening Isaac Lab's declared runtime contract.

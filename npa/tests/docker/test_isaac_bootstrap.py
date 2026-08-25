@@ -36,6 +36,8 @@ BASE_INSTALLER = COMMON / "install_isaac_runtime_base.sh"
 NPA_CLI = COMMON.parent / "isaac-lab" / "npa_cli.sh"
 WHEELS = COMMON / "isaac-nvidia-wheels.txt"
 OSS_DEPS = COMMON / "isaac-oss-deps.txt"
+ISAAC3_WHEELS = COMMON / "isaac3-nvidia-wheels.txt"
+ISAAC3_OSS_DEPS = COMMON / "isaac3-oss-deps.txt"
 
 EX_CONFIG = 78
 EX_UNAVAILABLE = 69
@@ -520,11 +522,12 @@ def test_eight_concurrent_installs_produce_one_tree(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------------------
 
 
-def test_every_nvidia_wheel_is_version_and_hash_pinned() -> None:
+@pytest.mark.parametrize("manifest", [WHEELS, ISAAC3_WHEELS])
+def test_every_nvidia_wheel_is_version_and_hash_pinned(manifest: Path) -> None:
     """The runtime fetch is attack surface; nothing may be unpinned."""
     lines = [
         line.strip()
-        for line in WHEELS.read_text(encoding="utf-8").splitlines()
+        for line in manifest.read_text(encoding="utf-8").splitlines()
         if line.strip() and not line.strip().startswith("#")
     ]
     requirements = [line for line in lines if not line.startswith("--hash")]
@@ -547,6 +550,13 @@ def test_wheel_manifest_matches_the_repo_pins() -> None:
     assert text.count("--hash=sha256:") == 26
 
 
+def test_isaac3_wheel_manifest_matches_the_image_pins() -> None:
+    text = ISAAC3_WHEELS.read_text(encoding="utf-8")
+    assert "isaacsim==6.0.1.0" in text
+    assert "isaaclab==3.0.0b2.post1" in text
+    assert text.count("--hash=sha256:") == 26
+
+
 def test_wheel_manifest_is_fetched_only_from_nvidias_index() -> None:
     """--index-url, not --extra-index-url: the set must not be shadowable from PyPI.
 
@@ -564,9 +574,10 @@ def test_wheel_manifest_is_fetched_only_from_nvidias_index() -> None:
     assert "--no-deps" in instructions
 
 
-def test_oss_deps_carry_no_nvidia_isaac_package() -> None:
+@pytest.mark.parametrize("closure", [OSS_DEPS, ISAAC3_OSS_DEPS])
+def test_oss_deps_carry_no_nvidia_isaac_package(closure: Path) -> None:
     """The baked list must stay OSS-only; an Isaac wheel here would defeat the design."""
-    for line in OSS_DEPS.read_text(encoding="utf-8").splitlines():
+    for line in closure.read_text(encoding="utf-8").splitlines():
         requirement = line.split("#", 1)[0].strip().lower()
         if not requirement:
             continue
@@ -617,6 +628,16 @@ def test_isaac_image_normalizes_bootstrap_scripts_for_the_non_root_user() -> Non
     assert "chmod 0755 /opt/npa/docker/workbench/common/*.sh" in dockerfile
 
 
+def test_isaac3_image_pins_runtime_source_and_python_contract() -> None:
+    dockerfile = (COMMON.parent / "isaac-lab" / "Dockerfile").read_text(encoding="utf-8")
+    assert "ARG ISAAC_LAB_VERSION=3.0.0b2.post1" in dockerfile
+    assert "ARG ISAAC_SIM_VERSION=6.0.1.0" in dockerfile
+    assert "ARG ISAAC_LAB_SRC_COMMIT=ffff603eafc6b74264a5261cc0183d6a65390d78" in dockerfile
+    assert "NPA_ISAAC_PYTHON_MINOR=3.12" in dockerfile
+    assert "isaac3-nvidia-wheels.txt" in dockerfile
+    assert "isaac3-oss-deps.txt" in dockerfile
+
+
 def test_base_installer_upgrades_linux_headers_from_the_fixed_snapshot() -> None:
     """Do not retain the stale kernel-header package inherited from CUDA.
 
@@ -629,6 +650,9 @@ def test_base_installer_upgrades_linux_headers_from_the_fixed_snapshot() -> None
     installer = BASE_INSTALLER.read_text(encoding="utf-8")
     assert 'UBUNTU_SNAPSHOT="${NPA_UBUNTU_SNAPSHOT:-20260801T053000Z}"' in installer
     assert "linux-libc-dev=5.15.0-186.196" in installer
+    assert 'NPA_UBUNTU_SUITE:-jammy' in installer
+    assert 'NPA_ISAAC_PYTHON_MINOR:-3.11' in installer
+    assert '"$ISAAC_PYTHON_MINOR" = 3.12' in installer
 
 
 # --------------------------------------------------------------------------------------
@@ -761,13 +785,14 @@ def test_base_installer_uses_immutable_system_and_bootstrap_inputs() -> None:
     assert '"$ISAAC_VENV/bin/python" -m pip check' in text
     assert "pip uninstall --yes wheel" in text
 
-    closure = (COMMON / "isaac-oss-deps.txt").read_text(encoding="utf-8")
-    lines = [
-        line.strip()
-        for line in closure.splitlines()
-        if line.strip() and not line.startswith("#")
-    ]
-    assert len(lines) >= 120
-    assert all(line.count("==") == 1 for line in lines)
-    assert "packaging==23.2" in lines
-    assert not any(line.lower().startswith("wheel==") for line in lines)
+    for closure_path in (OSS_DEPS, ISAAC3_OSS_DEPS):
+        closure = closure_path.read_text(encoding="utf-8")
+        lines = [
+            line.strip()
+            for line in closure.splitlines()
+            if line.strip() and not line.startswith("#")
+        ]
+        assert len(lines) >= 120
+        assert all(line.count("==") == 1 for line in lines)
+        assert not any(line.lower().startswith("wheel==") for line in lines)
+    assert "packaging==23.2" in OSS_DEPS.read_text(encoding="utf-8").splitlines()

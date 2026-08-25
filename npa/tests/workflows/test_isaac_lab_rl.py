@@ -52,6 +52,7 @@ def test_isaac_lab_single_job_yaml_uses_rt_core_gpu_and_rsl_rl_entrypoint() -> N
     assert "scripts/reinforcement_learning/rsl_rl/train.py" in task["run"]
     assert "--num_envs" in task["run"]
     assert "--max_iterations" in task["run"]
+    assert "--headless" in task["run"]
     assert "agent.save_interval=1" in task["envs"]["ISAAC_LAB_HYDRA_OVERRIDES"]
     # SkyPilot does not interpolate ${VAR} in envs; ship a concrete endpoint.
     assert task["envs"]["AWS_ENDPOINT_URL"] == "https://storage.eu-north1.nebius.cloud"
@@ -100,7 +101,7 @@ def test_isaac_lab_sweep_spec_uses_parallel_group_and_distinct_variants() -> Non
     ]
     for name in members:
         member = spec.states[name]
-        assert spec.resources[member.resources]["accelerators"] == "L40S:1"
+        assert spec.resources[member.resources]["accelerators"] == "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"
         # Each variant writes under its own prefix, as the template's envs did.
         assert member.params["variant_uri"].rstrip("/").endswith(member.params["variant"])
 

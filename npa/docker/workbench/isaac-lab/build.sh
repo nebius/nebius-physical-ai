@@ -105,13 +105,13 @@ VERSION="$(read_pin isaac-lab)"
 IMAGE_TAG="${IMAGE_TAG_OVERRIDE:-$VERSION}"
 LOCAL_IMAGE="${IMAGE_NAME}:${IMAGE_TAG}"
 
-# Keep the Isaac Sim pin and the Isaac Lab source commit in one place: the bootstrap's
-# defaults. Reading them here means the build cannot drift from what runs.
-BOOTSTRAP="$SCRIPT_DIR/../common/isaac_bootstrap.sh"
-ISAAC_SIM_VERSION="$(sed -n 's/^ISAAC_SIM_VERSION="${ISAAC_SIM_VERSION:-\(.*\)}"$/\1/p' "$BOOTSTRAP")"
-ISAAC_LAB_SRC_COMMIT="$(sed -n 's/^ISAAC_LAB_SRC_COMMIT="${NPA_ISAAC_LAB_SRC_COMMIT:-\(.*\)}"$/\1/p' "$BOOTSTRAP")"
+# The shared bootstrap retains Isaac 2 defaults for SONIC/GR00T/LeIsaac
+# compatibility. The canonical Isaac Lab image owns its explicit 3.x pins.
+DOCKERFILE="$SCRIPT_DIR/Dockerfile"
+ISAAC_SIM_VERSION="$(sed -n 's/^ARG ISAAC_SIM_VERSION=//p' "$DOCKERFILE")"
+ISAAC_LAB_SRC_COMMIT="$(sed -n 's/^ARG ISAAC_LAB_SRC_COMMIT=//p' "$DOCKERFILE")"
 if [ -z "$ISAAC_SIM_VERSION" ] || [ -z "$ISAAC_LAB_SRC_COMMIT" ]; then
-  echo "ERROR: could not read the Isaac pins out of $BOOTSTRAP" >&2
+  echo "ERROR: could not read the Isaac pins out of $DOCKERFILE" >&2
   exit 1
 fi
 

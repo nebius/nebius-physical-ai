@@ -158,11 +158,10 @@ def test_isaac_lab_deploy_installs_expected_package(tmp_path: Path, mocker) -> N
     assert "boot_disk_size_gb" not in tf_vars
 
     install_cmd = ssh.run_or_raise.call_args.args[0]
-    assert "python3.11 -m venv /opt/isaac-lab/venv" in install_cmd
-    assert (
-        '/opt/isaac-lab/venv/bin/python -m pip install "isaaclab[isaacsim,all]==2.3.2.post1" '
-        "--extra-index-url https://pypi.nvidia.com"
-    ) in install_cmd
+    assert "python3.12 -m venv /opt/isaac-lab/venv" in install_cmd
+    assert "/opt/isaac-lab/venv/bin/python -m pip install --pre" in install_cmd
+    assert '"isaaclab[isaacsim,all,newton,rsl-rl]==3.0.0b2.post1"' in install_cmd
+    assert "--extra-index-url https://pypi.nvidia.com" in install_cmd
     assert "ISAAC_LAB_ENV_SMOKE_OK" in install_cmd
     write_config.assert_called()
     wb_cfg = write_config.call_args.args[0]["projects"]["proj"]["workbenches"]["isaac"]
@@ -519,13 +518,14 @@ def test_isaac_lab_train_builds_remote_command(mocker) -> None:
     assert result.exit_code == 0
     cmd = ssh.run.call_args.args[0]
     assert "source /opt/isaac-lab/venv/bin/activate" in cmd
-    assert "ISAACLAB_PKG=/opt/isaac-lab/venv/lib/python3.11/site-packages/isaaclab" in cmd
+    assert "ISAACLAB_PKG=/opt/isaac-lab/venv/lib/python3.12/site-packages/isaaclab" in cmd
     assert "$ISAACLAB_PKG/source/isaaclab_tasks" in cmd
     assert "scripts/reinforcement_learning/rsl_rl/train.py" in cmd
     assert "--task \"$TASK\"" in cmd
     assert "--num_envs \"$NUM_ENVS\"" in cmd
     assert "--max_iterations \"$MAX_ITERATIONS\"" in cmd
-    assert "--headless" in cmd
+    assert "--visualizer none" in cmd
+    assert "Refusing to generate or run a compatibility trainer" in cmd
     assert "agent.save_interval=1" in cmd
     assert "Isaac-Reach-Franka-v0" in cmd
     assert "NUM_ENVS=64" in cmd

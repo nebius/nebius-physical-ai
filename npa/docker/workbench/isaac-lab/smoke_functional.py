@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 
-EXPECTED_ISAAC_LAB_VERSION = os.environ.get("ISAAC_LAB_VERSION", "2.3.2.post1")
+EXPECTED_ISAAC_LAB_VERSION = os.environ.get("ISAAC_LAB_VERSION", "3.0.0b2.post1")
 TASK_NAME = os.environ.get("ISAAC_LAB_SMOKE_TASK", "Isaac-Reach-Franka-v0")
 NUM_ENVS = int(os.environ.get("ISAAC_LAB_SMOKE_NUM_ENVS", "64"))
 TRAIN_STEPS = int(os.environ.get("ISAAC_LAB_SMOKE_TRAIN_STEPS", "100"))
@@ -77,7 +77,7 @@ def check_launch_runtime(state: SmokeState) -> CheckResult:
     try:
         from isaaclab.app import AppLauncher
 
-        app_launcher = AppLauncher(headless=True)
+        app_launcher = AppLauncher(visualizer="none")
         state.simulation_app = app_launcher.app
         if state.simulation_app is None:
             return CheckResult("launch Isaac Sim runtime", False, "AppLauncher.app is None")
