@@ -20,15 +20,16 @@ COPY --chmod=0755 docker/workbench/common/workflow_runtime_entrypoint.sh \
 COPY --chmod=0755 docker/workbench/common/install_workflow_runtime_prereqs.sh \
     /usr/local/bin/install-workflow-runtime-prereqs
 
-# The public Genesis parent includes imageio-ffmpeg for unrelated video
-# tooling. EnvGen never executes it, and its wheel-bundled static FFmpeg is not
-# redistributable under this image's public packaging contract.
+# The public Genesis parent includes moviepy/imageio-ffmpeg for unrelated video
+# tooling. EnvGen never executes either package, and imageio-ffmpeg's
+# wheel-bundled static FFmpeg is not redistributable under this image's public
+# packaging contract.
 RUN /usr/local/bin/install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}" \
     && test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
     && find /opt/npa/src /opt/npa/workflows -type d -exec chmod a+rx {} + \
     && find /opt/npa/src /opt/npa/workflows -type f -exec chmod a+r {} + \
     && chmod a+r /opt/npa/pyproject.toml \
-    && python -m pip uninstall -y transformers imageio-ffmpeg \
+    && python -m pip uninstall -y transformers moviepy imageio-ffmpeg \
     && python -m pip install --no-deps \
       -r /opt/npa/sim2real-control-requirements.txt \
       -r /opt/npa/sim2real-genesis-requirements.txt \
