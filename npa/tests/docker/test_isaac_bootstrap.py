@@ -557,6 +557,19 @@ def test_isaac3_wheel_manifest_matches_the_image_pins() -> None:
     assert text.count("--hash=sha256:") == 26
 
 
+def test_isaac3_oss_closure_merges_the_workflow_runtime_security_pins() -> None:
+    lines = ISAAC3_OSS_DEPS.read_text(encoding="utf-8").splitlines()
+    shared = (COMMON / "sim2real-control-requirements.txt").read_text(encoding="utf-8")
+    for requirement in (
+        "cryptography==50.0.0",
+        "oauthlib==3.3.1",
+        "requests-oauthlib==2.0.0",
+    ):
+        assert requirement in lines
+        assert requirement in shared
+    assert "msal==1.38.0" in lines
+
+
 def test_wheel_manifest_is_fetched_only_from_nvidias_index() -> None:
     """--index-url, not --extra-index-url: the set must not be shadowable from PyPI.
 
