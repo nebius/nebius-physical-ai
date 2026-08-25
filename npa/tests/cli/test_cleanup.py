@@ -259,6 +259,7 @@ def test_alias_free_full_cleanup_records_not_submitted_audit_for_exact_project(
             {"kind": "terraform_agent_destroy"},
             {
                 "exact_instance_absent": True,
+                "local_state_retired": True,
                 "terraform_destroy_completed": True,
                 "terraform_dependency_graph": sorted(
                     cleanup_cli._AGENT_TERRAFORM_GRAPH
@@ -359,6 +360,7 @@ def test_structured_equivalent_phase_supersedes_failed_sibling() -> None:
             },
             "verification": {
                 "exact_instance_absent": True,
+                "local_state_retired": True,
                 "terraform_destroy_completed": True,
                 "terraform_dependency_graph": sorted(
                     cleanup_cli._AGENT_TERRAFORM_GRAPH
@@ -1087,6 +1089,7 @@ def test_full_cleanup_accepts_atomic_terminal_receipts_and_forgets_exact_alias(
             {"kind": "terraform_agent_destroy"},
             {
                 "exact_instance_absent": True,
+                "local_state_retired": True,
                 "terraform_destroy_completed": True,
                 "terraform_dependency_graph": sorted(
                     cleanup_cli._AGENT_TERRAFORM_GRAPH
@@ -1197,6 +1200,7 @@ def test_cleanup_full_json_repeats_monotonically_while_iam_is_unresolved(
             {"kind": "terraform_agent_destroy", "purge_iam": True},
             {
                 "exact_instance_absent": True,
+                "local_state_retired": True,
                 "terraform_destroy_completed": True,
                 "terraform_dependency_graph": sorted(
                     cleanup_cli._AGENT_TERRAFORM_GRAPH
