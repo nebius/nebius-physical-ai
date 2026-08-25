@@ -119,31 +119,22 @@ for workloads that generate kernels at runtime. A B300 port must move the whole
 locked environment to CUDA 13/cu130 and pass the full depth-conditioned
 Video2Video smoke; a CUDA probe or import is not sufficient.
 
-## Sim2Real VLM (self-hosted Reason2 + hosted Cosmos3)
+## Sim2Real VLM (hosted Cosmos3 only)
 
-Sim2Real stage 8 evaluates the exact Stage 7 rollouts with two parallel leaves:
+Sim2Real stage 8 evaluates every exact Stage 7 rollout with one CPU-only leaf:
+`nvidia/Cosmos3-Super-Reasoner`, hosted by Nebius Token Factory.
 
-- `nvidia/Cosmos-Reason2-8B` (`vlm_eval_reason2`)
-- `nvidia/Cosmos3-Super-Reasoner` (`vlm_eval_cosmos3`, hosted by Nebius Token Factory)
+Implementation lives in `npa.workbench.cosmos.reason`. The Cosmos3 leaf uses the
+CPU controller image, bounded deterministic event-frame selection, and the
+existing OpenAI-compatible Token Factory client. Stage 9 consumes its event-local
+structured judgments directly after exact coverage and provenance checks. It
+must never request a GPU or require the general-purpose Reason image.
 
-Implementation lives in `npa.workbench.cosmos.reason`. Reason2 uses the
-weight-free `npa-cosmos3-reason` image and its Qwen3-VL loader on one GPU. The
-Cosmos3 leaf uses the CPU controller image, bounded deterministic event-frame
-selection, and the existing OpenAI-compatible Token Factory client. The general
-two-evaluator merge combines event-local structured judgments after exact
-coverage and provenance checks. The hosted leaf must never request a GPU.
-
-**Access setup:** accept the Reason2 gated repo at
-https://huggingface.co while signed in, then put `HF_TOKEN` in
-`~/.npa/credentials.yaml` and mirror it into the cluster `hf-ngc-tokens` secret.
-See [sim2real-workflow.md](../../../docs/workbench/guides/sim2real-workflow.md#hugging-face-model-access-self-hosted-workbench).
-
-Also configure `NEBIUS_TOKEN_FACTORY_KEY` privately, run `npa workbench
+**Access setup:** configure `NEBIUS_TOKEN_FACTORY_KEY` privately, run `npa workbench
 token-factory models`, and confirm the exact Super-Reasoner model plus a minimal
 inference before submitting. Model availability is key/project-specific.
 
-Env knobs: `VLM_REASON2_MODEL`, `VLM_COSMOS3_MODEL`, `VLM_REASON2_IMAGE`, and
-`NPA_COSMOS_REASON2_CACHE`. Cosmos3-Super-Reasoner model materials are
+The canonical model knob is `VLM_COSMOS3_MODEL`. Cosmos3-Super-Reasoner model materials are
 OpenMDW-1.1; retain
 `skills/LICENSE-NVIDIA-COSMOS3-OPENMDW-1.1` and
 `skills/NOTICE-NVIDIA-COSMOS3`. Hosted weights never enter NPA image layers.

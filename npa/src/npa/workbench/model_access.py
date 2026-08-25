@@ -76,7 +76,7 @@ WORKBENCH_ASSETS: tuple[GatedAsset, ...] = (
     GatedAsset("nvidia/GEAR-SONIC", HF, ("sonic",), False),
     GatedAsset("nvidia/Cosmos-Transfer2.5-2B", HF, ("paidf", "sim2real"), True),
     GatedAsset("nvidia/Cosmos-Reason2-2B", HF, ("groot",), True),
-    GatedAsset("nvidia/Cosmos-Reason2-8B", HF, ("sim2real",), True),
+    GatedAsset("nvidia/Cosmos-Reason2-8B", HF, ("cosmos",), True),
     GatedAsset(
         "nvidia/Cosmos3-Super-Reasoner",
         TOKEN_FACTORY,

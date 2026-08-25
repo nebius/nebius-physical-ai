@@ -708,7 +708,6 @@ def test_config_pinned_resource_images_satisfy_the_npa_source_requirement() -> N
             "controller_image",
             "transfer_image",
             "envgen_image",
-            "reason_image",
             "isaac_image",
             "viewer_image",
         )
@@ -749,7 +748,6 @@ def test_preflight_images_accepts_the_same_config_vars_as_submit(mocker) -> None
         "controller_image",
         "transfer_image",
         "envgen_image",
-        "reason_image",
         "isaac_image",
         "viewer_image",
     ):

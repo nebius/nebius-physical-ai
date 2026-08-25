@@ -199,6 +199,7 @@ def test_token_factory_rollout_evaluator_returns_event_local_contract(tmp_path) 
         client=Client(),
     )
     assert len(result["per_step"]) == 10
+    assert result["schema"] == "npa.sim2real.vlm_eval.v3"
     assert result["backend"] == "token_factory"
     assert result["request"] == {
         "request_id": "request-public-1",
@@ -210,6 +211,31 @@ def test_token_factory_rollout_evaluator_returns_event_local_contract(tmp_path) 
         "cost_usd": None,
         "cost_source": "unavailable",
     }
+
+
+def test_cosmos3_success_cannot_bypass_the_fixed_threshold() -> None:
+    payload = reason_module._parse_cosmos_reason_output(
+        json.dumps(
+            {
+                "success": True,
+                "score": 0.49,
+                "summary": "model claimed success below the workflow threshold",
+                "per_step": [
+                    {
+                        "step": 0,
+                        "critique_text": "cube remains unstable",
+                        "error_tags": ["unstable"],
+                    }
+                ],
+            }
+        ),
+        actions=[{"step": 0, "action": [0.0]}],
+        rollout_id="rollout-threshold",
+        threshold=0.5,
+        family="cosmos3",
+    )
+    assert payload["schema"] == "npa.sim2real.vlm_eval.v3"
+    assert payload["success"] is False
 
 
 def test_task_description_from_manifest_prefers_task_description() -> None:
@@ -256,6 +282,7 @@ def test_merge_dual_reason_evaluations_averages_scores_and_requires_both_success
     merged = merge_reason_evaluations(reason2, cosmos3, threshold=0.75)
 
     assert merged["two_evaluator"] is True
+    assert merged["schema"] == "npa.sim2real.vlm_eval.v2"
     assert merged["component_source"] == "cosmos_reason2_cosmos3_vlm"
     assert merged["score"] == 0.6
     assert merged["success"] is False

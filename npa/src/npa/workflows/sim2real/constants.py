@@ -64,11 +64,11 @@ REFERENCE_VLM_ALIASES = {
     "cosmos3",
 }
 DEFAULT_VLM_SEAM_EVIDENCE = (
-    f"Two evaluator defaults: self-hosted {DEFAULT_REASON2_MODEL} and hosted "
-    f"{DEFAULT_COSMOS3_MODEL} through Nebius Token Factory. Verify Hugging Face "
-    "and Token Factory access before launch; see sim2real-workflow.md."
+    f"The canonical evaluator is hosted {DEFAULT_COSMOS3_MODEL} through Nebius "
+    "Token Factory. Verify key-scoped model access and balance before launch; "
+    "see sim2real-workflow.md."
 )
-SCHEMA_VLM_EVAL = "npa.sim2real.vlm_eval.v2"
+SCHEMA_VLM_EVAL = "npa.sim2real.vlm_eval.v3"
 SCHEMA_RL_SIGNAL = "npa.sim2real.rl_signal.v1"
 SCHEMA_HELDOUT_REPORT = "npa.sim2real.heldout_eval.v1"
 SCHEMA_THRESHOLD_DECISION = "npa.sim2real.threshold_decision.v1"

@@ -22,7 +22,6 @@ _IMAGE_KEYS = (
     "controller_image",
     "transfer_image",
     "envgen_image",
-    "reason_image",
     "isaac_image",
     "viewer_image",
 )
@@ -97,14 +96,7 @@ def static_prerequisites(
 
     hf_token = str(secret_values.get("HF_TOKEN") or "").strip()
     if hf_token:
-        repos = list(
-            dict.fromkeys(
-                [
-                    "nvidia/Cosmos-Transfer2.5-2B",
-                    str(config.get("reason2_model") or "").strip(),
-                ]
-            )
-        )
+        repos = ["nvidia/Cosmos-Transfer2.5-2B"]
         denied: list[str] = []
         for repo in (item for item in repos if item):
             result = hf_validator(hf_token, repo)
@@ -118,7 +110,7 @@ def static_prerequisites(
                     + "; ".join(denied),
                     "accept each model's terms while signed in to the account that owns "
                     "HF_TOKEN, then run `npa workbench health access --capability "
-                    "sim2real` until both repositories PASS",
+                    "sim2real` until the repository passes",
                 )
             )
     token_factory_key = str(secret_values.get("NEBIUS_TOKEN_FACTORY_KEY") or "").strip()

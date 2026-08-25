@@ -14,7 +14,7 @@ flowchart LR
   EG --> S[5 sealed split]
   S --> M[6 scenario manifest]
   M --> R[7 Isaac rollouts]
-  R --> CR[8 parallel Cosmos Reason]
+  R --> CR[8 hosted Cosmos3-Super evaluation]
   CR --> PPO[9 BYO Isaac PPO + validation]
   PPO --> G[10 untouched gold eval]
   G --> D[11 strict decision record]

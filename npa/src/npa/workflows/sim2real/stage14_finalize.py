@@ -78,7 +78,7 @@ def download_plan(
                 ),
                 (
                     str(item.get("vlm_eval_uri") or ""),
-                    f"vlm_eval/train/{outer}/{inner}/merged",
+                    f"vlm_eval/train/{outer}/{inner}/evaluations",
                     True,
                 ),
                 (
@@ -161,7 +161,7 @@ def finalize_in_work(args: argparse.Namespace, *, root: str, work: Path) -> None
             / "train"
             / f"outer-{args.outer_iteration:02d}"
             / f"iter-{inner:02d}"
-            / "merged"
+            / "evaluations"
         )
         item["signal_dir"] = str(
             local

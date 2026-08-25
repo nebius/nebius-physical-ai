@@ -8,12 +8,11 @@ creates a run or launches work.
 
 ## 1. Accept the exact third-party terms
 
-The runtime downloads two gated checkpoints under the operator's Hugging Face
-account. Sign in, review the applicable model terms, and request/accept access
-on both pages:
+The canonical runtime downloads one gated checkpoint under the operator's
+Hugging Face account. Sign in, review the applicable model terms, and
+request/accept access:
 
 - [`nvidia/Cosmos-Transfer2.5-2B`](https://huggingface.co/nvidia/Cosmos-Transfer2.5-2B)
-- [`nvidia/Cosmos-Reason2-8B`](https://huggingface.co/nvidia/Cosmos-Reason2-8B)
 
 Stage 8's second evaluator is the hosted `nvidia/Cosmos3-Super-Reasoner` through
 Nebius Token Factory. Its model classification is OpenMDW-1.1; retain NVIDIA
@@ -30,7 +29,7 @@ NPA's non-interactive Isaac policy defaults the public `ACCEPT_EULA` value to
 `--no-accept-eula` (or a recognized negative `ACCEPT_EULA` value) to opt out;
 privacy and telemetry consent remain independent and disabled by default.
 
-Create a read token and verify the same token can access both self-hosted models.
+Create a read token and verify it can access Cosmos Transfer.
 Configure `NEBIUS_TOKEN_FACTORY_KEY` only in the private credential store or
 runtime environment, then verify the key-specific hosted model list and a
 minimal inference (which also fails closed for an unusable balance):
@@ -42,12 +41,12 @@ npa/.venv/bin/npa workbench health access --capability sim2real
 npa/.venv/bin/npa workbench token-factory models
 ```
 
-Expected: two `HF access ok` lines, the exact
+Expected: one Sim2Real `HF access ok` line, the exact
 `nvidia/Cosmos3-Super-Reasoner` model ID, and zero exit statuses. A `401` means the
 token is invalid or did not reach the check; a `403` means the account has not
 accepted access or a fine-grained token omits that repository. See
 [Hugging Face setup](../huggingface-token.md). `NGC_API_KEY` is not required by
-the submitted runtime when all six images are already in the selected registry;
+the submitted runtime when all five images are already in the selected registry;
 it may be required by a separate image-build/source-fetch path.
 
 ## 2. Configure Nebius, storage, Kubernetes, and SkyPilot
@@ -166,14 +165,13 @@ image pull failures are handled in the next gate. See
 The workflow does not copy images into the configured registry. Build/push the
 runtime images using the repository scripts, or use already validated images
 from your private registry. Never submit tags: resolve and retain immutable
-`@sha256:` references for these six config keys:
+`@sha256:` references for these five config keys:
 
 | Config key | Required image |
 | --- | --- |
 | `controller_image` | `npa-sim2real-control` |
 | `transfer_image` | `npa-cosmos2-transfer` |
 | `envgen_image` | `npa-envgen` |
-| `reason_image` | `npa-cosmos3-reason` |
 | `isaac_image` | `npa-isaac-lab` (same bytes used to warm the cache) |
 | `viewer_image` | `npa-rerun-viewer` |
 
@@ -190,7 +188,6 @@ pulls with the same config used by submit:
 export CONTROLLER_IMAGE='<registry>/npa-sim2real-control@sha256:<64-hex>'
 export TRANSFER_IMAGE='<registry>/npa-cosmos2-transfer@sha256:<64-hex>'
 export ENVGEN_IMAGE='<registry>/npa-envgen@sha256:<64-hex>'
-export REASON_IMAGE='<registry>/npa-cosmos3-reason@sha256:<64-hex>'
 export ISAAC_IMAGE="${NPA_ISAAC_IMAGE}"
 export VIEWER_IMAGE='<registry>/npa-rerun-viewer@sha256:<64-hex>'
 export SPEC=npa/workflows/workbench/npa-workflows/sim2real.yaml
@@ -202,7 +199,6 @@ npa/.venv/bin/npa workbench workflow preflight-images "${SPEC}" \
   --var controller_image="${CONTROLLER_IMAGE}" \
   --var transfer_image="${TRANSFER_IMAGE}" \
   --var envgen_image="${ENVGEN_IMAGE}" \
-  --var reason_image="${REASON_IMAGE}" \
   --var isaac_image="${ISAAC_IMAGE}" \
   --var viewer_image="${VIEWER_IMAGE}"
 ```
@@ -261,7 +257,6 @@ npa/.venv/bin/npa workbench workflow submit "${SPEC}" \
   --var controller_image="${CONTROLLER_IMAGE}" \
   --var transfer_image="${TRANSFER_IMAGE}" \
   --var envgen_image="${ENVGEN_IMAGE}" \
-  --var reason_image="${REASON_IMAGE}" \
   --var isaac_image="${ISAAC_IMAGE}" \
   --var viewer_image="${VIEWER_IMAGE}" \
   --var isaac_cache_pvc=npa-isaac-cache
@@ -288,14 +283,14 @@ npa/.venv/bin/npa workbench workflow plan-spec "${SPEC}" \
   --var controller_image="${CONTROLLER_IMAGE}" \
   --var transfer_image="${TRANSFER_IMAGE}" \
   --var envgen_image="${ENVGEN_IMAGE}" \
-  --var reason_image="${REASON_IMAGE}" \
   --var isaac_image="${ISAAC_IMAGE}" \
   --var viewer_image="${VIEWER_IMAGE}" \
   --var isaac_cache_pvc=npa-isaac-cache
 ```
 
 Expected: validation reports valid, and the wave plan shows the 14-stage graph
-with Stage 4 and Stage 8 parallel waves. Then submit through the durable runtime:
+with the Stage 4 parallel wave and direct Stage 7 → hosted Stage 8 → Stage 9
+sequence. Then submit through the durable runtime:
 
 ```bash
 npa/.venv/bin/npa workbench workflow submit "${SPEC}" \
@@ -309,7 +304,6 @@ npa/.venv/bin/npa workbench workflow submit "${SPEC}" \
   --var controller_image="${CONTROLLER_IMAGE}" \
   --var transfer_image="${TRANSFER_IMAGE}" \
   --var envgen_image="${ENVGEN_IMAGE}" \
-  --var reason_image="${REASON_IMAGE}" \
   --var isaac_image="${ISAAC_IMAGE}" \
   --var viewer_image="${VIEWER_IMAGE}" \
   --var isaac_cache_pvc=npa-isaac-cache \

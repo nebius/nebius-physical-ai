@@ -1284,7 +1284,6 @@ def _canonical_sim2real_1x1():
             "controller_image": image,
             "transfer_image": image,
             "envgen_image": image,
-            "reason_image": image,
             "isaac_image": image,
             "viewer_image": image,
             "isaac_cache_pvc": "isaac-cache",
@@ -1329,7 +1328,7 @@ def test_canonical_three_iteration_budget_promotes_and_finalizes_outer_one() -> 
         assert "--outer-iteration 3" not in rendered
 
 
-def test_canonical_resume_replays_stage8_wave_then_restarts_at_stage9() -> None:
+def test_canonical_resume_replays_single_stage8_then_restarts_at_stage9() -> None:
     spec = _canonical_sim2real_1x1()
     store = MemoryStore()
     first_submitter = FakeSubmitter()
@@ -1349,10 +1348,7 @@ def test_canonical_resume_replays_stage8_wave_then_restarts_at_stage9() -> None:
         trigger_waiter=_trigger_ready,
     )
     assert first_report.status == "failed"
-    assert first_submitter.calls[-2]["tasks"] == [
-        "stage-08-reason2",
-        "stage-08-cosmos3",
-    ]
+    assert first_submitter.calls[-2]["tasks"] == ["stage-08-cosmos3"]
     assert first_submitter.calls[-1]["tasks"] == ["stage-09-ppo"]
 
     options = RuntimeOptions(
@@ -1387,7 +1383,7 @@ def test_canonical_resume_replays_stage8_wave_then_restarts_at_stage9() -> None:
         ["stage-13-retrigger"],
         ["stage-14-visualize"],
     ]
-    stage8 = next(wave for wave in report.waves if "stage-08-reason2" in wave["states"])
+    stage8 = next(wave for wave in report.waves if "stage-08-cosmos3" in wave["states"])
     assert stage8["replayed"] is True
 
 

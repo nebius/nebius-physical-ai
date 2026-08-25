@@ -18,11 +18,9 @@ def _config(**overrides):
         "controller_image": digest,
         "transfer_image": digest,
         "envgen_image": digest,
-        "reason_image": digest,
         "isaac_image": digest,
         "viewer_image": digest,
         "isaac_cache_pvc": "npa-isaac-cache",
-        "reason2_model": "nvidia/Cosmos-Reason2-8B",
         "cosmos3_model": "nvidia/Cosmos3-Super-Reasoner",
         "gpu_queue": "sim2real-gpu",
         "gpu_priority_class": "sim2real-production",
@@ -47,10 +45,8 @@ def test_static_preflight_checks_hf_models_and_hosted_model_before_submission():
         token_factory_validator=lambda _key, model: hosted.append(model) or SimpleNamespace(ok=True),
     )
 
-    assert checked == [
-        "nvidia/Cosmos-Transfer2.5-2B",
-        "nvidia/Cosmos-Reason2-8B",
-    ]
+    assert checked == ["nvidia/Cosmos-Transfer2.5-2B"]
+    assert "nvidia/Cosmos-Reason2-8B" not in checked
     assert hosted == ["nvidia/Cosmos3-Super-Reasoner"]
     rendered = "\n".join(item for item, _ in issues)
     assert "Cosmos-Transfer2.5-2B" in rendered

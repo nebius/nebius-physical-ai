@@ -17,7 +17,6 @@ from npa.workflows.sim2real.stage14_finalize import (
 )
 from npa.workflows.sim2real.stage9_replay import (
     existing_replay as _stage9_existing_replay,
-    publish_stage8_join as _publish_stage8_join,
 )
 from npa.workflows.sim2real.workflow_io import (
     aggregate_parallel_provenance,
@@ -492,18 +491,12 @@ def _stage7(args: argparse.Namespace) -> None:
 
 def _stage8(args: argparse.Namespace) -> None:
     from npa.workbench.cosmos.reason import (
-        run_cosmos_reason_vlm,
         run_token_factory_rollout_vlm,
         task_description_from_manifest,
     )
     from npa.workflows.sim2real.workflow_io import image_provenance
 
     root, work = _root(args), _work(8)
-    expected_backend = "token_factory" if args.reason_lane == "cosmos3" else "self_hosted"
-    if args.reason_backend != expected_backend:
-        raise RuntimeError(
-            f"Stage 8 {args.reason_lane} lane requires {expected_backend} backend"
-        )
     source = (
         f"{root}/actions/train/outer-{args.outer_iteration:02d}/"
         f"iter-{args.inner_iteration:02d}/"
@@ -518,12 +511,7 @@ def _stage8(args: argparse.Namespace) -> None:
         frames = [path for path in frames if path.is_file()]
         if not frames:
             frames = sorted(manifest_path.parent.glob("camera-*.png"))
-        evaluator = (
-            run_token_factory_rollout_vlm
-            if args.reason_backend == "token_factory"
-            else run_cosmos_reason_vlm
-        )
-        evaluation = evaluator(
+        evaluation = run_token_factory_rollout_vlm(
             model_id=args.reason_model,
             image_paths=frames,
             actions=list(manifest.get("actions") or []),
@@ -535,11 +523,14 @@ def _stage8(args: argparse.Namespace) -> None:
     if not results:
         raise RuntimeError("Stage 8 found no real Stage 7 rollouts")
     requests = [dict(item.get("request") or {}) for item in results]
+    rollout_ids = [str(item["rollout_id"]) for item in results]
+    if len(set(rollout_ids)) != len(rollout_ids):
+        raise RuntimeError("Stage 8 found duplicate Stage 7 rollout identities")
     evaluator_usage = {
-        "provider": "nebius" if args.reason_backend == "token_factory" else "self_hosted",
-        "backend": args.reason_backend,
+        "provider": "nebius",
+        "backend": "token_factory",
         "model": args.reason_model,
-        "request_count": len(requests) if args.reason_backend == "token_factory" else 0,
+        "request_count": len(requests),
         "input_tokens": sum(int(item.get("input_tokens") or 0) for item in requests),
         "output_tokens": sum(int(item.get("output_tokens") or 0) for item in requests),
         "total_tokens": sum(int(item.get("total_tokens") or 0) for item in requests),
@@ -561,37 +552,40 @@ def _stage8(args: argparse.Namespace) -> None:
         ),
     }
     payload = {
-        "schema": "npa.sim2real.cosmos_reason_lane.v2",
-        "lane": args.reason_lane,
+        "schema": "npa.sim2real.cosmos3_evaluator.v1",
+        "evaluator": "cosmos3",
         "model": args.reason_model,
-        "provider": evaluator_usage["provider"],
-        "backend": args.reason_backend,
+        "provider": "nebius",
+        "backend": "token_factory",
         "evaluations": results,
+        "source_rollout_ids": rollout_ids,
         "evaluator_usage": evaluator_usage,
-        "provenance": image_provenance(require_gpu=args.reason_backend != "token_factory"),
+        "provenance": image_provenance(require_gpu=False),
     }
     output_uri = (
         f"{root}/vlm_eval/train/outer-{args.outer_iteration:02d}/"
-        f"iter-{args.inner_iteration:02d}/{args.reason_lane}.json"
+        f"iter-{args.inner_iteration:02d}/cosmos3.json"
     )
     write_loop_output(
         output_uri, payload, work / "out", args.outer_iteration, args.inner_iteration
     )
-    publish_component_lane_record(
+    publish_component_record(
         root_uri=root,
         stage=8,
-        lane=f"{args.reason_lane}-o{args.outer_iteration}-i{args.inner_iteration}",
-        evidence="This standard-workflow leaf ran one declared Cosmos Reason evaluation lane.",
+        name="stage_08_vlm_eval_train",
+        tier="WORKS",
+        evidence="Hosted Cosmos3-Super-Reasoner scored every Stage 7 rollout with event-local labels through Token Factory.",
         artifacts={
             "result": output_uri,
             "model": args.reason_model,
             "provider": evaluator_usage["provider"],
-            "backend": args.reason_backend,
+            "backend": "token_factory",
             "evaluator_usage": evaluator_usage,
             "rollout_count": len(results),
             "outer_iteration": args.outer_iteration,
             "inner_iteration": args.inner_iteration,
         },
+        require_gpu=False,
         execution_provenance=payload["provenance"],
     )
 
@@ -635,10 +629,7 @@ def _run_eval(
 
 
 def _stage9(args: argparse.Namespace) -> None:
-    from npa.workbench.cosmos.reason import (
-        cosmos_reason_family,
-        merge_reason_evaluations,
-    )
+    from npa.workbench.cosmos.reason import cosmos_reason_family
     from npa.workflows.sim2real import byo_isaac_trainer
     from npa.workflows.sim2real.checkpoint_selection import select_best_checkpoint
     from npa.workflows.sim2real.temporal_credit import convert_evaluation
@@ -648,56 +639,95 @@ def _stage9(args: argparse.Namespace) -> None:
         f"{root}/vlm_eval/train/outer-{args.outer_iteration:02d}/"
         f"iter-{args.inner_iteration:02d}/"
     )
-    reason2 = read_json(lane_base + "reason2.json", directory=work / "r2")
     cosmos3 = read_json(lane_base + "cosmos3.json", directory=work / "cosmos3")
+    stage8_record = read_json(
+        f"{root}/components/stage_08.json", directory=work / "stage8-record"
+    )
     if (
-        reason2.get("lane") != "reason2"
-        or cosmos3.get("lane") != "cosmos3"
-        or cosmos_reason_family(str(reason2.get("model") or "")) != "reason2"
+        cosmos3.get("schema") not in {
+            "npa.sim2real.cosmos3_evaluator.v1",
+            "npa.sim2real.cosmos_reason_lane.v2",
+        }
+        or (cosmos3.get("evaluator") or cosmos3.get("lane")) != "cosmos3"
         or cosmos_reason_family(str(cosmos3.get("model") or "")) != "cosmos3"
         or cosmos3.get("backend") != "token_factory"
         or cosmos3.get("provider") != "nebius"
-        or reason2.get("backend", "self_hosted") != "self_hosted"
-        or not reason2.get("provenance")
         or not cosmos3.get("provenance")
+        or stage8_record.get("stage") != 8
+        or stage8_record.get("name") != "stage_08_vlm_eval_train"
+        or stage8_record.get("artifacts", {}).get("result")
+        != lane_base + "cosmos3.json"
+        or stage8_record.get("artifacts", {}).get("backend") != "token_factory"
+        or int(stage8_record.get("artifacts", {}).get("outer_iteration") or 0)
+        != args.outer_iteration
+        or int(stage8_record.get("artifacts", {}).get("inner_iteration") or 0)
+        != args.inner_iteration
     ):
         raise RuntimeError(
-            "Stage 8 requires genuine Reason2 and Cosmos3 lane identity, model family, and provenance"
+            "Stage 8 requires genuine hosted Cosmos3 identity, model family, and provenance"
         )
-    left = {item["rollout_id"]: item for item in reason2["evaluations"]}
     right = {item["rollout_id"]: item for item in cosmos3["evaluations"]}
+    source_rollout_ids = [str(item) for item in cosmos3.get("source_rollout_ids") or right]
     cosmos3_usage = dict(cosmos3.get("evaluator_usage") or {})
+    request_fields = {
+        "request_id",
+        "input_tokens",
+        "output_tokens",
+        "total_tokens",
+        "latency_seconds",
+        "retries",
+        "cost_usd",
+    }
+    requests = [dict(item.get("request") or {}) for item in right.values()]
     if (
-        set(left) != set(right)
-        or not left
-        or len(left) != len(reason2["evaluations"])
+        not right
         or len(right) != len(cosmos3["evaluations"])
+        or set(source_rollout_ids) != set(right)
+        or len(source_rollout_ids) != len(right)
         or int(cosmos3_usage.get("request_count") or 0) != len(right)
+        or any(not request_fields.issubset(request) for request in requests)
+        or int(cosmos3_usage.get("input_tokens") or 0)
+        != sum(int(request.get("input_tokens") or 0) for request in requests)
+        or int(cosmos3_usage.get("output_tokens") or 0)
+        != sum(int(request.get("output_tokens") or 0) for request in requests)
+        or int(cosmos3_usage.get("total_tokens") or 0)
+        != sum(int(request.get("total_tokens") or 0) for request in requests)
+        or len(cosmos3_usage.get("per_request_latency_seconds") or []) != len(right)
         or any(
-            item.get("backend") != "token_factory"
+            item.get("schema") != "npa.sim2real.vlm_eval.v3"
+            or item.get("backend") != "token_factory"
             or item.get("provider") != "nebius"
             or item.get("model") != cosmos3.get("model")
             or not isinstance(item.get("request"), dict)
+            or int(item.get("action_count") or 0) < 1
+            or len(item.get("per_step") or []) != int(item.get("action_count") or 0)
+            or len(
+                {
+                    int(step.get("step"))
+                    for step in item.get("per_step") or []
+                    if isinstance(step, dict) and step.get("step") is not None
+                }
+            )
+            != int(item.get("action_count") or 0)
             for item in right.values()
         )
     ):
-        raise RuntimeError("Stage 8 Reason2 and Cosmos3 lanes do not cover the same rollouts")
-    merged_dir, signal_dir = work / "merged", work / "signals"
-    merged_dir.mkdir()
+        raise RuntimeError("Stage 8 Cosmos3 evaluations do not exactly cover Stage 7 rollouts")
+    evaluation_dir, signal_dir = work / "evaluations", work / "signals"
+    evaluation_dir.mkdir()
     signal_dir.mkdir()
-    merged: list[dict[str, Any]] = []
+    evaluations: list[dict[str, Any]] = []
     signals: list[dict[str, Any]] = []
-    for rollout_id in sorted(left):
-        evaluation = merge_reason_evaluations(
-            left[rollout_id], right[rollout_id], threshold=args.threshold
-        )
+    for rollout_id in sorted(right):
+        evaluation = dict(right[rollout_id])
+        evaluation["threshold"] = args.threshold
         signal = convert_evaluation(evaluation)
-        (merged_dir / f"{rollout_id}.json").write_text(json.dumps(evaluation, indent=2))
+        (evaluation_dir / f"{rollout_id}.json").write_text(json.dumps(evaluation, indent=2))
         (signal_dir / f"{rollout_id}.json").write_text(json.dumps(signal, indent=2))
-        merged.append(evaluation)
+        evaluations.append(evaluation)
         signals.append(signal)
     evidence_uri = f"{root}/inner_loop/outer-{args.outer_iteration:02d}/evidence.json"
-    merged_uri = lane_base + "merged/"
+    evaluation_uri = lane_base + "evaluations/"
     signal_uri = lane_base + "signals/"
     actions_uri = (
         f"{root}/actions/train/outer-{args.outer_iteration:02d}/"
@@ -711,25 +741,14 @@ def _stage9(args: argparse.Namespace) -> None:
         outer_iteration=args.outer_iteration,
         inner_iteration=args.inner_iteration,
         actions_uri=actions_uri,
-        merged_uri=merged_uri,
+        evaluation_uri=evaluation_uri,
         signal_uri=signal_uri,
-        sample_vlm_eval=merged[0],
+        sample_vlm_eval=evaluations[0],
         sample_signal=signals[0],
     )
     if replay is not None:
         candidate, selection, update = replay
         write_loop_output(evidence_uri, prior, work / "evidence", args.outer_iteration)
-        _publish_stage8_join(
-            root=root,
-            work=work,
-            lane_base=lane_base,
-            reason2=reason2,
-            cosmos3=cosmos3,
-            merged_uri=merged_uri,
-            rollout_count=len(merged),
-            outer_iteration=args.outer_iteration,
-            inner_iteration=args.inner_iteration,
-        )
         publish_component_record(
             root_uri=root,
             stage=9,
@@ -819,16 +838,13 @@ def _stage9(args: argparse.Namespace) -> None:
             {
                 "iteration": args.inner_iteration,
                 "actions_uri": actions_uri,
-                "vlm_eval_uri": merged_uri,
+                "vlm_eval_uri": evaluation_uri,
                 "signal_uri": signal_uri,
                 "trainer_component_invocation": update.get("component_invocation"),
                 "update": update,
-                "sample_vlm_eval": merged[0],
+                "sample_vlm_eval": evaluations[0],
                 "sample_signal": signals[0],
-                "evaluator_usage": {
-                    "reason2": reason2.get("evaluator_usage"),
-                    "cosmos3": cosmos3.get("evaluator_usage"),
-                },
+                "evaluator_usage": cosmos3.get("evaluator_usage"),
             }
         ],
         "checkpoint_candidates": candidates,
@@ -840,24 +856,13 @@ def _stage9(args: argparse.Namespace) -> None:
             selected_validation.get("success_rate") or 0.0
         ),
     }
-    storage().upload_directory(str(merged_dir), merged_uri)
+    storage().upload_directory(str(evaluation_dir), evaluation_uri)
     storage().upload_directory(str(signal_dir), signal_uri)
     write_json(
         lane_base + "signal-batch.json", {"signals": signals}, directory=work / "batch"
     )
     write_json(lane_base + "training-update.json", update, directory=work / "training")
     write_loop_output(evidence_uri, evidence, work / "evidence", args.outer_iteration)
-    _publish_stage8_join(
-        root=root,
-        work=work,
-        lane_base=lane_base,
-        reason2=reason2,
-        cosmos3=cosmos3,
-        merged_uri=merged_uri,
-        rollout_count=len(merged),
-        outer_iteration=args.outer_iteration,
-        inner_iteration=args.inner_iteration,
-    )
     publish_component_record(
         root_uri=root,
         stage=9,
@@ -1062,15 +1067,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--inner-iteration", type=int, default=1)
     parser.add_argument("--rollout-count", type=int, default=1)
     parser.add_argument("--steps-per-rollout", type=int, default=32)
-    parser.add_argument(
-        "--reason-lane", choices=("reason2", "cosmos3"), default="reason2"
-    )
-    parser.add_argument("--reason-model", default="nvidia/Cosmos-Reason2-8B")
-    parser.add_argument(
-        "--reason-backend",
-        choices=("self_hosted", "token_factory"),
-        default="self_hosted",
-    )
+    parser.add_argument("--reason-model", default="nvidia/Cosmos3-Super-Reasoner")
     parser.add_argument("--threshold", type=float, default=0.5)
     parser.add_argument("--ppo-num-envs", type=int, default=64)
     parser.add_argument("--ppo-iterations", type=int, default=10)

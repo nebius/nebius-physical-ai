@@ -22,7 +22,8 @@ DEFAULT_REASON_MAX_NEW_TOKENS = 8192
 REFERENCE_VLM_ALIASES = frozenset(
     {"", "npa-cosmos3-reason", "cosmos3-reason", "cosmos-reason", "reason2", "cosmos3"}
 )
-VLM_EVAL_SCHEMA = "npa.sim2real.vlm_eval.v2"
+VLM_EVAL_SCHEMA = "npa.sim2real.vlm_eval.v3"
+LEGACY_TWO_EVALUATOR_SCHEMA = "npa.sim2real.vlm_eval.v2"
 
 ERROR_SEVERITY = {
     "collision": 0.95,
@@ -185,7 +186,7 @@ def merge_reason_evaluations(
     *,
     threshold: float,
 ) -> dict[str, Any]:
-    """Fuse Reason2 and Cosmos3 judgments into one sim2real VLM eval payload."""
+    """Fuse archived Reason2/Cosmos3 judgments for legacy artifact readers."""
 
     score2 = float(reason2_eval.get("score", 0.0))
     score3 = float(cosmos3_eval.get("score", 0.0))
@@ -271,7 +272,7 @@ def merge_reason_evaluations(
         str(cosmos3_eval.get("summary") or "").strip(),
     ]
     return {
-        "schema": VLM_EVAL_SCHEMA,
+        "schema": LEGACY_TWO_EVALUATOR_SCHEMA,
         "rollout_id": str(
             reason2_eval.get("rollout_id") or cosmos3_eval.get("rollout_id") or ""
         ),
@@ -291,7 +292,7 @@ def merge_reason_evaluations(
             "score": cosmos3_eval.get("score"),
             "success": cosmos3_eval.get("success"),
         },
-        "two_evaluator": True,
+        "two_evaluator": True,  # archived payload compatibility only
         "threshold": threshold,
     }
 
@@ -539,6 +540,7 @@ def run_token_factory_rollout_vlm(
             "model": resolved_model,
             "reason_family": "cosmos3",
             "frame_count": len(selected_paths),
+            "action_count": len(actions),
             "selected_frames": [path.name for path in selected_paths],
             "request": {
                 "request_id": str(response.get("id") or "") or None,
@@ -660,7 +662,7 @@ def _parse_cosmos_reason_output(
     if "score" not in payload:
         raise CosmosReasonError(f"{family} output did not include a numeric score")
     score = max(0.0, min(1.0, float(payload["score"])))
-    success = bool(payload.get("success", score >= threshold))
+    success = bool(payload.get("success", score >= threshold)) and score >= threshold
     raw_steps = payload.get("per_step") or payload.get("steps") or []
     expected_actions = {
         int(action.get("step", index)): action for index, action in enumerate(actions)
@@ -748,7 +750,7 @@ def _parse_cosmos_reason_output(
             }
         )
     return {
-        "schema": VLM_EVAL_SCHEMA,
+        "schema": VLM_EVAL_SCHEMA if family == "cosmos3" else LEGACY_TWO_EVALUATOR_SCHEMA,
         "rollout_id": str(payload.get("rollout_id") or rollout_id),
         "success": success,
         "score": round(score, 6),

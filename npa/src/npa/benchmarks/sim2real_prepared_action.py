@@ -27,7 +27,6 @@ IMAGE_ROLES = (
     "controller",
     "transfer",
     "envgen",
-    "reason",
     "isaac",
     "viewer",
 )

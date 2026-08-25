@@ -119,8 +119,8 @@ plan an earlier stage wrote rather than a hardcoded string.
 ## Gotchas
 
 - **Canonical Sim2Real is scoring, not planning.** Stage 8 uses
-  `nvidia/Cosmos3-Super-Reasoner` as a CPU-only hosted evaluator in parallel
-  with self-hosted Reason2. It sends a bounded, deterministic rollout-wide
+  `nvidia/Cosmos3-Super-Reasoner` as its only Stage 8 evaluator, on CPU with no
+  self-hosted evaluator image. It sends a bounded, deterministic rollout-wide
   frame sample and requires event-local structured scores. Preserve request
   IDs, token usage, latency, retries, and an authoritative returned cost or
   explicit null separately from model-agent tokens.

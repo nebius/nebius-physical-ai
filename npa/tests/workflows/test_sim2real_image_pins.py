@@ -75,7 +75,6 @@ def test_canonical_sim2real_workflow_requires_operator_pinned_images() -> None:
         "controller_image",
         "transfer_image",
         "envgen_image",
-        "reason_image",
         "isaac_image",
         "viewer_image",
     )
