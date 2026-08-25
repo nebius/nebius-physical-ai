@@ -276,6 +276,11 @@ jobs:
           if any(value in history for value in forbidden):
               raise SystemExit("cached EULA acceptance found in layer history")
           PY
+          # The loaded runtime image remains in Docker's image store. BuildKit's
+          # disposable construction cache can be larger than the image itself and
+          # otherwise leaves insufficient space to serialize large GPU images for
+          # the mandatory layer-by-layer payload scan.
+          docker buildx prune --all --force
           docker save --output "$RUNNER_TEMP/${TOOL}.tar" "$IMAGE"
           npa/.venv/bin/python npa/scripts/scan_image_omniverse_payload.py \
             --tarball "$RUNNER_TEMP/${TOOL}.tar" \
@@ -299,6 +304,7 @@ jobs:
             docker run --rm --entrypoint /opt/npa/venv/bin/python "$IMAGE" \
               /opt/npa/docker/workbench/sonic/verify_mujoco_image.py
           fi
+          rm -f "$RUNNER_TEMP/${TOOL}.tar"
 
       - name: Pre-publication vulnerability, secret, and license scan
         uses: aquasecurity/trivy-action@v0.36.0

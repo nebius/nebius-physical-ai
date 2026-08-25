@@ -106,6 +106,21 @@ def test_public_base_pull_authentication_precedes_local_build() -> None:
     assert auth < build < push
 
 
+def test_large_image_scan_reclaims_only_disposable_build_cache_and_tar() -> None:
+    spec = _spec(PUBLISH)
+    step = next(
+        item
+        for item in spec["jobs"]["build-development"]["steps"]
+        if item.get("name")
+        == "Enforce runtime, revision, bootstrap, config, and history contracts"
+    )
+    script = step["run"]
+    assert script.index("docker buildx prune --all --force") < script.index(
+        'docker save --output "$RUNNER_TEMP/${TOOL}.tar"'
+    )
+    assert 'rm -f "$RUNNER_TEMP/${TOOL}.tar"' in script
+
+
 def test_post_push_and_promotion_gates_are_digest_bound() -> None:
     text = PUBLISH.read_text(encoding="utf-8")
     for required in (
