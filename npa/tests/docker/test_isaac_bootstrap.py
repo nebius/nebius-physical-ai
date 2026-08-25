@@ -636,6 +636,9 @@ def test_isaac3_image_pins_runtime_source_and_python_contract() -> None:
     assert "NPA_ISAAC_PYTHON_MINOR=3.12" in dockerfile
     assert "isaac3-nvidia-wheels.txt" in dockerfile
     assert "isaac3-oss-deps.txt" in dockerfile
+    build_script = (COMMON.parent / "isaac-lab" / "build.sh").read_text(encoding="utf-8")
+    assert "sed -n 's/^ARG ISAAC_LAB_VERSION=//p'" in build_script
+    assert "read_pin isaac-lab" not in build_script
 
 
 def test_base_installer_upgrades_linux_headers_from_the_fixed_snapshot() -> None:
