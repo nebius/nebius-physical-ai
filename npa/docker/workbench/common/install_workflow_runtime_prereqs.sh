@@ -47,6 +47,7 @@ apt-get --fix-broken install -y --no-install-recommends
 apt-get install -y --no-install-recommends \
   ca-certificates \
   curl \
+  ffmpeg \
   netcat-openbsd \
   openssh-client \
   openssh-server \

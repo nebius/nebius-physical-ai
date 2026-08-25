@@ -38,7 +38,15 @@ def test_cosmos_reason_replaces_parent_npa_metadata_before_pip_check() -> None:
 
 def test_envgen_removes_unrelated_nonredistributable_parent_binary() -> None:
     text = (WORKBENCH / "sim2real-envgen/Dockerfile").read_text(encoding="utf-8")
-    assert "pip uninstall -y transformers moviepy imageio-ffmpeg" in text
+    installer = (WORKBENCH / "common/install_workflow_runtime_prereqs.sh").read_text(
+        encoding="utf-8"
+    )
+    assert "pip uninstall -y transformers imageio-ffmpeg" in text
+    assert "moviepy imageio-ffmpeg" not in text
+    assert "imageio_ffmpeg-0.6.0.tar.gz#sha256=" in text
+    assert "IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg" in text
+    assert "imageio_ffmpeg/binaries/ffmpeg*" in text
+    assert "  ffmpeg \\" in installer
 
 
 def test_isaac_runtime_uses_system_ffmpeg_without_wheel_bundled_binary() -> None:
