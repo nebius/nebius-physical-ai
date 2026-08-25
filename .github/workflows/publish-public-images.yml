@@ -302,6 +302,9 @@ jobs:
           set -euo pipefail
           docker buildx prune --all --force
           mkdir -p "$TRIVY_TEMP_DIR"
+          # Trivy 0.70 always wraps scans in context.WithTimeout and a zero
+          # duration expires immediately. Go's largest whole-second duration
+          # gives this mandatory gate no practical analysis deadline.
           docker run --rm \
             -e TMPDIR=/tmp/trivy \
             -v /var/run/docker.sock:/var/run/docker.sock \
@@ -309,6 +312,7 @@ jobs:
             -v "$GITHUB_WORKSPACE/.trivyignore:/.trivyignore:ro" \
             aquasec/trivy:0.70.0@sha256:be1190afcb28352bfddc4ddeb71470835d16462af68d310f9f4bca710961a41e image \
               --cache-dir /tmp/trivy/cache \
+              --timeout 2562047h47m16s \
               --scanners vuln,secret,license \
               --severity CRITICAL \
               --exit-code 1 \
@@ -330,6 +334,7 @@ jobs:
             -v "$RUNNER_TEMP:/output" \
             aquasec/trivy:0.70.0@sha256:be1190afcb28352bfddc4ddeb71470835d16462af68d310f9f4bca710961a41e image \
               --cache-dir /tmp/trivy/cache \
+              --timeout 2562047h47m16s \
               --scanners vuln \
               --format spdx-json \
               --output "/output/${TOOL}-sbom.spdx.json" \
