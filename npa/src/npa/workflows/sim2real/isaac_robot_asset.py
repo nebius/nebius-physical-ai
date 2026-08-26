@@ -172,6 +172,11 @@ def prepare_with_running_app() -> dict:
                     usd_file_name=resolved.name,
                     force_usd_conversion=True,
                     fix_base=True,
+                    joint_drive=UrdfConverterCfg.JointDriveCfg(
+                        gains=UrdfConverterCfg.JointDriveCfg.PDGainsCfg(
+                            stiffness=None
+                        )
+                    ),
                 )
             )
             produced = Path(str(getattr(converter, "usd_path", "")))

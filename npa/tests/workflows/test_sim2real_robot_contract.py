@@ -439,11 +439,22 @@ def test_isaac_prepare_converts_urdf_and_publishes_digest_manifest(
             self.app = FakeApp()
 
     class FakeCfg:
+        class JointDriveCfg:
+            class PDGainsCfg:
+                def __init__(self, **kwargs: object) -> None:
+                    self.__dict__.update(kwargs)
+
+            def __init__(self, **kwargs: object) -> None:
+                self.__dict__.update(kwargs)
+
         def __init__(self, **kwargs: object) -> None:
             self.__dict__.update(kwargs)
 
+    converter_cfgs: list[FakeCfg] = []
+
     class FakeConverter:
         def __init__(self, cfg: FakeCfg) -> None:
+            converter_cfgs.append(cfg)
             self.usd_path = str(Path(cfg.usd_dir) / cfg.usd_file_name)
             Path(self.usd_path).write_bytes(b'#usda 1.0\ndef Xform "robot" {}\n')
 
@@ -461,6 +472,7 @@ def test_isaac_prepare_converts_urdf_and_publishes_digest_manifest(
     monkeypatch.setenv("NPA_ROBOT_WORK_DIR", str(tmp_path / "runtime"))
 
     manifest = isaac_robot_asset.prepare()
+    assert converter_cfgs[0].joint_drive.gains.stiffness is None
     assert manifest["converter"] == "isaaclab.sim.converters.UrdfConverter"
     assert (
         manifest["usd_sha256"]
