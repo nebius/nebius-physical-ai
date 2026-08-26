@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import json
 from pathlib import Path
 import subprocess
@@ -60,6 +61,118 @@ def _agent_terminal_verification(*, iam_complete: bool = True) -> dict[str, obje
         "iam_cleanup_complete": iam_complete,
         "iam_disposition": "deleted" if iam_complete else "verification_unresolved",
     }
+
+
+def _agent_destroy_success_payload(
+    name: str, instance_id: str, *, iam_disposition: str
+) -> dict[str, object]:
+    iam_complete = iam_disposition in {"absent", "deleted"}
+    return {
+        "outcome": "verified_deleted",
+        "verified": True,
+        "infrastructure_absent": True,
+        "iam_cleanup_complete": iam_complete,
+        "shared_iam_preserved": iam_disposition == "retained_shared",
+        "iam_disposition": iam_disposition,
+        "identity_source": "live_configuration",
+        "receipt_id": "",
+        "identity": {
+            "project_alias": "demo",
+            "project_id": "project-a",
+            "agent_name": name,
+            "instance_id": instance_id,
+        },
+        "identity_field_sources": {},
+    }
+
+
+def _record_agent_destroy_success(
+    name: str, instance_id: str, *, iam_disposition: str
+) -> None:
+    iam_complete = iam_disposition in {"absent", "deleted"}
+    teardown_receipts.record_teardown_event(
+        phase="agent",
+        resource=name,
+        terminal_state="verified_deleted",
+        project_alias="demo",
+        project_id="project-a",
+        identity={
+            "project_alias": "demo",
+            "project_id": "project-a",
+            "agent_name": name,
+            "instance_id": instance_id,
+        },
+        action={"kind": "terraform_agent_destroy", "purge_iam": True},
+        verification={
+            **_agent_terminal_verification(iam_complete=iam_complete),
+            "iam_disposition": iam_disposition,
+        },
+    )
+
+
+def _project_agent_destroy_phases(
+    generations: dict[str, str],
+) -> list[DestroyPhase]:
+    commands = tuple(
+        (
+            "npa",
+            "agent",
+            "destroy",
+            "--project",
+            "demo",
+            "--name",
+            name,
+            "--yes",
+            "--json",
+        )
+        for name in generations
+    )
+    return [
+        DestroyPhase(
+            "agents",
+            commands,
+            "agents",
+            metadata={
+                "agent_generations": {
+                    name: [instance_id]
+                    for name, instance_id in generations.items()
+                }
+            },
+        ),
+        DestroyPhase(
+            "controller",
+            (("npa", "controller-delete"),),
+            "controller",
+            ("agents",),
+        ),
+    ]
+
+
+def _execute_project_agent_payloads(
+    phases: list[DestroyPhase],
+    payloads: dict[str, dict[str, object]],
+    *,
+    on_agent: Callable[[str], None] | None = None,
+) -> tuple[dict[str, object], list[str]]:
+    from npa import project_destroy
+
+    order: list[str] = []
+
+    def run(command, **_kwargs):  # noqa: ANN001, ANN202
+        if "--name" in command:
+            name = command[command.index("--name") + 1]
+            order.append(name)
+            if on_agent is not None:
+                on_agent(name)
+            payload = payloads[name]
+        else:
+            order.append(command[-1])
+            payload = {}
+        return subprocess.CompletedProcess(
+            command, 0, stdout=json.dumps(payload), stderr=""
+        )
+
+    return project_destroy.execute_project_destroy("demo", phases, runner=run), order
 
 
 def _record_terminal_cloud_receipts() -> None:
@@ -261,55 +374,26 @@ def test_unresolved_agent_iam_blocks_project_destroy_execution(
 def test_multi_agent_destroy_converges_after_final_sibling_deletes_shared_iam(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from npa import project_destroy
     from npa.clients import config as config_module
 
     _write_project_config(config_module.CONFIG_PATH)
-    order: list[str] = []
-    phases = [
-        DestroyPhase(
-            "agents",
-            (
-                ("npa", "agent-destroy", "agent-a"),
-                ("npa", "agent-destroy", "agent-b"),
-            ),
-            "agents",
-        ),
-        DestroyPhase(
-            "controller",
-            (("npa", "controller-delete"),),
-            "controller",
-            ("agents",),
-        ),
-    ]
+    generations = {"agent-a": "instance-a", "agent-b": "instance-b"}
+    dispositions = {"agent-a": "retained_shared", "agent-b": "deleted"}
+    payloads = {
+        name: _agent_destroy_success_payload(
+            name, instance_id, iam_disposition=dispositions[name]
+        )
+        for name, instance_id in generations.items()
+    }
 
-    def run(command, **_kwargs):  # noqa: ANN001, ANN202
-        order.append(command[-1])
-        if command[-1] == "agent-a":
-            payload = {
-                "outcome": "verified_deleted",
-                "verified": True,
-                "infrastructure_absent": True,
-                "iam_cleanup_complete": False,
-                "shared_iam_preserved": True,
-                "iam_disposition": "retained_shared",
-            }
-        elif command[-1] == "agent-b":
-            payload = {
-                "outcome": "verified_deleted",
-                "verified": True,
-                "infrastructure_absent": True,
-                "iam_cleanup_complete": True,
-                "shared_iam_preserved": False,
-                "iam_disposition": "deleted",
-            }
-        else:
-            payload = {}
-        return subprocess.CompletedProcess(
-            command, 0, stdout=json.dumps(payload), stderr=""
+    def record(name: str) -> None:
+        _record_agent_destroy_success(
+            name, generations[name], iam_disposition=dispositions[name]
         )
 
-    result = project_destroy.execute_project_destroy("demo", phases, runner=run)
+    result, order = _execute_project_agent_payloads(
+        _project_agent_destroy_phases(generations), payloads, on_agent=record
+    )
 
     assert order == ["agent-a", "agent-b", "controller-delete"]
     assert result["status"] == "success"
@@ -325,43 +409,26 @@ def test_multi_agent_destroy_converges_after_final_sibling_deletes_shared_iam(
 def test_multi_agent_destroy_blocks_when_final_sibling_retains_shared_iam(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from npa import project_destroy
     from npa.clients import config as config_module
 
     _write_project_config(config_module.CONFIG_PATH)
-    order: list[str] = []
-    phases = [
-        DestroyPhase(
-            "agents",
-            (
-                ("npa", "agent-destroy", "agent-a"),
-                ("npa", "agent-destroy", "agent-b"),
-            ),
-            "agents",
-        ),
-        DestroyPhase(
-            "controller",
-            (("npa", "controller-delete"),),
-            "controller",
-            ("agents",),
-        ),
-    ]
-    def run(command, **_kwargs):  # noqa: ANN001, ANN202
-        order.append(command[-1])
-        iam_complete = command[-1] == "agent-a"
-        payload = {
-            "outcome": "verified_deleted",
-            "verified": True,
-            "infrastructure_absent": True,
-            "iam_cleanup_complete": iam_complete,
-            "shared_iam_preserved": not iam_complete,
-            "iam_disposition": "deleted" if iam_complete else "retained_shared",
-        }
-        return subprocess.CompletedProcess(
-            command, 0, stdout=json.dumps(payload), stderr=""
+    generations = {"agent-a": "instance-a", "agent-b": "instance-b"}
+    dispositions = {"agent-a": "deleted", "agent-b": "retained_shared"}
+    payloads = {
+        name: _agent_destroy_success_payload(
+            name, instance_id, iam_disposition=dispositions[name]
+        )
+        for name, instance_id in generations.items()
+    }
+
+    def record(name: str) -> None:
+        _record_agent_destroy_success(
+            name, generations[name], iam_disposition=dispositions[name]
         )
 
-    result = project_destroy.execute_project_destroy("demo", phases, runner=run)
+    result, order = _execute_project_agent_payloads(
+        _project_agent_destroy_phases(generations), payloads, on_agent=record
+    )
 
     assert order == ["agent-a", "agent-b"]
     assert result["status"] == "partial"
@@ -371,7 +438,17 @@ def test_multi_agent_destroy_blocks_when_final_sibling_retains_shared_iam(
     ]
     assert "agent IAM cleanup remains unresolved" in result["phases"][0]["errors"][0]
     assert result["phases"][0]["recovery_commands"] == [
-        ["npa", "agent-destroy", "agent-b"],
+        [
+            "npa",
+            "agent",
+            "destroy",
+            "--project",
+            "demo",
+            "--name",
+            "agent-b",
+            "--yes",
+            "--json",
+        ],
     ]
     assert result["phases"][0]["evidence"]["shared_iam_state"] == "retained_shared"
 
@@ -410,6 +487,143 @@ def test_malformed_agent_destroy_output_blocks_dependent_retirement(
         "partial",
         "skipped_dependency",
     ]
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {
+            "infrastructure_absent": True,
+            "iam_cleanup_complete": True,
+        },
+        {
+            "outcome": "verified_deleted",
+            "verified": True,
+            "infrastructure_absent": True,
+            "iam_cleanup_complete": True,
+            "shared_iam_preserved": False,
+            "iam_disposition": "deleted",
+            "identity_source": "live_configuration",
+            "receipt_id": "",
+            "identity": {
+                "project_alias": "other",
+                "project_id": "project-b",
+                "agent_name": "other-agent",
+                "instance_id": "other-instance",
+            },
+            "identity_field_sources": {},
+        },
+    ],
+    ids=["sparse", "conflicting-identity"],
+)
+def test_incomplete_or_conflicting_agent_success_evidence_blocks_dependents(
+    monkeypatch: pytest.MonkeyPatch,
+    payload: dict[str, object],
+) -> None:
+    from npa.clients import config as config_module
+
+    _write_project_config(config_module.CONFIG_PATH)
+    result, order = _execute_project_agent_payloads(
+        _project_agent_destroy_phases({"agent": "instance-a"}),
+        {"agent": payload},
+    )
+
+    assert order == ["agent"]
+    assert result["status"] == "partial"
+    assert [item["status"] for item in result["phases"]] == [
+        "partial",
+        "skipped_dependency",
+    ]
+
+
+def test_agent_success_output_without_authoritative_receipt_blocks_dependents(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa.clients import config as config_module
+
+    _write_project_config(config_module.CONFIG_PATH)
+    payload = _agent_destroy_success_payload(
+        "agent", "instance-a", iam_disposition="deleted"
+    )
+    result, order = _execute_project_agent_payloads(
+        _project_agent_destroy_phases({"agent": "instance-a"}),
+        {"agent": payload},
+    )
+
+    assert order == ["agent"]
+    assert result["status"] == "partial"
+    assert [item["status"] for item in result["phases"]] == [
+        "partial",
+        "skipped_dependency",
+    ]
+
+
+def test_agent_success_for_unplanned_instance_generation_blocks_dependents(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa.clients import config as config_module
+
+    _write_project_config(config_module.CONFIG_PATH)
+    _record_agent_destroy_success(
+        "agent", "replacement-instance", iam_disposition="deleted"
+    )
+    payload = _agent_destroy_success_payload(
+        "agent", "replacement-instance", iam_disposition="deleted"
+    )
+    result, order = _execute_project_agent_payloads(
+        _project_agent_destroy_phases({"agent": "instance-a"}),
+        {"agent": payload},
+    )
+
+    assert order == ["agent"]
+    assert result["status"] == "partial"
+    assert result["phases"][0]["status"] == "partial"
+
+
+def test_newer_agent_receipt_failure_overrides_success_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa.clients import config as config_module
+
+    _write_project_config(config_module.CONFIG_PATH)
+    times = iter(("2099-01-01T00:00:00Z", "2099-01-01T00:00:01Z"))
+    monkeypatch.setattr(
+        teardown_receipts,
+        "utc_now",
+        lambda: next(times, "2099-01-01T00:00:02Z"),
+    )
+    _record_agent_destroy_success("agent", "instance-a", iam_disposition="deleted")
+    teardown_receipts.record_teardown_event(
+        phase="agent",
+        resource="agent",
+        terminal_state="verification_failed",
+        project_alias="demo",
+        project_id="project-a",
+        identity={
+            "project_alias": "demo",
+            "project_id": "project-a",
+            "agent_name": "agent",
+            "instance_id": "instance-a",
+        },
+        action={"kind": "terraform_agent_destroy", "purge_iam": True},
+        verification={
+            **_agent_terminal_verification(),
+            "iam_cleanup_complete": False,
+            "iam_disposition": "verification_unresolved",
+        },
+        errors=["later provider verification failed"],
+    )
+    payload = _agent_destroy_success_payload(
+        "agent", "instance-a", iam_disposition="deleted"
+    )
+    result, order = _execute_project_agent_payloads(
+        _project_agent_destroy_phases({"agent": "instance-a"}),
+        {"agent": payload},
+    )
+
+    assert order == ["agent"]
+    assert result["status"] == "partial"
+    assert result["phases"][0]["status"] == "partial"
 
 
 def test_direct_forget_preserves_project_with_unresolved_agent_iam(

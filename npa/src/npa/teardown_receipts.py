@@ -912,6 +912,61 @@ _AGENT_TERRAFORM_GRAPH = frozenset(
 )
 
 
+def agent_teardown_event_disposition(event: Mapping[str, Any]) -> str:
+    """Classify complete, immutable agent teardown evidence.
+
+    ``retained_shared`` is terminal for one agent generation but is only a
+    provisional project-level success: a later sibling must still prove the
+    shared account absent.  Every other incomplete or conflicting shape stays
+    unresolved.
+    """
+
+    phase = str(event.get("phase") or "")
+    state = str(event.get("terminal_state") or "").lower()
+    action = event.get("action")
+    action = action if isinstance(action, Mapping) else {}
+    verification = event.get("verification")
+    verification = verification if isinstance(verification, Mapping) else {}
+    identity = event.get("identity")
+    identity = identity if isinstance(identity, Mapping) else {}
+    errors = event.get("errors")
+    graph = verification.get("terraform_dependency_graph")
+    resource = str(event.get("resource") or "")
+    event_project_id = str(event.get("project_id") or "").strip()
+    identity_project_id = str(identity.get("project_id") or "").strip()
+    identity_agent_name = str(identity.get("agent_name") or "").strip()
+    common_authority = bool(
+        phase == "agent"
+        and state in {"verified_absent", "verified_deleted"}
+        and action.get("kind") == "terraform_agent_destroy"
+        and isinstance(errors, list)
+        and not errors
+        and bool(event_project_id)
+        and identity_project_id == event_project_id
+        and bool(str(identity.get("instance_id") or "").strip())
+        and bool(identity_agent_name)
+        and identity_agent_name == resource
+        and verification.get("exact_instance_absent") is True
+        and verification.get("local_state_retired") is True
+        and verification.get("terraform_destroy_completed") is True
+        and isinstance(graph, list)
+        and _AGENT_TERRAFORM_GRAPH.issubset(graph)
+    )
+    if not common_authority:
+        return "unresolved"
+    iam_complete = verification.get("iam_cleanup_complete")
+    iam_disposition = str(verification.get("iam_disposition") or "")
+    if iam_complete is True and iam_disposition in {"absent", "deleted"}:
+        return "verified_absent"
+    if (
+        iam_complete is False
+        and iam_disposition == "retained_shared"
+        and action.get("purge_iam") is True
+    ):
+        return "retained_shared"
+    return "unresolved"
+
+
 def teardown_event_authorizes_convergence(event: Mapping[str, Any]) -> bool:
     """Validate terminal evidence against the action that produced it.
 
@@ -977,25 +1032,7 @@ def teardown_event_authorizes_convergence(event: Mapping[str, Any]) -> bool:
             )
         )
     if phase == "agent":
-        graph = verification.get("terraform_dependency_graph")
-        iam_authoritative = bool(
-            verification.get("iam_cleanup_complete") is True
-            and verification.get("iam_disposition") in {"absent", "deleted"}
-        )
-        return bool(
-            state in {"verified_absent", "verified_deleted"}
-            and kind == "terraform_agent_destroy"
-            and bool(str(identity.get("project_id") or "").strip())
-            and bool(str(identity.get("instance_id") or "").strip())
-            and str(identity.get("agent_name") or event.get("resource") or "")
-            == str(event.get("resource") or "")
-            and verification.get("exact_instance_absent") is True
-            and verification.get("local_state_retired") is True
-            and verification.get("terraform_destroy_completed") is True
-            and isinstance(graph, list)
-            and _AGENT_TERRAFORM_GRAPH.issubset(graph)
-            and iam_authoritative
-        )
+        return agent_teardown_event_disposition(event) == "verified_absent"
     if phase == "bucket":
         return bool(
             state in {"verified_absent", "verified_deleted"}

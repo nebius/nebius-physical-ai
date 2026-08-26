@@ -28,6 +28,76 @@ from npa.project_destroy import DestroyPhase, execute_project_destroy
 from npa.provisioning_journal import ProvisioningOperation, operation_context
 
 
+def _project_agent_success_payload(
+    *,
+    project_alias: str,
+    project_id: str,
+    name: str,
+    instance_id: str,
+    iam_disposition: str = "deleted",
+) -> dict[str, object]:
+    iam_complete = iam_disposition in {"absent", "deleted"}
+    return {
+        "outcome": "verified_deleted",
+        "verified": True,
+        "infrastructure_absent": True,
+        "iam_cleanup_complete": iam_complete,
+        "shared_iam_preserved": iam_disposition == "retained_shared",
+        "iam_disposition": iam_disposition,
+        "identity_source": "live_configuration",
+        "receipt_id": "",
+        "identity": {
+            "project_alias": project_alias,
+            "project_id": project_id,
+            "agent_name": name,
+            "instance_id": instance_id,
+        },
+        "identity_field_sources": {},
+    }
+
+
+def _record_project_agent_success(
+    *,
+    project_alias: str,
+    project_id: str,
+    name: str,
+    instance_id: str,
+    iam_disposition: str = "deleted",
+) -> None:
+    iam_complete = iam_disposition in {"absent", "deleted"}
+    teardown_receipts.record_teardown_event(
+        phase="agent",
+        resource=name,
+        terminal_state="verified_deleted",
+        project_alias=project_alias,
+        project_id=project_id,
+        identity={
+            "project_alias": project_alias,
+            "project_id": project_id,
+            "agent_name": name,
+            "instance_id": instance_id,
+        },
+        action={"kind": "terraform_agent_destroy", "purge_iam": True},
+        verification={
+            "exact_instance_absent": True,
+            "terraform_destroy_completed": True,
+            "terraform_dependency_graph": sorted(
+                {
+                    "compute_instance",
+                    "boot_disk",
+                    "network",
+                    "subnet",
+                    "security_group",
+                    "public_ip",
+                }
+            ),
+            "local_state_retired": True,
+            "iam_cleanup_complete": iam_complete,
+            "iam_disposition": iam_disposition,
+        },
+    )
+
+
 class S3Error(Exception):
     def __init__(self, code: str, status: int) -> None:
         self.response = {
@@ -2747,12 +2817,20 @@ def test_destroy_resume_replays_recreated_resources_before_project_delete(
         calls.append(command[1])
         if command[1] == "workflow-list":
             stdout = '{"runs": []}'
-        elif command[1] == "agent-destroy":
+        elif command[1] == "agent":
+            _record_project_agent_success(
+                project_alias="demo",
+                project_id="project-a",
+                name="agent",
+                instance_id="instance-a",
+            )
             stdout = json.dumps(
-                {
-                    "infrastructure_absent": True,
-                    "iam_cleanup_complete": True,
-                }
+                _project_agent_success_payload(
+                    project_alias="demo",
+                    project_id="project-a",
+                    name="agent",
+                    instance_id="instance-a",
+                )
             )
         else:
             stdout = "{}"
@@ -2765,7 +2843,25 @@ def test_destroy_resume_replays_recreated_resources_before_project_delete(
     )
     phases = [
         DestroyPhase("workflows", (("npa", "workflow-list"),), "workflows"),
-        DestroyPhase("agents", (("npa", "agent-destroy"),), "agents", ("workflows",)),
+        DestroyPhase(
+            "agents",
+            (
+                (
+                    "npa",
+                    "agent",
+                    "destroy",
+                    "--project",
+                    "demo",
+                    "--name",
+                    "agent",
+                    "--yes",
+                    "--json",
+                ),
+            ),
+            "agents",
+            ("workflows",),
+            {"agent_generations": {"agent": ["instance-a"]}},
+        ),
         DestroyPhase(
             "controller", (("npa", "controller-destroy"),), "controller", ("workflows",)
         ),
@@ -2788,7 +2884,7 @@ def test_destroy_resume_replays_recreated_resources_before_project_delete(
     assert result["status"] == "success"
     assert calls == [
         "workflow-list",
-        "agent-destroy",
+        "agent",
         "controller-destroy",
         "cluster-destroy",
         "delete-project",
@@ -3119,7 +3215,24 @@ def test_incident_retains_alias_until_iam_recovers_then_deletes_project_from_rec
     iam_resolved = False
     phases = [
         DestroyPhase("workflows", (("npa", "workflow-list"),), "inventory"),
-        DestroyPhase("agents", (("npa", "agent-destroy"),), "agent"),
+        DestroyPhase(
+            "agents",
+            (
+                (
+                    "npa",
+                    "agent",
+                    "destroy",
+                    "--project",
+                    "demo",
+                    "--name",
+                    "agent",
+                    "--yes",
+                    "--json",
+                ),
+            ),
+            "agent",
+            metadata={"agent_generations": {"agent": ["instance-a"]}},
+        ),
         DestroyPhase("clusters", (), "none", ("workflows",)),
         DestroyPhase(
             "bucket", (("npa", "bucket-delete"),), "bucket", ("agents", "clusters")
@@ -3143,16 +3256,24 @@ def test_incident_retains_alias_until_iam_recovers_then_deletes_project_from_rec
                 stdout='{"runs": []}',
                 stderr="Warning: SkyPilot update check skipped",
             )
-        if cmd[1] == "agent-destroy":
+        if cmd[1] == "agent":
             if iam_resolved:
+                _record_project_agent_success(
+                    project_alias="demo",
+                    project_id="project-a",
+                    name="agent",
+                    instance_id="instance-a",
+                )
                 return subprocess.CompletedProcess(
                     cmd,
                     0,
                     stdout=json.dumps(
-                        {
-                            "infrastructure_absent": True,
-                            "iam_cleanup_complete": True,
-                        }
+                        _project_agent_success_payload(
+                            project_alias="demo",
+                            project_id="project-a",
+                            name="agent",
+                            instance_id="instance-a",
+                        )
                     ),
                     stderr="",
                 )
@@ -3171,7 +3292,7 @@ def test_incident_retains_alias_until_iam_recovers_then_deletes_project_from_rec
 
     initial = execute_project_destroy("demo", phases, runner=runner)
     assert initial["status"] == "partial"
-    assert order == ["workflow-list", "agent-destroy", "local-cleanup"]
+    assert order == ["workflow-list", "agent", "local-cleanup"]
     initial_statuses = {
         item["phase"]: item["status"] for item in initial["phases"]
     }
@@ -3232,7 +3353,7 @@ def test_incident_retains_alias_until_iam_recovers_then_deletes_project_from_rec
     assert retried["status"] == "success"
     assert order[before_retry:] == [
         "workflow-list",
-        "agent-destroy",
+        "agent",
         "bucket-delete",
         "storage-iam",
         "local-cleanup",
@@ -3749,6 +3870,12 @@ def test_full_mocked_project_lifecycle_is_exact_isolated_and_idempotent(
         if command[1:3] == ["agent", "destroy"]:
             assert command[command.index("--project") + 1] == "target"
             provider["instances"].discard("instance-target")
+            _record_project_agent_success(
+                project_alias="target",
+                project_id="project-target",
+                name="agent",
+                instance_id="instance-target",
+            )
         elif command[1:3] == ["skypilot", "cleanup-controller"]:
             assert command[command.index("--cluster-id") + 1] == "cluster-target-id"
             provider["controllers"].discard("cluster-target-id")
@@ -3767,10 +3894,12 @@ def test_full_mocked_project_lifecycle_is_exact_isolated_and_idempotent(
             main_module._forget_project("target")
         stdout = (
             json.dumps(
-                {
-                    "infrastructure_absent": True,
-                    "iam_cleanup_complete": True,
-                }
+                _project_agent_success_payload(
+                    project_alias="target",
+                    project_id="project-target",
+                    name="agent",
+                    instance_id="instance-target",
+                )
             )
             if command[1:3] == ["agent", "destroy"]
             else "{}"
