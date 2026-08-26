@@ -120,6 +120,65 @@ def test_known_project_no_provision_is_provider_free_and_deselects_old_storage(
     assert "old-synthetic-bucket" not in result.output
 
 
+def test_known_project_no_provision_disables_retained_exact_project_storage(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _config_path, credentials_path = _point_configure_at_tmp(monkeypatch, tmp_path)
+    retained_storage = {
+        "bucket": "s3://retained-synthetic-bucket/",
+        "endpoint_url": "https://storage.example.invalid",
+        "aws_access_key_id": "retained-access",
+        "aws_secret_access_key": "retained-secret",
+    }
+    credentials_path.write_text(
+        yaml.safe_dump(
+            {
+                "project_credentials": {
+                    "schema_version": "npa.project-credentials.v2",
+                    "current_project_id": "project-synthetic",
+                    "projects": {
+                        "project-synthetic": {
+                            "project_id": "project-synthetic",
+                            "aliases": ["fresh"],
+                            "storage_selected": True,
+                            "storage": retained_storage,
+                        }
+                    },
+                },
+                "storage": retained_storage,
+            }
+        ),
+        encoding="utf-8",
+    )
+    credentials_path.chmod(0o600)
+
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("project-only configure must not contact a provider")
+
+    monkeypatch.setattr(nebius, "get_iam_token", forbidden)
+    monkeypatch.setattr(nebius, "set_profile_project", forbidden)
+    monkeypatch.setattr(nebius, "get_project_name", forbidden)
+    monkeypatch.setattr(cli_main, "_provision_object_storage", forbidden)
+    monkeypatch.setattr(
+        "npa.clients.storage_validation.probe_storage_write", forbidden
+    )
+
+    result = runner.invoke(app, _known_project_args(provision=False))
+
+    assert result.exit_code == 0, result.output
+    saved_credentials = yaml.safe_load(credentials_path.read_text())
+    retained_record = saved_credentials["project_credentials"]["projects"][
+        "project-synthetic"
+    ]
+    assert retained_record["storage_selected"] is False
+    assert retained_record["storage"] == retained_storage
+    resolved = config_module.resolve_project_storage("fresh")
+    assert resolved.checkpoint_bucket == ""
+    assert resolved.endpoint_url == ""
+    assert resolved.aws_access_key_id == ""
+    assert resolved.aws_secret_access_key == ""
+
+
 def test_known_project_provision_is_explicit_and_summarized(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
