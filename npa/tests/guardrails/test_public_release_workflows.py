@@ -97,6 +97,13 @@ def test_prepublication_gates_run_before_the_public_dev_push() -> None:
     assert "if matrix and head != sha" in text
 
 
+def test_public_image_workflow_preserves_large_image_security_scans() -> None:
+    text = PUBLISH.read_text(encoding="utf-8")
+    assert "docker buildx prune --all --force" in text
+    assert text.count("TMPDIR: /mnt/npa-trivy") == 2
+    assert "scanners: vuln,secret,license" in text
+
+
 def test_post_push_and_promotion_gates_are_digest_bound() -> None:
     text = PUBLISH.read_text(encoding="utf-8")
     for required in (

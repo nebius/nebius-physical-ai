@@ -295,8 +295,19 @@ jobs:
               /opt/npa/docker/workbench/sonic/verify_mujoco_image.py
           fi
 
+      # CUDA/AI images can exceed 25 GB. Once the exact loaded image passes its
+      # contract, BuildKit's duplicate cache is no longer evidence and can be
+      # discarded. Trivy's export goes on the hosted runner's large temp disk so
+      # the unchanged vulnerability/secret/license gates inspect every layer.
+      - name: Prepare capacity for full-image security scans
+        run: |
+          docker buildx prune --all --force
+          sudo install -d -m 0777 /mnt/npa-trivy
+
       - name: Pre-publication vulnerability, secret, and license scan
         uses: aquasecurity/trivy-action@v0.36.0
+        env:
+          TMPDIR: /mnt/npa-trivy
         with:
           image-ref: ${{ matrix.image }}
           scanners: vuln,secret,license
@@ -307,6 +318,8 @@ jobs:
 
       - name: Generate pre-publication SBOM
         uses: aquasecurity/trivy-action@v0.36.0
+        env:
+          TMPDIR: /mnt/npa-trivy
         with:
           image-ref: ${{ matrix.image }}
           scanners: vuln
