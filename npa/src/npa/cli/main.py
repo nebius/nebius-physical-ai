@@ -2023,6 +2023,23 @@ def _probe_hf_assets_parallel(
 def _model_access_note(hf_token: str, ngc_key: str) -> str:
     """Return a redacted, non-gating HF/NGC access summary for configure."""
 
+    try:
+        return _build_model_access_note(hf_token, ngc_key)
+    except Exception as exc:  # noqa: BLE001 - the whole advisory is non-gating
+        logger.debug(
+            "Configure model-access advisory unavailable (%s)",
+            type(exc).__name__,
+        )
+        return (
+            "[NOTE] Access checks are informational; HF/NGC access advisory "
+            "unavailable. Configuration remains saved. Use `npa workbench health "
+            "access` when model access must be enforced."
+        )
+
+
+def _build_model_access_note(hf_token: str, ngc_key: str) -> str:
+    """Build the advisory inside the fail-safe configure boundary."""
+
     from npa.clients import huggingface
     from npa.clients.huggingface import HFAccessResult
     from npa.workbench.model_access import gated_hf_assets

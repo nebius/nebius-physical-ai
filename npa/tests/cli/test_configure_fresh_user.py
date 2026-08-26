@@ -382,6 +382,60 @@ def test_access_probe_exceptions_are_informative_and_never_gate(
     assert "nvapi-synthetic-secret" not in note
 
 
+def test_interactive_configure_survives_access_advisory_construction_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    config_path, _credentials_path = _point_configure_at_tmp(monkeypatch, tmp_path)
+    monkeypatch.setattr(cli_main, "_ensure_nebius_profile", lambda: True)
+    monkeypatch.setattr(nebius, "current_project_id", lambda: "project-synthetic")
+    monkeypatch.setattr(nebius, "current_tenant_id", lambda: "tenant-synthetic")
+    monkeypatch.setattr(nebius, "list_projects_in_tenant", lambda *_args: [])
+    monkeypatch.setattr(
+        cli_main,
+        "_provision_object_storage",
+        lambda *_args, **_kwargs: {
+            "aws_access_key_id": "synthetic-access",
+            "aws_secret_access_key": "synthetic-storage-secret",
+            "endpoint_url": "https://storage.example.invalid",
+            "bucket": "s3://new-synthetic-bucket/",
+            "_validated": "true",
+            "_disposition": "created",
+        },
+    )
+    monkeypatch.setattr(
+        cli_main,
+        "_prompt_setup_tokens",
+        lambda *_args, **_kwargs: (
+            "hf_synthetic_secret",
+            "",
+            "nvapi-synthetic-secret",
+        ),
+    )
+
+    def asset_discovery_failed() -> list[object]:
+        raise RuntimeError("asset discovery echoed hf_synthetic_secret")
+
+    monkeypatch.setattr(
+        "npa.workbench.model_access.gated_hf_assets", asset_discovery_failed
+    )
+
+    result = runner.invoke(
+        app,
+        ["configure", "--interactive", "--provision"],
+        input="\n\n\n",
+    )
+
+    assert result.exit_code == 0, result.output
+    saved = yaml.safe_load(config_path.read_text())
+    selected = saved["projects"][saved["default_project"]]
+    assert selected["project_id"] == "project-synthetic"
+    assert "configuration=saved" in result.output
+    assert "Access checks are informational" in result.output
+    assert "advisory unavailable" in result.output
+    assert "hf_synthetic_secret" not in result.output
+    assert "nvapi-synthetic-secret" not in result.output
+
+
 def test_environment_credential_import_saves_then_reports_advisory(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
