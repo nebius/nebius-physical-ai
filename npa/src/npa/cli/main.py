@@ -762,7 +762,7 @@ def _provision_object_storage(
         selected = bucket_name or _generated_configure_bucket_name(
             tenant_id, project_id
         )
-        _generated_name = not bool(bucket_name)
+        _generated_name = _generated_name or not bool(bucket_name)
         bucket_name = selected
         typer.echo(
             "Object storage (non-interactive): "
@@ -801,23 +801,12 @@ def _provision_object_storage(
     create_storage_class = DEFAULT_BUCKET_STORAGE_CLASS
     if exists is True:
         if _generated_name:
-            alternate = _generated_configure_bucket_name(tenant_id, project_id)
             typer.echo(
                 f"  Generated name collision: exact bucket '{bucket_name}' already "
-                f"exists. It will not be adopted; retrying with '{alternate}'."
+                "exists. It will not be adopted or changed; re-run configure to "
+                "generate another fresh name."
             )
-            return _provision_object_storage(
-                nebius_client,
-                ask,
-                project_id=project_id,
-                tenant_id=tenant_id,
-                region=region,
-                existing_bucket=alternate,
-                interactive=False,
-                bucket_storage_class=requested_storage_class,
-                bucket_max_size_bytes=requested_max_size_bytes,
-                _generated_name=True,
-            )
+            return None
         if requested_storage_class or requested_max_size_bytes is not None:
             item = nebius_client.get_bucket_by_name(project_id, bucket_name)
             spec = (item or {}).get("spec", {})

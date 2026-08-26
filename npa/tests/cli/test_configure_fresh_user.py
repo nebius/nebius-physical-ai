@@ -376,18 +376,17 @@ def test_generated_configure_bucket_names_are_utc_and_collision_safe() -> None:
 def test_generated_exact_bucket_collision_is_reported_and_never_adopted(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    generated = iter(["fresh-collision", "fresh-retry"])
     lookups: list[str] = []
     provisioned: list[str] = []
     monkeypatch.setattr(
         cli_main,
         "_generated_configure_bucket_name",
-        lambda *_args: next(generated),
+        lambda *_args: "fresh-collision",
     )
 
     def exists(_project_id: str, bucket_name: str) -> bool:
         lookups.append(bucket_name)
-        return bucket_name == "fresh-collision"
+        return True
 
     monkeypatch.setattr(nebius, "bucket_exists", exists)
 
@@ -415,10 +414,9 @@ def test_generated_exact_bucket_collision_is_reported_and_never_adopted(
     )
 
     output = capsys.readouterr().out
-    assert lookups == ["fresh-collision", "fresh-retry"]
-    assert provisioned == ["fresh-retry"]
-    assert result is not None
-    assert result["_disposition"] == "created"
+    assert lookups == ["fresh-collision"]
+    assert provisioned == []
+    assert result is None
     assert "Generated name collision" in output
     assert "will not be adopted" in output
 

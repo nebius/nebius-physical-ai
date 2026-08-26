@@ -330,9 +330,9 @@ npa configure --no-interactive \
 ```
 
 The generated name includes a UTC timestamp and random suffix. In the unlikely
-event of an exact collision, NPA reports it, refuses to adopt the old bucket, and
-tries another fresh name. Create-only class and cap options never alter an
-existing bucket.
+event of an exact collision, NPA reports it and stops without adopting or
+changing the old bucket; re-run configure to generate another fresh name.
+Create-only class and cap options never alter an existing bucket.
 
 These are non-secret identifiers; do not pass IAM, S3, Token Factory, HF, or NGC
 secrets on the command line. The command reuses existing storage only after the
