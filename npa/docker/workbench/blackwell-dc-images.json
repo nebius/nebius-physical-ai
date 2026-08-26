@@ -601,8 +601,10 @@
       "measured_arch_list": ["sm_75", "sm_80", "sm_86", "sm_90", "sm_100", "sm_120", "compute_120"],
       "validated_tag": "dev-56d8c4f3f05db7aa3b03323441a3e0d7b97ac8da",
       "validated_digest": "sha256:6e42f553a0d14712dc1ed7fa42c72b0f083f4ae3f89b30eaf0e93cfdf64e820d",
+      "published_tag": "ray1-cu130",
+      "published_digest": "sha256:6e42f553a0d14712dc1ed7fa42c72b0f083f4ae3f89b30eaf0e93cfdf64e820d",
       "publication_model": "exact-digest-promoted",
-      "published_registries": ["public-development"]
+      "published_registries": ["public-development", "public-release"]
     },
     {
       "name": "npa-content-agents",

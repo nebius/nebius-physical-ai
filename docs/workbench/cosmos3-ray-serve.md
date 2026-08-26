@@ -77,8 +77,8 @@ Before launch, run `npa workbench health preflight --checks hf,ngc,s3 --json`
 and `npa workbench health access --capability cosmos3 --json`. Keep exact cloud
 resource and storage identifiers only in access-controlled validation evidence.
 
-The accepted public development image is
-`dev-56d8c4f3f05db7aa3b03323441a3e0d7b97ac8da` at
+The supported public release is `ray1-cu130`. It and the retained immutable
+development tag `dev-56d8c4f3f05db7aa3b03323441a3e0d7b97ac8da` resolve to
 `sha256:6e42f553a0d14712dc1ed7fa42c72b0f083f4ae3f89b30eaf0e93cfdf64e820d`.
 On 2026-08-26, that exact digest completed independent guarded two-sample
 text-to-image batches on B200 and RTX PRO 6000. Each run returned two structured
