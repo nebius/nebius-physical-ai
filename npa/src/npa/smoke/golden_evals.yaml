@@ -421,6 +421,32 @@ containers:
       timeout_seconds: 3600
       status: ready
 
+  cosmos3-ray-serve:
+    image: npa-cosmos3-ray-serve
+    dockerfile: npa/docker/workbench/cosmos3-ray-serve/Dockerfile
+    physical_ai:
+      useful: true
+      role: >-
+        Persistent, dynamically batched Cosmos3-Nano world-model serving for
+        synthetic-data-generation workloads.
+    safety:
+      runs_as: ubuntu
+      base_image: exact accepted npa-cosmos3 digest (CUDA 13, OpenMDW-1.1 source)
+      network: authenticated native Ray Serve API on :8000
+      external_fetch: [huggingface-models-and-guardrails]
+      notes: >-
+        Uses upstream OmniModelDeployment and @ray.serve.batch, not vLLM-Omni.
+        Model, VAE, and guardrail weights download only at runtime through the
+        operator model cache. Guardrails and bearer authentication default on.
+    golden_eval:
+      kind: server-smoke
+      command: bash /opt/cosmos3-ray-serve/smoke_functional.sh
+      artifact: provenance.json
+      serverless_gpu: b200
+      gpu: required
+      timeout_seconds: 3600
+      status: gpu-gated
+
   cosmos3-reason:
     image: npa-cosmos3-reason
     dockerfile: npa/docker/workbench/cosmos3-reason/Dockerfile

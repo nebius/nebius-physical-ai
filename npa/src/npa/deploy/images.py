@@ -40,6 +40,7 @@ CONTAINER_IMAGE_NAMES = {
     "cosmos": "npa-cosmos",
     "cosmos2-transfer": "npa-cosmos2-transfer",
     "cosmos3": "npa-cosmos3",
+    "cosmos3-ray-serve": "npa-cosmos3-ray-serve",
     "cosmos3-serving": "npa-cosmos3-serving",
     "cosmos3-reason": "npa-cosmos3-reason",
     "cosmos-curate": "npa-cosmos-curate",
@@ -124,9 +125,9 @@ OMNIVERSE_RESTRICTED_DERIVED_IMAGES = RESTRICTED_DERIVED_IMAGES
 #
 # Remove a tool from this set in the same change that records its accepted image
 # digest and its payload-scan/GPU evidence — not before.
-UNVALIDATED_PUBLICATION_TOOLS: frozenset[str] = frozenset()
+UNVALIDATED_PUBLICATION_TOOLS: frozenset[str] = frozenset({"cosmos3-ray-serve"})
 VALIDATION_CANDIDATE_TOOLS: frozenset[str] = frozenset()
-PUBLICATION_QUARANTINE_TOOLS: frozenset[str] = frozenset()
+PUBLICATION_QUARANTINE_TOOLS: frozenset[str] = UNVALIDATED_PUBLICATION_TOOLS
 
 # Some newer operator/BYOF pins have not yet been promoted to the supported
 # anonymous channel. Public execution stays on the last accepted release while
@@ -184,6 +185,7 @@ SUPPORTED_TOOL_VERSIONS = {
     # torch cu130. The immutable predecessor remains rollback provenance.
     # No weights baked; gated Cosmos3 checkpoints download at runtime.
     "cosmos3": "1.2.2-cu130-r6",
+    "cosmos3-ray-serve": "ray1-cu130-unbuilt",
     "cosmos3-serving": "0.2.0-oss",
     "cosmos3-reason": "cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
     "cosmos-curate": "0.1.2-skypilot-v1-20260813T164700Z",
@@ -690,15 +692,18 @@ def omniverse_restricted_image_names() -> list[str]:
 
 
 def publicly_publishable_tools() -> list[str]:
-    """Return the workbench tools that are OSS-redistributable to a public registry.
+    """Return tools accepted for the supported anonymous release inventory.
 
-    Excludes anything in ``RESTRICTED_PUBLICATION_TOOLS``. The Isaac images now
-    fetch Isaac Sim / Isaac Lab at run time under the operator's own EULA
-    acceptance. Cosmos3 serving and SONIC MuJoCo have exact accepted public
-    development digests and GPU evidence recorded for their current releases.
+    Redistribution eligibility is necessary but not sufficient: tools remain out
+    while ``PUBLICATION_QUARANTINE_TOOLS`` records that their built-image or GPU
+    evidence is incomplete. The trusted build workflow can still create their
+    immutable development artifact directly from the public packaging contract.
     """
     return sorted(
-        tool for tool in CONTAINER_IMAGE_NAMES if is_publicly_redistributable(tool)
+        tool
+        for tool in CONTAINER_IMAGE_NAMES
+        if is_publicly_redistributable(tool)
+        and tool not in PUBLICATION_QUARANTINE_TOOLS
     )
 
 

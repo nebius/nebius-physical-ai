@@ -61,6 +61,9 @@ def _p(
 #               the ones worth closing, tool by tool, with a live run each.
 #
 SPEC_GAP_REASONS: dict[str, dict[str, str]] = {
+    "cosmos3/ray-batch": {
+        "dry_run": "boolean",
+    },
     "alpamayo2-super/infer": {
         "manifest": "knob",
         "require_camera_projection": "boolean",
@@ -331,6 +334,25 @@ CONTRACTS: tuple[CapabilityContract, ...] = (
             _p("image", "image", "--image"),
             _p("prompt", "prompt", "--prompt"),
             _p("run_id", "run_id", "--run-id"),
+        ),
+    ),
+    CapabilityContract(
+        name="cosmos3/ray-batch",
+        cli_module="npa.cli.workbench.cosmos3",
+        cli_callback="ray_batch_cmd",
+        sdk_module="npa.sdk.workbench.cosmos3",
+        sdk_attr="ray_batch",
+        spec_path=SPECS / "cosmos3-ray-batch.yaml",
+        tool_ref="workbench.cosmos3.ray_batch",
+        spec_gap=("dry_run",),
+        params=(
+            _p("input_path", "input_path", "--input-path"),
+            _p("output_path", "output_path", "--output-path"),
+            _p("endpoint", "endpoint", "--endpoint"),
+            _p("token_env", "token_env", "--token-env"),
+            _p("timeout", "timeout", "--timeout"),
+            _p("run_id", "run_id", "--run-id"),
+            _p("dry_run", "dry_run", "--dry-run"),
         ),
     ),
     CapabilityContract(

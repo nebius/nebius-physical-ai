@@ -289,7 +289,7 @@ def test_rebuilt_cosmos3_serving_and_sonic_mujoco_are_gpu_accepted() -> None:
     assert RESTRICTED_DERIVED_IMAGES == frozenset()
     for tool in ("isaac-lab", "sonic", "groot", "cosmos3-serving", "sonic-mujoco"):
         assert is_publicly_redistributable(tool), tool
-    assert UNVALIDATED_PUBLICATION_TOOLS == frozenset()
+    assert UNVALIDATED_PUBLICATION_TOOLS == frozenset({"cosmos3-ray-serve"})
     assert set(images.GPU_ACCEPTED_PUBLIC_IMAGE_DIGESTS) == {
         "cosmos3-serving",
         "sonic-mujoco",
@@ -326,7 +326,11 @@ def test_public_set_includes_the_oss_tools() -> None:
         "sonic-mujoco",
     ):
         assert tool in public, tool
-    assert public == set(CONTAINER_IMAGE_NAMES) - RESTRICTED_PUBLICATION_TOOLS
+    assert public == (
+        set(CONTAINER_IMAGE_NAMES)
+        - RESTRICTED_PUBLICATION_TOOLS
+        - images.PUBLICATION_QUARANTINE_TOOLS
+    )
 
 
 def test_publish_plan_now_includes_the_isaac_images() -> None:

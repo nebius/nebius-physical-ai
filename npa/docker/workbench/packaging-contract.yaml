@@ -318,6 +318,18 @@ images:
       accepted terms, or gated assets. Both gated model repositories are probed
       before the documented 8-GPU service starts.
     redistribution: public
+  cosmos3-ray-serve:
+    dockerfile: cosmos3-ray-serve/Dockerfile
+    tier: service
+    ports: [8000]
+    notes: >-
+      Persistent Cosmos3-Nano service using cosmos-framework 1.2.2's native
+      OmniModelDeployment and @ray.serve.batch path. Derives from the exact
+      accepted npa-cosmos3 digest and adds only NPA's authenticated ingress and
+      S3 client contract. No model, VAE, or guardrail weights are baked;
+      operator-entitled assets use the standard runtime model cache. Guardrails
+      default on and the API returns structured SampleOutputs plus hashed media.
+    redistribution: public
   content-agents:
     dockerfile: content-agents/Dockerfile
     ovrtx_runtime_fetch: true

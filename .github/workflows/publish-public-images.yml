@@ -177,6 +177,7 @@ jobs:
             npa/tests/docker/test_ltx_runtime_bootstrap.py \
             npa/tests/docker/test_ltx_image_payload_scan.py \
             npa/tests/docker/test_cosmos3_serving_image_contract.py \
+            npa/tests/docker/test_cosmos3_ray_serve_image_contract.py \
             npa/tests/docker/test_sonic_mujoco_public_image_contract.py \
             npa/tests/deploy/test_public_publish.py \
             npa/tests/guardrails/test_secure_image_build_skill.py \
@@ -284,6 +285,11 @@ jobs:
               --tarball "$RUNNER_TEMP/${TOOL}.tar" \
               --json "$RUNNER_TEMP/${TOOL}-cosmos3-serving-payload.json"
           fi
+          if [ "$TOOL" = cosmos3-ray-serve ]; then
+            npa/.venv/bin/python npa/scripts/scan_image_cosmos3_ray_serve_payload.py \
+              --tarball "$RUNNER_TEMP/${TOOL}.tar" \
+              --json "$RUNNER_TEMP/${TOOL}-cosmos3-ray-serve-payload.json"
+          fi
           if [ "$TOOL" = sonic-mujoco ]; then
             docker run --rm --entrypoint /opt/npa/venv/bin/python "$IMAGE" \
               /opt/npa/docker/workbench/sonic/verify_mujoco_image.py
@@ -375,6 +381,13 @@ jobs:
             npa/.venv/bin/python npa/scripts/scan_image_cosmos3_serving_payload.py \
               --tarball "$RUNNER_TEMP/${TOOL}-pushed.tar" \
               --json "$RUNNER_TEMP/${TOOL}-pushed-cosmos3-serving-payload.json"
+          fi
+          if [ "$TOOL" = cosmos3-ray-serve ]; then
+            docker pull "$exact"
+            docker save --output "$RUNNER_TEMP/${TOOL}-pushed.tar" "$exact"
+            npa/.venv/bin/python npa/scripts/scan_image_cosmos3_ray_serve_payload.py \
+              --tarball "$RUNNER_TEMP/${TOOL}-pushed.tar" \
+              --json "$RUNNER_TEMP/${TOOL}-pushed-cosmos3-ray-serve-payload.json"
           fi
           if [ "$TOOL" = sonic-mujoco ]; then
             docker pull "$exact"

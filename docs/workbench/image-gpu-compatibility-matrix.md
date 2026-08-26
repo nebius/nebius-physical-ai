@@ -64,6 +64,7 @@ The old `npa-cosmos:1.0.9` cu126 image stopped at Hopper. Its additive cu128/tor
 | `npa-detection-training` | supported | **verified** [29] | **verified** [30] | **verified** [28] | **verified** [31] |
 | `npa-cosmos3` | supported | supported | **verified** [59] | supported | supported |
 | `npa-cosmos3-serving` (build-your-own) | blocked (8-GPU memory floor) | **verified** (8xH200) | supported (8 GPUs) | supported (8 GPUs) | supported (8 GPUs) |
+| `npa-cosmos3-ray-serve` | pending build | pending build | pending real Cosmos3-Nano Ray batch | pending real Cosmos3-Nano Ray batch | pending build |
 | `npa-content-agents` | supported (RT cores) | blocked (no RT cores) | **verified** [64] | blocked (no RT cores) | blocked (no RT cores) |
 | `npa-wan2-2` | supported | supported | **historical evidence** [60] | **historical evidence** [61] | supported |
 | `npa-ltx2` | built, no GPU result | built, no GPU result | built, no GPU result | built, no GPU result | built, no GPU result |

@@ -587,6 +587,18 @@
       "published_registries": ["public-development", "public-release"]
     },
     {
+      "name": "npa-cosmos3-ray-serve",
+      "dockerfile": "cosmos3-ray-serve/Dockerfile",
+      "build_script": "cosmos3-ray-serve/build.sh",
+      "redistribution": "public",
+      "verdict": "unknown",
+      "validation": "pending-build",
+      "torch": "inherited frozen CUDA 13 inference environment from exact accepted npa-cosmos3 digest",
+      "source_compiled_extensions": [],
+      "smoke": "guarded two-sample Cosmos3-Nano request through native @ray.serve.batch with structured outputs",
+      "notes": "B200 sm_100 and RTX PRO 6000 sm_120 require distinct real model-backed acceptance before publication."
+    },
+    {
       "name": "npa-content-agents",
       "dockerfile": "content-agents/Dockerfile",
       "build_script": "content-agents/build.sh",
