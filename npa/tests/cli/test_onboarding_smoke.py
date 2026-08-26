@@ -109,6 +109,7 @@ def test_known_project_configure_is_non_interactive_and_reuses_storage(
         [
             "configure",
             "--no-interactive",
+            "--provision",
             "--tenant-id",
             "tenant-known",
             "--project-id",
@@ -153,7 +154,7 @@ def test_known_project_configure_requires_complete_identity_flags() -> None:
     )
 
     assert result.exit_code != 0
-    assert "requires all of --tenant-id" in result.output
+    assert "Known-project configure requires" in result.output
     assert "--region" in result.output
     assert "--project-alias" in result.output
 
@@ -188,6 +189,7 @@ def test_known_project_configure_forwards_new_bucket_class_and_size(
         [
             "configure",
             "--no-interactive",
+            "--provision",
             "--tenant-id",
             "tenant-known",
             "--project-id",
@@ -213,6 +215,7 @@ def test_known_project_bucket_options_reject_invalid_values() -> None:
     common = [
         "configure",
         "--no-interactive",
+        "--provision",
         "--tenant-id",
         "tenant-known",
         "--project-id",
@@ -240,10 +243,14 @@ def test_noninteractive_storage_selection_never_prints_prompt_language(
     from npa.clients.storage_validation import StorageProbeResult
 
     fake_nebius = SimpleNamespace(
-        bucket_name_for=lambda _tenant, _project: "derived-bucket",
-        bucket_exists=lambda _project, _bucket: True,
+        bucket_exists=lambda _project, _bucket: False,
+        normalize_bucket_storage_class=lambda _value: "standard",
         NebiusError=RuntimeError,
         is_permission_denied=lambda _message: False,
+    )
+    monkeypatch.setattr(
+        "npa.cli.main._generated_configure_bucket_name",
+        lambda _tenant, _project: "derived-bucket",
     )
     monkeypatch.setattr(
         "npa.clients.storage_setup.provision_storage",
@@ -269,7 +276,10 @@ def test_noninteractive_storage_selection_never_prints_prompt_language(
 
     output = capsys.readouterr().out
     assert result is not None
-    assert "Object storage (non-interactive): selected 'derived-bucket'" in output
+    assert (
+        "Object storage (non-interactive): generated fresh name 'derived-bucket'"
+        in output
+    )
     assert "enter a bucket name" not in output.lower()
     assert "press Enter" not in output
 
@@ -283,7 +293,6 @@ def test_noninteractive_storage_creation_forwards_requested_shape(
     from npa.clients.storage_validation import StorageProbeResult
 
     fake_nebius = SimpleNamespace(
-        bucket_name_for=lambda _tenant, _project: "derived-bucket",
         bucket_exists=lambda _project, _bucket: False,
         normalize_bucket_storage_class=lambda value: (
             "enhanced_throughput" if value == "enhanced_throughput" else "standard"
@@ -312,6 +321,7 @@ def test_noninteractive_storage_creation_forwards_requested_shape(
         project_id="project",
         tenant_id="tenant",
         region="us-central1",
+        existing_bucket="derived-bucket",
         interactive=False,
         bucket_storage_class="enhanced_throughput",
         bucket_max_size_bytes=100 * 1024**3,
@@ -328,7 +338,6 @@ def test_noninteractive_storage_reuse_rejects_shape_mismatch(monkeypatch) -> Non
     from npa.cli.main import _provision_object_storage
 
     fake_nebius = SimpleNamespace(
-        bucket_name_for=lambda _tenant, _project: "derived-bucket",
         bucket_exists=lambda _project, _bucket: True,
         get_bucket_by_name=lambda _project, _bucket: {
             "spec": {"default_storage_class": "standard", "max_size_bytes": "1"}
@@ -350,6 +359,7 @@ def test_noninteractive_storage_reuse_rejects_shape_mismatch(monkeypatch) -> Non
         project_id="project",
         tenant_id="tenant",
         region="us-central1",
+        existing_bucket="derived-bucket",
         interactive=False,
         bucket_storage_class="enhanced_throughput",
         bucket_max_size_bytes=100 * 1024**3,

@@ -2026,13 +2026,10 @@ def bucket_name_for(tenant_id: str, project_id: str) -> str:
 
 
 def _list_project_buckets(project_id: str) -> list[dict[str, Any]]:
-    """Return every bucket in *project_id*.
+    """Return every bucket in *project_id* for explicit inventory commands.
 
-    Uses ``--all`` so existing buckets are never missed behind the CLI's default
-    pagination (matching the orphan-instance/tenant/project listers). Without it,
-    a project with many buckets returned only the first page, so ``bucket_exists``
-    reported ``False`` for a real bucket and ``npa configure`` wrongly prompted to
-    create a new one.
+    Exact-name configure checks use ``get_bucket_by_name`` and never enumerate
+    unrelated buckets in the project.
     """
     data = _run_json(
         [
@@ -2049,12 +2046,37 @@ def _list_project_buckets(project_id: str) -> list[dict[str, Any]]:
 
 
 def get_bucket_by_name(project_id: str, bucket_name: str) -> dict[str, Any] | None:
-    """Return the bucket list item for *bucket_name*, or ``None``."""
+    """Return the exact parent-scoped bucket, or ``None`` on verified NotFound."""
 
-    for item in _list_project_buckets(project_id):
-        if item.get("metadata", {}).get("name") == bucket_name:
-            return item
-    return None
+    exact_project = str(project_id or "").strip()
+    exact_name = str(bucket_name or "").strip()
+    if not exact_project or not exact_name:
+        return None
+    try:
+        item = _run_json(
+            [
+                "storage",
+                "bucket",
+                "get-by-name",
+                "--parent-id",
+                exact_project,
+                "--name",
+                exact_name,
+            ]
+        )
+    except NebiusError as exc:
+        if _is_exact_bucket_not_found(str(exc), exact_name):
+            return None
+        raise
+    metadata = item.get("metadata")
+    if not isinstance(metadata, dict):
+        raise NebiusError("exact bucket lookup returned no resource metadata")
+    if str(metadata.get("name") or "").strip() != exact_name:
+        raise NebiusError("exact bucket lookup returned an unexpected resource name")
+    returned_parent = str(metadata.get("parent_id") or "").strip()
+    if returned_parent and returned_parent != exact_project:
+        raise NebiusError("exact bucket lookup returned an unexpected parent")
+    return item
 
 
 def delete_bucket(bucket_id: str, *, ttl: str = "") -> None:
@@ -2076,10 +2098,37 @@ def delete_bucket(bucket_id: str, *, ttl: str = "") -> None:
 
 def bucket_exists(project_id: str, bucket_name: str) -> bool:
     """Return True when *bucket_name* already exists in the project."""
-    return any(
-        item.get("metadata", {}).get("name") == bucket_name
-        for item in _list_project_buckets(project_id)
-    )
+    return get_bucket_by_name(project_id, bucket_name) is not None
+
+
+def _is_exact_bucket_not_found(message: str, bucket_name: str) -> bool:
+    """Classify only a provider-confirmed absence of the requested bucket.
+
+    The command wrapper itself contains ``storage bucket`` for every failure, so
+    a broad ``"not found"`` substring check can misclassify a missing CLI
+    profile or parent project as bucket absence. Restrict the decision to the
+    provider detail line naming the exact bucket or explicitly saying that a
+    bucket does not exist.
+    """
+
+    exact_name = str(bucket_name or "").strip().lower()
+    for raw_line in str(message or "").splitlines():
+        detail = raw_line.strip().lower()
+        # The current CLI emits the bucket-specific provider detail before
+        # trailing request/trace diagnostics, so inspecting only the final line
+        # loses the authoritative NoSuchBucket result.
+        if "nosuchbucket" in detail:
+            return True
+        if not _is_not_found(detail):
+            continue
+        if exact_name and exact_name in detail:
+            return True
+        if re.search(
+            r"\bbucket\b\s+(?:does(?:n['’]?t| not)\s+exist|not found|is missing)\b",
+            detail,
+        ):
+            return True
+    return False
 
 
 def ensure_bucket(
@@ -2089,18 +2138,27 @@ def ensure_bucket(
     max_size_bytes: int = 0,
     default_storage_class: str = DEFAULT_BUCKET_STORAGE_CLASS,
     on_created: Callable[[str], None] | None = None,
+    allow_existing: bool = True,
 ) -> str:
     """Get or create an S3 bucket, return its name.
 
     *max_size_bytes* caps a newly created bucket (0 = unlimited). It is only
     applied when the bucket is created; an existing bucket is reused unchanged.
     *default_storage_class* is applied only when the bucket is created.
+    Set *allow_existing* false when a generated name must never be adopted if it
+    appears during either exact lookup race.
     """
     from npa.lifecycle_intent import forbid_destructive_provisioning
 
     forbid_destructive_provisioning("ensure_bucket")
     if bucket_exists(project_id, bucket_name):
-        return bucket_name
+        if allow_existing:
+            return bucket_name
+        raise NebiusError(
+            f"Object-storage bucket name '{bucket_name}' is already taken; "
+            "refusing to adopt an existing bucket selected by a generated-name "
+            "configure flow."
+        )
 
     storage_class = normalize_bucket_storage_class(default_storage_class)
     args = [
@@ -2129,7 +2187,13 @@ def ensure_bucket(
         if not _is_already_exists(str(exc)):
             raise
         if get_bucket_by_name(project_id, bucket_name) is not None:
-            return bucket_name
+            if allow_existing:
+                return bucket_name
+            raise NebiusError(
+                f"Object-storage bucket name '{bucket_name}' became already taken "
+                "during creation; refusing to adopt an existing bucket selected "
+                "by a generated-name configure flow."
+            ) from exc
         raise NebiusError(
             f"Object-storage bucket name '{bucket_name}' is already taken "
             "(bucket names are globally unique) and is not in project "
@@ -2159,6 +2223,7 @@ def bootstrap_environment(
     on_status: Callable[[str], None] | None = None,
     on_resource_created: Callable[[str, dict[str, str]], None] | None = None,
     allow_editors_fallback: bool = False,
+    allow_existing_bucket: bool = True,
 ) -> dict[str, str]:
     """Run the full environment bootstrap, return a dict of credentials.
 
@@ -2168,8 +2233,9 @@ def bootstrap_environment(
     to the deterministic ``bucket_name_for`` name. *bucket_max_size_bytes* caps
     a newly created bucket (0 = unlimited); it is ignored when the bucket
     already exists. *bucket_storage_class* applies only when the bucket is
-    created. *on_status* is an optional callback ``(message: str) -> None`` for
-    progress reporting.
+    created. Set *allow_existing_bucket* false for a generated configure name
+    that must fail closed across a concurrent create. *on_status* is an optional
+    callback ``(message: str) -> None`` for progress reporting.
     """
 
     from npa.lifecycle_intent import forbid_destructive_provisioning
@@ -2219,6 +2285,13 @@ def bootstrap_environment(
 
     bucket_name = bucket_name or bucket_name_for(tenant_id, project_id)
     saved_storage: dict[str, str] | None = None
+    created_bucket = False
+
+    def _record_created_bucket(name: str) -> None:
+        nonlocal created_bucket
+        created_bucket = True
+        if on_resource_created:
+            on_resource_created("bucket", {"name": name})
 
     _status("Setting up S3 bucket...")
     try:
@@ -2227,15 +2300,8 @@ def bootstrap_environment(
             bucket_name,
             max_size_bytes=bucket_max_size_bytes,
             default_storage_class=bucket_storage_class,
-            **(
-                {
-                    "on_created": lambda name: on_resource_created(
-                        "bucket", {"name": name}
-                    )
-                }
-                if on_resource_created
-                else {}
-            ),
+            on_created=_record_created_bucket,
+            allow_existing=allow_existing_bucket,
         )
     except NebiusError as exc:
         if not _is_permission_denied(str(exc)):
@@ -2351,6 +2417,7 @@ def bootstrap_environment(
         "nebius_secret_key": aws_secret_key,
         "s3_bucket": bucket_name,
         "s3_endpoint": s3_endpoint,
+        "bucket_disposition": "created" if created_bucket else "reused",
         "nebius_project_id": project_id,
         "nebius_region": region,
         "iam_binding_state": binding.state.value,
