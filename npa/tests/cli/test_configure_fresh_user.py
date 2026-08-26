@@ -156,6 +156,93 @@ def test_known_project_provision_is_explicit_and_summarized(
     assert "storage=created" in result.output
 
 
+@pytest.mark.parametrize("failure_phase", ["authentication", "storage-probe"])
+def test_failed_known_project_provision_preserves_prior_credential_selection(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    failure_phase: str,
+) -> None:
+    _config_path, credentials_path = _point_configure_at_tmp(monkeypatch, tmp_path)
+    prior_storage = {
+        "aws_access_key_id": "prior-access",
+        "aws_secret_access_key": "prior-secret",
+        "endpoint_url": "https://storage.example.invalid",
+        "bucket": "s3://prior-bucket/",
+    }
+    target_storage = {
+        "aws_access_key_id": "target-access",
+        "aws_secret_access_key": "target-secret",
+        "endpoint_url": "https://storage.example.invalid",
+        "bucket": "s3://target-bucket/",
+    }
+    credentials_path.write_text(
+        yaml.safe_dump(
+            {
+                "storage": prior_storage,
+                "storage_iam": {
+                    "service_account_id": "prior-account",
+                    "service_account_name": "lerobot-training",
+                    "service_account_project_id": "prior-project",
+                    "service_account_managed_by": "npa",
+                },
+                "project_credentials": {
+                    "schema_version": "npa.project-credentials.v2",
+                    "current_project_id": "prior-project",
+                    "projects": {
+                        "prior-project": {
+                            "project_id": "prior-project",
+                            "storage_selected": True,
+                            "storage": prior_storage,
+                            "storage_iam": {
+                                "service_account_id": "prior-account",
+                                "service_account_name": "lerobot-training",
+                                "service_account_project_id": "prior-project",
+                                "service_account_managed_by": "npa",
+                            },
+                        },
+                        "project-synthetic": {
+                            "project_id": "project-synthetic",
+                            "storage_selected": False,
+                            "storage": target_storage,
+                            "storage_iam": {
+                                "service_account_id": "target-account",
+                                "service_account_name": "lerobot-training",
+                                "service_account_project_id": "project-synthetic",
+                                "service_account_managed_by": "npa",
+                            },
+                        },
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    credentials_path.chmod(0o600)
+
+    if failure_phase == "authentication":
+        monkeypatch.setattr(
+            nebius,
+            "get_iam_token",
+            lambda: (_ for _ in ()).throw(nebius.NebiusError("authentication failed")),
+        )
+    else:
+        monkeypatch.setattr(nebius, "get_iam_token", lambda: "synthetic-iam")
+        monkeypatch.setattr(
+            "npa.clients.storage_validation.probe_storage_write",
+            lambda **_kwargs: type("Probe", (), {"ok": False})(),
+        )
+        monkeypatch.setattr(cli_main, "_provision_object_storage", lambda *_a, **_k: None)
+
+    result = runner.invoke(app, _known_project_args(provision=True))
+
+    assert result.exit_code == 2, result.output
+    saved = yaml.safe_load(credentials_path.read_text())
+    root = saved["project_credentials"]
+    assert root["current_project_id"] == "prior-project"
+    assert root["projects"]["project-synthetic"]["storage_selected"] is False
+    assert saved["storage"]["bucket"] == "s3://prior-bucket/"
+
+
 def test_interactive_no_provision_has_clear_provider_free_summary(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -172,11 +259,13 @@ def test_interactive_no_provision_has_clear_provider_free_summary(
     monkeypatch.setattr(
         "npa.clients.storage_validation.probe_storage_write", forbidden
     )
-    monkeypatch.setattr(
-        cli_main,
-        "_model_access_note",
-        lambda *_args: "[NOTE] HF token missing; NGC key missing (informational).",
-    )
+    access_probe_calls: list[tuple[str, str]] = []
+
+    def access_note(hf_token: str, ngc_key: str) -> str:
+        access_probe_calls.append((hf_token, ngc_key))
+        return "[NOTE] HF token missing; NGC key missing (informational)."
+
+    monkeypatch.setattr(cli_main, "_model_access_note", access_note)
     answers = "\n".join(
         ["tenant-synthetic", "project-synthetic", "", "", "", ""]
     ) + "\n"
@@ -195,6 +284,8 @@ def test_interactive_no_provision_has_clear_provider_free_summary(
     assert "Intent: interactive project configuration only" in result.output
     assert "Summary:" in result.output
     assert "storage=not selected" in result.output
+    assert "access probes skipped by --no-provision" in result.output
+    assert access_probe_calls == []
 
 
 @pytest.mark.parametrize(
@@ -328,12 +419,13 @@ def test_prompt_free_project_and_environment_import_are_one_provider_free_intent
     monkeypatch.setattr(nebius, "get_iam_token", forbidden)
     monkeypatch.setattr(nebius, "set_profile_project", forbidden)
     monkeypatch.setattr(cli_main, "_provision_object_storage", forbidden)
-    monkeypatch.setattr(
-        cli_main,
-        "_saved_model_access_note",
-        lambda: "[NOTE] Access checks are informational; HF token valid.",
-        raising=False,
-    )
+    access_probe_calls: list[str] = []
+
+    def access_note() -> str:
+        access_probe_calls.append("called")
+        return "[NOTE] Access checks are informational; HF token valid."
+
+    monkeypatch.setattr(cli_main, "_saved_model_access_note", access_note, raising=False)
 
     result = runner.invoke(
         app, [*_known_project_args(provision=False), "--save-env-credentials"]
@@ -349,6 +441,61 @@ def test_prompt_free_project_and_environment_import_are_one_provider_free_intent
         yaml.safe_load(credentials_path.read_text())["tokens"]["HF_TOKEN"]
         == "hf_synthetic_combined_secret"
     )
+    assert "access probes skipped by --no-provision" in result.output
+    assert access_probe_calls == []
+
+
+def test_show_env_can_import_credentials_without_breaking_machine_stdout(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    config_path, credentials_path = _point_configure_at_tmp(monkeypatch, tmp_path)
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "default_project": "fresh",
+                "projects": {
+                    "fresh": {
+                        "tenant_id": "tenant-synthetic",
+                        "project_id": "project-synthetic",
+                        "region": "eu-north1",
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("HF_TOKEN", "hf_synthetic_machine_secret")
+    monkeypatch.setattr(
+        cli_main,
+        "_saved_model_access_note",
+        lambda: "[NOTE] Access checks are informational; HF token valid.",
+    )
+
+    result = runner.invoke(
+        app,
+        ["configure", "--show", "--env", "--save-env-credentials"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout.splitlines() == [
+        "NPA_PROJECT_ALIAS=fresh",
+        "NPA_PROJECT_ID=project-synthetic",
+        "NPA_TENANT_ID=tenant-synthetic",
+        "NPA_REGION=eu-north1",
+    ]
+    assert "Credential fields persisted" in result.stderr
+    assert "hf_synthetic_machine_secret" not in result.output
+    assert (
+        yaml.safe_load(credentials_path.read_text())["tokens"]["HF_TOKEN"]
+        == "hf_synthetic_machine_secret"
+    )
+
+
+def test_show_accepts_harmless_no_interactive_flag() -> None:
+    result = runner.invoke(app, ["configure", "--show", "--no-interactive"])
+
+    assert result.exit_code == 0, result.output
+    assert "Current configuration" in result.output
 
 
 def test_configure_help_describes_provider_free_and_explicit_provision_intent() -> None:
@@ -438,6 +585,27 @@ def test_exact_bucket_lookup_does_not_enumerate_project(
     assert args[:3] == ["storage", "bucket", "get-by-name"]
     assert args[args.index("--name") + 1] == "exact-synthetic"
     assert "--all" not in args
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "profile 'missing-profile' not found",
+        "rpc error: code = NotFound desc = parent project not found",
+    ],
+)
+def test_exact_bucket_lookup_does_not_treat_unrelated_not_found_as_absence(
+    monkeypatch: pytest.MonkeyPatch,
+    message: str,
+) -> None:
+    monkeypatch.setattr(
+        nebius,
+        "_run_json",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(nebius.NebiusError(message)),
+    )
+
+    with pytest.raises(nebius.NebiusError, match="not found"):
+        nebius.get_bucket_by_name("project-synthetic", "exact-synthetic")
 
 
 def test_exact_existing_bucket_reuse_is_explicit_in_output(

@@ -54,16 +54,18 @@ npa configure --no-interactive --no-provision --save-env-credentials \
 ```
 
 That command imports supported environment credentials and saves the project;
-it does not contact Nebius or select storage. Add explicit `--provision` when
-unattended setup should create or reuse writable project storage.
+it does not contact Nebius, Hugging Face, or NGC and does not select storage.
+Add explicit `--provision` when unattended setup should create or reuse writable
+project storage.
 
 **Gate:** `npa configure --show` reports the intended project stanza. When
 storage was explicitly provisioned, it also reports the exact bucket and
 endpoint. A silent exit or an unexpected stanza means configure did not write
 what you think it did — resolve it here, because every later command resolves
-credentials through this file. Hugging Face and NGC status in configure's
-summary is informative and never blocks this local save; Step 3 is the enforcing
-access gate.
+credentials through this file. Hugging Face and NGC status in provisioning or
+credential-import summaries is informative and never blocks the local save;
+`--no-provision` reports those probes as skipped. Step 3 is the enforcing access
+gate.
 
 Do not hardcode project IDs, tenant IDs, private registry IDs, or bucket names
 anywhere in the repo. The project values belong only in `~/.npa/`; private

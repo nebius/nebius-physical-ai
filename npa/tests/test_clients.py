@@ -1240,6 +1240,8 @@ def test_nebius_bootstrap_uses_explicit_bucket_name(mocker) -> None:
         "chosen",
         max_size_bytes=123,
         default_storage_class="standard",
+        on_created=mocker.ANY,
+        allow_existing=True,
     )
 
 
@@ -1647,6 +1649,27 @@ def test_nebius_ensure_bucket_reuses_on_already_exists_conflict(mocker) -> None:
     )
 
     assert nebius.ensure_bucket("project", "npa-bucket-abc") == "npa-bucket-abc"
+
+
+def test_nebius_ensure_bucket_refuses_generated_name_create_race(mocker) -> None:
+    mocker.patch("npa.clients.nebius.bucket_exists", return_value=False)
+    mocker.patch(
+        "npa.clients.nebius._run",
+        side_effect=nebius.NebiusError("AlreadyExists: bucket exists"),
+    )
+    mocker.patch(
+        "npa.clients.nebius.get_bucket_by_name",
+        return_value={
+            "metadata": {"name": "npa-bucket-abc", "parent_id": "project"}
+        },
+    )
+
+    with pytest.raises(nebius.NebiusError, match="refusing to adopt"):
+        nebius.ensure_bucket(
+            "project",
+            "npa-bucket-abc",
+            allow_existing=False,
+        )
 
 
 def test_nebius_ensure_bucket_reports_clear_conflict_when_name_taken_elsewhere(

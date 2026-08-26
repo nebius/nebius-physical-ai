@@ -2065,7 +2065,7 @@ def get_bucket_by_name(project_id: str, bucket_name: str) -> dict[str, Any] | No
             ]
         )
     except NebiusError as exc:
-        if _is_not_found(str(exc)):
+        if _is_exact_bucket_not_found(str(exc), exact_name):
             return None
         raise
     metadata = item.get("metadata")
@@ -2101,6 +2101,30 @@ def bucket_exists(project_id: str, bucket_name: str) -> bool:
     return get_bucket_by_name(project_id, bucket_name) is not None
 
 
+def _is_exact_bucket_not_found(message: str, bucket_name: str) -> bool:
+    """Classify only a provider-confirmed absence of the requested bucket.
+
+    The command wrapper itself contains ``storage bucket`` for every failure, so
+    a broad ``"not found"`` substring check can misclassify a missing CLI
+    profile or parent project as bucket absence. Restrict the decision to the
+    provider detail line naming the exact bucket or explicitly saying that a
+    bucket does not exist.
+    """
+
+    detail = str(message or "").rsplit("\n", 1)[-1].strip().lower()
+    if not _is_not_found(detail):
+        return False
+    exact_name = str(bucket_name or "").strip().lower()
+    if exact_name and exact_name in detail:
+        return True
+    return bool(
+        re.search(
+            r"\bbucket\b[^\n]{0,120}\b(?:notfound|not found|does not exist|missing)\b",
+            detail,
+        )
+    )
+
+
 def ensure_bucket(
     project_id: str,
     bucket_name: str,
@@ -2108,18 +2132,27 @@ def ensure_bucket(
     max_size_bytes: int = 0,
     default_storage_class: str = DEFAULT_BUCKET_STORAGE_CLASS,
     on_created: Callable[[str], None] | None = None,
+    allow_existing: bool = True,
 ) -> str:
     """Get or create an S3 bucket, return its name.
 
     *max_size_bytes* caps a newly created bucket (0 = unlimited). It is only
     applied when the bucket is created; an existing bucket is reused unchanged.
     *default_storage_class* is applied only when the bucket is created.
+    Set *allow_existing* false when a generated name must never be adopted if it
+    appears during either exact lookup race.
     """
     from npa.lifecycle_intent import forbid_destructive_provisioning
 
     forbid_destructive_provisioning("ensure_bucket")
     if bucket_exists(project_id, bucket_name):
-        return bucket_name
+        if allow_existing:
+            return bucket_name
+        raise NebiusError(
+            f"Object-storage bucket name '{bucket_name}' is already taken; "
+            "refusing to adopt an existing bucket selected by a generated-name "
+            "configure flow."
+        )
 
     storage_class = normalize_bucket_storage_class(default_storage_class)
     args = [
@@ -2148,7 +2181,13 @@ def ensure_bucket(
         if not _is_already_exists(str(exc)):
             raise
         if get_bucket_by_name(project_id, bucket_name) is not None:
-            return bucket_name
+            if allow_existing:
+                return bucket_name
+            raise NebiusError(
+                f"Object-storage bucket name '{bucket_name}' became already taken "
+                "during creation; refusing to adopt an existing bucket selected "
+                "by a generated-name configure flow."
+            ) from exc
         raise NebiusError(
             f"Object-storage bucket name '{bucket_name}' is already taken "
             "(bucket names are globally unique) and is not in project "
@@ -2178,6 +2217,7 @@ def bootstrap_environment(
     on_status: Callable[[str], None] | None = None,
     on_resource_created: Callable[[str, dict[str, str]], None] | None = None,
     allow_editors_fallback: bool = False,
+    allow_existing_bucket: bool = True,
 ) -> dict[str, str]:
     """Run the full environment bootstrap, return a dict of credentials.
 
@@ -2187,8 +2227,9 @@ def bootstrap_environment(
     to the deterministic ``bucket_name_for`` name. *bucket_max_size_bytes* caps
     a newly created bucket (0 = unlimited); it is ignored when the bucket
     already exists. *bucket_storage_class* applies only when the bucket is
-    created. *on_status* is an optional callback ``(message: str) -> None`` for
-    progress reporting.
+    created. Set *allow_existing_bucket* false for a generated configure name
+    that must fail closed across a concurrent create. *on_status* is an optional
+    callback ``(message: str) -> None`` for progress reporting.
     """
 
     from npa.lifecycle_intent import forbid_destructive_provisioning
@@ -2238,6 +2279,13 @@ def bootstrap_environment(
 
     bucket_name = bucket_name or bucket_name_for(tenant_id, project_id)
     saved_storage: dict[str, str] | None = None
+    created_bucket = False
+
+    def _record_created_bucket(name: str) -> None:
+        nonlocal created_bucket
+        created_bucket = True
+        if on_resource_created:
+            on_resource_created("bucket", {"name": name})
 
     _status("Setting up S3 bucket...")
     try:
@@ -2246,15 +2294,8 @@ def bootstrap_environment(
             bucket_name,
             max_size_bytes=bucket_max_size_bytes,
             default_storage_class=bucket_storage_class,
-            **(
-                {
-                    "on_created": lambda name: on_resource_created(
-                        "bucket", {"name": name}
-                    )
-                }
-                if on_resource_created
-                else {}
-            ),
+            on_created=_record_created_bucket,
+            allow_existing=allow_existing_bucket,
         )
     except NebiusError as exc:
         if not _is_permission_denied(str(exc)):
@@ -2370,6 +2411,7 @@ def bootstrap_environment(
         "nebius_secret_key": aws_secret_key,
         "s3_bucket": bucket_name,
         "s3_endpoint": s3_endpoint,
+        "bucket_disposition": "created" if created_bucket else "reused",
         "nebius_project_id": project_id,
         "nebius_region": region,
         "iam_binding_state": binding.state.value,

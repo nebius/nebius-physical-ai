@@ -513,6 +513,7 @@ def provision_storage(
     convergence_sleep: Callable[[float], None] | None = None,
     convergence_random: Callable[[], float] | None = None,
     allow_editors_fallback: bool = False,
+    allow_existing_bucket: bool = True,
 ) -> tuple[dict[str, str], StorageProbeResult]:
     """Reconcile, validate and atomically commit first-run storage."""
 
@@ -589,6 +590,9 @@ def provision_storage(
             fallback_kwargs: dict[str, bool] = {}
             if fallback_enabled:
                 fallback_kwargs["allow_editors_fallback"] = True
+            bucket_reuse_kwargs: dict[str, bool] = {}
+            if not allow_existing_bucket:
+                bucket_reuse_kwargs["allow_existing_bucket"] = False
             bootstrap = cast(Callable[..., dict[str, str]], nebius.bootstrap_environment)
             credentials = bootstrap(
                 project_id,
@@ -599,6 +603,7 @@ def provision_storage(
                 bucket_storage_class=bucket_storage_class,
                 on_status=on_status,
                 on_resource_created=transaction.record_created,
+                **bucket_reuse_kwargs,
                 **fallback_kwargs,
                 **identity_name_kwargs,
             )

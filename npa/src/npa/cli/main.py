@@ -376,8 +376,9 @@ otherwise pressing Enter generates a fresh collision-safe name. Use
 `npa configure --no-provision` for provider-free project and token configuration,
 or create ~/.npa/credentials.yaml by hand for user-level tokens, object storage,
 and BYOVM SSH defaults. Prompt-free known-project setup is also provider-free
-unless `--provision` is explicit. Hugging Face and NGC checks printed here are
-informational; use `npa workbench health access` as the enforcing gate:
+unless `--provision` is explicit. Hugging Face and NGC checks performed during
+provisioning or credential import are informational; use
+`npa workbench health access` as the enforcing gate:
 
 tokens:
   # Hugging Face access token (for model + dataset downloads, incl. gated repos).
@@ -875,6 +876,7 @@ def _provision_object_storage(
             bucket_name=bucket_name,
             bucket_max_size_bytes=create_max_size_bytes,
             bucket_storage_class=create_storage_class,
+            allow_existing_bucket=not _generated_name,
             on_status=lambda msg: typer.echo(f"  - {msg}"),
         )
     except nebius_client.NebiusError as exc:
@@ -934,7 +936,9 @@ def _provision_object_storage(
         return None
 
     bucket = _as_bucket_uri(creds.get("s3_bucket", ""))
-    disposition = "reused" if exists is True else "created"
+    disposition = str(creds.get("bucket_disposition") or "").strip().lower()
+    if disposition not in {"created", "reused"}:
+        disposition = "reused" if exists is True else "created"
     if disposition == "reused":
         typer.echo(f"  Configured existing bucket {bucket}; {probe.summary}")
     else:
@@ -1399,6 +1403,7 @@ def _run_interactive_configure(
     from npa.clients.credentials import load_credentials, write_credentials_file
     from npa.clients import nebius as nebius_client
 
+    provider_free = not provision
     typer.echo(
         "Intent: "
         + (
@@ -1929,7 +1934,11 @@ def _run_interactive_configure(
         f"project={alias or 'not set'}; storage={storage_disposition}; "
         "configuration=saved."
     )
-    typer.echo(_model_access_note(hf_token, ngc_api_key))
+    typer.echo(
+        _skipped_model_access_note()
+        if provider_free
+        else _model_access_note(hf_token, ngc_api_key)
+    )
     if not provision:
         typer.echo(
             "Project configuration saved without object storage. Re-run with "
@@ -2135,6 +2144,16 @@ def _saved_model_access_note() -> str:
             "[NOTE] Access checks are informational; saved credentials could not "
             "be read. Use `npa workbench health access` after fixing the store."
         )
+
+
+def _skipped_model_access_note() -> str:
+    """Return the explicit provider-free advisory for ``--no-provision``."""
+
+    return (
+        "[NOTE] Access checks are informational; HF/NGC access probes skipped by "
+        "--no-provision. Run `npa workbench health access` when model access must "
+        "be enforced."
+    )
 
 
 def _store_token_factory_key(api_key: str) -> None:
@@ -2440,7 +2459,6 @@ def _run_known_project_configure(
 
     from npa.clients import nebius as nebius_client
     from npa.clients.config import CONFIG_PATH, list_projects, write_config
-    from npa.clients.credentials import load_credentials
 
     values = {
         "--tenant-id": str(tenant_id or "").strip(),
@@ -2518,17 +2536,14 @@ def _run_known_project_configure(
     _validate_alias_project_identity(
         alias, existing_projects.get(alias) or {}, values["--project-id"]
     )
-    from npa.clients.project_credential_store import select_project_credentials
-
-    select_project_credentials(
-        values["--project-id"],
-        alias=alias,
-        select_storage=provision,
-    )
-
     # Project-only setup is deliberately local. Provider authentication, bucket
     # probes, and profile rebinding occur only behind the explicit --provision
     # intent.
+    from npa.clients.project_credential_store import (
+        project_credential_record,
+        select_project_credentials,
+    )
+
     if provision:
         try:
             nebius_client.get_iam_token()
@@ -2537,17 +2552,26 @@ def _run_known_project_configure(
                 "The active Nebius CLI profile cannot authenticate "
                 "non-interactively. Activate or refresh it, then retry."
             ) from exc
+        existing_record = project_credential_record(values["--project-id"])
+    else:
+        existing_record = {}
+        select_project_credentials(
+            values["--project-id"],
+            alias=alias,
+            select_storage=False,
+        )
 
-    existing = load_credentials(environ={})
+    existing_storage = existing_record.get("storage")
+    existing_storage = (
+        dict(existing_storage) if isinstance(existing_storage, dict) else {}
+    )
     storage: dict[str, str] = {}
     existing_complete = bool(
-        existing.s3_access_key_id
-        and existing.s3_secret_access_key
-        and existing.s3_bucket
+        existing_storage.get("aws_access_key_id")
+        and existing_storage.get("aws_secret_access_key")
+        and existing_storage.get("bucket")
     )
-    existing_relationship_verified = _storage_relationship_verified(
-        existing, values["--project-id"]
-    )
+    existing_relationship_verified = bool(existing_complete and existing_record)
     if (
         provision
         and existing_complete
@@ -2557,20 +2581,26 @@ def _run_known_project_configure(
         from npa.clients.storage_validation import probe_storage_write
 
         probe = probe_storage_write(
-            bucket=existing.s3_bucket,
-            endpoint_url=existing.s3_endpoint
+            bucket=str(existing_storage.get("bucket") or ""),
+            endpoint_url=str(existing_storage.get("endpoint_url") or "")
             or _endpoint_for_region(values["--region"]),
-            access_key_id=existing.s3_access_key_id,
-            secret_access_key=existing.s3_secret_access_key,
+            access_key_id=str(existing_storage.get("aws_access_key_id") or ""),
+            secret_access_key=str(
+                existing_storage.get("aws_secret_access_key") or ""
+            ),
             region=values["--region"],
         )
         if probe.ok:
             storage = {
-                "aws_access_key_id": existing.s3_access_key_id,
-                "aws_secret_access_key": existing.s3_secret_access_key,
-                "endpoint_url": existing.s3_endpoint
+                "aws_access_key_id": str(
+                    existing_storage.get("aws_access_key_id") or ""
+                ),
+                "aws_secret_access_key": str(
+                    existing_storage.get("aws_secret_access_key") or ""
+                ),
+                "endpoint_url": str(existing_storage.get("endpoint_url") or "")
                 or _endpoint_for_region(values["--region"]),
-                "bucket": existing.s3_bucket,
+                "bucket": str(existing_storage.get("bucket") or ""),
                 "_validated": "true",
             }
             typer.echo(
@@ -2597,7 +2627,7 @@ def _run_known_project_configure(
             tenant_id=values["--tenant-id"],
             region=values["--region"],
             existing_bucket=(
-                _bucket_name_from_uri(existing.s3_bucket)
+                _bucket_name_from_uri(str(existing_storage.get("bucket") or ""))
                 if existing_relationship_verified
                 else ""
             ),
@@ -2683,7 +2713,9 @@ def _run_known_project_configure(
         f"Summary: mode={'provision' if provision else 'project-only'}; "
         f"project={alias}; storage={storage_disposition}; configuration=saved."
     )
-    typer.echo(_saved_model_access_note())
+    typer.echo(
+        _saved_model_access_note() if provision else _skipped_model_access_note()
+    )
 
 
 class ConfigureMode(str, Enum):
@@ -2748,8 +2780,14 @@ def _configure_mode(arguments: dict[str, Any]) -> ConfigureMode:
             else ConfigureMode.GUIDANCE
         )
     )
+    if mode == ConfigureMode.DISPLAY and (
+        interactive is True or provision is not None
+    ):
+        raise typer.BadParameter(
+            f"{mode.value} mode is read-only or self-contained and cannot be "
+            "combined with interactive/provisioning options."
+        )
     if mode in {
-        ConfigureMode.DISPLAY,
         ConfigureMode.SOURCE_URI,
         ConfigureMode.FORGET_PROJECT,
     } and (interactive is not None or provision is not None):
@@ -2828,19 +2866,22 @@ def _configure_impl(
         persist_supported_env_credentials,
     )
 
-    def persist_environment_credentials() -> None:
+    def persist_environment_credentials(*, diagnostics_to_stderr: bool = False) -> None:
         report = persist_supported_env_credentials()
         typer.echo(
             "Credential environment sources detected: "
             + (", ".join(report["detected"]) if report["detected"] else "none"),
+            err=diagnostics_to_stderr,
         )
         typer.echo(
             "Credential fields persisted (values redacted): "
             + (", ".join(report["persisted"]) if report["persisted"] else "none")
             + f"; store={CREDENTIALS_PATH}",
+            err=diagnostics_to_stderr,
         )
         typer.echo(
-            f"Environment credentials (values redacted) saved to {CREDENTIALS_PATH}."
+            f"Environment credentials (values redacted) saved to {CREDENTIALS_PATH}.",
+            err=diagnostics_to_stderr,
         )
         for warning in report["warnings"]:
             typer.echo(f"Credential warning: {warning}", err=True)
@@ -2867,10 +2908,11 @@ def _configure_impl(
             typer.echo(_SETUP_GUIDANCE)
         return
     if mode == ConfigureMode.IMPORT_CREDENTIALS:
-        persist_environment_credentials()
-        typer.echo(_saved_model_access_note())
+        machine_output = bool(show and env_output)
+        persist_environment_credentials(diagnostics_to_stderr=machine_output)
+        typer.echo(_saved_model_access_note(), err=machine_output)
         if show:
-            typer.echo(_configured_summary())
+            typer.echo(_configured_env_lines() if env_output else _configured_summary())
         return
     if mode == ConfigureMode.KNOWN_PROJECT:
         if save_env_credentials:

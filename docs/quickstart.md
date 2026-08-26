@@ -228,11 +228,15 @@ service-account credential is required only when you add explicit
 Automation supplies values through protected environment variables and adds the
 boolean `--save-env-credentials`; NPA atomically persists only supported
 variables in its owner-only credential store. Prompt-free known-project setup is
-project-only by default: it does not contact Nebius, inspect saved storage, or
-adopt an old bucket. Add `--provision` when storage mutation is intended. That
-path reuses already-selected S3 credentials only when exact project provenance
-and a write/read/delete probe both verify them; otherwise it generates a fresh
-collision-safe name without listing or rotating unrelated access keys.
+project-only by default: it does not contact Nebius, Hugging Face, or NGC,
+inspect saved storage, or adopt an old bucket. Add `--provision` when storage
+mutation is intended. Credential import remains composable with the
+machine-readable view: `npa configure --show --env --save-env-credentials`
+sends only non-secret shell assignments to stdout and sends import/access
+diagnostics to stderr. The provisioning path reuses already-selected S3
+credentials only when exact project provenance and a write/read/delete probe
+both verify them; otherwise it generates a fresh collision-safe name without
+listing or rotating unrelated access keys.
 
 Run interactive setup in a terminal. `npa configure` creates or reuses your
 Nebius CLI profile first. When creating one, it asks for the project ID before
@@ -249,8 +253,8 @@ flow keeps your current setup unchanged, and typing a new value updates just
 that field. When object storage is already configured it defaults to keeping the
 existing bucket and S3 key (so a re-run does not mint a new access key); decline
 that prompt to re-provision. It then writes `~/.npa/credentials.yaml` and
-`~/.npa/config.yaml`, performs bounded live checks through the same Hugging Face
-model/dataset and NGC repository-entitlement paths as
+`~/.npa/config.yaml`. Provisioning setup performs bounded live checks through
+the same Hugging Face model/dataset and NGC repository-entitlement paths as
 `npa workbench health access`, and prints a one-line `[NOTE]` summary. The note
 is advisory so a transient upstream outage does not undo otherwise valid local
 setup; use the health command as the access gate — see
@@ -338,7 +342,8 @@ These are non-secret identifiers; do not pass IAM, S3, Token Factory, HF, or NGC
 secrets on the command line. The command reuses existing storage only after the
 same write/read capability probe deployment uses. Without `--provision`, the
 prompt-free command saves only project configuration and supported environment
-credentials; `--no-provision` makes that provider-free intent explicit.
+credentials; `--no-provision` makes that provider-free intent explicit and
+reports that HF/NGC access probes were skipped.
 
 Gate: after interactive setup, `nebius iam get-access-token` exits successfully.
 

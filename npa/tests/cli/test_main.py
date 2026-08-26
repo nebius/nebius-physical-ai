@@ -1713,8 +1713,14 @@ def test_configure_rerun_can_reprovision_storage_when_declined(
         bucket_storage_class="standard",
         on_status=None,
         on_resource_created=None,
+        allow_existing_bucket=True,
     ):
-        calls.append({"bucket_name": bucket_name})
+        calls.append(
+            {
+                "bucket_name": bucket_name,
+                "allow_existing_bucket": allow_existing_bucket,
+            }
+        )
         return {
             "nebius_api_key": "AK_new",
             "nebius_secret_key": "SK_new",
@@ -1752,6 +1758,7 @@ def test_configure_rerun_can_reprovision_storage_when_declined(
         calls[0]["bucket_name"],
     )
     assert calls[0]["bucket_name"] != "npa-bucket-existing"
+    assert calls[0]["allow_existing_bucket"] is False
     creds = yaml.safe_load(creds_path.read_text())
     assert creds["storage"]["aws_access_key_id"] == "AK_new"
 
