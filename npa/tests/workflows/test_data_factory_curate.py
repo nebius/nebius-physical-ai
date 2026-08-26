@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import json
+import sys
+from pathlib import Path
+from types import SimpleNamespace
+
 import pytest
 
 from npa.workflows import data_factory_curate as dfc
@@ -189,3 +194,107 @@ def test_run_curation_raises_when_fiftyone_absent() -> None:
             read_json=lambda key: None,
             workdir="/tmp/does-not-matter",
         )
+
+
+def test_terminal_rejected_review_uses_portable_fiftyone_dataset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The terminal path invokes real FiftyOne APIs and remains non-promoting."""
+
+    observed: dict[str, object] = {}
+
+    class FakeSample(dict):
+        def __init__(self, *, filepath: str, tags: list[str]):
+            super().__init__()
+            self.filepath = filepath
+            self.tags = tags
+
+    class FakeDataset:
+        def __init__(self, *, name: str, persistent: bool):
+            observed["name"] = name
+            observed["persistent"] = persistent
+            self.samples: list[FakeSample] = []
+            self.info: dict[str, object] = {}
+
+        def add_sample(self, sample: FakeSample) -> None:
+            self.samples.append(sample)
+
+        def save(self) -> None:
+            observed["saved"] = True
+
+        def export(self, *, export_dir: str, dataset_type: object, export_media: bool) -> None:
+            observed["dataset_type"] = dataset_type
+            observed["export_media"] = export_media
+            Path(export_dir, "metadata.json").write_text(
+                json.dumps({"sample_count": len(self.samples)})
+            )
+
+        def get_field_schema(self) -> dict[str, object]:
+            fields = {
+                key: object()
+                for sample in self.samples
+                for key in sample
+            }
+            return {"filepath": object(), **fields}
+
+        def delete(self) -> None:
+            observed["deleted"] = True
+
+        def __len__(self) -> int:
+            return len(self.samples)
+
+    dataset_type = object()
+    fake_fo = SimpleNamespace(
+        __version__="test-real-api",
+        Dataset=FakeDataset,
+        Sample=FakeSample,
+        types=SimpleNamespace(FiftyOneDataset=dataset_type),
+    )
+    monkeypatch.setitem(sys.modules, "fiftyone", fake_fo)
+
+    def download(_key: str, destination: str) -> str:
+        media = Path(destination) / "augmented.mp4"
+        media.write_bytes(b"candidate-media")
+        return str(media)
+
+    report = dfc.export_terminal_review_dataset(
+        candidates=[
+            {
+                "candidate_id": "iteration-1/candidate-a",
+                "iteration": 1,
+                "clip_id": "candidate-a",
+                "media_key": "run/candidate-a/augmented.mp4",
+                "score": 0.72,
+                "candidate_passed": False,
+                "hard_checks_passed": False,
+                "promotion_eligible": False,
+                "failed_attributes": ["lighting"],
+                "hallucination_status": "passed",
+                "attribute_results": [{"variable": "lighting", "passed": False}],
+                "hard_check_results": {"hallucination": {"passed": True}},
+            }
+        ],
+        dataset_name="paidf-review-test",
+        download_key=download,
+        export_dir=str(tmp_path / "export"),
+        workdir=str(tmp_path / "media"),
+        run_disposition="rejected",
+    )
+
+    assert report["engine"] == "fiftyone"
+    assert report["candidate_count"] == 1
+    assert report["review_only"] is True
+    assert report["promotion_eligible_count"] == 0
+    assert "quality_disposition" in report["fields"]
+    assert "promotion_eligible" in report["fields"]
+    assert observed == {
+        "name": "paidf-review-test-export",
+        "persistent": False,
+        "saved": True,
+        "dataset_type": dataset_type,
+        "export_media": True,
+        "deleted": True,
+    }
+    assert json.loads((tmp_path / "export" / "metadata.json").read_text()) == {
+        "sample_count": 1
+    }

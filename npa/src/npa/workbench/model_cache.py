@@ -1,4 +1,4 @@
-"""One durable cache for the model weights the workbench downloads at run time.
+"""One durable cache for model weights and reviewed runtimes fetched at run time.
 
 The workbench images deliberately bake no model weights. NVIDIA's Cosmos
 checkpoints and guardrails, GR00T, the Qwen VLMs, Wan 2.2, LTX, and the curator
@@ -11,7 +11,7 @@ a path with no bind mount at all), so each download was discarded with the
 container and the next run paid for it again: tens of gigabytes of egress and
 minutes of GPU time per stage, repeated for every run of the same image.
 
-This module is the single place that answers "where do downloaded weights live",
+This module is the single place that answers "where do downloaded artifacts live",
 for every runtime NPA drives:
 
 * SkyPilot tasks (:mod:`npa.orchestration.npa_workflow.skypilot_render`)
@@ -46,7 +46,7 @@ their Kubernetes workflows would have broken their working Serverless Jobs. Henc
 Object storage is intentionally not an option here. The Hugging Face hub cache is
 a blobs/snapshots tree held together by symlinks, which S3-backed FUSE mounts do
 not implement; a bucket mount would corrupt exactly the cache it was meant to
-preserve. Durable weight storage has to be a real filesystem.
+preserve. Durable cache storage has to be a real filesystem.
 """
 
 from __future__ import annotations
@@ -147,6 +147,8 @@ class ModelCacheError(ValueError):
 #: * ``HF_LEROBOT_HOME`` / ``LEROBOT_HF_HOME``: LeRobot datasets and policies.
 #: * ``WAN22_CACHE_DIR`` / ``NPA_LTX_MODEL_CACHE``: the BYOF video models, whose
 #:   images ship zero weights.
+#: * ``NPA_CONTENT_AGENTS_RUNTIME_CACHE``: the exact OVRTX SDK delivered by
+#:   NVIDIA to the operator; the public Content Agents image ships zero OVRTX.
 MODEL_CACHE_LAYOUT: tuple[tuple[str, str], ...] = (
     ("HF_HOME", "huggingface"),
     ("HF_HUB_CACHE", "huggingface/hub"),
@@ -177,6 +179,7 @@ MODEL_CACHE_LAYOUT: tuple[tuple[str, str], ...] = (
     ("LEISAAC_ASSETS_ROOT", "leisaac/assets/runtime"),
     ("WAN22_CACHE_DIR", "wan2.2"),
     ("NPA_LTX_MODEL_CACHE", "ltx-2.5"),
+    ("NPA_CONTENT_AGENTS_RUNTIME_CACHE", "runtimes/content-agents"),
 )
 
 #: Every variable this module can set. Callers that filter an environment down to
@@ -356,7 +359,7 @@ def render_model_cache_shell(root: str, *, mounted: bool) -> str:
 
     quoted = " ".join(shlex.quote(path) for path in dirs)
     note = (
-        "mounted here, weights persist across runs"
+        "mounted here, cached artifacts persist across runs"
         if mounted
         else "not mounted by npa; persists only if this path already does"
     )

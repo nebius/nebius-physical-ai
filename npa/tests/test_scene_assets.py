@@ -92,6 +92,30 @@ def test_parse_scene_spec_byo_mesh_object() -> None:
     assert spec.source_uri == "s3://bucket/spec.json"
 
 
+def test_density_only_scene_spec_round_trips_without_null_mass() -> None:
+    doc = {
+        "objects": [
+            {
+                "name": "widget",
+                "asset_source": "byo_mesh",
+                "uri": "s3://bucket/object.usdz",
+                "density": 2700.0,
+                "friction": 0.47,
+                "friction_source": "dynamic_friction",
+                "dynamic_friction": 0.47,
+            }
+        ]
+    }
+
+    serialized = sa.parse_scene_spec(doc).to_dict()["objects"][0]
+
+    assert serialized["density"] == 2700.0
+    assert "mass" not in serialized
+    assert serialized["friction"] == 0.47
+    assert serialized["friction_source"] == "dynamic_friction"
+    assert serialized["dynamic_friction"] == 0.47
+
+
 def test_parse_scene_spec_supports_multiple_objects_and_target() -> None:
     doc = {
         "objects": [
@@ -521,4 +545,3 @@ def test_camera_names_defaults_and_custom() -> None:
         }
     )
     assert sa.camera_names(scene) == ("overhead",)
-

@@ -33,7 +33,6 @@ _EXACT_SOURCE_DOCKERFILES = (
 _STANDARD_WORKFLOW_PASSTHROUGH_DOCKERFILES = (
     "cosmos3-reason/Dockerfile",
     "isaac-lab/Dockerfile",
-    "rerun-viewer/Dockerfile",
     "sim2real-control/Dockerfile",
     "sim2real-envgen/Dockerfile",
     "sim2real-eval/Dockerfile",
@@ -204,12 +203,15 @@ def test_rerun_viewer_is_exact_source_stage14_runtime() -> None:
     )
     assert 'org.opencontainers.image.revision="${NPA_SOURCE_SHA}"' in dockerfile
     assert "NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA}" in dockerfile
-    assert "NPA_BAKED_PYTHON=/usr/local/bin/python" in dockerfile
+    assert "NPA_BAKED_PYTHON=/opt/rerun/venv/bin/python" in dockerfile
     assert "npa-exact-source.pth" in dockerfile
     assert "sim2real-viewer-requirements.txt" in dockerfile
     assert "--no-deps" in dockerfile
     assert "pip check" in dockerfile
-    assert 'ENTRYPOINT ["/usr/local/bin/npa-workflow-entrypoint"]' in dockerfile
+    assert (
+        'ENTRYPOINT ["/opt/npa/docker/workbench/rerun-viewer/entrypoint.sh"]'
+        in dockerfile
+    )
     for prerequisite in ("openssh-server", "rsync", "sudo", "netcat-openbsd"):
         assert prerequisite in dockerfile
     lines = [

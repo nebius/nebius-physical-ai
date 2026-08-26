@@ -181,7 +181,6 @@ def _interactive_configure_answers(
         env.tenant_id,
         env.project_id,
         env.region,
-        "",  # container registry (default)
         bucket_name,
     ]
     if new_bucket:
@@ -259,7 +258,7 @@ def _assert_dotfiles(
     assert project["project_id"] == env.project_id
     assert project["tenant_id"] == env.tenant_id
     assert project["region"] == env.region
-    assert project["container_registry"]
+    assert "container_registry" not in project
     assert config["default_project"] == env.region
     return creds
 

@@ -195,6 +195,46 @@ def test_preflight_selected_check(monkeypatch) -> None:
     assert "token_factory:" not in result.output
 
 
+def test_preflight_live_hf_uses_authenticated_identity_probe(monkeypatch) -> None:
+    from npa.cli.workbench import health as health_module
+    from npa.clients.huggingface import HFAccessResult
+
+    observed: list[str] = []
+    monkeypatch.setattr(health_module, "load_credentials", lambda: _AccessCreds())
+    monkeypatch.setattr(
+        health_module,
+        "validate_hf_identity",
+        lambda token: (
+            observed.append(token)
+            or HFAccessResult(repo="whoami-v2", ok=True, status_code=200)
+        ),
+    )
+
+    result = runner.invoke(app, ["workbench", "health", "preflight", "--checks", "hf"])
+
+    assert result.exit_code == 0
+    assert "authenticated by Hugging Face" in result.output
+    assert observed == ["hf_from_environment"]
+
+
+def test_preflight_live_ngc_uses_token_exchange_probe(monkeypatch) -> None:
+    from npa.cli.workbench import health as health_module
+
+    observed: list[str] = []
+    monkeypatch.setattr(health_module, "load_credentials", lambda: _AccessCreds())
+    monkeypatch.setattr(
+        health_module,
+        "_ngc_auth_verifier",
+        lambda key: observed.append(key) or "reachable",
+    )
+
+    result = runner.invoke(app, ["workbench", "health", "preflight", "--checks", "ngc"])
+
+    assert result.exit_code == 0
+    assert "authenticated by NGC" in result.output
+    assert observed == ["nvapi-from-environment"]
+
+
 def test_preflight_rejects_unknown_check(monkeypatch) -> None:
     from npa.cli.workbench import health as health_module
 
@@ -368,6 +408,60 @@ def test_access_pass_when_validator_ok(monkeypatch) -> None:
     payload = json.loads(result.output)
     assert payload["ok"] is True
     assert "ngc" in {c["name"] for c in payload["checks"]}
+
+
+def test_access_fails_on_ngc_auth_rejection(monkeypatch) -> None:
+    from npa.cli.workbench import health as health_module
+
+    monkeypatch.setattr(
+        health_module, "load_credentials", lambda *a, **k: _AccessCreds()
+    )
+    monkeypatch.setattr(
+        health_module,
+        "validate_hf_access",
+        lambda token, repo, repo_type: _HFOK(ok=True),
+    )
+    monkeypatch.setattr(
+        "npa.workbench.nurec.nurec.check_ngc_image_access",
+        lambda key: "auth-401",
+    )
+
+    result = runner.invoke(
+        app,
+        ["workbench", "health", "access", "--capability", "nurec"],
+    )
+
+    assert result.exit_code == 1
+    assert "FAIL" in result.output
+    assert "NGC Catalog access" in result.output
+
+
+def test_access_warns_on_transient_ngc_failure_without_rejecting_key(
+    monkeypatch,
+) -> None:
+    from npa.cli.workbench import health as health_module
+
+    monkeypatch.setattr(
+        health_module, "load_credentials", lambda *a, **k: _AccessCreds()
+    )
+    monkeypatch.setattr(
+        health_module,
+        "validate_hf_access",
+        lambda token, repo, repo_type: _HFOK(ok=True),
+    )
+    monkeypatch.setattr(
+        "npa.workbench.nurec.nurec.check_ngc_image_access",
+        lambda key: "unreachable",
+    )
+
+    result = runner.invoke(
+        app,
+        ["workbench", "health", "access", "--capability", "nurec"],
+    )
+
+    assert result.exit_code == 0
+    assert "WARN" in result.output
+    assert "credential presence alone does not prove pull access" in result.output
 
 
 def test_access_rejects_unknown_capability(monkeypatch) -> None:

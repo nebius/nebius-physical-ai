@@ -11,6 +11,16 @@ from typing import Any, Mapping, Sequence
 RUN_SCHEMA_VERSION = "npa.workflow.run.v1"
 RUNTIME_SCHEMA_VERSION = "npa.workflow.runtime.v1"
 PAIDF_WORKFLOW_NAME = "physical-ai-data-factory"
+PAIDF_COSMOS3_WORKFLOW_NAME = "paidf-cosmos3"
+PAIDF_INPUT_WORKFLOW_NAMES = frozenset(
+    {PAIDF_WORKFLOW_NAME, PAIDF_COSMOS3_WORKFLOW_NAME}
+)
+
+
+def is_paidf_input_workflow_name(name: object) -> bool:
+    """Whether submit owns real-video/LeRobot preparation for this workflow."""
+
+    return str(name or "").strip() in PAIDF_INPUT_WORKFLOW_NAMES
 
 
 def paidf_artifact_prefix(run_id: str) -> str:
@@ -189,6 +199,9 @@ class RuntimeRunState:
                 "block_after_uncertain_success",
                 "recovery_deadline_exhausted_verified_absent",
                 "interrupted_verified_absent",
+                "resume_block_terminal_or_legacy_absence",
+                "resume_block_output_present",
+                "resume_block_output_indeterminate",
             }
             return dict(record) if status == "running" or unresolved else None
         return None

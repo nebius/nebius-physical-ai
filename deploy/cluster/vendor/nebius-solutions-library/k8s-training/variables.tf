@@ -492,8 +492,9 @@ variable "custom_driver" {
 }
 
 variable "filesystem_csi" {
-  description = "Configuration for Nebius Shared Filesystem CSI installation when a shared filesystem is present. Set previous_default_storage_class_name to an empty string to skip demoting another StorageClass."
+  description = "Optional operator-supplied standards-based Helm repository and configuration for Shared Filesystem CSI. NPA has no provider-private registry default."
   type = object({
+    chart_repository                    = optional(string, "")
     chart_version                       = optional(string, "0.1.6")
     namespace                           = optional(string, "kube-system")
     make_default_storage_class          = optional(bool, true)

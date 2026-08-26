@@ -45,24 +45,20 @@ GET /api/artifacts/run/{run_id}
 POST /api/sim-viz/load-artifact
 {
   "run_id": "run-prefix",
-  "s3_uri": "s3://bucket/path/to/object"
+  "run_ref": "<server-issued opaque run reference>",
+  "project_id": "<selected project>",
+  "resource_bucket": "<selected bucket>",
+  "resolved_prefix": "<selected prefix, possibly empty>",
+  "source_selected": true,
+  "key": "path/to/run/object"
 }
 ```
 
-or
-
-```http
-POST /api/sim-viz/load-artifact
-{
-  "run_id": "run-prefix",
-  "key": "run-prefix/reports/output.rrd"
-}
-```
-
-`s3_uri` intentionally requires `run_id`: the backend authorizes the exact key
-against that run's discovered artifact inventory. URI-only loading is rejected
-with a stable 400 response because bucket membership alone is not run-level
-authorization.
+Preserve this exact source tuple from list response to card, thumbnail, preview,
+download, and load action. `s3_uri` is provenance only: URI-only or otherwise
+unscoped media requests are rejected with a stable 400 response because bucket
+membership alone is not run-level authorization. Follow every artifact-page
+cursor before computing preference; the shipped UI does this automatically.
 
 4. Confirm loaded state:
 

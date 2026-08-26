@@ -1476,11 +1476,11 @@ def test_bootstrap_embeds_lichtblick_viewer() -> None:
     assert "npa-lichtblick.service" in source
     # verify() probes the embed plumbing.
     assert "lichtblick embed probe" in source
-    # Region-agnostic image acquisition: the sidecar pulls from whichever mirror
-    # registry (eu-north1 or us-central1) is reachable, not a locally-built image.
+    # Region-agnostic image acquisition uses the anonymous public GHCR release.
     assert "lichtblick_pull_candidates" in source
     assert "for lb_cand in {lichtblick_pull_candidates}" in source
     assert "npa-lichtblick image acquired from" in source
+    assert "docker login" not in source
 
 
 def test_lichtblick_recordings_grant_no_cross_origin_read() -> None:
@@ -1752,7 +1752,9 @@ def test_bootstrap_ui_mcap_cards_bind_exact_provenance_in_page() -> None:
     exact_source_handler = source.split("async function loadExactArtifactSource", 1)[
         1
     ].split("function learningStagesFromContract", 1)[0]
-    assert "deferPreferredViewer: true" in exact_source_handler
+    # Exact-source inventory now discovers every page before selecting and
+    # immediately opens the global preferred recording.
+    assert "deferPreferredViewer: false" in exact_source_handler
     assert "loadArtifactsForSelectedRun(runRef" in exact_source_handler
     external_handler = source.split("async function openFoxgloveWeb", 1)[1].split(
         "async function captureFoxgloveContext", 1
@@ -1835,7 +1837,7 @@ def test_bootstrap_embeds_chat_endpoint() -> None:
     assert "npa workbench byof run" in source or "run_byof_repo.py" in source
     assert "For BYOF solution onboarding" in source
     assert "Always use real registry-qualified images" in source
-    assert "`<your-registry-id>` placeholders" in source
+    assert "registry placeholders" in source
     assert "sky gpus list" in source
     bootstrap_split = '        const lines = String(text || "").split(/\\r?\\n/);'
     assert "\r" not in bootstrap_split
@@ -2390,12 +2392,36 @@ def test_direct_run_load_cancels_background_discovery_and_uses_exact_artifacts()
     assert "singlePage: true," in source
     assert "background: true," in source
     assert "Render the authoritative workflow timeline before attempting" in source
-    assert "!context.deferPreferredViewer && preferred" in source
+    assert "!context.deferPreferredViewer && !context.suppressPreferredAutoload && preferred" in source
     assert "deferPreferredViewer: true" in source
     assert 'showToast("Run loaded; preferred viewer failed: "' in source
     assert '"#stageList .stage-physical-job"' in source
     assert (
         "if (!physicalStageCount) await loadRunDetails(runId, detailOptions);" in source
+    )
+
+
+def test_artifact_inventory_autopaginates_before_global_preference_and_selection() -> None:
+    source = _agent_ui_bundle()
+    block = source.split(
+        "async function loadArtifactsForSelectedRun", 1
+    )[1].split("async function loadExactArtifactSource", 1)[0]
+
+    assert "const seenCursors = new Set();" in block
+    assert "while (nextCursor)" in block
+    assert "seenCursors.has(nextCursor)" in block
+    assert "paginationEmptyPageCount" in block
+    assert "paginationDuplicateCount" in block
+    assert "Artifact inventory source changed during pagination" in block
+    assert "Artifact inventory is truncated but the server returned no continuation cursor" in block
+    assert 'continuation.set("project_id", selectedSource.project_id);' in block
+    assert 'continuation.set("resource_bucket", selectedSource.bucket);' in block
+    assert 'continuation.set("resolved_prefix", selectedSource.resolved_prefix);' in block
+    assert 'continuation.set("source_selected", "1");' in block
+    assert "const preferred = selectPreferredArtifact(artifacts);" in block
+    assert block.index("while (nextCursor)") < block.index("setActiveRunId(runId)")
+    assert block.index("selectPreferredArtifact(artifacts)") < block.index(
+        "setActiveRunId(runId)"
     )
 
 
@@ -2709,17 +2735,72 @@ def test_agent_status_json(monkeypatch) -> None:
         "npa.cli.agent._health",
         lambda *_args, **_kwargs: (True, 200),
     )
+    monkeypatch.setattr(
+        "npa.cli.agent._basic_auth_protects_endpoint",
+        lambda *_args, **_kwargs: (True, 401),
+    )
 
     result = runner.invoke(app, ["status", "--json"])
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
     assert payload["health"] is True
+    assert payload["basic_auth_enforced"] is True
+    assert payload["unauthenticated_ui_status_code"] == 401
+    assert payload["endpoint_disclosure_allowed"] is True
     assert payload["ui_status_code"] == 200
     assert payload["rerun_status_code"] == 200
     assert payload["public_url"] == "https://8.8.8.8/"
     assert payload["sim_viz_url"].endswith("/rerun/")
     assert payload["sim_assets_url"].endswith("8.8.8.8/assets/")
     assert payload["cameras_api_url"].endswith("/assets/api/sim-assets/cameras")
+    assert payload["direct_url"] == ""
+
+
+def test_agent_status_withholds_endpoint_when_basic_auth_is_not_enforced(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "npa.cli.agent._agent_record",
+        lambda project, name: {
+            "public_ip": "8.8.8.8",
+            "agent_url": "https://8.8.8.8/",
+            "public_url": "https://8.8.8.8/",
+            "public_https": True,
+            "direct_url": "http://8.8.8.8:8088/",
+            "rerun_url": "https://8.8.8.8/rerun/",
+            "sim_viz_url": "https://8.8.8.8/rerun/",
+            "sim_assets_url": "https://8.8.8.8/assets/",
+            "cameras_api_url": "https://8.8.8.8/assets/api/sim-assets/cameras",
+            "auth_secret_path": "/tmp/agent-auth",
+            "llm": {},
+        },
+    )
+    monkeypatch.setattr("npa.cli.agent._load_auth_secret", lambda _: ("npa", "secret"))
+    monkeypatch.setattr("npa.cli.agent._health", lambda *_args, **_kwargs: (True, 200))
+    monkeypatch.setattr(
+        "npa.cli.agent._basic_auth_protects_endpoint",
+        lambda *_args, **_kwargs: (False, 200),
+    )
+
+    result = runner.invoke(app, ["status", "--json"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["health"] is False
+    assert payload["basic_auth_enforced"] is False
+    assert payload["unauthenticated_ui_status_code"] == 200
+    assert payload["endpoint_disclosure_allowed"] is False
+    for key in (
+        "public_ip",
+        "public_url",
+        "direct_url",
+        "ui_url",
+        "rerun_url",
+        "sim_viz_url",
+        "sim_assets_url",
+        "cameras_api_url",
+    ):
+        assert payload[key] == ""
 
 
 def test_agent_status_not_found_json_is_nonzero(monkeypatch) -> None:
@@ -4200,6 +4281,11 @@ def test_agent_status_read_only_does_not_probe_storage(monkeypatch, tmp_path) ->
     )
     monkeypatch.setattr(agent_module, "_load_auth_secret", lambda _path: ("u", "p"))
     monkeypatch.setattr(agent_module, "_health", lambda *_args, **_kwargs: (True, 200))
+    monkeypatch.setattr(
+        agent_module,
+        "_basic_auth_protects_endpoint",
+        lambda *_args, **_kwargs: (True, 401),
+    )
     monkeypatch.setattr(
         storage_validation,
         "probe_storage_write",

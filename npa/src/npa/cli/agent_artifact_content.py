@@ -7,7 +7,6 @@ import re
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from npa.cli.agent_access_runtime import _resolve_accessible_run_artifact
     from npa.workflows.artifacts import (
         Artifact,
         artifact_role_for_relative_key,
@@ -21,57 +20,6 @@ if TYPE_CHECKING:
 # ruff: noqa: F821,E501
 
 _artifact_content_logger = logging.getLogger("npa.agent.artifact_content")
-
-
-def _apply_content_artifact(
-    *,
-    state: dict,
-    run_id: str,
-    key: str,
-    bucket: str,
-    s3_uri: str,
-    render: str,
-) -> dict:
-    """Select a non-recording artifact without staging its S3 bytes locally."""
-    now = _now_iso()
-    sim_viz = dict(DEFAULT_SIM_VIZ)
-    current = state.get("sim_viz")
-    if isinstance(current, dict):
-        sim_viz.update(current)
-    query = (
-        f"run_id={quote(run_id, safe='')}&key={quote(key, safe='')}&"
-        f"bucket={quote(bucket, safe='')}"
-    )
-    content_url = f"/api/artifacts/content?{query}"
-    download_url = f"{content_url}&download=true"
-    previewable = render in {"json", "text", "image", "video"}
-    sim_viz.update(
-        {
-            "run_id": run_id,
-            "active_run_id": run_id,
-            "stage": "artifact-selected",
-            "rrd_uri": "",
-            "rerun_iframe_url": "/rerun/",
-            "rerun_ready": False,
-            "artifact_uri": s3_uri,
-            "artifact_key": key,
-            "artifact_render": render,
-            "artifact_preview_url": content_url if previewable else "",
-            "artifact_download_url": download_url,
-            "preview_status": "artifact_preview" if previewable else "download_only",
-            "visualization_note": (
-                f"Selected {render} artifact for secure same-origin preview."
-                if previewable
-                else "Binary/download-only artifact selected; metadata is shown without rendering bytes."
-            ),
-            "rrd_updated_at": now,
-            "mode": "static",
-        }
-    )
-    state["sim_viz"] = sim_viz
-    _record_sim_viz_run(state, sim_viz)
-    _save_state(state)
-    return sim_viz
 
 
 def _summary_documents_for_run(s3, bucket: str, artifacts: list) -> dict:
@@ -125,8 +73,60 @@ def _resolved_artifact_for_content(
     key: str,
     requested_bucket: str = "",
     exact_membership: bool = False,
+    source_authorized: bool = False,
+    resolved_prefix: str = "",
 ):
     normalized_key = _safe_artifact_key(key)
+    if exact_membership and source_authorized:
+        # The caller already re-proved the complete server-issued source tuple
+        # (run_ref + project + bucket + prefix) through
+        # ``_authorize_exact_run_ref_source``. Keep the object lookup on that
+        # exact path: validate run-prefix membership and HEAD only this key.
+        # Re-enumerating the run here is both slower and less precise when a
+        # source contains duplicate basenames or more than one native S3 page.
+        normalized_run = validate_run_id(run_id)
+        run_bucket = str(requested_bucket or "").strip()
+        if not run_bucket:
+            raise HTTPException(
+                status_code=400,
+                detail="resource bucket is required for exact artifact playback",
+            )
+        source_prefix = _validated_resolved_prefix(resolved_prefix)
+        discovered_scope = (
+            "/".join(
+                part for part in (source_prefix, normalized_run) if part
+            )
+            + "/"
+        )
+        if not normalized_key.startswith(discovered_scope):
+            raise HTTPException(
+                status_code=404,
+                detail="artifact key is outside the selected run source",
+            )
+        relative_key = normalized_key[len(discovered_scope) :]
+        if not relative_key:
+            raise HTTPException(
+                status_code=404,
+                detail="artifact key does not identify an object in the selected run",
+            )
+        head = s3.head_object(Bucket=run_bucket, Key=normalized_key)
+        modified = head.get("LastModified")
+        if hasattr(modified, "isoformat"):
+            modified = modified.isoformat()
+        render = render_hint_for_object(key=normalized_key)
+        artifact = Artifact(
+            run_id=normalized_run,
+            key=normalized_key,
+            s3_uri=f"s3://{run_bucket}/{normalized_key}",
+            size=int(head.get("ContentLength") or 0),
+            last_modified=str(modified or ""),
+            render=render,
+            inline=is_inline_render(render),
+            role=artifact_role_for_relative_key(relative_key),
+            namespace=source_prefix or "<bucket-root>",
+            relative_key=relative_key,
+        )
+        return normalized_run, run_bucket, artifact
     if exact_membership:
         # A load request that carries an exact bucket/key tuple must stay on the
         # bounded membership path.  Re-listing the whole run here both loses the
@@ -199,6 +199,66 @@ def _resolved_artifact_for_content(
     return normalized_run, run_bucket, artifact
 
 
+def _exact_artifact_source(
+    *,
+    s3,
+    settings,
+    run_id: str,
+    run_ref: str,
+    project_id: str,
+    resource_bucket: str,
+    resolved_prefix: str | None,
+    source_selected: bool,
+    key: str,
+):
+    """Authorize one server-selected artifact without raw-URI rediscovery."""
+    missing = []
+    if not str(run_id or "").strip():
+        missing.append("run_id")
+    if not str(run_ref or "").strip():
+        missing.append("run_ref")
+    if not str(project_id or "").strip():
+        missing.append("project_id")
+    if not str(resource_bucket or "").strip():
+        missing.append("resource_bucket")
+    if resolved_prefix is None:
+        missing.append("resolved_prefix")
+    if not source_selected:
+        missing.append("source_selected")
+    if missing:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "schema": "npa.agent.api_error/v1",
+                "code": "exact_artifact_source_required",
+                "message": (
+                    "Artifact preview/download requires the exact server-selected "
+                    "run source. List the run again and use its scoped card action."
+                ),
+                "missing_fields": missing,
+            },
+        )
+    source_bucket, _source_project, source_prefix = _authorize_exact_run_ref_source(
+        s3=s3,
+        settings=settings,
+        run_id=str(run_id or "").strip(),
+        run_ref=str(run_ref or "").strip(),
+        resource_bucket=str(resource_bucket or "").strip(),
+        project_id=str(project_id or "").strip(),
+        resolved_prefix=str(resolved_prefix or ""),
+    )
+    return _resolved_artifact_for_content(
+        s3,
+        settings,
+        run_id=str(run_id or "").strip(),
+        key=key,
+        requested_bucket=source_bucket,
+        exact_membership=True,
+        source_authorized=True,
+        resolved_prefix=source_prefix,
+    )
+
+
 def _artifact_stream(body):
     try:
         while True:
@@ -217,17 +277,25 @@ def _artifact_content_response(
     request: Request,
     *,
     run_id: str,
+    run_ref: str,
     key: str,
-    bucket: str = "",
+    project_id: str,
+    resource_bucket: str,
+    resolved_prefix: str | None,
+    source_selected: bool,
     download: bool = False,
 ):
     s3, settings = _agent_s3_client()
-    normalized_run, run_bucket, artifact = _resolved_artifact_for_content(
-        s3,
-        settings,
+    normalized_run, run_bucket, artifact = _exact_artifact_source(
+        s3=s3,
+        settings=settings,
         run_id=run_id,
+        run_ref=run_ref,
         key=key,
-        requested_bucket=bucket,
+        project_id=project_id,
+        resource_bucket=resource_bucket,
+        resolved_prefix=resolved_prefix,
+        source_selected=source_selected,
     )
     render = str(artifact.render or "download")
     category = artifact_category_for_relative_key(
@@ -247,6 +315,8 @@ def _artifact_content_response(
         "X-NPA-Artifact-Category": category,
         "X-NPA-Artifact-Render": render,
         "X-NPA-Run-Id": normalized_run,
+        "X-NPA-Run-Ref": str(run_ref or "").strip(),
+        "X-NPA-Source-Selected": "true",
     }
     if request.method == "HEAD":
         head = s3.head_object(Bucket=run_bucket, Key=str(artifact.key))
@@ -362,17 +432,25 @@ def _artifact_content_response(
 @app.api_route("/artifacts/content", methods=["GET", "HEAD"])
 def artifacts_content(
     request: Request,
-    run_id: str,
-    key: str,
-    bucket: str = "",
+    run_id: str = "",
+    run_ref: str = "",
+    key: str = "",
+    project_id: str = "",
+    resource_bucket: str = "",
+    resolved_prefix: str | None = None,
+    source_selected: bool = False,
     download: bool = False,
 ):
     try:
         return _artifact_content_response(
             request,
             run_id=run_id,
+            run_ref=run_ref,
             key=key,
-            bucket=bucket,
+            project_id=project_id,
+            resource_bucket=resource_bucket,
+            resolved_prefix=resolved_prefix,
+            source_selected=source_selected,
             download=download,
         )
     except HTTPException:
@@ -446,15 +524,17 @@ def artifact_file(filename: str):
 def artifacts_download(
     request: Request,
     run_id: str = "",
+    run_ref: str = "",
     key: str = "",
     s3_uri: str = "",
-    bucket: str = "",
+    project_id: str = "",
+    resource_bucket: str = "",
+    resolved_prefix: str | None = None,
+    source_selected: bool = False,
 ):
     requested_uri = str(s3_uri or "").strip()
     requested_key = str(key or "").strip()
-    requested_bucket = str(bucket or "").strip()
-    if not str(run_id or "").strip():
-        raise HTTPException(status_code=400, detail="run_id is required")
+    requested_bucket = str(resource_bucket or "").strip()
     try:
         if requested_uri:
             uri_bucket, uri_key = parse_s3_uri(requested_uri)
@@ -472,8 +552,12 @@ def artifacts_download(
         return _artifact_content_response(
             request,
             run_id=run_id,
+            run_ref=run_ref,
             key=requested_key,
-            bucket=requested_bucket,
+            project_id=project_id,
+            resource_bucket=requested_bucket,
+            resolved_prefix=resolved_prefix,
+            source_selected=source_selected,
             download=True,
         )
     except HTTPException:

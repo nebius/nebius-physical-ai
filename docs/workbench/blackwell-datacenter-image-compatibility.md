@@ -63,7 +63,9 @@ npa/docker/workbench/base/cuda13-b300/build.sh \
 
 Other scripts and their base overrides: `genesis/build_sm120.sh --base-image`, `sim2real-build.sh` (`BASE_IMAGE`, `GENESIS_IMAGE`), `sonic/build.sh --variant baked|k8s|mujoco` (extend the existing `NPA_CUDA_ARCHITECTURES` build arg), `cosmos2-transfer/build.sh`, `lerobot/build.sh`, `lancedb/build.sh`, `groot/build.sh`.
 
-Push new tags to both the primary (`eu-north1`) and mirror (`us-central1`) registries. Resolve the registry through `${NPA_REGISTRY}` or `npa.deploy.images`; never hardcode a registry id.
+Push immutable `dev-<full-git-sha>` candidates to the private GHCR namespace,
+then promote the validated digest to the public GHCR release namespace. Never
+place development tags in a public package.
 
 The packaging contract still applies (`npa/docker/workbench/packaging-contract.yaml`): non-root final user, `EXPOSE`/`HEALTHCHECK` per tier, no baked secrets, and a declared `redistribution` class.
 

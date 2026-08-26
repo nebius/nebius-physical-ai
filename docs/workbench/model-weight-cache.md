@@ -1,4 +1,4 @@
-# Caching runtime-downloaded model weights
+# Caching runtime-downloaded model weights and reviewed SDKs
 
 The workbench images bake **no model weights**. Every NVIDIA Cosmos checkpoint and
 guardrail, GR00T, the Cosmos-Curate towers, the Qwen VLMs, Wan 2.2 and LTX are
@@ -14,7 +14,8 @@ download died with the container, and **the next run of the same image downloade
 again**: tens of gigabytes of egress and minutes of GPU time per stage, on an
 already-billing GPU, every run.
 
-`npa.workbench.model_cache` is the one answer to that question. Point it at durable
+`npa.workbench.model_cache` is the one answer to that question for weights and the
+Content Agents OVRTX SDK. Point it at durable
 storage once and every runtime NPA drives redirects its whole cache family into that
 tree, so the second run of an image is a cache hit.
 
@@ -212,6 +213,7 @@ which is the failure this exists to remove.
 | `NPA_COSMOS_CURATE_WEIGHTS_DIR` | `cosmos-curate/models` | rebinds upstream Cosmos-Curate's hardcoded `/config/models` |
 | `HF_LEROBOT_HOME`, `LEROBOT_HF_HOME` | `lerobot` | LeRobot datasets and policies |
 | `WAN22_CACHE_DIR`, `NPA_LTX_MODEL_CACHE` | `wan2.2`, `ltx-2.5` | the BYOF video models |
+| `NPA_CONTENT_AGENTS_RUNTIME_CACHE` | `runtimes/content-agents` | exact OVRTX SDK delivered directly by NVIDIA to the operator |
 
 `MODEL_CACHE_LAYOUT` in `npa/src/npa/workbench/model_cache.py` is the source of
 truth; `MODEL_CACHE_ENV_NAMES` is the allow-list that env-filtering call sites (the
@@ -225,7 +227,7 @@ narrower names directly and a single unset name is enough to leak a download.
 Each stage logs the root it resolved before it downloads anything:
 
 ```
-npa model cache: /opt/npa-model-cache (mounted here, weights persist across runs)
+npa model cache: /opt/npa-model-cache (mounted here, cached artifacts persist across runs)
 ```
 
 Absence of that line means the stage is on ephemeral storage. A stage that resolved
@@ -300,7 +302,17 @@ whatever image the stage pulls.
 
 ## What this does not cover
 
-Model *weights* only. The BYOF video images also fetch a CUDA PyTorch runtime into
+Model weights plus the Content Agents OVRTX SDK only. OVRTX shares this cache
+because three separate render Jobs need the same verified SDK and the public image
+contains none of its bytes. Its version/architecture/lock-bound identity, writer
+lock, unique temporary installation, and atomic ready marker keep it separate from
+mutable model aliases. Without a mounted cache it falls back to XDG cache, which is
+pod/node-ephemeral under SkyPilot and can be downloaded again by the next Job.
+A durable ReadWriteOnce claim works for the sequential Content Agents render
+stages; use ReadWriteMany only when jobs on different nodes must read the cache
+concurrently.
+
+The BYOF video images also fetch a CUDA PyTorch runtime into
 their own trees (`NPA_WAN_RUNTIME_CACHE`, `NPA_LTX_RUNTIME_CACHE`), which are still
 per-run and are not redirected here — a wheel closure is a different artifact with a
 different verification story, which is why Isaac's has its own volume rather than
@@ -315,10 +327,10 @@ weight cache still proves the gate closed.
 
 Same motivation, different fill pattern, separate volumes.
 
-| | Isaac runtime cache | Model weight cache |
+| | Isaac runtime cache | Shared model/runtime cache |
 | --- | --- | --- |
 | Manifest | `common/warm-isaac-cache.yaml` | `common/model-weight-cache.yaml` |
-| Contents | pinned `isaacsim`/`isaaclab` wheels + Isaac Lab source | downloaded model weights |
+| Contents | pinned `isaacsim`/`isaaclab` wheels + Isaac Lab source | downloaded model weights + exact Content Agents OVRTX SDK |
 | Fills | one CPU warm Job, up front | lazily, by whichever stage needs a checkpoint first |
 | Mounted | read-only (`NPA_ISAAC_CACHE_READONLY=1`) | read-write; it accumulates |
 | Opt-in via | `NPA_ISAAC_CACHE_DIR` | `NPA_MODEL_CACHE_PVC` / `_HOST_PATH` / `_DIR` |

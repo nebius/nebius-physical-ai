@@ -23,7 +23,11 @@ import httpx
 
 DEFAULT_BASE_URL = "https://api.tokenfactory.nebius.com/v1/"
 DEFAULT_API_KEY_ENV = "NEBIUS_TOKEN_FACTORY_KEY"
-DEFAULT_TIMEOUT_S = 120.0
+# Large vision-language caption requests can spend several minutes in hosted
+# inference even after the connection is established.  Keep a bounded network
+# failure mode, but do not turn normal Qwen-VL latency into four identical
+# transport retries and a failed workflow stage.
+DEFAULT_TIMEOUT_S = 600.0
 DEFAULT_RETRY_ATTEMPTS = 4
 RETRYABLE_STATUS_CODES = frozenset({429, 500, 502, 503, 504, 529})
 DEFAULT_TEXT_MODEL = "meta-llama/Llama-3.3-70B-Instruct"

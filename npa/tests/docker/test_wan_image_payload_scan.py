@@ -51,6 +51,39 @@ def _tar_bytes(members: dict[str, bytes], *, mode: str = "w") -> bytes:
     return _gzip(raw) if mode == "w:gz" else raw
 
 
+def _docker_save(
+    path: Path, *, layers: list[dict[str, bytes]], config: dict
+) -> Path:
+    layer_archives: list[tuple[str, bytes]] = []
+    for index, members in enumerate(layers):
+        layer_archives.append((f"layer-{index}/layer.tar", _tar_bytes(members)))
+    manifest = [{"Config": "config.json", "Layers": [name for name, _ in layer_archives]}]
+    return _tar(
+        path,
+        {
+            "manifest.json": json.dumps(manifest).encode(),
+            "config.json": json.dumps(config).encode(),
+            **dict(layer_archives),
+        },
+    )
+
+
+def test_docker_save_scans_payload_deleted_by_a_later_layer(tmp_path: Path) -> None:
+    archive = _docker_save(
+        tmp_path / "image.tar",
+        layers=[
+            {"workspace/model.safetensors": b"weights"},
+            {"workspace/.wh.model.safetensors": b""},
+        ],
+        config={"history": []},
+    )
+    layer_dir = tmp_path / "layers"
+    layer_dir.mkdir()
+    layers, config = scanner.docker_save_material(archive, layer_dir)
+    findings = scanner.scan_tars(layers, config)
+    assert "checkpoint_or_weight" in {finding.kind for finding in findings}
+
+
 def _zip_bytes(members: dict[str, bytes]) -> bytes:
     payload = io.BytesIO()
     with zipfile.ZipFile(payload, "w", compression=zipfile.ZIP_DEFLATED) as archive:
@@ -591,20 +624,12 @@ def test_secret_literal_exception_requires_exact_audited_bytes(
     )
 
 
-def test_precompiled_secret_literal_allowlist_is_exact() -> None:
-    expected = {
-        "opt/wan-base/lib/python3.10/site-packages/PIL/__pycache__/ImageFont.cpython-310.pyc": (
-            "59632aaf913b02078acc5d366bcef3e28a14194acaf7904c4c13ac4714c319a2"
-        ),
-        "opt/wan-base/lib/python3.10/site-packages/cryptography/hazmat/primitives/serialization/__pycache__/ssh.cpython-310.pyc": (
-            "b269114f93539cfc4c55511c3ecb8e55e7a8f1f9dd8755deef8762f9938eec3e"
-        ),
-    }
-
-    assert {
-        path: scanner.AUDITED_SECRET_LITERAL_FILE_SHA256.get(path)
-        for path in expected
-    } == expected
+def test_secret_literal_allowlist_contains_no_precompiled_bytecode() -> None:
+    assert not [
+        path
+        for path in scanner.AUDITED_SECRET_LITERAL_FILE_SHA256
+        if "/__pycache__/" in path or path.endswith(".pyc")
+    ]
 
 
 @pytest.mark.parametrize(

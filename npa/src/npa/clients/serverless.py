@@ -17,9 +17,6 @@ import time
 from typing import Any
 from urllib.parse import urlparse
 
-from npa.clients.nebius_auth import NebiusTokenError, mint_nebius_iam_token
-
-
 @dataclass
 class ServerlessClientError(Exception):
     """Base exception for serverless client errors."""
@@ -108,8 +105,6 @@ _SECRET_KEY_PARTS = (
     "private_key",
 )
 _SENSITIVE_VALUE_FLAGS = {"--registry-password", "--token"}
-_NEBIUS_CR_HOST_SUFFIX = ".nebius.cloud"
-
 logger = logging.getLogger(__name__)
 
 
@@ -123,11 +118,6 @@ def _registry_server_from_image(image: str) -> str:
     if "." in host or ":" in host or host == "localhost":
         return host.removeprefix("https://").removeprefix("http://").rstrip("/")
     return ""
-
-
-def _is_nebius_container_registry_image(image: str) -> bool:
-    host = _registry_server_from_image(image)
-    return host.startswith("cr.") and host.endswith(_NEBIUS_CR_HOST_SUFFIX)
 
 
 class EndpointStatus(str, Enum):
@@ -579,35 +569,38 @@ class ServerlessClient:
         self._poll_interval = poll_interval
         self._sleep = sleep
 
-    def _mint_registry_token(self) -> str:
-        """Mint a short-lived IAM token for Nebius Container Registry pulls.
-
-        Delegates to the canonical, ambient-token-robust helper so serverless
-        pulls never 403 because a stale ``NEBIUS_IAM_TOKEN`` was exported.
-        """
-
-        try:
-            return mint_nebius_iam_token(nebius_cli=self._nebius_bin)
-        except NebiusTokenError as exc:
-            raise ServerlessClientError(str(exc)) from exc
-
     def _registry_auth_args(self, image: str) -> list[str]:
-        """CLI flags so serverless can pull private ``cr.*.nebius.cloud`` images."""
+        """CLI flags for explicitly configured private-registry credentials."""
+
+        from npa.deploy.images import is_public_registry
 
         if os.environ.get("NPA_SERVERLESS_SKIP_REGISTRY_AUTH", "").strip() == "1":
             return []
-        if not _is_nebius_container_registry_image(image):
-            return []
-        username = (
-            os.environ.get("NPA_REGISTRY_USERNAME", "").strip()
-            or "iam"
-        )
-        # Prefer an explicit NPA_REGISTRY_PASSWORD; otherwise always mint a
-        # fresh IAM token. Do not reuse SKYPILOT_DOCKER_PASSWORD — ops VMs often
-        # export a token for a different SA/project that cannot pull this CR.
+        configured_server = os.environ.get("NPA_REGISTRY_SERVER", "").strip()
+        username = os.environ.get("NPA_REGISTRY_USERNAME", "").strip()
         password = os.environ.get("NPA_REGISTRY_PASSWORD", "").strip()
-        if not password:
-            password = self._mint_registry_token()
+        if not configured_server and not username and not password:
+            return []
+        image_registry = image.removeprefix("docker:").rsplit("/", 1)[0]
+        if is_public_registry(image_registry):
+            return []
+        # Pre-GHCR configurations commonly left a username behind after their
+        # server/token fields were removed. A username alone cannot authenticate
+        # anything, so preserve anonymous public pulls instead of treating that
+        # harmless migration residue as an incomplete private-registry request.
+        if username and not configured_server and not password:
+            return []
+        if not configured_server or not username or not password:
+            raise ServerlessClientError(
+                "private registry auth requires NPA_REGISTRY_SERVER, "
+                "NPA_REGISTRY_USERNAME, and NPA_REGISTRY_PASSWORD"
+            )
+        image_server = _registry_server_from_image(image)
+        configured_host = _registry_server_from_image(configured_server + "/x")
+        if configured_host != image_server:
+            raise ServerlessClientError(
+                "NPA_REGISTRY_SERVER does not match the selected image registry"
+            )
         return ["--registry-username", username, "--registry-password", password]
 
     def create_endpoint(

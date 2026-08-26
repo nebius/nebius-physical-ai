@@ -22,7 +22,8 @@ Options
 --project-id  <str>  Known Nebius project ID for prompt-free configure.
 --region  <str>  Known Nebius project region for prompt-free configure.
 --project-alias  <str>  Local NPA alias for prompt-free configure.
---container-registry  <str>  Optional non-secret registry override.
+--bucket-storage-class  <str>  Storage class for a newly created known-project bucket: standard, enhanced, or intelligent.
+--bucket-size-gb  <str>  GiB cap for a newly created known-project bucket; 0 means unlimited.
 --help  Show this message and exit.
 ```
 
@@ -40,7 +41,8 @@ Options
 | `--project-id` | <str>  Known Nebius project ID for prompt-free configure. |
 | `--region` | <str>  Known Nebius project region for prompt-free configure. |
 | `--project-alias` | <str>  Local NPA alias for prompt-free configure. |
-| `--container-registry` | <str>  Optional non-secret registry override. |
+| `--bucket-storage-class` | <str>  Storage class for a newly created known-project bucket: standard, enhanced, or intelligent. |
+| `--bucket-size-gb` | <str>  GiB cap for a newly created known-project bucket; 0 means unlimited. |
 | `--help` | Show this message and exit. |
 
 ## Subcommands

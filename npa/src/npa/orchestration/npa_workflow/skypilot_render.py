@@ -71,6 +71,10 @@ SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
     "workbench.vlm_eval": (),
     # Attribute verification generates and answers its questions on Token Factory.
     "workbench.cosmos_evaluator": ("NEBIUS_TOKEN_FACTORY_KEY",),
+    # Material and physics classification call a real hosted vision model. The
+    # acquire/validate/package actions do not consume the key, but one prefix
+    # hint makes the complete shipped workflow's credential requirement clear.
+    "workbench.content_agents": ("NEBIUS_TOKEN_FACTORY_KEY",),
     # This entry explicitly disables the parent Cosmos3 hint: the public Nano
     # checkpoint is downloaded anonymously and this toolRef passes --no-guardrails.
     "workbench.cosmos3.text_to_image": (),
@@ -313,8 +317,8 @@ class SkypilotRenderOptions:
     # Accelerator specs resolved against the live cluster at submit time, keyed by
     # the spec's own accelerator string. NPA_WORKFLOW_GPU_ACCELERATOR still wins.
     gpu_accelerator_overrides: Mapping[str, str] = field(default_factory=dict)
-    # When False (``--plan-only``), embed placeholders instead of minting live
-    # Nebius registry tokens into rendered YAML that may be printed to stdout.
+    # When False (``--plan-only``), embed placeholders instead of explicit live
+    # private-registry credentials in YAML that may be printed to stdout.
     materialize_registry_secrets: bool = True
     # Shared scheduler identity for the current runtime wave attempt.  The
     # runtime supplies its durable logical launch id; offline renders derive a
@@ -351,6 +355,9 @@ def normalize_resources(
     # operators can retarget without editing the committed blueprint; otherwise
     # submit-time resolution supplies a per-profile remap.
     accel_override = str(_os.environ.get("NPA_WORKFLOW_GPU_ACCELERATOR") or "").strip()
+    gpu_memory_override = str(
+        _os.environ.get("NPA_WORKFLOW_GPU_MEMORY") or ""
+    ).strip()
     overrides = dict(accelerator_overrides or {})
 
     out: dict[str, Any] = {}
@@ -384,12 +391,15 @@ def normalize_resources(
                 value = f"{selected_override}:{declared_count}"
             elif selected_override:
                 value = selected_override
-        if key == "memory" and isinstance(value, str):
-            stripped = value.strip()
-            if stripped.lower().endswith("gi"):
-                value = stripped[:-2]
-            elif stripped.lower().endswith("g"):
-                value = stripped[:-1]
+        if key == "memory":
+            if gpu_memory_override and resources.get("accelerators"):
+                value = gpu_memory_override
+            if isinstance(value, str):
+                stripped = value.strip()
+                if stripped.lower().endswith("gi"):
+                    value = stripped[:-2]
+                elif stripped.lower().endswith("g"):
+                    value = stripped[:-1]
         out[key] = value
 
     cloud = str(out.get("cloud") or "").strip().lower()
@@ -826,6 +836,59 @@ def render_run_preamble_for_tool(tool_ref: str, *, config: Mapping[str, Any]) ->
     shells — a server started in setup is gone by the time the command runs.
     """
 
+    content_agents_pythonpath = (
+        'if [ -n "$PYTHONPATH" ]; then\n'
+        '  export PYTHONPATH="/opt/npa-runtime:/opt/content-agents:'
+        '/opt/content-agents/apps:$PYTHONPATH"\n'
+        "else\n"
+        '  export PYTHONPATH="/opt/npa-runtime:/opt/content-agents:'
+        '/opt/content-agents/apps"\n'
+        "fi\n"
+    )
+    if tool_ref in {
+        "workbench.content_agents.materials",
+        "workbench.content_agents.physics",
+        "workbench.content_agents.validate",
+    }:
+        # SkyPilot's Kubernetes bootstrap replaces an image ENTRYPOINT with its
+        # own bash command. Bootstrap the immutable operator-owned runtime cache,
+        # then restore Xvfb in the shell that actually invokes OVRTX. Fail before
+        # the expensive upstream pipeline if the node exposes CUDA devices without
+        # the host-mounted graphics userspace OVRTX requires.
+        return content_agents_pythonpath + (
+            "/opt/venv/bin/python -m npa.workflows.content_agents bootstrap-runtime\n"
+            "if ! python3 -c 'import ctypes; "
+            'ctypes.CDLL("libGLX_nvidia.so.0")' "' >/dev/null 2>&1; then\n"
+            "  echo 'OVRTX requires NVIDIA GPU Operator graphics driver mounts; "
+            "libGLX_nvidia.so.0 is unavailable' >&2\n"
+            "  exit 1\n"
+            "fi\n"
+            'npa_ovrtx_display="$(printenv OVRTX_XVFB_DISPLAY 2>/dev/null || true)"\n'
+            'if [ -z "$npa_ovrtx_display" ]; then npa_ovrtx_display=99; fi\n'
+            'if [ -z "$(printenv DISPLAY 2>/dev/null || true)" ]; then\n'
+            "  /usr/local/bin/npa-content-agents-entrypoint /bin/true\n"
+            '  export DISPLAY=":$npa_ovrtx_display"\n'
+            '  npa_ovrtx_lock="/tmp/.X$npa_ovrtx_display-lock"\n'
+            '  npa_ovrtx_xvfb_pid="$(tr -d "[:space:]" < "$npa_ovrtx_lock")"\n'
+            '  case "$npa_ovrtx_xvfb_pid" in\n'
+            "    ''|*[!0-9]*) echo 'invalid Xvfb pid file' >&2; exit 1 ;;\n"
+            "  esac\n"
+            "  npa_cleanup_ovrtx_display() {\n"
+            '    if [ -r "/proc/$npa_ovrtx_xvfb_pid/comm" ] &&\n'
+            '       [ "$(cat "/proc/$npa_ovrtx_xvfb_pid/comm")" = Xvfb ] &&\n'
+            '       [ "$(tr -d "[:space:]" < "$npa_ovrtx_lock" 2>/dev/null || true)" = '
+            '"$npa_ovrtx_xvfb_pid" ]; then\n'
+            '      kill "$npa_ovrtx_xvfb_pid" 2>/dev/null || true\n'
+            "    fi\n"
+            "  }\n"
+            "  trap npa_cleanup_ovrtx_display EXIT\n"
+            "fi\n"
+        )
+    if tool_ref.startswith("workbench.content_agents."):
+        # SkyPilot starts setup/run through login shells that may discard Docker
+        # ENV values. Keep the narrow baked adapter importable on CPU stages too,
+        # without invoking the render-only runtime bootstrap above.
+        return content_agents_pythonpath
     if not tool_ref.startswith("workbench.vlm_eval"):
         return ""
     # #236 skipped the benchmark toolRef here, correctly for the twin it had: a `sample`
@@ -932,8 +995,16 @@ def render_task_run_script(command: Sequence[str], *, preamble: str = "") -> str
         # succeeds), the overlay lands in the vendor interpreter, and the stage runs the stale
         # CLI. Live job 284: `No such command 'cosmos2'. Did you mean 'cosmos'?` — from an npa
         # predating the subcommand, while the recorded interpreter had the current one.
-        '  printf \'#!/bin/sh\\nexec "%s" -c "from npa.cli.main import app_entry; '
-        'app_entry()" "$@"\\n\' "$npa_python" > /tmp/npa-shim/npa\n'
+        # The distribution intentionally has no top-level ``npa.__main__``.
+        # Import and CALL the same lightweight entry function used by the
+        # installed console script so the shim stays bound to the recorded
+        # interpreter without relying on a scripts directory that may be
+        # outside PATH.  Calling it explicitly also supports older baked NPA
+        # images whose entry module defines ``main`` but has no ``__main__``
+        # guard: ``python -m npa.cli.entry`` silently exited 0 in a live Cosmos
+        # Evaluator stage and therefore produced no declared report.
+        '  printf \'#!/bin/sh\\nexec "%s" -c "from npa.cli.entry import main; main()" "$@"\\n\' '
+        '"$npa_python" > /tmp/npa-shim/npa\n'
         "  chmod +x /tmp/npa-shim/npa\n"
         '  export PATH="/tmp/npa-shim:$PATH"\n'
         # Console scripts installed next to that interpreter must be resolvable by
@@ -1388,6 +1459,37 @@ def render_setup_for_tool(
 
     if not options.default_setup:
         return ""
+    if tool_ref.startswith("workbench.content_agents."):
+        # The public Content Agents image deliberately carries only the narrow
+        # module adapter used by its five toolRefs. Requiring the full ``npa``
+        # console script here would either force unrelated CLI/dependency bytes
+        # into that image or make SkyPilot overlay source at runtime. Verify the
+        # same zero-OVRTX image boundary used during the build, then record its
+        # exact interpreter for the run-shell shim. This inspection never
+        # downloads OVRTX; render-stage preambles bootstrap it later.
+        return (
+            "set -e\n"
+            'npa_baked_python="/opt/venv/bin/python"\n'
+            'if [ -n "$PYTHONPATH" ]; then\n'
+            '  export PYTHONPATH="/opt/npa-runtime:/opt/content-agents:'
+            '/opt/content-agents/apps:$PYTHONPATH"\n'
+            "else\n"
+            '  export PYTHONPATH="/opt/npa-runtime:/opt/content-agents:'
+            '/opt/content-agents/apps"\n'
+            "fi\n"
+            'if [ ! -x "$npa_baked_python" ]; then\n'
+            '  echo "Content Agents baked interpreter is unavailable" >&2\n'
+            "  exit 69\n"
+            "fi\n"
+            '"$npa_baked_python" - <<\'PY\'\n'
+            "from npa.workflows.content_agents import inspect_image\n"
+            "payload = inspect_image()\n"
+            "if payload.get('status') != 'image-ready':\n"
+            "    raise SystemExit('Content Agents image boundary is not ready')\n"
+            "print('Content Agents narrow baked runtime verified')\n"
+            "PY\n"
+            'printf \'%s\\n\' "$npa_baked_python" > /tmp/npa-python\n'
+        )
     require_baked = str(config.get("require_baked_npa") or "").strip().lower()
     if require_baked in {"1", "true", "yes", "on"}:
         probe_module = "npa.cli.main"
@@ -1617,8 +1719,6 @@ def plan_image_pull_secrets(
             for item in raw_names
             if isinstance(item, dict) and str(item.get("name") or "").strip()
         )
-        if _is_nebius_registry_image(image):
-            names = tuple(dict.fromkeys((*names, "npa-nebius-registry")))
         paths.setdefault(image, []).append(names)
     return {
         image: ()
@@ -1732,8 +1832,10 @@ def build_skypilot_task_doc(
             accepted=options.accept_eula,
         )
     )
-    # Optional tuning passthrough. The first-class transfer_execute toolRef always
-    # conditions on the workflow input; these variables can tune that real path.
+    # Optional tuning passthrough. Cosmos resolves explicit argv first, these env
+    # values second, and a validated run-scoped refinement artifact last. Thus the
+    # env values tune direct/first-pass execution but intentionally cannot override
+    # a committed retry policy.
     import os as _os_cond
 
     for _cond_var in (
@@ -1886,31 +1988,22 @@ def build_skypilot_task_doc(
         ):
             envs["NPA_SRC_OVERLAY"] = "1"
             doc["envs"] = envs
-    _inject_nebius_registry_docker_secrets(
+    _inject_operator_registry_docker_secrets(
         doc,
         materialize=options.materialize_registry_secrets,
     )
     return doc
 
 
-def _is_nebius_registry_image(image_id: str) -> bool:
-    value = image_id.removeprefix("docker:").strip()
-    host = value.split("/", 1)[0] if "/" in value else ""
-    return host.startswith("cr.") and host.endswith(".nebius.cloud")
-
-
-def _inject_nebius_registry_docker_secrets(
+def _inject_operator_registry_docker_secrets(
     doc: dict[str, Any],
     *,
     materialize: bool = True,
 ) -> None:
-    """Embed SkyPilot Docker login secrets for private Nebius registry images.
+    """Embed configured exact-host credentials for an operator registry.
 
-    Matches the burst submit path: ``resources.image_id`` is pulled before YAML
-    ``setup`` runs, so registry auth must live in task ``secrets``.
-
-    When ``materialize`` is False (plan-only), embed a placeholder password so
-    rendered YAML can be printed without minting or leaking live IAM tokens.
+    Official public GHCR development and release tags remain anonymous. NPA
+    never mints provider IAM tokens or manages Kubernetes pull secrets.
     """
 
     import os
@@ -1920,45 +2013,38 @@ def _inject_nebius_registry_docker_secrets(
         return
     cloud = str(resources.get("cloud") or "").strip().lower()
     image_id = str(resources.get("image_id") or "").strip()
-    # Nebius VMs need SKYPILOT_DOCKER_* for private pulls; k8s uses imagePullSecrets
-    # but still benefits from secrets when the controller falls back to docker login.
-    if cloud not in {"nebius", "kubernetes", "k8s"} or not _is_nebius_registry_image(
-        image_id
-    ):
+    if cloud not in {"nebius", "kubernetes", "k8s"} or not image_id:
         return
 
     server = image_id.removeprefix("docker:").split("/", 1)[0]
-    # Registry/credentials consistency guard (applies to EVERY stage image, not
-    # just Cosmos): SkyPilot logs into the image's registry host using
-    # SKYPILOT_DOCKER_PASSWORD. If that password authenticates to a DIFFERENT
-    # registry (SKYPILOT_DOCKER_SERVER), the pull is a 403 ErrImagePull that stalls
-    # provisioning. Fail fast with an actionable message at submit time. Only
-    # enforced when actually materializing creds (real submit), never plan-only.
-    if materialize:
-        creds_server = str(os.environ.get("SKYPILOT_DOCKER_SERVER") or "").strip()
-        if creds_server and creds_server != server:
+    creds_server = str(os.environ.get("SKYPILOT_DOCKER_SERVER") or "").strip()
+    if not creds_server:
+        return
+    if creds_server != server:
+        from npa.deploy.images import is_public_registry
+
+        image_registry = image_id.removeprefix("docker:").rsplit("/", 1)[0]
+        if is_public_registry(image_registry):
+            return
+        if materialize:
             raise NpaWorkflowRenderError(
                 f"registry mismatch: task image is in {server!r} but the Docker "
-                f"credentials (SKYPILOT_DOCKER_SERVER) authenticate to {creds_server!r}. "
-                "Pinning images from a registry your credentials cannot pull causes a "
-                "403 ErrImagePull for every image. Pass --registry pointing at the "
-                f"credentials' registry {creds_server!r} (e.g. the primary workbench "
-                f"registry), or set SKYPILOT_DOCKER_* for {server!r}."
+                "credentials (SKYPILOT_DOCKER_SERVER) authenticate to "
+                f"{creds_server!r}. Set SKYPILOT_DOCKER_* for {server!r}, or "
+                f"select an image from {creds_server!r}."
             )
+        return
+
     from npa.orchestration.skypilot.registry_preflight import (
         resolve_registry_credentials,
     )
 
-    username, password = resolve_registry_credentials(server, mint=False)
+    username, password = resolve_registry_credentials(server)
+    if not username:
+        return
     if materialize:
         if not password:
-            try:
-                username, password = resolve_registry_credentials(server, mint=True)
-            except Exception as exc:  # noqa: BLE001
-                raise NpaWorkflowRenderError(
-                    "Nebius registry image requires SKYPILOT_DOCKER_PASSWORD "
-                    f"(or mintable IAM token); failed to mint: {exc}"
-                ) from exc
+            return
     else:
         password = "<SKYPILOT_DOCKER_PASSWORD>"
 
@@ -1968,20 +2054,6 @@ def _inject_nebius_registry_docker_secrets(
     secrets.setdefault("SKYPILOT_DOCKER_SERVER", server)
     secrets.setdefault("SKYPILOT_DOCKER_USERNAME", username)
     secrets.setdefault("SKYPILOT_DOCKER_PASSWORD", password)
-    if cloud in {"kubernetes", "k8s"}:
-        config = doc.setdefault("config", {})
-        if not isinstance(config, dict):
-            raise NpaWorkflowRenderError("SkyPilot task config must be a mapping")
-        kubernetes = config.setdefault("kubernetes", {})
-        if not isinstance(kubernetes, dict):
-            raise NpaWorkflowRenderError("SkyPilot kubernetes config must be a mapping")
-        pod_config = kubernetes.setdefault("pod_config", {})
-        spec = pod_config.setdefault("spec", {})
-        pull_secrets = spec.setdefault("imagePullSecrets", [])
-        if not isinstance(pull_secrets, list):
-            raise NpaWorkflowRenderError("pod imagePullSecrets must be a list")
-        if {"name": "npa-nebius-registry"} not in pull_secrets:
-            pull_secrets.append({"name": "npa-nebius-registry"})
 
 
 def render_skypilot_yaml(

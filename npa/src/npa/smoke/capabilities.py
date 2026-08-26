@@ -13,6 +13,13 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
         "torch import + CUDA device available",
         "flash_attn import (Blackwell/CUDA13 stack)",
     ],
+    "content-agents": [
+        "exact OVRTX 0.3.0.312915 runtime fetch and verified immutable cache",
+        "real upstream Physics Agent authoring on a generated rigid USD object",
+        "rigid body, collision, mass, friction, and material-binding checks",
+        "upstream Validation Agent render_valid + physics_sane pass",
+        "non-empty OVRTX render and machine-readable smoke artifact",
+    ],
     "groot": [
         "Isaac-GR00T repo present",
         "uv available",

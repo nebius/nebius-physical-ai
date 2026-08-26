@@ -165,6 +165,12 @@ class RuntimeOptions:
     config_path: Path | None = None
     isolated_config_dir: Path | None = None
     resume: bool = False
+    #: Explicitly permit recovery of a previously reconciled, non-terminal launch
+    #: only after the exact managed job and every declared output are proven absent.
+    #: This is deliberately separate from ordinary workload retries: the default
+    #: remains fail closed because an absent scheduler record alone cannot prove an
+    #: arbitrary stage has no external side effects.
+    retry_absent_in_flight: bool = False
     project: str = "default"
     sky_bin: str = ""
     credential_resolver: Callable[[], Mapping[str, str]] | None = field(
@@ -536,6 +542,11 @@ class SkyPilotWaveExecutor:
                     "interrupted_verified_absent",
                     "verified_absent_no_retry",
                 }
+                explicit_absence_retry = (
+                    category == "operator_recovery"
+                    and str(latest.get("recovery_decision") or "")
+                    == "operator_authorized_verified_absent_relaunch"
+                )
                 terminal_workload = is_terminal_fail(sky_status) or category in {
                     "auth",
                     "rbac",
@@ -547,11 +558,13 @@ class SkyPilotWaveExecutor:
                     "workload",
                     "schema",
                 }
-                if (
-                    terminal_workload
-                    and not safe_transport_retry
-                    and self.options.retries <= 0
-                ):
+                if safe_transport_retry or explicit_absence_retry:
+                    retrying_prior_terminal = True
+                    self._log(
+                        f"wave {key}: prior exact-absence recovery permits a new "
+                        f"attempt after attempt {prior_attempt}"
+                    )
+                elif terminal_workload and self.options.retries <= 0:
                     attempt = self._attempt_from_record(
                         latest, steps=steps, kind=kind, group=group
                     )
@@ -708,7 +721,7 @@ class SkyPilotWaveExecutor:
             attempt.job_id = str(getattr(evidence, "job_id", "") or job_id)
             status = str(getattr(evidence, "status", "") or "UNKNOWN").upper()
         elif outcome == "absent":
-            retryable = attempt.launch_sequence == 0 or (
+            automatic_retry = attempt.launch_sequence == 0 or (
                 attempt.error_category
                 in {
                     "kubernetes_transport",
@@ -721,10 +734,84 @@ class SkyPilotWaveExecutor:
                     "interrupted_verified_absent",
                 }
             )
-            if retryable:
+            explicit_retry = (
+                self.options.retry_absent_in_flight
+                and bool(job_id)
+                and bool(job_name)
+                and bool(attempt.logical_launch_id)
+                and attempt.launch_sequence > 0
+                and not is_terminal(attempt.sky_status)
+                and attempt.recovery_decision
+                in {
+                    "submitted_and_reconciled",
+                    "resume_block_terminal_or_legacy_absence",
+                    "resume_block_output_present",
+                    "resume_block_output_indeterminate",
+                }
+            )
+            if explicit_retry:
+                outputs_absent, output_state = self._declared_outputs_absent(
+                    attempt.outputs
+                )
+                if not outputs_absent:
+                    attempt.status = "failed"
+                    attempt.error = (
+                        "explicit absent-job recovery refused because declared "
+                        f"durable outputs are {output_state}"
+                    )
+                    attempt.recovery_decision = (
+                        "resume_block_output_present"
+                        if output_state == "present"
+                        else "resume_block_output_indeterminate"
+                    )
+                    attempt.operator_remedy = (
+                        "Preserve the existing artifacts and start a new run, or "
+                        "restore authoritative output-state access; do not overwrite "
+                        "or delete artifacts to force recovery."
+                    )
+                    attempt.cancellation_state = "not_applicable"
+                    self.ledger.record(attempt)
+                    return attempt
+                attempt.status = "failed"
+                attempt.ended_at = utc_now()
+                attempt.error_category = "operator_recovery"
+                attempt.recovery_decision = (
+                    "operator_authorized_verified_absent_relaunch"
+                )
+                attempt.reconciliation.append(
+                    {
+                        "outcome": "absent",
+                        "source": "exact_managed_job_reconciliation",
+                        "checked_at": utc_now(),
+                    }
+                )
+                attempt.operator_remedy = (
+                    "Relaunch the same wave as a new durable attempt identity."
+                )
+                self.ledger.record(attempt)
+                self._log(
+                    f"wave {key}: explicit recovery and exact reconciliation prove "
+                    "the prior job and declared outputs absent; launching a new attempt"
+                )
+                self.attempts.pop()
+                return None
+            if attempt.recovery_decision in {
+                "resume_block_output_present",
+                "resume_block_output_indeterminate",
+            }:
+                # Keep the more specific, durable blocker across repeated default
+                # resumes.  Only the explicit option above may re-check it.
+                attempt.status = "failed"
+                attempt.cancellation_state = "not_applicable"
+                self.ledger.record(attempt)
+                return attempt
+            if automatic_retry:
+                attempt.status = "failed"
+                attempt.ended_at = utc_now()
+                self.ledger.record(attempt)
                 self._log(
                     f"wave {key}: exact reconciliation proves the transient launch "
-                    "absent; safely relaunching the same logical identity"
+                    "absent; safely launching a new attempt identity"
                 )
                 self.attempts.pop()
                 return None
@@ -834,6 +921,27 @@ class SkyPilotWaveExecutor:
                 return False
         return True
 
+    def _declared_outputs_absent(self, outputs: Sequence[Any]) -> tuple[bool, str]:
+        """Prove every declared output absent for explicit in-flight recovery.
+
+        Missing declarations and storage-read failures are indeterminate.  A
+        caller may not erase or overwrite durable artifacts merely to make a lost
+        scheduler record retryable.
+        """
+
+        if not outputs:
+            return False, "indeterminate"
+        for output in outputs:
+            uri = _declared_output_uri(output)
+            if not uri:
+                return False, "indeterminate"
+            try:
+                if self._output_checker(uri):
+                    return False, "present"
+            except Exception:  # noqa: BLE001 - storage uncertainty must fail closed
+                return False, "indeterminate"
+        return True, "absent"
+
     def _require_outputs(self, outputs: Sequence[Any], *, key: str) -> None:
         missing: list[str] = []
         for output in outputs:
@@ -927,8 +1035,8 @@ class SkyPilotWaveExecutor:
         with tempfile.TemporaryDirectory(prefix="npa-workflow-wave-") as tmp:
             path = Path(tmp) / f"{job_name}.skypilot.yaml"
             path.write_text(yaml_text, encoding="utf-8")
-            # The rendered task can embed registry/docker auth (a short-lived IAM
-            # token under SKYPILOT_DOCKER_PASSWORD) and S3 creds; keep it owner-only.
+            # The rendered task can embed explicit operator registry/docker auth
+            # and S3 credentials; keep it owner-only.
             try:
                 path.chmod(0o600)
             except OSError:  # pragma: no cover - unusual filesystems
@@ -1089,6 +1197,7 @@ class SkyPilotWaveExecutor:
                     job_name,
                     job_id=job_id,
                     isolated_config_dir=self.options.isolated_config_dir,
+                    config_path=self.options.config_path,
                     sky_bin=self.options.sky_bin or None,
                 )
             except Exception as exc:  # noqa: BLE001 - fail closed below

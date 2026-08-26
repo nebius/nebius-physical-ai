@@ -41,6 +41,13 @@ skills:
       - type: cli_help
         args: ["agent", "deploy", "--help"]
         contains: "llm-model"
+  - name: agent-run-data-collection
+    category: atomic
+    when_to_use: "Collect NPA agent work for fine-tuning or evaluation so every goal-level episode emits a sanitized, outcome-linked trajectory to an append-only S3 dataset in an operator-specified tenant and bucket."
+    path: skills/atomic/agent-run-data-collection/SKILL.md
+    smoke:
+      - type: file_exists
+        path: skills/atomic/agent-run-data-collection/references/trajectory-schema.md
   - name: architecture
     category: atomic
     when_to_use: "Platform architecture, tool-layer scope, orchestrator decisions, partner model, and validation state."
@@ -215,6 +222,17 @@ skills:
       - type: cli_help
         args: ["--help"]
         contains: "workbench"
+  - name: secure-image-build
+    category: atomic
+    when_to_use: "Build, tag, push, copy, or promote any NPA container image, especially immutable public development images and supported GHCR releases."
+    path: skills/atomic/secure-image-build/SKILL.md
+    smoke:
+      - type: file_exists
+        path: npa/docker/workbench/packaging-contract.yaml
+      - type: file_exists
+        path: npa/src/npa/deploy/publish_public.py
+      - type: file_exists
+        path: .github/workflows/publish-public-images.yml
   - name: submit-workflow
     category: atomic
     when_to_use: "Submit, validate, or debug SkyPilot workflow YAML and runner paths."
@@ -335,7 +353,7 @@ skills:
         contains: "ttl-hours"
   - name: burst
     category: tools
-    when_to_use: "Run one gang-scheduled multi-node GPU job through SkyPilot without authoring a workflow: `npa burst submit` wires torchrun rendezvous across nodes, `submit-yaml` submits a single-task YAML with `${VAR}` substitution and Nebius registry login."
+    when_to_use: "Run one gang-scheduled multi-node GPU job through SkyPilot without authoring a workflow: `npa burst submit` wires torchrun rendezvous across nodes, while `submit-yaml` supports one task, `${VAR}` substitution, and optional generic registry credentials."
     path: skills/tools/burst/SKILL.md
     smoke:
       - type: cli_help
@@ -735,7 +753,7 @@ skills:
         contains: "guardrails"
   - name: contribute-workbench-image
     category: workflows
-    when_to_use: "Carry an external or maintainer-authored NPA image change from a fork PR through license classification, trusted build, private registry validation, and incremental GHCR publication."
+    when_to_use: "Carry an external or maintainer-authored NPA image change from a fork PR through license classification, trusted build, immutable public-dev validation, and incremental GHCR publication."
     path: skills/workflows/contribute-workbench-image/SKILL.md
     smoke:
       - type: file_exists
@@ -904,6 +922,18 @@ skills:
           - npa/workflows/workbench/npa-workflows/token-factory-parallel-fanout.yaml
           - npa/workflows/workbench/npa-workflows/token-factory-gate-loop.yaml
           - npa/workflows/workbench/npa-workflows/isaac-lab-rl-sweep.yaml
+  - name: content-agents
+    category: workflows
+    when_to_use: "Package, validate, or operate NVIDIA Content Agents for real material/physics enrichment and OVRTX validation of a self-contained USD object, producing a narrow Isaac rigid-object handoff."
+    path: skills/workflows/content-agents/SKILL.md
+    smoke:
+      - type: file_exists
+        path: npa/docker/workbench/content-agents/Dockerfile
+      - type: file_exists
+        path: npa/src/npa/workflows/content_agents.py
+      - type: npa_workflow_yaml
+        paths:
+          - npa/workflows/workbench/npa-workflows/content-agents-rigid-object.yaml
   - name: neural-reconstruction
     category: workflows
     when_to_use: "Reconstruct real sensor captures into renderable 3D scenes with NVIDIA Omniverse NuRec / NRE on Nebius: NCore V4 input, 3DGUT Gaussian training, renderable USDZ, novel-view rendering, and the Rerun recording the NPA agent displays. Also for NCore sequences that will not load in NRE and for RT-core GPU routing."

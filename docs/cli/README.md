@@ -42,7 +42,6 @@ Generated from `npa --help`. Run `bash scripts/build_docs.sh` after CLI changes.
 - [npa cluster node-group](node-group.md)
 - [npa workbench nurec](nurec.md)
 - [npa provision-if-absent](provision-if-absent.md)
-- [npa registry](registry.md)
 - [npa rerun](rerun.md)
 - [npa workbench sonic retargeting](retargeting.md)
 - [npa workbench scenario-gen](scenario-gen.md)

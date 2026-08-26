@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -409,6 +410,60 @@ def test_submit_workflow_secrets_can_come_from_extra_env(monkeypatch, tmp_path) 
     assert "from-config" not in cmd
     assert captured_env["AWS_ACCESS_KEY_ID"] == "from-config"
 
+    rendered = yaml.safe_load(
+        (
+            tmp_path
+            / "sky-state"
+            / "submissions"
+            / "run-config-secrets"
+            / "skypilot-config.yaml"
+        ).read_text(encoding="utf-8")
+    )
+    assert rendered["kubernetes"]["allowed_contexts"] == ["npa-rtxpro-mk8s"]
+
+
+def test_submit_workflow_replaces_stale_kubernetes_context_allowlist(
+    monkeypatch, tmp_path
+) -> None:
+    yaml_path = tmp_path / "workflow.yaml"
+    yaml_path.write_text(
+        "name: demo\nresources:\n  cloud: kubernetes\n", encoding="utf-8"
+    )
+    global_config = tmp_path / "global.yaml"
+    global_config.write_text(
+        "kubernetes:\n"
+        "  allowed_contexts: [old-customer-context]\n"
+        "  pod_config:\n"
+        "    spec:\n"
+        "      imagePullSecrets:\n"
+        "        - name: customer-registry-auth\n",
+        encoding="utf-8",
+    )
+    sky_bin = _fake_sky(tmp_path)
+
+    def fake_run(cmd, **kwargs):
+        if _is_status_cmd(cmd):
+            return _healthy_status(cmd)
+        return subprocess.CompletedProcess(
+            cmd, 0, stdout="Job submitted, ID: 12\n", stderr=""
+        )
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    result = submit_workflow(
+        yaml_path,
+        "run-exact-context",
+        config_path=global_config,
+        isolated_config_dir=tmp_path / "sky-state",
+        sky_bin=sky_bin,
+        infra="k8s/run-owned-context",
+    )
+
+    rendered = yaml.safe_load(Path(result.log_paths["config"]).read_text())
+    assert rendered["kubernetes"]["allowed_contexts"] == ["run-owned-context"]
+    assert rendered["kubernetes"]["pod_config"]["spec"]["imagePullSecrets"] == [
+        {"name": "customer-registry-auth"}
+    ]
+
 
 def test_submit_workflow_honors_isolated_config_dir(monkeypatch, tmp_path) -> None:
     yaml_path = tmp_path / "workflow.yaml"
@@ -443,7 +498,19 @@ def test_sky_environment_preserves_nebius_exec_auth_without_copying(
     provider_config = operator_home / ".nebius"
     provider_config.mkdir(parents=True)
     (provider_config / "config.yaml").write_text("profiles: {}\n", encoding="utf-8")
+    selected_kubeconfig = tmp_path / "selected-kubeconfig"
+    selected_kubeconfig.write_text(
+        "apiVersion: v1\nkind: Config\ncontexts: []\n", encoding="utf-8"
+    )
+    fallback_kubeconfig = tmp_path / "fallback-kubeconfig"
+    fallback_kubeconfig.write_text(
+        "apiVersion: v1\nkind: Config\ncontexts: []\n", encoding="utf-8"
+    )
     monkeypatch.setenv("HOME", str(operator_home))
+    monkeypatch.setenv(
+        "KUBECONFIG",
+        f"{selected_kubeconfig}{os.pathsep}{fallback_kubeconfig}",
+    )
 
     isolated = tmp_path / "isolated"
     env = sky_environment(isolated)
@@ -451,6 +518,9 @@ def test_sky_environment_preserves_nebius_exec_auth_without_copying(
     linked = isolated / "home" / ".nebius"
     assert linked.is_symlink()
     assert linked.resolve() == provider_config.resolve()
+    isolated_kubeconfig = isolated / "home" / ".kube" / "config"
+    assert isolated_kubeconfig.is_symlink()
+    assert isolated_kubeconfig.resolve() == selected_kubeconfig.resolve()
     assert env["HOME"] == str(isolated / "home")
 
 
@@ -787,6 +857,59 @@ def test_wait_for_controller_proceeds_when_up(monkeypatch) -> None:
     )
 
 
+def test_wait_for_controller_ignores_only_foreign_explicit_identity(
+    monkeypatch,
+) -> None:
+    calls = []
+
+    def fake_run(cmd, **_kwargs):
+        calls.append(cmd)
+        if "--refresh" in cmd:
+            detail = (
+                "ClusterOwnerIdentityMismatchError: "
+                "sky-jobs-controller-otheruser is owned elsewhere"
+            )
+            return subprocess.CompletedProcess(cmd, 1, stdout="", stderr=detail)
+        return subprocess.CompletedProcess(cmd, 0, stdout="[]", stderr="")
+
+    monkeypatch.setattr(workflow_module.subprocess, "run", fake_run)
+    workflow_module._wait_for_healthy_jobs_controller(
+        "sky",
+        env={"SKYPILOT_USER_ID": "isolated-user"},
+        timeout=0,
+        interval=0.01,
+    )
+
+    assert calls == [
+        ["sky", "status", "--refresh", "--output", "json"],
+        ["sky", "status", "--output", "json"],
+    ]
+
+
+def test_wait_for_controller_does_not_ignore_current_identity_mismatch(
+    monkeypatch,
+) -> None:
+    detail = (
+        "ClusterOwnerIdentityMismatchError: "
+        "sky-jobs-controller-isolated-user is owned elsewhere"
+    )
+    monkeypatch.setattr(
+        workflow_module.subprocess,
+        "run",
+        lambda cmd, **_kwargs: subprocess.CompletedProcess(
+            cmd, 1, stdout="", stderr=detail
+        ),
+    )
+
+    with pytest.raises(SkyPilotSubmitError, match="ClusterOwnerIdentityMismatchError"):
+        workflow_module._wait_for_healthy_jobs_controller(
+            "sky",
+            env={"SKYPILOT_USER_ID": "isolated-user"},
+            timeout=0,
+            interval=0.01,
+        )
+
+
 def test_wait_for_controller_blocks_on_transient_init(monkeypatch) -> None:
     # A transient INIT/provisioning controller is still treated as not-ready.
     monkeypatch.setattr(
@@ -1072,8 +1195,8 @@ def test_launch_failure_pod_config_kubernetes_bug_gets_a_fix_hint() -> None:
 def test_submission_dir_and_secret_files_are_owner_only(tmp_path) -> None:
     """The submission dir + its secret-bearing files must not be world-readable.
 
-    The rendered task YAML / generated SkyPilot config can carry a registry IAM
-    token (SKYPILOT_DOCKER_PASSWORD) and S3 creds; write_text/mkdir honor the
+    The rendered task YAML / generated SkyPilot config can carry an operator's
+    registry password and S3 creds; write_text/mkdir honor the
     umask, so submit tightens them explicitly (security bug 9).
     """
     import shutil

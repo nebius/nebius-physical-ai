@@ -16,7 +16,7 @@ local scans when the environment variable is not set.
 Registry image reachability is environment-dependent, so image existence checks stay out of GitHub CI and can be run from a host with access to the container registry:
 
 ```bash
-npa/.venv/bin/python npa/scripts/check_workflow_images.py --registry-id "$NPA_REGISTRY_ID"
+npa/.venv/bin/python npa/scripts/check_workflow_images.py --registry "$NPA_REGISTRY"
 ```
 
 Current workflow image tags still include operator placeholders, so the script reports `SEAM` until those placeholders are rendered for a specific run or registry.

@@ -400,10 +400,94 @@ def validate_spec(spec: NpaWorkflowSpec) -> None:
 
     _validate_resource_profiles(spec)
     _validate_executable_resource_contracts(spec)
+    _validate_optional_sam2_config(spec)
     _assert_acyclic_needs(spec)
     _assert_terminal_exists(spec)
     _assert_bounded_control_flow_cycles(spec)
     _validate_resolvable(spec)
+
+
+def _validate_optional_sam2_config(spec: NpaWorkflowSpec) -> None:
+    """Fail before provisioning when a workflow opts into the SAM2 contract."""
+
+    if not any(
+        state.tool_ref == "workbench.cosmos2.transfer_execute"
+        for state in spec.states.values()
+    ) or "segmentation_mode" not in spec.config:
+        return
+    mode = str(spec.config.get("segmentation_mode") or "off").strip().lower()
+    if mode == "off":
+        return
+    from npa.workbench.cosmos.sam2_masks import Sam2MaskConfig, Sam2MaskError
+
+    try:
+        config = Sam2MaskConfig(
+            mode=mode,
+            model_id=str(spec.config.get("sam2_model") or ""),
+            model_revision=str(spec.config.get("sam2_model_revision") or ""),
+            points_per_side=int(spec.config.get("sam2_points_per_side") or 0),
+            predicted_iou_threshold=float(
+                spec.config.get("sam2_predicted_iou_threshold") or 0
+            ),
+            stability_threshold=float(
+                spec.config.get("sam2_stability_threshold") or 0
+            ),
+            min_area_fraction=float(
+                spec.config.get("sam2_min_area_fraction") or 0
+            ),
+            max_area_fraction=float(
+                spec.config.get("sam2_max_area_fraction") or 0
+            ),
+            max_objects=int(spec.config.get("sam2_max_objects") or 0),
+        )
+    except (TypeError, ValueError) as exc:
+        raise NpaWorkflowError(
+            "optional SAM2 settings must use numeric sampling, threshold, area, "
+            "and object-count values"
+        ) from exc
+    try:
+        config.validate()
+    except Sam2MaskError as exc:
+        raise NpaWorkflowError(f"invalid optional SAM2 configuration: {exc}") from exc
+    uri = str(spec.config.get("segmentation_uri") or "")
+    if not uri.startswith("s3://"):
+        raise NpaWorkflowError(
+            "optional SAM2 requires segmentation_uri as a versioned s3:// prefix"
+        )
+    if str(spec.config.get("protected_chroma_regions_json") or "").strip():
+        raise NpaWorkflowError(
+            "optional SAM2 masks and protected_chroma_regions_json are mutually exclusive"
+        )
+    for state in spec.states.values():
+        if state.tool_ref != "workbench.cosmos2.transfer_execute":
+            continue
+        profile = spec.resources.get(state.resources, {})
+        nodes = profile_num_nodes(
+            profile,
+            name=state.resources,
+            config=spec.config,
+            run={"id": "validate-run"},
+        )
+        if nodes > 1:
+            raise NpaWorkflowError(
+                "optional SAM2 auto segmentation requires one augment node; use "
+                "multi-GPU variant fan-out on that node"
+            )
+    try:
+        luma_delta = int(spec.config.get("protected_luma_max_delta"))
+        feather_pixels = int(spec.config.get("protected_feather_pixels"))
+    except (TypeError, ValueError) as exc:
+        raise NpaWorkflowError(
+            "optional SAM2 protected-luma delta and feather width must be integers"
+        ) from exc
+    if not 0 <= luma_delta <= 255:
+        raise NpaWorkflowError(
+            "optional SAM2 protected_luma_max_delta must be within 0..255"
+        )
+    if feather_pixels < 1:
+        raise NpaWorkflowError(
+            "optional SAM2 protected_feather_pixels must be positive"
+        )
 
 
 def profile_num_nodes(
@@ -487,6 +571,12 @@ def _validate_executable_resource_contracts(spec: NpaWorkflowSpec) -> None:
     from npa.orchestration.npa_workflow.interpreter import _make_context
 
     context = _make_context(spec, run_id="validate-run")
+    # Executable params may carry a named loop token (for append-only per-attempt
+    # output prefixes). Use the same first-iteration sentinel as the general
+    # resolvability validator so semantic checks validate the resolved contract.
+    context.loop_iterations = {
+        state.name: 1 for state in spec.states.values() if state.loop is not None
+    }
     for state in spec.states.values():
         if not state.run and not state.tool_ref:
             continue
@@ -535,6 +625,7 @@ def _validate_executable_resource_contracts(spec: NpaWorkflowSpec) -> None:
                 state.params,
                 config=context.config,
                 run=context.run,
+                loop_iterations=context.loop_iterations,
             )
         except TokenError as exc:
             raise NpaWorkflowError(f"state {state.name}: {exc}") from exc

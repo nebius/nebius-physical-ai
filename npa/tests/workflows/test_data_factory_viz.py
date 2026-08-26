@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -41,6 +43,150 @@ def test_build_run_rrd_from_local_run(tmp_path: Path) -> None:
     assert result["run_id"] == "df-run"
     assert out.is_file()
     assert out.stat().st_size > 0
+    rerun_cli = Path(sys.executable).with_name("rerun")
+    assert rerun_cli.is_file()
+    verified = subprocess.run(
+        [str(rerun_cli), "rrd", "verify", str(out)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert verified.returncode == 0, verified.stderr
+
+
+def test_rejected_rrd_component_stats_include_actual_augmented_media(
+    tmp_path: Path,
+) -> None:
+    """Regression: rejected evidence must contain pixels/video, not URI-only text."""
+
+    pytest.importorskip("rerun")
+    run = tmp_path / "rejected-run"
+    candidate = run / "cosmos_augmented" / "iteration-1" / "candidate-a"
+    _write_png(candidate / "frame-00000.png", (12, 34, 56))
+    video = candidate / "augmented_video.mp4"
+    encoded = subprocess.run(
+        [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-loop",
+            "1",
+            "-i",
+            str(candidate / "frame-00000.png"),
+            "-t",
+            "0.2",
+            "-pix_fmt",
+            "yuv420p",
+            "-y",
+            str(video),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert encoded.returncode == 0, encoded.stderr
+    (candidate.parent / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema": "npa.cosmos2.transfer.v1",
+                "mode": "cosmos_transfer2.5_gpu",
+                "status": "executed",
+                "node_count": 1,
+                "variant_count": 1,
+                "variants": [
+                    {
+                        "clip": "candidate-a",
+                        "variant_index": 0,
+                        "augmented_video_uri": (
+                            "s3://test/run/cosmos_augmented/iteration-1/"
+                            "candidate-a/augmented_video.mp4"
+                        ),
+                        "control_uris": {},
+                    }
+                ],
+            }
+        )
+    )
+    grade = run / "grade"
+    (grade / "iteration-1" / "ranking").mkdir(parents=True)
+    (grade / "iteration-1" / "ranking" / "cosmos_evaluator.json").write_text(
+        json.dumps(
+            {
+                "status": "completed",
+                "clips": [
+                    {
+                        "clip_id": "candidate-a",
+                        "score": 0.7,
+                        "passed": False,
+                        "attribute_verification": {
+                            "passed": False,
+                            "checks": [
+                                {"variable": "lighting", "passed": False}
+                            ],
+                        },
+                        "hallucination": {"passed": True},
+                    }
+                ],
+            }
+        )
+    )
+    (grade / "quality_disposition.json").write_text(
+        json.dumps(
+            {
+                "quality_status": "rejected",
+                "score": 0.7,
+                "threshold": 0.75,
+            }
+        )
+    )
+
+    out = tmp_path / "reports" / "rejected.rrd"
+    result = build_run_rrd(str(run), str(out))
+
+    assert result["augmented_media_entities"] == 1
+    assert result["augmented_frame_components"] == 1
+    assert result["augmented_video_components"] == 1
+    printed = subprocess.run(
+        [str(Path(sys.executable).with_name("rerun")), "rrd", "print", "-v", str(out)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert printed.returncode == 0, printed.stderr
+    component_stats = printed.stdout
+    assert "augmented/iteration-1/candidate-a" in component_stats
+    assert "@EncodedImage:blob" in component_stats
+    assert "@AssetVideo:blob" in component_stats
+    assert "augmented/iteration-1/candidate-a/disposition" in component_stats
+    import npa.workflows.data_factory_viz as viz
+
+    verified = viz._verify_terminal_rrd_media(
+        out,
+        variant_records=[
+            {
+                "candidate_id": "iteration-1/candidate-a",
+                "video": video,
+            }
+        ],
+        quality_status="REJECTED",
+    )
+    assert verified == {
+        "augmented_video_entities": 1,
+        "augmented_disposition_entities": 1,
+    }
+    video.write_bytes(b"changed")
+    with pytest.raises(DataFactoryVizError, match="differs from its canonical"):
+        viz._verify_terminal_rrd_media(
+            out,
+            variant_records=[
+                {
+                    "candidate_id": "iteration-1/candidate-a",
+                    "video": video,
+                }
+            ],
+            quality_status="REJECTED",
+        )
 
 
 def test_frame_index_parses_both_naming_schemes() -> None:
@@ -105,8 +251,22 @@ def test_load_stage_docs_covers_all_pipeline_stages(tmp_path: Path) -> None:
         "clips": ["aug-0", "aug-1"], "variants": [{"clip": "aug-0"}, {"clip": "aug-1"}],
     }))
     (run / "grade").mkdir(parents=True)
-    (run / "grade" / "vlm_eval_stub.json").write_text(json.dumps({"score": 0.82, "model": "Qwen/Qwen2.5-VL-72B-Instruct"}))
-    (run / "grade" / "decision.json").write_text(json.dumps({"decision": "promote_checkpoint"}))
+    (run / "grade" / "cosmos_evaluator.json").write_text(
+        json.dumps({"score": 0.72, "status": "completed", "passed": False})
+    )
+    (run / "grade" / "decision.json").write_text(
+        json.dumps({"decision": "loop_back_to_inner_loop"})
+    )
+    (run / "grade" / "quality_disposition.json").write_text(
+        json.dumps(
+            {
+                "quality_status": "rejected",
+                "score": 0.72,
+                "threshold": 0.75,
+                "reasons": ["aggregate score is below threshold"],
+            }
+        )
+    )
     (run / "curation").mkdir(parents=True)
     (run / "curation" / "report.json").write_text(json.dumps({"augmented_clips": 2, "multiply": {"mode": "multi-variant"}}))
     (run / "reports").mkdir(parents=True)
@@ -127,7 +287,53 @@ def test_load_stage_docs_covers_all_pipeline_stages(tmp_path: Path) -> None:
     assert "Upstream real sample" in docs["pipeline/0_input_provenance"]
     assert "normalized_conditioning_clip" in docs["pipeline/0_input_provenance"]
     # Hallucination / attribute-verify grade + gate decision are both present.
-    assert "0.82" in docs["pipeline/3_grade"]
+    assert "0.72" in docs["pipeline/3_grade"]
+    assert "loop_back_to_inner_loop" in docs["pipeline/3_grade"]
+    assert "rejected" in docs["pipeline/3_grade"]
+    assert "aggregate score is below threshold" in docs["pipeline/3_grade"]
+
+
+def test_stage_docs_select_latest_append_only_refinement_iteration(
+    tmp_path: Path,
+) -> None:
+    from npa.workflows.data_factory_viz import _load_stage_docs
+
+    run = tmp_path / "run"
+    for iteration, score in ((1, 0.2), (2, 0.8)):
+        augment = run / "cosmos_augmented" / f"iteration-{iteration}"
+        augment.mkdir(parents=True)
+        (augment / "manifest.json").write_text(
+            json.dumps(
+                {
+                    "mode": "cosmos_transfer2.5_gpu",
+                    "variant_count": iteration,
+                    "input_conditioned": True,
+                }
+            )
+        )
+        grade = run / "grade" / f"iteration-{iteration}"
+        grade.mkdir(parents=True)
+        (grade / "cosmos_evaluator.json").write_text(
+            json.dumps({"score": score, "status": "completed"})
+        )
+        (grade / "decision.json").write_text(
+            json.dumps(
+                {
+                    "decision": "promote_checkpoint"
+                    if iteration == 2
+                    else "loop_back"
+                }
+            )
+        )
+    (run / "grade" / "quality_disposition.json").write_text(
+        json.dumps({"quality_status": "accepted", "score": 0.8})
+    )
+
+    docs = _load_stage_docs(run)
+
+    assert '"variant_count": 2' in docs["pipeline/2_augment"]
+    assert '"score": 0.8' in docs["pipeline/3_grade"]
+    assert '"score": 0.2' not in docs["pipeline/3_grade"]
     assert "promote_checkpoint" in docs["pipeline/3_grade"]
     # Stage log lists each stage.
     assert "augment" in docs["pipeline/0_log"]
@@ -254,6 +460,48 @@ def test_captions_carry_self_identifying_header(tmp_path: Path) -> None:
 def test_build_run_rrd_requires_rrd_output(tmp_path: Path) -> None:
     with pytest.raises(DataFactoryVizError):
         build_run_rrd(str(tmp_path), str(tmp_path / "out.json"))
+
+
+def test_viewer_publication_preservation_check_is_additive_and_fail_closed() -> None:
+    import npa.workflows.data_factory_viz as viz
+
+    before = [
+        {"key": "run/input/source.mp4", "size": 10, "etag": "source"},
+        {"key": "run/cosmos_augmented/a/frame.png", "size": 20, "etag": "frame"},
+        {"key": "run/npa-workflow/runtime.json", "size": 20, "etag": "old"},
+    ]
+    after = [
+        before[0],
+        before[1],
+        {"key": "run/npa-workflow/runtime.json", "size": 21, "etag": "new"},
+        {"key": "run/reports/sim2real.rrd", "size": 30, "etag": "rrd"},
+    ]
+    preserved = viz._verify_additive_publication(
+        before, after, "run/reports/sim2real.rrd"
+    )
+    assert preserved == before[:2]
+    assert (
+        viz._verify_additive_publication(
+            after, after, "run/reports/sim2real.rrd"
+        )
+        == before[:2]
+    )
+
+    changed = [
+        {**before[0], "etag": "changed"},
+        before[1],
+        after[2],
+        after[-1],
+    ]
+    with pytest.raises(DataFactoryVizError, match="changed the canonical"):
+        viz._verify_additive_publication(
+            before, changed, "run/reports/sim2real.rrd"
+        )
+    changed_rrd = [*after[:-1], {**after[-1], "etag": "changed"}]
+    with pytest.raises(DataFactoryVizError, match="changed an existing recording"):
+        viz._verify_additive_publication(
+            after, changed_rrd, "run/reports/sim2real.rrd"
+        )
 
 
 def test_build_run_rrd_errors_when_no_frames(tmp_path: Path) -> None:

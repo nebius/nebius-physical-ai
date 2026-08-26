@@ -33,12 +33,22 @@ config:
   steps: "24"
   variant_count: "2"
   variant_parallelism: "1"
+  # Optional stable seed for appearance-profile sampling. Leave empty to retain
+  # run-ID sampling; set it for reproducible quality comparisons.
+  augmentation_seed: ""
   parallelism_preset: latency
   refinement_iterations: "2"
   retry_seed_stride: "1000"
   retry_guidance_delta: "-0.5"
   retry_steps_delta: "4"
+  # Preserve source camera/motion while retaining 20% of the real Cosmos
+  # appearance treatment. The unmodified Cosmos video remains beside the
+  # published composite for evaluator and provenance audit.
+  source_motion_weight: "0.8"
   grade_threshold: "0.75"
+  # Cosmos Evaluator defaults to the ranking observation policy. Workflows that
+  # perform a separate final selection override this per state with `holdout`.
+  attribute_sample_policy: ranking
   default_decision: loop_back
 
   # Shared PAIDF appearance sampler and evaluator settings.
@@ -136,6 +146,7 @@ states:
         - "false"
         - "false"
         - "{{config.augment_subject}}"
+        - "{{config.augmentation_seed}}"
     outputs:
       - uri: "{{config.configs_uri}}manifest.json"
         schema: npa.data_factory.configs.v1
@@ -176,7 +187,8 @@ states:
     description: >-
       Run one real npa-cosmos3/cosmos-framework video2video inference per variant.
       The source input, captions, prompt, model, seed, guardrails, and lineage are
-      recorded in per-variant metadata and the run manifest.
+      recorded in per-variant metadata and the run manifest. The configured
+      source-motion composite keeps the raw Cosmos artifact for audit.
     toolRef: workbench.cosmos3.generate_variants
     resources: gpu
     inputs:

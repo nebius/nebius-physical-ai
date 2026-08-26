@@ -692,7 +692,12 @@ def test_nebius_bootstrap_returns_verifiable_storage_account_ownership(mocker) -
         "npa.clients.nebius.get_bucket_by_name",
         return_value={"metadata": {"id": "bucket-id"}},
     )
-    mocker.patch("npa.clients.nebius._existing_editors_binding", return_value=None)
+    mocker.patch(
+        "npa.clients.nebius._existing_editors_binding",
+        side_effect=nebius.NebiusError(
+            "PermissionDenied: tenant-wide editors inventory"
+        ),
+    )
     mocker.patch(
         "npa.clients.nebius.ensure_storage_capability_binding",
         return_value=nebius.StorageIamBindingEvidence(
@@ -754,13 +759,18 @@ def test_nebius_bootstrap_stops_before_bucket_or_key_when_required_iam_fails(
         "npa.clients.nebius.get_bucket_by_name",
         return_value={"metadata": {"id": "bucket-id"}},
     )
-    mocker.patch("npa.clients.nebius._existing_editors_binding", return_value=None)
+    mocker.patch(
+        "npa.clients.nebius._existing_editors_binding",
+        side_effect=nebius.NebiusError(
+            "PermissionDenied: tenant-wide editors inventory"
+        ),
+    )
     key = mocker.patch(
         "npa.clients.nebius.ensure_access_key", return_value=("key", "secret")
     )
 
     messages: list[str] = []
-    with pytest.raises(nebius.NebiusError, match="Required storage IAM capability"):
+    with pytest.raises(nebius.NebiusError, match="project-scoped admin permission"):
         nebius.bootstrap_environment(
             "project", "tenant", "eu-north1", on_status=messages.append
         )
@@ -1803,81 +1813,6 @@ def test_nebius_list_accessible_projects_spans_tenants(mocker) -> None:
     result = nebius.list_accessible_projects()
 
     assert [p["id"] for p in result] == ["project-1", "project-2"]
-
-
-def test_nebius_discover_container_registry_builds_url(mocker) -> None:
-    mocker.patch(
-        "npa.clients.nebius._run_json",
-        return_value={
-            "items": [
-                {
-                    "metadata": {"id": "registry-e00abc"},
-                    "status": {"registry_fqdn": "cr.eu-north1.nebius.cloud"},
-                }
-            ]
-        },
-    )
-
-    assert (
-        nebius.discover_container_registry("project")
-        == "cr.eu-north1.nebius.cloud/e00abc"
-    )
-
-
-def test_nebius_discover_container_registry_prefers_eu_north1(mocker) -> None:
-    # A project with registries in several regions (unstable API order) must
-    # default to the eu-north1 registry, the main region.
-    mocker.patch(
-        "npa.clients.nebius._run_json",
-        return_value={
-            "items": [
-                {
-                    "metadata": {"id": "registry-u00usc"},
-                    "status": {"registry_fqdn": "cr.us-central1.nebius.cloud"},
-                },
-                {
-                    "metadata": {"id": "registry-e00eu"},
-                    "status": {"registry_fqdn": "cr.eu-north1.nebius.cloud"},
-                },
-            ]
-        },
-    )
-
-    assert (
-        nebius.discover_container_registry("project")
-        == "cr.eu-north1.nebius.cloud/e00eu"
-    )
-
-
-def test_nebius_discover_container_registry_falls_back_when_no_eu_north1(
-    mocker,
-) -> None:
-    mocker.patch(
-        "npa.clients.nebius._run_json",
-        return_value={
-            "items": [
-                {
-                    "metadata": {"id": "registry-u00usc"},
-                    "status": {"registry_fqdn": "cr.us-central1.nebius.cloud"},
-                }
-            ]
-        },
-    )
-
-    assert (
-        nebius.discover_container_registry("project")
-        == "cr.us-central1.nebius.cloud/u00usc"
-    )
-
-
-def test_nebius_discover_container_registry_empty_without_project() -> None:
-    assert nebius.discover_container_registry("") == ""
-
-
-def test_nebius_discover_container_registry_best_effort_on_error(mocker) -> None:
-    mocker.patch("npa.clients.nebius._run_json", side_effect=NebiusError("denied"))
-
-    assert nebius.discover_container_registry("project") == ""
 
 
 def test_nebius_get_project_region_reads_status(mocker) -> None:

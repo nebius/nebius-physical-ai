@@ -162,34 +162,39 @@ genesis = "cuda13-b300-0.4.6-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
 isaac-lab = "2.3.2.post1"
 leisaac = "0.4.0-20260817T231825Z"
 cosmos = "cu128-torch27-sm100-1.0.9-20260803T002017Z"
-cosmos2-transfer = "2.5.1-skypilot-ready-20260801T053000Z"
-# Additive r2 image release for cosmos-framework 1.2.2 (pinned commit) + torch
-# cu130. The immutable 1.2.2-cu130 tag remains available for rollback; weights
-# stay out of both images.
-cosmos3 = "1.2.2-cu130-r2"
+cosmos2-transfer = "2.5.1-sam2-multigpu-20260817-r2"
+# Additive r5 image release for cosmos-framework 1.2.2 (pinned commit) + torch
+# cu130 with the attested SkyPilot bootstrap closure. The immutable
+# earlier tags remain provenance; r5 excludes wheel-bundled FFmpeg and keeps the
+# no-argv worker pod alive for SkyPilot bootstrap; weights stay out.
+cosmos3 = "1.2.2-cu130-r6"
+cosmos3-serving = "0.2.0-oss"
 cosmos3-reason = "cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
 # Cosmos Curator: NVIDIA upstream checkout + GPU-free curation stage deps.
 cosmos-curate = "0.1.2-skypilot-v1-20260813T164700Z"
 # Cosmos Evaluator: NVIDIA upstream checkout; no model weights (CV + hosted VLM).
-cosmos-evaluator = "0.1.2-skypilot-v1-20260813T164700Z"
+# r2 includes the attribute-sample-policy CLI consumed by PAIDF.
+cosmos-evaluator = "0.1.2-skypilot-v1-20260813T164700Z-r2"
 groot = "0.1.0"
-fiftyone = "1.15.0.post1"
+fiftyone = "1.15.0-post1-skypilot-v1-20260815-review5"
 sonic = "cuda13-b300-0.1.2-k8s-runtime-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
+sonic-mujoco = "0.2.0-runtime"
 retargeting = "0.1.1"
 envgen = "cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
 reference-policy = "cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
 lerobot-vlm-rl = "cuda13-b300-0.1.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
 loop-eval = "cuda13-b300-0.1.3-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
-rerun-viewer = "0.31.4"
+rerun-viewer = "0.31.4-skypilot-v1-20260815-review5-r2"
 # Tracks the pinned @foxglove/embed SDK release (npa.workbench.foxglove).
 foxglove-embed = "0.58.0"
 # Lichtblick (MPL-2.0): OSS, Foxglove-compatible static web viewer bundle tag.
 lichtblick = "1.26.0"
 lancedb = "cuda13-b300-0.30.3-sm80-sm90-sm100-sm103-sm120-20260803T031514Z"
 detection-training = "bdd100k-golden-eval-smoke-20260614T210000Z"
-wan2-2 = "2.2-ti2v5b-rtfetch-cu128-20260809T011658Z-r7"
-ltx2 = "2.5-rtfetch-unbuilt"
+wan2-2 = "2.2-ti2v5b-rtfetch-cu130-20260817"
+ltx2 = "2.5-rtfetch-20260817"
 alpamayo2-super = "0.1.0-cu128"
+content-agents = "0.5.2-npa2"
 nebius-cli = "0.12.254"
 terraform = "~> 0.5.201"
 terraform-cli = "1.13.3"
@@ -217,6 +222,9 @@ packages = ["src/npa"]
 "src/npa/solutions/solutions.toml" = "npa/solutions/solutions.toml"
 "src/npa/deploy/sonic_image_manifest.json" = "npa/deploy/sonic_image_manifest.json"
 "src/npa/deploy/wan2_2_image_manifest.json" = "npa/deploy/wan2_2_image_manifest.json"
+"src/npa/deploy/content_agents_image_manifest.json" = "npa/deploy/content_agents_image_manifest.json"
+"src/npa/deploy/ltx2_image_manifest.json" = "npa/deploy/ltx2_image_manifest.json"
+"src/npa/deploy/public_release_manifest.json" = "npa/deploy/public_release_manifest.json"
 "src/npa/deploy/lerobot_version_manifest.json" = "npa/deploy/lerobot_version_manifest.json"
 "src/npa/deploy/terraform/.terraform.lock.hcl" = "npa/deploy/terraform/.terraform.lock.hcl"
 "src/npa/deploy/terraform/.terraform.lock.npa.json" = "npa/deploy/terraform/.terraform.lock.npa.json"

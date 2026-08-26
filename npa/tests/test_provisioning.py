@@ -83,6 +83,12 @@ def _successful_storage_probe(monkeypatch):
             "default_storage_class": "compute-csi-default-sc",
         },
     )
+    # SkyPilot context enablement has its own CLI tests. Provisioning tests
+    # assert orchestration and must never invoke a real SkyPilot process.
+    monkeypatch.setattr(
+        "npa.cli.cluster.terraform_lifecycle._check_skypilot_kubernetes",
+        lambda *_args, **_kwargs: ("sky", {}, "config"),
+    )
     # provision_if_absent resolves kubectl before calling the validator stubbed
     # above, so without this the cached-cluster tests pass only on a machine that
     # happens to have kubectl installed. Nothing here ever executes the binary.
@@ -165,6 +171,26 @@ def test_provision_if_absent_dry_run_reports_actions(
         for action in result.actions
     )
     assert result.storage_bucket == "s3://bucket/checkpoints/"
+
+
+def test_provision_if_absent_preflight_uses_terraform_disk_overrides(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_runtime(tmp_path, monkeypatch)
+    monkeypatch.setenv("TF_VAR_cpu_disk_size", "96")
+    monkeypatch.setenv("TF_VAR_gpu_disk_size", "600")
+
+    result = provisioning.provision_if_absent(
+        project="proj",
+        kubeconfig=tmp_path / "missing-kubeconfig",
+        dry_run=True,
+        skip_s3=True,
+    )
+
+    topology = result.preflight["topology"]
+    assert topology["cpu_disk_gib"] == 96
+    assert topology["gpu_disk_gib"] == 600
+    assert topology["required_network_ssd_gib"] == "696"
 
 
 def test_provision_dry_run_from_installed_package_ignores_cached_cluster(
@@ -330,6 +356,10 @@ def test_reused_cluster_runs_requested_skypilot_smoke(
     kubeconfig.write_text("apiVersion: v1\n", encoding="utf-8")
     seen: list[tuple[object, ...]] = []
     monkeypatch.setattr(
+        "npa.cli.cluster.terraform_lifecycle._check_skypilot_kubernetes",
+        lambda *args, **kwargs: seen.append(("check", *args, kwargs)),
+    )
+    monkeypatch.setattr(
         "npa.cli.cluster.terraform_lifecycle._run_skypilot_smoke",
         lambda *args, **kwargs: seen.append(("smoke", *args, kwargs)),
     )
@@ -349,19 +379,25 @@ def test_reused_cluster_runs_requested_skypilot_smoke(
 
     assert result.status == "ok"
     assert "sky-smoke:passed" in result.actions
-    assert [item[0] for item in seen] == ["readiness", "smoke"]
-    readiness = seen[0]
+    assert [item[0] for item in seen] == ["check", "readiness", "smoke"]
+    assert seen[0] == (
+        "check",
+        kubeconfig,
+        "npa-cluster",
+        {"sky_bin": "/opt/npa/sky"},
+    )
+    readiness = seen[1]
     assert readiness[1] == ["RTXPRO6000:1"]
     assert readiness[-1]["kubeconfig"] == kubeconfig
     assert readiness[-1]["sky_bin"] == "/opt/npa/sky"
     assert readiness[-1]["label_known_gpus"] is True
-    assert seen[1] == (
+    assert seen[2] == (
         "smoke",
         kubeconfig,
         "npa-cluster",
         "npa-cluster",
         "RTXPRO6000:1",
-        {"sky_bin": "/opt/npa/sky"},
+        {"sky_bin": "/opt/npa/sky", "credentials_checked": True},
     )
 
 
@@ -376,6 +412,10 @@ def test_fresh_cluster_uses_the_same_readiness_then_smoke_boundary(
         seen.append(("up", kwargs))
 
     monkeypatch.setattr("npa.cli.cluster.terraform_lifecycle.up_cmd", up)
+    monkeypatch.setattr(
+        "npa.cli.cluster.terraform_lifecycle._check_skypilot_kubernetes",
+        lambda *_args, **kwargs: seen.append(("check", kwargs)),
+    )
     monkeypatch.setattr(
         "npa.orchestration.skypilot.k8s_gpu_catalog.wait_for_kubernetes_accelerators",
         lambda *_args, **kwargs: seen.append(("readiness", kwargs)) or {},
@@ -395,13 +435,15 @@ def test_fresh_cluster_uses_the_same_readiness_then_smoke_boundary(
     )
 
     assert result.status == "ok"
-    assert [item[0] for item in seen] == ["up", "readiness", "smoke"]
+    assert [item[0] for item in seen] == ["up", "check", "readiness", "smoke"]
     up_kwargs = seen[0][1]
     assert up_kwargs["sky_smoke"] is False
     assert up_kwargs["sky_bin"] == "/opt/npa/sky"
-    assert seen[1][1]["label_known_gpus"] is True
     assert seen[1][1]["sky_bin"] == "/opt/npa/sky"
+    assert seen[2][1]["label_known_gpus"] is True
     assert seen[2][1]["sky_bin"] == "/opt/npa/sky"
+    assert seen[3][1]["sky_bin"] == "/opt/npa/sky"
+    assert seen[3][1]["credentials_checked"] is True
 
 
 def test_cached_smoke_without_accelerator_keeps_auto_detection(

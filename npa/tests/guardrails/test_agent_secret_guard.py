@@ -11,6 +11,10 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 GITIGNORE = REPO_ROOT / ".gitignore"
 AGENT_PATH = REPO_ROOT / "npa" / "src" / "npa" / "cli" / "agent.py"
 VM_AUTH_PATH = REPO_ROOT / "npa" / "src" / "npa" / "clients" / "nebius_vm_auth.py"
+AGENT_SKILL_PATH = REPO_ROOT / "skills" / "tools" / "npa-agent" / "SKILL.md"
+INFRA_PROTECTION_SKILL_PATH = (
+    REPO_ROOT / "skills" / "atomic" / "protect-nebius-infra-details" / "SKILL.md"
+)
 
 FORBIDDEN_TRACKED_SUFFIXES = (
     "auth.env",
@@ -79,6 +83,22 @@ def test_agent_bootstrap_does_not_commit_generated_passwords() -> None:
         assert not pattern.search(source), (
             f"literal secret pattern in agent.py: {pattern.pattern}"
         )
+
+
+def test_agent_endpoint_disclosure_requires_verified_basic_auth() -> None:
+    source = AGENT_PATH.read_text(encoding="utf-8")
+    agent_skill = AGENT_SKILL_PATH.read_text(encoding="utf-8")
+    protection_skill = INFRA_PROTECTION_SKILL_PATH.read_text(encoding="utf-8")
+
+    assert "_basic_auth_protects_endpoint" in source
+    assert 'response.status_code == 401' in source
+    assert '"endpoint_disclosure_allowed": endpoint_disclosure_allowed' in source
+    assert '"direct_url": ""' in source
+    assert "endpoint_disclosure_allowed=true" in agent_skill
+    assert "basic_auth_enforced=true" in agent_skill
+    assert "Verified agent UI endpoint exception" in protection_skill
+    assert "returned `401`" in protection_skill
+    assert "This exception does not permit `direct_url`" in protection_skill
 
 
 def test_vm_auth_verification_never_surfaces_iam_token_output() -> None:

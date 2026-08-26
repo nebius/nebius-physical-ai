@@ -864,13 +864,14 @@ def test_cli_threads_seg_conditioning_through_the_multiply_fan_out(monkeypatch) 
     assert seen[0]["mask_prompt"] == "robot arm"
     assert published[0]["control_output_uri"] == "s3://bkt/cosmos_control/"
     payload = json.loads(result.output)
-    assert payload["control"] == "seg"
-    assert payload["control_prompt"] == "robot arm"
-    assert payload["mask_prompt"] == "robot arm"
-    assert payload["control_output_uri"] == "s3://bkt/cosmos_control/"
-    assert payload["control_uris"] == {
-        "control_seg": "s3://bkt/control/aug-run-0/control_seg.mp4"
-    }
+    # Prompt text and storage locations may be customer-derived. The invocation
+    # and durable manifest assertions above prove they were threaded correctly;
+    # the CLI response must not echo them.
+    assert "control" not in payload
+    assert "control_prompt" not in payload
+    assert "mask_prompt" not in payload
+    assert "control_output_uri" not in payload
+    assert "control_uris" not in payload
 
 
 def test_env_overrides_let_a_submit_switch_to_seg_without_new_argv(monkeypatch) -> None:

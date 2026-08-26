@@ -1,5 +1,10 @@
 # EVIDENCE — live runs for `npa.workflow` parallel execution + runtime control flow
 
+> Historical, non-operative evidence: registry references in this document
+> record immutable past runs. They are not current defaults or operator guidance;
+> NPA-owned images now use one public GHCR namespace with immutable development
+> tags and digest-identical supported release tags.
+
 Every claim below is backed by a **live run on real Nebius infrastructure** from
 the operator dev VM (`nebius-dev-vm`) against the `npa-rtxpro-mk8s` Kubernetes
 cluster, real S3, and the real hosted Token Factory models. Anything that was

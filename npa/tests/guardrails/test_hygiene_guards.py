@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
+import re
 import warnings
 
 from npa.guardrails.skypilot import (
@@ -29,6 +30,21 @@ def test_no_unsupported_skypilot_down_or_autodown() -> None:
     assert not hits, "\n".join(
         f"{hit.path}:{hit.line_number}: {hit.line}" for hit in hits
     )
+
+
+def test_debug_skill_does_not_restore_retired_registry_auth_helpers() -> None:
+    skill = (
+        REPO_ROOT / "skills" / "atomic" / "debug-failed-run" / "SKILL.md"
+    ).read_text(encoding="utf-8")
+    retired = {
+        "mint_nebius_iam_token",
+        "ensure_registry_pull_secret_for_images",
+        "this project's registry",
+    }
+
+    assert retired.isdisjoint(skill.splitlines())
+    for marker in retired:
+        assert marker not in skill
 
 
 def test_teardown_guard_catches_broken_fixture(tmp_path: Path) -> None:
@@ -161,16 +177,8 @@ def _mentions_local_cuda(node: ast.AST, source: str) -> bool:
     return "cuda.is_available" in segment or "torch.cuda" in segment
 
 
-def test_shipped_examples_use_registry_placeholder_not_first_party_id() -> None:
-    """Shipped BYO examples must not bake in the first-party registry ID.
-
-    Resolver-owned defaults (npa.deploy.images, the image manifests, and ops
-    scripts) may reference the concrete `npa-workbench` registry; committed
-    example YAMLs and cookbooks must use the `<your-registry-id>` placeholder
-    so external users never pull against a registry they cannot access.
-    """
-    from npa.deploy.images import DEFAULT_CONTAINER_REGISTRY_ID
-
+def test_shipped_examples_do_not_depend_on_nebius_container_registry() -> None:
+    """Runnable examples use GHCR releases or generic operator registries."""
     example_roots = [
         REPO_ROOT / "npa" / "workflows",
         REPO_ROOT / "docs" / "workbench" / "cookbooks",
@@ -182,11 +190,69 @@ def test_shipped_examples_use_registry_placeholder_not_first_party_id() -> None:
             if path.suffix not in {".yaml", ".yml", ".md", ".json"}:
                 continue
             text = path.read_text(encoding="utf-8", errors="replace")
-            if DEFAULT_CONTAINER_REGISTRY_ID in text:
+            if re.search(r"cr\.[a-z0-9-]+\.nebius\.cloud", text, re.IGNORECASE):
                 offenders.append(str(path.relative_to(REPO_ROOT)))
     assert not offenders, (
-        "Concrete first-party registry ID found in shipped examples; "
-        "use the <your-registry-id> placeholder instead: " + ", ".join(offenders)
+        "legacy Nebius registry reference found in shipped examples: "
+        + ", ".join(offenders)
+    )
+
+
+def test_legacy_registry_hosts_are_only_vendor_dependencies_or_history() -> None:
+    """NPA-owned runtime/publication paths must never regain a provider registry."""
+    allowed_prefixes = (
+        "EVIDENCE.md",
+        "CHANGELOG.md",
+        "SECURITY.md",
+    )
+    host = re.compile(r"cr\.[a-z0-9-]+\.nebius\.cloud", re.IGNORECASE)
+    offenders: list[str] = []
+    for path in REPO_ROOT.rglob("*"):
+        if not path.is_file() or {
+            ".git",
+            ".venv",
+            ".pytest_cache",
+            "__pycache__",
+        }.intersection(path.parts):
+            continue
+        relative = str(path.relative_to(REPO_ROOT))
+        if relative.startswith(allowed_prefixes):
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        if host.search(text):
+            offenders.append(relative)
+    assert not offenders, "operative legacy registry hosts found: " + ", ".join(
+        sorted(offenders)
+    )
+
+
+def test_no_provider_specific_registry_auth_or_pull_secret_defaults() -> None:
+    """NPA-owned paths use anonymous GHCR or explicit generic BYOF auth only."""
+    forbidden = re.compile(
+        "(?i)(npa-" + "nebius-registry|NEBIUS_" + "REGISTRY_PROFILE|"
+        "private-" + "candidate|Nebius Container " + "Registry)"
+    )
+    allowed = {"EVIDENCE.md", "SECURITY.md"}
+    offenders: list[str] = []
+    for path in REPO_ROOT.rglob("*"):
+        if not path.is_file() or {".git", ".venv", "__pycache__"}.intersection(
+            path.parts
+        ):
+            continue
+        relative = str(path.relative_to(REPO_ROOT))
+        if relative in allowed:
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        if forbidden.search(text):
+            offenders.append(relative)
+    assert not offenders, "provider-specific registry dependency found: " + ", ".join(
+        sorted(offenders)
     )
 
 

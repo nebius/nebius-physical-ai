@@ -823,15 +823,18 @@ def test_workflow_status_maps_distillation_error(mocker) -> None:
 
 
 def test_workflow_logs_prints_stage_logs(mocker) -> None:
+    synthetic_secret = "legacy-secret-value"
     mocker.patch(
         "npa.workflows.distill.get_stage_logs",
-        return_value="stage log text",
+        return_value=f"stage log text AWS_SECRET_ACCESS_KEY={synthetic_secret}",
     )
 
     result = runner.invoke(app, ["workbench", "workflow", "logs", "run-1", "convert"])
 
     assert result.exit_code == 0
     assert "stage log text" in result.output
+    assert synthetic_secret not in result.output
+    assert "AWS_SECRET_ACCESS_KEY=<redacted>" in result.output
 
 
 def test_durable_workflow_status_logs_and_artifacts_read_s3(monkeypatch) -> None:
@@ -899,7 +902,9 @@ def test_durable_workflow_status_logs_and_artifacts_read_s3(monkeypatch) -> None
         Body=json.dumps(status).encode("utf-8"),
     )
     fake_s3.put_object(
-        Bucket="bucket", Key="run-1/logs/train/run.log", Body=b"training complete\n"
+        Bucket="bucket",
+        Key="run-1/logs/train/run.log",
+        Body=b"training complete AWS_SECRET_ACCESS_KEY=durable-secret-value\n",
     )
     fake_s3.put_object(
         Bucket="bucket", Key="run-1/artifacts/train/model.bin", Body=b"model"
@@ -924,6 +929,8 @@ def test_durable_workflow_status_logs_and_artifacts_read_s3(monkeypatch) -> None
     assert payload["stages"]["train"]["tier"] == "WORKS"
     assert logs_result.exit_code == 0
     assert "training complete" in logs_result.output
+    assert "durable-secret-value" not in logs_result.output
+    assert "AWS_SECRET_ACCESS_KEY=<redacted>" in logs_result.output
     assert artifacts_result.exit_code == 0
     assert "s3://bucket/run-1/artifacts/train/model.bin" in artifacts_result.output
 
@@ -1037,6 +1044,7 @@ def test_workflow_dns_failure_is_unavailable_and_eight_ledger_stages_remain_visi
             "sky_status": "PENDING",
             "job_id": str(100 + index),
             "job_name": f"synthetic-{name}",
+            "tasks": [{"task_id": index, "task_name": f"synthetic-{name}"}],
             "started_at": "2026-08-04T00:00:00Z",
         }
         for index, name in enumerate(stage_names)
@@ -1076,6 +1084,14 @@ def test_workflow_dns_failure_is_unavailable_and_eight_ledger_stages_remain_visi
         Key=f"{prefix}/runtime.json",
         Body=json.dumps(runtime).encode(),
     )
+    fake_s3.put_object(
+        Bucket="bucket",
+        Key=f"{prefix}/logs/stage-0/run.log",
+        Body=(
+            "cached progress "
+            f"AWS_SECRET_ACCESS_KEY={synthetic_secret}\n"
+        ).encode(),
+    )
     uri = f"s3://bucket/{prefix}/manifest.json"
 
     status_result = runner.invoke(
@@ -1107,11 +1123,37 @@ def test_workflow_dns_failure_is_unavailable_and_eight_ledger_stages_remain_visi
     assert "npa workbench workflow status" in human.output
     assert synthetic_secret not in human.output
 
+    cached_logs = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "logs",
+            uri,
+            "--stage",
+            "stage-0",
+            "--cached",
+            "--json",
+        ],
+    )
+    assert cached_logs.exit_code == 0, cached_logs.output
+    cached_payload = json.loads(cached_logs.output)
+    assert cached_payload["cached_log_state"] == "available"
+    assert cached_payload["log_truncated"] is False
+    assert "AWS_SECRET_ACCESS_KEY=<redacted>" in cached_payload["log"]
+    assert synthetic_secret not in cached_logs.output
+
+    log_task_ids: list[str] = []
+
+    def unavailable_logs(**kwargs):  # noqa: ANN003, ANN202
+        log_task_ids.append(kwargs["stage"])
+        return subprocess.CompletedProcess(
+            ["sky", "jobs", "logs"], 1, "", dns_error
+        )
+
     monkeypatch.setattr(
         "npa.orchestration.skypilot.workflow_state.tail_live_job_logs",
-        lambda **kwargs: subprocess.CompletedProcess(
-            ["sky", "jobs", "logs"], 1, "", dns_error
-        ),
+        unavailable_logs,
     )
     monkeypatch.setattr(
         "npa.cli.workbench.workflow._resolve_sky_bin", lambda value: "synthetic-sky"
@@ -1138,14 +1180,19 @@ def test_workflow_dns_failure_is_unavailable_and_eight_ledger_stages_remain_visi
     assert "<none>" not in logs.output
     assert synthetic_secret not in logs.output
 
-    monkeypatch.setattr(
-        "npa.orchestration.skypilot.workflow_state.tail_live_job_logs",
-        lambda **kwargs: subprocess.CompletedProcess(
+    def successful_log_tail(**kwargs):  # noqa: ANN003, ANN202
+        log_task_ids.append(kwargs["stage"])
+        return subprocess.CompletedProcess(
             ["sky", "jobs", "logs"],
             0,
-            f"progress AWS_SECRET_ACCESS_KEY={synthetic_secret}\n",
+            "discarded-prefix\n" * 20
+            + f"progress AWS_SECRET_ACCESS_KEY={synthetic_secret}\n",
             "",
-        ),
+        )
+
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.workflow_state.tail_live_job_logs",
+        successful_log_tail,
     )
     successful_logs = runner.invoke(
         app,
@@ -1156,12 +1203,20 @@ def test_workflow_dns_failure_is_unavailable_and_eight_ledger_stages_remain_visi
             uri,
             "--stage",
             "stage-0",
+            "--max-output-chars",
+            "64",
             "--json",
         ],
     )
     assert successful_logs.exit_code == 0, successful_logs.output
     assert synthetic_secret not in successful_logs.output
-    assert "<redacted>" in json.loads(successful_logs.output)["log"]
+    successful_payload = json.loads(successful_logs.output)
+    assert "<redacted>" in successful_payload["log"]
+    assert successful_payload["log_truncated"] is True
+    assert successful_payload["log_chars_returned"] == 64
+    assert successful_payload["log_chars_total"] > 64
+    assert len(successful_payload["log"] + successful_payload["stderr"]) == 64
+    assert log_task_ids == ["0", "0"]
 
 
 def test_workflow_cached_status_is_opt_in_and_skips_live_controller(

@@ -466,7 +466,6 @@ def _configured_references(
     registry = str(
         env.get("NPA_REGISTRY")
         or project_block.get("container_registry")
-        or project_block.get("registry_id")
         or ""
     ).strip()
     if registry:

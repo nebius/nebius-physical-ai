@@ -58,7 +58,7 @@ def test_global_config_contains_only_skypilot_config_fields() -> None:
     config = yaml.safe_load((PROFILES / GLOBAL_CONFIG).read_text(encoding="utf-8"))
 
     assert set(config) == {"kubernetes"}
-    assert config["kubernetes"]["pod_config"]["spec"]["imagePullSecrets"]
+    assert config["kubernetes"] == {}
 
 
 @pytest.mark.parametrize("path", _task_profiles(), ids=lambda p: p.name)

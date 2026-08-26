@@ -803,9 +803,13 @@ function installAgentApiMocks() {
   // bytes through the authenticated download proxy.
   cy.intercept("GET", "/api/artifacts/download*", (req) => {
     const url = new URL(req.url);
-    const uri = url.searchParams.get("s3_uri") || "";
-    if (uri.match(/\.(png|jpe?g|gif|webp)$/i)) {
+    const key = url.searchParams.get("key") || "";
+    if (key.match(/\.(png|jpe?g|gif|webp)$/i)) {
       req.reply({ statusCode: 200, headers: { "content-type": "image/png" }, body: "mock-image-bytes" });
+      return;
+    }
+    if (key.match(/\.(mp4|webm|mov)$/i)) {
+      req.reply({ statusCode: 200, headers: { "content-type": "video/mp4" }, fixture: "browser-compatible.mp4,null" });
       return;
     }
     req.reply({ statusCode: 200, headers: { "content-type": "application/octet-stream" }, body: "mock-bytes" });
@@ -828,7 +832,17 @@ function installAgentApiMocks() {
         : `inline; filename="${key.split("/").pop() || "artifact.bin"}"`,
     };
     if (req.method === "HEAD") {
-      req.reply({ statusCode: 200, headers: { ...baseHeaders, "content-length": "4096" }, body: "" });
+      const mediaType = key.match(/\.(mp4|webm|mov)$/i)
+        ? "video/mp4"
+        : (key.match(/\.(png|jpe?g|gif|webp)$/i) ? "image/png" : "application/octet-stream");
+      req.reply({
+        statusCode: 200,
+        headers: { ...baseHeaders, "content-type": mediaType, "content-length": "4096" },
+        // Cypress recalculates Content-Length for intercepted HEAD responses
+        // from the reply body. Supplying representative bytes keeps the mock's
+        // browser-streaming metadata truthful; fetch still exposes no HEAD body.
+        body: "x".repeat(4096),
+      });
       return;
     }
     if (!download && key.endsWith("manifest.json")) {
@@ -874,15 +888,13 @@ function installAgentApiMocks() {
       return;
     }
     if (!download && key.match(/\.(mp4|webm|mov)$/i)) {
-      const ranged = Boolean(req.headers.range);
       req.reply({
-        statusCode: ranged ? 206 : 200,
+        statusCode: 200,
         headers: {
           ...baseHeaders,
           "content-type": "video/mp4",
-          ...(ranged ? { "content-range": "bytes 0-99/4096", "content-length": "100" } : {}),
         },
-        body: "mock-video-bytes",
+        fixture: "browser-compatible.mp4,null",
       });
       return;
     }
@@ -1012,7 +1024,7 @@ function installAgentApiMocks() {
       access: { status: "available", scope: bucket ? "selected_resource" : "tenant" },
     }));
   }).as("artifactRuns");
-  cy.intercept("GET", `/api/artifacts/run/${NON_STOCK_RUN_ID}*`, json({
+  cy.intercept("GET", new RegExp(`/api/artifacts/run/(?:${NON_STOCK_RUN_ID}|npa1_mock_non_stock)(?:\\?|$)`), json({
     run_id: NON_STOCK_RUN_ID,
     run_ref: "npa1_mock_non_stock",
     bucket: "mock",
@@ -1025,6 +1037,7 @@ function installAgentApiMocks() {
   })).as("nonStockArtifactList");
   cy.intercept("GET", `/api/artifacts/run/${JSON_ONLY_RUN_ID}*`, json({
     run_id: JSON_ONLY_RUN_ID,
+    run_ref: "npa1_json_only",
     bucket: "project-artifacts",
     project_id: "project-a",
     resolved_prefix: "",
@@ -1034,6 +1047,7 @@ function installAgentApiMocks() {
   })).as("jsonOnlyArtifactList");
   cy.intercept("GET", `/api/artifacts/run/${ARTIFACT_ONLY_RUN_ID}*`, json({
     run_id: ARTIFACT_ONLY_RUN_ID,
+    run_ref: "npa1_artifact_only",
     bucket: "project-artifacts",
     project_id: "project-a",
     resolved_prefix: "tenant-runs",
@@ -1043,6 +1057,10 @@ function installAgentApiMocks() {
   })).as("artifactOnlyList");
   cy.intercept("GET", "/api/artifacts/run/mock-run*", json({
     run_id: "mock-run",
+    run_ref: "npa1_mock_run",
+    bucket: "mock",
+    project_id: "project-local",
+    resolved_prefix: "",
     prefix: "sim2real-b",
     artifacts: [
       {
@@ -1053,8 +1071,12 @@ function installAgentApiMocks() {
       },
     ],
   })).as("artifactList");
-  cy.intercept("GET", `/api/artifacts/run/${DF_MOCK_RUN_ID}*`, json({
+  cy.intercept("GET", new RegExp(`/api/artifacts/run/(?:${DF_MOCK_RUN_ID}|npa1_paidf_mock)(?:\\?|$)`), json({
     run_id: DF_MOCK_RUN_ID,
+    run_ref: "npa1_paidf_mock",
+    bucket: "mock",
+    project_id: "project-local",
+    resolved_prefix: "checkpoints/physical-ai-data-factory",
     prefix: "physical-ai-data-factory",
     count: DF_MOCK_ARTIFACTS.length,
     artifacts: DF_MOCK_ARTIFACTS,
@@ -1062,6 +1084,10 @@ function installAgentApiMocks() {
   })).as("dfArtifactList");
   cy.intercept("GET", `/api/artifacts/run/${DF_INPUT_ONLY_RUN_ID}*`, json({
     run_id: DF_INPUT_ONLY_RUN_ID,
+    run_ref: "npa1_paidf_input_only",
+    bucket: "mock",
+    project_id: "project-local",
+    resolved_prefix: "physical-ai-data-factory",
     prefix: "physical-ai-data-factory",
     count: DF_INPUT_ONLY_ARTIFACTS.length,
     artifacts: DF_INPUT_ONLY_ARTIFACTS,
@@ -1077,6 +1103,10 @@ function installAgentApiMocks() {
   }).as("artifactProvenance");
   cy.intercept("GET", `/api/fiftyone/dataset/${DF_MOCK_RUN_ID}`, json({
     run_id: DF_MOCK_RUN_ID,
+    run_ref: "npa1_paidf_mock",
+    bucket: "mock",
+    project_id: "project-local",
+    resolved_prefix: "checkpoints/physical-ai-data-factory",
     source: {
       source_kind: "user_supplied",
       input_origin: "operator_supplied",

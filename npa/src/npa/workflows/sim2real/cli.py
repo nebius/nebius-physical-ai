@@ -243,7 +243,7 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
         "--k8s-image-pull-secrets",
         default=os.environ.get(
             "NPA_SIM2REAL_K8S_IMAGE_PULL_SECRETS",
-            "agent-sa,ngc-nvcr-imagepullsecret,npa-nebius-registry",
+            "ngc-nvcr-imagepullsecret",
         ),
     )
     parser.add_argument(

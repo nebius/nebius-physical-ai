@@ -391,10 +391,15 @@ def discover_agent_access(
     resources_by_project: dict[str, list[StorageResourceAccess]] = {
         project_id: [] for project_id in ordered_project_ids
     }
-    for project_id, resource, error in probe_results:
+    for project_id, resource, _error in probe_results:
         resources_by_project[project_id].append(resource)
-        if error is not None:
-            errors.append(error)
+        # A bucket-level S3 denial is an effective capability result for that
+        # resource, not a failure of tenant/project discovery.  Keep it on the
+        # resource's list/read capabilities so selecting that bucket remains
+        # visibly blocked, but do not promote every inaccessible sibling into
+        # the report-wide error banner.  Structural inventory failures above
+        # still remain global because they prevent the affected scope from
+        # being enumerated at all.
 
     projects: list[ProjectAccess] = []
     for inventory in inventories:

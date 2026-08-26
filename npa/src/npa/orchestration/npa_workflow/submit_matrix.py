@@ -509,6 +509,22 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         ),
     ),
     SubmitLiveCase(
+        "content-agents-rigid-object.yaml",
+        "gpu",
+        secret_envs=(
+            "NEBIUS_TOKEN_FACTORY_KEY",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+        ),
+        requires_token_factory=True,
+        image_tool="content-agents",
+        notes=(
+            "Public zero-vendor-payload NVIDIA Content Agents v0.5.2 adapter: "
+            "generated/customer USD -> real OVRTX material + physics pipelines -> "
+            "Validation Agent profiles -> rigid-ready USD/USDZ and Isaac Stage-2 manifest."
+        ),
+    ),
+    SubmitLiveCase(
         "tokenfactory-rollout-judge.yaml",
         "gpu",
         secret_envs=(
@@ -817,15 +833,14 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         ),
         plan_only=True,
         plan_only_justification=(
-            "the npa-ltx2 image has not been built, so no live submit can run yet"
+            "the shared submit harness cannot establish that its HF token has the "
+            "operator-specific gated Lightricks entitlement required at runtime"
         ),
         notes=(
-            "BYOF LTX-2.5 candidate. Plan-only for a reason the other entries do "
-            "not share: the image does not exist yet. It also cannot be submitted "
-            "on an operator's behalf at all — both fetches refuse without that "
-            "operator's own entitlement on the gated Lightricks/LTX-2.5 "
-            "repository. test_ltx2_live_e2e.py owns the gated live path once an "
-            "image exists."
+            "The accepted zero-payload digest has passed a real RTX PRO 6000 "
+            "text-to-video run. This shared matrix remains plan-only because both "
+            "runtime fetches require the submitting operator's gated "
+            "Lightricks/LTX-2.5 entitlement; test_ltx2_live_e2e.py owns that live path."
         ),
     ),
     SubmitLiveCase(

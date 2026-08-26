@@ -25,6 +25,16 @@ if [[ "$PUSH" == 1 && -z "$REGISTRY" ]]; then
   REGISTRY="$(cd "$NPA_ROOT" && "$NPA_PYTHON" -c 'from npa.clients.config import resolve_container_registry; print(resolve_container_registry())')"
 fi
 SOURCE_COMMIT="$(git -C "$REPO_ROOT" rev-parse HEAD)"
+[[ "$SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]] || {
+  echo "ERROR: source commit must be a full Git SHA" >&2
+  exit 2
+}
+if [[ "$PUSH" == 1 && "${REGISTRY%/}" == "ghcr.io/nebius/nebius-physical-ai" ]]; then
+  [[ "$TAG" == "dev-${SOURCE_COMMIT}" ]] || {
+    echo "ERROR: official GHCR accepts only dev-<full-git-sha> from this build helper; promote releases by digest" >&2
+    exit 2
+  }
+fi
 if [[ "$PUSH" == 1 ]]; then
   git -C "$REPO_ROOT" diff --quiet
   git -C "$REPO_ROOT" diff --cached --quiet
@@ -49,5 +59,5 @@ env -u HF_TOKEN -u NGC_API_KEY -u NEBIUS_IAM_TOKEN \
     -u NPA_LTX_ACCEPT_NVIDIA_RUNTIME_TERMS \
   docker buildx build "${ARGS[@]}" "$NPA_ROOT"
 echo "Built: $IMAGE"
-echo "Verify the artifact before publishing:"
+echo "Verify the artifact before any publication or promotion:"
 echo "  ${NPA_PYTHON} ${NPA_ROOT}/scripts/scan_image_ltx_payload.py ${IMAGE}"

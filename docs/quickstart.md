@@ -149,8 +149,11 @@ chmod 600 ~/.npa/credentials.yaml
 Nebius account authentication is handled by the `nebius` CLI profile, not by a
 long-lived `NEBIUS_TOKEN` in `~/.npa/credentials.yaml`.
 
-Before running `npa configure`, sign up for Nebius AI Cloud, note your tenant
-id, and create a project in the target region. An Object Storage bucket is
+Before running `npa configure`, sign up for Nebius AI Cloud, note your tenant ID
+and exact `project-...` ID, and create a project in the target region. Supplying
+the project ID when NPA creates the CLI profile avoids tenant-wide project
+discovery, so profiles authorized through a project-scoped IAM group work
+without broader tenant permissions. An Object Storage bucket is
 optional — `npa configure` creates a default bucket named `npa-bucket-<hash>`
 (a short hash of your tenant and project ids, e.g. `npa-bucket-1a2b3c4d`) with
 **standard** storage and a size cap when you press Enter at the bucket prompt
@@ -227,9 +230,10 @@ otherwise it proposes a fresh project-scoped bucket, without listing or rotating
 unrelated access keys.
 
 Run interactive setup in a terminal. `npa configure` creates or reuses your
-Nebius CLI profile first, then prompts for your tenant id and project id, your
-region and container registry (defaults are discovered from the project), guides
-you to reuse an existing bucket or create a default `npa-bucket-<hash>` bucket
+Nebius CLI profile first. When creating one, it asks for the project ID before
+browser authentication. It then prompts for your tenant ID, confirms the project
+ID and region, and guides you to reuse an existing bucket or create a default
+`npa-bucket-<hash>` bucket
 (standard storage, size limit in GB), and asks for a local **project alias**
 (default = region; used later as `-p <alias>`).
 
@@ -239,20 +243,33 @@ On a re-run every prompt is pre-filled with the value already saved in
 flow keeps your current setup unchanged, and typing a new value updates just
 that field. When object storage is already configured it defaults to keeping the
 existing bucket and S3 key (so a re-run does not mint a new access key); decline
-that prompt to re-provision. It then
-writes `~/.npa/credentials.yaml` and `~/.npa/config.yaml`, and prints a one-line
-`[NOTE]` summarizing which gated workbench models your HF and NGC tokens can (or
-cannot) access — see [§4e](#4e-accept-and-verify-gated-model-access):
+that prompt to re-provision. It then writes `~/.npa/credentials.yaml` and
+`~/.npa/config.yaml`, performs bounded live checks through the same Hugging Face
+model/dataset and NGC repository-entitlement paths as
+`npa workbench health access`, and prints a one-line `[NOTE]` summary. The note
+is advisory so a transient upstream outage does not undo otherwise valid local
+setup; use the health command as the access gate — see
+[§4e](#4e-accept-and-verify-gated-model-access):
 
 ```bash
 npa configure
 ```
 
+Workbench images resolve from the anonymous
+`ghcr.io/nebius/nebius-physical-ai` mirror by default, so configure does not ask
+for or save a container registry. Existing `container_registry` entries remain
+supported as custom overrides; for new private or locally modified images, set
+`NPA_REGISTRY` or pass the command's explicit image/registry option.
+
 Storage is committed after its declared write/read capability probe succeeds.
 Delete is best-effort probe cleanup and is reported independently. The declared
 runtime actions are `GetObject`, `HeadObject`, `PutObject`, `DeleteObject`, and
 `ListObjectsV2`; NPA binds `storage.object-editor` to a project-scoped NPA group
-at the exact bucket. A provider-verified existing `editors` membership is
+at the exact bucket. Initial auto-provisioning therefore requires the active
+profile to have `admin` permission on the target project so it can manage that
+project's IAM group, membership, and access permit. Tenant-wide project listing
+and tenant-wide `admin` permission are not required. A provider-verified existing
+`editors` membership is
 accepted for older installations. Creating `editors` is an explicit compatibility
 fallback only when Nebius reports the narrow role unsupported. Unknown,
 unreadable, or insufficient IAM stops before key creation and probing. Newly
@@ -293,6 +310,19 @@ npa configure --no-interactive \
   --tenant-id "$YOUR_TENANT_ID" --project-id "$YOUR_PROJECT_ID" \
   --region "$NEBIUS_REGION" --project-alias "$PROJECT_ALIAS"
 ```
+
+For a newly created bucket, automation may also select its create-only storage
+class and size cap without putting credentials on the command line:
+
+```bash
+npa configure --no-interactive \
+  --tenant-id "$YOUR_TENANT_ID" --project-id "$YOUR_PROJECT_ID" \
+  --region "$NEBIUS_REGION" --project-alias "$PROJECT_ALIAS" \
+  --bucket-storage-class enhanced --bucket-size-gb 100
+```
+
+If the deterministic bucket already exists, these options verify its class and
+cap exactly and fail closed on a mismatch; they never alter an existing bucket.
 
 These are non-secret identifiers; do not pass IAM, S3, Token Factory, HF, or NGC
 secrets on the command line. The command reuses existing storage only after the
@@ -449,10 +479,13 @@ A convenience wrapper is also available:
 HF_TOKEN=hf_xxx NGC_API_KEY=nvapi-xxx scripts/accept-model-access.sh
 ```
 
-The report is PASS/WARN/FAIL per model; it exits non-zero if a required gated
-model is still inaccessible, so it fits a CI or cold-start preflight. For the
-broader credential preflight (HF/NGC/S3/Token Factory presence and
-reachability), use `npa workbench health preflight`.
+The report is PASS/WARN/FAIL per model or repository; it exits non-zero if a
+required gated Hugging Face asset or NGC pull is definitively rejected, so it
+fits a CI or cold-start preflight. `npa configure` uses these same live access
+probes for its bounded advisory summary, but does not turn an optional missing
+credential or transient network failure into a setup failure. For the broader
+credential preflight (presence/format plus basic HF, S3, and Token Factory
+connectivity), use `npa workbench health preflight`.
 
 ## 5. First platform checks
 
@@ -682,9 +715,11 @@ kubectl config use-context <your-workbench-context>
 
 `403`/`denied` when pushing or pulling a container image
 
-Check that you are logged in to the registry. Nebius registries use a Docker
-credential helper; confirm `~/.docker/config.json` references your registry
-host and that `nebius iam get-access-token` succeeds.
+Supported NPA images pull anonymously from
+`ghcr.io/nebius/nebius-physical-ai`. If an explicit BYOF override points at an
+operator-owned registry, authenticate to that exact host using the registry's
+documented standards-based mechanism and confirm the same immutable reference
+can be pulled from the execution environment.
 
 Capacity, quota, or `Not enough resources` errors
 

@@ -10,7 +10,7 @@ locals {
 
   filesystem_csi_chart_name          = "csi-mounted-fs-path"
   filesystem_csi_storage_class_name  = "csi-mounted-fs-path-sc"
-  filesystem_csi_enabled             = local.shared-filesystem != null
+  filesystem_csi_enabled             = local.shared-filesystem != null && trimspace(var.filesystem_csi.chart_repository) != ""
   filesystem_csi_data_dir            = "${trimsuffix(local.filestore.mount_path, "/")}/csi-mounted-fs-path-data/"
   filesystem_csi_previous_default_sc = var.filesystem_csi.previous_default_storage_class_name
   create_cpu_node_group              = var.cpu_nodes_autoscaling.enabled || var.cpu_nodes_fixed_count > 0

@@ -60,7 +60,7 @@ setup, the two-repo table, the 401-vs-403 diagnostic for a gated-download
 failure, and the Xet download workaround for a specific Hugging Face client
 pin.
 
-The r2 image keeps the faster Xet transfer path enabled with its measured,
+The current r6 image keeps the faster Xet transfer path enabled with its measured,
 compatible baked versions (`huggingface_hub==0.36.2`, `hf-xet==1.3.2`). The
 image build records this pair and fails if the known-bad `1.23.0` / `1.5.1`
 combination is ever resolved; only non-image/custom environments need the
@@ -77,12 +77,12 @@ this release does not redesign guardrail behavior.
 
 ## Build
 
-The supported/default image release is `npa-cosmos3:1.2.2-cu130-r2`. It is an
-additive successor to `1.2.2-cu130`: the old immutable tag is retained for
-rollback and provenance and must never be overwritten or deleted. Pre-merge
-validation builds use a branch-specific candidate tag in a private registry;
-the official `1.2.2-cu130-r2` tag is built and published only from the reviewed
-trusted commit.
+The supported/default image release is `npa-cosmos3:1.2.2-cu130-r6`. It is an
+additive successor to the historical rollback tag `npa-cosmos3:1.2.2-cu130`,
+which is retained for provenance and must never be
+overwritten or deleted. Pre-merge validation builds use a branch-specific
+candidate tag in a private registry; the official `1.2.2-cu130-r6` tag is built
+and published only from the reviewed trusted commit.
 
 ```bash
 # Defaults to the pinned framework commit and the supported-tools tag.
@@ -236,7 +236,13 @@ smoke, use `npa/workflows/workbench/npa-workflows/cosmos3-text-to-image.yaml`.
 
 ## Measured timing: Cosmos3-Super text2video on H200 and B200
 
-Measured 2026-08-08 with `npa-cosmos3:1.2.2-cu130` (npa `3fe85845`, cosmos-framework `5e67049c`), mode `text2video`, checkpoint `Cosmos3-Super` at the serving lane's anchor shape: 1280x720, 189 frames, 24 fps, 35 sampling steps, seed 17, guardrails on, NVIDIA's example text-to-video prompt. One job is one full model load: every invocation loads the checkpoint, samples, decodes, applies the guardrail postprocessor, encodes, and publishes, then exits.
+Historical measurement from 2026-08-08 with `npa-cosmos3:1.2.2-cu130`
+(npa `3fe85845`, cosmos-framework `5e67049c`), mode `text2video`, checkpoint
+`Cosmos3-Super` at the serving lane's anchor shape: 1280x720, 189 frames, 24
+fps, 35 sampling steps, seed 17, guardrails on, NVIDIA's example text-to-video
+prompt. One job is one full model load: every invocation loads the checkpoint,
+samples, decodes, applies the guardrail postprocessor, encodes, and publishes,
+then exits.
 
 | Platform | Wall per invocation | Sampling | Steady state per step | Notes |
 | --- | --- | --- | --- | --- |

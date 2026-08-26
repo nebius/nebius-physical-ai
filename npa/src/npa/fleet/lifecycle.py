@@ -998,6 +998,9 @@ def plan_fleet(
                 ],
                 "filestore_mount_path": backend_plan["filestore_mount_path"],
                 "filestore_mount_tag": backend_plan["filestore_mount_tag"],
+                "filesystem_csi_enabled": backend_plan[
+                    "filesystem_csi_enabled"
+                ],
                 "k8s_version": backend_plan["k8s_version"],
                 "mig": backend_plan["mig"],
             }
@@ -1390,6 +1393,7 @@ def _deploy_mk8s_fleet(
     concurrency: int = 1,
     profile: str | None = None,
     preflight: bool = True,
+    repair_stopped_placeholder: bool = False,
     stream_terraform: bool = True,
     on_status: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
@@ -1649,6 +1653,7 @@ def _deploy_mk8s_fleet(
                 timeout_minutes=timeout_minutes,
                 on_status=on_status,
                 log_path=log_path,
+                repair_stopped_placeholder=repair_stopped_placeholder,
             )
         return get_backend("mk8s").apply(
             t["cluster"],
@@ -1679,6 +1684,7 @@ def _deploy_mk8s_fleet(
                 timeout_minutes=timeout_minutes,
                 on_status=on_status,
                 log_path=log_path,
+                repair_stopped_placeholder=repair_stopped_placeholder,
             ),
         )
 

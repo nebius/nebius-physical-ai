@@ -12,8 +12,10 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import tempfile
 import time
 from typing import Any
+import xml.etree.ElementTree as ET
 
 import mujoco
 import numpy as np
@@ -25,6 +27,7 @@ DEFAULT_CONFIG = (
     "/opt/sonic/gear_sonic/utils/mujoco_sim/wbc_configs/g1_29dof_sonic_model12.yaml"
 )
 DEFAULT_OUTPUT = "/tmp/npa-sonic-output/mujoco_eval_metrics.json"
+GEOMETRY_MODE = "upstream-mesh"
 
 
 def main() -> int:
@@ -154,6 +157,7 @@ def _load_yaml(path: Path) -> dict[str, Any]:
 
 
 def _load_model(config: dict[str, Any]) -> mujoco.MjModel:
+    global GEOMETRY_MODE
     root = Path(os.environ.get("SONIC_HOME", "/opt/sonic"))
     scene = str(config.get("ROBOT_SCENE") or "gear_sonic/data/robot_model/model_data/g1/scene_43dof.xml")
     xml_path = Path(scene)
@@ -161,7 +165,48 @@ def _load_model(config: dict[str, Any]) -> mujoco.MjModel:
         xml_path = root / xml_path
     if not xml_path.is_file():
         raise SystemExit(f"MuJoCo XML not found: {xml_path}")
-    model = mujoco.MjModel.from_xml_path(str(xml_path))
+    scene_text = xml_path.read_text(encoding="utf-8")
+    scene_tree = ET.fromstring(scene_text)
+    include = scene_tree.find("include")
+    included_path = xml_path.parent / str(include.get("file", "")) if include is not None else None
+    if included_path is None or not included_path.is_file():
+        raise SystemExit(f"MuJoCo included robot XML not found for {xml_path}")
+
+    robot_tree = ET.parse(included_path)
+    robot_root = robot_tree.getroot()
+    mesh_files = [xml_path.parent / "meshes" / str(node.get("file", "")) for node in robot_root.findall("./asset/mesh")]
+    lfs_placeholders = [
+        path
+        for path in mesh_files
+        if path.is_file()
+        and path.read_bytes()[:80].startswith(b"version https://git-lfs.github.com/spec")
+    ]
+    if lfs_placeholders:
+        # The public image deliberately skips every Git-LFS object so unclassified
+        # robot assets cannot slip into a layer. For headless dynamics, replace the
+        # unavailable visual/collision meshes with conservative primitive collision
+        # proxies while retaining the upstream mass, inertia, joints and actuators.
+        asset = robot_root.find("asset")
+        if asset is not None:
+            for node in list(asset.findall("mesh")):
+                asset.remove(node)
+        for geom in robot_root.iter("geom"):
+            if geom.get("type") == "mesh" or geom.get("mesh"):
+                geom.set("type", "sphere")
+                geom.set("size", "0.03")
+                geom.attrib.pop("mesh", None)
+        GEOMETRY_MODE = "primitive-proxy-no-lfs-payload"
+        with tempfile.TemporaryDirectory(prefix="npa-sonic-mujoco-") as tmp:
+            tmp_path = Path(tmp)
+            sanitized_name = "g1_sanitized.xml"
+            robot_tree.write(tmp_path / sanitized_name, encoding="utf-8", xml_declaration=True)
+            include.set("file", sanitized_name)
+            ET.ElementTree(scene_tree).write(
+                tmp_path / xml_path.name, encoding="utf-8", xml_declaration=True
+            )
+            model = mujoco.MjModel.from_xml_path(str(tmp_path / xml_path.name))
+    else:
+        model = mujoco.MjModel.from_xml_path(str(xml_path))
     model.opt.timestep = float(config.get("SIMULATE_DT", model.opt.timestep))
     return model
 
@@ -218,6 +263,7 @@ def _summarize(
             "nbody": int(model.nbody),
             "timestep": float(model.opt.timestep),
             "gl": os.environ.get("MUJOCO_GL", ""),
+            "geometry_mode": GEOMETRY_MODE,
         },
         "eval": {
             "embodiment": os.environ.get("SONIC_EMBODIMENT", "UNITREE_G1_SONIC"),

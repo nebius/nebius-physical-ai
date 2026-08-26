@@ -215,7 +215,7 @@ def submit_yaml(
         values = ", ".join(sorted(unresolved))
         raise BurstConfigError(f"SkyPilot YAML has unresolved placeholders: {values}")
     _validate_burst_yaml_runtime(task, source)
-    _inject_nebius_registry_login(task)
+    _inject_registry_login(task)
 
     resolved_name = name or str(task.get("name") or source.stem)
     if not _JOB_NAME_RE.fullmatch(resolved_name):
@@ -408,38 +408,53 @@ def _validate_burst_yaml_runtime(task: Mapping[str, Any], source: Path) -> None:
         raise BurstConfigError(f"SkyPilot task resources.image_id must be a string: {source}")
 
 
-def _is_nebius_registry_image(image_id: str) -> bool:
-    value = image_id.removeprefix("docker:").removeprefix("http://").removeprefix("https://")
-    return value.startswith("cr.") and ".nebius.cloud/" in value
+def _inject_registry_login(task: dict[str, Any]) -> None:
+    """Forward only explicit credentials for the image's exact registry host."""
+    from npa.deploy.images import is_public_registry
 
-
-def _inject_nebius_registry_login(task: dict[str, Any]) -> None:
     resources = task.get("resources") or {}
     if not isinstance(resources, Mapping):
         return
-    cloud = str(resources.get("cloud") or "").strip().lower()
     image = str(resources.get("image_id") or "").strip()
-    if cloud != "nebius" or not _is_nebius_registry_image(image):
-        return
     server = _registry_server_from_image_id(image)
     if not server:
         return
+    configured_server = (
+        os.environ.get("SKYPILOT_DOCKER_SERVER", "").strip()
+        or os.environ.get("NPA_REGISTRY_SERVER", "").strip()
+    ).removeprefix("https://").removeprefix("http://").rstrip("/")
+    username = os.environ.get("SKYPILOT_DOCKER_USERNAME", "").strip() or os.environ.get(
+        "NPA_REGISTRY_USERNAME", ""
+    ).strip()
+    password = os.environ.get("SKYPILOT_DOCKER_PASSWORD", "").strip() or os.environ.get(
+        "NPA_REGISTRY_PASSWORD", ""
+    ).strip()
+    image_registry = image.removeprefix("docker:").rsplit("/", 1)[0]
+    if configured_server != server:
+        if is_public_registry(image_registry):
+            return
+        if configured_server and username and password:
+            raise BurstConfigError(
+                f"registry mismatch: task image is in {server!r} but the configured "
+                f"Docker credentials authenticate to {configured_server!r}"
+            )
+        return
+    if not username or not password:
+        return
     secrets = task.setdefault("secrets", {})
     if not isinstance(secrets, dict):
-        raise BurstConfigError("SkyPilot task secrets must be a mapping when using Nebius registry auth")
+        raise BurstConfigError("SkyPilot task secrets must be a mapping when using private registry auth")
     if {
         "SKYPILOT_DOCKER_SERVER",
         "SKYPILOT_DOCKER_USERNAME",
         "SKYPILOT_DOCKER_PASSWORD",
     } <= set(secrets):
         return
-    from npa.workflows.sim2real.registry_auth import mint_nebius_registry_token
-
     secrets.update(
         {
             "SKYPILOT_DOCKER_SERVER": server,
-            "SKYPILOT_DOCKER_USERNAME": "iam",
-            "SKYPILOT_DOCKER_PASSWORD": mint_nebius_registry_token(),
+            "SKYPILOT_DOCKER_USERNAME": username,
+            "SKYPILOT_DOCKER_PASSWORD": password,
         }
     )
 

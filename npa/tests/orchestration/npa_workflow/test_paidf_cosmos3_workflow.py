@@ -77,6 +77,7 @@ def test_configuration_surface_and_privacy_defaults() -> None:
         "steps",
         "variant_count",
         "variant_parallelism",
+        "augmentation_seed",
         "input_kind",
         "input_episode",
         "input_camera",
@@ -88,6 +89,11 @@ def test_configuration_surface_and_privacy_defaults() -> None:
     ):
         assert key in config
     assert config["cosmos3_mode"] == "video2video"
+    assert config["augmentation_seed"] == ""
+    assert (
+        doc["states"]["generate-configs"]["run"]["argv"][-1]
+        == "{{config.augmentation_seed}}"
+    )
     assert config["bucket"] == "example-bucket"
     text = SPEC.read_text(encoding="utf-8")
     for forbidden in ("tenant", "project-id", "cluster-name", "hf_", "AKIA"):

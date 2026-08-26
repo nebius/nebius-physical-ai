@@ -12,6 +12,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+from functools import lru_cache
 import re
 import sys
 from pathlib import Path
@@ -58,14 +59,20 @@ STALE_TOOL_TAGS: dict[str, set[str]] = {
     },
 }
 
-# The old Cosmos3 tag is immutable rollback evidence, not a supported default.
-# Keep its one human-facing reference narrowly allowlisted; any workflow/source
-# use of the same tag remains an actionable stale-reference failure.
-ALLOWLISTED_STALE_REFS: set[tuple[str, str, str]] = {
-    ("docs/workbench/cosmos3-generate.md", "npa-cosmos3", "1.2.2-cu130"),
+# Cosmos3 release docs retain a few old immutable tags as explicitly labelled
+# history. Every other Cosmos3-looking tag must equal the supported-tools pin.
+# Keeping this allowlist path-and-tag specific prevents a new default bump from
+# silently leaving current instructions on the previous release.
+ALLOWLISTED_HISTORICAL_COSMOS3_REFS: set[tuple[str, str]] = {
+    ("docs/workbench/container-image-catalog.md", "1.2.2-cu130"),
+    ("docs/workbench/container-image-catalog.md", "1.2.2-cu130-r2"),
+    ("docs/workbench/container-image-catalog.md", "1.2.2-cu130-r5"),
+    ("docs/workbench/cosmos3-generate.md", "1.2.2-cu130"),
+    ("docs/workbench/image-gpu-compatibility-matrix.md", "1.2.2-cu130-r2"),
 }
 
 IMAGE_REF_RE = re.compile(r"(npa-[a-z0-9-]+):([a-z0-9._-]+(?:T[0-9]+Z)?)", re.IGNORECASE)
+HISTORICAL_MARKER_RE = re.compile(r"\b(?:historical|rollback|provenance)\b", re.IGNORECASE)
 
 SKIP_TAG_SUFFIXES = (":smoke", ":test", ":local", ":latest", "-k8s-runtime")
 
@@ -77,6 +84,16 @@ def _tool_for_image(image: str) -> str | None:
     return None
 
 
+@lru_cache(maxsize=None)
+def _canonical_tag(tool: str) -> str:
+    return supported_tool_version(tool)
+
+
+def _cosmos3_family_tags(line: str, canonical: str) -> list[str]:
+    family = re.sub(r"-r\d+$", "", canonical)
+    return re.findall(rf"\b{re.escape(family)}(?:-r\d+)?\b", line, re.IGNORECASE)
+
+
 def _scan_file(path: Path) -> list[str]:
     text = path.read_text(encoding="utf-8")
     if any(token in text for token in ALLOWLIST_SUBSTRINGS) and "cosmos2-transfer" in str(
@@ -85,19 +102,34 @@ def _scan_file(path: Path) -> list[str]:
         return []
     rel = path.relative_to(REPO_ROOT)
     issues: list[str] = []
-    for image, tag in IMAGE_REF_RE.findall(text):
-        if any(image.endswith(suffix) or f":{tag}".endswith(suffix) for suffix in SKIP_TAG_SUFFIXES):
-            continue
-        tool = _tool_for_image(image)
-        if tool is None:
-            continue
-        stale = STALE_TOOL_TAGS.get(tool, set())
-        if tag in stale:
-            if (str(rel), image.lower(), tag) in ALLOWLISTED_STALE_REFS:
+    cosmos3_canonical = _canonical_tag("cosmos3")
+    for line in text.splitlines():
+        for image, tag in IMAGE_REF_RE.findall(line):
+            if any(
+                image.endswith(suffix) or f":{tag}".endswith(suffix)
+                for suffix in SKIP_TAG_SUFFIXES
+            ):
                 continue
-            canonical = supported_tool_version(tool)
+            tool = _tool_for_image(image)
+            if tool is None or tool == "cosmos3":
+                continue
+            stale = STALE_TOOL_TAGS.get(tool, set())
+            if tag not in stale:
+                continue
+            canonical = _canonical_tag(tool)
             issues.append(
                 f"{rel}: {image}:{tag} (use {CONTAINER_IMAGE_NAMES[tool]}:{canonical})"
+            )
+
+        for tag in _cosmos3_family_tags(line, cosmos3_canonical):
+            if tag == cosmos3_canonical:
+                continue
+            allowlisted = (str(rel), tag) in ALLOWLISTED_HISTORICAL_COSMOS3_REFS
+            if allowlisted and HISTORICAL_MARKER_RE.search(line):
+                continue
+            issues.append(
+                f"{rel}: npa-cosmos3:{tag} "
+                f"(use npa-cosmos3:{cosmos3_canonical})"
             )
     return issues
 

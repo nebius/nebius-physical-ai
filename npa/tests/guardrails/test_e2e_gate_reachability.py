@@ -34,6 +34,9 @@ MANUAL_GATES = {
     "NPA_LTX2_LIVE_GPU": "LTX-2.5 requires the operator's own gated-repository token",
     "NPA_E2E_BYOVM_SELF_HEAL": "targets an explicitly selected existing BYOVM service",
     "NPA_CONFIGURE_E2E": "creates storage configuration and needs exact project selectors",
+    "NPA_PROJECT_SCOPED_STORAGE_E2E": (
+        "requires an explicitly selected non-production project for its tenant/project scope matrix"
+    ),
     "NPA_E2E_S3_ACCESS_KEY_ID": "runtime prerequisite, not an authorization gate",
     "NPA_E2E_S3_SECRET_ACCESS_KEY": "runtime prerequisite, not an authorization gate",
     "NPA_E2E_SERVERLESS_PROJECT": "serverless suite is reachable through e2e-serverless",

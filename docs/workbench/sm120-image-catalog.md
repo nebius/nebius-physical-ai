@@ -1,8 +1,8 @@
 # sm_120 Image Catalog
 
 This catalog records the first-party images used for RTX PRO 6000 Blackwell
-(`sm_120`) validation. The registry IDs can be replaced with a customer registry
-when rebuilding the same Dockerfiles.
+(`sm_120`) validation. Published redistributable releases use the public GHCR
+channel; rebuilds may target an operator-controlled registry via `NPA_REGISTRY`.
 
 Manifest source: `npa/docker/workbench/sm120-images.json`.
 
@@ -48,7 +48,8 @@ GENESIS_IMAGE="${NPA_REGISTRY}/npa-genesis:cuda13-b300-0.4.6-sm80-sm90-sm100-sm1
 npa/docker/workbench/sim2real-build.sh --registry "${NPA_REGISTRY}" --push
 ```
 
-Build the SONIC RTX PRO 6000 Kubernetes runtime:
+For a generic operator-owned BYOF registry, build the SONIC RTX PRO 6000
+Kubernetes runtime with:
 
 ```bash
 npa/docker/workbench/sonic/build.sh \
@@ -57,6 +58,10 @@ npa/docker/workbench/sonic/build.sh \
   --tag 0.1.2-k8s-runtime \
   --push
 ```
+
+This command is not the NPA release path. Official GHCR development builds and
+promotions use `.github/workflows/publish-public-images.yml` and immutable
+source-SHA tags.
 
 ## Live Smoke
 

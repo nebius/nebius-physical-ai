@@ -106,11 +106,11 @@ def test_skypilot_smoke_scopes_check_and_uses_explicit_binary(
 ) -> None:
     kubeconfig = tmp_path / "kubeconfig"
     kubeconfig.write_text("apiVersion: v1\n", encoding="utf-8")
-    streams: list[tuple[list[str], dict[str, str]]] = []
+    streams: list[tuple[list[str], dict[str, str], Path]] = []
     monkeypatch.setattr(tf_mod, "_require_bin", lambda value: value)
 
     def stream(cmd, **kwargs):  # noqa: ANN001
-        streams.append((cmd, kwargs["env"]))
+        streams.append((cmd, kwargs["env"], kwargs["cwd"]))
         output = "Kubernetes: enabled [compute]\n" if cmd[1] == "check" else ""
         return _completed(output)
 
@@ -133,26 +133,29 @@ def test_skypilot_smoke_scopes_check_and_uses_explicit_binary(
         "kubernetes",
     ]
     assert streams[0][1]["KUBECONFIG"] == str(kubeconfig)
+    assert streams[0][2] == kubeconfig.parent
     launch = streams[1][0]
     assert launch[0:2] == ["/opt/npa/sky", "launch"]
     assert launch[launch.index("--config") + 1] == (
         'kubernetes.allowed_contexts=["fleet-exact"]'
     )
     assert launch[launch.index("--gpus") + 1] == "RTXPRO6000:1"
+    assert streams[1][2] == kubeconfig.parent
     down = streams[2][0]
     assert down[0:2] == ["/opt/npa/sky", "down"]
     assert down[down.index("--config") + 1] == (
         'kubernetes.allowed_contexts=["fleet-exact"]'
     )
+    assert streams[2][2] == kubeconfig.parent
 
 
 def test_skypilot_auto_detection_uses_exact_context_config(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    seen: list[list[str]] = []
+    seen: list[tuple[list[str], Path | None]] = []
 
-    def capture(cmd, **_kwargs):  # noqa: ANN001
-        seen.append(cmd)
+    def capture(cmd, **kwargs):  # noqa: ANN001
+        seen.append((cmd, kwargs.get("cwd")))
         return _completed("RTXPRO-6000-BLACKWELL-SERVER-EDITION  1  1 of 1 free\n")
 
     monkeypatch.setattr(tf_mod, "_run_capture", capture)
@@ -161,19 +164,23 @@ def test_skypilot_auto_detection_uses_exact_context_config(
         "k8s/fleet-exact",
         {},
         config_override='kubernetes.allowed_contexts=["fleet-exact"]',
+        cwd=Path("/durable/sky"),
     )
 
     assert accelerator == "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"
     assert seen == [
-        [
-            "/opt/npa/sky",
-            "show-gpus",
-            "--config",
-            'kubernetes.allowed_contexts=["fleet-exact"]',
-            "--infra",
-            "k8s/fleet-exact",
-            "--all",
-        ]
+        (
+            [
+                "/opt/npa/sky",
+                "show-gpus",
+                "--config",
+                'kubernetes.allowed_contexts=["fleet-exact"]',
+                "--infra",
+                "k8s/fleet-exact",
+                "--all",
+            ],
+            Path("/durable/sky"),
+        )
     ]
 
 

@@ -27,7 +27,7 @@ operator:
 export NEBIUS_PROJECT_ID=<your-project-id>
 export NEBIUS_TENANT_ID=<your-tenant-id>
 export NPA_S3_BUCKET=<your-bucket>
-export NPA_REGISTRY=cr.eu-north1.nebius.cloud/<your-registry-id>
+export NPA_REGISTRY=ghcr.io/nebius/nebius-physical-ai
 export AWS_ENDPOINT_URL=https://storage.eu-north1.nebius.cloud
 export NPA_STORAGE_ENDPOINT=storage.eu-north1.nebius.cloud
 ```
@@ -49,7 +49,7 @@ Verify local access before launching a GPU job:
 ```bash
 nebius iam get-access-token >/dev/null
 aws s3 ls "s3://${NPA_S3_BUCKET}/" --endpoint-url "${AWS_ENDPOINT_URL}"
-docker login cr.eu-north1.nebius.cloud
+docker manifest inspect "${NPA_REGISTRY}/npa-genesis:0.4.6" >/dev/null
 ```
 
 ## Kubernetes Access
@@ -71,13 +71,17 @@ kubectl auth can-i list pods -n default
 kubectl auth can-i list nodes
 kubectl get nodes
 kubectl get namespace workbench
-kubectl get secret npa-nebius-registry -n default
 ```
 
 Expected result: the `kubectl auth can-i` commands print `yes`, nodes are
-listed, the `workbench` namespace exists for services, and the registry pull
-secret exists in the SkyPilot namespace. If `sky check` later reports an
+listed and the `workbench` namespace exists for services. If `sky check` later reports an
 anonymous-user `403`, refresh the kube context before debugging workflow YAML.
+
+Official public GHCR development and release tags need no pull secret. For an
+operator-controlled private registry, pre-create a standard Docker config
+secret, reference it explicitly in the workload, and rotate it through your
+normal secret-management process. NPA does not create or refresh registry
+secrets.
 
 ## SkyPilot Runtime
 
@@ -173,7 +177,7 @@ Check the aliases your cluster exposes before submitting raw YAML:
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
 | `sky check` reports anonymous-user `403` | Expired or wrong kube context | Re-select or refresh the Nebius MK8s context, then rerun `kubectl auth can-i ...` |
-| Image pull returns `401 Unauthorized` | Expired Nebius registry token in the pull secret | Recreate `npa-nebius-registry` in the SkyPilot namespace |
+| A private image returns `401 Unauthorized` | The explicitly configured registry credential or pull secret is absent/invalid | Refresh the exact-host credential or operator-managed Docker config secret; public GHCR releases need neither |
 | Pod stays pending with no matching GPU | Requested accelerator alias is not exposed by the cluster | Run `show-gpus`, then update the workflow GPU value or ask for the node group |
 | S3 upload fails with `NoSuchBucket` | Bucket name, endpoint, or region mismatch | Use `https://storage.eu-north1.nebius.cloud` and verify `NPA_S3_BUCKET` has no `s3://` prefix |
 | Literal `${AWS_ENDPOINT_URL}` appears in logs | Submitted raw YAML without materialization | Use an NPA runner or render a temporary YAML before raw SkyPilot launch |

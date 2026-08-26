@@ -7,6 +7,10 @@ description: Use when verifying that a bootstrapped NPA agent VM can create, val
 
 ## Operating Model
 
+- The workflow operation contract is provider-neutral. The caller owns any
+  reasoning system it uses; NPA does not select or require a model for draft,
+  validation, planning, provisioning, submission, or observation. See
+  `docs/workbench/agent-workflow-operations.md` for the bounded command journey.
 - **Dev/operator VM** is the source of truth for NPA lifecycle, auth, SSH keys,
   and agent records. Run `npa agent fresh-setup`, `bootstrap`, `status`, and
   `verify-live` there.
@@ -65,6 +69,11 @@ agent record SSH key. Do not print credential files or secret values.
    Kubernetes as needed through normal NPA commands. Do not manually create,
    delete, or mutate cloud resources outside NPA.
 
+6. Inspect or stop only through bounded NPA workflow operations. Prefer
+   `status --json`, `logs --cached --max-output-chars 32768 --json`, and
+   `artifacts --json`; cancel the run before any separately authorized cluster
+   teardown. Never expose backend commands or state paths to the calling agent.
+
 ## Pass Criteria
 
 - Agent VM SSH works from the dev VM with the recorded key.
@@ -82,4 +91,3 @@ agent record SSH key. Do not print credential files or secret values.
   submit with explicit project/cluster target.
 - `POST /api/workflows/submit` validates YAML, provisions minimal Kubernetes
   when allowed and needed, and records a scheduler plan/run record.
-

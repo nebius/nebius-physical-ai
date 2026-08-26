@@ -117,11 +117,15 @@ image (`public` | `restricted`), enforced by
   build-your-own), but hosting it **prebuilt on a public/anonymous registry** would
   make us the third-party redistributor.
 
-  **`cosmos3-serving` is currently `restricted`.** Its pinned vLLM-Omni base embeds
-  NVIDIA's Deep Learning Container License; the thin wrapper and anonymous GHCR do
-  not establish that license's derived-distribution conditions. `isaac-lab`, `sonic`,
-  `sonic-mujoco` and `groot` used to be restricted, and the re-architecture that made
-  those four public is described below.
+  `cosmos3-serving` and the replacement `sonic-mujoco` are public only because
+  their old restricted parents were removed. Cosmos serving now ships a
+  zero-payload bootstrap and performs its hash-locked CUDA Python/source/model
+  delivery at runtime under operator credentials and explicit terms. SONIC
+  MuJoCo now builds independently from a digest-pinned public Python base and
+  contains only SONIC source, MuJoCo, and the CUDA Toolkit runtime libraries
+  expressly listed as redistributable by their included SDK terms. Both current
+  releases are bound to exact public development digests with accepted real-GPU
+  evidence.
 
 ## Manual gate audit (2026-08-16)
 
@@ -214,7 +218,7 @@ reading the Dockerfile:
 
 ```bash
 npa/.venv/bin/python npa/scripts/scan_image_omniverse_payload.py \
-    cr.<region>.nebius.cloud/<registry-id>/npa-isaac-lab:2.3.2.post1
+    <your-registry>/<namespace>/npa-isaac-lab:2.3.2.post1
 ```
 
 The scanner streams the image's flattened filesystem and its layer history, matching Kit
@@ -231,36 +235,41 @@ bootstrap, the pinned manifests, two smoke scripts and two empty mount points �
 is nothing credentialed left to pull:
 
 ```bash
-npa/docker/workbench/isaac-lab/build.sh --registry cr.<region>.nebius.cloud/<id> --push
-npa/docker/workbench/sonic/build.sh    --registry cr.<region>.nebius.cloud/<id> --push --variant baked
-npa/docker/workbench/groot/build.sh    --registry cr.<region>.nebius.cloud/<id> --push
+npa/docker/workbench/isaac-lab/build.sh --registry <your-registry>/<namespace> --push
+npa/docker/workbench/sonic/build.sh    --registry <your-registry>/<namespace> --push --variant k8s
+npa/docker/workbench/groot/build.sh    --registry <your-registry>/<namespace> --push
 ```
 
-### Promoting the canonical tags — mind the order
+### Public development and release — mind the order
 
-Because the runtime-fetch images validate the run-scoped operator EULA policy
-before fetching Isaac,
-promoting them onto the canonical tags is not a neutral swap. Four layers had to be taught
-to forward that acceptance: the Isaac/GR00T/SONIC command builders, the SkyPilot
-renderer, and the canonical Sim2Real standard-workflow Isaac resource profile.
+Official images use one public namespace:
+`ghcr.io/nebius/nebius-physical-ai`. A reviewed build first receives the
+immutable tag `dev-<full-git-sha>` on its normal `npa-<tool>` package. Public
+development images are anonymously downloadable immediately; deleting a failed
+tag cannot revoke downloads.
 
-**Promote only after that plumbing is on the default branch.** Anyone running from a branch
-without it who pulls a canonical tag gets an image their code cannot consent to, and the job
-exits 78.
+Before that first public push, run every packaging, licensing, base-pin,
+non-root, secret, customer-data, infrastructure-data, proprietary-payload,
+gated-asset, SBOM, vulnerability, provenance, source-revision, and bootstrap-
+contract gate. Restricted images never enter official GHCR. After the push,
+resolve the digest, repeat exact-digest scans, prove anonymous pullability, and
+run a real functional workflow on compatible physical hardware.
+
+Promote only the validated digest to its supported release tag:
 
 ```bash
-./npa/scripts/promote_isaac_rtfetch_tags.sh --dry-run           # default; prints only
-./npa/scripts/promote_isaac_rtfetch_tags.sh --i-have-sign-off   # both registries
-./npa/scripts/promote_isaac_rtfetch_tags.sh --rollback --i-have-sign-off
+npa/.venv/bin/python -m npa.deploy.publish_public \
+  --target ghcr.io/nebius/nebius-physical-ai \
+  --development-sha <full-git-sha> --dry-run
+npa/.venv/bin/python -m npa.deploy.publish_public \
+  --target ghcr.io/nebius/nebius-physical-ai \
+  --development-sha <full-git-sha>
 ```
 
-The script pins the validated digests and the pre-re-architecture digests, checks each
-source exists before touching either registry, and re-reads every tag afterwards to confirm
-parity. Rollback is always safe: the old images bake Isaac and need no acceptance plumbing.
-
-Only after promotion should `npa.deploy.publish_public` be run with `dry_run=false` — it
-resolves **canonical** tags, so publishing beforehand would push the old Omniverse-baked
-images to a public registry, the exact outcome this architecture exists to prevent.
+The publisher resolves each development tag once and copies only by immutable
+digest. It checks config, licensing, payload scans, SBOM/provenance attestations,
+and any declared bootstrap contract before exposing a release tag, then verifies
+anonymous pullability and exact digest parity.
 
 **The honest trade.** `npa-isaac-lab` went from 8.41 GB to 10.66 GB compressed (+27%).
 Removing Isaac Sim saved less than adding a standalone PyTorch cu128 wheel set cost — its
@@ -273,126 +282,32 @@ GR00T N1, and Cosmos-Reason weights (and VLMs) are downloaded at **runtime**
 using the customer's own HF/NGC token when the upstream repository is gated.
 Every required gated repository is probed before provisioning; there is no NPA
 manual terms flag or access-check bypass. Public repositories work anonymously.
-The upstream license still applies, and we never redistribute weights. Those
-downloads should survive the run that paid for them — see
-[Runtime-fetched model weights](#runtime-fetched-model-weights-and-where-they-land).
+The upstream license still applies, and we never redistribute weights.
 
-Access model today (both regions): each workbench registry
-(`cr.eu-north1.nebius.cloud/…` primary, `cr.us-central1.nebius.cloud/…` mirror)
-is **already readable org/tenant-wide** — the tenant `viewers`/`editors` groups
-hold `viewer`/`editor`, which cascades to image pull — so developers inside the
-owning org can pull every image, including the `restricted` ones (internal R&D
-use).
-
-**Pulling from any Nebius tenant / publicly.** Nebius Container Registry cannot
-express "any Nebius tenant can pull": it has **no anonymous/public mode** and
-**no `allAuthenticatedUsers` / cross-tenant grant**. Every pull needs an
-authenticated identity, tenants are strictly isolated, and the only way to admit
-an out-of-tenant identity is to invite that specific account into the owning
-tenant and add it to a group — which does not scale to "anyone from any tenant."
-The only way to make the images pullable by every Nebius tenant (which is also
-pullable by anyone) is therefore to **mirror to a public-capable registry** —
-GHCR (`ghcr.io`, the default), Docker Hub, or Quay.
-
-Only the `public`-classified subset may be mirrored. Use the license-guarded
-publisher, which copies exactly `publicly_publishable_tools()` (every workbench
-image, now that the Isaac images fetch Isaac at run time) and hard-refuses
-anything still classified `restricted`:
-
-```bash
-# defaults to $NPA_PUBLIC_REGISTRY, else ghcr.io/nebius/nebius-physical-ai
-python -m npa.deploy.publish_public --dry-run
-python -m npa.deploy.publish_public --target ghcr.io/<org>/<repo>
-```
-
-The copy path is bracketed by checks it runs itself. Before writing anything it
-resolves every source tag once and uses only the resulting immutable digest for
-config inspection, licensing gates, bootstrap-attestation validation, and copy.
-The target tag is not exposed until all those gates pass. A missing/stale
-bootstrap label, a config/digest mismatch, or any scan failure leaves the public
-reference unchanged. The GitHub workflow serializes publishers for a target and
-does not cancel an in-progress publication because registries provide no atomic
-compare-and-swap for tags.
-
-It also reads every **source** manifest, because `crane auth login` writes a config file and
-exits 0 for any string without ever contacting the registry — so a stale credential
-would otherwise surface partway through the copy loop with some packages already
-created. Run it alone with `--preflight`. The registry's own error code says which
-of three unrelated problems you have:
+The manual `Publish public images` workflow can build selected public development
+images and can separately preflight/promote selected validated tools. It uses the
+repository-scoped `GITHUB_TOKEN` with `packages: write`; no second registry token
+or namespace is part of the official flow. Run `--preflight` before promotion.
 
 | Code | Meaning | Fix |
 | --- | --- | --- |
-| `UNAUTHORIZED` on **every** image | the credential resolved to no identity | replace the credential (below) |
-| `UNAUTHORIZED` on **some** images | the identity lacks `viewer` on those repositories | fix the role, not the token |
+| `UNAUTHORIZED` on **every** image | the GHCR credential resolved to no identity | replace the scoped credential |
+| `UNAUTHORIZED` on **some** images | the identity lacks package read access | fix package access, not the tag |
 | `NAME_UNKNOWN` | no such repository — the image was never built and pushed | build and push it, or `--skip-missing` |
 | `MANIFEST_UNKNOWN` | the repository exists but not this tag — the pin points at an unpushed build | correct the pin, or `--skip-missing` |
 
-Locally, mint a fresh source token with:
+Locally, authenticate only when a registry operation needs a write-capable identity:
 
 ```bash
-nebius iam get-access-token | crane auth login cr.eu-north1.nebius.cloud -u iam --password-stdin
+printf '%s' "$GHCR_TOKEN" | crane auth login ghcr.io -u "$GHCR_USER" --password-stdin
 ```
 
-### The CI credential must not be an access token
-
-**Do not put the output of `nebius iam get-access-token` in a CI secret.** An access
-token lives **12 hours**, and `Publish public images` is dispatched by hand — so a
-stored one is dead long before the next run. That is precisely how the workflow's first
-run failed: all 23 source reads returned `UNAUTHORIZED: authentication required: failed
-to get profile`, which is Nebius CR's way of saying the bearer token resolved to no
-identity. The preflight caught it before anything was written, so nothing was published
-and no package was created.
-
-Use one of the two durable credentials instead (GHCR push always uses the built-in
-`GITHUB_TOKEN`):
-
-| Secret | What it is | Lifetime |
-| --- | --- | --- |
-| `NEBIUS_SA_CREDENTIALS_JSON` | authorized-key credentials JSON for a service account with `viewer` on the source registry; the job mints a fresh token per run | no expiry to manage |
-| `NEBIUS_CR_TOKEN` | a static key issued for the registry service | 6 months by default, up to 3 years |
-
-The workflow prefers `NEBIUS_SA_CREDENTIALS_JSON` and falls back to `NEBIUS_CR_TOKEN`; both
-are resolved by `npa/scripts/ci_source_registry_login.sh`, shared by the publish and health
-workflows so the credential path cannot drift between them. Issue a static key with:
-
-```bash
-nebius iam static-key issue \
-  --account-service-account-id=<service-account-id> \
-  --service=CONTAINER_REGISTRY
-```
-
-> **A static key expires and nothing in this repo can see it coming.** Its lifetime is set at
-> issue time (6 months by default) and is *not* readable from the token, unlike an access
-> token's `exp`. So record the expiry date wherever you keep operational reminders — not in
-> the repo, which must not carry tenant identifiers — and rely on the **Public mirror health**
-> workflow for the early warning: it runs the same read-only preflight weekly and goes red on
-> a dead credential, months before anyone next needs to publish. Verify the service account
-> holds `viewer` on the source registry; without it every read is denied.
-
-Either way the credential is checked offline before the two-minute manifest sweep, so an
-expired token is named as such in seconds rather than arriving as a wall of identical
-`UNAUTHORIZED` lines:
-
-```bash
-printf '%s' "$TOKEN" | python -m npa.deploy.publish_public --describe-credential
-```
-
-That check is a fast diagnostic, not proof the credential *works* — an opaque static key has
-no expiry to read, so it always passes. Prove a credential by reading a real manifest with it,
-and point `DOCKER_CONFIG` at an empty directory first so the read cannot succeed on an ambient
-login you already had:
+Prove the development image anonymously with an empty Docker config:
 
 ```bash
 export DOCKER_CONFIG="$(mktemp -d)"
-printf '%s' "$TOKEN" | crane auth login cr.eu-north1.nebius.cloud -u iam --password-stdin
-crane manifest cr.eu-north1.nebius.cloud/<registry-id>/npa-lerobot:<tag> >/dev/null && echo ok
+crane manifest ghcr.io/nebius/nebius-physical-ai/npa-lerobot:dev-<full-git-sha> >/dev/null
 ```
-
-You do not have to guess whether a real run would work: the `Publish public images`
-workflow's default **dry run is a full rehearsal** — it resolves the plan, logs in to
-the source registry, preflights every pinned tag, and runs the Isaac gate, skipping
-only the copy and the public verification. A green dry run means the real run will get
-as far as writing.
 
 ### The plan is what we build, not what is pushed
 
@@ -418,115 +333,43 @@ copies the rest. Two properties matter here:
   `--skip-missing`, because a credential or role fault would otherwise quietly shrink the
   published set. Denial also wins when a registry answers `NAME_UNKNOWN` for a repository
   the identity cannot see.
-- **Skipped images are absent from the mirror**, so a consumer pointing `NPA_REGISTRY` at it
+- **Skipped release tags are absent**, so a consumer using the supported pin
   gets a pull failure for those tags until the image is built and the workflow re-run.
-  Adding one later costs one more visibility flip.
 
 The copy itself is incremental. After the complete digest-pinned source preflight,
 bootstrap attestation, and licensing gates,
 the publisher compares each source and target manifest digest. An exact match prints
 ``Already current; skipping copy`` and performs no registry write; only a missing or changed
 target runs ``crane copy``. This makes it safe to re-run the full guarded plan when one new
-image lands without republishing every existing image. A second run after the one-time GHCR
-visibility flips likewise skips all matching copies and only re-verifies anonymous pulls.
-
-or the `Publish public images` GitHub Actions workflow (manual dispatch,
-dry-run by default). **Consumers in any tenant** then pull the OSS images by
-pointing the resolver at the public mirror:
+image lands without republishing every existing image. Consumers then pull by
+pointing the resolver at the public release channel:
 
 ```bash
 export NPA_REGISTRY=ghcr.io/nebius/nebius-physical-ai   # OSS images, any tenant
 ```
 
-### Pushing is not publishing
-
-A newly created GHCR container package is **private**, and a package linked to a repository
-inherits that repository's access *permissions* but **not** its visibility — so even a
-public repo yields private packages. GitHub exposes **no REST API** to change visibility for
-organisation-owned packages (only user-owned ones), so this step cannot be automated. It is
-manual, per package, and one-way.
-
-A copy therefore verifies the outcome it claims instead of reporting success on the
-push, and the same check runs standalone:
+Both development and release tags must pass the unauthenticated check:
 
 ```bash
-# checks every planned target over the UNAUTHENTICATED path; non-zero if any is private
-python -m npa.deploy.publish_public --verify-public
+npa/.venv/bin/python -m npa.deploy.publish_public --verify-accepted-releases
 ```
 
-As of writing every image reports `NOT PUBLIC` because nothing has ever been pushed to
-the mirror — `ghcr.io/nebius/nebius-physical-ai` does not exist yet. GHCR creates a
-package on first push; there is no registry to provision in advance.
+This read-only health check resolves every accepted release tag anonymously and
+compares it with `public_release_manifest.json`'s `published_digest`. Use
+`--verify-parity` separately when a retained development source tag exists and
+source-to-release parity is the question; a missing historical dev tag is not a
+release-byte verdict.
 
-To make a package public, someone with admin on it opens that package's settings and
-uses **Danger Zone → Change visibility → Public**. `--verify-public --checklist` prints
-a direct link per package that is still private, and the publish workflow writes the
-same list into its job summary, so this is a row of clicks rather than a hunt through
-<https://github.com/orgs/nebius/packages>:
-
-```
-https://github.com/orgs/<org>/packages/container/<repo>%2F<image>/settings
-```
-
-The flip is **one-time per package**, not per release: visibility persists across later
-pushes of new tags to an existing package. So the manual cost is paid once at
-onboarding, and adding a new image later costs one more flip.
-
-> **This is irreversible.** A public package cannot be made private again, and deleting a
-> tag does not undo publication — treat a mistaken publish as an incident, not a revert.
-> Confirm the `redistribution` classification of every image in the plan first.
-
-Why this one step cannot be automated: GitHub's Packages REST API exposes list, delete
-and restore only, and the visibility `PATCH` that exists for *user*-owned packages has
-no organisation equivalent — it 404s for any token type, including GitHub App tokens.
-A package linked to a repository inherits that repository's access *permissions* but
-[explicitly not its
-visibility](https://docs.github.com/en/packages/learn-github-packages/configuring-a-packages-access-control-and-visibility),
-so a public repo does not yield public packages either. Note also that `crane copy`
-transfers manifests unchanged, so it cannot add an `org.opencontainers.image.source`
-label; linking every package to the repo automatically would mean rebuilding every
-image, which is deliberately not done here.
-
-Never add a `restricted` image to a public target. Nothing is currently classified
-that way, and `publish_public` refuses anything that is, as defence in depth around the
-selector.
+Never add a `restricted` image to official GHCR.
+`publish_public` and `development_image_for_tool` refuse every member of the
+general restricted-image inventory. Separately, license-eligible candidates
+remain in `UNVALIDATED_PUBLICATION_TOOLS` until exact-digest GPU evidence is
+recorded, so a classification change alone cannot create a supported release.
 
 > **Publishing is a business decision.** The engineering makes publication defensible —
 > the images contain no NVIDIA-proprietary bytes, and NVIDIA delivers Isaac to each
 > operator under that operator's own acceptance — but dispatching the workflow with
 > `dry_run=false` should wait on sign-off from someone with the authority to accept it.
-
-## Runtime-fetched model weights (and where they land)
-
-Because no image bakes weights, every run of an image downloads them. Whether that
-happens **once** or **every time** is a property of the storage the operator gives
-the run, and for a long time nothing supplied it: each runtime wrote to whatever
-directory happened to be writable inside its image (`/tmp/hf_home`, a pod-local
-`emptyDir`, a path with no bind mount at all), so the download died with the
-container and the next run re-paid for it on an already-billing GPU.
-
-`npa/src/npa/workbench/model_cache.py` is now the one place that answers "where do
-downloaded weights live", and it is wired into every runtime NPA drives: SkyPilot
-task envs plus a Kubernetes volume at the cache root, sim2real sibling GPU Jobs,
-Serverless Jobs, long-lived workbench containers on a VM, and the OpenPI and LeIsaac
-Deployments. It is on wherever that does not mean inventing storage: a VM deploy
-creates a directory on its own disk, and on Kubernetes applying the shipped manifest
-is the whole of it, because submit finds the claim by name.
-
-```bash
-kubectl apply -f npa/docker/workbench/common/model-weight-cache.yaml
-```
-
-NPA never creates a claim, chooses a storage class, or bills anyone for a volume, so
-Kubernetes stays inert until that claim exists, and a Serverless Job caches only once
-`NPA_MODEL_CACHE_FILESYSTEM` names a filesystem. `NPA_MODEL_CACHE_DISABLED=1` turns
-everything off. See [model-weight-cache.md](model-weight-cache.md) for the full
-variable family, which runtime honors which, sizing, and how to verify a run is
-hitting the cache.
-
-This does not move the redistribution boundary: the bytes still arrive from the
-vendor under the operator's own entitlement, into the operator's own storage. It only
-stops NPA from throwing them away.
 
 ## Feature exposure
 

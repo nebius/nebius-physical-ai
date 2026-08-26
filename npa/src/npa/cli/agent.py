@@ -197,7 +197,7 @@ DEFAULT_LLM_MODELS = (
     DEFAULT_LLM_MODEL,
     "Qwen/Qwen2.5-VL-72B-Instruct",
 )
-AGENT_UI_VERSION = "2026081401"
+AGENT_UI_VERSION = "2026081903"
 ARTIFACT_DISCOVERY_CONTRACT = "s3-source-qualified-v1"
 DEFAULT_HTTPS_PORT = 443
 AGENT_SOURCE_ROOT = "/opt/npa-agent/npa-src"
@@ -1061,10 +1061,8 @@ server {{
         os.environ.get("NPA_AGENT_LICHTBLICK_IMAGE", "").strip()
         or "npa-lichtblick:1.26.0"
     )
-    # Region-agnostic image acquisition: the Lichtblick image is mirrored to both
-    # the eu-north1 and us-central1 registries, so a fresh VM in any region pulls
-    # from whichever registry is reachable instead of depending on a locally-built
-    # image. Candidates = primary + mirror registry (see deploy.images).
+    # Region-agnostic image acquisition uses the anonymous public release. An
+    # explicit customer registry override remains available through deploy.images.
     lichtblick_pull_candidates = " ".join(
         shlex.quote(ref)
         for ref in container_image_candidates("lichtblick", preferred_region=region)
@@ -3051,12 +3049,12 @@ def _agent_system_prompt() -> str:
         [
             "",
             "Before Sim2Real submit, confirm scene/robot/camera selection.",
-            "Always use real registry-qualified images from your Nebius container registry",
-            "(or `NPA_REGISTRY` / `container_registry` in ~/.npa/config.yaml); never keep",
-            "`<your-registry-id>` placeholders in runnable workflows.",
+            "Always use real registry-qualified images: supported defaults resolve from",
+            "public GHCR, while `NPA_REGISTRY` or a legacy `container_registry` value selects",
+            "custom/private images. Never keep registry placeholders in runnable workflows.",
             "For BYOF solution onboarding, use `npa workbench byof run`",
             "(or `npa/scripts/run_byof_repo.py`) to containerize an OSS repo,",
-            "push to the configured Nebius registry, then launch a real Isaac-Lab run",
+            "push to an explicitly selected customer registry, then launch a real Isaac-Lab run",
             "with `--image` override on RT-core GPUs (L40S / RTX PRO 6000).",
             "See docs/architecture/oss-onboarding-ladder.md for Tier 0→2 promotion.",
             "For live infra runs, verify GPU compatibility first (`sky check`, `sky gpus list`)",
@@ -6865,19 +6863,44 @@ def artifacts_for_run(
                 }},
             )
         if len(matches) > 1:
-            return JSONResponse(
-                status_code=409,
-                content={{
-                    "ok": False,
-                    "error": {{
-                        "code": "ambiguous_run_id",
-                        "message": "This run ID exists in multiple artifact sources; select a project, bucket, and resolved prefix.",
+            try:
+                resolutions = [
+                    RunResolution(
+                        run_id=normalized_run,
+                        bucket=item.bucket,
+                        source_prefix=item.resolved_prefix,
+                        artifacts=list_artifacts(
+                            item.bucket,
+                            normalized_run,
+                            prefix=item.resolved_prefix,
+                            s3=s3,
+                        ),
+                    )
+                    for item in matches
+                ]
+                complete = prefer_complete_run_resolution(resolutions)
+            except Exception:  # noqa: BLE001 - ambiguity remains the safe fallback
+                complete = None
+            if complete is None:
+                return JSONResponse(
+                    status_code=409,
+                    content={{
+                        "ok": False,
+                        "error": {{
+                            "code": "ambiguous_run_id",
+                            "message": "This run ID exists in multiple artifact sources; select a project, bucket, and resolved prefix.",
+                        }},
+                        "run_id": normalized_run,
+                        "sources": [item.to_dict() for item in matches],
+                        "access": access_diagnostics,
                     }},
-                    "run_id": normalized_run,
-                    "sources": [item.to_dict() for item in matches],
-                    "access": access_diagnostics,
-                }},
-            )
+                )
+            matches = [
+                item
+                for item in matches
+                if item.bucket == complete.bucket
+                and item.resolved_prefix == complete.source_prefix
+            ]
         selected = matches[0]
         run_bucket = selected.bucket
         artifact_prefix = selected.resolved_prefix
@@ -7064,6 +7087,7 @@ def artifacts_stage(
         return {{
             "ok": True,
             "run_id": normalized_run,
+            "run_ref": encode_run_ref(run_bucket, effective_prefix, normalized_run),
             "project_id": str(bucket_projects.get(run_bucket) or project_id or ""),
             "bucket": run_bucket,
             "resolved_prefix": effective_prefix,
@@ -7138,6 +7162,7 @@ def fiftyone_dataset(
         return {{
             "ok": True,
             "run_id": normalized_run,
+            "run_ref": encode_run_ref(bucket, exact_prefix, normalized_run),
             "bucket": bucket,
             "project_id": selected_project or project_id,
             "resolved_prefix": exact_prefix,
@@ -7217,114 +7242,6 @@ def artifacts_run_provenance(
         return JSONResponse(status_code=502, content={{"ok": False, "error": str(exc), "source": "s3"}})
 
 
-@app.api_route("/artifacts/file/{{filename}}", methods=["GET", "HEAD"])
-def artifact_file(filename: str):
-    safe_name = Path(str(filename)).name
-    if safe_name != filename:
-        raise HTTPException(status_code=400, detail="invalid artifact filename")
-    target = RECORDINGS_DIR / safe_name
-    if not target.is_file():
-        raise HTTPException(status_code=404, detail=f"artifact file not found: {{filename}}")
-    # Browsers cannot render Netpbm (.ppm/.pgm/.pbm/.pnm), .bmp, or .tiff. Sim
-    # rollout camera frames are saved as .ppm, so transcode to PNG on the way out
-    # to make them viewable in the Rerun/Image panes and artifact previews.
-    if needs_image_transcode(safe_name):
-        try:
-            import io as _io
-
-            from PIL import Image as _Image
-
-            with _Image.open(target) as _im:
-                _buf = _io.BytesIO()
-                _im.convert("RGB").save(_buf, format="PNG")
-            return Response(content=_buf.getvalue(), media_type="image/png")
-        except Exception as exc:
-            raise HTTPException(status_code=500, detail=f"image transcode failed: {{exc}}") from exc
-    # artifact_media_type comes from the embedded workflows/artifacts.py module.
-    return FileResponse(str(target), media_type=artifact_media_type(safe_name))
-
-
-@app.get("/artifacts/download")
-def artifacts_download(run_id: str = "", key: str = "", s3_uri: str = "", bucket: str = ""):
-    # Direct download of ANY run artifact (every object is downloadable, not just
-    # the viewer-loadable ones). Streams the S3 object back with an attachment
-    # Content-Disposition so the browser saves it under its real filename. Unlike
-    # /sim-viz/load-artifact this does not mutate viewer state. Bucket resolves
-    # from s3_uri (preferred, bucket-qualified) > explicit bucket param > the
-    # run's bucket (resolved across all accessible buckets) > primary.
-    requested_uri = str(s3_uri or "").strip()
-    requested_key = str(key or "").strip()
-    requested_bucket = str(bucket or "").strip()
-    if not requested_uri and not requested_key:
-        raise HTTPException(status_code=400, detail="Provide s3_uri or key")
-    try:
-        s3, settings = _agent_s3_client()
-        run_selector = str(run_id or "").strip()
-        if requested_uri:
-            obj_bucket, obj_key = parse_s3_uri(requested_uri)
-            obj_key = _safe_artifact_key(obj_key)
-            if run_selector:
-                resolution = resolve_run_artifacts(
-                    _agent_s3_buckets(s3, settings),
-                    base_prefix=settings.get("prefix", ""),
-                    run_ref_or_id=run_selector,
-                    s3=s3,
-                )
-                if resolution is None or not any(
-                    item.key == obj_key and item.s3_uri == requested_uri
-                    for item in resolution.artifacts
-                ):
-                    raise HTTPException(
-                        status_code=400,
-                        detail="artifact URI is outside the selected run",
-                    )
-                obj_bucket = resolution.bucket
-            else:
-                obj_bucket, obj_key, _authorized_run = _authorize_agent_artifact_uri(
-                    s3=s3, settings=settings, uri=requested_uri
-                )
-            uri = f"s3://{{obj_bucket}}/{{obj_key}}"
-        else:
-            obj_key = _safe_artifact_key(requested_key)
-            if run_selector:
-                resolution = resolve_run_artifacts(
-                    _agent_s3_buckets(s3, settings),
-                    base_prefix=settings.get("prefix", ""),
-                    run_ref_or_id=run_selector,
-                    s3=s3,
-                )
-                if resolution is None:
-                    raise HTTPException(status_code=404, detail="run_id not found")
-                if requested_bucket and requested_bucket != resolution.bucket:
-                    raise HTTPException(
-                        status_code=400,
-                        detail="artifact bucket conflicts with the selected run",
-                    )
-                if obj_key not in {{item.key for item in resolution.artifacts}}:
-                    raise HTTPException(status_code=400, detail="artifact key is outside the selected run")
-                obj_bucket = resolution.bucket
-            else:
-                obj_bucket = requested_bucket or settings["bucket"]
-                if obj_bucket not in _configured_agent_s3_buckets(settings):
-                    raise HTTPException(
-                        status_code=400,
-                        detail="artifact bucket is not a configured agent bucket",
-                    )
-            uri = f"s3://{{obj_bucket}}/{{obj_key}}"
-        local_path = RECORDINGS_DIR / _artifact_filename(obj_key)
-        download_s3_uri(uri, local_path, s3=s3)
-        leaf = Path(obj_key).name or "artifact.bin"
-        return FileResponse(
-            str(local_path),
-            media_type=artifact_media_type(leaf),
-            filename=leaf,
-        )
-    except HTTPException:
-        raise
-    except Exception as exc:
-        return JSONResponse(status_code=502, content={{"ok": False, "error": str(exc), "source": "s3"}})
-
-
 @app.post("/sim-viz/load-artifact")
 def sim_viz_load_artifact(payload: dict | None = None):
     body = payload if isinstance(payload, dict) else {{}}
@@ -7332,12 +7249,23 @@ def sim_viz_load_artifact(payload: dict | None = None):
     requested_run = str(body.get("run_id") or "").strip()
     requested_run_ref = str(body.get("run_ref") or "").strip()
     requested_key = str(body.get("key") or "").strip()
+    requested_bucket, requested_project, requested_prefix, source_selected = (
+        _selected_run_request(body)
+    )
+    exact_source_request = bool(
+        requested_run_ref
+        and requested_bucket
+        and requested_project
+        and "resolved_prefix" in body
+        and source_selected
+    )
     if not requested_uri and not (requested_run and requested_key):
         raise HTTPException(status_code=400, detail="Provide either s3_uri or run_id + key")
     try:
         s3, settings = _agent_s3_client()
         resolved_ref = ""
         resolution = None
+        selected_source_identity = None
         if requested_uri:
             if not (requested_run_ref or requested_run):
                 raise HTTPException(
@@ -7377,18 +7305,45 @@ def sim_viz_load_artifact(payload: dict | None = None):
                         status_code=400,
                         detail="artifact URI is outside the selected run",
                     )
-                # The caller supplied both exact identities emitted by the
-                # server.  Re-prove the tuple with the bounded source/object
-                # membership checks instead of throwing that precision away
-                # and rescanning every object in the bucket.
-                run_id, bucket, artifact = _resolved_artifact_for_content(
-                    s3,
-                    settings,
-                    run_id=ref_run_id,
-                    key=key,
-                    requested_bucket=ref_bucket,
-                    exact_membership=True,
-                )
+                if exact_source_request:
+                    source_bucket, source_project, source_prefix = (
+                        _authorize_exact_run_ref_source(
+                            s3=s3,
+                            settings=settings,
+                            run_id=ref_run_id,
+                            run_ref=requested_run_ref,
+                            resource_bucket=requested_bucket,
+                            project_id=requested_project,
+                            resolved_prefix=requested_prefix,
+                        )
+                    )
+                    run_id, bucket, artifact = _resolved_artifact_for_content(
+                        s3,
+                        settings,
+                        run_id=ref_run_id,
+                        key=key,
+                        requested_bucket=source_bucket,
+                        exact_membership=True,
+                        source_authorized=True,
+                        resolved_prefix=source_prefix,
+                    )
+                    selected_source_identity = (
+                        source_bucket,
+                        source_project,
+                        source_prefix,
+                    )
+                else:
+                    # Compatibility callers that have only a run_ref still use
+                    # bounded inventory membership; browser cards always send
+                    # the complete source tuple and take the exact fast path.
+                    run_id, bucket, artifact = _resolved_artifact_for_content(
+                        s3,
+                        settings,
+                        run_id=ref_run_id,
+                        key=key,
+                        requested_bucket=ref_bucket,
+                        exact_membership=True,
+                    )
                 key = str(artifact.key)
                 s3_uri = str(artifact.s3_uri)
                 resolved_ref = encode_run_ref(bucket, ref_prefix, run_id)
@@ -7409,28 +7364,62 @@ def sim_viz_load_artifact(payload: dict | None = None):
                 s3_uri = str(artifact.s3_uri)
         else:
             key = _safe_artifact_key(requested_key)
-            resolution = resolve_run_artifacts(
-                _agent_s3_buckets(s3, settings),
-                base_prefix=settings.get("prefix", ""),
-                run_ref_or_id=requested_run_ref or requested_run,
-                s3=s3,
-            )
-            if resolution is None:
-                raise HTTPException(status_code=404, detail="run_id not found")
-            if key not in {{item.key for item in resolution.artifacts}}:
-                raise HTTPException(status_code=400, detail="artifact key is outside the selected run")
-            run_id = resolution.run_id
-            bucket = resolution.bucket
-            resolved_ref = resolution.run_ref
-            s3_uri = f"s3://{{bucket}}/{{key}}"
+            if exact_source_request:
+                source_bucket, source_project, source_prefix = (
+                    _authorize_exact_run_ref_source(
+                        s3=s3,
+                        settings=settings,
+                        run_id=requested_run,
+                        run_ref=requested_run_ref,
+                        resource_bucket=requested_bucket,
+                        project_id=requested_project,
+                        resolved_prefix=requested_prefix,
+                    )
+                )
+                run_id, bucket, artifact = _resolved_artifact_for_content(
+                    s3,
+                    settings,
+                    run_id=requested_run,
+                    key=key,
+                    requested_bucket=source_bucket,
+                    exact_membership=True,
+                    source_authorized=True,
+                    resolved_prefix=source_prefix,
+                )
+                key = str(artifact.key)
+                s3_uri = str(artifact.s3_uri)
+                resolved_ref = requested_run_ref
+                selected_source_identity = (
+                    source_bucket,
+                    source_project,
+                    source_prefix,
+                )
+            else:
+                resolution = resolve_run_artifacts(
+                    _agent_s3_buckets(s3, settings),
+                    base_prefix=settings.get("prefix", ""),
+                    run_ref_or_id=requested_run_ref or requested_run,
+                    s3=s3,
+                )
+                if resolution is None:
+                    raise HTTPException(status_code=404, detail="run_id not found")
+                if key not in {{item.key for item in resolution.artifacts}}:
+                    raise HTTPException(status_code=400, detail="artifact key is outside the selected run")
+                run_id = resolution.run_id
+                bucket = resolution.bucket
+                resolved_ref = resolution.run_ref
+                s3_uri = f"s3://{{bucket}}/{{key}}"
         local_name = _artifact_filename(key)
         local_path = RECORDINGS_DIR / local_name
         download_s3_uri(s3_uri, local_path, s3=s3)
         render = render_hint_for_object(key=key)
         state = _load_state()
-        source_bucket, source_project, source_prefix = _artifact_source_metadata(
-            _agent_access_report(), bucket, key, run_id
-        )
+        if selected_source_identity is not None:
+            source_bucket, source_project, source_prefix = selected_source_identity
+        else:
+            source_bucket, source_project, source_prefix = _artifact_source_metadata(
+                _agent_access_report(), bucket, key, run_id
+            )
         run_artifacts = resolution.artifacts if resolution is not None else []
         run_summary = build_run_summary(
             run_id,
@@ -9005,16 +8994,11 @@ sudo systemctl reset-failed npa-agent-backend npa-rerun nginx || true
 sudo systemctl enable --now npa-agent-backend npa-rerun nginx
 sudo systemctl restart npa-rerun nginx
 sudo systemctl restart npa-agent-backend
-# Region-agnostic Lichtblick image acquisition: pull from whichever mirror
-# registry (eu-north1 or us-central1) is reachable and retag to the sidecar's
-# image, so a fresh VM in any region works without a locally-built image. Falls
-# back to any local image. Best-effort — never blocks the deploy.
+# Region-agnostic Lichtblick image acquisition: anonymously pull the public
+# release (or an explicitly configured customer override) and retag it to the
+# sidecar image. Best-effort — never blocks the deploy.
 for lb_cand in {lichtblick_pull_candidates}; do
   lb_host="${{lb_cand%%/*}}"
-  if command -v nebius >/dev/null 2>&1; then
-    lb_tok="$(nebius iam get-access-token 2>/dev/null || true)"
-    [ -n "$lb_tok" ] && printf '%s' "$lb_tok" | sudo docker login "$lb_host" -u iam --password-stdin >/dev/null 2>&1 || true
-  fi
   if sudo docker pull "$lb_cand" >/dev/null 2>&1; then
     sudo docker tag "$lb_cand" {lichtblick_image} >/dev/null 2>&1 || true
     echo "npa-lichtblick image acquired from $lb_host"
@@ -9191,6 +9175,25 @@ def _health(
     except httpx.HTTPError:
         return False, 0
     return response.status_code == 200, response.status_code
+
+
+def _basic_auth_protects_endpoint(
+    url: str,
+    *,
+    timeout: float = 5.0,
+    verify: bool = True,
+) -> tuple[bool, int]:
+    """Prove that an unauthenticated request cannot reach the agent UI."""
+    try:
+        response = httpx.get(
+            url,
+            timeout=timeout,
+            verify=verify,
+            follow_redirects=False,
+        )
+    except httpx.HTTPError:
+        return False, 0
+    return response.status_code == 401, response.status_code
 
 
 _artifact_only_http_probe = agent_resources.artifact_only_http_probe
@@ -10813,22 +10816,32 @@ def status_cmd(
     ui_ok, ui_code = _health(
         agent_url, user=auth_user, password=auth_password, verify=tls_verify
     )
+    basic_auth_enforced, unauthenticated_ui_code = _basic_auth_protects_endpoint(
+        agent_url,
+        verify=tls_verify,
+    )
     rerun_ok, rerun_code = _health(
         sim_viz_url, user=auth_user, password=auth_password, verify=tls_verify
     )
+    endpoint_disclosure_allowed = bool(ui_ok and basic_auth_enforced)
     payload = {
         "project": project,
         "name": name,
-        "public_ip": record.get("public_ip", ""),
-        "public_url": public_url,
+        "public_ip": record.get("public_ip", "") if endpoint_disclosure_allowed else "",
+        "public_url": public_url if endpoint_disclosure_allowed else "",
         "public_https": _record_public_https(record),
-        "direct_url": record.get("direct_url", ""),
-        "ui_url": agent_url,
-        "rerun_url": rerun_url,
-        "sim_viz_url": sim_viz_url,
-        "sim_assets_url": sim_assets_url,
-        "cameras_api_url": cameras_api_url,
-        "health": bool(ui_ok and rerun_ok),
+        # The direct service URL is not covered by the public HTTPS Basic Auth
+        # proof and is intentionally never part of status handoffs.
+        "direct_url": "",
+        "ui_url": agent_url if endpoint_disclosure_allowed else "",
+        "rerun_url": rerun_url if endpoint_disclosure_allowed else "",
+        "sim_viz_url": sim_viz_url if endpoint_disclosure_allowed else "",
+        "sim_assets_url": sim_assets_url if endpoint_disclosure_allowed else "",
+        "cameras_api_url": cameras_api_url if endpoint_disclosure_allowed else "",
+        "health": bool(ui_ok and rerun_ok and basic_auth_enforced),
+        "basic_auth_enforced": basic_auth_enforced,
+        "unauthenticated_ui_status_code": unauthenticated_ui_code,
+        "endpoint_disclosure_allowed": endpoint_disclosure_allowed,
         "ui_status_code": ui_code,
         "rerun_status_code": rerun_code,
         "llm": record.get("llm", {}),

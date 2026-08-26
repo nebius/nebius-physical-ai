@@ -24,7 +24,7 @@ npa/docker/workbench/lancedb/build.sh
 ```
 
 The pushed first-party default is
-`cr.eu-north1.nebius.cloud/<your-registry-id>/npa-lancedb:cuda13-b300-0.30.3-sm80-sm90-sm100-sm103-sm120-20260803T031514Z`.
+`<your-registry>/<namespace>/npa-lancedb:cuda13-b300-0.30.3-sm80-sm90-sm100-sm103-sm120-20260803T031514Z`.
 
 Deploy:
 
@@ -35,7 +35,7 @@ npa workbench lancedb deploy \
   --port 8686 \
   --auth-mode none \
   --replace \
-  --image cr.eu-north1.nebius.cloud/<your-registry-id>/npa-lancedb:cuda13-b300-0.30.3-sm80-sm90-sm100-sm103-sm120-20260803T031514Z
+  --image <your-registry>/<namespace>/npa-lancedb:cuda13-b300-0.30.3-sm80-sm90-sm100-sm103-sm120-20260803T031514Z
 ```
 
 Check status:

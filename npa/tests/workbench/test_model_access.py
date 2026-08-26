@@ -13,6 +13,7 @@ from npa.workbench.model_access import (
     check_hf_asset,
     check_ngc_key,
     check_workbench_access,
+    gated_hf_assets,
     gated_hf_repos,
     has_failure,
     hf_model_url,
@@ -134,6 +135,33 @@ def test_hf_transient_error_warns() -> None:
     assert result.status == WARN
 
 
+def test_hf_validator_diagnostic_redacts_token() -> None:
+    token = "hf_synthetic_secret"
+    result = check_hf_asset(
+        _gated_asset(),
+        token,
+        hf_validator=lambda t, r, k: _HFResult(
+            ok=False, status_code=403, error=f"upstream echoed {t}"
+        ),
+    )
+
+    assert token not in " ".join((*result.details, result.summary, result.remedy))
+    assert "<redacted>" in result.details[0]
+
+
+def test_hf_validator_exception_is_sanitized() -> None:
+    token = "hf_synthetic_exception_secret"
+
+    def _raise(t, r, k):
+        raise RuntimeError(f"upstream echoed {t}")
+
+    result = check_hf_asset(_gated_asset(), token, hf_validator=_raise)
+
+    assert result.status == WARN
+    assert token not in " ".join((*result.details, result.summary, result.remedy))
+    assert result.details == ("probe failed (RuntimeError)",)
+
+
 def test_ngc_warns_when_needed_and_missing() -> None:
     assert check_ngc_key("", needed=True).status == WARN
 
@@ -171,6 +199,59 @@ def test_ngc_credential_does_not_masquerade_as_entitlement() -> None:
     )
     assert result.status == FAIL
     assert "entitlement" in result.summary
+
+
+@pytest.mark.parametrize(
+    "outcome",
+    ["auth-no-token", "auth-401", "auth-403"],
+)
+def test_ngc_definitive_auth_rejection_fails(outcome: str) -> None:
+    result = check_ngc_key(
+        "nvapi-synthetic",
+        needed=True,
+        ngc_validator=lambda key: outcome,
+    )
+
+    assert result.status == FAIL
+    assert "credential rejected" in result.summary
+    assert "health access" in result.remedy
+
+
+@pytest.mark.parametrize("outcome", ["entitlement-required", "tags-401", "tags-403"])
+def test_ngc_definitive_entitlement_rejection_fails(outcome: str) -> None:
+    result = check_ngc_key(
+        "nvapi-synthetic",
+        needed=True,
+        ngc_validator=lambda key: outcome,
+    )
+
+    assert result.status == FAIL
+    assert "entitlement denied" in result.summary
+    assert "health access" in result.remedy
+
+
+def test_ngc_transport_failure_warns() -> None:
+    result = check_ngc_key(
+        "nvapi-synthetic",
+        needed=True,
+        ngc_validator=lambda key: "unreachable",
+    )
+
+    assert result.status == WARN
+    assert "reachable" in result.remedy
+
+
+def test_ngc_validator_exception_is_sanitized() -> None:
+    secret = "nvapi-synthetic-exception-secret"
+
+    def _raise(key: str) -> str:
+        raise RuntimeError(f"upstream echoed {key}")
+
+    result = check_ngc_key(secret, needed=True, ngc_validator=_raise)
+
+    assert result.status == WARN
+    assert secret not in " ".join((*result.details, result.summary, result.remedy))
+    assert result.details == ("probe failed (RuntimeError)",)
 
 
 def test_ngc_warns_on_bad_prefix() -> None:
@@ -221,6 +302,13 @@ def test_gated_hf_repos_returns_only_gated_hf() -> None:
     assert "nvidia/GR00T-N1.7-3B" not in groot
     assert "nvidia/Cosmos-Reason2-2B" in groot
     assert all("groot" in a.capabilities for a in WORKBENCH_ASSETS if a.repo in groot)
+
+
+def test_gated_hf_assets_preserve_repository_types() -> None:
+    assets = {asset.repo: asset for asset in gated_hf_assets()}
+
+    assert assets["nvidia/PhysicalAI-Autonomous-Vehicles"].repo_type == "dataset"
+    assert assets["nvidia/Cosmos-Reason2-2B"].repo_type == "model"
 
 
 def test_check_workbench_access_gated_only_skips_public() -> None:
@@ -278,6 +366,20 @@ def test_access_note_ngc_missing_names_capabilities() -> None:
     assert "nurec" in note
     # NGC line must not conflate HF repo IDs with NGC container access.
     assert "nvidia/" not in note
+
+
+def test_access_note_distinguishes_ngc_credential_rejection() -> None:
+    results = check_workbench_access(
+        hf_token="hf_synthetic",
+        ngc_key="nvapi-synthetic",
+        hf_validator=lambda t, r, k: _HFResult(ok=True),
+        ngc_validator=lambda key: "auth-401",
+        gated_only=True,
+    )
+
+    note = access_note(results)
+    assert "NGC credential rejected for: nurec" in note
+    assert "entitlement denied" not in note
 
 
 def test_access_note_counts_unverified() -> None:

@@ -35,6 +35,8 @@ app = typer.Typer(
 console = Console(stderr=True)
 logger = logging.getLogger(__name__)
 _PLACEHOLDER_RE = re.compile(r"\$\{([^}]+)\}")
+DEFAULT_LOG_OUTPUT_CHARS = 32_768
+MAX_LOG_OUTPUT_CHARS = 262_144
 
 
 class OutputFormat(str, Enum):
@@ -52,6 +54,64 @@ class ControllerBackendOption(str, Enum):
     nebius = "nebius"
 
 
+def _bounded_log_text(text: str, max_output_chars: int) -> tuple[str, dict[str, object]]:
+    """Return the diagnostic tail and a machine-readable truncation contract."""
+
+    if not 1 <= max_output_chars <= MAX_LOG_OUTPUT_CHARS:
+        raise ValueError(
+            f"--max-output-chars must be between 1 and {MAX_LOG_OUTPUT_CHARS}"
+        )
+    value = str(text or "")
+    total = len(value)
+    bounded = value if total <= max_output_chars else value[-max_output_chars:]
+    return bounded, {
+        "log_truncated": total > max_output_chars,
+        "log_chars_total": total,
+        "log_chars_returned": len(bounded),
+        "log_output_limit": max_output_chars,
+    }
+
+
+def _bounded_log_streams(
+    stdout: str, stderr: str, max_output_chars: int
+) -> tuple[str, str, dict[str, object]]:
+    """Bound two log streams together while retaining each diagnostic tail."""
+
+    combined = f"{stdout or ''}{stderr or ''}"
+    _, metadata = _bounded_log_text(combined, max_output_chars)
+    if not metadata["log_truncated"]:
+        return str(stdout or ""), str(stderr or ""), metadata
+
+    stdout_value = str(stdout or "")
+    stderr_value = str(stderr or "")
+    stderr_budget = min(
+        len(stderr_value), max_output_chars // 2 if stdout_value else max_output_chars
+    )
+    stdout_budget = min(len(stdout_value), max_output_chars - stderr_budget)
+    remaining = max_output_chars - stdout_budget - stderr_budget
+    if remaining:
+        extra_stderr = min(len(stderr_value) - stderr_budget, remaining)
+        stderr_budget += extra_stderr
+        remaining -= extra_stderr
+    if remaining:
+        stdout_budget += min(len(stdout_value) - stdout_budget, remaining)
+
+    bounded_stdout = stdout_value[-stdout_budget:] if stdout_budget else ""
+    bounded_stderr = stderr_value[-stderr_budget:] if stderr_budget else ""
+    metadata["log_chars_returned"] = len(bounded_stdout) + len(bounded_stderr)
+    return bounded_stdout, bounded_stderr, metadata
+
+
+def _emit_log_truncation(metadata: Mapping[str, object]) -> None:
+    if metadata.get("log_truncated"):
+        typer.echo(
+            "npa_log_truncated: true "
+            f"(returned {metadata['log_chars_returned']} of "
+            f"{metadata['log_chars_total']} chars)",
+            err=True,
+        )
+
+
 def _fail(msg: str, code: int = 1) -> None:
     # Operational recovery commands and status phrases must remain copyable and
     # machine-observable even when Rich detects a narrow non-interactive console.
@@ -63,80 +123,6 @@ def _fail(msg: str, code: int = 1) -> None:
     error.append(str(msg))
     console.print(error, soft_wrap=True)
     raise typer.Exit(code)
-
-
-# ``docker:cr.<region>.nebius.cloud/<registry-id>/<image>:<tag>`` in a rendered plan.
-_NEBIUS_IMAGE_RE = re.compile(
-    r"image_id:\s*docker:(cr\.[a-z0-9-]+\.nebius\.cloud)/", re.IGNORECASE
-)
-
-
-def nebius_registry_hosts(rendered_yaml: str) -> list[str]:
-    """Distinct Nebius registry hosts a rendered plan pulls images from."""
-
-    return sorted(
-        {match.group(1).lower() for match in _NEBIUS_IMAGE_RE.finditer(rendered_yaml)}
-    )
-
-
-def _refresh_kubernetes_pull_secrets(
-    rendered_path: Path, *, k8s_context: str = "", kubeconfig: str = ""
-) -> None:
-    """Refresh the cluster's Nebius registry pull secret before launching.
-
-    Kubernetes pulls private images with an ``imagePullSecret``, and the Nebius
-    registry only accepts short-lived IAM tokens — so a cluster whose secret was
-    written days ago fails every pull with ``401 Unauthorized`` even though
-    ``docker login`` on the operator box works, and SkyPilot reports it as
-    ``ErrImagePull`` / resources-unavailable rather than an auth problem. Minting a
-    fresh token here keeps a pinned-image submit from failing for a reason that has
-    nothing to do with the workflow.
-
-    A private-image submit is blocked if this refresh fails: preflight and the
-    credentials Kubernetes actually uses must agree, rather than accepting a job
-    that is guaranteed to sit in ``ImagePullBackOff``.
-    """
-
-    try:
-        rendered = rendered_path.read_text(encoding="utf-8")
-    except OSError:
-        return
-    hosts = nebius_registry_hosts(rendered)
-    if not hosts:
-        return
-
-    from npa.workflows.sim2real.registry_auth import (
-        ensure_nebius_registry_pull_secret,
-        mint_nebius_registry_token,
-    )
-
-    joined = ", ".join(hosts)
-    # One call with every host: the secret holds a single dockerconfigjson and each
-    # apply replaces it, so refreshing host by host would leave only the last one.
-    # Do not consult SKYPILOT_DOCKER_PASSWORD/NPA_REGISTRY_PASSWORD here. Those are
-    # valid render/preflight overrides, but can be the short-lived token installed at
-    # the start of a long runtime loop. "Refresh" must mint a genuinely new,
-    # profile-scoped Nebius credential; callers with an independently managed secret
-    # explicitly select --no-refresh-registry-secret.
-    try:
-        username = "iam"
-        password = mint_nebius_registry_token()
-        if not password:
-            raise RuntimeError("no registry credential could be resolved")
-        ensure_nebius_registry_pull_secret(
-            registry_servers=hosts,
-            username=username,
-            token=password,
-            kubeconfig=kubeconfig,
-            k8s_context=k8s_context,
-        )
-    except Exception as exc:
-        raise RuntimeError(
-            "could not install the Kubernetes imagePullSecret for "
-            f"{joined}: {exc}. Fix kubectl access/registry credentials before submit; "
-            "otherwise every private-image task will fail with ImagePullBackOff."
-        ) from exc
-    console.print(f"Refreshed the Kubernetes pull secret for {joined}")
 
 
 @app.command("prepare-run")
@@ -325,6 +311,15 @@ def submit_cmd(
             "(disabled by default; prefer the explicit --resume-run ID contract)."
         ),
     ),
+    retry_absent_in_flight: bool = typer.Option(
+        False,
+        "--retry-absent-in-flight/--no-retry-absent-in-flight",
+        help=(
+            "With --runtime and explicit resume: authorize a new attempt only when "
+            "the exact previously reconciled managed job and every declared durable "
+            "output are proven absent. Disabled by default."
+        ),
+    ),
     poll_seconds: int = typer.Option(
         30,
         "--poll-seconds",
@@ -429,16 +424,8 @@ def submit_cmd(
         True,
         "--registry-auth/--no-registry-auth",
         help=(
-            "For VM SONIC image pulls, materialize Docker registry auth envs. "
-            "Nebius Container Registry defaults to a fresh IAM token."
-        ),
-    ),
-    refresh_registry_secret: bool = typer.Option(
-        True,
-        "--refresh-registry-secret/--no-refresh-registry-secret",
-        help=(
-            "Refresh the Kubernetes Nebius pull secret before submit. Disable only "
-            "when the cluster already has a separately managed pull credential."
+            "For VM SONIC private-image pulls, materialize explicit exact-host "
+            "Docker registry credentials."
         ),
     ),
     registry_username: str = typer.Option(
@@ -565,6 +552,39 @@ def submit_cmd(
         "--input-uri",
         help="PAIDF only: replace the pinned starter with one readable s3://... MP4 object.",
     ),
+    lerobot_uri: str = typer.Option(
+        "",
+        "--lerobot-uri",
+        help=(
+            "PAIDF only: use an S3 LeRobotDataset prefix without downloading the "
+            "whole dataset; one episode/camera video is selected before provisioning."
+        ),
+    ),
+    lerobot_camera: str = typer.Option(
+        "",
+        "--lerobot-camera",
+        help=(
+            "PAIDF LeRobot input only: exact observation camera feature/path segment; "
+            "the lexically first camera is used when omitted unless strict selection "
+            "is requested."
+        ),
+    ),
+    lerobot_episode: int | None = typer.Option(
+        None,
+        "--lerobot-episode",
+        help=(
+            "PAIDF LeRobot input only: non-negative episode index (compatibility "
+            "default: 0)."
+        ),
+    ),
+    require_explicit_lerobot_selection: bool = typer.Option(
+        False,
+        "--require-explicit-lerobot-selection",
+        help=(
+            "PAIDF LeRobot input only: fail before object-store access unless both "
+            "--lerobot-camera and --lerobot-episode were explicitly supplied."
+        ),
+    ),
     seed_fixture: bool = typer.Option(
         False,
         "--seed-fixture",
@@ -599,7 +619,9 @@ def submit_cmd(
     from npa.orchestration.npa_workflow.errors import NpaWorkflowError
     from npa.orchestration.npa_workflow.skypilot_render import SkypilotRenderOptions
     from npa.orchestration.npa_workflow.submit import prepare_npa_workflow_for_submit
-    from npa.orchestration.npa_workflow.run_state import PAIDF_WORKFLOW_NAME
+    from npa.orchestration.npa_workflow.run_state import (
+        is_paidf_input_workflow_name,
+    )
     from npa.orchestration.skypilot.workflow import (
         SkyPilotSubmitError,
         WorkflowResult,
@@ -654,29 +676,44 @@ def submit_cmd(
         )
         return
     is_paidf_spec = bool(
-        merged_npa_spec is not None and merged_npa_spec.name == PAIDF_WORKFLOW_NAME
+        merged_npa_spec is not None
+        and is_paidf_input_workflow_name(merged_npa_spec.name)
     )
     legacy_fixture = _is_truthy_submit_value(
         substitutions.get("seed_fixture")
     ) or _is_truthy_submit_value(substitutions.get("seed_default_input"))
     fixture_requested = seed_fixture or legacy_fixture
+    resolved_lerobot_episode = 0 if lerobot_episode is None else lerobot_episode
     try:
         from npa.workflows.data_factory_input import select_paidf_input
 
-        select_paidf_input(
+        input_selection = select_paidf_input(
             input_video=input_video,
             input_uri=input_uri,
+            lerobot_uri=lerobot_uri,
             seed_fixture=fixture_requested,
+        )
+        from npa.workflows.data_factory_input import validate_lerobot_selector
+
+        validate_lerobot_selector(
+            selection=input_selection,
+            camera=lerobot_camera,
+            episode=resolved_lerobot_episode,
+            require_explicit_selection=require_explicit_lerobot_selection,
+            episode_was_explicit=lerobot_episode is not None,
         )
     except RuntimeError as exc:
         _fail(str(exc))
         return
     if (
-        input_video is not None or input_uri.strip() or fixture_requested
+        input_video is not None
+        or input_uri.strip()
+        or lerobot_uri.strip()
+        or fixture_requested
     ) and not is_paidf_spec:
         _fail(
-            "--input-video, --input-uri, and --seed-fixture are supported only by "
-            "the physical-ai-data-factory workflow"
+            "--input-video, --input-uri, --lerobot-uri, and --seed-fixture are "
+            "supported only by a Physical AI Data Factory workflow"
         )
         return
     materializer = _resolve_materializer(tool, yaml_path)
@@ -685,6 +722,9 @@ def submit_cmd(
         return
     if resume and not (run_id or resume_run):
         _fail("--resume requires an explicit --resume-run ID (or legacy --run-id)")
+        return
+    if retry_absent_in_flight and not (resume_run or (resume and run_id)):
+        _fail("--retry-absent-in-flight requires an explicit --resume-run ID")
         return
     workflow_identity = ""
     if is_npa_spec:
@@ -843,12 +883,6 @@ def submit_cmd(
         return
 
     prepared_npa = None
-    # The runtime registry-auth render has its own temporary directory.  Keep
-    # the cleanup sentinel in the enclosing submit scope: fully image-pinned
-    # workflows with --no-stage-src never enter the source-staging branch
-    # below, but their fail-fast render errors must still cleanly reach the
-    # operator instead of being masked by an unbound local in ``finally``.
-    registry_auth_plan = None
     deploy_targets = []
     resolved_deploy_plans: dict[str, Any] = {}
     paidf_placement_prechecked = False
@@ -1341,6 +1375,13 @@ def submit_cmd(
                         bucket=bucket_for_source,
                         input_video=input_video,
                         input_uri=input_uri,
+                        lerobot_uri=lerobot_uri,
+                        lerobot_camera=lerobot_camera,
+                        lerobot_episode=resolved_lerobot_episode,
+                        require_explicit_lerobot_selection=(
+                            require_explicit_lerobot_selection
+                        ),
+                        lerobot_episode_was_explicit=lerobot_episode is not None,
                         seed_fixture=fixture_requested,
                     )
                 else:
@@ -1349,6 +1390,13 @@ def submit_cmd(
                         bucket=bucket_for_source,
                         input_video=input_video,
                         input_uri=input_uri,
+                        lerobot_uri=lerobot_uri,
+                        lerobot_camera=lerobot_camera,
+                        lerobot_episode=resolved_lerobot_episode,
+                        require_explicit_lerobot_selection=(
+                            require_explicit_lerobot_selection
+                        ),
+                        lerobot_episode_was_explicit=lerobot_episode is not None,
                         seed_fixture=fixture_requested,
                         endpoint_url=s3_endpoint,
                         aws_access_key_id=extra_env.get("AWS_ACCESS_KEY_ID", ""),
@@ -1360,7 +1408,36 @@ def submit_cmd(
             except PaidfInputError as exc:
                 _fail(str(exc))
                 return
-            substitutions.update(prepared_input.config_overrides())
+            prepared_overrides = prepared_input.config_overrides()
+            from npa.orchestration.npa_workflow.run_state import (
+                PAIDF_COSMOS3_WORKFLOW_NAME,
+            )
+
+            if workflow_identity == PAIDF_COSMOS3_WORKFLOW_NAME:
+                # The independent Cosmos3 spec owns its run-local provenance URI.
+                # The shared preparer still validates/stages the selected media,
+                # but must not redirect the Cosmos3 worker onto the original
+                # PAIDF schema's immutable provenance object.
+                prepared_overrides.pop("input_provenance_uri", None)
+                if prepared_input.selection == "lerobot_dataset":
+                    prepared_overrides.update(
+                        {
+                            "input_kind": "lerobot",
+                            "lerobot_dataset_uri": lerobot_uri.strip(),
+                            "input_episode": str(resolved_lerobot_episode),
+                            "input_camera": lerobot_camera.strip(),
+                        }
+                    )
+                else:
+                    prepared_overrides.update(
+                        {
+                            "input_kind": "video",
+                            "input_video_uri": str(
+                                prepared_input.provenance.get("staged_source_uri") or ""
+                            ),
+                        }
+                    )
+            substitutions.update(prepared_overrides)
             substitutions["seed_fixture"] = (
                 "true" if prepared_input.selection == "synthetic_fixture" else "false"
             )
@@ -1457,40 +1534,6 @@ def submit_cmd(
                 return
 
         if runtime and not plan_only:
-            # Runtime renders one wave at a time and historically returned before
-            # the one-shot path refreshed Kubernetes pull credentials.  Validate
-            # the complete selected plan once solely to install the exact private-
-            # registry secret before any managed job can enter ErrImagePull.  A
-            # dynamic runtime must still read its real gate artifact, so a branch
-            # assumption used only for this throwaway render must not leak into the
-            # runtime driver.  Prefer an operator/spec assumption when present and
-            # otherwise render the promotion branch, which includes the downstream
-            # states whose images need registry authentication.
-            try:
-                registry_auth_assume = (
-                    assume_decision
-                    or str(spec_config.get("plan_assume_decision") or "").strip()
-                    or "promote_checkpoint"
-                )
-                registry_auth_plan = prepare_npa_workflow_for_submit(
-                    yaml_path,
-                    run_id=resolved_run_id,
-                    assume_decision=registry_auth_assume,
-                    config_overrides=substitutions,
-                    render_options=npa_render_options,
-                )
-                if refresh_registry_secret:
-                    _refresh_kubernetes_pull_secrets(
-                        registry_auth_plan.skypilot_yaml_path,
-                        k8s_context=infra_context,
-                        kubeconfig=os.environ.get("KUBECONFIG", ""),
-                    )
-            except NpaWorkflowError as exc:
-                _fail(str(exc))
-                return
-            finally:
-                if registry_auth_plan is not None:
-                    registry_auth_plan.temp_dir.cleanup()
             _run_npa_workflow_runtime(
                 yaml_path,
                 run_id=resolved_run_id,
@@ -1511,7 +1554,7 @@ def submit_cmd(
                 retries=retries,
                 max_concurrency=max_concurrency,
                 resume=resume,
-                refresh_registry_secret=refresh_registry_secret,
+                retry_absent_in_flight=retry_absent_in_flight,
                 output_format=output_format,
                 project=project,
                 auto_load=auto_load,
@@ -1644,13 +1687,6 @@ def submit_cmd(
                     typer.echo("details: pass --details (or --output-format json)")
             prepared_npa.temp_dir.cleanup()
             return
-
-        if refresh_registry_secret:
-            _refresh_kubernetes_pull_secrets(
-                prepared_npa.skypilot_yaml_path,
-                k8s_context=infra_context,
-                kubeconfig=os.environ.get("KUBECONFIG", ""),
-            )
 
         # Skip SkyPilot-path materializers; npa.workflow already planned.
         materializer = ""
@@ -2080,7 +2116,7 @@ def _run_npa_workflow_runtime(
     retries: int,
     max_concurrency: int,
     resume: bool,
-    refresh_registry_secret: bool,
+    retry_absent_in_flight: bool,
     output_format: "OutputFormat",
     project: str = "",
     auto_load: bool = True,
@@ -2136,19 +2172,6 @@ def _run_npa_workflow_runtime(
     )
 
     resolved_secret_envs = secret_env_names(secret_envs, values=secret_env_values)
-    pre_submit_hook = None
-    if refresh_registry_secret:
-        runtime_k8s_context = _infra_kube_context(infra)
-        runtime_kubeconfig = os.environ.get("KUBECONFIG", "")
-
-        def _refresh_runtime_pull_secret(rendered_path: Path) -> None:
-            _refresh_kubernetes_pull_secrets(
-                rendered_path,
-                k8s_context=runtime_k8s_context,
-                kubeconfig=runtime_kubeconfig,
-            )
-
-        pre_submit_hook = _refresh_runtime_pull_secret
     options = RuntimeOptions(
         poll_seconds=poll_seconds,
         max_wait_seconds=max_wait_seconds,
@@ -2163,13 +2186,13 @@ def _run_npa_workflow_runtime(
         isolated_config_dir=isolated_config_dir,
         config_path=config_path,
         resume=resume,
+        retry_absent_in_flight=retry_absent_in_flight,
         project=project or "default",
         sky_bin=sky_bin,
         credential_resolver=lambda: _resolve_runtime_secret_values(
             project=project,
             requested=list(resolved_secret_envs),
         ),
-        pre_submit_hook=pre_submit_hook,
     )
     runtime_env = dict(secret_env_values)
     endpoint = str(getattr(render_options, "aws_endpoint_url", "") or "").strip()
@@ -2508,11 +2531,10 @@ def _emit_compact_submit_plan(plan, *, infrastructure: Mapping[str, object]) -> 
 def _resolve_submit_registry(registry: str, project: str) -> str:
     """Return the registry a submit should pull from.
 
-    An explicit --registry wins. Otherwise use the registry `npa configure` saved
-    for the project: the image pins otherwise resolved against the first-party
-    default even when the operator had selected (or been given) a project
-    registry, so preflight checked one registry while the run pulled from another
-    and the printed build command targeted the wrong place.
+    An explicit --registry wins, followed by NPA_REGISTRY and a legacy saved
+    project override. With none of those, image resolution uses the anonymous
+    GHCR default. Keeping saved overrides in this chain preserves existing custom
+    registry configurations without requiring registry setup for new projects.
     """
 
     explicit = str(registry or "").strip()
@@ -2571,9 +2593,7 @@ def _preflight_submit_images(
         )
         steps = []
         for decision in dict.fromkeys(decisions):
-            plan = build_plan(
-                resolved_spec, run_id=run_id, assume_decision=decision
-            )
+            plan = build_plan(resolved_spec, run_id=run_id, assume_decision=decision)
             steps.extend(plan.steps)
         images = plan_images(resolved_spec, steps, run_id=run_id, options=options)
         pull_secrets_by_image = plan_image_pull_secrets(
@@ -2923,6 +2943,9 @@ def _transfer_control_modalities(spec, *, run_id: str) -> set[str]:
         "workbench.cosmos2.transfer_conditioned_execute",
     }
     modalities: set[str] = set()
+    loop_iterations = {
+        state.name: 1 for state in spec.states.values() if state.loop is not None
+    }
     for state in spec.states.values():
         if state.tool_ref not in tool_refs:
             continue
@@ -2933,6 +2956,7 @@ def _transfer_control_modalities(spec, *, run_id: str) -> set[str]:
                     value,
                     config=spec.config,
                     run={"id": run_id},
+                    loop_iterations=loop_iterations,
                 )
                 if isinstance(value, str)
                 else value
@@ -3078,14 +3102,16 @@ def _npa_spec_config(yaml_path: Path, substitutions: dict[str, str]) -> dict:
 
 
 def _is_paidf_workflow_spec(yaml_path: Path) -> bool:
-    """Identify the one workflow whose submit command owns starter preparation."""
+    """Identify workflows whose submit command owns starter preparation."""
 
     from npa.orchestration.npa_workflow.errors import NpaWorkflowError
-    from npa.orchestration.npa_workflow.run_state import PAIDF_WORKFLOW_NAME
+    from npa.orchestration.npa_workflow.run_state import (
+        is_paidf_input_workflow_name,
+    )
     from npa.orchestration.npa_workflow.spec import load_spec
 
     try:
-        return load_spec(yaml_path).name == PAIDF_WORKFLOW_NAME
+        return is_paidf_input_workflow_name(load_spec(yaml_path).name)
     except NpaWorkflowError:
         return False
 
@@ -5020,8 +5046,18 @@ def logs_cmd(
     json_output: bool = typer.Option(
         False, "--json", help="Emit the log-source contract as JSON."
     ),
+    max_output_chars: int = typer.Option(
+        DEFAULT_LOG_OUTPUT_CHARS,
+        "--max-output-chars",
+        min=1,
+        max=MAX_LOG_OUTPUT_CHARS,
+        help=(
+            "Maximum redacted log characters returned. The diagnostic tail is kept "
+            "when truncation is required."
+        ),
+    ),
 ) -> None:
-    """Show logs for a specific stage of a workflow run."""
+    """Show a bounded log tail for a specific stage of a workflow run."""
     selected_stage = stage_option or stage or ""
     try:
         from npa.orchestration.npa_workflow.run_resolution import validate_run_id
@@ -5089,13 +5125,34 @@ def logs_cmd(
                 )
                 safe_stdout = redact_text(live.stdout)
                 safe_stderr = redact_text(live.stderr)
+                safe_stdout, safe_stderr, log_metadata = _bounded_log_streams(
+                    safe_stdout, safe_stderr, max_output_chars
+                )
                 if safe_stdout and not json_output:
                     typer.echo(safe_stdout, nl=False)
                 if safe_stderr and not json_output:
                     typer.echo(safe_stderr, err=True, nl=False)
+                if not json_output:
+                    _emit_log_truncation(log_metadata)
                 if live.returncode != 0:
                     raise RuntimeError(
                         "run found with manifest pending, but SkyPilot logs are unavailable"
+                    )
+                if json_output:
+                    typer.echo(
+                        json.dumps(
+                            {
+                                "run_id": resolution.run_id,
+                                "stage": selected_stage,
+                                "manifest_state": "pending",
+                                "live_log_state": "available",
+                                "log": safe_stdout,
+                                "stderr": safe_stderr,
+                                **log_metadata,
+                            },
+                            indent=2,
+                            sort_keys=True,
+                        )
                     )
                 return
             assert state is not None
@@ -5116,18 +5173,27 @@ def logs_cmd(
                     for wave in resolution.runtime_state.get("waves") or []:
                         if not isinstance(wave, dict):
                             continue
-                        for state_name in wave.get("states") or []:
-                            runtime_stages.append(
-                                {
-                                    "stage": str(state_name),
-                                    "attempt": int(wave.get("attempt") or 1),
-                                    "managed_job_id": str(wave.get("job_id") or ""),
-                                    "logical_state": str(
-                                        wave.get("status") or "unknown"
-                                    ),
-                                    "provenance": "legacy_runtime_wave_reconstruction",
-                                }
-                            )
+                        wave_states = list(wave.get("states") or [])
+                        wave_tasks = [
+                            item
+                            for item in wave.get("tasks") or []
+                            if isinstance(item, dict)
+                        ]
+                        for index, state_name in enumerate(wave_states):
+                            reconstructed = {
+                                "stage": str(state_name),
+                                "attempt": int(wave.get("attempt") or 1),
+                                "managed_job_id": str(wave.get("job_id") or ""),
+                                "logical_state": str(
+                                    wave.get("status") or "unknown"
+                                ),
+                                "provenance": "legacy_runtime_wave_reconstruction",
+                            }
+                            if len(wave_tasks) == len(wave_states):
+                                task_id = wave_tasks[index].get("task_id")
+                                if task_id is not None:
+                                    reconstructed["sky_task_id"] = str(task_id)
+                            runtime_stages.append(reconstructed)
                 available = list(
                     dict.fromkeys(
                         [str(item.get("state") or "") for item in steps]
@@ -5159,6 +5225,36 @@ def logs_cmd(
                 stage_attempts.sort(key=lambda item: int(item.get("attempt") or 1))
                 selected_attempt = stage_attempts[-1] if stage_attempts else {}
                 job_id = str(selected_attempt.get("managed_job_id") or "")
+                if selected_attempt.get("sky_task_id") in (None, ""):
+                    matching_waves = [
+                        wave
+                        for wave in resolution.runtime_state.get("waves") or []
+                        if isinstance(wave, dict)
+                        and selected_stage in list(wave.get("states") or [])
+                        and (
+                            not job_id
+                            or str(wave.get("job_id") or "") == job_id
+                        )
+                    ]
+                    matching_waves.sort(
+                        key=lambda wave: int(wave.get("attempt") or 1)
+                    )
+                    if matching_waves:
+                        selected_wave = matching_waves[-1]
+                        wave_states = list(selected_wave.get("states") or [])
+                        wave_tasks = [
+                            item
+                            for item in selected_wave.get("tasks") or []
+                            if isinstance(item, dict)
+                        ]
+                        if len(wave_states) == len(wave_tasks):
+                            index = wave_states.index(selected_stage)
+                            task_id = wave_tasks[index].get("task_id")
+                            if task_id is not None:
+                                selected_attempt = {
+                                    **selected_attempt,
+                                    "sky_task_id": str(task_id),
+                                }
                 if not job_id and not resolution.runtime_state.get("waves"):
                     # Root job IDs are compatible only for the historical one-job
                     # manifest contract. Never broadcast one ID across runtime waves.
@@ -5208,9 +5304,12 @@ def logs_cmd(
                 if cached:
                     cached_text = ""
                     try:
-                        cached_text = read_stage_log(state, selected_stage)
+                        cached_text = redact_text(read_stage_log(state, selected_stage))
                     except Exception:  # noqa: BLE001 - reported through the source contract
                         cached_text = ""
+                    cached_text, log_metadata = _bounded_log_text(
+                        cached_text, max_output_chars
+                    )
                     source_payload = apply_verification(
                         source_payload,
                         status=CACHED,
@@ -5225,6 +5324,7 @@ def logs_cmd(
                         "available" if cached_text else "unavailable"
                     )
                     source_payload["log"] = cached_text
+                    source_payload.update(log_metadata)
                     if json_output:
                         typer.echo(json.dumps(source_payload, indent=2, sort_keys=True))
                     else:
@@ -5237,6 +5337,7 @@ def logs_cmd(
                         )
                         if cached_text:
                             typer.echo(cached_text, nl=False)
+                        _emit_log_truncation(log_metadata)
                     return
                 if not job_id:
                     reason = (
@@ -5269,19 +5370,30 @@ def logs_cmd(
                         typer.echo(f"cause: {reason}")
                         typer.echo(f"retry: {live_verification['retry_command']}")
                     raise typer.Exit(code=2)
+                sky_task_id = selected_attempt.get("sky_task_id")
+                live_stage = (
+                    str(sky_task_id)
+                    if sky_task_id is not None and str(sky_task_id) != ""
+                    else selected_stage
+                )
                 live = tail_live_job_logs(
                     sky_bin=_resolve_sky_bin(sky_bin),
                     job_id=job_id,
-                    stage=selected_stage,
+                    stage=live_stage,
                     follow=follow,
                     timeout=86400 if follow else 300,
                 )
                 safe_stdout = redact_text(live.stdout)
                 safe_stderr = redact_text(live.stderr)
+                safe_stdout, safe_stderr, log_metadata = _bounded_log_streams(
+                    safe_stdout, safe_stderr, max_output_chars
+                )
                 if safe_stdout and not json_output:
                     typer.echo(safe_stdout, nl=False)
                 if safe_stderr and not json_output:
                     typer.echo(safe_stderr, err=True, nl=False)
+                if not json_output:
+                    _emit_log_truncation(log_metadata)
                 if live.returncode != 0:
                     from npa.verification import (
                         classify_verification_failure,
@@ -5331,7 +5443,12 @@ def logs_cmd(
                         retry_command=log_retry,
                     )
                     source_payload.update(
-                        {"live_log_state": "available", "log": safe_stdout}
+                        {
+                            "live_log_state": "available",
+                            "log": safe_stdout,
+                            "stderr": safe_stderr,
+                            **log_metadata,
+                        }
                     )
                     typer.echo(json.dumps(source_payload, indent=2, sort_keys=True))
                 elif live.stdout:
@@ -5350,13 +5467,21 @@ def logs_cmd(
                 )
                 safe_stdout = redact_text(live.stdout)
                 safe_stderr = redact_text(live.stderr)
+                safe_stdout, safe_stderr, log_metadata = _bounded_log_streams(
+                    safe_stdout, safe_stderr, max_output_chars
+                )
                 if safe_stdout:
                     typer.echo(safe_stdout, nl=False)
                 if safe_stderr:
                     typer.echo(safe_stderr, err=True, nl=False)
+                _emit_log_truncation(log_metadata)
                 if live.returncode == 0:
                     return
-            typer.echo(read_stage_log(state, selected_stage), nl=False)
+            cached_text, log_metadata = _bounded_log_text(
+                redact_text(read_stage_log(state, selected_stage)), max_output_chars
+            )
+            typer.echo(cached_text, nl=False)
+            _emit_log_truncation(log_metadata)
             return
         except typer.Exit:
             raise
@@ -5376,7 +5501,13 @@ def logs_cmd(
         _fail(str(exc))
         return
 
-    typer.echo(logs)
+    from npa.orchestration.skypilot.workflow_state import redact_text
+
+    bounded_logs, log_metadata = _bounded_log_text(
+        redact_text(logs), max_output_chars
+    )
+    typer.echo(bounded_logs)
+    _emit_log_truncation(log_metadata)
 
 
 @app.command("artifacts")
@@ -6469,7 +6600,7 @@ def preflight_images_cmd(
         "",
         "--project",
         "-p",
-        help="Project alias whose configured registry to check. Defaults to the configured project.",
+        help="Project alias whose image registry override/default to check. Defaults to the configured project.",
     ),
     image: str = typer.Option("", "--image", help="Pin every step to this image."),
     image_override: list[str] = typer.Option(
