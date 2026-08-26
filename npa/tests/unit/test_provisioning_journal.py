@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 import hashlib
+import inspect
 import json
 from pathlib import Path
 import stat
@@ -546,6 +548,46 @@ def test_retire_state_copy_failure_preserves_journal_recovery_evidence(
 
     assert state.exists()
     assert operation.read()["local_state_copies"]
+
+
+def test_retire_state_copies_rejects_replacement_before_retirement_lock(
+    journal_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from npa import provisioning_journal
+
+    operation = _prepare()
+    original = b'{"version":4,"serial":1}'
+    replacement = b'{"version":4,"serial":2}'
+    state = operation.preserve_state_bytes(original, name="verified")
+    real_locked_operation = provisioning_journal._locked_operation
+    replaced = False
+
+    @contextmanager
+    def replace_before_retirement_lock(operation_id: str):
+        nonlocal replaced
+        stack_functions = {frame.function for frame in inspect.stack()}
+        if (
+            not replaced
+            and "retire_state_copies" in stack_functions
+            and "state_copies" not in stack_functions
+        ):
+            state.write_bytes(replacement)
+            replaced = True
+        with real_locked_operation(operation_id) as directory:
+            yield directory
+
+    monkeypatch.setattr(
+        provisioning_journal, "_locked_operation", replace_before_retirement_lock
+    )
+
+    with pytest.raises(OperationJournalError, match="SHA-256 validation"):
+        operation.retire_state_copies()
+
+    assert replaced is True
+    assert state.read_bytes() == replacement
+    payload = operation.read()
+    assert payload["local_state_copies"]
+    assert "local_state_retired_at" not in payload
 
 
 def test_partial_state_copy_retirement_is_retryable_from_durable_intent(

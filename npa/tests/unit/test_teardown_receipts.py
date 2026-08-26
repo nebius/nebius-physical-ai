@@ -196,6 +196,40 @@ def test_prune_is_explicit_age_gated_and_preserves_uncertainty(
     assert any("unresolved/uncertain" in item for item in retained)
 
 
+def test_prune_preserves_old_receipt_when_sibling_generation_is_unresolved(
+    monkeypatch, tmp_path: Path
+) -> None:  # noqa: ANN001
+    _root(monkeypatch, tmp_path)
+    times = iter(("2000-01-01T00:00:00Z", "2099-01-01T00:00:00Z"))
+    monkeypatch.setattr(receipts, "utc_now", lambda: next(times))
+    identity = {"project_id": "project-1", "cluster_id": "cluster-1"}
+    terminal = receipts.record_teardown_event(
+        phase="cluster",
+        resource="cluster-1",
+        terminal_state="verified_deleted",
+        project_alias="alpha",
+        project_id="project-1",
+        identity=identity,
+        action={"kind": "terraform_full_cluster_destroy"},
+        verification={"terraform_destroy": "completed"},
+    )
+    unresolved = receipts.record_teardown_event(
+        phase="cluster",
+        resource="cluster-1",
+        terminal_state="verification_failed",
+        project_alias="beta",
+        identity=identity,
+        errors=["newer verification is unresolved"],
+    )
+
+    removed, retained = receipts.prune_teardown_receipts(older_than_days=90)
+
+    assert removed == []
+    assert terminal.exists()
+    assert unresolved.exists()
+    assert any("sibling" in item for item in retained)
+
+
 def test_v2_identity_is_private_immutable_and_path_safe(
     monkeypatch, tmp_path: Path
 ) -> None:  # noqa: ANN001

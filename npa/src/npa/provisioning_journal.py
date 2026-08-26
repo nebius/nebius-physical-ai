@@ -1578,8 +1578,9 @@ class ProvisioningOperation:
             ) from exc
         return self.preserve_state_bytes(data, name=name)
 
-    def state_copies(self) -> list[Path]:
-        payload = self.read()
+    def _validated_state_copies(self, payload: Mapping[str, Any]) -> list[Path]:
+        """Validate preserved state against one lock-pinned journal snapshot."""
+
         paths: list[Path] = []
         retiring = set(payload.get("local_state_retirement_in_progress") or [])
         backend = payload.get("backend")
@@ -1643,12 +1644,17 @@ class ProvisioningOperation:
             paths.append(candidate)
         return list(dict.fromkeys(paths))
 
+    def state_copies(self) -> list[Path]:
+        with _locked_operation(self.operation_id):
+            payload = _read_unlocked(self.path)
+            return self._validated_state_copies(payload)
+
     def retire_state_copies(self) -> list[Path]:
         """Remove exact validated state copies and mark the journal audit-only."""
 
-        candidates = self.state_copies()
         with _locked_operation(self.operation_id):
             payload = _read_unlocked(self.path)
+            candidates = self._validated_state_copies(payload)
             copy_records = payload.get("local_state_copies") or []
             expected_paths = [
                 self.path.parent / str(item.get("path") or "")

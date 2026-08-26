@@ -937,6 +937,53 @@ def test_cleanup_recovery_merge_preserves_concurrent_config_and_credentials() ->
     assert set(credentials["recovery"]) == {"project-a", "project-peer"}
 
 
+def test_full_cleanup_reinventories_credentials_after_final_clear(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa.cli import cleanup as cleanup_cli
+    from npa.clients import credentials as credentials_module
+
+    credentials_module.CREDENTIALS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    credentials_module.CREDENTIALS_PATH.write_text(
+        yaml.safe_dump({"tokens": {"HF_TOKEN": "fixture-original-token"}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        cleanup_cli,
+        "_storage_iam_full_check",
+        lambda *_a, **_k: ("verified absent", False, "fully_clean", "verified_terminal"),
+    )
+    monkeypatch.setattr(
+        cleanup_cli, "_nonterminal_jobs", lambda _sky: ([], "", "verified_empty")
+    )
+    real_clear = cleanup_cli._clear_full_credentials
+
+    def clear_then_replace() -> list[str]:
+        removed = real_clear()
+        credentials_module.CREDENTIALS_PATH.write_text(
+            yaml.safe_dump({"tokens": {"HF_TOKEN": "fixture-replacement-token"}}),
+            encoding="utf-8",
+        )
+        return removed
+
+    monkeypatch.setattr(cleanup_cli, "_clear_full_credentials", clear_then_replace)
+
+    result = runner.invoke(
+        app, ["cleanup", "--full", "--yes", "--keep-sky", "--json"]
+    )
+
+    assert result.exit_code != 0, result.output
+    payload = json.loads(result.output)
+    assert payload["result"] != "fully_cleaned"
+    assert payload["verification_unresolved"] is True
+    retained = yaml.safe_load(
+        credentials_module.CREDENTIALS_PATH.read_text(encoding="utf-8")
+    )
+    assert retained["tokens"]["HF_TOKEN"] == "fixture-replacement-token"
+    event = teardown_receipts.latest_phase_states()["local_cleanup"]
+    assert event["terminal_state"] != "completed"
+
+
 def test_project_config_retirement_failure_restores_project_credentials(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1036,8 +1083,10 @@ def test_agent_credential_retirement_restores_auth_after_partial_directory_delet
     real_rmtree = __import__("shutil").rmtree
 
     def partially_delete_then_fail(path: Path) -> None:
-        if Path(path) == agent_dir:
-            auth.unlink()
+        candidate = Path(path)
+        candidate_auth = candidate / "auth.env"
+        if candidate_auth.exists():
+            candidate_auth.unlink()
             raise OSError("injected partial credential-directory deletion")
         real_rmtree(path)
 
@@ -1093,6 +1142,49 @@ def test_agent_credential_retirement_restores_recovery_after_parent_prune_failur
         '{"instance_id":"instance-a"}\n'
     )
     assert agent_dir.is_dir()
+
+
+def test_agent_local_retirement_preserves_same_name_replacement_generation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa.cli import agent_local_state
+    from npa.cli.agent_local_state import (
+        AgentLocalRetirementError,
+        cleanup_agent_local_files,
+    )
+    from npa.deploy import provisioner
+
+    agent_dir = Path.home() / ".npa" / "agents" / "demo" / "agent"
+    agent_dir.mkdir(parents=True)
+    (agent_dir / "auth.env").write_text(
+        "AGENT_PASSWORD=fixture-original\n", encoding="utf-8"
+    )
+    original_backup = agent_dir.with_name("agent-original-generation")
+    tf_dir = provisioner.working_dir_path("demo", "agent")
+    tf_dir.mkdir(parents=True)
+    (tf_dir / "terraform.tfstate").write_text("{}\n", encoding="utf-8")
+    real_capture = agent_local_state._capture_agent_local_recovery
+
+    def capture_then_replace(path: Path):  # noqa: ANN202
+        snapshot = real_capture(path)
+        path.rename(original_backup)
+        path.mkdir(parents=True)
+        (path / "auth.env").write_text(
+            "AGENT_PASSWORD=fixture-replacement\n", encoding="utf-8"
+        )
+        return snapshot
+
+    monkeypatch.setattr(
+        agent_local_state, "_capture_agent_local_recovery", capture_then_replace
+    )
+
+    with pytest.raises(AgentLocalRetirementError):
+        cleanup_agent_local_files("demo", "agent")
+
+    assert original_backup.is_dir()
+    assert (agent_dir / "auth.env").read_text(encoding="utf-8") == (
+        "AGENT_PASSWORD=fixture-replacement\n"
+    )
 
 
 def test_agent_destroy_iam_failure_preserves_auth_and_agent_record(
@@ -1715,6 +1807,59 @@ def test_receipt_aggregation_ignores_alias_after_immutable_project_resolution(
         project_alias="alpha", project_id="project-a"
     )
 
+    assert states["agent"]["terminal_state"] == "verification_failed"
+    assert cleanup_cli._event_authorizes_cloud_absence(states["agent"]) is False
+
+
+def test_receipt_aggregation_uses_nested_immutable_project_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa.cli import cleanup as cleanup_cli
+
+    times = iter(("2099-01-01T00:00:00Z", "2099-01-01T00:00:01Z"))
+    monkeypatch.setattr(teardown_receipts, "utc_now", lambda: next(times))
+    identity = {
+        "project_id": "project-a",
+        "agent_name": "agent",
+        "instance_id": "instance-a",
+    }
+    teardown_receipts.record_teardown_event(
+        phase="agent",
+        resource="agent",
+        terminal_state="verified_deleted",
+        project_alias="alpha",
+        project_id="project-a",
+        identity=identity,
+        action={"kind": "terraform_agent_destroy", "purge_iam": True},
+        verification=_agent_terminal_verification(),
+    )
+    teardown_receipts.record_teardown_event(
+        phase="agent",
+        resource="agent",
+        terminal_state="verification_failed",
+        identity=identity,
+        action={"kind": "terraform_agent_destroy", "purge_iam": True},
+        verification={
+            **_agent_terminal_verification(),
+            "iam_cleanup_complete": False,
+            "iam_disposition": "verification_unresolved",
+        },
+        errors=["newer nested-identity verification failed"],
+    )
+
+    selected = teardown_receipts.list_teardown_receipts(
+        project_id="project-a", legacy="exclude", strict=True
+    )
+    generations = teardown_receipts.latest_resource_generation_events(
+        project_id="project-a", phase="agent", strict=True
+    )
+    states = teardown_receipts.latest_phase_states(
+        project_alias="alpha", project_id="project-a", strict=True
+    )
+
+    assert len(selected) == 2
+    assert len(generations) == 1
+    assert generations[0]["terminal_state"] == "verification_failed"
     assert states["agent"]["terminal_state"] == "verification_failed"
     assert cleanup_cli._event_authorizes_cloud_absence(states["agent"]) is False
 

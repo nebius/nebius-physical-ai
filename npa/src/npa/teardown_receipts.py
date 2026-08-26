@@ -1198,18 +1198,22 @@ def latest_resource_generation_events(
     """Return newest evidence for every matching immutable resource generation."""
 
     grouped: dict[tuple[str, ...], list[dict[str, Any]]] = {}
-    for receipt in list_teardown_receipts(strict=strict):
-        receipt_project_id = str(receipt.get("project_id") or "")
-        receipt_alias = str(receipt.get("project_alias") or "")
-        if project_id and receipt_project_id != project_id:
-            continue
-        if project_alias and not project_id and receipt_alias != project_alias:
-            continue
+    for receipt in list_teardown_receipts(
+        project_alias=project_alias if not project_id else "",
+        project_id=project_id,
+        legacy="exclude" if project_alias or project_id else "include",
+        strict=strict,
+    ):
         receipt_id = str(receipt.get("receipt_id") or "")
         for event in receipt.get("events") or []:
             if not isinstance(event, dict):
                 continue
-            if project_id and str(event.get("project_id") or "") != project_id:
+            identity = event.get("identity")
+            identity = identity if isinstance(identity, Mapping) else {}
+            event_project_id = str(
+                event.get("project_id") or identity.get("project_id") or ""
+            )
+            if project_id and event_project_id != project_id:
                 continue
             if phase and str(event.get("phase") or "") != phase:
                 continue
@@ -1291,17 +1295,21 @@ def latest_phase_states(
     """
 
     grouped: dict[str, dict[tuple[str, ...], list[dict[str, Any]]]] = {}
-    for receipt in list_teardown_receipts(strict=strict):
-        receipt_project_id = str(receipt.get("project_id") or "")
-        receipt_alias = str(receipt.get("project_alias") or "")
-        if project_id and receipt_project_id != project_id:
-            continue
-        if project_alias and not project_id and receipt_alias != project_alias:
-            continue
+    for receipt in list_teardown_receipts(
+        project_alias=project_alias if not project_id else "",
+        project_id=project_id,
+        legacy="exclude" if project_alias or project_id else "include",
+        strict=strict,
+    ):
         for event in receipt.get("events") or []:
             if not isinstance(event, dict):
                 continue
-            if project_id and str(event.get("project_id") or "") != project_id:
+            identity = event.get("identity")
+            identity = identity if isinstance(identity, Mapping) else {}
+            event_project_id = str(
+                event.get("project_id") or identity.get("project_id") or ""
+            )
+            if project_id and event_project_id != project_id:
                 continue
             phase = str(event.get("phase") or "")
             if not phase:
@@ -1358,10 +1366,38 @@ def prune_teardown_receipts(*, older_than_days: int) -> tuple[list[Path], list[s
     removed: list[Path] = []
     retained: list[str] = []
     with _locked_root() as root:
-        for path in sorted(root.glob("*.json")):
-            payload = _read(path)
+        inventory = [(path, _read(path)) for path in sorted(root.glob("*.json"))]
+        generations: dict[tuple[str, ...], list[dict[str, Any]]] = {}
+        for _path, payload in inventory:
+            receipt_id = str(payload.get("receipt_id") or "")
+            for event in payload.get("events") or []:
+                if not isinstance(event, Mapping):
+                    continue
+                annotated = dict(event)
+                annotated["_receipt_id"] = receipt_id
+                key = _event_generation_key(annotated, receipt_id=receipt_id)
+                generations.setdefault(key, []).append(annotated)
+        current_generations = {
+            key: _latest_generation_event(events)
+            for key, events in generations.items()
+        }
+        for path, payload in inventory:
             if not receipt_is_terminal(payload):
                 retained.append(f"{path.name}: unresolved/uncertain phase remains")
+                continue
+            receipt_id = str(payload.get("receipt_id") or "")
+            receipt_generation_keys = {
+                _event_generation_key(dict(event), receipt_id=receipt_id)
+                for event in payload.get("events") or []
+                if isinstance(event, Mapping)
+            }
+            if any(
+                not teardown_event_authorizes_convergence(current_generations[key])
+                for key in receipt_generation_keys
+            ):
+                retained.append(
+                    f"{path.name}: unresolved/conflicting sibling generation remains"
+                )
                 continue
             try:
                 updated = datetime.fromisoformat(

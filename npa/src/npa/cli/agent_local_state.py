@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import os
 import shutil
+import stat
 import tempfile
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -177,6 +179,7 @@ def cleanup_agent_local_files(
 
     tf_dir = provisioner.working_dir_path(project_alias, name)
     targets = ((tf_dir, tf_dir.parent.parent), (agent_dir, agent_root))
+    target_generations: dict[Path, tuple[int, int] | None] = {}
     for target, root in targets:
         try:
             if not target.resolve(strict=False).is_relative_to(root.resolve()):
@@ -191,18 +194,85 @@ def cleanup_agent_local_files(
             raise AgentLocalRetirementError(
                 f"agent local-state path is not a regular directory: {target}"
             )
-
-    def retire_directory(target: Path) -> None:
         if os.path.lexists(target):
             try:
-                shutil.rmtree(target)
+                current = os.lstat(target)
             except OSError as exc:
                 raise AgentLocalRetirementError(
-                    f"could not retire agent local-state path {target}: {exc}"
+                    f"could not inventory agent local-state path {target}: {exc}"
                 ) from exc
+            if not stat.S_ISDIR(current.st_mode):
+                raise AgentLocalRetirementError(
+                    f"agent local-state path is not a regular directory: {target}"
+                )
+            target_generations[target] = (current.st_dev, current.st_ino)
+        else:
+            target_generations[target] = None
+
+    def retire_directory(target: Path, expected: tuple[int, int] | None) -> None:
+        if expected is None:
+            if os.path.lexists(target):
+                raise AgentLocalRetirementError(
+                    f"agent local-state generation appeared during retirement: {target}"
+                )
+            return
+        try:
+            current = os.lstat(target)
+        except FileNotFoundError as exc:
+            raise AgentLocalRetirementError(
+                f"agent local-state generation disappeared during retirement: {target}"
+            ) from exc
+        except OSError as exc:
+            raise AgentLocalRetirementError(
+                f"could not verify agent local-state generation {target}: {exc}"
+            ) from exc
+        if (current.st_dev, current.st_ino) != expected or not stat.S_ISDIR(
+            current.st_mode
+        ):
+            raise AgentLocalRetirementError(
+                f"agent local-state generation changed during retirement: {target}"
+            )
+
+        quarantine = target.with_name(
+            f".{target.name}.retiring-{uuid.uuid4().hex}"
+        )
+        try:
+            if os.path.lexists(quarantine):
+                raise AgentLocalRetirementError(
+                    f"agent local-state quarantine already exists: {quarantine}"
+                )
+            os.rename(target, quarantine)
+            quarantined = os.lstat(quarantine)
+            if (quarantined.st_dev, quarantined.st_ino) != expected or not stat.S_ISDIR(
+                quarantined.st_mode
+            ):
+                if not os.path.lexists(target):
+                    os.rename(quarantine, target)
+                raise AgentLocalRetirementError(
+                    f"agent local-state generation changed during retirement: {target}"
+                )
+            shutil.rmtree(quarantine)
+        except AgentLocalRetirementError:
+            raise
+        except OSError as exc:
+            try:
+                if os.path.lexists(quarantine) and not os.path.lexists(target):
+                    os.rename(quarantine, target)
+            except OSError as restore_exc:
+                raise AgentLocalRetirementError(
+                    "could not retire agent local-state path "
+                    f"{target}: {exc}; quarantine restoration failed: {restore_exc}"
+                ) from exc
+            raise AgentLocalRetirementError(
+                f"could not retire agent local-state path {target}: {exc}"
+            ) from exc
+        if os.path.lexists(quarantine):
+            raise AgentLocalRetirementError(
+                f"agent local-state quarantine remains after retirement: {quarantine}"
+            )
         if os.path.lexists(target):
             raise AgentLocalRetirementError(
-                f"agent local-state path remains after retirement: {target}"
+                f"a replacement agent local-state generation was preserved: {target}"
             )
 
     recovery_snapshot = _capture_agent_local_recovery(agent_dir)
@@ -211,7 +281,7 @@ def cleanup_agent_local_files(
     # directory is removed. Any injected or real failure therefore preserves
     # credentials and the remaining recovery material.
     try:
-        retire_directory(tf_dir)
+        retire_directory(tf_dir, target_generations[tf_dir])
 
         if operation_ids:
             from npa.provisioning_journal import OperationJournalError, load_operation
@@ -234,7 +304,7 @@ def cleanup_agent_local_files(
                         f"could not retire exact operation state {operation_id}: {exc}"
                     ) from exc
 
-        retire_directory(agent_dir)
+        retire_directory(agent_dir, target_generations[agent_dir])
 
         # Empty alias parents are residue too. A sibling keeps the parent non-empty.
         for parent in (agent_dir.parent, tf_dir.parent):

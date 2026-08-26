@@ -2004,6 +2004,7 @@ def cleanup_cmd(
     removed_total = 0
     shared_runtime_preserved = False
     project_credential_residue_items: list[dict[str, str]] = []
+    final_credential_labels: list[str] = []
 
     def emit_json(
         result: str, local_state: str, *, cleanup_failed: bool = False
@@ -2027,6 +2028,7 @@ def cleanup_cmd(
             local_state not in {"fully_clean", "fully_cleaned", "preserved_shared_sky"}
             or project_credential_residue_items
             or agent_operational_state_present
+            or final_credential_labels
         )
         if receipt_project_id:
             cloud_phase_names = {
@@ -2093,6 +2095,7 @@ def cleanup_cmd(
                     "audit_receipts_are_operational_residue": False,
                     "preserved_shared_runtime": shared_runtime_preserved,
                     "retained_local_residue": project_credential_residue_items,
+                    "retained_shared_credentials": final_credential_labels,
                     "agent_operational_state_present": agent_operational_state_present,
                     "agent_operational_state_detail": agent_operational_state_detail,
                 },
@@ -2791,6 +2794,72 @@ def cleanup_cmd(
                 emit(f"Removed empty NPA home: {path}")
             else:
                 emit(f"Removed {label}: {path}")
+    # Re-inventory every operational state class after the final mutation. A
+    # concurrent credential/config/agent generation is retained and makes the
+    # transaction partial; a pre-mutation inventory can never authorize the
+    # terminal receipt.
+    if full:
+        try:
+            final_credential_labels = _full_credential_labels()
+        except (OSError, RuntimeError, ValueError) as exc:
+            final_credential_labels = ["unresolved credential inventory"]
+            cleanup_failed = True
+            emit(
+                f"Warning: final shared-credential inventory failed: {exc}", err=True
+            )
+        if final_credential_labels:
+            cleanup_failed = True
+            emit(
+                "Warning: final inventory found retained shared credential group(s): "
+                + ", ".join(final_credential_labels)
+                + ".",
+                err=True,
+            )
+        try:
+            if receipt_project_id:
+                from npa.clients.config import resolve_environment
+                from npa.clients.project_credential_store import (
+                    project_credential_residue,
+                )
+
+                project_credential_residue_items = project_credential_residue(
+                    receipt_project_id
+                )
+                final_environment = (
+                    resolve_environment(receipt_alias) if receipt_alias else None
+                )
+                if (
+                    final_environment is not None
+                    and str(final_environment.project_id or "") == receipt_project_id
+                ):
+                    project_credential_residue_items.append(
+                        {
+                            "path": f"config.projects.{receipt_alias}",
+                            "class": "project_alias_or_default",
+                        }
+                    )
+                (
+                    agent_operational_state_present,
+                    agent_operational_state_detail,
+                ) = _agent_operational_state_present(
+                    receipt_alias, receipt_project_id
+                )
+            else:
+                (
+                    agent_operational_state_present,
+                    agent_operational_state_detail,
+                ) = _unscoped_project_state_present()
+        except (OSError, RuntimeError, ValueError) as exc:
+            agent_operational_state_present = True
+            agent_operational_state_detail = f"final inventory unresolved: {exc}"
+            cleanup_failed = True
+        if project_credential_residue_items or agent_operational_state_present:
+            cleanup_failed = True
+            emit(
+                "Warning: final project/config/agent inventory found operational "
+                "state or could not verify its absence.",
+                err=True,
+            )
     if full and cleanup_failed and recovery_state_mutated:
         (
             restore_failures,
@@ -2818,7 +2887,14 @@ def cleanup_cmd(
     remaining_terraform = collect_terraform_residue()
     if remaining_terraform:
         cleanup_failed = True
-    local_terminal = not cleanup_failed and not iam_partial and not remaining_terraform
+    local_terminal = bool(
+        not cleanup_failed
+        and not iam_partial
+        and not remaining_terraform
+        and not final_credential_labels
+        and not project_credential_residue_items
+        and not agent_operational_state_present
+    )
     try:
         record_teardown_event(
             phase="local_cleanup",
@@ -2834,6 +2910,13 @@ def cleanup_cmd(
             },
             verification={
                 "remaining_terraform_count": len(remaining_terraform),
+                "remaining_shared_credential_groups": len(
+                    final_credential_labels
+                ),
+                "remaining_project_credential_records": len(
+                    project_credential_residue_items
+                ),
+                "agent_operational_state_present": agent_operational_state_present,
                 "sky_state_preserved": bool(
                     sky_preserved_by_skip or not sky_audit_safe
                 ),
