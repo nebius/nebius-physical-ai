@@ -213,6 +213,17 @@ def scenario_contract_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _round_robin_scenario_ids(
+    count: int, *, row_count: int, cursor: int = 0, offset: int = 0
+) -> tuple[list[int], int]:
+    """Assign the next globally unvisited scenario records before cycling."""
+
+    if count < 0 or row_count <= 0 or cursor < 0:
+        raise ValueError("scenario assignment counts must be non-negative and non-empty")
+    assigned = [(cursor + offset + index) % row_count for index in range(count)]
+    return assigned, cursor + count
+
+
 def _ensure_runtime_buffers(env: Any, rows: list[dict[str, Any]]) -> None:
     import torch
 
@@ -220,11 +231,13 @@ def _ensure_runtime_buffers(env: Any, rows: list[dict[str, Any]]) -> None:
         env.npa_scenario_indices = torch.zeros(
             env.num_envs, dtype=torch.long, device=env.device
         )
-        env.npa_scenario_episode_counts = torch.zeros_like(env.npa_scenario_indices)
+        env.npa_scenario_assignment_cursor = 0
         env.npa_scenario_applied_counts = torch.zeros(
             len(rows), dtype=torch.long, device=env.device
         )
         env.npa_scenario_rows = rows
+    if not hasattr(env, "npa_scenario_assignment_cursor"):
+        env.npa_scenario_assignment_cursor = 0
     if not hasattr(env, "npa_stable_placement_steps"):
         env.npa_stable_placement_steps = torch.zeros(
             env.num_envs, dtype=torch.long, device=env.device
@@ -255,12 +268,18 @@ def _assign(env: Any, env_ids: Any, rows: list[dict[str, Any]]) -> Any:
     rotate = os.environ.get("NPA_SIM2REAL_SCENARIO_ROTATE_ON_RESET", "1") != "0"
     offset = int(os.environ.get("NPA_SIM2REAL_SCENARIO_OFFSET", "0") or 0)
     if rotate:
-        # A prime stride makes complete passes through non-prime split sizes while
-        # different vector env indices cover adjacent records in parallel.
-        scenario_ids = (
-            ids + offset + env.npa_scenario_episode_counts[ids] * 104729
-        ) % len(rows)
-        env.npa_scenario_episode_counts[ids] += 1
+        # Consume the next global records before cycling. Per-environment episode
+        # counters can revisit already-covered records when only a small subset of
+        # vector environments resets, making strict coverage mathematically
+        # avoidable even after enough real reset assignments have occurred.
+        assigned, next_cursor = _round_robin_scenario_ids(
+            int(ids.numel()),
+            row_count=len(rows),
+            cursor=int(env.npa_scenario_assignment_cursor),
+            offset=offset,
+        )
+        scenario_ids = torch.tensor(assigned, dtype=torch.long, device=env.device)
+        env.npa_scenario_assignment_cursor = next_cursor
     else:
         scenario_ids = (ids + offset) % len(rows)
     env.npa_scenario_indices[ids] = scenario_ids

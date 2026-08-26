@@ -41,6 +41,7 @@ from npa.workflows.sim2real.isaac_scenario_task import (
     STABLE_PLACEMENT_SPEED_MPS,
     STABLE_PLACEMENT_STEPS,
     ScenarioContractError,
+    _round_robin_scenario_ids,
     _scheduled_drop_penalty_type,
     drop_penalty_schedule_fraction,
     module_source,
@@ -328,6 +329,22 @@ def test_isaac_scenario_split_matches_authoritative_task_contract(
         "NPA_SIM2REAL_TASK_CONTRACT_DIGEST", contract["task_contract_digest"]
     )
     assert len(read_scenarios(str(scenario_path))) == 3
+
+
+def test_partial_vector_resets_cover_unvisited_scenarios_before_cycling() -> None:
+    initial, cursor = _round_robin_scenario_ids(16, row_count=18)
+    partial_reset, cursor = _round_robin_scenario_ids(
+        4, row_count=18, cursor=cursor
+    )
+
+    # This is the exact shape of the failed live proof: 20 real assignments were
+    # enough to cover 18 records, but per-environment rotation revisited 0..15.
+    assert len(set(initial + partial_reset)) == 18
+    assert partial_reset == [16, 17, 0, 1]
+    assert cursor == 20
+
+    offset, _ = _round_robin_scenario_ids(3, row_count=5, offset=2)
+    assert offset == [2, 3, 4]
 
 
 def test_scenario_task_ships_strict_stable_placement_curriculum() -> None:
