@@ -269,6 +269,9 @@ CAMERA_VIEWS = json.loads(os.environ.get("ROLLOUT_CAMERA_VIEWS_JSON", "[]") or "
 CAPTURE_WIDTH = int(os.environ.get("ROLLOUT_CAPTURE_WIDTH", "640"))
 CAPTURE_HEIGHT = int(os.environ.get("ROLLOUT_CAPTURE_HEIGHT", "480"))
 CAPTURE_STRIDE = max(1, int(os.environ.get("ROLLOUT_CAPTURE_STRIDE", "1")))
+CAPTURE_STEPS = [step for step in SAMPLE_STEPS if step % CAPTURE_STRIDE == 0]
+if HORIZON_STEPS not in CAPTURE_STEPS:
+    CAPTURE_STEPS.append(HORIZON_STEPS)
 PNG_COMPRESS_LEVEL = int(os.environ.get("ROLLOUT_PNG_COMPRESS_LEVEL", "3"))
 CAPTURE_FPS = float(os.environ.get("ROLLOUT_CAPTURE_FPS", "10"))
 SIM_DEVICE = os.environ.get("ROLLOUT_SIM_DEVICE", "cuda:0").strip() or "cuda:0"
@@ -297,6 +300,7 @@ def upload_and_exit(rollouts, note, applied=None):
             "capture": {"width": CAPTURE_WIDTH, "height": CAPTURE_HEIGHT,
                         "rollout_stride": CAPTURE_STRIDE,
                         "decision_points": STEPS, "horizon_steps": HORIZON_STEPS,
+                        "expected_frames_per_view": len(CAPTURE_STEPS),
                         "png_compress_level": PNG_COMPRESS_LEVEL, "fps": CAPTURE_FPS}}
     json.dump(meta, open("/tmp/rollwork/rollouts.json", "w"))
     print("ROLLOUT_WROTE", note, "rollouts", len(rollouts), flush=True)
@@ -995,9 +999,13 @@ def materialize_rollout_dirs(
         }
         horizon_steps = int(capture.get("horizon_steps") or 0)
         capture_stride = max(1, int(capture.get("rollout_stride") or 1))
-        expected_frame_count = (
-            len(range(0, horizon_steps, capture_stride)) + 1 if horizon_steps > 0 else 0
-        )
+        expected_frame_count = int(capture.get("expected_frames_per_view") or 0)
+        if expected_frame_count <= 0:
+            expected_frame_count = (
+                len(range(0, horizon_steps, capture_stride)) + 1
+                if horizon_steps > 0
+                else 0
+            )
         missing_views = sorted(
             name for name in expected_views if not view_frames.get(name)
         )
