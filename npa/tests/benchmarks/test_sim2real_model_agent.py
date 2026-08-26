@@ -1783,6 +1783,21 @@ def test_model_server_renderer_pins_image_and_isolates_multinode_endpoint() -> N
     assert any(volume["name"] == "infiniband" for volume in pod_spec["volumes"])
 
 
+def test_model_server_renderer_rejects_unsupported_multinode_vllm() -> None:
+    model = {
+        "repository": "org/model",
+        "revision": "a" * 40,
+        "server": "vllm",
+        "server_image": "registry/server@sha256:" + "b" * 64,
+        "tool_call_parser": "parser",
+        "context_limit": 1000,
+        "tensor_parallel_size": 16,
+    }
+
+    with pytest.raises(ValueError, match="provider-neutral multi-node rendezvous"):
+        render_server_resources(model, namespace="trial-a", service_name="m")
+
+
 def test_glm_catalog_uses_release_with_blackwell_glm_support() -> None:
     npa_root = Path(__file__).resolve().parents[2]
     catalog = json.loads(

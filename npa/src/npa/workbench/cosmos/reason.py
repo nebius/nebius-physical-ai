@@ -192,8 +192,6 @@ def merge_reason_evaluations(
     score3 = float(cosmos3_eval.get("score", 0.0))
     score = round((score2 + score3) / 2.0, 6)
     success = bool(reason2_eval.get("success")) and bool(cosmos3_eval.get("success"))
-    if not success and score >= threshold:
-        success = score >= threshold
     steps2 = {
         int(item.get("step", index)): item
         for index, item in enumerate(reason2_eval.get("per_step") or [])

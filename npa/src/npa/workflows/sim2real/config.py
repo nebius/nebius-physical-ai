@@ -259,11 +259,7 @@ def build_config_from_env(**overrides: Any) -> Sim2RealLoopConfig:
         ),
         vlm_cosmos3_model=str(
             overrides.get("vlm_cosmos3_model")
-            or (
-                DEFAULT_COSMOS3_MODEL
-                if overrides.get("vlm_reason3_model")  # archived key compatibility
-                else ""
-            )
+            or overrides.get("vlm_reason3_model")  # archived key compatibility
             or os.environ.get("VLM_COSMOS3_MODEL")
             or DEFAULT_COSMOS3_MODEL
         ),

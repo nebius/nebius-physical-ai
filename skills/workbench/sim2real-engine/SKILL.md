@@ -45,7 +45,9 @@ or spawn sibling Jobs.
 - The Cosmos3 evaluator uses `nvidia/Cosmos3-Super-Reasoner` through Token Factory,
   receives `NEBIUS_TOKEN_FACTORY_KEY` by secret name, requests no GPU, and
   publishes evaluator tokens/latency/retries/request IDs/cost separately from
-  model-agent accounting.
+  model-agent accounting. Stage 9 must reject missing, duplicate, or extra
+  evaluations by comparing that single result with the authoritative Stage 7
+  rollout set before PPO or checkpoint selection.
 - Train, validation, and gold digests are disjoint. Checkpoint ranking reads
   validation only; Stage 10 reads gold only and preserves exact render lineage.
 - Temporal rewards remain bounded and simulator-grounded. Strict success remains

@@ -32,6 +32,7 @@ from npa.workflows.sim2real.workflow_stage import (
     _stage8,
     _stage9,
     _stage9_existing_replay,
+    _validate_stage7_cosmos3_coverage,
 )
 
 
@@ -230,6 +231,31 @@ def test_reduced_plan_preserves_all_real_solution_boundaries() -> None:
     assert set(states) == expected
     assert states.count("stage-07-rollouts") == 1
     assert states.count("stage-09-ppo") == 1
+
+
+@pytest.mark.parametrize(
+    ("stage7_ids", "source_ids", "evaluation_ids"),
+    [
+        (["rollout-1", "rollout-2"], ["rollout-1"], ["rollout-1"]),
+        (["rollout-1"], ["rollout-1", "rollout-1"], ["rollout-1", "rollout-1"]),
+        (["rollout-1"], ["rollout-1", "rollout-extra"], ["rollout-1", "rollout-extra"]),
+    ],
+    ids=["missing", "duplicate", "extra"],
+)
+def test_stage9_rejects_inexact_single_evaluator_coverage(
+    stage7_ids: list[str], source_ids: list[str], evaluation_ids: list[str]
+) -> None:
+    stage7 = {
+        "schema": "npa.sim2real.policy_rollouts.v1",
+        "rollout_dirs": [f"/tmp/actions/{item}" for item in stage7_ids],
+    }
+    cosmos3 = {
+        "source_rollout_ids": source_ids,
+        "evaluations": [{"rollout_id": item} for item in evaluation_ids],
+    }
+
+    with pytest.raises(RuntimeError, match="exactly cover Stage 7"):
+        _validate_stage7_cosmos3_coverage(stage7, cosmos3)
 
 
 def test_stage_adapters_do_not_submit_hidden_kubernetes_jobs() -> None:
@@ -536,6 +562,10 @@ def test_stage9_retry_republishes_exact_evidence_without_training(
     )
     lane_base = f"{root}/vlm_eval/train/outer-01/iter-01/"
     lanes = {
+        f"{root}/actions/train/outer-01/iter-01/rollouts-result.json": {
+            "schema": "npa.sim2real.policy_rollouts.v1",
+            "rollout_dirs": ["/tmp/actions/rollout-1"],
+        },
         f"{root}/components/stage_08.json": {
             "stage": 8,
             "name": "stage_08_vlm_eval_train",

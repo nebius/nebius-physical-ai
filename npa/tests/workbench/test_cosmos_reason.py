@@ -23,6 +23,7 @@ from npa.workbench.cosmos.reason import (
     default_reason_cache_dir,
     cosmos_reason_family,
     merge_reason_evaluations,
+    merge_dual_reason_evaluations,
     prepare_cosmos_reason_cache,
     resolve_cosmos_reason_model_id,
     task_description_from_manifest,
@@ -250,7 +251,7 @@ def test_merge_dual_reason_evaluations_averages_scores_and_requires_both_success
         "rollout_id": "rollout-0000",
         "model": DEFAULT_REASON2_MODEL,
         "success": True,
-        "score": 0.8,
+        "score": 0.9,
         "per_step": [
             {
                 "step": 0,
@@ -266,7 +267,7 @@ def test_merge_dual_reason_evaluations_averages_scores_and_requires_both_success
         "rollout_id": "rollout-0000",
         "model": DEFAULT_COSMOS3_MODEL,
         "success": False,
-        "score": 0.4,
+        "score": 0.8,
         "per_step": [
             {
                 "step": 0,
@@ -284,13 +285,17 @@ def test_merge_dual_reason_evaluations_averages_scores_and_requires_both_success
     assert merged["two_evaluator"] is True
     assert merged["schema"] == "npa.sim2real.vlm_eval.v2"
     assert merged["component_source"] == "cosmos_reason2_cosmos3_vlm"
-    assert merged["score"] == 0.6
+    assert merged["score"] == 0.85
     assert merged["success"] is False
     assert merged["per_step"][0]["error_tags"] == ["ok", "late_grasp"]
     assert "reason2_critique" in merged["per_step"][0]
     assert "cosmos3_critique" in merged["per_step"][0]
     assert "cosmos3_tags" in merged["per_step"][0]
     assert merged["cosmos3"]["model"] == DEFAULT_COSMOS3_MODEL
+
+    archived_alias = merge_dual_reason_evaluations(reason2, cosmos3, threshold=0.75)
+    assert archived_alias["score"] == 0.85
+    assert archived_alias["success"] is False
 
 
 def test_summary_only_output_is_rejected_without_temporal_broadcast() -> None:

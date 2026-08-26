@@ -1678,6 +1678,17 @@ def test_build_config_from_env_reads_fixed_count_mode(monkeypatch) -> None:
     assert override.early_exit is True
 
 
+def test_archived_reason3_model_override_preserves_custom_value(monkeypatch) -> None:
+    monkeypatch.delenv("VLM_COSMOS3_MODEL", raising=False)
+
+    config = build_config_from_env(
+        run_id="archived-cosmos3-model",
+        vlm_reason3_model="vendor/custom-cosmos3-reasoner",
+    )
+
+    assert config.vlm_cosmos3_model == "vendor/custom-cosmos3-reasoner"
+
+
 def test_component_heldout_payload_dispatches_isaac_backend(monkeypatch) -> None:
     envs = [{"env_id": "heldout-0000", "seed": 1}]
     captured = {}

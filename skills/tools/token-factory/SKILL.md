@@ -121,7 +121,9 @@ plan an earlier stage wrote rather than a hardcoded string.
 - **Canonical Sim2Real is scoring, not planning.** Stage 8 uses
   `nvidia/Cosmos3-Super-Reasoner` as its only Stage 8 evaluator, on CPU with no
   self-hosted evaluator image. It sends a bounded, deterministic rollout-wide
-  frame sample and requires event-local structured scores. Preserve request
+  frame sample and requires event-local structured scores. Stage 9 compares the
+  single evaluator result with the authoritative Stage 7 rollout set and rejects
+  missing, duplicate, or extra evaluations before PPO. Preserve request
   IDs, token usage, latency, retries, and an authoritative returned cost or
   explicit null separately from model-agent tokens.
 - **Sim2Real preflight is stronger than model listing.** Its submit and prepared

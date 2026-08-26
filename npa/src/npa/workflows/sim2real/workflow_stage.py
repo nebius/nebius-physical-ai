@@ -533,6 +533,51 @@ def _run_eval(
     return report
 
 
+def _validate_stage7_cosmos3_coverage(
+    stage7: dict[str, Any], cosmos3: dict[str, Any]
+) -> dict[str, dict[str, Any]]:
+    """Return evaluations only when one Cosmos3 result covers Stage 7 exactly."""
+
+    rollout_dirs = stage7.get("rollout_dirs")
+    stage7_ids = (
+        [Path(str(item).rstrip("/")).name for item in rollout_dirs]
+        if isinstance(rollout_dirs, list)
+        else []
+    )
+    evaluations = cosmos3.get("evaluations")
+    evaluation_rows = evaluations if isinstance(evaluations, list) else []
+    evaluation_ids = [
+        str(item.get("rollout_id") or "")
+        for item in evaluation_rows
+        if isinstance(item, dict)
+    ]
+    source_ids_value = cosmos3.get("source_rollout_ids")
+    source_ids = (
+        [str(item) for item in source_ids_value]
+        if isinstance(source_ids_value, list)
+        else []
+    )
+    if (
+        stage7.get("schema") != "npa.sim2real.policy_rollouts.v1"
+        or not stage7_ids
+        or any(not item for item in stage7_ids)
+        or len(set(stage7_ids)) != len(stage7_ids)
+        or not evaluation_rows
+        or len(evaluation_ids) != len(evaluation_rows)
+        or any(not item for item in evaluation_ids)
+        or len(set(evaluation_ids)) != len(evaluation_ids)
+        or len(source_ids) != len(evaluation_ids)
+        or len(set(source_ids)) != len(source_ids)
+        or set(source_ids) != set(evaluation_ids)
+        or len(stage7_ids) != len(evaluation_ids)
+        or set(stage7_ids) != set(evaluation_ids)
+    ):
+        raise RuntimeError(
+            "Stage 8 Cosmos3 evaluations do not exactly cover Stage 7 rollouts"
+        )
+    return {rollout_id: item for rollout_id, item in zip(evaluation_ids, evaluation_rows)}
+
+
 def _stage9(args: argparse.Namespace) -> None:
     from npa.workbench.cosmos.reason import cosmos_reason_family
     from npa.workflows.sim2real import byo_isaac_trainer
@@ -545,6 +590,13 @@ def _stage9(args: argparse.Namespace) -> None:
         f"iter-{args.inner_iteration:02d}/"
     )
     cosmos3 = read_json(lane_base + "cosmos3.json", directory=work / "cosmos3")
+    actions_uri = (
+        f"{root}/actions/train/outer-{args.outer_iteration:02d}/"
+        f"iter-{args.inner_iteration:02d}/"
+    )
+    stage7 = read_json(
+        actions_uri + "rollouts-result.json", directory=work / "stage7-rollouts"
+    )
     stage8_record = read_json(
         f"{root}/components/stage_08.json", directory=work / "stage8-record"
     )
@@ -571,8 +623,7 @@ def _stage9(args: argparse.Namespace) -> None:
         raise RuntimeError(
             "Stage 8 requires genuine hosted Cosmos3 identity, model family, and provenance"
         )
-    right = {item["rollout_id"]: item for item in cosmos3["evaluations"]}
-    source_rollout_ids = [str(item) for item in cosmos3.get("source_rollout_ids") or right]
+    right = _validate_stage7_cosmos3_coverage(stage7, cosmos3)
     cosmos3_usage = dict(cosmos3.get("evaluator_usage") or {})
     request_fields = {
         "request_id",
@@ -585,11 +636,7 @@ def _stage9(args: argparse.Namespace) -> None:
     }
     requests = [dict(item.get("request") or {}) for item in right.values()]
     if (
-        not right
-        or len(right) != len(cosmos3["evaluations"])
-        or set(source_rollout_ids) != set(right)
-        or len(source_rollout_ids) != len(right)
-        or int(cosmos3_usage.get("request_count") or 0) != len(right)
+        int(cosmos3_usage.get("request_count") or 0) != len(right)
         or any(not request_fields.issubset(request) for request in requests)
         or int(cosmos3_usage.get("input_tokens") or 0)
         != sum(int(request.get("input_tokens") or 0) for request in requests)
@@ -634,10 +681,6 @@ def _stage9(args: argparse.Namespace) -> None:
     evidence_uri = f"{root}/inner_loop/outer-{args.outer_iteration:02d}/evidence.json"
     evaluation_uri = lane_base + "evaluations/"
     signal_uri = lane_base + "signals/"
-    actions_uri = (
-        f"{root}/actions/train/outer-{args.outer_iteration:02d}/"
-        f"iter-{args.inner_iteration:02d}/"
-    )
     prior: dict[str, Any] = {}
     if list_prefix(evidence_uri):
         prior = read_json(evidence_uri, directory=work / "prior-evidence")

@@ -346,10 +346,11 @@ states:
       - {uri: "{{config.root_uri}}/components/stage_08.json", schema: npa.sim2real.component_record.v1}
 
   stage-09-ppo:
-    description: Stage 9 - consume Cosmos3 temporal signals, run genuine BYO Isaac RSL-RL PPO, and select with validation only.
+    description: Stage 9 - require exact Stage 7 rollout coverage from the single hosted Cosmos3 evaluator, consume its temporal signals, run genuine BYO Isaac RSL-RL PPO, and select with validation only.
     resources: isaac-gpu
     params: {outer_iteration: "{{loop.outer-loop}}", inner_iteration: "{{loop.inner-loop}}"}
     inputs:
+      - {uri: "{{config.root_uri}}/actions/train/outer-{{loop.outer-loop}}/iter-{{loop.inner-loop}}/rollouts-result.json", schema: npa.sim2real.policy_rollouts.v1}
       - {uri: "{{config.root_uri}}/vlm_eval/train/outer-{{loop.outer-loop}}/iter-{{loop.inner-loop}}/cosmos3.json", schema: npa.sim2real.cosmos3_evaluator.v1}
       - {uri: "{{config.root_uri}}/components/stage_08.json", schema: npa.sim2real.component_record.v1}
     run:

@@ -87,6 +87,11 @@ def render_server_resources(
     tp = int(model["tensor_parallel_size"])
     if tp < 1 or tp > 16 or (tp > 8 and tp != 16):
         raise ValueError("this benchmark supports TP 1-8 on one node or TP 16 on two")
+    if model["server"] == "vllm" and tp > 8:
+        raise ValueError(
+            "vLLM tensor parallelism above 8 requires a provider-neutral "
+            "multi-node rendezvous contract, which this benchmark does not implement"
+        )
     replicas = 2 if tp == 16 else 1
     gpus_per_pod = 8 if tp >= 8 else tp
     argv = _server_argv(model, service_name=service_name)
