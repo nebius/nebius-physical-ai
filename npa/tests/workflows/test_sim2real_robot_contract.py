@@ -472,6 +472,7 @@ def test_isaac_prepare_converts_urdf_and_publishes_digest_manifest(
     monkeypatch.setenv("NPA_ROBOT_WORK_DIR", str(tmp_path / "runtime"))
 
     manifest = isaac_robot_asset.prepare()
+    assert converter_cfgs[0].merge_fixed_joints is False
     assert converter_cfgs[0].joint_drive.gains.stiffness is None
     assert manifest["converter"] == "isaaclab.sim.converters.UrdfConverter"
     assert (
