@@ -941,8 +941,8 @@ def agent_teardown_event_disposition(event: Mapping[str, Any]) -> str:
         and action.get("kind") == "terraform_agent_destroy"
         and isinstance(errors, list)
         and not errors
-        and bool(event_project_id)
-        and identity_project_id == event_project_id
+        and bool(identity_project_id)
+        and (not event_project_id or identity_project_id == event_project_id)
         and bool(str(identity.get("instance_id") or "").strip())
         and bool(identity_agent_name)
         and identity_agent_name == resource
