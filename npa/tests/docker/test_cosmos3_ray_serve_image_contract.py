@@ -59,6 +59,8 @@ def test_image_uses_exact_accepted_framework_parent_and_bakes_no_weights() -> No
     assert "*.safetensors" in text
     assert "NPA_COSMOS3_RAY_GUARDRAILS=true" in text
     assert "ARG COSMOS3_RAY_VERSION=2.46.0" in text
+    assert "ARG LINUX_LIBC_DEV_VERSION=6.8.0-138.138" in text
+    assert '"linux-libc-dev=${LINUX_LIBC_DEV_VERSION}"' in text
     assert "uv sync --frozen --inexact" in text
     assert "--extra guardrail --extra serve --group cu130" in text
     assert "uv pip install --python /opt/npa/.venv/bin/python" in text

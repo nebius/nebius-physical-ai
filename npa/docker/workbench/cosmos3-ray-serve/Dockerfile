@@ -9,6 +9,10 @@ ARG NPA_SOURCE_SHA
 ARG COSMOS3_RAY_SERVE_VERSION=ray1-cu130
 ARG COSMOS3_REF=5e67049cd94acb667786f1e6dd0dab821cb90c97
 ARG COSMOS3_RAY_VERSION=2.46.0
+# Exact Ubuntu Noble security build that fixes the parent image's known
+# linux-libc-dev critical findings. This package is compile-time headers only;
+# the workload still uses the host's managed kernel and NVIDIA driver.
+ARG LINUX_LIBC_DEV_VERSION=6.8.0-138.138
 
 LABEL npa.tool="cosmos3-ray-serve" \
       npa.version="${COSMOS3_RAY_SERVE_VERSION}" \
@@ -35,7 +39,11 @@ ENV NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA} \
     PYTHONPATH=/opt/npa/src
 
 USER root
-RUN mkdir -p /outputs /tmp/ray \
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+       "linux-libc-dev=${LINUX_LIBC_DEV_VERSION}" \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /outputs /tmp/ray \
     && chown ubuntu:ubuntu /outputs /tmp/ray
 USER ubuntu
 
