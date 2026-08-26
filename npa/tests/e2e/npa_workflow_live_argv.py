@@ -65,11 +65,12 @@ def one_shot_submit_args(
     project: str | None,
     assume_decision: str = "",
     preset: str = "",
+    config_vars: Iterable[tuple[str, str]] = (),
     image_args: Sequence[str] = (),
     secret_env_args: Sequence[str] = (),
     skypilot_config_args: Sequence[str] = (),
 ) -> list[str]:
-    return [
+    args = [
         "workbench",
         "workflow",
         "submit",
@@ -89,6 +90,9 @@ def one_shot_submit_args(
         *secret_env_args,
         *skypilot_config_args,
     ]
+    for key, value in config_vars:
+        args.extend(["--var", f"{key}={value}"])
+    return args
 
 
 def runtime_submit_args(

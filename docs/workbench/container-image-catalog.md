@@ -16,10 +16,11 @@ docker pull ghcr.io/nebius/nebius-physical-ai/npa-retargeting:0.1.1
 `NPA_REGISTRY` remains available for private or locally modified images, and
 existing saved `container_registry` overrides remain compatible.
 
-The catalog was verified against the public GHCR tag and OCI manifest APIs on
-2026-08-22. All 27 images in the active publication plan resolved anonymously;
-the separately quarantined LTX-2.5 candidate remains absent. **Built** is the
-UTC build date of the newest listed variant; reproducible images that
+The accepted-release manifest was verified against the public GHCR tag and OCI
+manifest APIs on 2026-08-26. All 29 recorded release digests resolved
+anonymously; the active publication plan also records LeIsaac as pending rather
+than treating it as an accepted release claim. **Built** is the UTC build date
+of the newest listed variant; reproducible images that
 intentionally zero their OCI `created` field use the timestamp in the immutable
 tag and `npa.build_ts` label.
 
@@ -68,7 +69,7 @@ published, and anonymously pullable status for this exact digest only.
 | Alpamayo 2 Super 34B | `npa-alpamayo2-super` | `0.1.0-cu128` | 2026-08-18 | Real surround-view VLA trajectory inference through NVIDIA's Apache-2.0 source. OpenMDW-1.1 weights and the separately gated/non-transferable PhysicalAI-AV sample data are fetched only at runtime under the operator's Hugging Face identity. The payload-clean image and real workflow were validated independently on B200 and RTX PRO 6000. See the [operator guide](alpamayo2-super.md). |
 | NVIDIA Content Agents 0.5.2 | `npa-content-agents` | `0.5.2-npa2` | 2026-08-22 | Public rigid-object material/physics/validation adapter containing Apache-2.0 source and zero OVRTX payload. Exact OVRTX 0.3.0.312915 is fetched directly from NVIDIA into the operator runtime cache. The exact public digest passed byte/layer scanning, anonymous resolution, and a real RTX PRO 6000 workflow. See [Content Agents](content-agents.md). |
 | SONIC Retargeting 0.1.1 | `npa-retargeting` | `0.1.1` | 2026-06-16 | CPU-only motion retargeting and motion-library conversion feeding SONIC locomotion training. A slim `python:3.11` image for the inexpensive preprocessing stage before GPU work. |
-| Rerun 0.31.4 | `npa-rerun-viewer` | `0.31.4` | 2026-07-01 | Rerun viewer/server on port 9090 for `.rrd` robotics traces produced by workflow stages. Uses `python:3.11-slim` and runs as `nobody`. |
+| Rerun 0.31.4 | `npa-rerun-viewer` | `0.31.4` | 2026-07-01 | Published Rerun viewer/server on port 9090 for `.rrd` robotics traces. Current source defines an as-yet-unpublished non-root `ubuntu` SkyPilot worker with ports 9090/9876 and an exact-source Sim2Real Stage 14 runtime; it bakes no models, datasets, credentials, or runtime caches. |
 | LeRobot Policy Server 0.1.1 | `npa-lerobot-policy` | `0.1.1` | 2026-07-10 | Serves a trained LeRobot policy over HTTP for closed-loop inference (default `lerobot/diffusion_pusht`). This is the BYO-policy contract endpoint called by other workflow stages. |
 | BDD100K Detection Training | `npa-detection-training` | `bdd100k-golden-eval-smoke-20260614T210000Z` | 2026-07-22 | Object-detector train/eval service on port 8790 with torchvision detectors and COCO metrics. It provides the re-label and measurement stage in the data-factory loop. |
 | Lichtblick 1.26.0 | `npa-lichtblick` | `1.26.0` | 2026-07-23 | Fully open-source (MPL-2.0), Foxglove-compatible MCAP/ROS log viewer served by Caddy on port 8080. No account or proprietary component is required. |

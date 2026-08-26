@@ -514,8 +514,10 @@ def test_canonical_sim2real_registered_for_runtime_live_infra() -> None:
     matrix_case = next((case for case in SUBMIT_LIVE_MATRIX if case.spec == spec), None)
     assert matrix_case is not None
     assert matrix_case.runtime
-    assert matrix_case.expected_parallel_tasks == 2
+    assert matrix_case.expected_parallel_tasks == 8
     assert matrix_case.tier == "multi"
+    assert matrix_case.preset == "public-franka-lift"
+    assert "NEBIUS_TOKEN_FACTORY_KEY" in matrix_case.secret_envs
     helpers = _load_live_helpers()
     assert spec in helpers.DYNAMIC_SPECS
 

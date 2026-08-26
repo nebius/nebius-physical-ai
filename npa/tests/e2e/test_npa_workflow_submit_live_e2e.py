@@ -232,7 +232,7 @@ def _plan_only_config_vars(
     if case.spec != "sim2real.yaml":
         return case.config_vars
     digest = "sha256:" + "0" * 64
-    roles = ("controller", "transfer", "envgen", "reason", "isaac", "viewer")
+    roles = ("controller", "transfer", "envgen", "isaac", "viewer")
     return (
         *(
             (f"{role}_image", f"{registry}/plan-only/sim2real-{role}@{digest}")

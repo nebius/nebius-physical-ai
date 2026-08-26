@@ -733,20 +733,25 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
         "sim2real.yaml",
         "multi",
-        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "HF_TOKEN"),
+        secret_envs=(
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "HF_TOKEN",
+            "NEBIUS_TOKEN_FACTORY_KEY",
+        ),
         runtime=True,
         preset="public-franka-lift",
-        expected_parallel_tasks=2,
+        expected_parallel_tasks=8,
         rotation_skip=True,
         skip_reason=(
-            "The canonical live case requires six project-local immutable image "
+            "The canonical live case requires five immutable component image "
             "digests, a prewarmed Isaac cache PVC, and task-aligned trigger data."
         ),
         notes=(
             "Canonical compositional 14-stage Sim2Real runtime using the explicit "
             "public-franka-lift preset. Repository CI validates the dynamic plan; "
-            "an operator live run first stages the pinned public seed and supplies six "
-            "registry-qualified immutable component images, an Isaac cache PVC, "
+            "an operator live run first stages the pinned public seed and supplies five "
+            "immutable component images, an Isaac cache PVC, "
             "and task-aligned trigger data. The reduced real-GPU proof is archived "
             "separately because the component images are project-local."
         ),

@@ -59,7 +59,8 @@ RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.list \
     && install -d -m 0755 -o ubuntu -g ubuntu \
       /opt/npa/docker/workbench/rerun-viewer \
       /opt/rerun \
-      /opt/rerun/venv
+      /opt/rerun/venv \
+    && chown ubuntu:ubuntu /workspace
 
 COPY --chown=ubuntu:ubuntu pyproject.toml /opt/npa/pyproject.toml
 COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa
