@@ -369,9 +369,10 @@ jobs:
           test -n "$PROVENANCE_URL" && test -s "$PROVENANCE_BUNDLE"
           test -n "$SBOM_URL" && test -s "$SBOM_BUNDLE"
 
-      - name: Verify pushed bytes, revision, payload, and anonymous pull
+      - name: Verify pushed bytes, revision, payload, visibility, and anonymous pull
         env:
           DIGEST: ${{ steps.push.outputs.digest }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           repository="${IMAGE%:*}"
@@ -407,6 +408,16 @@ jobs:
             docker run --rm --entrypoint /opt/npa/venv/bin/python "$exact" \
               /opt/npa/docker/workbench/sonic/verify_mujoco_image.py
           fi
+          path="${IMAGE#ghcr.io/}"
+          owner="${path%%/*}"
+          package_and_tag="${path#*/}"
+          package="${package_and_tag%:*}"
+          encoded="${package//\//%2F}"
+          package_api="/orgs/${owner}/packages/container/${encoded}"
+          if [ "$(gh api "$package_api" --jq .visibility)" != public ]; then
+            gh api --method PATCH "$package_api" -f visibility=public >/dev/null
+          fi
+          test "$(gh api "$package_api" --jq .visibility)" = public
           anonymous_config="$(mktemp -d)"
           DOCKER_CONFIG="$anonymous_config" crane manifest "$IMAGE" >/dev/null
           echo "Validated public development digest: $DIGEST" >> "$GITHUB_STEP_SUMMARY"
@@ -422,6 +433,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: imjasonh/setup-crane@v0.4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Delete only the exact unpromoted development version
         env:
@@ -477,6 +494,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: imjasonh/setup-crane@v0.4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Remove an exact run-owned dev tag after a failed build batch
         env:

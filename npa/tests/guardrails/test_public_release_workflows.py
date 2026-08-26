@@ -112,13 +112,19 @@ def test_post_push_and_promotion_gates_are_digest_bound() -> None:
         "subject-name: ${{ steps.push.outputs.repository }}",
         "Require both digest-bound attestation results",
         "crane digest",
-        "DOCKER_CONFIG=\"$anonymous_config\" crane manifest",
+        'DOCKER_CONFIG="$anonymous_config" crane manifest',
         "--development-sha",
         "--mode preflight",
         "--mode publish",
         "Retained immutable dev tags as release provenance",
     ):
         assert required in text
+    visibility = text.index('gh api --method PATCH "$package_api" -f visibility=public')
+    anonymous = text.index('DOCKER_CONFIG="$anonymous_config" crane manifest')
+    pushed_scan = text.index(
+        "scan_image_cosmos3_ray_serve_payload.py", text.index("Verify pushed bytes")
+    )
+    assert pushed_scan < visibility < anonymous
 
 
 def test_build_and_cleanup_dispatches_cannot_fall_through_to_promotion() -> None:
