@@ -140,16 +140,22 @@ def main() -> None:
                 "server_source_revision": source_revision,
             }
 
-        @api.post("/v1/batches", response_model=RayBatchResponse)
+        @api.post("/v1/batches")
         async def batches(
-            self, body: RayBatchRequest, authorization: str = Header(default="")
-        ) -> RayBatchResponse:
+            self, body: dict[str, Any], authorization: str = Header(default="")
+        ) -> dict[str, Any]:
             self._authorize(authorization)
-            if body.model != model_name:
+            # Keep Pydantic models outside FastAPI's route metadata.  Ray 2.46
+            # cloudpickles that metadata when freezing an ingress app, and the
+            # pinned Python 3.13/Pydantic combination recursively serializes a
+            # model's mock validator.  Explicit validation preserves the exact
+            # wire contract without making the model part of Ray's app pickle.
+            request = RayBatchRequest.model_validate(body)
+            if request.model != model_name:
                 raise fastapi.HTTPException(
-                    status_code=404, detail=f"model {body.model!r} is not loaded"
+                    status_code=404, detail=f"model {request.model!r} is not loaded"
                 )
-            request_id = body.request_id or uuid.uuid4().hex
+            request_id = request.request_id or uuid.uuid4().hex
             request_root = (output_root / request_id).resolve()
             if output_root not in request_root.parents:
                 raise fastapi.HTTPException(
@@ -158,7 +164,7 @@ def main() -> None:
             request_root.mkdir(parents=True, exist_ok=False)
 
             samples = []
-            for raw in body.samples:
+            for raw in request.samples:
                 sample = OmniSampleOverrides.model_validate(raw)
                 sample.output_dir = request_root / str(raw["name"])
                 sample.download(sample.output_dir / "inputs")
@@ -196,7 +202,7 @@ def main() -> None:
                 max_batch_size=max_batch_size,
                 framework_revision=framework_revision,
                 server_source_revision=source_revision,
-            )
+            ).model_dump(mode="json")
 
         @api.get("/v1/artifacts/{artifact_path:path}")
         async def artifact(

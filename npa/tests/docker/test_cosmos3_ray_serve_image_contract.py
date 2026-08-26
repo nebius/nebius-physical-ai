@@ -75,7 +75,16 @@ def test_server_invokes_upstream_native_batching_component() -> None:
     assert ".generate.remote(sample)" in server
     assert "@ray.serve.batch" in verify
     assert "OmniInference" in verify
-    assert "_cuda_getArchFlags() or \"\").split()" in verify
+    assert '_cuda_getArchFlags() or "").split()' in verify
+
+
+def test_ray_ingress_keeps_pydantic_models_out_of_frozen_route_metadata() -> None:
+    server = (ROOT / "npa/src/npa/workbench/cosmos/ray_server.py").read_text()
+    assert '@api.post("/v1/batches")' in server
+    assert "response_model=RayBatchResponse" not in server
+    assert "body: dict[str, Any]" in server
+    assert "request = RayBatchRequest.model_validate(body)" in server
+    assert ').model_dump(mode="json")' in server
 
 
 def test_golden_eval_is_real_model_backed_batching() -> None:
