@@ -32,7 +32,7 @@ def main() -> None:
         raise RuntimeError("NPA batch contract is missing from the framework environment")
     if not callable(npa_ray_server.main):
         raise RuntimeError("NPA authenticated Ray ingress is not importable")
-    arches = set(torch._C._cuda_getArchFlags())
+    arches = set((torch._C._cuda_getArchFlags() or "").split())
     for required in {"sm_100", "sm_120"}:
         if required not in arches:
             raise RuntimeError(f"torch wheel lacks required Blackwell target {required}: {sorted(arches)}")

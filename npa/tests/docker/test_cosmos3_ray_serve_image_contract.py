@@ -73,6 +73,7 @@ def test_server_invokes_upstream_native_batching_component() -> None:
     assert ".generate.remote(sample)" in server
     assert "@ray.serve.batch" in verify
     assert "OmniInference" in verify
+    assert "_cuda_getArchFlags() or \"\").split()" in verify
 
 
 def test_golden_eval_is_real_model_backed_batching() -> None:
