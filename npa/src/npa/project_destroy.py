@@ -1153,6 +1153,8 @@ def execute_project_destroy(
                         )
                         recovery_commands.append(list(cancel_command))
         else:
+            agent_final_iam_complete = False
+            agent_retained_shared_commands: list[list[str]] = []
             for command in commands:
                 completed = _run(command, runner)
                 executed.append(list(command))
@@ -1164,14 +1166,20 @@ def execute_project_destroy(
                     and parsed.get("outcome") == "degraded_local_metadata"
                     and parsed.get("remote_absence_verified") is True
                 )
-                agent_iam_unresolved = bool(
+                agent_retained_shared = bool(
                     phase.name == "agents"
+                    and completed.returncode == 0
                     and isinstance(parsed, dict)
+                    and parsed.get("outcome") == "verified_deleted"
+                    and parsed.get("verified") is True
                     and parsed.get("infrastructure_absent") is True
                     and parsed.get("iam_cleanup_complete") is False
+                    and parsed.get("shared_iam_preserved") is True
+                    and parsed.get("iam_disposition") == "retained_shared"
                 )
                 agent_converged = bool(
                     phase.name == "agents"
+                    and completed.returncode == 0
                     and isinstance(parsed, dict)
                     and parsed.get("infrastructure_absent") is True
                     and parsed.get("iam_cleanup_complete") is True
@@ -1181,11 +1189,16 @@ def execute_project_destroy(
                         "exact remote controller absence verified; stale local "
                         "metadata remains for idempotent reconciliation"
                     )
-                elif agent_iam_unresolved:
-                    phase_errors.append(
-                        "exact agent infrastructure absence was verified, but agent IAM cleanup remains unresolved"
-                    )
-                    recovery_commands.append(list(command))
+                elif agent_retained_shared:
+                    # Agent IAM is project-shared. An earlier sibling must retain it
+                    # while a later sibling still depends on the account. Treat that
+                    # exact terminal disposition as provisional until the final
+                    # sibling verifies the shared account absent.
+                    agent_final_iam_complete = False
+                    agent_retained_shared_commands.append(list(command))
+                elif agent_converged:
+                    agent_final_iam_complete = True
+                    agent_retained_shared_commands.clear()
                 elif phase.name == "agents" and not agent_converged:
                     phase_errors.append(
                         "agent teardown did not return parseable, complete "
@@ -1195,6 +1208,33 @@ def execute_project_destroy(
                 elif completed.returncode != 0:
                     phase_errors.append(_command_failure_detail(completed))
                     recovery_commands.append(list(command))
+            if phase.name == "agents":
+                if phase_errors:
+                    shared_iam_state = "unresolved"
+                elif agent_final_iam_complete:
+                    shared_iam_state = "verified_absent"
+                elif agent_retained_shared_commands:
+                    shared_iam_state = "retained_shared"
+                elif commands:
+                    shared_iam_state = "unresolved"
+                else:
+                    shared_iam_state = "not_applicable"
+                phase_evidence.update(
+                    {
+                        "agent_count": len(commands),
+                        "shared_iam_state": shared_iam_state,
+                    }
+                )
+                if (
+                    commands
+                    and not phase_errors
+                    and not agent_final_iam_complete
+                ):
+                    phase_errors.append(
+                        "exact agent infrastructure absence was verified, but shared "
+                        "agent IAM cleanup remains unresolved after the final sibling"
+                    )
+                    recovery_commands.extend(agent_retained_shared_commands)
             if phase.name == "storage_iam" and not phase_errors:
                 raw_generation_ids = phase.metadata.get("generation_ids", [])
                 raw_logical_names = phase.metadata.get("logical_names", [])

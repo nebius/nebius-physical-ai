@@ -258,6 +258,124 @@ def test_unresolved_agent_iam_blocks_project_destroy_execution(
     assert result["status"] == "partial"
 
 
+def test_multi_agent_destroy_converges_after_final_sibling_deletes_shared_iam(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa import project_destroy
+    from npa.clients import config as config_module
+
+    _write_project_config(config_module.CONFIG_PATH)
+    order: list[str] = []
+    phases = [
+        DestroyPhase(
+            "agents",
+            (
+                ("npa", "agent-destroy", "agent-a"),
+                ("npa", "agent-destroy", "agent-b"),
+            ),
+            "agents",
+        ),
+        DestroyPhase(
+            "controller",
+            (("npa", "controller-delete"),),
+            "controller",
+            ("agents",),
+        ),
+    ]
+
+    def run(command, **_kwargs):  # noqa: ANN001, ANN202
+        order.append(command[-1])
+        if command[-1] == "agent-a":
+            payload = {
+                "outcome": "verified_deleted",
+                "verified": True,
+                "infrastructure_absent": True,
+                "iam_cleanup_complete": False,
+                "shared_iam_preserved": True,
+                "iam_disposition": "retained_shared",
+            }
+        elif command[-1] == "agent-b":
+            payload = {
+                "outcome": "verified_deleted",
+                "verified": True,
+                "infrastructure_absent": True,
+                "iam_cleanup_complete": True,
+                "shared_iam_preserved": False,
+                "iam_disposition": "deleted",
+            }
+        else:
+            payload = {}
+        return subprocess.CompletedProcess(
+            command, 0, stdout=json.dumps(payload), stderr=""
+        )
+
+    result = project_destroy.execute_project_destroy("demo", phases, runner=run)
+
+    assert order == ["agent-a", "agent-b", "controller-delete"]
+    assert result["status"] == "success"
+    assert [item["status"] for item in result["phases"]] == [
+        "completed",
+        "completed",
+    ]
+    assert result["phases"][0]["errors"] == []
+    assert result["phases"][0]["recovery_commands"] == []
+    assert result["phases"][0]["evidence"]["shared_iam_state"] == "verified_absent"
+
+
+def test_multi_agent_destroy_blocks_when_final_sibling_retains_shared_iam(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa import project_destroy
+    from npa.clients import config as config_module
+
+    _write_project_config(config_module.CONFIG_PATH)
+    order: list[str] = []
+    phases = [
+        DestroyPhase(
+            "agents",
+            (
+                ("npa", "agent-destroy", "agent-a"),
+                ("npa", "agent-destroy", "agent-b"),
+            ),
+            "agents",
+        ),
+        DestroyPhase(
+            "controller",
+            (("npa", "controller-delete"),),
+            "controller",
+            ("agents",),
+        ),
+    ]
+    def run(command, **_kwargs):  # noqa: ANN001, ANN202
+        order.append(command[-1])
+        iam_complete = command[-1] == "agent-a"
+        payload = {
+            "outcome": "verified_deleted",
+            "verified": True,
+            "infrastructure_absent": True,
+            "iam_cleanup_complete": iam_complete,
+            "shared_iam_preserved": not iam_complete,
+            "iam_disposition": "deleted" if iam_complete else "retained_shared",
+        }
+        return subprocess.CompletedProcess(
+            command, 0, stdout=json.dumps(payload), stderr=""
+        )
+
+    result = project_destroy.execute_project_destroy("demo", phases, runner=run)
+
+    assert order == ["agent-a", "agent-b"]
+    assert result["status"] == "partial"
+    assert [item["status"] for item in result["phases"]] == [
+        "partial",
+        "skipped_dependency",
+    ]
+    assert "agent IAM cleanup remains unresolved" in result["phases"][0]["errors"][0]
+    assert result["phases"][0]["recovery_commands"] == [
+        ["npa", "agent-destroy", "agent-b"],
+    ]
+    assert result["phases"][0]["evidence"]["shared_iam_state"] == "retained_shared"
+
+
 def test_malformed_agent_destroy_output_blocks_dependent_retirement(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
