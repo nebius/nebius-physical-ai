@@ -85,6 +85,7 @@ def test_ray_ingress_keeps_pydantic_models_out_of_frozen_route_metadata() -> Non
     assert "body: dict[str, Any]" in server
     assert "request = RayBatchRequest.model_validate(body)" in server
     assert ').model_dump(mode="json")' in server
+    assert ") -> FileResponse:" not in server
 
 
 def test_golden_eval_is_real_model_backed_batching() -> None:

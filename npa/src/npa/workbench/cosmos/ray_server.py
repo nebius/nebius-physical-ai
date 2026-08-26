@@ -207,7 +207,7 @@ def main() -> None:
         @api.get("/v1/artifacts/{artifact_path:path}")
         async def artifact(
             self, artifact_path: str, authorization: str = Header(default="")
-        ) -> FileResponse:
+        ):
             self._authorize(authorization)
             path = (output_root / artifact_path).resolve()
             if output_root not in path.parents or not path.is_file():
