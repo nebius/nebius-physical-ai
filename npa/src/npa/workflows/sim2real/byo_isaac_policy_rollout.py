@@ -336,6 +336,9 @@ try:
     rtx_settings.set_float("/rtx/dataWindowNDC/2", 1.0)
     rtx_settings.set_float("/rtx/dataWindowNDC/3", 1.0)
     rtx_settings.set_bool("/rtx/dataWindow/fitOutputToDataWindow", False)
+    if os.environ.get("NPA_PREPARE_ROBOT_ASSET_IN_APP") == "1":
+        from npa.workflows.sim2real.isaac_robot_asset import prepare_with_running_app
+        prepare_with_running_app()
     import gymnasium as gym, torch
     import isaaclab_tasks  # noqa: F401
     _scenarios = None

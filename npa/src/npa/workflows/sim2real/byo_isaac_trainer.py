@@ -145,20 +145,14 @@ def robot_asset_preflight_script(robot_spec: dict[str, Any]) -> str:
         "export NPA_BYO_ROBOT_SPEC_JSON="
         + shlex.quote(spec_json)
         + "\n"
-        + '"$PY" -m npa.workflows.sim2real.isaac_robot_asset '
-        + operation
-        + "\n"
     )
     if operation == "prepare":
-        # Conversion runs in its own Isaac process.  Kit shutdown can remove
-        # converter-owned files under /tmp even though prepare() has already
-        # published the exact USD and digest manifest.  Re-fetch those durable
-        # bytes after shutdown so the following rollout uses a normal file whose
-        # lifetime spans articulation creation.  Later train/eval stages already
-        # use fetch directly.
-        command += (
-            '"$PY" -m npa.workflows.sim2real.isaac_robot_asset fetch\n'
-        )
+        # Stage 7 converts inside the rollout's already-running AppLauncher.
+        # A separate converter process is unsafe because Kit shutdown can end
+        # that interpreter before it publishes or preserve its local USD.
+        command += "export NPA_PREPARE_ROBOT_ASSET_IN_APP=1\n"
+    else:
+        command += '"$PY" -m npa.workflows.sim2real.isaac_robot_asset fetch\n'
     return command
 
 

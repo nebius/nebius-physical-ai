@@ -136,8 +136,8 @@ def _validate_usd(path: Path, spec: dict) -> None:
         )
 
 
-def prepare() -> dict:
-    """Convert the Stage-2 URDF once (or normalize USD) and publish exact bytes."""
+def prepare_with_running_app() -> dict:
+    """Convert and publish while the caller's Isaac application is running."""
 
     spec = _spec()
     _validate_spec(spec)
@@ -160,14 +160,6 @@ def prepare() -> dict:
             "robot source file is missing or has the wrong digest"
         )
 
-    from isaaclab.app import AppLauncher
-
-    app = AppLauncher(
-        headless=True,
-        kit_args=os.environ.get(
-            "NPA_ISAAC_KIT_ARGS", "--portable-root /tmp/npa-isaac-kit"
-        ),
-    ).app
     try:
         if spec["source_format"] == "urdf":
             os.environ["ROS_PACKAGE_PATH"] = str(source_root)
@@ -197,11 +189,8 @@ def prepare() -> dict:
             )
         _validate_usd(resolved, spec)
 
-        # Publish before closing Kit.  Isaac's SimulationApp shutdown may terminate
-        # the interpreter after its native plugins have drained, so code placed after
-        # ``app.close()`` is not a reliable production handoff.  The following
-        # invocation (rollout/train/eval) must only start after both exact objects are
-        # durable; otherwise it could observe the contract's URI without the bytes.
+        # The caller keeps Kit alive through publication and the Stage 7 rollout.
+        # Train/eval only start after both exact objects are durable.
         usd_sha256 = _sha256(resolved)
         manifest = {
             "schema": "npa.sim2real.resolved_robot_asset.v1",
@@ -231,6 +220,21 @@ def prepare() -> dict:
         raise IsaacRobotAssetError(
             f"Isaac robot conversion failed for {source.name}: {exc}"
         ) from exc
+
+
+def prepare() -> dict:
+    """Standalone compatibility entrypoint for conversion and publication."""
+
+    from isaaclab.app import AppLauncher
+
+    app = AppLauncher(
+        headless=True,
+        kit_args=os.environ.get(
+            "NPA_ISAAC_KIT_ARGS", "--portable-root /tmp/npa-isaac-kit"
+        ),
+    ).app
+    try:
+        return prepare_with_running_app()
     finally:
         app.close()
 
