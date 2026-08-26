@@ -428,7 +428,10 @@ def test_isaac_prepare_converts_urdf_and_publishes_digest_manifest(
 
     class FakeApp:
         def close(self) -> None:
-            return None
+            # Isaac Kit shutdown may terminate the interpreter.  The immutable
+            # handoff must therefore be durable before close begins.
+            assert spec["resolved_usd_uri"] in uploads
+            assert spec["resolved_manifest_uri"] in uploads
 
     class FakeLauncher:
         def __init__(self, **kwargs: object) -> None:

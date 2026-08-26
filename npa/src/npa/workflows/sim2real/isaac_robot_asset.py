@@ -196,6 +196,35 @@ def prepare() -> dict:
                 f"unsupported robot source format {spec['source_format']!r}"
             )
         _validate_usd(resolved, spec)
+
+        # Publish before closing Kit.  Isaac's SimulationApp shutdown may terminate
+        # the interpreter after its native plugins have drained, so code placed after
+        # ``app.close()`` is not a reliable production handoff.  The following
+        # invocation (rollout/train/eval) must only start after both exact objects are
+        # durable; otherwise it could observe the contract's URI without the bytes.
+        usd_sha256 = _sha256(resolved)
+        manifest = {
+            "schema": "npa.sim2real.resolved_robot_asset.v1",
+            "embodiment_digest": spec["embodiment_digest"],
+            "source_tree_sha256": spec["source_tree_sha256"],
+            "source_sha256": spec["source_sha256"],
+            "source_format": spec["source_format"],
+            "usd_uri": spec["resolved_usd_uri"],
+            "usd_sha256": usd_sha256,
+            "usd_size_bytes": resolved.stat().st_size,
+            "expected_action_dim": int(spec["expected_action_dim"]),
+            "expected_observation_dim": int(spec["expected_observation_dim"]),
+            "converter": (
+                "isaaclab.sim.converters.UrdfConverter"
+                if spec["source_format"] == "urdf"
+                else "identity"
+            ),
+        }
+        manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True))
+        _upload(resolved, str(spec["resolved_usd_uri"]))
+        _upload(manifest_path, str(spec["resolved_manifest_uri"]))
+        print("ROBOT_ASSET_RESOLVED " + json.dumps(manifest, sort_keys=True), flush=True)
+        return manifest
     except IsaacRobotAssetError:
         raise
     except Exception as exc:  # noqa: BLE001 - surface Isaac converter diagnostics
@@ -204,30 +233,6 @@ def prepare() -> dict:
         ) from exc
     finally:
         app.close()
-
-    usd_sha256 = _sha256(resolved)
-    manifest = {
-        "schema": "npa.sim2real.resolved_robot_asset.v1",
-        "embodiment_digest": spec["embodiment_digest"],
-        "source_tree_sha256": spec["source_tree_sha256"],
-        "source_sha256": spec["source_sha256"],
-        "source_format": spec["source_format"],
-        "usd_uri": spec["resolved_usd_uri"],
-        "usd_sha256": usd_sha256,
-        "usd_size_bytes": resolved.stat().st_size,
-        "expected_action_dim": int(spec["expected_action_dim"]),
-        "expected_observation_dim": int(spec["expected_observation_dim"]),
-        "converter": (
-            "isaaclab.sim.converters.UrdfConverter"
-            if spec["source_format"] == "urdf"
-            else "identity"
-        ),
-    }
-    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True))
-    _upload(resolved, str(spec["resolved_usd_uri"]))
-    _upload(manifest_path, str(spec["resolved_manifest_uri"]))
-    print("ROBOT_ASSET_RESOLVED " + json.dumps(manifest, sort_keys=True), flush=True)
-    return manifest
 
 
 def fetch() -> dict:
