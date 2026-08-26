@@ -141,7 +141,7 @@ def robot_asset_preflight_script(robot_spec: dict[str, Any]) -> str:
     if operation not in {"prepare", "fetch"}:
         raise ValueError("NPA_SIM2REAL_ROBOT_ASSET_OPERATION must be prepare or fetch")
     spec_json = json.dumps(robot_spec, sort_keys=True)
-    return (
+    command = (
         "export NPA_BYO_ROBOT_SPEC_JSON="
         + shlex.quote(spec_json)
         + "\n"
@@ -149,6 +149,17 @@ def robot_asset_preflight_script(robot_spec: dict[str, Any]) -> str:
         + operation
         + "\n"
     )
+    if operation == "prepare":
+        # Conversion runs in its own Isaac process.  Kit shutdown can remove
+        # converter-owned files under /tmp even though prepare() has already
+        # published the exact USD and digest manifest.  Re-fetch those durable
+        # bytes after shutdown so the following rollout uses a normal file whose
+        # lifetime spans articulation creation.  Later train/eval stages already
+        # use fetch directly.
+        command += (
+            '"$PY" -m npa.workflows.sim2real.isaac_robot_asset fetch\n'
+        )
+    return command
 
 
 def embodiment_evidence(robot_spec: dict[str, Any] | None) -> dict[str, Any]:

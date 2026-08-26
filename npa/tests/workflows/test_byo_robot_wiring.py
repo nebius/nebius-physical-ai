@@ -85,6 +85,37 @@ def test_payload_carries_retarget_and_gripper_fields():
     assert p["gripper_close"] == 0.0
 
 
+def test_prepare_asset_preflight_refetches_published_usd_after_kit_shutdown(
+    monkeypatch,
+):
+    spec = {
+        "source_format": "urdf",
+        "resolved_usd_uri": "s3://private-run/resolved/robot.usd",
+    }
+    monkeypatch.setenv("NPA_SIM2REAL_ROBOT_ASSET_OPERATION", "prepare")
+
+    script = tr.robot_asset_preflight_script(spec)
+
+    assert script.count("npa.workflows.sim2real.isaac_robot_asset prepare") == 1
+    assert script.count("npa.workflows.sim2real.isaac_robot_asset fetch") == 1
+    assert script.index("isaac_robot_asset prepare") < script.index(
+        "isaac_robot_asset fetch"
+    )
+
+
+def test_fetch_asset_preflight_does_not_repeat_download(monkeypatch):
+    spec = {
+        "source_format": "urdf",
+        "resolved_usd_uri": "s3://private-run/resolved/robot.usd",
+    }
+    monkeypatch.setenv("NPA_SIM2REAL_ROBOT_ASSET_OPERATION", "fetch")
+
+    script = tr.robot_asset_preflight_script(spec)
+
+    assert "isaac_robot_asset prepare" not in script
+    assert script.count("npa.workflows.sim2real.isaac_robot_asset fetch") == 1
+
+
 def test_payload_ur_preset_carries_no_gripper():
     # A bare UR preset must serialize n_gripper_joints=0 / no finger links so the
     # in-container honesty check can flag the lift incompatibility.
