@@ -182,7 +182,7 @@ schema is identical for GLM, Qwen, and GPT-OSS trials. The closed receipt schema
 binds the canonical spec path and digest, source and
 benchmark-base commits, exact detached workspace state (including content hashes
 for every tracked or untracked change), run identity,
-project selection, staged-input manifest and identity, six immutable component
+project selection, staged-input manifest and identity, five immutable component
 image digests, runtime/resume/no-deadline policy, scoped Isaac EULA acceptance,
 required secret environment names (never values), the paths and hashes of eight
 completed, passing preflight receipts, and the exact argv-array digest. The controller requires the
