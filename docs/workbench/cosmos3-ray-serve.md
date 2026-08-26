@@ -39,6 +39,20 @@ The service exposes authenticated `GET /health`, model-backed `GET /ready`,
 `GET /models`, `GET /system-info`, `POST /v1/batches`, and artifact retrieval at
 `GET /v1/artifacts/{path}`.
 
+### Trusted batch callers and conditioning downloads
+
+Treat the bearer token as a credential for trusted workflow pods, not as a
+general multi-tenant API key. Each authenticated `/v1/batches` request is passed
+to upstream `OmniSampleOverrides.download()`, which can fetch client-selected
+conditioning inputs from HTTP(S) or S3 and can use files already mounted in the
+container. NPA does not restrict those network destinations or claim an SSRF
+defense at this API boundary.
+
+Do not expose the endpoint to untrusted clients. Limit token distribution to the
+workflow pods that own the generation queue, isolate the service from unrelated
+tenants, and enforce any required destination allowlist with the deployment's
+network-egress controls.
+
 ## Submit and persist a batch
 
 Prepare an exact JSON object in S3:

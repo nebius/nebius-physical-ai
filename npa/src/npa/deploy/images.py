@@ -127,7 +127,12 @@ OMNIVERSE_RESTRICTED_DERIVED_IMAGES = RESTRICTED_DERIVED_IMAGES
 # digest and its payload-scan/GPU evidence — not before.
 UNVALIDATED_PUBLICATION_TOOLS: frozenset[str] = frozenset()
 VALIDATION_CANDIDATE_TOOLS: frozenset[str] = frozenset()
-PUBLICATION_QUARANTINE_TOOLS: frozenset[str] = UNVALIDATED_PUBLICATION_TOOLS
+# Compatibility view used by publication callers and public imports. Derive it
+# from the two canonical validation-state inventories; never maintain it
+# independently.
+PUBLICATION_QUARANTINE_TOOLS: frozenset[str] = (
+    UNVALIDATED_PUBLICATION_TOOLS | VALIDATION_CANDIDATE_TOOLS
+)
 
 # Some newer operator/BYOF pins have not yet been promoted to the supported
 # anonymous channel. Public execution stays on the last accepted release while
