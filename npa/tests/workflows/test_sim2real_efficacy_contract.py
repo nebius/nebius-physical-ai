@@ -585,6 +585,39 @@ def test_temporal_credit_is_grounded_bounded_and_non_degenerate() -> None:
     assert signal["per_step"][1]["confidence"] < signal["per_step"][0]["confidence"]
 
 
+def test_temporal_credit_fallback_preserves_normalized_source_actions() -> None:
+    static_truth = {
+        "object_goal_distance_m": 0.30,
+        "end_effector_object_distance_m": 0.20,
+        "contact": False,
+        "stable_grasp": False,
+        "object_lift_m": 0.0,
+        "placement_stable": False,
+        "scenario_config_digest": "cfg",
+    }
+    evaluation = {
+        "rollout_id": "stationary-with-policy-cadence",
+        "per_step": [
+            {
+                "step": index,
+                "action": [magnitude, -0.1],
+                "error_tags": ["minor_alignment"],
+                "confidence": 0.9,
+                "simulator_ground_truth": static_truth,
+            }
+            for index, magnitude in enumerate((0.10, 0.12, 0.15, 0.18))
+        ],
+    }
+
+    signal = convert_evaluation(evaluation)
+
+    calibration = signal["calibration"]
+    assert calibration["degenerate_simulator_fallback_used"] is True
+    assert calibration["nonzero_advantage_count"] > 0
+    assert len({row["reward"] for row in signal["per_step"]}) > 1
+    assert all(row["action_credit"]["source_action"] for row in signal["per_step"])
+
+
 def test_temporal_credit_calibration_rejects_untrustworthy_vlm_rows() -> None:
     sources = (
         ("model_missing", 0.95, False, ["minor_alignment"]),
