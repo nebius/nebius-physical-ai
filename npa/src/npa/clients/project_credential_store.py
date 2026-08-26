@@ -128,6 +128,10 @@ def _compatibility_views(document: dict[str, Any], root: Mapping[str, Any]) -> N
     selected = projects.get(current) if current and isinstance(projects, Mapping) else None
     if isinstance(selected, Mapping):
         for key in ("storage", "storage_iam", "nebius"):
+            if key in {"storage", "storage_iam"} and selected.get(
+                "storage_selected"
+            ) is False:
+                continue
             value = selected.get(key)
             if isinstance(value, Mapping) and value:
                 compatible = deepcopy(dict(value))
@@ -222,6 +226,69 @@ def write_project_credentials(
     return target
 
 
+def select_project_credentials(
+    project_id: str,
+    *,
+    alias: str = "",
+    path: Path | None = None,
+    select_storage: bool,
+) -> Path:
+    """Select one exact project without adopting unrelated legacy storage.
+
+    A project-only configure preserves ambiguous legacy fields under a
+    non-authoritative quarantine record, then clears the top-level compatibility
+    view. This keeps recovery evidence without making an old bucket look selected
+    for a genuinely fresh configuration.
+    """
+
+    from npa.clients.credentials import update_private_yaml
+
+    exact = str(project_id or "").strip()
+    if not exact:
+        raise ProjectCredentialStoreError("exact project ID is required")
+    clean_alias = str(alias or "").strip()
+    target = _path(path)
+
+    def update(document: dict[str, Any]) -> dict[str, Any]:
+        root, projects = _root(document)
+        legacy_fields = {
+            key: deepcopy(document[key])
+            for key in ("storage", "storage_iam", "nebius")
+            if isinstance(document.get(key), Mapping) and document.get(key)
+        }
+        if legacy_fields and not projects:
+            owner = _legacy_owner(document)
+            if owner:
+                _migrate_legacy(document, root, projects, owner)
+            else:
+                root["legacy_unscoped"] = {
+                    **legacy_fields,
+                    "quarantined_at": _now(),
+                    "reason": "ambiguous legacy project ownership",
+                }
+
+        saved = projects.get(exact)
+        record = deepcopy(dict(saved)) if isinstance(saved, Mapping) else {}
+        record["project_id"] = exact
+        aliases = {str(item) for item in record.get("aliases", []) if item}
+        if clean_alias:
+            aliases.add(clean_alias)
+        if aliases:
+            record["aliases"] = sorted(aliases)
+        record["storage_selected"] = bool(select_storage)
+        record["updated_at"] = _now()
+        projects[exact] = record
+        root["projects"] = projects
+        root["schema_version"] = SCHEMA_VERSION
+        root["current_project_id"] = exact
+        document["project_credentials"] = root
+        _compatibility_views(document, root)
+        return document
+
+    update_private_yaml(target, update)
+    return target
+
+
 def persist_agent_service_account_id(project_id: str, service_account_id: str) -> None:
     """Persist one agent principal under its exact project identity."""
 
@@ -308,6 +375,8 @@ def merge_project_credentials_document(
                     seen.add(marker)
         incoming_iam["generations"] = generations
     merged = _deep_merge(existing, incoming)
+    if select and isinstance(incoming.get("storage"), Mapping):
+        merged["storage_selected"] = True
     merged["project_id"] = exact
     aliases = {str(item) for item in merged.get("aliases", []) if item}
     if alias:

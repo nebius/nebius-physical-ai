@@ -31,6 +31,13 @@ def _stub_model_access(monkeypatch):
     def _ok(token, repo, repo_type="model", *, timeout=10.0):
         return HFAccessResult(repo=repo, ok=True, status_code=200)
 
+    monkeypatch.setattr(
+        huggingface,
+        "validate_hf_identity",
+        lambda token, *, timeout=10.0: HFAccessResult(
+            repo="whoami-v2", ok=True, status_code=200
+        ),
+    )
     monkeypatch.setattr(huggingface, "validate_hf_access", _ok)
     monkeypatch.setattr(
         "npa.workbench.nurec.nurec.check_ngc_image_access",
@@ -911,7 +918,7 @@ def test_configure_project_scoped_profile_uses_profile_defaults(
 
     result = runner.invoke(
         app,
-        ["configure", "--interactive", "--no-provision"],
+        ["configure", "--interactive", "--provision"],
         input="\n".join([""] * 12) + "\n",
     )
 
@@ -976,7 +983,11 @@ def test_configure_explains_why_discovery_was_skipped(monkeypatch, tmp_path) -> 
         raise AssertionError("discovery must not run without a tenant")
 
     monkeypatch.setattr(nebius_module, "list_projects_in_tenant", _must_not_discover)
-    monkeypatch.setattr(nebius_module, "bucket_exists", lambda *_a, **_k: True)
+    monkeypatch.setattr(
+        nebius_module,
+        "bucket_exists",
+        lambda _project_id, bucket_name: bucket_name == "b",
+    )
     monkeypatch.setattr(
         nebius_module,
         "bootstrap_environment",
@@ -989,7 +1000,9 @@ def test_configure_explains_why_discovery_was_skipped(monkeypatch, tmp_path) -> 
     )
 
     # manual: tenant, project, region, profile-bind(n), bucket, tokens
-    answers = "\n".join(["tenant-x", "project-x", "", "n", "", "", "", ""]) + "\n"
+    answers = "\n".join(
+        ["tenant-x", "project-x", "", "n", "b", "", "", ""]
+    ) + "\n"
     result = runner.invoke(app, ["configure", "--interactive"], input=answers)
 
     assert result.exit_code == 0, result.output
@@ -1059,7 +1072,9 @@ def test_configure_binds_nebius_profile_to_selected_project(
         },
     )
 
-    answers = "\n".join(["tenant-x", "project-x", "", "", "", "", "", "", ""]) + "\n"
+    answers = "\n".join(
+        ["tenant-x", "project-x", "", "", "b", "", "", "", ""]
+    ) + "\n"
     result = runner.invoke(app, ["configure", "--interactive"], input=answers)
 
     assert result.exit_code == 0, result.output
@@ -1088,7 +1103,9 @@ def test_configure_declining_profile_binding_leaves_it_alone(
         },
     )
 
-    answers = "\n".join(["tenant-x", "project-x", "", "n", "", "", "", ""]) + "\n"
+    answers = "\n".join(
+        ["tenant-x", "project-x", "", "n", "b", "", "", ""]
+    ) + "\n"
     result = runner.invoke(app, ["configure", "--interactive"], input=answers)
 
     assert result.exit_code == 0, result.output
@@ -1288,7 +1305,7 @@ def test_configure_interactive_provisions_storage(monkeypatch, tmp_path) -> None
     assert oct(creds_path.stat().st_mode)[-3:] == "600"
 
 
-def test_configure_provision_reuses_existing_bucket_without_size_prompt(
+def test_configure_provision_reuses_explicit_bucket_without_size_prompt(
     monkeypatch, tmp_path
 ) -> None:
     import yaml
@@ -1327,16 +1344,17 @@ def test_configure_provision_reuses_existing_bucket_without_size_prompt(
 
     monkeypatch.setattr(nebius_module, "bootstrap_environment", fake_bootstrap)
 
-    # proj, tenant, region, bucket name (Enter = default), HF, token factory, NGC
-    answers = "\n".join(["tenant-1", "project-1", "", "", "", "", ""]) + "\n"
+    # proj, tenant, region, exact existing bucket, HF, token factory, NGC
+    answers = "\n".join(
+        ["tenant-1", "project-1", "", "existing-bucket", "", "", ""]
+    ) + "\n"
     result = runner.invoke(app, ["configure", "--interactive"], input=answers)
 
     assert result.exit_code == 0, result.output
-    assert "No bucket name provided" in result.output
     assert "Reusing existing object-storage bucket" in result.output
     assert sizes == [0]
     creds = yaml.safe_load(creds_path.read_text())
-    assert creds["storage"]["bucket"].startswith("s3://npa-bucket-")
+    assert creds["storage"]["bucket"] == "s3://existing-bucket/"
 
 
 def _run_reuse_bucket_configure(monkeypatch, tmp_path, *, hf_token: str, ngc_key: str):
@@ -1379,7 +1397,17 @@ def _run_reuse_bucket_configure(monkeypatch, tmp_path, *, hf_token: str, ngc_key
     monkeypatch.setattr(nebius_module, "bootstrap_environment", fake_bootstrap)
 
     answers = (
-        "\n".join(["tenant-1", "project-1", "", "", hf_token, "", ngc_key])
+        "\n".join(
+            [
+                "tenant-1",
+                "project-1",
+                "",
+                "existing-bucket",
+                hf_token,
+                "",
+                ngc_key,
+            ]
+        )
         + "\n"
     )
     return runner.invoke(app, ["configure", "--interactive"], input=answers)
@@ -1399,7 +1427,9 @@ def test_configure_prints_model_access_note_all_ok(monkeypatch, tmp_path) -> Non
     )
     assert result.exit_code == 0, result.output
     note = _note_line(result.output)
-    assert note == "[NOTE] HF and NGC tokens can access all checked workbench models."
+    assert "Access checks are informational" in note
+    assert "HF token valid; gated access confirmed" in note
+    assert "NGC key valid; repository access confirmed" in note
 
 
 def test_configure_hf_probe_preserves_gated_dataset_type(monkeypatch, tmp_path) -> None:
@@ -1578,7 +1608,11 @@ def _prepopulate_config(monkeypatch, tmp_path):
     _stub_nebius_defaults(
         monkeypatch, project="project-existing", tenant="tenant-existing"
     )
-    monkeypatch.setattr(nebius_module, "bucket_exists", lambda *_a, **_k: True)
+    monkeypatch.setattr(
+        nebius_module,
+        "bucket_exists",
+        lambda _project_id, bucket_name: bucket_name == "npa-bucket-existing",
+    )
     return creds_path, config_path, nebius_module
 
 
@@ -1679,8 +1713,14 @@ def test_configure_rerun_can_reprovision_storage_when_declined(
         bucket_storage_class="standard",
         on_status=None,
         on_resource_created=None,
+        allow_existing_bucket=True,
     ):
-        calls.append({"bucket_name": bucket_name})
+        calls.append(
+            {
+                "bucket_name": bucket_name,
+                "allow_existing_bucket": allow_existing_bucket,
+            }
+        )
         return {
             "nebius_api_key": "AK_new",
             "nebius_secret_key": "SK_new",
@@ -1700,6 +1740,8 @@ def test_configure_rerun_can_reprovision_storage_when_declined(
                 "",  # region (keep)
                 "n",  # keep existing storage? -> no
                 "",  # bucket name (fresh project-scoped default)
+                "",  # storage class (standard default)
+                "",  # size cap (recommended default)
                 "",  # HF (keep)
                 "",  # token factory (keep)
                 "",  # NGC (keep)
@@ -1711,10 +1753,12 @@ def test_configure_rerun_can_reprovision_storage_when_declined(
 
     assert result.exit_code == 0, result.output
     assert len(calls) == 1
-    assert calls[0]["bucket_name"] == nebius_module.bucket_name_for(
-        "tenant-existing", "project-existing"
+    assert re.fullmatch(
+        r"npa-bucket-\d{8}t\d{6}z-[0-9a-f]{6}-[0-9a-f]{8}",
+        calls[0]["bucket_name"],
     )
     assert calls[0]["bucket_name"] != "npa-bucket-existing"
+    assert calls[0]["allow_existing_bucket"] is False
     creds = yaml.safe_load(creds_path.read_text())
     assert creds["storage"]["aws_access_key_id"] == "AK_new"
 
@@ -2104,7 +2148,7 @@ def test_configure_bucket_search_failure_fails_closed_before_create(
     assert calls == []
 
 
-def test_noninteractive_bucket_collision_uses_a_different_deterministic_name(
+def test_noninteractive_bucket_collision_uses_a_fresh_collision_safe_name(
     monkeypatch,
 ) -> None:
     import npa.clients.nebius as nebius_module
@@ -2139,13 +2183,15 @@ def test_noninteractive_bucket_collision_uses_a_different_deterministic_name(
 
     assert result is not None
     assert requested[0] == "npa-bucket-collision"
-    assert requested[1] == cli_main._collision_bucket_name(
-        requested[0], tenant_id="tenant-a", project_id="project-a"
-    )
     assert requested[1] != requested[0]
+    assert re.fullmatch(
+        r"npa-bucket-\d{8}t\d{6}z-[0-9a-f]{6}-[0-9a-f]{8}", requested[1]
+    )
 
 
-def test_configure_no_provision_uses_manual_entry(monkeypatch, tmp_path) -> None:
+def test_configure_no_provision_skips_manual_storage_and_provider_calls(
+    monkeypatch, tmp_path
+) -> None:
     import yaml
 
     from npa.clients import config as config_module
@@ -2191,11 +2237,8 @@ def test_configure_no_provision_uses_manual_entry(monkeypatch, tmp_path) -> None
     assert "project alias: me-central1" in result.output
     assert "-p me-central1" in result.output
     creds = yaml.safe_load(creds_path.read_text())
-    assert creds["storage"]["aws_access_key_id"] == "AKIAMANUAL"
-    # Endpoint default tracks the entered region.
-    assert (
-        creds["storage"]["endpoint_url"] == "https://storage.me-central1.nebius.cloud"
-    )
+    assert "storage" not in creds
+    assert "Object storage not selected" in result.output
     cfg = yaml.safe_load(config_path.read_text())
     assert cfg["default_project"] == "me-central1"
     assert cfg["projects"]["me-central1"]["region"] == "me-central1"
@@ -2333,10 +2376,6 @@ def test_configure_interactive_updates_selected_token_and_preserves_skipped_toke
                 "",  # tenant id
                 "",  # project id
                 "",  # region
-                "",  # S3 access key id
-                "",  # S3 secret access key
-                "",  # S3 endpoint
-                "",  # S3 bucket
                 "hf-updated",  # HF token
                 "",  # Token Factory API key (unchanged)
                 "",  # NGC API key (unchanged)
@@ -2479,7 +2518,7 @@ def test_configure_existing_profile_writes_config_with_explicit_ids(
                 "tenant-from-profile",  # tenant id (entered explicitly)
                 "project-from-profile",  # project id (entered explicitly)
                 "",  # region (accept eu-north1 default)
-                "",  # bucket name (Enter = default)
+                "existing-bucket",  # exact existing bucket name
                 "hf_from_profile",  # HF token
                 "",  # Token Factory API key (skip)
                 "",  # NGC API key (skip)
@@ -2524,7 +2563,9 @@ def test_configure_uses_default_region_without_registry_discovery(
     monkeypatch.setattr(nebius_module, "bucket_exists", lambda *_a, **_k: True)
     monkeypatch.setattr(nebius_module, "bootstrap_environment", _bootstrap_capture([]))
 
-    answers = "\n".join(["tenant-1", "project-1", "", "", "", "", ""]) + "\n"
+    answers = "\n".join(
+        ["tenant-1", "project-1", "", "existing-bucket", "", "", ""]
+    ) + "\n"
     result = runner.invoke(app, ["configure", "--interactive"], input=answers)
 
     assert result.exit_code == 0, result.output
