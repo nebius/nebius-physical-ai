@@ -68,7 +68,7 @@ def test_canonical_is_one_standard_compositional_workflow() -> None:
     ):
         assert forbidden not in rendered_commands
 
-    for state in ("stage-04-shard-0", "stage-04-shard-1"):
+    for state in (f"stage-04-shard-{index}" for index in range(8)):
         assert any(
             "/components/lanes/stage_04/" in output["uri"]
             for output in payload["states"][state]["outputs"]
@@ -215,8 +215,7 @@ def test_reduced_plan_preserves_all_real_solution_boundaries() -> None:
         "stage-01-trigger",
         "stage-02-assets",
         "stage-03-transfer",
-        "stage-04-shard-0",
-        "stage-04-shard-1",
+        *(f"stage-04-shard-{index}" for index in range(8)),
         "stage-05-split",
         "stage-06-tokens",
         "stage-07-rollouts",
@@ -368,7 +367,7 @@ def test_shard_count_override_fails_before_plan_or_submit(shard_count: int) -> N
     spec = load_spec(SPEC)
     with pytest.raises(
         NpaWorkflowError,
-        match=rf"parallelCount resolves to {shard_count}.*2 members",
+        match=rf"parallelCount resolves to {shard_count}.*8 members",
     ):
         merge_config_overrides(spec, {"shard_count": str(shard_count)})
 
@@ -380,15 +379,15 @@ def test_shard_count_mismatch_fails_static_spec_validation(tmp_path: Path) -> No
     invalid.write_text(yaml.safe_dump(payload, sort_keys=False))
 
     with pytest.raises(
-        NpaWorkflowError, match="parallelCount resolves to 3.*2 members"
+        NpaWorkflowError, match="parallelCount resolves to 3.*8 members"
     ):
         load_spec(invalid)
 
 
 def test_default_shard_count_matches_declared_parallel_lanes() -> None:
-    spec = merge_config_overrides(load_spec(SPEC), {"shard_count": "2"})
+    spec = merge_config_overrides(load_spec(SPEC), {"shard_count": "8"})
     assert spec.states["stage-04-wave"].parallel_count == "{{config.shard_count}}"
-    assert len(spec.states["stage-04-wave"].parallel) == 2
+    assert len(spec.states["stage-04-wave"].parallel) == 8
 
 
 @pytest.mark.parametrize(

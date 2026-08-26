@@ -393,7 +393,7 @@ def test_sim2real_staged_chat_parameters_validate_and_plan() -> None:
     assert spec["config"]["env_count"] == "12000"
     assert spec["config"]["threshold"] == "0.82"
     assert spec["config"]["task_id"] == "Isaac-Lift-Cube-Franka-v0"
-    assert len(spec["states"]) == 18
+    assert len(spec["states"]) == 24
     assert "stage-08-cosmos3" in spec["states"]
     assert "stage-08-wave" not in spec["states"]
     assert "stage-08-reason2" not in spec["states"]
@@ -478,7 +478,7 @@ def test_sim2real_named_text_and_clause_boundaries_are_exact() -> None:
         ("rollout length 3", "--steps-per-rollout", "3"),
         ("12 held-out environments", "--gold-count", "12"),
         ("5000 environments", "--env-count", "5000"),
-        ("2 envgen shards", "--shard-count", "2"),
+        ("8 envgen shards", "--shard-count", "8"),
         ("seed 9", "--seed", "9"),
         ("80% success threshold", "--threshold", "0.8"),
         ("75% train fraction", "--train-fraction", "0.75"),
@@ -508,7 +508,7 @@ def test_unsupported_envgen_shards_fail_draft_planning() -> None:
     )
     assert draft["plan"]["ok"] is False
     assert "parallelCount resolves to 16" in draft["plan"]["error"]
-    assert "declares 2 members" in draft["plan"]["error"]
+    assert "declares 8 members" in draft["plan"]["error"]
 
 
 @pytest.mark.parametrize(

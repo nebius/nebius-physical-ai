@@ -40,7 +40,9 @@ config:
   allow_early_exit: "1"
   env_count: "10000"
   train_fraction: "0.8"
-  shard_count: "2"
+  # EnvGen is rank-aware and scales horizontally; use half of a 16-GPU pool so
+  # adjacent GPU stages retain scheduling headroom.
+  shard_count: "8"
   envgen_seed: "42"
   rollout_count: "64"
   steps_per_rollout: "32"
@@ -211,15 +213,15 @@ states:
 
   stage-04-wave:
     description: Stage 4 - parallel raw environment generation in standard workflow GPU tasks.
-    parallel: [stage-04-shard-0, stage-04-shard-1]
-    # v0.0.1 groups are explicit. This generic assertion makes shard_count=2 an
+    parallel: [stage-04-shard-0, stage-04-shard-1, stage-04-shard-2, stage-04-shard-3, stage-04-shard-4, stage-04-shard-5, stage-04-shard-6, stage-04-shard-7]
+    # v0.0.1 groups are explicit. This generic assertion makes shard_count=8 an
     # honest validate/plan/submit contract instead of silently under-fanning out.
     parallelCount: "{{config.shard_count}}"
-    maxConcurrency: 2
+    maxConcurrency: 8
     next: stage-05-split
 
   stage-04-shard-0:
-    description: Raw EnvGen shard 0/2.
+    description: Raw EnvGen shard 0/8.
     resources: envgen-gpu
     run:
       argv: [python3, -m, npa.workflows.sim2real.workflow_stage, --stage, "4", --root-uri, "{{config.root_uri}}", --run-id, "{{run.id}}", --env-count, "{{config.env_count}}", --shard-index, "0", --shard-count, "{{config.shard_count}}", --seed, "{{config.envgen_seed}}"]
@@ -228,13 +230,67 @@ states:
       - {uri: "{{config.root_uri}}/components/lanes/stage_04/shard-00000.json", schema: npa.sim2real.component_lane_record.v1}
 
   stage-04-shard-1:
-    description: Raw EnvGen shard 1/2.
+    description: Raw EnvGen shard 1/8.
     resources: envgen-gpu
     run:
       argv: [python3, -m, npa.workflows.sim2real.workflow_stage, --stage, "4", --root-uri, "{{config.root_uri}}", --run-id, "{{run.id}}", --env-count, "{{config.env_count}}", --shard-index, "1", --shard-count, "{{config.shard_count}}", --seed, "{{config.envgen_seed}}"]
     outputs:
       - {uri: "{{config.root_uri}}/envs/raw/raw-shard-01-summary.json", schema: npa.sim2real.raw_env_shard_summary.v1}
       - {uri: "{{config.root_uri}}/components/lanes/stage_04/shard-00001.json", schema: npa.sim2real.component_lane_record.v1}
+
+  stage-04-shard-2:
+    description: Raw EnvGen shard 2/8.
+    resources: envgen-gpu
+    run:
+      argv: [python3, -m, npa.workflows.sim2real.workflow_stage, --stage, "4", --root-uri, "{{config.root_uri}}", --run-id, "{{run.id}}", --env-count, "{{config.env_count}}", --shard-index, "2", --shard-count, "{{config.shard_count}}", --seed, "{{config.envgen_seed}}"]
+    outputs:
+      - {uri: "{{config.root_uri}}/envs/raw/raw-shard-02-summary.json", schema: npa.sim2real.raw_env_shard_summary.v1}
+      - {uri: "{{config.root_uri}}/components/lanes/stage_04/shard-00002.json", schema: npa.sim2real.component_lane_record.v1}
+
+  stage-04-shard-3:
+    description: Raw EnvGen shard 3/8.
+    resources: envgen-gpu
+    run:
+      argv: [python3, -m, npa.workflows.sim2real.workflow_stage, --stage, "4", --root-uri, "{{config.root_uri}}", --run-id, "{{run.id}}", --env-count, "{{config.env_count}}", --shard-index, "3", --shard-count, "{{config.shard_count}}", --seed, "{{config.envgen_seed}}"]
+    outputs:
+      - {uri: "{{config.root_uri}}/envs/raw/raw-shard-03-summary.json", schema: npa.sim2real.raw_env_shard_summary.v1}
+      - {uri: "{{config.root_uri}}/components/lanes/stage_04/shard-00003.json", schema: npa.sim2real.component_lane_record.v1}
+
+  stage-04-shard-4:
+    description: Raw EnvGen shard 4/8.
+    resources: envgen-gpu
+    run:
+      argv: [python3, -m, npa.workflows.sim2real.workflow_stage, --stage, "4", --root-uri, "{{config.root_uri}}", --run-id, "{{run.id}}", --env-count, "{{config.env_count}}", --shard-index, "4", --shard-count, "{{config.shard_count}}", --seed, "{{config.envgen_seed}}"]
+    outputs:
+      - {uri: "{{config.root_uri}}/envs/raw/raw-shard-04-summary.json", schema: npa.sim2real.raw_env_shard_summary.v1}
+      - {uri: "{{config.root_uri}}/components/lanes/stage_04/shard-00004.json", schema: npa.sim2real.component_lane_record.v1}
+
+  stage-04-shard-5:
+    description: Raw EnvGen shard 5/8.
+    resources: envgen-gpu
+    run:
+      argv: [python3, -m, npa.workflows.sim2real.workflow_stage, --stage, "4", --root-uri, "{{config.root_uri}}", --run-id, "{{run.id}}", --env-count, "{{config.env_count}}", --shard-index, "5", --shard-count, "{{config.shard_count}}", --seed, "{{config.envgen_seed}}"]
+    outputs:
+      - {uri: "{{config.root_uri}}/envs/raw/raw-shard-05-summary.json", schema: npa.sim2real.raw_env_shard_summary.v1}
+      - {uri: "{{config.root_uri}}/components/lanes/stage_04/shard-00005.json", schema: npa.sim2real.component_lane_record.v1}
+
+  stage-04-shard-6:
+    description: Raw EnvGen shard 6/8.
+    resources: envgen-gpu
+    run:
+      argv: [python3, -m, npa.workflows.sim2real.workflow_stage, --stage, "4", --root-uri, "{{config.root_uri}}", --run-id, "{{run.id}}", --env-count, "{{config.env_count}}", --shard-index, "6", --shard-count, "{{config.shard_count}}", --seed, "{{config.envgen_seed}}"]
+    outputs:
+      - {uri: "{{config.root_uri}}/envs/raw/raw-shard-06-summary.json", schema: npa.sim2real.raw_env_shard_summary.v1}
+      - {uri: "{{config.root_uri}}/components/lanes/stage_04/shard-00006.json", schema: npa.sim2real.component_lane_record.v1}
+
+  stage-04-shard-7:
+    description: Raw EnvGen shard 7/8.
+    resources: envgen-gpu
+    run:
+      argv: [python3, -m, npa.workflows.sim2real.workflow_stage, --stage, "4", --root-uri, "{{config.root_uri}}", --run-id, "{{run.id}}", --env-count, "{{config.env_count}}", --shard-index, "7", --shard-count, "{{config.shard_count}}", --seed, "{{config.envgen_seed}}"]
+    outputs:
+      - {uri: "{{config.root_uri}}/envs/raw/raw-shard-07-summary.json", schema: npa.sim2real.raw_env_shard_summary.v1}
+      - {uri: "{{config.root_uri}}/components/lanes/stage_04/shard-00007.json", schema: npa.sim2real.component_lane_record.v1}
 
   stage-05-split:
     description: Stage 5 - curate and seal disjoint train, validation, and untouched gold scenarios.
