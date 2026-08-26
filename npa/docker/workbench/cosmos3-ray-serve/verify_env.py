@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import inspect
 import os
 from pathlib import Path
 
@@ -14,13 +13,19 @@ from npa.workbench.cosmos import ray_server as npa_ray_server
 
 
 def main() -> None:
-    source = inspect.getsource(cosmos_ray_serve.OmniModelDeployment)
+    # Ray decorators replace the Python classes with Deployment/ActorClass
+    # wrappers at import time. Prove the pinned implementation from its source
+    # module, then separately prove that importing produced real Ray objects.
+    source_path = Path(cosmos_ray_serve.__file__)
+    source = source_path.read_text(encoding="utf-8")
     if "@ray.serve.batch" not in source:
         raise RuntimeError("upstream OmniModelDeployment no longer owns Ray Serve batching")
-    if "generate_batch" not in source or "OmniInference" not in inspect.getsource(
-        cosmos_ray_serve.OmniModelWorker
-    ):
+    if "class OmniModelDeployment" not in source or "OmniInference" not in source:
         raise RuntimeError("native Cosmos model generation path is incomplete")
+    if not hasattr(cosmos_ray_serve.OmniModelDeployment, "bind"):
+        raise RuntimeError("upstream model did not import as a Ray Serve deployment")
+    if not hasattr(cosmos_ray_serve.OmniModelWorker, "remote"):
+        raise RuntimeError("upstream model worker did not import as a Ray actor")
     if not hasattr(ray.serve, "run"):
         raise RuntimeError("Ray Serve runtime is missing")
     if npa_ray_contract.RAY_BATCH_SCHEMA != "npa.cosmos3.ray-serve.batch.v1":
