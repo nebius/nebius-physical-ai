@@ -608,6 +608,29 @@ def test_exact_bucket_lookup_does_not_treat_unrelated_not_found_as_absence(
         nebius.get_bucket_by_name("project-synthetic", "exact-synthetic")
 
 
+def test_exact_bucket_lookup_accepts_multiline_no_such_bucket_detail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    message = "\n".join(
+        [
+            "nebius storage bucket get-by-name failed (exit 13):",
+            "rpc error: code = NotFound desc = NoSuchBucket: Bucket doesn't exist",
+            "request = synthetic-request-id",
+            "caused by service error:",
+            "  Service storage error NoSuchBucket",
+            "This issue may be linked to API request calls.",
+            "  Trace ID: synthetic-trace-id",
+        ]
+    )
+    monkeypatch.setattr(
+        nebius,
+        "_run_json",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(nebius.NebiusError(message)),
+    )
+
+    assert nebius.get_bucket_by_name("project-synthetic", "exact-synthetic") is None
+
+
 def test_exact_existing_bucket_reuse_is_explicit_in_output(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

@@ -2111,18 +2111,24 @@ def _is_exact_bucket_not_found(message: str, bucket_name: str) -> bool:
     bucket does not exist.
     """
 
-    detail = str(message or "").rsplit("\n", 1)[-1].strip().lower()
-    if not _is_not_found(detail):
-        return False
     exact_name = str(bucket_name or "").strip().lower()
-    if exact_name and exact_name in detail:
-        return True
-    return bool(
-        re.search(
-            r"\bbucket\b[^\n]{0,120}\b(?:notfound|not found|does not exist|missing)\b",
+    for raw_line in str(message or "").splitlines():
+        detail = raw_line.strip().lower()
+        # The current CLI emits the bucket-specific provider detail before
+        # trailing request/trace diagnostics, so inspecting only the final line
+        # loses the authoritative NoSuchBucket result.
+        if "nosuchbucket" in detail:
+            return True
+        if not _is_not_found(detail):
+            continue
+        if exact_name and exact_name in detail:
+            return True
+        if re.search(
+            r"\bbucket\b\s+(?:does(?:n['’]?t| not)\s+exist|not found|is missing)\b",
             detail,
-        )
-    )
+        ):
+            return True
+    return False
 
 
 def ensure_bucket(
