@@ -31,6 +31,13 @@ def _stub_model_access(monkeypatch):
     def _ok(token, repo, repo_type="model", *, timeout=10.0):
         return HFAccessResult(repo=repo, ok=True, status_code=200)
 
+    monkeypatch.setattr(
+        huggingface,
+        "validate_hf_identity",
+        lambda token, *, timeout=10.0: HFAccessResult(
+            repo="whoami-v2", ok=True, status_code=200
+        ),
+    )
     monkeypatch.setattr(huggingface, "validate_hf_access", _ok)
     monkeypatch.setattr(
         "npa.workbench.nurec.nurec.check_ngc_image_access",
@@ -911,7 +918,7 @@ def test_configure_project_scoped_profile_uses_profile_defaults(
 
     result = runner.invoke(
         app,
-        ["configure", "--interactive", "--no-provision"],
+        ["configure", "--interactive", "--provision"],
         input="\n".join([""] * 12) + "\n",
     )
 
@@ -1399,7 +1406,9 @@ def test_configure_prints_model_access_note_all_ok(monkeypatch, tmp_path) -> Non
     )
     assert result.exit_code == 0, result.output
     note = _note_line(result.output)
-    assert note == "[NOTE] HF and NGC tokens can access all checked workbench models."
+    assert "Access checks are informational" in note
+    assert "HF token valid; gated access confirmed" in note
+    assert "NGC key valid; repository access confirmed" in note
 
 
 def test_configure_hf_probe_preserves_gated_dataset_type(monkeypatch, tmp_path) -> None:
@@ -1711,8 +1720,9 @@ def test_configure_rerun_can_reprovision_storage_when_declined(
 
     assert result.exit_code == 0, result.output
     assert len(calls) == 1
-    assert calls[0]["bucket_name"] == nebius_module.bucket_name_for(
-        "tenant-existing", "project-existing"
+    assert re.fullmatch(
+        r"npa-bucket-\d{8}t\d{6}z-[0-9a-f]{6}-[0-9a-f]{8}",
+        calls[0]["bucket_name"],
     )
     assert calls[0]["bucket_name"] != "npa-bucket-existing"
     creds = yaml.safe_load(creds_path.read_text())
@@ -2104,7 +2114,7 @@ def test_configure_bucket_search_failure_fails_closed_before_create(
     assert calls == []
 
 
-def test_noninteractive_bucket_collision_uses_a_different_deterministic_name(
+def test_noninteractive_bucket_collision_uses_a_fresh_collision_safe_name(
     monkeypatch,
 ) -> None:
     import npa.clients.nebius as nebius_module
@@ -2139,13 +2149,15 @@ def test_noninteractive_bucket_collision_uses_a_different_deterministic_name(
 
     assert result is not None
     assert requested[0] == "npa-bucket-collision"
-    assert requested[1] == cli_main._collision_bucket_name(
-        requested[0], tenant_id="tenant-a", project_id="project-a"
-    )
     assert requested[1] != requested[0]
+    assert re.fullmatch(
+        r"npa-bucket-\d{8}t\d{6}z-[0-9a-f]{6}-[0-9a-f]{8}", requested[1]
+    )
 
 
-def test_configure_no_provision_uses_manual_entry(monkeypatch, tmp_path) -> None:
+def test_configure_no_provision_skips_manual_storage_and_provider_calls(
+    monkeypatch, tmp_path
+) -> None:
     import yaml
 
     from npa.clients import config as config_module
@@ -2191,11 +2203,8 @@ def test_configure_no_provision_uses_manual_entry(monkeypatch, tmp_path) -> None
     assert "project alias: me-central1" in result.output
     assert "-p me-central1" in result.output
     creds = yaml.safe_load(creds_path.read_text())
-    assert creds["storage"]["aws_access_key_id"] == "AKIAMANUAL"
-    # Endpoint default tracks the entered region.
-    assert (
-        creds["storage"]["endpoint_url"] == "https://storage.me-central1.nebius.cloud"
-    )
+    assert "storage" not in creds
+    assert "Object storage not selected" in result.output
     cfg = yaml.safe_load(config_path.read_text())
     assert cfg["default_project"] == "me-central1"
     assert cfg["projects"]["me-central1"]["region"] == "me-central1"
@@ -2333,10 +2342,6 @@ def test_configure_interactive_updates_selected_token_and_preserves_skipped_toke
                 "",  # tenant id
                 "",  # project id
                 "",  # region
-                "",  # S3 access key id
-                "",  # S3 secret access key
-                "",  # S3 endpoint
-                "",  # S3 bucket
                 "hf-updated",  # HF token
                 "",  # Token Factory API key (unchanged)
                 "",  # NGC API key (unchanged)
