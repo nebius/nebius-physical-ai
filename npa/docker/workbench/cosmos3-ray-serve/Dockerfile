@@ -8,10 +8,12 @@ FROM ${BASE_IMAGE}
 ARG NPA_SOURCE_SHA
 ARG COSMOS3_RAY_SERVE_VERSION=ray1-cu130
 ARG COSMOS3_REF=5e67049cd94acb667786f1e6dd0dab821cb90c97
+ARG COSMOS3_RAY_VERSION=2.46.0
 
 LABEL npa.tool="cosmos3-ray-serve" \
       npa.version="${COSMOS3_RAY_SERVE_VERSION}" \
       npa.cosmos3.ref="${COSMOS3_REF}" \
+      npa.cosmos3.ray.version="${COSMOS3_RAY_VERSION}" \
       npa.serving.backend="cosmos-framework-native-ray-serve" \
       org.opencontainers.image.revision="${NPA_SOURCE_SHA}" \
       org.opencontainers.image.source="https://github.com/nebius/nebius-physical-ai" \
@@ -37,10 +39,11 @@ RUN mkdir -p /outputs /tmp/ray \
     && chown ubuntu:ubuntu /outputs /tmp/ray
 USER ubuntu
 
-# Replace only NPA's thin control/client layer. The model implementation, Ray
-# deployment and dependency lock remain the exact pinned upstream bytes in the
-# parent. Installing editable keeps the CLI and framework interpreter on the
-# same source tree without resolving another dependency closure.
+# Replace only NPA's thin control/client layer. The model implementation and
+# dependency lock remain the exact pinned upstream bytes in the parent. The
+# parent generation image intentionally omits upstream's `serve` extra, so sync
+# that extra from the already-pinned upstream uv.lock. `--inexact` retains the
+# parent's two explicitly pinned generate-only dependencies.
 COPY --chown=ubuntu:ubuntu pyproject.toml /opt/npa/pyproject.toml
 COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa
 COPY --chown=ubuntu:ubuntu workflows /opt/npa/workflows
@@ -48,7 +51,12 @@ COPY --chown=ubuntu:ubuntu docker/workbench/cosmos3-ray-serve/verify_env.py /opt
 COPY --chown=ubuntu:ubuntu --chmod=755 docker/workbench/cosmos3-ray-serve/entrypoint.sh /usr/local/bin/cosmos3-ray-serve-entrypoint
 COPY --chown=ubuntu:ubuntu --chmod=755 docker/workbench/cosmos3-ray-serve/smoke_functional.sh /opt/cosmos3-ray-serve/smoke_functional.sh
 
-RUN uv pip install --python /opt/npa/.venv/bin/python --no-deps -e /opt/npa \
+RUN cd /opt/cosmos3/cosmos-framework \
+    && UV_CACHE_DIR=/tmp/uv-cache uv sync --frozen --inexact \
+       --extra guardrail --extra serve --group cu130 \
+    && test "$(.venv/bin/python -c 'import ray; print(ray.__version__)')" = "${COSMOS3_RAY_VERSION}" \
+    && rm -rf /tmp/uv-cache \
+    && uv pip install --python /opt/npa/.venv/bin/python --no-deps -e /opt/npa \
     && /opt/cosmos3/cosmos-framework/.venv/bin/python /opt/cosmos3-ray-serve/verify_env.py \
     && test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
     && test -w /outputs \

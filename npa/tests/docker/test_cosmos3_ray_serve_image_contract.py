@@ -58,6 +58,9 @@ def test_image_uses_exact_accepted_framework_parent_and_bakes_no_weights() -> No
     assert "vllm" not in text.lower()
     assert "*.safetensors" in text
     assert "NPA_COSMOS3_RAY_GUARDRAILS=true" in text
+    assert "ARG COSMOS3_RAY_VERSION=2.46.0" in text
+    assert "uv sync --frozen --inexact" in text
+    assert "--extra guardrail --extra serve --group cu130" in text
     assert "uv pip install --python /opt/npa/.venv/bin/python" in text
 
 
