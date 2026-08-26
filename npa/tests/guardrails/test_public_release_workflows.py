@@ -79,7 +79,7 @@ def test_prepublication_gates_run_before_the_public_dev_push() -> None:
         "test_packaging_contract.py",
         "npa.guardrails.confidentiality",
         "gitleaks detect",
-        "Prove an existing destination package is public",
+        "Prove destination cannot expose unvalidated tagged bytes",
         "scan_image_omniverse_payload.py",
         "scan_image_ltx_payload.py",
         "scan_image_wan_payload.py",
@@ -93,7 +93,7 @@ def test_prepublication_gates_run_before_the_public_dev_push() -> None:
     ):
         assert required in text
         assert text.index(required) < push
-    assert "organisation policy and post-push anonymous verification apply" in text
+    assert "exact pushed-byte gates and post-push anonymous verification apply" in text
     assert "if matrix and head != sha" in text
 
 
@@ -125,6 +125,11 @@ def test_post_push_and_promotion_gates_are_digest_bound() -> None:
         "scan_image_cosmos3_ray_serve_payload.py", text.index("Verify pushed bytes")
     )
     assert pushed_scan < visibility < anonymous
+    prepush = text.index("Prove destination cannot expose unvalidated tagged bytes")
+    push = text.index("Push only after every pre-publication gate passes")
+    assert prepush < push
+    assert "Private destination contains tagged versions" in text[prepush:push]
+    assert "tagged_count" in text[prepush:push]
 
 
 def test_build_and_cleanup_dispatches_cannot_fall_through_to_promotion() -> None:

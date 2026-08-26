@@ -195,7 +195,7 @@ jobs:
           sudo install -m 0755 gitleaks /usr/local/bin/gitleaks
           gitleaks detect --source . --config .gitleaks.toml --redact --no-banner --log-opts="origin/main..HEAD"
 
-      - name: Prove an existing destination package is public
+      - name: Prove destination cannot expose unvalidated tagged bytes
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -207,14 +207,34 @@ jobs:
           encoded="${package//\//%2F}"
           response="$(mktemp)"
           status="$(gh api --silent --include "/orgs/${owner}/packages/container/${encoded}" >"$response" 2>/dev/null; printf '%s' "$?")"
+          package_api="/orgs/${owner}/packages/container/${encoded}"
           if [ "$status" = 0 ]; then
-            test "$(gh api "/orgs/${owner}/packages/container/${encoded}" --jq .visibility)" = public
+            visibility="$(gh api "$package_api" --jq .visibility)"
+            if [ "$visibility" = public ]; then
+              echo "Existing package is already public." >> "$GITHUB_STEP_SUMMARY"
+            elif [ "$visibility" = private ]; then
+              # A failed first publication can leave private, untagged OCI
+              # attestations behind after its exact tagged image version is deleted.
+              # Those referrers must not prevent a clean retry, but a private package
+              # containing any tagged image could expose unvalidated bytes when the
+              # successful retry switches the package to public below.
+              versions="$(mktemp)"
+              gh api --paginate --slurp "${package_api}/versions?per_page=100" | jq 'add' > "$versions"
+              tagged_count="$(jq '[.[] | select((.metadata.container.tags // []) | length > 0)] | length' "$versions")"
+              if [ "$tagged_count" != 0 ]; then
+                echo "::error::Private destination contains tagged versions; refusing a visibility change"
+                exit 1
+              fi
+              echo "Private destination contains no tagged image versions; exact pushed-byte gates and visibility verification apply." >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "::error::Unsupported destination visibility: $visibility"
+              exit 1
+            fi
           elif grep -q '^HTTP/.* 404 ' "$response"; then
-            # The organisation policy forbids private package creation. A new package
-            # can therefore be created only after every byte-level gate below passes;
-            # the post-push anonymous check remains mandatory and failure triggers the
-            # exact run-owned version cleanup job.
-            echo "New package; organisation policy and post-push anonymous verification apply." >> "$GITHUB_STEP_SUMMARY"
+            # A new package is created only after every local byte-level gate below
+            # passes. The pushed digest is scanned again before the package visibility
+            # changes, and any failure triggers exact run-owned version cleanup.
+            echo "New package; exact pushed-byte gates and post-push anonymous verification apply." >> "$GITHUB_STEP_SUMMARY"
           else
             echo "::error::Could not prove destination package state"
             exit 1
