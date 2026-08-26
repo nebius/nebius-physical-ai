@@ -365,18 +365,45 @@ def test_resolved_usd_fetch_verifies_manifest_and_bytes(
         "expected_action_dim": 8,
         "expected_observation_dim": 36,
     }
+    payload = tmp_path / "configuration" / "robot_physics.usd"
+    payload.parent.mkdir()
+    payload.write_bytes(b'#usda 1.0\ndef PhysicsScene "physics" {}\n')
+    asset_sources = {"robot.usd": usd, "configuration/robot_physics.usd": payload}
+    asset_files = [
+        {
+            "path": relative,
+            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            "size_bytes": path.stat().st_size,
+        }
+        for relative, path in sorted(asset_sources.items())
+    ]
+    tree_hasher = hashlib.sha256()
+    for entry in asset_files:
+        tree_hasher.update(entry["path"].encode())
+        tree_hasher.update(b"\0")
+        tree_hasher.update(entry["sha256"].encode())
+        tree_hasher.update(b"\0")
     manifest = {
+        "schema": "npa.sim2real.resolved_robot_asset.v2",
         "embodiment_digest": spec["embodiment_digest"],
         "source_tree_sha256": spec["source_tree_sha256"],
         "expected_action_dim": spec["expected_action_dim"],
         "expected_observation_dim": spec["expected_observation_dim"],
         "usd_sha256": usd_sha,
+        "usd_size_bytes": usd.stat().st_size,
+        "entrypoint": "robot.usd",
+        "asset_files": asset_files,
+        "asset_tree_sha256": tree_hasher.hexdigest(),
     }
     manifest_path = tmp_path / "published-manifest.json"
     manifest_path.write_text(json.dumps(manifest))
 
     def fake_download(uri: str, destination: Path) -> None:
-        source = manifest_path if uri.endswith("manifest.json") else usd
+        if uri.endswith("manifest.json"):
+            source = manifest_path
+        else:
+            relative = uri.split(".assets/", 1)[1]
+            source = asset_sources[relative]
         shutil.copy2(source, destination)
 
     monkeypatch.setattr(isaac_robot_asset, "_spec", lambda: spec)
@@ -387,11 +414,54 @@ def test_resolved_usd_fetch_verifies_manifest_and_bytes(
     assert (
         tmp_path / "runtime" / "resolved" / "robot.usd"
     ).read_bytes() == usd.read_bytes()
+    assert (
+        tmp_path / "runtime" / "resolved" / "configuration" / "robot_physics.usd"
+    ).read_bytes() == payload.read_bytes()
 
     manifest["expected_action_dim"] = 9
     manifest_path.write_text(json.dumps(manifest))
     with pytest.raises(isaac_robot_asset.IsaacRobotAssetError, match="parity mismatch"):
         isaac_robot_asset.fetch()
+
+
+def test_resolved_usd_fetch_rejects_unsafe_asset_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spec = {
+        "asset_root_uri": "s3://private-run/source/",
+        "source_relative_path": "robot.urdf",
+        "source_tree_sha256": "a" * 64,
+        "source_sha256": "b" * 64,
+        "source_format": "urdf",
+        "embodiment_digest": "c" * 64,
+        "resolved_usd_uri": "s3://private-run/resolved/robot.usd",
+        "resolved_manifest_uri": "s3://private-run/resolved/manifest.json",
+        "expected_action_dim": 8,
+        "expected_observation_dim": 36,
+    }
+    manifest = {
+        "schema": "npa.sim2real.resolved_robot_asset.v2",
+        "embodiment_digest": spec["embodiment_digest"],
+        "source_tree_sha256": spec["source_tree_sha256"],
+        "expected_action_dim": spec["expected_action_dim"],
+        "expected_observation_dim": spec["expected_observation_dim"],
+        "entrypoint": "robot.usd",
+        "asset_files": [
+            {"path": "robot.usd", "sha256": "d" * 64, "size_bytes": 1},
+            {"path": "../escape.usd", "sha256": "e" * 64, "size_bytes": 1},
+        ],
+    }
+
+    def fake_download(uri: str, destination: Path) -> None:
+        assert uri == spec["resolved_manifest_uri"]
+        destination.write_text(json.dumps(manifest))
+
+    monkeypatch.setattr(isaac_robot_asset, "_spec", lambda: spec)
+    monkeypatch.setattr(isaac_robot_asset, "_download", fake_download)
+    monkeypatch.setenv("NPA_ROBOT_WORK_DIR", str(tmp_path / "runtime"))
+    with pytest.raises(isaac_robot_asset.IsaacRobotAssetError, match="unsafe asset path"):
+        isaac_robot_asset.fetch()
+    assert not (tmp_path / "runtime" / "escape.usd").exists()
 
 
 def test_isaac_prepare_converts_urdf_and_publishes_digest_manifest(
@@ -457,6 +527,11 @@ def test_isaac_prepare_converts_urdf_and_publishes_digest_manifest(
             converter_cfgs.append(cfg)
             self.usd_path = str(Path(cfg.usd_dir) / cfg.usd_file_name)
             Path(self.usd_path).write_bytes(b'#usda 1.0\ndef Xform "robot" {}\n')
+            configuration = Path(cfg.usd_dir) / "configuration"
+            configuration.mkdir()
+            (configuration / "robot_physics.usd").write_bytes(
+                b'#usda 1.0\ndef PhysicsScene "physics" {}\n'
+            )
 
     app_module = types.ModuleType("isaaclab.app")
     app_module.AppLauncher = FakeLauncher
@@ -475,6 +550,15 @@ def test_isaac_prepare_converts_urdf_and_publishes_digest_manifest(
     assert converter_cfgs[0].merge_fixed_joints is False
     assert converter_cfgs[0].joint_drive.gains.stiffness is None
     assert manifest["converter"] == "isaaclab.sim.converters.UrdfConverter"
+    assert manifest["schema"] == "npa.sim2real.resolved_robot_asset.v2"
+    assert [entry["path"] for entry in manifest["asset_files"]] == [
+        "configuration/robot_physics.usd",
+        "robot.usd",
+    ]
+    for entry in manifest["asset_files"]:
+        assert (
+            spec["resolved_usd_uri"] + ".assets/" + entry["path"]
+        ) in uploads
     assert (
         manifest["usd_sha256"]
         == hashlib.sha256(uploads[spec["resolved_usd_uri"]]).hexdigest()
