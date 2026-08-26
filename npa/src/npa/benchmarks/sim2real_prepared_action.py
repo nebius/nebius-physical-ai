@@ -724,7 +724,7 @@ def validate_receipt(
     images = receipt["images"]
     if not isinstance(images, dict) or set(images) != set(IMAGE_ROLES):
         raise PreparedActionError(
-            "receipt_schema_invalid", "receipt must bind exactly six image roles"
+            "receipt_schema_invalid", "receipt must bind exactly five image roles"
         )
     if any(
         not isinstance(value, str) or not _IMAGE_DIGEST_RE.fullmatch(value)
