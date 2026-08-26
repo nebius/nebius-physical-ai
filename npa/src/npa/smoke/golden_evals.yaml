@@ -102,7 +102,7 @@ containers:
       serverless_gpu: rtx6000
       gpu: required
       timeout_seconds: 1800
-      status: gpu-gated
+      status: ready
 
   groot:
     image: npa-groot

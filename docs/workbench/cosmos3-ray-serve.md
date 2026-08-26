@@ -76,3 +76,15 @@ and document the real limitation rather than falling back to another backend.
 Before launch, run `npa workbench health preflight --checks hf,ngc,s3 --json`
 and `npa workbench health access --capability cosmos3 --json`. Keep exact cloud
 resource and storage identifiers only in access-controlled validation evidence.
+
+The accepted public development image is
+`dev-56d8c4f3f05db7aa3b03323441a3e0d7b97ac8da` at
+`sha256:6e42f553a0d14712dc1ed7fa42c72b0f083f4ae3f89b30eaf0e93cfdf64e820d`.
+On 2026-08-26, that exact digest completed independent guarded two-sample
+text-to-image batches on B200 and RTX PRO 6000. Each run returned two structured
+outputs and two decodable images and persisted five S3 objects (request,
+response, provenance, and media). B200 artifact hashes were
+`3a91a993e19e…` and `8838f93a8831…`; RTX PRO 6000 hashes were
+`357ca45a4121…` and `4345aac2743c…`. The measured runtime was Torch
+2.10.0+cu130 with native `sm_100` and `sm_120` SASS. Concrete service, cluster,
+and storage identifiers remain only in the access-controlled evidence record.

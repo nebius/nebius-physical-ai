@@ -125,7 +125,7 @@ OMNIVERSE_RESTRICTED_DERIVED_IMAGES = RESTRICTED_DERIVED_IMAGES
 #
 # Remove a tool from this set in the same change that records its accepted image
 # digest and its payload-scan/GPU evidence — not before.
-UNVALIDATED_PUBLICATION_TOOLS: frozenset[str] = frozenset({"cosmos3-ray-serve"})
+UNVALIDATED_PUBLICATION_TOOLS: frozenset[str] = frozenset()
 VALIDATION_CANDIDATE_TOOLS: frozenset[str] = frozenset()
 PUBLICATION_QUARANTINE_TOOLS: frozenset[str] = UNVALIDATED_PUBLICATION_TOOLS
 
@@ -142,6 +142,10 @@ PUBLIC_RELEASE_TAG_OVERRIDES: dict[str, str] = {
 # whose filesystem/layers were scanned and whose advertised GPU capability ran.
 # A newly built dev tag must earn fresh evidence before this mapping changes.
 GPU_ACCEPTED_PUBLIC_IMAGE_SOURCES: dict[str, dict[str, str]] = {
+    "cosmos3-ray-serve": {
+        "development_sha": "56d8c4f3f05db7aa3b03323441a3e0d7b97ac8da",
+        "oci_digest": "sha256:6e42f553a0d14712dc1ed7fa42c72b0f083f4ae3f89b30eaf0e93cfdf64e820d",
+    },
     "cosmos3-serving": {
         "development_sha": "d854f6a76cd87ec05ad97ccde6d596f3329efa0e",
         "oci_digest": "sha256:3342bbe44bd1c00ebf05ab4c9d7286058a94bb5ce90b49b164b23604d3acf180",
@@ -185,7 +189,7 @@ SUPPORTED_TOOL_VERSIONS = {
     # torch cu130. The immutable predecessor remains rollback provenance.
     # No weights baked; gated Cosmos3 checkpoints download at runtime.
     "cosmos3": "1.2.2-cu130-r6",
-    "cosmos3-ray-serve": "ray1-cu130-unbuilt",
+    "cosmos3-ray-serve": "ray1-cu130",
     "cosmos3-serving": "0.2.0-oss",
     "cosmos3-reason": "cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
     "cosmos-curate": "0.1.2-skypilot-v1-20260813T164700Z",

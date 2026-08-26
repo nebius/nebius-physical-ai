@@ -37,10 +37,10 @@ IMAGE = ROOT / "npa/docker/workbench/cosmos3-ray-serve"
 DOCKERFILE = IMAGE / "Dockerfile"
 
 
-def test_image_is_registered_as_unbuilt_public_service() -> None:
+def test_image_is_registered_as_gpu_accepted_public_service() -> None:
     assert CONTAINER_IMAGE_NAMES["cosmos3-ray-serve"] == "npa-cosmos3-ray-serve"
-    assert supported_tool_version("cosmos3-ray-serve").endswith("-unbuilt")
-    assert "cosmos3-ray-serve" in UNVALIDATED_PUBLICATION_TOOLS
+    assert supported_tool_version("cosmos3-ray-serve") == "ray1-cu130"
+    assert "cosmos3-ray-serve" not in UNVALIDATED_PUBLICATION_TOOLS
     contract = yaml.safe_load(
         (ROOT / "npa/docker/workbench/packaging-contract.yaml").read_text()
     )
