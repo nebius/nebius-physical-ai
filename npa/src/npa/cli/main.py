@@ -2774,7 +2774,7 @@ def _configure_mode(arguments: dict[str, Any]) -> ConfigureMode:
         requested.append(ConfigureMode.IMPORT_CREDENTIALS)
     if known or any(str(arguments.get(name) or "").strip() for name in bucket_names):
         requested.append(ConfigureMode.KNOWN_PROJECT)
-    if requested == [ConfigureMode.DISPLAY, ConfigureMode.IMPORT_CREDENTIALS] and show:
+    if requested == [ConfigureMode.DISPLAY, ConfigureMode.IMPORT_CREDENTIALS]:
         requested = [ConfigureMode.IMPORT_CREDENTIALS]
     if requested == [ConfigureMode.IMPORT_CREDENTIALS, ConfigureMode.KNOWN_PROJECT]:
         # One deterministic prompt-free transaction: import supported environment
@@ -2925,10 +2925,10 @@ def _configure_impl(
             typer.echo(_SETUP_GUIDANCE)
         return
     if mode == ConfigureMode.IMPORT_CREDENTIALS:
-        machine_output = bool(show and env_output)
+        machine_output = env_output
         persist_environment_credentials(diagnostics_to_stderr=machine_output)
         typer.echo(_saved_model_access_note(), err=machine_output)
-        if show:
+        if show or env_output:
             typer.echo(_configured_env_lines() if env_output else _configured_summary())
         return
     if mode == ConfigureMode.KNOWN_PROJECT:

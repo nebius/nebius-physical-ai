@@ -545,6 +545,53 @@ def test_show_env_can_import_credentials_without_breaking_machine_stdout(
     )
 
 
+@pytest.mark.parametrize("command", ["configure", "init"])
+def test_env_can_import_credentials_without_requiring_show(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, command: str
+) -> None:
+    config_path, credentials_path = _point_configure_at_tmp(monkeypatch, tmp_path)
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "default_project": "fresh",
+                "projects": {
+                    "fresh": {
+                        "tenant_id": "tenant-synthetic",
+                        "project_id": "project-synthetic",
+                        "region": "eu-north1",
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("HF_TOKEN", "hf_synthetic_legacy_machine_secret")
+    monkeypatch.setattr(
+        cli_main,
+        "_saved_model_access_note",
+        lambda: "[NOTE] Access checks are informational; HF token valid.",
+    )
+
+    result = runner.invoke(
+        app,
+        [command, "--env", "--save-env-credentials"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout.splitlines() == [
+        "NPA_PROJECT_ALIAS=fresh",
+        "NPA_PROJECT_ID=project-synthetic",
+        "NPA_TENANT_ID=tenant-synthetic",
+        "NPA_REGION=eu-north1",
+    ]
+    assert "Credential fields persisted" in result.stderr
+    assert "hf_synthetic_legacy_machine_secret" not in result.output
+    assert (
+        yaml.safe_load(credentials_path.read_text())["tokens"]["HF_TOKEN"]
+        == "hf_synthetic_legacy_machine_secret"
+    )
+
+
 def test_show_accepts_harmless_no_interactive_flag() -> None:
     result = runner.invoke(app, ["configure", "--show", "--no-interactive"])
 
