@@ -76,11 +76,11 @@ def utc_now() -> str:
 
 def receipt_root() -> Path:
     override = os.environ.get("NPA_TEARDOWN_RECEIPT_DIR", "").strip()
-    if override:
-        return Path(override).expanduser()
-    config_dir = os.environ.get("NPA_CONFIG_DIR", "").strip()
-    root = Path(config_dir).expanduser() if config_dir else Path.home() / ".npa"
-    return root / "teardown-receipts"
+    return (
+        Path(override).expanduser()
+        if override
+        else Path.home() / ".npa" / "teardown-receipts"
+    )
 
 
 def _journal_key(project_alias: str, project_id: str) -> str:
@@ -203,220 +203,6 @@ def _read(path: Path) -> dict[str, Any]:
         raise TeardownReceiptError(
             f"invalid teardown receipt {path}: events must be a list"
         )
-    def require_timestamp(value: object, field: str) -> None:
-        if not isinstance(value, str) or not value.strip():
-            raise TeardownReceiptError(
-                f"invalid teardown receipt {path}: {field} must be a timestamp"
-            )
-        try:
-            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-        except ValueError as exc:
-            raise TeardownReceiptError(
-                f"invalid teardown receipt {path}: {field} is not ISO-8601"
-            ) from exc
-        if parsed.tzinfo is None:
-            raise TeardownReceiptError(
-                f"invalid teardown receipt {path}: {field} has no timezone"
-            )
-
-    receipt_id = payload.get("receipt_id")
-    if not isinstance(receipt_id, str) or receipt_id != path.stem:
-        raise TeardownReceiptError(
-            f"invalid teardown receipt {path}: embedded receipt_id mismatch"
-        )
-    for field in ("created_at", "updated_at"):
-        require_timestamp(payload.get(field), field)
-    for field in ("project_alias", "project_id"):
-        if not isinstance(payload.get(field, ""), str):
-            raise TeardownReceiptError(
-                f"invalid teardown receipt {path}: {field} must be a string"
-            )
-    if not isinstance(payload.get("identity", {}), Mapping):
-        raise TeardownReceiptError(
-            f"invalid teardown receipt {path}: identity must be an object"
-        )
-
-    identity_fields = frozenset(
-        {
-            "project_alias",
-            "project_id",
-            "tenant_id",
-            "parent_id",
-            "account_id",
-            "region",
-            "profile",
-            "context",
-            "kubeconfig_path",
-            "cluster_id",
-            "cluster_name",
-            "agent_name",
-            "instance_id",
-            "operation_id",
-            "service_account_id",
-            "run_id",
-            "workflow_s3_uri",
-            "sky_job_id",
-            "controller_context",
-            "resource_type",
-            "requested_name",
-        }
-    )
-
-    def validate_identity(value: object, location: str) -> None:
-        if isinstance(value, Mapping):
-            for key, item in value.items():
-                if not isinstance(key, str) or not key:
-                    raise TeardownReceiptError(
-                        f"invalid teardown receipt {path}: {location} has invalid key"
-                    )
-                if key in identity_fields and not isinstance(item, str):
-                    raise TeardownReceiptError(
-                        f"invalid teardown receipt {path}: {location}.{key} "
-                        "must be a string"
-                    )
-                collection_keys = {
-                    "agents": ("agent_name", "instance_id"),
-                    "clusters": (
-                        "cluster_id",
-                        "context",
-                        "controller_context",
-                        "operation_id",
-                    ),
-                    "workflows": ("run_id",),
-                    "operations": ("operation_id",),
-                    "generations": ("service_account_id",),
-                }
-                if key in collection_keys:
-                    if not isinstance(item, list):
-                        raise TeardownReceiptError(
-                            f"invalid teardown receipt {path}: {location}.{key} "
-                            "must be a list"
-                        )
-                    for index, member in enumerate(item, start=1):
-                        if not isinstance(member, Mapping) or not any(
-                            isinstance(member.get(candidate), str)
-                            and bool(str(member.get(candidate) or "").strip())
-                            for candidate in collection_keys[key]
-                        ):
-                            raise TeardownReceiptError(
-                                f"invalid teardown receipt {path}: {location}.{key}"
-                                f"[{index}] has no complete immutable identity"
-                            )
-                        if key == "agents" and not all(
-                            isinstance(member.get(candidate), str)
-                            and bool(str(member.get(candidate) or "").strip())
-                            for candidate in ("agent_name", "instance_id")
-                        ):
-                            raise TeardownReceiptError(
-                                f"invalid teardown receipt {path}: {location}.agents"
-                                f"[{index}] has no complete agent identity"
-                            )
-                validate_identity(item, f"{location}.{key}")
-        elif isinstance(value, list):
-            for index, item in enumerate(value, start=1):
-                validate_identity(item, f"{location}[{index}]")
-
-    def reject_duplicate_identities(identity: Mapping[str, Any], location: str) -> None:
-        for collection, key in (
-            ("agents", "instance_id"),
-            ("clusters", "cluster_id"),
-            ("workflows", "run_id"),
-            ("operations", "operation_id"),
-            ("generations", "service_account_id"),
-        ):
-            values = identity.get(collection)
-            if not isinstance(values, list):
-                continue
-            identifiers = [
-                item.get(key)
-                for item in values
-                if isinstance(item, Mapping) and item.get(key) not in (None, "")
-            ]
-            if len(identifiers) != len(set(identifiers)):
-                raise TeardownReceiptError(
-                    f"invalid teardown receipt {path}: {location}.{collection} "
-                    f"contains duplicate {key} values"
-                )
-            for index, item in enumerate(values, start=1):
-                if isinstance(item, Mapping):
-                    reject_duplicate_identities(
-                        item, f"{location}.{collection}[{index}]"
-                    )
-
-    root_identity = payload.get("identity", {})
-    validate_identity(root_identity, "identity")
-    reject_duplicate_identities(root_identity, "identity")
-    previous_sequence = 0
-    for index, event in enumerate(events, start=1):
-        if not isinstance(event, Mapping):
-            raise TeardownReceiptError(
-                f"invalid teardown receipt {path}: event {index} is not an object"
-            )
-        for field in ("phase", "resource", "terminal_state"):
-            if not isinstance(event.get(field), str) or not str(event[field]).strip():
-                raise TeardownReceiptError(
-                    f"invalid teardown receipt {path}: event {index} has invalid {field}"
-                )
-        for field in ("project_alias", "project_id", "context"):
-            if not isinstance(event.get(field, ""), str):
-                raise TeardownReceiptError(
-                    f"invalid teardown receipt {path}: event {index} has invalid {field}"
-                )
-        for field in ("precheck", "verification", "identity"):
-            if not isinstance(event.get(field, {}), Mapping):
-                raise TeardownReceiptError(
-                    f"invalid teardown receipt {path}: event {index} has invalid {field}"
-                )
-        action = event.get("action", {})
-        if not isinstance(action, (Mapping, str)):
-            raise TeardownReceiptError(
-                f"invalid teardown receipt {path}: event {index} has invalid action"
-            )
-        if isinstance(action, Mapping) and "kind" in action and (
-            not isinstance(action.get("kind"), str) or not action.get("kind")
-        ):
-            raise TeardownReceiptError(
-                f"invalid teardown receipt {path}: event {index} has invalid action kind"
-            )
-        errors = event.get("errors", [])
-        if not isinstance(errors, list) or not all(
-            isinstance(item, str) for item in errors
-        ):
-            raise TeardownReceiptError(
-                f"invalid teardown receipt {path}: event {index} has invalid errors"
-            )
-        require_timestamp(event.get("recorded_at"), f"event {index} recorded_at")
-        sequence = event.get("sequence")
-        if schema == SCHEMA_VERSION:
-            if type(sequence) is not int or sequence != previous_sequence + 1:
-                raise TeardownReceiptError(
-                    f"invalid teardown receipt {path}: event sequence is missing, "
-                    "duplicated, or non-monotonic"
-                )
-            previous_sequence = sequence
-        verification = event.get("verification", {})
-        event_identity = event.get("identity", {})
-        validate_identity(event_identity, f"event {index} identity")
-        reject_duplicate_identities(event_identity, f"event {index} identity")
-        for field in ("exact_instance_absent", "terraform_destroy_completed"):
-            if field in verification and type(verification[field]) is not bool:
-                raise TeardownReceiptError(
-                    f"invalid teardown receipt {path}: event {index} verification "
-                    f"field {field} must be boolean"
-                )
-        graph = verification.get("terraform_dependency_graph")
-        if graph is not None and (
-            not isinstance(graph, list)
-            or not all(isinstance(item, str) and item for item in graph)
-            or len(set(graph)) != len(graph)
-        ):
-            raise TeardownReceiptError(
-                f"invalid teardown receipt {path}: event {index} has invalid "
-                "terraform dependency graph"
-            )
-    if schema in LEGACY_SCHEMA_VERSIONS:
-        for index, event in enumerate(events, start=1):
-            event["sequence"] = index
     # Normalize additively in memory. The next append durably migrates v1 to v2.
     payload["schema_version"] = SCHEMA_VERSION
     payload.setdefault("identity", {})
@@ -772,7 +558,6 @@ def record_teardown_event(
                 f"receipt identity mismatch at {path}; refusing to mix projects"
             )
         events = list(payload.get("events") or [])
-        event["sequence"] = len(events) + 1
         events.append(event)
         payload["events"] = events
         payload["updated_at"] = now
@@ -809,7 +594,6 @@ def list_teardown_receipts(
     project_alias: str = "",
     project_id: str = "",
     legacy: str = "include",
-    strict: bool = False,
 ) -> list[dict[str, Any]]:
     """List receipts with explicit project and legacy-identity semantics.
 
@@ -827,8 +611,6 @@ def list_teardown_receipts(
         try:
             payload = _read(path)
         except TeardownReceiptError:
-            if strict:
-                raise
             if project_alias or project_id or legacy == "exclude":
                 continue
             receipts.append(
@@ -883,15 +665,12 @@ def list_teardown_receipts(
             if isinstance(event, dict)
             and str(event.get("terminal_state") or "") not in TERMINAL_STATES
         ]
-        terminal = receipt_is_terminal(payload)
-        if not terminal and not unresolved:
-            unresolved.append("inspect incomplete or conflicting terminal evidence")
         payload["subject"] = {
             "project_ids": sorted(subject_project_ids),
             "project_aliases": sorted(subject_aliases),
         }
         payload["audit_only"] = True
-        payload["operational_status"] = "terminal" if terminal else "unresolved"
+        payload["operational_status"] = "unresolved" if unresolved else "terminal"
         payload["unresolved_actions"] = unresolved
         payload["path"] = str(path)
         receipts.append(payload)
@@ -900,461 +679,56 @@ def list_teardown_receipts(
     )
 
 
-_AGENT_TERRAFORM_GRAPH = frozenset(
-    {
-        "compute_instance",
-        "boot_disk",
-        "network",
-        "subnet",
-        "security_group",
-        "public_ip",
-    }
-)
-
-
-def agent_teardown_event_disposition(event: Mapping[str, Any]) -> str:
-    """Classify complete, immutable agent teardown evidence.
-
-    ``retained_shared`` is terminal for one agent generation but is only a
-    provisional project-level success: a later sibling must still prove the
-    shared account absent.  Every other incomplete or conflicting shape stays
-    unresolved.
-    """
-
-    phase = str(event.get("phase") or "")
-    state = str(event.get("terminal_state") or "").lower()
-    action = event.get("action")
-    action = action if isinstance(action, Mapping) else {}
-    verification = event.get("verification")
-    verification = verification if isinstance(verification, Mapping) else {}
-    identity = event.get("identity")
-    identity = identity if isinstance(identity, Mapping) else {}
-    errors = event.get("errors")
-    graph = verification.get("terraform_dependency_graph")
-    resource = str(event.get("resource") or "")
-    event_project_id = str(event.get("project_id") or "").strip()
-    identity_project_id = str(identity.get("project_id") or "").strip()
-    identity_agent_name = str(identity.get("agent_name") or "").strip()
-    common_authority = bool(
-        phase == "agent"
-        and state in {"verified_absent", "verified_deleted"}
-        and action.get("kind") == "terraform_agent_destroy"
-        and isinstance(errors, list)
-        and not errors
-        and bool(identity_project_id)
-        and (not event_project_id or identity_project_id == event_project_id)
-        and bool(str(identity.get("instance_id") or "").strip())
-        and bool(identity_agent_name)
-        and identity_agent_name == resource
-        and verification.get("exact_instance_absent") is True
-        and verification.get("local_state_retired") is True
-        and verification.get("terraform_destroy_completed") is True
-        and isinstance(graph, list)
-        and _AGENT_TERRAFORM_GRAPH.issubset(graph)
-    )
-    if not common_authority:
-        return "unresolved"
-    iam_complete = verification.get("iam_cleanup_complete")
-    iam_disposition = str(verification.get("iam_disposition") or "")
-    if iam_complete is True and iam_disposition in {"absent", "deleted"}:
-        return "verified_absent"
-    if (
-        iam_complete is False
-        and iam_disposition == "retained_shared"
-        and action.get("purge_iam") is True
-    ):
-        return "retained_shared"
-    return "unresolved"
-
-
-def teardown_event_authorizes_convergence(event: Mapping[str, Any]) -> bool:
-    """Validate terminal evidence against the action that produced it.
-
-    A terminal word is never enough for a destructive consumer.  This function
-    is deliberately shared by cleanup, status, receipt aggregation, and pruning
-    so those surfaces cannot assign different meanings to the same evidence.
-    Unknown phases retain the historical terminal-state contract; cloud phases
-    use action-specific schemas and exact verification fields.
-    """
-
-    phase = str(event.get("phase") or "")
-    state = str(event.get("terminal_state") or "").lower()
-    action = event.get("action")
-    action = action if isinstance(action, Mapping) else {}
-    verification = event.get("verification")
-    verification = verification if isinstance(verification, Mapping) else {}
-    identity = event.get("identity")
-    identity = identity if isinstance(identity, Mapping) else {}
-    errors = event.get("errors")
-    if not isinstance(errors, list) or errors:
-        return False
-    kind = str(action.get("kind") or "")
-    if phase.startswith("project_destroy_"):
-        return bool(
-            state == "completed"
-            and kind == "npa_guarded_phase"
-            and verification.get("converged") is True
-        )
-    if phase == "workflow_audit":
-        return bool(
-            kind == "read_only_managed_job_audit"
-            and verification.get("nonterminal_job_ids") == []
-            and (
-                (
-                    state in {"not_submitted", "verified_absent"}
-                    and not verification.get("detail")
-                )
-                or (
-                    state == "operator_attested"
-                    and verification.get("operator_attestation") is True
-                    and verification.get("queue_state") == "SKIPPED_BY_OPERATOR"
-                )
-            )
-        )
-    if phase == "workflow":
-        outcome = str(verification.get("outcome") or "")
-        return bool(
-            (state == "not_submitted" and kind == "none" and outcome == "not_submitted")
-            or (
-                state == "verified_absent"
-                and kind == "none"
-                and outcome == "already_absent"
-            )
-            or (
-                state == "cancelled"
-                and kind == "managed_job_cancel"
-                and outcome == "cancelled"
-            )
-            or (
-                state == "terminal"
-                and kind == "none"
-                and outcome in {"terminal", "no_cancellation_needed"}
-            )
-        )
-    if phase == "agent":
-        return agent_teardown_event_disposition(event) == "verified_absent"
-    if phase == "bucket":
-        return bool(
-            state in {"verified_absent", "verified_deleted"}
-            and kind in {"none", "bucket_delete", "scheduled_bucket_purge"}
-            and verification.get("bucket_absent") is True
-        )
-    if phase == "storage_iam":
-        provider_outcome = str(verification.get("provider_outcome") or "")
-        if not str(identity.get("service_account_id") or "").strip():
-            return False
-        if kind in {"none", "exact_provider_check", "remove_verified_absent_local_evidence"}:
-            return bool(
-                state == "verified_absent"
-                and provider_outcome == "verified_absent"
-                and verification.get("exact_service_account_absent") is True
-            )
-        if kind == "delete_npa_owned_service_account":
-            return bool(
-                state == "verified_deleted"
-                and provider_outcome == "verified_absent"
-                and verification.get("exact_service_account_absent") is True
-                and verification.get("access_keys_absent") is True
-                and verification.get("local_recovery_retired") is True
-            )
-        if kind == "preserve_unowned_account_remove_npa_access":
-            return bool(
-                state == "completed"
-                and provider_outcome == "retained_account_access_resolved"
-                and verification.get("service_account_preserved") is True
-                and verification.get("access_state_absent") is True
-                and verification.get("retained_account_dependents_verified") is True
-            )
-        return False
-    if phase == "cluster":
-        return bool(
-            (
-                state == "verified_absent"
-                and kind == "exact_provider_check"
-                and verification.get("provider_absence") == "verified"
-            )
-            or (
-                state == "verified_deleted"
-                and kind == "terraform_full_cluster_destroy"
-                and verification.get("terraform_destroy") == "completed"
-            )
-            or (
-                state == "verified_deleted"
-                and kind == "delete_exact_operation_inventory"
-                and verification.get("state_consumers_absent") is True
-                and verification.get("errors") == []
-            )
-        )
-    if phase == "controller":
-        return bool(
-            state in {"verified_absent", "verified_deleted"}
-            and kind == "controller_cleanup"
-            and verification.get("local_state_removed_after_remote_absence") is True
-            and verification.get("remote_controller_pods") == []
-        )
-    return bool(state in TERMINAL_STATES)
-
-
-def _event_generation_key(
-    event: Mapping[str, Any], *, receipt_id: str
-) -> tuple[str, ...]:
-    """Return one immutable resource-generation key for receipt aggregation."""
-
-    phase = str(event.get("phase") or "")
-    resource = str(event.get("resource") or "")
-    identity = event.get("identity")
-    identity = identity if isinstance(identity, Mapping) else {}
-    project_id = str(event.get("project_id") or identity.get("project_id") or "")
-    selectors: tuple[str, ...]
-    if phase == "agent":
-        selectors = (
-            str(identity.get("agent_name") or resource),
-            str(identity.get("instance_id") or ""),
-        )
-    elif phase == "storage_iam":
-        selectors = (str(identity.get("service_account_id") or resource),)
-    elif phase in {"cluster", "controller"}:
-        selectors = (
-            str(
-                identity.get("cluster_id")
-                or identity.get("controller_context")
-                or identity.get("context")
-                or event.get("context")
-                or resource
-            ),
-        )
-    elif phase in {"workflow", "workflow_audit"}:
-        selectors = (str(identity.get("run_id") or resource),)
-    else:
-        selectors = (resource,)
-    if not all(selectors):
-        # Incomplete identity must not coalesce with a complete sibling.  Keep it
-        # independently actionable and let the action schema classify it unsafe.
-        selectors = (*selectors, f"incomplete@{receipt_id}")
-    return (phase, project_id, *selectors)
-
-
-def _parse_event_time(event: Mapping[str, Any]) -> datetime | None:
-    value = event.get("recorded_at")
-    if not isinstance(value, str) or not value:
-        return None
-    try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    return parsed if parsed.tzinfo is not None else None
-
-
-def _latest_generation_event(events: list[dict[str, Any]]) -> dict[str, Any]:
-    """Select newest evidence without treating cross-file sequence as a clock."""
-
-    per_receipt: dict[str, dict[str, Any]] = {}
-    for event in events:
-        receipt_id = str(event.get("_receipt_id") or "")
-        previous = per_receipt.get(receipt_id)
-        if previous is None or int(event.get("sequence") or 0) > int(
-            previous.get("sequence") or 0
-        ):
-            per_receipt[receipt_id] = event
-    candidates = list(per_receipt.values())
-    if len(candidates) == 1:
-        return candidates[0]
-    dated = [(event, _parse_event_time(event)) for event in candidates]
-    if any(parsed is None for _event, parsed in dated):
-        return {
-            "phase": str(candidates[0].get("phase") or ""),
-            "resource": str(candidates[0].get("resource") or ""),
-            "terminal_state": "evidence_conflict",
-            "action": {"kind": "receipt_generation_conflict"},
-            "verification": {"cross_receipt_order": "unavailable"},
-            "errors": ["same resource generation has unordered cross-receipt evidence"],
-            "recorded_at": "",
-            "sequence": 0,
-        }
-    newest_time = max(parsed for _event, parsed in dated if parsed is not None)
-    newest = [event for event, parsed in dated if parsed == newest_time]
-    if len(newest) != 1:
-        return {
-            "phase": str(newest[0].get("phase") or ""),
-            "resource": str(newest[0].get("resource") or ""),
-            "terminal_state": "evidence_conflict",
-            "action": {"kind": "receipt_generation_conflict"},
-            "verification": {"cross_receipt_order": "conflicting"},
-            "errors": ["same resource generation has conflicting newest receipt evidence"],
-            "recorded_at": str(newest[0].get("recorded_at") or ""),
-            "sequence": 0,
-        }
-    return newest[0]
-
-
-def latest_resource_generation_events(
-    *,
-    project_alias: str = "",
-    project_id: str = "",
-    phase: str = "",
-    resource: str = "",
-    strict: bool = False,
-) -> list[dict[str, Any]]:
-    """Return newest evidence for every matching immutable resource generation."""
-
-    grouped: dict[tuple[str, ...], list[dict[str, Any]]] = {}
-    for receipt in list_teardown_receipts(
-        project_alias=project_alias if not project_id else "",
-        project_id=project_id,
-        legacy="exclude" if project_alias or project_id else "include",
-        strict=strict,
-    ):
-        receipt_id = str(receipt.get("receipt_id") or "")
-        for event in receipt.get("events") or []:
-            if not isinstance(event, dict):
-                continue
-            identity = event.get("identity")
-            identity = identity if isinstance(identity, Mapping) else {}
-            event_project_id = str(
-                event.get("project_id") or identity.get("project_id") or ""
-            )
-            if project_id and event_project_id != project_id:
-                continue
-            if phase and str(event.get("phase") or "") != phase:
-                continue
-            if resource and str(event.get("resource") or "") != resource:
-                continue
-            annotated = dict(event)
-            annotated["_receipt_id"] = receipt_id
-            key = _event_generation_key(annotated, receipt_id=receipt_id)
-            grouped.setdefault(key, []).append(annotated)
-    return [_latest_generation_event(events) for events in grouped.values()]
-
-
-def latest_matching_resource_generation_event(
-    event: Mapping[str, Any],
-    *,
-    receipt_id: str,
-    strict: bool = False,
-) -> dict[str, Any]:
-    """Return authoritative cross-receipt evidence for ``event``'s generation.
-
-    A selected receipt is an identity selector, not an evidence snapshot.  Once
-    it identifies an immutable resource generation, every receipt for that
-    project and generation participates in convergence.  This prevents an
-    operator-selected older receipt from hiding a newer unresolved observation.
-    """
-
-    selected_receipt_id = str(receipt_id or "").strip()
-    selected = dict(event)
-    selected["_receipt_id"] = selected_receipt_id
-    identity = selected.get("identity")
-    identity = identity if isinstance(identity, Mapping) else {}
-    project_id = str(
-        selected.get("project_id") or identity.get("project_id") or ""
-    ).strip()
-    phase = str(selected.get("phase") or "").strip()
-    if not selected_receipt_id or not project_id or not phase:
-        return {}
-    generation = _event_generation_key(selected, receipt_id=selected_receipt_id)
-    matching: list[dict[str, Any]] = []
-    for receipt in list_teardown_receipts(
-        project_id=project_id, legacy="exclude", strict=strict
-    ):
-        candidate_receipt_id = str(receipt.get("receipt_id") or "")
-        for candidate in receipt.get("events") or []:
-            if not isinstance(candidate, dict):
-                continue
-            candidate_identity = candidate.get("identity")
-            candidate_identity = (
-                candidate_identity if isinstance(candidate_identity, Mapping) else {}
-            )
-            candidate_project_id = str(
-                candidate.get("project_id")
-                or candidate_identity.get("project_id")
-                or ""
-            ).strip()
-            if candidate_project_id != project_id:
-                continue
-            annotated = dict(candidate)
-            annotated["_receipt_id"] = candidate_receipt_id
-            if (
-                _event_generation_key(
-                    annotated, receipt_id=candidate_receipt_id
-                )
-                == generation
-            ):
-                matching.append(annotated)
-    return _latest_generation_event(matching) if matching else {}
-
-
 def latest_phase_states(
-    *, project_alias: str = "", project_id: str = "", strict: bool = False
+    *, project_alias: str = "", project_id: str = ""
 ) -> dict[str, dict[str, Any]]:
-    """Return phase convergence while preserving every immutable generation.
+    """Return latest evidence per phase, including receipts surviving config removal."""
 
-    The returned event remains backward-compatible for display callers.  It is
-    the first unresolved/conflicting generation when any exist; otherwise it is
-    a representative terminal event after *all* sibling generations validate.
-    Receipt-local sequence is compared only within its own file.
-    """
-
-    grouped: dict[str, dict[tuple[str, ...], list[dict[str, Any]]]] = {}
-    for receipt in list_teardown_receipts(
-        project_alias=project_alias if not project_id else "",
-        project_id=project_id,
-        legacy="exclude" if project_alias or project_id else "include",
-        strict=strict,
-    ):
+    per_receipt: dict[tuple[str, str], dict[str, Any]] = {}
+    for receipt in list_teardown_receipts():
+        receipt_project_id = str(receipt.get("project_id") or "")
+        receipt_alias = str(receipt.get("project_alias") or "")
+        if project_id and receipt_project_id != project_id:
+            continue
+        if project_alias and receipt_alias != project_alias:
+            continue
         for event in receipt.get("events") or []:
             if not isinstance(event, dict):
-                continue
-            identity = event.get("identity")
-            identity = identity if isinstance(identity, Mapping) else {}
-            event_project_id = str(
-                event.get("project_id") or identity.get("project_id") or ""
-            )
-            if project_id and event_project_id != project_id:
                 continue
             phase = str(event.get("phase") or "")
-            if not phase:
-                continue
-            annotated = dict(event)
-            annotated["_receipt_id"] = str(receipt.get("receipt_id") or "")
-            key = _event_generation_key(
-                annotated, receipt_id=str(receipt.get("receipt_id") or "")
-            )
-            grouped.setdefault(phase, {}).setdefault(key, []).append(annotated)
+            key = (str(receipt.get("receipt_id") or ""), phase)
+            previous = per_receipt.get(key) or {}
+            if phase and str(event.get("recorded_at") or "") >= str(
+                previous.get("recorded_at") or ""
+            ):
+                per_receipt[key] = event
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for (_receipt_id, phase), event in per_receipt.items():
+        grouped.setdefault(phase, []).append(event)
     states: dict[str, dict[str, Any]] = {}
-    for phase, generations in grouped.items():
-        current = [_latest_generation_event(events) for events in generations.values()]
+    for phase, events in grouped.items():
         unresolved = [
-            event for event in current if not teardown_event_authorizes_convergence(event)
+            event
+            for event in events
+            if str(event.get("terminal_state") or "").lower() not in TERMINAL_STATES
         ]
-        selected = sorted(
-            unresolved or current,
-            key=lambda event: (
-                str(event.get("recorded_at") or ""),
-                str(event.get("_receipt_id") or ""),
-                str(event.get("resource") or ""),
-            ),
-            reverse=True,
-        )[0]
-        selected = dict(selected)
-        selected["resource_generation_count"] = len(current)
-        selected["unresolved_resource_generation_count"] = len(unresolved)
-        states[phase] = selected
+        # Across projects, one unresolved identity must remain actionable; a
+        # newer completed project may not hide it. If every identity is terminal,
+        # report the newest durable convergence evidence.
+        states[phase] = max(
+            unresolved or events, key=lambda event: str(event.get("recorded_at") or "")
+        )
     return states
 
 
 def receipt_is_terminal(receipt: Mapping[str, Any]) -> bool:
-    generations: dict[tuple[str, ...], list[dict[str, Any]]] = {}
-    receipt_id = str(receipt.get("receipt_id") or "")
+    latest: dict[str, str] = {}
     for event in receipt.get("events") or []:
         if isinstance(event, Mapping):
-            copied = dict(event)
-            copied["_receipt_id"] = receipt_id
-            key = _event_generation_key(copied, receipt_id=receipt_id)
-            generations.setdefault(key, []).append(copied)
-    latest = [_latest_generation_event(events) for events in generations.values()]
-    return bool(latest) and all(
-        teardown_event_authorizes_convergence(event) for event in latest
-    )
+            latest[str(event.get("phase") or "")] = str(
+                event.get("terminal_state") or "unknown"
+            ).lower()
+    return bool(latest) and all(state in TERMINAL_STATES for state in latest.values())
 
 
 def prune_teardown_receipts(*, older_than_days: int) -> tuple[list[Path], list[str]]:
@@ -1366,38 +740,10 @@ def prune_teardown_receipts(*, older_than_days: int) -> tuple[list[Path], list[s
     removed: list[Path] = []
     retained: list[str] = []
     with _locked_root() as root:
-        inventory = [(path, _read(path)) for path in sorted(root.glob("*.json"))]
-        generations: dict[tuple[str, ...], list[dict[str, Any]]] = {}
-        for _path, payload in inventory:
-            receipt_id = str(payload.get("receipt_id") or "")
-            for event in payload.get("events") or []:
-                if not isinstance(event, Mapping):
-                    continue
-                annotated = dict(event)
-                annotated["_receipt_id"] = receipt_id
-                key = _event_generation_key(annotated, receipt_id=receipt_id)
-                generations.setdefault(key, []).append(annotated)
-        current_generations = {
-            key: _latest_generation_event(events)
-            for key, events in generations.items()
-        }
-        for path, payload in inventory:
+        for path in sorted(root.glob("*.json")):
+            payload = _read(path)
             if not receipt_is_terminal(payload):
                 retained.append(f"{path.name}: unresolved/uncertain phase remains")
-                continue
-            receipt_id = str(payload.get("receipt_id") or "")
-            receipt_generation_keys = {
-                _event_generation_key(dict(event), receipt_id=receipt_id)
-                for event in payload.get("events") or []
-                if isinstance(event, Mapping)
-            }
-            if any(
-                not teardown_event_authorizes_convergence(current_generations[key])
-                for key in receipt_generation_keys
-            ):
-                retained.append(
-                    f"{path.name}: unresolved/conflicting sibling generation remains"
-                )
                 continue
             try:
                 updated = datetime.fromisoformat(

@@ -155,16 +155,14 @@ For a pre-authenticated service-account/federation profile with known IDs, the
 prompt-free equivalent is:
 
 ```bash
-npa configure --save-env-credentials
 npa configure --no-interactive \
+  --save-env-credentials \
   --tenant-id "$TENANT_ID" --project-id "$PROJECT_ID" \
   --region "$REGION" --project-alias "$PROJECT_ALIAS"
 ```
 
 Only non-secret IDs are arguments. Keep all credential material in the active
 Nebius profile and `~/.npa/credentials.yaml`, never shell history.
-Credential import and exact-project setup are separate modes so display or
-project selection can never silently mutate credential state.
 
 The configured S3 endpoint is selected automatically; `--s3-endpoint` is only an
 explicit override. Workbench images default to the anonymous GHCR mirror.
@@ -326,9 +324,7 @@ SPEC=npa/workflows/workbench/npa-workflows/physical-ai-data-factory.yaml
 
 npa configure
 # For prompt-free setup, export supported credential variables first and use:
-# npa configure --save-env-credentials
-# npa configure --no-interactive --tenant-id ... --project-id ... \
-#   --region ... --project-alias ...
+# npa configure --no-interactive --save-env-credentials ...known project flags...
 eval "$(npa configure --show --env)"
 PROJECT="$NPA_PROJECT_ALIAS"
 # Optional for a legacy config with a saved private-registry override: force the

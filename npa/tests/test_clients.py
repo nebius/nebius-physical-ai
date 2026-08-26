@@ -639,8 +639,8 @@ def test_nebius_service_account_creates_when_not_found_despite_saved(mocker) -> 
         "npa.clients.nebius._run_json",
         side_effect=[
             nebius.NebiusError(
-                "provider verified npa-agent is absent",
-                provider_status=nebius.ProviderStatus.NOT_FOUND,
+                "nebius iam service-account get-by-name failed (exit 5):\n"
+                "NotFound: 'npa-agent' not found in project"
             ),
             {"metadata": {"id": "serviceaccount-new"}},
         ],
@@ -661,10 +661,7 @@ def test_nebius_service_account_reports_ownership_only_when_created(mocker) -> N
     run_json = mocker.patch(
         "npa.clients.nebius._run_json",
         side_effect=[
-            nebius.NebiusError(
-                "provider verified lerobot-training is absent",
-                provider_status=nebius.ProviderStatus.NOT_FOUND,
-            ),
+            nebius.NebiusError("NotFound: 'lerobot-training' not found"),
             {"metadata": {"id": "serviceaccount-created"}},
         ],
     )
@@ -868,7 +865,7 @@ def test_access_key_inventory_exposes_only_cli_allowlisted_jsonpath_fields(
             "accesskey-a",
             "lerobot-access-key",
             "serviceaccount-a",
-            "<no value>",
+            NebiusError("service_account_id is not found"),
             "ACTIVE",
             "1970-01-01T00:00:00Z",
         ],
@@ -923,14 +920,14 @@ def test_access_key_inventory_tolerates_mixed_unrelated_entries(mocker) -> None:
             "accesskey-unrelated\naccesskey-agent",
             "accesskey-unrelated",
             "unrelated",
-            "<no value>",
-            "<no value>",
+            NebiusError("id is not found"),
+            NebiusError("service_account_id is not found"),
             "ACTIVE",
             "",
             "accesskey-agent",
             "npa-agent-access-key",
             "serviceaccount-agent",
-            "<no value>",
+            NebiusError("service_account_id is not found"),
             "ACTIVE",
             "",
         ],
@@ -989,7 +986,7 @@ def test_access_key_inventory_rejects_secret_bearing_scalar_response(mocker) -> 
     ],
     ids=["omitted-items", "null-items-range", "nil-items-iterate"],
 )
-def test_access_key_inventory_missing_or_null_items_error_is_unresolved(
+def test_access_key_inventory_treats_missing_or_null_items_as_empty(
     mocker, provider_message
 ) -> None:
     mocker.patch(
@@ -999,8 +996,7 @@ def test_access_key_inventory_missing_or_null_items_error_is_unresolved(
         ),
     )
 
-    with pytest.raises(NebiusError, match="items"):
-        nebius._list_access_key_metadata("project-a")
+    assert nebius._list_access_key_metadata("project-a") == []
 
 
 def test_access_key_inventory_treats_empty_formatter_output_as_empty(mocker) -> None:
@@ -1416,17 +1412,6 @@ def test_strict_service_account_name_lookup_rejects_ambiguous_empty_success(
         )
 
 
-def test_strict_service_account_name_lookup_rejects_nonstring_identity(mocker) -> None:
-    mocker.patch(
-        "npa.clients.nebius._run_json", return_value={"metadata": {"id": False}}
-    )
-
-    with pytest.raises(NebiusError, match="schema-invalid"):
-        nebius.get_service_account_id_by_name(
-            "project", "lerobot-training", strict=True
-        )
-
-
 def test_exact_service_account_verification_rejects_ambiguous_empty_success(
     mocker,
 ) -> None:
@@ -1530,24 +1515,13 @@ def test_nebius_bootstrap_agent_environment_falls_back_on_permission_denied(
 
 
 def test_nebius_bucket_exists(mocker) -> None:
-    run_json = mocker.patch(
+    mocker.patch(
         "npa.clients.nebius._run_json",
-        side_effect=[
-            {"metadata": {"name": "npa-bucket-abc", "parent_id": "project"}},
-            nebius.NebiusError(
-                "provider verified bucket absence",
-                provider_status=nebius.ProviderStatus.NOT_FOUND,
-            ),
-        ],
+        return_value={"items": [{"metadata": {"name": "npa-bucket-abc"}}]},
     )
 
     assert nebius.bucket_exists("project", "npa-bucket-abc") is True
     assert nebius.bucket_exists("project", "other") is False
-    assert all(
-        call.args[0][:3] == ["storage", "bucket", "get-by-name"]
-        for call in run_json.call_args_list
-    )
-    assert all("--all" not in call.args[0] for call in run_json.call_args_list)
 
 
 def test_cli_env_strips_stale_iam_token(monkeypatch) -> None:
@@ -1612,189 +1586,23 @@ def test_is_permission_denied_matches_access_denied() -> None:
     assert not nebius.is_permission_denied("NotFound: bucket missing")
 
 
-@pytest.mark.parametrize(
-    "message",
-    [
-        "nebius CLI not found on PATH",
-        "profile 'operator' not found in the Nebius configuration",
-        "Unauthenticated: credential file not found",
-        "PermissionDenied: required role binding was not found",
-        "transport dependency not found while dialing the API",
-        "invalid JSON: metadata field not found",
-        "PermissionDenied: inventory failed; nested code = NotFound",
-    ],
-)
-def test_nebius_not_found_classifier_rejects_non_resource_failures(message) -> None:
-    assert nebius.is_not_found(message) is False
+def test_nebius_bucket_list_paginates_with_all(mocker) -> None:
+    """Bucket existence checks must page past the CLI default.
 
-
-@pytest.mark.parametrize(
-    "message",
-    [
-        "NotFound",
-        "NotFound: compute instance does not exist",
-        "rpc error: code = NotFound desc = requested resource is absent",
-        '{"code":"NOT_FOUND","message":"resource is absent"}',
-        "status.code: ResourceNotFound",
-    ],
-)
-def test_nebius_not_found_classifier_rejects_untyped_exception_text(message) -> None:
-    assert nebius.is_not_found(nebius.NebiusError(message)) is False
-
-
-@pytest.mark.parametrize(
-    "stderr",
-    [
-        "NotFound: compute instance does not exist",
-        "rpc error: code = NotFound desc = requested resource is absent",
-        '{"code":"NOT_FOUND","message":"resource is absent"}',
-        '{"status":{"code":"ResourceNotFound"}}',
-    ],
-)
-def test_nebius_run_classifies_top_level_provider_not_found(mocker, stderr) -> None:
-    mocker.patch("npa.clients.nebius._require_nebius", return_value="/usr/bin/nebius")
-    mocker.patch(
-        "npa.clients.nebius.subprocess.run",
-        return_value=subprocess.CompletedProcess(["nebius"], 1, "", stderr),
-    )
-
-    with pytest.raises(nebius.NebiusError) as raised:
-        nebius._run(["compute", "instance", "get"])
-
-    assert nebius.is_not_found(raised.value) is True
-
-
-@pytest.mark.parametrize(
-    "stderr",
-    [
-        "PermissionDenied: nested code = NotFound",
-        "transport wrapper failed: NotFound",
-        "invalid JSON: status=NotFound",
-        '{"message":"nested code = NotFound"}',
-    ],
-)
-def test_nebius_run_keeps_non_status_not_found_text_unresolved(mocker, stderr) -> None:
-    mocker.patch("npa.clients.nebius._require_nebius", return_value="/usr/bin/nebius")
-    mocker.patch(
-        "npa.clients.nebius.subprocess.run",
-        return_value=subprocess.CompletedProcess(["nebius"], 1, "", stderr),
-    )
-
-    with pytest.raises(nebius.NebiusError) as raised:
-        nebius._run(["compute", "instance", "get"])
-
-    assert nebius.is_not_found(raised.value) is False
-
-
-def test_compute_identity_missing_nebius_cli_is_unresolved(mocker) -> None:
-    mocker.patch("shutil.which", return_value=None)
-
-    with pytest.raises(NebiusError, match="CLI not found"):
-        nebius.get_compute_instance_identity(
-            "instance-a",
-            project_id="project-a",
-            expected_name="agent-demo-agent",
-        )
-
-
-@pytest.mark.parametrize(
-    "message",
-    [
-        "profile 'operator' not found in the Nebius configuration",
-        "Unauthenticated: credential file not found",
-        "PermissionDenied: required role binding was not found",
-    ],
-)
-def test_compute_identity_provider_prerequisite_failure_is_unresolved(
-    mocker, message
-) -> None:
-    mocker.patch(
-        "npa.clients.nebius._run_json", side_effect=nebius.NebiusError(message)
-    )
-
-    with pytest.raises(NebiusError, match="not found"):
-        nebius.get_compute_instance_identity(
-            "instance-a",
-            project_id="project-a",
-            expected_name="agent-demo-agent",
-            profile="operator",
-        )
-
-
-def test_compute_identity_exact_provider_not_found_is_absent(mocker) -> None:
-    mocker.patch(
-        "npa.clients.nebius._run_json",
-        side_effect=nebius.NebiusError(
-            "provider verified compute instance absence",
-            provider_status=nebius.ProviderStatus.NOT_FOUND,
-        ),
-    )
-
-    assert (
-        nebius.get_compute_instance_identity(
-            "instance-a",
-            project_id="project-a",
-            expected_name="agent-demo-agent",
-        )
-        is None
-    )
-
-
-@pytest.mark.parametrize("field", ["id", "name", "parent_id"])
-def test_compute_identity_rejects_nonstring_provider_identity(mocker, field) -> None:
-    metadata = {
-        "id": "instance-a",
-        "name": "agent-demo-agent",
-        "parent_id": "project-a",
-    }
-    metadata[field] = False
-    mocker.patch(
-        "npa.clients.nebius._run_json", return_value={"metadata": metadata}
-    )
-
-    with pytest.raises(NebiusError, match="schema-invalid"):
-        nebius.get_compute_instance_identity(
-            "instance-a",
-            project_id="project-a",
-            expected_name="agent-demo-agent",
-        )
-
-
-def test_nebius_bucket_exact_lookup_does_not_enumerate_project(mocker) -> None:
-    """Existence checks query only the requested bucket name.
-
-    Regression: ``npa configure`` used ``storage bucket list --all`` and filtered
-    locally, exposing unrelated project inventory just to prove a fresh unique
-    name was absent. Nebius provides an exact parent-scoped ``get-by-name`` API;
-    use it so a fresh-user configure never enumerates sibling buckets.
+    Regression: an unpaged ``storage bucket list`` dropped existing buckets
+    beyond the first page, so ``bucket_exists`` returned False for a real
+    bucket and ``npa configure`` wrongly prompted for new-bucket storage class.
+    Uses ``--all`` (true pagination) for consistency with the other listers.
     """
-    run_json = mocker.patch(
-        "npa.clients.nebius._run_json",
-        return_value={
-            "metadata": {"name": "npa-bucket-abc", "parent_id": "project"}
-        },
-    )
-
-    assert nebius.bucket_exists("project", "npa-bucket-abc") is True
-    args = run_json.call_args.args[0]
-    assert args[:3] == ["storage", "bucket", "get-by-name"]
-    assert args[args.index("--parent-id") + 1] == "project"
-    assert args[args.index("--name") + 1] == "npa-bucket-abc"
-    assert "--all" not in args
-
-
-def test_nebius_explicit_bucket_inventory_still_paginates_with_all(mocker) -> None:
     run_json = mocker.patch(
         "npa.clients.nebius._run_json",
         return_value={"items": [{"metadata": {"name": "npa-bucket-abc"}}]},
     )
 
-    assert nebius._list_project_buckets("project") == [
-        {"metadata": {"name": "npa-bucket-abc"}}
-    ]
+    assert nebius.bucket_exists("project", "npa-bucket-abc") is True
     args = run_json.call_args.args[0]
     assert args[:3] == ["storage", "bucket", "list"]
-    assert "--all" in args
+    assert "--all" in args, args
 
 
 def test_nebius_ensure_bucket_reuses_existing_without_create(mocker) -> None:

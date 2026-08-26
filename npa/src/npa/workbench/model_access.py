@@ -5,9 +5,9 @@ whether the token already has access to every gated model the workbench uses and
 points at the exact page to accept for anything still gated.
 
 Important: Hugging Face gated repositories require *interactive* license
-account authorization upstream. NPA checks representative artifact access with
-the supplied token and does not invent another acceptance flag. NGC access
-likewise requires both a key and a successful repository entitlement probe.
+account authorization upstream. NPA checks repository access with the supplied
+token and does not invent another acceptance flag. NGC access likewise requires
+both a key and a successful repository entitlement probe.
 
 Every check is a pure function that takes the resolved tokens plus injectable
 Hugging Face and NGC validators; the CLI wires the real probes, tests inject
@@ -24,7 +24,7 @@ from npa.workflows.sim2real_health import FAIL, PASS, WARN, CheckResult, has_fai
 
 HF = "huggingface"
 NGC = "ngc"
-HF_GATING_LAST_VERIFIED = "2026-08-22"
+HF_GATING_LAST_VERIFIED = "2026-08-17"
 
 
 @dataclass(frozen=True)
@@ -37,8 +37,6 @@ class GatedAsset:
     gated: bool
     note: str = ""
     repo_type: str = "model"
-    revision: str = ""
-    filename: str = ""
 
 
 # This tuple is the single source of truth for the models the access check
@@ -72,61 +70,17 @@ WORKBENCH_ASSETS: tuple[GatedAsset, ...] = (
             "interactively; dataset bytes are non-transferable and runtime-only."
         ),
         repo_type="dataset",
-        revision="b719eea7f0a63619ef51ec7f54178af0937ef050",
-        filename="clip_index.parquet",
     ),
     GatedAsset("nvidia/GR00T-N1.7-3B", HF, ("groot",), False),
     GatedAsset("nvidia/GEAR-SONIC", HF, ("sonic",), False),
-    GatedAsset(
-        "nvidia/Cosmos-Transfer2.5-2B",
-        HF,
-        ("paidf", "sim2real"),
-        True,
-        revision="b67b64abda3801a9aceddbff2bdb86126c06db74",
-        filename="general/edge/61f5694b-0ad5-4ecd-8ad7-c8545627d125_ema_bf16.pt",
-    ),
-    GatedAsset(
-        "nvidia/Cosmos-Reason2-2B",
-        HF,
-        ("groot", "sim2real"),
-        True,
-        revision="main",
-        filename="model.safetensors",
-    ),
-    GatedAsset(
-        "nvidia/Cosmos-Reason2-8B",
-        HF,
-        ("sim2real",),
-        True,
-        revision="main",
-        filename="model-00001-of-00004.safetensors",
-    ),
+    GatedAsset("nvidia/Cosmos-Transfer2.5-2B", HF, ("paidf", "sim2real"), True),
+    GatedAsset("nvidia/Cosmos-Reason2-2B", HF, ("groot", "sim2real"), True),
+    GatedAsset("nvidia/Cosmos-Reason2-8B", HF, ("sim2real",), True),
     GatedAsset("nvidia/Cosmos-Reason1-7B", HF, ("cosmos",), False),
     GatedAsset("nvidia/Cosmos3-Nano", HF, ("cosmos3",), False),
-    GatedAsset(
-        "nvidia/Cosmos-Guardrail1",
-        HF,
-        ("cosmos3",),
-        True,
-        revision="main",
-        filename="video_content_safety_filter/safety_filter.pt",
-    ),
-    GatedAsset(
-        "nvidia/Cosmos-1.0-Guardrail",
-        HF,
-        ("cosmos3-serving",),
-        True,
-        revision="main",
-        filename="config.json",
-    ),
-    GatedAsset(
-        "nvidia/Cosmos-1.0-Diffusion-7B-Text2World",
-        HF,
-        ("cosmos",),
-        True,
-        revision="main",
-        filename="transformer/diffusion_pytorch_model-00001-of-00003.safetensors",
-    ),
+    GatedAsset("nvidia/Cosmos-Guardrail1", HF, ("cosmos3",), True),
+    GatedAsset("nvidia/Cosmos-1.0-Guardrail", HF, ("cosmos3-serving",), True),
+    GatedAsset("nvidia/Cosmos-1.0-Diffusion-7B-Text2World", HF, ("cosmos",), True),
     GatedAsset(
         "nvidia/PhysicalAI-NuRec-PPISP",
         HF,
@@ -140,20 +94,12 @@ WORKBENCH_ASSETS: tuple[GatedAsset, ...] = (
         ("token_factory",),
         True,
         note="Only needed to self-host; Token Factory serves it hosted (no HF gating).",
-        revision="main",
-        filename="model-00001-of-00030.safetensors",
     ),
     GatedAsset("Qwen/Qwen2-VL-7B-Instruct", HF, ("vlm_eval",), False),
     GatedAsset(
         "Qwen/Qwen2.5-VL-72B-Instruct", HF, ("vlm_eval", "token_factory"), False
     ),
-    GatedAsset(
-        "lerobot/pusht",
-        HF,
-        ("lerobot", "sim2real"),
-        False,
-        repo_type="dataset",
-    ),
+    GatedAsset("lerobot/pusht", HF, ("lerobot", "sim2real"), False),
 )
 
 # Capabilities whose NVIDIA containers/models are pulled from NGC and therefore
@@ -227,7 +173,7 @@ def _redact_secret(text: Any, secret: str) -> str:
 def check_hf_asset(
     asset: GatedAsset,
     token: str,
-    hf_validator: Callable[..., Any] | None,
+    hf_validator: Callable[[str, str, str], Any] | None,
 ) -> CheckResult:
     """Check whether *token* can access one gated Hugging Face repo."""
 
@@ -237,7 +183,7 @@ def check_hf_asset(
         if asset.gated:
             return CheckResult(
                 name=name,
-                status=FAIL if hf_validator is not None else WARN,
+                status=WARN,
                 summary=f"No HF token; cannot verify gated access to {asset.repo}.{caps}",
                 remedy=(
                     f"Accept the license at {hf_model_url(asset.repo)} while signed in, "
@@ -261,22 +207,8 @@ def check_hf_asset(
             status=PASS,
             summary=f"HF token present; {asset.repo} access not verified (offline).{caps}",
         )
-    if asset.gated and (not asset.revision or not asset.filename):
-        return CheckResult(
-            name=name,
-            status=FAIL,
-            summary=f"HF gated-asset catalog is incomplete for {asset.repo}.{caps}",
-            remedy="Update NPA so the capability's representative artifact is current.",
-            details=("missing representative revision or filename",),
-        )
     try:
-        result = hf_validator(
-            token,
-            asset.repo,
-            asset.repo_type,
-            revision=asset.revision,
-            filename=asset.filename,
-        )
+        result = hf_validator(token, asset.repo, asset.repo_type)
     except Exception as exc:  # noqa: BLE001 - a probe exception is transient
         return CheckResult(
             name=name,
@@ -295,46 +227,34 @@ def check_hf_asset(
             ),
         )
     status_code = getattr(result, "status_code", None)
-    error_kind = str(getattr(result, "error_kind", "") or "")
     error = _redact_secret(
         getattr(result, "error", "") or "unknown error",
         token,
     )
-    if error_kind in {"authentication", "missing_token"}:
-        return CheckResult(
-            name=name,
-            status=FAIL,
-            summary=f"HF token rejected for {asset.repo}.{caps}",
-            remedy="Regenerate the token at https://huggingface.co/settings/tokens.",
-            details=(error,),
-        )
-    if error_kind == "entitlement" or (
-        not error_kind and status_code in {401, 403} and asset.gated
-    ):
-        return CheckResult(
-            name=name,
-            status=FAIL,
-            summary=f"HF token lacks gated artifact access to {asset.repo}.{caps}",
-            remedy=(
-                f"Open {hf_model_url(asset.repo)} while signed in and click "
-                "'Agree and access repository', then re-run this check."
-            ),
-            details=(error,),
-        )
-    if error_kind == "catalog_drift" or status_code == 404:
-        return CheckResult(
-            name=name,
-            status=FAIL,
-            summary=f"HF artifact catalog drift detected for {asset.repo}.{caps}",
-            remedy="Update NPA so its representative revision and filename match the capability.",
-            details=(error,),
-        )
     if status_code in {401, 403}:
+        if asset.gated:
+            return CheckResult(
+                name=name,
+                status=FAIL,
+                summary=f"HF token cannot access gated repo {asset.repo}.{caps}",
+                remedy=(
+                    f"Open {hf_model_url(asset.repo)} while signed in and click "
+                    "'Agree and access repository', then re-run this check."
+                ),
+                details=(error,),
+            )
         return CheckResult(
             name=name,
             status=FAIL,
-            summary=f"HF token rejected for {asset.repo}.{caps}",
-            remedy="Regenerate the token at https://huggingface.co/settings/tokens.",
+            summary=(
+                f"HF {'token rejected' if token else 'anonymous access rejected'} "
+                f"for {asset.repo}.{caps}"
+            ),
+            remedy=(
+                "Regenerate the token at https://huggingface.co/settings/tokens."
+                if token
+                else "The asset metadata may have changed; verify its Hugging Face page."
+            ),
             details=(error,),
         )
     return CheckResult(
@@ -364,7 +284,7 @@ def check_ngc_key(
     if not key:
         return CheckResult(
             name="ngc",
-            status=FAIL if ngc_validator is not None else WARN,
+            status=WARN,
             summary="NGC_API_KEY is not set (needed for the NuRec NRE image pull).",
             remedy=(
                 "Create one at https://org.ngc.nvidia.com/setup/api-key and run "
@@ -375,7 +295,7 @@ def check_ngc_key(
     if not key.lower().startswith(("nvapi-", "nvapi_")):
         return CheckResult(
             name="ngc",
-            status=FAIL if ngc_validator is not None else WARN,
+            status=WARN,
             summary="NGC_API_KEY is set but does not look like an NGC key.",
             remedy="NGC keys start with 'nvapi-'. Re-check the value.",
         )
@@ -439,7 +359,7 @@ def check_workbench_access(
     *,
     hf_token: str,
     ngc_key: str,
-    hf_validator: Callable[..., Any] | None = None,
+    hf_validator: Callable[[str, str, str], Any] | None = None,
     ngc_validator: Callable[[str], str] | None = None,
     capabilities: Iterable[str] | None = None,
     gated_only: bool = False,
@@ -473,10 +393,10 @@ def check_workbench_access(
 def access_note(results: list[CheckResult]) -> str:
     """Return a one-line ``[NOTE]`` naming the models HF/NGC cannot access.
 
-    Definitive HF authentication, entitlement, and catalog failures are listed
-    as "no access"; transient or otherwise uncertain probes are counted as
-    "unverified". NGC separates missing/malformed keys, transient probe failures,
-    credential rejection, and repository-entitlement denial.
+    HF entries with a definitive rejection (401/403) are listed as "no access";
+    entries that could not be reached are counted as "unverified". NGC separates
+    missing/malformed keys, transient probe failures, credential rejection, and
+    repository-entitlement denial.
     """
 
     hf_no = [r.name for r in results if r.name != "ngc" and r.status == FAIL]
@@ -484,11 +404,15 @@ def access_note(results: list[CheckResult]) -> str:
     ngc = next((r for r in results if r.name == "ngc"), None)
     ngc_ok = ngc is None or ngc.status == PASS
     ngc_missing = bool(
-        ngc is not None and ("not set" in ngc.summary or "does not look" in ngc.summary)
+        ngc is not None
+        and ngc.status == WARN
+        and ("not set" in ngc.summary or "does not look" in ngc.summary)
     )
     ngc_unverified = bool(ngc is not None and ngc.status == WARN and not ngc_missing)
     ngc_credential_rejected = bool(
-        ngc is not None and ngc.status == FAIL and "credential rejected" in ngc.summary
+        ngc is not None
+        and ngc.status == FAIL
+        and "credential rejected" in ngc.summary
     )
 
     if not hf_no and ngc_ok and not hf_unverified:
@@ -507,13 +431,17 @@ def access_note(results: list[CheckResult]) -> str:
         )
     elif ngc_unverified:
         parts.append(
-            "NGC repository entitlement unverified for: " + ", ".join(NGC_CAPABILITIES)
+            "NGC repository entitlement unverified for: "
+            + ", ".join(NGC_CAPABILITIES)
         )
     elif ngc_credential_rejected:
-        parts.append("NGC credential rejected for: " + ", ".join(NGC_CAPABILITIES))
+        parts.append(
+            "NGC credential rejected for: " + ", ".join(NGC_CAPABILITIES)
+        )
     elif not ngc_ok:
         parts.append(
-            "NGC repository entitlement denied for: " + ", ".join(NGC_CAPABILITIES)
+            "NGC repository entitlement denied for: "
+            + ", ".join(NGC_CAPABILITIES)
         )
     if hf_unverified:
         parts.append(f"{len(hf_unverified)} model(s) unverified")

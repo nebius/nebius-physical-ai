@@ -509,24 +509,10 @@ def _iam_stubs(
 ):
     from npa.clients import nebius as nebius_module
 
-    deleted: list[str] = []
     monkeypatch.setattr(
         nebius_module,
         "get_service_account_id_by_name",
         lambda project_id, name, **kwargs: sa_id or None,
-    )
-    monkeypatch.setattr(
-        "npa.cli.agent_iam._owned_agent_account",
-        lambda _project_id: (
-            {
-                "id": sa_id,
-                "name": "npa-agent",
-                "project_id": "project-a",
-                "created_by": "npa",
-            }
-            if sa_id
-            else None
-        ),
     )
     monkeypatch.setattr(
         nebius_module,
@@ -534,7 +520,6 @@ def _iam_stubs(
         lambda project_id, account, **kwargs: [
             {"id": key, "name": "npa-agent-access-key", "state": "ACTIVE"}
             for key in keys
-            if key not in deleted
         ],
     )
     monkeypatch.setattr(
@@ -543,21 +528,7 @@ def _iam_stubs(
     monkeypatch.setattr(
         nebius_module, "get_compute_instance_identity", lambda *args, **kwargs: None
     )
-    monkeypatch.setattr(
-        nebius_module,
-        "get_service_account_identity",
-        lambda account_id, **_kwargs: (
-            None
-            if account_id in deleted
-            else nebius_module.ServiceAccountIdentity(
-                account_id=account_id,
-                name="npa-agent",
-                project_id="project-a",
-                tenant_id="",
-                profile="",
-            )
-        ),
-    )
+    deleted: list[str] = []
     monkeypatch.setattr(
         nebius_module, "delete_access_key", lambda key_id: deleted.append(key_id)
     )
@@ -654,9 +625,8 @@ def test_agent_destroy_keep_iam_only_reports(monkeypatch, tmp_path: Path) -> Non
 
 
 def test_agent_destroy_keeps_iam_other_agents_need(monkeypatch, tmp_path: Path) -> None:
-    """Provider and local identity evidence agree another agent still uses it."""
+    """The account is per project: another agent still uses it."""
     from npa.cli import agent as agent_module
-    from npa.clients import nebius as nebius_module
 
     _agent_config(
         monkeypatch,
@@ -671,22 +641,6 @@ def test_agent_destroy_keeps_iam_other_agents_need(monkeypatch, tmp_path: Path) 
         agent_module, "_cleanup_agent_local_files", lambda *a, **k: None
     )
     deleted = _iam_stubs(monkeypatch)
-    monkeypatch.setattr(
-        nebius_module,
-        "_run_json",
-        lambda *_a, **_k: {
-            "items": [
-                {
-                    "metadata": {"id": "instance-second", "name": "agent-second"},
-                    "spec": {
-                        "account": {
-                            "service_account": {"id": "serviceaccount-agent"}
-                        }
-                    },
-                }
-            ]
-        },
-    )
     monkeypatch.setattr("npa.cli.agent_iam.agent_iam_owned", lambda *_args: True)
     monkeypatch.setattr("npa.cli.agent_iam.clear_agent_iam_record", lambda *_args: True)
 
@@ -694,7 +648,7 @@ def test_agent_destroy_keeps_iam_other_agents_need(monkeypatch, tmp_path: Path) 
 
     assert result.exit_code == 0, result.output
     assert deleted == []
-    assert "agree on exact dependent VM" in result.output
+    assert "still use it" in result.output
 
 
 def test_agent_destroy_does_not_claim_success_when_provider_still_has_vm(

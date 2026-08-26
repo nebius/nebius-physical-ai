@@ -15,7 +15,6 @@ class HFAccessResult:
     ok: bool
     status_code: int | None = None
     error: str = ""
-    error_kind: str = ""
     revision: str = ""
     filename: str = ""
 
@@ -56,57 +55,9 @@ def validate_hf_identity(token: str, *, timeout: float = 10.0) -> HFAccessResult
 
 
 def validate_hf_access(
-    token: str,
-    repo: str,
-    repo_type: str = "model",
-    *,
-    revision: str = "",
-    filename: str = "",
-    timeout: float = 10.0,
+    token: str, repo: str, repo_type: str = "model", *, timeout: float = 10.0
 ) -> HFAccessResult:
-    """Check repository access, or exact artifact authorization when specified.
-
-    Hugging Face repository metadata may remain public for a gated repository,
-    so callers that enforce gated access must provide both ``revision`` and
-    ``filename``. The exact-file probe proves that the supplied user token can
-    resolve bytes without downloading model weights.
-    """
-
-    if not revision and not filename:
-        # Preserve the long-standing repository-level API for public models,
-        # while ensuring every catalogued gated asset gets exact-byte semantics
-        # even from older callers that only passed its repository name.
-        from npa.workbench.model_access import gated_hf_assets
-
-        catalogued = next(
-            (
-                asset
-                for asset in gated_hf_assets()
-                if asset.repo == repo and asset.repo_type == repo_type
-            ),
-            None,
-        )
-        if catalogued is not None:
-            revision = catalogued.revision
-            filename = catalogued.filename
-    if revision or filename:
-        if not revision or not filename:
-            return HFAccessResult(
-                repo=repo,
-                ok=False,
-                revision=revision,
-                filename=filename,
-                error_kind="catalog_drift",
-                error="exact artifact validation requires both revision and filename",
-            )
-        return validate_hf_file_access(
-            token,
-            repo,
-            revision,
-            filename,
-            repo_type=repo_type,
-            timeout=timeout,
-        )
+    """Check authenticated or anonymous access to a Hugging Face repository."""
     headers = {"Authorization": f"Bearer {token}"} if token else {}
     kind = "datasets" if repo_type == "dataset" else "models"
     url = f"https://huggingface.co/api/{kind}/{repo}"
@@ -119,19 +70,13 @@ def validate_hf_access(
                 url, headers=headers, timeout=timeout, follow_redirects=True
             )
     except httpx.HTTPError as exc:
-        return HFAccessResult(
-            repo=repo,
-            ok=False,
-            error_kind="transient",
-            error=f"repository metadata probe failed: {type(exc).__name__}",
-        )
+        return HFAccessResult(repo=repo, ok=False, error=str(exc))
 
     if response.status_code in {401, 403}:
         return HFAccessResult(
             repo=repo,
             ok=False,
             status_code=response.status_code,
-            error_kind="authentication" if token else "anonymous_denied",
             error=(
                 f"Error: HF_TOKEN does not have access to {repo}. "
                 f"Request access at {hf_model_url(repo)} and retry."
@@ -143,34 +88,8 @@ def validate_hf_access(
         repo=repo,
         ok=False,
         status_code=response.status_code,
-        error_kind="transient",
         error=f"Unable to validate Hugging Face access to {repo}: HTTP {response.status_code}",
     )
-
-
-def _classify_hf_artifact_rejection(token: str, *, timeout: float) -> str:
-    """Distinguish an invalid token from a valid token lacking entitlement.
-
-    The identity request never follows redirects and is sent only to the fixed
-    Hugging Face origin. Its response body is deliberately ignored.
-    """
-
-    if not token:
-        return "missing_token"
-    try:
-        response = httpx.get(
-            "https://huggingface.co/api/whoami-v2",
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=timeout,
-            follow_redirects=False,
-        )
-    except httpx.HTTPError:
-        return "transient"
-    if 200 <= response.status_code < 300:
-        return "entitlement"
-    if response.status_code in {401, 403}:
-        return "authentication"
-    return "transient"
 
 
 def validate_hf_file_access(
@@ -179,7 +98,6 @@ def validate_hf_file_access(
     revision: str,
     filename: str,
     *,
-    repo_type: str = "model",
     timeout: float = 10.0,
 ) -> HFAccessResult:
     """Verify one pinned checkpoint path without downloading its bytes.
@@ -199,12 +117,10 @@ def validate_hf_file_access(
             revision=normalized_revision,
             filename=normalized_filename,
             ok=False,
-            error_kind="missing_token",
             error="HF_TOKEN is required to verify the selected gated checkpoint",
         )
-    repo_prefix = "datasets/" if repo_type == "dataset" else ""
     url = (
-        f"https://huggingface.co/{repo_prefix}{normalized_repo}/resolve/"
+        f"https://huggingface.co/{normalized_repo}/resolve/"
         f"{quote(normalized_revision, safe='')}/{quote(normalized_filename, safe='/')}"
     )
     headers = {"Authorization": f"Bearer {token}"}
@@ -225,7 +141,6 @@ def validate_hf_file_access(
             revision=normalized_revision,
             filename=normalized_filename,
             ok=False,
-            error_kind="transient",
             error=f"checkpoint access probe failed: {type(exc).__name__}",
         )
     status = response.status_code
@@ -283,30 +198,19 @@ def validate_hf_file_access(
             filename=normalized_filename,
             ok=False,
             status_code=status,
-            error_kind="unverified_redirect",
             error=error,
         )
     if status in {401, 403}:
-        error_kind = _classify_hf_artifact_rejection(token, timeout=timeout)
-        if error_kind == "authentication":
-            error = "HF_TOKEN was rejected while checking exact artifact access"
-        elif error_kind == "entitlement":
-            error = (
-                f"HF token is valid but lacks gated artifact access to "
-                f"{normalized_repo}; request access at {hf_model_url(normalized_repo)}"
-            )
-        else:
-            error = (
-                "artifact access was denied and token identity could not be verified"
-            )
+        error = (
+            f"HF token cannot access gated repo {normalized_repo}; request access "
+            f"at {hf_model_url(normalized_repo)}"
+        )
     elif status == 404:
-        error_kind = "catalog_drift"
         error = (
             f"pinned checkpoint was not found in {normalized_repo}; verify revision "
-            "and filename against the capability default"
+            "and filename against the pinned Cosmos Transfer source"
         )
     else:
-        error_kind = "transient"
         error = (
             f"could not verify exact checkpoint access for {normalized_repo}: "
             f"HTTP {status}"
@@ -317,6 +221,5 @@ def validate_hf_file_access(
         filename=normalized_filename,
         ok=False,
         status_code=status,
-        error_kind=error_kind,
         error=error,
     )

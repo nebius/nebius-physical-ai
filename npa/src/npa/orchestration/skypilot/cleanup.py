@@ -132,6 +132,8 @@ def sky_down(
     cleanup = CleanupResult(commands=[cmd])
     if result.returncode == 0:
         cleanup.resources_removed.append(cluster_name)
+    elif _is_conclusive_absence_error(_command_detail(result)):
+        cleanup.resources_removed.append(f"{cluster_name}:already-absent")
     else:
         cleanup.errors.append(_format_command_error(cmd, result))
     return cleanup
@@ -232,7 +234,7 @@ def cleanup_jobs_controller(
             or receipt_identity.get("controller_context")
             or ""
         )
-        if receipt_identity.receipt_authorizes_noop:
+        if receipt_identity.receipt_is_terminal:
             cleanup.outcome = "already_absent"
             cleanup.verified = True
             cleanup.no_op = True
@@ -255,7 +257,7 @@ def cleanup_jobs_controller(
             cleanup.errors.append(str(exc))
             cleanup.outcome = "unsafe"
             return cleanup
-        if cluster_receipt_identity.receipt_authorizes_noop:
+        if cluster_receipt_identity.receipt_is_terminal:
             cleanup.project_alias = str(
                 cluster_receipt_identity.get("project_alias") or cleanup.project_alias
             )
@@ -514,7 +516,6 @@ def _record_remote_controller_absence(identity: Any, cleanup: CleanupResult) -> 
             project_alias=identity.project_alias,
             project_id=identity.project_id,
             context=identity.context,
-            identity=identity.receipt_identity(),
             precheck={"identity_verified": True, **identity.receipt_identity()},
             action={"kind": "checkpoint_before_local_state_removal"},
             verification={"remote_controller_pods": [], "remote_absence": True},
@@ -584,7 +585,7 @@ def _record_controller_result(
             context=identity.context,
             identity=identity.receipt_identity(),
             precheck={"identity_verified": True, **identity.receipt_identity()},
-            action={"kind": "controller_cleanup", "commands": cleanup.commands},
+            action={"commands": cleanup.commands},
             verification={
                 "remote_controller_pods": [
                     f"{namespace}/{pod}" for namespace, pod, _name in remote_pods
@@ -1356,6 +1357,8 @@ def _down_jobs_controller(
             return cleanup
     if result.returncode == 0:
         cleanup.resources_removed.append(controller_name)
+    elif _is_conclusive_absence_error(_command_detail(result)):
+        cleanup.resources_removed.append(f"{controller_name}:already-absent")
     else:
         cleanup.errors.append(_format_command_error(cmd, result))
     return cleanup
@@ -1636,6 +1639,36 @@ def _format_command_error(
 
 def _command_detail(result: subprocess.CompletedProcess[str]) -> str:
     return _combined_output(result) or f"exit {result.returncode}"
+
+
+def _is_conclusive_absence_error(detail: str) -> bool:
+    """Recognize an exact absent resource without swallowing auth/API failures."""
+
+    lowered = " ".join(str(detail or "").lower().split())
+    if any(
+        marker in lowered
+        for marker in (
+            "unauthorized",
+            "unauthenticated",
+            "permission denied",
+            "forbidden",
+            "timed out",
+            "timeout",
+            "connection refused",
+            "unavailable",
+        )
+    ):
+        return False
+    return any(
+        marker in lowered
+        for marker in (
+            "not found",
+            "notfound",
+            "does not exist",
+            "already absent",
+            "no cluster found",
+        )
+    )
 
 
 def _combined_output(result: subprocess.CompletedProcess[str]) -> str:

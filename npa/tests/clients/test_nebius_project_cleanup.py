@@ -9,12 +9,7 @@ def test_project_identity_not_found_is_verified_absence(monkeypatch) -> None:
     monkeypatch.setattr(
         nebius,
         "_run_json",
-        lambda *_a, **_k: (_ for _ in ()).throw(
-            nebius.NebiusError(
-                "provider verified project absence",
-                provider_status=nebius.ProviderStatus.NOT_FOUND,
-            )
-        ),
+        lambda *_a, **_k: (_ for _ in ()).throw(nebius.NebiusError("NotFound")),
     )
     monkeypatch.setattr(nebius, "_iam_profile_args", lambda _profile: ([], "test"))
 

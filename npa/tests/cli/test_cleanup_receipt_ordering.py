@@ -18,10 +18,6 @@ def _home(monkeypatch, tmp_path: Path) -> Path:  # noqa: ANN001
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
-    monkeypatch.setenv("NPA_CONFIG_DIR", str(home / ".npa"))
-    monkeypatch.setenv(
-        "NPA_OPERATION_JOURNAL_DIR", str(home / ".npa" / "operations")
-    )
     monkeypatch.setenv(
         "NPA_TEARDOWN_RECEIPT_DIR", str(home / ".npa" / "teardown-receipts")
     )
@@ -141,65 +137,20 @@ def test_final_audit_uses_receipts_after_config_and_resources_are_removed(
     monkeypatch, tmp_path: Path
 ) -> None:  # noqa: ANN001
     _home(monkeypatch, tmp_path)
-    evidence = {
-        "workflow_audit": (
-            "verified_absent",
-            {"kind": "read_only_managed_job_audit"},
-            {"nonterminal_job_ids": [], "detail": ""},
-        ),
-        "agent": (
-            "verified_deleted",
-            {"kind": "terraform_agent_destroy"},
-            {
-                "exact_instance_absent": True,
-                "local_state_retired": True,
-                "terraform_destroy_completed": True,
-                "terraform_dependency_graph": sorted(
-                    cleanup_cli._AGENT_TERRAFORM_GRAPH
-                ),
-                "iam_cleanup_complete": True,
-                "iam_disposition": "deleted",
-            },
-        ),
-        "cluster": (
-            "verified_absent",
-            {"kind": "exact_provider_check"},
-            {"provider_absence": "verified"},
-        ),
-        "bucket": (
-            "verified_absent",
-            {"kind": "none"},
-            {"bucket_absent": True},
-        ),
-        "project_config": (
-            "verified_deleted",
-            {"kind": "forget_project"},
-            {"project_config_absent": True},
-        ),
-        "local_cleanup": (
-            "completed",
-            {"kind": "local_cleanup"},
-            {"remaining_terraform_count": 0},
-        ),
-    }
-    for phase, (state, action, verification) in evidence.items():
+    for phase in (
+        "workflow_audit",
+        "agent",
+        "cluster",
+        "bucket",
+        "project_config",
+        "local_cleanup",
+    ):
         teardown_receipts.record_teardown_event(
             phase=phase,
             resource=f"{phase}-fixture",
-            terminal_state=state,
-            action=action,
-            verification=verification,
-            identity=(
-                {
-                    "project_id": "project-fixture",
-                    "agent_name": "agent-fixture",
-                    "instance_id": "instance-fixture",
-                }
-                if phase == "agent"
-                else {"cluster_id": "cluster-fixture"}
-                if phase == "cluster"
-                else {}
-            ),
+            terminal_state="verified_deleted"
+            if phase != "local_cleanup"
+            else "completed",
         )
     monkeypatch.setattr(
         cleanup_cli,

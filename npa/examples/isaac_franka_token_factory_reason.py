@@ -4,8 +4,7 @@
 Local path (no SkyPilot):
   1. Capture frames on a GPU host inside the Isaac Lab image, or use the sample
      frames under docs/assets/hackathon/isaac-franka-lift-cube/.
-  2. Export NEBIUS_TOKEN_FACTORY_KEY, then persist it without putting the secret
-     in argv: ``npa configure --save-env-credentials``.
+  2. Export NEBIUS_TOKEN_FACTORY_KEY (or run ``npa configure --token-factory-key``).
   3. Run this script:
 
      npa/.venv/bin/python npa/examples/isaac_franka_token_factory_reason.py \\
@@ -62,8 +61,7 @@ def main() -> int:
 
     if not resolve_config(require_api_key=False).api_key:
         print(
-            "Export NEBIUS_TOKEN_FACTORY_KEY and run "
-            "npa configure --save-env-credentials",
+            "Set NEBIUS_TOKEN_FACTORY_KEY or run npa configure --token-factory-key",
             file=sys.stderr,
         )
         return 1

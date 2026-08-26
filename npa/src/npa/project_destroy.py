@@ -327,38 +327,12 @@ def build_project_destroy_plan(
     project_id = str(environment.project_id)
     agents = resolve_project_agents(project)
     agent_names = set(agents)
-    agent_generations: dict[str, set[str]] = {
-        str(name): {
-            str(record.get("instance_id") or "").strip()
-        }
-        for name, record in agents.items()
-        if isinstance(record, Mapping)
-        and str(record.get("project_id") or "").strip() == project_id
-        and str(record.get("instance_id") or "").strip()
-    }
-    agent_operations = list_operations(
+    for operation in list_operations(
         project_alias=project, project_id=project_id, resource_type="agent"
-    )
-    for operation in agent_operations:
-        payload = operation.read()
-        requested_name = str(payload.get("requested_name") or "").strip()
+    ):
+        requested_name = str(operation.read().get("requested_name") or "").strip()
         if requested_name:
             agent_names.add(requested_name)
-            for resource in payload.get("resources") or []:
-                if not isinstance(resource, Mapping):
-                    continue
-                provider_id = str(resource.get("provider_id") or "").strip()
-                resource_project = str(
-                    resource.get("project_id") or project_id
-                ).strip()
-                if (
-                    resource.get("resource_type") == "compute_instance"
-                    and provider_id
-                    and resource_project == project_id
-                ):
-                    agent_generations.setdefault(requested_name, set()).add(
-                        provider_id
-                    )
     agent_commands = tuple(
         (
             "npa",
@@ -509,22 +483,13 @@ def build_project_destroy_plan(
             "Inventory durable runs, then cancel each exact run before controller teardown.",
         ),
         DestroyPhase(
-            "agents",
-            agent_commands,
-            "Destroy every configured project agent.",
-            metadata={
-                "project_id": project_id,
-                "agent_generations": {
-                    name: sorted(agent_generations.get(name, set()))
-                    for name in sorted(agent_names)
-                },
-            },
+            "agents", agent_commands, "Destroy every configured project agent."
         ),
         DestroyPhase(
             "controller",
             controller_commands,
             "Remove the exact bound shared controller.",
-            ("workflows", "agents"),
+            ("workflows",),
         ),
         DestroyPhase(
             "clusters",
@@ -1029,117 +994,6 @@ def _command_evidence(
     }
 
 
-def _command_option(command: tuple[str, ...], option: str) -> str:
-    try:
-        position = command.index(option) + 1
-    except ValueError:
-        return ""
-    return str(command[position]).strip() if position < len(command) else ""
-
-
-def _agent_destroy_result_disposition(
-    completed: subprocess.CompletedProcess[str],
-    command: tuple[str, ...],
-    *,
-    project_alias: str,
-    project_id: str,
-    planned_generations: Mapping[str, object],
-) -> tuple[str, str]:
-    """Validate child output against the newest immutable receipt generation."""
-
-    if completed.returncode != 0:
-        return "unresolved", "agent teardown command exited without convergence"
-    parsed = parse_single_json_document(completed.stdout or "")
-    if not isinstance(parsed, dict):
-        return "unresolved", "agent teardown returned ambiguous JSON evidence"
-    expected_alias = _command_option(command, "--project")
-    expected_name = _command_option(command, "--name")
-    if expected_alias != project_alias or not expected_name:
-        return "unresolved", "agent teardown command lacked exact project/name selectors"
-    identity = parsed.get("identity")
-    identity = identity if isinstance(identity, Mapping) else {}
-    instance_id = str(identity.get("instance_id") or "").strip()
-    identity_checks = {
-        "project_alias": str(identity.get("project_alias") or "").strip()
-        == project_alias,
-        "project_id": str(identity.get("project_id") or "").strip() == project_id,
-        "agent_name": str(identity.get("agent_name") or "").strip()
-        == expected_name,
-        "instance_id": bool(instance_id),
-    }
-    mismatches = [name for name, matches in identity_checks.items() if not matches]
-    if mismatches:
-        return (
-            "unresolved",
-            "agent teardown identity evidence conflicts with " + ", ".join(mismatches),
-        )
-    if not str(parsed.get("identity_source") or "").strip() or not isinstance(
-        parsed.get("identity_field_sources"), Mapping
-    ):
-        return "unresolved", "agent teardown identity provenance is incomplete"
-    raw_expected = planned_generations.get(expected_name, [])
-    expected_generations = {
-        str(value).strip()
-        for value in (
-            raw_expected if isinstance(raw_expected, (list, tuple, set)) else []
-        )
-        if str(value).strip()
-    }
-    if expected_generations and instance_id not in expected_generations:
-        return "unresolved", "agent teardown instance generation was not in the plan"
-
-    output_disposition = "unresolved"
-    if (
-        parsed.get("outcome") == "verified_deleted"
-        and parsed.get("verified") is True
-        and parsed.get("infrastructure_absent") is True
-        and parsed.get("iam_cleanup_complete") is True
-        and parsed.get("shared_iam_preserved") is False
-        and parsed.get("iam_disposition") in {"absent", "deleted"}
-    ):
-        output_disposition = "verified_absent"
-    elif (
-        parsed.get("outcome") == "verified_deleted"
-        and parsed.get("verified") is True
-        and parsed.get("infrastructure_absent") is True
-        and parsed.get("iam_cleanup_complete") is False
-        and parsed.get("shared_iam_preserved") is True
-        and parsed.get("iam_disposition") == "retained_shared"
-    ):
-        output_disposition = "retained_shared"
-    if output_disposition == "unresolved":
-        return "unresolved", "agent teardown success evidence is incomplete or conflicting"
-
-    from npa.teardown_receipts import (
-        agent_teardown_event_disposition,
-        latest_resource_generation_events,
-    )
-
-    try:
-        events = latest_resource_generation_events(
-            project_id=project_id,
-            phase="agent",
-            resource=expected_name,
-            strict=True,
-        )
-    except (OSError, RuntimeError, ValueError):
-        return "unresolved", "agent teardown receipt inventory is unavailable"
-    matching = []
-    for event in events:
-        event_identity = event.get("identity")
-        event_identity = (
-            event_identity if isinstance(event_identity, Mapping) else {}
-        )
-        if str(event_identity.get("instance_id") or "").strip() == instance_id:
-            matching.append(event)
-    if len(matching) != 1:
-        return "unresolved", "agent teardown receipt generation is missing or ambiguous"
-    receipt_disposition = agent_teardown_event_disposition(matching[0])
-    if receipt_disposition != output_disposition:
-        return "unresolved", "agent teardown output conflicts with newest receipt evidence"
-    return output_disposition, ""
-
-
 @intent_boundary(OperationIntent.DESTROY)
 def execute_project_destroy(
     project: str,
@@ -1299,14 +1153,6 @@ def execute_project_destroy(
                         )
                         recovery_commands.append(list(cancel_command))
         else:
-            agent_final_iam_complete = False
-            agent_retained_shared_commands: list[list[str]] = []
-            raw_agent_generations = phase.metadata.get("agent_generations", {})
-            planned_agent_generations = (
-                raw_agent_generations
-                if isinstance(raw_agent_generations, Mapping)
-                else {}
-            )
             for command in commands:
                 completed = _run(command, runner)
                 executed.append(list(command))
@@ -1318,67 +1164,24 @@ def execute_project_destroy(
                     and parsed.get("outcome") == "degraded_local_metadata"
                     and parsed.get("remote_absence_verified") is True
                 )
-                agent_disposition, agent_error = (
-                    _agent_destroy_result_disposition(
-                        completed,
-                        command,
-                        project_alias=project,
-                        project_id=project_id,
-                        planned_generations=planned_agent_generations,
-                    )
-                    if phase.name == "agents"
-                    else ("unresolved", "")
+                infrastructure_only_converged = bool(
+                    phase.name == "agents"
+                    and isinstance(parsed, dict)
+                    and parsed.get("infrastructure_absent") is True
+                    and parsed.get("iam_cleanup_complete") is False
                 )
-                agent_retained_shared = agent_disposition == "retained_shared"
-                agent_converged = agent_disposition == "verified_absent"
                 if remote_only_converged:
                     phase_warnings.append(
                         "exact remote controller absence verified; stale local "
                         "metadata remains for idempotent reconciliation"
                     )
-                elif agent_retained_shared:
-                    # Agent IAM is project-shared. An earlier sibling must retain it
-                    # while a later sibling still depends on the account. Treat that
-                    # exact terminal disposition as provisional until the final
-                    # sibling verifies the shared account absent.
-                    agent_final_iam_complete = False
-                    agent_retained_shared_commands.append(list(command))
-                elif agent_converged:
-                    agent_final_iam_complete = True
-                    agent_retained_shared_commands.clear()
-                elif phase.name == "agents" and not agent_converged:
-                    phase_errors.append(agent_error)
-                    recovery_commands.append(list(command))
+                elif infrastructure_only_converged:
+                    phase_warnings.append(
+                        "exact agent infrastructure absence verified; agent IAM cleanup remains partial"
+                    )
                 elif completed.returncode != 0:
                     phase_errors.append(_command_failure_detail(completed))
                     recovery_commands.append(list(command))
-            if phase.name == "agents":
-                if phase_errors:
-                    shared_iam_state = "unresolved"
-                elif agent_final_iam_complete:
-                    shared_iam_state = "verified_absent"
-                elif agent_retained_shared_commands:
-                    shared_iam_state = "retained_shared"
-                elif commands:
-                    shared_iam_state = "unresolved"
-                else:
-                    shared_iam_state = "not_applicable"
-                phase_evidence.update(
-                    {
-                        "agent_count": len(commands),
-                        "shared_iam_state": shared_iam_state,
-                    }
-                )
-                if (
-                    commands
-                    and not phase_errors
-                    and not agent_final_iam_complete
-                ):
-                    phase_errors.append(
-                        "exact agent infrastructure absence was verified, but shared "
-                        "agent IAM cleanup remains unresolved after the final sibling"
-                    )
-                    recovery_commands.extend(agent_retained_shared_commands)
             if phase.name == "storage_iam" and not phase_errors:
                 raw_generation_ids = phase.metadata.get("generation_ids", [])
                 raw_logical_names = phase.metadata.get("logical_names", [])

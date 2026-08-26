@@ -100,7 +100,7 @@ def recover_default_security_group_delete(
     try:
         nebius._run(["vpc", "network", "delete", "--id", network_id])
     except NebiusError as exc:
-        if nebius.is_not_found(exc):
+        if nebius.is_not_found(str(exc)):
             status(
                 f"NPA-owned parent network {network_id} is already absent; continuing."
             )

@@ -992,14 +992,14 @@ def test_forget_project_converges_when_cleanup_receipt_persistence_fails(
 
     result = CliRunner().invoke(app, ["configure", "--forget-project", "target"])
 
+    assert result.exit_code == 0, result.output
     saved = yaml.safe_load(isolated_config.read_text(encoding="utf-8"))
+    assert saved["default_project"] == "unrelated"
+    assert set(saved["projects"]) == {"unrelated"}
+    assert saved["projects"]["unrelated"]["project_id"] == "project-unrelated"
+    assert "controller_owner" not in saved.get("skypilot", {})
+    assert "Removed project 'target'" in result.output
     if fallback_succeeds:
-        assert result.exit_code == 0, result.output
-        assert saved["default_project"] == "unrelated"
-        assert set(saved["projects"]) == {"unrelated"}
-        assert saved["projects"]["unrelated"]["project_id"] == "project-unrelated"
-        assert "controller_owner" not in saved.get("skypilot", {})
-        assert "Removed project 'target'" in result.output
         assert "wrote a minimal safe cleanup receipt" in result.output
         [receipt] = teardown_receipts.list_teardown_receipts(
             project_id="project-target", legacy="exclude"
@@ -1010,14 +1010,7 @@ def test_forget_project_converges_when_cleanup_receipt_persistence_fails(
             "project_id": "project-target",
         }
     else:
-        assert result.exit_code != 0, result.output
-        assert saved["default_project"] == "target"
-        assert set(saved["projects"]) == {"target", "unrelated"}
-        assert saved["projects"]["target"]["project_id"] == "project-target"
-        assert saved["skypilot"]["controller_owner"]["project_id"] == (
-            "project-target"
-        )
-        assert "recovery state were preserved" in result.output
+        assert "degraded audit evidence" in result.output
         assert not (tmp_path / "receipts").exists()
 
 

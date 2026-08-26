@@ -7,8 +7,6 @@ re-exported from ``npa.cli.agent`` for the existing call sites and tests.
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
 import shutil
 from typing import Any, Mapping
 
@@ -22,10 +20,6 @@ from npa.clients.config import (
 from npa.deploy import provisioner
 from npa.deploy.provisioner import ProvisionerError
 from npa.provisioning_journal import current_operation, list_operations
-
-
-class AgentTerraformStateIdentityError(RuntimeError):
-    """Surviving agent Terraform state lacks one trustworthy VM identity."""
 
 
 def _ensure_terraform_state_bucket(
@@ -338,131 +332,6 @@ def _agent_terraform_state_exists(project: str, name: str) -> bool:
     )
 
 
-def _agent_terraform_instance_id(project: str, name: str) -> str:
-    """Return one immutable VM ID shared by every surviving state copy.
-
-    This is deliberately stricter than ``_agent_terraform_state_exists``. A
-    cache directory, empty/destroyed state, malformed copy, or disagreement
-    between local and journal-preserved state cannot distinguish historical
-    debris from a fresh deployment and therefore is not identity evidence.
-    """
-
-    tf_dir = provisioner.working_dir_path(project, name)
-    local_candidates = [
-        tf_dir / "terraform.tfstate",
-        tf_dir / "errored.tfstate",
-    ]
-    paths: list[Path] = []
-    for candidate in local_candidates:
-        if not candidate.exists():
-            continue
-        if candidate.is_symlink() or not candidate.is_file():
-            raise AgentTerraformStateIdentityError(
-                "agent Terraform state path is not a regular file"
-            )
-        paths.append(candidate)
-    if (tf_dir / ".terraform").exists() and not paths:
-        raise AgentTerraformStateIdentityError(
-            "initialized agent Terraform state has no local immutable instance identity"
-        )
-    try:
-        operations = list_operations(
-            project_alias=project,
-            resource_type="agent",
-            requested_name=name,
-        )
-        for operation in operations:
-            paths.extend(operation.state_copies())
-    except (OSError, RuntimeError, ValueError) as exc:
-        raise AgentTerraformStateIdentityError(
-            "agent Terraform journal state identity could not be verified"
-        ) from exc
-    paths = list(dict.fromkeys(paths))
-    if not paths:
-        raise AgentTerraformStateIdentityError(
-            "agent Terraform state exists without exact immutable instance evidence"
-        )
-
-    observed: set[str] = set()
-    for path in paths:
-        try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-            raise AgentTerraformStateIdentityError(
-                "agent Terraform state is unreadable or malformed"
-            ) from exc
-        if not isinstance(payload, Mapping):
-            raise AgentTerraformStateIdentityError(
-                "agent Terraform state root is not an object"
-            )
-        state_ids: set[str] = set()
-        outputs = payload.get("outputs", {})
-        if not isinstance(outputs, Mapping):
-            raise AgentTerraformStateIdentityError(
-                "agent Terraform outputs are malformed"
-            )
-        instance_output = outputs.get("instance_id")
-        if instance_output is not None:
-            if not isinstance(instance_output, Mapping):
-                raise AgentTerraformStateIdentityError(
-                    "agent Terraform instance output is malformed"
-                )
-            output_id = str(instance_output.get("value") or "").strip()
-            if not output_id:
-                raise AgentTerraformStateIdentityError(
-                    "agent Terraform instance output has no immutable ID"
-                )
-            state_ids.add(output_id)
-
-        resources = payload.get("resources", [])
-        if not isinstance(resources, list):
-            raise AgentTerraformStateIdentityError(
-                "agent Terraform resources are malformed"
-            )
-        for resource in resources:
-            if not isinstance(resource, Mapping):
-                raise AgentTerraformStateIdentityError(
-                    "agent Terraform resource entry is malformed"
-                )
-            if not (
-                str(resource.get("mode") or "") == "managed"
-                and str(resource.get("type") or "")
-                == "nebius_compute_v1_instance"
-            ):
-                continue
-            instances = resource.get("instances")
-            if not isinstance(instances, list) or not instances:
-                raise AgentTerraformStateIdentityError(
-                    "agent Terraform compute resource has no immutable instance evidence"
-                )
-            for instance in instances:
-                attributes = (
-                    instance.get("attributes")
-                    if isinstance(instance, Mapping)
-                    else None
-                )
-                instance_id = (
-                    str(attributes.get("id") or "").strip()
-                    if isinstance(attributes, Mapping)
-                    else ""
-                )
-                if not instance_id:
-                    raise AgentTerraformStateIdentityError(
-                        "agent Terraform compute resource has no immutable ID"
-                    )
-                state_ids.add(instance_id)
-        if len(state_ids) != 1:
-            raise AgentTerraformStateIdentityError(
-                "agent Terraform state has missing or conflicting instance identities"
-            )
-        observed.update(state_ids)
-    if len(observed) != 1:
-        raise AgentTerraformStateIdentityError(
-            "surviving agent Terraform state copies disagree on instance identity"
-        )
-    return next(iter(observed))
-
-
 def _record_agent_destroy_event(
     project: str,
     name: str,
@@ -476,9 +345,6 @@ def _record_agent_destroy_event(
     project_id: str = "",
     identity_source: str = "live_configuration",
     terraform_graph_absent: bool = False,
-    iam_cleanup_complete: bool | None = None,
-    iam_disposition: str = "",
-    local_state_retired: bool = False,
 ) -> None:
     """Persist agent destroy evidence outside the removable project record."""
 
@@ -507,7 +373,6 @@ def _record_agent_destroy_event(
     }
     if terminal_state in {"verified_deleted", "verified_absent"}:
         verification["exact_instance_absent"] = True
-        verification["local_state_retired"] = local_state_retired is True
         if terraform_graph_absent:
             verification.update(
                 {
@@ -522,11 +387,6 @@ def _record_agent_destroy_event(
                     ],
                 }
             )
-    if terraform_graph_absent:
-        verification["iam_cleanup_complete"] = iam_cleanup_complete is True
-        verification["iam_disposition"] = (
-            str(iam_disposition or "verification_unresolved")
-        )
     record_teardown_event(
         phase="agent",
         resource=name,
@@ -742,11 +602,6 @@ def _destroy_agent_terraform(
         if candidate.read().get("phase")
         not in {"committed", "destroyed", "rolled-back"}
     ]
-    if len(nonterminal_operations) > 1 and not operation_id:
-        raise ProvisionerError(
-            "Agent recovery is ambiguous across multiple nonterminal operation "
-            "journals. Pass the exact --operation-id; no resources were changed."
-        )
     candidate_operations = nonterminal_operations or operations
     candidate_project_ids = {
         str(candidate.read().get("project_id") or "")
@@ -759,42 +614,7 @@ def _destroy_agent_terraform(
             "Nebius projects. Pass the exact recorded project alias; no resources "
             "were changed."
         )
-    record_instance_id = str((record or {}).get("instance_id") or "").strip()
-
-    def operation_instance_ids(candidate: Any) -> set[str]:
-        return {
-            str(resource.get("provider_id") or "").strip()
-            for resource in candidate.read().get("resources") or []
-            if isinstance(resource, Mapping)
-            and resource.get("resource_type") == "compute_instance"
-            and str(resource.get("provider_id") or "").strip()
-        }
-
-    operation = candidate_operations[0] if len(candidate_operations) == 1 else None
-    if len(candidate_operations) > 1:
-        matching = [
-            candidate
-            for candidate in candidate_operations
-            if record_instance_id
-            and operation_instance_ids(candidate) == {record_instance_id}
-        ]
-        if len(matching) != 1:
-            raise ProvisionerError(
-                "Agent recovery is ambiguous across same-name operation generations. "
-                "Pass the exact --operation-id; no resources were changed."
-            )
-        operation = matching[0]
-    if operation is not None:
-        journal_instance_ids = operation_instance_ids(operation)
-        if (
-            record_instance_id
-            and journal_instance_ids
-            and journal_instance_ids != {record_instance_id}
-        ):
-            raise ProvisionerError(
-                "Agent recovery identity mismatch: the selected operation journal "
-                "names a different immutable instance. No resources were changed."
-            )
+    operation = candidate_operations[0] if candidate_operations else None
     operation_payload = operation.read() if operation is not None else {}
     if operation is not None and (
         str(operation_payload.get("resource_type") or "") != "agent"
@@ -955,30 +775,7 @@ def _destroy_agent_terraform(
             provisioner.state_push(copies[0], tf_dir)
     elif copies:
         (tf_dir / "backend.tf").unlink(missing_ok=True)
-        terraform_runtime_dir = tf_dir / ".terraform"
-        if terraform_runtime_dir.is_symlink():
-            raise ProvisionerError(
-                "Agent Terraform runtime path is a symlink; recovery state was "
-                "preserved."
-            )
-        if terraform_runtime_dir.exists():
-            if not terraform_runtime_dir.is_dir():
-                raise ProvisionerError(
-                    "Agent Terraform runtime path is not a regular directory; "
-                    "recovery state was preserved."
-                )
-            try:
-                shutil.rmtree(terraform_runtime_dir)
-            except OSError as exc:
-                raise ProvisionerError(
-                    "Agent Terraform runtime could not be retired before exact "
-                    "state recovery; recovery state was preserved."
-                ) from exc
-        if terraform_runtime_dir.is_symlink() or terraform_runtime_dir.exists():
-            raise ProvisionerError(
-                "Agent Terraform runtime remains after retirement; recovery state "
-                "was preserved."
-            )
+        shutil.rmtree(tf_dir / ".terraform", ignore_errors=True)
         shutil.copy2(copies[0], tf_dir / "terraform.tfstate")
         (tf_dir / "terraform.tfstate").chmod(0o600)
         provisioner.init(tf_dir=tf_dir, disable_backend=True)

@@ -1558,7 +1558,7 @@ def down_cmd(
                 _clear_local_cluster_state(preview_context)
             return
     if not has_evidence:
-        if cleanup_identity.receipt_authorizes_noop:
+        if cleanup_identity.receipt_is_terminal:
             payload = {
                 **cleanup_identity.to_dict(),
                 "outcome": "already_absent",

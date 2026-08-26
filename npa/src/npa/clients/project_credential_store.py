@@ -39,9 +39,7 @@ def _path(path: Path | None) -> Path:
 def _legacy_owner(document: Mapping[str, Any]) -> str:
     iam = document.get("storage_iam")
     if isinstance(iam, Mapping):
-        owner = str(
-            iam.get("service_account_project_id") or iam.get("project_id") or ""
-        ).strip()
+        owner = str(iam.get("service_account_project_id") or iam.get("project_id") or "").strip()
         if owner:
             return owner
     nebius = document.get("nebius")
@@ -55,11 +53,7 @@ def _legacy_owner(document: Mapping[str, Any]) -> str:
             return owner
     storage = document.get("storage")
     storage = storage if isinstance(storage, Mapping) else {}
-    bucket = (
-        str(storage.get("bucket") or storage.get("s3_bucket") or "")
-        .removeprefix("s3://")
-        .strip("/")
-    )
+    bucket = str(storage.get("bucket") or storage.get("s3_bucket") or "").removeprefix("s3://").strip("/")
     setup = document.get("storage_setup")
     projects = setup.get("projects") if isinstance(setup, Mapping) else None
     matches: list[str] = []
@@ -86,22 +80,15 @@ def _root(document: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
         raise ProjectCredentialStoreError("project credential store is not a mapping")
     schema = value.get("schema_version")
     if schema != SCHEMA_VERSION:
-        raise ProjectCredentialStoreError(
-            f"unsupported project credential schema {schema!r}"
-        )
+        raise ProjectCredentialStoreError(f"unsupported project credential schema {schema!r}")
     projects = value.get("projects")
     if not isinstance(projects, Mapping):
-        raise ProjectCredentialStoreError(
-            "project credential store projects must be a mapping"
-        )
+        raise ProjectCredentialStoreError("project credential store projects must be a mapping")
     return deepcopy(dict(value)), deepcopy(dict(projects))
 
 
 def _migrate_legacy(
-    document: dict[str, Any],
-    root: dict[str, Any],
-    projects: dict[str, Any],
-    project_id: str,
+    document: dict[str, Any], root: dict[str, Any], projects: dict[str, Any], project_id: str
 ) -> None:
     legacy_fields = {
         key: deepcopy(document[key])
@@ -138,12 +125,8 @@ def _compatibility_views(document: dict[str, Any], root: Mapping[str, Any]) -> N
         document.pop(key, None)
     current = str(root.get("current_project_id") or "").strip()
     projects = root.get("projects")
-    selected = (
-        projects.get(current) if current and isinstance(projects, Mapping) else None
-    )
+    selected = projects.get(current) if current and isinstance(projects, Mapping) else None
     if isinstance(selected, Mapping):
-        if selected.get("storage_selected") is False:
-            return
         for key in ("storage", "storage_iam", "nebius"):
             value = selected.get(key)
             if isinstance(value, Mapping) and value:
@@ -187,9 +170,7 @@ def project_credential_record(
         record = projects.get(exact)
         result = deepcopy(dict(record)) if isinstance(record, Mapping) else {}
         if result and alias:
-            aliases = sorted(
-                {*(str(item) for item in result.get("aliases", []) if item), alias}
-            )
+            aliases = sorted({*(str(item) for item in result.get("aliases", []) if item), alias})
             result["aliases"] = aliases
             result["project_id"] = exact
             result["updated_at"] = _now()
@@ -212,99 +193,6 @@ def project_credential_record(
     if target.exists():
         update_private_yaml(target, update)
     return result
-
-
-def read_project_credential_record(
-    project_id: str,
-    *,
-    path: Path | None = None,
-) -> dict[str, Any] | None:
-    """Read one exact-project record without migrating or selecting anything.
-
-    ``None`` means the record is absent.  An empty mapping is a real selected
-    record with no project-scoped credentials, which is materially different:
-    callers must not fall back to another project's top-level compatibility
-    view in that case.
-    """
-
-    exact = str(project_id or "").strip()
-    if not exact:
-        raise ProjectCredentialStoreError("exact project ID is required")
-    target = _path(path)
-    if not target.exists():
-        return None
-    from npa.clients.credentials import _read_credentials_document
-
-    document = _read_credentials_document(target)
-    _saved_root, saved_projects = _root(document)
-    saved = saved_projects.get(exact)
-    return deepcopy(dict(saved)) if isinstance(saved, Mapping) else None
-
-
-def select_project_credentials(
-    project_id: str,
-    *,
-    alias: str = "",
-    path: Path | None = None,
-    select_storage: bool = True,
-) -> Path:
-    """Select an exact project even when it has no storage credentials.
-
-    Selection regenerates the top-level compatibility view exclusively from
-    the selected record. ``select_storage=False`` preserves saved storage for
-    later recovery but keeps it inactive and out of compatibility resolution.
-    Provably owned legacy storage is first moved under its real project.
-    Ambiguous legacy storage is retained under a quarantined non-authoritative
-    key so selecting a new project neither loses it nor leaks it into that
-    project's compatibility view.
-    """
-
-    from npa.clients.credentials import update_private_yaml
-
-    exact = str(project_id or "").strip()
-    if not exact:
-        raise ProjectCredentialStoreError("exact project ID is required")
-    clean_alias = str(alias or "").strip()
-    target = _path(path)
-
-    def update(document: dict[str, Any]) -> dict[str, Any]:
-        root, projects = _root(document)
-        if not projects:
-            legacy_fields = {
-                key: deepcopy(document[key])
-                for key in ("storage", "storage_iam", "nebius")
-                if isinstance(document.get(key), Mapping) and document.get(key)
-            }
-            if legacy_fields:
-                owner = _legacy_owner(document)
-                if owner:
-                    _migrate_legacy(document, root, projects, owner)
-                else:
-                    root["legacy_unscoped"] = {
-                        **legacy_fields,
-                        "quarantined_at": _now(),
-                        "reason": "ambiguous legacy project ownership",
-                    }
-        saved = projects.get(exact)
-        record = deepcopy(dict(saved)) if isinstance(saved, Mapping) else {}
-        record["project_id"] = exact
-        aliases = {str(item) for item in record.get("aliases", []) if item}
-        if clean_alias:
-            aliases.add(clean_alias)
-        if aliases:
-            record["aliases"] = sorted(aliases)
-        record["storage_selected"] = bool(select_storage)
-        record["updated_at"] = _now()
-        projects[exact] = record
-        root["projects"] = projects
-        root["schema_version"] = SCHEMA_VERSION
-        root["current_project_id"] = exact
-        document["project_credentials"] = root
-        _compatibility_views(document, root)
-        return document
-
-    update_private_yaml(target, update)
-    return target
 
 
 def write_project_credentials(
@@ -405,10 +293,7 @@ def merge_project_credentials_document(
     if isinstance(existing_iam, Mapping) and isinstance(incoming_iam, dict):
         generations: list[dict[str, Any]] = []
         seen: set[tuple[str, tuple[str, ...]]] = set()
-        for source in (
-            existing_iam.get("generations"),
-            incoming_iam.get("generations"),
-        ):
+        for source in (existing_iam.get("generations"), incoming_iam.get("generations")):
             if not isinstance(source, list):
                 continue
             for item in source:
@@ -416,21 +301,13 @@ def merge_project_credentials_document(
                     continue
                 marker = (
                     str(item.get("service_account_id") or ""),
-                    tuple(
-                        sorted(
-                            str(value)
-                            for value in item.get("access_key_ids", [])
-                            if value
-                        )
-                    ),
+                    tuple(sorted(str(value) for value in item.get("access_key_ids", []) if value)),
                 )
                 if marker not in seen:
                     generations.append(deepcopy(dict(item)))
                     seen.add(marker)
         incoming_iam["generations"] = generations
     merged = _deep_merge(existing, incoming)
-    if select and isinstance(incoming.get("storage"), Mapping):
-        merged["storage_selected"] = True
     merged["project_id"] = exact
     aliases = {str(item) for item in merged.get("aliases", []) if item}
     if alias:

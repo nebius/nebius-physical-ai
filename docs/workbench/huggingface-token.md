@@ -16,21 +16,17 @@ NPA does not add another acceptance switch.
 1. Sign in (or create a free account) at <https://huggingface.co>.
 2. Go to **Settings → Access Tokens**: <https://huggingface.co/settings/tokens>.
 3. Click **Create new token**. A **Read** token is enough for downloads. (If you
-   plan to *push* datasets/models, use a **Write** token.) See Hugging Face's
-   [user access token documentation](https://huggingface.co/docs/hub/security-tokens).
+   plan to *push* datasets/models, use a **Write** token.)
 4. Name it (e.g. `npa-workbench`) and click **Create token**.
 5. **Copy it now** — Hugging Face shows the value once. It starts with `hf_`.
 
 ## 2. Accept gated-model licenses (required for gated repos)
 
 Gated repositories require account access upstream — there is no API for NPA to
-grant it. For each gated model or dataset you plan to use, open its page while
-signed in and complete its access request, as described in Hugging Face's
-[gated-model documentation](https://huggingface.co/docs/hub/models-gated). As
-reverified against the authoritative Hugging Face API on 2026-08-21, the
-workbench's gated assets include:
+grant it. For each gated model you plan to use, open its page while signed in
+and complete its access request. As reverified against the authoritative
+Hugging Face API on 2026-08-14, the workbench's gated models include:
 
-- <https://huggingface.co/datasets/nvidia/PhysicalAI-Autonomous-Vehicles>
 - <https://huggingface.co/nvidia/Cosmos-Transfer2.5-2B>
 - <https://huggingface.co/nvidia/Cosmos-Reason2-2B>
 - <https://huggingface.co/nvidia/Cosmos-Reason2-8B>
@@ -70,17 +66,10 @@ chmod 600 ~/.npa/credentials.yaml
 
 ```bash
 export HF_TOKEN=hf_XXXXXXXXXXXXXXXXXXXX
-npa configure --save-env-credentials  # optional durable, prompt-free import
 ```
 
-`npa` keeps secrets out of argv and resolves the token in this order:
-environment variable → `~/.npa/credentials.yaml`.
-
-Interactive secret prompts require a TTY. Automation should use environment
-credential import above. A legacy harness that deliberately accepts visible
-secret entry may pass `--interactive --allow-visible-secret-input` (or set
-`NPA_ALLOW_VISIBLE_SECRET_INPUT=1`), but this opt-in can expose input on the
-terminal and must not be used in shared logs.
+`npa` resolves the token in this order: explicit CLI flag → environment
+variable → `~/.npa/credentials.yaml`.
 
 ## 4. Verify access
 
@@ -93,35 +82,20 @@ npa workbench health preflight --checks hf
 npa workbench health preflight --offline
 ```
 
-Repository metadata can be public even when artifact downloads are gated, so
-`health access` checks a representative revision and filename for each gated
-asset. It issues only a HEAD or one-byte range request and does not download
-model weights; this follows the same repository/revision/filename contract as
-Hugging Face's [download API](https://huggingface.co/docs/huggingface_hub/main/guides/download).
-Bearer credentials are sent only to the fixed Hugging Face origin and are never
-forwarded to redirect hosts.
-
-`health access` reports `HF access ok: <repo>` for each asset your token can
+`health access` reports `HF access ok: <repo>` for each model your token can
 reach and, for anything still gated, the exact **Agree and access repository**
-URL to open. It distinguishes an invalid/revoked token, a valid account missing
-gated entitlement, catalog revision/file drift, and transient network
-uncertainty. Interactive and prompt-free `npa configure` paths run the same
-repository-aware checks, including the dataset API for gated datasets, but
-print one bounded advisory `[NOTE]`; those results never change an
-otherwise-successful configure exit. Use `health access` when you need an
-enforcing PASS/FAIL gate. Generic online preflight calls Hugging Face's
-authenticated `whoami-v2` endpoint; public repository metadata is not accepted
-as token proof.
+URL to open. Interactive `npa configure` runs the same repository-aware probe
+(including the dataset API for gated datasets) and prints a bounded advisory
+summary; use `health access` when you need an enforcing PASS/FAIL gate.
+Generic online preflight calls Hugging Face's authenticated `whoami-v2`
+endpoint; public repository metadata is not accepted as token proof.
 
 ## Troubleshooting
 
-- **Valid token but gated artifact denied** — accept that model or dataset's
-  terms while signed in, then re-run the enforcing access check.
+- **`401`/`403` on a gated repo** — you have not accepted that model's license.
+  Open the model page while signed in and click **Agree and access repository**.
 - **Token rejected everywhere** — the token is wrong or was revoked. Regenerate
-  it at <https://huggingface.co/settings/tokens>, export it, and run
-  `npa configure --save-env-credentials`.
-- **Catalog drift** — upgrade NPA so the representative revision and filename
-  match the capability default; accepting terms cannot repair a missing file.
+  it at <https://huggingface.co/settings/tokens> and re-run `npa configure`.
 - **Downloads are slow / rate-limited without a token** — public repos work
   without a token but authenticated downloads are faster and higher-limit; set
   `HF_TOKEN` anyway.

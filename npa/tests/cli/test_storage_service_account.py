@@ -77,108 +77,6 @@ def _seed_owned_account(
     return credentials_path
 
 
-def _seed_retained_storage_account(
-    monkeypatch,
-    tmp_path: Path,
-    *,
-    current_key: str = "accesskey-run",
-    created_keys: tuple[str, ...] = (),
-    with_residue: bool = True,
-) -> Path:
-    """Seed project storage on a pre-existing account plus a separate agent ID."""
-
-    from npa.clients import config as config_module
-    from npa.clients import credentials as credentials_module
-    from npa.clients import nebius as nebius_module
-
-    project: dict[str, object] = {
-        "project_id": "project-a",
-        "tenant_id": "tenant-a",
-    }
-    if with_residue:
-        project["storage_iam_verification_required"] = {
-            "project_id": "project-a",
-            "service_account_id": "serviceaccount-storage",
-            "candidate_service_account_ids": ["serviceaccount-storage"],
-            "access_key_ids": [current_key] if current_key else [],
-            "created_access_key_ids": list(created_keys),
-            "bucket_cleanup_state": "complete",
-            "bucket_name": "gone",
-            "ownership": "unverified",
-            "ownership_state": "pending-verification",
-        }
-    config_path = tmp_path / "config.yaml"
-    config_path.write_text(
-        yaml.safe_dump({"default_project": "prod", "projects": {"prod": project}}),
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(config_module, "CONFIG_PATH", config_path)
-
-    storage = (
-        {
-            "bucket": "s3://gone/",
-            "aws_access_key_id": current_key,
-            "aws_secret_access_key": "secret",
-        }
-        if current_key
-        else {}
-    )
-    credentials_path = tmp_path / "credentials.yaml"
-    credentials_path.write_text(
-        yaml.safe_dump(
-            {
-                "nebius": {"service_account_id": "serviceaccount-agent"},
-                "project_credentials": {
-                    "schema_version": "npa.project-credentials.v2",
-                    "current_project_id": "project-a",
-                    "projects": {
-                        "project-a": {
-                            "project_id": "project-a",
-                            "storage_selected": bool(storage),
-                            "storage": storage,
-                            "storage_iam": {
-                                "active_service_account_id": "serviceaccount-storage",
-                                "generations": [
-                                    {
-                                        "service_account_id": "serviceaccount-storage",
-                                        "service_account_project_id": "project-a",
-                                        "access_key_ids": list(created_keys),
-                                        "binding": {"state": "existing"},
-                                    }
-                                ],
-                            },
-                            "nebius": {
-                                "service_account_id": "serviceaccount-agent",
-                                "service_account_project_id": "project-a",
-                            },
-                        }
-                    },
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", credentials_path)
-    monkeypatch.setenv("NPA_TEARDOWN_RECEIPT_DIR", str(tmp_path / "receipts"))
-    monkeypatch.setattr(
-        nebius_module,
-        "get_service_account_identity",
-        lambda account_id, **_kwargs: nebius_module.ServiceAccountIdentity(
-            account_id=account_id,
-            name="lerobot-training",
-            project_id="project-a",
-            tenant_id="tenant-a",
-            profile="",
-        ),
-    )
-    monkeypatch.setattr(
-        nebius_module,
-        "get_service_account_id_by_name",
-        lambda *_args, **_kwargs: "serviceaccount-storage",
-    )
-    return credentials_path
-
-
 def test_exact_create_provenance_supports_custom_run_scoped_storage_account_name(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -256,259 +154,31 @@ def test_project_store_binding_ownership_beats_lossy_compatibility_view(
     )
 
 
-def test_untrusted_storage_identity_never_falls_back_across_project_store(
-    monkeypatch, tmp_path: Path
-) -> None:
-    from npa.cli import storage as storage_module
-    from npa.clients import credentials as credentials_module
-
-    path = tmp_path / "credentials.yaml"
-    path.write_text(
-        yaml.safe_dump(
-            {
-                "storage_iam": {
-                    "service_account_id": "serviceaccount-b",
-                    "service_account_project_id": "project-b",
-                },
-                "project_credentials": {
-                    "schema_version": "npa.project-credentials.v2",
-                    "current_project_id": "project-b",
-                    "projects": {
-                        "project-a": {
-                            "storage_iam": {
-                                "active_service_account_id": "serviceaccount-a",
-                                "generations": [
-                                    {"service_account_id": "serviceaccount-a"}
-                                ],
-                            }
-                        },
-                        "project-b": {
-                            "storage_iam": {
-                                "active_service_account_id": "serviceaccount-b",
-                                "generations": [
-                                    {"service_account_id": "serviceaccount-b"}
-                                ],
-                            }
-                        },
-                    },
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", path)
-
-    assert storage_module._untrusted_storage_account_ids("project-a") == {
-        "serviceaccount-a"
-    }
-    assert storage_module._untrusted_storage_account_ids("project-missing") == set()
-
-
-def test_bucket_tombstone_prefers_project_storage_identity_over_agent_generic(
-    monkeypatch, tmp_path: Path
-) -> None:
-    from npa.cli import storage as storage_module
-    from npa.clients import config as config_module
-
-    _seed_retained_storage_account(monkeypatch, tmp_path, with_residue=False)
-
-    alias, marker = storage_module._begin_bucket_iam_cleanup_tombstone(
-        "prod", "project-a", "gone"
-    )
-
-    assert alias == "prod"
-    assert marker["service_account_id"] == "serviceaccount-storage"
-    assert marker["candidate_service_account_ids"] == ["serviceaccount-storage"]
-    assert marker["access_key_ids"] == ["accesskey-run"]
-    assert marker.get("created_access_key_ids", []) == []
-    saved = yaml.safe_load(config_module.CONFIG_PATH.read_text(encoding="utf-8"))
-    assert saved["projects"]["prod"]["storage_iam_verification_required"] == marker
-
-
-def test_retained_storage_account_with_absent_run_access_is_terminal(
-    monkeypatch, tmp_path: Path
-) -> None:
-    from npa.cli import storage as storage_module
-    from npa.clients import config as config_module
-    from npa.clients import nebius as nebius_module
-
-    credentials_path = _seed_retained_storage_account(monkeypatch, tmp_path)
-    storage_module._prune_storage_credentials("gone")
-    monkeypatch.setattr(
-        nebius_module,
-        "list_access_keys_for_service_account",
-        lambda *_args, **_kwargs: [],
-    )
-    deleted_accounts: list[str] = []
-    monkeypatch.setattr(
-        nebius_module,
-        "delete_service_account",
-        lambda account_id, **_kwargs: deleted_accounts.append(account_id),
-    )
-
-    dry_run = runner.invoke(
-        app,
-        [
-            "storage",
-            "service-account",
-            "delete",
-            "--project",
-            "prod",
-            "--dry-run",
-            "--json",
-        ],
-    )
-    assert dry_run.exit_code == 0, dry_run.output
-    assert json.loads(dry_run.output)["result"] == "access_state_already_absent"
-
-    result = runner.invoke(
-        app,
-        [
-            "storage",
-            "service-account",
-            "delete",
-            "--project",
-            "prod",
-            "--yes",
-            "--json",
-        ],
-    )
-
-    assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
-    assert payload["result"] == "access_state_resolved"
-    assert payload["service_account_preserved"] is True
-    assert deleted_accounts == []
-    config = yaml.safe_load(config_module.CONFIG_PATH.read_text(encoding="utf-8"))
-    assert "storage_iam_verification_required" not in config["projects"]["prod"]
-    credentials = yaml.safe_load(credentials_path.read_text(encoding="utf-8"))
-    project_record = credentials["project_credentials"]["projects"]["project-a"]
-    assert "storage" not in project_record
-    assert "storage_iam" not in project_record
-    assert project_record["nebius"]["service_account_id"] == "serviceaccount-agent"
-
-
-def test_retained_storage_account_deletes_only_created_access_key(
-    monkeypatch, tmp_path: Path
-) -> None:
-    from npa.cli import storage as storage_module
-    from npa.clients import nebius as nebius_module
-
-    _seed_retained_storage_account(
-        monkeypatch,
-        tmp_path,
-        created_keys=("accesskey-run",),
-    )
-    storage_module._prune_storage_credentials("gone")
-    live_keys = {"accesskey-run"}
-
-    def list_keys(_project_id, service_account_id, **_kwargs):
-        return [
-            {
-                "id": key_id,
-                "name": "lerobot-access-key",
-                "service_account_id": service_account_id,
-            }
-            for key_id in sorted(live_keys)
-        ]
-
-    monkeypatch.setattr(
-        nebius_module, "list_access_keys_for_service_account", list_keys
-    )
-    deleted_accounts: list[str] = []
-    monkeypatch.setattr(
-        nebius_module,
-        "delete_access_key",
-        lambda key_id, **_kwargs: live_keys.discard(key_id),
-    )
-    monkeypatch.setattr(
-        nebius_module,
-        "delete_service_account",
-        lambda account_id, **_kwargs: deleted_accounts.append(account_id),
-    )
-
-    dry_run = runner.invoke(
-        app,
-        [
-            "storage",
-            "service-account",
-            "delete",
-            "--project",
-            "prod",
-            "--dry-run",
-            "--json",
-        ],
-    )
-    assert dry_run.exit_code == 0, dry_run.output
-    assert json.loads(dry_run.output)["result"] == "access_cleanup_planned"
-    assert live_keys == {"accesskey-run"}
-
-    result = runner.invoke(
-        app,
-        [
-            "storage",
-            "service-account",
-            "delete",
-            "--project",
-            "prod",
-            "--yes",
-            "--json",
-        ],
-    )
-
-    assert result.exit_code == 0, result.output
-    assert json.loads(result.output)["result"] == "access_state_resolved"
-    assert live_keys == set()
-    assert deleted_accounts == []
-
-
 def _stub_iam(monkeypatch) -> list[str]:
     from npa.clients import nebius as nebius_module
 
-    live_keys = {"accesskey-storage"}
-    deleted_accounts: set[str] = set()
-    read_identity = nebius_module.get_service_account_identity
     monkeypatch.setattr(
         nebius_module,
         "list_access_keys_for_service_account",
         lambda project_id, sa_id, **kwargs: [
             {
-                "id": key_id,
+                "id": "accesskey-storage",
                 "name": "lerobot-access-key",
                 "state": "ACTIVE",
                 "service_account_id": sa_id,
             }
-            for key_id in sorted(live_keys)
         ],
     )
     deleted: list[str] = []
-
-    def delete_key(key_id, **_kwargs):  # noqa: ANN001, ANN202
-        deleted.append(key_id)
-        live_keys.discard(key_id)
-
-    def delete_account(account_id, **_kwargs):  # noqa: ANN001, ANN202
-        deleted.append(account_id)
-        deleted_accounts.add(account_id)
-
     monkeypatch.setattr(
         nebius_module,
         "delete_access_key",
-        delete_key,
+        lambda key_id, **_kwargs: deleted.append(key_id),
     )
     monkeypatch.setattr(
         nebius_module,
         "delete_service_account",
-        delete_account,
-    )
-    monkeypatch.setattr(
-        nebius_module,
-        "get_service_account_identity",
-        lambda account_id, **_kwargs: (
-            read_identity(account_id, **_kwargs)
-            if account_id not in deleted_accounts
-            else None
-        ),
+        lambda sa_id, **_kwargs: deleted.append(sa_id),
     )
     return deleted
 
@@ -706,6 +376,7 @@ def test_storage_access_key_relationship_mismatch_fails_before_delete(
         "delete_service_account",
         lambda account_id, **_kwargs: deleted.append(account_id),
     )
+
     result = runner.invoke(
         app,
         [
@@ -1102,7 +773,10 @@ def test_storage_service_account_failure_is_reported_and_marker_is_retriable(
 
     assert result.exit_code == 1
     assert "could not delete access key accesskey-storage" in result.output
-    assert "service-account deletion was blocked" not in result.output
+    assert (
+        "could not delete NPA-owned service account serviceaccount-storage"
+        in result.output
+    )
     assert credentials_path.exists()
     assert (
         yaml.safe_load(credentials_path.read_text())["storage_iam"][
@@ -1140,10 +814,7 @@ def test_storage_service_account_list_not_found_reconciles_absent_account(
         nebius_module,
         "list_access_keys_for_service_account",
         lambda *args, **kwargs: (_ for _ in ()).throw(
-            nebius_module.NebiusError(
-                "NotFound: service account is absent",
-                provider_status=nebius_module.ProviderStatus.NOT_FOUND,
-            )
+            nebius_module.NebiusError("NotFound: service account is absent")
         ),
     )
     monkeypatch.setattr(
@@ -1190,10 +861,7 @@ def test_storage_service_account_list_not_found_requires_confirmation_to_prune(
         nebius_module,
         "list_access_keys_for_service_account",
         lambda *args, **kwargs: (_ for _ in ()).throw(
-            nebius_module.NebiusError(
-                "NotFound: service account is absent",
-                provider_status=nebius_module.ProviderStatus.NOT_FOUND,
-            )
+            nebius_module.NebiusError("NotFound: service account is absent")
         ),
     )
 
@@ -1213,26 +881,18 @@ def test_storage_service_account_access_key_not_found_is_idempotent(
     from npa.clients import nebius as nebius_module
 
     credentials_path = _seed_owned_account(monkeypatch, tmp_path)
-    inventory_calls = 0
-
-    def list_keys(_project, account, **kwargs):  # noqa: ANN001, ANN202
-        nonlocal inventory_calls
-        inventory_calls += 1
-        if inventory_calls == 1:
-            return [{"id": "accesskey-storage", "service_account_id": account}]
-        return []
-
     monkeypatch.setattr(
-        nebius_module, "list_access_keys_for_service_account", list_keys
+        nebius_module,
+        "list_access_keys_for_service_account",
+        lambda _project, account, **kwargs: [
+            {"id": "accesskey-storage", "service_account_id": account}
+        ],
     )
     monkeypatch.setattr(
         nebius_module,
         "delete_access_key",
         lambda key_id, **_kwargs: (_ for _ in ()).throw(
-            nebius_module.NebiusError(
-                "NotFound: access key is absent",
-                provider_status=nebius_module.ProviderStatus.NOT_FOUND,
-            )
+            nebius_module.NebiusError("NotFound: access key is absent")
         ),
     )
     deleted: list[str] = []
@@ -1240,21 +900,6 @@ def test_storage_service_account_access_key_not_found_is_idempotent(
         nebius_module,
         "delete_service_account",
         lambda account_id, **_kwargs: deleted.append(account_id),
-    )
-    monkeypatch.setattr(
-        nebius_module,
-        "get_service_account_identity",
-        lambda account_id, **_kwargs: (
-            None
-            if account_id in deleted
-            else nebius_module.ServiceAccountIdentity(
-                account_id=account_id,
-                name="lerobot-training",
-                project_id="project-a",
-                tenant_id="tenant-a",
-                profile="",
-            )
-        ),
     )
 
     result = runner.invoke(
@@ -1323,29 +968,8 @@ def test_storage_service_account_already_absent_is_idempotent(
         nebius_module,
         "delete_service_account",
         lambda sa_id, **_kwargs: (_ for _ in ()).throw(
-            nebius_module.NebiusError(
-                "NotFound",
-                provider_status=nebius_module.ProviderStatus.NOT_FOUND,
-            )
+            nebius_module.NebiusError("NotFound")
         ),
-    )
-    identity_calls = 0
-
-    def read_identity(account_id, **_kwargs):  # noqa: ANN001, ANN202
-        nonlocal identity_calls
-        identity_calls += 1
-        if identity_calls == 1:
-            return nebius_module.ServiceAccountIdentity(
-                account_id=account_id,
-                name="lerobot-training",
-                project_id="project-a",
-                tenant_id="tenant-a",
-                profile="",
-            )
-        return None
-
-    monkeypatch.setattr(
-        nebius_module, "get_service_account_identity", read_identity
     )
 
     result = runner.invoke(
@@ -1830,9 +1454,7 @@ def test_exact_project_alias_free_absence_persists_global_receipt(
         "_storage_service_account_record",
         lambda **_kwargs: (None, "no ownership record"),
     )
-    monkeypatch.setattr(
-        storage_module, "_untrusted_storage_account_ids", lambda _project="": set()
-    )
+    monkeypatch.setattr(storage_module, "_untrusted_storage_account_ids", set)
     monkeypatch.setattr(
         "npa.clients.nebius.get_service_account_identity",
         lambda *_args, **_kwargs: None,
@@ -1848,14 +1470,14 @@ def test_exact_project_alias_free_absence_persists_global_receipt(
 
     assert context.alias == ""
     assert context.identity_source == "explicit_exact_arguments"
-    assert observation.outcome == "verified_absent"
+    assert observation.outcome == "verification_failed"
     [receipt] = list_teardown_receipts()
     assert receipt["project_id"] == "project-exact"
     assert (
         receipt["identity"]["storage_iam"]["service_account_id"]
         == "service-account-exact"
     )
-    assert receipt["events"][-1]["terminal_state"] == "verified_absent"
+    assert receipt["events"][-1]["terminal_state"] == "verification_failed"
 
 
 def test_receipt_context_carries_exact_account_without_configured_alias(
@@ -1909,8 +1531,6 @@ def test_receipt_only_storage_iam_verifies_parent_and_access_key_after_forget(
         project_alias="forgotten",
         project_id="project-a",
         identity={"project_id": "project-a"},
-        action={"kind": "bucket_delete", "scheduled": False},
-        verification={"bucket_absent": True},
     )
     record_teardown_event(
         phase="storage_iam",
@@ -2000,11 +1620,7 @@ def test_receipt_reuses_exact_durable_storage_iam_absence_without_credentials(
             "ownership": "npa",
             "iam_key_ids": ["accesskey-storage"],
         },
-        action={"kind": "exact_provider_check"},
-        verification={
-            "provider_outcome": "verified_absent",
-            "exact_service_account_absent": True,
-        },
+        verification={"provider_outcome": "verified_absent"},
     )
     monkeypatch.setattr(
         "npa.clients.nebius.get_service_account_identity",
@@ -2018,91 +1634,3 @@ def test_receipt_reuses_exact_durable_storage_iam_absence_without_credentials(
 
     assert observation.verified_absent
     assert observation.account_id == "serviceaccount-storage"
-
-
-def test_newer_conflicting_storage_iam_receipt_blocks_old_absence(
-    monkeypatch, tmp_path: Path
-) -> None:
-    from npa.cli import storage as storage_module
-    from npa.clients import config as config_module
-    from npa.clients import credentials as credentials_module
-    from npa.clients.nebius import NebiusError
-    from npa.teardown_receipts import record_teardown_event
-
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setenv("NPA_TEARDOWN_RECEIPT_DIR", str(tmp_path / "receipts"))
-    config_path = tmp_path / "config.yaml"
-    config_path.write_text("projects: {}\n", encoding="utf-8")
-    monkeypatch.setattr(config_module, "CONFIG_PATH", config_path)
-    monkeypatch.setattr(
-        credentials_module, "CREDENTIALS_PATH", tmp_path / "missing-credentials.yaml"
-    )
-    identity = {
-        "project_id": "project-a",
-        "tenant_id": "tenant-a",
-        "service_account_id": "serviceaccount-storage",
-        "service_account_name": "lerobot-training",
-        "ownership": "npa",
-    }
-    receipt_path = record_teardown_event(
-        phase="storage_iam",
-        resource="serviceaccount-storage",
-        terminal_state="verified_absent",
-        project_id="project-a",
-        identity=identity,
-        action={"kind": "exact_provider_check"},
-        verification={"provider_outcome": "verified_absent"},
-    )
-    record_teardown_event(
-        phase="storage_iam",
-        resource="serviceaccount-storage",
-        terminal_state="verification_failed",
-        project_id="project-a",
-        identity=identity,
-        action={"kind": "exact_provider_check"},
-        verification={"provider_outcome": "verification_failed"},
-        errors=["provider inventory unavailable"],
-    )
-    monkeypatch.setattr(
-        "npa.clients.nebius.get_service_account_identity",
-        lambda *_a, **_k: (_ for _ in ()).throw(NebiusError("authentication failed")),
-    )
-
-    context = storage_module._resolve_storage_iam_context(receipt=receipt_path.stem)
-    observation = storage_module._observe_storage_iam(context)
-
-    assert observation.outcome == "verification_failed"
-    assert not observation.verified_absent
-
-
-def test_newer_bucket_failure_blocks_old_receipt_cleanup_authority(
-    monkeypatch, tmp_path: Path
-) -> None:
-    from npa.cli.storage import _receipt_proves_bucket_cleanup
-    from npa.teardown_receipts import record_teardown_event
-
-    monkeypatch.setenv("NPA_TEARDOWN_RECEIPT_DIR", str(tmp_path / "receipts"))
-    identity = {"project_id": "project-a", "bucket_name": "bucket-a"}
-    receipt_path = record_teardown_event(
-        phase="bucket",
-        resource="bucket-a",
-        terminal_state="verified_absent",
-        project_id="project-a",
-        identity=identity,
-        action={"kind": "bucket_delete"},
-        verification={"bucket_absent": True},
-    )
-    assert _receipt_proves_bucket_cleanup(receipt_path.stem, "project-a")
-
-    record_teardown_event(
-        phase="bucket",
-        resource="bucket-a",
-        terminal_state="verification_failed",
-        project_id="project-a",
-        identity=identity,
-        action={"kind": "bucket_delete"},
-        verification={"bucket_absent": False},
-        errors=["provider verification unavailable"],
-    )
-
-    assert not _receipt_proves_bucket_cleanup(receipt_path.stem, "project-a")

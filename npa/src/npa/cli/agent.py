@@ -49,10 +49,6 @@ from npa.cli.agent_env_files import (  # noqa: F401 - re-exported for tests/call
 from npa.cli.agent_destroy import destroy_cmd as _destroy_cmd_impl
 from npa.cli.agent_auth import auth_profile_cmd
 from npa.cli.agent_inventory import agent_list_cmd
-from npa.cli.agent_local_state import (  # noqa: F401 - compatibility re-exports
-    AgentLocalRetirementError,
-    cleanup_agent_local_files as _cleanup_agent_local_files,
-)
 from npa.cli.agent_preflight import (
     _agent_hard_prereq_results,
     _agent_nebius_auth_result,
@@ -63,7 +59,6 @@ from npa.cli.agent_preflight import (
 )
 from npa.cli.agent_records import (  # noqa: F401 - compatibility re-exports
     agent_record as _agent_record,
-    decode_agent_record,
     remove_agent_record as _remove_agent_record,
     resolve_project_agents,
     store_agent_record as _store_agent_record,
@@ -81,7 +76,6 @@ from npa.cli.agent_setup_convergence import (
     reconcile_agent_setup as _reconcile_agent_setup,
 )
 from npa.cli.agent_terraform import (
-    _agent_terraform_instance_id,  # noqa: F401 - recovery hook re-export
     _agent_terraform_state_exists,  # noqa: F401 - recovery hook re-export
     _apply_agent_terraform,
     _cleanup_orphan_agent_instances,  # noqa: F401 - recovery hook re-export
@@ -345,6 +339,35 @@ def _cleanup_agent_ingress(instance_id: str) -> None:
 
 def _auth_secret_path(project_alias: str, name: str) -> Path:
     return Path.home() / ".npa" / "agents" / project_alias / name / "auth.env"
+
+
+def _cleanup_agent_local_files(project_alias: str, name: str) -> None:
+    """Remove the local agent state + Terraform workdir after a destroy.
+
+    Two trees live under ``~/.npa`` for an agent: ``agents/<alias>/<name>/``
+    (auth.env + secrets — live basic-auth credentials, a stale-credential leak
+    if left) and ``workbenches/<alias>/<name>/`` (the Terraform workdir with the
+    provider cache and, in a local backend, ``terraform.tfstate``). Terraform has
+    already destroyed the VM by the time this runs, so both are safe to remove;
+    leaving the workdir behind was the teardown-report leftover.
+    """
+    agent_dir = Path.home() / ".npa" / "agents" / project_alias / name
+    shutil.rmtree(agent_dir, ignore_errors=True)
+
+    from npa.deploy import provisioner
+
+    tf_dir = provisioner.working_dir_path(project_alias, name)
+    shutil.rmtree(tf_dir, ignore_errors=True)
+
+    # Drop the now-empty <alias> parents so tearing down the last agent leaves no
+    # empty ~/.npa/{agents,workbenches}/<alias>/ tree behind (a sibling agent
+    # under the same alias keeps its parent non-empty, so it is preserved).
+    for parent in (agent_dir.parent, tf_dir.parent):
+        try:
+            if parent.is_dir() and not any(parent.iterdir()):
+                parent.rmdir()
+        except OSError:
+            pass
 
 
 def _write_auth_secret(
@@ -748,34 +771,27 @@ def _write_agent_llm_env(
     llm_providers: list[str] | tuple[str, ...] = (DEFAULT_LLM_PROVIDER,),
     llm_models: list[str] | tuple[str, ...] = DEFAULT_LLM_MODELS,
 ) -> None:
-    """Stage agent model configuration and any Token Factory credential.
-
-    The agent is intentionally deployable without a Token Factory key so its
-    grounded, non-LLM routes remain usable.  The restart-safe convergence
-    contract still fingerprints ``llm.env`` in that mode, so always create the
-    file and include the credential only when one was supplied.
-    """
+    """Stage Token Factory credentials on the VM (chmod 600, not baked into image)."""
+    if not tf_api_key.strip():
+        return
     models_csv = ",".join(_normalize_llm_models(list(llm_models)))
-    providers = list(
-        dict.fromkeys(str(item).strip() for item in llm_providers if str(item).strip())
+    providers_csv = ",".join(
+        _normalize_llm_models(
+            [str(item) for item in llm_providers if str(item).strip()]
+        )
+        or [DEFAULT_LLM_PROVIDER]
     )
-    providers_csv = ",".join(providers or [DEFAULT_LLM_PROVIDER])
-    env_lines = []
-    if tf_api_key.strip():
-        env_lines.append(f"NEBIUS_TOKEN_FACTORY_KEY={tf_api_key.strip()}")
-    env_lines.extend(
-        [
-            f"NPA_AGENT_LLM_PROVIDER={llm_provider.strip() or DEFAULT_LLM_PROVIDER}",
-            f"NPA_AGENT_LLM_PROVIDERS={providers_csv}",
-            f"NPA_AGENT_LLM_MODEL={llm_model}",
-            f"NPA_AGENT_LLM_MODELS={models_csv}",
-            "",
-        ]
+    env_content = (
+        f"NEBIUS_TOKEN_FACTORY_KEY={tf_api_key.strip()}\n"
+        f"NPA_AGENT_LLM_PROVIDER={llm_provider.strip() or DEFAULT_LLM_PROVIDER}\n"
+        f"NPA_AGENT_LLM_PROVIDERS={providers_csv}\n"
+        f"NPA_AGENT_LLM_MODEL={llm_model}\n"
+        f"NPA_AGENT_LLM_MODELS={models_csv}\n"
     )
-    _stage_private_text(
-        ssh,
-        content="\n".join(env_lines),
-        target="/opt/npa-agent/llm.env",
+    env_b64 = base64.b64encode(env_content.encode("utf-8")).decode("ascii")
+    ssh.run_or_raise(
+        f"echo {shlex.quote(env_b64)} | base64 -d | sudo tee /opt/npa-agent/llm.env >/dev/null "
+        "&& sudo chmod 600 /opt/npa-agent/llm.env"
     )
 
 

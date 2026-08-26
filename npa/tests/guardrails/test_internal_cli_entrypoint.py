@@ -107,7 +107,6 @@ def test_real_destroy_cli_executes_registered_phases_without_npa_on_path(
     env.update(
         {
             "HOME": str(home),
-            "NPA_CONFIG_DIR": str(config.parent),
             "NPA_TEARDOWN_RECEIPT_DIR": str(tmp_path / "receipts"),
             "NPA_OPERATION_JOURNAL_DIR": str(tmp_path / "operations"),
         }

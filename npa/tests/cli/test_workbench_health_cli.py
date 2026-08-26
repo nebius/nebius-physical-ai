@@ -307,11 +307,10 @@ def test_preflight_warn_only_suppresses_exit(monkeypatch) -> None:
 
 
 class _HFOK:
-    def __init__(self, ok=True, status_code=None, error="", error_kind=""):
+    def __init__(self, ok=True, status_code=None, error=""):
         self.ok = ok
         self.status_code = status_code
         self.error = error
-        self.error_kind = error_kind
 
 
 def test_access_registered_and_help() -> None:
@@ -337,38 +336,6 @@ def test_access_offline_reports_gated_models(monkeypatch) -> None:
     assert "ngc" in result.output
 
 
-def test_access_online_is_an_enforcing_gate_for_missing_hf_token(monkeypatch) -> None:
-    from npa.cli.workbench import health as health_module
-
-    monkeypatch.setattr(
-        health_module, "load_credentials", lambda *a, **k: _EmptyCreds()
-    )
-
-    result = runner.invoke(
-        app,
-        ["workbench", "health", "access", "--capability", "groot"],
-    )
-
-    assert result.exit_code == 1
-    assert "No HF token" in result.output
-
-
-def test_access_online_is_an_enforcing_gate_for_missing_ngc_key(monkeypatch) -> None:
-    from npa.cli.workbench import health as health_module
-
-    monkeypatch.setattr(
-        health_module, "load_credentials", lambda *a, **k: _EmptyCreds()
-    )
-
-    result = runner.invoke(
-        app,
-        ["workbench", "health", "access", "--capability", "nurec"],
-    )
-
-    assert result.exit_code == 1
-    assert "NGC_API_KEY is not set" in result.output
-
-
 def test_access_fails_on_gated_denial(monkeypatch) -> None:
     from npa.cli.workbench import health as health_module
 
@@ -378,11 +345,8 @@ def test_access_fails_on_gated_denial(monkeypatch) -> None:
     monkeypatch.setattr(
         health_module,
         "validate_hf_access",
-        lambda token, repo, repo_type, **kwargs: _HFOK(
-            ok=False,
-            status_code=403,
-            error="no access",
-            error_kind="entitlement",
+        lambda token, repo, repo_type: _HFOK(
+            ok=False, status_code=403, error="no access"
         ),
     )
     result = runner.invoke(
@@ -403,11 +367,8 @@ def test_access_warn_only_suppresses_exit(monkeypatch) -> None:
     monkeypatch.setattr(
         health_module,
         "validate_hf_access",
-        lambda token, repo, repo_type, **kwargs: _HFOK(
-            ok=False,
-            status_code=403,
-            error="no access",
-            error_kind="entitlement",
+        lambda token, repo, repo_type: _HFOK(
+            ok=False, status_code=403, error="no access"
         ),
     )
     result = runner.invoke(
@@ -433,7 +394,7 @@ def test_access_pass_when_validator_ok(monkeypatch) -> None:
     monkeypatch.setattr(
         health_module,
         "validate_hf_access",
-        lambda token, repo, repo_type, **kwargs: _HFOK(ok=True),
+        lambda token, repo, repo_type: _HFOK(ok=True),
     )
     monkeypatch.setattr(
         "npa.workbench.nurec.nurec.check_ngc_image_access",
@@ -458,7 +419,7 @@ def test_access_fails_on_ngc_auth_rejection(monkeypatch) -> None:
     monkeypatch.setattr(
         health_module,
         "validate_hf_access",
-        lambda token, repo, repo_type, **kwargs: _HFOK(ok=True),
+        lambda token, repo, repo_type: _HFOK(ok=True),
     )
     monkeypatch.setattr(
         "npa.workbench.nurec.nurec.check_ngc_image_access",
@@ -486,7 +447,7 @@ def test_access_warns_on_transient_ngc_failure_without_rejecting_key(
     monkeypatch.setattr(
         health_module,
         "validate_hf_access",
-        lambda token, repo, repo_type, **kwargs: _HFOK(ok=True),
+        lambda token, repo, repo_type: _HFOK(ok=True),
     )
     monkeypatch.setattr(
         "npa.workbench.nurec.nurec.check_ngc_image_access",

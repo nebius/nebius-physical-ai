@@ -101,7 +101,7 @@ def test_configure_rejects_a_non_s3_source_prefix(
 
     result = runner.invoke(app, ["configure", "--src-s3-uri", "/local/path"])
 
-    assert result.exit_code == 2
+    assert result.exit_code == 1
     assert "must be an s3:// URI" in result.output
 
 

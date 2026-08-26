@@ -230,22 +230,6 @@ def test_known_project_bucket_options_reject_invalid_values() -> None:
     assert result.exit_code != 0
     assert "must be a finite non-negative number" in result.output
 
-    result = runner.invoke(
-        app,
-        ["configure", "--no-interactive", "--bucket-storage-class", "standard"],
-        env={"COLUMNS": "240"},
-    )
-    assert result.exit_code != 0
-    assert "requires all of --tenant-id" in result.output
-
-    result = runner.invoke(
-        app,
-        [*common, "--no-provision", "--bucket-size-gb", "1"],
-        env={"COLUMNS": "240"},
-    )
-    assert result.exit_code != 0
-    assert "require --provision" in result.output
-
 
 def test_noninteractive_storage_selection_never_prints_prompt_language(
     monkeypatch, capsys

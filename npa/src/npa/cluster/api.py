@@ -777,28 +777,14 @@ class MK8sClient:
     ) -> None:
         if self._is_not_found(result):
             raise not_found_error(prefix)
-        from npa.clients.nebius import redact_nebius_output
-
-        detail = redact_nebius_output(
-            (result.stderr or result.stdout or "").strip()
-        )[:1000]
+        detail = (result.stderr or result.stdout or "").strip()
         suffix = f": {detail}" if detail else f" (exit code {result.returncode})"
         raise ClusterError(f"{prefix}{suffix}")
 
     @staticmethod
     def _is_not_found(result: subprocess.CompletedProcess[str]) -> bool:
-        # This is the provider subprocess boundary. Only a recognized top-level
-        # status on stderr may become exact absence; arbitrary stdout, wrapper
-        # prose, auth/RBAC, transport, and parse text remain errors.
-        from npa.clients.nebius import (
-            ProviderStatus,
-            provider_status_from_cli_stderr,
-        )
-
-        return (
-            provider_status_from_cli_stderr(result.stderr)
-            is ProviderStatus.NOT_FOUND
-        )
+        detail = f"{result.stderr}\n{result.stdout}".lower()
+        return "not found" in detail or "notfound" in detail
 
     @staticmethod
     def _is_transient(result: subprocess.CompletedProcess[str]) -> bool:

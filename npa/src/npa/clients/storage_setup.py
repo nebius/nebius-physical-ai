@@ -415,7 +415,7 @@ class StorageSetupTransaction:
                 elif kind == "service_account":
                     nebius.delete_service_account(metadata.get("id", ""))
             except Exception as rollback_exc:  # noqa: BLE001 - preserve partial state
-                if nebius.is_not_found(rollback_exc):
+                if nebius.is_not_found(str(rollback_exc)):
                     self._remove_resource(kind, metadata)
                 else:
                     message = nebius.redact_nebius_output(str(rollback_exc))

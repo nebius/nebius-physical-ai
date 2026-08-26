@@ -156,14 +156,6 @@ def isolate_home_config(monkeypatch, tmp_path_factory, request):
     import npa.orchestration.skypilot._bin
 
     npa_dir = home / ".npa"
-    # Product code treats NPA_CONFIG_DIR as the authoritative config/state root.
-    # Override an operator's exported value along with HOME so cleanup and
-    # lifecycle tests cannot observe or mutate the operator's live isolated run.
-    monkeypatch.setenv("NPA_CONFIG_DIR", str(npa_dir))
-    monkeypatch.setenv("NPA_OPERATION_JOURNAL_DIR", str(npa_dir / "operations"))
-    monkeypatch.setenv(
-        "NPA_TEARDOWN_RECEIPT_DIR", str(npa_dir / "teardown-receipts")
-    )
     monkeypatch.setattr(npa.clients.config, "CONFIG_PATH", npa_dir / "config.yaml")
     monkeypatch.setattr(
         npa.clients.credentials, "CREDENTIALS_PATH", npa_dir / "credentials.yaml"

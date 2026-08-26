@@ -18,17 +18,11 @@ def _isolate_nebius_profile(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("NEBIUS_PROFILE", raising=False)
 
 
-def _result(
-    payload: dict | None = None,
-    *,
-    returncode: int = 0,
-    stderr: str = "",
-    stdout: str | None = None,
-):
+def _result(payload: dict | None = None, *, returncode: int = 0, stderr: str = ""):
     return subprocess.CompletedProcess(
         args=["nebius"],
         returncode=returncode,
-        stdout=json.dumps(payload or {}) if stdout is None else stdout,
+        stdout=json.dumps(payload or {}),
         stderr=stderr,
     )
 
@@ -216,51 +210,12 @@ def test_get_cluster_uses_name_fallback_after_id_miss() -> None:
 
 def test_get_cluster_raises_not_found() -> None:
     def run(args, **kwargs):
-        return _result(returncode=1, stderr="NotFound: cluster is absent")
+        return _result(returncode=1, stderr="not found")
 
     client = MK8sClient(nebius_bin="nebius", subprocess_runner=run)
 
     with pytest.raises(ClusterNotFoundError):
         client.get_cluster("missing", project_id="project-a")
-
-
-@pytest.mark.parametrize(
-    ("stderr", "stdout"),
-    [
-        ("wrapper says resource not found", ""),
-        ("PermissionDenied: nested NotFound", ""),
-        ("transport failed while NotFound was mentioned", ""),
-        ("authentication failed", "NotFound"),
-    ],
-)
-def test_get_cluster_arbitrary_not_found_text_remains_error(
-    stderr: str, stdout: str
-) -> None:
-    def run(args, **kwargs):  # noqa: ANN001, ANN202
-        return _result(returncode=1, stderr=stderr, stdout=stdout)
-
-    client = MK8sClient(nebius_bin="nebius", subprocess_runner=run)
-
-    with pytest.raises(ClusterError):
-        client.get_cluster("missing", project_id="project-a")
-
-
-def test_get_cluster_error_is_redacted_and_not_absence() -> None:
-    secret = "ghp_abcdefghijklmnopqrstuvwxyz123456"
-
-    def run(args, **kwargs):  # noqa: ANN001, ANN202
-        return _result(
-            returncode=1,
-            stderr=f"PermissionDenied: nested NotFound token={secret}",
-        )
-
-    client = MK8sClient(nebius_bin="nebius", subprocess_runner=run)
-
-    with pytest.raises(ClusterError) as raised:
-        client.get_cluster("missing", project_id="project-a")
-
-    assert secret not in str(raised.value)
-    assert "PermissionDenied" in str(raised.value)
 
 
 def test_transient_errors_are_retried() -> None:

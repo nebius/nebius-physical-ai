@@ -871,22 +871,6 @@ def forget_project(alias: str) -> bool:
         if isinstance(project, dict)
         else ""
     )
-    if project_id:
-        try:
-            from npa.cli.agent_iam import agent_iam_recovery_present
-
-            agent_iam_remains = agent_iam_recovery_present(project_id)
-        except (OSError, RuntimeError, ValueError) as exc:
-            raise ConfigError(
-                f"Project '{cleaned}' has unreadable agent IAM recovery evidence; "
-                "reconcile agent teardown before forgetting it."
-            ) from exc
-        if agent_iam_remains:
-            raise ConfigError(
-                f"Project '{cleaned}' has unresolved agent IAM recovery evidence. "
-                "Complete `npa agent destroy --purge-iam` verification before "
-                "forgetting the project."
-            )
     skypilot = yml.get("skypilot")
     skypilot_map: dict[str, Any] = skypilot if isinstance(skypilot, dict) else {}
     owner = skypilot_map.get("controller_owner")
@@ -1518,9 +1502,7 @@ def resolve_project_storage(
             migrate_legacy=not read_only,
         )
         saved_storage = record.get("storage")
-        if record.get("storage_selected") is not False and isinstance(
-            saved_storage, dict
-        ):
+        if isinstance(saved_storage, dict):
             project_storage_credentials = saved_storage
 
     def source_value(source: dict[str, Any], *keys: str) -> str:

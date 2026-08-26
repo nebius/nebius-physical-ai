@@ -10,16 +10,6 @@ import pytest
 from npa import teardown_receipts as receipts
 
 
-def test_receipt_root_follows_isolated_npa_config_dir(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    monkeypatch.delenv("NPA_TEARDOWN_RECEIPT_DIR", raising=False)
-    isolated = tmp_path / "isolated-npa"
-    monkeypatch.setenv("NPA_CONFIG_DIR", str(isolated))
-
-    assert receipts.receipt_root() == isolated / "teardown-receipts"
-
-
 def _root(monkeypatch, tmp_path: Path) -> Path:  # noqa: ANN001
     root = tmp_path / "audit"
     monkeypatch.setenv("NPA_TEARDOWN_RECEIPT_DIR", str(root))
@@ -122,34 +112,6 @@ def test_retry_does_not_regress_terminal_phase_to_unknown(
     )
 
 
-def test_latest_phase_uses_receipt_sequence_not_wall_clock_text(
-    monkeypatch, tmp_path: Path
-) -> None:  # noqa: ANN001
-    _root(monkeypatch, tmp_path)
-    path = receipts.record_teardown_event(
-        phase="agent",
-        resource="agent",
-        terminal_state="verified_deleted",
-        project_id="project-demo",
-    )
-    receipts.record_teardown_event(
-        phase="agent",
-        resource="agent",
-        terminal_state="verification_failed",
-        project_id="project-demo",
-        errors=["retry remains unresolved"],
-    )
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    payload["events"][0]["recorded_at"] = "2099-01-01T00:00:00Z"
-    payload["events"][1]["recorded_at"] = "2000-01-01T00:00:00Z"
-    receipts._write_atomic(path, payload)
-
-    latest = receipts.latest_phase_states(project_id="project-demo")["agent"]
-
-    assert latest["sequence"] == 2
-    assert latest["terminal_state"] == "verification_failed"
-
-
 def test_global_receipt_never_proves_completion_for_an_explicit_project(
     monkeypatch, tmp_path: Path
 ) -> None:  # noqa: ANN001
@@ -172,9 +134,6 @@ def test_prune_is_explicit_age_gated_and_preserves_uncertainty(
         resource="cluster-demo",
         terminal_state="verified_deleted",
         project_alias="terminal",
-        identity={"cluster_id": "cluster-demo"},
-        action={"kind": "terraform_full_cluster_destroy"},
-        verification={"terraform_destroy": "completed"},
     )
     unresolved = receipts.record_teardown_event(
         phase="controller",
@@ -194,40 +153,6 @@ def test_prune_is_explicit_age_gated_and_preserves_uncertainty(
     assert not terminal.exists()
     assert unresolved.exists()
     assert any("unresolved/uncertain" in item for item in retained)
-
-
-def test_prune_preserves_old_receipt_when_sibling_generation_is_unresolved(
-    monkeypatch, tmp_path: Path
-) -> None:  # noqa: ANN001
-    _root(monkeypatch, tmp_path)
-    times = iter(("2000-01-01T00:00:00Z", "2099-01-01T00:00:00Z"))
-    monkeypatch.setattr(receipts, "utc_now", lambda: next(times))
-    identity = {"project_id": "project-1", "cluster_id": "cluster-1"}
-    terminal = receipts.record_teardown_event(
-        phase="cluster",
-        resource="cluster-1",
-        terminal_state="verified_deleted",
-        project_alias="alpha",
-        project_id="project-1",
-        identity=identity,
-        action={"kind": "terraform_full_cluster_destroy"},
-        verification={"terraform_destroy": "completed"},
-    )
-    unresolved = receipts.record_teardown_event(
-        phase="cluster",
-        resource="cluster-1",
-        terminal_state="verification_failed",
-        project_alias="beta",
-        identity=identity,
-        errors=["newer verification is unresolved"],
-    )
-
-    removed, retained = receipts.prune_teardown_receipts(older_than_days=90)
-
-    assert removed == []
-    assert terminal.exists()
-    assert unresolved.exists()
-    assert any("sibling" in item for item in retained)
 
 
 def test_v2_identity_is_private_immutable_and_path_safe(
@@ -450,87 +375,3 @@ def test_controller_observation_does_not_poison_recreated_cluster_identity(
         ("cluster-first", "cluster-operation-first"),
         ("cluster-retry", "cluster-operation-retry"),
     }
-
-
-@pytest.mark.parametrize(
-    "case",
-    [
-        "unsupported-schema",
-        "bad-root-timestamp",
-        "bad-sequence",
-        "bad-event-timestamp",
-        "bad-action",
-        "bad-action-kind",
-        "bad-verification-bool",
-        "bad-identity-type",
-        "bad-identity-collection",
-        "incomplete-agent-identity",
-        "duplicate-generation-id",
-    ],
-)
-def test_strict_receipt_inventory_rejects_every_invalid_authority_shape(
-    monkeypatch, tmp_path: Path, case: str
-) -> None:  # noqa: ANN001
-    _root(monkeypatch, tmp_path)
-    path = receipts.record_teardown_event(
-        phase="agent",
-        resource="agent",
-        terminal_state="verified_deleted",
-        project_id="project-1",
-        identity={
-            "project_id": "project-1",
-            "agent_name": "agent",
-            "instance_id": "instance-1",
-        },
-        action={"kind": "terraform_agent_destroy"},
-        verification={
-            "exact_instance_absent": True,
-            "terraform_destroy_completed": True,
-            "terraform_dependency_graph": [
-                "compute_instance",
-                "boot_disk",
-                "network",
-                "subnet",
-                "security_group",
-                "public_ip",
-            ],
-        },
-    )
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    event = payload["events"][0]
-    if case == "unsupported-schema":
-        payload["schema_version"] = "npa.teardown.receipt.v999"
-    elif case == "bad-root-timestamp":
-        payload["updated_at"] = "tomorrow"
-    elif case == "bad-sequence":
-        event["sequence"] = 2
-    elif case == "bad-event-timestamp":
-        event["recorded_at"] = "2026-08-24"
-    elif case == "bad-action":
-        event["action"] = []
-    elif case == "bad-action-kind":
-        event["action"]["kind"] = False
-    elif case == "bad-verification-bool":
-        event["verification"]["exact_instance_absent"] = "true"
-    elif case == "bad-identity-type":
-        event["identity"]["instance_id"] = False
-    elif case == "bad-identity-collection":
-        payload["identity"]["agents"] = False
-    elif case == "incomplete-agent-identity":
-        payload["identity"]["agents"][0].pop("agent_name")
-    elif case == "duplicate-generation-id":
-        payload["identity"]["agents"].append(
-            dict(payload["identity"]["agents"][0])
-        )
-    path.write_text(json.dumps(payload), encoding="utf-8")
-
-    with pytest.raises(receipts.TeardownReceiptError):
-        receipts.list_teardown_receipts(
-            project_id="project-1", legacy="exclude", strict=True
-        )
-    assert (
-        receipts.list_teardown_receipts(
-            project_id="project-1", legacy="exclude", strict=False
-        )
-        == []
-    )

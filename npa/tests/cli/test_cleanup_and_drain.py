@@ -52,13 +52,6 @@ def npa_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     home = tmp_path / "home"
     (home / ".npa").mkdir(parents=True)
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
-    monkeypatch.setenv("NPA_CONFIG_DIR", str(home / ".npa"))
-    monkeypatch.setenv(
-        "NPA_OPERATION_JOURNAL_DIR", str(home / ".npa" / "operations")
-    )
-    monkeypatch.setenv(
-        "NPA_TEARDOWN_RECEIPT_DIR", str(home / ".npa" / "teardown-receipts")
-    )
     return home
 
 

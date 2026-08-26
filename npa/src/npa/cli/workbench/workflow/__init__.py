@@ -5768,7 +5768,7 @@ def cancel_cmd(
             resource=str(run_id) if not str(run_id).startswith("s3://") else "",
         )
         resolved_identity_run = str(identity.get("run_id") or run_id)
-        if identity.receipt_authorizes_noop:
+        if identity.receipt_is_terminal:
             from npa.orchestration.npa_workflow.run_resolution import RunResolution
 
             resolution = RunResolution(
@@ -5793,7 +5793,7 @@ def cancel_cmd(
         if resolution.not_submitted:
             detected = (
                 "NOT_SUBMITTED"
-                if not identity.receipt_authorizes_noop
+                if not identity.receipt_is_terminal
                 or identity.terminal_state == "not_submitted"
                 else "TERMINAL"
             )
@@ -5810,7 +5810,7 @@ def cancel_cmd(
                 "sky_job_ids": [],
                 "cloud_calls": False,
                 "verification": "terminal_receipt"
-                if identity.receipt_authorizes_noop
+                if identity.receipt_is_terminal
                 else "durable_planning_ledger",
                 "resolution_checks": resolution.checks_payload(),
                 "message": "No cancellation was needed; durable evidence proves the run never launched or is terminal.",

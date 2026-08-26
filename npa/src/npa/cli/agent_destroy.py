@@ -11,101 +11,12 @@ from npa.cli._typer_defaults import resolve_typer_defaults
 from npa.lifecycle_intent import OperationIntent, intent_boundary, json_stdout_contract
 
 
-_AGENT_TERRAFORM_GRAPH = frozenset(
-    {
-        "compute_instance",
-        "boot_disk",
-        "network",
-        "subnet",
-        "security_group",
-        "public_ip",
-    }
-)
-
-
 def _emit(payload: dict[str, Any], *, output_json: bool) -> None:
     if output_json:
         typer.echo(json.dumps(payload, indent=2, sort_keys=True))
     else:
         typer.echo(f"identity_source: {payload['identity_source']}")
         typer.echo(str(payload["message"]))
-
-
-def _terminal_agent_graph_event(
-    receipt_id: str, *, name: str, instance_id: str
-) -> dict[str, Any]:
-    """Return exact durable graph-absence evidence from an older destroy attempt."""
-
-    if not receipt_id or not instance_id:
-        return {}
-    from npa.teardown_receipts import (
-        latest_matching_resource_generation_event,
-        load_teardown_receipt,
-    )
-
-    candidates: list[dict[str, Any]] = []
-    for event in load_teardown_receipt(receipt_id).get("events") or []:
-        if not isinstance(event, dict):
-            continue
-        identity = event.get("identity")
-        identity = identity if isinstance(identity, dict) else {}
-        if (
-            event.get("phase") == "agent"
-            and str(event.get("resource") or "") == name
-            and str(identity.get("instance_id") or "") == instance_id
-        ):
-            candidates.append(event)
-    selected = max(
-        candidates, key=lambda item: int(item.get("sequence") or 0), default={}
-    )
-    if not selected:
-        return {}
-    graph_candidates: list[dict[str, Any]] = []
-    for event in candidates:
-        verification = event.get("verification")
-        verification = verification if isinstance(verification, dict) else {}
-        action = event.get("action")
-        action = action if isinstance(action, dict) else {}
-        graph = verification.get("terraform_dependency_graph")
-        errors = event.get("errors")
-        if (
-            str(event.get("terminal_state") or "").lower()
-            in {"verified_absent", "verified_deleted"}
-            and action.get("kind") == "terraform_agent_destroy"
-            and verification.get("exact_instance_absent") is True
-            and verification.get("terraform_destroy_completed") is True
-            and isinstance(graph, list)
-            and _AGENT_TERRAFORM_GRAPH.issubset(graph)
-            and isinstance(errors, list)
-            and not errors
-        ):
-            graph_candidates.append(event)
-    if not graph_candidates:
-        return {}
-    authoritative = latest_matching_resource_generation_event(
-        selected, receipt_id=receipt_id, strict=True
-    )
-    if not authoritative:
-        return {}
-    identity = authoritative.get("identity")
-    identity = identity if isinstance(identity, dict) else {}
-    action = authoritative.get("action")
-    action = action if isinstance(action, dict) else {}
-    verification = authoritative.get("verification")
-    verification = verification if isinstance(verification, dict) else {}
-    if not (
-        str(authoritative.get("phase") or "") == "agent"
-        and str(authoritative.get("resource") or "") == name
-        and str(identity.get("instance_id") or "") == instance_id
-        and action.get("kind") == "terraform_agent_destroy"
-        and verification.get("exact_instance_absent") is not False
-        and verification.get("terraform_destroy_completed") is not False
-    ):
-        return {}
-    # Preserve the newest event's unresolved state while retaining the older
-    # immutable Terraform-graph facet solely for a provider-rechecked IAM retry.
-    # Callers must never mistake the graph proof for full teardown convergence.
-    return authoritative
 
 
 @resolve_typer_defaults
@@ -156,70 +67,36 @@ def destroy_cmd(
     alias = project.strip()
     if not selectors:
         alias = agent_module._resolve_project_alias(alias)
-
-    def read_saved_record(selected_alias: str) -> tuple[bool, dict[str, Any]]:
-        if not selected_alias:
-            return False, {}
-        from npa.cli.agent_records import AgentRecordError, AgentRecordState
-
-        try:
-            decoded = agent_module.decode_agent_record(selected_alias, name)
-        except AgentRecordError as exc:
-            raise typer.BadParameter(str(exc)) from exc
-        if decoded.present and decoded.state is not AgentRecordState.COMPLETE:
-            raise typer.BadParameter(
-                f"Saved agent record {name!r} is present but {decoded.state.value}: "
-                f"{decoded.detail}. "
-                "refusing receipt or IAM reconciliation until the lifecycle record "
-                "is recovered or explicitly repaired."
-            )
-        return decoded.present, dict(decoded.record)
-
-    def live_identity(
-        selected_alias: str, saved_record: dict[str, Any]
-    ) -> dict[str, str]:
-        saved_environment = (
-            resolve_environment(selected_alias) if selected_alias else None
-        )
-        values = {
-            "project_alias": selected_alias,
-            "project_id": str(
-                getattr(saved_environment, "project_id", "") or ""
-            ),
-            "tenant_id": str(getattr(saved_environment, "tenant_id", "") or ""),
-            "region": str(getattr(saved_environment, "region", "") or ""),
-        }
-        if saved_record:
-            values.update(
-                {
-                    "agent_name": name,
-                    "instance_id": str(saved_record.get("instance_id") or ""),
-                    "project_id": str(
-                        saved_record.get("project_id") or values["project_id"]
-                    ),
-                    "region": str(saved_record.get("region") or values["region"]),
-                    "service_account_id": str(
-                        saved_record.get("service_account_id") or ""
-                    ),
-                }
-            )
-        return values
-
-    explicit_identity = {
+    saved = resolve_environment(alias) if alias else None
+    live = {
         "project_alias": alias,
-        "project_id": project_id,
-        "tenant_id": tenant_id,
-        "region": region,
-        "agent_name": name,
-        "instance_id": instance_id,
-        "operation_id": operation_id,
-        "profile": profile,
+        "project_id": str(getattr(saved, "project_id", "") or ""),
+        "tenant_id": str(getattr(saved, "tenant_id", "") or ""),
+        "region": str(getattr(saved, "region", "") or ""),
     }
-    record_present, record = read_saved_record(alias)
-    live = live_identity(alias, record)
+    record = agent_module._agent_record(alias, name) if alias else {}
+    if record:
+        live.update(
+            {
+                "agent_name": name,
+                "instance_id": str(record.get("instance_id") or ""),
+                "project_id": str(record.get("project_id") or live["project_id"]),
+                "region": str(record.get("region") or live["region"]),
+                "service_account_id": str(record.get("service_account_id") or ""),
+            }
+        )
     try:
         identity = resolve_cleanup_identity(
-            explicit=explicit_identity,
+            explicit={
+                "project_alias": alias,
+                "project_id": project_id,
+                "tenant_id": tenant_id,
+                "region": region,
+                "agent_name": name,
+                "instance_id": instance_id,
+                "operation_id": operation_id,
+                "profile": profile,
+            },
             receipt_id=receipt,
             live=live,
             phase="agent",
@@ -227,20 +104,6 @@ def destroy_cmd(
         )
     except (CleanupIdentityError, RuntimeError, ValueError) as exc:
         raise typer.BadParameter(str(exc)) from exc
-    resolved_alias = str(identity.get("project_alias") or alias)
-    if resolved_alias and resolved_alias != alias:
-        record_present, record = read_saved_record(resolved_alias)
-        live = live_identity(resolved_alias, record)
-        try:
-            identity = resolve_cleanup_identity(
-                explicit=explicit_identity,
-                receipt_id=receipt,
-                live=live,
-                phase="agent",
-                resource=name,
-            )
-        except (CleanupIdentityError, RuntimeError, ValueError) as exc:
-            raise typer.BadParameter(str(exc)) from exc
     alias = str(identity.get("project_alias") or alias)
     exact_project = str(identity.get("project_id") or "")
     exact_instance = str(identity.get("instance_id") or "")
@@ -255,577 +118,22 @@ def destroy_cmd(
             requested_name=name,
         )
     )
-    if exact_operation:
-        operation_payload = operations[0].read()
-        if (
-            str(operation_payload.get("resource_type") or "") != "agent"
-            or str(operation_payload.get("requested_name") or "") != name
-        ):
-            raise typer.BadParameter(
-                "The selected operation journal does not own this exact agent name; "
-                "no mutation was attempted."
-            )
-        operation_compute_ids = {
-            str(resource.get("provider_id") or "").strip()
-            for resource in operation_payload.get("resources") or []
-            if isinstance(resource, dict)
-            and resource.get("resource_type") == "compute_instance"
-            and str(resource.get("provider_id") or "").strip()
-        }
-        if len(operation_compute_ids) > 1:
-            raise typer.BadParameter(
-                "The selected operation journal has ambiguous compute identities; "
-                "no mutation was attempted."
-            )
-        operation_identity = {
-            "project_alias": str(
-                operation_payload.get("project_alias") or ""
-            ).strip(),
-            "project_id": str(operation_payload.get("project_id") or "").strip(),
-            "tenant_id": str(operation_payload.get("tenant_id") or "").strip(),
-            "region": str(operation_payload.get("region") or "").strip(),
-            "instance_id": next(iter(operation_compute_ids), ""),
-        }
-        for field, journal_value in operation_identity.items():
-            resolved_value = str(identity.get(field) or "").strip()
-            if resolved_value and journal_value and resolved_value != journal_value:
-                raise typer.BadParameter(
-                    f"The selected operation journal conflicts with {field}; "
-                    "no mutation was attempted."
-                )
-            if not resolved_value and journal_value:
-                identity.values[field] = journal_value
-                identity.field_sources[field] = f"operation:{exact_operation}"
-        alias = str(identity.get("project_alias") or alias)
-        exact_project = str(identity.get("project_id") or "")
-        exact_instance = str(identity.get("instance_id") or "")
     if not alias and operations:
-        operation_aliases = {
-            str(operation.read().get("project_alias") or "").strip()
-            for operation in operations
-            if str(operation.read().get("project_alias") or "").strip()
-        }
-        if len(operation_aliases) != 1:
-            raise typer.BadParameter(
-                "Operation journals do not identify one exact project alias. "
-                "Pass an exact receipt/alias; no mutation was attempted."
-            )
-        alias = next(iter(operation_aliases))
-    if not exact_project:
-        raise typer.BadParameter(
-            "An exact immutable project ID is required before agent teardown; "
-            "no mutation was attempted."
-        )
-    if exact_operation:
-        related_operations = list_operations(
-            project_alias=alias,
-            project_id=exact_project,
-            resource_type="agent",
-            requested_name=name,
-        )
-        if exact_operation not in {
-            operation.operation_id for operation in related_operations
-        }:
-            raise typer.BadParameter(
-                "The selected operation journal is outside the exact agent/project "
-                "inventory; no mutation was attempted."
-            )
-        operations = related_operations
+        alias = str(operations[0].read().get("project_alias") or "")
     state_exists = bool(
         alias and agent_module._agent_terraform_state_exists(alias, name)
     )
-    if state_exists:
-        from npa.cli.agent_terraform import AgentTerraformStateIdentityError
-
-        try:
-            state_instance = agent_module._agent_terraform_instance_id(alias, name)
-        except AgentTerraformStateIdentityError as exc:
-            agent_module._record_agent_destroy_event(
-                alias,
-                name,
-                terminal_state="verification_failed",
-                error=str(exc),
-                identity=identity.values,
-                project_id=exact_project,
-                identity_source=identity.source,
-            )
-            raise typer.BadParameter(
-                "Saved agent state has no single trustworthy immutable instance "
-                f"identity: {exc}. No mutation was attempted."
-            ) from exc
-        if exact_instance and state_instance != exact_instance:
-            agent_module._record_agent_destroy_event(
-                alias,
-                name,
-                terminal_state="verification_failed",
-                error="saved record/receipt conflicts with Terraform instance identity",
-                identity=identity.values,
-                project_id=exact_project,
-                identity_source=identity.source,
-            )
-            raise typer.BadParameter(
-                "Saved agent record/receipt identity conflicts with surviving "
-                "Terraform state. No mutation was attempted."
-            )
-        if not exact_instance:
-            exact_instance = state_instance
-            identity.values["instance_id"] = state_instance
-    terminal_graph = _terminal_agent_graph_event(
-        receipt, name=name, instance_id=exact_instance
-    )
-
-    operation_ids_snapshot = tuple(
-        sorted(operation.operation_id for operation in operations)
-    )
-
-    def operation_matches_terminal_generation(operation: Any) -> bool:
-        payload = operation.read()
-        if (
-            payload.get("audit_only") is True
-            and str(payload.get("phase") or "")
-            in {"committed", "destroyed", "rolled-back"}
-            and not operation.state_copies()
-        ):
-            return True
-        compute_ids = {
-            str(resource.get("provider_id") or "").strip()
-            for resource in payload.get("resources") or []
-            if isinstance(resource, dict)
-            and resource.get("resource_type") == "compute_instance"
-            and str(resource.get("provider_id") or "").strip()
-        }
-        if compute_ids:
-            return bool(exact_instance and compute_ids == {exact_instance})
-        return bool(
-            str(payload.get("phase") or "") in {"destroyed", "rolled-back"}
-            and not operation.state_copies()
-        )
-
-    operations_match_terminal = all(
-        operation_matches_terminal_generation(operation) for operation in operations
-    )
-    if terminal_graph and not record_present and operations and not operations_match_terminal:
-        raise typer.BadParameter(
-            "A current or ambiguous same-name operation generation conflicts with "
-            "the historical terminal receipt. No mutation was attempted."
-        )
-    if exact_operation and any(
-        operation.operation_id != exact_operation
-        and not operation_matches_terminal_generation(operation)
-        for operation in operations
-    ):
-        raise typer.BadParameter(
-            "A sibling same-name operation generation conflicts with the selected "
-            "operation. No mutation was attempted."
-        )
-
-    def prepare_teardown_operation() -> Any:
-        resume_argv = [
-            "npa",
-            "agent",
-            "destroy",
-            "--project",
-            alias,
-            "--name",
-            name,
-            "--yes",
-        ]
-        if exact_project:
-            resume_argv.extend(["--project-id", exact_project])
-        return ProvisioningOperation.prepare(
-            command="npa agent destroy",
-            project_alias=alias,
-            project_id=exact_project,
-            tenant_id=str(identity.get("tenant_id") or ""),
-            region=str(identity.get("region") or ""),
-            resource_type="agent-teardown",
-            requested_name=name,
-            ownership_source="agent-destroy-cli",
-            resume_command="",
-            resume_argv=resume_argv,
-            destroy_argv=resume_argv,
-        )
-
-    def retire_local_state_under_lease(
-        transaction: Any, *, finalize: bool = False
-    ) -> tuple[Any, dict[str, Any]]:
-        """Revalidate one generation under its project lease, then retire it."""
-
-        try:
-            with operation_context(transaction):
-                phase = str(transaction.read().get("phase") or "")
-                if phase == "prepared":
-                    transaction.transition("mutating")
-                if alias:
-                    from npa.cli.agent_records import AgentRecordState
-
-                    current_record = agent_module.decode_agent_record(alias, name)
-                    if current_record.present != record_present:
-                        raise agent_module.AgentLocalRetirementError(
-                            "saved agent record presence changed during teardown"
-                        )
-                    if current_record.present and (
-                        current_record.state is not AgentRecordState.COMPLETE
-                        or current_record.record.get("project_id") != exact_project
-                        or current_record.record.get("instance_id") != exact_instance
-                    ):
-                        raise agent_module.AgentLocalRetirementError(
-                            "saved agent generation changed during teardown"
-                        )
-                current_operations = list_operations(
-                    project_alias=alias,
-                    project_id=exact_project,
-                    resource_type="agent",
-                    requested_name=name,
-                )
-                current_ids = tuple(
-                    sorted(operation.operation_id for operation in current_operations)
-                )
-                if current_ids != operation_ids_snapshot:
-                    raise agent_module.AgentLocalRetirementError(
-                        "agent operation generation changed during teardown"
-                    )
-                current_state = bool(
-                    alias
-                    and agent_module._agent_terraform_state_exists(alias, name)
-                )
-                if current_state:
-                    from npa.cli.agent_terraform import (
-                        AgentTerraformStateIdentityError,
-                    )
-
-                    try:
-                        current_state_instance = (
-                            agent_module._agent_terraform_instance_id(alias, name)
-                        )
-                    except AgentTerraformStateIdentityError as exc:
-                        raise agent_module.AgentLocalRetirementError(str(exc)) from exc
-                    if not exact_instance or current_state_instance != exact_instance:
-                        raise agent_module.AgentLocalRetirementError(
-                            "Terraform state generation changed during teardown"
-                        )
-                if exact_instance:
-                    try:
-                        remote = get_compute_instance_identity(
-                            exact_instance,
-                            project_id=exact_project,
-                            expected_name=(f"agent-{alias}-{name}" if alias else ""),
-                            profile=str(identity.get("profile") or "") or None,
-                        )
-                    except NebiusError as exc:
-                        raise agent_module.AgentLocalRetirementError(
-                            "exact provider absence recheck is unresolved: " + str(exc)
-                        ) from exc
-                    if remote is not None:
-                        raise agent_module.AgentLocalRetirementError(
-                            "exact provider instance reappeared during teardown"
-                        )
-                removed_record: dict[str, Any] = {}
-                if record_present:
-                    removed_record = dict(current_record.record)
-                    agent_module._remove_agent_record(alias, name)
-                    if agent_module.decode_agent_record(alias, name).present:
-                        raise agent_module.AgentLocalRetirementError(
-                            "saved agent record remains after removal"
-                        )
-                try:
-                    retired_snapshot = agent_module._cleanup_agent_local_files(
-                        alias,
-                        name,
-                        operation_ids=operation_ids_snapshot,
-                    )
-                except BaseException as exc:
-                    if removed_record:
-                        try:
-                            agent_module._store_agent_record(
-                                alias, name, removed_record
-                            )
-                            restored = agent_module.decode_agent_record(alias, name)
-                            if (
-                                not restored.present
-                                or restored.record.get("project_id") != exact_project
-                                or restored.record.get("instance_id") != exact_instance
-                            ):
-                                raise agent_module.AgentLocalRetirementError(
-                                    "saved agent recovery record did not restore"
-                                )
-                        except (OSError, RuntimeError, ValueError) as restore_exc:
-                            raise agent_module.AgentLocalRetirementError(
-                                "local retirement failed and the saved agent recovery "
-                                f"record could not be restored: {restore_exc}"
-                            ) from exc
-                    raise
-                if finalize and str(transaction.read().get("phase") or "") not in {
-                    "committed",
-                    "destroyed",
-                    "rolled-back",
-                }:
-                    transaction.transition("destroyed")
-                return retired_snapshot, removed_record
-        except BaseException:
-            phase = str(transaction.read().get("phase") or "")
-            if phase not in {"committed", "destroyed", "rolled-back"}:
-                transaction.transition(
-                    "recovery-required",
-                    error="exact local agent retirement did not converge",
-                )
-            raise
-
-    def restore_retired_local_state(
-        retired_snapshot: Any, removed_record: dict[str, Any]
-    ) -> None:
-        """Restore credentials and the exact saved identity after receipt failure."""
-
-        errors: list[str] = []
-        if retired_snapshot is not None:
-            try:
-                retired_snapshot.restore()
-            except (OSError, RuntimeError, ValueError) as exc:
-                errors.append(f"agent recovery files: {exc}")
-        if removed_record:
-            try:
-                agent_module._store_agent_record(alias, name, removed_record)
-                restored = agent_module.decode_agent_record(alias, name)
-                if (
-                    not restored.present
-                    or restored.record.get("project_id") != exact_project
-                    or restored.record.get("instance_id") != exact_instance
-                ):
-                    raise agent_module.AgentLocalRetirementError(
-                        "saved agent recovery record did not restore"
-                    )
-            except (OSError, RuntimeError, ValueError) as exc:
-                errors.append(f"saved agent record: {exc}")
-        if errors:
-            raise agent_module.AgentLocalRetirementError(
-                "could not restore local recovery state after receipt failure: "
-                + "; ".join(errors)
-            )
-
-    def finalize_local_retirement(
-        transaction: Any,
-        *,
-        terminal_state: str,
-        terraform_graph_absent: bool = False,
-        iam_disposition: str = "",
-    ) -> None:
-        """Retire local state before publishing terminal convergence evidence."""
-
-        retired_snapshot, removed_record = retire_local_state_under_lease(
-            transaction, finalize=True
-        )
-        try:
-            agent_module._record_agent_destroy_event(
-                alias,
-                name,
-                terminal_state=terminal_state,
-                identity=identity.values,
-                project_id=exact_project,
-                identity_source=identity.source,
-                terraform_graph_absent=terraform_graph_absent,
-                purge_iam=purge_iam if terraform_graph_absent else None,
-                iam_cleanup_complete=(
-                    iam_disposition in {"absent", "deleted"}
-                    if terraform_graph_absent
-                    else None
-                ),
-                iam_disposition=iam_disposition,
-                local_state_retired=True,
-            )
-        except BaseException as receipt_exc:
-            recovery_error = ""
-            try:
-                restore_retired_local_state(retired_snapshot, removed_record)
-            except (OSError, RuntimeError, ValueError) as exc:
-                recovery_error = str(exc)
-            partial_error = (
-                "terminal agent teardown receipt was not durable"
-                + (
-                    f"; local recovery restoration failed: {recovery_error}"
-                    if recovery_error
-                    else ""
-                )
-            )
-            try:
-                agent_module._record_agent_destroy_event(
-                    alias,
-                    name,
-                    terminal_state="partial",
-                    error=partial_error,
-                    identity=identity.values,
-                    project_id=exact_project,
-                    identity_source=identity.source,
-                    terraform_graph_absent=terraform_graph_absent,
-                    purge_iam=purge_iam if terraform_graph_absent else None,
-                    iam_cleanup_complete=(
-                        iam_disposition in {"absent", "deleted"}
-                        if terraform_graph_absent
-                        else None
-                    ),
-                    iam_disposition=iam_disposition,
-                )
-            except (OSError, RuntimeError, ValueError) as partial_exc:
-                if recovery_error:
-                    raise agent_module.AgentLocalRetirementError(
-                        partial_error
-                        + f"; unresolved receipt write failure: {partial_exc}"
-                    ) from receipt_exc
-            if recovery_error:
-                raise agent_module.AgentLocalRetirementError(partial_error) from receipt_exc
-            raise
-    # A prior attempt may have destroyed and provider-verified the full exact
-    # Terraform graph, then returned partial only because IAM inventory was
-    # unresolved.  Retrying by receipt must reconcile IAM without reopening an
-    # absent Terraform backend.  A newer same-name operation still wins so
-    # alias/name reuse cannot make an old receipt affect a new deployment.
-    if (
-        not record
-        and terminal_graph
-        and operations_match_terminal
-    ):
-        from npa.cli.agent_iam import AgentIAMCleanupError, report_destroyed_agent_iam
-        from npa.cli.destructive import require_destructive_confirmation
-
-        def fail_closed(message: str) -> None:
-            agent_module._record_agent_destroy_event(
-                alias,
-                name,
-                terminal_state="verification_failed",
-                terraform_state_present=state_exists,
-                error=message,
-                identity=identity.values,
-                project_id=exact_project,
-                identity_source=identity.source,
-            )
-            _emit(
-                {
-                    **identity.to_dict(),
-                    "outcome": "verification_failed",
-                    "verified": False,
-                    "infrastructure_absent": False,
-                    "iam_cleanup_complete": False,
-                    "message": message,
-                },
-                output_json=output_json,
-            )
-            raise typer.Exit(code=2)
-
-        if state_exists:
-            if not exact_project:
-                fail_closed(
-                    "The terminal receipt and surviving Terraform state cannot be "
-                    "provider-verified without an exact project identity. Credentials "
-                    "and local state were retained."
-                )
-            try:
-                remote = get_compute_instance_identity(
-                    state_instance,
-                    project_id=exact_project,
-                    expected_name=(f"agent-{alias}-{name}" if alias else ""),
-                    profile=str(identity.get("profile") or "") or None,
-                )
-            except NebiusError as exc:
-                fail_closed(
-                    "The terminal receipt matches surviving Terraform state, but exact "
-                    f"provider absence verification is unresolved: {exc}. Credentials "
-                    "and local state were retained."
-                )
-            if remote is not None:
-                fail_closed(
-                    "The exact instance in the terminal receipt and surviving Terraform "
-                    "state is present at the provider. Credentials and local state were "
-                    "retained."
-                )
-
-        require_destructive_confirmation(
-            yes=yes,
-            prompt=(
-                f"Reconcile IAM for already-destroyed agent {alias}/{name} using "
-                "exact terminal receipt evidence?"
-            ),
-            output_json=output_json,
-            payload=identity.to_dict(),
-        )
-        retirement_operation = prepare_teardown_operation()
-        with operation_context(retirement_operation):
-            if str(retirement_operation.read().get("phase") or "") == "prepared":
-                retirement_operation.transition("mutating")
-            try:
-                iam_disposition = report_destroyed_agent_iam(
-                    alias, name, record=dict(identity.values), purge=purge_iam
-                )
-            except AgentIAMCleanupError as exc:
-                retirement_operation.transition(
-                    "recovery-required", error="agent IAM cleanup did not converge"
-                )
-                agent_module._record_agent_destroy_event(
-                    alias,
-                    name,
-                    terminal_state="partial",
-                    error=str(exc),
-                    identity=identity.values,
-                    project_id=exact_project,
-                    identity_source=identity.source,
-                    terraform_graph_absent=True,
-                    iam_cleanup_complete=False,
-                    iam_disposition="verification_unresolved",
-                )
-                _emit(
-                    {
-                        **identity.to_dict(),
-                        "outcome": "partial_iam_cleanup",
-                        "verified": False,
-                        "infrastructure_absent": True,
-                        "iam_cleanup_complete": False,
-                        "message": str(exc),
-                    },
-                    output_json=output_json,
-                )
-                raise typer.Exit(code=2) from exc
-            try:
-                finalize_local_retirement(
-                    retirement_operation,
-                    terminal_state="verified_deleted",
-                    terraform_graph_absent=True,
-                    iam_disposition=iam_disposition,
-                )
-            except (OSError, RuntimeError, ValueError) as exc:
-                _emit(
-                    {
-                        **identity.to_dict(),
-                        "outcome": "partial_receipt_cleanup",
-                        "verified": False,
-                        "infrastructure_absent": True,
-                        "iam_cleanup_complete": iam_disposition
-                        in {"absent", "deleted"},
-                        "message": (
-                            "Agent cloud and IAM convergence was verified, but the "
-                            "terminal teardown receipt was not durable. Local "
-                            "credentials and recovery state were retained."
-                        ),
-                    },
-                    output_json=output_json,
-                )
-                raise typer.Exit(code=2) from exc
-        _emit(
-            {
-                **identity.to_dict(),
-                "outcome": "verified_deleted",
-                "verified": True,
-                "infrastructure_absent": True,
-                "iam_cleanup_complete": iam_disposition in {"absent", "deleted"},
-                "shared_iam_preserved": iam_disposition == "retained_shared",
-                "iam_disposition": iam_disposition,
-                "no_op": iam_disposition in {"absent", "retained_shared"},
-                "message": (
-                    f"Agent {name!r} infrastructure was already absent; exact IAM "
-                    "state was reconciled from terminal receipt evidence."
-                ),
-            },
-            output_json=output_json,
-        )
-        return
     if not record and not state_exists and not operations:
+        if identity.receipt_is_terminal:
+            payload = {
+                **identity.to_dict(),
+                "outcome": "already_absent",
+                "verified": True,
+                "no_op": True,
+                "message": f"Agent {name!r} is already absent per terminal receipt evidence.",
+            }
+            _emit(payload, output_json=output_json)
+            return
         if not exact_project or not exact_instance:
             raise typer.BadParameter(
                 "No agent state exists. Pass --receipt with immutable agent identity, "
@@ -847,41 +155,14 @@ def destroy_cmd(
                 f"Exact instance {exact_instance} is present, but no complete Terraform "
                 "ownership/state graph is available. NPA refused a VM-only deletion."
             )
-        if alias:
-            from npa.cli.destructive import require_destructive_confirmation
-
-            require_destructive_confirmation(
-                yes=yes,
-                prompt=f"Retire local state for absent agent {alias}/{name}?",
-                output_json=output_json,
-                payload=identity.to_dict(),
-            )
-            retirement_operation = prepare_teardown_operation()
-            with operation_context(retirement_operation):
-                if (
-                    str(retirement_operation.read().get("phase") or "")
-                    == "prepared"
-                ):
-                    retirement_operation.transition("mutating")
-                try:
-                    finalize_local_retirement(
-                        retirement_operation,
-                        terminal_state="verified_absent",
-                    )
-                except (OSError, RuntimeError, ValueError) as exc:
-                    raise typer.BadParameter(
-                        "Provider verified the exact instance absent, but local agent "
-                        f"retirement is incomplete: {exc}"
-                    ) from exc
-        else:
-            agent_module._record_agent_destroy_event(
-                alias,
-                name,
-                terminal_state="verified_absent",
-                identity=identity.values,
-                project_id=exact_project,
-                identity_source=identity.source,
-            )
+        agent_module._record_agent_destroy_event(
+            alias,
+            name,
+            terminal_state="verified_absent",
+            identity=identity.values,
+            project_id=exact_project,
+            identity_source=identity.source,
+        )
         payload = {
             **identity.to_dict(),
             "outcome": "already_absent",
@@ -892,10 +173,16 @@ def destroy_cmd(
         _emit(payload, output_json=output_json)
         return
 
-    # A present current record must stand on its own. Historical receipts may
-    # select a generation only when the key is absent; they never complete an
-    # incomplete current schema.
-    recovery_record = dict(record) if record_present else dict(identity.values)
+    recovery_record = dict(record)
+    for key in (
+        "project_id",
+        "tenant_id",
+        "region",
+        "instance_id",
+        "service_account_id",
+    ):
+        if identity.get(key) and not recovery_record.get(key):
+            recovery_record[key] = identity.get(key)
     from npa.cli.destructive import require_destructive_confirmation
 
     require_destructive_confirmation(
@@ -913,12 +200,36 @@ def destroy_cmd(
         # recovery path: teardown resumes under that operation's project lease.
         teardown_operation = selected_operation
     else:
-        teardown_operation = prepare_teardown_operation()
+        resume_argv = [
+            "npa",
+            "agent",
+            "destroy",
+            "--project",
+            alias,
+            "--name",
+            name,
+            "--yes",
+        ]
+        if exact_project:
+            resume_argv.extend(["--project-id", exact_project])
+        teardown_operation = ProvisioningOperation.prepare(
+            command="npa agent destroy",
+            project_alias=alias,
+            project_id=exact_project,
+            tenant_id=str(identity.get("tenant_id") or ""),
+            region=str(identity.get("region") or ""),
+            resource_type="agent-teardown",
+            requested_name=name,
+            ownership_source="agent-destroy-cli",
+            resume_command="",
+            resume_argv=resume_argv,
+            destroy_argv=resume_argv,
+        )
     agent_module._record_agent_destroy_event(
         alias,
         name,
         terminal_state="in_progress",
-        record_present=record_present,
+        record_present=bool(record),
         terraform_state_present=state_exists,
         purge_iam=purge_iam,
         identity=identity.values,
@@ -1036,120 +347,64 @@ def destroy_cmd(
                 identity_source=identity.source,
             )
             agent_module._fail(message)
-    iam_disposition = "not_applicable"
-    with operation_context(teardown_operation):
-        if alias:
-            from npa.cli.agent_iam import (
-                AgentIAMCleanupError,
-                report_destroyed_agent_iam,
-            )
-
-            try:
-                iam_disposition = report_destroyed_agent_iam(
-                    alias, name, record=recovery_record or None, purge=purge_iam
-                )
-            except AgentIAMCleanupError as exc:
-                iam_error = str(exc)
-                if (
-                    str(teardown_operation.read().get("phase") or "")
-                    not in TERMINAL_PHASES
-                ):
-                    teardown_operation.transition(
-                        "recovery-required",
-                        error="agent IAM cleanup did not converge",
-                    )
-                agent_module._record_agent_destroy_event(
-                    alias,
-                    name,
-                    terminal_state="partial",
-                    error=iam_error,
-                    identity=identity.values,
-                    project_id=exact_project,
-                    identity_source=identity.source,
-                    terraform_graph_absent=True,
-                    purge_iam=purge_iam,
-                    iam_cleanup_complete=False,
-                    iam_disposition="verification_unresolved",
-                )
-                _emit(
-                    {
-                        **identity.to_dict(),
-                        "outcome": "partial_iam_cleanup",
-                        "verified": False,
-                        "infrastructure_absent": True,
-                        "iam_cleanup_complete": False,
-                        "message": iam_error,
-                    },
-                    output_json=output_json,
-                )
-                raise typer.Exit(code=2) from exc
+    agent_module._record_agent_destroy_event(
+        alias,
+        name,
+        terminal_state="verified_deleted",
+        identity=identity.values,
+        project_id=exact_project,
+        identity_source=identity.source,
+        terraform_graph_absent=True,
+    )
+    if record:
+        agent_module._remove_agent_record(alias, name)
+    agent_module._cleanup_agent_local_files(alias, name)
+    iam_error = ""
+    if alias:
+        from npa.cli.agent_iam import AgentIAMCleanupError, report_destroyed_agent_iam
 
         try:
-            finalize_local_retirement(
-                teardown_operation,
-                terminal_state="verified_deleted",
-                terraform_graph_absent=True,
-                iam_disposition=iam_disposition,
+            report_destroyed_agent_iam(
+                alias, name, record=recovery_record or None, purge=purge_iam
             )
-        except agent_module.AgentLocalRetirementError as exc:
-            message = (
-                "Provider and IAM convergence was verified, but exact local state "
-                f"retirement failed: {exc}. Credentials and recovery evidence "
-                "were retained."
-            )
+        except AgentIAMCleanupError as exc:
+            iam_error = str(exc)
             agent_module._record_agent_destroy_event(
                 alias,
                 name,
                 terminal_state="partial",
-                error=message,
+                error=iam_error,
                 identity=identity.values,
                 project_id=exact_project,
                 identity_source=identity.source,
                 terraform_graph_absent=True,
-                purge_iam=purge_iam,
-                iam_cleanup_complete=iam_disposition in {"absent", "deleted"},
-                iam_disposition=iam_disposition,
             )
-            _emit(
-                {
-                    **identity.to_dict(),
-                    "outcome": "partial_local_cleanup",
-                    "verified": False,
-                    "infrastructure_absent": True,
-                    "iam_cleanup_complete": iam_disposition
-                    in {"absent", "deleted"},
-                    "message": message,
-                },
-                output_json=output_json,
-            )
-            raise typer.Exit(code=2) from exc
-        except (OSError, RuntimeError, ValueError) as exc:
-            _emit(
-                {
-                    **identity.to_dict(),
-                    "outcome": "partial_receipt_cleanup",
-                    "verified": False,
-                    "infrastructure_absent": True,
-                    "iam_cleanup_complete": iam_disposition
-                    in {"absent", "deleted"},
-                    "message": (
-                        "Agent cloud, IAM, and local retirement converged, but the "
-                        "terminal teardown receipt was not durable. Local credentials "
-                        "and recovery identity were restored."
-                    ),
-                },
-                output_json=output_json,
-            )
-            raise typer.Exit(code=2) from exc
+    # The exact agent's infrastructure has already been provider-verified absent.
+    # Shared project IAM may intentionally remain while other agents depend on it;
+    # that degraded cleanup result must not leave the project lifecycle lease open
+    # and prevent a fresh deployment of this agent name.
+    if str(teardown_operation.read().get("phase") or "") not in TERMINAL_PHASES:
+        teardown_operation.transition("destroyed")
+    if iam_error:
+        _emit(
+            {
+                **identity.to_dict(),
+                "outcome": "partial_iam_cleanup",
+                "verified": False,
+                "infrastructure_absent": True,
+                "iam_cleanup_complete": False,
+                "message": iam_error,
+            },
+            output_json=output_json,
+        )
+        raise typer.Exit(code=2)
     _emit(
         {
             **identity.to_dict(),
             "outcome": "verified_deleted",
             "verified": True,
             "infrastructure_absent": True,
-            "iam_cleanup_complete": iam_disposition in {"absent", "deleted"},
-            "shared_iam_preserved": iam_disposition == "retained_shared",
-            "iam_disposition": iam_disposition,
+            "iam_cleanup_complete": bool(purge_iam),
             "no_op": False,
             "message": f"destroyed: {alias}/{name}",
         },

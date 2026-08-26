@@ -5,10 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from npa.provisioning_journal import list_operations
-from npa.teardown_receipts import (
-    latest_resource_generation_events,
-    teardown_event_authorizes_convergence,
-)
+from npa.teardown_receipts import TERMINAL_STATES, list_teardown_receipts
 
 
 def _verify_created_resources(
@@ -96,71 +93,6 @@ def partial_agent_status(project: str, name: str) -> dict[str, Any]:
         resource_type="agent",
         requested_name=name,
     )
-    # A completed destroy is newer and more authoritative than the successful
-    # setup/bootstrap journals it intentionally leaves as audit evidence.  Do
-    # not let those older committed operations make an absent agent look
-    # resumable.  Conversely, a genuinely newer deploy operation must win over
-    # an old receipt so alias/name reuse remains safe.
-    try:
-        from npa.clients.config import resolve_environment
-
-        environment = resolve_environment(project)
-        project_id = (
-            str(environment.project_id or "") if environment is not None else ""
-        )
-    except Exception:  # noqa: BLE001 - no immutable identity means no receipt claim
-        project_id = ""
-    newest_operation_at = max(
-        (str(operation.read().get("updated_at") or "") for operation in operations),
-        default="",
-    )
-    if project_id:
-        receipt_events = latest_resource_generation_events(
-            project_id=project_id,
-            phase="agent",
-            resource=name,
-            strict=True,
-        )
-        exact_events: list[dict[str, Any]] = []
-        for event in receipt_events:
-            identity = event.get("identity")
-            identity = identity if isinstance(identity, dict) else {}
-            if (
-                identity.get("project_id") != project_id
-                or identity.get("agent_name") != name
-                or not isinstance(identity.get("instance_id"), str)
-                or not str(identity.get("instance_id") or "").strip()
-            ):
-                exact_events = []
-                break
-            exact_events.append(event)
-        if (
-            exact_events
-            and all(teardown_event_authorizes_convergence(event) for event in exact_events)
-            and all(
-                str(event.get("recorded_at") or "")
-                and (
-                    not newest_operation_at
-                    or str(event.get("recorded_at") or "") > newest_operation_at
-                )
-                for event in exact_events
-            )
-        ):
-            newest = max(
-                exact_events, key=lambda event: str(event.get("recorded_at") or "")
-            )
-            return {
-                "project": project,
-                "project_id": project_id,
-                "name": name,
-                "classification": "VERIFIED_ABSENT",
-                "receipt_id": str(newest.get("_receipt_id") or ""),
-                "phase": str(newest.get("terminal_state") or "").lower(),
-                "lifecycle": "succeeded",
-                "resources": [],
-                "recovery": {},
-                "current_verification": "terminal_exact_agent_receipt",
-            }
     if operations:
         summary = operations[0].recovery_summary()
         phase = str(summary.get("phase") or "")
@@ -173,11 +105,7 @@ def partial_agent_status(project: str, name: str) -> dict[str, Any]:
         if provider_present:
             classification = "CLEANUP_REQUIRED"
         elif phase in {"destroyed", "rolled-back"}:
-            classification = (
-                "VERIFIED_ABSENT"
-                if current_verification == "provider_verified_absent"
-                else "PARTIAL"
-            )
+            classification = "VERIFIED_ABSENT"
         elif phase == "rollback-incomplete":
             classification = "ROLLBACK_REQUIRED"
         elif phase == "prepared" and not resources:
@@ -189,9 +117,7 @@ def partial_agent_status(project: str, name: str) -> dict[str, Any]:
         if current_verification == "provider_verified_absent":
             classification = "VERIFIED_ABSENT"
         effective_lifecycle = (
-            "partial"
-            if classification in {"CLEANUP_REQUIRED", "PARTIAL"}
-            else lifecycle
+            "partial" if classification == "CLEANUP_REQUIRED" else lifecycle
         )
         residual_service_accounts = [
             item
@@ -250,6 +176,38 @@ def partial_agent_status(project: str, name: str) -> dict[str, Any]:
     # A project receipt can contain several agents. Match the exact resource,
     # and require the current immutable project ID so alias reuse cannot turn a
     # different project's old teardown into an absence claim.
+    try:
+        from npa.clients.config import resolve_environment
+
+        environment = resolve_environment(project)
+        project_id = (
+            str(environment.project_id or "") if environment is not None else ""
+        )
+    except Exception:  # noqa: BLE001 - no immutable identity means no receipt claim
+        project_id = ""
+    if project_id:
+        for receipt in list_teardown_receipts(project_id=project_id, legacy="exclude"):
+            for event in reversed(receipt.get("events") or []):
+                if not isinstance(event, dict):
+                    continue
+                if str(event.get("phase") or "") != "agent":
+                    continue
+                if str(event.get("resource") or "") != name:
+                    continue
+                terminal = str(event.get("terminal_state") or "").lower()
+                if terminal in TERMINAL_STATES:
+                    return {
+                        "project": project,
+                        "project_id": project_id,
+                        "name": name,
+                        "classification": "VERIFIED_ABSENT",
+                        "receipt_id": str(receipt.get("receipt_id") or ""),
+                        "phase": terminal,
+                        "lifecycle": "succeeded",
+                        "resources": [],
+                        "recovery": {},
+                        "current_verification": "terminal_exact_agent_receipt",
+                    }
     return {
         "project": project,
         "name": name,

@@ -13,7 +13,6 @@ either way, and deletes it when the caller opts in.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from typing import Any, Callable
 
 StatusFn = Callable[[str], None]
@@ -21,16 +20,6 @@ StatusFn = Callable[[str], None]
 
 class AgentIAMCleanupError(RuntimeError):
     """Exact agent infrastructure is absent, but owned IAM did not converge."""
-
-
-class AgentIAMRecordError(RuntimeError):
-    """The owner-only IAM journal is present but invalid or unreadable."""
-
-
-def _safe_error(exc: BaseException) -> str:
-    from npa.clients.nebius import redact_nebius_output
-
-    return redact_nebius_output(str(exc))[:1000]
 
 
 def _agent_iam_records() -> tuple[dict[str, Any], Any]:
@@ -43,90 +32,10 @@ def _agent_iam_records() -> tuple[dict[str, Any], Any]:
     if not CREDENTIALS_PATH.exists():
         return {}, CREDENTIALS_PATH
     try:
-        loaded = yaml.safe_load(CREDENTIALS_PATH.read_text(encoding="utf-8"))
-    except (OSError, yaml.YAMLError) as exc:
-        raise AgentIAMRecordError("agent IAM journal is unreadable") from exc
-    data = {} if loaded is None else loaded
-    if not isinstance(data, dict):
-        raise AgentIAMRecordError("credentials root is not an object")
-    if "agent_iam" not in data:
-        return data, CREDENTIALS_PATH
-    root = data["agent_iam"]
-    if not isinstance(root, dict) or type(root.get("version")) is not int:
-        raise AgentIAMRecordError("agent IAM journal root/schema is invalid")
-    if (
-        root["version"] != 1
-        or "projects" not in root
-        or not isinstance(root["projects"], dict)
-    ):
-        raise AgentIAMRecordError("agent IAM journal version/projects are invalid")
-    for project_id, record in root["projects"].items():
-        if not isinstance(project_id, str) or not project_id.strip():
-            raise AgentIAMRecordError("agent IAM journal has an invalid project key")
-        if (
-            not isinstance(record, dict)
-            or "resources" not in record
-            or not isinstance(record["resources"], dict)
-        ):
-            raise AgentIAMRecordError(
-                f"agent IAM journal for project {project_id!r} is incomplete"
-            )
-        resources = record.get("resources", {})
-        account = resources.get("service_account")
-        if account is not None and (
-            not isinstance(account, dict)
-            or account.get("created_by") != "npa"
-            or account.get("project_id") != project_id
-            or not isinstance(account.get("id"), str)
-            or not account.get("id")
-            or not isinstance(account.get("name"), str)
-            or not account.get("name")
-        ):
-            raise AgentIAMRecordError(
-                f"agent IAM service-account record for {project_id!r} is invalid"
-            )
-        keys = resources.get("access_keys", {})
-        if not isinstance(keys, dict):
-            raise AgentIAMRecordError(
-                f"agent IAM access-key records for {project_id!r} are invalid"
-            )
-        for key_id, key in keys.items():
-            if (
-                not isinstance(key_id, str)
-                or not key_id
-                or not isinstance(key, dict)
-                or key.get("id") != key_id
-                or key.get("project_id") != project_id
-                or key.get("created_by") != "npa"
-            ):
-                raise AgentIAMRecordError(
-                    f"agent IAM access-key record for {project_id!r} is invalid"
-                )
-    return data, CREDENTIALS_PATH
-
-
-def _owned_agent_account(project_id: str) -> dict[str, str] | None:
-    data, _path = _agent_iam_records()
-    root = data.get("agent_iam")
-    projects = root.get("projects") if isinstance(root, dict) else None
-    record = projects.get(project_id) if isinstance(projects, dict) else None
-    resources = record.get("resources") if isinstance(record, dict) else None
-    account = resources.get("service_account") if isinstance(resources, dict) else None
-    return dict(account) if isinstance(account, dict) else None
-
-
-def agent_iam_recovery_present(project_id: str) -> bool:
-    """Return whether owner-only IAM recovery evidence remains for a project."""
-
-    cleaned = str(project_id or "").strip()
-    if not cleaned:
-        raise AgentIAMRecordError("exact project ID is required for agent IAM audit")
-    data, _path = _agent_iam_records()
-    root = data.get("agent_iam")
-    if not isinstance(root, dict):
-        return False
-    projects = root.get("projects")
-    return isinstance(projects, dict) and cleaned in projects
+        data = yaml.safe_load(CREDENTIALS_PATH.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError):
+        data = {}
+    return (data if isinstance(data, dict) else {}), CREDENTIALS_PATH
 
 
 def record_agent_iam_resource(
@@ -186,7 +95,12 @@ def mark_agent_iam_status(project_id: str, status: str) -> None:
 
 
 def agent_iam_owned(project_id: str, account_id: str) -> bool:
-    account = _owned_agent_account(project_id)
+    data, _path = _agent_iam_records()
+    root = data.get("agent_iam")
+    projects = root.get("projects") if isinstance(root, dict) else None
+    record = projects.get(project_id) if isinstance(projects, dict) else None
+    resources = record.get("resources") if isinstance(record, dict) else None
+    account = resources.get("service_account") if isinstance(resources, dict) else None
     return bool(
         isinstance(account, dict)
         and account.get("created_by") == "npa"
@@ -281,8 +195,6 @@ def agent_iam_leftovers(project_id: str) -> dict[str, Any]:
     try:
         from npa.clients.nebius import (
             AGENT_SERVICE_ACCOUNT_NAME,
-            NebiusError,
-            get_service_account_identity,
             get_service_account_id_by_name,
             list_access_keys_for_service_account,
         )
@@ -292,7 +204,7 @@ def agent_iam_leftovers(project_id: str) -> dict[str, Any]:
             "service_account_name": "",
             "access_keys": [],
             "inventory_verified": False,
-            "inventory_error": _safe_error(exc),
+            "inventory_error": str(exc),
             "dependents": [],
         }
 
@@ -306,91 +218,22 @@ def agent_iam_leftovers(project_id: str) -> dict[str, Any]:
             "dependents": [],
         }
     try:
-        owned_account = _owned_agent_account(project_id)
-    except AgentIAMRecordError as exc:
+        sa_id = (
+            get_service_account_id_by_name(
+                project_id, AGENT_SERVICE_ACCOUNT_NAME, strict=True
+            )
+            or ""
+        )
+    except Exception as exc:  # noqa: BLE001 - fail closed and report exact blocker
         return {
             "project_id": project_id,
             "service_account_id": "",
             "service_account_name": AGENT_SERVICE_ACCOUNT_NAME,
             "access_keys": [],
             "inventory_verified": False,
-            "inventory_error": _safe_error(exc),
+            "inventory_error": str(exc),
             "dependents": [],
         }
-    owned_id = str((owned_account or {}).get("id") or "")
-    try:
-        named_id = (
-            get_service_account_id_by_name(
-                project_id, AGENT_SERVICE_ACCOUNT_NAME, strict=True
-            )
-            or ""
-        )
-        exact_identity = (
-            get_service_account_identity(
-                owned_id,
-                project_id=project_id,
-            )
-            if owned_id
-            else None
-        )
-        if not isinstance(named_id, str):
-            raise NebiusError(
-                "Nebius returned an invalid named service-account identity"
-            )
-        named_id = named_id.strip()
-        if exact_identity is not None and (
-            not isinstance(getattr(exact_identity, "account_id", None), str)
-            or exact_identity.account_id != owned_id
-            or not isinstance(getattr(exact_identity, "name", None), str)
-            or not exact_identity.name.strip()
-            or not isinstance(getattr(exact_identity, "project_id", None), str)
-            or exact_identity.project_id != project_id
-        ):
-            raise NebiusError(
-                "Nebius returned an invalid exact service-account identity"
-            )
-    except Exception as exc:  # noqa: BLE001 - fail closed and report exact blocker
-        return {
-            "project_id": project_id,
-            "service_account_id": owned_id,
-            "service_account_name": AGENT_SERVICE_ACCOUNT_NAME,
-            "access_keys": [],
-            "owned_by_npa": bool(owned_id),
-            "inventory_verified": False,
-            "inventory_error": _safe_error(exc),
-            "dependents": [],
-        }
-    if exact_identity is not None:
-        if exact_identity.name != AGENT_SERVICE_ACCOUNT_NAME:
-            return {
-                "project_id": project_id,
-                "service_account_id": owned_id,
-                "service_account_name": exact_identity.name,
-                "access_keys": [],
-                "owned_by_npa": True,
-                "inventory_verified": False,
-                "inventory_error": (
-                    "owned exact service account is present under a different name"
-                ),
-                "dependents": [],
-            }
-        if named_id != owned_id:
-            return {
-                "project_id": project_id,
-                "service_account_id": owned_id,
-                "service_account_name": AGENT_SERVICE_ACCOUNT_NAME,
-                "access_keys": [],
-                "owned_by_npa": True,
-                "inventory_verified": False,
-                "inventory_error": (
-                    "named and owned service-account identities conflict"
-                ),
-                "dependents": [],
-            }
-        sa_id = owned_id
-    else:
-        # Exact owned absence does not make a same-name replacement NPA-owned.
-        sa_id = named_id
     keys: list[dict[str, str]] = []
     if sa_id:
         try:
@@ -401,79 +244,112 @@ def agent_iam_leftovers(project_id: str) -> dict[str, Any]:
                 "service_account_id": sa_id,
                 "service_account_name": AGENT_SERVICE_ACCOUNT_NAME,
                 "access_keys": [],
-                "owned_by_npa": bool(owned_id and sa_id == owned_id),
+                "owned_by_npa": agent_iam_owned(project_id, sa_id),
                 "inventory_verified": False,
-                "inventory_error": _safe_error(exc),
-                "dependents": [],
-            }
-        if not isinstance(keys, list):
-            return {
-                "project_id": project_id,
-                "service_account_id": sa_id,
-                "service_account_name": AGENT_SERVICE_ACCOUNT_NAME,
-                "access_keys": [],
-                "owned_by_npa": bool(owned_id and sa_id == owned_id),
-                "inventory_verified": False,
-                "inventory_error": "access-key inventory is schema-invalid",
-                "dependents": [],
-            }
-        key_ids: list[str] = []
-        for key in keys:
-            key_id = key.get("id") if isinstance(key, Mapping) else None
-            if not isinstance(key_id, str) or not key_id.strip():
-                return {
-                    "project_id": project_id,
-                    "service_account_id": sa_id,
-                    "service_account_name": AGENT_SERVICE_ACCOUNT_NAME,
-                    "access_keys": [],
-                    "owned_by_npa": bool(owned_id and sa_id == owned_id),
-                    "inventory_verified": False,
-                    "inventory_error": "access-key inventory is schema-invalid",
-                    "dependents": [],
-                }
-            key_ids.append(key_id.strip())
-        if len(key_ids) != len(set(key_ids)):
-            return {
-                "project_id": project_id,
-                "service_account_id": sa_id,
-                "service_account_name": AGENT_SERVICE_ACCOUNT_NAME,
-                "access_keys": [],
-                "owned_by_npa": bool(owned_id and sa_id == owned_id),
-                "inventory_verified": False,
-                "inventory_error": "access-key inventory has duplicate identities",
+                "inventory_error": str(exc),
                 "dependents": [],
             }
         try:
             dependents = _provider_agent_dependents(project_id, sa_id)
-        except Exception as exc:  # noqa: BLE001 - current inventory is mandatory
-            return {
-                "project_id": project_id,
-                "service_account_id": sa_id,
-                "service_account_name": AGENT_SERVICE_ACCOUNT_NAME,
-                "access_keys": keys,
-                "owned_by_npa": bool(owned_id and sa_id == owned_id),
-                "inventory_verified": False,
-                "inventory_error": _safe_error(exc),
-                "dependents": [],
-            }
+        except Exception as exc:  # noqa: BLE001 - exact receipt fallback below
+            proof, proof_error = _receipt_proves_agent_graphs_absent(project_id, sa_id)
+            if not proof:
+                return {
+                    "project_id": project_id,
+                    "service_account_id": sa_id,
+                    "service_account_name": AGENT_SERVICE_ACCOUNT_NAME,
+                    "access_keys": keys,
+                    "owned_by_npa": agent_iam_owned(project_id, sa_id),
+                    "inventory_verified": False,
+                    "inventory_error": f"{exc}; exact receipt fallback: {proof_error}",
+                    "dependents": [],
+                }
+            dependents = []
     else:
         dependents = []
     return {
         "project_id": project_id,
         "service_account_id": sa_id,
-        "verified_absent_owned_id": owned_id if owned_id and not sa_id else "",
         "service_account_name": AGENT_SERVICE_ACCOUNT_NAME,
         "access_keys": keys,
-        "owned_by_npa": bool(owned_id and sa_id == owned_id),
+        "owned_by_npa": agent_iam_owned(project_id, sa_id),
         "inventory_verified": True,
         "inventory_error": "",
         "dependents": dependents,
     }
 
 
-def _provider_agent_dependents(
+def _receipt_proves_agent_graphs_absent(
     project_id: str, account_id: str
-) -> list[dict[str, str]]:
+) -> tuple[bool, str]:
+    """Use exact terminal Terraform-graph receipts when broad inventory is invalid.
+
+    This fallback never treats an empty/missing receipt set as absence.  Every
+    receipt agent tied to the selected NPA-created service account must have an
+    immutable instance ID and a terminal verified delete/absence event.  Those
+    events are written only after Terraform destroys the VM, disk, network,
+    subnet, security group and public-IP graph and an exact VM get returns
+    NotFound.
+    """
+
+    from npa.teardown_receipts import list_teardown_receipts
+
+    terminal = {"verified_absent", "verified_deleted", "deleted"}
+    candidates: set[tuple[str, str]] = set()
+    verified: set[tuple[str, str]] = set()
+    for receipt in list_teardown_receipts(project_id=project_id, legacy="exclude"):
+        identity = receipt.get("identity")
+        identity = identity if isinstance(identity, dict) else {}
+        for item in identity.get("agents") or []:
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("service_account_id") or "") != account_id:
+                continue
+            name = str(item.get("agent_name") or "").strip()
+            instance_id = str(item.get("instance_id") or "").strip()
+            if name and instance_id:
+                candidates.add((name, instance_id))
+        for event in receipt.get("events") or []:
+            if not isinstance(event, dict) or event.get("phase") != "agent":
+                continue
+            event_identity = event.get("identity")
+            event_identity = event_identity if isinstance(event_identity, dict) else {}
+            if str(event_identity.get("service_account_id") or "") != account_id:
+                continue
+            name = str(
+                event_identity.get("agent_name") or event.get("resource") or ""
+            ).strip()
+            instance_id = str(event_identity.get("instance_id") or "").strip()
+            if (
+                name
+                and instance_id
+                and str(event.get("terminal_state") or "").lower() in terminal
+                and isinstance(event.get("verification"), dict)
+                and event["verification"].get("exact_instance_absent") is True
+                and event["verification"].get("terraform_destroy_completed") is True
+                and {
+                    "compute_instance",
+                    "boot_disk",
+                    "network",
+                    "subnet",
+                    "security_group",
+                    "public_ip",
+                }.issubset(
+                    set(event["verification"].get("terraform_dependency_graph") or [])
+                )
+            ):
+                verified.add((name, instance_id))
+    if not candidates:
+        return False, "no exact agent dependency graph is recorded"
+    missing = sorted(candidates - verified)
+    if missing:
+        return False, "non-terminal exact agent graph(s): " + ", ".join(
+            f"{name}/{instance_id}" for name, instance_id in missing
+        )
+    return True, "all exact receipt-recorded agent dependency graphs are absent"
+
+
+def _provider_agent_dependents(project_id: str, account_id: str) -> list[str]:
     """List exact provider VMs attached to the shared agent service account."""
 
     from npa.clients.nebius import NebiusError, _run_json
@@ -484,7 +360,7 @@ def _provider_agent_dependents(
     items = payload.get("items")
     if not isinstance(items, list):
         raise NebiusError("Nebius returned a schema-invalid compute inventory")
-    dependents: list[dict[str, str]] = []
+    dependents: list[str] = []
     for item in items:
         if not isinstance(item, dict):
             raise NebiusError("Nebius returned a non-object compute inventory item")
@@ -492,235 +368,86 @@ def _provider_agent_dependents(
         spec = item.get("spec")
         if not isinstance(metadata, dict) or not isinstance(spec, dict):
             raise NebiusError("Nebius returned incomplete compute identity/spec data")
-        raw_identity = metadata.get("id")
-        raw_name = metadata.get("name")
-        if (
-            not isinstance(raw_identity, str)
-            or not raw_identity.strip()
-            or not isinstance(raw_name, str)
-            or not raw_name.strip()
-        ):
-            raise NebiusError("Nebius returned a VM without exact identity")
-        identity = raw_identity.strip()
-        name = raw_name.strip()
-        raw_account = spec.get("account")
-        if raw_account is not None and not isinstance(raw_account, dict):
-            raise NebiusError("Nebius returned invalid compute account data")
-        account = raw_account if isinstance(raw_account, dict) else {}
-        raw_nested = account.get("service_account")
-        if raw_nested is not None and not isinstance(raw_nested, dict):
-            raise NebiusError(
-                "Nebius returned invalid nested compute service-account data"
-            )
-        nested = raw_nested if isinstance(raw_nested, dict) else {}
-        candidates = (
-            nested.get("id"),
-            account.get("service_account_id"),
-            spec.get("service_account_id"),
-        )
-        if any(value is not None and not isinstance(value, str) for value in candidates):
-            raise NebiusError(
-                "Nebius returned a compute service-account identity with invalid type"
-            )
-        exact_candidates = {
-            str(value).strip() for value in candidates if str(value or "").strip()
-        }
-        if len(exact_candidates) > 1:
-            raise NebiusError(
-                "Nebius compute service-account identity paths disagree"
-            )
-        attached = next(iter(exact_candidates), "")
+        account = spec.get("account")
+        account = account if isinstance(account, dict) else {}
+        nested = account.get("service_account")
+        nested = nested if isinstance(nested, dict) else {}
+        attached = str(
+            nested.get("id")
+            or account.get("service_account_id")
+            or spec.get("service_account_id")
+            or ""
+        ).strip()
         if attached != account_id:
             continue
-        dependents.append({"name": name, "instance_id": identity})
-    instance_ids = [item["instance_id"] for item in dependents]
-    if len(instance_ids) != len(set(instance_ids)):
-        raise NebiusError("Nebius returned duplicate compute instance identities")
-    return sorted(dependents, key=lambda item: (item["name"], item["instance_id"]))
+        identity = str(metadata.get("id") or "").strip()
+        name = str(metadata.get("name") or "").strip()
+        if not identity or not name:
+            raise NebiusError("Nebius returned an attached VM without exact identity")
+        dependents.append(f"{name} ({identity})")
+    return sorted(dependents)
 
 
 def purge_agent_iam(leftovers: dict[str, Any], *, on_status: StatusFn) -> list[str]:
-    """Delete exact owned IAM and prove absence before retiring its journal."""
+    """Delete the access keys then the service account. Returns what was deleted."""
     from npa.clients.nebius import (
-        AGENT_SERVICE_ACCOUNT_NAME,
         NebiusError,
         delete_access_key,
         delete_service_account,
-        get_service_account_identity,
         is_not_found,
-        list_access_keys_for_service_account,
     )
 
-    if leftovers.get("inventory_verified") is not True:
-        raise AgentIAMCleanupError(
-            "authoritative verified agent IAM inventory is required"
-        )
-    if leftovers.get("owned_by_npa") is not True:
-        raise AgentIAMCleanupError("verified NPA ownership is required for IAM cleanup")
-    if leftovers.get("inventory_error") not in {"", None}:
-        raise AgentIAMCleanupError("authoritative IAM inventory contains an error")
-    if leftovers.get("dependents") != []:
-        raise AgentIAMCleanupError(
-            "authoritative empty dependent inventory is required for IAM cleanup"
-        )
-    if leftovers.get("service_account_name") != AGENT_SERVICE_ACCOUNT_NAME:
-        raise AgentIAMCleanupError(
-            "exact NPA agent service-account identity is required"
-        )
-
-    project_id = leftovers.get("project_id")
-    sa_id = leftovers.get("service_account_id")
-    if not isinstance(project_id, str) or not project_id:
-        raise AgentIAMCleanupError("exact project ID is required for IAM cleanup")
-    if not isinstance(sa_id, str) or not sa_id:
-        raise AgentIAMCleanupError(
-            "exact service-account ID is required for IAM cleanup"
-        )
-    raw_keys = leftovers.get("access_keys")
-    if not isinstance(raw_keys, list):
-        raise AgentIAMCleanupError("access-key inventory is schema-invalid")
-    key_ids: list[str] = []
-    for key in raw_keys:
-        key_id = key.get("id") if isinstance(key, Mapping) else None
-        if not isinstance(key_id, str) or not key_id or key_id in key_ids:
-            raise AgentIAMCleanupError("access-key inventory has invalid identities")
-        key_ids.append(key_id)
-
-    authoritative = agent_iam_leftovers(project_id)
-    authoritative_keys = (
-        authoritative.get("access_keys") if isinstance(authoritative, Mapping) else None
-    )
-    authoritative_ids = (
-        [
-            item.get("id")
-            for item in authoritative_keys
-            if isinstance(item, Mapping)
-        ]
-        if isinstance(authoritative_keys, list)
-        else []
-    )
-    if (
-        not isinstance(authoritative, Mapping)
-        or authoritative.get("inventory_verified") is not True
-        or authoritative.get("owned_by_npa") is not True
-        or authoritative.get("inventory_error") not in {"", None}
-        or authoritative.get("dependents") != []
-        or authoritative.get("project_id") != project_id
-        or authoritative.get("service_account_id") != sa_id
-        or authoritative.get("service_account_name") != AGENT_SERVICE_ACCOUNT_NAME
-        or not isinstance(authoritative_keys, list)
-        or len(authoritative_ids) != len(authoritative_keys)
-        or set(authoritative_ids) != set(key_ids)
-    ):
-        raise AgentIAMCleanupError(
-            "authoritative agent IAM inventory changed or is not verified"
-        )
-
+    deleted: list[str] = []
     failures: list[str] = []
-    for key_id in key_ids:
+    for key in leftovers.get("access_keys") or []:
+        key_id = str((key or {}).get("id", "") or "")
+        if not key_id:
+            continue
         try:
             delete_access_key(key_id)
         except NebiusError as exc:
-            if not is_not_found(exc):
-                failures.append(f"access key {key_id}: {_safe_error(exc)}")
+            if is_not_found(str(exc)):
+                deleted.append(f"access key {key_id}")
+                remove_agent_iam_resource(
+                    str(leftovers.get("project_id", "") or ""), "access_key", key_id
+                )
+                continue
+            on_status(f"Warning: could not delete access key {key_id}: {exc}")
+            failures.append(f"access key {key_id}: {exc}")
+            continue
+        deleted.append(f"access key {key_id}")
+    sa_id = str(leftovers.get("service_account_id", "") or "")
+    if sa_id:
+        try:
+            delete_service_account(sa_id)
+        except NebiusError as exc:
+            if is_not_found(str(exc)):
+                deleted.append(
+                    f"service account {leftovers.get('service_account_name') or sa_id} ({sa_id})"
+                )
+                clear_agent_iam_record(
+                    str(leftovers.get("project_id", "") or ""), sa_id
+                )
+            else:
+                on_status(f"Warning: could not delete service account {sa_id}: {exc}")
+                failures.append(f"service account {sa_id}: {exc}")
+        else:
+            deleted.append(
+                f"service account {leftovers.get('service_account_name') or sa_id} ({sa_id})"
+            )
+            clear_agent_iam_record(str(leftovers.get("project_id", "") or ""), sa_id)
+    for item in deleted:
+        on_status(f"Deleted {item}.")
     if failures:
         raise AgentIAMCleanupError(
             "exact agent IAM cleanup remains partial: " + "; ".join(failures)
         )
-    try:
-        remaining_keys = list_access_keys_for_service_account(
-            project_id, sa_id, strict=True
-        )
-    except Exception as exc:  # noqa: BLE001 - postcheck must fail closed
-        raise AgentIAMCleanupError(
-            "access-key post-delete verification is unresolved: " + _safe_error(exc)
-        ) from exc
-    if not isinstance(remaining_keys, list):
-        raise AgentIAMCleanupError(
-            "access-key post-delete verification returned invalid schema"
-        )
-    postcheck_ids: list[str] = []
-    for item in remaining_keys:
-        key_id = item.get("id") if isinstance(item, Mapping) else None
-        if not isinstance(key_id, str) or not key_id.strip():
-            raise AgentIAMCleanupError(
-                "access-key post-delete verification returned invalid schema"
-            )
-        postcheck_ids.append(key_id.strip())
-    if len(postcheck_ids) != len(set(postcheck_ids)):
-        raise AgentIAMCleanupError(
-            "access-key post-delete verification returned duplicate identities"
-        )
-    if postcheck_ids:
-        raise AgentIAMCleanupError(
-            "provider still reports deleted access key(s) or replacement key(s); "
-            "the authoritative post-delete inventory is not empty"
-        )
-    try:
-        for key_id in key_ids:
-            remove_agent_iam_resource(project_id, "access_key", key_id)
-    except (AgentIAMRecordError, OSError, ValueError) as exc:
-        raise AgentIAMCleanupError(
-            "provider access keys are absent, but exact local key ownership "
-            "evidence could not be retired: " + _safe_error(exc)
-        ) from exc
-
-    try:
-        dependents = _provider_agent_dependents(project_id, sa_id)
-    except Exception as exc:  # noqa: BLE001 - destructive recheck must fail closed
-        raise AgentIAMCleanupError(
-            "immediate dependent revalidation is unresolved: " + _safe_error(exc)
-        ) from exc
-    if dependents:
-        raise AgentIAMCleanupError(
-            "service-account deletion blocked by a newly observed dependent VM"
-        )
-
-    try:
-        delete_service_account(sa_id)
-    except NebiusError as exc:
-        if not is_not_found(exc):
-            raise AgentIAMCleanupError(
-                f"exact service-account deletion failed for {sa_id}: "
-                + _safe_error(exc)
-            ) from exc
-    try:
-        remaining_account = get_service_account_identity(
-            sa_id,
-            project_id=project_id,
-        )
-    except Exception as exc:  # noqa: BLE001 - postcheck must fail closed
-        raise AgentIAMCleanupError(
-            "service-account post-delete verification is unresolved: "
-            + _safe_error(exc)
-        ) from exc
-    if remaining_account is not None:
-        raise AgentIAMCleanupError(
-            f"provider still reports service account {sa_id} after deletion"
-        )
-    try:
-        local_record_cleared = clear_agent_iam_record(project_id, sa_id)
-    except (AgentIAMRecordError, OSError, ValueError) as exc:
-        raise AgentIAMCleanupError(
-            "provider IAM is absent but its exact local ownership record could "
-            "not be retired: " + _safe_error(exc)
-        ) from exc
-    if not local_record_cleared:
-        raise AgentIAMCleanupError(
-            "provider IAM is absent but its exact local ownership record remains"
-        )
-    deleted = [*(f"access key {key_id}" for key_id in key_ids)]
-    deleted.append(
-        f"service account {leftovers.get('service_account_name') or sa_id} ({sa_id})"
-    )
-    for item in deleted:
-        on_status(f"Deleted {item}.")
     return deleted
 
 
 def report_destroyed_agent_iam(
     project: str, name: str, *, record: dict[str, Any] | None, purge: bool = True
-) -> str:
+) -> None:
     """Surface the npa-agent service account/keys that outlive the destroyed VM."""
     import typer
 
@@ -731,78 +458,22 @@ def report_destroyed_agent_iam(
     if not project_id:
         saved_env = resolve_environment(project)
         project_id = str(getattr(saved_env, "project_id", "") or "")
-    remaining_records = {
-        key: value
-        for key, value in resolve_project_agents(project).items()
-        if key != name
-    }
-    remaining = len(remaining_records)
-    local_dependent_instance_ids: set[str] | None = None
-    if purge:
-        from npa.cli.agent_records import AgentRecordState, decode_agent_record
-
-        local_dependent_instance_ids = set()
-        for peer_name in remaining_records:
-            try:
-                decoded = decode_agent_record(project, peer_name)
-            except (OSError, RuntimeError, ValueError) as exc:
-                raise AgentIAMCleanupError(
-                    f"local agent dependency record {peer_name!r} is unreadable"
-                ) from exc
-            if decoded.state is not AgentRecordState.COMPLETE:
-                description = (
-                    "empty or absent"
-                    if decoded.state in {
-                        AgentRecordState.ABSENT,
-                        AgentRecordState.INCOMPLETE,
-                    }
-                    else decoded.state.value
-                )
-                raise AgentIAMCleanupError(
-                    f"local agent dependency record {peer_name!r} is {description}: "
-                    f"{decoded.detail}"
-                )
-            peer_record = decoded.record
-            peer_project = peer_record.get("project_id")
-            if not isinstance(peer_project, str) or peer_project.strip() != project_id:
-                raise AgentIAMCleanupError(
-                    f"local agent dependency record {peer_name!r} has no matching "
-                    "immutable project ID"
-                )
-            peer_instance = peer_record.get("instance_id")
-            if not isinstance(peer_instance, str) or not peer_instance.strip():
-                raise AgentIAMCleanupError(
-                    f"local agent dependency record {peer_name!r} has no immutable "
-                    "instance ID"
-                )
-            peer_instance = peer_instance.strip()
-            if peer_instance in local_dependent_instance_ids:
-                raise AgentIAMCleanupError(
-                    "local agent dependency records reuse immutable instance ID "
-                    f"{peer_instance!r}"
-                )
-            local_dependent_instance_ids.add(peer_instance)
-    dispositions: list[str] = []
+    remaining = len([key for key in resolve_project_agents(project) if key != name])
     report_agent_iam(
         project_id=project_id,
         remaining_agents=remaining,
-        local_dependent_instance_ids=local_dependent_instance_ids,
         purge=purge,
         on_status=lambda message: typer.echo(f"  {message}", err=True),
-        on_disposition=dispositions.append,
         strict=purge,
     )
-    return dispositions[-1] if dispositions else "absent"
 
 
 def report_agent_iam(
     *,
     project_id: str,
     remaining_agents: int,
-    local_dependent_instance_ids: set[str] | None = None,
     purge: bool,
     on_status: StatusFn,
-    on_disposition: StatusFn | None = None,
     strict: bool = False,
 ) -> list[str]:
     """Report (and optionally delete) the IAM the agent VM left behind.
@@ -811,109 +482,27 @@ def report_agent_iam(
     teardown was complete.
     """
     leftovers = agent_iam_leftovers(project_id)
-    if not isinstance(leftovers, Mapping):
-        inventory_error = "provider inventory returned an invalid result"
-    else:
-        inventory_error = str(
-            leftovers.get("inventory_error") or "unknown provider error"
-        )
-    if (
-        not isinstance(leftovers, Mapping)
-        or leftovers.get("inventory_verified") is not True
-    ):
-        if on_disposition is not None:
-            on_disposition("verification_unresolved")
+    if not leftovers.get("inventory_verified"):
         on_status(
             "Keeping the npa-agent service account: exact provider dependency "
             "inventory is unresolved ("
-            + inventory_error
+            + str(leftovers.get("inventory_error") or "unknown provider error")
             + "). No IAM resources were deleted."
         )
         if strict and purge:
             raise AgentIAMCleanupError(
                 "exact provider dependency inventory for agent IAM is unresolved: "
-                + inventory_error
+                + str(leftovers.get("inventory_error") or "unknown provider error")
             )
         return []
-    service_account_id = leftovers.get("service_account_id")
-    if not isinstance(service_account_id, str):
-        if on_disposition is not None:
-            on_disposition("verification_unresolved")
-        if strict and purge:
-            raise AgentIAMCleanupError(
-                "exact provider agent IAM inventory has an invalid service-account ID"
-            )
+    if not leftovers.get("service_account_id"):
         return []
-    if not service_account_id:
-        absent_owned_id = leftovers.get("verified_absent_owned_id", "")
-        if purge and absent_owned_id:
-            try:
-                retired_absent_record = bool(
-                    isinstance(absent_owned_id, str)
-                    and clear_agent_iam_record(project_id, absent_owned_id)
-                )
-            except (AgentIAMRecordError, OSError, ValueError):
-                retired_absent_record = False
-            if not retired_absent_record:
-                if on_disposition is not None:
-                    on_disposition("verification_unresolved")
-                if strict:
-                    raise AgentIAMCleanupError(
-                        "provider verified exact agent IAM absent, but its local "
-                        "ownership record could not be retired"
-                    )
-                return []
-        if on_disposition is not None:
-            on_disposition("absent")
-        return []
-    provider_dependents = leftovers.get("dependents")
-    if not isinstance(provider_dependents, list) or not all(
-        isinstance(item, Mapping)
-        and isinstance(item.get("name"), str)
-        and bool(item.get("name"))
-        and isinstance(item.get("instance_id"), str)
-        and bool(item.get("instance_id"))
-        for item in provider_dependents
-    ):
-        if on_disposition is not None:
-            on_disposition("verification_unresolved")
-        if strict and purge:
-            raise AgentIAMCleanupError(
-                "exact provider agent dependency inventory is schema-invalid"
-            )
-        return []
-    provider_dependency_count = len(provider_dependents)
-    local_dependency_count = max(remaining_agents, 0)
-    provider_dependent_instance_ids: set[str] = set()
-    for dependent in provider_dependents:
-        instance_id = str(dependent["instance_id"])
-        if not instance_id or instance_id in provider_dependent_instance_ids:
-            if on_disposition is not None:
-                on_disposition("verification_unresolved")
-            if strict and purge:
-                raise AgentIAMCleanupError(
-                    "exact provider agent dependency inventory contains duplicate IDs"
-                )
-            return []
-        provider_dependent_instance_ids.add(instance_id)
-    dependency_inventory_agrees = bool(
-        provider_dependency_count == local_dependency_count
-        and local_dependent_instance_ids is not None
-        and (
-            len(provider_dependent_instance_ids) == provider_dependency_count
-            and local_dependent_instance_ids == provider_dependent_instance_ids
-        )
-    )
-    last_agent = local_dependency_count == 0 and provider_dependency_count == 0
-    owned = leftovers.get("owned_by_npa") is True
+    provider_dependents = list(leftovers.get("dependents") or [])
+    last_agent = remaining_agents == 0 and not provider_dependents
+    owned = bool(leftovers.get("owned_by_npa"))
     if purge and last_agent and owned:
-        deleted = purge_agent_iam(leftovers, on_status=on_status)
-        if on_disposition is not None:
-            on_disposition("deleted")
-        return deleted
+        return purge_agent_iam(leftovers, on_status=on_status)
     if purge and last_agent and not owned:
-        if on_disposition is not None:
-            on_disposition("retained_unowned")
         on_status(
             "Keeping the npa-agent service account: its familiar name is not proof "
             "that NPA created it. No IAM resources were deleted."
@@ -923,54 +512,20 @@ def report_agent_iam(
                 "agent IAM remains because exact NPA creation ownership is unproven"
             )
     if purge and not last_agent:
-        if provider_dependents and dependency_inventory_agrees:
-            if on_disposition is not None:
-                on_disposition("retained_shared")
+        if provider_dependents:
             on_status(
                 "Keeping the npa-agent service account: exact provider inventory "
-                "and local lifecycle records agree on exact dependent VM(s): "
-                + ", ".join(
-                    f"{item['name']} ({item['instance_id']})"
-                    for item in provider_dependents
-                )
-                + "."
+                "shows dependent VM(s): " + ", ".join(provider_dependents) + "."
             )
-        elif not provider_dependents:
-            if on_disposition is not None:
-                on_disposition("retained_local_dependents")
+        else:
             on_status(
                 "Keeping the npa-agent service account: "
-                f"{local_dependency_count} other local agent record(s) still use it, "
-                "but exact provider inventory reports no dependent VM."
+                f"{remaining_agents} other local agent record(s) still use it."
             )
-            if strict:
-                raise AgentIAMCleanupError(
-                    "agent IAM remains on local-only dependency evidence; exact "
-                    "provider inventory reports no dependent VM"
-                )
-        else:
-            if on_disposition is not None:
-                on_disposition("retained_dependency_disagreement")
-            on_status(
-                "Keeping the npa-agent service account: provider/local dependency "
-                "inventories disagree ("
-                f"provider={provider_dependency_count}, local={local_dependency_count}); "
-                "provider-dependent VM(s): "
-                + ", ".join(
-                    f"{item['name']} ({item['instance_id']})"
-                    for item in provider_dependents
-                )
-                + "."
+        if strict and provider_dependents:
+            raise AgentIAMCleanupError(
+                "agent IAM remains because exact provider inventory reports dependent VM(s)"
             )
-            if strict:
-                raise AgentIAMCleanupError(
-                    "agent IAM remains because provider/local dependency inventories "
-                    "disagree"
-                )
-        # Only exact provider dependents corroborated by local lifecycle records
-        # make intentional IAM retention a successful strict purge disposition.
-    elif not purge and on_disposition is not None:
-        on_disposition("retained_by_request")
     for line in format_iam_leftovers(
         leftovers, project_id=project_id, last_agent=last_agent
     ):

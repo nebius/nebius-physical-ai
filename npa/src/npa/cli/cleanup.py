@@ -16,7 +16,6 @@ silently removed.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from dataclasses import dataclass
 import os
 from pathlib import Path
@@ -34,16 +33,6 @@ class _Residue:
     size: int
     device: int
     inode: int
-
-
-@dataclass(frozen=True)
-class _PrivateYamlSnapshot:
-    """Secret-bearing local recovery document held only in memory."""
-
-    label: str
-    path: Path
-    existed: bool
-    document: dict[str, Any]
 
 
 @dataclass(frozen=True)
@@ -69,110 +58,6 @@ class CleanupPhase:
             "operator_action_required": self.operator_action_required,
             "operator_action_remains": self.operator_action_required,
         }
-
-
-def _snapshot_cleanup_recovery_documents() -> tuple[_PrivateYamlSnapshot, ...]:
-    """Capture config/credentials before the final retirement transaction."""
-
-    import yaml
-
-    from npa.clients import config, credentials
-
-    snapshots: list[_PrivateYamlSnapshot] = []
-    for label, path in (
-        ("project configuration", config.CONFIG_PATH),
-        ("credential store", credentials.CREDENTIALS_PATH),
-    ):
-        if path.is_symlink():
-            raise RuntimeError(f"{label} is a symlink")
-        if not path.exists():
-            snapshots.append(_PrivateYamlSnapshot(label, path, False, {}))
-            continue
-        try:
-            loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
-        except (OSError, yaml.YAMLError) as exc:
-            raise RuntimeError(f"{label} cannot be snapshotted safely") from exc
-        if loaded is None:
-            loaded = {}
-        if not isinstance(loaded, dict):
-            raise RuntimeError(f"{label} is schema-invalid")
-        snapshots.append(_PrivateYamlSnapshot(label, path, True, loaded))
-    return tuple(snapshots)
-
-
-def _restore_cleanup_recovery_documents(
-    snapshots: tuple[_PrivateYamlSnapshot, ...],
-    *,
-    project_alias: str,
-    project_id: str,
-) -> tuple[list[str], list[dict[str, str]], bool, str]:
-    """Restore recovery documents and return their refreshed safe inventory."""
-
-    from copy import deepcopy
-
-    from npa.clients.credentials import update_private_yaml
-
-    failures: list[str] = []
-
-    def merge_missing(
-        current: Mapping[str, Any], saved: Mapping[str, Any]
-    ) -> dict[str, Any]:
-        """Restore deleted values without replacing concurrent successful writes."""
-
-        merged = deepcopy(dict(current))
-        for key, saved_value in saved.items():
-            if key not in merged:
-                merged[key] = deepcopy(saved_value)
-                continue
-            current_value = merged[key]
-            if isinstance(current_value, Mapping) and isinstance(
-                saved_value, Mapping
-            ):
-                merged[key] = merge_missing(current_value, saved_value)
-        return merged
-
-    for snapshot in snapshots:
-        try:
-            update_private_yaml(
-                snapshot.path,
-                lambda current, saved=snapshot: (
-                    merge_missing(current, saved.document)
-                    if saved.existed
-                    else (current or None)
-                ),
-            )
-        except (OSError, RuntimeError, ValueError) as exc:
-            failures.append(f"{snapshot.label}: {type(exc).__name__}")
-    if not project_id:
-        return failures, [], False, "no exact project recovery inventory requested"
-
-    from npa.clients.config import ConfigError, resolve_environment
-    from npa.clients.project_credential_store import project_credential_residue
-
-    try:
-        residue = project_credential_residue(project_id)
-        restored_environment = (
-            resolve_environment(project_alias) if project_alias else None
-        )
-        if (
-            restored_environment is not None
-            and str(restored_environment.project_id or "") == project_id
-        ):
-            residue.append(
-                {
-                    "path": f"config.projects.{project_alias}",
-                    "class": "project_alias_or_default",
-                }
-            )
-    except (ConfigError, OSError, RuntimeError, ValueError) as exc:
-        failures.append(f"recovery inventory: {type(exc).__name__}")
-        return failures, [], True, "restored recovery inventory is unresolved"
-    try:
-        present, detail = _agent_operational_state_present(project_alias, project_id)
-    except (OSError, RuntimeError, ValueError) as exc:
-        present = True
-        detail = f"restored inventory unresolved: {exc}"
-    return failures, residue, present, detail
 
 
 def _dir_size(path: Path) -> int:
@@ -257,24 +142,14 @@ def _full_credential_labels() -> list[str]:
 
     from npa.clients.credentials import CREDENTIALS_PATH
 
-    if not CREDENTIALS_PATH.exists():
-        return []
     try:
-        loaded = yaml.safe_load(CREDENTIALS_PATH.read_text(encoding="utf-8"))
-    except (OSError, yaml.YAMLError) as exc:
-        raise RuntimeError("local credential inventory is unreadable") from exc
-    data = {} if loaded is None else loaded
+        data = yaml.safe_load(CREDENTIALS_PATH.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError):
+        return []
     if not isinstance(data, dict):
-        raise RuntimeError("local credential inventory root is schema-invalid")
+        return []
     raw_tokens = data.get("tokens")
-    if "tokens" in data and not isinstance(raw_tokens, dict):
-        raise RuntimeError("local credential token inventory is schema-invalid")
     tokens = raw_tokens if isinstance(raw_tokens, dict) else {}
-    for section_name in _SERVICE_CREDENTIAL_FIELDS:
-        if section_name in data and not isinstance(data[section_name], dict):
-            raise RuntimeError(
-                f"local credential section {section_name!r} is schema-invalid"
-            )
     labels: list[str] = []
     if (
         data.get("HF_TOKEN")
@@ -569,11 +444,7 @@ def _storage_iam_full_check(
         _storage_service_account_record,
         _untrusted_storage_account_ids,
     )
-    from npa.clients.config import (
-        ConfigError,
-        storage_iam_residue,
-        storage_iam_residues,
-    )
+    from npa.clients.config import ConfigError, storage_iam_residues
 
     aliases = [project] if project else list(storage_iam_residues())
     if not aliases:
@@ -591,92 +462,14 @@ def _storage_iam_full_check(
     states: list[str] = []
     ownership_states: list[str] = []
     partial = False
-
-    def retained_access_receipt_is_terminal(
-        exact_project: str, marker: dict[str, Any]
-    ) -> bool:
-        from npa.teardown_receipts import (
-            latest_resource_generation_events,
-            teardown_event_authorizes_convergence,
-        )
-
-        account_id = str(marker.get("service_account_id") or "").strip()
-        if not account_id:
-            return False
-        matching = [
-            event
-            for event in latest_resource_generation_events(
-                project_id=exact_project, phase="storage_iam", strict=True
-            )
-            if isinstance(event.get("identity"), dict)
-            and str(event["identity"].get("service_account_id") or "").strip()
-            == account_id
-        ]
-        return bool(
-            matching
-            and all(
-                isinstance(event.get("action"), dict)
-                and event["action"].get("kind")
-                == "preserve_unowned_account_remove_npa_access"
-                and teardown_event_authorizes_convergence(event)
-                for event in matching
-            )
-        )
-
     for alias in aliases:
         try:
             if alias.startswith("project-"):
                 context = _resolve_storage_iam_context(project_id=alias)
             else:
                 context = _resolve_storage_iam_context(alias)
-            # Once exact storage lifecycle evidence is terminal and removed, a
-            # project-scoped cleanup must not rediscover a pre-existing/shared
-            # account merely because it has NPA's familiar default name.
-            marker = storage_iam_residue(context.alias) if context.alias else {}
-            record, _note = _storage_service_account_record(
-                project_id=context.project_id
-            )
-            untrusted_ids = _untrusted_storage_account_ids(context.project_id)
-            if (
-                marker
-                and record is None
-                and not untrusted_ids
-                and retained_access_receipt_is_terminal(context.project_id, marker)
-            ):
-                ownership_states.append("retained_shared")
-                if prune_verified_absence and context.alias:
-                    from npa.clients.config import clear_storage_iam_residue
-
-                    clear_storage_iam_residue(
-                        context.alias,
-                        account_id=str(marker.get("service_account_id") or ""),
-                    )
-                    states.append("fully_cleaned")
-                    messages.append(
-                        "Storage IAM: removed a stale local marker after exact terminal "
-                        "access-cleanup receipt verification; the shared account remains."
-                    )
-                else:
-                    states.append("partial_local_cleanup")
-                    partial = True
-                    messages.append(
-                        "Storage IAM: exact access cleanup is terminal and the shared "
-                        "account remains; a stale local marker awaits full local cleanup."
-                    )
-                continue
-            if not marker and record is None and not untrusted_ids:
-                ownership_states.append("verified_terminal")
-                messages.append(
-                    "Storage IAM: no saved identity evidence or unresolved project "
-                    "marker remains; unrelated provider identities were not searched by name."
-                )
-                states.append(
-                    "fully_cleaned" if prune_verified_absence else "fully_clean"
-                )
-                continue
             observation = _observe_storage_iam(context)
-            if prune_verified_absence or not observation.verified_absent:
-                _persist_storage_iam_observation(observation)
+            _persist_storage_iam_observation(observation)
         except ConfigError as exc:
             record, _note = _storage_service_account_record()
             ownership_states.append("owned" if record is not None else "unknown")
@@ -698,39 +491,6 @@ def _storage_iam_full_check(
             )
             states.append("partial_verification_failure")
             partial = True
-            continue
-        if observation.retained_account_access_delete_planned:
-            ownership_states.append("retained_shared")
-            messages.append(
-                "Storage IAM: the pre-existing/shared account was preserved, but "
-                "exact NPA-created access state still requires the guarded storage "
-                "service-account cleanup command."
-            )
-            states.append("locally_clean_cloud_iam_unresolved")
-            partial = True
-            continue
-        if observation.retained_account_access_resolved:
-            ownership_states.append("retained_shared")
-            if prune_verified_absence:
-                from npa.clients.config import clear_storage_iam_residue
-
-                if not _remove_storage_service_account_record(observation.account_id):
-                    messages.append(
-                        "Storage IAM: run-scoped access is absent, but the stale local "
-                        "storage generation could not be retired; fix permissions and retry."
-                    )
-                    states.append("partial_local_cleanup")
-                    partial = True
-                    continue
-                if context.alias:
-                    clear_storage_iam_residue(
-                        context.alias, account_id=observation.account_id
-                    )
-            messages.append(
-                "Storage IAM: exact run-scoped access state is absent; the "
-                "pre-existing/shared service account was preserved."
-            )
-            states.append("fully_cleaned" if prune_verified_absence else "fully_clean")
             continue
         if observation.present:
             ownership_states.append(
@@ -788,745 +548,11 @@ def _storage_iam_full_check(
         if "pending_verification" in ownership_states
         else "owned"
         if "owned" in ownership_states
-        else "retained_shared"
-        if "retained_shared" in ownership_states
         else "unknown"
         if "unknown" in ownership_states
         else "verified_terminal"
     )
     return "\n".join(messages), partial, status, ownership_state
-
-
-_CLOUD_CLEANUP_TERMINAL_STATES = frozenset(
-    {
-        "already_absent",
-        "cancelled",
-        "completed",
-        "deleted",
-        "not_submitted",
-        "operator_attested",
-        "terminal",
-        "verified_absent",
-        "verified_deleted",
-    }
-)
-_CLOUD_CLEANUP_REQUIRED_GROUPS = (
-    ("workflow_audit", "workflow", "project_destroy_workflows"),
-    ("agent", "project_destroy_agents"),
-    ("bucket", "project_destroy_bucket"),
-    ("storage_iam", "project_destroy_storage_iam"),
-)
-_CLOUD_CLEANUP_OPTIONAL_GROUPS = (
-    ("controller", "project_destroy_controller"),
-    ("cluster", "project_destroy_clusters"),
-)
-_CLOUD_CLEANUP_PHASE_GROUPS = (
-    *_CLOUD_CLEANUP_REQUIRED_GROUPS,
-    *_CLOUD_CLEANUP_OPTIONAL_GROUPS,
-)
-_AGENT_TERRAFORM_GRAPH = frozenset(
-    {
-        "compute_instance",
-        "boot_disk",
-        "network",
-        "subnet",
-        "security_group",
-        "public_ip",
-    }
-)
-
-
-def _agent_operational_state_present(
-    project_alias: str, project_id: str
-) -> tuple[bool, str]:
-    """Inventory exact local agent state without treating audit journals as live."""
-
-    from npa.cli.agent_records import resolve_project_agents
-    from npa.deploy import provisioner
-    from npa.provisioning_journal import TERMINAL_PHASES, list_operations
-
-    alias = str(project_alias or "").strip()
-    exact_project = str(project_id or "").strip()
-    if alias and resolve_project_agents(alias):
-        return True, "saved agent record(s) remain"
-    roots: list[Path] = []
-    auth_root = Path.home() / ".npa" / "agents"
-    workbench_root = provisioner.working_dir_path(
-        alias, ".cleanup-inventory"
-    ).parent
-    if alias:
-        roots.extend((auth_root / alias, workbench_root))
-    else:
-        roots.extend((auth_root, workbench_root))
-    for root in roots:
-        if not os.path.lexists(root):
-            continue
-        if root.is_symlink() or not root.is_dir():
-            raise RuntimeError(f"agent local-state root {root} is not a directory")
-        try:
-            if any(root.iterdir()):
-                return True, f"agent local-state tree remains at {root}"
-        except OSError as exc:
-            raise RuntimeError(f"agent local-state inventory failed at {root}") from exc
-    for operation in list_operations(
-        project_alias=alias,
-        project_id=exact_project,
-        resource_type="agent",
-        strict=True,
-    ):
-        payload = operation.read()
-        audit_only = payload.get("audit_only") is True
-        if operation.state_copies() or not (
-            audit_only and str(payload.get("phase") or "") in TERMINAL_PHASES
-        ):
-            return True, f"operational agent journal {operation.operation_id} remains"
-    return False, "no local operational agent state remains"
-
-
-def _unscoped_project_state_present() -> tuple[bool, str]:
-    """Fail-closed inventory when full cleanup has no immutable project scope."""
-
-    import yaml
-
-    from npa.clients.config import list_projects
-    from npa.clients.credentials import CREDENTIALS_PATH
-
-    projects = list_projects()
-    if projects:
-        return True, "configured project scope exists but no project was selected"
-    present, detail = _agent_operational_state_present("", "")
-    if present:
-        return True, detail
-    if not CREDENTIALS_PATH.exists():
-        return False, "no project-scoped local state exists"
-    try:
-        loaded = yaml.safe_load(CREDENTIALS_PATH.read_text(encoding="utf-8")) or {}
-    except (OSError, yaml.YAMLError) as exc:
-        raise RuntimeError("unscoped credential inventory is unreadable") from exc
-    if not isinstance(loaded, dict):
-        raise RuntimeError("unscoped credential inventory is schema-invalid")
-    agent_iam = loaded.get("agent_iam")
-    if "agent_iam" in loaded and not isinstance(agent_iam, dict):
-        raise RuntimeError("unscoped agent IAM inventory is schema-invalid")
-    agent_projects = (
-        agent_iam.get("projects") if isinstance(agent_iam, dict) else None
-    )
-    if agent_projects is not None and not isinstance(agent_projects, dict):
-        raise RuntimeError("unscoped agent IAM project inventory is schema-invalid")
-    if isinstance(agent_projects, dict) and agent_projects:
-        return True, "agent IAM recovery records exist without selected project scope"
-    project_credentials = loaded.get("project_credentials")
-    if "project_credentials" in loaded and not isinstance(project_credentials, dict):
-        raise RuntimeError("unscoped project credential inventory is schema-invalid")
-    credential_projects = (
-        project_credentials.get("projects")
-        if isinstance(project_credentials, dict)
-        else None
-    )
-    if credential_projects is not None and not isinstance(credential_projects, dict):
-        raise RuntimeError("unscoped project credential records are schema-invalid")
-    if isinstance(credential_projects, dict) and credential_projects:
-        return True, "project credential records exist without selected project scope"
-    legacy_unscoped = (
-        project_credentials.get("legacy_unscoped")
-        if isinstance(project_credentials, dict)
-        else None
-    )
-    if legacy_unscoped is not None and not isinstance(legacy_unscoped, dict):
-        raise RuntimeError("unscoped legacy credential inventory is schema-invalid")
-    if isinstance(legacy_unscoped, dict) and legacy_unscoped:
-        return True, "legacy credential records exist without selected project scope"
-    storage_iam = loaded.get("storage_iam")
-    if "storage_iam" in loaded and not isinstance(storage_iam, dict):
-        raise RuntimeError("unscoped storage IAM inventory is schema-invalid")
-    if isinstance(storage_iam, dict) and storage_iam:
-        return True, "storage IAM recovery records exist without selected project scope"
-    tokens = loaded.get("tokens")
-    if "tokens" in loaded and not isinstance(tokens, dict):
-        raise RuntimeError("unscoped credential token inventory is schema-invalid")
-    storage_fields = {
-        "AWS_ACCESS_KEY_ID",
-        "AWS_SECRET_ACCESS_KEY",
-        "AWS_ENDPOINT_URL",
-        "NEBIUS_S3_ENDPOINT",
-        "NEBIUS_S3_BUCKET",
-        "NPA_CHECKPOINT_BUCKET",
-        "NPA_STORAGE_ENDPOINT",
-        "access_key",
-        "access_key_id",
-        "aws_access_key_id",
-        "aws_secret_access_key",
-        "bucket",
-        "checkpoint_bucket",
-        "endpoint",
-        "endpoint_url",
-        "nebius_api_key",
-        "nebius_secret_key",
-        "s3_bucket",
-        "s3_endpoint",
-        "secret_access_key",
-        "secret_key",
-    }
-
-    def contains_storage_state(mapping: Mapping[str, object]) -> bool:
-        return any(
-            mapping.get(key) not in (None, "") for key in storage_fields
-        )
-
-    if contains_storage_state(loaded) or (
-        isinstance(tokens, dict) and contains_storage_state(tokens)
-    ):
-        return True, "legacy storage credentials exist without selected project scope"
-    for section_name in ("storage", "s3", "object-storage", "object_storage"):
-        section = loaded.get(section_name)
-        if section_name in loaded and not isinstance(section, dict):
-            raise RuntimeError(
-                f"unscoped storage section {section_name!r} is schema-invalid"
-            )
-        if isinstance(section, dict) and contains_storage_state(section):
-            return True, "legacy storage credentials exist without selected project scope"
-    return False, "no project-scoped local state exists"
-
-
-def _phase_group_events(
-    phase_states: dict[str, dict[str, object]], names: tuple[str, ...]
-) -> list[dict[str, object]]:
-    return [phase_states[name] for name in names if phase_states.get(name)]
-
-
-def _newest_phase_group_is_terminal(
-    phase_states: dict[str, dict[str, object]],
-    names: tuple[str, ...],
-    *,
-    allow_agent_local_retirement_pending: bool = False,
-) -> bool:
-    events = _phase_group_events(phase_states, names)
-    if not events:
-        return False
-    receipt_ids = {str(event.get("_receipt_id") or "") for event in events}
-    if len(receipt_ids) == 1:
-        # Alternative workflow evidence in one receipt has an honest local
-        # clock. A later audit may supersede an earlier workflow probe.
-        newest_sequence = max(int(event.get("sequence") or 0) for event in events)
-        events = [
-            event
-            for event in events
-            if int(event.get("sequence") or 0) == newest_sequence
-        ]
-    # Across receipt files there is no shared sequence clock: every current
-    # generation must converge independently.
-    return all(
-        (
-            _agent_event_authorizes_prelocal_retirement(event)
-            if allow_agent_local_retirement_pending
-            and str(event.get("phase") or "") == "agent"
-            else _event_authorizes_cloud_absence(event)
-        )
-        for event in events
-    )
-
-
-def _event_authorizes_cloud_absence(event: Mapping[str, object]) -> bool:
-    """Require phase-specific structured convergence, never a terminal word."""
-    from npa.teardown_receipts import teardown_event_authorizes_convergence
-
-    return teardown_event_authorizes_convergence(event)
-
-
-def _agent_event_authorizes_prelocal_retirement(
-    event: Mapping[str, object],
-) -> bool:
-    """Allow exact local retirement from complete cloud/IAM evidence only."""
-
-    action = event.get("action")
-    action = action if isinstance(action, Mapping) else {}
-    verification = event.get("verification")
-    verification = verification if isinstance(verification, Mapping) else {}
-    identity = event.get("identity")
-    identity = identity if isinstance(identity, Mapping) else {}
-    graph = verification.get("terraform_dependency_graph")
-    errors = event.get("errors")
-    return bool(
-        str(event.get("phase") or "") == "agent"
-        and str(event.get("terminal_state") or "").lower()
-        in {"verified_absent", "verified_deleted"}
-        and action.get("kind") == "terraform_agent_destroy"
-        and bool(str(identity.get("project_id") or "").strip())
-        and bool(str(identity.get("instance_id") or "").strip())
-        and verification.get("exact_instance_absent") is True
-        and verification.get("terraform_destroy_completed") is True
-        and isinstance(graph, list)
-        and _AGENT_TERRAFORM_GRAPH.issubset(graph)
-        and verification.get("iam_cleanup_complete") is True
-        and verification.get("iam_disposition") in {"absent", "deleted"}
-        and isinstance(errors, list)
-        and not errors
-    )
-
-
-def _cloud_cleanup_receipts_are_terminal(
-    phase_states: dict[str, dict[str, object]],
-    *,
-    allow_agent_local_retirement_pending: bool = False,
-) -> bool:
-    """Accept the newest monolithic or equivalent exact cleanup evidence."""
-
-    if not all(
-        _newest_phase_group_is_terminal(
-            phase_states,
-            names,
-            allow_agent_local_retirement_pending=(
-                allow_agent_local_retirement_pending and names[0] == "agent"
-            ),
-        )
-        for names in _CLOUD_CLEANUP_REQUIRED_GROUPS
-    ):
-        return False
-    # Optional controller/cluster phases are not applicable to an agent-only
-    # fresh-config run. If NPA has any such evidence, however, uncertainty must
-    # still block credential and alias retirement.
-    return all(
-        not _phase_group_events(phase_states, names)
-        or _newest_phase_group_is_terminal(phase_states, names)
-        for names in _CLOUD_CLEANUP_OPTIONAL_GROUPS
-    )
-
-
-def _agent_lifecycle_allows_project_retirement(
-    project_alias: str, project_id: str, *, retire: bool = False
-) -> tuple[bool, str]:
-    """Reconcile surviving agent generations before forgetting their credentials.
-
-    Receipts are historical evidence, not an inventory. A reused alias/name may
-    already have a newer agent record, provisioning operation, or Terraform
-    state. Only one immutable state identity that matches complete graph-absence
-    evidence and an exact provider NotFound may be treated as stale.
-    """
-
-    from npa.cli import agent as agent_module
-    from npa.cli.agent_terraform import AgentTerraformStateIdentityError
-    from npa.clients.nebius import NebiusError, get_compute_instance_identity
-    from npa.deploy import provisioner
-    from npa.provisioning_journal import (
-        ProvisioningOperation,
-        list_operations,
-        operation_context,
-    )
-    from npa.teardown_receipts import latest_resource_generation_events
-
-    alias = str(project_alias or "").strip()
-    exact_project = str(project_id or "").strip()
-    if not exact_project:
-        return False, "an exact immutable project ID is required"
-
-    if not alias:
-        # Once an alias is gone, an unbound local Terraform tree cannot be
-        # proven unrelated to the exact project. Preserve its credentials. A
-        # completely absent tree, by contrast, is positive local evidence that
-        # there is no surviving alias/name generation to reconcile.
-        workbench_base = provisioner.working_dir_path("", ".cleanup-inventory").parent
-        auth_base = Path.home() / ".npa" / "agents"
-        try:
-            for local_root in (workbench_base, auth_base):
-                if not local_root.exists():
-                    continue
-                if local_root.is_symlink() or not local_root.is_dir():
-                    return False, "an agent local-state root is not a regular directory"
-                if any(local_root.iterdir()):
-                    return False, (
-                        "alias-free agent local state cannot be bound to the "
-                        "exact project"
-                    )
-        except OSError as exc:
-            return False, f"agent Terraform state inventory is unreadable: {exc}"
-
-        try:
-            for operation in list_operations(
-                project_id=exact_project, resource_type="agent", strict=True
-            ):
-                payload = operation.read()
-                if not (
-                    payload.get("audit_only") is True
-                    and str(payload.get("phase") or "")
-                    in {"committed", "destroyed", "rolled-back"}
-                    and not operation.state_copies()
-                ):
-                    return False, (
-                        "alias-free agent provisioning state remains for the "
-                        "exact project"
-                    )
-        except (OSError, RuntimeError, ValueError) as exc:
-            return False, f"provisioning journal inventory is unreadable: {exc}"
-        return True, "no alias-bound agent lifecycle evidence survives"
-
-    try:
-        records = agent_module.resolve_project_agents(alias)
-    except (OSError, RuntimeError, ValueError) as exc:
-        return False, f"saved agent records are unreadable: {exc}"
-    if not isinstance(records, dict):
-        return False, "saved agent records are schema-invalid"
-
-    names: set[str] = set()
-    for saved_name in records:
-        if (
-            not isinstance(saved_name, str)
-            or not saved_name.strip()
-            or saved_name != saved_name.strip()
-        ):
-            return False, "a saved agent record has an invalid deployment name"
-        names.add(saved_name)
-    local_names: set[str] = set()
-    workbench_root = provisioner.working_dir_path(alias, ".cleanup-inventory").parent
-    try:
-        auth_root = Path.home() / ".npa" / "agents" / alias
-        for local_root in (workbench_root, auth_root):
-            if not local_root.exists():
-                continue
-            if local_root.is_symlink() or not local_root.is_dir():
-                return False, "an agent local-state root is not a regular directory"
-            for child in local_root.iterdir():
-                if child.is_symlink():
-                    return False, "an agent local-state path is a symlink"
-                if not child.is_dir():
-                    return False, "an agent local-state entry is not a directory"
-                # Even an empty per-agent directory is current operational
-                # presence.  It may only be retired after the name is bound to
-                # one exact historical generation and provider absence.
-                local_names.add(child.name)
-    except OSError as exc:
-        return False, f"agent Terraform state inventory is unreadable: {exc}"
-    names.update(local_names)
-
-    operations_by_name: dict[str, list[dict[str, object]]] = {}
-    try:
-        for operation in list_operations(resource_type="agent", strict=True):
-            payload = operation.read()
-            saved_alias = str(payload.get("project_alias") or "")
-            saved_project = str(payload.get("project_id") or "")
-            if saved_alias != alias and saved_project != exact_project:
-                continue
-            if saved_alias and saved_alias != alias:
-                return False, "an agent journal conflicts with the selected alias"
-            if saved_project and saved_project != exact_project:
-                return False, "an agent journal conflicts with the selected project"
-            name = str(payload.get("requested_name") or "").strip()
-            if not name:
-                return False, "an agent journal has no requested deployment name"
-            names.add(name)
-            operations_by_name.setdefault(name, []).append(
-                {**dict(payload), "_operation_id": operation.operation_id}
-            )
-    except (OSError, RuntimeError, ValueError) as exc:
-        return False, f"provisioning journal inventory is unreadable: {exc}"
-
-    terminal_graphs: dict[tuple[str, str], dict[str, object]] = {}
-    try:
-        receipt_events = latest_resource_generation_events(
-            project_id=exact_project, phase="agent", strict=True
-        )
-    except (OSError, RuntimeError, ValueError) as exc:
-        return False, f"agent teardown receipts are unreadable: {exc}"
-    for event in receipt_events:
-        if not _agent_event_authorizes_prelocal_retirement(event):
-            continue
-        identity = event.get("identity")
-        identity = identity if isinstance(identity, Mapping) else {}
-        name = str(identity.get("agent_name") or event.get("resource") or "").strip()
-        instance_id = str(identity.get("instance_id") or "").strip()
-        if name and instance_id:
-            terminal_graphs[(name, instance_id)] = dict(event)
-
-    retirements: list[
-        tuple[str, str, bool, tuple[str, ...], str, dict[str, object]]
-    ] = []
-    for name in sorted(names):
-        record_present = name in records
-        if record_present:
-            from npa.cli.agent_records import AgentRecordState, decode_agent_record
-
-            try:
-                decoded = decode_agent_record(alias, name)
-            except (OSError, RuntimeError, ValueError) as exc:
-                return False, f"saved agent record {name!r} is unreadable: {exc}"
-            if decoded.state is not AgentRecordState.COMPLETE:
-                return False, (
-                    f"saved agent record {name!r} is {decoded.state.value}: "
-                    f"{decoded.detail}"
-                )
-            record = decoded.record
-        else:
-            record = {}
-        saved_project = record.get("project_id")
-        record_project = str(saved_project or "").strip()
-        if record_project != exact_project and record_present:
-            return False, f"saved agent record {name!r} conflicts with the project"
-        saved_instance = record.get("instance_id")
-
-        try:
-            state_exists = agent_module._agent_terraform_state_exists(alias, name)
-        except (OSError, RuntimeError, ValueError) as exc:
-            return False, f"agent {name!r} Terraform inventory is unreadable: {exc}"
-        instance_ids = {
-            value
-            for value in (str(saved_instance or "").strip(),)
-            if value
-        }
-        if state_exists:
-            try:
-                instance_ids.add(
-                    agent_module._agent_terraform_instance_id(alias, name)
-                )
-            except AgentTerraformStateIdentityError as exc:
-                return False, f"agent {name!r} Terraform identity is ambiguous: {exc}"
-
-        operations = operations_by_name.get(name, [])
-        active_operations = [
-            operation
-            for operation in operations
-            if str(operation.get("phase") or "") not in {"destroyed", "rolled-back"}
-        ]
-        if len(active_operations) > 1:
-            return False, (
-                f"agent {name!r} has multiple current same-name operation generations"
-            )
-        has_local_files = name in local_names
-        if not (
-            record_present or state_exists or active_operations or has_local_files
-        ):
-            continue
-        if not instance_ids:
-            receipt_instance_ids = {
-                instance_id
-                for candidate_name, instance_id in terminal_graphs
-                if candidate_name == name
-            }
-            if len(receipt_instance_ids) == 1:
-                instance_ids.update(receipt_instance_ids)
-        if len(instance_ids) != 1:
-            return False, f"agent {name!r} has no single immutable instance identity"
-        instance_id = next(iter(instance_ids))
-        terminal = terminal_graphs.get((name, instance_id))
-        if not terminal:
-            return False, (
-                f"agent {name!r} has surviving lifecycle state without matching "
-                "complete terminal graph evidence"
-            )
-        for operation in active_operations:
-            compute_ids = {
-                str(resource.get("provider_id") or "").strip()
-                for resource in operation.get("resources") or []
-                if isinstance(resource, Mapping)
-                and resource.get("resource_type") == "compute_instance"
-                and str(resource.get("provider_id") or "").strip()
-            }
-            if compute_ids != {instance_id}:
-                return False, (
-                    f"agent {name!r} has a current operation that is not bound "
-                    "to the terminal receipt generation"
-                )
-
-        identity = terminal.get("identity")
-        identity = identity if isinstance(identity, Mapping) else {}
-        try:
-            remote = get_compute_instance_identity(
-                instance_id,
-                project_id=exact_project,
-                expected_name=f"agent-{alias}-{name}",
-                profile=str(identity.get("profile") or "") or None,
-            )
-        except NebiusError as exc:
-            return False, f"agent {name!r} provider absence is unresolved: {exc}"
-        if remote is not None:
-            return False, f"agent {name!r} is still present at the provider"
-
-        retirements.append(
-            (
-                name,
-                instance_id,
-                record_present,
-                tuple(
-                    str(operation.get("_operation_id") or "")
-                    for operation in operations
-                    if str(operation.get("_operation_id") or "")
-                ),
-                str(identity.get("profile") or ""),
-                dict(terminal),
-            )
-        )
-
-    if retire:
-        for (
-            name,
-            instance_id,
-            expected_record,
-            operation_ids,
-            profile,
-            terminal_event,
-        ) in retirements:
-            transaction = ProvisioningOperation.prepare(
-                command="npa cleanup agent-local-retirement",
-                project_alias=alias,
-                project_id=exact_project,
-                resource_type="agent-teardown",
-                requested_name=name,
-                ownership_source="cleanup-agent-local-retirement",
-                resume_command="",
-                resume_argv=(
-                    "npa",
-                    "cleanup",
-                    "--project",
-                    alias,
-                    "--full",
-                    "--yes",
-                ),
-            )
-            retired_snapshot = None
-            removed_record: dict[str, Any] = {}
-            try:
-                with operation_context(transaction):
-                    if str(transaction.read().get("phase") or "") == "prepared":
-                        transaction.transition("mutating")
-                    from npa.cli.agent_records import AgentRecordState
-
-                    current = agent_module.decode_agent_record(alias, name)
-                    if current.present != expected_record:
-                        raise RuntimeError(
-                            "saved agent record presence changed during retirement"
-                        )
-                    if current.present and (
-                        current.state is not AgentRecordState.COMPLETE
-                        or current.record.get("project_id") != exact_project
-                        or current.record.get("instance_id") != instance_id
-                    ):
-                        raise RuntimeError(
-                            "saved agent generation changed during retirement"
-                        )
-                    current_operations = list_operations(
-                        project_alias=alias,
-                        project_id=exact_project,
-                        resource_type="agent",
-                        requested_name=name,
-                        strict=True,
-                    )
-                    current_ids = tuple(
-                        sorted(item.operation_id for item in current_operations)
-                    )
-                    if current_ids != tuple(sorted(operation_ids)):
-                        raise RuntimeError(
-                            "agent operation generation changed during retirement"
-                        )
-                    if agent_module._agent_terraform_state_exists(alias, name):
-                        current_instance = agent_module._agent_terraform_instance_id(
-                            alias, name
-                        )
-                        if current_instance != instance_id:
-                            raise RuntimeError(
-                                "Terraform state generation changed during retirement"
-                            )
-                    remote = get_compute_instance_identity(
-                        instance_id,
-                        project_id=exact_project,
-                        expected_name=f"agent-{alias}-{name}",
-                        profile=profile or None,
-                    )
-                    if remote is not None:
-                        raise RuntimeError(
-                            "exact provider instance reappeared during retirement"
-                        )
-                    retired_snapshot = agent_module._cleanup_agent_local_files(
-                        alias, name, operation_ids=operation_ids
-                    )
-                    if expected_record:
-                        removed_record = dict(current.record)
-                        agent_module._remove_agent_record(alias, name)
-                        if agent_module.decode_agent_record(alias, name).present:
-                            raise RuntimeError(f"saved agent record {name!r} remains")
-                    transaction.transition("destroyed")
-                    terminal_verification = terminal_event.get("verification")
-                    terminal_verification = (
-                        terminal_verification
-                        if isinstance(terminal_verification, Mapping)
-                        else {}
-                    )
-                    terminal_action = terminal_event.get("action")
-                    terminal_action = (
-                        terminal_action if isinstance(terminal_action, Mapping) else {}
-                    )
-                    agent_module._record_agent_destroy_event(
-                        alias,
-                        name,
-                        terminal_state=str(
-                            terminal_event.get("terminal_state") or "verified_deleted"
-                        ),
-                        identity=dict(terminal_event.get("identity") or {}),
-                        project_id=exact_project,
-                        identity_source="cleanup_exact_terminal_generation",
-                        terraform_graph_absent=True,
-                        purge_iam=(
-                            bool(terminal_action.get("purge_iam"))
-                            if "purge_iam" in terminal_action
-                            else None
-                        ),
-                        iam_cleanup_complete=(
-                            terminal_verification.get("iam_cleanup_complete") is True
-                        ),
-                        iam_disposition=str(
-                            terminal_verification.get("iam_disposition") or ""
-                        ),
-                        local_state_retired=True,
-                    )
-            except BaseException as exc:
-                recovery_errors: list[str] = []
-                if retired_snapshot is not None:
-                    try:
-                        retired_snapshot.restore()
-                    except (OSError, RuntimeError, ValueError) as restore_exc:
-                        recovery_errors.append(f"agent recovery files: {restore_exc}")
-                if removed_record:
-                    try:
-                        agent_module._store_agent_record(alias, name, removed_record)
-                    except (OSError, RuntimeError, ValueError) as restore_exc:
-                        recovery_errors.append(f"saved agent record: {restore_exc}")
-                if retired_snapshot is not None:
-                    try:
-                        agent_module._record_agent_destroy_event(
-                            alias,
-                            name,
-                            terminal_state="partial",
-                            error="cleanup local retirement did not converge",
-                            identity=dict(terminal_event.get("identity") or {}),
-                            project_id=exact_project,
-                            identity_source="cleanup_exact_terminal_generation",
-                            terraform_graph_absent=True,
-                            iam_cleanup_complete=False,
-                            iam_disposition="verification_unresolved",
-                        )
-                    except (OSError, RuntimeError, ValueError) as receipt_exc:
-                        recovery_errors.append(
-                            f"unresolved receipt write: {receipt_exc}"
-                        )
-                phase = str(transaction.read().get("phase") or "")
-                if phase not in {"committed", "destroyed", "rolled-back"}:
-                    transaction.transition(
-                        "recovery-required",
-                        error="exact local agent retirement did not converge",
-                    )
-                if isinstance(exc, (KeyboardInterrupt, SystemExit)):
-                    raise
-                detail = f"agent {name!r} local retirement failed: {exc}"
-                if recovery_errors:
-                    detail += "; recovery restoration failed: " + "; ".join(
-                        recovery_errors
-                    )
-                return False, detail
-        try:
-            present, detail = _agent_operational_state_present(alias, exact_project)
-        except (OSError, RuntimeError, ValueError) as exc:
-            return False, f"final agent local-state inventory failed: {exc}"
-        if present:
-            return False, detail
-
-    return True, "surviving agent lifecycle evidence is absent or exactly stale"
 
 
 def cleanup_phase_model(
@@ -1586,12 +612,7 @@ def cleanup_phase_model(
     def completed(phase: str) -> bool:
         from npa.teardown_receipts import TERMINAL_STATES
 
-        event = receipt_phases.get(phase) or {}
-        if phase in {
-            name for group in _CLOUD_CLEANUP_PHASE_GROUPS for name in group
-        }:
-            return _event_authorizes_cloud_absence(event)
-        state = str(event.get("terminal_state") or "")
+        state = str((receipt_phases.get(phase) or {}).get("terminal_state") or "")
         return state in TERMINAL_STATES
 
     def observed(phase: str, fallback: str) -> str:
@@ -2004,15 +1025,12 @@ def cleanup_cmd(
     removed_total = 0
     shared_runtime_preserved = False
     project_credential_residue_items: list[dict[str, str]] = []
-    final_credential_labels: list[str] = []
 
     def emit_json(
         result: str, local_state: str, *, cleanup_failed: bool = False
     ) -> None:
         receipt_phases = latest_phase_states(
-            project_alias=receipt_alias,
-            project_id=receipt_project_id,
-            strict=yes,
+            project_alias=receipt_alias, project_id=receipt_project_id
         )
         phases = cleanup_phase_model(
             jobs=job_ids,
@@ -2025,43 +1043,20 @@ def cleanup_cmd(
         from npa.teardown_receipts import TERMINAL_STATES
 
         operational_residue = bool(
-            local_state not in {"fully_clean", "fully_cleaned", "preserved_shared_sky"}
+            local_state
+            not in {"fully_clean", "fully_cleaned", "preserved_shared_sky"}
             or project_credential_residue_items
-            or agent_operational_state_present
-            or final_credential_labels
         )
-        if receipt_project_id:
-            cloud_phase_names = {
-                name for group in _CLOUD_CLEANUP_PHASE_GROUPS for name in group
-            }
-            unresolved_receipts = bool(
-                any(
-                    _phase_group_events(receipt_phases, group)
-                    and not _newest_phase_group_is_terminal(receipt_phases, group)
-                    for group in _CLOUD_CLEANUP_PHASE_GROUPS
-                )
-                or any(
-                    name not in cloud_phase_names
-                    and str(event.get("terminal_state") or "")
-                    not in TERMINAL_STATES
-                    for name, event in receipt_phases.items()
-                )
-            )
-        else:
-            unresolved_receipts = any(
-                str(event.get("terminal_state") or "") not in TERMINAL_STATES
-                for event in receipt_phases.values()
-            )
+        unresolved_receipts = any(
+            str(event.get("terminal_state") or "") not in TERMINAL_STATES
+            for event in receipt_phases.values()
+        )
         verification_unresolved = bool(
             iam_partial
             or job_note
             or (job_queue_state == "SKIPPED_BY_OPERATOR" and not attestation_safe)
             or cleanup_failed
             or unresolved_receipts
-            or (
-                bool(receipt_project_id)
-                and not _cloud_cleanup_receipts_are_terminal(receipt_phases)
-            )
         )
         retained_receipts = len(
             list_teardown_receipts(
@@ -2095,9 +1090,6 @@ def cleanup_cmd(
                     "audit_receipts_are_operational_residue": False,
                     "preserved_shared_runtime": shared_runtime_preserved,
                     "retained_local_residue": project_credential_residue_items,
-                    "retained_shared_credentials": final_credential_labels,
-                    "agent_operational_state_present": agent_operational_state_present,
-                    "agent_operational_state_detail": agent_operational_state_detail,
                 },
                 indent=2,
                 sort_keys=True,
@@ -2122,11 +1114,7 @@ def cleanup_cmd(
             iam_partial,
             iam_status,
             iam_ownership_state,
-        ) = _storage_iam_full_check(project, prune_verified_absence=False)
-
-    agent_operational_state_present = False
-    agent_operational_state_detail = "not checked"
-    unscoped_scope_verified_absent = False
+        ) = _storage_iam_full_check(project, prune_verified_absence=yes)
 
     if full and receipt_project_id:
         from npa.clients.project_credential_store import project_credential_residue
@@ -2135,46 +1123,31 @@ def cleanup_cmd(
             receipt_project_id
         )
         if receipt_alias:
-            from npa.clients.config import resolve_environment
-
-            environment = resolve_environment(receipt_alias)
-            if (
-                environment is not None
-                and str(environment.project_id or "") == receipt_project_id
-            ):
-                project_credential_residue_items.append(
-                    {
-                        "path": f"config.projects.{receipt_alias}",
-                        "class": "project_alias_or_default",
-                    }
-                )
-        try:
-            (
-                agent_operational_state_present,
-                agent_operational_state_detail,
-            ) = _agent_operational_state_present(receipt_alias, receipt_project_id)
-        except (OSError, RuntimeError, ValueError) as exc:
-            agent_operational_state_present = True
-            agent_operational_state_detail = f"inventory unresolved: {exc}"
-    elif full:
-        try:
-            (
-                agent_operational_state_present,
-                agent_operational_state_detail,
-            ) = _unscoped_project_state_present()
-            unscoped_scope_verified_absent = not agent_operational_state_present
-        except (OSError, RuntimeError, ValueError) as exc:
-            agent_operational_state_present = True
-            agent_operational_state_detail = f"unscoped inventory unresolved: {exc}"
+            project_credential_residue_items.append(
+                {
+                    "path": f"config.projects.{receipt_alias}",
+                    "class": "project_alias_or_default",
+                }
+            )
 
     prior_phases = latest_phase_states(
-        project_alias=receipt_alias,
-        project_id=receipt_project_id,
-        strict=yes,
+        project_alias=receipt_alias, project_id=receipt_project_id
     )
-    prior_workflow_terminal = _newest_phase_group_is_terminal(
-        prior_phases, _CLOUD_CLEANUP_REQUIRED_GROUPS[0]
+    prior_workflow = (
+        prior_phases.get("workflow_audit")
+        or prior_phases.get("workflow")
+        or prior_phases.get("project_destroy_workflows")
     )
+    prior_workflow_state = str((prior_workflow or {}).get("terminal_state") or "")
+    prior_workflow_terminal = prior_workflow_state in {
+        "already_absent",
+        "cancelled",
+        "completed",
+        "deleted",
+        "terminal",
+        "verified_absent",
+        "verified_deleted",
+    }
     sky_operational_state_present = any(
         item.label in {"SkyPilot venv", "SkyPilot state (~/.sky)"} for item in residue
     )
@@ -2266,9 +1239,8 @@ def cleanup_cmd(
                 if job_ids
                 else "verification_failed"
             ),
-            project_alias=receipt_alias,
-            project_id=receipt_project_id
-            or str(getattr(environment, "project_id", "") or ""),
+            project_alias=project,
+            project_id=str(getattr(environment, "project_id", "") or ""),
             precheck={"skip_requested": skip_jobs},
             action={"kind": "read_only_managed_job_audit"},
             verification={
@@ -2305,28 +1277,13 @@ def cleanup_cmd(
         and not credential_labels
         and not full_empty_state
         and not project_credential_residue_items
-        and not agent_operational_state_present
     ):
-        phase_states = latest_phase_states(
-            project_alias=receipt_alias,
-            project_id=receipt_project_id,
-            strict=yes,
-        )
-        cloud_incomplete = bool(
-            full
-            and yes
-            and receipt_project_id
-            and not _cloud_cleanup_receipts_are_terminal(phase_states)
-        )
         if output_json:
             emit_json(
                 iam_status
                 if iam_partial
-                else "partial_cloud_cleanup"
-                if cloud_incomplete
                 else ("fully_cleaned" if yes else "fully_clean"),
-                "partial_cloud_cleanup" if cloud_incomplete else "fully_clean",
-                cleanup_failed=cloud_incomplete,
+                "fully_clean",
             )
         else:
             typer.echo("No local NPA/SkyPilot residue to clean up.")
@@ -2339,9 +1296,7 @@ def cleanup_cmd(
                     iam_ownership_state=iam_ownership_state,
                     local_state="fully_clean",
                     receipt_phases=latest_phase_states(
-                        project_alias=receipt_alias,
-                        project_id=receipt_project_id,
-                        strict=yes,
+                        project_alias=receipt_alias, project_id=receipt_project_id
                     ),
                 )
             )
@@ -2361,13 +1316,6 @@ def cleanup_cmd(
                 err=True,
             )
             raise typer.Exit(code=2)
-        if cloud_incomplete:
-            emit(
-                "Full cleanup is partial because complete phase-specific cloud "
-                "absence evidence is missing or unresolved.",
-                err=True,
-            )
-            raise typer.Exit(code=1)
         return
 
     scope = (
@@ -2395,11 +1343,6 @@ def cleanup_cmd(
         emit(f"  {label:<26} {'saved':>8}")
     for path in full_empty_state:
         emit(f"  {'empty local state':<26} {'-':>8}  {path}")
-    if agent_operational_state_present:
-        emit(
-            f"  {'agent operational state':<26} {'saved':>8}  "
-            f"{agent_operational_state_detail}"
-        )
     if residue or terraform_residue:
         emit(f"  {'total':<26} {_human(total):>8}")
 
@@ -2424,9 +1367,7 @@ def cleanup_cmd(
                     iam_ownership_state=iam_ownership_state,
                     local_state="residue_present",
                     receipt_phases=latest_phase_states(
-                        project_alias=receipt_alias,
-                        project_id=receipt_project_id,
-                        strict=yes,
+                        project_alias=receipt_alias, project_id=receipt_project_id
                     ),
                 )
             )
@@ -2436,8 +1377,6 @@ def cleanup_cmd(
 
     removed_bin = False
     cleanup_failed = False
-    recovery_snapshots: tuple[_PrivateYamlSnapshot, ...] = ()
-    recovery_state_mutated = False
     sky_audit_safe = (
         not skip_jobs and not job_ids and not job_note
     ) or attestation_safe
@@ -2447,8 +1386,7 @@ def cleanup_cmd(
             phase="local_cleanup",
             resource="npa-local-state",
             terminal_state="in_progress",
-            project_alias=receipt_alias,
-            project_id=receipt_project_id,
+            project_alias=project,
             precheck={"managed_jobs_verified_terminal_or_absent": sky_audit_safe},
             action={
                 "kind": "local_cleanup",
@@ -2467,24 +1405,11 @@ def cleanup_cmd(
         if output_json:
             emit_json("partial_cleanup", "residue_present", cleanup_failed=True)
         raise typer.Exit(code=1) from exc
-    if full:
-        try:
-            recovery_snapshots = _snapshot_cleanup_recovery_documents()
-        except (OSError, RuntimeError, ValueError) as exc:
-            cleanup_failed = True
-            emit(
-                "Preserved local state because recovery credentials/configuration "
-                f"could not be snapshotted before retirement: {exc}",
-                err=True,
-            )
-            if output_json:
-                emit_json("partial_cleanup", "residue_present", cleanup_failed=True)
-            raise typer.Exit(code=1) from exc
     for residue_item in residue:
-        if project and residue_item.label in {
-            "SkyPilot venv",
-            "Terraform provider cache",
-        }:
+        if (
+            project
+            and residue_item.label in {"SkyPilot venv", "Terraform provider cache"}
+        ):
             shared_runtime_preserved = True
             emit(
                 f"Preserved shared {residue_item.label} at {residue_item.path}: "
@@ -2567,171 +1492,64 @@ def cleanup_cmd(
             pass
     cleared_credentials: list[str] = []
     pruned_state: list[tuple[str, Path]] = []
-    remaining_terraform = collect_terraform_residue()
-    if remaining_terraform:
-        cleanup_failed = True
-        emit(
-            "Warning: Terraform residue remains after cleanup: "
-            + ", ".join(str(item.path) for item in remaining_terraform),
-            err=True,
-        )
     if full:
-        agent_retirement_safe = True
-        agent_retirement_detail = "no exact-project credential retirement requested"
-        if receipt_project_id and agent_operational_state_present:
-            agent_retirement_safe, agent_retirement_detail = (
-                _agent_lifecycle_allows_project_retirement(
-                    receipt_alias, receipt_project_id, retire=False
-                )
-            )
-        phase_states = latest_phase_states(
-            project_alias=receipt_alias,
-            project_id=receipt_project_id,
-            strict=True,
-        )
-        agent_retirement_prerequisites = bool(
-            receipt_project_id
-            and agent_operational_state_present
-            and agent_retirement_safe
-            and not remaining_terraform
-            and not cleanup_failed
-            and not iam_partial
-            and _cloud_cleanup_receipts_are_terminal(
-                phase_states,
-                allow_agent_local_retirement_pending=True,
-            )
-        )
-        if agent_retirement_prerequisites:
-            recovery_state_mutated = True
-            agent_retirement_safe, agent_retirement_detail = (
-                _agent_lifecycle_allows_project_retirement(
-                    receipt_alias, receipt_project_id, retire=True
-                )
-            )
-            if agent_retirement_safe:
-                try:
-                    (
-                        agent_operational_state_present,
-                        agent_operational_state_detail,
-                    ) = _agent_operational_state_present(
-                        receipt_alias, receipt_project_id
-                    )
-                except (OSError, RuntimeError, ValueError) as exc:
-                    agent_retirement_safe = False
-                    agent_operational_state_present = True
-                    agent_retirement_detail = (
-                        f"final agent local-state inventory failed: {exc}"
-                    )
-            if not agent_retirement_safe or agent_operational_state_present:
-                cleanup_failed = True
-            phase_states = latest_phase_states(
-                project_alias=receipt_alias,
-                project_id=receipt_project_id,
-                strict=True,
-            )
-        credentials_retirement_safe = bool(
-            (
-                unscoped_scope_verified_absent
-                if not receipt_project_id
-                else agent_retirement_safe and not agent_operational_state_present
-            )
-            and not remaining_terraform
-        )
-        cloud_absent = bool(
-            unscoped_scope_verified_absent
-            if not receipt_project_id
-            else (
-                _cloud_cleanup_receipts_are_terminal(phase_states)
-                and agent_retirement_safe
-            )
-        )
-        if receipt_project_id and not cloud_absent:
+        cleared_credentials = _clear_full_credentials()
+        if cleared_credentials:
+            emit("Removed locally stored " + ", ".join(cleared_credentials) + ".")
+        if credential_labels and set(cleared_credentials) != set(credential_labels):
             cleanup_failed = True
+            missing_credentials = sorted(
+                set(credential_labels) - set(cleared_credentials)
+            )
             emit(
-                "Warning: full cleanup remains partial because complete "
-                "phase-specific cloud absence evidence is missing or unresolved.",
+                "Warning: requested shared credential group(s) could not be removed: "
+                + ", ".join(missing_credentials)
+                + ". Any groups reported removed above remain removed; unrelated "
+                "credential data was preserved.",
                 err=True,
             )
-        if (
-            cloud_absent
-            and credentials_retirement_safe
-            and not cleanup_failed
-            and not iam_partial
-        ):
-            (
-                iam_message,
-                iam_partial,
-                iam_status,
-                iam_ownership_state,
-            ) = _storage_iam_full_check(project, prune_verified_absence=True)
-            if iam_partial:
-                cleanup_failed = True
-                emit(
-                    "Warning: final storage IAM evidence retirement did not converge.",
-                    err=True,
-                )
-        convergence_safe = bool(
-            credentials_retirement_safe
-            and cloud_absent
-            and not iam_partial
-            and not cleanup_failed
+        cloud_terminal_states = {
+            "already_absent",
+            "cancelled",
+            "completed",
+            "deleted",
+            "not_submitted",
+            "terminal",
+            "verified_absent",
+            "verified_deleted",
+        }
+        cloud_phase_names = (
+            "project_destroy_workflows",
+            "project_destroy_agents",
+            "project_destroy_controller",
+            "project_destroy_clusters",
+            "project_destroy_bucket",
+            "project_destroy_storage_iam",
         )
-        if project_credential_residue_items and convergence_safe:
-            from npa.clients.config import forget_project, resolve_environment
+        phase_states = latest_phase_states(
+            project_alias=receipt_alias, project_id=receipt_project_id
+        )
+        cloud_absent = bool(
+            receipt_project_id
+            and all(
+                str((phase_states.get(name) or {}).get("terminal_state") or "")
+                in cloud_terminal_states
+                for name in cloud_phase_names
+            )
+        )
+        if project_credential_residue_items and not iam_partial and cloud_absent:
             from npa.clients.project_credential_store import (
                 forget_project_credentials,
                 project_credential_residue,
             )
 
-            try:
-                recovery_state_mutated = True
-                removed_credentials = forget_project_credentials(receipt_project_id)
-                environment = (
-                    resolve_environment(receipt_alias) if receipt_alias else None
+            if forget_project_credentials(receipt_project_id):
+                project_credential_residue_items = project_credential_residue(
+                    receipt_project_id
                 )
-                removed_alias = False
-                if (
-                    environment is not None
-                    and str(environment.project_id or "") == receipt_project_id
-                ):
-                    removed_alias = forget_project(receipt_alias)
-            except (OSError, RuntimeError, ValueError) as exc:
-                removed_credentials = False
-                removed_alias = False
-                cleanup_failed = True
                 emit(
-                    "Warning: exact-project credential/config retirement failed: "
-                    f"{exc}",
-                    err=True,
+                    "Removed exact-project operational credentials after complete cloud absence proof."
                 )
-            if removed_credentials or removed_alias:
-                emit(
-                    "Removed exact-project operational credentials/configuration after "
-                    "complete cloud absence proof."
-                )
-            project_credential_residue_items = project_credential_residue(
-                receipt_project_id
-            )
-            remaining_environment = (
-                resolve_environment(receipt_alias) if receipt_alias else None
-            )
-            if (
-                remaining_environment is not None
-                and str(remaining_environment.project_id or "") == receipt_project_id
-            ):
-                project_credential_residue_items.append(
-                    {
-                        "path": f"config.projects.{receipt_alias}",
-                        "class": "project_alias_or_default",
-                    }
-                )
-        if agent_operational_state_present or not agent_retirement_safe:
-            cleanup_failed = True
-            emit(
-                "Warning: exact-project credentials and alias were preserved because "
-                f"agent lifecycle verification is unresolved: {agent_retirement_detail}.",
-                err=True,
-            )
         if project_credential_residue_items:
             cleanup_failed = True
             emit(
@@ -2739,169 +1557,19 @@ def cleanup_cmd(
                 + ", ".join(item["path"] for item in project_credential_residue_items),
                 err=True,
             )
-        # Reinventory after all dependent local/cloud retirement. A concurrent
-        # Terraform generation or failed deletion keeps every credential intact.
-        remaining_terraform = collect_terraform_residue()
-        if remaining_terraform:
-            cleanup_failed = True
-            emit(
-                "Warning: final Terraform inventory found residue: "
-                + ", ".join(str(item.path) for item in remaining_terraform),
-                err=True,
-            )
-        final_credentials_safe = bool(
-            credentials_retirement_safe
-            and cloud_absent
-            and not iam_partial
-            and not cleanup_failed
-            and not project_credential_residue_items
-            and not remaining_terraform
-        )
-        if final_credentials_safe:
-            recovery_state_mutated = True
-            cleared_credentials = _clear_full_credentials()
-            if cleared_credentials:
-                emit(
-                    "Removed locally stored "
-                    + ", ".join(cleared_credentials)
-                    + "."
-                )
-            if credential_labels and set(cleared_credentials) != set(
-                credential_labels
-            ):
-                cleanup_failed = True
-                missing_credentials = sorted(
-                    set(credential_labels) - set(cleared_credentials)
-                )
-                emit(
-                    "Warning: requested shared credential group(s) could not be removed: "
-                    + ", ".join(missing_credentials)
-                    + ". Unrelated credential data was preserved.",
-                    err=True,
-                )
-        elif credential_labels:
-            cleanup_failed = True
-            emit(
-                "Preserved shared credentials because local/cloud convergence is "
-                "unresolved.",
-                err=True,
-            )
-        if final_credentials_safe:
-            recovery_state_mutated = True
-        pruned_state = _prune_full_empty_state(npa_dir) if final_credentials_safe else []
+        pruned_state = _prune_full_empty_state(npa_dir)
         for label, path in pruned_state:
             if label == "empty NPA home":
                 emit(f"Removed empty NPA home: {path}")
             else:
                 emit(f"Removed {label}: {path}")
-    # Re-inventory every operational state class after the final mutation. A
-    # concurrent credential/config/agent generation is retained and makes the
-    # transaction partial; a pre-mutation inventory can never authorize the
-    # terminal receipt.
-    if full:
-        try:
-            final_credential_labels = _full_credential_labels()
-        except (OSError, RuntimeError, ValueError) as exc:
-            final_credential_labels = ["unresolved credential inventory"]
-            cleanup_failed = True
-            emit(
-                f"Warning: final shared-credential inventory failed: {exc}", err=True
-            )
-        if final_credential_labels:
-            cleanup_failed = True
-            emit(
-                "Warning: final inventory found retained shared credential group(s): "
-                + ", ".join(final_credential_labels)
-                + ".",
-                err=True,
-            )
-        try:
-            if receipt_project_id:
-                from npa.clients.config import resolve_environment
-                from npa.clients.project_credential_store import (
-                    project_credential_residue,
-                )
-
-                project_credential_residue_items = project_credential_residue(
-                    receipt_project_id
-                )
-                final_environment = (
-                    resolve_environment(receipt_alias) if receipt_alias else None
-                )
-                if (
-                    final_environment is not None
-                    and str(final_environment.project_id or "") == receipt_project_id
-                ):
-                    project_credential_residue_items.append(
-                        {
-                            "path": f"config.projects.{receipt_alias}",
-                            "class": "project_alias_or_default",
-                        }
-                    )
-                (
-                    agent_operational_state_present,
-                    agent_operational_state_detail,
-                ) = _agent_operational_state_present(
-                    receipt_alias, receipt_project_id
-                )
-            else:
-                (
-                    agent_operational_state_present,
-                    agent_operational_state_detail,
-                ) = _unscoped_project_state_present()
-        except (OSError, RuntimeError, ValueError) as exc:
-            agent_operational_state_present = True
-            agent_operational_state_detail = f"final inventory unresolved: {exc}"
-            cleanup_failed = True
-        if project_credential_residue_items or agent_operational_state_present:
-            cleanup_failed = True
-            emit(
-                "Warning: final project/config/agent inventory found operational "
-                "state or could not verify its absence.",
-                err=True,
-            )
-    if full and cleanup_failed and recovery_state_mutated:
-        (
-            restore_failures,
-            project_credential_residue_items,
-            agent_operational_state_present,
-            agent_operational_state_detail,
-        ) = _restore_cleanup_recovery_documents(
-            recovery_snapshots,
-            project_alias=receipt_alias,
-            project_id=receipt_project_id,
-        )
-        if restore_failures:
-            emit(
-                "Warning: recovery credential/config restoration was incomplete: "
-                + ", ".join(restore_failures),
-                err=True,
-            )
-        else:
-            emit(
-                "Restored recovery credentials/configuration because local "
-                "retirement did not converge."
-            )
-    # Terminal state is derived from the final inventory, never from mutation
-    # attempts that preceded it.
-    remaining_terraform = collect_terraform_residue()
-    if remaining_terraform:
-        cleanup_failed = True
-    local_terminal = bool(
-        not cleanup_failed
-        and not iam_partial
-        and not remaining_terraform
-        and not final_credential_labels
-        and not project_credential_residue_items
-        and not agent_operational_state_present
-    )
+    local_terminal = not cleanup_failed and not iam_partial
     try:
         record_teardown_event(
             phase="local_cleanup",
             resource="npa-local-state",
             terminal_state="completed" if local_terminal else "partial",
-            project_alias=receipt_alias,
-            project_id=receipt_project_id,
+            project_alias=project,
             precheck={"managed_jobs_verified_terminal_or_absent": sky_audit_safe},
             action={
                 "kind": "local_cleanup",
@@ -2909,14 +1577,7 @@ def cleanup_cmd(
                 "include_sky": include_sky,
             },
             verification={
-                "remaining_terraform_count": len(remaining_terraform),
-                "remaining_shared_credential_groups": len(
-                    final_credential_labels
-                ),
-                "remaining_project_credential_records": len(
-                    project_credential_residue_items
-                ),
-                "agent_operational_state_present": agent_operational_state_present,
+                "remaining_terraform_count": len(collect_terraform_residue()),
                 "sky_state_preserved": bool(
                     sky_preserved_by_skip or not sky_audit_safe
                 ),
@@ -2928,28 +1589,14 @@ def cleanup_cmd(
     except (OSError, RuntimeError, ValueError) as exc:
         cleanup_failed = True
         emit(f"Warning: local cleanup receipt could not be written: {exc}", err=True)
-        if full and recovery_state_mutated:
-            (
-                restore_failures,
-                project_credential_residue_items,
-                agent_operational_state_present,
-                agent_operational_state_detail,
-            ) = _restore_cleanup_recovery_documents(
-                recovery_snapshots,
-                project_alias=receipt_alias,
-                project_id=receipt_project_id,
-            )
-            if restore_failures:
-                emit(
-                    "Warning: recovery credential/config restoration was incomplete: "
-                    + ", ".join(restore_failures),
-                    err=True,
-                )
-            else:
-                emit(
-                    "Restored recovery credentials/configuration because the "
-                    "terminal cleanup receipt was not durable."
-                )
+    remaining_terraform = collect_terraform_residue()
+    if remaining_terraform:
+        cleanup_failed = True
+        emit(
+            "Warning: Terraform residue remains after cleanup: "
+            + ", ".join(str(item.path) for item in remaining_terraform),
+            err=True,
+        )
     emit("")
     if full and not cleanup_failed and not iam_partial:
         emit(
@@ -2996,9 +1643,7 @@ def cleanup_cmd(
                     "partial_local_cleanup" if cleanup_failed else "fully_cleaned"
                 ),
                 receipt_phases=latest_phase_states(
-                    project_alias=receipt_alias,
-                    project_id=receipt_project_id,
-                    strict=yes,
+                    project_alias=receipt_alias, project_id=receipt_project_id
                 ),
             )
         )
