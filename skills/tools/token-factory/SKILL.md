@@ -125,6 +125,9 @@ on the same model, `POST /v1/files` with `purpose=batch`, `GET /v1/batches`, and
 dataset create/delete all succeed — which rules out the key, the balance, the
 model, and the payload. When you see this, stop debugging your spec, cancel what
 you queued (`POST /batches/{id}/cancel`), and use `generate` until batch recovers.
+Do not wait it out: the same 403 was still being returned eight days after it was
+first seen, so "temporarily" can outlast any plausible stage timeout. Plan the
+run on `generate` and re-probe later rather than leaving a stage parked.
 
 **That 403 is not the quota rejection**, and conflating the two sends you down the
 wrong path. The documented limits are 10 active batches per customer and 100
