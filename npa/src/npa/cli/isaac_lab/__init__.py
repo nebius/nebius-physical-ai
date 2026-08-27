@@ -1461,6 +1461,15 @@ try:
     (output_dir / "meta.json").write_text(json.dumps(meta, indent=2))
     print("ISAAC_LAB_TRAJ_EXPORT_COMPLETE")
     print(json.dumps(meta, indent=2), flush=True)
+except Exception as exc:
+    # Isaac/Kit can consume the interpreter traceback during application
+    # shutdown. Emit a stable final marker before closing the app so remote
+    # callers retain the actual policy/rollout failure in stdout.
+    print(
+        f"ISAAC_LAB_TRAJ_EXPORT_FAILED {{type(exc).__name__}}: {{exc!r}}",
+        flush=True,
+    )
+    raise
 finally:
     if env is not None:
         env.close()
