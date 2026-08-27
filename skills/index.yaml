@@ -41,6 +41,13 @@ skills:
       - type: cli_help
         args: ["agent", "deploy", "--help"]
         contains: "llm-model"
+  - name: agent-run-data-collection
+    category: atomic
+    when_to_use: "Collect NPA agent work for fine-tuning or evaluation so every goal-level episode emits a sanitized, outcome-linked trajectory to an append-only S3 dataset in an operator-specified tenant and bucket."
+    path: skills/atomic/agent-run-data-collection/SKILL.md
+    smoke:
+      - type: file_exists
+        path: skills/atomic/agent-run-data-collection/references/trajectory-schema.md
   - name: architecture
     category: atomic
     when_to_use: "Platform architecture, tool-layer scope, orchestrator decisions, partner model, and validation state."
@@ -744,6 +751,22 @@ skills:
       - type: cli_help
         args: ["workbench", "cosmos3", "generate", "--help"]
         contains: "guardrails"
+  - name: cosmos3-ray-serve
+    category: tools
+    when_to_use: "Operate, validate, or troubleshoot persistent batched Cosmos3-Nano inference through NVIDIA cosmos-framework's native Ray Serve path."
+    path: skills/tools/cosmos3-ray-serve/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "cosmos3", "ray-serve", "--help"]
+        contains: "max-batch-size"
+      - type: cli_help
+        args: ["workbench", "cosmos3", "ray-batch", "--help"]
+        contains: "input-path"
+      - type: npa_workflow_yaml
+        paths:
+          - npa/workflows/workbench/npa-workflows/cosmos3-ray-batch.yaml
+      - type: file_exists
+        path: npa/docker/workbench/cosmos3-ray-serve/Dockerfile
   - name: contribute-workbench-image
     category: workflows
     when_to_use: "Carry an external or maintainer-authored NPA image change from a fork PR through license classification, trusted build, immutable public-dev validation, and incremental GHCR publication."

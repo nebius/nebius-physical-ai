@@ -24,7 +24,8 @@ from npa.workflows.sim2real_health import FAIL, PASS, WARN, CheckResult, has_fai
 
 HF = "huggingface"
 NGC = "ngc"
-HF_GATING_LAST_VERIFIED = "2026-08-17"
+TOKEN_FACTORY = "token_factory"
+HF_GATING_LAST_VERIFIED = "2026-08-25"
 
 
 @dataclass(frozen=True)
@@ -74,8 +75,18 @@ WORKBENCH_ASSETS: tuple[GatedAsset, ...] = (
     GatedAsset("nvidia/GR00T-N1.7-3B", HF, ("groot",), False),
     GatedAsset("nvidia/GEAR-SONIC", HF, ("sonic",), False),
     GatedAsset("nvidia/Cosmos-Transfer2.5-2B", HF, ("paidf", "sim2real"), True),
-    GatedAsset("nvidia/Cosmos-Reason2-2B", HF, ("groot", "sim2real"), True),
-    GatedAsset("nvidia/Cosmos-Reason2-8B", HF, ("sim2real",), True),
+    GatedAsset("nvidia/Cosmos-Reason2-2B", HF, ("groot",), True),
+    GatedAsset("nvidia/Cosmos-Reason2-8B", HF, ("cosmos",), True),
+    GatedAsset(
+        "nvidia/Cosmos3-Super-Reasoner",
+        TOKEN_FACTORY,
+        ("sim2real", "token_factory"),
+        False,
+        note=(
+            "Hosted OpenMDW-1.1 model; verify key/project availability and balance "
+            "through Token Factory, not Hugging Face."
+        ),
+    ),
     GatedAsset("nvidia/Cosmos-Reason1-7B", HF, ("cosmos",), False),
     GatedAsset("nvidia/Cosmos3-Nano", HF, ("cosmos3",), False),
     GatedAsset("nvidia/Cosmos-Guardrail1", HF, ("cosmos3",), True),

@@ -2480,9 +2480,30 @@ def _destroy_one_with_mocked_terraform(tmp_path, monkeypatch, *, destroy_fails: 
         },
     )
     calls: list[list[str]] = []
+    lock_active = False
+
+    class CacheLock:
+        def __enter__(self):
+            nonlocal lock_active
+            assert lock_active is False
+            lock_active = True
+
+        def __exit__(self, *_args):
+            nonlocal lock_active
+            lock_active = False
+
+    monkeypatch.setattr(
+        L._mk8s_execution,
+        "terraform_plugin_cache_lock",
+        lambda _env: CacheLock(),
+    )
 
     def fake_tf_run(args, **kwargs):
         calls.append(args)
+        if "init" in args:
+            assert lock_active is True
+        if "destroy" in args:
+            assert lock_active is False
         if destroy_fails and "destroy" in args:
             raise RuntimeError("terraform destroy failed")
 

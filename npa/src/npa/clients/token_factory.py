@@ -50,6 +50,16 @@ class TokenFactoryError(RuntimeError):
 
 
 @dataclass(frozen=True)
+class TokenFactoryAccessResult:
+    """Secret-free model availability and billable-inference preflight result."""
+
+    ok: bool
+    model: str
+    error: str = ""
+    request_id: str | None = None
+
+
+@dataclass(frozen=True)
 class TokenFactoryConfig:
     """Resolved connection settings for Nebius Token Factory."""
 
@@ -99,6 +109,33 @@ def resolve_config(
     return TokenFactoryConfig(base_url=resolved_base, api_key=resolved_key, timeout_s=timeout_s)
 
 
+def validate_model_access(api_key: str, model: str) -> TokenFactoryAccessResult:
+    """Verify key scope, model availability, and ability to execute inference."""
+
+    try:
+        client = TokenFactoryClient(resolve_config(api_key=api_key, environ={}))
+        if model not in client.list_models():
+            return TokenFactoryAccessResult(False, model, "model unavailable to this key")
+        response = client.chat_completion(
+            model=model,
+            messages=[
+                {
+                    "role": "user",
+                    "content": "Return the single JSON object {\"preflight\":true}.",
+                }
+            ],
+            temperature=0.0,
+            max_tokens=16,
+        )
+        if not response.get("choices"):
+            return TokenFactoryAccessResult(False, model, "inference returned no choice")
+        return TokenFactoryAccessResult(
+            True, model, request_id=str(response.get("id") or "") or None
+        )
+    except TokenFactoryError as exc:
+        return TokenFactoryAccessResult(False, model, str(exc))
+
+
 _THINK_RE = re.compile(r"\A\s*<think>(?P<reasoning>.*?)</think>\s*", re.DOTALL)
 
 
@@ -146,10 +183,17 @@ class TokenFactoryClient:
             raise ValueError("retry_attempts must be at least one")
         self._retry_attempts = retry_attempts
         self._sleeper = sleeper or time.sleep
+        self._last_request_metrics: dict[str, Any] = {}
 
     @property
     def config(self) -> TokenFactoryConfig:
         return self._config
+
+    @property
+    def last_request_metrics(self) -> dict[str, Any]:
+        """Return secret-free transport metrics for the most recent request."""
+
+        return dict(self._last_request_metrics)
 
     def chat_completion(
         self,
@@ -248,8 +292,12 @@ class TokenFactoryClient:
     def _request(self, method: str, url: str, *, json_body: dict[str, Any] | None = None) -> Any:
         owns_client = self._http_client is None
         client = self._http_client or httpx.Client(timeout=self._config.timeout_s)
+        started = time.perf_counter()
+        attempts = 0
+        self._last_request_metrics = {}
         try:
             for attempt in range(1, self._retry_attempts + 1):
+                attempts = attempt
                 try:
                     response = client.request(
                         method, url, headers=self._headers(), json=json_body
@@ -268,6 +316,12 @@ class TokenFactoryClient:
                     self._sleeper(float(2 ** (attempt - 1)))
                     continue
                 response.raise_for_status()
+                self._last_request_metrics = {
+                    "attempts": attempts,
+                    "retries": attempts - 1,
+                    "latency_seconds": round(time.perf_counter() - started, 6),
+                    "status_code": response.status_code,
+                }
                 return response.json()
             raise AssertionError("unreachable Token Factory retry loop")
         except httpx.HTTPStatusError as exc:
@@ -283,6 +337,13 @@ class TokenFactoryClient:
         except json.JSONDecodeError as exc:  # pragma: no cover - defensive
             raise TokenFactoryError("Token Factory returned non-JSON response") from exc
         finally:
+            if not self._last_request_metrics:
+                self._last_request_metrics = {
+                    "attempts": attempts,
+                    "retries": max(0, attempts - 1),
+                    "latency_seconds": round(time.perf_counter() - started, 6),
+                    "status_code": None,
+                }
             if owns_client:
                 client.close()
 

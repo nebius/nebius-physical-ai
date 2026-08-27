@@ -1501,6 +1501,12 @@ def resolve_project_storage(
             alias="" if read_only else str(project or ""),
             migrate_legacy=not read_only,
         )
+        # ``configure --no-provision`` retains exact-project storage as audit
+        # and cleanup evidence, but explicitly removes it from operational
+        # selection.  Do not fall through to that record, an older inline
+        # stanza, or ambient shared credentials after the user deselects it.
+        if record.get("storage_selected") is False:
+            return StorageConfig(checkpoint_bucket="", endpoint_url="")
         saved_storage = record.get("storage")
         if isinstance(saved_storage, dict):
             project_storage_credentials = saved_storage

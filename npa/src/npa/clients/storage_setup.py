@@ -126,11 +126,12 @@ class StorageSetupTransaction:
         project = f" --project {self.project_alias}" if self.project_alias else ""
         return f"npa provision-if-absent{project} --skip-k8s"
 
-    def begin(self) -> None:
+    def begin(self) -> bool:
         # An interrupted attempt owns its exact bucket name. Reconcile that
         # resource even if a later invocation proposes a different default;
         # creating the new name would orphan the first bucket and overwrite its
         # provenance. Unproven/legacy records are never adopted this way.
+        resuming_owned_bucket = False
         prior = storage_setup_record(self.project_id, path=self.credentials_path)
         prior_resources = prior.get("resources")
         prior_bucket = (
@@ -144,6 +145,7 @@ class StorageSetupTransaction:
             and str(prior_bucket.get("name", "")).strip()
         ):
             self.bucket_name = str(prior_bucket["name"]).strip()
+            resuming_owned_bucket = True
         self._update_record(
             {
                 "version": 1,
@@ -163,6 +165,7 @@ class StorageSetupTransaction:
             phase = str(self.operation.read().get("phase") or "")
             if phase != "mutating":
                 self.operation.transition("mutating")
+        return resuming_owned_bucket
 
     def record_created(self, kind: str, metadata: dict[str, str]) -> None:
         """Persist ownership before allowing the next fallible provider step."""
@@ -513,6 +516,7 @@ def provision_storage(
     convergence_sleep: Callable[[float], None] | None = None,
     convergence_random: Callable[[], float] | None = None,
     allow_editors_fallback: bool = False,
+    allow_existing_bucket: bool = True,
 ) -> tuple[dict[str, str], StorageProbeResult]:
     """Reconcile, validate and atomically commit first-run storage."""
 
@@ -572,7 +576,7 @@ def provision_storage(
         ) from exc
     context = operation_context(operation) if owns_operation else nullcontext(operation)
     with context:
-        transaction.begin()
+        resuming_owned_bucket = transaction.begin()
         try:
             identity_name_kwargs: dict[str, str] = {}
             if service_account_name != "lerobot-training":
@@ -589,6 +593,9 @@ def provision_storage(
             fallback_kwargs: dict[str, bool] = {}
             if fallback_enabled:
                 fallback_kwargs["allow_editors_fallback"] = True
+            bucket_reuse_kwargs: dict[str, bool] = {}
+            if not allow_existing_bucket and not resuming_owned_bucket:
+                bucket_reuse_kwargs["allow_existing_bucket"] = False
             bootstrap = cast(Callable[..., dict[str, str]], nebius.bootstrap_environment)
             credentials = bootstrap(
                 project_id,
@@ -599,6 +606,7 @@ def provision_storage(
                 bucket_storage_class=bucket_storage_class,
                 on_status=on_status,
                 on_resource_created=transaction.record_created,
+                **bucket_reuse_kwargs,
                 **fallback_kwargs,
                 **identity_name_kwargs,
             )

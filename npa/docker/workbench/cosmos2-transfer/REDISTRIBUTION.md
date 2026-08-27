@@ -65,6 +65,10 @@ The cross-stage environment copy assigns UID/GID 1000 directly. This preserves t
 non-root runtime ownership without a second copy-on-write layer containing the full
 dependency tree.
 
+The final image uses Ubuntu's packaged `/usr/bin/ffmpeg`. The executable bundled
+inside the `imageio-ffmpeg` wheel is deleted after the dependency tree is copied,
+and the build asserts that the Python wrapper resolves the system executable.
+
 `openssh-server` is present only for SkyPilot bootstrap compatibility. Its package
 post-install step generates random host keys, so the same build layer deletes every
 `/etc/ssh/ssh_host_*` file. SkyPilot generates ephemeral keys during live bootstrap;

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -487,6 +488,17 @@ def test_submit_workflow_honors_isolated_config_dir(monkeypatch, tmp_path) -> No
 
     assert captured_env["HOME"] == str(tmp_path / "isolated" / "home")
     assert captured_env["SKY_RUNTIME_DIR"] == str(tmp_path / "isolated" / "sky-runtime")
+    assert re.fullmatch(r"npa-[0-9a-f]{12}", captured_env["SKYPILOT_USER_ID"])
+
+
+def test_sky_environment_preserves_explicit_user_id(monkeypatch, tmp_path) -> None:
+    from npa.orchestration.skypilot.cleanup import sky_environment
+
+    monkeypatch.setenv("SKYPILOT_USER_ID", "operator-selected")
+
+    env = sky_environment(tmp_path / "isolated")
+
+    assert env["SKYPILOT_USER_ID"] == "operator-selected"
 
 
 def test_sky_environment_preserves_nebius_exec_auth_without_copying(

@@ -28,6 +28,18 @@ def test_cluster_terraform_defaults_all_gpu_pools_to_managed_driver_image() -> N
     assert "gpu_nodes_driverfull_image      = false" not in main_tf
 
 
+def test_cluster_terraform_wires_operator_filesystem_csi_repository() -> None:
+    cluster_dir = Path(__file__).resolve().parents[3] / "deploy" / "cluster"
+
+    assert (
+        "chart_repository                    = var.filesystem_csi_chart_repository"
+        in (cluster_dir / "main.tf").read_text()
+    )
+    assert 'variable "filesystem_csi_chart_repository"' in (
+        cluster_dir / "variables.tf"
+    ).read_text()
+
+
 runner = CliRunner()
 _REAL_WHOLE_PATH_PREFLIGHT = tf_mod._preflight_whole_path_capacity
 
@@ -249,6 +261,7 @@ def test_up_runs_terraform_writes_kubeconfig_and_validates(
                 "gpu_nodes_count = 2",
                 'gpu_nodes_preset = "8gpu-192vcpu-1744gb"',
                 "enable_filestore = true",
+                'filesystem_csi_chart_repository = "oci://charts.example.invalid/nebius"',
                 'subnet_id = "subnet-a"',
             ]
         )
@@ -801,6 +814,7 @@ def test_up_allows_duplicate_managed_by_terraform_state(
                 'region = "region-a"',
                 'cluster_name = "cluster-a"',
                 'existing_filestore = "computefilesystem-a"',
+                'filesystem_csi_chart_repository = "oci://charts.example.invalid/nebius"',
             ]
         )
         + "\n"
@@ -878,6 +892,7 @@ def test_up_stops_when_filestore_quota_is_too_small(
                 'region = "region-a"',
                 'cluster_name = "cluster-a"',
                 "enable_filestore = true",
+                'filesystem_csi_chart_repository = "oci://charts.example.invalid/nebius"',
                 "filestore_disk_size_gibibytes = 1024",
             ]
         )
@@ -910,6 +925,23 @@ def test_up_stops_when_filestore_quota_is_too_small(
     assert result.exit_code != 0
     assert "Shared filesystem quota is insufficient" in result.output
     assert _find_call(stream_calls, "terraform", "apply", "-auto-approve") is None
+
+
+@pytest.mark.parametrize(
+    "tfvars",
+    [
+        {"enable_filestore": True},
+        {"existing_filestore": "filesystem-a"},
+    ],
+)
+def test_filestore_preflight_requires_csi_repository(
+    tfvars: dict[str, object],
+) -> None:
+    with pytest.raises(
+        tf_mod.typer.BadParameter,
+        match="filesystem_csi_chart_repository",
+    ):
+        tf_mod._preflight_filestore_quota("nebius", tfvars, {})
 
 
 def test_up_skips_filestore_quota_when_disabled_by_default(

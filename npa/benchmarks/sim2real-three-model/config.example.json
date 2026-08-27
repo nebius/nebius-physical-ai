@@ -1,0 +1,44 @@
+{
+  "model": "MODEL_REPOSITORY",
+  "revision": "IMMUTABLE_MODEL_REVISION",
+  "served_model_name": "benchmark-model",
+  "endpoint": "http://127.0.0.1:8000/v1",
+  "api_key": "benchmark-local",
+  "workspace": "/path/to/detached-origin-main-workspace",
+  "evidence_dir": "/restricted/external/evidence/trial-name",
+  "private_root": "/restricted/external/evidence",
+  "controller_repo_root": "/path/to/prepared-controller-repository",
+  "origin_main_commit": "ORIGIN_MAIN_COMMIT",
+  "seed": 20260820,
+  "system_prompt_file": "npa/benchmarks/sim2real-three-model/system-prompt.txt",
+  "artifact_root": "benchmark-artifacts",
+  "completion_mode": "strict_grasp",
+  "prepared_action": null,
+  "minimum_lift_m": 0.05,
+  "minimum_hold_seconds": 2.0,
+  "rerun_bin": "/path/to/npa/.venv/bin/rerun",
+  "stream_safeguards": {
+    "idle_timeout_seconds": 180,
+    "no_tool_progress_seconds": 900,
+    "no_tool_progress_characters": 65536,
+    "tool_assembly_seconds": 300,
+    "tool_assembly_characters": 65536,
+    "max_identical_malformed_responses": 3
+  },
+  "serving": {
+    "engine": "sglang-or-vllm",
+    "image": "IMAGE_REFERENCE_AT_IMMUTABLE_DIGEST",
+    "quantization": "MODEL_SPECIFIC_QUANTIZATION",
+    "context_limit": 0,
+    "tensor_parallel_size": 0,
+    "pipeline_parallel_size": 1,
+    "tool_call_parser": "MODEL_SPECIFIC_PARSER",
+    "reasoning_parser": null,
+    "arguments": []
+  },
+  "environment": {
+    "NPA_PROJECT": "PRIVATE_PROJECT_ALIAS",
+    "NPA_BENCHMARK_TRIAL": "UNIQUE_TRIAL_ROLE",
+    "SKYPILOT_API_SERVER_ENDPOINT": "http://127.0.0.1:PRIVATE_PORT"
+  }
+}

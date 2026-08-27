@@ -12,9 +12,11 @@ workflows, and operational runbooks.
 | [container-packaging.md](container-packaging.md) | Container packaging tiers, security baseline, and feature exposure contract |
 | [model-weight-cache.md](model-weight-cache.md) | Durable cache for model weights and reviewed SDKs the public images do not bake, so a second run is a cache hit |
 | [cosmos3-b200-checkpoint-evaluation-20260814.md](cosmos3-b200-checkpoint-evaluation-20260814.md) | Reserved-B200, 72-image Cosmos3 checkpoint evaluation and three-seed investment decision |
+| [cosmos3-ray-serve.md](cosmos3-ray-serve.md) | Persistent Cosmos3-Nano serving through native Ray Serve batching with durable S3 outputs |
 | [leisaac-teleoperation.md](leisaac-teleoperation.md) | Capability-gated LeIsaac agent tab, RT-core launch, keyboard teleoperation, and cleanup |
 | [../architecture/oss-onboarding-ladder.md](../architecture/oss-onboarding-ladder.md) | OSS → BYOF → workflow → first-class tool promotion ladder |
 | [npa-workflow-tool-catalog.md](npa-workflow-tool-catalog.md) | `toolRef` catalog for declarative `npa.workflow` specs |
+| [agent-workflow-operations.md](agent-workflow-operations.md) | Provider-neutral, bounded NPA operations for agents authoring and running Workbench workflows |
 | [kubernetes.md](kubernetes.md) | User setup and operational checklist for running Workbench services and SkyPilot workflows on Kubernetes |
 | [mk8s-gpu-driver-strategy.md](mk8s-gpu-driver-strategy.md) | Managed GPU driver modes, fail-closed post-deploy health validation, recipe compatibility, and existing-pool migration |
 | [../../npa/workflows/workbench/npa-workflows/README.md](../../npa/workflows/workbench/npa-workflows/README.md) | **Workflow catalog** — find the right `npa.workflow` spec by what you want to do |
@@ -46,5 +48,6 @@ workflows, and operational runbooks.
 | Customer running the first H100 sim-to-real proof | [guides/sim2real-workflow.md](guides/sim2real-workflow.md) |
 | Operator reproducing a workload | [cookbooks/README.md](cookbooks/README.md) |
 | SDK integrator or agent author | [../sdk/errors.md](../sdk/errors.md) |
+| Automation agent operating a workflow | [agent-workflow-operations.md](agent-workflow-operations.md) |
 | Internal engineer triaging a failure | [../cli-errors.md](../cli-errors.md) |
 | Operator running e2e tests | [../testing/e2e-serverless.md](../testing/e2e-serverless.md) |

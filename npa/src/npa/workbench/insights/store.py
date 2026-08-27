@@ -54,7 +54,8 @@ WORKFLOW_RUN_SCHEMA = "npa.workflow.run.v1"
 REPORT_PROFILES: dict[str, tuple[str, str]] = {
     "npa.rl_sweep.variant_metrics.v1": ("isaac_lab", "sweep-train"),
     "npa.sim2real.heldout_eval.v1": ("sim2real", "eval"),
-    "npa.sim2real.vlm_eval.v1": ("vlm_eval", "eval"),
+    "npa.sim2real.vlm_eval.v1": ("vlm_eval", "eval"),  # archived artifacts
+    "npa.sim2real.vlm_eval.v2": ("vlm_eval", "eval"),
     "npa.rl.eval_report.v1": ("rl", "eval"),
     "npa.workbench.vlm_eval.report.v1": ("vlm_eval", "eval"),
     "npa.workbench.vlm_eval.benchmark.v1": ("vlm_eval", "benchmark"),

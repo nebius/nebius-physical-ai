@@ -1,0 +1,36 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+metadata:
+  name: cosmos3-ray-batch
+  description: >-
+    Submit a prepared SDG batch to an already-running Cosmos3-Nano native Ray
+    Serve deployment, then persist request, structured Cosmos outputs, generated
+    media, hashes, and provenance through S3.
+
+config:
+  bucket: example-bucket
+  prefix: "runs/{{run.id}}/cosmos3-ray-batch"
+  input_uri: "s3://{{config.bucket}}/{{config.prefix}}/inputs/batch.json"
+  output_uri: "s3://{{config.bucket}}/{{config.prefix}}/outputs/"
+  ray_endpoint: "http://npa-cosmos3-ray-serve.workbench.svc.cluster.local:8000"
+  ray_token_env: NPA_COSMOS3_RAY_TOKEN
+  request_timeout: "1800"
+
+resources:
+  client:
+    cloud: kubernetes
+    cpus: 2
+    memory: 4Gi
+
+initial: submit_batch
+
+states:
+  submit_batch:
+    description: Exercise native Ray batching and publish the durable result record.
+    toolRef: workbench.cosmos3.ray_batch
+    resources: client
+    outputs:
+      - uri: "{{config.output_uri}}provenance.json"
+        schema: npa.cosmos3.ray-serve.provenance.v1
+    terminal: true

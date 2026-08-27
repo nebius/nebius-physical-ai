@@ -28,18 +28,23 @@ RUN /usr/local/bin/install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}" \
     && find /opt/npa/src /opt/npa/workflows -type d -exec chmod a+rx {} + \
     && find /opt/npa/src /opt/npa/workflows -type f -exec chmod a+r {} + \
     && chmod a+r /opt/npa/pyproject.toml \
-    && python -m pip uninstall -y transformers imageio-ffmpeg \
+    && python -m pip uninstall -y npa transformers imageio-ffmpeg \
     && python -m pip install --no-deps \
       'imageio-ffmpeg @ https://files.pythonhosted.org/packages/44/bd/c3343c721f2a1b0c9fc71c1aebf1966a3b7f08c2eea8ed5437a2865611d6/imageio_ffmpeg-0.6.0.tar.gz#sha256=e2556bed8e005564a9f925bb7afa4002d82770d6b08825078b7697ab88ba1755' \
     && python -m pip install --no-deps \
       -r /opt/npa/sim2real-control-requirements.txt \
       -r /opt/npa/sim2real-genesis-requirements.txt \
-    && python -m pip check \
+    && find /opt/npa/venv -type f \
+      -path '*/imageio_ffmpeg/binaries/ffmpeg*' -delete \
+    && test -z "$(find /opt/npa/venv -type f \
+      -path '*/imageio_ffmpeg/binaries/ffmpeg*' -print -quit)" \
     && IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg python -c \
       'import imageio_ffmpeg; assert imageio_ffmpeg.get_ffmpeg_exe() == "/usr/bin/ffmpeg"' \
-    && test -z "$(find /opt/npa/venv -type f -path '*/imageio_ffmpeg/binaries/ffmpeg*' -print -quit)" \
+    && python -m pip check \
+    && python -c "import site; from pathlib import Path; Path(site.getsitepackages()[0], 'npa-exact-source.pth').write_text('/opt/npa/src\\n', encoding='utf-8')" \
+    && env -u PYTHONPATH /opt/npa/venv/bin/python -c \
+      'import boto3; from npa.workflows.sim2real.workflow_stage import main; assert callable(main)' \
     && python -c 'import importlib.metadata as m; assert not any(d.metadata["Name"].lower() == "transformers" for d in m.distributions())' \
-    && python -m pip install --no-deps -e /opt/npa \
     && python -m py_compile /opt/npa/src/npa/workflows/sim2real_envgen.py
 
 # Flatten the sanitized filesystem so the published image does not reference
@@ -82,8 +87,9 @@ ENV PATH=/opt/npa/venv/bin:/usr/local/cuda/bin:/usr/local/nvidia/bin:/usr/local/
     PYOPENGL_PLATFORM=egl \
     EGL_PLATFORM=device \
     NPA_GENESIS_HOME=/opt/genesis \
-    IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg \
     NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA} \
+    NPA_BAKED_PYTHON=/opt/npa/venv/bin/python \
+    IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg \
     PYTHONPATH=/opt/npa/src
 
 WORKDIR /opt/npa

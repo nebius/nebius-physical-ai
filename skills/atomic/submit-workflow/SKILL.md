@@ -65,6 +65,24 @@ successful `npa skypilot verify --cluster <exact-context>`:
   immutable ID, retry only after authoritative absence plus a classified
   transport/API warm-up failure, or fail closed as indeterminate. Never bypass
   this with raw `sky jobs launch`, retry by name, or cancel by name.
+- **An isolated SkyPilot state directory has its own stable controller user
+  identity.** Reuse the same directory when resuming a run; a different isolated
+  directory intentionally selects a different controller namespace. An explicit
+  `SKYPILOT_USER_ID` still takes precedence.
+- **A baked workflow image validates the module it actually executes.** Set
+  `config.baked_npa_import` to that dotted module when `require_baked_npa` is
+  enabled; otherwise the backward-compatible probe is `npa.cli.main`. This keeps
+  source attestation strict without requiring narrow stage images to install the
+  unrelated full CLI dependency closure.
+- **Baked Kubernetes tasks get writable bootstrap caches.** NPA supplies
+  pod-local `XDG_CACHE_HOME` and `UV_CACHE_DIR` defaults under `/tmp` so a
+  read-only image-owned model cache cannot break SkyPilot's setup probe. Explicit
+  workflow environment values still take precedence; model/checkpoint caches and
+  mounted durable volumes are not redirected.
+- **Explicit workload retries apply after exact resume reconciliation too.** If an
+  adopted in-flight job is proven terminal, `--retries` advances through the same
+  durable terminal-retry path and assigns a new attempt identity. With no explicit
+  retries, the terminal outcome remains preserved and no duplicate is launched.
 - Transaction recovery uses capped exponential jitter and a 180-second recovery
   deadline. This is product behavior, not an operator job/time budget. A
   recovered launch proceeds in the same command; use `--resume-run <same-id>`
@@ -115,6 +133,11 @@ successful `npa skypilot verify --cluster <exact-context>`:
   pull with the credentials it injects and refuses to launch on a `403`; run it
   standalone with `npa workbench workflow preflight-images <spec.yaml>`, or skip
   with `--no-preflight-images`.
+- **A large authenticated cold pull is not an access failure.** Bootstrap probes
+  default to a 30-minute observation window. Use
+  `--image-bootstrap-timeout-seconds 0` for no deadline while warming large
+  images; digest, authentication, attestation, capability, exact ownership, and
+  verified cleanup gates remain mandatory.
 - **A silent 15-minute submit is usually the kubernetes client.** SkyPilot 0.12.2
   does not cap the client version, and client 36+ makes every `pod_config` fail
   validation, so the managed-jobs controller retries forever. `npa skypilot

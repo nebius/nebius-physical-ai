@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
+import fcntl
 import os
 from pathlib import Path
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import threading
@@ -22,6 +26,46 @@ class BackendCommandError(RuntimeError):
         self.stdout = _redact(stdout)
         self.stderr = _redact(stderr)
         super().__init__(message)
+
+
+@contextmanager
+def terraform_plugin_cache_lock(env: dict[str, str]) -> Iterator[None]:
+    """Serialize Terraform init operations which share a provider cache.
+
+    Terraform's plugin cache is not concurrency safe. Even after a cache has
+    been pre-warmed, ``terraform init`` may rewrite a cached package while
+    computing its dependency-lock checksum. A second concurrent init can then
+    record a checksum for the transient package and fail at apply time. Use a
+    sibling lock file so Terraform never sees it as cache content, and use an
+    OS lock so separate NPA processes are serialized as well as local threads.
+    """
+
+    configured = env.get("TF_PLUGIN_CACHE_DIR", "").strip()
+    if not configured:
+        yield
+        return
+    cache_dir = Path(configured).expanduser()
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    lock_name = cache_dir.name
+    if not lock_name.startswith("."):
+        lock_name = f".{lock_name}"
+    lock_path = cache_dir.parent / f"{lock_name}.npa-init.lock"
+    flags = os.O_CREAT | os.O_RDWR | os.O_CLOEXEC | os.O_NOFOLLOW
+    descriptor = os.open(lock_path, flags, 0o600)
+    try:
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+            raise BackendCommandError(
+                f"Unsafe Terraform plugin cache lock target: {lock_path}"
+            )
+        os.fchmod(descriptor, 0o600)
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+    finally:
+        os.close(descriptor)
 
 
 def _sensitive_values(env: dict[str, str] | None) -> tuple[str, ...]:

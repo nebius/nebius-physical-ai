@@ -35,6 +35,8 @@ app = typer.Typer(
 console = Console(stderr=True)
 logger = logging.getLogger(__name__)
 _PLACEHOLDER_RE = re.compile(r"\$\{([^}]+)\}")
+DEFAULT_LOG_OUTPUT_CHARS = 32_768
+MAX_LOG_OUTPUT_CHARS = 262_144
 
 
 class OutputFormat(str, Enum):
@@ -52,6 +54,64 @@ class ControllerBackendOption(str, Enum):
     nebius = "nebius"
 
 
+def _bounded_log_text(text: str, max_output_chars: int) -> tuple[str, dict[str, object]]:
+    """Return the diagnostic tail and a machine-readable truncation contract."""
+
+    if not 1 <= max_output_chars <= MAX_LOG_OUTPUT_CHARS:
+        raise ValueError(
+            f"--max-output-chars must be between 1 and {MAX_LOG_OUTPUT_CHARS}"
+        )
+    value = str(text or "")
+    total = len(value)
+    bounded = value if total <= max_output_chars else value[-max_output_chars:]
+    return bounded, {
+        "log_truncated": total > max_output_chars,
+        "log_chars_total": total,
+        "log_chars_returned": len(bounded),
+        "log_output_limit": max_output_chars,
+    }
+
+
+def _bounded_log_streams(
+    stdout: str, stderr: str, max_output_chars: int
+) -> tuple[str, str, dict[str, object]]:
+    """Bound two log streams together while retaining each diagnostic tail."""
+
+    combined = f"{stdout or ''}{stderr or ''}"
+    _, metadata = _bounded_log_text(combined, max_output_chars)
+    if not metadata["log_truncated"]:
+        return str(stdout or ""), str(stderr or ""), metadata
+
+    stdout_value = str(stdout or "")
+    stderr_value = str(stderr or "")
+    stderr_budget = min(
+        len(stderr_value), max_output_chars // 2 if stdout_value else max_output_chars
+    )
+    stdout_budget = min(len(stdout_value), max_output_chars - stderr_budget)
+    remaining = max_output_chars - stdout_budget - stderr_budget
+    if remaining:
+        extra_stderr = min(len(stderr_value) - stderr_budget, remaining)
+        stderr_budget += extra_stderr
+        remaining -= extra_stderr
+    if remaining:
+        stdout_budget += min(len(stdout_value) - stdout_budget, remaining)
+
+    bounded_stdout = stdout_value[-stdout_budget:] if stdout_budget else ""
+    bounded_stderr = stderr_value[-stderr_budget:] if stderr_budget else ""
+    metadata["log_chars_returned"] = len(bounded_stdout) + len(bounded_stderr)
+    return bounded_stdout, bounded_stderr, metadata
+
+
+def _emit_log_truncation(metadata: Mapping[str, object]) -> None:
+    if metadata.get("log_truncated"):
+        typer.echo(
+            "npa_log_truncated: true "
+            f"(returned {metadata['log_chars_returned']} of "
+            f"{metadata['log_chars_total']} chars)",
+            err=True,
+        )
+
+
 def _fail(msg: str, code: int = 1) -> None:
     # Operational recovery commands and status phrases must remain copyable and
     # machine-observable even when Rich detects a narrow non-interactive console.
@@ -63,6 +123,25 @@ def _fail(msg: str, code: int = 1) -> None:
     error.append(str(msg))
     console.print(error, soft_wrap=True)
     raise typer.Exit(code)
+
+
+def _emit_image_bootstrap_observing_progress(
+    *, digest: str, timeout_seconds: int
+) -> None:
+    """Report that an immutable image capability probe is being observed."""
+
+    typer.echo(
+        json.dumps(
+            {
+                "apiVersion": "npa.image-bootstrap-progress/v1",
+                "digest": digest,
+                "state": "observing",
+                "timeout_seconds": timeout_seconds,
+            },
+            sort_keys=True,
+        ),
+        err=True,
+    )
 
 
 @app.command("prepare-run")
@@ -191,6 +270,14 @@ def submit_cmd(
             "${KEY}; for npa.workflow specs this merges into config."
         ),
     ),
+    preset: str = typer.Option(
+        "",
+        "--preset",
+        help=(
+            "Explicit shipped workflow seed/config preset. Preset-owned dataset, "
+            "task, and trigger keys cannot be replaced with --var."
+        ),
+    ),
     assume_decision: str = typer.Option(
         "",
         "--assume-decision",
@@ -293,6 +380,15 @@ def submit_cmd(
             "For npa.workflow specs: reproduce each step's image pull with this run's "
             "own registry credentials before submitting, so a 403 fails here instead of "
             "leaving workers in ImagePullBackOff."
+        ),
+    ),
+    image_bootstrap_timeout_seconds: int = typer.Option(
+        1800,
+        "--image-bootstrap-timeout-seconds",
+        min=0,
+        help=(
+            "Seconds to observe each digest-bound image capability probe; "
+            "0 waits without a deadline for large cold pulls."
         ),
     ),
     resolve_accelerators: bool = typer.Option(
@@ -577,11 +673,21 @@ def submit_cmd(
         _fail(str(exc))
         return
     is_npa_spec = is_npa_workflow_spec(yaml_path)
+    if preset and not is_npa_spec:
+        _fail("--preset is supported only for npa.workflow/v0.0.1 specs")
+        return
     merged_npa_spec = None
     if is_npa_spec:
+        from npa.orchestration.npa_workflow.presets import preset_overrides
+        from npa.orchestration.npa_workflow.spec import load_spec
         from npa.orchestration.npa_workflow.submit import load_spec_for_submit
 
         try:
+            substitutions = preset_overrides(
+                workflow_name=load_spec(yaml_path).name,
+                preset=preset,
+                explicit=substitutions,
+            )
             # This is the authoritative spec for every later preflight.  It is
             # intentionally loaded before credentials, images, ledgers, input
             # staging, provisioning, or accelerator discovery.
@@ -1031,6 +1137,7 @@ def submit_cmd(
                 )
             if not plan_only and workflow_identity == "sim2real":
                 from npa.clients.huggingface import validate_hf_access
+                from npa.clients.token_factory import validate_model_access
                 from npa.clients.kube import run_kubectl
                 from npa.orchestration.npa_workflow.sim2real_preflight import (
                     kubernetes_prerequisites,
@@ -1043,6 +1150,7 @@ def submit_cmd(
                         requested_secret_envs=secret_env,
                         secret_values=extra_env,
                         hf_validator=validate_hf_access,
+                        token_factory_validator=validate_model_access,
                     )
                 )
                 kubeconfig = os.environ.get("KUBECONFIG", "")
@@ -1059,6 +1167,10 @@ def submit_cmd(
                     kubernetes_prerequisites(
                         spec_config,
                         runner=_run_sim2real_kubectl,
+                        namespace=(
+                            os.environ.get("NPA_SIM2REAL_K8S_NAMESPACE", "").strip()
+                            or "default"
+                        ),
                     )
                 )
             if missing:
@@ -1125,6 +1237,7 @@ def submit_cmd(
             assume_decision=assume_decision,
             enabled=preflight_images and not plan_only,
             infra=infra,
+            image_bootstrap_timeout_seconds=image_bootstrap_timeout_seconds,
         )
 
         # Provision/adopt the exact submission target before any writable-S3
@@ -2475,6 +2588,7 @@ def _preflight_submit_images(
     assume_decision: str,
     enabled: bool,
     infra: str = "",
+    image_bootstrap_timeout_seconds: int = 1800,
 ) -> dict[str, str]:
     """Fail before the run starts when a step's image cannot actually be pulled.
 
@@ -2543,6 +2657,7 @@ def _preflight_submit_images(
         pull_checks=checks,
         context=context_from_infra(infra),
         pull_secrets_by_image=pull_secrets_by_image,
+        observation_timeout_seconds=image_bootstrap_timeout_seconds,
     )
     typer.echo(
         f"image-preflight: {len(checks)} image(s) pullable and bootstrap-compatible",
@@ -2560,6 +2675,7 @@ def _preflight_image_bootstrap_contracts(
     pull_checks: Sequence[object],
     context: str,
     pull_secrets_by_image: Mapping[str, tuple[str, ...]] | None = None,
+    observation_timeout_seconds: int = 1800,
 ) -> list[dict[str, object]]:
     """Verify each selected digest, never a mutable tag, against one contract."""
 
@@ -2580,6 +2696,8 @@ def _preflight_image_bootstrap_contracts(
     from npa.deploy.images import requires_skypilot_bootstrap_runtime_probe
 
     check_by_image = {str(getattr(item, "image", "")): item for item in pull_checks}
+    if observation_timeout_seconds < 0:
+        _fail("image bootstrap observation timeout must be zero or greater")
     cache_path = Path.home() / ".npa" / "cache" / "sky-image-bootstrap.json"
     results: list[dict[str, object]] = []
     for image in dict.fromkeys(
@@ -2611,11 +2729,19 @@ def _preflight_image_bootstrap_contracts(
                     # does not implement the full contract, so the label cannot
                     # establish provenance. Probe the selected immutable bytes and
                     # ignore stale label-backed cache entries for the same digest.
+                    _emit_image_bootstrap_observing_progress(
+                        digest=digest,
+                        timeout_seconds=observation_timeout_seconds,
+                    )
                     evidence = probe_image_capabilities(
                         image=image,
                         digest=digest,
                         context=context,
                         kubeconfig=str(os.environ.get("KUBECONFIG") or ""),
+                        image_pull_secrets=tuple(
+                            (pull_secrets_by_image or {}).get(image, ())
+                        ),
+                        observation_timeout_seconds=observation_timeout_seconds,
                     )
                 elif attested.ok:
                     evidence = attested
@@ -2627,6 +2753,10 @@ def _preflight_image_bootstrap_contracts(
                     # to substitute a runtime probe for that build contract.
                     evidence = attested
                 else:
+                    _emit_image_bootstrap_observing_progress(
+                        digest=digest,
+                        timeout_seconds=observation_timeout_seconds,
+                    )
                     evidence = probe_image_capabilities(
                         image=image,
                         digest=digest,
@@ -2635,6 +2765,7 @@ def _preflight_image_bootstrap_contracts(
                         image_pull_secrets=tuple(
                             (pull_secrets_by_image or {}).get(image, ())
                         ),
+                        observation_timeout_seconds=observation_timeout_seconds,
                     )
                 store_cached_evidence(cache_path, evidence)
         except (ImageBootstrapContractError, RuntimeError, OSError, ValueError) as exc:
@@ -2646,6 +2777,19 @@ def _preflight_image_bootstrap_contracts(
             _fail(
                 f"image bootstrap contract {CONTRACT_VERSION} failed for "
                 f"{evidence.image}: {evidence.detail or evidence.state}"
+            )
+        if evidence.source == "ephemeral_capability_probe":
+            typer.echo(
+                json.dumps(
+                    {
+                        "apiVersion": "npa.image-bootstrap-progress/v1",
+                        "cleanup": evidence.cleanup,
+                        "digest": evidence.digest,
+                        "state": "compatible",
+                    },
+                    sort_keys=True,
+                ),
+                err=True,
             )
         results.append(evidence.to_dict())
     return results
@@ -4962,8 +5106,18 @@ def logs_cmd(
     json_output: bool = typer.Option(
         False, "--json", help="Emit the log-source contract as JSON."
     ),
+    max_output_chars: int = typer.Option(
+        DEFAULT_LOG_OUTPUT_CHARS,
+        "--max-output-chars",
+        min=1,
+        max=MAX_LOG_OUTPUT_CHARS,
+        help=(
+            "Maximum redacted log characters returned. The diagnostic tail is kept "
+            "when truncation is required."
+        ),
+    ),
 ) -> None:
-    """Show logs for a specific stage of a workflow run."""
+    """Show a bounded log tail for a specific stage of a workflow run."""
     selected_stage = stage_option or stage or ""
     try:
         from npa.orchestration.npa_workflow.run_resolution import validate_run_id
@@ -5031,13 +5185,34 @@ def logs_cmd(
                 )
                 safe_stdout = redact_text(live.stdout)
                 safe_stderr = redact_text(live.stderr)
+                safe_stdout, safe_stderr, log_metadata = _bounded_log_streams(
+                    safe_stdout, safe_stderr, max_output_chars
+                )
                 if safe_stdout and not json_output:
                     typer.echo(safe_stdout, nl=False)
                 if safe_stderr and not json_output:
                     typer.echo(safe_stderr, err=True, nl=False)
+                if not json_output:
+                    _emit_log_truncation(log_metadata)
                 if live.returncode != 0:
                     raise RuntimeError(
                         "run found with manifest pending, but SkyPilot logs are unavailable"
+                    )
+                if json_output:
+                    typer.echo(
+                        json.dumps(
+                            {
+                                "run_id": resolution.run_id,
+                                "stage": selected_stage,
+                                "manifest_state": "pending",
+                                "live_log_state": "available",
+                                "log": safe_stdout,
+                                "stderr": safe_stderr,
+                                **log_metadata,
+                            },
+                            indent=2,
+                            sort_keys=True,
+                        )
                     )
                 return
             assert state is not None
@@ -5058,18 +5233,27 @@ def logs_cmd(
                     for wave in resolution.runtime_state.get("waves") or []:
                         if not isinstance(wave, dict):
                             continue
-                        for state_name in wave.get("states") or []:
-                            runtime_stages.append(
-                                {
-                                    "stage": str(state_name),
-                                    "attempt": int(wave.get("attempt") or 1),
-                                    "managed_job_id": str(wave.get("job_id") or ""),
-                                    "logical_state": str(
-                                        wave.get("status") or "unknown"
-                                    ),
-                                    "provenance": "legacy_runtime_wave_reconstruction",
-                                }
-                            )
+                        wave_states = list(wave.get("states") or [])
+                        wave_tasks = [
+                            item
+                            for item in wave.get("tasks") or []
+                            if isinstance(item, dict)
+                        ]
+                        for index, state_name in enumerate(wave_states):
+                            reconstructed = {
+                                "stage": str(state_name),
+                                "attempt": int(wave.get("attempt") or 1),
+                                "managed_job_id": str(wave.get("job_id") or ""),
+                                "logical_state": str(
+                                    wave.get("status") or "unknown"
+                                ),
+                                "provenance": "legacy_runtime_wave_reconstruction",
+                            }
+                            if len(wave_tasks) == len(wave_states):
+                                task_id = wave_tasks[index].get("task_id")
+                                if task_id is not None:
+                                    reconstructed["sky_task_id"] = str(task_id)
+                            runtime_stages.append(reconstructed)
                 available = list(
                     dict.fromkeys(
                         [str(item.get("state") or "") for item in steps]
@@ -5101,6 +5285,36 @@ def logs_cmd(
                 stage_attempts.sort(key=lambda item: int(item.get("attempt") or 1))
                 selected_attempt = stage_attempts[-1] if stage_attempts else {}
                 job_id = str(selected_attempt.get("managed_job_id") or "")
+                if selected_attempt.get("sky_task_id") in (None, ""):
+                    matching_waves = [
+                        wave
+                        for wave in resolution.runtime_state.get("waves") or []
+                        if isinstance(wave, dict)
+                        and selected_stage in list(wave.get("states") or [])
+                        and (
+                            not job_id
+                            or str(wave.get("job_id") or "") == job_id
+                        )
+                    ]
+                    matching_waves.sort(
+                        key=lambda wave: int(wave.get("attempt") or 1)
+                    )
+                    if matching_waves:
+                        selected_wave = matching_waves[-1]
+                        wave_states = list(selected_wave.get("states") or [])
+                        wave_tasks = [
+                            item
+                            for item in selected_wave.get("tasks") or []
+                            if isinstance(item, dict)
+                        ]
+                        if len(wave_states) == len(wave_tasks):
+                            index = wave_states.index(selected_stage)
+                            task_id = wave_tasks[index].get("task_id")
+                            if task_id is not None:
+                                selected_attempt = {
+                                    **selected_attempt,
+                                    "sky_task_id": str(task_id),
+                                }
                 if not job_id and not resolution.runtime_state.get("waves"):
                     # Root job IDs are compatible only for the historical one-job
                     # manifest contract. Never broadcast one ID across runtime waves.
@@ -5150,9 +5364,12 @@ def logs_cmd(
                 if cached:
                     cached_text = ""
                     try:
-                        cached_text = read_stage_log(state, selected_stage)
+                        cached_text = redact_text(read_stage_log(state, selected_stage))
                     except Exception:  # noqa: BLE001 - reported through the source contract
                         cached_text = ""
+                    cached_text, log_metadata = _bounded_log_text(
+                        cached_text, max_output_chars
+                    )
                     source_payload = apply_verification(
                         source_payload,
                         status=CACHED,
@@ -5167,6 +5384,7 @@ def logs_cmd(
                         "available" if cached_text else "unavailable"
                     )
                     source_payload["log"] = cached_text
+                    source_payload.update(log_metadata)
                     if json_output:
                         typer.echo(json.dumps(source_payload, indent=2, sort_keys=True))
                     else:
@@ -5179,6 +5397,7 @@ def logs_cmd(
                         )
                         if cached_text:
                             typer.echo(cached_text, nl=False)
+                        _emit_log_truncation(log_metadata)
                     return
                 if not job_id:
                     reason = (
@@ -5211,19 +5430,30 @@ def logs_cmd(
                         typer.echo(f"cause: {reason}")
                         typer.echo(f"retry: {live_verification['retry_command']}")
                     raise typer.Exit(code=2)
+                sky_task_id = selected_attempt.get("sky_task_id")
+                live_stage = (
+                    str(sky_task_id)
+                    if sky_task_id is not None and str(sky_task_id) != ""
+                    else selected_stage
+                )
                 live = tail_live_job_logs(
                     sky_bin=_resolve_sky_bin(sky_bin),
                     job_id=job_id,
-                    stage=selected_stage,
+                    stage=live_stage,
                     follow=follow,
                     timeout=86400 if follow else 300,
                 )
                 safe_stdout = redact_text(live.stdout)
                 safe_stderr = redact_text(live.stderr)
+                safe_stdout, safe_stderr, log_metadata = _bounded_log_streams(
+                    safe_stdout, safe_stderr, max_output_chars
+                )
                 if safe_stdout and not json_output:
                     typer.echo(safe_stdout, nl=False)
                 if safe_stderr and not json_output:
                     typer.echo(safe_stderr, err=True, nl=False)
+                if not json_output:
+                    _emit_log_truncation(log_metadata)
                 if live.returncode != 0:
                     from npa.verification import (
                         classify_verification_failure,
@@ -5273,7 +5503,12 @@ def logs_cmd(
                         retry_command=log_retry,
                     )
                     source_payload.update(
-                        {"live_log_state": "available", "log": safe_stdout}
+                        {
+                            "live_log_state": "available",
+                            "log": safe_stdout,
+                            "stderr": safe_stderr,
+                            **log_metadata,
+                        }
                     )
                     typer.echo(json.dumps(source_payload, indent=2, sort_keys=True))
                 elif live.stdout:
@@ -5292,13 +5527,21 @@ def logs_cmd(
                 )
                 safe_stdout = redact_text(live.stdout)
                 safe_stderr = redact_text(live.stderr)
+                safe_stdout, safe_stderr, log_metadata = _bounded_log_streams(
+                    safe_stdout, safe_stderr, max_output_chars
+                )
                 if safe_stdout:
                     typer.echo(safe_stdout, nl=False)
                 if safe_stderr:
                     typer.echo(safe_stderr, err=True, nl=False)
+                _emit_log_truncation(log_metadata)
                 if live.returncode == 0:
                     return
-            typer.echo(read_stage_log(state, selected_stage), nl=False)
+            cached_text, log_metadata = _bounded_log_text(
+                redact_text(read_stage_log(state, selected_stage)), max_output_chars
+            )
+            typer.echo(cached_text, nl=False)
+            _emit_log_truncation(log_metadata)
             return
         except typer.Exit:
             raise
@@ -5318,7 +5561,13 @@ def logs_cmd(
         _fail(str(exc))
         return
 
-    typer.echo(logs)
+    from npa.orchestration.skypilot.workflow_state import redact_text
+
+    bounded_logs, log_metadata = _bounded_log_text(
+        redact_text(logs), max_output_chars
+    )
+    typer.echo(bounded_logs)
+    _emit_log_truncation(log_metadata)
 
 
 @app.command("artifacts")
@@ -6162,16 +6411,35 @@ def validate_spec_cmd(
         help="NPA workflow spec (apiVersion: npa.workflow/v0.0.1)."
     ),
     json_output: bool = typer.Option(False, "--json", help="Emit JSON result."),
+    preset: str = typer.Option(
+        "", "--preset", help="Explicit shipped workflow seed/config preset."
+    ),
 ) -> None:
     """Validate an NPA workflow specification file."""
 
+    from npa.orchestration.npa_workflow.presets import preset_overrides
+    from npa.orchestration.npa_workflow.submit import merge_config_overrides
+
     spec = _load_npa_workflow(yaml_path)
+    try:
+        spec = merge_config_overrides(
+            spec,
+            preset_overrides(workflow_name=spec.name, preset=preset),
+        )
+    except Exception as exc:
+        _fail(str(exc))
+        return
     payload = {
         "status": "valid",
         "apiVersion": spec.api_version,
         "name": spec.name,
         "states": sorted(spec.states),
         "initial": spec.initial,
+        "preset": str(spec.config.get("workflow_preset") or ""),
+        "dataset_id": str(spec.config.get("dataset_id") or ""),
+        "task_id": str(spec.config.get("task_id") or ""),
+        "trigger_uri": str(spec.config.get("trigger_uri") or ""),
+        "seed_manifest_uri": str(spec.config.get("seed_manifest_uri") or ""),
     }
     if json_output:
         typer.echo(json.dumps(payload, indent=2, sort_keys=True))
@@ -6198,6 +6466,9 @@ def plan_spec_cmd(
             "plan uses the spec's `example-bucket` placeholder."
         ),
     ),
+    preset: str = typer.Option(
+        "", "--preset", help="Explicit shipped workflow seed/config preset."
+    ),
     waves: bool = typer.Option(
         False,
         "--waves",
@@ -6215,7 +6486,16 @@ def plan_spec_cmd(
 
     spec = _load_npa_workflow(yaml_path)
     try:
-        spec = merge_config_overrides(spec, _parse_submit_vars(var))
+        from npa.orchestration.npa_workflow.presets import preset_overrides
+
+        spec = merge_config_overrides(
+            spec,
+            preset_overrides(
+                workflow_name=spec.name,
+                preset=preset,
+                explicit=_parse_submit_vars(var),
+            ),
+        )
     except NpaWorkflowError as exc:
         _fail(str(exc))
         return
@@ -6292,6 +6572,9 @@ def run_spec_cmd(
             "run uses the spec's `example-bucket` placeholder."
         ),
     ),
+    preset: str = typer.Option(
+        "", "--preset", help="Explicit shipped workflow seed/config preset."
+    ),
     persist_state: bool = typer.Option(
         False,
         "--persist-state",
@@ -6320,7 +6603,16 @@ def run_spec_cmd(
     from npa.orchestration.npa_workflow.submit import merge_config_overrides
 
     spec = _load_npa_workflow(yaml_path)
-    spec = merge_config_overrides(spec, _parse_submit_vars(var))
+    from npa.orchestration.npa_workflow.presets import preset_overrides
+
+    spec = merge_config_overrides(
+        spec,
+        preset_overrides(
+            workflow_name=spec.name,
+            preset=preset,
+            explicit=_parse_submit_vars(var),
+        ),
+    )
     _warn_placeholder_bucket(spec.config, quiet=json_output)
     resolved_run_id = run_id or f"{spec.name}-{int(time.time())}"
     resolved_assume = assume_decision or str(
@@ -6386,6 +6678,23 @@ def preflight_images_cmd(
     infra: str = typer.Option(
         "", "--infra", help="Exact k8s/<context> used for unattested image probes."
     ),
+    image_pull_secret: list[str] = typer.Option(
+        [],
+        "--image-pull-secret",
+        help=(
+            "Existing operator-managed Kubernetes dockerconfigjson Secret used by "
+            "bootstrap capability probes. Repeat for multiple Secrets."
+        ),
+    ),
+    image_bootstrap_timeout_seconds: int = typer.Option(
+        1800,
+        "--image-bootstrap-timeout-seconds",
+        min=0,
+        help=(
+            "Seconds to observe each digest-bound capability probe; "
+            "0 waits without a deadline for large cold pulls."
+        ),
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit JSON report."),
 ) -> None:
     """Prove every image this spec pulls is pullable, with the run's own credentials.
@@ -6434,6 +6743,12 @@ def preflight_images_cmd(
     pull_secrets_by_image = plan_image_pull_secrets(
         spec, plan.steps, run_id=run_id, options=options
     )
+    if image_pull_secret:
+        explicit = tuple(dict.fromkeys(item.strip() for item in image_pull_secret if item.strip()))
+        pull_secrets_by_image = {
+            selected: tuple(dict.fromkeys((*pull_secrets_by_image.get(selected, ()), *explicit)))
+            for selected in images
+        }
     if not images:
         typer.echo("images: none pinned by this spec")
         return
@@ -6453,6 +6768,7 @@ def preflight_images_cmd(
             pull_checks=checks,
             context=context_from_infra(infra),
             pull_secrets_by_image=pull_secrets_by_image,
+            observation_timeout_seconds=image_bootstrap_timeout_seconds,
         )
     if json_output:
         typer.echo(

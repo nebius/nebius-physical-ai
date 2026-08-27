@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import subprocess
+import threading
 import time
 
 import pytest
@@ -12,6 +13,7 @@ from npa.cluster_backends.process import (
     require_bin,
     run_capture,
     run_stream,
+    terraform_plugin_cache_lock,
     terraform_env,
 )
 
@@ -178,3 +180,34 @@ def test_failed_nebius_token_exchange_is_redacted(tmp_path: Path) -> None:
         terraform_env(str(nebius))
     assert "provider-secret" not in str(raised.value)
     assert "<redacted>" in str(raised.value)
+
+
+def test_terraform_plugin_cache_lock_serializes_threads(tmp_path: Path) -> None:
+    env = {"TF_PLUGIN_CACHE_DIR": str(tmp_path / ".providers")}
+    first_entered = threading.Event()
+    release_first = threading.Event()
+    second_entered = threading.Event()
+
+    def first() -> None:
+        with terraform_plugin_cache_lock(env):
+            first_entered.set()
+            assert release_first.wait(timeout=2)
+
+    def second() -> None:
+        assert first_entered.wait(timeout=2)
+        with terraform_plugin_cache_lock(env):
+            second_entered.set()
+
+    first_thread = threading.Thread(target=first)
+    second_thread = threading.Thread(target=second)
+    first_thread.start()
+    second_thread.start()
+    assert first_entered.wait(timeout=2)
+    assert not second_entered.wait(timeout=0.05)
+    release_first.set()
+    first_thread.join(timeout=2)
+    second_thread.join(timeout=2)
+    assert not first_thread.is_alive()
+    assert not second_thread.is_alive()
+    assert second_entered.is_set()
+    assert (tmp_path / ".providers.npa-init.lock").stat().st_mode & 0o777 == 0o600

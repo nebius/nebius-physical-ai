@@ -31,6 +31,7 @@ The source of truth is `skills/index.yaml`. The tree is organized as:
 - `skills/tools/vlm-eval/SKILL.md`: score rollouts with a VLM and turn the score into a gate — `run` vs `loop`, rubric/threshold benchmark sweeps, backend selection, and judging against a plan an earlier stage wrote.
 - `skills/tools/golden-eval/SKILL.md`: prove a container image actually works — per-container hello-world manifest, dry-run/local/serverless tiers, batch runs, and the offline manifest validation that gates CI.
 - `skills/tools/alpamayo2-super/SKILL.md`: real Alpamayo 2 Super VLA inference, separate OpenMDW model and gated PhysicalAI-AV dataset terms, runtime-fetch packaging, and B200/RTX PRO 6000 validation.
+- `skills/tools/cosmos3-ray-serve/SKILL.md`: persistent Cosmos3-Nano serving through cosmos-framework's native Ray Serve batching path, authenticated readiness, S3 provenance, and independent B200/RTX PRO 6000 validation.
 - `skills/tools/burst/SKILL.md`: one gang-scheduled multi-node GPU job with torchrun rendezvous, deliberately not a workflow surface.
 - `skills/tools/gpu-cluster-provisioning/SKILL.md`: managed-image vs GPU-Operator driver strategy (operator mode is unsafe on NVSwitch), the post-apply health gates (fabric, CUDA vectorAdd, stability window), accelerator-name discovery, and triage for nodes whose GPUs do not work.
 - `skills/tools/detection-training/SKILL.md`: Faster R-CNN detectors trained from LanceDB materialized views (BDD100K failure-mode slices).

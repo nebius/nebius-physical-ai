@@ -17,9 +17,7 @@ from npa.clients.storage import StorageClient
 from npa.workflows.sim2real.artifact_upload import (
     upload_run_artifacts,  # noqa: F401 - public engine import surface
 )
-from npa.workbench.cosmos.reason import (
-    merge_dual_reason_evaluations,
-)
+from npa.workbench.cosmos.reason import merge_reason_evaluations
 from npa.workbench.model_cache import (
     RUNTIME_KUBERNETES,
     model_cache_env,
@@ -171,7 +169,7 @@ def evaluate_rollout_with_vlm(
     output_dir: Path,
     config: Sim2RealLoopConfig,
 ) -> dict[str, Any]:
-    """Invoke Reason2 + Reason3 (or a single model) and parse structured judgments."""
+    """Invoke Reason2 + Cosmos3 (or a single model) and parse structured judgments."""
 
     manifest_path = rollout_dir / "manifest.json"
     if not manifest_path.exists():
@@ -203,23 +201,23 @@ def evaluate_rollout_with_vlm(
         )
         payload = _read_component_json(output_path, invocation)
     elif not config.s3_bucket.strip():
-        if config.vlm_dual_reason:
+        if config.vlm_two_evaluator:
             reason2 = _reference_vlm_payload_from_rollout(
                 manifest,
                 rollout_dir=rollout_dir,
                 rollout_id=rollout_id,
                 config=config,
             )
-            reason3 = _reference_vlm_payload_from_rollout(
+            cosmos3 = _reference_vlm_payload_from_rollout(
                 manifest,
                 rollout_dir=rollout_dir,
                 rollout_id=rollout_id,
                 config=config,
             )
             reason2["model"] = config.vlm_reason2_model
-            reason3["model"] = config.vlm_reason3_model
-            payload = merge_dual_reason_evaluations(
-                reason2, reason3, threshold=config.threshold
+            cosmos3["model"] = config.vlm_cosmos3_model
+            payload = merge_reason_evaluations(
+                reason2, cosmos3, threshold=config.threshold
             )
         else:
             payload = _reference_vlm_payload_from_rollout(
@@ -232,14 +230,14 @@ def evaluate_rollout_with_vlm(
             "component": "vlm_eval",
             "mode": "local_reference",
             "image": config.vlm_image,
-            "dual_reason": config.vlm_dual_reason,
+            "two_evaluator": config.vlm_two_evaluator,
         }
         _write_json_artifact(output_path, payload)
-    elif config.vlm_dual_reason:
+    elif config.vlm_two_evaluator:
         from concurrent.futures import ThreadPoolExecutor
 
         reason2_image = (config.vlm_reason2_image or config.vlm_image).strip()
-        reason3_image = (config.vlm_reason3_image or config.vlm_image).strip()
+        cosmos3_image = (config.vlm_cosmos3_image or config.vlm_image).strip()
 
         def _run_reason2() -> tuple[dict[str, Any], dict[str, Any]]:
             return _evaluate_reason_rollout_k8s(
@@ -254,34 +252,34 @@ def evaluate_rollout_with_vlm(
                 output_dir=output_dir,
             )
 
-        def _run_reason3() -> tuple[dict[str, Any], dict[str, Any]]:
+        def _run_cosmos3() -> tuple[dict[str, Any], dict[str, Any]]:
             return _evaluate_reason_rollout_k8s(
                 rollout_dir,
                 manifest=manifest,
                 manifest_path=manifest_path,
                 rollout_id=rollout_id,
                 config=config,
-                model=config.vlm_reason3_model,
-                image=reason3_image,
-                component="vlm_eval_reason3",
+                model=config.vlm_cosmos3_model,
+                image=cosmos3_image,
+                component="vlm_eval_cosmos3",
                 output_dir=output_dir,
             )
 
         with ThreadPoolExecutor(max_workers=2) as pool:
             reason2_future = pool.submit(_run_reason2)
-            reason3_future = pool.submit(_run_reason3)
+            cosmos3_future = pool.submit(_run_cosmos3)
             reason2_eval, reason2_invocation = reason2_future.result()
-            reason3_eval, reason3_invocation = reason3_future.result()
-        payload = merge_dual_reason_evaluations(
-            reason2_eval, reason3_eval, threshold=config.threshold
+            cosmos3_eval, cosmos3_invocation = cosmos3_future.result()
+        payload = merge_reason_evaluations(
+            reason2_eval, cosmos3_eval, threshold=config.threshold
         )
         invocation = {
             "component": "vlm_eval",
-            "mode": "kubernetes_job_dual_reason",
+            "mode": "kubernetes_job_two_evaluator",
             "reason2_image": reason2_image,
-            "reason3_image": reason3_image,
+            "cosmos3_image": cosmos3_image,
             "reason2_invocation": _public_invocation(reason2_invocation),
-            "reason3_invocation": _public_invocation(reason3_invocation),
+            "cosmos3_invocation": _public_invocation(cosmos3_invocation),
             "gpu_provenance": {
                 "candidate_order": list(
                     dict.fromkeys(
@@ -291,7 +289,7 @@ def evaluate_rollout_with_vlm(
                             )
                         )
                         + list(
-                            (reason3_invocation.get("gpu_provenance") or {}).get(
+                            (cosmos3_invocation.get("gpu_provenance") or {}).get(
                                 "candidate_order", []
                             )
                         )
@@ -301,7 +299,7 @@ def evaluate_rollout_with_vlm(
                     (reason2_invocation.get("gpu_provenance") or {}).get("attempts", [])
                 )
                 + list(
-                    (reason3_invocation.get("gpu_provenance") or {}).get("attempts", [])
+                    (cosmos3_invocation.get("gpu_provenance") or {}).get("attempts", [])
                 ),
                 "selected_products": list(
                     dict.fromkeys(
@@ -310,7 +308,7 @@ def evaluate_rollout_with_vlm(
                             (reason2_invocation.get("gpu_provenance") or {}).get(
                                 "selected_product"
                             ),
-                            (reason3_invocation.get("gpu_provenance") or {}).get(
+                            (cosmos3_invocation.get("gpu_provenance") or {}).get(
                                 "selected_product"
                             ),
                         )
@@ -324,7 +322,7 @@ def evaluate_rollout_with_vlm(
                             (reason2_invocation.get("gpu_provenance") or {}).get(
                                 "selected_node"
                             ),
-                            (reason3_invocation.get("gpu_provenance") or {}).get(
+                            (cosmos3_invocation.get("gpu_provenance") or {}).get(
                                 "selected_node"
                             ),
                         )
@@ -342,14 +340,14 @@ def evaluate_rollout_with_vlm(
                         )
                     ),
                     int(
-                        (reason3_invocation.get("gpu_provenance") or {}).get(
+                        (cosmos3_invocation.get("gpu_provenance") or {}).get(
                             "minimum_vram_gb", 0
                         )
                     ),
                 ),
                 "model_requirement": [
                     config.vlm_reason2_model,
-                    config.vlm_reason3_model,
+                    config.vlm_cosmos3_model,
                 ],
                 "image_digests": list(
                     dict.fromkeys(
@@ -359,7 +357,7 @@ def evaluate_rollout_with_vlm(
                             )
                         )
                         + list(
-                            (reason3_invocation.get("gpu_provenance") or {}).get(
+                            (cosmos3_invocation.get("gpu_provenance") or {}).get(
                                 "image_digests", []
                             )
                         )
@@ -373,7 +371,7 @@ def evaluate_rollout_with_vlm(
                         or 0
                     )
                     + float(
-                        (reason3_invocation.get("gpu_provenance") or {}).get(
+                        (cosmos3_invocation.get("gpu_provenance") or {}).get(
                             "duration_s", 0
                         )
                         or 0
@@ -1367,7 +1365,11 @@ def _normalize_vlm_evaluation(
                 ),
                 "model_disagreement": bool(raw.get("model_disagreement")),
                 "reason2_critique": str(raw.get("reason2_critique") or ""),
-                "reason3_critique": str(raw.get("reason3_critique") or ""),
+                "cosmos3_critique": str(
+                    raw.get("cosmos3_critique")
+                    or raw.get("reason3_critique")  # archived artifact compatibility
+                    or ""
+                ),
                 "simulator_ground_truth": dict(
                     (action_items.get(step) or {}).get("simulator_ground_truth") or {}
                 ),
@@ -1396,7 +1398,7 @@ def _normalize_vlm_evaluation(
                 "critique_source": "model_missing",
                 "model_disagreement": False,
                 "reason2_critique": "",
-                "reason3_critique": "",
+                "cosmos3_critique": "",
                 "simulator_ground_truth": dict(
                     action_item.get("simulator_ground_truth") or {}
                 ),

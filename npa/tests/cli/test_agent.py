@@ -4685,6 +4685,34 @@ def test_agent_setup_passes_concrete_defaults_to_deploy(monkeypatch, tmp_path) -
     assert captured["no_public_https"] is False
 
 
+def test_agent_fresh_setup_forwards_agent_only(monkeypatch) -> None:
+    captured: dict = {}
+    monkeypatch.setattr("npa.cli.agent._agent_record", lambda *args, **kwargs: {})
+    monkeypatch.setattr("npa.cli.agent._store_project_environment", lambda **kwargs: None)
+    monkeypatch.setattr(
+        "npa.cli.agent.deploy_cmd", lambda **kwargs: captured.update(kwargs)
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "fresh-setup",
+            "--project",
+            "dev",
+            "--project-id",
+            "project-dev",
+            "--tenant-id",
+            "tenant-a",
+            "--region",
+            "us-central1",
+            "--agent-only",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert captured["agent_only"] is True
+
+
 def _stub_agent_deploy_cloud_calls(
     monkeypatch, tmp_path, *, credential_sentinels: bool = False
 ):
