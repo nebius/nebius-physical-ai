@@ -462,6 +462,7 @@ def _validate_argv_contract(receipt: Mapping[str, Any]) -> None:
         "--preset",
         "--assume-decision",
         "--max-wait-seconds",
+        "--retries",
         "--var",
         "--secret-env",
         "--output-format",
@@ -495,6 +496,13 @@ def _validate_argv_contract(receipt: Mapping[str, Any]) -> None:
         "--max-wait-seconds": str(receipt["runtime_policy"]["max_wait_seconds"]),
         "--output-format": "json",
     }
+    retries = receipt["runtime_policy"].get("retries", 0)
+    if retries:
+        exact_options["--retries"] = str(retries)
+    elif _option_values(argv, "--retries"):
+        raise PreparedActionError(
+            "argv_contract_invalid", "argv retries are not bound by the receipt"
+        )
     for option, expected in exact_options.items():
         if _option_values(argv, option) != [expected]:
             raise PreparedActionError(
@@ -678,11 +686,14 @@ def validate_receipt(
         {"manifest_sandbox_path", "manifest_sha256", "identity", "identity_sha256"},
         "staged_input",
     )
-    runtime = _require_keys(
-        receipt["runtime_policy"],
-        {"runtime", "resume", "max_wait_seconds"},
-        "runtime_policy",
-    )
+    runtime = receipt["runtime_policy"]
+    if not isinstance(runtime, dict) or set(runtime) not in {
+        frozenset({"runtime", "resume", "max_wait_seconds"}),
+        frozenset({"runtime", "resume", "max_wait_seconds", "retries"}),
+    }:
+        raise PreparedActionError(
+            "receipt_schema_invalid", "runtime_policy does not match the closed schema"
+        )
     _require_sha(spec["sha256"], "canonical_spec.sha256")
     _require_commit(source["workspace_commit"], "source.workspace_commit")
     _require_commit(source["source_commit"], "source.source_commit")
@@ -703,9 +714,11 @@ def validate_receipt(
         raise PreparedActionError("receipt_tampered", "project selection digest differs")
     if staged["identity_sha256"] != canonical_sha256(staged["identity"]):
         raise PreparedActionError("receipt_tampered", "staged input identity differs")
-    if runtime != {"runtime": True, "resume": True, "max_wait_seconds": 0}:
+    base_runtime = {"runtime": True, "resume": True, "max_wait_seconds": 0}
+    if runtime not in (base_runtime, {**base_runtime, "retries": 1}):
         raise PreparedActionError(
-            "receipt_schema_invalid", "runtime policy must be runtime resume with no deadline"
+            "receipt_schema_invalid",
+            "runtime policy must be runtime resume with no deadline and at most one explicit retry",
         )
     if receipt["accepted_eulas"] != ["isaac"]:
         raise PreparedActionError(

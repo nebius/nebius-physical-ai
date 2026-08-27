@@ -205,6 +205,39 @@ def test_receipt_tampering_is_rejected(prepared: dict[str, object]) -> None:
     assert error.value.classification == "receipt_tampered"
 
 
+def test_receipt_binds_one_explicit_resume_retry(
+    prepared: dict[str, object],
+) -> None:
+    request = dict(prepared["request"])
+    request["action_id"] = "resume-prepared-run-2"
+    request["runtime_policy"] = {
+        "runtime": True,
+        "resume": True,
+        "max_wait_seconds": 0,
+        "retries": 1,
+    }
+    argv = list(request["argv"])
+    insert_at = argv.index("--max-wait-seconds")
+    argv[insert_at:insert_at] = ["--retries", "1"]
+    request["argv"] = argv
+    control = prepared["control"]
+    assert isinstance(control, Path)
+    request_path = control / "resume-action-request.json"
+    receipt_path = control / "resume-action-receipt.json"
+    request_path.write_text(json.dumps(request))
+    os.chmod(request_path, 0o600)
+
+    receipt = create_receipt_from_request(request_path, receipt_path)
+
+    assert receipt["runtime_policy"]["retries"] == 1
+    assert receipt["argv"].count("--retries") == 1
+    validate_receipt(
+        receipt_path,
+        requested_action_id="resume-prepared-run-2",
+        context=prepared["context"],
+    )
+
+
 def test_value_bearing_request_inside_agent_mount_is_rejected(
     prepared: dict[str, object]
 ) -> None:
