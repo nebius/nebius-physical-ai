@@ -1333,30 +1333,45 @@ try:
         except Exception:
             from omni.isaac.lab_rl.rsl_rl import RslRlVecEnvWrapper
         from rsl_rl.runners import OnPolicyRunner
-        wrapped = RslRlVecEnvWrapper(env)
         agent_cfg = None
+        config_errors = []
         for loader in ("isaaclab_tasks.utils", "omni.isaac.lab_tasks.utils"):
             try:
                 mod = __import__(loader, fromlist=["load_cfg_from_registry"])
                 agent_cfg = mod.load_cfg_from_registry(task, "rsl_rl_cfg_entry_point")
                 break
-            except Exception:
-                pass
+            except Exception as exc:
+                config_errors.append(f"{{loader}}: {{exc!r}}")
+        if agent_cfg is None:
+            raise RuntimeError(
+                "could not load rsl_rl_cfg_entry_point: " + "; ".join(config_errors)
+            )
         acfg = agent_cfg.to_dict() if hasattr(agent_cfg, "to_dict") else dict(agent_cfg)
-        runner = OnPolicyRunner(wrapped, acfg, log_dir=None, device=device)
+        clip_actions = (
+            getattr(agent_cfg, "clip_actions", None)
+            if not isinstance(agent_cfg, dict)
+            else agent_cfg.get("clip_actions")
+        )
+        runner_device = (
+            getattr(agent_cfg, "device", None)
+            if not isinstance(agent_cfg, dict)
+            else agent_cfg.get("device")
+        ) or device
+        wrapped = RslRlVecEnvWrapper(env, clip_actions=clip_actions)
+        runner = OnPolicyRunner(wrapped, acfg, log_dir=None, device=runner_device)
         runner.load(str(checkpoint_path))
-        policy = runner.get_inference_policy(device=device)
+        policy = runner.get_inference_policy(device=runner_device)
         env = wrapped
         policy_loaded = True
         print("ISAAC_LAB_TRAJ_EXPORT_POLICY_LOADED", flush=True)
     except Exception as exc:
-        print(f"ISAAC_LAB_TRAJ_EXPORT_POLICY_LOAD_FAILED {{exc!r}} -- random fallback", flush=True)
+        raise RuntimeError(f"trained-policy checkpoint load failed: {{exc!r}}") from exc
 
     def _act(obs):
-        if policy_loaded and policy is not None and obs is not None:
-            with torch.inference_mode():
-                return policy(obs)
-        return torch.as_tensor(env.action_space.sample(), device=device, dtype=torch.float32)
+        if not policy_loaded or policy is None or obs is None:
+            raise RuntimeError("trained policy is unavailable during trajectory export")
+        with torch.inference_mode():
+            return policy(obs)
 
     def _step_env(env, actions):
         # Gymnasium envs return 5 values; the rsl_rl VecEnv wrapper installed

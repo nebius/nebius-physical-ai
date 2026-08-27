@@ -1749,6 +1749,10 @@ def test_isaac_lab_train_export_trajectories_runs_second_remote_script(mocker) -
     assert "ISAAC_LAB_TRAJ_EXPORT_START" in traj_cmd
     assert "npa_isaac_lab_checkpoint.pt" in traj_cmd
     assert "/tmp/isaac-out/trajectories" in traj_cmd
+    assert "RslRlVecEnvWrapper(env, clip_actions=clip_actions)" in traj_cmd
+    assert "device=runner_device" in traj_cmd
+    assert "random fallback" not in traj_cmd
+    assert "trained-policy checkpoint load failed" in traj_cmd
     payload = json.loads(result.output)
     assert payload["trajectory_export"] == "success"
     assert payload["trajectories_dir"] == "/tmp/isaac-out/trajectories"
