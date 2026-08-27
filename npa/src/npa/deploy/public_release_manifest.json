@@ -1,0 +1,38 @@
+{
+  "format": "npa_public_release_manifest_v1",
+  "registry": "ghcr.io/nebius/nebius-physical-ai",
+  "releases": {
+    "cosmos": {"tag": "cu128-torch27-sm100-1.0.9-20260803T002017Z", "published_digest": "sha256:a7d2ba85ea4ad2d2036f6f8575b4e7a801d3f98ff202f6eb575329f1af9a41dd"},
+    "cosmos-curate": {"tag": "0.1.2-skypilot-v1-20260813T164700Z", "published_digest": "sha256:7762ef4d2409e2a90aedddc4417f9caf8d59f37cdce0e9522c5caf9bc12afcea"},
+    "cosmos-evaluator": {"tag": "0.1.2-skypilot-v1-20260813T164700Z-r2", "published_digest": "sha256:7f6a71d6528a0daea614a96afec342df2d9d3238dd9874a2848eee15e1f52a29"},
+    "cosmos2-transfer": {"tag": "2.5.1-skypilot-ready-20260801T053000Z", "published_digest": "sha256:9b4c5eb505353aa3dea37284c662f3cff306fa7c902f040e559f7939173345cc"},
+    "cosmos3": {"tag": "1.2.2-cu130-r6", "published_digest": "sha256:0eb459769eba9942b5b9004c4df68721f2c3e5490a6614e85ced67e8a6f9cd5d"},
+    "cosmos3-reason": {"tag": "cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z", "published_digest": "sha256:e708aa32b9247eaedf1a7a5b0d82adbe65b95a9af50721b9d09fddbfd508bbc9"},
+    "cosmos3-serving": {"tag": "0.2.0-oss", "published_digest": "sha256:3342bbe44bd1c00ebf05ab4c9d7286058a94bb5ce90b49b164b23604d3acf180", "development_sha": "d854f6a76cd87ec05ad97ccde6d596f3329efa0e"},
+    "detection-training": {"tag": "bdd100k-golden-eval-smoke-20260614T210000Z", "published_digest": "sha256:a432dd2a9e6bafed4b78466ac806f584c7fcf549cf3be0edaf75f2fecdadfdd9"},
+    "envgen": {"tag": "cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z", "published_digest": "sha256:8e0ea40c064a15409233efdd036a369b36e1c04e713bcf81440d9d4372cae376"},
+    "fiftyone": {"tag": "1.15.0.post1", "published_digest": "sha256:cdc0cb7b1f59f3db3f9e6f899be17f27235d5aa7fe6ad171289bee7b3d995fc3"},
+    "foxglove-embed": {"tag": "0.58.0", "published_digest": "sha256:dc8e55ca8697bae7e9473d32451614b7c4a1d508b29d98e2bc8063bde2ec7828"},
+    "genesis": {"tag": "cuda13-b300-0.4.6-sm80-sm90-sm100-sm103-sm120-20260803T034152Z", "published_digest": "sha256:80cd1c4c7f7a5466533de29ee5cad1213202f348545346fea9ed6746fa03b1ca"},
+    "groot": {"tag": "0.1.0", "published_digest": "sha256:47fd6b727f249fbdb0ec237dc748c8bdc7cbf38474dc12c1cffe82f17fdde37b"},
+    "isaac-lab": {"tag": "2.3.2.post1", "published_digest": "sha256:c2e142c5312c903fd2a165028ca17e34335813d034ce036b936c6dc3a886bea8"},
+    "lancedb": {"tag": "cuda13-b300-0.30.3-sm80-sm90-sm100-sm103-sm120-20260803T031514Z", "published_digest": "sha256:a303b53d0769e612101d468ba957656997838f4b8e6a03430f2b5a2c89e3f8b5"},
+    "lerobot": {"tag": "cuda13-b300-0.5.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z", "published_digest": "sha256:14a2e0dfe61fb2c46c6e4b8d75f1a06f2f68f9cfa4a6428a175411afaf93749e"},
+    "lerobot-policy": {"tag": "0.1.1", "published_digest": "sha256:fe787495c11747995539b93f6192a1fee3e14b0f1683ea188a95109d762e6adb"},
+    "lerobot-vlm-rl": {"tag": "cuda13-b300-0.1.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z", "published_digest": "sha256:7bd5b21d487f3ab6614197b8a8af81fe3ed001247b4501740615540cb55998e5"},
+    "lichtblick": {"tag": "1.26.0", "published_digest": "sha256:545a42effeec9a705fef12b92a3383db0649df0e66c088bcb14cd9fb3a93a70a"},
+    "loop-eval": {"tag": "cuda13-b300-0.1.3-sm80-sm90-sm100-sm103-sm120-20260803T034152Z", "published_digest": "sha256:9cb111c56d9c1db8357b04f43e46790f6853213ff1a78fd0b2dae5ad337eb75a"},
+    "ltx2": {"tag": "2.5-rtfetch-20260817", "published_digest": "sha256:c04b5b4e4c7f1c26e21671b3826ce8da75755c98bab2c54cd46137c609c2410b", "development_sha": "072952df62d23e8bc10d7e083230b3e2f2aeac52"},
+    "reference-policy": {"tag": "cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z", "published_digest": "sha256:58eb0d714f9d57fbae7fc8dfc56caf7f98f84699146c820dce18f2aaa2313cb6"},
+    "rerun-viewer": {"tag": "0.31.4", "published_digest": "sha256:9c78c5117bdd7de571a0b5ecd956b91d6690d8e02ce60672abb320c90e313fc7"},
+    "retargeting": {"tag": "0.1.1", "published_digest": "sha256:e8782bd75084b59a82015a13c581fcd9520feeff6e00ea96367c820e7edfedff"},
+    "sonic": {"tag": "cuda13-b300-0.1.2-k8s-runtime-sm80-sm90-sm100-sm103-sm120-20260803T034152Z", "published_digest": "sha256:c9ba0996b28f54b013e36da689638b386a7ef9c0c8c4413fc4b3c72ff1a808bb"},
+    "sonic-mujoco": {"tag": "0.2.0-runtime", "published_digest": "sha256:2388d9e97269afaa414966e83a27f676a3f44d4271e9828c57bc13fbdce80f57", "development_sha": "5b5b5e69e9e686f8d5f305fd735a02f402f6da4b"},
+    "wan2-2": {"tag": "2.2-ti2v5b-rtfetch-cu130-20260817", "published_digest": "sha256:5780959ca6c6e7eb77ee7ea7d005fcf0f56db50783ce798dddee2809185eb837", "development_sha": "bc18684d35fa171f7912cb84ef1ae16d4fc116e6"},
+    "alpamayo2-super": {"tag": "0.1.0-cu128", "published_digest": "sha256:2164450f8baf57d8798f64063ea27bf11611f5b695c467de0c2e319e3134ebd5"},
+    "content-agents": {"tag": "0.5.2-npa2", "published_digest": "sha256:c64aaf6201bdaa013f9d16e8497290cf166907932f036297d7abaa430cbad7db"}
+  },
+  "publication_pending": {
+    "leisaac": "The supported tag is not yet anonymously pullable; it is not an accepted public release claim."
+  }
+}

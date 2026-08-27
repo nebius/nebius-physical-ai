@@ -25,11 +25,11 @@ Also load `byof-onboard`, `oss-solution-registry-onboard`,
 - Official model: `Wan-AI/Wan2.2-TI2V-5B`, pinned to
   `921dbaf3f1674a56f47e83fb80a34bac8a8f203e`.
 - TI2V-5B is a stock generative-video model supporting text and image inputs.
-- A historical private validation record accepted the real single-GPU
+- A historical operator-only validation record accepted the real single-GPU
   text-to-video path on RTX PRO 6000 Blackwell (`sm_120`) from immutable image
   digest `sha256:1baa4e2e89999ea26df81891ac786fa99c7498cbf173e5c5abad54c6f1dd1d13`,
   including exact MP4/RRD byte identity.
-- A historical private validation record accepted one shared official
+- A historical operator-only validation record accepted one shared official
   generation from that same observed image digest on four B200s (`sm_100`) with
   world size 4, NCCL, T5 and DiT FULL_SHARD FSDP, Ulysses size 4, and exact
   MP4/RRD byte identity.
@@ -118,11 +118,11 @@ verified manifest may name `wan2.2_verified_rerun_recording`.
 
 | Capability | Status |
 | --- | --- |
-| `wan2.2_ti2v_5b_text_to_video` | accepted historical evidence; current runtime needs a fresh RTX PRO run |
-| `wan2.2_decoded_mp4_validation` | accepted historical evidence; 17 decoded 1280×704 frames at 24 fps |
+| `wan2.2_ti2v_5b_text_to_video` | accepted current evidence; exact public-dev digest ran the Torch 2.13.0/CUDA 13.0 closure on RTX PRO 6000 |
+| `wan2.2_decoded_mp4_validation` | accepted current evidence; 17 decoded 1280×704 frames at 24 fps |
 | `wan2.2_ti2v_5b_text_to_video_multigpu_fsdp_ulysses` | accepted historical evidence; current runtime needs a fresh 4×B200 official run |
 | `wan2.2_distributed_rank_topology_validation` | accepted historical evidence; four unique ranks/devices and collective/barrier evidence |
-| `wan2.2_verified_rerun_recording` | accepted historical evidence only for the prior runtime; current acceptance still requires an uploaded verified RRD manifest |
+| `wan2.2_verified_rerun_recording` | accepted current single-GPU evidence; exact MP4 identity and uploaded RRD were independently re-verified |
 | `wan2.2_ti2v_5b_image_to_video` | deferred |
 | A14B / S2V / Animate | deferred |
 | official TI2V fine-tuning | deferred; no pinned-source entrypoint |

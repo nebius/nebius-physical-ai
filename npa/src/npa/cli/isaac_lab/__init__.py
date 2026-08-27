@@ -2416,7 +2416,6 @@ def deploy_cmd(
                             f"{ISAAC_LAB_HOME}/evals",
                             f"{ISAAC_LAB_HOME}/inputs",
                         ],
-                        registry_token=merged_vars.get("iam_token", ""),
                     )
                 except SSHError as exc:
                     fail_app(f"Isaac Lab container deployment failed: {exc}")

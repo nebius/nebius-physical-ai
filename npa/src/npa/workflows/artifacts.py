@@ -346,6 +346,12 @@ class RunSummary:
             "input_artifact_count": self.input_artifact_count,
             "metadata_artifact_count": self.metadata_artifact_count,
             "namespaces": list(self.namespaces),
+            "canonical_score": self.canonical_score,
+            "canonical_candidate": bool(
+                self.input_artifact_count > 0
+                and self.output_artifact_count > 1
+                and self.canonical_score > 0
+            ),
             "source_type": "artifact_storage",
             "source_label": "S3 artifacts",
         }
@@ -461,6 +467,50 @@ def _merge_staging_resolutions(
     for same_run in grouped.values():
         merged.extend(_merge_staging_resolution_group(same_run))
     return merged
+
+
+def prefer_complete_run_resolution(
+    matches: list[RunResolution],
+) -> RunResolution | None:
+    """Choose one provable strict-superset source, otherwise remain ambiguous.
+
+    Viewer/checkpoint publication must never hide a canonical run behind a
+    same-basename one-file mirror. Relative artifact identity and byte size let us
+    prove that such a mirror is a strict subset. Legitimate duplicate runs whose
+    overlapping bytes differ, or where neither inventory contains the other,
+    remain fail-closed and require the server-issued source-qualified ``run_ref``.
+    """
+
+    if len(matches) < 2:
+        return matches[0] if matches else None
+
+    def inventory(match: RunResolution) -> dict[str, tuple[int, str]]:
+        return {
+            str(artifact.relative_key or artifact.key): (
+                int(artifact.size),
+                str(artifact.render),
+            )
+            for artifact in match.artifacts
+        }
+
+    inventories = [(match, inventory(match)) for match in matches]
+    dominant: list[RunResolution] = []
+    for candidate, candidate_inventory in inventories:
+        if not candidate_inventory:
+            continue
+        strictly_larger = False
+        for other, other_inventory in inventories:
+            if other is candidate:
+                continue
+            if not other_inventory.items() <= candidate_inventory.items():
+                break
+            strictly_larger = strictly_larger or len(candidate_inventory) > len(
+                other_inventory
+            )
+        else:
+            if strictly_larger:
+                dominant.append(candidate)
+    return dominant[0] if len(dominant) == 1 else None
 
 
 def _merge_staging_resolution_group(
@@ -2015,8 +2065,11 @@ def list_all_runs_across_buckets(
     ordered = sorted(
         merged.values(),
         key=lambda item: (
-            item.last_modified,
+            item.started_at or item.last_modified,
             item.run_id.lower(),
+            item.canonical_score,
+            item.artifact_count,
+            item.last_modified,
             item.project_id,
             item.bucket,
             item.resolved_prefix,
@@ -2111,7 +2164,13 @@ def list_runs_at_prefix_across_buckets(
             merged[(run.bucket, run.resolved_prefix, run.run_id)] = run
     ordered = sorted(
         merged.values(),
-        key=lambda item: (item.last_modified, item.run_id),
+        key=lambda item: (
+            item.started_at or item.last_modified,
+            item.run_id,
+            item.canonical_score,
+            item.artifact_count,
+            item.last_modified,
+        ),
         reverse=True,
     )
     truncated = any_bucket_truncated or len(ordered) > limit or not discovery_complete
@@ -2254,7 +2313,10 @@ def find_run_artifacts_across_buckets(
     if not matches:
         return "", []
     if len(matches) > 1:
-        raise AmbiguousRunError(run_id, [item.run_ref for item in matches])
+        complete = prefer_complete_run_resolution(matches)
+        if complete is None:
+            raise AmbiguousRunError(run_id, [item.run_ref for item in matches])
+        return complete.bucket, complete.artifacts
     return matches[0].bucket, matches[0].artifacts
 
 
@@ -2547,7 +2609,10 @@ def resolve_run_artifacts(
     if not matches:
         return None
     if len(matches) > 1:
-        raise AmbiguousRunError(run_id, [item.run_ref for item in matches])
+        complete = prefer_complete_run_resolution(matches)
+        if complete is None:
+            raise AmbiguousRunError(run_id, [item.run_ref for item in matches])
+        return complete
     return matches[0]
 
 
@@ -2568,7 +2633,10 @@ def find_run_artifacts(
     if not matches:
         return []
     if len(matches) > 1:
-        raise AmbiguousRunError(run_id, [item.run_ref for item in matches])
+        complete = prefer_complete_run_resolution(matches)
+        if complete is None:
+            raise AmbiguousRunError(run_id, [item.run_ref for item in matches])
+        return complete.artifacts
     return matches[0].artifacts
 
 

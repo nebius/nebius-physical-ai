@@ -692,7 +692,12 @@ def test_nebius_bootstrap_returns_verifiable_storage_account_ownership(mocker) -
         "npa.clients.nebius.get_bucket_by_name",
         return_value={"metadata": {"id": "bucket-id"}},
     )
-    mocker.patch("npa.clients.nebius._existing_editors_binding", return_value=None)
+    mocker.patch(
+        "npa.clients.nebius._existing_editors_binding",
+        side_effect=nebius.NebiusError(
+            "PermissionDenied: tenant-wide editors inventory"
+        ),
+    )
     mocker.patch(
         "npa.clients.nebius.ensure_storage_capability_binding",
         return_value=nebius.StorageIamBindingEvidence(
@@ -754,13 +759,18 @@ def test_nebius_bootstrap_stops_before_bucket_or_key_when_required_iam_fails(
         "npa.clients.nebius.get_bucket_by_name",
         return_value={"metadata": {"id": "bucket-id"}},
     )
-    mocker.patch("npa.clients.nebius._existing_editors_binding", return_value=None)
+    mocker.patch(
+        "npa.clients.nebius._existing_editors_binding",
+        side_effect=nebius.NebiusError(
+            "PermissionDenied: tenant-wide editors inventory"
+        ),
+    )
     key = mocker.patch(
         "npa.clients.nebius.ensure_access_key", return_value=("key", "secret")
     )
 
     messages: list[str] = []
-    with pytest.raises(nebius.NebiusError, match="Required storage IAM capability"):
+    with pytest.raises(nebius.NebiusError, match="project-scoped admin permission"):
         nebius.bootstrap_environment(
             "project", "tenant", "eu-north1", on_status=messages.append
         )
@@ -1230,6 +1240,8 @@ def test_nebius_bootstrap_uses_explicit_bucket_name(mocker) -> None:
         "chosen",
         max_size_bytes=123,
         default_storage_class="standard",
+        on_created=mocker.ANY,
+        allow_existing=True,
     )
 
 
@@ -1505,13 +1517,20 @@ def test_nebius_bootstrap_agent_environment_falls_back_on_permission_denied(
 
 
 def test_nebius_bucket_exists(mocker) -> None:
-    mocker.patch(
+    run_json = mocker.patch(
         "npa.clients.nebius._run_json",
-        return_value={"items": [{"metadata": {"name": "npa-bucket-abc"}}]},
+        side_effect=[
+            {"metadata": {"name": "npa-bucket-abc", "parent_id": "project"}},
+            nebius.NebiusError("NotFound: bucket does not exist"),
+        ],
     )
 
     assert nebius.bucket_exists("project", "npa-bucket-abc") is True
     assert nebius.bucket_exists("project", "other") is False
+    assert all(
+        call.args[0][:3] == ["storage", "bucket", "get-by-name"]
+        for call in run_json.call_args_list
+    )
 
 
 def test_cli_env_strips_stale_iam_token(monkeypatch) -> None:
@@ -1576,23 +1595,19 @@ def test_is_permission_denied_matches_access_denied() -> None:
     assert not nebius.is_permission_denied("NotFound: bucket missing")
 
 
-def test_nebius_bucket_list_paginates_with_all(mocker) -> None:
-    """Bucket existence checks must page past the CLI default.
-
-    Regression: an unpaged ``storage bucket list`` dropped existing buckets
-    beyond the first page, so ``bucket_exists`` returned False for a real
-    bucket and ``npa configure`` wrongly prompted for new-bucket storage class.
-    Uses ``--all`` (true pagination) for consistency with the other listers.
-    """
+def test_nebius_bucket_exact_lookup_does_not_enumerate_project(mocker) -> None:
     run_json = mocker.patch(
         "npa.clients.nebius._run_json",
-        return_value={"items": [{"metadata": {"name": "npa-bucket-abc"}}]},
+        return_value={
+            "metadata": {"name": "npa-bucket-abc", "parent_id": "project"}
+        },
     )
 
     assert nebius.bucket_exists("project", "npa-bucket-abc") is True
     args = run_json.call_args.args[0]
-    assert args[:3] == ["storage", "bucket", "list"]
-    assert "--all" in args, args
+    assert args[:3] == ["storage", "bucket", "get-by-name"]
+    assert args[args.index("--name") + 1] == "npa-bucket-abc"
+    assert "--all" not in args
 
 
 def test_nebius_ensure_bucket_reuses_existing_without_create(mocker) -> None:
@@ -1634,6 +1649,27 @@ def test_nebius_ensure_bucket_reuses_on_already_exists_conflict(mocker) -> None:
     )
 
     assert nebius.ensure_bucket("project", "npa-bucket-abc") == "npa-bucket-abc"
+
+
+def test_nebius_ensure_bucket_refuses_generated_name_create_race(mocker) -> None:
+    mocker.patch("npa.clients.nebius.bucket_exists", return_value=False)
+    mocker.patch(
+        "npa.clients.nebius._run",
+        side_effect=nebius.NebiusError("AlreadyExists: bucket exists"),
+    )
+    mocker.patch(
+        "npa.clients.nebius.get_bucket_by_name",
+        return_value={
+            "metadata": {"name": "npa-bucket-abc", "parent_id": "project"}
+        },
+    )
+
+    with pytest.raises(nebius.NebiusError, match="refusing to adopt"):
+        nebius.ensure_bucket(
+            "project",
+            "npa-bucket-abc",
+            allow_existing=False,
+        )
 
 
 def test_nebius_ensure_bucket_reports_clear_conflict_when_name_taken_elsewhere(
@@ -1803,81 +1839,6 @@ def test_nebius_list_accessible_projects_spans_tenants(mocker) -> None:
     result = nebius.list_accessible_projects()
 
     assert [p["id"] for p in result] == ["project-1", "project-2"]
-
-
-def test_nebius_discover_container_registry_builds_url(mocker) -> None:
-    mocker.patch(
-        "npa.clients.nebius._run_json",
-        return_value={
-            "items": [
-                {
-                    "metadata": {"id": "registry-e00abc"},
-                    "status": {"registry_fqdn": "cr.eu-north1.nebius.cloud"},
-                }
-            ]
-        },
-    )
-
-    assert (
-        nebius.discover_container_registry("project")
-        == "cr.eu-north1.nebius.cloud/e00abc"
-    )
-
-
-def test_nebius_discover_container_registry_prefers_eu_north1(mocker) -> None:
-    # A project with registries in several regions (unstable API order) must
-    # default to the eu-north1 registry, the main region.
-    mocker.patch(
-        "npa.clients.nebius._run_json",
-        return_value={
-            "items": [
-                {
-                    "metadata": {"id": "registry-u00usc"},
-                    "status": {"registry_fqdn": "cr.us-central1.nebius.cloud"},
-                },
-                {
-                    "metadata": {"id": "registry-e00eu"},
-                    "status": {"registry_fqdn": "cr.eu-north1.nebius.cloud"},
-                },
-            ]
-        },
-    )
-
-    assert (
-        nebius.discover_container_registry("project")
-        == "cr.eu-north1.nebius.cloud/e00eu"
-    )
-
-
-def test_nebius_discover_container_registry_falls_back_when_no_eu_north1(
-    mocker,
-) -> None:
-    mocker.patch(
-        "npa.clients.nebius._run_json",
-        return_value={
-            "items": [
-                {
-                    "metadata": {"id": "registry-u00usc"},
-                    "status": {"registry_fqdn": "cr.us-central1.nebius.cloud"},
-                }
-            ]
-        },
-    )
-
-    assert (
-        nebius.discover_container_registry("project")
-        == "cr.us-central1.nebius.cloud/u00usc"
-    )
-
-
-def test_nebius_discover_container_registry_empty_without_project() -> None:
-    assert nebius.discover_container_registry("") == ""
-
-
-def test_nebius_discover_container_registry_best_effort_on_error(mocker) -> None:
-    mocker.patch("npa.clients.nebius._run_json", side_effect=NebiusError("denied"))
-
-    assert nebius.discover_container_registry("project") == ""
 
 
 def test_nebius_get_project_region_reads_status(mocker) -> None:

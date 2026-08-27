@@ -5,7 +5,6 @@ from __future__ import annotations
 import base64
 import json
 import os
-import shutil
 import subprocess
 from enum import Enum
 from pathlib import Path
@@ -93,7 +92,7 @@ def deploy_cmd(
     gpu_type: str = typer.Option("h100", "--gpu-type", help="GPU type: h100 or l40s."),
     node_selector_key: str = typer.Option("node.kubernetes.io/instance-type", "--node-selector-key", help="GPU node selector label key."),
     node_selector_value: str = typer.Option("", "--node-selector-value", help="GPU node selector label value override."),
-    image_pull_secret: str = typer.Option("npa-nebius-registry", "--image-pull-secret", help="Kubernetes imagePullSecret name for private registries."),
+    image_pull_secret: str = typer.Option("", "--image-pull-secret", help="Existing operator-managed Kubernetes imagePullSecret for a private registry."),
     token_env: str = typer.Option(DEFAULT_TOKEN_ENV, "--token-env", help="Environment variable containing service token."),
     auth_mode: str = typer.Option("token", "--auth-mode", help="Auth mode: none or token. Defaults to token (secure)."),
     insecure_no_auth: bool = typer.Option(
@@ -155,13 +154,6 @@ def deploy_cmd(
             "drives GPU training and carries S3 credentials, and any pod in the cluster can reach it. "
             "Use --auth-mode token with DETECTION_TRAINING_TOKEN set.",
             err=True,
-        )
-    if image_pull_secret:
-        _ensure_image_pull_secret(
-            image=resolved_image,
-            secret_name=image_pull_secret,
-            namespace=namespace,
-            kubeconfig=resolved_kubeconfig,
         )
     _kubectl(["apply", "-f", "-"], stdin=json.dumps(manifest), kubeconfig=resolved_kubeconfig)
     _kubectl(["rollout", "status", f"deployment/{name}", "-n", namespace, "--timeout=900s"], kubeconfig=resolved_kubeconfig)
@@ -714,113 +706,6 @@ def _service_env(*, input_path: str, output_path: str, auth_mode: str, token_env
         env["AWS_ENDPOINT_URL_S3"] = endpoint
         env["NEBIUS_S3_ENDPOINT"] = endpoint
     return {key: value for key, value in env.items() if value}
-
-
-def _ensure_image_pull_secret(*, image: str, secret_name: str, namespace: str, kubeconfig: str) -> None:
-    """Put a usable pull secret in the namespace, minting one rather than copying a stale file.
-
-    `~/.docker/config.json` holds whatever token the operator last logged in with, and Nebius IAM
-    tokens expire — so a deploy that copies it can leave a Deployment whose kubelet gets
-    `401 Unauthorized` on its next restart. Minting is what the LanceDB deploy learned to do
-    (EVIDENCE.md §R41); doing it the same way here means one answer to the same question.
-    """
-
-    registry = _image_registry(image)
-    if not registry:
-        return
-    from npa.workbench.service_kubernetes import ServiceKubernetesError, ensure_registry_secret
-
-    try:
-        ensure_registry_secret(secret_name, namespace, registry)
-        return
-    except ServiceKubernetesError:
-        # No mintable IAM identity here; fall back to whatever the operator is logged in as.
-        pass
-    docker_config = _docker_auth_config(registry)
-    payload = {
-        "apiVersion": "v1",
-        "kind": "Secret",
-        "metadata": {"name": secret_name, "namespace": namespace},
-        "type": "kubernetes.io/dockerconfigjson",
-        "data": {
-            ".dockerconfigjson": base64.b64encode(json.dumps(docker_config).encode("utf-8")).decode("ascii"),
-        },
-    }
-    _kubectl(["apply", "-f", "-"], stdin=json.dumps(payload), kubeconfig=kubeconfig)
-
-
-def _image_registry(image: str) -> str:
-    if "/" not in image:
-        return ""
-    first = image.split("/", 1)[0]
-    if "." in first or ":" in first or first == "localhost":
-        return first
-    return ""
-
-
-def _docker_auth_config(registry: str) -> dict[str, Any]:
-    config_path = Path.home() / ".docker" / "config.json"
-    if not config_path.exists():
-        fail(f"Cannot create image pull secret for {registry}: {config_path} does not exist")
-    try:
-        config = json.loads(config_path.read_text())
-    except json.JSONDecodeError as exc:
-        fail(f"Cannot parse {config_path}: {exc}")
-    entry = _docker_auth_entry(config, registry)
-    if not entry:
-        helper = _docker_credential_helper(config, registry)
-        if not helper:
-            fail(f"Cannot find Docker auth or credential helper for {registry}")
-        entry = _docker_auth_from_helper(helper, registry)
-    return {"auths": {registry: entry}}
-
-
-def _docker_auth_entry(config: dict[str, Any], registry: str) -> dict[str, str] | None:
-    auths = config.get("auths", {})
-    if not isinstance(auths, dict):
-        return None
-    for candidate in (registry, f"https://{registry}", f"http://{registry}"):
-        raw = auths.get(candidate)
-        if isinstance(raw, dict) and (raw.get("auth") or raw.get("identitytoken")):
-            return {key: value for key, value in raw.items() if isinstance(value, str)}
-    return None
-
-
-def _docker_credential_helper(config: dict[str, Any], registry: str) -> str:
-    helpers = config.get("credHelpers", {})
-    if isinstance(helpers, dict):
-        for candidate in (registry, f"https://{registry}", f"http://{registry}"):
-            helper = helpers.get(candidate)
-            if isinstance(helper, str) and helper:
-                return helper
-    store = config.get("credsStore")
-    return store if isinstance(store, str) else ""
-
-
-def _docker_auth_from_helper(helper: str, registry: str) -> dict[str, str]:
-    executable = f"docker-credential-{helper}"
-    if shutil.which(executable) is None:
-        fail(f"Docker credential helper {executable} is not installed")
-    try:
-        result = subprocess.run(
-            [executable, "get"],
-            input=registry,
-            text=True,
-            capture_output=True,
-            check=True,
-        )
-        payload = json.loads(result.stdout)
-    except subprocess.CalledProcessError as exc:
-        detail = (exc.stderr or exc.stdout or "").strip()
-        fail(f"Docker credential helper {executable} cannot read credentials for {registry}: {detail}")
-    except json.JSONDecodeError as exc:
-        fail(f"Docker credential helper {executable} returned invalid JSON: {exc}")
-    username = str(payload.get("Username") or payload.get("username") or "")
-    secret = str(payload.get("Secret") or payload.get("secret") or "")
-    if not username or not secret:
-        fail(f"Docker credential helper {executable} returned incomplete credentials for {registry}")
-    auth = base64.b64encode(f"{username}:{secret}".encode("utf-8")).decode("ascii")
-    return {"username": username, "password": secret, "auth": auth}
 
 
 def _kubectl(

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
 import subprocess
 import sys
 from argparse import Namespace
@@ -28,8 +29,10 @@ from npa.workflows.sim2real.workflow_stage import (
     _stage11,
     _stage14,
     _stage14_download_plan,
+    _stage8,
     _stage9,
     _stage9_existing_replay,
+    _validate_stage7_cosmos3_coverage,
 )
 
 
@@ -66,22 +69,28 @@ def test_canonical_is_one_standard_compositional_workflow() -> None:
     ):
         assert forbidden not in rendered_commands
 
-    for state in ("stage-04-shard-0", "stage-04-shard-1"):
+    for state in (f"stage-04-shard-{index}" for index in range(8)):
         assert any(
             "/components/lanes/stage_04/" in output["uri"]
             for output in payload["states"][state]["outputs"]
         )
-    for state in ("stage-08-reason2", "stage-08-reason3"):
-        assert any(
-            "/components/lanes/stage_08/" in output["uri"]
-            for output in payload["states"][state]["outputs"]
-        )
+    assert "stage-08-wave" not in payload["states"]
+    assert "stage-08-reason2" not in payload["states"]
+    assert "reason2_model" not in payload["config"]
+    assert "reason_image" not in payload["config"]
+    assert "reason-gpu" not in payload["resources"]
 
     viewer = payload["resources"]["viewer-cpu"]["kubernetes"]["pod_config"]["spec"][
         "containers"
     ][0]["resources"]
     assert viewer["requests"]["ephemeral-storage"] == "8Gi"
     assert viewer["limits"]["ephemeral-storage"] == "16Gi"
+    cosmos3 = payload["states"]["stage-08-cosmos3"]
+    assert cosmos3["resources"] == "stage8-cpu"
+    assert "accelerators" not in payload["resources"]["stage8-cpu"]
+    assert payload["config"]["cosmos3_model"] == "nvidia/Cosmos3-Super-Reasoner"
+    assert "--reason-lane" not in cosmos3["run"]["argv"]
+    assert "--reason-backend" not in cosmos3["run"]["argv"]
 
 
 def test_retired_monolithic_toolrefs_are_not_catalog_surfaces() -> None:
@@ -92,6 +101,100 @@ def test_retired_monolithic_toolrefs_are_not_catalog_surfaces() -> None:
         "workbench.sim2real.finalize",
     ):
         assert tool_ref not in TOOL_CATALOG
+
+
+def test_stage8_scores_every_rollout_once_with_hosted_cosmos3(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from npa.workbench.cosmos import reason
+    from npa.workflows.sim2real import stage8_cosmos3
+
+    work = tmp_path / "stage8"
+    work.mkdir()
+
+    class Store:
+        def download_directory(self, _source, destination):
+            destination = Path(destination)
+            for index in range(2):
+                rollout = destination / f"rollout-{index:04d}"
+                rollout.mkdir(parents=True)
+                (rollout / "camera-000.png").write_bytes(b"synthetic-public-frame")
+                (rollout / "manifest.json").write_text(
+                    json.dumps(
+                        {
+                            "rollout_id": f"rollout-{index:04d}",
+                            "task_description": "strict cube grasp",
+                            "camera_observations": ["camera-000.png"],
+                            "actions": [{"step": 0, "action": [0.0]}],
+                        }
+                    )
+                )
+
+    calls = []
+
+    def evaluate(**kwargs):
+        calls.append(kwargs["rollout_id"])
+        return {
+            "schema": "npa.sim2real.vlm_eval.v3",
+            "rollout_id": kwargs["rollout_id"],
+            "model": kwargs["model_id"],
+            "provider": "nebius",
+            "backend": "token_factory",
+            "action_count": 1,
+            "per_step": [{"step": 0}],
+            "request": {
+                "request_id": f"request-{len(calls)}",
+                "input_tokens": 10,
+                "output_tokens": 5,
+                "total_tokens": 15,
+                "latency_seconds": 0.25,
+                "retries": 0,
+                "cost_usd": None,
+            },
+        }
+
+    writes = []
+    records = []
+    monkeypatch.setattr(
+        stage8_cosmos3.tempfile, "mkdtemp", lambda **_kwargs: str(work)
+    )
+    monkeypatch.setattr(stage8_cosmos3, "storage", lambda: Store())
+    monkeypatch.setattr(reason, "run_token_factory_rollout_vlm", evaluate)
+    monkeypatch.setattr(
+        stage8_cosmos3,
+        "image_provenance",
+        lambda **kwargs: {"gpu_required": kwargs["require_gpu"]},
+    )
+    monkeypatch.setattr(
+        stage8_cosmos3,
+        "write_loop_output",
+        lambda uri, payload, *_args: writes.append((uri, payload)),
+    )
+    monkeypatch.setattr(
+        stage8_cosmos3,
+        "publish_component_record",
+        lambda **kwargs: records.append(kwargs),
+    )
+
+    _stage8(
+        Namespace(
+            root_uri="s3://unit/run",
+            outer_iteration=1,
+            inner_iteration=1,
+            reason_model="nvidia/Cosmos3-Super-Reasoner",
+            threshold=0.5,
+        )
+    )
+
+    assert calls == ["rollout-0000", "rollout-0001"]
+    payload = writes[0][1]
+    assert payload["schema"] == "npa.sim2real.cosmos3_evaluator.v1"
+    assert payload["source_rollout_ids"] == calls
+    assert payload["evaluator_usage"]["request_count"] == 2
+    assert payload["evaluator_usage"]["total_tokens"] == 30
+    assert payload["evaluator_usage"]["cost_usd"] is None
+    assert payload["provenance"]["gpu_required"] is False
+    assert records[0]["require_gpu"] is False
 
 
 def test_reduced_plan_preserves_all_real_solution_boundaries() -> None:
@@ -113,13 +216,11 @@ def test_reduced_plan_preserves_all_real_solution_boundaries() -> None:
         "stage-01-trigger",
         "stage-02-assets",
         "stage-03-transfer",
-        "stage-04-shard-0",
-        "stage-04-shard-1",
+        *(f"stage-04-shard-{index}" for index in range(8)),
         "stage-05-split",
         "stage-06-tokens",
         "stage-07-rollouts",
-        "stage-08-reason2",
-        "stage-08-reason3",
+        "stage-08-cosmos3",
         "stage-09-ppo",
         "stage-10-gold",
         "stage-11-decision",
@@ -130,6 +231,31 @@ def test_reduced_plan_preserves_all_real_solution_boundaries() -> None:
     assert set(states) == expected
     assert states.count("stage-07-rollouts") == 1
     assert states.count("stage-09-ppo") == 1
+
+
+@pytest.mark.parametrize(
+    ("stage7_ids", "source_ids", "evaluation_ids"),
+    [
+        (["rollout-1", "rollout-2"], ["rollout-1"], ["rollout-1"]),
+        (["rollout-1"], ["rollout-1", "rollout-1"], ["rollout-1", "rollout-1"]),
+        (["rollout-1"], ["rollout-1", "rollout-extra"], ["rollout-1", "rollout-extra"]),
+    ],
+    ids=["missing", "duplicate", "extra"],
+)
+def test_stage9_rejects_inexact_single_evaluator_coverage(
+    stage7_ids: list[str], source_ids: list[str], evaluation_ids: list[str]
+) -> None:
+    stage7 = {
+        "schema": "npa.sim2real.policy_rollouts.v1",
+        "rollout_dirs": [f"/tmp/actions/{item}" for item in stage7_ids],
+    }
+    cosmos3 = {
+        "source_rollout_ids": source_ids,
+        "evaluations": [{"rollout_id": item} for item in evaluation_ids],
+    }
+
+    with pytest.raises(RuntimeError, match="exactly cover Stage 7"):
+        _validate_stage7_cosmos3_coverage(stage7, cosmos3)
 
 
 def test_stage_adapters_do_not_submit_hidden_kubernetes_jobs() -> None:
@@ -209,14 +335,8 @@ def test_loop_outputs_preserve_canonical_lineage_and_runtime_checkpoint(
             1,
         ),
         (
-            "stage-08-reason2",
-            "s3://unit/run/vlm_eval/train/outer-01/iter-01/reason2.json",
-            1,
-            1,
-        ),
-        (
-            "stage-08-reason3",
-            "s3://unit/run/vlm_eval/train/outer-01/iter-01/reason3.json",
+            "stage-08-cosmos3",
+            "s3://unit/run/vlm_eval/train/outer-01/iter-01/cosmos3.json",
             1,
             1,
         ),
@@ -273,7 +393,7 @@ def test_shard_count_override_fails_before_plan_or_submit(shard_count: int) -> N
     spec = load_spec(SPEC)
     with pytest.raises(
         NpaWorkflowError,
-        match=rf"parallelCount resolves to {shard_count}.*2 members",
+        match=rf"parallelCount resolves to {shard_count}.*8 members",
     ):
         merge_config_overrides(spec, {"shard_count": str(shard_count)})
 
@@ -285,15 +405,15 @@ def test_shard_count_mismatch_fails_static_spec_validation(tmp_path: Path) -> No
     invalid.write_text(yaml.safe_dump(payload, sort_keys=False))
 
     with pytest.raises(
-        NpaWorkflowError, match="parallelCount resolves to 3.*2 members"
+        NpaWorkflowError, match="parallelCount resolves to 3.*8 members"
     ):
         load_spec(invalid)
 
 
 def test_default_shard_count_matches_declared_parallel_lanes() -> None:
-    spec = merge_config_overrides(load_spec(SPEC), {"shard_count": "2"})
+    spec = merge_config_overrides(load_spec(SPEC), {"shard_count": "8"})
     assert spec.states["stage-04-wave"].parallel_count == "{{config.shard_count}}"
-    assert len(spec.states["stage-04-wave"].parallel) == 2
+    assert len(spec.states["stage-04-wave"].parallel) == 8
 
 
 @pytest.mark.parametrize(
@@ -345,12 +465,31 @@ def _stage9_replay_fixture() -> tuple[dict, dict, dict, dict]:
         "validation_report_uri": "s3://unit/run/validation.json",
         "validation_report": validation,
     }
-    sample_eval = {"rollout_id": "rollout-1", "score": 0.8}
+    sample_eval = {
+        "schema": "npa.sim2real.vlm_eval.v3",
+        "rollout_id": "rollout-1",
+        "score": 0.8,
+        "threshold": 0.5,
+        "model": "nvidia/Cosmos3-Super-Reasoner",
+        "provider": "nebius",
+        "backend": "token_factory",
+        "request": {
+            "request_id": "request-1",
+            "input_tokens": 10,
+            "output_tokens": 5,
+            "total_tokens": 15,
+            "latency_seconds": 0.25,
+            "retries": 0,
+            "cost_usd": None,
+        },
+        "action_count": 1,
+        "per_step": [{"step": 0}],
+    }
     sample_signal = {"rollout_id": "rollout-1", "weight": 1.0}
     iteration = {
         "iteration": 1,
         "actions_uri": "s3://unit/run/actions/",
-        "vlm_eval_uri": "s3://unit/run/merged/",
+        "vlm_eval_uri": "s3://unit/run/evaluations/",
         "signal_uri": "s3://unit/run/signals/",
         "trainer_component_invocation": {"mode": "npa_workflow_skypilot_task"},
         "update": {"checkpoint_path": candidate["checkpoint_uri"]},
@@ -380,7 +519,7 @@ def test_stage9_exact_same_iteration_replay_is_idempotent() -> None:
         outer_iteration=1,
         inner_iteration=1,
         actions_uri="s3://unit/run/actions/",
-        merged_uri="s3://unit/run/merged/",
+        evaluation_uri="s3://unit/run/evaluations/",
         signal_uri="s3://unit/run/signals/",
         sample_vlm_eval=sample_eval,
         sample_signal=sample_signal,
@@ -398,7 +537,7 @@ def test_stage9_conflicting_same_iteration_replay_fails_closed() -> None:
             outer_iteration=1,
             inner_iteration=1,
             actions_uri="s3://unit/run/different-actions/",
-            merged_uri="s3://unit/run/merged/",
+            evaluation_uri="s3://unit/run/evaluations/",
             signal_uri="s3://unit/run/signals/",
             sample_vlm_eval=sample_eval,
             sample_signal=sample_signal,
@@ -408,7 +547,6 @@ def test_stage9_conflicting_same_iteration_replay_fails_closed() -> None:
 def test_stage9_retry_republishes_exact_evidence_without_training(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    from npa.workbench.cosmos import reason
     from npa.workflows.sim2real import byo_isaac_trainer, temporal_credit
     from npa.workflows.sim2real import workflow_stage
 
@@ -418,14 +556,43 @@ def test_stage9_retry_republishes_exact_evidence_without_training(
     iteration.update(
         {
             "actions_uri": f"{root}/actions/train/outer-01/iter-01/",
-            "vlm_eval_uri": f"{root}/vlm_eval/train/outer-01/iter-01/merged/",
+            "vlm_eval_uri": f"{root}/vlm_eval/train/outer-01/iter-01/evaluations/",
             "signal_uri": f"{root}/vlm_eval/train/outer-01/iter-01/signals/",
         }
     )
     lane_base = f"{root}/vlm_eval/train/outer-01/iter-01/"
     lanes = {
-        lane_base + "reason2.json": {"evaluations": [{"rollout_id": "rollout-1"}]},
-        lane_base + "reason3.json": {"evaluations": [{"rollout_id": "rollout-1"}]},
+        f"{root}/actions/train/outer-01/iter-01/rollouts-result.json": {
+            "schema": "npa.sim2real.policy_rollouts.v1",
+            "rollout_dirs": ["/tmp/actions/rollout-1"],
+        },
+        f"{root}/components/stage_08.json": {
+            "stage": 8,
+            "name": "stage_08_vlm_eval_train",
+            "artifacts": {
+                "result": lane_base + "cosmos3.json",
+                "backend": "token_factory",
+                "outer_iteration": 1,
+                "inner_iteration": 1,
+            },
+        },
+        lane_base + "cosmos3.json": {
+            "schema": "npa.sim2real.cosmos3_evaluator.v1",
+            "evaluator": "cosmos3",
+            "model": "nvidia/Cosmos3-Super-Reasoner",
+            "provider": "nebius",
+            "backend": "token_factory",
+            "provenance": {"image": "cosmos3"},
+            "evaluator_usage": {
+                "request_count": 1,
+                "input_tokens": 10,
+                "output_tokens": 5,
+                "total_tokens": 15,
+                "per_request_latency_seconds": [0.25],
+            },
+            "source_rollout_ids": ["rollout-1"],
+            "evaluations": [sample_eval],
+        },
     }
 
     work = tmp_path / "stage9"
@@ -440,9 +607,6 @@ def test_stage9_retry_republishes_exact_evidence_without_training(
         ),
     )
     monkeypatch.setattr(
-        reason, "merge_dual_reason_evaluations", lambda *_a, **_k: sample_eval
-    )
-    monkeypatch.setattr(
         temporal_credit, "convert_evaluation", lambda _item: sample_signal
     )
     monkeypatch.setattr(
@@ -451,15 +615,11 @@ def test_stage9_retry_republishes_exact_evidence_without_training(
         lambda: pytest.fail("an exact replay must not run PPO again"),
     )
     writes: list[tuple[str, dict, int]] = []
-    joins: list[dict] = []
     records: list[dict] = []
     monkeypatch.setattr(
         workflow_stage,
         "write_loop_output",
         lambda uri, payload, _directory, outer: writes.append((uri, payload, outer)),
-    )
-    monkeypatch.setattr(
-        workflow_stage, "_publish_stage8_join", lambda **kwargs: joins.append(kwargs)
     )
     monkeypatch.setattr(
         workflow_stage,
@@ -479,7 +639,6 @@ def test_stage9_retry_republishes_exact_evidence_without_training(
 
     assert writes == [(f"{root}/inner_loop/outer-01/evidence.json", evidence, 1)]
     assert len(evidence["iterations"]) == len(evidence["checkpoint_candidates"]) == 1
-    assert len(joins) == 1
     assert records[0]["artifacts"]["idempotent_replay"] is True
 
 
@@ -492,7 +651,7 @@ def test_stage14_selects_only_consumed_artifacts_and_cleans_workspace(
             {
                 "iteration": 1,
                 "actions_uri": f"{root}/actions/train/outer-01/iter-01/",
-                "vlm_eval_uri": f"{root}/vlm_eval/train/outer-01/iter-01/merged/",
+                "vlm_eval_uri": f"{root}/vlm_eval/train/outer-01/iter-01/evaluations/",
                 "signal_uri": f"{root}/vlm_eval/train/outer-01/iter-01/signals/",
             }
         ]
@@ -608,6 +767,35 @@ def test_baked_setup_executes_and_records_the_declared_interpreter(
     assert b"must be an absolute path" in failed.stderr
 
 
+def test_baked_setup_rejects_an_unsafe_import_module() -> None:
+    with pytest.raises(
+        NpaWorkflowError,
+        match="config.baked_npa_import must be a dotted Python module name",
+    ):
+        render_setup_for_tool(
+            "run.shell",
+            config={
+                "require_baked_npa": "1",
+                "baked_npa_import": "npa.cli.main; raise SystemExit(0)",
+            },
+            options=SkypilotRenderOptions(),
+        )
+
+
+def test_baked_raw_module_setup_probes_the_executed_module() -> None:
+    setup = render_setup_for_tool(
+        "",
+        config={"require_baked_npa": "1"},
+        options=SkypilotRenderOptions(),
+        command=["python3", "-m", "npa.workflows.sim2real.workflow_stage"],
+    )
+
+    assert (
+        "importlib.import_module('npa.workflows.sim2real.workflow_stage')" in setup
+    )
+    assert "npa.cli.main" not in setup
+
+
 def test_exact_source_and_per_state_immutable_images_reach_rendered_tasks() -> None:
     spec = load_spec(SPEC)
     source_sha = "a" * 40
@@ -620,7 +808,6 @@ def test_exact_source_and_per_state_immutable_images_reach_rendered_tasks() -> N
             "controller_image": image,
             "transfer_image": image,
             "envgen_image": image,
-            "reason_image": image,
             "isaac_image": image,
             "viewer_image": image,
             "isaac_cache_pvc": "isaac-cache",
@@ -643,13 +830,30 @@ def test_exact_source_and_per_state_immutable_images_reach_rendered_tasks() -> N
         assert task["envs"]["NPA_SIM2REAL_SOURCE_SHA"] == source_sha
         assert task["envs"]["NPA_TASK_IMAGE"] == image
         assert "immutable baked NPA runtime verified" in task["setup"]
-        assert "import npa.cli.main" in task["setup"]
+        assert (
+            "importlib.import_module('npa.workflows.sim2real.workflow_stage')"
+            in task["setup"]
+        )
         assert "NPA_BAKED_PYTHON" in task["setup"]
         assert "/tmp/npa-python" in task["setup"]
+        assert "/opt/npa/src" in task["setup"]
+        assert "/tmp/npa-baked-pythonpath" in task["setup"]
+        assert "/tmp/npa-baked-pythonpath" in task["run"]
         assert "baked NPA interpreter must be an absolute path" in task["setup"]
         assert "baked NPA interpreter is not executable" in task["setup"]
         assert "pip install" not in task["setup"]
         assert "NPA_SRC_S3_URI" not in task["envs"]
+        pod_containers = task["config"]["kubernetes"]["pod_config"]["spec"][
+            "containers"
+        ]
+        ray_node = next(
+            container for container in pod_containers if container["name"] == "ray-node"
+        )
+        bootstrap_env = {
+            item["name"]: item["value"] for item in ray_node.get("env", [])
+        }
+        assert bootstrap_env["XDG_CACHE_HOME"] == "/tmp/npa-skypilot-xdg-cache"
+        assert bootstrap_env["UV_CACHE_DIR"] == "/tmp/npa-skypilot-uv-cache"
 
     gpu_tasks = [task for task in tasks if task["resources"].get("accelerators")]
     assert gpu_tasks
@@ -659,6 +863,30 @@ def test_exact_source_and_per_state_immutable_images_reach_rendered_tasks() -> N
             "kueue.x-k8s.io/queue-name": "sim2real-gpu"
         }
         assert pod_config["spec"]["priorityClassName"] == "sim2real-production"
+
+    transfer_pod = spec.resources["transfer-gpu"]["kubernetes"]["pod_config"][
+        "spec"
+    ]
+    transfer_env = {
+        item["name"]: item["value"]
+        for item in transfer_pod["containers"][0]["env"]
+    }
+    assert transfer_env == {
+        "UV_CACHE_DIR": "/tmp/npa-skypilot-uv-cache",
+        "XDG_CACHE_HOME": "/tmp/npa-skypilot-xdg-cache",
+    }
+    rendered_transfer_tasks = [
+        task
+        for task in tasks
+        if task["envs"]["NPA_WORKFLOW_STATE"] == "stage-03-transfer"
+    ]
+    assert len(rendered_transfer_tasks) == 1
+    assert (
+        rendered_transfer_tasks[0]["config"]["kubernetes"]["pod_config"]["spec"][
+            "containers"
+        ][0]["env"]
+        == transfer_pod["containers"][0]["env"]
+    )
 
     isaac_pod = spec.resources["isaac-gpu"]["kubernetes"]["pod_config"]["spec"]
     assert isaac_pod.get("securityContext", {}).get("runAsUser") != 0

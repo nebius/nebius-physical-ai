@@ -114,7 +114,11 @@ class ObjectSpec:
     # Appearance / physics
     color: tuple[float, float, float] = DEFAULT_COLOR
     mass: float | None = None
+    density: float | None = None
     friction: float | None = None
+    friction_source: str = ""
+    static_friction: float | None = None
+    dynamic_friction: float | None = None
     fixed: bool = False
     # Resolved fields (populated by resolve_scene_assets)
     local_path: str = ""
@@ -307,15 +311,22 @@ def _object_from_dict(raw: dict[str, Any], index: int) -> ObjectSpec:
         obj.color = _coerce_triple(raw["color"], "color")
     if raw.get("mass") is not None:
         obj.mass = float(raw["mass"])
+    if raw.get("density") is not None:
+        obj.density = float(raw["density"])
     if raw.get("friction") is not None:
         obj.friction = float(raw["friction"])
+    obj.friction_source = str(raw.get("friction_source") or "").strip()
+    if raw.get("static_friction") is not None:
+        obj.static_friction = float(raw["static_friction"])
+    if raw.get("dynamic_friction") is not None:
+        obj.dynamic_friction = float(raw["dynamic_friction"])
     obj.fixed = bool(raw.get("fixed", role == ROLE_STATIC))
     return obj
 
 
 def _object_to_dict(obj: ObjectSpec) -> dict[str, Any]:
     scale = list(obj.scale) if isinstance(obj.scale, tuple) else obj.scale
-    return {
+    payload = {
         "name": obj.name,
         "asset_source": obj.asset_source,
         "role": obj.role,
@@ -333,6 +344,17 @@ def _object_to_dict(obj: ObjectSpec) -> dict[str, Any]:
         "friction": obj.friction,
         "fixed": obj.fixed,
     }
+    if obj.density is not None:
+        payload["density"] = obj.density
+        if obj.mass is None:
+            payload.pop("mass")
+    if obj.friction_source:
+        payload["friction_source"] = obj.friction_source
+    if obj.static_friction is not None:
+        payload["static_friction"] = obj.static_friction
+    if obj.dynamic_friction is not None:
+        payload["dynamic_friction"] = obj.dynamic_friction
+    return payload
 
 
 def _camera_from_dict(name: str, raw: dict[str, Any]) -> CameraSpec:

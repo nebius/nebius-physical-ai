@@ -93,6 +93,6 @@ The first run downloads approximately 67 GB of operator-entitled model assets.
 Neither the model cache nor the non-transferable dataset is part of the image or
 published artifacts.
 
-The accepted tag is available from the operator registry configured in NPA.
-Anonymous GHCR mirroring is a separate maintainer publication step; lack of a
-public mirror does not authorize copying the gated dataset or runtime cache.
+The accepted runtime-fetch image is available from the anonymous GHCR mirror
+used by default. Neither that public image nor any private copy contains or
+authorizes copying the gated dataset, model weights, or runtime cache.

@@ -89,8 +89,8 @@ Both the **evaluator** and the **feedback source** are swappable:
   rendered frames), or `heldout-metrics`.
 - `--feedback-source`: `none`, `sim-env`, `vlm`, or `byo-container`.
 
-That's the same `vlm-eval` judge from the
-[no-GPU guide](score-a-robot-no-gpu.md), now grading a live policy.
+The `vlm-eval` judge is documented in its own
+[skill](../../../skills/tools/vlm-eval/SKILL.md).
 
 ## Look at it
 

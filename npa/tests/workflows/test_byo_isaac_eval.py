@@ -160,6 +160,28 @@ def test_eval_manifest_rejects_oversized_embedded_scenarios():
         )
 
 
+def test_eval_manifest_materializes_embedded_scenarios_without_argv_payload():
+    manifest = ev.build_isaac_eval_job_manifest(
+        job_name="j",
+        run_id="r",
+        image="reg/npa-isaac-lab:tag",
+        task="Isaac-Lift-Cube-Franka-v0",
+        num_envs=2,
+        checkpoint_uri="s3://b/model.pt",
+        per_env_s3_uri="s3://b/out.json",
+        s3_endpoint="https://s3.example",
+        namespace="default",
+        service_account="agent-sa",
+        gpu_product="NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
+        scenarios_jsonl='{"scenario_config_digest":"digest"}\n',
+    )
+    script = _manifest_script(manifest)
+
+    assert "base64 --decode > /tmp/evalwork/scenarios.jsonl" in script
+    assert "NPA_EVAL_SCENARIOS_B64" in script
+    assert "--payload" not in script
+
+
 def test_publish_eval_scenarios_is_content_addressed():
     rows = [
         {

@@ -220,7 +220,7 @@ def test_full_loop_writes_stage_artifacts_and_candidate(tmp_path: Path) -> None:
     assert augment["status"] in {"executed_reference", "executed", "contract_ready"}
     assert (
         augment.get("image")
-        == "npa-cosmos2-transfer:2.5.1-skypilot-ready-20260801T053000Z"
+        == "npa-cosmos2-transfer:2.5.1-sam2-multigpu-20260817-r2"
     )
     assert (
         trigger["trigger_dataset_uri"] == "s3://bucket/sim2real-triggers/lerobot-pusht/"
@@ -338,8 +338,8 @@ class _FakeComponentStorage:
             payload = self.downloads.get("vlm_eval_reason2") or self.downloads.get(
                 "vlm_eval"
             )
-        if payload is None and "vlm-eval-reason3" in bucket_uri:
-            payload = self.downloads.get("vlm_eval_reason3") or self.downloads.get(
+        if payload is None and "vlm-eval-cosmos3" in bucket_uri:
+            payload = self.downloads.get("vlm_eval_cosmos3") or self.downloads.get(
                 "vlm_eval"
             )
         if payload is None and "/heldout-eval/" in bucket_uri:
@@ -411,11 +411,6 @@ def _patch_kubectl(monkeypatch) -> list[dict]:
         lambda **kwargs: FakeClient(),
     )
     monkeypatch.setattr(engine_module, "run_gpu_job_with_fallback", fake_run_gpu)
-    monkeypatch.setattr(
-        engine_module,
-        "_refresh_registry_pull_secret_for_sibling_job",
-        lambda *args, **kwargs: None,
-    )
     return calls
 
 
@@ -472,13 +467,13 @@ def test_image_vlm_eval_launches_sibling_job_and_parses_output(
     container = manifest["spec"]["template"]["spec"]["containers"][0]
 
     assert evaluation["score"] == 0.512345
-    assert evaluation["component_invocation"]["mode"] == "kubernetes_job_dual_reason"
+    assert evaluation["component_invocation"]["mode"] == "kubernetes_job_two_evaluator"
     assert evaluation["component_invocation"]["reason2_image"]
     assert convert_vlm_eval_to_rl_signal(evaluation)["score"] == 0.512345
     assert storage.uploaded_directories
     assert manifest["spec"]["template"]["spec"]["serviceAccountName"] == "agent-sa"
-    assert {"name": "agent-sa"} in manifest["spec"]["template"]["spec"][
-        "imagePullSecrets"
+    assert manifest["spec"]["template"]["spec"]["imagePullSecrets"] == [
+        {"name": "ngc-nvcr-imagepullsecret"}
     ]
     assert {"secretRef": {"name": "hf-ngc-tokens"}} in container["envFrom"]
     assert {"secretRef": {"name": "npa-storage-credentials"}} in container["envFrom"]
@@ -1272,14 +1267,14 @@ def test_default_augment_image_uses_cosmos2_transfer_contract(monkeypatch) -> No
 
     assert (
         default_augment_image()
-        == "npa-cosmos2-transfer:2.5.1-skypilot-ready-20260801T053000Z"
+        == "npa-cosmos2-transfer:2.5.1-sam2-multigpu-20260817-r2"
     )
 
     config = build_config_from_env(run_id="sim2real-images")
 
     assert (
         config.augment_image
-        == "npa-cosmos2-transfer:2.5.1-skypilot-ready-20260801T053000Z"
+        == "npa-cosmos2-transfer:2.5.1-sam2-multigpu-20260817-r2"
     )
     assert config.vlm_image == (
         "npa-cosmos3-reason:cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
@@ -1295,7 +1290,7 @@ def test_default_augment_image_uses_first_party_cosmos2_registry(monkeypatch) ->
 
     assert (
         config.augment_image
-        == "registry.example/workbench/npa-cosmos2-transfer:2.5.1-skypilot-ready-20260801T053000Z"
+        == "registry.example/workbench/npa-cosmos2-transfer:2.5.1-sam2-multigpu-20260817-r2"
     )
     assert (
         config.vlm_image
@@ -1499,7 +1494,7 @@ def test_loop_component_records_require_real_kubernetes_evidence(
                 "trainer_source": "byo_command",
                 "sample_vlm_eval": {
                     "component_invocation": {
-                        "mode": "kubernetes_job_dual_reason",
+                        "mode": "kubernetes_job_two_evaluator",
                         "gpu_provenance": {
                             "selected_products": ["NVIDIA-L40S"],
                             "image_digests": ["sha256:reason"],
@@ -1681,6 +1676,17 @@ def test_build_config_from_env_reads_fixed_count_mode(monkeypatch) -> None:
 
     assert config.early_exit is False
     assert override.early_exit is True
+
+
+def test_archived_reason3_model_override_preserves_custom_value(monkeypatch) -> None:
+    monkeypatch.delenv("VLM_COSMOS3_MODEL", raising=False)
+
+    config = build_config_from_env(
+        run_id="archived-cosmos3-model",
+        vlm_reason3_model="vendor/custom-cosmos3-reasoner",
+    )
+
+    assert config.vlm_cosmos3_model == "vendor/custom-cosmos3-reasoner"
 
 
 def test_component_heldout_payload_dispatches_isaac_backend(monkeypatch) -> None:
@@ -2549,7 +2555,7 @@ def test_cosmos_split_sdk_and_raw_yaml_contracts() -> None:
     transfer = cosmos2.transfer(
         input_uri="s3://bucket/input/",
         output_uri="s3://bucket/augment/",
-        image="npa-cosmos2-transfer:2.5.1-skypilot-ready-20260801T053000Z",
+        image="npa-cosmos2-transfer:2.5.1-sam2-multigpu-20260817-r2",
     )
     reason = cosmos3.reason(
         input_uri="s3://bucket/rollouts/",
@@ -2561,7 +2567,7 @@ def test_cosmos_split_sdk_and_raw_yaml_contracts() -> None:
     assert reason["schema"] == "npa.cosmos3.reason.v1"
     assert (
         transfer["image"]
-        == "npa-cosmos2-transfer:2.5.1-skypilot-ready-20260801T053000Z"
+        == "npa-cosmos2-transfer:2.5.1-sam2-multigpu-20260817-r2"
     )
     assert reason["image"] == "npa-cosmos3-reason:3.0.0"
     assert transfer["image"] != reason["image"]
@@ -2635,7 +2641,7 @@ def test_parallel_vlm_eval_caps_sibling_job_concurrency(
         steps_per_rollout=1,
         inner_iterations=1,
         k8s_max_parallel_gpus=2,
-        vlm_dual_reason=False,
+        vlm_two_evaluator=False,
         k8s_namespace="default",
     )
     rollouts = generate_action_rollouts(

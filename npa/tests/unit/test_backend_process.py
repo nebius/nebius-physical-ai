@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import subprocess
+import threading
+import time
 
 import pytest
 
@@ -10,6 +13,7 @@ from npa.cluster_backends.process import (
     require_bin,
     run_capture,
     run_stream,
+    terraform_plugin_cache_lock,
     terraform_env,
 )
 
@@ -103,6 +107,59 @@ def test_capture_normalizes_launch_and_timeout_errors(tmp_path: Path) -> None:
         run_capture(["/bin/sh", "-c", "sleep 2"], timeout=0.01)
 
 
+def test_stream_timeout_stops_descendant_process_group(tmp_path: Path) -> None:
+    pid_path = tmp_path / "child.pid"
+    with pytest.raises(BackendCommandError, match="timed out"):
+        run_stream(
+            [
+                "/bin/sh",
+                "-c",
+                f"sleep 30 & echo $! > {pid_path}; wait",
+            ],
+            timeout=0.2,
+        )
+    child_pid = int(pid_path.read_text())
+    for _ in range(50):
+        try:
+            os.kill(child_pid, 0)
+        except ProcessLookupError:
+            break
+        stat_path = Path(f"/proc/{child_pid}/stat")
+        try:
+            state = stat_path.read_text().split()[2]
+        except (FileNotFoundError, ProcessLookupError):
+            # The descendant exited between kill(0) and procfs inspection.
+            break
+        if state == "Z":
+            break
+        time.sleep(0.02)
+    else:
+        pytest.fail("stream timeout left a descendant process running")
+
+
+def test_default_stream_interrupt_stops_process_group(monkeypatch) -> None:
+    from io import StringIO
+
+    import npa.cluster_backends.process as process_module
+
+    class InterruptedProcess:
+        pid = 123
+        stdout = StringIO("")
+        stderr = StringIO("")
+
+        def wait(self, **_kwargs):  # noqa: ANN001
+            raise KeyboardInterrupt
+
+    process = InterruptedProcess()
+    stopped = []
+    monkeypatch.setattr(subprocess, "Popen", lambda *_a, **_k: process)
+    monkeypatch.setattr(process_module, "_stop_process", stopped.append)
+
+    with pytest.raises(KeyboardInterrupt):
+        run_stream(["terraform", "apply"])
+    assert stopped == [process]
+
+
 def test_explicit_executable_path_wins_over_path_lookup(tmp_path: Path) -> None:
     executable = tmp_path / "tool"
     executable.write_text("#!/bin/sh\nexit 0\n")
@@ -123,3 +180,34 @@ def test_failed_nebius_token_exchange_is_redacted(tmp_path: Path) -> None:
         terraform_env(str(nebius))
     assert "provider-secret" not in str(raised.value)
     assert "<redacted>" in str(raised.value)
+
+
+def test_terraform_plugin_cache_lock_serializes_threads(tmp_path: Path) -> None:
+    env = {"TF_PLUGIN_CACHE_DIR": str(tmp_path / ".providers")}
+    first_entered = threading.Event()
+    release_first = threading.Event()
+    second_entered = threading.Event()
+
+    def first() -> None:
+        with terraform_plugin_cache_lock(env):
+            first_entered.set()
+            assert release_first.wait(timeout=2)
+
+    def second() -> None:
+        assert first_entered.wait(timeout=2)
+        with terraform_plugin_cache_lock(env):
+            second_entered.set()
+
+    first_thread = threading.Thread(target=first)
+    second_thread = threading.Thread(target=second)
+    first_thread.start()
+    second_thread.start()
+    assert first_entered.wait(timeout=2)
+    assert not second_entered.wait(timeout=0.05)
+    release_first.set()
+    first_thread.join(timeout=2)
+    second_thread.join(timeout=2)
+    assert not first_thread.is_alive()
+    assert not second_thread.is_alive()
+    assert second_entered.is_set()
+    assert (tmp_path / ".providers.npa-init.lock").stat().st_mode & 0o777 == 0o600

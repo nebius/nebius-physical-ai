@@ -57,14 +57,22 @@ export NGC_API_KEY=nvapi-XXXXXXXXXXXXXXXXXXXX
 ## 3. Verify
 
 ```bash
-npa workbench health access          # checks NGC key presence/format + HF access
+npa workbench health access          # checks NGC repository entitlement + HF access
+# authenticate the configured key through NGC token exchange:
+npa workbench health preflight --checks ngc
 # or presence-only, no network:
 npa workbench health preflight --offline
 ```
 
-A well-formed key (starting with `nvapi-`) reports as configured. A real image
-pull is the authoritative entitlement check; credentials alone do not grant
-rights or make restricted image bytes redistributable.
+A well-formed key (starting with `nvapi-`) is not treated as proof by itself.
+`health access` performs the registry token exchange and tag-listing request for
+the selected NGC repository without downloading image layers. Interactive
+`npa configure` uses the same probe for its bounded advisory summary. A
+successful pull preflight proves access at that moment; it does not grant rights
+or make restricted image bytes redistributable.
+Generic online preflight also performs token exchange. A successful exchange
+authenticates the key but does not imply access to every NGC artifact; run the
+capability-specific access check before provisioning for a gated image/model.
 
 ## Troubleshooting
 

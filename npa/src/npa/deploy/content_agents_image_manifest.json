@@ -1,0 +1,102 @@
+{
+  "format": "npa_content_agents_accepted_image_manifest_v1",
+  "tag": "0.5.2-npa2",
+  "oci_digest": "sha256:c64aaf6201bdaa013f9d16e8497290cf166907932f036297d7abaa430cbad7db",
+  "amd64_manifest": "sha256:bfdd7b053dd7ca7a36d5b82cbc162a7235a123876153c8df8236b0a55cbcc408",
+  "implementation_revision": "36dd0578a9b10b2529de5d9e5eaaca69e3c84254",
+  "source": {
+    "repository": "https://github.com/NVIDIA-Omniverse/content-agents.git",
+    "revision": "36dbf3f274f8e256637230a05a085853f65cc175",
+    "version": "0.5.2",
+    "license": "Apache-2.0"
+  },
+  "runtime": {
+    "name": "OVRTX",
+    "version": "0.3.0.312915",
+    "architecture": "x86_64",
+    "lock_sha256": "ed582577175e4a5b32f8b69ef9cdbfc3d7337f3786051d8b076e30a2652f6fa5",
+    "wheel_sha256": "a6b2b3c357f6487451c8d71e96cc4f83156c08fd9747d10e1b65f3866bed4b8f",
+    "delivery": "anonymous-runtime-fetch-from-nvidia",
+    "cache_identity": "lock-ed582577175e4a5b32f8b69ef9cdbfc3d7337f3786051d8b076e30a2652f6fa5",
+    "cache_tier": "configured-filesystem",
+    "pvc_access_mode": "ReadWriteOnce",
+    "sequential_render_jobs": true,
+    "reused_render_stages": 3,
+    "ready_markers": 1,
+    "single_writer_lock": true,
+    "atomic_ready_publication": true,
+    "credentials_required": false
+  },
+  "payload_scan": {
+    "format": "npa_content_agents_image_byte_scan_v2",
+    "report_sha256": "29678bbf5a925216448e4945f3c8507eada0d6347069bd3e07e0734c630bd3db",
+    "archives_scanned": 3,
+    "findings": 0
+  },
+  "general_payload_scan": {
+    "format": "npa_restricted_payload_scan_v2",
+    "report_sha256": "fcf4c1a7a45a59c921a125557df8a74f6ca3ad766b605f6492d1ab4df7c8e103",
+    "entries_scanned": 28471,
+    "payload_hits": 0,
+    "history_hits": 0,
+    "weight_shaped_paths": 5
+  },
+  "vulnerability_scan": {
+    "scanner": "Trivy 0.72.0",
+    "report_sha256": "a9549d3036672295d20833fe87d87c3fe6abdde2603be995519697efb671d544",
+    "critical_total": 0,
+    "critical_with_fix": 0,
+    "secrets": 0
+  },
+  "attestations": {
+    "manifest_count": 1,
+    "statement_count": 2,
+    "spdx": 1,
+    "slsa_provenance_v0_2": 1,
+    "bound_to_amd64_manifest": true
+  },
+  "rtx_proof": {
+    "record_id": "private-access-controlled-validation-record",
+    "gpu_model": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+    "gpu_count": 1,
+    "observed_image_id_digest": "sha256:c64aaf6201bdaa013f9d16e8497290cf166907932f036297d7abaa430cbad7db",
+    "upstream_validation": "pass",
+    "material_render_count": 6,
+    "physics_render_count": 6,
+    "validation_render_count": 1,
+    "artifact_count": 37,
+    "artifact_bytes": 1808557,
+    "usd_sha256": "87968a4b1ebe144b4c1275c2b3be6b66dc1b778342d9f3af5f170e8e28ddca94",
+    "usd_size_bytes": 2684,
+    "usdz_sha256": "1ed4f7e4cd7032a38095d577a7c6441f7471a1ecd9021039e1cf61f0ed908a6e",
+    "usdz_size_bytes": 2850,
+    "independent_reopen": {
+      "usd_prim_count": 10,
+      "usdz_prim_count": 10,
+      "default_prim": "/World"
+    },
+    "rigid_physics": {
+      "rigid_body": true,
+      "collision": true,
+      "fixed": false,
+      "mass_or_density": 2.700000047683716,
+      "mass_or_density_source": "mass",
+      "friction": 0.6100000143051147,
+      "friction_source": "static_friction"
+    },
+    "consumer": "npa.sim2real.stage_02.isaac_rigid_object"
+  },
+  "anonymous_publication": {
+    "registry": "ghcr.io/nebius/nebius-physical-ai/npa-content-agents",
+    "tag": "0.5.2-npa2",
+    "verified": true,
+    "verified_at": "2026-08-22",
+    "verification": "unauthenticated-manifest-and-config-by-digest",
+    "oci_digest": "sha256:c64aaf6201bdaa013f9d16e8497290cf166907932f036297d7abaa430cbad7db",
+    "platform_manifests": 1,
+    "attestation_manifests": 1,
+    "oci_user": "ubuntu",
+    "redistribution_label": "public",
+    "ovrtx_delivery_label": "runtime-fetch"
+  }
+}

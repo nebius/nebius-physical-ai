@@ -18,8 +18,9 @@ granted by Lightricks after that operator accepted the terms on the gated
 repository page, and it is what both fetches require — so a run without one
 refuses in the pod exactly as it does here.
 
-Status: no live run has happened. The image has not been built. See
-``docs/workbench/ltx2.md`` for the runbook that produces the evidence.
+The accepted release proof is recorded by immutable digest. This test remains
+the mandatory acceptance path for every future candidate; prior evidence never
+transfers to different bytes.
 """
 
 from __future__ import annotations

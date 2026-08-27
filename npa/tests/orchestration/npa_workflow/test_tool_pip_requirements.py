@@ -338,7 +338,16 @@ def test_the_npa_console_script_is_shimmed_to_the_recorded_interpreter(
     # so the recorded source goes in front of it.
     assert 'export PYTHONPATH="$npa_src_path:$PYTHONPATH"' in run_script
     assert "${" not in run_script, "the placeholder guard rejects braced expansions"
-    assert "from npa.cli.main import app_entry" in run_script
+    # npa has no top-level __main__; the generated shim must call the same
+    # supported entry function as the installed console script.  An explicit
+    # call also works with older images whose entry module lacks a __main__
+    # guard and would otherwise silently no-op under ``python -m``.
+    assert (
+        'exec "%s" -c "from npa.cli.entry import main; main()" "$@"'
+        in run_script
+    )
+    assert 'exec "%s" -m npa.cli.entry "$@"' not in run_script
+    assert 'exec "%s" -m npa "$@"' not in run_script
     # Both shims come from the same recorded interpreter.
     assert run_script.count('"$npa_python"') >= 2
 

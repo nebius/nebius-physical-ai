@@ -29,11 +29,67 @@ from npa.workflows.artifacts import (
     list_run_categories,
     list_runs,
     list_runs_at_prefix_across_buckets,
+    prefer_complete_run_resolution,
     render_hint_for_object,
     resolve_run_artifact,
     resolve_run_artifacts,
     select_preferred_artifact,
 )
+
+
+def test_complete_canonical_run_wins_over_same_id_one_file_overlay() -> None:
+    run_id = "paidf-run"
+
+    def artifact(prefix: str, relative: str, size: int, render: str) -> Artifact:
+        key = f"{prefix}/{run_id}/{relative}"
+        return Artifact(
+            run_id=run_id,
+            key=key,
+            s3_uri=f"s3://bucket/{key}",
+            size=size,
+            last_modified="2026-08-18T00:00:00+00:00",
+            render=render,
+            inline=False,
+            relative_key=relative,
+        )
+
+    canonical_rrd = artifact("canonical", "reports/sim2real.rrd", 100, "rerun")
+    canonical = RunResolution(
+        run_id,
+        "bucket",
+        "canonical",
+        [
+            canonical_rrd,
+            artifact("canonical", "cosmos_augmented/a/augmented_video.mp4", 200, "video"),
+            artifact("canonical", "grade/quality_disposition.json", 50, "json"),
+        ],
+    )
+    overlay = RunResolution(
+        run_id,
+        "bucket",
+        "viewer-overlay",
+        [
+            Artifact(
+                **{
+                    **canonical_rrd.__dict__,
+                    "key": f"viewer-overlay/{run_id}/reports/sim2real.rrd",
+                    "s3_uri": (
+                        f"s3://bucket/viewer-overlay/{run_id}/reports/sim2real.rrd"
+                    ),
+                }
+            )
+        ],
+    )
+
+    assert prefer_complete_run_resolution([overlay, canonical]) is canonical
+
+    divergent = RunResolution(
+        run_id,
+        "bucket",
+        "other",
+        [artifact("other", "reports/sim2real.rrd", 101, "rerun")],
+    )
+    assert prefer_complete_run_resolution([canonical, divergent]) is None
 
 
 def test_build_fiftyone_dataset_groups_variants_and_summarizes() -> None:

@@ -1,13 +1,35 @@
 ---
 name: audit-container-docs
-description: Audit and update NPA container-image catalogs and related container documentation when images are added, removed, renamed, retagged, republished, reclassified, or materially changed. Use for docs/workbench/container-image-catalog.md drift, public-mirror inventory checks, and container documentation reviews.
+description: Reconcile NPA container-image catalogs and related documentation whenever a workbench image or solution is added, removed, renamed, retagged, republished, reclassified, or materially changed. Use for docs/workbench/container-image-catalog.md drift, public-release inventory checks, and image or solution onboarding.
 ---
 
 # Audit Container Documentation
 
 Separate repository intent from registry state. An image can have a Dockerfile,
 be eligible for redistribution, or exist in a private registry without being in
-the public mirror inventory. State only the layer that the evidence proves.
+the public release inventory. State only the layer that the evidence proves.
+
+## Required Onboarding Hook
+
+Load this skill before finishing any change that introduces or changes a
+workbench image or an image-backed solution. This includes work performed through
+`contribute-workbench-image`, `add-workbench-tool`, and
+`oss-solution-registry-onboard`.
+
+Reconcile `docs/workbench/container-image-catalog.md` after the image name, pin,
+packaging classification, and publication intent are stable:
+
+- Add or update a table row only when the image is selected by
+  `publicly_publishable_tools()` and its exact resolved tag is anonymously
+  pullable. Do not list a build, private-registry artifact, or merely
+  redistribution-eligible image as published.
+- For a new solution that remains BYOF-only, restricted, internal, deferred, or
+  otherwise outside the public plan, do not force it into the public table.
+  Confirm the exclusion against repository sources and document it in the
+  appropriate solution or container documentation when the distinction would
+  otherwise be misleading.
+- Treat the catalog audit and its guardrail as part of the originating image or
+  solution change, not as optional follow-up work.
 
 ## Read The Authoritative Sources
 
@@ -17,10 +39,12 @@ Use these sources for distinct facts:
 - `npa/docker/workbench/packaging-contract.yaml`: built-image inventory,
   packaging tier, ports, security exceptions, and redistribution eligibility.
 - `npa/src/npa/deploy/images.py`: canonical tool-to-image names, restricted
-  tools, public-mirror membership, and tag-resolution exceptions.
+  tools, public-release membership, and tag-resolution exceptions.
 - `npa/pyproject.toml` `[tool.npa.supported-tools]`: default immutable image pins.
 - `npa/src/npa/deploy/*_image_manifest.json`: variant-specific pins and evidence
   for SONIC, Wan, LeRobot, and any future manifest-backed tool.
+- `npa/src/npa/deploy/public_release_manifest.json`: accepted release tags and
+  exact anonymously verified `published_digest` values.
 - `npa/docker/workbench/<image>/Dockerfile*`, build scripts, lock files, and
   redistribution records: what an image actually contains and does.
 - `npa/src/npa/deploy/publish_public.py`: exact public source-to-target plan.
@@ -30,22 +54,24 @@ Use these sources for distinct facts:
   Treat this as volatile observed state, not a replacement for repository intent.
 
 Do not treat every Dockerfile or every `redistribution: public` entry as a public
-catalog row. `public` means eligible to redistribute; public-mirror membership is
+catalog row. `public` means eligible to redistribute; public-release membership is
 the intersection selected by `publicly_publishable_tools()` and its resolved pin.
 
 ## Run The Audit
 
 1. Preserve unrelated dirty-tree changes and inspect the diff from the relevant
    base. Search recent changes to Dockerfiles, packaging contracts, image maps,
-   manifests, supported-tool pins, workflows, and container docs.
+   manifests, supported-tool pins, workflows, solution metadata, and container
+   docs. If this audit was loaded by an onboarding skill, identify the new or
+   changed image/solution explicitly before reconciling the catalog.
 2. Print the repository's current public plan from the installed checkout:
 
    ```bash
    npa/.venv/bin/python - <<'PY'
-   from npa.deploy.images import CONTAINER_IMAGE_NAMES, public_mirror_tag_for_tool, publicly_publishable_tools
+   from npa.deploy.images import CONTAINER_IMAGE_NAMES, public_release_tag_for_tool, publicly_publishable_tools
 
    for tool in publicly_publishable_tools():
-       print(tool, CONTAINER_IMAGE_NAMES[tool], public_mirror_tag_for_tool(tool), sep="\t")
+       print(tool, CONTAINER_IMAGE_NAMES[tool], public_release_tag_for_tool(tool), sep="\t")
    PY
    ```
 
@@ -62,7 +88,7 @@ the intersection selected by `publicly_publishable_tools()` and its resolved pin
 
    ```bash
    npa/.venv/bin/python -m npa.deploy.publish_public \
-     --target ghcr.io/nebius/nebius-physical-ai --verify-public
+     --target ghcr.io/nebius/nebius-physical-ai --verify-accepted-releases
    docker buildx imagetools inspect \
      ghcr.io/nebius/nebius-physical-ai/<image>:<tag>
    ```

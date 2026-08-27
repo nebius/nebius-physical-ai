@@ -1,7 +1,3 @@
-# SkyPilot global config for RTX PRO mk8s clusters pulling from Nebius Container Registry.
+# SkyPilot global config for RTX PRO mk8s clusters. Public GHCR releases need no pull secret.
 # Use with: sky launch --config npa/src/npa/workflows/byof/profiles/skypilot-kubernetes-rtxpro.yaml ...
-kubernetes:
-  pod_config:
-    spec:
-      imagePullSecrets:
-        - name: agent-sa
+kubernetes: {}

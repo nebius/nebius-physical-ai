@@ -45,7 +45,7 @@ The serverless Job commands use the same option shape:
 npa workbench cosmos -p eu-north1 -n w13-cosmos train \
   --runtime serverless \
   --project-id <YOUR_PROJECT_ID> \
-  --image cr.eu-north1.nebius.cloud/${NPA_REGISTRY_ID}/npa-cosmos:cu128-torch27-sm100-1.0.9-20260803T002017Z \
+  --image ghcr.io/nebius/nebius-physical-ai/npa-cosmos:cu128-torch27-sm100-1.0.9-20260803T002017Z \
   --gpu-type h100 \
   --gpu-count 1 \
   --gpu-preset 1gpu-16vcpu-200gb \
@@ -127,7 +127,7 @@ npa workbench groot -p uk-south1 -n w7p-groot infer \
 
 Current status: `SMOKE_FAILED`. W7p-groot-debug fixed the missing-image-tag
 issue and proved the corrected submission uses
-`cr.eu-north1.nebius.cloud/<your-registry-id>/npa-groot:0.1.0`; the post-fix
+`<your-registry>/<namespace>/npa-groot:0.1.0`; the post-fix
 retry stalled in `STARTING` with no logs and was deleted.
 
 ## Shared Infrastructure

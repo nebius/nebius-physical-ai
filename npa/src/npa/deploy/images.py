@@ -7,26 +7,29 @@ from importlib import resources
 import json
 import os
 from pathlib import Path
+import re
 from typing import Any
 
-# Primary public Workbench registry (eu-north1). A registry path is a public
-# locator, not a credential: pulls are still gated by the registry pull secret /
-# IAM token, which are never committed. Operators can override it with NPA_REGISTRY
-# or `container_registry` in ~/.npa/config.yaml.
-DEFAULT_CONTAINER_REGISTRY_ID = "e00cm0vc6t09m0z5gw"
-DEFAULT_CONTAINER_REGISTRY = (
-    f"cr.eu-north1.nebius.cloud/{DEFAULT_CONTAINER_REGISTRY_ID}"
-)
-# Mirror registry (us-central1) used for region-agnostic failover: every tool
-# image is mirrored to both this and the primary (eu-north1) registry, so a pull
-# succeeds regardless of the caller's region — e.g. an in-cluster us-central1 pull
-# cannot reach the cross-region eu-north1 registry, and vice versa. A registry
-# path is a public locator, not a credential. Override with NPA_BACKUP_REGISTRY.
-BACKUP_CONTAINER_REGISTRY = "cr.us-central1.nebius.cloud/u00j7q4jjkahvsx0jy"
+# Official NPA images use one public GHCR namespace. Immutable
+# ``dev-<full-git-sha>`` tags and supported release tags share each image package;
+# guarded promotion applies the release tag only to an already validated dev digest.
+# ``NPA_REGISTRY`` remains the generic operator execution override. Restricted and
+# build-your-own images must use an operator-controlled registry and are refused from
+# official GHCR.
+PUBLIC_CONTAINER_REGISTRY_ENV = "NPA_PUBLIC_REGISTRY"
+DEFAULT_PUBLIC_CONTAINER_REGISTRY = "ghcr.io/nebius/nebius-physical-ai"
+
+# Compatibility name for callers that mean "the normal execution registry". The
+# default is the public release channel; it no longer points at Nebius Container
+# Registry and carries no registry ID or regional failover behavior.
+DEFAULT_CONTAINER_REGISTRY = DEFAULT_PUBLIC_CONTAINER_REGISTRY
 DEFAULT_VLM_IMAGE_ENV = "NPA_VLM_IMAGE"
 DEFAULT_WORKBENCH_IMAGE_ENV = "NPA_WORKBENCH_IMAGE"
 SONIC_IMAGE_MANIFEST_RESOURCE = "sonic_image_manifest.json"
 WAN_IMAGE_MANIFEST_RESOURCE = "wan2_2_image_manifest.json"
+LTX2_IMAGE_MANIFEST_RESOURCE = "ltx2_image_manifest.json"
+CONTENT_AGENTS_IMAGE_MANIFEST_RESOURCE = "content_agents_image_manifest.json"
+PUBLIC_RELEASE_MANIFEST_RESOURCE = "public_release_manifest.json"
 
 CONTAINER_IMAGE_NAMES = {
     "lerobot": "npa-lerobot",
@@ -37,12 +40,14 @@ CONTAINER_IMAGE_NAMES = {
     "cosmos": "npa-cosmos",
     "cosmos2-transfer": "npa-cosmos2-transfer",
     "cosmos3": "npa-cosmos3",
+    "cosmos3-serving": "npa-cosmos3-serving",
     "cosmos3-reason": "npa-cosmos3-reason",
     "cosmos-curate": "npa-cosmos-curate",
     "cosmos-evaluator": "npa-cosmos-evaluator",
     "groot": "npa-groot",
     "fiftyone": "npa-fiftyone",
     "sonic": "npa-sonic",
+    "sonic-mujoco": "npa-sonic-mujoco",
     "retargeting": "npa-retargeting",
     "envgen": "npa-envgen",
     "reference-policy": "npa-reference-policy",
@@ -56,6 +61,7 @@ CONTAINER_IMAGE_NAMES = {
     "wan2-2": "npa-wan2-2",
     "ltx2": "npa-ltx2",
     "alpamayo2-super": "npa-alpamayo2-super",
+    "content-agents": "npa-content-agents",
 }
 
 # Public-image publication must enforce the digest-bound SkyPilot bootstrap
@@ -66,9 +72,12 @@ CONTAINER_IMAGE_NAMES = {
 SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS: frozenset[str] = frozenset(
     {
         "cosmos2-transfer",
+        "cosmos3",
         "cosmos-curate",
         "cosmos-evaluator",
+        "content-agents",
         "fiftyone",
+        "rerun-viewer",
     }
 )
 
@@ -92,52 +101,21 @@ def requires_skypilot_bootstrap_runtime_probe(image: str) -> bool:
     }
 
 
-# Tools whose built image may NOT be published to a public/anonymous registry,
-# because it bakes a runtime we are not licensed to redistribute.
-#
-# The Isaac-family membership is deliberately empty: those images were
-# re-architected to fetch Isaac at runtime. Cosmos3 serving is restricted for a
-# separate reason: its pinned vLLM-Omni base embeds the NVIDIA Deep Learning
-# Container License and the thin wrapper does not establish the license's
-# material-additional-functionality and downstream-terms conditions for an
-# anonymous standalone GHCR distribution. Operators may build it into their own
-# registry instead.
-#
-# It used to hold {"isaac-lab", "sonic", "groot"}, because those images baked NVIDIA
-# Omniverse Kit (Isaac Sim): the Isaac Sim SOURCE is Apache-2.0, but the shipped
-# binary bundles the Kit SDK + NVIDIA assets, and both the isaacsim AND isaaclab
-# PyPI packages declare "License: NVIDIA Proprietary Software". Publishing them
-# would have made us the third-party redistributor of Omniverse Kit, which needs
-# an NVIDIA AI Enterprise license.
-#
-# They were re-architected to contain no NVIDIA Isaac bytes at all: Isaac Sim and
-# Isaac Lab are fetched on first run from pypi.nvidia.com, into a cache volume,
-# under the OPERATOR's own EULA acceptance, and the image refuses to start Isaac
-# without it (npa/docker/workbench/common/isaac_bootstrap.sh). NVIDIA delivers to
-# each operator directly, so we are never the redistributor — the same pattern the
-# workbench already uses for gated model weights. Verified mechanically against the
-# built images by npa/scripts/scan_image_omniverse_payload.py.
-#
-# The compatibility name predates this non-Omniverse member. Keep it until a
-# deliberate API rename; the behavior is the general restricted-runtime guard.
-# Kept in sync with packaging-contract.yaml's `redistribution:` fields by
-# npa/tests/deploy/test_public_publish.py.
-OMNIVERSE_RESTRICTED_TOOLS: frozenset[str] = frozenset({"cosmos3-serving"})
+# General public-registry refusal inventories. They intentionally describe the
+# redistribution decision, not a particular vendor payload. Both are empty now:
+# Cosmos3 serving is a zero-payload runtime bootstrap on a public Python base,
+# and sonic-mujoco is rebuilt independently without its quarantined parent.
+RESTRICTED_PUBLICATION_TOOLS: frozenset[str] = frozenset()
+RESTRICTED_DERIVED_IMAGES: frozenset[str] = frozenset()
 
-# Images built FROM a restricted tool image, so they inherit whatever it bakes and
-# the same no-public-redistribution rule. They are not separate
-# CONTAINER_IMAGE_NAMES entries (they are variants of their parent tool), so they
-# never reach publicly_publishable_tools(); they are listed here so operator-facing
-# output can name every excluded image without hardcoding it at the call site.
-# Empty for the same reason as above: ``sonic-mujoco`` inherits sonic's runtime-fetch
-# architecture and adds no Isaac and no Omniverse assets of its own.
-OMNIVERSE_RESTRICTED_DERIVED_IMAGES: frozenset[str] = frozenset({"sonic-mujoco"})
+# Compatibility exports for installed callers. New code uses the general names.
+OMNIVERSE_RESTRICTED_TOOLS = RESTRICTED_PUBLICATION_TOOLS
+OMNIVERSE_RESTRICTED_DERIVED_IMAGES = RESTRICTED_DERIVED_IMAGES
 
-# Tools that are licence-eligible for public redistribution but have no built,
-# GPU result yet. For ltx2 the image has been built and byte-scanned; what is
-# missing is a run on real hardware, and publication claims both.
+# Tools that are licence-eligible for public redistribution but have no accepted
+# built/GPU-validated artifact yet.
 #
-# This is a different question from `OMNIVERSE_RESTRICTED_TOOLS`, and conflating
+# This is a different question from `RESTRICTED_PUBLICATION_TOOLS`, and conflating
 # them would be wrong in both directions: these are not restricted (the licensing
 # work is done and the answer was "public"), they are simply unproven. Publishing
 # an image whose payload scan and GPU smoke have never run would hand out a claim
@@ -146,18 +124,36 @@ OMNIVERSE_RESTRICTED_DERIVED_IMAGES: frozenset[str] = frozenset({"sonic-mujoco"}
 #
 # Remove a tool from this set in the same change that records its accepted image
 # digest and its payload-scan/GPU evidence — not before.
-UNVALIDATED_PUBLICATION_TOOLS: frozenset[str] = frozenset({"ltx2"})
+UNVALIDATED_PUBLICATION_TOOLS: frozenset[str] = frozenset()
+VALIDATION_CANDIDATE_TOOLS: frozenset[str] = frozenset()
+PUBLICATION_QUARANTINE_TOOLS: frozenset[str] = frozenset()
 
-# Public mirror registry for the OSS-redistributable image subset. Nebius CR does
-# NOT support anonymous/public pulls and has no cross-tenant / all-authenticated
-# grant, so making images pullable by any Nebius tenant (or anyone) means
-# mirroring the publicly_publishable_tools() set to a public-capable registry.
-# GHCR is the default (public, anonymous pull, native to the GitHub org). A
-# registry path is a public locator, not a credential. Override with
-# NPA_PUBLIC_REGISTRY; consumers in any tenant pull the OSS images by setting
-# NPA_REGISTRY to this value.
-PUBLIC_CONTAINER_REGISTRY_ENV = "NPA_PUBLIC_REGISTRY"
-DEFAULT_PUBLIC_CONTAINER_REGISTRY = "ghcr.io/nebius/nebius-physical-ai"
+# Some newer operator/BYOF pins have not yet been promoted to the supported
+# anonymous channel. Public execution stays on the last accepted release while
+# an explicit custom registry resolves the newer supported-tool pin.
+PUBLIC_RELEASE_TAG_OVERRIDES: dict[str, str] = {
+    "cosmos2-transfer": "2.5.1-skypilot-ready-20260801T053000Z",
+    "fiftyone": "1.15.0.post1",
+    "rerun-viewer": "0.31.4",
+}
+
+# Release promotion for the rebuilt surfaces is bound to the exact manifests
+# whose filesystem/layers were scanned and whose advertised GPU capability ran.
+# A newly built dev tag must earn fresh evidence before this mapping changes.
+GPU_ACCEPTED_PUBLIC_IMAGE_SOURCES: dict[str, dict[str, str]] = {
+    "cosmos3-serving": {
+        "development_sha": "d854f6a76cd87ec05ad97ccde6d596f3329efa0e",
+        "oci_digest": "sha256:3342bbe44bd1c00ebf05ab4c9d7286058a94bb5ce90b49b164b23604d3acf180",
+    },
+    "sonic-mujoco": {
+        "development_sha": "5b5b5e69e9e686f8d5f305fd735a02f402f6da4b",
+        "oci_digest": "sha256:2388d9e97269afaa414966e83a27f676a3f44d4271e9828c57bc13fbdce80f57",
+    },
+}
+GPU_ACCEPTED_PUBLIC_IMAGE_DIGESTS: dict[str, str] = {
+    tool: source["oci_digest"]
+    for tool, source in GPU_ACCEPTED_PUBLIC_IMAGE_SOURCES.items()
+}
 
 # Registry hosts that serve anonymous/public pulls. Resolving a restricted image
 # against one of these is always wrong: either it is not there (we never publish
@@ -166,7 +162,6 @@ DEFAULT_PUBLIC_CONTAINER_REGISTRY = "ghcr.io/nebius/nebius-physical-ai"
 # into their OWN registry is the licensed path, whichever registry that is.
 PUBLIC_REGISTRY_HOSTS = frozenset(
     {
-        "ghcr.io",
         "docker.io",
         "index.docker.io",
         "registry-1.docker.io",
@@ -184,23 +179,25 @@ SUPPORTED_TOOL_VERSIONS = {
     "isaac-lab": "2.3.2.post1",
     "leisaac": "0.4.0-20260817T231825Z",
     "cosmos": "cu128-torch27-sm100-1.0.9-20260803T002017Z",
-    "cosmos2-transfer": "2.5.1-skypilot-ready-20260801T053000Z",
+    "cosmos2-transfer": "2.5.1-sam2-multigpu-20260817-r2",
     # Additive r2 release of cosmos-framework 1.2.2 (pinned commit 5e67049c) +
-    # torch cu130. The immutable 1.2.2-cu130 tag remains rollback provenance.
+    # torch cu130. The immutable predecessor remains rollback provenance.
     # No weights baked; gated Cosmos3 checkpoints download at runtime.
-    "cosmos3": "1.2.2-cu130-r2",
+    "cosmos3": "1.2.2-cu130-r6",
+    "cosmos3-serving": "0.2.0-oss",
     "cosmos3-reason": "cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
     "cosmos-curate": "0.1.2-skypilot-v1-20260813T164700Z",
-    "cosmos-evaluator": "0.1.2-skypilot-v1-20260813T164700Z",
+    "cosmos-evaluator": "0.1.2-skypilot-v1-20260813T164700Z-r2",
     "groot": "0.1.0",
-    "fiftyone": "1.15.0.post1",
+    "fiftyone": "1.15.0-post1-skypilot-v1-20260815-review5",
     "sonic": "cuda13-b300-0.1.2-k8s-runtime-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
+    "sonic-mujoco": "0.2.0-runtime",
     "retargeting": "0.1.1",
     "envgen": "cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
     "reference-policy": "cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
     "lerobot-vlm-rl": "cuda13-b300-0.1.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
     "loop-eval": "cuda13-b300-0.1.3-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
-    "rerun-viewer": "0.31.4",
+    "rerun-viewer": "0.31.4-skypilot-v1-20260815-review5-r2",
     # Tracks the pinned @foxglove/embed SDK release (npa.workbench.foxglove).
     "foxglove-embed": "0.58.0",
     # Lichtblick (MPL-2.0): OSS, Foxglove-compatible static web viewer bundle.
@@ -208,16 +205,12 @@ SUPPORTED_TOOL_VERSIONS = {
     "lancedb": "cuda13-b300-0.30.3-sm80-sm90-sm100-sm103-sm120-20260803T031514Z",
     "detection-training": "bdd100k-golden-eval-smoke-20260614T210000Z",
     # Public-eligible Wan source/CPU base; CUDA torch is operator-gated runtime fetch.
-    "wan2-2": "2.2-ti2v5b-rtfetch-cu128-20260809T011658Z-r7",
-    # LTX-2.5. The tag names the design, not a built artifact: this image has not
-    # been built or GPU-validated yet, and publish_public refuses it until an
-    # accepted-image manifest exists. Everything LTX (source AND weights) is a
-    # runtime fetch under the operator's own Hugging Face entitlement.
-    # The suffix predates the build and is now half-wrong: the image exists and
-    # has been scanned. It stays until the GPU run, because renaming it would
-    # imply the whole claim is earned, and re-tagging is part of that change.
-    "ltx2": "2.5-rtfetch-unbuilt",
+    "wan2-2": "2.2-ti2v5b-rtfetch-cu130-20260817",
+    # LTX source and weights remain operator-entitled runtime fetches. This tag
+    # resolves only to the zero-payload digest recorded in ltx2_image_manifest.json.
+    "ltx2": "2.5-rtfetch-20260817",
     "alpamayo2-super": "0.1.0-cu128",
+    "content-agents": "0.5.2-npa2",
     "nebius-cli": "0.12.254",
     "terraform": "~> 0.5.201",
     "terraform-cli": "1.13.3",
@@ -260,6 +253,86 @@ def wan_accepted_image_manifest() -> dict[str, Any]:
     return payload
 
 
+@lru_cache(maxsize=1)
+def ltx2_accepted_image_manifest() -> dict[str, Any]:
+    """Return the exact zero-payload image and GPU proof allowed for publication."""
+
+    text = (
+        resources.files(__package__)
+        .joinpath(LTX2_IMAGE_MANIFEST_RESOURCE)
+        .read_text(encoding="utf-8")
+    )
+    payload = json.loads(text)
+    if not isinstance(payload, dict):
+        raise RuntimeError("LTX accepted image manifest must be a JSON object")
+    if payload.get("format") != "npa_ltx2_accepted_image_manifest_v1":
+        raise RuntimeError("Unsupported LTX accepted image manifest format")
+    if payload.get("tag") != SUPPORTED_TOOL_VERSIONS["ltx2"]:
+        raise RuntimeError(
+            "LTX accepted image manifest tag drifted from the supported tag"
+        )
+    return payload
+
+
+@lru_cache(maxsize=1)
+def content_agents_accepted_image_manifest() -> dict[str, Any]:
+    """Return the immutable Content Agents image/runtime/RTX proof tuple."""
+
+    payload = json.loads(
+        resources.files(__package__)
+        .joinpath(CONTENT_AGENTS_IMAGE_MANIFEST_RESOURCE)
+        .read_text(encoding="utf-8")
+    )
+    if not isinstance(payload, dict):
+        raise RuntimeError("Content Agents accepted image manifest must be a JSON object")
+    if payload.get("format") != "npa_content_agents_accepted_image_manifest_v1":
+        raise RuntimeError("Unsupported Content Agents accepted image manifest format")
+    if payload.get("tag") != SUPPORTED_TOOL_VERSIONS["content-agents"]:
+        raise RuntimeError(
+            "Content Agents accepted image manifest tag drifted from the supported tag"
+        )
+    return payload
+
+
+@lru_cache(maxsize=1)
+def public_release_manifest() -> dict[str, Any]:
+    """Load exact anonymously verified release-digest claims."""
+
+    payload = json.loads(
+        resources.files("npa.deploy")
+        .joinpath(PUBLIC_RELEASE_MANIFEST_RESOURCE)
+        .read_text(encoding="utf-8")
+    )
+    if not isinstance(payload, dict):
+        raise RuntimeError("Public release manifest must be a JSON object")
+    if payload.get("format") != "npa_public_release_manifest_v1":
+        raise RuntimeError("Unsupported public release manifest format")
+    if payload.get("registry") != DEFAULT_PUBLIC_CONTAINER_REGISTRY:
+        raise RuntimeError("Public release manifest registry drifted from official GHCR")
+    releases = payload.get("releases")
+    pending = payload.get("publication_pending")
+    if not isinstance(releases, dict) or not isinstance(pending, dict):
+        raise RuntimeError("Public release manifest inventories must be objects")
+    if set(releases) | set(pending) != set(publicly_publishable_tools()):
+        raise RuntimeError(
+            "Public release manifest must partition every publishable tool into "
+            "published or publication-pending"
+        )
+    for tool, entry in releases.items():
+        if not isinstance(entry, dict):
+            raise RuntimeError(f"Public release manifest entry {tool!r} must be an object")
+        if entry.get("tag") != public_release_tag_for_tool(tool):
+            raise RuntimeError(f"Public release tag drifted for {tool!r}")
+        if re.fullmatch(
+            r"sha256:[0-9a-f]{64}", str(entry.get("published_digest") or "")
+        ) is None:
+            raise RuntimeError(f"Public release digest is invalid for {tool!r}")
+        development_sha = entry.get("development_sha")
+        if development_sha is not None:
+            development_tag(str(development_sha))
+    return payload
+
+
 def sonic_image_variants() -> dict[str, dict[str, Any]]:
     """Return SONIC image manifest entries by variant id."""
 
@@ -296,8 +369,8 @@ def supported_tool_version(tool: str) -> str:
         ) from exc
 
 
-def public_mirror_tag_for_tool(tool: str) -> str:
-    """Return the exact repository pin that the public mirror must carry.
+def public_release_tag_for_tool(tool: str) -> str:
+    """Return the exact repository pin that the public release channel must carry.
 
     SONIC's runtime resolver accepts only the active host-mounted Kubernetes
     variant. The public inventory contract pins that validated cross-architecture
@@ -305,7 +378,7 @@ def public_mirror_tag_for_tool(tool: str) -> str:
     """
     if tool == "sonic":
         return SUPPORTED_TOOL_VERSIONS[tool]
-    return supported_tool_version(tool)
+    return PUBLIC_RELEASE_TAG_OVERRIDES.get(tool, supported_tool_version(tool))
 
 
 def supported_lerobot_versions() -> tuple[str, ...]:
@@ -371,9 +444,10 @@ def sonic_image_entry(
             f"Unknown SONIC image variant {resolved!r}; choose one of: {choices}"
         ) from exc
     if str(entry.get("status") or "active") != "active":
-        reason = str(entry.get("quarantine_reason") or "restricted image bytes")
+        status = str(entry.get("status") or "unknown")
+        reason = str(entry.get("quarantine_reason") or "image is not accepted")
         raise ValueError(
-            f"SONIC image variant {resolved!r} is quarantined and cannot be resolved: "
+            f"SONIC image variant {resolved!r} has status {status!r} and cannot be resolved: "
             f"{reason} Use sonic-k8s-host-mounted or build a newly scanned, "
             "license-compatible replacement."
         )
@@ -389,6 +463,7 @@ def container_image_for_tool(
     image_variant: str | None = None,
 ) -> str:
     """Return the fully qualified image ref for a Workbench tool."""
+    resolved_registry = registry or execution_container_registry()
     if tool == "sonic":
         entry = sonic_image_entry(gpu_target=gpu_target, image_variant=image_variant)
         image_name = str(entry["name"])
@@ -399,8 +474,11 @@ def container_image_for_tool(
                 f"Image variants are only defined for SONIC, got tool={tool!r}"
             )
         image_name = CONTAINER_IMAGE_NAMES[tool]
-        resolved_tag = tag or supported_tool_version(tool)
-    resolved_registry = registry or _primary_registry()
+        resolved_tag = tag or (
+            public_release_tag_for_tool(tool)
+            if is_public_registry(resolved_registry)
+            else supported_tool_version(tool)
+        )
     if not is_publicly_redistributable(tool) and is_public_registry(resolved_registry):
         raise ValueError(
             f"{tool!r} is not publicly redistributable and is never distributed from a "
@@ -469,39 +547,14 @@ def _workbench_dockerfile(tool: str) -> str:
     return relative if (repo_root / relative).is_file() else ""
 
 
-def registry_from_id(registry_id: str) -> str:
-    """Build a full registry locator from a bare Nebius registry id.
-
-    A bare id (``NPA_REGISTRY_ID``) is expanded against the primary region so it
-    resolves the same way on every registry path (see ``resolve_container_registry``).
-    """
-    return f"cr.eu-north1.nebius.cloud/{registry_id.strip()}"
-
-
 def registry_from_env() -> str:
-    """Return the registry from NPA_REGISTRY, then NPA_REGISTRY_ID, else ""."""
-    explicit = os.environ.get("NPA_REGISTRY", "").strip()
-    if explicit:
-        return explicit
-    registry_id = os.environ.get("NPA_REGISTRY_ID", "").strip()
-    if registry_id:
-        return registry_from_id(registry_id)
-    return ""
+    """Return the generic operator execution-registry override, if set."""
+    return os.environ.get("NPA_REGISTRY", "").strip()
 
 
-def primary_container_registry() -> str:
-    """Resolve the primary registry: NPA_REGISTRY, then NPA_REGISTRY_ID, then default."""
+def execution_container_registry() -> str:
+    """Resolve an operator override, otherwise the public GHCR release channel."""
     return registry_from_env() or DEFAULT_CONTAINER_REGISTRY
-
-
-_primary_registry = primary_container_registry
-
-
-def backup_container_registry() -> str:
-    """Resolve the backup registry override, or the committed default."""
-    return (
-        os.environ.get("NPA_BACKUP_REGISTRY", "").strip() or BACKUP_CONTAINER_REGISTRY
-    )
 
 
 def container_image_candidates(
@@ -513,58 +566,87 @@ def container_image_candidates(
     image_variant: str | None = None,
     preferred_region: str | None = None,
 ) -> list[str]:
-    """Return image refs to try in order across both mirror registries.
+    """Return the single selected image reference.
 
-    Callers that support pull failover should iterate these so a pull works
-    region-agnostically: every image is mirrored to both registries, and a caller
-    that cannot reach one region (cross-region 403, or an identity without read on
-    the other project's registry) falls through to the other. ``preferred_region``
-    reorders so the caller's local-region registry (``cr.<region>.nebius.cloud``)
-    is tried first, avoiding a guaranteed-denied cross-region attempt.
+    The historical regional mirror/failover behavior was specific to Nebius
+    Container Registry and is intentionally gone. ``preferred_region`` remains an
+    ignored compatibility argument so older SDK callers do not break.
     """
-    primary = container_image_for_tool(
-        tool,
-        registry=registry,
-        tag=tag,
-        gpu_target=gpu_target,
-        image_variant=image_variant,
-    )
-    candidates = [primary]
-    backup_registry = backup_container_registry()
-    if backup_registry:
-        backup = container_image_for_tool(
+    del preferred_region
+    return [
+        container_image_for_tool(
             tool,
-            registry=backup_registry,
+            registry=registry,
             tag=tag,
             gpu_target=gpu_target,
             image_variant=image_variant,
         )
-        if backup != primary:
-            candidates.append(backup)
-    region = (preferred_region or "").strip().lower()
-    if region:
-        host_prefix = f"cr.{region}.nebius.cloud/"
-        local = [ref for ref in candidates if ref.startswith(host_prefix)]
-        other = [ref for ref in candidates if not ref.startswith(host_prefix)]
-        candidates = local + other
-    return candidates
+    ]
 
 
 def public_container_registry() -> str:
-    """Return the public mirror registry: ``NPA_PUBLIC_REGISTRY`` or the default."""
-    return (
+    """Return the official public GHCR release namespace."""
+    value = (
         os.environ.get(PUBLIC_CONTAINER_REGISTRY_ENV, "").strip()
         or DEFAULT_PUBLIC_CONTAINER_REGISTRY
+    )
+    return _ghcr_namespace(value, channel="public release")
+
+
+def _ghcr_namespace(value: str, *, channel: str) -> str:
+    """Validate an official channel override as ``ghcr.io/<owner>/<namespace>``."""
+    normalized = str(value or "").strip().rstrip("/")
+    parts = normalized.split("/")
+    if len(parts) < 3 or parts[0].lower() != "ghcr.io" or not all(parts[1:]):
+        raise ValueError(
+            f"{channel} registry must be a GHCR package namespace such as "
+            "ghcr.io/<owner>/<namespace>"
+        )
+    return normalized
+
+
+def development_tag(git_sha: str) -> str:
+    """Return the immutable public development tag for a full Git commit SHA."""
+    normalized = str(git_sha or "").strip().lower()
+    if len(normalized) != 40 or any(
+        char not in "0123456789abcdef" for char in normalized
+    ):
+        raise ValueError("development source SHA must be a full 40-character Git SHA")
+    return f"dev-{normalized}"
+
+
+def development_image_for_tool(
+    tool: str,
+    *,
+    git_sha: str,
+    registry: str | None = None,
+    gpu_target: str | None = None,
+    image_variant: str | None = None,
+) -> str:
+    """Return an official public development reference for redistributable bytes."""
+    if not is_publicly_redistributable(tool):
+        raise ValueError(
+            f"{tool!r} is restricted/build-your-own and cannot be pushed to "
+            "official GHCR; use an operator-controlled registry"
+        )
+    resolved_registry = _ghcr_namespace(
+        registry or public_container_registry(), channel="public development"
+    )
+    return container_image_for_tool(
+        tool,
+        registry=resolved_registry,
+        tag=development_tag(git_sha),
+        gpu_target=gpu_target,
+        image_variant=image_variant,
     )
 
 
 def is_public_registry(registry: str) -> bool:
     """Whether a registry serves anonymous/public pulls.
 
-    True for the well-known public hosts and for whatever registry is configured
-    as our public mirror. A Nebius (or other private) registry is not public: an
-    operator's own registry is exactly where a restricted image is supposed to
-    live.
+    True for conservative public-only hosts, the immutable default official
+    namespace, and the configured public release namespace. GHCR is package-
+    scoped, so an arbitrary operator GHCR namespace is not assumed public.
     """
     candidate = registry.strip().rstrip("/")
     if not candidate:
@@ -572,36 +654,74 @@ def is_public_registry(registry: str) -> bool:
     host = candidate.split("/", 1)[0].lower()
     if host in PUBLIC_REGISTRY_HOSTS:
         return True
+    if candidate.lower() == DEFAULT_PUBLIC_CONTAINER_REGISTRY.lower():
+        return True
     mirror = public_container_registry().strip().rstrip("/")
     return bool(mirror) and candidate.lower() == mirror.lower()
+
+
+def is_official_container_registry(registry: str) -> bool:
+    """Whether ``registry`` is the official NPA public GHCR namespace."""
+    candidate = str(registry or "").strip().rstrip("/").lower()
+    return candidate in {
+        DEFAULT_PUBLIC_CONTAINER_REGISTRY.lower(),
+        public_container_registry().rstrip("/").lower(),
+    }
 
 
 def is_publicly_redistributable(tool: str) -> bool:
     """Whether a tool image may be published to a public/anonymous registry.
 
-    ``False`` for any tool in ``OMNIVERSE_RESTRICTED_TOOLS`` — images that bake a
+    ``False`` for any tool in ``RESTRICTED_PUBLICATION_TOOLS`` — images that bake a
     runtime we may not redistribute, which are licensed for internal-R&D /
     build-your-own use only. See the set's comment for current membership.
     """
-    return tool not in OMNIVERSE_RESTRICTED_TOOLS
+    return tool not in RESTRICTED_PUBLICATION_TOOLS
+
+
+def restricted_image_names() -> list[str]:
+    """Return every image name excluded from public registries."""
+    return sorted(RESTRICTED_PUBLICATION_TOOLS | RESTRICTED_DERIVED_IMAGES)
 
 
 def omniverse_restricted_image_names() -> list[str]:
-    """Return every image name excluded from public registries (tools + variants)."""
-    return sorted(OMNIVERSE_RESTRICTED_TOOLS | OMNIVERSE_RESTRICTED_DERIVED_IMAGES)
+    """Compatibility alias for :func:`restricted_image_names`."""
+    return restricted_image_names()
 
 
 def publicly_publishable_tools() -> list[str]:
     """Return the workbench tools that are OSS-redistributable to a public registry.
 
-    Excludes anything in ``OMNIVERSE_RESTRICTED_TOOLS``. The Isaac images now
+    Excludes anything in ``RESTRICTED_PUBLICATION_TOOLS``. The Isaac images now
     fetch Isaac Sim / Isaac Lab at run time under the operator's own EULA
-    acceptance, so every entry in ``CONTAINER_IMAGE_NAMES`` remains publishable;
-    the separately contracted Cosmos3 serving image stays build-your-own.
+    acceptance. Cosmos3 serving and SONIC MuJoCo have exact accepted public
+    development digests and GPU evidence recorded for their current releases.
     """
     return sorted(
         tool for tool in CONTAINER_IMAGE_NAMES if is_publicly_redistributable(tool)
     )
+
+
+def accepted_publication_development_sha(tool: str) -> str | None:
+    """Return a tool's exact accepted development SHA when one is recorded."""
+
+    entry = (public_release_manifest().get("releases") or {}).get(tool) or {}
+    value = entry.get("development_sha")
+    if value is None:
+        return None
+    normalized = development_tag(str(value)).removeprefix("dev-")
+    if tool == "wan2-2" and normalized != wan_accepted_image_manifest().get(
+        "development_sha"
+    ):
+        raise RuntimeError("Wan release and accepted-image development SHAs disagree")
+    if tool == "ltx2" and normalized != ltx2_accepted_image_manifest().get(
+        "development_sha"
+    ):
+        raise RuntimeError("LTX release and accepted-image development SHAs disagree")
+    gpu_source = GPU_ACCEPTED_PUBLIC_IMAGE_SOURCES.get(tool)
+    if gpu_source and normalized != gpu_source.get("development_sha"):
+        raise RuntimeError(f"{tool} release and GPU-accepted development SHAs disagree")
+    return normalized
 
 
 def default_vlm_image(*, registry: str | None = None) -> str:
@@ -648,11 +768,9 @@ def _normalize_sonic_variant(
         "rtx-pro": "sonic-k8s-host-mounted",
         "rtx6000": "sonic-k8s-host-mounted",
         "rtx-pro-6000": "sonic-k8s-host-mounted",
-        "mujoco": "sonic-mujoco-h100-mvp",
-        "h100": "sonic-mujoco-h100-mvp",
-        "h200": "sonic-mujoco-h100-mvp",
-        "sonic-mujoco": "sonic-mujoco-h100-mvp",
-        "mvp": "sonic-mujoco-h100-mvp",
+        "mujoco": "sonic-mujoco-runtime-fetch",
+        "b200": "sonic-mujoco-runtime-fetch",
+        "sonic-mujoco": "sonic-mujoco-runtime-fetch",
     }
     resolved = aliases.get(normalized, normalized)
     if resolved not in variants:

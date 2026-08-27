@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -1596,8 +1597,35 @@ def sky_environment(isolated_config_dir: Path | None = None) -> dict[str, str]:
         and not isolated_provider_config.is_symlink()
     ):
         isolated_provider_config.symlink_to(provider_config, target_is_directory=True)
+    # SkyPilot 0.12.2's Kubernetes region validator calls
+    # ``list_kube_config_contexts()`` without a ``config_file`` argument.  The
+    # Kubernetes client therefore ignores KUBECONFIG and reads only
+    # ``~/.kube/config``.  In an isolated HOME that produces ``contexts: []``
+    # even though every other probe sees the exact selected NPA kubeconfig.
+    # Link the first (highest-precedence) KUBECONFIG into the isolated default
+    # location.  This keeps auth live and operator-owned without copying a
+    # credential-bearing file into run state.
+    raw_kubeconfig = str(env.get("KUBECONFIG") or "").strip()
+    if raw_kubeconfig:
+        selected_kubeconfig = Path(raw_kubeconfig.split(os.pathsep, 1)[0]).expanduser()
+        if selected_kubeconfig.is_file():
+            isolated_kubeconfig = home / ".kube" / "config"
+            isolated_kubeconfig.parent.mkdir(parents=True, exist_ok=True)
+            selected_target = selected_kubeconfig.resolve()
+            if isolated_kubeconfig.is_symlink():
+                if isolated_kubeconfig.resolve(strict=False) != selected_target:
+                    isolated_kubeconfig.unlink()
+            if not isolated_kubeconfig.exists() and not isolated_kubeconfig.is_symlink():
+                isolated_kubeconfig.symlink_to(selected_target)
     env["HOME"] = str(home)
     env["SKY_RUNTIME_DIR"] = str(runtime)
+    # SkyPilot otherwise derives its user hash from the unchanged operator and
+    # hostname, so two isolated homes still target the same jobs-controller
+    # name.  Give each isolated state root a stable identity while honoring an
+    # explicit operator-selected identity.
+    if not str(env.get("SKYPILOT_USER_ID") or "").strip():
+        state_digest = hashlib.sha256(str(root.resolve()).encode()).hexdigest()[:12]
+        env["SKYPILOT_USER_ID"] = f"npa-{state_digest}"
     env["PYTHONUNBUFFERED"] = "1"
     repo_src = Path(__file__).resolve().parents[3]
     env["PYTHONPATH"] = str(repo_src) + os.pathsep + env.get("PYTHONPATH", "")

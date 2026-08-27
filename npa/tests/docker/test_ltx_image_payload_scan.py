@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import io
+import json
 import sys
 import tarfile
 from pathlib import Path
@@ -41,6 +42,27 @@ def _tar(path: Path, members: dict[str, bytes]) -> Path:
             info.size = len(payload)
             archive.addfile(info, io.BytesIO(payload))
     return path
+
+
+def _docker_save(
+    path: Path, *, layers: list[dict[str, bytes]], config: dict
+) -> Path:
+    layer_archives: list[tuple[str, bytes]] = []
+    for index, members in enumerate(layers):
+        stream = io.BytesIO()
+        with tarfile.open(fileobj=stream, mode="w") as layer:
+            for name, payload in members.items():
+                info = tarfile.TarInfo(name)
+                info.size = len(payload)
+                layer.addfile(info, io.BytesIO(payload))
+        layer_archives.append((f"layer-{index}/layer.tar", stream.getvalue()))
+    manifest = [{"Config": "config.json", "Layers": [name for name, _ in layer_archives]}]
+    members = {
+        "manifest.json": json.dumps(manifest).encode(),
+        "config.json": json.dumps(config).encode(),
+        **dict(layer_archives),
+    }
+    return _tar(path, members)
 
 
 def _kinds(findings) -> set[str]:
@@ -100,6 +122,33 @@ class TestCleanImagePasses:
             b"NPA_LTX_ACCEPT_COMMUNITY_LICENSE= ltx-runtime ensure\n"
         )
         assert scanner.scan(_tar(tmp_path / "r.tar", rootfs), CLEAN_CONFIG) == []
+
+    def test_docker_save_scans_every_layer_and_history(self, tmp_path: Path) -> None:
+        assert scanner.docker_save_material is scanner.walker.docker_save_material
+        archive = _docker_save(
+            tmp_path / "image.tar",
+            layers=[CLEAN_ROOTFS, {"workspace/.wh.deleted": b""}],
+            config=CLEAN_CONFIG,
+        )
+        (tmp_path / "layers").mkdir(exist_ok=True)
+        layers, config = scanner.docker_save_material(archive, tmp_path / "layers")
+        assert scanner.scan_tars(layers, config) == []
+
+    def test_docker_save_detects_payload_deleted_by_a_later_layer(
+        self, tmp_path: Path
+    ) -> None:
+        archive = _docker_save(
+            tmp_path / "image.tar",
+            layers=[
+                {"opt/models/ltx-2.5-secret.safetensors": b"weights"},
+                {"opt/models/.wh.ltx-2.5-secret.safetensors": b""},
+            ],
+            config=CLEAN_CONFIG,
+        )
+        layer_dir = tmp_path / "layers"
+        layer_dir.mkdir()
+        layers, config = scanner.docker_save_material(archive, layer_dir)
+        assert "ltx_weight_file" in _kinds(scanner.scan_tars(layers, config))
 
     @pytest.mark.parametrize(
         "created_by",

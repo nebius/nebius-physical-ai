@@ -21,6 +21,7 @@ import httpx
 import typer
 from rich.console import Console
 
+from npa.cli.fiftyone.review import register_review_augmented
 from npa.cli.ingress import (
     ensure_alias_ingress,
     ensure_deploy_ingress,
@@ -170,6 +171,7 @@ class OutputFormat(str, Enum):
 
 class DatasetFormat(str, Enum):
     auto = "auto"
+    fiftyone = "fiftyone"
     lerobot = "lerobot"
     video = "video"
 
@@ -1620,7 +1622,20 @@ def load_video_source(path: Path):
     return load_media_source(path, VIDEO_EXTENSIONS)
 
 
+def load_fiftyone_source(path: Path):
+    reset_dataset()
+    dataset = fo.Dataset.from_dir(
+        dataset_dir=str(path),
+        dataset_type=fo.types.FiftyOneDataset,
+        name=NAME,
+    )
+    persist(dataset)
+    return dataset
+
+
 def load_auto_source(path: Path):
+    if FORMAT == "fiftyone":
+        return load_fiftyone_source(path)
     video_files = _files_with_ext(path, VIDEO_EXTENSIONS)
     image_files = _files_with_ext(path, IMAGE_EXTENSIONS)
     if FORMAT == "video" or (FORMAT == "auto" and video_files and not image_files):
@@ -1839,7 +1854,20 @@ def load_video_source(path: Path):
     return load_media_source(path, VIDEO_EXTENSIONS)
 
 
+def load_fiftyone_source(path: Path):
+    reset_dataset()
+    dataset = fo.Dataset.from_dir(
+        dataset_dir=str(path),
+        dataset_type=fo.types.FiftyOneDataset,
+        name=NAME,
+    )
+    persist(dataset)
+    return dataset
+
+
 def load_auto_source(path: Path):
+    if FORMAT == "fiftyone":
+        return load_fiftyone_source(path)
     video_files = _files_with_ext(path, VIDEO_EXTENSIONS)
     image_files = _files_with_ext(path, IMAGE_EXTENSIONS)
     if FORMAT == "video" or (FORMAT == "auto" and video_files and not image_files):
@@ -2767,7 +2795,7 @@ def deploy_cmd(
     kubeconfig: str = typer.Option("", "--kubeconfig", help="Kubeconfig path override when using Kubernetes."),
     namespace: str = typer.Option(FIFTYONE_K8S_DEFAULT_NAMESPACE, "--namespace", help="Kubernetes namespace."),
     service_name: str = typer.Option(FIFTYONE_K8S_DEFAULT_NAME, "--service-name", help="Kubernetes deployment/service name."),
-    image_pull_secret: str = typer.Option("npa-nebius-registry", "--image-pull-secret", help="Kubernetes imagePullSecret name."),
+    image_pull_secret: str = typer.Option("", "--image-pull-secret", help="Existing operator-managed Kubernetes imagePullSecret for a private registry."),
     host: str = typer.Option("", "--host", help="BYOVM SSH host/IP. Used only with --runtime byovm."),
     ssh_key: str = typer.Option("", "--ssh-key", help="BYOVM SSH private key path. Used only with --runtime byovm."),
     ssh_user: str = typer.Option("", "--ssh-user", help="BYOVM SSH username. Defaults to ubuntu."),
@@ -3344,7 +3372,7 @@ def deploy_cmd(
                         _build_app_py(),
                         owner=ssh_user,
                     )
-                    image_ref = container_image_for_tool(
+                    image_ref = image.strip() or container_image_for_tool(
                         "fiftyone",
                         registry=resolve_container_registry(proj_alias),
                     )
@@ -3368,11 +3396,10 @@ def deploy_cmd(
                             f"{FIFTYONE_HOME}/zoo/models",
                         ],
                         command=(
-                            "-lc "
+                            "bash -lc "
                             + shlex.quote(f"exec {FIFTYONE_VENV}/bin/python {FIFTYONE_HOME}/app.py")
                         ),
                         gpu=uses_gpu,
-                        registry_token=merged_vars.get("iam_token", ""),
                     )
                     if verify_env and not no_shared_creds:
                         failed_keys = audit_remote_env(
@@ -3719,6 +3746,14 @@ def curate_augmented_cmd(
         "report_uri": report.get("written_uri", rpt),
     }
     _output(summary, output)
+
+
+register_review_augmented(
+    app,
+    output_format=OutputFormat,
+    fail=_fail,
+    emit=_output,
+)
 
 
 @app.command("eval")

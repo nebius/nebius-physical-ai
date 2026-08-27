@@ -48,20 +48,18 @@ dropped subprocess environment.
 
 Category for follow-up: platform.
 
-## Registry Pull Secret Expires Silently
+## Private Registry Credentials Expire
 
 Symptom: the task pod fails to pull the Workbench image with a registry
 authentication error such as `401 Unauthorized`.
 
-Root cause: Nebius IAM-backed registry tokens expire, and an old
-`npa-nebius-registry` pull secret can remain in the namespace.
+Root cause: explicit GHCR or operator-registry credentials expired, or the
+workload references a stale operator-managed Docker config secret.
 
-Mitigation: the standard workflow runtime refreshes registry credentials while
-submitting its SkyPilot tasks. Manual workaround if needed: refresh the registry
-token and recreate the `npa-nebius-registry` image pull secret in the SkyPilot
-namespace, normally `default`. The older per-stage sibling-Job refresh helper is
-retained only for archived pre-standard-runtime replay and is scheduled for
-removal under the Sim2Real legacy compatibility contract.
+Mitigation: public GHCR releases require no credentials. For a private image,
+rotate the exact-host credential through the operator's secret-management
+process and update the explicitly referenced standard Docker config secret.
+NPA does not mint tokens or refresh Kubernetes registry secrets.
 
 Category for follow-up: security.
 
@@ -71,16 +69,16 @@ Symptom: an operator confirms the tag exists (`GET /v2/<repo>/tags/list` returns
 `200`), but every worker pod fails to pull with `403 Forbidden` and the managed
 job sits in `PENDING` / `ImagePullBackOff` instead of failing.
 
-Root cause: Nebius Container Registry speaks the standard Docker Registry v2
-auth flow. Listing tags and pulling a manifest are *different permissions*, and
+Root cause: private OCI registries use the standard Docker Registry v2 auth
+flow. Listing tags and pulling a manifest are *different permissions*, and
 the token endpoint issues tokens optimistically — the registry only enforces the
 permission on the final manifest request. So a readable tag list proves nothing
 about whether the identity the run injects can pull. Kubernetes then retries
 image pulls indefinitely, so the run never fails; it just stops.
 
 Mitigation: `npa workbench workflow submit` now reproduces each planned step's
-pull with the very credentials it is about to inject and refuses to submit when
-a Nebius registry image comes back `403`. Run it standalone with:
+pull with the selected exact-host credentials and refuses to submit when a
+private image comes back `403`. Run it standalone with:
 
 ```bash
 npa workbench workflow preflight-images <spec.yaml>
@@ -447,7 +445,7 @@ parse string as hex hash value`, with a valid token and an accepted license.
 Root cause: huggingface/xet-core#895 breaks the Xet transfer client on exactly
 `huggingface_hub==1.23.0` plus `hf-xet==1.5.1`. Newer releases fix it.
 
-The frozen `npa-cosmos3:1.2.2-cu130-r2` image bakes the compatible
+The current `npa-cosmos3:1.2.2-cu130-r6` image bakes the compatible
 `huggingface_hub==0.36.2` / `hf-xet==1.3.2` pair and its build rejects the
 known-bad pair. In other runtimes, set `HF_HUB_DISABLE_XET=1` and retry or
 upgrade the pair. `npa workbench cosmos3 generate` warns on stderr only for the

@@ -40,24 +40,36 @@ npa configure                 # interactive: creates/reuses the CLI profile
 ```
 
 `configure` writes `~/.npa/config.yaml` (machine-managed, non-secret) and
-`~/.npa/credentials.yaml` (secrets, `0600`). It auto-provisions an S3 bucket and
-access key by default; `--no-provision` lets you supply existing object-storage
-credentials instead.
+`~/.npa/credentials.yaml` (secrets, `0600`). Interactive setup offers S3 bucket
+and access-key provisioning by default. `--no-provision` is a provider-free
+project/token setup: it neither probes nor adopts saved storage. Enter an exact
+existing bucket name only when you intend to reuse it; pressing Enter generates
+a fresh name with a UTC timestamp and random suffix.
 
 For unattended setup, avoid the prompts entirely:
 
 ```bash
-npa configure --no-interactive --save-env-credentials \
+npa configure --no-interactive --no-provision --save-env-credentials \
   --tenant-id <id> --project-id <id> --region <region> --project-alias <alias>
 ```
 
-**Gate:** `npa configure --show` reports the project stanza, bucket, and endpoint
-you intend to use. A silent exit or an empty storage section means configure did
-not write what you think it did — resolve it here, because every later command
-resolves credentials through this file.
+That command imports supported environment credentials and saves the project;
+it does not contact Nebius, Hugging Face, or NGC and does not select storage.
+Add explicit `--provision` when unattended setup should create or reuse writable
+project storage.
 
-Do not hardcode project IDs, tenant IDs, registry IDs, or bucket names anywhere
-in the repo; they belong only in `~/.npa/`.
+**Gate:** `npa configure --show` reports the intended project stanza. When
+storage was explicitly provisioned, it also reports the exact bucket and
+endpoint. A silent exit or an unexpected stanza means configure did not write
+what you think it did — resolve it here, because every later command resolves
+credentials through this file. Hugging Face and NGC status in provisioning or
+credential-import summaries is informative and never blocks the local save;
+`--no-provision` reports those probes as skipped. Step 3 is the enforcing access
+gate.
+
+Do not hardcode project IDs, tenant IDs, private registry IDs, or bucket names
+anywhere in the repo. The project values belong only in `~/.npa/`; private
+registry selection belongs in `NPA_REGISTRY` or an explicit image option.
 
 ## Step 3 — Prove credentials before spending anything
 
@@ -146,11 +158,12 @@ single node, so `NAME:2` never schedules on 1-GPU nodes regardless of node count
 npa workbench workflow preflight-images <spec.yaml> --project <alias> --json
 ```
 
-**Gate:** every image reports `ok`. Nothing mirrors workbench images into the
-registry `npa configure` selected, so `not_found` means the image was never
-pushed to *your* registry. A `403` does not fail a job — Kubernetes retries pulls
-forever — so an unpullable image silently burns cluster time in
-`ImagePullBackOff`. `submit` runs this check before provisioning by default.
+**Gate:** every image reports `ok`. Supported images resolve from the anonymous
+GHCR mirror by default. If you explicitly select a custom/private registry,
+`not_found` means the image was never pushed there. A `403` does not fail a job —
+Kubernetes retries pulls forever — so an unpullable image silently burns cluster
+time in `ImagePullBackOff`. `submit` runs this check before provisioning by
+default.
 
 ## Step 9 — Submit
 

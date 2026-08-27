@@ -10,7 +10,7 @@ It is not detected or submitted through a Sim2Real-specific controller.
 Each real solution boundary is a workflow state with its own immutable image,
 resource request, inputs, and outputs. CPU contract states surround Cosmos
 Transfer, parallel environment-generation shards, Isaac policy rollouts,
-parallel Cosmos Reason lanes, BYO Isaac RSL-RL PPO, Isaac gold evaluation, and
+a CPU-only hosted Cosmos3 evaluator, BYO Isaac RSL-RL PPO, Isaac gold evaluation, and
 Rerun/MCAP finalization. Stage 12 is intentionally an external `SEAM`; it is
 recorded as such and is never reported as `WORKS`.
 

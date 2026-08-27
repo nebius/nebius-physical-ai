@@ -168,7 +168,7 @@ def test_dockerfile_provides_golden_eval_entrypoint(name: str) -> None:
     sources, dests = _copy_directives(text)
     command = spec.golden_eval.command
 
-    if command.startswith("python -m npa.smoke."):
+    if command.startswith("python -m npa."):
         module = command.split("python -m ", 1)[1].split()[0]
         module_file = "src/" + module.replace(".", "/") + ".py"
         provides = any(
@@ -177,7 +177,7 @@ def test_dockerfile_provides_golden_eval_entrypoint(name: str) -> None:
         )
         assert provides, (
             f"{name}: {spec.dockerfile} runs `{command}` but does not COPY the "
-            f"npa.smoke package (need src/npa, src/npa/smoke, or {module_file})"
+            f"NPA module (need src/npa, src/npa/smoke, or {module_file})"
         )
     elif command.startswith("python /"):
         script_path = command.split("python ", 1)[1].split()[0]
@@ -347,12 +347,13 @@ def test_cli_run_rejects_unknown_container() -> None:
     assert result.exit_code != 0
 
 
-# Isaac Lab and SONIC render through RTX ray-tracing cores. H100 and H200 have none: they
-# are throughput parts. A render path scheduled there does not fail cleanly -- imports pass
-# and the job burns its budget before producing wrong or empty output, which is the worst
-# kind of failure to debug. See skills/atomic/gpu-selection/SKILL.md.
+# Isaac Lab, SONIC, and Content Agents render through RTX ray-tracing cores. H100 and
+# H200 have none: they are throughput parts. A render path scheduled there does not fail
+# cleanly -- imports pass and the job burns its budget before producing wrong or empty
+# output, which is the worst kind of failure to debug. See
+# skills/atomic/gpu-selection/SKILL.md.
 RT_CORE_GPUS = {"l40s", "rtx6000"}
-RT_CORE_REQUIRED = {"isaac-lab", "sonic"}
+RT_CORE_REQUIRED = {"content-agents", "isaac-lab", "sonic"}
 
 
 @pytest.mark.parametrize("name", sorted(RT_CORE_REQUIRED))

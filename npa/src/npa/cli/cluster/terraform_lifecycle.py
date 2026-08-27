@@ -545,6 +545,12 @@ def up_cmd(
             existing_filestore=str(
                 _tfvar_value(tfvars, env, "existing_filestore", "") or ""
             ),
+            filesystem_csi_chart_repository=str(
+                _tfvar_value(
+                    tfvars, env, "filesystem_csi_chart_repository", ""
+                )
+                or ""
+            ),
             subnet_id=str(_tfvar_value(tfvars, env, "subnet_id", "") or ""),
             filestore_disk_size_gibibytes=int(
                 _tfvar_value(tfvars, env, "filestore_disk_size_gibibytes", 1024) or 1024
@@ -2644,7 +2650,19 @@ def _preflight_filestore_quota(
     existing_filestore = str(
         _tfvar_value(tfvars, env, "existing_filestore", "") or ""
     ).strip()
-    if not enable_filestore or existing_filestore:
+    if not enable_filestore and not existing_filestore:
+        return
+    chart_repository = str(
+        _tfvar_value(tfvars, env, "filesystem_csi_chart_repository", "") or ""
+    ).strip()
+    if not chart_repository:
+        raise typer.BadParameter(
+            "Shared filesystem CSI requires filesystem_csi_chart_repository when "
+            "enable_filestore or existing_filestore is set. Supply the operator-approved "
+            "Helm repository through terraform.tfvars or "
+            "TF_VAR_filesystem_csi_chart_repository before running apply."
+        )
+    if existing_filestore:
         return
     tenant_id = str(_tfvar_value(tfvars, env, "tenant_id", "") or "").strip()
     region = str(_tfvar_value(tfvars, env, "region", "") or "").strip()
@@ -3953,6 +3971,10 @@ def _check_skypilot_kubernetes(
     sky, env, config_override = _skypilot_context(
         kubeconfig_path, context, sky_bin=sky_bin
     )
+    # SkyPilot auto-starts a long-lived local API server and that daemon inherits
+    # the CLI process's cwd.  Keep it on the durable cluster state directory: a
+    # deleted Terraform/temp cwd later makes every rsync fail with getcwd(2).
+    sky_cwd = kubeconfig_path.parent
     check_result = _run_stream(
         [
             sky,
@@ -3961,6 +3983,7 @@ def _check_skypilot_kubernetes(
             config_override,
             "kubernetes",
         ],
+        cwd=sky_cwd,
         env=env,
         timeout=300,
         capture_output=True,
@@ -3996,8 +4019,9 @@ def _run_skypilot_smoke(
             kubeconfig_path, context, sky_bin=sky_bin
         )
     infra = f"k8s/{context}"
+    sky_cwd = kubeconfig_path.parent
     accelerator = sky_gpus.strip() or _detect_skypilot_gpu(
-        sky, infra, env, config_override=config_override
+        sky, infra, env, config_override=config_override, cwd=sky_cwd
     )
     smoke_name = _sky_cluster_name(cluster_name)
     try:
@@ -4016,16 +4040,24 @@ def _run_skypilot_smoke(
                 "-y",
                 "nvidia-smi",
             ],
+            cwd=sky_cwd,
             env=env,
             timeout=1800,
         )
     finally:
         _run_stream(
             [sky, "down", "--config", config_override, "--yes", smoke_name],
+            cwd=sky_cwd,
             env=env,
             timeout=600,
         )
-        _wait_for_sky_down(sky, smoke_name, env, config_override=config_override)
+        _wait_for_sky_down(
+            sky,
+            smoke_name,
+            env,
+            config_override=config_override,
+            cwd=sky_cwd,
+        )
     typer.echo(f"SkyPilot smoke passed and {smoke_name} was removed.")
 
 
@@ -4035,11 +4067,12 @@ def _detect_skypilot_gpu(
     env: dict[str, str],
     *,
     config_override: str = "",
+    cwd: Path | None = None,
 ) -> str:
     cmd = [sky, "show-gpus", "--infra", infra, "--all"]
     if config_override:
         cmd[2:2] = ["--config", config_override]
-    result = _run_capture(cmd, env=env, timeout=300)
+    result = _run_capture(cmd, cwd=cwd, env=env, timeout=300)
     for line in result.stdout.splitlines():
         if "RTX" not in line.upper() or "6000" not in line:
             continue
@@ -4062,12 +4095,13 @@ def _wait_for_sky_down(
     env: dict[str, str],
     *,
     config_override: str = "",
+    cwd: Path | None = None,
 ) -> None:
     for _ in range(30):
         cmd = [sky, "status", "--refresh"]
         if config_override:
             cmd[2:2] = ["--config", config_override]
-        result = _run_capture(cmd, env=env, timeout=120, check=False)
+        result = _run_capture(cmd, cwd=cwd, env=env, timeout=120, check=False)
         if cluster_name not in result.stdout:
             return
         time.sleep(10)

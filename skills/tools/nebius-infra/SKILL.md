@@ -124,14 +124,17 @@ or provider/auth verification failure is partial cleanup and exits 2.
 
 ## Three-Tier Contract
 
-- CLI: `npa configure` writes runtime config and credentials; `npa
+- CLI: `npa configure` writes project/storage config and credentials; public
+  workbench images default to GHCR, while `NPA_REGISTRY` and existing saved
+  overrides select custom/private images. `npa
   provision-if-absent` ensures missing S3/Kubernetes resources or reports the
   dry-run plan.
 - SDK: `npa.provisioning.provision_if_absent` and project settings via
   `npa.clients.config.resolve_project_storage` / `resolve_environment`.
 - YAML: workflow YAML reads runtime values through environment variables such as
   `NPA_PROJECT_ID`, `NPA_TENANT_ID`, `NPA_REGION`, `NPA_REGISTRY`,
-  `NPA_REGISTRY_ID`, `NPA_S3_BUCKET`, `NPA_STORAGE_ENDPOINT`, and AWS S3 keys.
+  `NPA_S3_BUCKET`, `NPA_STORAGE_ENDPOINT`, and AWS S3 keys. NPA-owned image
+  defaults are GHCR-based and independent of Nebius project identity.
 
 ## GPU Routing
 
@@ -189,12 +192,10 @@ or provider/auth verification failure is partial cleanup and exits 2.
   into the existing project-ID-keyed receipt namespace; it never recreates an
   alias. Exact NotFound is absence, while RBAC/auth/network/parse uncertainty is
   unresolved and nonzero.
-- Disposable validation registries are removed with `npa registry delete` using
-  exact project/tenant/registry ID/name selectors; immutable artifacts are
-  inventoried and deleted before the registry. An NPA-created disposable
-  project's unique provider default topology can be removed with `npa network
-  delete-project-default`; extra, shared, or non-default network inventory fails
-  closed. Run both before guarded project deletion.
+- An NPA-created disposable project's unique provider default topology can be
+  removed with `npa network delete-project-default`; extra, shared, or
+  non-default network inventory fails closed. Run it before guarded project
+  deletion.
 - With no cluster state/inventory and no NPA kubeconfig, `npa cluster down` is a
   no-op before binary lookup, authentication, Terraform init/provider download,
   or Kubernetes/RBAC calls. Real apply/destroy uses marked ephemeral
@@ -222,37 +223,12 @@ or provider/auth verification failure is partial cleanup and exits 2.
 - For human authentication on a remote operator/dev VM, use
   `skills/atomic/vm-nebius-auth/SKILL.md`; the callback completes a CLI profile,
   after which IAM mints access tokens. Never transfer those tokens through chat.
-- Nebius IAM registry tokens expire. If Kubernetes image pulls fail with `401
-  Unauthorized` / `403 Forbidden` / `ErrImagePull`, refresh the registry pull
-  secret in the namespace that owns the pod. **Do not hand-mint or hand-test the
-  token per run** — use the shared, reusable helper below (any workflow can call
-  and rely on it; it is the single source of truth).
-
-### Reusable registry token refresh (`npa.clients.nebius_auth`)
-
-`npa.clients.nebius_auth.mint_nebius_iam_token(...)` is the canonical way to get
-a fresh short-lived Nebius IAM token. It is robust to a stale/ambient
-`NEBIUS_IAM_TOKEN` (or `NEBIUS_IAM_TOKEN_FILE`) in the environment — which
-otherwise makes the bare `nebius iam get-access-token` skip a real exchange
-("token from NEBIUS_IAM_TOKEN env is used"), silently leaving pull secrets stale
-and causing later `403 Forbidden` pulls. The helper strips the ambient token,
-performs a profile-scoped exchange (`NPA_NEBIUS_PROFILE` / `NEBIUS_PROFILE`), and
-only falls back to the ambient token if the exchange fails.
-
-- `registry_auth.mint_nebius_registry_token` (sim2real / BYOF),
-  `workbench.sonic.workflow._mint_nebius_registry_token`, and
-  `ServerlessClient._mint_registry_token` all delegate here — fix once, fixed
-  everywhere.
-- To refresh a Kubernetes pull secret before a job, call
-  `npa.workflows.sim2real.registry_auth.ensure_registry_pull_secret_for_images(
-  *images, namespace=..., kubeconfig=..., k8s_context=...)`.
-- Operators no longer need to `unset NEBIUS_IAM_TOKEN` before a BYOF / sim2real
-  run; the refresh mints a fresh profile token regardless.
-- Dev/operator VM Docker access to a private Nebius Container Registry image
-  does not automatically authenticate fresh SkyPilot worker VMs. Direct Nebius
-  burst jobs need SkyPilot Docker-login env/secrets injected before image pull;
-  `npa burst submit-yaml` handles this for `cr.*.nebius.cloud` images by minting
-  a short-lived IAM token with `nebius iam get-access-token`.
+- Official NPA GHCR development and release tags pull anonymously. Operator-
+  controlled private registries require explicit exact-host
+  `SKYPILOT_DOCKER_SERVER`, `SKYPILOT_DOCKER_USERNAME`, and
+  `SKYPILOT_DOCKER_PASSWORD` credentials. Kubernetes users pre-create and
+  explicitly reference a standard Docker config secret. NPA never mints a
+  registry token and never creates or refreshes a provider-specific pull secret.
 - SkyPilot task pods run in `default`; deployed workbench services run in
   `workbench`.
 - Cached kubeconfig reuse is a success path for `provision-if-absent`; absence

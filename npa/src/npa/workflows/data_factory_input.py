@@ -16,7 +16,9 @@ import json
 import math
 import os
 from pathlib import Path
+import re
 import shutil
+from string import Formatter
 import subprocess
 import tempfile
 import time
@@ -35,6 +37,9 @@ CONDITIONING_FRAMES = 8
 CONDITIONING_FRAME_COUNT = 93
 CONDITIONING_FPS = 16
 SUPPORTED_CODECS = frozenset({"h264"})
+MAX_LEROBOT_INFO_BYTES = 1_000_000
+MAX_LEROBOT_EPISODE_METADATA_BYTES = 64_000_000
+MAX_LEROBOT_VIDEO_PATH_BYTES = 1_024
 
 
 @dataclass(frozen=True)
@@ -48,6 +53,7 @@ class PreparedPaidfInput:
 
     def config_overrides(self) -> dict[str, str]:
         source = self.provenance
+        customer_dataset = source.get("source_kind") == "lerobot_dataset"
         return {
             "seed_fixture": "true"
             if self.selection == "synthetic_fixture"
@@ -61,9 +67,12 @@ class PreparedPaidfInput:
             "input_source_kind": str(source.get("source_kind") or ""),
             "input_origin": str(source.get("input_origin") or ""),
             "input_origin_label": str(source.get("input_origin_label") or ""),
-            "input_sha256": str(source.get("sha256") or ""),
+            # LeRobot content hashes are used only for in-memory immutable-byte
+            # checks; they are not expanded into scheduler commands or persisted.
+            "input_sha256": "" if customer_dataset else str(source.get("sha256") or ""),
             "input_license": str(source.get("asset_license") or ""),
             "input_staged_uri": str(source.get("staged_canonical_s3_uri") or ""),
+            "input_source_format": str(source.get("source_format") or "video"),
             "input_authoritative_url": str(
                 source.get("authoritative_upstream_url")
                 or source.get("source_ref")
@@ -92,17 +101,24 @@ def load_starter_contract() -> dict[str, Any]:
 
 
 def select_paidf_input(
-    *, input_video: Path | None = None, input_uri: str = "", seed_fixture: bool = False
+    *,
+    input_video: Path | None = None,
+    input_uri: str = "",
+    lerobot_uri: str = "",
+    seed_fixture: bool = False,
 ) -> str:
     """Resolve mutually exclusive CLI selectors without performing I/O."""
 
     selected = (
-        int(input_video is not None) + int(bool(input_uri.strip())) + int(seed_fixture)
+        int(input_video is not None)
+        + int(bool(input_uri.strip()))
+        + int(bool(lerobot_uri.strip()))
+        + int(seed_fixture)
     )
     if selected > 1:
         raise PaidfInputError(
-            "choose exactly one PAIDF input: --input-video, --input-uri, or "
-            "--seed-fixture; the options conflict"
+            "choose exactly one PAIDF input: --input-video, --input-uri, "
+            "--lerobot-uri, or --seed-fixture; the options conflict"
         )
     if seed_fixture:
         return "synthetic_fixture"
@@ -123,6 +139,14 @@ def select_paidf_input(
         if not parsed.path.lower().endswith(".mp4"):
             raise PaidfInputError("--input-uri must name one MP4 object ending in .mp4")
         return "object_uri"
+    if lerobot_uri.strip():
+        parsed = urlparse(lerobot_uri.strip())
+        if parsed.scheme != "s3" or not parsed.netloc:
+            raise PaidfInputError(
+                "--lerobot-uri must name an S3 LeRobotDataset prefix, for example "
+                "s3://bucket/datasets/robot-run/"
+            )
+        return "lerobot_dataset"
     return "starter"
 
 
@@ -132,12 +156,27 @@ def plan_paidf_input(
     bucket: str,
     input_video: Path | None = None,
     input_uri: str = "",
+    lerobot_uri: str = "",
+    lerobot_camera: str = "",
+    lerobot_episode: int = 0,
+    require_explicit_lerobot_selection: bool = False,
+    lerobot_episode_was_explicit: bool = False,
     seed_fixture: bool = False,
 ) -> PreparedPaidfInput:
     """Describe selection for ``--plan-only`` without filesystem, S3, or network I/O."""
 
     selection = select_paidf_input(
-        input_video=input_video, input_uri=input_uri, seed_fixture=seed_fixture
+        input_video=input_video,
+        input_uri=input_uri,
+        lerobot_uri=lerobot_uri,
+        seed_fixture=seed_fixture,
+    )
+    validate_lerobot_selector(
+        selection=selection,
+        camera=lerobot_camera,
+        episode=lerobot_episode,
+        require_explicit_selection=require_explicit_lerobot_selection,
+        episode_was_explicit=lerobot_episode_was_explicit,
     )
     base_uri = (
         f"s3://{bucket}/physical-ai-data-factory/{run_id}/input/"
@@ -163,14 +202,28 @@ def plan_paidf_input(
             },
         )
     else:
-        source_ref = str(input_video) if input_video is not None else input_uri.strip()
+        source_ref = (
+            lerobot_uri.strip()
+            if selection == "lerobot_dataset"
+            else str(input_video)
+            if input_video is not None
+            else input_uri.strip()
+        )
+        source = (
+            _lerobot_source_metadata(
+                camera=lerobot_camera,
+                explicit_selection=require_explicit_lerobot_selection,
+            )
+            if selection == "lerobot_dataset"
+            else _user_source_metadata(
+                source_ref=source_ref,
+                transport="local_file" if input_video is not None else "s3_object",
+            )
+        )
         provenance = _build_provenance(
             run_id=run_id,
             base_uri=base_uri,
-            source=_user_source_metadata(
-                source_ref=source_ref,
-                transport="local_file" if input_video is not None else "s3_object",
-            ),
+            source=source,
             derivation={
                 "kind": "normalized_conditioning_clip",
                 "staged_uri": f"{base_uri}conditioning.mp4" if base_uri else "",
@@ -185,6 +238,11 @@ def prepare_paidf_input(
     bucket: str,
     input_video: Path | None = None,
     input_uri: str = "",
+    lerobot_uri: str = "",
+    lerobot_camera: str = "",
+    lerobot_episode: int = 0,
+    require_explicit_lerobot_selection: bool = False,
+    lerobot_episode_was_explicit: bool = False,
     seed_fixture: bool = False,
     endpoint_url: str = "",
     aws_access_key_id: str = "",
@@ -203,7 +261,17 @@ def prepare_paidf_input(
     """
 
     selection = select_paidf_input(
-        input_video=input_video, input_uri=input_uri, seed_fixture=seed_fixture
+        input_video=input_video,
+        input_uri=input_uri,
+        lerobot_uri=lerobot_uri,
+        seed_fixture=seed_fixture,
+    )
+    validate_lerobot_selector(
+        selection=selection,
+        camera=lerobot_camera,
+        episode=lerobot_episode,
+        require_explicit_selection=require_explicit_lerobot_selection,
+        episode_was_explicit=lerobot_episode_was_explicit,
     )
     clean_run_id = str(run_id or "").strip()
     clean_bucket = str(bucket or "").strip()
@@ -273,16 +341,26 @@ def prepare_paidf_input(
 
         if existing and selection == "starter":
             # An implicit default must never replace a committed user source.
-            report(
-                "PAIDF input: reusing committed "
-                f"{existing.get('input_origin_label', 'run input')} at {base_uri}"
-            )
+            if existing.get("source_kind") == "lerobot_dataset":
+                report(
+                    "PAIDF input: reusing committed operator-supplied "
+                    "LeRobotDataset selection (source identifiers redacted)"
+                )
+            else:
+                report(
+                    "PAIDF input: reusing committed "
+                    f"{existing.get('input_origin_label', 'run input')} at {base_uri}"
+                )
             requested_source = _download_staged_source(storage_client, base_uri, tmp)
-            _verify_digest(
-                requested_source,
-                str(existing.get("sha256") or ""),
-                context="committed staged source",
-            )
+            # Confidential LeRobot provenance intentionally omits content hashes.
+            # The immutable stage check below compares the bytes in memory without
+            # serializing their digest into reports or object metadata.
+            if existing.get("source_kind") != "lerobot_dataset":
+                _verify_digest(
+                    requested_source,
+                    str(existing.get("sha256") or ""),
+                    context="committed staged source",
+                )
             requested_meta = dict(existing)
             selection = str(existing.get("source_kind") or "user_supplied")
         elif selection == "local_video":
@@ -319,6 +397,16 @@ def prepare_paidf_input(
                 )
             requested_meta = _user_source_metadata(
                 source_ref=input_uri.strip(), transport="s3_object"
+            )
+        elif selection == "lerobot_dataset":
+            requested_source = tmp / "lerobot-source.mp4"
+            requested_meta = _materialize_lerobot_episode(
+                storage_client,
+                lerobot_uri=lerobot_uri.strip(),
+                camera=lerobot_camera,
+                episode=lerobot_episode,
+                explicit_selection=require_explicit_lerobot_selection,
+                destination=requested_source,
             )
         else:
             legacy = _legacy_staged_video(storage_client, base_uri)
@@ -404,6 +492,7 @@ def prepare_paidf_input(
             source=requested_meta,
             derivation=derivation,
         )
+        confidential_input = provenance.get("source_kind") == "lerobot_dataset"
 
         if existing:
             # Different ffmpeg/libx264 builds can produce different bytes from
@@ -416,24 +505,43 @@ def prepare_paidf_input(
             f"{base_uri}source.mp4",
             source_sha,
             immutable_source=True,
+            persist_digest_metadata=not confidential_input,
         )
         _stage_file(
             storage_client,
             conditioning,
             f"{base_uri}conditioning.mp4",
             _sha256(conditioning),
+            persist_digest_metadata=not confidential_input,
         )
         for frame in frames:
             _stage_file(
-                storage_client, frame, f"{base_uri}{frame.name}", _sha256(frame)
+                storage_client,
+                frame,
+                f"{base_uri}{frame.name}",
+                _sha256(frame),
+                persist_digest_metadata=not confidential_input,
             )
         if not existing:
-            _upload_json(storage_client, provenance, f"{base_uri}provenance.json", tmp)
-        report(
-            "PAIDF input: "
-            f"{'reused' if existing else 'prepared'} {provenance['input_origin_label']} "
-            f"sha256={provenance['sha256']} staged={base_uri}"
-        )
+            _upload_json(
+                storage_client,
+                provenance,
+                f"{base_uri}provenance.json",
+                tmp,
+                persist_digest_metadata=not confidential_input,
+            )
+        if provenance.get("source_kind") == "lerobot_dataset":
+            report(
+                "PAIDF input: "
+                f"{'reused' if existing else 'prepared'} operator-supplied "
+                "LeRobotDataset selection (source identifiers redacted)"
+            )
+        else:
+            report(
+                "PAIDF input: "
+                f"{'reused' if existing else 'prepared'} {provenance['input_origin_label']} "
+                f"sha256={provenance['sha256']} staged={base_uri}"
+            )
         return PreparedPaidfInput(
             str(provenance.get("source_kind") or selection),
             provenance,
@@ -858,6 +966,518 @@ def _user_source_metadata(*, source_ref: str, transport: str) -> dict[str, Any]:
     }
 
 
+def validate_lerobot_selector(
+    *,
+    selection: str,
+    camera: str,
+    episode: int,
+    require_explicit_selection: bool = False,
+    episode_was_explicit: bool = False,
+) -> None:
+    """Validate LeRobot-only selectors before any object-store access."""
+
+    if episode < 0:
+        raise PaidfInputError("--lerobot-episode must be a non-negative integer")
+    if require_explicit_selection:
+        if selection != "lerobot_dataset":
+            raise PaidfInputError(
+                "--require-explicit-lerobot-selection requires --lerobot-uri"
+            )
+        missing: list[str] = []
+        if not camera.strip():
+            missing.append("--lerobot-camera")
+        if not episode_was_explicit:
+            missing.append("--lerobot-episode")
+        if missing:
+            raise PaidfInputError(
+                "--require-explicit-lerobot-selection fails closed unless the "
+                "operator supplies " + " and ".join(missing)
+            )
+    if selection != "lerobot_dataset" and (
+        camera.strip() or episode != 0 or episode_was_explicit
+    ):
+        raise PaidfInputError(
+            "--lerobot-camera and --lerobot-episode require --lerobot-uri"
+        )
+
+
+def _lerobot_source_metadata(
+    *, camera: str, explicit_selection: bool = False
+) -> dict[str, Any]:
+    """Describe a selected LeRobot trajectory without inferring its ownership."""
+
+    # The source prefix, episode, and feature names can themselves be customer
+    # metadata. Durable provenance records only the generic selection policy.
+    return {
+        "source_kind": "lerobot_dataset",
+        "source_format": "lerobot",
+        "input_origin": "operator_supplied_dataset",
+        "input_origin_label": "Operator-supplied LeRobotDataset",
+        "source_ref": "",
+        "transport": "s3_lerobot_dataset",
+        "lerobot_selection": {
+            "episode_selector": "operator-supplied",
+            "camera_selector": "explicit" if camera.strip() else "automatic",
+            "selection_contract": (
+                "explicit-camera-and-episode"
+                if explicit_selection
+                else "compatibility-defaults"
+            ),
+        },
+        "authenticity": {
+            "classification": "operator_supplied_unverified",
+            "evidence": (
+                "NPA validated the LeRobot metadata/media layout but does not infer "
+                "whether operator-supplied observations are captured or generated."
+            ),
+        },
+        "asset_license": "operator-managed",
+        "asset_license_url": "",
+        "asset_attribution": "operator-managed",
+        "redistribution_permitted": None,
+        "hosted_service_use_permitted": None,
+        "field_of_use_restrictions": "operator-managed",
+        "acceptance_required": None,
+        "authentication_required": None,
+        "delivery_mode": "operator_runtime_selection",
+    }
+
+
+def _materialize_lerobot_episode(
+    client: Any,
+    *,
+    lerobot_uri: str,
+    camera: str,
+    episode: int,
+    explicit_selection: bool,
+    destination: Path,
+) -> dict[str, Any]:
+    """Select one LeRobot camera/episode MP4 without downloading the dataset.
+
+    LeRobot v2/v3 datasets place ``meta/info.json`` below the dataset root and
+    videos below ``videos/``. The selector intentionally downloads only the
+    chosen trajectory: production datasets can be many terabytes and input
+    preparation must finish before GPU provisioning.
+    """
+
+    bucket, prefix = _split_s3(lerobot_uri)
+    normalized_prefix = prefix.rstrip("/") + "/" if prefix else ""
+    info_key = f"{normalized_prefix}meta/info.json"
+    try:
+        response = client.s3.get_object(Bucket=bucket, Key=info_key)
+        body = response["Body"]
+        try:
+            raw_info = body.read(MAX_LEROBOT_INFO_BYTES + 1)
+        finally:
+            close = getattr(body, "close", None)
+            if callable(close):
+                close()
+    except Exception as exc:  # noqa: BLE001
+        if _missing_s3(exc):
+            raise PaidfInputError(
+                "--lerobot-uri does not contain a LeRobot meta/info.json contract"
+            ) from exc
+        raise PaidfInputError(
+            "could not read the configured LeRobot meta/info.json contract"
+        ) from exc
+    if len(raw_info) > MAX_LEROBOT_INFO_BYTES:
+        raise PaidfInputError(
+            "LeRobot meta/info.json exceeds the 1 MB validation limit"
+        )
+    try:
+        info = json.loads(raw_info.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise PaidfInputError(
+            "could not validate the configured LeRobot meta/info.json contract"
+        ) from exc
+    if not isinstance(info, dict) or not isinstance(info.get("features"), dict):
+        raise PaidfInputError(
+            "LeRobot meta/info.json must contain a features mapping"
+        )
+    version_family = _lerobot_version_family(info)
+    video_features = sorted(
+        str(name)
+        for name, feature in info["features"].items()
+        if isinstance(feature, dict) and str(feature.get("dtype") or "") == "video"
+    )
+    if not video_features:
+        raise PaidfInputError(
+            "LeRobot meta/info.json declares no video observation features"
+        )
+    try:
+        raw_total_episodes = info.get("total_episodes")
+        if isinstance(raw_total_episodes, bool):
+            raise ValueError
+        total_episodes = int(raw_total_episodes)
+    except (TypeError, ValueError) as exc:
+        raise PaidfInputError(
+            "LeRobot total_episodes must be a positive integer"
+        ) from exc
+    if total_episodes < 1:
+        raise PaidfInputError(
+            "LeRobot total_episodes must be a positive integer"
+        )
+    if episode >= total_episodes:
+        raise PaidfInputError(
+            "the requested LeRobot episode is outside the declared dataset range"
+        )
+    try:
+        raw_chunks_size = info.get("chunks_size", 1_000)
+        if isinstance(raw_chunks_size, bool):
+            raise ValueError
+        chunks_size = int(raw_chunks_size)
+    except (TypeError, ValueError) as exc:
+        raise PaidfInputError("LeRobot chunks_size must be an integer") from exc
+    if chunks_size < 1:
+        raise PaidfInputError("LeRobot chunks_size must be a positive integer")
+    camera_name = camera.strip()
+    if camera_name and camera_name not in video_features:
+        raise PaidfInputError(
+            "the requested LeRobot camera is not a declared video feature"
+        )
+    candidate_features = [camera_name] if camera_name else video_features
+    selected_key = ""
+    clip_start = clip_end = None
+    if version_family == 3:
+        # LeRobot v3 groups many episodes into each video file. Resolve its
+        # metadata row and trim only the selected episode rather than staging the
+        # entire shared file as one trajectory.
+        record = _read_lerobot_episode_record(
+            client,
+            bucket=bucket,
+            prefix=normalized_prefix,
+            episode=episode,
+            chunks_size=chunks_size,
+            destination_dir=destination.parent,
+        )
+        template = str(info.get("video_path") or "").strip() or (
+            "videos/{video_key}/chunk-{chunk_index:03d}/file-{file_index:03d}.mp4"
+        )
+        missing_time_range = False
+        for feature in candidate_features:
+            chunk_index = record.get(f"videos/{feature}/chunk_index")
+            file_index = record.get(f"videos/{feature}/file_index")
+            if chunk_index is None or file_index is None:
+                if camera_name:
+                    raise PaidfInputError(
+                        "LeRobot v3 video metadata is missing the selected camera location"
+                    )
+                continue
+            rel = _format_lerobot_video_path(
+                template,
+                feature=feature,
+                episode=episode,
+                episode_chunk=episode // chunks_size,
+                chunk_index=chunk_index,
+                file_index=file_index,
+            )
+            key = f"{normalized_prefix}{rel}"
+            if _s3_object_exists(client, bucket=bucket, key=key):
+                candidate_start = record.get(f"videos/{feature}/from_timestamp")
+                candidate_end = record.get(f"videos/{feature}/to_timestamp")
+                if candidate_start is None or candidate_end is None:
+                    missing_time_range = True
+                    continue
+                selected_key = key
+                clip_start = candidate_start
+                clip_end = candidate_end
+                break
+        if not selected_key and missing_time_range:
+            raise PaidfInputError(
+                "LeRobot v3 video metadata is missing the selected episode time range"
+            )
+    else:
+        template = str(info.get("video_path") or "").strip() or (
+            "videos/chunk-{episode_chunk:03d}/{video_key}/"
+            "episode_{episode_index:06d}.mp4"
+        )
+        for feature in candidate_features:
+            rel = _format_lerobot_video_path(
+                template,
+                feature=feature,
+                episode=episode,
+                episode_chunk=episode // chunks_size,
+                chunk_index=episode // chunks_size,
+                file_index=episode,
+            )
+            key = f"{normalized_prefix}{rel}"
+            if _s3_object_exists(client, bucket=bucket, key=key):
+                selected_key = key
+                break
+    if not selected_key:
+        raise PaidfInputError(
+            "the requested LeRobot episode/camera has no resolvable observation video"
+        )
+    download_target = (
+        destination.with_name("lerobot-shared-source.mp4")
+        if clip_start is not None or clip_end is not None
+        else destination
+    )
+    try:
+        client.s3.download_file(bucket, selected_key, str(download_target))
+    except Exception as exc:  # noqa: BLE001
+        raise PaidfInputError(
+            "could not read the selected LeRobot observation video; verify "
+            "least-privilege GetObject access"
+        ) from exc
+    if clip_start is not None or clip_end is not None:
+        _trim_lerobot_episode(
+            download_target,
+            destination,
+            start_seconds=clip_start,
+            end_seconds=clip_end,
+        )
+        download_target.unlink(missing_ok=True)
+    if not destination.is_file() or destination.stat().st_size <= 0:
+        raise PaidfInputError("the selected LeRobot observation video is empty")
+    metadata = _lerobot_source_metadata(
+        camera=camera,
+        explicit_selection=explicit_selection,
+    )
+    metadata["lerobot_selection"].update(
+        {
+            "media_kind": "video",
+            "selected_object": "redacted",
+        }
+    )
+    return metadata
+
+
+def _read_lerobot_episode_record(
+    client: Any,
+    *,
+    bucket: str,
+    prefix: str,
+    episode: int,
+    chunks_size: int,
+    destination_dir: Path,
+) -> dict[str, Any]:
+    """Read one LeRobot v3 episode row without materializing dataset media."""
+
+    if chunks_size < 1:
+        raise PaidfInputError("LeRobot chunks_size must be a positive integer")
+    chunk = episode // chunks_size
+    marker = f"{prefix}meta/episodes/chunk-{chunk:03d}/"
+    try:
+        candidates = sorted(
+            key
+            for key in _list_s3_keys(client, bucket=bucket, prefix=marker)
+            if key.lower().endswith(".parquet")
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise PaidfInputError(
+            "could not inspect the selected LeRobot episode-metadata shard"
+        ) from exc
+    if not candidates:
+        raise PaidfInputError(
+            "the requested LeRobot episode has no episode-metadata shard"
+        )
+    try:
+        import pyarrow.parquet as pq
+    except ImportError as exc:
+        raise PaidfInputError(
+            "pyarrow is required to resolve LeRobot v3 episode metadata"
+        ) from exc
+    for index, key in enumerate(candidates):
+        local = destination_dir / f"lerobot-episode-metadata-{index:03d}.parquet"
+        try:
+            head = client.s3.head_object(Bucket=bucket, Key=key)
+            size = int(head.get("ContentLength") or 0)
+            if not 0 < size <= MAX_LEROBOT_EPISODE_METADATA_BYTES:
+                raise PaidfInputError(
+                    "LeRobot v3 episode metadata exceeds the safe shard-size limit"
+                )
+            client.s3.download_file(bucket, key, str(local))
+            rows = pq.read_table(
+                local, filters=[("episode_index", "=", episode)]
+            ).to_pylist()
+        except PaidfInputError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            raise PaidfInputError(
+                "could not read LeRobot v3 episode metadata"
+            ) from exc
+        finally:
+            local.unlink(missing_ok=True)
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            try:
+                row_episode = int(row.get("episode_index", -1))
+            except (TypeError, ValueError):
+                continue
+            if row_episode == episode:
+                return row
+    raise PaidfInputError(
+        "the requested LeRobot episode is absent from its metadata shard"
+    )
+
+
+def _lerobot_version_family(info: dict[str, Any]) -> int:
+    """Return a supported LeRobot major format version without guessing."""
+
+    raw = str(info.get("codebase_version") or "").strip().lower()
+    normalized = raw[1:] if raw.startswith("v") else raw
+    try:
+        major = int(normalized.split(".", 1)[0])
+    except (TypeError, ValueError) as exc:
+        raise PaidfInputError(
+            "LeRobot meta/info.json has no supported codebase_version"
+        ) from exc
+    if major not in {2, 3}:
+        raise PaidfInputError(
+            "PAIDF supports LeRobotDataset v2.x and v3.x video layouts"
+        )
+    return major
+
+
+def _format_lerobot_video_path(
+    template: str,
+    *,
+    feature: str,
+    episode: int,
+    episode_chunk: int,
+    chunk_index: Any,
+    file_index: Any,
+) -> str:
+    """Resolve the official LeRobot video template and keep it under videos/."""
+
+    if len(template.encode("utf-8")) > MAX_LEROBOT_VIDEO_PATH_BYTES:
+        raise PaidfInputError("LeRobot video_path exceeds the safe length limit")
+    allowed_fields = {
+        "video_key",
+        "episode_index",
+        "episode_chunk",
+        "chunk_index",
+        "file_index",
+    }
+    try:
+        fields = list(Formatter().parse(template))
+    except ValueError as exc:
+        raise PaidfInputError("LeRobot video_path has invalid format syntax") from exc
+    for _literal, field_name, format_spec, conversion in fields:
+        if field_name is None:
+            continue
+        if (
+            field_name not in allowed_fields
+            or conversion is not None
+            or (format_spec and re.fullmatch(r"0?[1-9][0-9]*d", format_spec) is None)
+        ):
+            raise PaidfInputError(
+                "LeRobot video_path contains an unsupported format field"
+            )
+    try:
+        resolved = template.format(
+            video_key=feature,
+            episode_index=episode,
+            episode_chunk=episode_chunk,
+            chunk_index=int(chunk_index),
+            file_index=int(file_index),
+        )
+    except (AttributeError, IndexError, KeyError, TypeError, ValueError) as exc:
+        raise PaidfInputError(
+            "LeRobot video_path cannot resolve the requested episode"
+        ) from exc
+    normalized = resolved.replace("\\", "/").strip()
+    parsed = urlparse(normalized)
+    parts = Path(normalized).parts
+    if (
+        not normalized
+        or parsed.scheme
+        or normalized.startswith("/")
+        or not normalized.lower().endswith(".mp4")
+        or not parts
+        or parts[0] != "videos"
+        or any(part in {"", ".", ".."} for part in parts)
+    ):
+        raise PaidfInputError(
+            "LeRobot video_path must resolve to one relative videos/... MP4 object"
+        )
+    return normalized
+
+
+def _s3_object_exists(client: Any, *, bucket: str, key: str) -> bool:
+    """Check one declared object without enumerating a production dataset."""
+
+    try:
+        client.s3.head_object(Bucket=bucket, Key=key)
+    except Exception as exc:  # noqa: BLE001
+        if _missing_s3(exc):
+            return False
+        raise PaidfInputError(
+            "could not verify the selected LeRobot observation object"
+        ) from exc
+    return True
+
+
+def _trim_lerobot_episode(
+    source: Path,
+    destination: Path,
+    *,
+    start_seconds: Any,
+    end_seconds: Any,
+) -> None:
+    """Extract one exact LeRobot v3 episode from a shared H.264 video file."""
+
+    try:
+        start = float(start_seconds)
+        end = float(end_seconds)
+    except (TypeError, ValueError) as exc:
+        raise PaidfInputError(
+            "LeRobot v3 video metadata requires numeric episode timestamps"
+        ) from exc
+    if not (math.isfinite(start) and math.isfinite(end) and 0.0 <= start < end):
+        raise PaidfInputError(
+            "LeRobot v3 video metadata has an invalid episode time range"
+        )
+    command = [
+        "ffmpeg",
+        "-y",
+        "-loglevel",
+        "error",
+        "-i",
+        str(source),
+        "-ss",
+        f"{start:.9f}",
+        "-t",
+        f"{end - start:.9f}",
+        "-an",
+        "-c:v",
+        "libx264",
+        "-pix_fmt",
+        "yuv420p",
+        "-movflags",
+        "+faststart",
+        str(destination),
+    ]
+    try:
+        result = subprocess.run(
+            command, capture_output=True, text=True, check=False
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise PaidfInputError("could not extract the selected LeRobot episode") from exc
+    if result.returncode != 0 or not destination.is_file():
+        raise PaidfInputError("could not extract the selected LeRobot episode")
+
+
+def _list_s3_keys(client: Any, *, bucket: str, prefix: str) -> list[str]:
+    """List a prefix across pages while remaining easy to fake in unit tests."""
+
+    paginator_factory = getattr(client.s3, "get_paginator", None)
+    if callable(paginator_factory):
+        pages = paginator_factory("list_objects_v2").paginate(
+            Bucket=bucket, Prefix=prefix
+        )
+    else:
+        pages = [client.s3.list_objects_v2(Bucket=bucket, Prefix=prefix)]
+    return [
+        str(item.get("Key") or "")
+        for page in pages
+        for item in page.get("Contents", [])
+        if str(item.get("Key") or "")
+    ]
+
+
 def _fixture_provenance(run_id: str, base_uri: str) -> dict[str, Any]:
     return {
         "schema_version": PROVENANCE_SCHEMA,
@@ -889,14 +1509,28 @@ def _fixture_provenance(run_id: str, base_uri: str) -> dict[str, Any]:
 def _build_provenance(
     *, run_id: str, base_uri: str, source: dict[str, Any], derivation: dict[str, Any]
 ) -> dict[str, Any]:
+    safe_source = dict(source)
+    safe_derivation = json.loads(json.dumps(derivation))
+    if safe_source.get("source_kind") == "lerobot_dataset":
+        # Source and derived hashes are confidential customer-content identifiers.
+        # Keep them in memory for immutable stage comparisons, but never serialize
+        # them into provenance, downstream reports, or object metadata.
+        safe_source.pop("sha256", None)
+        safe_derivation.pop("derived_from_sha256", None)
+        safe_derivation.pop("sha256", None)
+        frame_derivation = safe_derivation.get("frame_derivation")
+        if isinstance(frame_derivation, dict):
+            for item in frame_derivation.get("items") or []:
+                if isinstance(item, dict):
+                    item.pop("sha256", None)
     payload = {
         "schema_version": PROVENANCE_SCHEMA,
         "run_id": run_id,
-        **source,
+        **safe_source,
         "staged_canonical_s3_uri": base_uri,
         "staged_source_uri": f"{base_uri}source.mp4",
         "provenance_uri": f"{base_uri}provenance.json",
-        "derivation": derivation,
+        "derivation": safe_derivation,
         "cosmos_conditioning": {
             "enabled": True,
             "mode": "input_conditioned",
@@ -915,7 +1549,25 @@ def _assert_existing_matches(
         return
     existing_sha = str(existing.get("sha256") or "")
     requested_sha = str(requested.get("sha256") or "")
+    if (
+        not existing_sha
+        and (
+            existing.get("source_kind") == "lerobot_dataset"
+            or requested.get("source_kind") == "lerobot_dataset"
+        )
+    ):
+        # _stage_file compares the selected bytes against the immutable staged
+        # source without persisting the confidential digest.
+        return
     if existing_sha != requested_sha:
+        if (
+            existing.get("source_kind") == "lerobot_dataset"
+            or requested.get("source_kind") == "lerobot_dataset"
+        ):
+            raise PaidfInputError(
+                "run input is immutable: the selected LeRobot observation differs "
+                "from the committed run input. Use a new --run-id."
+            )
         qualifier = "explicit input" if explicit else "selected input"
         raise PaidfInputError(
             f"run input is immutable: {qualifier} SHA-256 {requested_sha} does not match "
@@ -927,6 +1579,11 @@ def _assert_existing_derivation_matches(
     existing: dict[str, Any], derived: dict[str, Any]
 ) -> None:
     """Require every recomputed artifact byte hash to match committed provenance."""
+
+    if existing.get("source_kind") == "lerobot_dataset":
+        # Confidential provenance has no content hashes; each existing derived
+        # object is compared byte-for-byte through _stage_file instead.
+        return
 
     committed = existing.get("derivation")
     if not isinstance(committed, dict):
@@ -1053,6 +1710,7 @@ def _stage_file(
     digest: str,
     *,
     immutable_source: bool = False,
+    persist_digest_metadata: bool = True,
 ) -> None:
     bucket, key = _split_s3(uri)
     try:
@@ -1077,11 +1735,14 @@ def _stage_file(
             f"{uri}; use a new --run-id"
         )
     try:
+        metadata = {"npa-role": "paidf-input"}
+        if persist_digest_metadata:
+            metadata["sha256"] = digest
         client.s3.upload_file(
             str(local),
             bucket,
             key,
-            ExtraArgs={"Metadata": {"sha256": digest, "npa-role": "paidf-input"}},
+            ExtraArgs={"Metadata": metadata},
         )
     except Exception as exc:  # noqa: BLE001
         raise PaidfInputError(
@@ -1089,13 +1750,26 @@ def _stage_file(
         ) from exc
 
 
-def _upload_json(client: Any, payload: dict[str, Any], uri: str, tmp: Path) -> None:
+def _upload_json(
+    client: Any,
+    payload: dict[str, Any],
+    uri: str,
+    tmp: Path,
+    *,
+    persist_digest_metadata: bool = True,
+) -> None:
     local = tmp / "provenance.json"
     local.write_text(
         json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
     digest = _sha256(local)
-    _stage_file(client, local, uri, digest)
+    _stage_file(
+        client,
+        local,
+        uri,
+        digest,
+        persist_digest_metadata=persist_digest_metadata,
+    )
 
 
 def _verify_file(path: Path, digest: str, size: int, *, context: str) -> None:

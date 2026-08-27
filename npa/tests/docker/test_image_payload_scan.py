@@ -68,6 +68,10 @@ PAYLOAD_PATHS = [
     "opt/leisaac-cache/assets/runtime/robots/arbitrary-version/robot.usda",
     "opt/leisaac/assets/scenes/future-release/task.usdc",
     "opt/venv/lib/python3.11/site-packages/imageio_ffmpeg/binaries/ffmpeg-linux-x86_64-v7.0.2",
+    "opt/cache/lib/python3.12/site-packages/ovrtx/bin/libovrtx.so",
+    "opt/cache/lib/python3.12/site-packages/ovrtx-0.3.dist-info/METADATA",
+    "opt/content-agents/.ovrtx_venv/bin/python",
+    "opt/vendor/libovrtx-render.so",
 ]
 
 # Paths the re-architected images legitimately DO ship.
@@ -116,6 +120,53 @@ def test_leisaac_dockerfile_removes_parent_imageio_ffmpeg_payload() -> None:
     assert "FROM ghcr.io/nebius/nebius-physical-ai/npa-isaac-lab" not in dockerfile
     assert 'rm -rf /root/.cache /home/"${NPA_RUNTIME_USER}"/.cache' in dockerfile
     assert 'test ! -e /home/"${NPA_RUNTIME_USER}"/.cache' in dockerfile
+
+
+def test_shared_isaac_runtime_uses_system_ffmpeg_without_bundled_payload() -> None:
+    installer = (
+        REPO_ROOT
+        / "npa"
+        / "docker"
+        / "workbench"
+        / "common"
+        / "install_isaac_runtime_base.sh"
+    ).read_text(encoding="utf-8")
+
+    assert "  ffmpeg \\\n" in installer
+    assert "*/imageio_ffmpeg/binaries/ffmpeg*" in installer
+    assert "imageio_ffmpeg.get_ffmpeg_exe()" in installer
+    assert ' = "ffmpeg"' in installer
+
+
+def test_blackwell_envgen_chain_uses_system_ffmpeg_without_bundled_payload() -> None:
+    paths = (
+        REPO_ROOT / "npa" / "docker" / "workbench" / "base" / "cuda13-b300" / "Dockerfile",
+        REPO_ROOT / "npa" / "docker" / "workbench" / "genesis" / "Dockerfile.sm120",
+        REPO_ROOT / "npa" / "docker" / "workbench" / "sim2real-envgen" / "Dockerfile",
+    )
+    for path in paths:
+        dockerfile = path.read_text(encoding="utf-8")
+        assert "IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg" in dockerfile
+        assert "*/imageio_ffmpeg/binaries/ffmpeg*" in dockerfile
+        assert "get_ffmpeg_exe()" in dockerfile
+        assert '== "/usr/bin/ffmpeg"' in dockerfile
+    envgen = paths[-1].read_text(encoding="utf-8")
+    assert "python -m pip uninstall -y npa" in envgen
+    assert "pip install --no-deps -e /opt/npa" not in envgen
+
+
+def test_isaac_lab_dockerfile_excludes_bundled_imageio_ffmpeg_payload() -> None:
+    dockerfile = (
+        REPO_ROOT / "npa" / "docker" / "workbench" / "isaac-lab" / "Dockerfile"
+    ).read_text(encoding="utf-8")
+    assert "IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg" in dockerfile
+    runtime_base_layer = dockerfile.split(
+        "COPY --chmod=0755 docker/workbench/isaac-lab/npa_cli.sh", 1
+    )[0].rsplit("RUN ", 1)[1]
+    assert "apt-get install -y --no-install-recommends ffmpeg" in runtime_base_layer
+    assert "*/imageio_ffmpeg/binaries/ffmpeg*" in runtime_base_layer
+    assert "-delete" in runtime_base_layer
+    assert "imageio_ffmpeg.get_ffmpeg_exe()" in runtime_base_layer
 
 
 @pytest.mark.parametrize("path", PAYLOAD_PATHS)
@@ -168,6 +219,8 @@ HISTORY_BAKING = [
     "FROM nvcr.io/nvidia/isaac-lab:2.3.2",
     "RUN /opt/npa/bin/isaac-bootstrap ensure",
     "RUN isaac_bootstrap.sh warm",
+    "RUN uv pip install -r pylock.ovrtx-runtime.toml --require-hashes",
+    "RUN python -m world_understanding.functions.graphics.render_ovrtx --provision-only",
     "ENV OMNI_KIT_ACCEPT_EULA=YES",
     "ENV ISAACSIM_ACCEPT_EULA=YES PRIVACY_CONSENT=Y",
 ]

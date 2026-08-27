@@ -5,18 +5,17 @@ interesting on Nebius Physical AI. Each one picks a **robot**, a **simulation
 environment**, and a **cool public dataset**, then walks you from zero to a
 result.
 
-New here? Start with the no-GPU guide — it runs on your laptop with no cloud,
-no GPU, and no credentials. Then pick a robot and have fun.
+New here? Pick whichever robot sounds like the most fun — the guides are
+independent, and each one ends with something you can look at.
 
-| Guide | Robot | Sim / engine | Public dataset | Needs a GPU? |
+| Guide | Robot | Sim / engine | Public dataset | GPU |
 | --- | --- | --- | --- | --- |
-| [Score a robot in 60 seconds](score-a-robot-no-gpu.md) | any | offline | shipped sample rollouts | No |
-| [Pick-and-place with a Franka arm](franka-pick-and-place-genesis.md) | Franka Emika Panda | Genesis | DROID (Franka) | Yes (L40S+) |
-| [Teach a robot to push a T](pusht-sim-to-real.md) | sim pusher | sim-to-real loop | `lerobot/pusht` | Yes (H100) — local smoke is free |
-| [Train a Reachy 2 humanoid policy](reachy2-lerobot-policy.md) | Reachy 2 | LeRobot | Pollen Robotics / LeRobot Hub | Yes |
-| [Make a Unitree G1 walk](g1-humanoid-walk-sonic.md) | Unitree G1 | MuJoCo | NVIDIA GEAR-SONIC checkpoint | Yes (H100) |
-| [Train a quadruped to run](quadruped-isaac-lab.md) | ANYmal / quadruped | Isaac Lab | Isaac Lab built-in tasks | Yes (RT-core: L40S / RTX PRO 6000) |
-| [Turn a photo capture into a 3D scene](neural-reconstruction.md) | n/a (scene capture) | NVIDIA NuRec / NRE | `nvidia/PhysicalAI-NuRec-PPISP` | Yes (RT-core: RTX PRO 6000 / L40S) |
+| [Pick-and-place with a Franka arm](franka-pick-and-place-genesis.md) | Franka Emika Panda | Genesis | DROID (Franka) | L40S+ |
+| [Teach a robot to push a T](pusht-sim-to-real.md) | sim pusher | sim-to-real loop | `lerobot/pusht` | H100 |
+| [Train a Reachy 2 humanoid policy](reachy2-lerobot-policy.md) | Reachy 2 | LeRobot | Pollen Robotics / LeRobot Hub | yes |
+| [Make a Unitree G1 walk](g1-humanoid-walk-sonic.md) | Unitree G1 | MuJoCo | NVIDIA GEAR-SONIC checkpoint | H100 |
+| [Train a quadruped to run](quadruped-isaac-lab.md) | ANYmal / quadruped | Isaac Lab | Isaac Lab built-in tasks | RT-core: L40S / RTX PRO 6000 |
+| [Turn a photo capture into a 3D scene](neural-reconstruction.md) | n/a (scene capture) | NVIDIA NuRec / NRE | `nvidia/PhysicalAI-NuRec-PPISP` | RT-core: RTX PRO 6000 / L40S |
 
 ## How these guides work
 
@@ -25,7 +24,7 @@ Every guide follows the same shape so you always know where you are:
 - **The hook** — what you'll build and why it's fun.
 - **Ingredients** — robot, sim, dataset, and what you need installed.
 - **Fast path** — the shortest command that produces a result.
-- **Go bigger** — turn the toy run into a real GPU run.
+- **Go bigger** — scale the fast path into a larger GPU run.
 - **Look at it** — visualize the result (Rerun, FiftyOne, reports).
 - **Dig deeper** — links to the full cookbook and the skill behind it.
 
@@ -45,7 +44,7 @@ pip install -e npa
 npa --version
 ```
 
-The no-GPU guide needs nothing else. The GPU guides assume you have completed
+The guides assume you have completed
 [../../quickstart.md](../../quickstart.md) and
 [../getting-started.md](../getting-started.md) (Nebius auth, an S3 bucket, and
 `npa configure`). Each guide calls out exactly when credentials are required.

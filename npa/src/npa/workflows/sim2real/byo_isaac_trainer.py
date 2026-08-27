@@ -26,7 +26,6 @@ without a GPU.
 
 from __future__ import annotations
 
-import base64
 import copy
 import hashlib
 import json
@@ -45,7 +44,10 @@ from npa.workflows.sim2real.capture import (
     ppo_settings,
 )
 from npa.workflows.sim2real.constants import DEFAULT_SIGNAL_ADAPTER_LEARNING_RATE
-from npa.workflows.sim2real.isaac_job_payload import compressed_bash_launch
+from npa.workflows.sim2real.isaac_job_payload import (
+    compressed_bash_launch,
+    embedded_base64_file_block,
+)
 
 DEFAULT_ISAAC_TASK = "Isaac-Lift-Cube-Franka-v0"
 DEFAULT_NUM_ENVS = DEFAULT_PPO_NUM_ENVS
@@ -767,11 +769,10 @@ def build_isaac_job_manifest(
                 f"--sha256 {shlex.quote(scenarios_sha256)}\n"
             )
         elif scenarios_jsonl:
-            encoded_scenarios = base64.b64encode(scenarios_jsonl.encode()).decode()
-            scenario_data_block = (
-                '"$PY" -m npa.workflows.sim2real.isaac_job_io write-base64 '
-                f"--payload {shlex.quote(encoded_scenarios)} "
-                "--destination /tmp/npa_robot/scenarios.jsonl\n"
+            scenario_data_block = embedded_base64_file_block(
+                scenarios_jsonl,
+                destination="/tmp/npa_robot/scenarios.jsonl",
+                marker="NPA_TRAINER_SCENARIOS_B64",
             )
         spec_json = json.dumps(robot_spec, sort_keys=True)
         # B2-derived robot-aware task config (action scale / placement / reward
@@ -980,9 +981,7 @@ def build_isaac_job_manifest(
                         "seccompProfile": {"type": "RuntimeDefault"},
                     },
                     "imagePullSecrets": [
-                        {"name": "agent-sa"},
                         {"name": "ngc-nvcr-imagepullsecret"},
-                        {"name": "npa-nebius-registry"},
                     ],
                     "containers": [
                         {

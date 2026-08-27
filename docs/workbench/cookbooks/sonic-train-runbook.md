@@ -54,13 +54,13 @@ editable defaults because SkyPilot 0.12.2 does not interpolate `${VAR}` inside
 For a zero-NPA raw SkyPilot run, copy the YAML, replace these literals, and
 launch it directly:
 
-| YAML field | Active RTX PRO 6000 Kubernetes value |
-| --- | --- |
-| `resources.image_id` and `POLICY_IMAGE` | exact active tag from `sonic_image_manifest.json` |
-| `SONIC_GPU_TYPE` | `gpu-rtx6000` |
-| `SONIC_IMAGE_VARIANT` | `sonic-k8s-host-mounted` |
-| `S3_ENDPOINT_URL` | your S3-compatible endpoint |
-| `S3_BUCKET` / `SONIC_OUTPUT_PREFIX` | your artifact destination |
+| YAML field | L40S value | RTX PRO 6000 Kubernetes value |
+| --- | --- | --- |
+| `resources.image_id` and `POLICY_IMAGE` | `<your-registry>/<namespace>/npa-sonic:0.1.2` | `<your-registry>/<namespace>/npa-sonic:0.1.2-k8s-runtime` |
+| `SONIC_GPU_TYPE` | `l40s` | `gpu-rtx6000` |
+| `SONIC_IMAGE_VARIANT` | `sonic-l40s-baked` | `sonic-k8s-host-mounted` |
+| `S3_ENDPOINT_URL` | your S3-compatible endpoint | your S3-compatible endpoint |
+| `S3_BUCKET` / `SONIC_OUTPUT_PREFIX` | your artifact destination | your artifact destination |
 
 ```bash
 cp npa/workflows/workbench/npa-workflows/sonic-train.yaml /tmp/sonic-train.yaml
@@ -124,7 +124,7 @@ from npa.sdk.workbench import sonic
 sonic.submit_workflow(
     Path("npa/workflows/workbench/npa-workflows/sonic-train.yaml"),
     run_id="sonic-train-smoke",
-    registry="cr.eu-north1.nebius.cloud/<registry-id>",
+    registry="<your-registry>/<namespace>",
     gpu_target="l40s",
     s3_endpoint="https://storage.eu-north1.nebius.cloud",
     s3_bucket="<bucket>",
@@ -133,16 +133,18 @@ sonic.submit_workflow(
 )
 ```
 
-Build and push only a newly scanned host-mounted runtime-fetch variant for RTX
-PRO 6000 Blackwell Kubernetes with the NVIDIA GPU Operator:
+Use the exact supported host-mounted image from the manifest for RTX PRO 6000
+Blackwell on Kubernetes with the NVIDIA GPU Operator:
 
 ```bash
-npa/docker/workbench/sonic/build.sh \
-  --registry "${NPA_REGISTRY}" \
-  --push \
-  --variant k8s \
-  --tag <new-additive-runtime-fetch-tag>
+export NPA_REGISTRY=ghcr.io/nebius/nebius-physical-ai
+docker manifest inspect \
+  "${NPA_REGISTRY}/npa-sonic:cuda13-b300-0.1.2-k8s-runtime-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
 ```
+
+The L40S baked variant is quarantined and must not be rebuilt or pushed as an
+NPA-owned public image. Compute-only deployments require an independently
+licensed, operator-built and validated BYOF image.
 
 Expected output artifacts:
 
@@ -175,13 +177,6 @@ runtime resolver reads `npa/src/npa/deploy/sonic_image_manifest.json`.
 - `--submit-only`: submit and return without polling.
 
 If `--data-path` is omitted, the command treats the run as a sample-data smoke.
-
-## Cost Guard
-
-The W7-sonic build-fix smoke budget is capped at $30. A single L40S smoke
-should stay well below that if it reaches terminal state promptly. Stop retrying
-and classify the run as platform or training failure if scheduling or startup
-consumes the budget without SONIC logs.
 
 ## Failure Classification
 

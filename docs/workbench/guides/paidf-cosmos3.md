@@ -38,9 +38,15 @@ infrastructure identifier is embedded.
 
 Generation behavior is configuration-driven through `cosmos3_checkpoint`,
 `cosmos3_mode`, `seed`, `guidance`, `steps`, `variant_count`,
-`variant_parallelism`, and `parallelism_preset`. Quality and retries use
+`variant_parallelism`, and `parallelism_preset`. `augmentation_seed` optionally
+decouples appearance-profile sampling from the run ID for reproducible quality
+comparisons. Quality and retries use
 `grade_threshold`, `refinement_iterations`, `retry_seed_stride`,
-`retry_guidance_delta`, and `retry_steps_delta`. The composition requires
+`retry_guidance_delta`, and `retry_steps_delta`. `source_motion_weight` controls
+the source-motion-preserving composite used for publication (the workflow uses
+`0.8`, retaining 20% of the real Cosmos appearance treatment). The unmodified
+Cosmos video is preserved beside the composite, so model output and post-process
+provenance remain independently auditable. The composition requires
 `video2video`: selecting a text-to-video or image-to-video mode fails before GPU
 inference rather than producing a misleading source-conditioned claim.
 
@@ -59,6 +65,7 @@ cosmos_augmented/
   manifest.json
   variant-0000/
     augmented_video.mp4
+    raw_cosmos_video.mp4
     frame-00001.png
     metadata.json
 ```
@@ -66,6 +73,8 @@ cosmos_augmented/
 Each metadata file records the real engine (`nvidia-cosmos/cosmos-framework`),
 `video2video` mode, source-video conditioning, checkpoint, seed, guidance,
 steps, attempt number, guardrail posture, non-baked weights, and input lineage.
+When motion preservation is enabled, it also records source/Cosmos weights and
+SHA-256 digests for both the raw model output and published composite.
 The run manifest records non-empty video bytes, variant count, actual GPU
 parallelism, and the same conditioning contract.
 

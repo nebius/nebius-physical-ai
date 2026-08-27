@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
+import pytest
+
 from npa.orchestration.npa_workflow.sim2real_preflight import (
     _ready_schedulable_cpu_nodes,
     kubernetes_prerequisites,
@@ -11,17 +13,15 @@ from npa.orchestration.npa_workflow.sim2real_preflight import (
 
 
 def _config(**overrides):
-    digest = f"cr.eu-north1.nebius.cloud/registry/image@sha256:{'a' * 64}"
+    digest = f"registry.example/registry/image@sha256:{'a' * 64}"
     config = {
         "controller_image": digest,
         "transfer_image": digest,
         "envgen_image": digest,
-        "reason_image": digest,
         "isaac_image": digest,
         "viewer_image": digest,
         "isaac_cache_pvc": "npa-isaac-cache",
-        "reason2_model": "nvidia/Cosmos-Reason2-8B",
-        "reason3_model": "nvidia/Cosmos-Reason2-2B",
+        "cosmos3_model": "nvidia/Cosmos3-Super-Reasoner",
         "gpu_queue": "sim2real-gpu",
         "gpu_priority_class": "sim2real-production",
     }
@@ -29,8 +29,9 @@ def _config(**overrides):
     return config
 
 
-def test_static_preflight_checks_all_three_gated_models_and_secret_forwarding():
+def test_static_preflight_checks_hf_models_and_hosted_model_before_submission():
     checked = []
+    hosted = []
 
     def validate(_token, repo):
         checked.append(repo)
@@ -38,20 +39,42 @@ def test_static_preflight_checks_all_three_gated_models_and_secret_forwarding():
 
     issues = static_prerequisites(
         _config(),
-        requested_secret_envs=["HF_TOKEN"],
-        secret_values={"HF_TOKEN": "redacted"},
+        requested_secret_envs=["HF_TOKEN", "NEBIUS_TOKEN_FACTORY_KEY"],
+        secret_values={"HF_TOKEN": "redacted", "NEBIUS_TOKEN_FACTORY_KEY": "redacted"},
         hf_validator=validate,
+        token_factory_validator=lambda _key, model: hosted.append(model) or SimpleNamespace(ok=True),
     )
 
-    assert checked == [
-        "nvidia/Cosmos-Transfer2.5-2B",
-        "nvidia/Cosmos-Reason2-8B",
-        "nvidia/Cosmos-Reason2-2B",
-    ]
+    assert checked == ["nvidia/Cosmos-Transfer2.5-2B"]
+    assert "nvidia/Cosmos-Reason2-8B" not in checked
+    assert hosted == ["nvidia/Cosmos3-Super-Reasoner"]
     rendered = "\n".join(item for item, _ in issues)
     assert "Cosmos-Transfer2.5-2B" in rendered
     assert "AWS_ACCESS_KEY_ID" in rendered
     assert "AWS_SECRET_ACCESS_KEY" in rendered
+
+
+def test_archived_reason3_config_key_does_not_change_canonical_hosted_probe():
+    checked = []
+    config = _config()
+    config.pop("cosmos3_model")
+    config["reason3_model"] = "nvidia/Cosmos-Reason2-2B"
+
+    static_prerequisites(
+        config,
+        requested_secret_envs=[
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "HF_TOKEN", "NEBIUS_TOKEN_FACTORY_KEY",
+        ],
+        secret_values={"HF_TOKEN": "redacted", "NEBIUS_TOKEN_FACTORY_KEY": "redacted"},
+        hf_validator=lambda _token, repo: checked.append(repo)
+        or SimpleNamespace(ok=True),
+        token_factory_validator=lambda _key, model: checked.append(model) or SimpleNamespace(ok=True),
+    )
+
+    assert "nvidia/Cosmos3-Super-Reasoner" in checked
+    assert "nvidia/Cosmos-Reason2-2B" not in checked
 
 
 def test_static_preflight_rejects_mutable_images_without_manual_eula_inputs():
@@ -61,14 +84,32 @@ def test_static_preflight_rejects_mutable_images_without_manual_eula_inputs():
             "AWS_ACCESS_KEY_ID",
             "AWS_SECRET_ACCESS_KEY",
             "HF_TOKEN",
+            "NEBIUS_TOKEN_FACTORY_KEY",
         ],
-        secret_values={"HF_TOKEN": "redacted"},
+        secret_values={"HF_TOKEN": "redacted", "NEBIUS_TOKEN_FACTORY_KEY": "redacted"},
         hf_validator=lambda _token, repo: SimpleNamespace(ok=True, repo=repo),
+        token_factory_validator=lambda _key, model: SimpleNamespace(ok=True, model=model),
     )
 
     rendered = "\n".join(item for item, _ in issues)
     assert "controller_image" in rendered
     assert "accept_eula" not in rendered.lower()
+
+
+def test_static_preflight_rejects_unresolved_token_factory_key():
+    issues = static_prerequisites(
+        _config(),
+        requested_secret_envs=[
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "HF_TOKEN",
+            "NEBIUS_TOKEN_FACTORY_KEY",
+        ],
+        secret_values={"HF_TOKEN": "redacted"},
+        hf_validator=lambda _token, repo: SimpleNamespace(ok=True, repo=repo),
+        token_factory_validator=lambda *_args: pytest.fail("missing key must not be probed"),
+    )
+    assert "could not be resolved" in "\n".join(item for item, _ in issues)
 
 
 def _nodes(*, cpu="10", memory="40Gi", gpu="0", taints=None):
@@ -97,9 +138,12 @@ def test_cpu_node_parser_requires_the_real_schedulable_profile():
     assert _ready_schedulable_cpu_nodes(_nodes(gpu="8")) == ["cpu-0"]
     assert _ready_schedulable_cpu_nodes(_nodes(cpu="9500m")) == []
     assert _ready_schedulable_cpu_nodes(_nodes(memory="39Gi")) == []
-    assert _ready_schedulable_cpu_nodes(
-        _nodes(taints=[{"key": "dedicated", "effect": "NoSchedule"}])
-    ) == []
+    assert (
+        _ready_schedulable_cpu_nodes(
+            _nodes(taints=[{"key": "dedicated", "effect": "NoSchedule"}])
+        )
+        == []
+    )
 
 
 def test_kubernetes_preflight_parses_nodes_pvc_queue_and_priority_class():

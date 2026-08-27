@@ -23,7 +23,7 @@ from npa.workflows.sim2real.constants import (
     DEFAULT_PREFIX,
     DEFAULT_REFERENCE_VLM_MODEL,
     DEFAULT_REASON2_MODEL,
-    DEFAULT_REASON3_MODEL,
+    DEFAULT_COSMOS3_MODEL,
     DEFAULT_ROLLOUT_COUNT,
     DEFAULT_S3_ENDPOINT,
     DEFAULT_SIM_BACKEND,
@@ -154,19 +154,19 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
         default=os.environ.get("VLM_REASON2_MODEL", DEFAULT_REASON2_MODEL),
     )
     parser.add_argument(
-        "--vlm-reason3-model",
-        default=os.environ.get("VLM_REASON3_MODEL", DEFAULT_REASON3_MODEL),
+        "--vlm-cosmos3-model",
+        default=os.environ.get("VLM_COSMOS3_MODEL", DEFAULT_COSMOS3_MODEL),
     )
     parser.add_argument(
         "--vlm-reason2-image", default=os.environ.get("VLM_REASON2_IMAGE", "")
     )
     parser.add_argument(
-        "--vlm-reason3-image", default=os.environ.get("VLM_REASON3_IMAGE", "")
+        "--vlm-cosmos3-image", default=os.environ.get("VLM_COSMOS3_IMAGE", "")
     )
     parser.add_argument(
-        "--vlm-dual-reason",
+        "--vlm-two-evaluator",
         action=argparse.BooleanOptionalAction,
-        default=_bool_value(os.environ.get("NPA_SIM2REAL_VLM_DUAL_REASON", "1")),
+        default=_bool_value(os.environ.get("NPA_SIM2REAL_VLM_TWO_EVALUATOR", "1")),
     )
     parser.add_argument(
         "--threshold",
@@ -243,7 +243,7 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
         "--k8s-image-pull-secrets",
         default=os.environ.get(
             "NPA_SIM2REAL_K8S_IMAGE_PULL_SECRETS",
-            "agent-sa,ngc-nvcr-imagepullsecret,npa-nebius-registry",
+            "ngc-nvcr-imagepullsecret",
         ),
     )
     parser.add_argument(
@@ -580,15 +580,15 @@ def main(argv: list[str] | None = None) -> int:
         trainer_image=args.trainer_image,
         vlm_image=args.vlm_image,
         vlm_reason2_image=args.vlm_reason2_image,
-        vlm_reason3_image=args.vlm_reason3_image,
+        vlm_cosmos3_image=args.vlm_cosmos3_image,
         eval_image=args.eval_image,
         isaac_image=args.isaac_image,
         sim_backend=args.sim_backend,
         isaac_task=args.isaac_task,
         vlm_model=args.vlm_model,
         vlm_reason2_model=args.vlm_reason2_model,
-        vlm_reason3_model=args.vlm_reason3_model,
-        vlm_dual_reason=args.vlm_dual_reason,
+        vlm_cosmos3_model=args.vlm_cosmos3_model,
+        vlm_two_evaluator=args.vlm_two_evaluator,
         threshold=args.threshold,
         early_exit=args.early_exit,
         inner_iterations=args.inner_iterations,

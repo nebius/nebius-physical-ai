@@ -123,7 +123,8 @@ secret exists in the namespace SkyPilot uses (normally `default`):
 ```bash
 export KUBECONFIG=~/.npa/clusters/npa-cluster/kubeconfig
 kubectl auth can-i create pods -n default
-kubectl get secret npa-nebius-registry -n default
+# Private images only: verify the operator-managed secret named by your workload.
+kubectl get secret <your-ghcr-pull-secret> -n default
 ```
 
 ### 3. In-cluster workbench services
@@ -280,12 +281,12 @@ configured S3 credentials to list and read this prefix.
 
 The committed YAML pins the first-party LanceDB and detection-training images:
 
-- `cr.eu-north1.nebius.cloud/<your-registry-id>/npa-lancedb:cuda13-b300-0.30.3-sm80-sm90-sm100-sm103-sm120-20260803T031514Z`
-- `cr.eu-north1.nebius.cloud/<your-registry-id>/npa-detection-training:bdd100k-golden-eval-smoke-20260614T210000Z`
+- `<your-registry>/<namespace>/npa-lancedb:cuda13-b300-0.30.3-sm80-sm90-sm100-sm103-sm120-20260803T031514Z`
+- `<your-registry>/<namespace>/npa-detection-training:bdd100k-golden-eval-smoke-20260614T210000Z`
 
 The optional final FiftyOne app can still be replaced with a BYO registry image:
 
-- `cr.eu-north1.nebius.cloud/<your-registry-id>/npa-fiftyone:<fiftyone-image-tag>`
+- `<your-registry>/<namespace>/npa-fiftyone:<fiftyone-image-tag>`
 
 The final FiftyOne task exposes port `5151` through SkyPilot. The app does not add authentication; restrict the run inputs to datasets that are safe to show publicly and use `sky status --endpoint 5151 <cluster>` to resolve the public URL.
 

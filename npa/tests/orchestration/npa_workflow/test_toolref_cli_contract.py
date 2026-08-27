@@ -66,6 +66,11 @@ CHECKED_TOOLREFS = [
         "npa.cli.fiftyone",
         "curate-augmented",
     ),
+    (
+        "workbench.fiftyone.review_augmented",
+        "npa.cli.fiftyone",
+        "review-augmented",
+    ),
     ("workbench.token_factory.caption", "npa.cli.workbench.token_factory", "caption"),
     ("workbench.token_factory.generate", "npa.cli.workbench.token_factory", "generate"),
     ("workbench.token_factory.reason", "npa.cli.workbench.token_factory", "reason"),

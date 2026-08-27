@@ -2,7 +2,7 @@
   "format": "npa_blackwell_dc_image_manifest_v1",
   "as_of": "2026-08-08T00:00:00Z",
   "registry_ref": "${NPA_REGISTRY}",
-  "registry_note": "Resolve the registry through npa.deploy.images / npa configure. Additive tags are pushed to both the primary (eu-north1) and mirror (us-central1) registries; never hardcode a registry id here.",
+  "registry_note": "Resolve official public development and release tags through npa.deploy.images. Development tags are immutable full-SHA tags and release provenance is digest-bound.",
   "target": {
     "family": "Blackwell datacenter",
     "gpus": [
@@ -57,7 +57,7 @@
       "dockerfile": "base/cuda13-b300/Dockerfile",
       "build_script": "base/cuda13-b300/build.sh",
       "verdict": "ready",
-      "validation": "validated",
+      "validation": "pending-hardware",
       "torch": "2.9.0+cu130",
       "torch_cuda_arch_list": "8.0 9.0 10.0 10.3 12.0",
       "source_compiled_extensions": [
@@ -68,8 +68,7 @@
       "published_tag": "cuda13-b300-sm80-sm90-sm100-sm103-sm120-20260803T032705Z",
       "published_digest": "sha256:6a493973bf8a92a9a33ad0c301a1b3c9ef1d4ba9e7e8364318d041e1b10285f1",
       "published_registries": [
-        "primary",
-        "mirror"
+        "public-release"
       ],
       "observed_wheel_arch_list": [
         "sm_75",
@@ -125,8 +124,7 @@
       "published_tag": "cuda13-b300-0.5.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
       "published_digest": "sha256:14a2e0dfe61fb2c46c6e4b8d75f1a06f2f68f9cfa4a6428a175411afaf93749e",
       "published_registries": [
-        "primary",
-        "mirror"
+        "public-release"
       ]
     },
     {
@@ -161,8 +159,7 @@
       "published_tag": "cuda13-b300-0.30.3-sm80-sm90-sm100-sm103-sm120-20260803T031514Z",
       "published_digest": "sha256:a303b53d0769e612101d468ba957656997838f4b8e6a03430f2b5a2c89e3f8b5",
       "published_registries": [
-        "primary",
-        "mirror"
+        "public-release"
       ],
       "measured_torch": "2.12.1+cu130",
       "measured_arch_list": [
@@ -200,34 +197,35 @@
       "verdict": "ready",
       "validation": "validated",
       "redistribution": "public",
-      "torch": "2.7.1+cu128, fetched into the operator-owned runtime volume after explicit terms acceptance",
+      "torch": "2.13.0+cu130, fetched into the operator-owned runtime volume after explicit terms acceptance",
       "source_compiled_extensions": [],
-      "smoke": "torch.distributed.run launches an instrumentation wrapper on four B200 ranks; the wrapper executes pinned official Wan TI2V-5B generate.py as __main__ with NCCL, FULL_SHARD T5/DiT, Ulysses collectives, decoded H.264 MP4 validation, and verified Rerun evidence",
-      "notes": "The public-eligible image itself is CPU-only. The accepted runtime closure was installed only in a writable volume and passed the dedicated official four-rank TI2V-5B smoke on four physical B200s, including NCCL 2.27.7 transport, T5/DiT FULL_SHARD, Ulysses collectives, MP4 validation, and RRD verification. The separate RTX PRO 6000 path independently passed with sm_120 and native PyTorch SDPA. No GPU result is inferred from either architecture for the other. The exact candidate has 27 disclosed CRITICAL OS findings with no available fixed version and zero Trivy secret findings; publication still fails on fixed CRITICAL findings.",
-      "validation_run": "private-four-gpu-validation-record",
+      "smoke": "the exact public-dev digest runs pinned official Wan TI2V-5B generation on one RTX PRO 6000 with native PyTorch SDPA, decoded H.264 MP4 validation, and independently verified Rerun evidence",
+      "notes": "The public-eligible image itself is CPU-only. The accepted Torch 2.13.0/CUDA 13.0 closure was installed only in a writable volume and passed the exact-digest single-GPU workflow on RTX PRO 6000, including official TI2V-5B generation, MP4 validation, and RRD verification. Its measured wheel includes sm_100, but the current distributed B200 path remains unqualified and no B200 result is inferred. The exact digest has zero fixed CRITICAL and zero Trivy secret findings; unfixed vulnerability disclosure remains mandatory at promotion.",
+      "validation_run": "operator-single-gpu-validation-record",
       "accepted_image_manifest": "npa/src/npa/deploy/wan2_2_image_manifest.json",
-      "measured_torch": "2.7.1+cu128",
+      "measured_torch": "2.13.0+cu130",
       "measured_arch_list": [
         "sm_75",
         "sm_80",
         "sm_86",
         "sm_90",
         "sm_100",
-        "sm_120",
-        "compute_120"
+        "sm_120"
       ]
     },
     {
       "name": "npa-ltx2",
       "dockerfile": "ltx2/Dockerfile",
       "build_script": "ltx2/build.sh",
-      "verdict": "unknown",
-      "validation": "pending-gpu",
+      "verdict": "not-applicable",
+      "validation": "not-required",
       "redistribution": "public",
       "torch": "not baked; the operator-owned runtime volume resolves upstream LTX-2's own cu132 torch pin (packages/ltx-core/pyproject.toml) under the operator's own HF_TOKEN and NVIDIA runtime-terms acceptance",
       "source_compiled_extensions": [],
       "smoke": "bash /opt/npa/ltx2/smoke.sh proves health, that the source and weight fetches each refuse without the operator's own HF_TOKEN (and names which gate refused), and the absence of any LTX or CUDA payload. Generation itself is the BYOF workflow, not a CLI subcommand.",
-      "notes": "The image itself is CPU-only and carries zero Lightricks bytes, so nothing about datacenter Blackwell has been measured. Built and byte-scanned: payload scan clean over 16 archives at the digest recorded in docs/workbench/ltx2.md. What is missing is a GPU run - one attempt reached real weight downloads and died on node ephemeral storage - so the verdict stays unknown until that produces a result."
+      "notes": "The published image itself is CPU-only and carries zero Lightricks bytes, so an in-image datacenter-Blackwell architecture verdict does not apply. Its operator-fetched runtime passed the real text-to-video and decoded-MP4 gates on one RTX PRO 6000 at the exact digest in the accepted manifest; that result does not claim B200/B300 compatibility.",
+      "validation_run": "operator-single-gpu-validation-record",
+      "accepted_image_manifest": "npa/src/npa/deploy/ltx2_image_manifest.json"
     },
     {
       "name": "npa-alpamayo2-super",
@@ -279,8 +277,7 @@
       "published_tag": "cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
       "published_digest": "sha256:e708aa32b9247eaedf1a7a5b0d82adbe65b95a9af50721b9d09fddbfd508bbc9",
       "published_registries": [
-        "primary",
-        "mirror"
+        "public-release"
       ]
     },
     {
@@ -313,8 +310,7 @@
       "published_tag": "cu128-torch27-sm100-1.0.9-20260803T002017Z",
       "published_digest": "sha256:a7d2ba85ea4ad2d2036f6f8575b4e7a801d3f98ff202f6eb575329f1af9a41dd",
       "published_registries": [
-        "primary",
-        "mirror"
+        "public-release"
       ],
       "measured_torch": "2.7.0+cu128",
       "measured_arch_list": [
@@ -353,8 +349,7 @@
       "published_tag": "cuda13-b300-0.4.6-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
       "published_digest": "sha256:80cd1c4c7f7a5466533de29ee5cad1213202f348545346fea9ed6746fa03b1ca",
       "published_registries": [
-        "primary",
-        "mirror"
+        "public-release"
       ]
     },
     {
@@ -384,10 +379,7 @@
       ],
       "published_tag": "cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
       "published_digest": "sha256:8e0ea40c064a15409233efdd036a369b36e1c04e713bcf81440d9d4372cae376",
-      "published_registries": [
-        "primary",
-        "mirror"
-      ]
+      "published_registries": ["public-release"]
     },
     {
       "name": "npa-reference-policy",
@@ -408,10 +400,7 @@
       ],
       "published_tag": "cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
       "published_digest": "sha256:58eb0d714f9d57fbae7fc8dfc56caf7f98f84699146c820dce18f2aaa2313cb6",
-      "published_registries": [
-        "primary",
-        "mirror"
-      ]
+      "published_registries": ["public-release"]
     },
     {
       "name": "npa-loop-eval",
@@ -432,10 +421,7 @@
       ],
       "published_tag": "cuda13-b300-0.1.3-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
       "published_digest": "sha256:9cb111c56d9c1db8357b04f43e46790f6853213ff1a78fd0b2dae5ad337eb75a",
-      "published_registries": [
-        "primary",
-        "mirror"
-      ]
+      "published_registries": ["public-release"]
     },
     {
       "name": "npa-lerobot-vlm-rl",
@@ -456,10 +442,7 @@
       ],
       "published_tag": "cuda13-b300-0.1.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
       "published_digest": "sha256:7bd5b21d487f3ab6614197b8a8af81fe3ed001247b4501740615540cb55998e5",
-      "published_registries": [
-        "primary",
-        "mirror"
-      ]
+      "published_registries": ["public-release"]
     },
     {
       "name": "npa-isaac-lab",
@@ -503,21 +486,21 @@
       ],
       "published_tag": "cuda13-b300-0.1.2-k8s-runtime-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
       "published_digest": "sha256:c9ba0996b28f54b013e36da689638b386a7ef9c0c8c4413fc4b3c72ff1a808bb",
-      "published_registries": [
-        "primary",
-        "mirror"
-      ]
+      "published_registries": ["public-release"]
     },
     {
       "name": "npa-sonic-mujoco",
       "dockerfile": "sonic/Dockerfile.mujoco",
-      "verdict": "blocked",
-      "validation": "pending-hardware",
-      "inherits_blocker_from": "npa-sonic",
-      "blocked_reason": "Built on top of npa-sonic, so it inherits the vendor CUDA 12.8 pin.",
-      "upstream_tracking": "NVIDIA Isaac Lab / Isaac Sim release notes for x86_64 CUDA 13 alignment",
+      "verdict": "ready",
+      "validation": "validated",
+      "torch": "hash-locked torch 2.9.0 cu128 wheel closure with sm_100 and sm_120",
+      "source_compiled_extensions": [],
       "smoke": "MuJoCo evaluation episode",
-      "notes": "Unblocks with npa-sonic."
+      "notes": "Exact public development digest passed payload/layer/history/Omniverse and security gates plus a real B200 Unitree G1 SONIC MuJoCo rollout (64 finite steps, fall rate 0).",
+      "published_tag": "0.2.0-runtime",
+      "published_digest": "sha256:2388d9e97269afaa414966e83a27f676a3f44d4271e9828c57bc13fbdce80f57",
+      "publication_model": "exact-digest-promoted",
+      "published_registries": ["public-development", "public-release"]
     },
     {
       "name": "npa-groot",
@@ -593,11 +576,30 @@
       "dockerfile": "cosmos3-serving/Dockerfile",
       "build_script": "cosmos3-serving/build.sh",
       "verdict": "ready",
-      "validation": "pending-hardware",
-      "torch": "CUDA 13 / vLLM-Omni runtime with TORCH_CUDA_ARCH_LIST covering 10.0",
+      "validation": "validated",
+      "torch": "zero-payload bootstrap; hash-locked torch 2.11.0 CUDA closure is operator runtime fetch",
       "source_compiled_extensions": [],
       "smoke": "8-GPU Cosmos3-Super server readiness plus a real /v1/videos generation and full H.264 decode",
-      "notes": "Build-your-own restricted image, never a public mirror candidate. The pinned amd64 base declares CUDA 13.0 and TORCH_CUDA_ARCH_LIST including 10.0. The serving stack passed a real guardrails-on generation on 8xH200, but has not run on B200 or B300."
+      "notes": "Exact zero-payload public development digest passed filesystem/layer/history and security gates plus guarded 8-GPU B200 service boot, readiness, and real H.264 video inference.",
+      "published_tag": "0.2.0-oss",
+      "published_digest": "sha256:3342bbe44bd1c00ebf05ab4c9d7286058a94bb5ce90b49b164b23604d3acf180",
+      "publication_model": "exact-digest-promoted",
+      "published_registries": ["public-development", "public-release"]
+    },
+    {
+      "name": "npa-content-agents",
+      "dockerfile": "content-agents/Dockerfile",
+      "build_script": "content-agents/build.sh",
+      "redistribution": "public",
+      "verdict": "blocked",
+      "validation": "validated",
+      "source_compiled_extensions": [],
+      "smoke": "real Material Agent and Physics Agent inference followed by OVRTX rendering and Validation Agent render_valid/physics_sane on an authored rigid USD",
+      "blocked_reason": "The accepted workflow requires OVRTX path tracing; B200 and B300 are datacenter Blackwell parts without RT cores and are not substitutes for RTX rendering.",
+      "upstream_tracking": "NVIDIA Blackwell data-center and RTX workstation product specifications; route this rendering workload to RTX PRO 6000.",
+      "validation_run": "private-access-controlled-validation-record",
+      "accepted_image_manifest": "npa/src/npa/deploy/content_agents_image_manifest.json",
+      "notes": "The public image contains Apache-2.0 Content Agents source and zero OVRTX payload; exact OVRTX 0.3.0.312915 is delivered anonymously by NVIDIA into the operator cache. The accepted image passed full-layer scans and a one-GPU RTX PRO 6000 workflow with 6/6/1 material, physics, and validation renders. This remains blocked on B200/B300 because those parts have no RT cores; hosted VLM inference needs no local model GPU."
     },
     {
       "name": "npa-cosmos-curate",
@@ -651,8 +653,8 @@
         "compute_120"
       ],
       "pushed_to": [
-        "primary",
-        "mirror"
+        "public-development",
+        "public-release"
       ],
       "hardware_run": "Validated the corrected published 20260803T032705Z image on physical B200, B300, H100, and RTX PRO 6000 on 2026-08-03 with npa/scripts/blackwell-gpu-validation-job.yaml. B200 reported capability (10,0) and native sm_100 SASS; B300 reported capability (10,3) with same-major sm_100 SASS coverage; H100 reported native sm_90; RTX reported native sm_120. Every run passed bf16 matmul and torch SDPA, intentionally rejected a different CUDA major, and ended ALL_GPU_VALIDATION_PASSED. flash-attn-4 matched SDPA at max error 0.00206 on B200/B300 and 0.00186 on H100; RTX recorded only the known non-TMA gap with --allow-no-tma. Datacenter runs never used that exception. The earlier rebuilt image's kernels ran on B300 but its baked validator was stale; it is superseded and is not the current alias target.",
       "validated_gpus": {

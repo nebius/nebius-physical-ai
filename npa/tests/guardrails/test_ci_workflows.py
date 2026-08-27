@@ -263,3 +263,4 @@ def test_advisory_mypy_is_manual_only() -> None:
     assert "mypy" not in lint["jobs"]
     assert typecheck["on"] == {"workflow_dispatch": ""}
     assert set(typecheck["jobs"]) == {"mypy"}
+    assert typecheck["permissions"] == {"contents": "read"}

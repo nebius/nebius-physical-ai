@@ -36,6 +36,302 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#runSummary").should("contain.text", "mock-run");
   });
 
+  it("merges every artifact page before globally preferring a later-page RRD", () => {
+    const runId = "paginated-preference-run";
+    const runRef = "npa1_paginated_preference";
+    const projectId = "project-a";
+    const bucket = "project-artifacts";
+    const resolvedPrefix = "workflow-runs";
+    const rrdKey = `${resolvedPrefix}/${runId}/reports/sim2real.rrd`;
+    const frame = (index) => ({
+      run_id: runId,
+      key: `${resolvedPrefix}/${runId}/frames/${String(index).padStart(6, "0")}.png`,
+      s3_uri: `s3://${bucket}/${resolvedPrefix}/${runId}/frames/${String(index).padStart(6, "0")}.png`,
+      render: "image",
+      role: "output",
+      size: 128,
+      last_modified: "2026-08-19T00:00:00Z",
+    });
+    const pageOneArtifacts = [
+      ...Array.from({ length: 999 }, (_value, index) => frame(index + 1)),
+      {
+        run_id: runId,
+        key: `${resolvedPrefix}/${runId}/cosmos_augmented/variant/augmented_video.mp4`,
+        s3_uri: `s3://${bucket}/${resolvedPrefix}/${runId}/cosmos_augmented/variant/augmented_video.mp4`,
+        render: "video",
+        role: "output",
+        size: 4096,
+        last_modified: "2026-08-19T00:00:00Z",
+      },
+    ];
+    const pageTwoArtifacts = [
+      ...Array.from({ length: 249 }, (_value, index) => frame(index + 1000)),
+      {
+        run_id: runId,
+        key: rrdKey,
+        s3_uri: `s3://${bucket}/${rrdKey}`,
+        render: "rerun",
+        role: "output",
+        size: 8000000,
+        last_modified: "2026-08-19T00:00:00Z",
+      },
+    ];
+    cy.intercept("GET", `/api/artifacts/run/${runRef}*`, (req) => {
+      const url = new URL(req.url);
+      const cursor = url.searchParams.get("cursor") || "";
+      const common = {
+        ok: true,
+        run_id: runId,
+        run_ref: runRef,
+        project_id: projectId,
+        bucket,
+        resolved_prefix: resolvedPrefix,
+      };
+      if (!cursor) {
+        req.alias = "paginatedArtifactsPageOne";
+        req.reply({
+          statusCode: 200,
+          body: {
+            ...common,
+            artifacts: pageOneArtifacts,
+            count: 1000,
+            truncated: true,
+            next_cursor: "opaque-page-two",
+            preferred: pageOneArtifacts[pageOneArtifacts.length - 1],
+            no_recording: true,
+            summary: { run_id: runId, artifact_count: 1000, has_recording: false },
+          },
+        });
+        return;
+      }
+      expect(cursor).to.eq("opaque-page-two");
+      expect(url.searchParams.get("project_id")).to.eq(projectId);
+      expect(url.searchParams.get("resource_bucket")).to.eq(bucket);
+      expect(url.searchParams.get("resolved_prefix")).to.eq(resolvedPrefix);
+      expect(url.searchParams.get("source_selected")).to.eq("1");
+      req.alias = "paginatedArtifactsPageTwo";
+      req.reply({
+        statusCode: 200,
+        body: {
+          ...common,
+          artifacts: pageTwoArtifacts,
+          count: 250,
+          truncated: false,
+          next_cursor: "",
+          preferred: pageTwoArtifacts[pageTwoArtifacts.length - 1],
+          no_recording: false,
+        },
+      });
+    });
+    cy.intercept("POST", "/api/sim-viz/load-artifact", (req) => {
+      expect(req.body).to.deep.include({
+        run_id: runId,
+        run_ref: runRef,
+        project_id: projectId,
+        resource_bucket: bucket,
+        resolved_prefix: resolvedPrefix,
+        source_selected: true,
+        key: rrdKey,
+        s3_uri: "",
+      });
+      req.alias = "paginatedPreferredLoad";
+      req.reply({
+        statusCode: 200,
+        body: {
+          ok: true,
+          render: "rerun",
+          run_ref: runRef,
+          sim_viz: {
+            ...SIM_VIZ,
+            run_id: runId,
+            active_run_id: runId,
+            artifact_render: "rerun",
+            artifact_key: rrdKey,
+            artifact_uri: `s3://${bucket}/${rrdKey}`,
+          },
+        },
+      });
+    });
+
+    cy.window().then((win) => {
+      void win.npaAgentArtifacts.loadExactSource({
+        run_id: runId,
+        run_ref: runRef,
+        project_id: projectId,
+        resource_bucket: bucket,
+        resolved_prefix: resolvedPrefix,
+        source_selected: true,
+      });
+    });
+    cy.wait("@paginatedArtifactsPageOne");
+    cy.wait("@paginatedArtifactsPageTwo");
+    cy.wait("@paginatedPreferredLoad");
+    cy.get("#artifactList").should("contain.text", "1250 artifacts");
+    cy.get("#artifactList").should("contain.text", "2 inventory pages merged");
+    cy.get(`#artifactList button[data-action="load-artifact"][data-key="${rrdKey}"]`)
+      .should("have.length", 1)
+      .closest(".artifact-card")
+      .should("have.class", "is-preferred")
+      .and("contain.text", "recommended");
+    cy.get("#renderedDataSummary").should("contain.text", rrdKey);
+  });
+
+  it("constructs fully scoped media URLs and rejects JSON before rendering video", () => {
+    const item = {
+      run_id: "scoped-video-run",
+      run_ref: "npa1_scoped_video",
+      project_id: "project-a",
+      resource_bucket: "project-artifacts",
+      bucket: "project-artifacts",
+      resolved_prefix: "workflow-runs",
+      source_selected: true,
+      key: "workflow-runs/scoped-video-run/augmented/preview.mp4",
+      render: "video",
+    };
+    cy.window().then((win) => {
+      const url = new URL(win.__NPA_AGENT_TEST__.artifactContentUrl(item.run_ref, item, false), win.location.origin);
+      expect(url.searchParams.get("run_id")).to.eq(item.run_id);
+      expect(url.searchParams.get("run_ref")).to.eq(item.run_ref);
+      expect(url.searchParams.get("project_id")).to.eq(item.project_id);
+      expect(url.searchParams.get("resource_bucket")).to.eq(item.resource_bucket);
+      expect(url.searchParams.get("resolved_prefix")).to.eq(item.resolved_prefix);
+      expect(url.searchParams.get("source_selected")).to.eq("true");
+      expect(url.searchParams.get("key")).to.eq(item.key);
+      const downloadUrl = new URL(win.__NPA_AGENT_TEST__.artifactContentUrl(item.run_ref, item, true), win.location.origin);
+      expect(downloadUrl.pathname).to.eq("/api/artifacts/download");
+      expect(downloadUrl.searchParams.get("run_ref")).to.eq(item.run_ref);
+      expect(downloadUrl.searchParams.get("key")).to.eq(item.key);
+      expect(url.searchParams.has("s3_uri")).to.eq(false);
+      expect(() => win.__NPA_AGENT_TEST__.artifactContentUrl("different-run", {
+        run_id: "different-run",
+        key: "different-run/video.mp4",
+      }, false)).to.throw("Exact artifact source is unavailable");
+    });
+    cy.intercept({ method: /GET|HEAD/, url: "/api/artifacts/content*preview.mp4*" }, (req) => {
+      req.alias = req.method === "HEAD" ? "jsonVideoHead" : "jsonVideoDiagnostic";
+      req.reply({
+        statusCode: 400,
+        headers: { "content-type": "application/json", "content-length": "31" },
+        body: { detail: { code: "exact_artifact_source_required", message: "Reload the exact run source." } },
+      });
+    });
+    cy.window().then((win) => win.__NPA_AGENT_TEST__.previewArtifact(item).catch(() => false));
+    cy.wait("@jsonVideoHead");
+    cy.wait("@jsonVideoDiagnostic");
+    cy.get("#artifactPreviewHost video").should("not.exist");
+    cy.get("#artifactPreviewHost .preview-error")
+      .should("contain.text", "not browser media")
+      .and("contain.text", "Reload the exact run source");
+  });
+
+  it("does not let stale pagination replace a newly selected exact run", () => {
+    const source = (runId, runRef) => ({
+      run_id: runId,
+      run_ref: runRef,
+      project_id: "project-a",
+      resource_bucket: "project-artifacts",
+      bucket: "project-artifacts",
+      resolved_prefix: "workflow-runs",
+      source_selected: true,
+    });
+    const stale = source("slow-paginated-run", "npa1_slow_paginated");
+    const current = source("current-exact-run", "npa1_current_exact");
+    cy.intercept("GET", /\/api\/artifacts\/run\/(?:npa1_slow_paginated|slow-paginated-run)(?:\?|$)/, (req) => {
+      const cursor = new URL(req.url).searchParams.get("cursor") || "";
+      if (!cursor) {
+        req.alias = "slowPageOne";
+        req.reply({
+          statusCode: 200,
+          body: {
+            ...stale,
+            artifacts: [{
+              key: "workflow-runs/slow-paginated-run/page-one.json",
+              s3_uri: "s3://project-artifacts/workflow-runs/slow-paginated-run/page-one.json",
+              render: "json",
+              role: "output",
+            }],
+            truncated: true,
+            next_cursor: "slow-page-two",
+          },
+        });
+        return;
+      }
+      req.alias = "slowPageTwo";
+      req.reply({
+        delay: 1200,
+        statusCode: 200,
+        body: {
+          ...stale,
+          artifacts: [{
+            key: "workflow-runs/slow-paginated-run/page-two.json",
+            s3_uri: "s3://project-artifacts/workflow-runs/slow-paginated-run/page-two.json",
+            render: "json",
+            role: "output",
+          }],
+          truncated: false,
+          next_cursor: "",
+        },
+      });
+    });
+    cy.intercept("GET", /\/api\/artifacts\/run\/(?:npa1_current_exact|current-exact-run)(?:\?|$)/, {
+      statusCode: 200,
+      body: {
+        ...current,
+        artifacts: [{
+          key: "workflow-runs/current-exact-run/current.json",
+          s3_uri: "s3://project-artifacts/workflow-runs/current-exact-run/current.json",
+          render: "json",
+          role: "output",
+        }],
+        truncated: false,
+        next_cursor: "",
+      },
+    }).as("currentInventory");
+    cy.intercept("POST", "/api/sim-viz/load-artifact", (req) => {
+      expect(req.body).to.deep.include({
+        run_id: current.run_id,
+        run_ref: current.run_ref,
+        project_id: current.project_id,
+        resource_bucket: current.resource_bucket,
+        resolved_prefix: current.resolved_prefix,
+        source_selected: true,
+        key: "workflow-runs/current-exact-run/current.json",
+        s3_uri: "",
+      });
+      req.alias = "currentPreferredLoad";
+      req.reply({
+        statusCode: 200,
+        body: {
+          ok: true,
+          render: "json",
+          run_ref: current.run_ref,
+          sim_viz: {
+            ...SIM_VIZ,
+            run_id: current.run_id,
+            active_run_id: current.run_id,
+            artifact_render: "json",
+            artifact_key: "workflow-runs/current-exact-run/current.json",
+          },
+        },
+      });
+    });
+
+    cy.window().then((win) => {
+      void win.npaAgentArtifacts.loadExactSource(stale);
+    });
+    cy.wait("@slowPageOne");
+    cy.window().then((win) => {
+      void win.npaAgentArtifacts.loadExactSource(current);
+    });
+    cy.wait("@currentInventory");
+    cy.wait("@currentPreferredLoad");
+    cy.wait(1400);
+    cy.get("#artifactList")
+      .should("contain.text", "workflow-runs/current-exact-run/current.json")
+      .and("not.contain.text", "slow-paginated-run");
+    cy.get("#simRunId").should("contain.text", "current-exact-run");
+  });
+
   it("shows generic workflow stages for non-Sim2Real runs", () => {
     cy.get("#tabRerun").click();
     cy.get("#panelRerun").should("have.class", "is-active");
@@ -633,6 +929,9 @@ describe("NPA agent UI with mocked APIs", () => {
   });
 
   it("disables denied and unavailable access actions with visible reasons", () => {
+    // Expected sibling-bucket capability gaps stay on the selected resource;
+    // they must not appear as repeated report-wide fatal-looking errors.
+    cy.get("#agentAccessErrors").should("have.text", "");
     for (const bucket of ["denied-artifacts", "unavailable-artifacts"]) {
       cy.get("#agentAccessBucketSelect").select(bucket);
       cy.get(`#agentAccessProjects [data-resource-bucket="${bucket}"]`).each(($button) => {
@@ -1025,6 +1324,7 @@ describe("NPA agent UI with mocked APIs", () => {
         ok: true,
         runs: [{
           run_id: runId,
+          run_ref: "npa1_paged_ui",
           source_type: "artifact_storage",
           bucket: "paged-bucket",
           project_id: "project-paged",
@@ -1036,7 +1336,7 @@ describe("NPA agent UI with mocked APIs", () => {
         truncated: false,
       },
     }).as("pagedRuns");
-    cy.intercept("GET", `/api/artifacts/run/${runId}*`, (req) => {
+    cy.intercept("GET", /\/api\/artifacts\/run\/(?:paged-ui-run|npa1_paged_ui)(?:\?|$)/, (req) => {
       const cursor = String((req.query && req.query.cursor) || "");
       if (!cursor) {
         req.reply({
@@ -1044,6 +1344,7 @@ describe("NPA agent UI with mocked APIs", () => {
           body: {
             ok: true,
             run_id: runId,
+            run_ref: "npa1_paged_ui",
             bucket: "paged-bucket",
             project_id: "project-paged",
             resolved_prefix: "category",
@@ -1070,6 +1371,7 @@ describe("NPA agent UI with mocked APIs", () => {
         body: {
           ok: true,
           run_id: runId,
+          run_ref: "npa1_paged_ui",
           bucket: "paged-bucket",
           project_id: "project-paged",
           resolved_prefix: "category",
@@ -1090,11 +1392,9 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#tabRerun").click();
     cy.get("#artifactRefreshRuns").click();
     cy.wait("@pagedRuns");
-    cy.get("#runIdSelect").select(runId);
-    cy.wait("@pagedArtifacts");
+    cy.get("#runIdSelect").select("npa1_paged_ui");
+    cy.wait(["@pagedArtifacts", "@pagedArtifacts"]);
     cy.get("#artifactList").should("contain.text", `category/${runId}/a.json`);
-    cy.get('#artifactList button[data-action="load-more-artifacts"]').click();
-    cy.wait("@pagedArtifacts");
     cy.get("#artifactList")
       .should("contain.text", `category/${runId}/a.json`)
       .and("contain.text", `category/${runId}/b.json`);
@@ -1475,6 +1775,10 @@ describe("NPA agent UI with mocked APIs", () => {
       body: {
         ok: true,
         run_id: "mock-run",
+        run_ref: "npa1_mock_run",
+        bucket: "mock",
+        project_id: "project-local",
+        resolved_prefix: "",
         prefix: "sim2real-b",
         artifacts: [
           {
@@ -1755,18 +2059,30 @@ describe("NPA agent UI with mocked APIs", () => {
       artifact_render: "",
       preview_status: "no_previewable_recording",
       output_artifact_count: 5,
-      available_runs: [{ run_id: TRAIN_RUN, artifact_count: 6, output_artifact_count: 5 }],
+      available_runs: [{
+        run_id: TRAIN_RUN,
+        run_ref: "npa1_training_run",
+        bucket: "mock",
+        project_id: "project-local",
+        resolved_prefix: "",
+        artifact_count: 6,
+        output_artifact_count: 5,
+      }],
     };
 
     cy.intercept("GET", "/api/artifacts/runs*", {
       statusCode: 200,
       body: { ok: true, runs: simViz.available_runs, total_runs: 1, truncated: false },
     }).as("trainingRuns");
-    cy.intercept("GET", `/api/artifacts/run/${TRAIN_RUN}*`, {
+    cy.intercept("GET", new RegExp(`/api/artifacts/run/(?:${TRAIN_RUN}|npa1_training_run)(?:\\?|$)`), {
       statusCode: 200,
       body: {
         ok: true,
         run_id: TRAIN_RUN,
+        run_ref: "npa1_training_run",
+        bucket: "mock",
+        project_id: "project-local",
+        resolved_prefix: "",
         count: artifacts.length,
         output_artifact_count: 5,
         input_artifact_count: 1,
@@ -1808,7 +2124,7 @@ describe("NPA agent UI with mocked APIs", () => {
     // The refresh request and select rendering are separate async steps. Retry
     // until the response is represented in the DOM instead of sampling the old
     // options synchronously on a busy CI host.
-    cy.get(`#runIdSelect option[value="${TRAIN_RUN}"]`).should("have.length", 1);
+    cy.get('#runIdSelect option[value="npa1_training_run"]').should("have.length", 1);
     cy.get("#runIdSelect option").should(($opts) => {
       const values = [...$opts].map((opt) => opt.value).filter(Boolean);
       expect(values).not.to.include("checkpoints");
@@ -1957,6 +2273,10 @@ describe("NPA agent UI with mocked APIs", () => {
       preview_status: "ready",
       available_runs: [{
         run_id: LEARNING_RUN,
+        run_ref: "npa1_learning_run",
+        bucket: "mock",
+        project_id: "project-local",
+        resolved_prefix: "",
         artifact_count: artifacts.length,
         source_type: "workflow_history",
         source_label: "Workflow history",
@@ -1966,11 +2286,15 @@ describe("NPA agent UI with mocked APIs", () => {
       statusCode: 200,
       body: { ok: true, runs: simViz.available_runs, total_runs: 1, truncated: false },
     }).as("learningRuns");
-    cy.intercept("GET", `/api/artifacts/run/${LEARNING_RUN}*`, {
+    cy.intercept("GET", new RegExp(`/api/artifacts/run/(?:${LEARNING_RUN}|npa1_learning_run)(?:\\?|$)`), {
       statusCode: 200,
       body: {
         ok: true,
         run_id: LEARNING_RUN,
+        run_ref: "npa1_learning_run",
+        bucket: "mock",
+        project_id: "project-local",
+        resolved_prefix: "",
         count: artifacts.length,
         artifacts,
         preferred: artifacts[0],
@@ -2195,8 +2519,8 @@ describe("NPA agent UI with mocked APIs", () => {
         ok: true,
         contract: "s3-source-qualified-v1",
         runs: [
-          { run_id: RUN_ID, run_ref: REF_A, source_prefix: "shared/category-a", has_viewable: true, artifact_count: 1 },
-          { run_id: RUN_ID, run_ref: REF_B, source_prefix: "shared/category-b", has_viewable: true, artifact_count: 1 },
+          { run_id: RUN_ID, run_ref: REF_A, bucket: "mock", project_id: "project-local", resolved_prefix: "shared/category-a", source_prefix: "shared/category-a", has_viewable: true, artifact_count: 1 },
+          { run_id: RUN_ID, run_ref: REF_B, bucket: "mock", project_id: "project-local", resolved_prefix: "shared/category-b", source_prefix: "shared/category-b", has_viewable: true, artifact_count: 1 },
         ],
         total_runs: 2,
         truncated: false,
@@ -2209,6 +2533,9 @@ describe("NPA agent UI with mocked APIs", () => {
         contract: "s3-source-qualified-v1",
         run_id: RUN_ID,
         run_ref: REF_B,
+        bucket: "mock",
+        project_id: "project-local",
+        resolved_prefix: "shared/category-b",
         prefix: "shared/category-b",
         artifacts: [
           { key: `shared/category-b/${RUN_ID}/result.future`, s3_uri: `s3://mock/shared/category-b/${RUN_ID}/result.future`, render: "download", size: 9 },
@@ -2837,6 +3164,88 @@ describe("NPA agent UI with mocked APIs", () => {
       } else {
         expect(String(content)).to.include("success_rate");
       }
+    });
+  });
+});
+
+describe("NPA agent preferred-recording mount handoff", () => {
+  it("replaces an in-flight page-boot mount with the selected run capability", () => {
+    const runId = "boot-handoff-run";
+    const runRef = "npa1_boot_handoff";
+    const projectId = "project-a";
+    const bucket = "project-artifacts";
+    const resolvedPrefix = "workflow-runs";
+    const key = `${resolvedPrefix}/${runId}/reports/sim2real.rrd`;
+    const capabilityPath = `/rerun/recordings/cap-${"B".repeat(43)}.rrd`;
+    let mountRequests = 0;
+
+    cy.installAgentApiMocks();
+    cy.intercept({ method: "GET", pathname: "/rerun/" }, (req) => {
+      mountRequests += 1;
+      req.reply({
+        delay: 2500,
+        fixture: "mock_rerun.html",
+        headers: { "content-type": "text/html; charset=utf-8" },
+      });
+    }).as("delayedRerunMount");
+    cy.intercept("POST", "/api/sim-viz/load-artifact", (req) => {
+      expect(req.body).to.deep.include({
+        run_id: runId,
+        run_ref: runRef,
+        project_id: projectId,
+        resource_bucket: bucket,
+        resolved_prefix: resolvedPrefix,
+        source_selected: true,
+        key,
+      });
+      req.reply({
+        statusCode: 200,
+        body: {
+          ok: true,
+          render: "rerun",
+          run_ref: runRef,
+          artifact_uri: `s3://${bucket}/${key}`,
+          sim_viz: {
+            ...SIM_VIZ,
+            run_id: runId,
+            active_run_id: runId,
+            stage: "artifact-loaded",
+            artifact_render: "rerun",
+            artifact_key: key,
+            artifact_run_ref: runRef,
+            artifact_preview_url: capabilityPath,
+            rerun_ready: true,
+          },
+        },
+      });
+    }).as("handoffArtifactLoad");
+    cy.visit("/");
+    cy.wrap(null).should(() => {
+      expect(mountRequests, "page-boot mount started").to.be.greaterThan(0);
+    });
+    cy.window().then((win) => {
+      expect(win.__NPA_AGENT_TEST__.requestTimeoutMs("/api/sim-viz/load-artifact", {})).to.eq(0);
+      const load = win.__NPA_AGENT_TEST__.loadArtifact({
+        run_id: runId,
+        run_ref: runRef,
+        project_id: projectId,
+        resource_bucket: bucket,
+        resolved_prefix: resolvedPrefix,
+        source_selected: true,
+        key,
+      });
+      return cy.wrap(load, { timeout: 30000 }).should("eq", true);
+    });
+    cy.wait("@handoffArtifactLoad");
+    cy.wrap(null).should(() => {
+      expect(mountRequests, "selected recording remount").to.be.greaterThan(1);
+    });
+    cy.get("#rerunFrame").should(($frame) => {
+      const frame = $frame[0];
+      expect(frame.hidden).to.eq(false);
+      expect(frame.dataset.rerunRunKey).to.eq(runId);
+      expect(frame.dataset.rerunRecordingUrl).to.include(capabilityPath);
+      expect(decodeURIComponent(String(frame.getAttribute("src") || ""))).to.include(capabilityPath);
     });
   });
 });

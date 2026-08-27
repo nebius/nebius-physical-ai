@@ -49,7 +49,7 @@ skill's Cosmos Transfer 2.5 blueprint.
 | Pseudo-Label Augmented | `annotate-augmented` | `npa workbench token-factory caption` (run.shell) | Token Factory |
 | Curation | `cosmos-curate` | `workbench.cosmos_curate.curate` (real Cosmos Curator stages → `clips/` + `metas/v0/`) | CPU |
 | Curation review | `curate` | `workbench.fiftyone.curate_augmented` (real FiftyOne Brain, fail closed, merges the curator report) | CPU |
-| Visualize | `visualize` | `workbench.nurec.visualize` → `data_factory_viz.build_run_rrd` → `reports/sim2real.rrd` | CPU, prebuilt `npa-rerun-viewer` image |
+| Visualize | `visualize` (accepted) / `visualize-rejected` (rejected evidence) | `workbench.nurec.visualize` → `data_factory_viz.build_run_rrd` → `reports/sim2real.rrd` | CPU, prebuilt `npa-rerun-viewer` image |
 | Finalize | `finalize` | `data_factory_stages.finalize` (real aggregate report) | CPU |
 
 Every stage invokes a real component (enforced by `test_real_components.py` and
@@ -77,6 +77,13 @@ diffusions **across the augment pod's GPUs**, one variant per GPU (pinned via
 capped at the variant count (so it is safe on 1 GPU and never pins a variant to a
 GPU the pod lacks). Request the GPUs in the spec: `resources.gpu.accelerators:
 RTXPRO6000:4` runs 4 variants at once (~one variant's wall-clock instead of 4×).
+When multiple model processes need more host RAM than the profile default, set
+`NPA_WORKFLOW_GPU_MEMORY=<N>Gi` alongside the accelerator override; it changes
+only accelerator-backed profiles, never the CPU stages. Failed variants publish
+typed, non-promoting records below the scheduler-attempt prefix while successful
+siblings continue into the run manifest. The manifest reports attempted,
+successful, and failed counts; an all-failed wave preserves those records but
+never publishes an empty candidate batch.
 Verified live: a 4-variant run on `RTXPRO6000:4` drove all 4 GPUs to 100%
 (4 distinct compute PIDs) and finished in ~14 min end-to-end; the manifest recorded
 `variant_parallelism: 4`.
@@ -335,9 +342,10 @@ Token Factory model.
 SPEC=npa/workflows/workbench/npa-workflows/physical-ai-data-factory.yaml
 npa workbench workflow validate-spec "$SPEC" --json
 # --var bucket= is required for a meaningful plan; without it the spec's
-# `example-bucket` placeholder is planned (plan-spec warns).
+# `example-bucket` placeholder is planned (plan-spec warns). The shipped
+# plan_assume_decision previews the accepted path; runtime still reads S3.
 npa workbench workflow plan-spec "$SPEC" --run-id demo \
-  --assume-decision promote_checkpoint --var bucket=<bucket> --json
+  --var bucket=<bucket> --json
 
 # Prerequisites, in order, on a fresh machine/account:
 npa workbench health preflight
@@ -362,8 +370,15 @@ The secret names above are resolved from the environment first and then the
 selected project's configured NPA credentials; operators do not re-export values
 already stored by `npa configure`. With no input selector, submit fetches,
 checksum-verifies, caches, normalizes, and stages the pinned real RoboPro starter.
-Use `--input-video` or `--input-uri` to replace it; use `--seed-fixture` only for
-explicitly synthetic developer/test input.
+Use `--input-video`, `--input-uri`, or `--lerobot-uri` to replace it; LeRobot
+selection may add an exact `--lerobot-camera` and non-negative
+`--lerobot-episode`, and materializes only the chosen observation video. For a
+subject-sensitive run, privately review representative beginning, middle, and
+end frames and pass `--require-explicit-lerobot-selection`; it fails before
+object-store access unless both selectors were explicitly supplied. The flag is
+data-agnostic and records no selectors or subject labels in Git. Omitting it
+retains the compatibility defaults and is not semantic-subject proof. Use
+`--seed-fixture` only for explicitly synthetic developer/test input.
 The one-variant override keeps the first real run decisive; omit it for the
 spec's default two-variant multiply or raise it with the requested GPU count.
 
@@ -386,16 +401,47 @@ not change these disk requirements.
 
 - **Prepare a verified video before GPU work.** The submit path selects the
   pinned RoboPro physical capture by default, or an explicit `--input-video` /
-  `--input-uri`; it validates H.264 MP4 media, verifies the default digest,
+  `--input-uri` / `--lerobot-uri`; LeRobot inputs validate `meta/info.json`, a
+  declared video feature, and the selected episode before media staging. It
+  validates H.264 MP4 media, verifies the default digest,
   caches/reuses safely, stages `source.mp4`, and derives the exact
   `conditioning.mp4` plus caption frames. `--seed-fixture` is the only synthetic
   geometry path. Conflicts, offline cache misses, invalid media, or checksum
   failures stop before automatic provisioning and never fall back. The catalog's
   mandatory `--condition-on-input` makes the staged conditioning clip the real
   Cosmos control. Consequently the Dataset & provenance tab and the full
-  `reports/sim2real.rrd` Rerun
-  recording only appear once the run gets past annotate → augment → curate →
-  visualize.
+  `reports/sim2real.rrd` Rerun recording is built after grading on both outcomes:
+  accepted runs include downstream captions/curation/finalization when available;
+  rejected runs get a partial evidence recording before the explicit fail-closed
+  state. Runs that fail before usable input/augmented frames exist cannot produce
+  an RRD.
+- **Schema is not semantic proof.** A valid LeRobot `meta/info.json`, checksum,
+  or automatic camera choice cannot establish the depicted subject. For a
+  subject-sensitive run, inspect representative frames outside the repository,
+  supply exact camera and episode selectors, and enable
+  `--require-explicit-lerobot-selection` so compatibility defaults cannot choose
+  a different stream. Ambiguous visual candidates fail closed operationally.
+- **SAM2 is explicit and optional.** `segmentation_mode: off` is the default and
+  keeps the non-SAM path unchanged. `sam2-auto` invokes upstream Meta SAM2 in the
+  Cosmos GPU task once per source clip, publishes an exact
+  frame-aligned mask contract, and reuses it across augmentation variants for
+  protected source-chroma/luma-bounded compositing. Raw prompt coordinates are
+  not a workflow config surface. Keep the official source and model revisions
+  immutable and fail closed on an incomplete mask sequence. The SAM2 masks are
+  distinct from Cosmos Evaluator comparison masks.
+- **Control A/B prompt sampling.** Set the same non-sensitive
+  `augmentation_seed` on two fresh runs when measuring an optional component.
+  Empty preserves deterministic run-ID-derived sampling.
+- **Refinement policy and precedence.** The first pass retains Cosmos Transfer's
+  established `control_weight=1.0` with guidance `3`. A failed gate consumes the
+  durable decision/report contract and must select a different in-bounds pair
+  (the default retry lowers guidance). Attempts are immutable JSON objects with
+  commit markers; only the current pointer is mutable. Explicit CLI values are
+  overridden by `NPA_COSMOS_*` conditioning variables, and a validated refinement
+  artifact overrides both so ambient worker settings cannot change a committed
+  retry. Prior live evidence showed that stronger control is non-monotonic with
+  attribute score, so this is compatibility policy rather than an improvement
+  claim.
 Run either NVIDIA component on its own, against a run prefix or local files:
 
 ```bash
@@ -515,12 +561,13 @@ npa workbench cosmos-curate curate-videos --input-dir ./clips --output-dir ./cur
   augment stage "multiplies": it runs one inference per sampled combo and emits
   one clip dir per variant (`publish_transfer_clip` per clip + a single
   `write_run_manifest`), so N sampled combos → N clip dirs.
-- **Full pipeline in the Rerun panel:** `build_run_rrd` logs the run's input
+- **Full or rejected-evidence pipeline in the Rerun panel:** `build_run_rrd` logs the run's input
   frames and each augmented clip's frames/label PLUS a static text doc per stage
   — sampled scenarios (config), the attribute-verify / hallucination grade + gate
-  decision, the curation report, the finalize aggregate, and a stage log — under
-  the `pipeline/*` entities, so the whole pipeline (logs, hallucination check,
-  input + output images) is viewable in one embedded Rerun recording.
+  decision, final quality disposition, any curation/finalize reports, and a stage
+  log — under the `pipeline/*` entities. Rejected runs take `visualize-rejected`
+  before `reject-quality`, so the evidence survives while promotion remains
+  fail-closed.
 - **Viewing in the NPA agent:** every stage lands under one S3 run prefix
   (`input/ configs/ labeled_original/ cosmos_augmented/ grade/ labeled_augmented/
   curation/ reports/`). The `visualize` stage writes `reports/sim2real.rrd`,

@@ -8,7 +8,7 @@ ladder; it does **not** replace per-solution registry catalogs.
 
 | Tier | When to stop here | What you get | Surfaces |
 | --- | --- | --- | --- |
-| **0 — BYOF container** | Validate an OSS repo runs on Nebius GPUs without a marketplace product | Image in project registry + container-verify smoke | `npa workbench byof run`, `workbench.byof.repo` toolRef, `byof.yaml` |
+| **0 — BYOF container** | Validate an OSS repo runs on Nebius GPUs without a marketplace product | Image in an operator-owned standards registry + container-verify smoke | `npa workbench byof run`, `workbench.byof.repo` toolRef, `byof.yaml` |
 | **1 — Solution workflow** | Repeatable pipeline for one OSS capability (train/eval/datagen) | Declarative `npa.workflow` YAML + SkyPilot smoke | Catalog `toolRef` + workflow under `npa/workflows/workbench/npa-workflows/` |
 | **2 — First-class workbench tool** | Shared marketplace tool with API/CLI/SDK parity | FastAPI service, golden eval, skill, image in `CONTAINER_IMAGE_NAMES` | `npa workbench <tool>`, `npa.sdk.workbench.<tool>`, catalog entries |
 

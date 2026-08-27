@@ -3,6 +3,7 @@ from __future__ import annotations
 from io import BytesIO
 import json
 from pathlib import Path
+import re
 import subprocess
 from urllib.error import URLError
 from urllib.parse import urlparse
@@ -18,6 +19,8 @@ class FakeS3:
         self.objects: dict[tuple[str, str], bytes] = {}
         self.metadata: dict[tuple[str, str], dict[str, str]] = {}
         self.uploads: list[tuple[str, str]] = []
+        self.downloads: list[tuple[str, str]] = []
+        self.list_requests: list[tuple[str, str]] = []
 
     @staticmethod
     def _missing(operation: str) -> ClientError:
@@ -31,6 +34,7 @@ class FakeS3:
         return {"Body": BytesIO(body)}
 
     def list_objects_v2(self, *, Bucket: str, Prefix: str):
+        self.list_requests.append((Bucket, Prefix))
         return {
             "Contents": [
                 {"Key": key, "Size": len(body)}
@@ -60,6 +64,7 @@ class FakeS3:
         target = Path(path)
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(body)
+        self.downloads.append((bucket, key))
 
 
 class FakeStorage:
@@ -148,6 +153,10 @@ def test_explicit_selectors_override_default() -> None:
     assert dfi.select_paidf_input(input_video=Path("capture.mp4")) == "local_video"
     assert dfi.select_paidf_input(input_uri="s3://bucket/capture.mp4") == "object_uri"
     assert dfi.select_paidf_input(seed_fixture=True) == "synthetic_fixture"
+    assert (
+        dfi.select_paidf_input(lerobot_uri="s3://bucket/dataset/")
+        == "lerobot_dataset"
+    )
 
 
 @pytest.mark.parametrize(
@@ -156,6 +165,7 @@ def test_explicit_selectors_override_default() -> None:
         ({"input_video": Path("capture.mov")}, "ending in .mp4"),
         ({"input_uri": "s3://bucket/capture.mkv"}, "MP4 object"),
         ({"input_uri": "https://example.test/capture.mp4"}, "one S3 object"),
+        ({"lerobot_uri": "https://example.test/dataset/"}, "S3 LeRobotDataset"),
     ],
 )
 def test_invalid_selector_paths_fail_clearly(kwargs: dict, message: str) -> None:
@@ -171,6 +181,378 @@ def test_fixture_plan_is_explicit_and_synthetic() -> None:
     assert result.provenance["source_kind"] == "synthetic_fixture"
     assert result.provenance["input_origin_label"] == "Synthetic seeded fixture"
     assert result.config_overrides()["seed_fixture"] == "true"
+
+
+def test_lerobot_selector_materializes_only_selected_camera_episode(
+    fake_media_pipeline: None,
+) -> None:
+    storage = FakeStorage()
+    prefix = "datasets/example/"
+    storage.s3.objects[("artifacts", prefix + "meta/info.json")] = json.dumps(
+        {
+            "codebase_version": "v2.1",
+            "total_episodes": 2,
+            "features": {
+                "observation.images.front": {"dtype": "video"},
+                "observation.images.wrist": {"dtype": "video"},
+            },
+        }
+    ).encode()
+    storage.s3.objects[
+        (
+            "artifacts",
+            prefix
+            + "videos/chunk-000/observation.images.front/episode_000001.mp4",
+        )
+    ] = b"front-episode-one"
+    storage.s3.objects[
+        (
+            "artifacts",
+            prefix
+            + "videos/chunk-000/observation.images.wrist/episode_000001.mp4",
+        )
+    ] = b"wrist-episode-one"
+    # An unrelated episode proves that PAIDF does not materialize the full dataset.
+    storage.s3.objects[
+        (
+            "artifacts",
+            prefix
+            + "videos/chunk-000/observation.images.front/episode_000000.mp4",
+        )
+    ] = b"front-episode-zero"
+
+    result = dfi.prepare_paidf_input(
+        run_id="paidf-lerobot",
+        bucket="artifacts",
+        lerobot_uri=f"s3://artifacts/{prefix}",
+        lerobot_camera="observation.images.wrist",
+        lerobot_episode=1,
+        storage_client=storage,
+    )
+
+    assert result.selection == "lerobot_dataset"
+    assert result.provenance["source_format"] == "lerobot"
+    assert result.provenance["lerobot_selection"] == {
+        "episode_selector": "operator-supplied",
+        "camera_selector": "explicit",
+        "selection_contract": "compatibility-defaults",
+        "media_kind": "video",
+        "selected_object": "redacted",
+    }
+    serialized = json.dumps(result.provenance)
+    assert prefix not in serialized
+    assert "observation.images.wrist" not in serialized
+    assert re.search(r"\b[0-9a-f]{64}\b", serialized) is None
+    assert result.config_overrides()["input_sha256"] == ""
+    assert storage.s3.downloads == [
+        (
+            "artifacts",
+            prefix
+            + "videos/chunk-000/observation.images.wrist/episode_000001.mp4",
+        )
+    ]
+    assert storage.s3.list_requests == []
+    assert result.config_overrides()["input_source_format"] == "lerobot"
+    staged_prefix = "physical-ai-data-factory/paidf-lerobot/input/"
+    assert all(
+        "sha256" not in metadata
+        for (bucket, key), metadata in storage.s3.metadata.items()
+        if bucket == "artifacts" and key.startswith(staged_prefix)
+    )
+
+
+def test_lerobot_camera_and_episode_validation_is_fail_closed() -> None:
+    with pytest.raises(dfi.PaidfInputError, match="non-negative"):
+        dfi.plan_paidf_input(
+            run_id="bad",
+            bucket="artifacts",
+            lerobot_uri="s3://artifacts/dataset/",
+            lerobot_episode=-1,
+        )
+    with pytest.raises(dfi.PaidfInputError, match="require --lerobot-uri"):
+        dfi.plan_paidf_input(
+            run_id="bad", bucket="artifacts", lerobot_camera="front"
+        )
+
+
+@pytest.mark.parametrize(
+    ("camera", "episode_was_explicit", "missing"),
+    [
+        ("", True, "--lerobot-camera"),
+        ("observation.images.front", False, "--lerobot-episode"),
+    ],
+)
+def test_lerobot_strict_selection_requires_explicit_camera_and_episode(
+    camera: str, episode_was_explicit: bool, missing: str
+) -> None:
+    with pytest.raises(dfi.PaidfInputError, match=missing):
+        dfi.validate_lerobot_selector(
+            selection="lerobot_dataset",
+            camera=camera,
+            episode=0,
+            require_explicit_selection=True,
+            episode_was_explicit=episode_was_explicit,
+        )
+
+    dfi.validate_lerobot_selector(
+        selection="lerobot_dataset",
+        camera="observation.images.front",
+        episode=0,
+        require_explicit_selection=True,
+        episode_was_explicit=True,
+    )
+
+    planned = dfi.plan_paidf_input(
+        run_id="paidf-explicit-contract",
+        bucket="artifacts",
+        lerobot_uri="s3://artifacts/dataset/",
+        lerobot_camera="observation.images.front",
+        lerobot_episode=0,
+        require_explicit_lerobot_selection=True,
+        lerobot_episode_was_explicit=True,
+    )
+    assert planned.provenance["lerobot_selection"]["selection_contract"] == (
+        "explicit-camera-and-episode"
+    )
+
+
+def test_lerobot_explicit_zero_episode_is_still_a_lerobot_only_selector() -> None:
+    with pytest.raises(dfi.PaidfInputError, match="require --lerobot-uri"):
+        dfi.validate_lerobot_selector(
+            selection="starter",
+            camera="",
+            episode=0,
+            episode_was_explicit=True,
+        )
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("total_episodes", 0, "positive integer"),
+        ("total_episodes", True, "positive integer"),
+        ("chunks_size", 0, "positive integer"),
+        ("chunks_size", True, "must be an integer"),
+    ],
+)
+def test_lerobot_rejects_invalid_dataset_cardinality(
+    field: str,
+    value: object,
+    message: str,
+    fake_media_pipeline: None,
+) -> None:
+    storage = FakeStorage()
+    info = {
+        "codebase_version": "v2.1",
+        "total_episodes": 1,
+        "chunks_size": 1_000,
+        "features": {"observation.images.front": {"dtype": "video"}},
+    }
+    info[field] = value
+    storage.s3.objects[("artifacts", "dataset/meta/info.json")] = json.dumps(
+        info
+    ).encode()
+
+    with pytest.raises(dfi.PaidfInputError, match=message):
+        dfi.prepare_paidf_input(
+            run_id="paidf-lerobot-cardinality",
+            bucket="artifacts",
+            lerobot_uri="s3://artifacts/dataset/",
+            storage_client=storage,
+        )
+
+
+def test_lerobot_rejects_oversized_metadata(
+    fake_media_pipeline: None,
+) -> None:
+    storage = FakeStorage()
+    storage.s3.objects[("artifacts", "dataset/meta/info.json")] = b"{" + (
+        b" " * dfi.MAX_LEROBOT_INFO_BYTES
+    )
+
+    with pytest.raises(dfi.PaidfInputError, match="1 MB validation limit"):
+        dfi.prepare_paidf_input(
+            run_id="paidf-lerobot-oversized",
+            bucket="artifacts",
+            lerobot_uri="s3://artifacts/dataset/",
+            storage_client=storage,
+        )
+
+
+def test_lerobot_rejects_unsafe_format_fields_and_nonfinite_timestamps(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with pytest.raises(dfi.PaidfInputError, match="unsupported format field"):
+        dfi._format_lerobot_video_path(
+            "videos/{video_key.__class__}/episode_{episode_index:06d}.mp4",
+            feature="observation.images.front",
+            episode=0,
+            episode_chunk=0,
+            chunk_index=0,
+            file_index=0,
+        )
+
+    monkeypatch.setattr(
+        dfi.subprocess,
+        "run",
+        lambda *_args, **_kwargs: pytest.fail("ffmpeg must not run"),
+    )
+    with pytest.raises(dfi.PaidfInputError, match="invalid episode time range"):
+        dfi._trim_lerobot_episode(
+            tmp_path / "source.mp4",
+            tmp_path / "episode.mp4",
+            start_seconds=0,
+            end_seconds=float("inf"),
+        )
+
+
+def test_lerobot_v3_selects_and_trims_one_episode_from_shared_video(
+    tmp_path: Path,
+    fake_media_pipeline: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    storage = FakeStorage()
+    prefix = "datasets/v3/"
+    feature = "observation.images.front"
+    storage.s3.objects[("artifacts", prefix + "meta/info.json")] = json.dumps(
+        {
+            "codebase_version": "v3.0",
+            "total_episodes": 8,
+            "chunks_size": 1000,
+            "video_path": "videos/{video_key}/chunk-{chunk_index:03d}/file-{file_index:03d}.mp4",
+            "features": {feature: {"dtype": "video"}},
+        }
+    ).encode()
+    table = pa.Table.from_pylist(
+        [
+            {
+                "episode_index": 7,
+                f"videos/{feature}/chunk_index": 0,
+                f"videos/{feature}/file_index": 2,
+                f"videos/{feature}/from_timestamp": 1.25,
+                f"videos/{feature}/to_timestamp": 2.75,
+            }
+        ]
+    )
+    parquet = tmp_path / "episodes.parquet"
+    pq.write_table(table, parquet)
+    storage.s3.objects[
+        ("artifacts", prefix + "meta/episodes/chunk-000/file-000.parquet")
+    ] = parquet.read_bytes()
+    shared_key = prefix + f"videos/{feature}/chunk-000/file-002.mp4"
+    storage.s3.objects[("artifacts", shared_key)] = b"shared-video"
+    trim_args: list[tuple[float, float]] = []
+
+    def fake_trim(source: Path, destination: Path, *, start_seconds, end_seconds):
+        trim_args.append((float(start_seconds), float(end_seconds)))
+        destination.write_bytes(b"episode:" + source.read_bytes())
+
+    monkeypatch.setattr(dfi, "_trim_lerobot_episode", fake_trim)
+
+    result = dfi.prepare_paidf_input(
+        run_id="paidf-lerobot-v3",
+        bucket="artifacts",
+        lerobot_uri=f"s3://artifacts/{prefix}",
+        lerobot_episode=7,
+        storage_client=storage,
+    )
+
+    assert result.selection == "lerobot_dataset"
+    assert trim_args == [(1.25, 2.75)]
+    assert [key for _bucket, key in storage.s3.downloads] == [
+        prefix + "meta/episodes/chunk-000/file-000.parquet",
+        shared_key,
+    ]
+    assert storage.s3.list_requests == [
+        ("artifacts", prefix + "meta/episodes/chunk-000/")
+    ]
+
+
+def test_lerobot_rejects_unsupported_version_and_unsafe_video_template(
+    fake_media_pipeline: None,
+) -> None:
+    storage = FakeStorage()
+    prefix = "datasets/unsupported/"
+    storage.s3.objects[("artifacts", prefix + "meta/info.json")] = json.dumps(
+        {
+            "codebase_version": "v4.0",
+            "features": {"observation.images.front": {"dtype": "video"}},
+        }
+    ).encode()
+    with pytest.raises(dfi.PaidfInputError, match="v2.x and v3.x"):
+        dfi.prepare_paidf_input(
+            run_id="paidf-lerobot-unsupported",
+            bucket="artifacts",
+            lerobot_uri=f"s3://artifacts/{prefix}",
+            storage_client=storage,
+        )
+
+    storage.s3.objects[("artifacts", prefix + "meta/info.json")] = json.dumps(
+        {
+            "codebase_version": "v2.1",
+            "total_episodes": 1,
+            "video_path": "../private/{video_key}/episode_{episode_index:06d}.mp4",
+            "features": {"observation.images.front": {"dtype": "video"}},
+        }
+    ).encode()
+    with pytest.raises(dfi.PaidfInputError, match="relative videos"):
+        dfi.prepare_paidf_input(
+            run_id="paidf-lerobot-unsafe-template",
+            bucket="artifacts",
+            lerobot_uri=f"s3://artifacts/{prefix}",
+            storage_client=storage,
+        )
+
+
+def test_lerobot_v3_refuses_shared_video_without_episode_timestamps(
+    tmp_path: Path,
+    fake_media_pipeline: None,
+) -> None:
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    storage = FakeStorage()
+    prefix = "datasets/v3-missing-time/"
+    feature = "observation.images.front"
+    storage.s3.objects[("artifacts", prefix + "meta/info.json")] = json.dumps(
+        {
+            "codebase_version": "v3.0",
+            "total_episodes": 1,
+            "chunks_size": 1000,
+            "features": {feature: {"dtype": "video"}},
+        }
+    ).encode()
+    table = pa.Table.from_pylist(
+        [
+            {
+                "episode_index": 0,
+                f"videos/{feature}/chunk_index": 0,
+                f"videos/{feature}/file_index": 0,
+            }
+        ]
+    )
+    parquet = tmp_path / "episodes.parquet"
+    pq.write_table(table, parquet)
+    storage.s3.objects[
+        ("artifacts", prefix + "meta/episodes/chunk-000/file-000.parquet")
+    ] = parquet.read_bytes()
+    storage.s3.objects[
+        ("artifacts", prefix + f"videos/{feature}/chunk-000/file-000.mp4")
+    ] = b"shared-video"
+
+    with pytest.raises(dfi.PaidfInputError, match="missing.*time range"):
+        dfi.prepare_paidf_input(
+            run_id="paidf-lerobot-v3-missing-time",
+            bucket="artifacts",
+            lerobot_uri=f"s3://artifacts/{prefix}",
+            storage_client=storage,
+        )
+
+    assert all("videos/" not in key for _bucket, key in storage.s3.downloads)
 
 
 def test_fixture_cannot_replace_committed_user_input(

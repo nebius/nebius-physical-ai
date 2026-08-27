@@ -11,7 +11,6 @@ from npa.deploy.publish_public import (
     _preflight_or_explain,
     build_publish_plan,
     verify_public,
-    visibility_checklist,
 )
 
 
@@ -40,11 +39,11 @@ def main() -> int:
             "provided as a comma/space-separated value."
         ),
     )
-    parser.add_argument("--source-registry", default=None)
+    parser.add_argument("--development-sha", default=None)
     parser.add_argument("--target", required=True)
     parser.add_argument(
         "--mode",
-        choices=("plan", "preflight", "publish", "verify", "checklist"),
+        choices=("plan", "preflight", "publish", "verify"),
         required=True,
     )
     args = parser.parse_args()
@@ -58,7 +57,7 @@ def main() -> int:
     # packages whose source and target digests happen to differ.
     complete = build_publish_plan(
         target_registry=args.target,
-        source_registry=args.source_registry or None,
+        development_git_sha=args.development_sha or None,
     )
     by_tool = {item.tool: item for item in complete}
     unknown = [tool for tool in requested_tools if tool not in by_tool]
@@ -73,10 +72,8 @@ def main() -> int:
 
     if args.mode == "plan":
         return 0
-    if args.mode in {"verify", "checklist"}:
+    if args.mode == "verify":
         failures = verify_public(selected)
-        if failures and args.mode == "checklist":
-            print(visibility_checklist(failures))
         return 1 if failures else 0
 
     publishable = _preflight_or_explain(selected)

@@ -3,7 +3,7 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from npa.clients.huggingface import validate_hf_access
+from npa.clients.huggingface import validate_hf_access, validate_hf_identity
 
 
 def test_validate_hf_access_accepts_200(mocker) -> None:
@@ -53,7 +53,31 @@ def test_validate_hf_access_reports_rate_limit_without_network() -> None:
 def validate_hf_access_with_status(status_code: int):
     mocker = pytest.MonkeyPatch()
     try:
-        mocker.setattr("httpx.head", lambda *args, **kwargs: httpx.Response(status_code))
+        mocker.setattr(
+            "httpx.head", lambda *args, **kwargs: httpx.Response(status_code)
+        )
         return validate_hf_access("hf-token", "nvidia/model")
     finally:
         mocker.undo()
+
+
+def test_validate_hf_identity_uses_authenticated_whoami_without_redirects(
+    mocker,
+) -> None:
+    get = mocker.patch("httpx.get", return_value=httpx.Response(200))
+
+    result = validate_hf_identity("hf-token")
+
+    assert result.ok is True
+    assert get.call_args.args == ("https://huggingface.co/api/whoami-v2",)
+    assert get.call_args.kwargs["headers"] == {"Authorization": "Bearer hf-token"}
+    assert get.call_args.kwargs["follow_redirects"] is False
+
+
+def test_validate_hf_identity_rejects_expired_token(mocker) -> None:
+    mocker.patch("httpx.get", return_value=httpx.Response(401))
+
+    result = validate_hf_identity("hf-expired")
+
+    assert result.ok is False
+    assert result.status_code == 401

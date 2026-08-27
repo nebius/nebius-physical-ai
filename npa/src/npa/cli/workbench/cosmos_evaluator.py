@@ -167,6 +167,14 @@ def evaluate_cmd(
     max_clips: int = typer.Option(
         0, "--max-clips", help="Grade at most this many variants (0 = all)."
     ),
+    attribute_sample_policy: str = typer.Option(
+        "ranking",
+        "--attribute-sample-policy",
+        help=(
+            "Deterministic frame sample: ranking uses beginning/middle/end; "
+            "holdout uses disjoint decoded frames for final validation."
+        ),
+    ),
     output: OutputFormat = typer.Option(
         OutputFormat.json, "--output", help="Output format."
     ),
@@ -202,6 +210,7 @@ def evaluate_cmd(
             question_model=question_model,
             vlm_model=vlm_model,
             max_clips=max_clips,
+            attribute_sample_policy=attribute_sample_policy,
         )
     except CosmosEvaluatorError as exc:
         _fail(str(exc))

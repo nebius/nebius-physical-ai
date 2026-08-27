@@ -9,6 +9,25 @@ Keep concrete live resource identifiers and names, account or tenant details,
 private endpoints and object/registry URIs, and credentials out of Git and public
 collaboration surfaces. Apply the rule even when a value is not itself a secret.
 
+## Verified agent UI endpoint exception
+
+The canonical `https://<public_ip>/` for an NPA agent may be included in local
+operator output or an explicitly requested operational handoff, including a PR
+handoff, only when all of these are true at disclosure time:
+
+1. `npa agent status` reports `endpoint_disclosure_allowed=true` and
+   `basic_auth_enforced=true`.
+2. The authenticated UI probe succeeded and the unauthenticated root probe
+   returned `401`.
+3. The URL contains no username, password, query, or fragment.
+4. The operator explicitly requested the endpoint for the agent in scope.
+
+This exception does not permit `direct_url`, usernames, passwords, auth-file
+contents, project/tenant/cluster/bucket identifiers, or unrelated endpoints.
+Never copy the endpoint into committed source, docs, examples, tests, fixtures,
+or reusable configuration. If the proof is missing or stale, keep the endpoint
+in access-controlled evidence and withhold it from the handoff.
+
 ## Publication workflow
 
 1. Treat commits, docs, reports, examples, fixtures, tests, PR or issue text, and

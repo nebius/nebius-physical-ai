@@ -10,6 +10,8 @@ Watch S3-compatible data prefixes and retrigger Workbench workflows.
 Options
 --help  Show this message and exit.
 Commands
+list-presets  List explicit workflow trigger/seed presets.
+stage-preset  Runtime-fetch and stage a verified preset into a run-scoped trigger prefix.
 run  Poll once and launch one pipeline run if new LeRobot data is present.
 watch  Poll continuously and launch one pipeline run per new LeRobot data batch.
 ```
@@ -24,6 +26,8 @@ watch  Poll continuously and launch one pipeline run per new LeRobot data batch.
 
 | Command | Description |
 | --- | --- |
+| `list-presets` | List explicit workflow trigger/seed presets. |
+| `stage-preset` | Runtime-fetch and stage a verified preset into a run-scoped trigger prefix. |
 | `run` | Poll once and launch one pipeline run if new LeRobot data is present. |
 | `watch` | Poll continuously and launch one pipeline run per new LeRobot data batch. |
 
@@ -31,7 +35,7 @@ watch  Poll continuously and launch one pipeline run per new LeRobot data batch.
 
 ```bash
 npa workbench workflow trigger --help
-npa workbench workflow trigger run --help
+npa workbench workflow trigger list-presets --help
 ```
 
 Regenerate this page with `bash scripts/build_docs.sh` after changing `trigger`.

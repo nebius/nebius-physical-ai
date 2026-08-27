@@ -86,6 +86,13 @@ way to get several GPUs at once, but a reclaim stops nodes mid-run — keep CPU
 stages on the CPU pool, and note that preemptibility changes the capacity pool
 only, never the disk or IP quota requirements.
 
+When a cluster enables a shared filestore (or attaches an existing one), set
+`TF_VAR_filesystem_csi_chart_repository` to the operator-approved Shared
+Filesystem CSI Helm repository. NPA intentionally has no provider-private
+default and now fails before apply if the repository is absent; creating the
+filesystem without its CSI driver leaves validation waiting for a StorageClass
+that cannot appear.
+
 ## Node groups after the fact
 
 ```bash

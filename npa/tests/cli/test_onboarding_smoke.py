@@ -109,6 +109,7 @@ def test_known_project_configure_is_non_interactive_and_reuses_storage(
         [
             "configure",
             "--no-interactive",
+            "--provision",
             "--tenant-id",
             "tenant-known",
             "--project-id",
@@ -132,7 +133,10 @@ def test_known_project_configure_is_non_interactive_and_reuses_storage(
     assert project["project_id"] == "project-known"
     assert project["tenant_id"] == "tenant-known"
     assert project["region"] == "eu-north1"
-    assert project["container_registry"]
+    assert "container_registry" not in project
+    assert config_module.resolve_container_registry("paidf-prod") == (
+        "ghcr.io/nebius/nebius-physical-ai"
+    )
 
 
 def test_known_project_configure_requires_complete_identity_flags() -> None:
@@ -150,9 +154,84 @@ def test_known_project_configure_requires_complete_identity_flags() -> None:
     )
 
     assert result.exit_code != 0
-    assert "requires all of --tenant-id" in result.output
+    assert "Known-project configure requires" in result.output
     assert "--region" in result.output
     assert "--project-alias" in result.output
+
+
+def test_known_project_configure_forwards_new_bucket_class_and_size(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.clients import config as config_module
+    from npa.clients import credentials as credentials_module
+
+    monkeypatch.setattr(config_module, "CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr(
+        credentials_module, "CREDENTIALS_PATH", tmp_path / "credentials.yaml"
+    )
+    monkeypatch.setattr("npa.clients.nebius.get_iam_token", lambda: "iam-token")
+    monkeypatch.setattr("npa.clients.nebius.set_profile_project", lambda *a, **k: True)
+    captured: dict[str, object] = {}
+
+    def fake_provision(*_args, **kwargs):
+        captured.update(kwargs)
+        return {
+            "aws_access_key_id": "access",
+            "aws_secret_access_key": "secret",
+            "endpoint_url": "https://storage.invalid",
+            "bucket": "s3://derived-bucket/",
+            "_validated": "true",
+        }
+
+    monkeypatch.setattr("npa.cli.main._provision_object_storage", fake_provision)
+    result = runner.invoke(
+        app,
+        [
+            "configure",
+            "--no-interactive",
+            "--provision",
+            "--tenant-id",
+            "tenant-known",
+            "--project-id",
+            "project-known",
+            "--region",
+            "us-central1",
+            "--project-alias",
+            "fleet-a",
+            "--bucket-storage-class",
+            "enhanced",
+            "--bucket-size-gb",
+            "100",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert captured["interactive"] is False
+    assert captured["bucket_storage_class"] == "enhanced_throughput"
+    assert captured["bucket_max_size_bytes"] == 100 * 1024**3
+
+
+def test_known_project_bucket_options_reject_invalid_values() -> None:
+    common = [
+        "configure",
+        "--no-interactive",
+        "--provision",
+        "--tenant-id",
+        "tenant-known",
+        "--project-id",
+        "project-known",
+        "--region",
+        "us-central1",
+        "--project-alias",
+        "fleet-a",
+    ]
+    result = runner.invoke(app, [*common, "--bucket-storage-class", "mystery"])
+    assert result.exit_code != 0
+    assert "must be standard, enhanced, or intelligent" in result.output
+
+    result = runner.invoke(app, [*common, "--bucket-size-gb", "not-a-number"])
+    assert result.exit_code != 0
+    assert "must be a finite non-negative number" in result.output
 
 
 def test_noninteractive_storage_selection_never_prints_prompt_language(
@@ -164,10 +243,14 @@ def test_noninteractive_storage_selection_never_prints_prompt_language(
     from npa.clients.storage_validation import StorageProbeResult
 
     fake_nebius = SimpleNamespace(
-        bucket_name_for=lambda _tenant, _project: "derived-bucket",
-        bucket_exists=lambda _project, _bucket: True,
+        bucket_exists=lambda _project, _bucket: False,
+        normalize_bucket_storage_class=lambda _value: "standard",
         NebiusError=RuntimeError,
         is_permission_denied=lambda _message: False,
+    )
+    monkeypatch.setattr(
+        "npa.cli.main._generated_configure_bucket_name",
+        lambda _tenant, _project: "derived-bucket",
     )
     monkeypatch.setattr(
         "npa.clients.storage_setup.provision_storage",
@@ -193,9 +276,96 @@ def test_noninteractive_storage_selection_never_prints_prompt_language(
 
     output = capsys.readouterr().out
     assert result is not None
-    assert "Object storage (non-interactive): selected 'derived-bucket'" in output
+    assert (
+        "Object storage (non-interactive): generated fresh name 'derived-bucket'"
+        in output
+    )
     assert "enter a bucket name" not in output.lower()
     assert "press Enter" not in output
+
+
+def test_noninteractive_storage_creation_forwards_requested_shape(
+    monkeypatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from npa.cli.main import _provision_object_storage
+    from npa.clients.storage_validation import StorageProbeResult
+
+    fake_nebius = SimpleNamespace(
+        bucket_exists=lambda _project, _bucket: False,
+        normalize_bucket_storage_class=lambda value: (
+            "enhanced_throughput" if value == "enhanced_throughput" else "standard"
+        ),
+        NebiusError=RuntimeError,
+        is_permission_denied=lambda _message: False,
+    )
+    captured: dict[str, object] = {}
+
+    def fake_provision(**kwargs):
+        captured.update(kwargs)
+        return (
+            {
+                "nebius_api_key": "access",
+                "nebius_secret_key": "secret",
+                "s3_bucket": "derived-bucket",
+                "s3_endpoint": "https://storage.invalid",
+            },
+            StorageProbeResult(True, "ok", "verified"),
+        )
+
+    monkeypatch.setattr("npa.clients.storage_setup.provision_storage", fake_provision)
+    result = _provision_object_storage(
+        fake_nebius,
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("prompted")),
+        project_id="project",
+        tenant_id="tenant",
+        region="us-central1",
+        existing_bucket="derived-bucket",
+        interactive=False,
+        bucket_storage_class="enhanced_throughput",
+        bucket_max_size_bytes=100 * 1024**3,
+    )
+
+    assert result is not None
+    assert captured["bucket_storage_class"] == "enhanced_throughput"
+    assert captured["bucket_max_size_bytes"] == 100 * 1024**3
+
+
+def test_noninteractive_storage_reuse_rejects_shape_mismatch(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    from npa.cli.main import _provision_object_storage
+
+    fake_nebius = SimpleNamespace(
+        bucket_exists=lambda _project, _bucket: True,
+        get_bucket_by_name=lambda _project, _bucket: {
+            "spec": {"default_storage_class": "standard", "max_size_bytes": "1"}
+        },
+        normalize_bucket_storage_class=lambda value: str(value).lower(),
+        NebiusError=RuntimeError,
+        is_permission_denied=lambda _message: False,
+    )
+
+    def must_not_provision(**_kwargs):
+        raise AssertionError("mismatched existing bucket must not be provisioned")
+
+    monkeypatch.setattr(
+        "npa.clients.storage_setup.provision_storage", must_not_provision
+    )
+    result = _provision_object_storage(
+        fake_nebius,
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("prompted")),
+        project_id="project",
+        tenant_id="tenant",
+        region="us-central1",
+        existing_bucket="derived-bucket",
+        interactive=False,
+        bucket_storage_class="enhanced_throughput",
+        bucket_max_size_bytes=100 * 1024**3,
+    )
+
+    assert result is None
 
 
 def test_npa_version_emits_no_syntax_warning(tmp_path) -> None:
@@ -274,6 +444,93 @@ def test_npa_version_fast_path_skips_heavy_imports() -> None:
     assert "HEAVY:\n" in proc.stdout or proc.stdout.rstrip().endswith("HEAVY:"), (
         "npa --version fast path imported heavy modules: " + proc.stdout
     )
+
+
+def test_cosmos2_capability_path_skips_the_platform_command_tree() -> None:
+    """The purpose-built Cosmos image can run its CLI without platform extras."""
+
+    probe = """
+import importlib.abc
+import os
+import sys
+
+blocked = {"httpx", "kubernetes", "paramiko", "rerun"}
+
+class BlockPlatformExtras(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname.partition(".")[0] in blocked:
+            raise RuntimeError(f"platform-only import attempted: {fullname}")
+        return None
+
+os.environ["NPA_SKIP_EAGER_IMPORTS"] = "1"
+sys.meta_path.insert(0, BlockPlatformExtras())
+sys.argv = ["npa", "workbench", "cosmos2", "transfer", "--help"]
+from npa.cli.entry import main
+main()
+"""
+    proc = subprocess.run(
+        [sys.executable, "-c", probe],
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "--segmentation-mode" in proc.stdout
+
+
+def test_cosmos2_capability_module_entry_dispatches_the_mounted_path() -> None:
+    """The image-authored ``python -m`` wrapper must execute the fast entry."""
+
+    env = dict(os.environ)
+    env["NPA_SKIP_EAGER_IMPORTS"] = "1"
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "npa.cli.entry",
+            "workbench",
+            "cosmos2",
+            "transfer",
+            "--help",
+        ],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "--control-asset" in proc.stdout
+    assert "--segmentation-mode" in proc.stdout
+
+
+def test_cosmos2_capability_path_consumes_mounted_command_name() -> None:
+    """The standalone image entrypoint must parse options after ``transfer``."""
+
+    probe = """
+import sys
+from npa.cli.workbench import cosmos2 as cli
+
+captured = {}
+
+def fake_app(*, args, prog_name):
+    captured["args"] = args
+    captured["prog_name"] = prog_name
+
+cli.app = fake_app
+sys.argv = [
+    "npa", "workbench", "cosmos2", "transfer",
+    "--input-uri", "local:///input", "--output-uri", "local:///output",
+]
+from npa.cli.entry import main
+main()
+print(captured)
+"""
+    proc = subprocess.run(
+        [sys.executable, "-c", probe],
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "'args': ['--input-uri', 'local:///input'" in proc.stdout
+    assert "'prog_name': 'npa workbench cosmos2 transfer'" in proc.stdout
 
 
 def test_quickstart_first_success_fixture_is_packaged() -> None:

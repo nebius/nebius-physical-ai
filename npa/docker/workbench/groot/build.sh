@@ -15,7 +15,7 @@ Usage: build.sh [--registry REGISTRY] [--push] [--tag TAG]
 Builds the GR00T runtime image as npa-groot:<gr00t-runtime-version>.
 When --registry is provided, also tags REGISTRY/npa-groot:<tag>.
 When --tag is provided, it overrides the final image tag.
-Use --registry cr.eu-north1.nebius.cloud/<your-registry-id> --push to publish.
+Use --registry <your-registry>/<namespace> --push to publish.
 
   --tag is what lets you validate a candidate without overwriting a canonical tag that
   running workloads resolve. --push streams straight to the registry via buildx instead

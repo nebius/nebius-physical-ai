@@ -20,7 +20,7 @@ from npa.workflows.sim2real.constants import (
     DEFAULT_PREFIX,
     DEFAULT_REFERENCE_VLM_MODEL,
     DEFAULT_REASON2_MODEL,
-    DEFAULT_REASON3_MODEL,
+    DEFAULT_COSMOS3_MODEL,
     DEFAULT_ROLLOUT_COUNT,
     DEFAULT_S3_ENDPOINT,
     DEFAULT_SIM_BACKEND,
@@ -217,9 +217,10 @@ def build_config_from_env(**overrides: Any) -> Sim2RealLoopConfig:
             or os.environ.get("VLM_IMAGE")
             or default_vlm_image(registry=registry or None)
         ),
-        vlm_reason3_image=str(
-            overrides.get("vlm_reason3_image")
-            or os.environ.get("VLM_REASON3_IMAGE")
+        vlm_cosmos3_image=str(
+            overrides.get("vlm_cosmos3_image")
+            or overrides.get("vlm_reason3_image")  # archived config compatibility
+            or os.environ.get("VLM_COSMOS3_IMAGE")
             or os.environ.get("VLM_IMAGE")
             or default_vlm_image(registry=registry or None)
         ),
@@ -256,16 +257,19 @@ def build_config_from_env(**overrides: Any) -> Sim2RealLoopConfig:
             or os.environ.get("VLM_MODEL")
             or DEFAULT_REASON2_MODEL
         ),
-        vlm_reason3_model=str(
-            overrides.get("vlm_reason3_model")
-            or os.environ.get("VLM_REASON3_MODEL")
-            or os.environ.get("NPA_COSMOS_REASON3_MODEL_ID")
-            or DEFAULT_REASON3_MODEL
+        vlm_cosmos3_model=str(
+            overrides.get("vlm_cosmos3_model")
+            or overrides.get("vlm_reason3_model")  # archived key compatibility
+            or os.environ.get("VLM_COSMOS3_MODEL")
+            or DEFAULT_COSMOS3_MODEL
         ),
-        vlm_dual_reason=_bool_value(
+        vlm_two_evaluator=_bool_value(
             overrides.get(
-                "vlm_dual_reason",
-                os.environ.get("NPA_SIM2REAL_VLM_DUAL_REASON", "1"),
+                "vlm_two_evaluator",
+                overrides.get(
+                    "vlm_dual_reason",  # archived config compatibility
+                    os.environ.get("NPA_SIM2REAL_VLM_TWO_EVALUATOR", "1"),
+                ),
             )
         ),
         threshold=float(
@@ -389,7 +393,7 @@ def build_config_from_env(**overrides: Any) -> Sim2RealLoopConfig:
         k8s_image_pull_secrets=str(
             overrides.get("k8s_image_pull_secrets")
             or os.environ.get("NPA_SIM2REAL_K8S_IMAGE_PULL_SECRETS")
-            or "agent-sa,ngc-nvcr-imagepullsecret,npa-nebius-registry"
+            or "ngc-nvcr-imagepullsecret"
         ),
         k8s_env_secret_names=str(
             overrides.get("k8s_env_secret_names")

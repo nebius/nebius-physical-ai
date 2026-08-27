@@ -12,6 +12,7 @@ from npa.orchestration.npa_workflow.catalog import (
     drop_empty_optional_flags,
 )
 from npa.orchestration.npa_workflow.decisions import (
+    load_decision,
     normalize_decision,
     refresh_context_decision,
 )
@@ -253,7 +254,15 @@ def run_workflow(
 def _make_context(spec: NpaWorkflowSpec, *, run_id: str) -> RunContext:
     run = {"id": run_id, "prefix": f"{spec.name}/{run_id}", **dict(spec.run_defaults)}
     run["id"] = run_id
-    config = _resolve_config_strings(dict(spec.config), run=run)
+    config_with_tool_defaults = dict(spec.config)
+    from npa.orchestration.npa_workflow.catalog import config_defaults_for_tool
+
+    for state in spec.states.values():
+        if not state.tool_ref:
+            continue
+        for key, value in config_defaults_for_tool(state.tool_ref).items():
+            config_with_tool_defaults.setdefault(key, value)
+    config = _resolve_config_strings(config_with_tool_defaults, run=run)
     if config.get("prefix"):
         run["prefix"] = resolve_tokens(str(config["prefix"]), config=config, run=run)
     return RunContext(config=config, run=run)
@@ -443,12 +452,14 @@ def _guard_execution_depth(spec: NpaWorkflowSpec, depth: int) -> None:
         )
 
 
-def _sequence_refreshes_decision(spec: NpaWorkflowSpec, state: StateSpec) -> bool:
-    return any(
-        spec.states[child].writes_decision
-        for child in state.sequence
-        if child in spec.states
-    )
+def _sequence_decision_writer(
+    spec: NpaWorkflowSpec, state: StateSpec
+) -> StateSpec | None:
+    for child in reversed(state.sequence):
+        candidate = spec.states.get(child)
+        if candidate is not None and candidate.writes_decision:
+            return candidate
+    return None
 
 
 def _append_state_step(
@@ -577,13 +588,48 @@ def _record_state_outputs(state: StateSpec, ctx: RunContext, step: PlanStep) -> 
 def _refresh_decision(
     ctx: RunContext,
     *,
+    state: StateSpec | None = None,
     reader: Any | None = None,
     read_s3: bool = False,
 ) -> None:
     if read_s3:
-        ctx.last_decision = refresh_context_decision(
-            ctx.as_predicate_context(), reader=reader
-        )
+        uri = _resolved_state_decision_uri(state, ctx) if state is not None else ""
+        if uri:
+            ctx.last_decision = load_decision(uri, reader=reader)
+        else:
+            ctx.last_decision = refresh_context_decision(
+                ctx.as_predicate_context(), reader=reader
+            )
+
+
+def _resolved_state_decision_uri(state: StateSpec, ctx: RunContext) -> str:
+    """Return the exact decision artifact resolved for one executed state.
+
+    A dynamic loop may override ``decision_uri`` with ``{{loop.*}}`` in the
+    decision writer's params. Reading only the workflow-wide config after the
+    state completes silently points at a legacy or previous-iteration object.
+    Prefer the already-resolved declared decision output, including when it is
+    not the state's first output, then fall back to the state-scoped config.
+    """
+
+    outputs = ctx.state_outputs.get(state.name) or {}
+    for index, artifact in enumerate(state.outputs, start=1):
+        if "decision" not in str(artifact.schema).lower():
+            continue
+        uri = str(outputs.get(f"output_{index}") or "").strip()
+        if uri:
+            return uri
+    config = state_config(state, ctx)
+    raw = str(config.get("decision_uri") or "").strip()
+    if not raw:
+        return ""
+    return resolve_tokens(
+        raw,
+        config=config,
+        run=ctx.run,
+        state_outputs=ctx.state_outputs,
+        loop_iterations=ctx.loop_iterations,
+    )
 
 
 def _execute_state_machine(
@@ -669,10 +715,12 @@ def _execute_state_machine(
                         depth=depth + 1,
                     )
                 if not ctx.last_decision:
+                    decision_writer = _sequence_decision_writer(spec, state)
                     _refresh_decision(
                         ctx,
+                        state=decision_writer,
                         reader=decision_reader,
-                        read_s3=_sequence_refreshes_decision(spec, state),
+                        read_s3=decision_writer is not None,
                     )
                 if not ctx.last_decision:
                     ctx.last_decision = assume_decision
@@ -795,7 +843,7 @@ def _execute_state_machine(
     if state.terminal:
         return results
     if state.transitions:
-        _refresh_decision(ctx, reader=decision_reader, read_s3=True)
+        _refresh_decision(ctx, state=state, reader=decision_reader, read_s3=True)
         if not ctx.last_decision:
             ctx.last_decision = assume_decision
     next_name = ""

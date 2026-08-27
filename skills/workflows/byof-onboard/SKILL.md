@@ -1,6 +1,6 @@
 ---
 name: byof-onboard
-description: Use when onboarding an OSS repo via BYOF — containerize on Ubuntu or Isaac Lab, push to Nebius registry, and smoke on live Kubernetes.
+description: Use when onboarding an OSS repo via BYOF — containerize on Ubuntu or Isaac Lab, push to an operator-controlled or authorized GHCR registry, and smoke on live Kubernetes.
 ---
 
 # BYOF Solution Onboard
@@ -11,7 +11,7 @@ in chat replies; point operators here.
 
 ## When To Use
 
-- Containerize a public GitHub/GitLab repo and push to the project registry
+- Containerize a public GitHub/GitLab repo and push to an authorized registry
 - Onboard a new workbench solution (toolRef + workflow + live smoke)
 - LeIsaac validation (Isaac Lab base + datagen or RL)
 - Generic Ubuntu BYOF (any OSS repo, no sim stack required)
@@ -26,10 +26,9 @@ artifact, and collecting live Nebius validation evidence. See
 
 ## Prerequisites
 
-- `~/.npa/config.yaml` — project alias, registry, `kubernetes` block (`cluster_name`, `gpu_profile`)
-- `~/.npa/credentials.yaml` — Nebius IAM (registry push/pull)
+- `~/.npa/config.yaml` — project alias, registry override, `kubernetes` block (`cluster_name`, `gpu_profile`)
+- Exact-host registry credentials when the selected registry is private
 - Operator host: Docker, `nebius` CLI, `sky` (for GPU/container smokes)
-- Optional: `NPA_NEBIUS_PROFILE=agent-sa` for registry write on shared VMs
 - SkyPilot must have Kubernetes enabled for the target context. The
   `solution-smoke` runner runs `sky check kubernetes` automatically before
   submission; if debugging manually, run it with the resolved kubeconfig/context

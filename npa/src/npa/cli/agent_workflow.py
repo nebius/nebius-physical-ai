@@ -1298,6 +1298,7 @@ def _data_factory_spec() -> dict[str, Any]:
         "config_runtime": OrderedDict(
             {
                 "prefix": "physical-ai-data-factory/{{run.id}}",
+                "plan_assume_decision": "promote_checkpoint",
                 "seed_fixture": "false",
                 "seed_default_input": "false",
                 # What to augment: a free-form hint surfaced as the augment prompt /
@@ -1313,12 +1314,34 @@ def _data_factory_spec() -> dict[str, Any]:
                 # The mask keys restrict the control to one segmented region.
                 "augment_control": "edge",
                 "augment_control_weight": "1.0",
+                "augment_guidance": "3.0",
                 "augment_control_prompt": "",
                 "augment_control_asset_uri": "",
                 "augment_mask_prompt": "",
                 "augment_mask_asset_uri": "",
                 "refinement_iterations": "2",
                 "grade_threshold": "0.75",
+                "adaptive_refinement_enabled": "true",
+                "refinement_control_weight_step": "0.25",
+                "refinement_max_control_weight": "1.0",
+                "refinement_guidance_step": "1.0",
+                "refinement_min_guidance": "1.0",
+                "protected_chroma_mode": "off",
+                "protected_chroma_regions_json": "",
+                "protected_luma_max_delta": "32",
+                "protected_feather_pixels": "12",
+                "segmentation_mode": "off",
+                "augmentation_seed": "",
+                "quality_anchor_uri": "",
+                "attribute_sample_policy": "ranking",
+                "sam2_model": "facebook/sam2.1-hiera-tiny",
+                "sam2_model_revision": "de431c4043854a71d8101e17995dfe596bf101a5",
+                "sam2_points_per_side": "16",
+                "sam2_predicted_iou_threshold": "0.86",
+                "sam2_stability_threshold": "0.92",
+                "sam2_min_area_fraction": "0.002",
+                "sam2_max_area_fraction": "0.65",
+                "sam2_max_objects": "6",
                 "default_decision": "loop_back",
                 "temporal_consistency_mode": "advisory",
                 "temporal_consistency_threshold": "0.8",
@@ -1360,7 +1383,10 @@ def _data_factory_spec() -> dict[str, Any]:
                 "augment_control_uri": "s3://{{config.bucket}}/{{config.prefix}}/cosmos_control/",
                 "rollouts_uri": "s3://{{config.bucket}}/{{config.prefix}}/cosmos_augmented/",
                 "scores_uri": "s3://{{config.bucket}}/{{config.prefix}}/grade/",
+                "selection_uri": "s3://{{config.bucket}}/{{config.prefix}}/selection/",
                 "decision_uri": "s3://{{config.bucket}}/{{config.prefix}}/grade/decision.json",
+                "refinement_uri": "s3://{{config.bucket}}/{{config.prefix}}/configs/refinement.json",
+                "segmentation_uri": "s3://{{config.bucket}}/{{config.prefix}}/segmentation/",
                 "quality_disposition_uri": "s3://{{config.bucket}}/{{config.prefix}}/grade/quality_disposition.json",
                 "augmented_frames_uri": "s3://{{config.bucket}}/{{config.prefix}}/cosmos_augmented/",
                 "labeled_augmented_uri": "s3://{{config.bucket}}/{{config.prefix}}/labeled_augmented/",
@@ -1368,6 +1394,10 @@ def _data_factory_spec() -> dict[str, Any]:
                 "curated_clips_uri": "s3://{{config.bucket}}/{{config.prefix}}/curation/cosmos_curator/",
                 "curator_report_uri": "s3://{{config.bucket}}/{{config.prefix}}/curation/cosmos_curator.json",
                 "curation_report_uri": "s3://{{config.bucket}}/{{config.prefix}}/curation/report.json",
+                "terminal_review_dataset_uri": "s3://{{config.bucket}}/{{config.prefix}}/review/fiftyone-dataset/",
+                "terminal_review_report_uri": "s3://{{config.bucket}}/{{config.prefix}}/review/fiftyone-review.json",
+                "terminal_review_decision_uri": "s3://{{config.bucket}}/{{config.prefix}}/review/decision.json",
+                "terminal_review_dataset_name": "paidf-review-{{run.id}}",
                 "run_root_uri": "s3://{{config.bucket}}/{{config.prefix}}/",
                 "rrd_uri": "s3://{{config.bucket}}/{{config.prefix}}/reports/sim2real.rrd",
                 "finalize_report_uri": "s3://{{config.bucket}}/{{config.prefix}}/reports/final.json",
@@ -1381,6 +1411,26 @@ def _data_factory_spec() -> dict[str, Any]:
                         "accelerators": "RTXPRO-6000-BLACKWELL-SERVER-EDITION:4",
                         "cpus": 16,
                         "memory": "128Gi",
+                        "kubernetes": OrderedDict(
+                            {
+                                "pod_config": OrderedDict(
+                                    {
+                                        "spec": OrderedDict(
+                                            {
+                                                "containers": [
+                                                    OrderedDict(
+                                                        {
+                                                            "name": "ray-node",
+                                                            "imagePullPolicy": "IfNotPresent",
+                                                        }
+                                                    )
+                                                ]
+                                            }
+                                        )
+                                    }
+                                )
+                            }
+                        ),
                     }
                 ),
                 "cpu": OrderedDict(
@@ -1415,6 +1465,8 @@ def _data_factory_spec() -> dict[str, Any]:
                                     "{{config.seed_default_input}}",
                                     "{{config.seed_fixture}}",
                                     "{{config.augment_subject}}",
+                                    "{{config.augmentation_seed}}",
+                                    "{{config.quality_anchor_uri}}",
                                 ]
                             }
                         ),
@@ -1457,6 +1509,50 @@ def _data_factory_spec() -> dict[str, Any]:
                         "next": "grade",
                     }
                 ),
+                "prepare-refinement": OrderedDict(
+                    {
+                        "description": (
+                            "Prepare an auditable adaptive Cosmos policy. Failed retries "
+                            "must change guidance and/or edge-control within declared bounds."
+                        ),
+                        "needs": ["annotate-original"],
+                        "resources": "cpu",
+                        "run": OrderedDict(
+                            {
+                                "argv": [
+                                    "python3",
+                                    "-c",
+                                    (
+                                        "import sys; from npa.workflows.data_factory_stages "
+                                        "import prepare_refinement; "
+                                        "prepare_refinement(*sys.argv[1:])"
+                                    ),
+                                    "{{config.scores_uri}}",
+                                    "{{config.refinement_uri}}",
+                                    "{{config.adaptive_refinement_enabled}}",
+                                    "{{config.augment_control_weight}}",
+                                    "{{config.augment_guidance}}",
+                                    "{{config.refinement_control_weight_step}}",
+                                    "{{config.refinement_max_control_weight}}",
+                                    "{{config.refinement_guidance_step}}",
+                                    "{{config.refinement_min_guidance}}",
+                                    "{{config.decision_uri}}",
+                                    "{{config.grade_threshold}}",
+                                    "{{loop.grade}}",
+                                    "{{config.quality_anchor_uri}}",
+                                ]
+                            }
+                        ),
+                        "outputs": [
+                            OrderedDict(
+                                {
+                                    "uri": "{{config.refinement_uri}}",
+                                    "schema": "npa.data_factory.refinement.v1",
+                                }
+                            )
+                        ],
+                    }
+                ),
                 "augment": OrderedDict(
                     {
                         "description": (
@@ -1467,7 +1563,7 @@ def _data_factory_spec() -> dict[str, Any]:
                             "A supported video under config.trigger_uri is mandatory. Member of the "
                             "grade refinement loop, so loop_back genuinely re-renders."
                         ),
-                        "needs": ["annotate-original"],
+                        "needs": ["prepare-refinement"],
                         "toolRef": "workbench.cosmos2.transfer_execute",
                         "resources": "gpu",
                         "inputs": [
@@ -1502,7 +1598,14 @@ def _data_factory_spec() -> dict[str, Any]:
                                 "until": "promote_checkpoint",
                             }
                         ),
-                        "sequence": ["augment", "evaluate", "quality-gate"],
+                        "sequence": [
+                            "prepare-refinement",
+                            "augment",
+                            "evaluate",
+                            "select-candidates",
+                            "evaluate-selected",
+                            "quality-gate",
+                        ],
                         "next": "quality-disposition",
                     }
                 ),
@@ -1516,6 +1619,98 @@ def _data_factory_spec() -> dict[str, Any]:
                         ),
                         "toolRef": "workbench.cosmos_evaluator.evaluate",
                         "resources": "cpu",
+                        "params": OrderedDict(
+                            {
+                                "rollouts_uri": "{{config.augment_uri}}iteration-{{loop.grade}}/",
+                                "scores_uri": "{{config.scores_uri}}iteration-{{loop.grade}}/ranking/",
+                                "attribute_sample_policy": "ranking",
+                            }
+                        ),
+                        "inputs": [
+                            OrderedDict(
+                                {
+                                    "uri": "{{config.rollouts_uri}}",
+                                    "schema": "npa.cosmos2.transfer.v1",
+                                }
+                            )
+                        ],
+                        "outputs": [
+                            OrderedDict(
+                                {
+                                    "uri": "{{config.scores_uri}}cosmos_evaluator.json",
+                                    "schema": "npa.cosmos_evaluator.report.v1",
+                                }
+                            )
+                        ],
+                    }
+                ),
+                "select-candidates": OrderedDict(
+                    {
+                        "description": (
+                            "Select only independently hard-passing candidates for a "
+                            "separate final-validation batch while preserving the complete "
+                            "ranking pool unchanged."
+                        ),
+                        "needs": ["evaluate"],
+                        "params": OrderedDict(
+                            {
+                                "augment_uri": "{{config.augment_uri}}iteration-{{loop.grade}}/",
+                                "ranking_scores_uri": "{{config.scores_uri}}iteration-{{loop.grade}}/ranking/",
+                                "selected_uri": "{{config.selection_uri}}iteration-{{loop.grade}}/",
+                                "selection_report_uri": "{{config.selection_uri}}iteration-{{loop.grade}}/selection.json",
+                            }
+                        ),
+                        "resources": "cpu",
+                        "run": OrderedDict(
+                            {
+                                "argv": [
+                                    "python3",
+                                    "-c",
+                                    (
+                                        "import sys; from npa.workflows.data_factory_stages "
+                                        "import select_hard_passing_candidates; "
+                                        "select_hard_passing_candidates(*sys.argv[1:])"
+                                    ),
+                                    "{{config.augment_uri}}",
+                                    "{{config.ranking_scores_uri}}",
+                                    "{{config.selected_uri}}",
+                                    "{{config.selection_report_uri}}",
+                                    "{{config.grade_threshold}}",
+                                ]
+                            }
+                        ),
+                        "outputs": [
+                            OrderedDict(
+                                {
+                                    "uri": "{{config.selected_uri}}manifest.json",
+                                    "schema": "npa.cosmos2.transfer.v1",
+                                }
+                            ),
+                            OrderedDict(
+                                {
+                                    "uri": "{{config.selection_report_uri}}",
+                                    "schema": "npa.paidf.candidate-selection/v1",
+                                }
+                            ),
+                        ],
+                    }
+                ),
+                "evaluate-selected": OrderedDict(
+                    {
+                        "description": (
+                            "Fail-closed final re-evaluation of the hard-passing selection "
+                            "using deterministic holdout frames disjoint from ranking."
+                        ),
+                        "needs": ["select-candidates"],
+                        "toolRef": "workbench.cosmos_evaluator.evaluate",
+                        "resources": "cpu",
+                        "params": OrderedDict(
+                            {
+                                "rollouts_uri": "{{config.selection_uri}}iteration-{{loop.grade}}/",
+                                "scores_uri": "{{config.scores_uri}}iteration-{{loop.grade}}/",
+                                "attribute_sample_policy": "holdout",
+                            }
+                        ),
                         "inputs": [
                             OrderedDict(
                                 {
@@ -1541,14 +1736,21 @@ def _data_factory_spec() -> dict[str, Any]:
                             "loop_back decision that drives the grade loop."
                         ),
                         "writesDecision": True,
-                        "needs": ["evaluate"],
+                        "needs": ["evaluate-selected"],
+                        "params": OrderedDict(
+                            {
+                                "scores_uri": "{{config.scores_uri}}iteration-{{loop.grade}}/",
+                                "decision_uri": "{{config.scores_uri}}iteration-{{loop.grade}}/decision.json",
+                            }
+                        ),
                         "resources": "cpu",
                         "run": OrderedDict(
                             {
                                 "shell": (
                                     'python3 -c "from npa.workflows.data_factory_stages import '
                                     "grade_gate; grade_gate('{{config.scores_uri}}', "
-                                    "'{{config.decision_uri}}', '{{config.grade_threshold}}')\""
+                                    "'{{config.decision_uri}}', '{{config.grade_threshold}}', "
+                                    "'{{config.refinement_uri}}')\""
                                 )
                             }
                         ),
@@ -1566,10 +1768,147 @@ def _data_factory_spec() -> dict[str, Any]:
                     {
                         "description": (
                             "Fail closed after the refinement loop: persist an auditable "
-                            "accepted/rejected disposition before rejecting a degraded, "
-                            "below-threshold, or hard-check-failing batch."
+                            "accepted/rejected disposition and route rejected runs through "
+                            "evidence-only Rerun visualization before failing."
                         ),
+                        "writesDecision": True,
                         "needs": ["grade"],
+                        "params": OrderedDict(
+                            {
+                                "scores_uri": "{{config.scores_uri}}iteration-{{loop.grade}}/",
+                                "decision_uri": "{{config.scores_uri}}iteration-{{loop.grade}}/decision.json",
+                            }
+                        ),
+                        "resources": "cpu",
+                        "run": OrderedDict(
+                            {
+                                "argv": [
+                                    "python3",
+                                    "-c",
+                                    (
+                                        "import sys; from npa.workflows.data_factory_stages "
+                                        "import write_quality_disposition; "
+                                        "write_quality_disposition(*sys.argv[1:])"
+                                    ),
+                                    "{{config.scores_uri}}",
+                                    "{{config.quality_disposition_uri}}",
+                                    "{{config.decision_uri}}",
+                                    "{{config.grade_threshold}}",
+                                ]
+                            }
+                        ),
+                        "outputs": [
+                            OrderedDict(
+                                {
+                                    "uri": "{{config.quality_disposition_uri}}",
+                                    "schema": "npa.data_factory.quality_disposition.v1",
+                                }
+                            ),
+                            OrderedDict(
+                                {
+                                    "uri": "{{config.decision_uri}}",
+                                    "schema": "npa.sim2real.threshold_decision.v1",
+                                }
+                            ),
+                        ],
+                        "transitions": [
+                            OrderedDict(
+                                {
+                                    "when": "promote_checkpoint",
+                                    "goto": "review-terminal-candidates",
+                                }
+                            ),
+                            OrderedDict(
+                                {
+                                    "when": "loop_back",
+                                    "goto": "review-terminal-candidates",
+                                }
+                            ),
+                        ],
+                    }
+                ),
+                "review-terminal-candidates": OrderedDict(
+                    {
+                        "description": (
+                            "Export every evaluated terminal candidate through real FiftyOne "
+                            "as a portable review dataset. Rejected samples remain explicitly "
+                            "non-promoting and accepted-only curation stays downstream."
+                        ),
+                        "needs": ["quality-disposition"],
+                        "toolRef": "workbench.fiftyone.review_augmented",
+                        "resources": "cpu",
+                        "outputs": [
+                            OrderedDict(
+                                {
+                                    "uri": "{{config.terminal_review_report_uri}}",
+                                    "schema": "npa.paidf.fiftyone-terminal-review/v1",
+                                }
+                            ),
+                            OrderedDict(
+                                {
+                                    "uri": "{{config.terminal_review_dataset_uri}}",
+                                    "schema": "fiftyone.types.FiftyOneDataset",
+                                }
+                            ),
+                        ],
+                        "next": "route-terminal-quality",
+                    }
+                ),
+                "route-terminal-quality": OrderedDict(
+                    {
+                        "description": (
+                            "Re-read the durable terminal disposition after common review "
+                            "without overwriting the canonical quality decision."
+                        ),
+                        "writesDecision": True,
+                        "needs": ["review-terminal-candidates"],
+                        "resources": "cpu",
+                        "run": OrderedDict(
+                            {
+                                "argv": [
+                                    "python3",
+                                    "-c",
+                                    (
+                                        "import sys; from npa.workflows.data_factory_stages "
+                                        "import route_terminal_quality; "
+                                        "route_terminal_quality(*sys.argv[1:])"
+                                    ),
+                                    "{{config.quality_disposition_uri}}",
+                                    "{{config.terminal_review_decision_uri}}",
+                                ]
+                            }
+                        ),
+                        "outputs": [
+                            OrderedDict(
+                                {
+                                    "uri": "{{config.terminal_review_decision_uri}}",
+                                    "schema": "npa.sim2real.threshold_decision.v1",
+                                }
+                            )
+                        ],
+                        "transitions": [
+                            OrderedDict(
+                                {
+                                    "when": "promote_checkpoint",
+                                    "goto": "require-accepted-quality",
+                                }
+                            ),
+                            OrderedDict(
+                                {
+                                    "when": "loop_back",
+                                    "goto": "visualize-rejected",
+                                }
+                            ),
+                        ],
+                    }
+                ),
+                "require-accepted-quality": OrderedDict(
+                    {
+                        "description": (
+                            "Re-check the durable accepted disposition before any "
+                            "accepted-only stage, including one-shot static plans."
+                        ),
+                        "needs": ["quality-disposition"],
                         "resources": "cpu",
                         "run": OrderedDict(
                             {
@@ -1587,15 +1926,55 @@ def _data_factory_spec() -> dict[str, Any]:
                                 ]
                             }
                         ),
+                        "next": "annotate-augmented",
+                    }
+                ),
+                "visualize-rejected": OrderedDict(
+                    {
+                        "description": (
+                            "Build reports/sim2real.rrd for a rejected run from the available "
+                            "input, augmented frames, evaluator report, gate decision, and "
+                            "quality disposition. Missing downstream artifacts are skipped."
+                        ),
+                        "needs": ["quality-disposition"],
+                        "resources": "cpu",
+                        "toolRef": "workbench.nurec.visualize",
                         "outputs": [
                             OrderedDict(
                                 {
-                                    "uri": "{{config.quality_disposition_uri}}",
-                                    "schema": "npa.data_factory.quality_disposition.v1",
+                                    "uri": "{{config.rrd_uri}}",
+                                    "schema": "npa.sim2real.rerun.v1",
                                 }
                             )
                         ],
-                        "next": "annotate-augmented",
+                        "next": "reject-quality",
+                    }
+                ),
+                "reject-quality": OrderedDict(
+                    {
+                        "description": (
+                            "Fail only after the rejected run's disposition and Rerun evidence "
+                            "are durable, preserving fail-closed promotion semantics."
+                        ),
+                        "needs": ["visualize-rejected"],
+                        "resources": "cpu",
+                        "run": OrderedDict(
+                            {
+                                "argv": [
+                                    "python3",
+                                    "-c",
+                                    (
+                                        "import sys; from npa.workflows.data_factory_stages "
+                                        "import enforce_quality_disposition; "
+                                        "enforce_quality_disposition(*sys.argv[1:])"
+                                    ),
+                                    "{{config.scores_uri}}",
+                                    "{{config.quality_disposition_uri}}",
+                                    "{{config.grade_threshold}}",
+                                ]
+                            }
+                        ),
+                        "terminal": True,
                     }
                 ),
                 "annotate-augmented": OrderedDict(
@@ -1604,7 +1983,7 @@ def _data_factory_spec() -> dict[str, Any]:
                             "Stage 3 - Pseudo-Label Augmented. Re-caption the promoted augmented "
                             "clips with the same hosted VLM so the amplified set ships labeled."
                         ),
-                        "needs": ["quality-disposition"],
+                        "needs": ["require-accepted-quality"],
                         "resources": "cpu",
                         "run": OrderedDict(
                             {

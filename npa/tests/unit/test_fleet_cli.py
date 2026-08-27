@@ -142,6 +142,37 @@ def test_single_gpu_preset_auto_disables_gpu_cluster() -> None:
     assert cluster.resolved_enable_gpu_cluster() is False
 
 
+def test_rtx_8gpu_preset_auto_disables_gpu_cluster() -> None:
+    cluster = ClusterSpec(
+        name="rtx",
+        gpu_nodes=NodePoolSpec(
+            count=2,
+            platform="gpu-rtx6000",
+            preset="8gpu-192vcpu-1744gb",
+        ),
+    )
+    cluster.validate()
+
+    assert cluster.resolved_enable_gpu_cluster() is False
+    assert "enable_gpu_cluster = false" in render_tfvars(cluster)
+
+
+def test_rtx_8gpu_preset_rejects_explicit_gpu_cluster() -> None:
+    cluster = ClusterSpec(
+        name="rtx",
+        gpu_nodes=NodePoolSpec(
+            count=2,
+            platform="gpu-rtx6000",
+            preset="8gpu-192vcpu-1744gb",
+        ),
+        enable_gpu_cluster=True,
+        infiniband_fabric="fabric-a",
+    )
+
+    with pytest.raises(FleetSpecError, match="fabric-capable 8-GPU SXM/NVL"):
+        cluster.validate()
+
+
 def test_enable_gpu_cluster_requires_8gpu_preset_and_fabric() -> None:
     cluster = ClusterSpec(
         name="c",
@@ -150,7 +181,7 @@ def test_enable_gpu_cluster_requires_8gpu_preset_and_fabric() -> None:
         ),
         enable_gpu_cluster=True,
     )
-    with pytest.raises(FleetSpecError, match="8-GPU preset"):
+    with pytest.raises(FleetSpecError, match="fabric-capable 8-GPU SXM/NVL"):
         cluster.validate()
 
 
@@ -252,6 +283,22 @@ def test_render_tfvars_rtx_single_gpu() -> None:
     assert 'ssh_public_key = { key = "ssh-ed25519 AAAA me" }' in tf
 
 
+def test_render_tfvars_uses_operator_filesystem_csi_repository() -> None:
+    cluster = ClusterSpec(
+        name="storage",
+        cpu_nodes=NodePoolSpec(count=1),
+        enable_filestore=True,
+        filesystem_csi_chart_repository="oci://charts.example.invalid/nebius",
+    )
+
+    tf = render_tfvars(cluster, ssh_public_key="ssh-ed25519 test")
+
+    assert (
+        'filesystem_csi = { chart_repository = '
+        '"oci://charts.example.invalid/nebius", chart_version = "0.1.6"' in tf
+    )
+
+
 def test_render_tfvars_8gpu_cluster_emits_fabric() -> None:
     cluster = ClusterSpec(
         name="train",
@@ -328,6 +375,39 @@ def test_render_tfvars_capacity_block_is_strict() -> None:
         'gpu_nodes_reservation_policy = { policy = "STRICT", '
         'reservation_ids = ["capacityblockgroup-test"] }' in tf
     )
+
+
+def test_render_tfvars_splits_independent_strict_reserved_workers() -> None:
+    cluster = ClusterSpec(
+        name="reserved",
+        gpu_nodes=NodePoolSpec(
+            count=2,
+            platform="gpu-rtx6000",
+            preset="8gpu-192vcpu-1744gb",
+            capacity_block_group="capacityblockgroup-test",
+        ),
+        enable_gpu_cluster=False,
+    )
+    tf = render_tfvars(cluster)
+    assert "gpu_nodes_fixed_count_per_group = 1" in tf
+    assert "gpu_node_groups = 2" in tf
+
+
+def test_render_tfvars_keeps_fabric_gpu_cluster_in_one_group() -> None:
+    cluster = ClusterSpec(
+        name="reserved-fabric",
+        gpu_nodes=NodePoolSpec(
+            count=2,
+            platform="gpu-h200-sxm",
+            preset="8gpu-128vcpu-1600gb",
+            capacity_block_group="capacityblockgroup-test",
+        ),
+        enable_gpu_cluster=True,
+        infiniband_fabric="us-central1-a",
+    )
+    tf = render_tfvars(cluster)
+    assert "gpu_nodes_fixed_count_per_group = 2" in tf
+    assert "gpu_node_groups = 1" in tf
 
 
 def test_render_tfvars_gpu_defaults_managed_and_operator_is_explicit() -> None:
@@ -440,6 +520,9 @@ def test_plan_reports_strict_reservation_without_echoing_capacity_block_id() -> 
     data["defaults"]["gpu_nodes"]["capacity_block_group"] = (
         "capacityblockgroup-runtime-only"
     )
+    data["defaults"]["filesystem_csi_chart_repository"] = (
+        "oci://private.example.invalid/operator-only"
+    )
     plan = plan_fleet(spec_from_mapping(data))
     cluster_plan = plan["projects"][0]["clusters"][0]
     assert cluster_plan["gpu_reservation"] == "strict"
@@ -447,7 +530,9 @@ def test_plan_reports_strict_reservation_without_echoing_capacity_block_id() -> 
     assert cluster_plan["filestore_disk_size_gibibytes"] == 1024
     assert cluster_plan["filestore_mount_path"] == "/mnt/data"
     assert cluster_plan["filestore_mount_tag"] == "data"
+    assert cluster_plan["filesystem_csi_enabled"] is True
     assert "capacityblockgroup-runtime-only" not in json.dumps(plan)
+    assert "private.example.invalid" not in json.dumps(plan)
 
 
 def test_load_spec_from_yaml(tmp_path) -> None:
@@ -710,6 +795,21 @@ def test_deploy_yes_flag_skips_prompt_and_runs(tmp_path, monkeypatch) -> None:
     )
     assert result.exit_code == 0, result.output
     assert "2 deployed" in result.output
+    assert captured["repair_stopped_placeholder"] is False
+
+    result = runner.invoke(
+        app,
+        [
+            "fleet",
+            "deploy",
+            "--spec",
+            str(_spec_file(tmp_path)),
+            "--yes",
+            "--repair-stopped-placeholder",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert captured["repair_stopped_placeholder"] is True
 
 
 def test_destroy_aborts_on_declined_confirmation(tmp_path, monkeypatch) -> None:
@@ -995,6 +1095,68 @@ def _add_quiet_filesystem_verifier(recipe_root: Path) -> Path:
     return verifier
 
 
+def _add_attach_racy_filesystem_verifier(recipe_root: Path) -> Path:
+    verifier = (
+        recipe_root
+        / "k8s-training"
+        / "filesystem-csi-validation"
+        / "01-verify-node-filesystem-mounts.sh"
+    )
+    verifier.parent.mkdir(parents=True, exist_ok=True)
+    verifier.write_text(
+        "#!/usr/bin/env bash\n"
+        'MOUNT_TAG="${MOUNT_TAG:-data}"\n'
+        'if kubectl debug "${node}" 2>&1 | tee "${output_file}"; then\n'
+        "    if ! grep -Fq \\\n"
+        '      "[result] PASS: shared filesystem host mount is writable '
+        'virtiofs with reboot-safe nofail at ${MOUNT_POINT} on this node" \\\n'
+        '      "${output_file}"; then\n'
+        "      FAILED=1\n"
+        "    fi\n"
+        "fi\n"
+    )
+    return verifier
+
+
+def _add_filesystem_validation_common(recipe_root: Path) -> Path:
+    common = (
+        recipe_root
+        / "k8s-training"
+        / "filesystem-csi-validation"
+        / "common.sh"
+    )
+    common.parent.mkdir(parents=True, exist_ok=True)
+    common.write_text(
+        'MOUNT_POINT="${MOUNT_POINT:-$(default_mount_point)}"\n'
+        'MOUNT_POINT="${MOUNT_POINT:-/mnt/data}"\n'
+    )
+    return common
+
+
+def _add_classless_filesystem_smoke_manifest(recipe_root: Path) -> Path:
+    manifest = (
+        recipe_root
+        / "k8s-training"
+        / "filesystem-csi-validation"
+        / "manifests"
+        / "01-csi-smoke-test.yaml"
+    )
+    manifest.parent.mkdir(parents=True, exist_ok=True)
+    manifest.write_text(
+        "apiVersion: v1\n"
+        "kind: PersistentVolumeClaim\n"
+        "spec:\n"
+        "  accessModes:\n"
+        "    - ReadWriteMany\n"
+        "---\n"
+        "apiVersion: v1\n"
+        "kind: Pod\n"
+        "spec:\n"
+        "  containers: []\n"
+    )
+    return manifest
+
+
 def test_prepare_install_dir_patches_external_recipe_debug_quiet(tmp_path) -> None:
     from npa.fleet import lifecycle as L
 
@@ -1016,6 +1178,117 @@ def test_prepare_install_dir_patches_external_recipe_debug_quiet(tmp_path) -> No
     )
     assert "--quiet" in source.read_text()
     assert "--quiet" not in installed.read_text()
+
+
+def test_prepare_install_dir_binds_filesystem_verifier_mount_path(tmp_path) -> None:
+    from npa.fleet import lifecycle as L
+
+    root = _fake_recipe(
+        tmp_path, 'provider "nebius" { domain = "api.eu.nebius.cloud:443" }\n'
+    )
+    source = _add_filesystem_validation_common(root)
+    workdir = L._prepare_install_dir(
+        tmp_path / "install",
+        recipe_root=root,
+        region="us-central1",
+        cluster=ClusterSpec(
+            name="c",
+            cpu_nodes=NodePoolSpec(count=1),
+            filestore_mount_path="/mnt/shared data",
+        ),
+        ssh_public_key="k",
+    )
+
+    installed = (
+        workdir / "filesystem-csi-validation" / "common.sh"
+    ).read_text()
+    assert "$(default_mount_point)" in source.read_text()
+    assert "$(default_mount_point)" not in installed
+    assert "if [[ -z \"${MOUNT_POINT:-}\" ]]; then" in installed
+    assert "MOUNT_POINT='/mnt/shared data'" in installed
+    assert 'MOUNT_POINT="${MOUNT_POINT:-/mnt/data}"' in installed
+
+
+def test_prepare_install_dir_pins_filesystem_smoke_storage_class(tmp_path) -> None:
+    from npa.fleet import lifecycle as L
+
+    root = _fake_recipe(
+        tmp_path, 'provider "nebius" { domain = "api.eu.nebius.cloud:443" }\n'
+    )
+    source = _add_classless_filesystem_smoke_manifest(root)
+    workdir = L._prepare_install_dir(
+        tmp_path / "install",
+        recipe_root=root,
+        region="us-central1",
+        cluster=ClusterSpec(name="c", cpu_nodes=NodePoolSpec(count=1)),
+        ssh_public_key="k",
+    )
+
+    installed = (
+        workdir
+        / "filesystem-csi-validation"
+        / "manifests"
+        / "01-csi-smoke-test.yaml"
+    ).read_text()
+    assert "storageClassName:" not in source.read_text()
+    assert installed.count("storageClassName: csi-mounted-fs-path-sc") == 1
+    assert installed.index("storageClassName:") < installed.index("accessModes:")
+    assert installed.index("storageClassName:") < installed.index("kind: Pod")
+
+
+def test_prepare_install_dir_recovers_kubectl_debug_attach_race(tmp_path) -> None:
+    from npa.fleet import lifecycle as L
+
+    root = _fake_recipe(
+        tmp_path, 'provider "nebius" { domain = "api.eu.nebius.cloud:443" }\n'
+    )
+    source = _add_attach_racy_filesystem_verifier(root)
+    workdir = L._prepare_install_dir(
+        tmp_path / "install",
+        recipe_root=root,
+        region="us-central1",
+        cluster=ClusterSpec(name="c", cpu_nodes=NodePoolSpec(count=1)),
+        ssh_public_key="k",
+    )
+
+    installed = (
+        workdir / "filesystem-csi-validation" / "01-verify-node-filesystem-mounts.sh"
+    ).read_text()
+    assert "waiting for detached debugger evidence" not in source.read_text()
+    assert "waiting for detached debugger evidence" in installed
+    assert 'MOUNT_TAG="${MOUNT_TAG:-data}"' not in installed
+    assert 'if [[ -z "${MOUNT_TAG:-}" ]]; then' in installed
+    assert "MOUNT_TAG=data" in installed
+    assert "--for=jsonpath='{.status.phase}'=Succeeded" in installed
+    assert 'kubectl logs -n "${TEST_NAMESPACE}" "${debug_pod_name}"' in installed
+    assert installed.index("waiting for detached debugger evidence") < installed.index(
+        "    if ! grep -Fq \\\n"
+    )
+
+
+def test_prepare_install_dir_binds_custom_filesystem_mount_tag(tmp_path) -> None:
+    from npa.fleet import lifecycle as L
+
+    root = _fake_recipe(
+        tmp_path, 'provider "nebius" { domain = "api.eu.nebius.cloud:443" }\n'
+    )
+    _add_attach_racy_filesystem_verifier(root)
+    workdir = L._prepare_install_dir(
+        tmp_path / "install",
+        recipe_root=root,
+        region="us-central1",
+        cluster=ClusterSpec(
+            name="c",
+            cpu_nodes=NodePoolSpec(count=1),
+            filestore_mount_tag="shared storage",
+        ),
+        ssh_public_key="k",
+    )
+
+    installed = (
+        workdir / "filesystem-csi-validation" / "01-verify-node-filesystem-mounts.sh"
+    ).read_text()
+    assert "MOUNT_TAG='shared storage'" in installed
 
 
 def test_prepare_install_dir_patches_fetched_recipe_debug_quiet(
@@ -1419,6 +1692,553 @@ def test_node_group_match_accepts_camel_case_with_explicit_on_demand_evidence() 
     assert L._provider_node_group_matches_pool(payload, pool) is True
 
 
+def _tainted_gpu_reconciliation_fixture() -> tuple[dict, dict, ClusterSpec]:
+    template = {
+        "resources": {
+            "platform": "gpu-rtx6000",
+            "preset": "8gpu-192vcpu-1744gb",
+        },
+        "boot_disk": {"type": "network_ssd", "size_gibibytes": 256},
+        "reservation_policy": {
+            "policy": "STRICT",
+            "reservation_ids": ["capacityblockgroup-test"],
+        },
+        "network_interfaces": [{"subnet_id": "vpcsubnet-test"}],
+        "filesystems": [
+            {
+                "existing_filesystem": "computefilesystem-test",
+                "mount_tag": "npa-shared-fs",
+                "attach_mode": "READ_WRITE",
+            }
+        ],
+        "gpu_cluster": None,
+        "gpu_settings": {"drivers_preset": "cuda13.0"},
+    }
+    attributes = {
+        "id": "mk8snodegroup-test",
+        "name": "cluster-test-gpu",
+        "fixed_node_count": 2,
+        "template": template,
+    }
+    state = {
+        "resources": [
+            {
+                "mode": "managed",
+                "type": "nebius_mk8s_v1_cluster",
+                "name": "k8s-cluster",
+                "instances": [{"attributes": {"id": "mk8scluster-test"}}],
+            },
+            {
+                "mode": "managed",
+                "type": "nebius_mk8s_v1_node_group",
+                "name": "gpu",
+                "instances": [
+                    {
+                        "index_key": 0,
+                        "status": "tainted",
+                        "attributes": attributes,
+                    }
+                ],
+            },
+        ]
+    }
+    provider = {
+        "metadata": {
+            "id": "mk8snodegroup-test",
+            "name": "cluster-test-gpu",
+            "parent_id": "mk8scluster-test",
+        },
+        "spec": {"fixed_node_count": 2, "template": template},
+        "status": {
+            "state": "PROVISIONING",
+            "target_node_count": 2,
+            "ready_node_count": 1,
+        },
+    }
+    cluster = ClusterSpec(
+        name="cluster-test",
+        cpu_nodes=NodePoolSpec(count=0),
+        gpu_nodes=NodePoolSpec(
+            count=2,
+            platform="gpu-rtx6000",
+            preset="8gpu-192vcpu-1744gb",
+            disk_size_gib=256,
+            capacity_block_group="capacityblockgroup-test",
+        ),
+        enable_filestore=True,
+        filestore_mount_tag="npa-shared-fs",
+    )
+    return state, provider, cluster
+
+
+def test_tainted_exact_node_group_is_safely_adopted(monkeypatch, tmp_path) -> None:
+    from npa.cluster_backends import mk8s_execution as execution
+    from npa.cluster_backends.mk8s_model import as_mk8s_desired
+
+    state, provider, cluster = _tainted_gpu_reconciliation_fixture()
+    calls: list[list[str]] = []
+
+    def run(args, **_kwargs):  # noqa: ANN001
+        calls.append(args)
+        if args[1:3] == ["state", "pull"]:
+            return _Cap(json.dumps(state), 0)
+        if "node-group" in args and "get" in args:
+            return _Cap(json.dumps(provider), 0)
+        if args[1:2] == ["untaint"]:
+            return _Cap("", 0)
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(execution, "_run_capture", run)
+    result = execution._reconcile_tainted_node_groups(
+        terraform_bin="terraform",
+        workdir=tmp_path,
+        env={},
+        cluster=as_mk8s_desired(cluster),
+        subnet_id="vpcsubnet-test",
+        nebius_bin="nebius",
+        profile="tenant-profile",
+        on_status=None,
+    )
+
+    assert result == {
+        "cluster_id": "mk8scluster-test",
+        "node_group_ids": ["mk8snodegroup-test"],
+    }
+    assert calls[-1] == [
+        "terraform",
+        "untaint",
+        "nebius_mk8s_v1_node_group.gpu[0]",
+    ]
+
+
+def test_tainted_node_group_mismatch_refuses_before_untaint(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.cluster_backends import mk8s_execution as execution
+    from npa.cluster_backends.mk8s_model import as_mk8s_desired
+
+    state, provider, cluster = _tainted_gpu_reconciliation_fixture()
+    provider["spec"]["template"]["reservation_policy"]["reservation_ids"] = [
+        "capacityblockgroup-other"
+    ]
+    calls: list[list[str]] = []
+
+    def run(args, **_kwargs):  # noqa: ANN001
+        calls.append(args)
+        if args[1:3] == ["state", "pull"]:
+            return _Cap(json.dumps(state), 0)
+        if "node-group" in args and "get" in args:
+            return _Cap(json.dumps(provider), 0)
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(execution, "_run_capture", run)
+    with pytest.raises(RuntimeError, match="live identity or desired topology"):
+        execution._reconcile_tainted_node_groups(
+            terraform_bin="terraform",
+            workdir=tmp_path,
+            env={},
+            cluster=as_mk8s_desired(cluster),
+            subnet_id="vpcsubnet-test",
+            nebius_bin="nebius",
+            profile="tenant-profile",
+            on_status=None,
+        )
+
+    assert all("untaint" not in call for call in calls)
+
+
+def test_failed_split_one_node_group_retains_taint_for_exact_replacement(
+    monkeypatch, tmp_path
+) -> None:
+    from copy import deepcopy
+
+    from npa.cluster_backends import mk8s_execution as execution
+    from npa.cluster_backends.mk8s_model import as_mk8s_desired
+
+    state, provider, cluster = _tainted_gpu_reconciliation_fixture()
+    first = state["resources"][1]["instances"][0]
+    first.pop("status")
+    first["attributes"]["fixed_node_count"] = 1
+    failed = deepcopy(first)
+    failed["index_key"] = 1
+    failed["status"] = "tainted"
+    failed["attributes"]["id"] = "mk8snodegroup-failed"
+    failed["attributes"]["name"] = "cluster-test-gpu-1"
+    state["resources"][1]["instances"].append(failed)
+    provider["metadata"]["id"] = "mk8snodegroup-failed"
+    provider["metadata"]["name"] = "cluster-test-gpu-1"
+    provider["spec"]["fixed_node_count"] = 1
+    provider["status"] = {"state": "PROVISIONING", "target_node_count": 1}
+    stopped = {
+        "metadata": {
+            "id": "computeinstance-failed",
+            "parent_id": "project-test",
+            "labels": {"mk8s-node-group-id": "mk8snodegroup-failed"},
+        },
+        "status": {"state": "STOPPED"},
+    }
+    calls: list[list[str]] = []
+
+    def run(args, **_kwargs):  # noqa: ANN001
+        calls.append(args)
+        if args[1:3] == ["state", "pull"]:
+            return _Cap(json.dumps(state), 0)
+        if "node-group" in args and "get" in args:
+            return _Cap(json.dumps(provider), 0)
+        if "compute" in args and "list" in args:
+            return _Cap(json.dumps({"items": [stopped]}), 0)
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(execution, "_run_capture", run)
+    assert execution._reconcile_tainted_node_groups(
+        terraform_bin="terraform",
+        workdir=tmp_path,
+        env={},
+        cluster=as_mk8s_desired(cluster),
+        project_id="project-test",
+        subnet_id="vpcsubnet-test",
+        nebius_bin="nebius",
+        profile="tenant-profile",
+        on_status=None,
+    ) == {}
+    assert all("untaint" not in call for call in calls)
+
+
+def test_provider_absent_exact_split_group_retains_taint_for_recreation(
+    monkeypatch, tmp_path
+) -> None:
+    from copy import deepcopy
+
+    from npa.cluster_backends import mk8s_execution as execution
+    from npa.cluster_backends.mk8s_model import as_mk8s_desired
+
+    state, _provider, cluster = _tainted_gpu_reconciliation_fixture()
+    first = state["resources"][1]["instances"][0]
+    first.pop("status")
+    first["attributes"]["fixed_node_count"] = 1
+    absent = deepcopy(first)
+    absent["index_key"] = 1
+    absent["status"] = "tainted"
+    absent["attributes"]["id"] = "mk8snodegroup-absent"
+    absent["attributes"]["name"] = "cluster-test-gpu-1"
+    state["resources"][1]["instances"].append(absent)
+    calls: list[list[str]] = []
+
+    class NotFound(_Cap):
+        stderr = "rpc error: code = NotFound desc = requested resource not found"
+
+    def run(args, **_kwargs):  # noqa: ANN001
+        calls.append(args)
+        if args[1:3] == ["state", "pull"]:
+            return _Cap(json.dumps(state), 0)
+        if "node-group" in args and "get" in args:
+            return NotFound("", 13)
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(execution, "_run_capture", run)
+    assert execution._reconcile_tainted_node_groups(
+        terraform_bin="terraform",
+        workdir=tmp_path,
+        env={},
+        cluster=as_mk8s_desired(cluster),
+        project_id="project-test",
+        subnet_id="vpcsubnet-test",
+        nebius_bin="nebius",
+        profile="tenant-profile",
+        on_status=None,
+    ) == {}
+    assert all("untaint" not in call for call in calls)
+
+
+def test_provider_get_error_does_not_retain_tainted_group(monkeypatch, tmp_path) -> None:
+    from npa.cluster_backends import mk8s_execution as execution
+    from npa.cluster_backends.mk8s_model import as_mk8s_desired
+
+    state, _provider, cluster = _tainted_gpu_reconciliation_fixture()
+
+    class PermissionDenied(_Cap):
+        stderr = "rpc error: code = PermissionDenied desc = access denied"
+
+    def run(args, **_kwargs):  # noqa: ANN001
+        if args[1:3] == ["state", "pull"]:
+            return _Cap(json.dumps(state), 0)
+        if "node-group" in args and "get" in args:
+            return PermissionDenied("", 7)
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(execution, "_run_capture", run)
+    with pytest.raises(RuntimeError, match="live identity or desired topology"):
+        execution._reconcile_tainted_node_groups(
+            terraform_bin="terraform",
+            workdir=tmp_path,
+            env={},
+            cluster=as_mk8s_desired(cluster),
+            subnet_id="vpcsubnet-test",
+            nebius_bin="nebius",
+            profile="tenant-profile",
+            on_status=None,
+        )
+
+
+def _stopped_placeholder_workers(provider: dict) -> tuple[dict, dict]:
+    template = provider["spec"]["template"]
+
+    def worker(worker_id: str, state: str) -> dict:
+        boot = template["boot_disk"]
+        return {
+            "metadata": {
+                "id": worker_id,
+                "parent_id": "project-test",
+                "labels": {
+                    "mk8s-cluster-id": "mk8scluster-test",
+                    "mk8s-node-group-id": "mk8snodegroup-test",
+                },
+            },
+            "spec": {
+                "resources": template["resources"],
+                "boot_disk": {
+                    "managed_disk": {
+                        "spec": {
+                            "type": boot["type"],
+                            "size_gibibytes": boot["size_gibibytes"],
+                        }
+                    }
+                },
+                "reservation_policy": template["reservation_policy"],
+                "network_interfaces": template["network_interfaces"],
+                "filesystems": template["filesystems"],
+                "gpu_cluster": {},
+            },
+            "status": {"state": state},
+        }
+
+    running = worker("computeinstance-running", "RUNNING")
+    running["status"].update(
+        {"reservation_id": "reservation-test", "disk_attachments": [{}]}
+    )
+    return running, worker("computeinstance-stopped", "STOPPED")
+
+
+def test_explicit_stopped_placeholder_repair_is_exact_and_cas_guarded(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.cluster_backends import mk8s_execution as execution
+    from npa.cluster_backends.mk8s_model import as_mk8s_desired
+
+    state, provider, cluster = _tainted_gpu_reconciliation_fixture()
+    state["resources"][1]["instances"][0].pop("status")
+    provider["metadata"]["resource_version"] = 10
+    running, stopped = _stopped_placeholder_workers(provider)
+    calls: list[list[str]] = []
+    inventory_reads = 0
+
+    def run(args, **_kwargs):  # noqa: ANN001
+        nonlocal inventory_reads
+        calls.append(args)
+        if args[1:3] == ["state", "pull"]:
+            return _Cap(json.dumps(state), 0)
+        if "operation" in args and "list" in args:
+            return _Cap(json.dumps({"items": []}), 0)
+        if "compute" in args and ["compute", "instance", "list"] == args[
+            args.index("compute") :
+        ][:3]:
+            inventory_reads += 1
+            items = [running, stopped] if inventory_reads == 1 else [running]
+            return _Cap(json.dumps({"items": items}), 0)
+        if "compute" in args and ["compute", "instance", "get"] == args[
+            args.index("compute") :
+        ][:3]:
+            return _Cap(json.dumps(stopped), 0)
+        if "compute" in args and ["compute", "instance", "delete"] == args[
+            args.index("compute") :
+        ][:3]:
+            return _Cap("{}", 0)
+        if "node-group" in args and "get" in args:
+            return _Cap(json.dumps(provider), 0)
+        if "node-group" in args and "update" in args:
+            count = args[args.index("--fixed-node-count") + 1]
+            revision = 11 if count == "1" else 12
+            return _Cap(json.dumps({"metadata": {"resource_version": revision}}), 0)
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(execution, "_run_capture", run)
+    result = execution._repair_exact_stopped_placeholder(
+        terraform_bin="terraform",
+        workdir=tmp_path,
+        env={},
+        cluster=as_mk8s_desired(cluster),
+        project_id="project-test",
+        subnet_id="vpcsubnet-test",
+        nebius_bin="nebius",
+        profile="tenant-profile",
+        on_status=None,
+    )
+
+    assert result == {"status": "reconciled"}
+    deletes = [call for call in calls if "delete" in call]
+    assert deletes == [
+        [
+            "nebius",
+            "--profile",
+            "tenant-profile",
+            "compute",
+            "instance",
+            "delete",
+            "--id",
+            "computeinstance-stopped",
+            "--format",
+            "json",
+        ]
+    ]
+    updates = [call for call in calls if "update" in call]
+    assert [call[call.index("--fixed-node-count") + 1] for call in updates] == [
+        "1",
+        "2",
+    ]
+    assert updates[0][updates[0].index("--resource-version") + 1] == "10"
+    assert updates[1][updates[1].index("--resource-version") + 1] == "11"
+    assert "--async" not in updates[0]
+    assert "--async" in updates[1]
+
+
+def test_stopped_placeholder_with_disk_fails_before_delete(monkeypatch, tmp_path) -> None:
+    from npa.cluster_backends import mk8s_execution as execution
+    from npa.cluster_backends.mk8s_model import as_mk8s_desired
+
+    state, provider, cluster = _tainted_gpu_reconciliation_fixture()
+    state["resources"][1]["instances"][0].pop("status")
+    running, stopped = _stopped_placeholder_workers(provider)
+    stopped["status"]["disk_attachments"] = [{}]
+    calls: list[list[str]] = []
+
+    def run(args, **_kwargs):  # noqa: ANN001
+        calls.append(args)
+        if args[1:3] == ["state", "pull"]:
+            return _Cap(json.dumps(state), 0)
+        if "operation" in args:
+            return _Cap(json.dumps({"items": []}), 0)
+        if args[1:4] == ["compute", "instance", "list"]:
+            return _Cap(json.dumps({"items": [running, stopped]}), 0)
+        if "node-group" in args and "get" in args:
+            return _Cap(json.dumps(provider), 0)
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(execution, "_run_capture", run)
+    with pytest.raises(RuntimeError, match="reservation or disk evidence is unsafe"):
+        execution._repair_exact_stopped_placeholder(
+            terraform_bin="terraform",
+            workdir=tmp_path,
+            env={},
+            cluster=as_mk8s_desired(cluster),
+            project_id="project-test",
+            subnet_id="vpcsubnet-test",
+            nebius_bin="nebius",
+            profile="",
+            on_status=None,
+        )
+    assert all("delete" not in call for call in calls)
+
+
+def test_explicit_repair_removes_exact_failed_split_group_orphan(
+    monkeypatch, tmp_path
+) -> None:
+    from copy import deepcopy
+
+    from npa.cluster_backends import mk8s_execution as execution
+    from npa.cluster_backends.mk8s_model import as_mk8s_desired
+
+    state, provider, cluster = _tainted_gpu_reconciliation_fixture()
+    state_group = state["resources"][1]["instances"][0]
+    state_group.pop("status")
+    state_group["attributes"]["fixed_node_count"] = 1
+    orphan = deepcopy(provider)
+    orphan["metadata"]["id"] = "mk8snodegroup-orphan"
+    orphan["metadata"]["name"] = "cluster-test-ng-gpu-1"
+    orphan["spec"]["fixed_node_count"] = 1
+    orphan["status"] = {"state": "PROVISIONING", "target_node_count": 1}
+    _running, stopped = _stopped_placeholder_workers(provider)
+    stopped["metadata"]["labels"]["mk8s-node-group-id"] = "mk8snodegroup-orphan"
+    calls: list[list[str]] = []
+
+    def run(args, **_kwargs):  # noqa: ANN001
+        calls.append(args)
+        if args[1:3] == ["state", "pull"]:
+            return _Cap(json.dumps(state), 0)
+        if "node-group" in args and "list" in args and "operation" not in args:
+            return _Cap(json.dumps({"items": [provider, orphan]}), 0)
+        if "operation" in args:
+            return _Cap(json.dumps({"items": []}), 0)
+        if "compute" in args and "list" in args:
+            return _Cap(json.dumps({"items": [stopped]}), 0)
+        if "node-group" in args and "delete" in args:
+            return _Cap("{}", 0)
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(execution, "_run_capture", run)
+    assert execution._repair_exact_stopped_placeholder(
+        terraform_bin="terraform",
+        workdir=tmp_path,
+        env={},
+        cluster=as_mk8s_desired(cluster),
+        project_id="project-test",
+        subnet_id="vpcsubnet-test",
+        nebius_bin="nebius",
+        profile="tenant-profile",
+        on_status=None,
+    ) == {"status": "split-orphan-removed"}
+    deletes = [call for call in calls if "delete" in call]
+    assert len(deletes) == 1
+    assert deletes[0][deletes[0].index("--id") + 1] == "mk8snodegroup-orphan"
+
+
+def test_existing_terraform_state_audit_failure_refuses_apply(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.cluster_backends import mk8s_execution as execution
+    from npa.cluster_backends.mk8s_model import as_mk8s_desired
+
+    _state, _provider, cluster = _tainted_gpu_reconciliation_fixture()
+    (tmp_path / "terraform.tfstate").write_text("{}\n")
+    monkeypatch.setattr(execution, "_run_capture", lambda *_a, **_k: _Cap("", 1))
+
+    with pytest.raises(RuntimeError, match="could not be audited"):
+        execution._reconcile_tainted_node_groups(
+            terraform_bin="terraform",
+            workdir=tmp_path,
+            env={},
+            cluster=as_mk8s_desired(cluster),
+            subnet_id="vpcsubnet-test",
+            nebius_bin="nebius",
+            profile="tenant-profile",
+            on_status=None,
+        )
+
+
+def test_absent_terraform_state_is_a_clean_reconciliation_noop(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.cluster_backends import mk8s_execution as execution
+    from npa.cluster_backends.mk8s_model import as_mk8s_desired
+
+    _state, _provider, cluster = _tainted_gpu_reconciliation_fixture()
+
+    class NoState(_Cap):
+        stderr = "No state file was found!"
+
+    monkeypatch.setattr(execution, "_run_capture", lambda *_a, **_k: NoState("", 1))
+
+    assert execution._reconcile_tainted_node_groups(
+        terraform_bin="terraform",
+        workdir=tmp_path,
+        env={},
+        cluster=as_mk8s_desired(cluster),
+        subnet_id="vpcsubnet-test",
+        nebius_bin="nebius",
+        profile="tenant-profile",
+        on_status=None,
+    ) == {}
+
+
 def test_deploy_one_cluster_failure_leaves_sidecar_provisioning(
     tmp_path, monkeypatch
 ) -> None:
@@ -1660,9 +2480,30 @@ def _destroy_one_with_mocked_terraform(tmp_path, monkeypatch, *, destroy_fails: 
         },
     )
     calls: list[list[str]] = []
+    lock_active = False
+
+    class CacheLock:
+        def __enter__(self):
+            nonlocal lock_active
+            assert lock_active is False
+            lock_active = True
+
+        def __exit__(self, *_args):
+            nonlocal lock_active
+            lock_active = False
+
+    monkeypatch.setattr(
+        L._mk8s_execution,
+        "terraform_plugin_cache_lock",
+        lambda _env: CacheLock(),
+    )
 
     def fake_tf_run(args, **kwargs):
         calls.append(args)
+        if "init" in args:
+            assert lock_active is True
+        if "destroy" in args:
+            assert lock_active is False
         if destroy_fails and "destroy" in args:
             raise RuntimeError("terraform destroy failed")
 

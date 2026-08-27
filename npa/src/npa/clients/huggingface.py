@@ -23,6 +23,37 @@ def hf_model_url(repo: str) -> str:
     return f"https://huggingface.co/{repo}"
 
 
+def validate_hf_identity(token: str, *, timeout: float = 10.0) -> HFAccessResult:
+    """Authenticate a token without treating public-repository access as proof."""
+
+    if not token:
+        return HFAccessResult(repo="whoami-v2", ok=False, error="HF_TOKEN is absent")
+    try:
+        response = httpx.get(
+            "https://huggingface.co/api/whoami-v2",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=timeout,
+            follow_redirects=False,
+        )
+    except httpx.HTTPError as exc:
+        return HFAccessResult(repo="whoami-v2", ok=False, error=str(exc))
+    if response.status_code == 200:
+        return HFAccessResult(repo="whoami-v2", ok=True, status_code=200)
+    if response.status_code in {401, 403}:
+        return HFAccessResult(
+            repo="whoami-v2",
+            ok=False,
+            status_code=response.status_code,
+            error="HF_TOKEN was rejected by Hugging Face",
+        )
+    return HFAccessResult(
+        repo="whoami-v2",
+        ok=False,
+        status_code=response.status_code,
+        error=f"Hugging Face identity probe returned HTTP {response.status_code}",
+    )
+
+
 def validate_hf_access(
     token: str, repo: str, repo_type: str = "model", *, timeout: float = 10.0
 ) -> HFAccessResult:

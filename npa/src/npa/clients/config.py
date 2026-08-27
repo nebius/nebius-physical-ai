@@ -507,24 +507,22 @@ def resolve_credentials() -> CredentialsConfig:
 
 
 def resolve_container_registry(project: str | None = None) -> str:
-    """Return the project-level container registry override, or the default."""
+    """Return the environment, project, global, or default registry in order."""
     yml = _load_yaml()
     try:
         proj = _resolve_project_section(yml, project)
     except ConfigError:
         proj = {}
 
-    value = ""
-    if isinstance(proj, dict):
-        value = str(proj.get("container_registry", "") or "")
-    if not value:
-        # Honor both NPA_REGISTRY and NPA_REGISTRY_ID here, matching
-        # deploy.images.primary_container_registry, so exporting only
-        # NPA_REGISTRY_ID does not silently fall back to the default registry
-        # on tool-deploy paths (lerobot/fiftyone/sonic/detection-training/sim2real).
-        from npa.deploy.images import registry_from_env
+    # An explicit execution override must win over legacy project registry
+    # configuration. This is especially important for digest-pinned public
+    # development images, which must not silently resolve back to a provider
+    # registry saved in ~/.npa/config.yaml.
+    from npa.deploy.images import registry_from_env
 
-        value = registry_from_env()
+    value = registry_from_env()
+    if not value and isinstance(proj, dict):
+        value = str(proj.get("container_registry", "") or "")
     if not value:
         value = str(yml.get("container_registry", "") or "")
     return value.rstrip("/") if value else DEFAULT_CONTAINER_REGISTRY
@@ -1503,6 +1501,12 @@ def resolve_project_storage(
             alias="" if read_only else str(project or ""),
             migrate_legacy=not read_only,
         )
+        # ``configure --no-provision`` retains exact-project storage as audit
+        # and cleanup evidence, but explicitly removes it from operational
+        # selection.  Do not fall through to that record, an older inline
+        # stanza, or ambient shared credentials after the user deselects it.
+        if record.get("storage_selected") is False:
+            return StorageConfig(checkpoint_bucket="", endpoint_url="")
         saved_storage = record.get("storage")
         if isinstance(saved_storage, dict):
             project_storage_credentials = saved_storage

@@ -44,7 +44,7 @@ networkx==3.4.2
 numpy==1.26.4
 opencv-python-headless==4.11.0.86
 packaging==26.3
-peft==0.17.0
+peft==0.20.0
 pillow==12.3.0
 pip==26.1.2
 propcache==0.5.2
