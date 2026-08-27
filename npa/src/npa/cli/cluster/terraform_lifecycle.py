@@ -545,6 +545,15 @@ def up_cmd(
             existing_filestore=str(
                 _tfvar_value(tfvars, env, "existing_filestore", "") or ""
             ),
+            filesystem_csi_chart_repository=str(
+                _tfvar_value(
+                    tfvars,
+                    env,
+                    "filesystem_csi_chart_repository",
+                    "",
+                )
+                or ""
+            ),
             subnet_id=str(_tfvar_value(tfvars, env, "subnet_id", "") or ""),
             filestore_disk_size_gibibytes=int(
                 _tfvar_value(tfvars, env, "filestore_disk_size_gibibytes", 1024) or 1024

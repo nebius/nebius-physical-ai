@@ -577,6 +577,48 @@ def test_compaction_preserves_prepared_action_and_durable_submit() -> None:
     assert _submitted_workflow_state(messages[2:]) == (True, ["prepared-run-1"])
 
 
+def test_consumed_prepared_action_does_not_hide_new_action() -> None:
+    messages = [
+        {
+            "role": "user",
+            "content": f"{PREPARED_ACTION_MARKER}\nAction ID: action-1",
+        },
+        {
+            "role": "tool",
+            "content": json.dumps(
+                {
+                    "schema": "npa.sim2real.prepared_workflow_action.result.v1",
+                    "action_consumed": True,
+                }
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                f"{PREPARED_ACTION_MARKER}\n"
+                "Typed action available: submit_prepared_workflow. "
+                "Action ID: action-2."
+            ),
+        },
+    ]
+
+    assert _prepared_action_consumed_state(messages) is True
+    assert _prepared_action_consumed_state(messages, "action-1") is True
+    assert _prepared_action_consumed_state(messages, "action-2") is False
+
+    checkpoint_messages = [
+        {"role": "system", "content": "system"},
+        {"role": "user", "content": "task"},
+        *messages,
+        {"role": "assistant", "content": "x" * 20_000},
+    ]
+    _, checkpoint = _context_checkpoint(checkpoint_messages, max_recent_chars=512)
+    assert '"action_id":"action-2"' in checkpoint["content"]
+    assert '"available":true' in checkpoint["content"]
+    assert "Action ID: action-2." in checkpoint["content"]
+    assert "Action ID: action-2.." not in checkpoint["content"]
+
+
 @pytest.mark.parametrize("durable_state", ["finished", "indeterminate"])
 def test_generic_submit_consumption_removes_typed_action_from_checkpoint(
     durable_state: str,

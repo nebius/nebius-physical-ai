@@ -4,7 +4,8 @@ FROM ${BASE_IMAGE}
 ARG NPA_SOURCE_SHA
 ARG UBUNTU_SNAPSHOT=20260801T053000Z
 LABEL npa.tool="envgen" \
-      org.opencontainers.image.revision="${NPA_SOURCE_SHA}"
+      org.opencontainers.image.revision="${NPA_SOURCE_SHA}" \
+      org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"
 
 WORKDIR /opt/npa
 USER root
