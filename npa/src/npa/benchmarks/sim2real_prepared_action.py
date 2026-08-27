@@ -266,12 +266,21 @@ def create_receipt_from_request(request_path: Path, output_path: Path) -> dict[s
                 "receipt_location_invalid", f"{label} is outside private evidence"
             ) from exc
     observed_workspace = workspace_state(workspace)
+    source_commit = request["source_commit"]
+    benchmark_base = request["benchmark_base"]
+    base_is_ancestor = benchmark_base == source_commit or subprocess.run(
+        ["git", "merge-base", "--is-ancestor", benchmark_base, source_commit],
+        cwd=workspace,
+        check=False,
+    ).returncode == 0
     if (
-        observed_workspace["head"] != request["benchmark_base"]
+        observed_workspace["head"] != source_commit
         or observed_workspace["detached"] is not True
+        or not base_is_ancestor
     ):
         raise PreparedActionError(
-            "source_mismatch", "workspace is not detached at the benchmark base"
+            "source_mismatch",
+            "workspace is not detached at a source commit descended from the benchmark base",
         )
     try:
         output_path.resolve().relative_to(evidence)
@@ -791,11 +800,25 @@ def validate_receipt(
                 "preflight_not_passed", f"{item['name']} preflight is not passed"
             )
     observed_workspace = workspace_state(context.workspace)
+    base_is_ancestor = benchmark["base_commit"] == source[
+        "source_commit"
+    ] or subprocess.run(
+        [
+            "git",
+            "merge-base",
+            "--is-ancestor",
+            benchmark["base_commit"],
+            source["source_commit"],
+        ],
+        cwd=context.workspace,
+        check=False,
+    ).returncode == 0
     if (
         observed_workspace["head"] != source["workspace_commit"]
         or observed_workspace["detached"] is not True
         or canonical_sha256(observed_workspace) != source["workspace_state_sha256"]
-        or benchmark["base_commit"] != source["workspace_commit"]
+        or source["source_commit"] != source["workspace_commit"]
+        or not base_is_ancestor
     ):
         raise PreparedActionError("source_mismatch", "workspace/source state changed")
     environment = context.environment

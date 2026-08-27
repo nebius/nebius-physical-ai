@@ -89,7 +89,7 @@ def prepared(tmp_path: Path) -> dict[str, object]:
     run_id = "prepared-run-1"
     project = "private-alias"
     project_infra = "k8s/private-context"
-    source = "a" * 64
+    source = base
     spec_sandbox = "/tmp/npa-private-evidence/sim2real.yaml"
     argv = [
         "npa/.venv/bin/npa",

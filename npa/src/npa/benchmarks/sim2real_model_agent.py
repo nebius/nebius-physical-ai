@@ -1814,7 +1814,11 @@ def _request_active_token_estimate(
 
 
 def _workspace_preflight(
-    workspace: Path, expected_commit: str, *, require_clean: bool
+    workspace: Path,
+    expected_commit: str,
+    *,
+    require_clean: bool,
+    allow_descendant: bool = False,
 ) -> str:
     if not workspace.is_dir():
         raise ValueError(f"workspace is missing: {workspace}")
@@ -1827,9 +1831,20 @@ def _workspace_preflight(
     status = subprocess.check_output(
         ["git", "status", "--porcelain"], cwd=workspace, text=True
     )
-    if head != expected_commit or branch or (require_clean and status):
+    expected_matches = head == expected_commit
+    if allow_descendant and not expected_matches:
+        expected_matches = (
+            subprocess.run(
+                ["git", "merge-base", "--is-ancestor", expected_commit, head],
+                cwd=workspace,
+                check=False,
+            ).returncode
+            == 0
+        )
+    if not expected_matches or branch or (require_clean and status):
         raise ValueError(
             "trial workspace must be detached at the recorded origin/main commit"
+            + (" or a descendant commit" if allow_descendant else "")
             + (" and clean" if require_clean else "")
         )
     return status
@@ -1988,6 +2003,7 @@ def run(config_path: Path) -> int:
         workspace,
         str(config["origin_main_commit"]),
         require_clean=not is_resume,
+        allow_descendant=is_resume,
     )
     system_prompt_path = Path(config["system_prompt_file"]).resolve()
     system = system_prompt_path.read_text(encoding="utf-8")
