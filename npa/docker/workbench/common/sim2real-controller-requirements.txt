@@ -10,6 +10,7 @@ httpx==0.28.1
 idna==3.18
 jmespath==1.1.0
 python-dateutil==2.9.0.post0
+PyYAML==6.0.3
 s3transfer==0.19.2
 six==1.17.0
 typing_extensions==4.15.0
