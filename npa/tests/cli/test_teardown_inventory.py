@@ -736,4 +736,7 @@ def test_wait_for_ssh_gates_the_terraform_wait_resource() -> None:
 
     assert 'variable "wait_for_ssh"' in variables_tf
     body = main_tf[main_tf.index('resource "null_resource" "wait_for_cloud_init"') :]
-    assert "count      = var.wait_for_ssh ? 1 : 0" in body[: body.index("provisioner")]
+    assert (
+        'count      = var.wait_for_ssh && trimspace(var.ssh_cidr_block) != "" ? 1 : 0'
+        in body[: body.index("provisioner")]
+    )

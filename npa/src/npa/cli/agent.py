@@ -9837,6 +9837,18 @@ def deploy_cmd(
             _fail(f"Invalid --tf-var value {item!r}; expected key=value")
         key, value = item.split("=", 1)
         merged_vars[key.strip()] = value.strip()
+    ssh_source = str(merged_vars.get("ssh_cidr_block", "")).strip()
+    application_source = str(merged_vars.get("application_cidr_block", "")).strip()
+    if not ssh_source:
+        _fail(
+            "Agent deploy requires an explicit ssh_cidr_block so the verified "
+            "post-create bootstrap can connect; pass it with --tf-var."
+        )
+    if not application_source:
+        _fail(
+            "Agent deploy requires an explicit application_cidr_block for its "
+            "public HTTPS health boundary; pass it with --tf-var."
+        )
     try:
         _ensure_terraform_state_bucket(
             project_id=env_project_id,
@@ -10113,7 +10125,16 @@ def deploy_cmd(
     if public_https:
         ingress_ports.append(DEFAULT_HTTPS_PORT)
     try:
-        ensure_ingress(vm_id=instance_id, ports=tuple(ingress_ports), tool="agent")
+        ensure_ingress(
+            vm_id=instance_id,
+            ports=tuple(ingress_ports),
+            source=application_source,
+            allow_world_open=str(
+                merged_vars.get("allow_world_open_application", "false")
+            ).lower()
+            == "true",
+            tool="agent",
+        )
         remove_npa_ingress_for_instance_ports(
             instance_id,
             ports=(backend_port,),
@@ -10330,6 +10351,11 @@ def setup_cmd(
         "--ssh-public-key-path",
         help="SSH public key for the VM.",
     ),
+    tf_var: list[str] = typer.Option(
+        [],
+        "--tf-var",
+        help="Additional Terraform var key=value; use for explicit SSH/application CIDRs.",
+    ),
     replace: bool = typer.Option(
         False,
         "--replace",
@@ -10421,6 +10447,7 @@ def setup_cmd(
         tenant_id=tenant_id,
         region=region,
         ssh_public_key_path=ssh_public_key_path,
+        tf_var=tf_var,
         replace=replace,
     )
 
@@ -10716,11 +10743,7 @@ def bootstrap_cmd(
         )
     instance_id = str(record.get("instance_id", "")).strip()
     if instance_id:
-        ingress_ports: list[int] = [agent_port, rerun_port]
-        if public_https:
-            ingress_ports.append(DEFAULT_HTTPS_PORT)
         try:
-            ensure_ingress(vm_id=instance_id, ports=tuple(ingress_ports), tool="agent")
             remove_npa_ingress_for_instance_ports(
                 instance_id,
                 ports=(backend_port,),

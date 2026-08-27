@@ -266,6 +266,79 @@ output "rendered" {{
     ]
 
 
+@pytest.mark.parametrize(
+    "workbench_type",
+    ["fiftyone", "lerobot", "lerobot-container", "cosmos", "genesis", "groot", "agent"],
+)
+def test_every_cloud_init_variant_omits_storage_secrets(
+    tmp_path: Path, workbench_type: str
+) -> None:
+    terraform = shutil.which("terraform")
+    if terraform is None:
+        pytest.skip("terraform is required to parse the deployment template")
+    template = PACKAGE_ROOT / "src/npa/deploy/terraform/cloud_init.yaml.tpl"
+    config = tmp_path / "main.tf"
+    config.write_text(
+        f'''locals {{
+  rendered = templatefile({json.dumps(str(template))}, {{
+    ssh_user = "ubuntu"
+    ssh_public_key = "ssh-ed25519 AAAA fixture"
+    workbench_type = {json.dumps(workbench_type)}
+    server_port = 8088
+    lerobot_version = "0.6.0"
+    fiftyone_version = "1.8.0"
+    s3_bucket = "fixture-bucket"
+    s3_endpoint = "https://storage.invalid"
+    nebius_region = "us-central1"
+    aws_access_key = "NPA_STORAGE_ACCESS_SENTINEL"
+    aws_secret_key = "NPA_STORAGE_SECRET_SENTINEL"
+  }})
+}}
+output "rendered" {{ value = local.rendered }}
+''',
+        encoding="utf-8",
+    )
+
+    rendered = subprocess.run(
+        [terraform, "apply", "-auto-approve", "-no-color"],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert rendered.returncode == 0, rendered.stderr
+    assert "NPA_STORAGE_ACCESS_SENTINEL" not in rendered.stdout
+    assert "NPA_STORAGE_SECRET_SENTINEL" not in rendered.stdout
+    assert "AWS_ACCESS_KEY_ID=" not in rendered.stdout
+    assert "AWS_SECRET_ACCESS_KEY=" not in rendered.stdout
+
+
+def test_terraform_splits_and_fails_closed_ingress() -> None:
+    main_tf = (PACKAGE_ROOT / "src/npa/deploy/terraform/main.tf").read_text()
+    variables_tf = (PACKAGE_ROOT / "src/npa/deploy/terraform/variables.tf").read_text()
+
+    ssh_rule = main_tf.split('resource "nebius_vpc_v1_security_rule" "allow_ssh"', 1)[1].split(
+        'resource "nebius_vpc_v1_security_rule" "allow_server"', 1
+    )[0]
+    app_rule = main_tf.split('resource "nebius_vpc_v1_security_rule" "allow_server"', 1)[1].split(
+        'resource "nebius_vpc_v1_security_rule" "allow_egress"', 1
+    )[0]
+    template_args = main_tf.split("cloud_init_user_data = templatefile", 1)[1].split(")", 1)[0]
+
+    assert 'default     = ""' in variables_tf.split('variable "ssh_cidr_block"', 1)[1].split("}", 1)[0]
+    assert 'default     = ""' in variables_tf.split('variable "application_cidr_block"', 1)[1].split("}", 1)[0]
+    assert "var.allow_world_open_ssh" in variables_tf
+    assert "var.allow_world_open_application" in variables_tf
+    assert 'count     = trimspace(var.ssh_cidr_block) == "" ? 0 : 1' in ssh_rule
+    assert "source_cidrs      = [var.ssh_cidr_block]" in ssh_rule
+    assert 'count     = trimspace(var.application_cidr_block) == "" ? 0 : 1' in app_rule
+    assert "source_cidrs      = [var.application_cidr_block]" in app_rule
+    assert "var.ssh_cidr_block" not in app_rule
+    assert "nebius_api_key" not in template_args
+    assert "nebius_secret_key" not in template_args
+
+
 def test_terraform_outputs_use_compute_and_cpu_names_with_legacy_aliases() -> None:
     outputs = (PACKAGE_ROOT / "src/npa/deploy/terraform/outputs.tf").read_text()
 

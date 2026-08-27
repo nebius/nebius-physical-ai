@@ -143,3 +143,8 @@ toolRefs: `workbench.insights.record`, `workbench.insights.ingest_run`,
   a step whose `resources_profile.accelerators` parses to >= 1, and manifests with
   status `planned` are skipped. CPU-only and never-executed runs therefore report
   no GPU count at all rather than a fabricated zero.
+- The service defaults to token authentication and an empty storage scope. Set
+  `INSIGHTS_TOKEN`, plus the narrow `INSIGHTS_ALLOWED_S3_ROOTS` and/or
+  `INSIGHTS_ALLOWED_LOCAL_ROOTS` boundary. `INSIGHTS_AUTH_MODE=none` is an
+  explicit local/test opt-in only; see
+  `docs/security/workbench-service-boundaries.md`.

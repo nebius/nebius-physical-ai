@@ -33,6 +33,15 @@ from npa.workbench.insights.store import (
     read_records,
     record_metrics,
 )
+from npa.workbench.storage_scope import StorageScope, use_storage_scope
+
+
+@pytest.fixture(autouse=True)
+def _explicit_local_storage_scope(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Insights tests intentionally operate only inside their per-test sandbox."""
+    monkeypatch.setenv("INSIGHTS_ALLOWED_LOCAL_ROOTS", str(tmp_path))
+    with use_storage_scope(StorageScope.from_config(local_roots=[tmp_path])):
+        yield
 
 
 def _metric(run_id: str, name: str, value: float, **kw: Any) -> dict[str, Any]:
@@ -993,6 +1002,20 @@ def test_service_health_system_info_and_token_auth() -> None:
     secure = TestClient(create_app(auth_mode="token", token="s3cr3t"))
     assert secure.get("/health").status_code == 401
     assert secure.get("/health", headers={"Authorization": "Bearer s3cr3t"}).status_code == 200
+
+
+def test_deployed_default_is_not_unauthenticated(monkeypatch: pytest.MonkeyPatch) -> None:
+    from npa.workbench.insights.service import create_app
+
+    monkeypatch.delenv("INSIGHTS_AUTH_MODE", raising=False)
+    monkeypatch.delenv("INSIGHTS_TOKEN", raising=False)
+    assert TestClient(create_app()).get("/health").status_code == 503
+
+
+def test_explicit_auth_none_remains_an_opt_in() -> None:
+    from npa.workbench.insights.service import create_app
+
+    assert TestClient(create_app(auth_mode="none")).get("/health").status_code == 200
 
 
 def test_sdk_workbench_namespace_exports_insights() -> None:

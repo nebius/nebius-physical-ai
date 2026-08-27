@@ -20,8 +20,17 @@ from npa.workbench.dataset.schemas import (
     ValidateRequest,
 )
 from npa.workbench.dataset.validation import DatasetValidationError, validate_manifest
+from npa.workbench.storage_scope import StorageScope, use_storage_scope
 
 runner = CliRunner()
+
+
+@pytest.fixture(autouse=True)
+def _explicit_local_storage_scope(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Dataset tests intentionally operate only inside their per-test sandbox."""
+    monkeypatch.setenv("DATASET_ALLOWED_LOCAL_ROOTS", str(tmp_path))
+    with use_storage_scope(StorageScope.from_config(local_roots=[tmp_path])):
+        yield
 
 
 def _raw(tmp_path: Path, records: list[dict[str, Any]] | None = None) -> str:
@@ -250,6 +259,20 @@ def test_health_system_info_and_token_auth() -> None:
     secure = TestClient(create_app(auth_mode="token", token="s3cr3t"))
     assert secure.get("/health").status_code == 401
     assert secure.get("/health", headers={"Authorization": "Bearer s3cr3t"}).status_code == 200
+
+
+def test_deployed_default_is_not_unauthenticated(monkeypatch: pytest.MonkeyPatch) -> None:
+    from npa.workbench.dataset.service import create_app
+
+    monkeypatch.delenv("DATASET_AUTH_MODE", raising=False)
+    monkeypatch.delenv("DATASET_TOKEN", raising=False)
+    assert TestClient(create_app()).get("/health").status_code == 503
+
+
+def test_explicit_auth_none_remains_an_opt_in() -> None:
+    from npa.workbench.dataset.service import create_app
+
+    assert TestClient(create_app(auth_mode="none")).get("/health").status_code == 200
 
 
 def test_cli_ingest_validate_curate_query(tmp_path: Path) -> None:

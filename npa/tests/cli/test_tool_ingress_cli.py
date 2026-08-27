@@ -8,6 +8,7 @@ from npa.clients.network import EnsureIngressResult
 
 
 runner = CliRunner()
+NARROW_SOURCE = "192.0.2.0/24"
 
 
 TOOL_CASES = [
@@ -23,7 +24,7 @@ def _result(tool: str, port: int) -> EnsureIngressResult:
         project_id="project-test",
         public_ip="203.0.113.10/32",
         ports=(port,),
-        source="0.0.0.0/0",
+        source=NARROW_SOURCE,
         tool=tool,
         security_groups=(),
     )
@@ -39,28 +40,41 @@ def _patch_projects(mocker, workbenches: dict):
 
 
 @pytest.mark.parametrize(("tool", "port"), TOOL_CASES)
-def test_tool_ensure_ingress_calls_primitive_with_instance_and_port(mocker, tool: str, port: int) -> None:
+def test_tool_ensure_ingress_calls_primitive_with_instance_and_port(
+    mocker, tool: str, port: int
+) -> None:
     _patch_projects(mocker, {"demo": {"instance_id": "computeinstance-test"}})
-    ensure = mocker.patch("npa.cli.ingress.ensure_ingress", return_value=_result(tool, port))
+    ensure = mocker.patch(
+        "npa.cli.ingress.ensure_ingress", return_value=_result(tool, port)
+    )
 
-    result = runner.invoke(app, ["workbench", tool, "ensure-ingress", "-n", "demo"])
+    result = runner.invoke(
+        app,
+        ["workbench", tool, "ensure-ingress", "-n", "demo", "--source", NARROW_SOURCE],
+    )
 
     assert result.exit_code == 0
     assert f"ingress already covered for port {port}" in result.output
     ensure.assert_called_once_with(
         vm_id="computeinstance-test",
         ports=(port,),
-        source="0.0.0.0/0",
+        source=NARROW_SOURCE,
+        allow_world_open=False,
         tool=tool,
     )
 
 
 @pytest.mark.parametrize(("tool", "port"), TOOL_CASES)
-def test_tool_ensure_ingress_missing_alias_is_clean(mocker, tool: str, port: int) -> None:
+def test_tool_ensure_ingress_missing_alias_is_clean(
+    mocker, tool: str, port: int
+) -> None:
     _patch_projects(mocker, {"other": {"instance_id": "computeinstance-test"}})
     ensure = mocker.patch("npa.cli.ingress.ensure_ingress")
 
-    result = runner.invoke(app, ["workbench", tool, "ensure-ingress", "-n", "demo"])
+    result = runner.invoke(
+        app,
+        ["workbench", tool, "ensure-ingress", "-n", "demo", "--source", NARROW_SOURCE],
+    )
 
     assert result.exit_code == 1
     assert "Workbench 'demo' not found" in result.output
@@ -68,11 +82,16 @@ def test_tool_ensure_ingress_missing_alias_is_clean(mocker, tool: str, port: int
 
 
 @pytest.mark.parametrize(("tool", "port"), TOOL_CASES)
-def test_tool_ensure_ingress_missing_instance_id_has_remediation(mocker, tool: str, port: int) -> None:
+def test_tool_ensure_ingress_missing_instance_id_has_remediation(
+    mocker, tool: str, port: int
+) -> None:
     _patch_projects(mocker, {"demo": {"endpoint": "http://203.0.113.10"}})
     ensure = mocker.patch("npa.cli.ingress.ensure_ingress")
 
-    result = runner.invoke(app, ["workbench", tool, "ensure-ingress", "-n", "demo"])
+    result = runner.invoke(
+        app,
+        ["workbench", tool, "ensure-ingress", "-n", "demo", "--source", NARROW_SOURCE],
+    )
 
     assert result.exit_code == 1
     normalized = " ".join(result.output.split())
@@ -80,4 +99,21 @@ def test_tool_ensure_ingress_missing_instance_id_has_remediation(mocker, tool: s
         f"alias 'demo' has no instance_id; re-register with "
         f"'npa workbench {tool} register-byovm'"
     ) in normalized
+    ensure.assert_not_called()
+
+
+@pytest.mark.parametrize(("tool", "port"), TOOL_CASES)
+def test_tool_world_open_ingress_requires_acknowledgement(
+    mocker, tool: str, port: int
+) -> None:
+    _patch_projects(mocker, {"demo": {"instance_id": "computeinstance-test"}})
+    ensure = mocker.patch("npa.cli.ingress.ensure_ingress")
+
+    result = runner.invoke(
+        app,
+        ["workbench", tool, "ensure-ingress", "-n", "demo", "--source", "0.0.0.0/0"],
+    )
+
+    assert result.exit_code == 1
+    assert "--allow-world-open" in result.output
     ensure.assert_not_called()

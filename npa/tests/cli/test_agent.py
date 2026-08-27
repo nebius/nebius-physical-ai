@@ -1356,7 +1356,10 @@ def test_deploy_persists_terraform_state_before_apply(monkeypatch, tmp_path) -> 
         region="us-central1",
         ssh_user="ubuntu",
         ssh_public_key_path=str(tmp_path / "id_ed25519.pub"),
-        tf_var=[],
+        tf_var=[
+            "ssh_cidr_block=203.0.113.50/32",
+            "application_cidr_block=203.0.113.50/32",
+        ],
         agent_port=8088,
         backend_port=8787,
         rerun_port=9090,
@@ -2392,7 +2395,10 @@ def test_direct_run_load_cancels_background_discovery_and_uses_exact_artifacts()
     assert "singlePage: true," in source
     assert "background: true," in source
     assert "Render the authoritative workflow timeline before attempting" in source
-    assert "!context.deferPreferredViewer && !context.suppressPreferredAutoload && preferred" in source
+    assert (
+        "!context.deferPreferredViewer && !context.suppressPreferredAutoload && preferred"
+        in source
+    )
     assert "deferPreferredViewer: true" in source
     assert 'showToast("Run loaded; preferred viewer failed: "' in source
     assert '"#stageList .stage-physical-job"' in source
@@ -2401,11 +2407,13 @@ def test_direct_run_load_cancels_background_discovery_and_uses_exact_artifacts()
     )
 
 
-def test_artifact_inventory_autopaginates_before_global_preference_and_selection() -> None:
+def test_artifact_inventory_autopaginates_before_global_preference_and_selection() -> (
+    None
+):
     source = _agent_ui_bundle()
-    block = source.split(
-        "async function loadArtifactsForSelectedRun", 1
-    )[1].split("async function loadExactArtifactSource", 1)[0]
+    block = source.split("async function loadArtifactsForSelectedRun", 1)[1].split(
+        "async function loadExactArtifactSource", 1
+    )[0]
 
     assert "const seenCursors = new Set();" in block
     assert "while (nextCursor)" in block
@@ -2413,10 +2421,15 @@ def test_artifact_inventory_autopaginates_before_global_preference_and_selection
     assert "paginationEmptyPageCount" in block
     assert "paginationDuplicateCount" in block
     assert "Artifact inventory source changed during pagination" in block
-    assert "Artifact inventory is truncated but the server returned no continuation cursor" in block
+    assert (
+        "Artifact inventory is truncated but the server returned no continuation cursor"
+        in block
+    )
     assert 'continuation.set("project_id", selectedSource.project_id);' in block
     assert 'continuation.set("resource_bucket", selectedSource.bucket);' in block
-    assert 'continuation.set("resolved_prefix", selectedSource.resolved_prefix);' in block
+    assert (
+        'continuation.set("resolved_prefix", selectedSource.resolved_prefix);' in block
+    )
     assert 'continuation.set("source_selected", "1");' in block
     assert "const preferred = selectPreferredArtifact(artifacts);" in block
     assert block.index("while (nextCursor)") < block.index("setActiveRunId(runId)")
@@ -3979,7 +3992,10 @@ def test_deploy_seeds_cost_ordered_ladder_without_explicit_models(
         region="eu-north1",
         ssh_user="ubuntu",
         ssh_public_key_path=str(tmp_path / "id_ed25519.pub"),
-        tf_var=[],
+        tf_var=[
+            "ssh_cidr_block=203.0.113.50/32",
+            "application_cidr_block=203.0.113.50/32",
+        ],
         agent_port=8088,
         backend_port=8787,
         rerun_port=9090,
@@ -4591,7 +4607,17 @@ def test_agent_setup_picks_configured_project(monkeypatch, tmp_path) -> None:
     # Explicit --project resolves tenant/project/region from config (no typing).
     result = runner.invoke(
         app,
-        ["setup", "--project", "dev", "--ssh-public-key-path", str(key_file)],
+        [
+            "setup",
+            "--project",
+            "dev",
+            "--ssh-public-key-path",
+            str(key_file),
+            "--tf-var",
+            "ssh_cidr_block=203.0.113.50/32",
+            "--tf-var",
+            "application_cidr_block=203.0.113.50/32",
+        ],
     )
 
     assert result.exit_code == 0, result.output
@@ -4665,7 +4691,17 @@ def test_agent_setup_passes_concrete_defaults_to_deploy(monkeypatch, tmp_path) -
 
     result = runner.invoke(
         app,
-        ["setup", "--project", "dev", "--ssh-public-key-path", str(key_file)],
+        [
+            "setup",
+            "--project",
+            "dev",
+            "--ssh-public-key-path",
+            str(key_file),
+            "--tf-var",
+            "ssh_cidr_block=203.0.113.50/32",
+            "--tf-var",
+            "application_cidr_block=203.0.113.50/32",
+        ],
     )
     assert result.exit_code == 0, result.output
 
@@ -4680,7 +4716,10 @@ def test_agent_setup_passes_concrete_defaults_to_deploy(monkeypatch, tmp_path) -
     assert captured["agent_port"] == DEFAULT_AGENT_PORT
     assert captured["backend_port"] == DEFAULT_BACKEND_PORT
     assert captured["rerun_port"] == DEFAULT_RERUN_PORT
-    assert captured["tf_var"] == []
+    assert captured["tf_var"] == [
+        "ssh_cidr_block=203.0.113.50/32",
+        "application_cidr_block=203.0.113.50/32",
+    ]
     assert captured["llm_models"] == []
     assert captured["no_public_https"] is False
 
@@ -4688,7 +4727,9 @@ def test_agent_setup_passes_concrete_defaults_to_deploy(monkeypatch, tmp_path) -
 def test_agent_fresh_setup_forwards_agent_only(monkeypatch) -> None:
     captured: dict = {}
     monkeypatch.setattr("npa.cli.agent._agent_record", lambda *args, **kwargs: {})
-    monkeypatch.setattr("npa.cli.agent._store_project_environment", lambda **kwargs: None)
+    monkeypatch.setattr(
+        "npa.cli.agent._store_project_environment", lambda **kwargs: None
+    )
     monkeypatch.setattr(
         "npa.cli.agent.deploy_cmd", lambda **kwargs: captured.update(kwargs)
     )
@@ -4796,7 +4837,17 @@ def test_agent_setup_renders_string_terraform_vars(monkeypatch, tmp_path) -> Non
 
     result = runner.invoke(
         app,
-        ["setup", "--project", "dev", "--ssh-public-key-path", str(key_file)],
+        [
+            "setup",
+            "--project",
+            "dev",
+            "--ssh-public-key-path",
+            str(key_file),
+            "--tf-var",
+            "ssh_cidr_block=203.0.113.50/32",
+            "--tf-var",
+            "application_cidr_block=203.0.113.50/32",
+        ],
     )
     assert result.exit_code == 0, result.output
 
@@ -4831,7 +4882,17 @@ def test_agent_deploy_keeps_s3_sentinels_out_of_terraform_and_agent_record(
 
     result = runner.invoke(
         app,
-        ["setup", "--project", "dev", "--ssh-public-key-path", str(key_file)],
+        [
+            "setup",
+            "--project",
+            "dev",
+            "--ssh-public-key-path",
+            str(key_file),
+            "--tf-var",
+            "ssh_cidr_block=203.0.113.50/32",
+            "--tf-var",
+            "application_cidr_block=203.0.113.50/32",
+        ],
     )
 
     assert result.exit_code == 0, result.output
@@ -4853,12 +4914,10 @@ def test_agent_deploy_keeps_s3_sentinels_out_of_terraform_and_agent_record(
         / "terraform"
         / "cloud_init.yaml.tpl"
     ).read_text(encoding="utf-8")
-    protected_write_files = template.split('%{ if workbench_type != "agent" ~}', 1)[
-        1
-    ].split("%{ endif ~}", 1)[0]
-    assert "write_files:" in protected_write_files
-    assert "${aws_access_key}" in protected_write_files
-    assert "${aws_secret_key}" in protected_write_files
+    assert "${aws_access_key}" not in template
+    assert "${aws_secret_key}" not in template
+    assert "AWS_ACCESS_KEY_ID=" not in template
+    assert "AWS_SECRET_ACCESS_KEY=" not in template
 
 
 def test_agent_setup_keeps_public_https_enabled(monkeypatch, tmp_path) -> None:
@@ -4873,7 +4932,17 @@ def test_agent_setup_keeps_public_https_enabled(monkeypatch, tmp_path) -> None:
 
     result = runner.invoke(
         app,
-        ["setup", "--project", "dev", "--ssh-public-key-path", str(key_file)],
+        [
+            "setup",
+            "--project",
+            "dev",
+            "--ssh-public-key-path",
+            str(key_file),
+            "--tf-var",
+            "ssh_cidr_block=203.0.113.50/32",
+            "--tf-var",
+            "application_cidr_block=203.0.113.50/32",
+        ],
     )
     assert result.exit_code == 0, result.output
     assert calls["bootstrap"]["public_https"] is True
@@ -5012,7 +5081,10 @@ def test_agent_whole_path_blocker_precedes_storage_and_terraform(
             region="us-central1",
             ssh_user="ubuntu",
             ssh_public_key_path=str(tmp_path / "id_ed25519.pub"),
-            tf_var=[],
+            tf_var=[
+                "ssh_cidr_block=203.0.113.50/32",
+                "application_cidr_block=203.0.113.50/32",
+            ],
             agent_port=8088,
             backend_port=8787,
             rerun_port=9090,
@@ -5075,7 +5147,10 @@ def test_agent_only_deploy_omits_paidf_capacity_reservation(
             region="us-central1",
             ssh_user="ubuntu",
             ssh_public_key_path=str(tmp_path / "id_ed25519.pub"),
-            tf_var=[],
+            tf_var=[
+                "ssh_cidr_block=203.0.113.50/32",
+                "application_cidr_block=203.0.113.50/32",
+            ],
             agent_only=True,
             agent_port=8088,
             backend_port=8787,

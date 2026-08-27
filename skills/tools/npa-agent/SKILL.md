@@ -20,7 +20,10 @@ Sim Assets + Cameras panels, embedded Rerun viewer, and Sim2Real submit hooks.
 ## Bootstrap And Verify
 
 ```bash
-npa/.venv/bin/npa agent fresh-setup --project rtxpro --name agent --project-id <project-id> --tenant-id <tenant-id> --region us-central1
+npa/.venv/bin/npa agent fresh-setup --project <alias> --name agent \
+  --project-id <project-id> --tenant-id <tenant-id> --region <region> \
+  --tf-var ssh_cidr_block=<operator-cidr> \
+  --tf-var application_cidr_block=<operator-cidr>
 npa/.venv/bin/npa agent bootstrap --project rtxpro --name agent
 # Existing agents missing credentials: refresh long-lived npa-agent SA + restage VM env
 npa/.venv/bin/npa agent bootstrap --project rtxpro --name agent --refresh-credentials
@@ -48,6 +51,14 @@ keys, product tokens, or basic-auth password. After the exact VM identity and SS
 channel are verified, bootstrap stages runtime credentials with owner-only SFTP
 uploads and atomic installs. A client failure resumes staging on that VM; it does
 not recreate the instance or copy secrets into Terraform state/user-data.
+
+SSH and application ingress are separate and empty by default. Agent deploy and
+fresh-setup require explicit `ssh_cidr_block` and `application_cidr_block`
+Terraform values because verified bootstrap and public HTTPS health checks use
+those paths. Any `/0` additionally requires the matching
+`allow_world_open_ssh=true` or `allow_world_open_application=true`
+acknowledgement. Post-deploy reconciliation reuses the application CIDR and
+never creates a world-open fallback rule.
 
 All `npa agent …` and `nebius` IAM commands run on the **operator/dev VM**.
 The **agent VM** only receives staged `/opt/npa-agent/*.env` files.

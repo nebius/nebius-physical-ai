@@ -6,10 +6,16 @@ from typing import Any
 
 from fastapi.testclient import TestClient
 from typer.testing import CliRunner
+import pytest
 
 from npa.cli.main import app
 
 runner = CliRunner()
+
+
+@pytest.fixture(autouse=True)
+def _allow_test_storage(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DATASET_ALLOWED_LOCAL_ROOTS", str(tmp_path))
 
 
 def _raw(tmp_path: Path) -> str:
