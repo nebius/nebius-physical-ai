@@ -29,6 +29,21 @@ APPEARANCE_OPTIONS = {
 }
 
 
+def test_attribute_holdout_frames_are_deterministic_and_disjoint_from_ranking() -> None:
+    ranking = av._representative_frame_targets(12, "ranking")
+    holdout = av._representative_frame_targets(12, "holdout")
+
+    assert ranking == {0, 5, 11}
+    assert holdout
+    assert ranking.isdisjoint(holdout)
+    assert holdout == av._representative_frame_targets(12, "holdout")
+
+
+def test_attribute_holdout_fails_closed_when_no_disjoint_frame_exists() -> None:
+    with pytest.raises(CosmosEvaluatorError, match="not used by ranking"):
+        av._representative_frame_targets(1, "holdout")
+
+
 # ---------------------------------------------------------------------------
 # Hallucination check internals
 # ---------------------------------------------------------------------------
@@ -609,6 +624,40 @@ def test_appearance_fidelity_decodes_real_encoded_video(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 # Attribute verification: upstream's question / answer protocol
 # ---------------------------------------------------------------------------
+
+
+def test_attribute_verifier_builds_begin_middle_end_contact_sheet(
+    tmp_path: Path,
+) -> None:
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        pytest.skip("ffmpeg is required to create the encoded-video fixture")
+    video = tmp_path / "representative.mp4"
+    subprocess.run(
+        [
+            ffmpeg,
+            "-loglevel",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc2=size=64x48:rate=6:duration=1",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            str(video),
+        ],
+        check=True,
+    )
+    sheet = tmp_path / "sheet.jpg"
+    av._write_representative_contact_sheet(video, sheet)
+
+    from PIL import Image
+
+    with Image.open(sheet) as image:
+        assert image.size == (192, 48)
 
 
 class FakeTokenFactory:
@@ -1299,6 +1348,41 @@ def test_an_absent_variant_is_a_skip_not_an_outage(tmp_path: Path) -> None:
     assert result.status == "completed"
     assert result.score == 0.0
     assert result.clips[0].skipped
+
+
+def test_empty_independent_selection_is_a_truthful_quality_rejection(
+    tmp_path: Path,
+) -> None:
+    from npa.workbench.cosmos_evaluator import evaluate_run
+
+    selection = tmp_path / "selection"
+    selection.mkdir()
+    (selection / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema": "npa.cosmos2.transfer.v1",
+                "mode": "cosmos_transfer2.5_gpu",
+                "status": "executed",
+                "node_count": 1,
+                "variant_count": 0,
+                "variants": [],
+                "selection_policy": "independent-hard-pass-only",
+            }
+        )
+    )
+
+    result = evaluate_run(
+        augment_uri=str(selection),
+        output_uri=str(tmp_path / "grade"),
+        attribute_sample_policy="holdout",
+    )
+
+    assert result.status == "completed"
+    assert result.passed is False
+    assert result.score == 0.0
+    assert result.clip_count == 0
+    assert result.batch_policy == "independent-hard-pass-selection"
+    assert "no independently hard-passing candidate" in result.warnings[0]
 
 
 def test_one_failed_variant_rejects_a_batch_even_when_the_mean_clears_threshold(

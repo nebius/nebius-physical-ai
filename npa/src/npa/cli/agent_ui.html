@@ -11465,6 +11465,7 @@
           lastRerunRecordingUrl = recordingUrl;
           mountedRerunRunKey = mountKey;
           iframe.dataset.rerunRunKey = mountKey;
+          iframe.dataset.rerunRecordingUrl = recordingUrl;
           if (!safeHideRerunBundleCover(iframe)) {
             scheduleRerunBundleUncover(iframe).catch(() => { /* best-effort */ });
           }
@@ -11540,6 +11541,7 @@
         }
         rerunIframeLoaded = true;
         mountedRerunRunKey = mountKey;
+        iframe.dataset.rerunRecordingUrl = lastRerunRecordingUrl;
         // Re-evaluate the CTA now that the iframe is up. `cta.hidden` is
         // `ready && rerunIframeLoaded`, so a status refresh that lands while the
         // iframe is still booting leaves the "No run-specific Rerun recording
@@ -11840,6 +11842,11 @@
           return cloudImport ? Math.ceil((serverSeconds + 60) * 1000) : 0;
         }
         if (pathText.startsWith("/api/artifacts/")) return 60000;
+        // Loading an exact recording can include a truthful same-origin copy of
+        // a large RRD/MCAP into the viewer cache. Cancellation still comes from
+        // the caller's AbortSignal, but a generic UI timer must not abandon the
+        // request while the server is streaming that selected object.
+        if (pathText === "/api/sim-viz/load-artifact") return 0;
         if (
           pathText === "/api/chat" ||
           pathText === "/api/workflows/submit" ||
@@ -12607,14 +12614,87 @@
         const match = String(uri || "").trim().match(/^s3:\/\/([^/]+)\/(.+)$/);
         return match ? { bucket: match[1], key: match[2] } : { bucket: "", key: "" };
       }
+      function artifactSourceSelection(runSelector, item) {
+        const candidate = item && typeof item === "object" ? item : {};
+        const selector = String(runSelector || "").trim();
+        const availableScope = activeRunResourceScope && typeof activeRunResourceScope === "object"
+          ? activeRunResourceScope
+          : {};
+        const explicitRunId = String(candidate.run_id || (/^npa1_/.test(selector) ? "" : selector)).trim();
+        const scope = !explicitRunId || String(availableScope.run_id || "").trim() === explicitRunId
+          ? availableScope
+          : {};
+        const runId = String(candidate.run_id || scope.run_id || (/^npa1_/.test(selector) ? "" : selector)).trim();
+        const runRef = String(candidate.run_ref || (/^npa1_/.test(selector) ? selector : "") || (scope.run_id ? activeArtifactRunRef : "") || "").trim();
+        const projectId = String(candidate.project_id || scope.project_id || "").trim();
+        const resourceBucket = String(candidate.resource_bucket || candidate.bucket || scope.bucket || "").trim();
+        const hasCandidatePrefix = Object.prototype.hasOwnProperty.call(candidate, "resolved_prefix");
+        const hasScopePrefix = Object.prototype.hasOwnProperty.call(scope, "resolved_prefix");
+        const resolvedPrefix = hasCandidatePrefix
+          ? String(candidate.resolved_prefix || "")
+          : (hasScopePrefix ? String(scope.resolved_prefix || "") : null);
+        const sourceSelected = candidate.source_selected === true || scope.source_selected === true;
+        const missing = [];
+        if (!runId) missing.push("run_id");
+        if (!runRef) missing.push("run_ref");
+        if (!projectId) missing.push("project_id");
+        if (!resourceBucket) missing.push("resource_bucket");
+        if (resolvedPrefix === null) missing.push("resolved_prefix");
+        if (!sourceSelected) missing.push("source_selected");
+        if (missing.length) {
+          throw new Error(
+            "Exact artifact source is unavailable (missing " + missing.join(", ") + "). Reload the run before previewing or downloading."
+          );
+        }
+        return {
+          run_id: runId,
+          run_ref: runRef,
+          project_id: projectId,
+          resource_bucket: resourceBucket,
+          resolved_prefix: resolvedPrefix,
+          source_selected: true,
+        };
+      }
       function artifactContentUrl(runId, item, download) {
+        const source = artifactSourceSelection(runId, item);
         const params = new URLSearchParams();
-        params.set("run_id", String(runId || ""));
+        params.set("run_id", source.run_id);
+        params.set("run_ref", source.run_ref);
+        params.set("project_id", source.project_id);
+        params.set("resource_bucket", source.resource_bucket);
+        params.set("resolved_prefix", source.resolved_prefix);
+        params.set("source_selected", "true");
         params.set("key", String((item && item.key) || ""));
-        const bucket = artifactBucket(item);
-        if (bucket) params.set("bucket", bucket);
-        if (download) params.set("download", "true");
-        return "/api/artifacts/content?" + params.toString();
+        return (download ? "/api/artifacts/download?" : "/api/artifacts/content?") + params.toString();
+      }
+      function selectPreferredArtifact(artifacts) {
+        const renderRank = { rerun: 0, mcap: 1, video: 2, image: 3, json: 4, text: 5, download: 6 };
+        const roleRank = { output: 0, metadata: 1, input: 2 };
+        const specificity = (item) => {
+          const key = String((item && item.key) || "").toLowerCase();
+          if (key.endsWith("/reports/sim2real.rrd")) return 0;
+          if (key.endsWith(".rrd")) return 1;
+          if (key.endsWith("/reports/sim2real-report.json")) return 2;
+          if (key.includes("/reports/")) return 3;
+          if (key.includes("/component-io/")) return 20;
+          return 10;
+        };
+        const values = Array.isArray(artifacts) ? artifacts.slice() : [];
+        values.sort((left, right) => {
+          const lRole = roleRank[String((left && left.role) || "")] ?? 3;
+          const rRole = roleRank[String((right && right.role) || "")] ?? 3;
+          if (lRole !== rRole) return lRole - rRole;
+          const lRender = renderRank[String((left && left.render) || "")] ?? 99;
+          const rRender = renderRank[String((right && right.render) || "")] ?? 99;
+          if (lRender !== rRender) return lRender - rRender;
+          const lSpecificity = specificity(left);
+          const rSpecificity = specificity(right);
+          if (lSpecificity !== rSpecificity) return lSpecificity - rSpecificity;
+          const modified = String((left && left.last_modified) || "").localeCompare(String((right && right.last_modified) || ""));
+          if (modified !== 0) return modified;
+          return String((left && left.key) || "").localeCompare(String((right && right.key) || ""));
+        });
+        return values.length ? values[0] : null;
       }
       function groupArtifactSequences(artifacts) {
         const grouped = [];
@@ -12738,8 +12818,13 @@
             button.addEventListener("click", () => {
               const payload = {
                 run_id: String(summary.run_id || ""),
+                run_ref: String(item.run_ref || activeArtifactRunRef || ""),
                 key: String(item.key || ""),
                 bucket: artifactBucket(item),
+                resource_bucket: String(item.resource_bucket || artifactBucket(item)),
+                project_id: String(item.project_id || ""),
+                resolved_prefix: String(item.resolved_prefix || ""),
+                source_selected: item.source_selected === true,
                 s3_uri: String(item.s3_uri || ""),
                 render: String(item.render || ""),
               };
@@ -12785,16 +12870,22 @@
           : preferredRunEntry(selection.run_ref || selection.run_id);
         let runId = String((entry && entry.run_id) || selection.run_id || requestedRun).trim();
         let runRef = String((entry && entry.run_ref) || selection.run_ref || "").trim();
-        const context = requestContext && typeof requestContext === "object" ? requestContext : {};
+        // Older callers passed refresh-only options in the second slot. Keep
+        // those options as request context while treating only an object with
+        // an artifact array as a pagination seed.
+        const seededPage = priorPage && Array.isArray(priorPage.artifacts) ? priorPage : null;
+        const context = requestContext && typeof requestContext === "object"
+          ? requestContext
+          : (priorPage && !seededPage && typeof priorPage === "object" ? priorPage : {});
         // No path prefix: the server locates the run by id across the whole run root.
-        const previous = priorPage && Array.isArray(priorPage.artifacts) ? priorPage.artifacts : [];
+        const previous = seededPage ? seededPage.artifacts : [];
         const params = new URLSearchParams();
-        if (priorPage && priorPage.next_cursor) {
-          params.set("cursor", String(priorPage.next_cursor));
-          params.set("resolved_prefix", String(priorPage.resolved_prefix || ""));
-          params.set("resource_bucket", String(priorPage.bucket || ""));
+        if (seededPage && seededPage.next_cursor) {
+          params.set("cursor", String(seededPage.next_cursor));
+          params.set("resolved_prefix", String(seededPage.resolved_prefix || ""));
+          params.set("resource_bucket", String(seededPage.bucket || ""));
           params.set("source_selected", "1");
-          if (priorPage.project_id) params.set("project_id", String(priorPage.project_id));
+          if (seededPage.project_id) params.set("project_id", String(seededPage.project_id));
         } else if (entry && entry.bucket) {
           params.set("resource_bucket", String(entry.bucket));
           params.set("source_selected", "1");
@@ -12810,12 +12901,129 @@
         const requestIsCurrent = () => listRequestId === artifactListRequestId &&
           (!context.isCurrent || context.isCurrent());
         let data = null;
+        let paginationPageCount = 0;
+        let paginationEmptyPageCount = 0;
+        let paginationDuplicateCount = 0;
         try {
           const runSelector = runRef || runId;
-          data = await apiJson(
+          const firstPage = await apiJson(
             "/api/artifacts/run/" + encodeURIComponent(runSelector) + (query ? "?" + query : ""),
             signal ? { signal } : undefined
           );
+          if (!requestIsCurrent()) return false;
+          paginationPageCount = 1;
+          const selectedSource = {
+            run_id: String(firstPage.run_id || runId).trim(),
+            run_ref: String(firstPage.run_ref || runRef).trim(),
+            bucket: String(firstPage.bucket || (entry && entry.bucket) || "").trim(),
+            project_id: String(firstPage.project_id || (entry && entry.project_id) || "").trim(),
+            resolved_prefix: String(firstPage.resolved_prefix || ""),
+          };
+          if (
+            !selectedSource.run_id || !selectedSource.run_ref || !selectedSource.bucket ||
+            !selectedSource.project_id || !Object.prototype.hasOwnProperty.call(firstPage, "resolved_prefix")
+          ) {
+            throw new Error("Artifact inventory response omitted exact run source provenance.");
+          }
+          const merged = new Map();
+          const mergePage = (page) => {
+            const pageArtifacts = Array.isArray(page && page.artifacts) ? page.artifacts : [];
+            if (!pageArtifacts.length) paginationEmptyPageCount += 1;
+            for (const item of pageArtifacts) {
+              const identity = String((item && item.s3_uri) || "").trim() ||
+                [selectedSource.bucket, String((item && item.key) || "")].join("/");
+              if (merged.has(identity)) paginationDuplicateCount += 1;
+              merged.set(identity, item);
+            }
+          };
+          for (const item of previous) {
+            const identity = String((item && item.s3_uri) || "").trim() ||
+              [selectedSource.bucket, String((item && item.key) || "")].join("/");
+            merged.set(identity, item);
+          }
+          mergePage(firstPage);
+          const seenCursors = new Set();
+          let page = firstPage;
+          let nextCursor = String(firstPage.next_cursor || "").trim();
+          while (nextCursor) {
+            if (!requestIsCurrent() || (signal && signal.aborted)) return false;
+            if (seenCursors.has(nextCursor)) {
+              throw new Error("Artifact inventory pagination repeated a server cursor; reload the run before selecting media.");
+            }
+            seenCursors.add(nextCursor);
+            const continuation = new URLSearchParams();
+            continuation.set("cursor", nextCursor);
+            continuation.set("resolved_prefix", selectedSource.resolved_prefix);
+            continuation.set("resource_bucket", selectedSource.bucket);
+            continuation.set("project_id", selectedSource.project_id);
+            continuation.set("source_selected", "1");
+            const nextPage = await apiJson(
+              "/api/artifacts/run/" + encodeURIComponent(selectedSource.run_ref) + "?" + continuation.toString(),
+              signal ? { signal } : undefined
+            );
+            if (!requestIsCurrent()) return false;
+            paginationPageCount += 1;
+            const sameSource =
+              String(nextPage.run_id || "") === selectedSource.run_id &&
+              String(nextPage.run_ref || "") === selectedSource.run_ref &&
+              String(nextPage.bucket || "") === selectedSource.bucket &&
+              String(nextPage.project_id || "") === selectedSource.project_id &&
+              String(nextPage.resolved_prefix || "") === selectedSource.resolved_prefix;
+            if (!sameSource) {
+              throw new Error("Artifact inventory source changed during pagination; reload the selected run.");
+            }
+            mergePage(nextPage);
+            page = nextPage;
+            nextCursor = String(nextPage.next_cursor || "").trim();
+          }
+          if (page && page.truncated) {
+            throw new Error("Artifact inventory is truncated but the server returned no continuation cursor.");
+          }
+          const sourceFields = {
+            run_id: selectedSource.run_id,
+            run_ref: selectedSource.run_ref,
+            project_id: selectedSource.project_id,
+            resource_bucket: selectedSource.bucket,
+            bucket: selectedSource.bucket,
+            resolved_prefix: selectedSource.resolved_prefix,
+            source_selected: true,
+          };
+          const artifacts = [...merged.values()].map((item) => Object.assign({}, item, sourceFields));
+          const preferred = selectPreferredArtifact(artifacts);
+          const roleCounts = artifacts.reduce((acc, item) => {
+            const artifactRole = String((item && item.role) || "output");
+            acc[artifactRole] = (acc[artifactRole] || 0) + 1;
+            return acc;
+          }, {});
+          const hasRecording = artifacts.some((item) => ["rerun", "mcap"].includes(String((item && item.render) || "")));
+          const summary = Object.assign({}, firstPage.summary || {}, {
+            run_id: selectedSource.run_id,
+            artifact_count: artifacts.length,
+            output_artifact_count: Number(roleCounts.output || 0),
+            input_artifact_count: Number(roleCounts.input || 0),
+            metadata_artifact_count: Number(roleCounts.metadata || 0),
+            total_bytes: artifacts.reduce((total, item) => total + Number((item && item.size) || 0), 0),
+            has_recording: hasRecording,
+          });
+          data = Object.assign({}, firstPage, {
+            run_id: selectedSource.run_id,
+            run_ref: selectedSource.run_ref,
+            bucket: selectedSource.bucket,
+            project_id: selectedSource.project_id,
+            resolved_prefix: selectedSource.resolved_prefix,
+            artifacts,
+            count: artifacts.length,
+            preferred,
+            truncated: false,
+            next_cursor: "",
+            pagination_complete: true,
+            output_artifact_count: Number(roleCounts.output || 0),
+            input_artifact_count: Number(roleCounts.input || 0),
+            metadata_artifact_count: Number(roleCounts.metadata || 0),
+            summary,
+            no_recording: !hasRecording,
+            recording_state: hasRecording ? "recording_available" : String(firstPage.recording_state || "no_recording"),
+          });
         } catch (err) {
           if (!requestIsCurrent() || (signal && signal.aborted)) return false;
           const searchResult = document.getElementById("stagesRunSearchResult");
@@ -12834,13 +13042,6 @@
         syncRunChooserFields(runId, activeRunEntryKey || runRef);
         const searchResult = document.getElementById("stagesRunSearchResult");
         if (searchResult) searchResult.textContent = "Loaded discovered NPA run: " + runId + ".";
-        if (previous.length) {
-          const merged = new Map(previous.map((item) => [String((item && item.s3_uri) || (item && item.key) || ""), item]));
-          for (const item of (Array.isArray(data.artifacts) ? data.artifacts : [])) {
-            merged.set(String((item && item.s3_uri) || (item && item.key) || ""), item);
-          }
-          data.artifacts = [...merged.values()];
-        }
         const artifacts = Array.isArray(data.artifacts) ? data.artifacts : [];
         activeArtifactInventoryRunId = runId;
         activeArtifactInventory = artifacts;
@@ -12867,6 +13068,7 @@
         list.hidden = Boolean(learningSummary);
         activeRunResourceScope = {
           run_id: runId,
+          run_ref: runRef,
           bucket: String(data.bucket || (entry && entry.bucket) || ""),
           project_id: String(data.project_id || (entry && entry.project_id) || ""),
           resolved_prefix: String(data.resolved_prefix || ""),
@@ -12923,13 +13125,17 @@
           .map((role) => role + "=" + String(roleCounts[role]))
           .join(" · ");
         const preferredKey = preferred ? String(preferred.key || "") : "";
+        const paginationText = String(paginationPageCount) + " inventory page" +
+          (paginationPageCount === 1 ? "" : "s") + " merged" +
+          (paginationDuplicateCount ? " · " + String(paginationDuplicateCount) + " duplicate object" + (paginationDuplicateCount === 1 ? "" : "s") + " deduplicated" : "") +
+          (paginationEmptyPageCount ? " · " + String(paginationEmptyPageCount) + " empty page" + (paginationEmptyPageCount === 1 ? "" : "s") + " followed" : "");
         const nextPageHtml = data.truncated && data.next_cursor
           ? '<div style="margin-top:8px;"><button class="btn" type="button" data-action="load-more-artifacts">Load next artifact page</button></div>'
           : "";
         list.innerHTML =
           '<div style="font-size:12px;color:#475569;margin:0 0 8px;">Showing ' +
           String(displayArtifacts.length) + " grouped rows from " + String(filteredArtifacts.length) + " selected / " + String(artifacts.length) +
-          " artifacts · " + escapeHtml(roleCountText) + " · " + escapeHtml(countText) + "</div>" +
+          " artifacts · " + escapeHtml(roleCountText) + " · " + escapeHtml(countText) + " · " + escapeHtml(paginationText) + "</div>" +
           displayArtifacts.map((item) => {
           const key = String(item.key || "");
           const render = String(item.render || "download");
@@ -12954,6 +13160,9 @@
             ? '<button class="btn' + primary + '" type="button" data-action="' + actionName + '" data-run-id="' +
               escapeHtml(runId) + '" data-key="' + escapeHtml(key) + '" data-bucket="' + escapeHtml(bucket) +
               '" data-run-ref="' + escapeHtml(runRef) + '" data-s3-uri="' + escapeHtml(s3uri) +
+              '" data-project-id="' + escapeHtml(String(data.project_id || "")) +
+              '" data-resolved-prefix="' + escapeHtml(String(data.resolved_prefix || "")) +
+              '" data-source-selected="true' +
               '" data-render="' + escapeHtml(render) + '">' + actionLabel + '</button> '
             : "";
           const foxgloveButton = render === "mcap"
@@ -12987,12 +13196,17 @@
                 '" data-run-id="' + escapeHtml(runId) + '" data-run-ref="' + escapeHtml(runRef) +
                 '" data-key="' + escapeHtml(key) +
                 '" data-bucket="' + escapeHtml(bucket) +
+                '" data-project-id="' + escapeHtml(String(data.project_id || "")) +
+                '" data-resolved-prefix="' + escapeHtml(String(data.resolved_prefix || "")) +
                 '"><span class="hint">&hellip;</span></div>'
               : "") +
             '<div class="artifact-card-actions">' + foxgloveButton + viewButton +
             '<button class="btn" type="button" data-action="download-artifact" data-run-id="' +
             escapeHtml(runId) + '" data-run-ref="' + escapeHtml(runRef) +
             '" data-key="' + escapeHtml(key) + '" data-bucket="' + escapeHtml(bucket) +
+            '" data-project-id="' + escapeHtml(String(data.project_id || "")) +
+            '" data-resolved-prefix="' + escapeHtml(String(data.resolved_prefix || "")) +
+            '" data-source-selected="true' +
             '" data-s3-uri="' + escapeHtml(s3uri) +
             '" data-name="' + escapeHtml(basename) + '">Download</button></div>' +
             '</div>'
@@ -13023,6 +13237,10 @@
               run_ref: String(btn.getAttribute("data-run-ref") || "").trim(),
               key: String(btn.getAttribute("data-key") || "").trim(),
               bucket: String(btn.getAttribute("data-bucket") || "").trim(),
+              resource_bucket: String(btn.getAttribute("data-bucket") || "").trim(),
+              project_id: String(btn.getAttribute("data-project-id") || "").trim(),
+              resolved_prefix: String(btn.getAttribute("data-resolved-prefix") || ""),
+              source_selected: String(btn.getAttribute("data-source-selected") || "") === "true",
             };
             await loadArtifact(payload, { operator: true });
           });
@@ -13040,8 +13258,13 @@
             try {
               await previewArtifact({
                 run_id: String(btn.getAttribute("data-run-id") || "").trim(),
+                run_ref: String(btn.getAttribute("data-run-ref") || "").trim(),
                 key: String(btn.getAttribute("data-key") || "").trim(),
                 bucket: String(btn.getAttribute("data-bucket") || "").trim(),
+                resource_bucket: String(btn.getAttribute("data-bucket") || "").trim(),
+                project_id: String(btn.getAttribute("data-project-id") || "").trim(),
+                resolved_prefix: String(btn.getAttribute("data-resolved-prefix") || ""),
+                source_selected: String(btn.getAttribute("data-source-selected") || "") === "true",
                 render: String(btn.getAttribute("data-render") || "download").trim(),
               });
             } catch (err) {
@@ -13057,7 +13280,12 @@
               String(btn.getAttribute("data-run-ref") || "").trim(),
               String(btn.getAttribute("data-key") || "").trim(),
               String(btn.getAttribute("data-bucket") || "").trim(),
-              String(btn.getAttribute("data-name") || "").trim()
+              String(btn.getAttribute("data-name") || "").trim(),
+              {
+                project_id: String(btn.getAttribute("data-project-id") || "").trim(),
+                resolved_prefix: String(btn.getAttribute("data-resolved-prefix") || ""),
+                source_selected: String(btn.getAttribute("data-source-selected") || "") === "true",
+              }
             );
           });
         });
@@ -13077,6 +13305,10 @@
               run_ref: String(node.getAttribute("data-run-ref") || "").trim(),
               key: String(node.getAttribute("data-key") || "").trim(),
               bucket: String(node.getAttribute("data-bucket") || "").trim(),
+              resource_bucket: String(node.getAttribute("data-bucket") || "").trim(),
+              project_id: String(node.getAttribute("data-project-id") || "").trim(),
+              resolved_prefix: String(node.getAttribute("data-resolved-prefix") || ""),
+              source_selected: true,
               render: "image",
             }).catch((err) => showToast("Load failed: " + String((err && err.message) || err), "error"));
           };
@@ -13091,7 +13323,7 @@
           String((preferred && preferred.key) || ""),
         ].join("|");
         const preferredViewerIntent = artifactLoadRequestId;
-        const shouldLoadPreferred = !context.deferPreferredViewer && preferred && ["rerun", "mcap", "video", "image", "json", "text", "download"].includes(preferredRender) &&
+        const shouldLoadPreferred = !context.deferPreferredViewer && !context.suppressPreferredAutoload && preferred && ["rerun", "mcap", "video", "image", "json", "text", "download"].includes(preferredRender) &&
           !(preferredRender === "rerun" && isMobileLayout()) &&
           preferredLoadKey !== autoLoadedPreferredKey;
         // Render the authoritative workflow timeline before attempting the
@@ -13110,6 +13342,10 @@
               run_id: runId,
               run_ref: runRef,
               key: String(preferred.key || "").trim(),
+              resource_bucket: String(preferred.resource_bucket || data.bucket || "").trim(),
+              project_id: String(preferred.project_id || data.project_id || "").trim(),
+              resolved_prefix: String(preferred.resolved_prefix || data.resolved_prefix || ""),
+              source_selected: true,
               s3_uri: String(preferred.s3_uri || "").trim(),
             }, {
               ...(signal ? { signal } : {}),
@@ -13159,10 +13395,9 @@
           source_selected: true,
         }, {
           pendingSelection: true,
-          // Render the authentic artifact cards first. Viewer loading remains
-          // an explicit card action, so this path never preempts the operator's
-          // exact-source click or duplicates its backend preparation.
-          deferPreferredViewer: true,
+          // Preference is computed only after all native S3 pages are merged;
+          // the resulting global recording is safe to auto-load here.
+          deferPreferredViewer: false,
         });
       }
       window.npaAgentArtifacts = Object.freeze({
@@ -13497,20 +13732,81 @@
         row.appendChild(link);
         host.appendChild(row);
       }
+      function artifactApiErrorDetail(payload) {
+        const exactSourceErrorCode = "exact_artifact_source_required";
+        const detail = payload && Object.prototype.hasOwnProperty.call(payload, "detail")
+          ? payload.detail
+          : (payload && (payload.error || payload.message));
+        if (typeof detail === "string") return detail;
+        if (detail && typeof detail === "object") {
+          if (String(detail.code || "") === exactSourceErrorCode) {
+            return String(detail.message || "Reload the run to refresh its exact source authorization.");
+          }
+          return String(detail.message || detail.code || JSON.stringify(detail));
+        }
+        return "The exact run source could not be authorized. Reload the run and try its artifact card again.";
+      }
+      async function validateVideoPreviewResponse(contentUrl) {
+        const head = await fetchWithTimeout(contentUrl, {
+          method: "HEAD",
+          credentials: "include",
+          headers: { Accept: "video/*" },
+        }, 30000);
+        const contentType = String(head.headers.get("content-type") || "").toLowerCase();
+        const contentLength = Number(head.headers.get("content-length") || 0);
+        const acceptRanges = String(head.headers.get("accept-ranges") || "").toLowerCase();
+        // Content-Type and range support distinguish a browser media response
+        // from the JSON/error bodies this guard exists to reject. Some browser
+        // intermediaries omit Content-Length on HEAD even when the same-origin
+        // backend supplied it, so keep that value diagnostic rather than making
+        // it the sole reason to reject otherwise valid video bytes.
+        if (head.ok && contentType.startsWith("video/") && acceptRanges === "bytes") {
+          return { contentType, contentLength, acceptRanges };
+        }
+        let detail = "";
+        try {
+          const diagnostic = await fetchWithTimeout(contentUrl, {
+            method: "GET",
+            credentials: "include",
+            headers: { Range: "bytes=0-0", Accept: "video/*, application/json" },
+          }, 30000);
+          const diagnosticType = String(diagnostic.headers.get("content-type") || "").toLowerCase();
+          if (diagnosticType.includes("json")) {
+            detail = artifactApiErrorDetail(await diagnostic.json());
+          } else if (!diagnostic.ok) {
+            detail = "HTTP " + String(diagnostic.status);
+          }
+        } catch (_diagnosticErr) { /* the HEAD evidence below remains actionable */ }
+        const facts = [
+          "HTTP " + String(head.status),
+          contentType ? "Content-Type " + contentType : "missing Content-Type",
+          contentLength > 0 ? "Content-Length " + String(contentLength) : "missing Content-Length",
+          acceptRanges ? "Accept-Ranges " + acceptRanges : "missing Accept-Ranges",
+        ].join(" · ");
+        throw new Error("Video preview response is not browser media (" + facts + "). " + (detail || "Reload the run to refresh its exact source authorization."));
+      }
       async function previewArtifact(item) {
         // A media/data preview is an explicit viewer choice. Invalidate a
         // recording load that may still be completing for the run; otherwise
         // its late Rerun mount can repaint this selection after the operator
         // has already opened the comparison video.
         artifactLoadRequestId += 1;
+        const previewRequestId = artifactLoadRequestId;
         const runId = String((item && item.run_id) || "").trim();
         const runRef = String((item && item.run_ref) || "").trim();
         const key = String((item && item.key) || "").trim();
         const bucket = String((item && item.bucket) || "").trim();
         const render = String((item && item.render) || "download").trim();
         if (!runId || !key) throw new Error("run_id and key are required for preview");
-        const contentUrl = artifactContentUrl(runRef || runId, { key, bucket }, false);
-        const downloadUrl = artifactContentUrl(runRef || runId, { key, bucket }, true);
+        const scopedItem = Object.assign({}, item, {
+          run_id: runId,
+          run_ref: runRef,
+          key,
+          bucket,
+          resource_bucket: bucket,
+        });
+        const contentUrl = artifactContentUrl(runRef || runId, scopedItem, false);
+        const downloadUrl = artifactContentUrl(runRef || runId, scopedItem, true);
         const name = key.split("/").pop() || "artifact.bin";
         const host = document.getElementById("artifactPreviewHost");
         if (!host) return false;
@@ -13553,6 +13849,15 @@
             img.setAttribute("data-preview-url", contentUrl);
             host.appendChild(img);
           } else if (render === "video") {
+            const loading = document.createElement("p");
+            loading.className = "hint";
+            loading.textContent = "Loading video preview…";
+            host.appendChild(loading);
+            // Prove the exact scoped route returns browser media before a video
+            // element can mistake a short JSON authorization error for an MP4.
+            await validateVideoPreviewResponse(contentUrl);
+            if (previewRequestId !== artifactLoadRequestId) return false;
+            loading.remove();
             // Keep the authenticated same-origin URL as the native media source;
             // browsers issue byte-range requests against it for metadata/seek.
             const video = document.createElement("video");
@@ -13561,7 +13866,15 @@
             video.preload = "metadata";
             video.src = contentUrl;
             video.setAttribute("data-preview-url", contentUrl);
+            video.addEventListener("error", () => {
+              if (previewRequestId !== artifactLoadRequestId) return;
+              const error = document.createElement("p");
+              error.className = "preview-error";
+              error.textContent = "Video decode/playback failed after the media route passed HTTP validation. Download the original and inspect its codec, pixel format, and stream metadata.";
+              video.replaceWith(error);
+            }, { once: true });
             host.appendChild(video);
+            video.load();
           } else if (render === "json" || render === "text") {
             const response = await fetchWithTimeout(contentUrl, { credentials: "include" }, 30000);
             if (!response.ok) throw new Error("preview fetch failed (" + String(response.status) + ")");
@@ -13621,12 +13934,19 @@
           throw err;
         }
       }
-      function downloadArtifact(runId, runRef, key, bucket, name) {
+      function downloadArtifact(runId, runRef, key, bucket, name, sourceDetails) {
         // Let the browser stream the attachment directly. This avoids buffering
         // multi-gigabyte checkpoints into a JavaScript Blob before download.
         const fallbackName = (String(key || "").split("/").pop()) || "artifact.bin";
         const saveName = String(name || fallbackName).trim() || fallbackName;
-        const url = artifactContentUrl(runRef || runId, { key, bucket }, true);
+        const scopedItem = Object.assign({
+          run_id: runId,
+          run_ref: runRef,
+          key,
+          bucket,
+          resource_bucket: bucket,
+        }, sourceDetails && typeof sourceDetails === "object" ? sourceDetails : {});
+        const url = artifactContentUrl(runRef || runId, scopedItem, true);
         const anchor = document.createElement("a");
         anchor.href = url;
         anchor.download = saveName;
@@ -13653,14 +13973,18 @@
         const runId = String((payload && payload.run_id) || "").trim();
         const runRef = String((payload && payload.run_ref) || "").trim();
         const key = String((payload && payload.key) || "").trim();
+        const source = artifactSourceSelection(runRef || runId, payload);
         const body = {
-          run_id: runId,
-          run_ref: runRef,
+          run_id: source.run_id,
+          run_ref: source.run_ref,
+          project_id: source.project_id,
+          resource_bucket: source.resource_bucket,
+          resolved_prefix: source.resolved_prefix,
+          source_selected: true,
           key,
-          // A run/key pair lets the backend resolve only across configured agent
-          // buckets. A source-qualified run_ref is stronger still. Preserve direct
-          // URI loading solely when no validated identity exists.
-          s3_uri: (runRef || (runId && key)) ? "" : String((payload && payload.s3_uri) || "").trim(),
+          // Exact list provenance is the authorization contract. Raw S3 URIs
+          // remain display metadata and never select a browser-loaded object.
+          s3_uri: "",
         };
         const data = await apiJson("/api/sim-viz/load-artifact", {
           method: "POST",
@@ -13709,21 +14033,40 @@
           setRenderMode("rerun", renderModeOptions);
           hideArtifactPreview();
           lastRrdUpdatedAt = "";
+          const frameMatchesSelectedRecording = () => {
+            const frame = document.getElementById("rerunFrame");
+            const frameSrc = String((frame && frame.getAttribute("src")) || "");
+            const frameRunKey = String((frame && frame.dataset.rerunRunKey) || "").trim();
+            const frameRecordingUrl = String((frame && frame.dataset.rerunRecordingUrl) || "").trim();
+            const capabilityPath = String(simViz.artifact_preview_url || "").trim();
+            let decodedSrc = frameSrc;
+            try { decodedSrc = decodeURIComponent(frameSrc); } catch (_decodeErr) { /* compare raw */ }
+            const capabilityMatches = !capabilityPath ||
+              decodedSrc.includes(capabilityPath) || frameRecordingUrl.endsWith(capabilityPath);
+            return Boolean(
+              frame && !frame.hidden && frameSrc && frameRunKey === loadedRunId &&
+              capabilityMatches
+            );
+          };
           // Soft-swap when possible; only force remount if the viewer is not alive.
           if (!(await swapRerunRecordingInPlace(String(simViz.camera || "workspace"), loadedRunId))) {
             // Let mountRerunIframe inspect the existing viewer. It can reuse a
             // display-ready same-run mount even when add_receiver is unavailable;
             // pre-emptively marking it dead causes a needless second navigation.
             await mountRerunIframeUntilSuccess(String(simViz.camera || "workspace"), 8, loadedRunId);
-            // A boot-time mount may have been in flight when the source-aware
-            // switch cleared the old frame. The single-flight promise can finish
-            // successfully for that superseded frame, so verify the DOM target
-            // before declaring the selected run mounted and retry once if needed.
-            const selectedFrame = document.getElementById("rerunFrame");
-            if (!selectedFrame || !selectedFrame.getAttribute("src")) {
+            // A page-boot mount may already own the single-flight promise. Its
+            // completion is not success for this selection unless both the run
+            // identity and per-object capability match. Retry after that older
+            // mount releases the single-flight slot instead of leaving its
+            // nonblank but unrelated recording in the selected run's pane.
+            if (!frameMatchesSelectedRecording()) {
               rerunIframeLoaded = false;
+              mountedRerunRunKey = "";
               await mountRerunIframeUntilSuccess(String(simViz.camera || "workspace"), 8, loadedRunId);
             }
+          }
+          if (!frameMatchesSelectedRecording()) {
+            throw new Error("Rerun viewer did not mount the selected recording capability.");
           }
         } else if (render === "mcap" || render === "lichtblick") {
           hideArtifactPreview();
@@ -13784,6 +14127,15 @@
         const samples = Array.isArray(data && data.samples) ? data.samples : [];
         const source = (data && data.source && typeof data.source === "object") ? data.source : {};
         const review = (data && data.review && typeof data.review === "object") ? data.review : {};
+        const voxelSource = {
+          run_id: String((data && data.run_id) || runId).trim(),
+          run_ref: String((data && data.run_ref) || activeArtifactRunRef || "").trim(),
+          bucket: String((data && data.bucket) || "").trim(),
+          resource_bucket: String((data && data.bucket) || "").trim(),
+          project_id: String((data && data.project_id) || "").trim(),
+          resolved_prefix: String((data && data.resolved_prefix) || ""),
+          source_selected: true,
+        };
         if (reviewHost) {
           const real = Boolean(review.real_fiftyone);
           reviewHost.className = "dataset-review " + (real ? "is-real" : "is-limited");
@@ -13929,7 +14281,7 @@
           const uri = String(node.getAttribute("data-thumb-uri") || "").trim();
           if (!uri) { node.innerHTML = '<span class="hint">no preview</span>'; continue; }
           const resolved = artifactFromS3Uri(uri);
-          const url = artifactContentUrl(voxelDatasetRun, resolved, false);
+          const url = artifactContentUrl(voxelSource.run_ref || voxelDatasetRun, Object.assign({}, resolved, voxelSource), false);
           authenticatedPreviewObjectUrl(url, null).then((src) => {
             node.innerHTML = '<img alt="sample" src="' + src + '" />';
           }).catch(() => { node.innerHTML = '<span class="hint">no preview</span>'; });
@@ -13939,14 +14291,21 @@
             e.preventDefault();
             const resolved = artifactFromS3Uri(String(btn.getAttribute("data-s3-uri") || "").trim());
             const render = resolved.key.match(/\.(mp4|webm|mov)$/i) ? "video" : "image";
-            await previewArtifact({ run_id: voxelDatasetRun, ...resolved, render });
+            await previewArtifact({ ...resolved, ...voxelSource, render });
           });
         });
         grid.querySelectorAll("button[data-vx-action='download']").forEach((btn) => {
           btn.addEventListener("click", (e) => {
             e.preventDefault();
             const resolved = artifactFromS3Uri(String(btn.getAttribute("data-s3-uri") || "").trim());
-            downloadArtifact(voxelDatasetRun, "", resolved.key, resolved.bucket, String(btn.getAttribute("data-name") || "").trim());
+            downloadArtifact(
+              voxelSource.run_id,
+              voxelSource.run_ref,
+              resolved.key,
+              resolved.bucket,
+              String(btn.getAttribute("data-name") || "").trim(),
+              voxelSource
+            );
           });
         });
       }
@@ -14408,7 +14767,10 @@
                 ? ' <button class="btn" type="button" data-sd-action="load" data-run-id="' + escapeHtml(rid) +
                   '" data-run-ref="' + escapeHtml(stageRunRef) +
                   '" data-key="' + escapeHtml(key) + '" data-s3-uri="' + escapeHtml(s3uri) +
-                  '" data-bucket="' + escapeHtml(bucket) + '" data-render="' + escapeHtml(render) + '">' + actionLabel + "</button>"
+                  '" data-bucket="' + escapeHtml(bucket) +
+                  '" data-project-id="' + escapeHtml(String((data && data.project_id) || "")) +
+                  '" data-resolved-prefix="' + escapeHtml(String((data && data.resolved_prefix) || "")) +
+                  '" data-source-selected="true" data-render="' + escapeHtml(render) + '">' + actionLabel + "</button>"
                 : "";
               const foxgloveButton = render === "mcap"
                 ? '<button class="btn btn-primary" type="button" data-sd-action="foxglove" disabled ' +
@@ -14425,6 +14787,10 @@
                 '<span class="stage-detail-actions">' + foxgloveButton + viewButton +
                 '<button class="btn" type="button" data-sd-action="download" data-run-id="' + escapeHtml(rid) +
                 '" data-key="' + escapeHtml(key) + '" data-bucket="' + escapeHtml(bucket) +
+                '" data-run-ref="' + escapeHtml(stageRunRef) +
+                '" data-project-id="' + escapeHtml(String((data && data.project_id) || "")) +
+                '" data-resolved-prefix="' + escapeHtml(String((data && data.resolved_prefix) || "")) +
+                '" data-source-selected="true' +
                 '" data-name="' + escapeHtml(base) + '">Download</button></span></div>';
             }).join("") + "</div>"
           : '<p class="hint">No artifacts found for this stage.</p>';
@@ -14444,6 +14810,10 @@
                 {
                   key: String(node.getAttribute("data-key") || "").trim(),
                   bucket: String(node.getAttribute("data-bucket") || "").trim(),
+                  run_ref: stageRunRef,
+                  project_id: String((data && data.project_id) || ""),
+                  resolved_prefix: String((data && data.resolved_prefix) || ""),
+                  source_selected: true,
                 },
                 false
               );
@@ -14463,8 +14833,12 @@
               event.preventDefault();
               previewArtifact({
                 run_id: String(node.getAttribute("data-run-id") || "").trim(),
+                run_ref: stageRunRef,
                 key: String(node.getAttribute("data-key") || "").trim(),
                 bucket: String(node.getAttribute("data-bucket") || "").trim(),
+                project_id: String((data && data.project_id) || ""),
+                resolved_prefix: String((data && data.resolved_prefix) || ""),
+                source_selected: true,
                 render: String(node.getAttribute("data-render") || "image").trim(),
               }).catch((err) => showToast("Load failed: " + String((err && err.message) || err), "error"));
             };
@@ -14478,8 +14852,12 @@
               event.preventDefault();
               const selected = {
                 run_id: String(btn.getAttribute("data-run-id") || "").trim(),
+                run_ref: String(btn.getAttribute("data-run-ref") || "").trim(),
                 key: String(btn.getAttribute("data-key") || "").trim(),
                 bucket: String(btn.getAttribute("data-bucket") || "").trim(),
+                project_id: String(btn.getAttribute("data-project-id") || "").trim(),
+                resolved_prefix: String(btn.getAttribute("data-resolved-prefix") || ""),
+                source_selected: String(btn.getAttribute("data-source-selected") || "") === "true",
                 render: String(btn.getAttribute("data-render") || "download").trim(),
               };
               if (selected.render === "rerun" || selected.render === "mcap") {
@@ -14501,10 +14879,15 @@
               event.preventDefault();
               downloadArtifact(
                 String(btn.getAttribute("data-run-id") || "").trim(),
-                "",
+                String(btn.getAttribute("data-run-ref") || "").trim(),
                 String(btn.getAttribute("data-key") || "").trim(),
                 String(btn.getAttribute("data-bucket") || "").trim(),
-                String(btn.getAttribute("data-name") || "").trim()
+                String(btn.getAttribute("data-name") || "").trim(),
+                {
+                  project_id: String(btn.getAttribute("data-project-id") || "").trim(),
+                  resolved_prefix: String(btn.getAttribute("data-resolved-prefix") || ""),
+                  source_selected: String(btn.getAttribute("data-source-selected") || "") === "true",
+                }
               );
             });
           });

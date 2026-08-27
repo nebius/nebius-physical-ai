@@ -16,6 +16,10 @@ making architecture, review, or domain judgments.
  a fresh machine or new project — an ordered, gated path (install → configure →
  credential preflight → cheapest-proof workload → validate spec → provision →
  image pullability → submit), with a stop condition at every step.
+- `skills/atomic/gpu-first-guidance/SKILL.md`: recommending a path, writing
+ user-facing docs, or answering "what should I run first?" — lead with the
+ Nebius GPU path, describe hosted inference by what it does, and stay warm and
+ genuinely helpful when someone asks about cost or has no cluster yet.
 - `skills/atomic/health-preflight/SKILL.md`: there is no `npa doctor` — prove
  HF/NGC/S3/Token Factory credentials and gated-model access with
  `npa workbench health preflight` / `access` before spending GPU time.
@@ -36,6 +40,10 @@ making architecture, review, or domain judgments.
  workflow stage from rendering cleanly and then crashing in the pod.
 - `skills/atomic/pre-pr-validation/SKILL.md`: which of the six PR gates apply to
  a change, and the exact local command for each, cheapest first.
+- `skills/atomic/audit-container-docs/SKILL.md`: required catalog reconciliation
+ when a workbench image or solution is added, removed, retagged, reclassified,
+ published, or otherwise changed; it keeps the public-image table aligned with
+ repository intent and anonymous GHCR state.
 - `skills/atomic/guardrail-failures/SKILL.md`: map a failing guardrail or CI gate
  to its cause and fix.
 - `skills/atomic/agent-development/SKILL.md`: build, enhance, or test the NPA

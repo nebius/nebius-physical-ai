@@ -212,6 +212,12 @@ def deploy_cmd(
         "against the fleet's needs before applying. Without it a capacity/quota "
         "wall surfaces as terraform blocking on 'Still creating...' until the timeout.",
     ),
+    repair_stopped_placeholder: bool = typer.Option(
+        False,
+        "--repair-stopped-placeholder",
+        help="Explicitly repair one exact stopped, unbound, diskless strict-reserved "
+        "GPU worker placeholder before apply. Fails closed on any ambiguous state.",
+    ),
     yes: bool = typer.Option(
         False,
         "--yes",
@@ -285,6 +291,7 @@ def deploy_cmd(
             timeout_minutes=timeout,
             profile=profile or None,
             preflight=preflight,
+            repair_stopped_placeholder=repair_stopped_placeholder,
             stream_terraform=not json_mode,
             on_status=lambda msg: typer.echo(f"  - {msg}", err=json_mode),
         )

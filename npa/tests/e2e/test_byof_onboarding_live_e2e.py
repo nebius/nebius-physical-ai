@@ -84,51 +84,6 @@ def _parse_last_json_blob(text: str) -> dict[str, object]:
     return last_obj
 
 
-def _maybe_refresh_byof_registry_pull_secret(registry: str, e2e_project: str | None) -> None:
-    if os.environ.get("NPA_BYOF_SKIP_REGISTRY_REFRESH") == "1":
-        return
-    _activate_nebius_profile()
-    server = registry.split("/", 1)[0]
-    if not server.startswith("cr.") or ".nebius.cloud" not in server:
-        return
-    target = resolve_byof_kubernetes_target(e2e_project)
-    if not target.kubeconfig and not target.context:
-        print("WARN: skipped registry pull-secret refresh: kubernetes target not configured", file=sys.stderr)
-        return
-    namespace = os.environ.get("NPA_BYOF_K8S_NAMESPACE", "skypilot-system")
-    skypilot_bin = resolve_skypilot_bin()
-    if skypilot_bin:
-        bin_dir = str(Path(skypilot_bin).parent)
-        os.environ["PATH"] = f"{bin_dir}:{os.environ.get('PATH', '')}"
-    try:
-        from npa.workflows.sim2real.registry_auth import ensure_nebius_registry_pull_secret
-
-        ensure_nebius_registry_pull_secret(
-            registry_server=server,
-            namespace=namespace,
-            kubeconfig=target.kubeconfig,
-            k8s_context=target.context,
-        )
-        for target_ns in ("default", namespace):
-            if target_ns == namespace:
-                continue
-            ensure_nebius_registry_pull_secret(
-                registry_server=server,
-                secret_name="agent-sa",
-                namespace=target_ns,
-                kubeconfig=target.kubeconfig,
-                k8s_context=target.context,
-            )
-            ensure_nebius_registry_pull_secret(
-                registry_server=server,
-                namespace=target_ns,
-                kubeconfig=target.kubeconfig,
-                k8s_context=target.context,
-            )
-    except Exception as exc:
-        print(f"WARN: skipped registry pull-secret refresh: {exc}", file=sys.stderr)
-
-
 @pytest.fixture(scope="module")
 def live_byof_built_image(e2e_project: str | None) -> str:
     preset_image = os.environ.get("NPA_BYOF_TEST_IMAGE", "").strip()
@@ -239,7 +194,7 @@ def test_live_byof_registry_resolution(e2e_project: str | None) -> None:
     assert registry
     assert "/" in registry
     assert "example-bucket" not in registry
-    assert "<your-registry-id>" not in registry
+    assert "<your-registry>" not in registry
 
 
 @pytest.mark.skipif(
@@ -361,7 +316,6 @@ def test_live_byof_runner_submit_smoke(
     live_byof_built_image: str,
 ) -> None:
     registry = resolve_container_registry(e2e_project)
-    _maybe_refresh_byof_registry_pull_secret(registry, e2e_project)
     yaml_override = resolve_byof_resource_yaml(e2e_project, smoke=True)
     image = os.environ.get("NPA_BYOF_TEST_IMAGE", "").strip() or live_byof_built_image
     task = os.environ.get("NPA_BYOF_TASK", "Isaac-Cartpole-v0")
@@ -535,7 +489,6 @@ def test_live_byof_ubuntu_oss_container_verify_submit(
     live_byof_ubuntu_built_image: str,
 ) -> None:
     registry = resolve_container_registry(e2e_project)
-    _maybe_refresh_byof_registry_pull_secret(registry, e2e_project)
     yaml_override = resolve_byof_resource_yaml(e2e_project, smoke=True, workload="container-verify")
     cmd = [
         sys.executable,

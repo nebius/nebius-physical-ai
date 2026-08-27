@@ -30,7 +30,7 @@ from npa.workflows.sim2real.constants import (
     DEFAULT_REFERENCE_POLICY_TAG,
     DEFAULT_REFERENCE_VLM_MODEL,
     DEFAULT_REASON2_MODEL,
-    DEFAULT_REASON3_MODEL,
+    DEFAULT_COSMOS3_MODEL,
     DEFAULT_ROLLOUT_COUNT,
     DEFAULT_S3_ENDPOINT,
     DEFAULT_SIM_BACKEND,
@@ -99,15 +99,15 @@ class Sim2RealLoopConfig:
     trainer_image: str = f"npa-lerobot-vlm-rl:{DEFAULT_TRAINER_TAG}"
     vlm_image: str = f"npa-cosmos3-reason:{DEFAULT_VLM_IMAGE_TAG}"
     vlm_reason2_image: str = ""
-    vlm_reason3_image: str = ""
+    vlm_cosmos3_image: str = ""
     eval_image: str = f"npa-loop-eval:{DEFAULT_EVAL_TAG}"
     isaac_image: str = f"npa-isaac-lab:{DEFAULT_ISAAC_TAG}"
     sim_backend: str = DEFAULT_SIM_BACKEND
     isaac_task: str = DEFAULT_ISAAC_TASK
     vlm_model: str = DEFAULT_REFERENCE_VLM_MODEL
     vlm_reason2_model: str = DEFAULT_REASON2_MODEL
-    vlm_reason3_model: str = DEFAULT_REASON3_MODEL
-    vlm_dual_reason: bool = True
+    vlm_cosmos3_model: str = DEFAULT_COSMOS3_MODEL
+    vlm_two_evaluator: bool = True
     threshold: float = DEFAULT_THRESHOLD
     # Continue through every configured outer iteration even after a checkpoint
     # clears the promotion threshold when false. Real qualification runs use this
@@ -134,9 +134,7 @@ class Sim2RealLoopConfig:
     rerun_enabled: bool = True
     k8s_namespace: str = ""
     k8s_service_account: str = "agent-sa"
-    k8s_image_pull_secrets: str = (
-        "agent-sa,ngc-nvcr-imagepullsecret,npa-nebius-registry"
-    )
+    k8s_image_pull_secrets: str = "ngc-nvcr-imagepullsecret"
     k8s_env_secret_names: str = "hf-ngc-tokens,npa-storage-credentials"
     k8s_isaac_cache_pvc: str = "npa-sim2real-isaac-cache"
     k8s_gpu_resource: str = "nvidia.com/gpu"

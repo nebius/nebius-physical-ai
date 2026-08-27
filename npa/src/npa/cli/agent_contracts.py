@@ -30,6 +30,10 @@ AGENT_LEISAAC_CONTRACT = (
 AGENT_MEDIA_PREVIEW_CONTRACT = (
     "authenticatedPreviewObjectUrl",
     "artifactContentUrl",
+    "artifactSourceSelection",
+    "selectPreferredArtifact",
+    "validateVideoPreviewResponse",
+    "exact_artifact_source_required",
     "video.src = contentUrl",
     "Loading video preview…",
     "No RRD/MCAP recording; use the artifacts below",

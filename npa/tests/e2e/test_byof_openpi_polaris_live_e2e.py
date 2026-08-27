@@ -24,7 +24,6 @@ from types import SimpleNamespace
 import pytest
 import yaml
 
-from npa.clients.config import resolve_container_registry
 from npa.clients.project_credentials import storage_env_for_project
 from npa.orchestration.npa_workflow import build_plan, load_spec
 from npa.orchestration.npa_workflow.skypilot_render import secret_env_hints_for_plan
@@ -39,7 +38,6 @@ from npa.workflows.byof.openpi_service import (
     controller_service_account_name,
     service_resource_names,
 )
-from npa.workflows.sim2real.registry_auth import ensure_nebius_registry_pull_secret
 
 from .npa_workflow_live_helpers import live_bucket
 
@@ -714,23 +712,6 @@ def _live_env(project: str | None, registry: str) -> dict[str, str]:
     return env
 
 
-def _refresh_pull_secrets(*, project: str | None, registry: str) -> None:
-    """Materialize private-registry auth before the split negative/positive runs."""
-
-    server = registry.removeprefix("docker:").split("/", 1)[0].strip()
-    assert server.startswith("cr.") and ".nebius.cloud" in server
-    target = resolve_byof_kubernetes_target(project)
-    for namespace in sorted({target.namespace or "default", "default"}):
-        for secret_name in ("agent-sa", "npa-nebius-registry"):
-            ensure_nebius_registry_pull_secret(
-                registry_server=server,
-                secret_name=secret_name,
-                namespace=namespace,
-                kubeconfig=target.kubeconfig,
-                k8s_context=target.context,
-            )
-
-
 def _release_split_run(*, run_id: str, env: dict[str, str]) -> None:
     """Release the exact split-run pod and verify that its B200 is free.
 
@@ -1027,40 +1008,6 @@ def test_openpi_polaris_spec_plans_real_b200_serving() -> None:
     assert "NPA_OPENPI_ACCEPT_GEMMA_TERMS" not in profile_text
 
 
-def test_openpi_split_live_runs_refresh_pull_secrets_for_selected_target(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    calls: list[dict[str, str]] = []
-    monkeypatch.setattr(
-        f"{__name__}.resolve_byof_kubernetes_target",
-        lambda _project: SimpleNamespace(
-            namespace="openpi",
-            kubeconfig="/tmp/task-kubeconfig",
-            context="task-context",
-        ),
-    )
-    monkeypatch.setattr(
-        f"{__name__}.ensure_nebius_registry_pull_secret",
-        lambda **kwargs: calls.append(kwargs),
-    )
-
-    _refresh_pull_secrets(
-        project="project", registry="cr.us-central1.nebius.cloud/registry"
-    )
-
-    assert calls == [
-        {
-            "registry_server": "cr.us-central1.nebius.cloud",
-            "secret_name": secret_name,
-            "namespace": namespace,
-            "kubeconfig": "/tmp/task-kubeconfig",
-            "k8s_context": "task-context",
-        }
-        for namespace in ("default", "openpi")
-        for secret_name in ("agent-sa", "npa-nebius-registry")
-    ]
-
-
 def test_openpi_split_live_env_uses_one_project_storage_identity(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1085,7 +1032,7 @@ def test_openpi_split_live_env_uses_one_project_storage_identity(
     )
     monkeypatch.setattr(f"{__name__}.resolve_skypilot_bin", lambda: "")
 
-    env = _live_env("project", "cr.us-central1.nebius.cloud/registry")
+    env = _live_env("project", "registry-us.example/registry")
 
     assert env["AWS_ACCESS_KEY_ID"] == "project-key"
     assert env["AWS_SECRET_ACCESS_KEY"] == "project-secret"
@@ -1364,11 +1311,14 @@ def test_openpi_polaris_live_b200_all_four_modes(
     assert not os.environ.get("NPA_BYOF_OPENPI_REUSE_IMAGE", "").strip(), (
         "the canonical gate must build and push; use the runner manually for reuse debugging"
     )
-    saved_registry = resolve_container_registry(e2e_project)
-    project_registry = (
-        os.environ.get("NPA_BYOF_OPENPI_PROJECT_REGISTRY", "").strip() or saved_registry
+    project_registry = os.environ.get("NPA_BYOF_OPENPI_REGISTRY", "").strip()
+    assert project_registry, (
+        "NPA_BYOF_OPENPI_REGISTRY must name an authenticated operator-controlled "
+        "registry; restricted OpenPI bytes must not enter the official NPA GHCR namespace"
     )
-    assert project_registry.startswith("cr.") and ".nebius.cloud/" in project_registry
+    assert project_registry.rstrip("/").lower() != (
+        "ghcr.io/nebius/nebius-physical-ai"
+    )
 
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     build_run_id = f"byof-openpi-polaris-build-{stamp}"
@@ -1430,7 +1380,6 @@ def test_openpi_polaris_live_b200_all_four_modes(
         image_tag, build_command=str(build["build_command"])
     )
     print(json.dumps({"openpi_build_evidence": build_byte_evidence}, sort_keys=True))
-    _refresh_pull_secrets(project=e2e_project, registry=project_registry)
 
     negative_env = dict(env)
     negative_env.pop("NPA_OPENPI_ACCEPT_GEMMA_TERMS", None)
@@ -1795,12 +1744,6 @@ def test_openpi_polaris_live_b200_all_four_modes(
 
     positive_env = dict(env)
     positive_env["NPA_OPENPI_ACCEPT_GEMMA_TERMS"] = "YES"
-    # The connected four-mode run and independent multi-GB checkpoint readback
-    # can outlive the registry token materialized before the negative split run.
-    # Refresh immediately before this separate direct launch so a cache miss
-    # still proves digest-pinned private-registry auth rather than depending on
-    # stale credentials or a node-local image.
-    _refresh_pull_secrets(project=e2e_project, registry=project_registry)
     positive_proc = _run_byof(
         _smoke_command(
             planned=planned,

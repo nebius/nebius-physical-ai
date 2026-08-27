@@ -108,6 +108,18 @@ redistribution:
         must use the image's own venv python (see Dockerfile.mujoco's
         ARG NPA_IMAGE_PYTHON, which exists exactly because this was a live trap).
       pattern: '(?im)^\s*RUN\b[^\n]*(/isaac-sim/python\.sh|\bisaac-python\b)'
+    - kind: ovrtx_wheel_install
+      why: >-
+        OVRTX declares NVIDIA Proprietary Software. Installing its reviewed
+        hash lock puts the native renderer in the image and makes that complete
+        image private-registry-only unless redistribution rights are separately
+        established.
+      pattern: '(?is)\bRUN\b[^\n]*\b(?:uv\s+)?pip\s+install\b[^\n]*pylock\.ovrtx-runtime'
+    - kind: ovrtx_build_bootstrap
+      why: >-
+        Provisioning OVRTX during an image build bakes NVIDIA's proprietary
+        runtime even if the Dockerfile never spells out pip install.
+      pattern: '(?is)\bRUN\b[^\n]*render_ovrtx[^\n]*--provision-only'
   classes:
     public:
       description: >
@@ -126,10 +138,11 @@ redistribution:
         the registry (internal R&D, build-your-own), but hosting it PREBUILT on a
         public/anonymous registry would make us the third-party redistributor,
         which requires an NVIDIA AI Enterprise license.
-        Restricted membership is deliberate: cosmos3-serving remains
-        build-your-own under the NVIDIA Deep Learning Container License, and the
-        stale sonic-mujoco variant is quarantined because it inherits restricted
-        baked bytes. Credentials or runtime consent do not alter either result.
+        Membership is deliberately generic and may be empty. Historical
+        Cosmos3-serving and SONIC-MuJoCo digests remain quarantined because they
+        inherited restricted baked bytes; new zero-payload/independent builds do
+        not alter the classification of those old artifacts. Credentials or
+        runtime consent never repair already baked restricted bytes.
       reason: bakes-a-non-redistributable-runtime
 
 # Relative to npa/docker/workbench/
@@ -187,9 +200,10 @@ images:
       Agreement above $10M revenue) and Attachment A(18) (no training other
       models on Outputs for commercial use) govern the operator's own conduct and
       artifacts, and are their responsibility rather than something this image
-      certifies. Byte/layer scanning
-      with scripts/scan_image_ltx_payload.py is mandatory before publication.
-      NOT YET BUILT OR GPU-VALIDATED; see ltx2/REDISTRIBUTION.md.
+      certifies. Byte/layer scanning with scripts/scan_image_ltx_payload.py is
+      mandatory before publication. The supported release must resolve to the
+      exact zero-payload digest in ltx2_image_manifest.json, whose operator-only
+      runtime fetch and real GPU generation evidence are bound to the same bytes.
   alpamayo2-super:
     dockerfile: alpamayo2-super/Dockerfile
     tier: service
@@ -214,11 +228,12 @@ images:
   sonic-mujoco:
     dockerfile: sonic/Dockerfile.mujoco
     tier: job
-    redistribution: restricted
+    redistribution: public
     notes: >-
-      Quarantined legacy variant: its default parent is the old npa-sonic:0.1.2
-      image containing restricted NVIDIA bytes. Credentials or runtime consent
-      cannot make an already-baked payload redistributable.
+      Rebuilt independently on a digest-pinned official Python base from pinned
+      Apache-2.0 SONIC source plus an exact public PyPI CUDA/MuJoCo closure;
+      Isaac Sim, Isaac Lab, Omniverse Kit, models, credentials, and accepted terms
+      remain absent. Isaac-facing inherited modes retain runtime-fetch refusal.
   sim2real-eval:
     dockerfile: sim2real-eval/Dockerfile
     tier: job
@@ -253,7 +268,11 @@ images:
       CUDA build/runtime bases. Git LFS smudging is disabled; upstream assets, example media,
       checkpoints, caches, and Git metadata are removed and build-guarded. Gated
       NVIDIA Open Model License weights are fetched only at runtime with the
-      operator's HF_TOKEN into a mounted cache. PAIDF's CC-BY-4.0 RoboPro starter
+      operator's HF_TOKEN into a mounted cache. Optional SAM2 removes the
+      lockfile's unaffiliated PyPI repackaging and installs Meta's official
+      Apache-2.0 source at immutable commit
+      2b90b9f5ceec907a1c18123530e92e794ad901a4; its public Apache-2.0 checkpoint
+      is runtime-fetched and never baked. PAIDF's CC-BY-4.0 RoboPro starter
       is likewise not baked into this or any image: the operator-side NPA CLI
       fetches the immutable object, enforces its SHA-256, and stages it to the
       run. The upstream Cosmos repository's ambiguously licensed example media
@@ -267,8 +286,13 @@ images:
     tier: job
     passwordless_root_exemption: "SkyPilot Kubernetes bootstrap only; non-root runtime user, no default sshd service, and no baked credentials."
     notes: >-
-      Cosmos 3 omni-model generation, released additively as 1.2.2-cu130-r2;
-      the immutable 1.2.2-cu130 image remains rollback provenance. Bakes
+      Cosmos 3 omni-model generation, released additively as 1.2.2-cu130-r6;
+      the immutable 1.2.2-cu130, r2, and unpublished r3/r4 images remain rollback
+      provenance. The r6 image removes imageio-ffmpeg's redundant wheel-bundled
+      executable, uses the attributed distro FFmpeg instead, and keeps a
+      no-argv SkyPilot worker pod alive until bootstrap execs its setup, and
+      publishes auditable source-motion-preserving PAIDF composites beside the
+      unmodified Cosmos outputs. Bakes
       OpenMDW-1.1 cosmos-framework SOURCE at a pinned commit plus its cu130
       inference venv; NO model weights. Gated
       Cosmos3 checkpoints, the Wan VAE, and the guardrail models download at
@@ -281,19 +305,42 @@ images:
       runtime user because the SkyPilot Kubernetes bootstrap installs its SSH runtime in-pod; see
       docs/security/container-golden-evals.md.
     redistribution: public
+    skypilot_bootstrap_contract: skypilot-0.12.2-v1
   cosmos3-serving:
     dockerfile: cosmos3-serving/Dockerfile
     tier: service
     ports: [8000]
     notes: >-
-      Build-your-own only. The vLLM-Omni source is Apache-2.0 and no model or
-      guardrail weights are baked, but the pinned base image embeds NVIDIA's
-      Deep Learning Container License. Its derived-container distribution grant
-      requires material added primary functionality and downstream terms at
-      least as protective; this thin serving wrapper and anonymous GHCR do not
-      establish those conditions. Operators build into their own registry and
-      fetch gated weights at runtime using a token whose account has upstream access.
-    redistribution: restricted
+      Zero-payload bootstrap on a digest-pinned official Python base. The exact
+      vLLM-Omni source and CUDA/PyTorch closure are fetched directly at runtime
+      only after the operator explicitly accepts the NVIDIA Software License.
+      It contains no NLC/NGC runtime, model or guardrail weights, credentials,
+      accepted terms, or gated assets. Both gated model repositories are probed
+      before the documented 8-GPU service starts.
+    redistribution: public
+  content-agents:
+    dockerfile: content-agents/Dockerfile
+    ovrtx_runtime_fetch: true
+    accepted_image_manifest: npa/src/npa/deploy/content_agents_image_manifest.json
+    tier: job
+    passwordless_root_exemption: >-
+      SkyPilot Kubernetes bootstrap only; the final task process is uid 1000,
+      no service or public ingress is enabled, host keys are generated only at
+      run time, and no credentials or license acceptance are baked.
+    notes: >-
+      NVIDIA Content Agents v0.5.2 source is Apache-2.0 and fetched at immutable
+      commit 36dbf3f274f8e256637230a05a085853f65cc175. The public image contains
+      only source, the NPA downloader, and the reviewed upstream OVRTX lock;
+      it contains zero OVRTX wheel, runtime, or native payload bytes. On first
+      render use, the operator fetches exact OVRTX 0.3.0.312915 directly from
+      NVIDIA's anonymous package index into the standard runtime cache.
+      Scene Optimizer Core, OvPhysX, upstream material/sample assets, model
+      weights, credentials, and customer data are excluded. Hosted VLM inference
+      and customer assets enter only at run time. NVIDIA driver userspace is not
+      baked; OVRTX requires an RTX Kubernetes node whose GPU Operator mounts
+      compute, utility, graphics, and display capabilities.
+    redistribution: public
+    skypilot_bootstrap_contract: skypilot-0.12.2-v1
   cosmos3-reason:
     dockerfile: cosmos3-reason/Dockerfile
     tier: job
@@ -328,6 +375,11 @@ images:
     dockerfile: isaac-lab/Dockerfile
     isaac_runtime_fetch: true
     tier: interactive
+    notes: >-
+      Bakes OSS dependencies only and uses Debian FFmpeg at runtime. The image
+      removes imageio-ffmpeg's wheel-bundled static executable in the same layer
+      that installs the Python environment. Isaac Sim/Lab and task assets remain
+      cryptographically verified runtime fetches after EULA preflight.
     redistribution: public
   leisaac:
     dockerfile: leisaac/Dockerfile
@@ -409,8 +461,19 @@ images:
     dockerfile: rerun-viewer/Dockerfile
     tier: job
     ports: [9090]
-    final_user: nobody
+    final_user: ubuntu
+    notes: >-
+      Purpose-built standard-workflow Stage 14 image with exact NPA source,
+      resolver-closed Rerun/MCAP dependencies, and SkyPilot Kubernetes bootstrap
+      prerequisites. Its command-passthrough entrypoint preserves orchestrator
+      argv, while an empty argv starts the interactive Rerun server.
+    passwordless_root_exemption: >-
+      SkyPilot's Kubernetes bootstrap installs and starts its in-pod SSH runtime
+      as the non-root ubuntu user. The image deletes all build-time SSH host keys,
+      disables password and root login, starts no SSH service by default, and
+      uses the grant only inside an explicitly orchestrated ephemeral worker.
     redistribution: public
+    skypilot_bootstrap_contract: skypilot-0.12.2-v1
   foxglove-embed:
     dockerfile: foxglove-embed/Dockerfile
     tier: service

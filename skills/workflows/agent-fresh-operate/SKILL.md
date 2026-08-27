@@ -70,6 +70,10 @@ target branch to the dev VM before live tests.
      --tenant-id <tenant-id> \
      --region us-central1
    ```
+   The default capacity gate reserves the canonical follow-on cluster as well as
+   the VM. Use `--agent-only` when this lifecycle intentionally creates only the
+   UI VM or when a separately managed cluster already satisfies the workload
+   plan; the flag still checks the VM's instance, disk, and public-IP capacity.
    Expect **compute PermissionDenied with VM SA attachment** on some cross-project
    profiles; npa retries apply without attached `service_account_id` and now emits
    a loud WARNING when it does — a VM without an attached SA cannot self-mint IAM

@@ -41,7 +41,10 @@ The Kubernetes controller is the default path (`W9-skypilot-k8s-controller`). Th
   driver emits a SkyPilot JobGroup for each `parallel:` wave and submits the
   following state as its barrier.
 - Managed-job Python API `Dag` support is effectively single-task for this repo's burst path. Use `npa burst submit-yaml` only for rendered single-task SkyPilot YAMLs; use `npa workbench workflow submit` for multi-stage workbench YAMLs.
-- Direct Nebius burst jobs pull `resources.image_id` before YAML `setup` runs. For private `cr.*.nebius.cloud` images, the submitter must inject SkyPilot Docker login config (`SKYPILOT_DOCKER_SERVER`, `SKYPILOT_DOCKER_USERNAME`, `SKYPILOT_DOCKER_PASSWORD`) into task secrets before launch. `npa burst submit-yaml` does this by minting a short-lived Nebius IAM token when the submitter has Nebius credentials.
+- Direct Nebius burst jobs pull `resources.image_id` before YAML `setup` runs.
+  Official public GHCR development and release tags need no registry secret.
+  Operator-controlled private registries require explicit exact-host SkyPilot
+  Docker credentials; NPA forwards them but never mints a provider token.
 
 ## What the Renderer Emits
 

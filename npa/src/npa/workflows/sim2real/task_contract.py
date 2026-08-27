@@ -207,7 +207,10 @@ def assert_contract_digest(contract: dict[str, Any]) -> str:
 
 
 def validate_seed_dataset_manifest(
-    manifest: dict[str, Any], *, contract: dict[str, Any]
+    manifest: dict[str, Any],
+    *,
+    contract: dict[str, Any],
+    trigger_objects: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Validate real Isaac trajectory provenance without trusting a dataset label."""
 
@@ -239,7 +242,7 @@ def validate_seed_dataset_manifest(
     sample_uri = str(manifest.get("sample_rollout_manifest_uri") or "")
     if not sample_uri.startswith("s3://"):
         raise TaskContractError("task seed dataset lacks an S3 sample rollout manifest")
-    return {
+    proof = {
         "schema": manifest["schema"],
         **expected,
         "source_backend": "isaac",
@@ -250,3 +253,110 @@ def validate_seed_dataset_manifest(
         "sample_rollout_manifest_uri": sample_uri,
         "manifest_digest": canonical_digest(manifest),
     }
+    if manifest.get("preset") == "public-franka-lift":
+        _validate_public_franka_lift_seed(
+            manifest,
+            trigger_objects=trigger_objects,
+        )
+        proof.update(
+            {
+                "preset": "public-franka-lift",
+                "source_provenance": manifest["source_provenance"],
+                "source_contract": manifest["source_contract"],
+                "compatibility_boundary": manifest["compatibility_boundary"],
+            }
+        )
+    return proof
+
+
+def _validate_public_franka_lift_seed(
+    manifest: dict[str, Any], *, trigger_objects: list[dict[str, Any]] | None
+) -> None:
+    """Keep the public source and canonical PPO contracts visibly separate."""
+
+    from npa.orchestration.npa_workflow.presets import (
+        PUBLIC_FRANKA_LIFT_CANONICAL_TASK_ID,
+        PUBLIC_FRANKA_LIFT_DATASET_ID,
+        PUBLIC_FRANKA_LIFT_DATASET_REPOSITORY,
+        PUBLIC_FRANKA_LIFT_DATASET_REVISION,
+        PUBLIC_FRANKA_LIFT_SOURCE_TASK_ID,
+    )
+
+    provenance = manifest.get("source_provenance")
+    source = manifest.get("source_contract")
+    boundary = manifest.get("compatibility_boundary")
+    if not all(isinstance(value, dict) for value in (provenance, source, boundary)):
+        raise TaskContractError("public Franka seed lacks explicit provenance/contract boundary")
+    if (
+        manifest.get("dataset_id") != PUBLIC_FRANKA_LIFT_DATASET_ID
+        or manifest.get("task_id") != PUBLIC_FRANKA_LIFT_CANONICAL_TASK_ID
+        or provenance.get("repository") != PUBLIC_FRANKA_LIFT_DATASET_REPOSITORY
+        or provenance.get("revision") != PUBLIC_FRANKA_LIFT_DATASET_REVISION
+        or provenance.get("declared_license") != "apache-2.0"
+        or provenance.get("anonymous_public") is not True
+    ):
+        raise TaskContractError("public Franka seed provenance does not match its immutable pin")
+    required_source_paths = {
+        "final_dataset/meta/info.json",
+        "final_dataset/meta/tasks.jsonl",
+        "final_dataset/meta/episodes.jsonl",
+        "final_dataset/data/chunk-000/episode_000000.parquet",
+        "final_dataset/videos/chunk-000/image/episode_000000.mp4",
+        "final_dataset/videos/chunk-000/wrist_image/episode_000000.mp4",
+    }
+    if set(provenance.get("source_paths") or []) != required_source_paths:
+        raise TaskContractError("public Franka seed source path provenance is incomplete")
+    if source != {
+        "task_id": PUBLIC_FRANKA_LIFT_SOURCE_TASK_ID,
+        "robot": "franka",
+        "action": {"dimensions": 7, "representation": "IK-relative"},
+        "cameras": ["image", "wrist_image"],
+    }:
+        raise TaskContractError("public Franka seed source action/camera contract changed")
+    if (
+        boundary.get("source_actions_reused_as_canonical_ppo_actions") is not False
+        or (boundary.get("canonical_action") or {}).get("dimensions") != 8
+        or boundary.get("canonical_cameras") != ["primary", "side", "overhead"]
+        or boundary.get("strict_success_distance_m") != STRICT_SUCCESS_DISTANCE_M
+        or boundary.get("placement_stability_required") is not True
+    ):
+        raise TaskContractError("public Franka seed weakens the canonical policy/evaluation boundary")
+    records = provenance.get("objects")
+    if not isinstance(records, list) or not records:
+        raise TaskContractError("public Franka seed lacks staged object hashes")
+    for record in records:
+        if (
+            not isinstance(record, dict)
+            or not str(record.get("uri") or "").startswith("s3://")
+            or int(record.get("bytes") or 0) <= 0
+            or len(str(record.get("sha256") or "")) != 64
+            or any(
+                char not in "0123456789abcdef"
+                for char in str(record.get("sha256") or "")
+            )
+        ):
+            raise TaskContractError("public Franka seed has malformed staged object evidence")
+    frame_records = [record for record in records if "/frames/camera-" in record["uri"]]
+    if len(frame_records) < 4 or len(frame_records) != int(manifest["camera_observation_count"]):
+        raise TaskContractError("public Franka seed must contain at least four decoded camera frames")
+    record_uris = {record["uri"] for record in records}
+    if sample_uri := str(manifest.get("sample_rollout_manifest_uri") or ""):
+        if sample_uri not in record_uris:
+            raise TaskContractError("public Franka seed sample rollout was not staged")
+    if not any(uri.endswith("/evidence/actions.json") for uri in record_uris):
+        raise TaskContractError("public Franka seed action evidence was not staged")
+    if trigger_objects is not None:
+        listed = {
+            f"s3://{item.get('Bucket')}/{item.get('Key')}": int(item.get("Size") or 0)
+            for item in trigger_objects
+            if item.get("Bucket") and item.get("Key")
+        }
+        missing_or_changed = sorted(
+            record["uri"]
+            for record in records
+            if listed.get(record["uri"]) != int(record["bytes"])
+        )
+        if missing_or_changed:
+            raise TaskContractError(
+                f"public Franka staged objects are missing or changed: {missing_or_changed}"
+            )

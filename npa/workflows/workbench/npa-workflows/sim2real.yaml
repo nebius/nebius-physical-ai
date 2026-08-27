@@ -10,13 +10,17 @@ metadata:
   description: >
     Compositional 14-stage Sim2Real workflow: validate a task-aligned trigger,
     consume the Isaac task contract, run Cosmos Transfer, parallel EnvGen,
-    sealed train/validation/gold split, Isaac rollouts, parallel Cosmos Reason,
+    sealed train/validation/gold split, Isaac rollouts, hosted Cosmos3 scoring,
     genuine BYO Isaac PPO, validation-only checkpoint selection, untouched gold
     evaluation, an honest external seam, and Rerun plus MCAP finalization.
 
 config:
+  # Explicit workflow presets are opt-in through `workflow ... --preset`.
+  # Empty preserves the production/custom dataset behavior below.
+  workflow_preset: ""
   source_sha: ""
   require_baked_npa: "1"
+  baked_npa_import: npa.workflows.sim2real.workflow_stage
   bucket: example-bucket
   prefix: "sim2real/{{run.id}}"
   root_uri: "s3://{{config.bucket}}/{{config.prefix}}"
@@ -37,7 +41,9 @@ config:
   allow_early_exit: "1"
   env_count: "10000"
   train_fraction: "0.8"
-  shard_count: "2"
+  # EnvGen is rank-aware and scales horizontally; use half of a 16-GPU pool so
+  # adjacent GPU stages retain scheduling headroom.
+  shard_count: "8"
   envgen_seed: "42"
   rollout_count: "64"
   steps_per_rollout: "32"
@@ -51,8 +57,7 @@ config:
   capture_width: "640"
   capture_height: "480"
   png_compress_level: "2"
-  reason2_model: nvidia/Cosmos-Reason2-8B
-  reason3_model: nvidia/Cosmos-Reason2-2B
+  cosmos3_model: nvidia/Cosmos3-Super-Reasoner
 
   # Required live inputs. The controller image is the purpose-built CPU-only
   # stage adapter, never a Genesis/trainer runtime. Empty defaults keep this
@@ -61,7 +66,6 @@ config:
   controller_image: ""
   transfer_image: ""
   envgen_image: ""
-  reason_image: ""
   isaac_image: ""
   viewer_image: ""
   isaac_cache_pvc: ""
@@ -88,6 +92,17 @@ resources:
             kueue.x-k8s.io/queue-name: "{{config.gpu_queue}}"
         spec:
           priorityClassName: "{{config.gpu_priority_class}}"
+          # The immutable Cosmos Transfer image keeps its model cache under /opt,
+          # but SkyPilot bootstraps uv as its non-root runtime user before the task
+          # starts. Keep only bootstrap caches in writable ephemeral storage; model
+          # weights and task outputs retain their existing attested locations.
+          containers:
+            - name: ray-node
+              env:
+                - name: UV_CACHE_DIR
+                  value: /tmp/npa-skypilot-uv-cache
+                - name: XDG_CACHE_HOME
+                  value: /tmp/npa-skypilot-xdg-cache
   envgen-gpu:
     cloud: kubernetes
     accelerators: RTXPRO6000:1
@@ -101,19 +116,11 @@ resources:
             kueue.x-k8s.io/queue-name: "{{config.gpu_queue}}"
         spec:
           priorityClassName: "{{config.gpu_priority_class}}"
-  reason-gpu:
+  stage8-cpu:
     cloud: kubernetes
-    accelerators: RTXPRO6000:1
-    cpus: 16
-    memory: 128Gi
-    image: "{{config.reason_image}}"
-    kubernetes:
-      pod_config:
-        metadata:
-          labels:
-            kueue.x-k8s.io/queue-name: "{{config.gpu_queue}}"
-        spec:
-          priorityClassName: "{{config.gpu_priority_class}}"
+    cpus: 8
+    memory: 32Gi
+    image: "{{config.controller_image}}"
   isaac-gpu:
     cloud: kubernetes
     accelerators: RTXPRO6000:1
@@ -207,15 +214,15 @@ states:
 
   stage-04-wave:
     description: Stage 4 - parallel raw environment generation in standard workflow GPU tasks.
-    parallel: [stage-04-shard-0, stage-04-shard-1]
-    # v0.0.1 groups are explicit. This generic assertion makes shard_count=2 an
+    parallel: [stage-04-shard-0, stage-04-shard-1, stage-04-shard-2, stage-04-shard-3, stage-04-shard-4, stage-04-shard-5, stage-04-shard-6, stage-04-shard-7]
+    # v0.0.1 groups are explicit. This generic assertion makes shard_count=8 an
     # honest validate/plan/submit contract instead of silently under-fanning out.
     parallelCount: "{{config.shard_count}}"
-    maxConcurrency: 2
+    maxConcurrency: 8
     next: stage-05-split
 
   stage-04-shard-0:
-    description: Raw EnvGen shard 0/2.
+    description: Raw EnvGen shard 0/8.
     resources: envgen-gpu
     run:
       argv: [python3, -m, npa.workflows.sim2real.workflow_stage, --stage, "4", --root-uri, "{{config.root_uri}}", --run-id, "{{run.id}}", --env-count, "{{config.env_count}}", --shard-index, "0", --shard-count, "{{config.shard_count}}", --seed, "{{config.envgen_seed}}"]
@@ -224,13 +231,67 @@ states:
       - {uri: "{{config.root_uri}}/components/lanes/stage_04/shard-00000.json", schema: npa.sim2real.component_lane_record.v1}
 
   stage-04-shard-1:
-    description: Raw EnvGen shard 1/2.
+    description: Raw EnvGen shard 1/8.
     resources: envgen-gpu
     run:
       argv: [python3, -m, npa.workflows.sim2real.workflow_stage, --stage, "4", --root-uri, "{{config.root_uri}}", --run-id, "{{run.id}}", --env-count, "{{config.env_count}}", --shard-index, "1", --shard-count, "{{config.shard_count}}", --seed, "{{config.envgen_seed}}"]
     outputs:
       - {uri: "{{config.root_uri}}/envs/raw/raw-shard-01-summary.json", schema: npa.sim2real.raw_env_shard_summary.v1}
       - {uri: "{{config.root_uri}}/components/lanes/stage_04/shard-00001.json", schema: npa.sim2real.component_lane_record.v1}
+
+  stage-04-shard-2:
+    description: Raw EnvGen shard 2/8.
+    resources: envgen-gpu
+    run:
+      argv: [python3, -m, npa.workflows.sim2real.workflow_stage, --stage, "4", --root-uri, "{{config.root_uri}}", --run-id, "{{run.id}}", --env-count, "{{config.env_count}}", --shard-index, "2", --shard-count, "{{config.shard_count}}", --seed, "{{config.envgen_seed}}"]
+    outputs:
+      - {uri: "{{config.root_uri}}/envs/raw/raw-shard-02-summary.json", schema: npa.sim2real.raw_env_shard_summary.v1}
+      - {uri: "{{config.root_uri}}/components/lanes/stage_04/shard-00002.json", schema: npa.sim2real.component_lane_record.v1}
+
+  stage-04-shard-3:
+    description: Raw EnvGen shard 3/8.
+    resources: envgen-gpu
+    run:
+      argv: [python3, -m, npa.workflows.sim2real.workflow_stage, --stage, "4", --root-uri, "{{config.root_uri}}", --run-id, "{{run.id}}", --env-count, "{{config.env_count}}", --shard-index, "3", --shard-count, "{{config.shard_count}}", --seed, "{{config.envgen_seed}}"]
+    outputs:
+      - {uri: "{{config.root_uri}}/envs/raw/raw-shard-03-summary.json", schema: npa.sim2real.raw_env_shard_summary.v1}
+      - {uri: "{{config.root_uri}}/components/lanes/stage_04/shard-00003.json", schema: npa.sim2real.component_lane_record.v1}
+
+  stage-04-shard-4:
+    description: Raw EnvGen shard 4/8.
+    resources: envgen-gpu
+    run:
+      argv: [python3, -m, npa.workflows.sim2real.workflow_stage, --stage, "4", --root-uri, "{{config.root_uri}}", --run-id, "{{run.id}}", --env-count, "{{config.env_count}}", --shard-index, "4", --shard-count, "{{config.shard_count}}", --seed, "{{config.envgen_seed}}"]
+    outputs:
+      - {uri: "{{config.root_uri}}/envs/raw/raw-shard-04-summary.json", schema: npa.sim2real.raw_env_shard_summary.v1}
+      - {uri: "{{config.root_uri}}/components/lanes/stage_04/shard-00004.json", schema: npa.sim2real.component_lane_record.v1}
+
+  stage-04-shard-5:
+    description: Raw EnvGen shard 5/8.
+    resources: envgen-gpu
+    run:
+      argv: [python3, -m, npa.workflows.sim2real.workflow_stage, --stage, "4", --root-uri, "{{config.root_uri}}", --run-id, "{{run.id}}", --env-count, "{{config.env_count}}", --shard-index, "5", --shard-count, "{{config.shard_count}}", --seed, "{{config.envgen_seed}}"]
+    outputs:
+      - {uri: "{{config.root_uri}}/envs/raw/raw-shard-05-summary.json", schema: npa.sim2real.raw_env_shard_summary.v1}
+      - {uri: "{{config.root_uri}}/components/lanes/stage_04/shard-00005.json", schema: npa.sim2real.component_lane_record.v1}
+
+  stage-04-shard-6:
+    description: Raw EnvGen shard 6/8.
+    resources: envgen-gpu
+    run:
+      argv: [python3, -m, npa.workflows.sim2real.workflow_stage, --stage, "4", --root-uri, "{{config.root_uri}}", --run-id, "{{run.id}}", --env-count, "{{config.env_count}}", --shard-index, "6", --shard-count, "{{config.shard_count}}", --seed, "{{config.envgen_seed}}"]
+    outputs:
+      - {uri: "{{config.root_uri}}/envs/raw/raw-shard-06-summary.json", schema: npa.sim2real.raw_env_shard_summary.v1}
+      - {uri: "{{config.root_uri}}/components/lanes/stage_04/shard-00006.json", schema: npa.sim2real.component_lane_record.v1}
+
+  stage-04-shard-7:
+    description: Raw EnvGen shard 7/8.
+    resources: envgen-gpu
+    run:
+      argv: [python3, -m, npa.workflows.sim2real.workflow_stage, --stage, "4", --root-uri, "{{config.root_uri}}", --run-id, "{{run.id}}", --env-count, "{{config.env_count}}", --shard-index, "7", --shard-count, "{{config.shard_count}}", --seed, "{{config.envgen_seed}}"]
+    outputs:
+      - {uri: "{{config.root_uri}}/envs/raw/raw-shard-07-summary.json", schema: npa.sim2real.raw_env_shard_summary.v1}
+      - {uri: "{{config.root_uri}}/components/lanes/stage_04/shard-00007.json", schema: npa.sim2real.component_lane_record.v1}
 
   stage-05-split:
     description: Stage 5 - curate and seal disjoint train, validation, and untouched gold scenarios.
@@ -259,10 +320,10 @@ states:
     next: stage-12-external-seam
 
   inner-loop:
-    description: Standard durable inner loop over Isaac rollout, dual Reason, and PPO.
+    description: Standard durable inner loop over Isaac rollout, hosted Cosmos3 evaluation, and PPO.
     loop:
       max: "{{config.inner_iterations}}"
-    sequence: [stage-07-rollouts, stage-08-wave, stage-09-ppo]
+    sequence: [stage-07-rollouts, stage-08-cosmos3, stage-09-ppo]
 
   stage-07-rollouts:
     description: Stage 7 - real Isaac policy rollouts with event-local multi-camera observations.
@@ -275,35 +336,24 @@ states:
     outputs:
       - {uri: "{{config.root_uri}}/actions/train/outer-{{loop.outer-loop}}/iter-{{loop.inner-loop}}/rollouts-result.json", schema: npa.sim2real.policy_rollouts.v1}
 
-  stage-08-wave:
-    description: Stage 8 - parallel real Cosmos Reason lanes over the exact Stage 7 events.
-    parallel: [stage-08-reason2, stage-08-reason3]
-    maxConcurrency: 2
-
-  stage-08-reason2:
-    description: Real Cosmos Reason2 evaluation lane.
-    resources: reason-gpu
+  stage-08-cosmos3:
+    description: Hosted NVIDIA Cosmos3-Super-Reasoner rollout evaluation through Nebius Token Factory.
+    resources: stage8-cpu
     params: {outer_iteration: "{{loop.outer-loop}}", inner_iteration: "{{loop.inner-loop}}"}
     run:
-      argv: [python3, -m, npa.workflows.sim2real.workflow_stage, --stage, "8", --root-uri, "{{config.root_uri}}", --run-id, "{{run.id}}", --outer-iteration, "{{config.outer_iteration}}", --inner-iteration, "{{config.inner_iteration}}", --reason-lane, reason2, --reason-model, "{{config.reason2_model}}", --threshold, "{{config.threshold}}"]
+      argv: [python3, -m, npa.workflows.sim2real.workflow_stage, --stage, "8", --root-uri, "{{config.root_uri}}", --run-id, "{{run.id}}", --outer-iteration, "{{config.outer_iteration}}", --inner-iteration, "{{config.inner_iteration}}", --reason-model, "{{config.cosmos3_model}}", --threshold, "{{config.threshold}}"]
     outputs:
-      - {uri: "{{config.root_uri}}/vlm_eval/train/outer-{{loop.outer-loop}}/iter-{{loop.inner-loop}}/reason2.json", schema: npa.sim2real.cosmos_reason_lane.v1}
-      - {uri: "{{config.root_uri}}/components/lanes/stage_08/reason2-o{{loop.outer-loop}}-i{{loop.inner-loop}}.json", schema: npa.sim2real.component_lane_record.v1}
-
-  stage-08-reason3:
-    description: Real Cosmos Reason3 evaluation lane.
-    resources: reason-gpu
-    params: {outer_iteration: "{{loop.outer-loop}}", inner_iteration: "{{loop.inner-loop}}"}
-    run:
-      argv: [python3, -m, npa.workflows.sim2real.workflow_stage, --stage, "8", --root-uri, "{{config.root_uri}}", --run-id, "{{run.id}}", --outer-iteration, "{{config.outer_iteration}}", --inner-iteration, "{{config.inner_iteration}}", --reason-lane, reason3, --reason-model, "{{config.reason3_model}}", --threshold, "{{config.threshold}}"]
-    outputs:
-      - {uri: "{{config.root_uri}}/vlm_eval/train/outer-{{loop.outer-loop}}/iter-{{loop.inner-loop}}/reason3.json", schema: npa.sim2real.cosmos_reason_lane.v1}
-      - {uri: "{{config.root_uri}}/components/lanes/stage_08/reason3-o{{loop.outer-loop}}-i{{loop.inner-loop}}.json", schema: npa.sim2real.component_lane_record.v1}
+      - {uri: "{{config.root_uri}}/vlm_eval/train/outer-{{loop.outer-loop}}/iter-{{loop.inner-loop}}/cosmos3.json", schema: npa.sim2real.cosmos3_evaluator.v1}
+      - {uri: "{{config.root_uri}}/components/stage_08.json", schema: npa.sim2real.component_record.v1}
 
   stage-09-ppo:
-    description: Stage 9 - merge Reason signals, run genuine BYO Isaac RSL-RL PPO, and select with validation only.
+    description: Stage 9 - require exact Stage 7 rollout coverage from the single hosted Cosmos3 evaluator, consume its temporal signals, run genuine BYO Isaac RSL-RL PPO, and select with validation only.
     resources: isaac-gpu
     params: {outer_iteration: "{{loop.outer-loop}}", inner_iteration: "{{loop.inner-loop}}"}
+    inputs:
+      - {uri: "{{config.root_uri}}/actions/train/outer-{{loop.outer-loop}}/iter-{{loop.inner-loop}}/rollouts-result.json", schema: npa.sim2real.policy_rollouts.v1}
+      - {uri: "{{config.root_uri}}/vlm_eval/train/outer-{{loop.outer-loop}}/iter-{{loop.inner-loop}}/cosmos3.json", schema: npa.sim2real.cosmos3_evaluator.v1}
+      - {uri: "{{config.root_uri}}/components/stage_08.json", schema: npa.sim2real.component_record.v1}
     run:
       argv: [python3, -m, npa.workflows.sim2real.workflow_stage, --stage, "9", --root-uri, "{{config.root_uri}}", --run-id, "{{run.id}}", --task-id, "{{config.task_id}}", --outer-iteration, "{{config.outer_iteration}}", --inner-iteration, "{{config.inner_iteration}}", --threshold, "{{config.threshold}}", --ppo-num-envs, "{{config.ppo_num_envs}}", --ppo-iterations, "{{config.ppo_iterations}}", --ppo-steps-per-env, "{{config.ppo_steps_per_env}}", --validation-count, "{{config.validation_count}}", --capture-fps, "{{config.capture_fps}}", --capture-width, "{{config.capture_width}}", --capture-height, "{{config.capture_height}}", --png-compress-level, "{{config.png_compress_level}}"]
     outputs:

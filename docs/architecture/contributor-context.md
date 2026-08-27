@@ -107,7 +107,7 @@ Expected passing baseline before any PR: **1242+ passed, 0 failures** (excluding
 ## Credentials and secrets policy
 
 - Never hardcode credentials, project IDs, tenant IDs, bucket names, or registry paths in source
-- Use `${NPA_S3_BUCKET}`, `${NPA_REGISTRY_ID}`, `${NEBIUS_PROJECT_ID}` as documented placeholders
+- Use `${NPA_S3_BUCKET}`, `${NPA_REGISTRY}`, `${NEBIUS_PROJECT_ID}` as documented placeholders
 - See `SECURITY.md` for the full policy and how to report issues
 - The repo runs `gitleaks` / secret scanning — commits with hardcoded values will be rejected
 
@@ -149,8 +149,10 @@ historical baseline.
 ### SONIC Image Routing Reconciled
 
 SONIC image selection is manifest-driven. The old baked `npa-sonic:0.1.2` and
-inherited MuJoCo variants are quarantined as restricted; only the scanned,
-host-mounted runtime-fetch variant is active for RTX PRO 6000 Blackwell Kubernetes
+inherited MuJoCo variants are quarantined as restricted. The independently
+rebuilt public MuJoCo image has exact-digest security and B200 GPU acceptance
+evidence and is released as `0.2.0-runtime`. The scanned, host-mounted
+runtime-fetch SONIC variant remains active for RTX PRO 6000 Blackwell Kubernetes
 targets with NVIDIA GPU Operator mounted drivers. The source of truth is
 `npa/src/npa/deploy/sonic_image_manifest.json`.
 

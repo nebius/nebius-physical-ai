@@ -22,12 +22,12 @@ NVIDIA blueprint (OSMO) → NPA stage (toolRef / run):
 | --- | --- | --- | --- |
 | Stage 1 Config Generation | `generate-configs` | `run.shell` (sample appearance-only variables) | CPU |
 | Stage 2a Understand & Annotate | `annotate-original` | `workbench.token_factory.caption` | Token Factory (zero-GPU) |
-| Stage 2b Augment & Multiply | `augment` | `workbench.cosmos2.transfer_execute` | GPU (Cosmos Transfer 2.5) |
+| Stage 2b Augment & Multiply | `augment` | `workbench.cosmos2.transfer_execute` | GPU (Cosmos Transfer 2.5; optional upstream Meta SAM2 masks) |
 | Evaluate & Validate | `grade` loop + `quality-disposition` | Cosmos Evaluator + NPA source-relative temporal/appearance fidelity + fail-closed disposition | Token Factory + CPU |
 | Stage 3 Pseudo-Label Augmented | `annotate-augmented` | `npa workbench token-factory caption` (run.shell) | Token Factory |
 | Stage 4a Curation | `cosmos-curate` | `workbench.cosmos_curate.curate` | CPU |
 | Stage 4b Curation review | `curate` | `workbench.fiftyone.curate_augmented` (required FiftyOne Brain) | CPU |
-| Visualize | `visualize` | `data_factory_viz.build_run_rrd` | CPU |
+| Visualize | `visualize` / `visualize-rejected` | `data_factory_viz.build_run_rrd` (full accepted run or partial rejection evidence) | CPU |
 | Finalize | `finalize` | `data_factory_stages.finalize` | CPU |
 
 Three NVIDIA components in that table are the real open-source projects:
@@ -37,7 +37,8 @@ Three NVIDIA components in that table are the real open-source projects:
 - **[Cosmos Evaluator](https://github.com/nvidia-cosmos/cosmos-evaluator)**
   (Apache-2.0) grades. The `evaluate` stage runs two of upstream's checks per
   variant: *attribute verification* (an LLM writes one multiple-choice question
-  per sampled attribute, a VLM answers it from a frame — both on Token Factory,
+  per sampled attribute, a VLM answers it from a truthful beginning/middle/end
+  contact sheet — both on Token Factory,
   since upstream drives them through a configurable OpenAI-compatible endpoint)
   and *hallucination* (per-frame dynamic-mask comparison against the source clip,
   CPU only). The hallucination score only feeds the run score for
@@ -142,10 +143,10 @@ license every Git LFS media asset or establish that every sample is a real
 capture. Those media files are neither bundled nor silently fetched. See
 `npa/docker/workbench/cosmos2-transfer/REDISTRIBUTION.md`.
 
-Selection precedence is strict: one explicit local or S3 object wins; conflicting
-selectors fail; no selector chooses the starter; `--seed-fixture` is the only
-synthetic geometry path. User input is labeled “User-supplied input”—NPA does not
-invent an authenticity or license claim for it.
+Selection precedence is strict: one explicit local file, S3 object, or S3
+LeRobotDataset prefix wins; conflicting selectors fail; no selector chooses the
+starter; `--seed-fixture` is the only synthetic geometry path. Operator input is
+labeled without inventing an authenticity or license claim for it.
 
 ```bash
 RUN_ID="$(npa workbench workflow prepare-run "$SPEC" --project "$PROJECT")"
@@ -164,6 +165,15 @@ npa workbench workflow submit "$SPEC" --run-id "$RUN_ID" --runtime \
   --var bucket="$BUCKET" --input-uri s3://source-bucket/path/capture.mp4 \
   --assume-decision promote_checkpoint
 
+# Replace with one operator-reviewed episode/camera video from an S3
+# LeRobotDataset prefix. The strict flag prevents compatibility defaults from
+# silently substituting another visual stream.
+npa workbench workflow submit "$SPEC" --run-id "$RUN_ID" --runtime \
+  --var bucket="$BUCKET" --lerobot-uri s3://source-bucket/datasets/robot-run/ \
+  --lerobot-camera observation.images.front --lerobot-episode 0 \
+  --require-explicit-lerobot-selection \
+  --assume-decision promote_checkpoint
+
 # Developers/tests only — explicitly synthetic
 npa workbench workflow submit "$SPEC" --run-id "$RUN_ID" --runtime \
   --var bucket="$BUCKET" --seed-fixture --assume-decision promote_checkpoint
@@ -172,6 +182,11 @@ npa workbench workflow submit "$SPEC" --run-id "$RUN_ID" --runtime \
 Those are alternatives: run one with the prepared fresh ID. A previous run is
 resumed only with an explicit `--resume-run "$RUN_ID"`; an unattended command
 never reads or silently reuses the legacy global `~/.npa/paidf-first-run-id`.
+For subject-sensitive LeRobot runs, inspect beginning, middle, and end frames
+privately, then pass `--require-explicit-lerobot-selection` with both reviewed
+selectors. The gate runs before object-store access and provisioning. Omitting it
+retains the compatibility behavior (episode 0 and a lexically first camera when
+not otherwise specified); schema validity alone is not semantic confirmation.
 
 The default cache is `~/.cache/npa/physical-ai-data-factory/`; set
 `NPA_PAIDF_CACHE_DIR` to move it. Every hit is rechecked. Set
@@ -209,21 +224,101 @@ or quality-disposition checks; it should not be made a shared default.
 - **CPU:** config sampling, hallucination, temporal-consistency, and protected-
   appearance checks, Cosmos Curator curation, FiftyOne review, visualize, finalize.
 
-The quality gate is fail closed. Promotion requires every variant to pass attribute
-verification and, for input-conditioned variants, hallucination checking, plus the
-aggregate threshold. Temporal consistency joins those hard checks only in calibrated
-`required` mode; protected-appearance fidelity does the same when its mode is
-`required`. If refinement is exhausted, `quality-disposition`
+The quality gate is fail closed. PAIDF first ranks every generated candidate,
+then copies only candidates with explicit independently passing 4/4 attribute,
+hallucination, threshold, and configured hard-check evidence into an additive
+`selection/iteration-N/` batch. It re-evaluates that selection on deterministic
+decoded holdout frames that are disjoint from the ranking beginning/middle/end
+sample. Temporal consistency joins the hard checks only in calibrated `required`
+mode; protected-appearance fidelity does the same when its mode is `required`.
+The complete ranking pool remains unchanged. If refinement is exhausted,
+`quality-disposition`
 writes `grade/quality_disposition.json` with `quality_status: rejected` and stops
 the workflow before labeling or curation. Workflow execution status and dataset
 quality status therefore remain separate and auditable.
 
-The all-variant batch policy is intentionally conservative: the reference workflow
-does not yet quarantine failed variant directories before downstream labeling and
-curation, so it will not promote a mixed-quality prefix. A future partial-promotion
-mode must first route only accepted variants into a separate downstream prefix.
+Refinement is adaptive by default. `prepare-refinement` writes
+`configs/refinement.json` before each render and keeps immutable
+`refinement-attempt-NN.json` copies plus commit markers. The established first-pass
+control weight remains `1.0`; `augment_guidance` defaults to `3.0`. After a failed
+evaluation the default retry lowers prompt guidance, while a custom baseline below
+its configured ceiling may also
+raise edge-control strength. Each retry selects a different in-bounds pair; once
+the declared monotonic schedule is exhausted, refinement fails closed instead of
+toggling back to a previous policy. A configuration with no possible first retry
+fails before GPU work. Transfer metadata records the effective values and failed
+check names and exact failed attribute names. Retry prompts emphasize only those
+failed attributes with their candidate-specific requested values, so a retry is
+not an unauditable replay of identical inference settings.
+The planner validates Cosmos Transfer's native constraints before reserving a GPU:
+edge-control weights stay within `0..1`, and guidance remains a non-negative
+integer.
+
+This baseline is a compatibility choice, not a claim that stronger structural
+conditioning always improves evaluator score. Prior live refinement evidence was
+non-monotonic, so PAIDF retains `1.0` for the first pass and changes guidance on
+retry; operators should tune only from comparable A/B evidence. Cosmos precedence
+is explicit CLI values, then `NPA_COSMOS_*` environment overrides, then the
+validated run-scoped refinement artifact. The final artifact wins so ambient
+worker settings cannot mutate a committed retry.
+
+Edge control preserves structure and motion, not source color. Deployments that
+must protect identity-bearing material colors can set
+`protected_chroma_mode: source-chroma` and provide normalized rectangles through
+`protected_chroma_regions_json`. Cosmos still generates the video, but the transfer
+stage restores source Cb/Cr per pixel inside feathered protected regions and
+limits generated luma to `protected_luma_max_delta` from the source pixel. Mild
+exposure and illumination changes remain without copying source RGB pixels, while
+extreme darkening or brightening is suppressed. Use
+`protected_feather_pixels` to soften rectangle boundaries. The mode is off by
+default: rectangles are a coarse MP4-only protection surface, and semantic masks
+or simulator passes are preferable when available. A decode or frame-count mismatch
+fails closed rather than publishing partially protected output.
+
+For object-shaped protection instead of coarse rectangles, set
+`segmentation_mode: sam2-auto`. It invokes the real upstream Meta SAM2 runtime
+once per source clip, emits one binary PNG mask per frame under the versioned
+`segmentation_uri`, and reuses those masks across all Cosmos variants and bounded
+refinement retries. Automatic mode discovers stable first-frame foreground
+proposals; raw prompt coordinates
+are intentionally not accepted through workflow config or rendered argv. The
+mask drives the same source-chroma/luma-bounded fidelity policy at pixel precision
+with feathered boundaries. Missing frames, empty eligible proposals, checkpoint
+mismatch, decode failure, empty/all-frame masks, invalid coverage, or upload
+failure stops the augment stage.
+
+The default is `segmentation_mode: off`, which neither downloads nor invokes
+SAM2 and preserves the original PAIDF/Cosmos behavior. The official
+`facebook/sam2.1-hiera-tiny` checkpoint is pinned by immutable revision for the
+default speed/quality tradeoff; tune proposal thresholds and `max_objects` from
+measured coverage and downstream evaluator results rather than assuming that
+more masks improve a domain. The image replaces the Cosmos lock's unaffiliated
+PyPI repackaging with Meta's immutable official source; its Apache-2.0 source,
+BSD helper notice, and checkpoint boundary are recorded in the Cosmos Transfer
+redistribution notice.
+
+For an A/B comparison, give both fresh runs the same non-sensitive
+`augmentation_seed`. Config generation will then order the same coherent,
+nonconflicting appearance profiles and assign the same distinct per-candidate
+diffusion seeds even though the run IDs differ. The first eight candidates cover
+eight concrete lighting/backdrop/palette/finish combinations without replacement,
+making evaluator and throughput deltas attributable to the optional component
+rather than a different workload. An empty value retains deterministic
+run-ID-derived sampling behavior. The maintained search table now provides eight
+conservative, unambiguous appearance profiles before it repeats a profile with a
+different diffusion seed. `quality_anchor_uri` can point at a preserved canonical
+run; PAIDF derives the highest-scoring independently hard-passing candidate and
+uses its recorded prompt variables, seed, control weight, and guidance as the
+first search anchor without embedding scene-specific values in the workflow.
+
+`protected_chroma_regions_json` is deliberately separate from
+`appearance_regions_json`: the former changes transfer pixels, while the latter
+only selects evaluator measurements. A deployment may use the same rectangles for
+both, but PAIDF does not couple those policies implicitly.
+
 Attribute verification remains an all-attributes hard check; its score still
-contributes to the aggregate. An unavailable VLM marks evaluation `degraded` and
+contributes to the aggregate. A bare summary `passed` bit without its per-check
+evidence is not selectable. An unavailable VLM marks evaluation `degraded` and
 fails closed instead of falling back to a motion-only promotion.
 
 Each curation/evaluation tool has its own CPU-only workbench image:
@@ -419,10 +514,15 @@ not guarantees. For practical warm/cold ranges and recovery guidance, see
 ```
 s3://<bucket>/physical-ai-data-factory/<run-id>/
   input/               # source.mp4 + conditioning clip/frames + provenance
-  configs/             # Stage 1 sampled augmentation manifest  -> json
+  configs/             # Stage 1 manifest + adaptive refinement provenance -> json
   labeled_original/    # Stage 2a VLM captions                  -> json
-  cosmos_augmented/    # Stage 2b augmented clips + metadata    -> video / json
-  grade/               # evaluator, decision, quality disposition -> json
+  cosmos_augmented/    # append-only candidates by iteration    -> video / image / json
+  selection/           # additive hard-pass holdout batches     -> video / json
+  grade/               # ranking + holdout reports, decisions, disposition -> json
+  review/
+    fiftyone-dataset/  # portable real FiftyOneDataset + media, every terminal run
+    fiftyone-review.json # review-only/accepted fields and preservation proof
+    decision.json      # post-review route; canonical quality decision is unchanged
   labeled_augmented/   # Stage 3 VLM captions on augmented      -> json
   curation/
     cosmos_curator/    # Cosmos Curator output tree             -> video / json
@@ -441,9 +541,34 @@ so the run renders in the NPA agent's **embedded Rerun viewer** — the agent
 prefers `reports/sim2real.rrd`, so selecting the run and loading it (or clicking
 the `.rrd` in the artifact browser) shows it in the Rerun panel.
 
+After refinement, `quality-disposition` branches on the persisted final result.
+Accepted runs continue through re-captioning and curation before `visualize`.
+Every terminal run first exports every committed candidate to a portable real
+FiftyOne dataset. Rejected samples are labeled `review-only`, expose score,
+per-attribute results, hallucination status, iteration, and candidate identity,
+and always have `promotion_eligible=false`; accepted-only relabeling, Cosmos
+Curator, Brain selection, and finalization remain skipped. Rejected runs then
+execute `visualize-rejected`, which embeds each committed candidate's actual PNG
+and MP4 components plus a `REJECTED` evidence panel in the RRD before
+`reject-quality` fails the workflow. A failure before any usable input or
+augmented media exists still cannot produce an RRD.
+The accepted branch begins with `require-accepted-quality`, which re-checks the
+durable disposition. This additional guard is what keeps a one-shot serial plan
+using a preview assumption from running accepted-only stages when the real report
+was rejected; runtime execution follows the same guarded branch.
+
+PAIDF uses Segment Anything only when `segmentation_mode` explicitly selects
+`sam2-auto`. These frame-aligned protected-content masks are
+distinct from Cosmos Evaluator's comparison masks and from Token Factory VLM
+captions. The default/off path remains entirely non-SAM.
+
 ## View input / intermediate / output in the NPA agent
 
-The agent discovers runs from its artifact bucket. If the agent's base prefix is
+The agent discovers runs from its artifact bucket. Discovery paginates the full
+configured source and prefers a provable complete strict-superset canonical run
+over a same-ID one-file viewer mirror. Divergent duplicates stay ambiguous and
+require the returned source-qualified `run_ref`; publication must never replace
+or remove the canonical prefix. If the agent's base prefix is
 `checkpoints`, place the run under `checkpoints/physical-ai-data-factory/<run-id>/`
 (or pass the matching discovery prefix). Then:
 
@@ -460,10 +585,14 @@ Input clips render as `video`, extracted frames as `image`, and every stage's
 labels/reports as `json` — so the full input → intermediate → output flow is
 browsable in the agent.
 
-> **Dataset provenance and the full Rerun recording only appear once the run gets past
-> annotate → augment → curate → visualize.** With an empty `input/` the run stops
-> at `annotate-original` (only `configs/manifest.json` is written), so there is no
-> `cosmos_augmented/`, no `curation/report.json` for the dataset tab, and no
-> `reports/sim2real.rrd` for the Rerun panel. Stage input frames first (see the
-> callout above) so the pipeline reaches curate/visualize and those panels
-> populate.
+Load the portable review archive into an existing durable Voxel51 deployment
+with `npa workbench fiftyone load-dataset --format fiftyone`; the loader imports
+`fo.types.FiftyOneDataset` with its media, marks the dataset persistent, and makes
+the disposition fields queryable after workflow compute has exited.
+
+> **An RRD needs decodable input or augmented frames.** With an empty `input/` the
+> run stops at `annotate-original` (only `configs/manifest.json` is written), so
+> there is no frame evidence from which to build `reports/sim2real.rrd`. Once
+> augmentation has produced frames, both accepted and quality-rejected paths
+> materialize the recording; only accepted runs include the downstream curation
+> and final report panels.

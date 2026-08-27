@@ -34,6 +34,7 @@ from npa.orchestration.skypilot.workflow import WorkflowResult
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 NPA_SPECS = REPO_ROOT / "npa" / "workflows" / "workbench" / "npa-workflows"
+PAIDF = NPA_SPECS / "physical-ai-data-factory.yaml"
 SKYPILOT_FIXTURES = REPO_ROOT / "npa" / "tests" / "fixtures" / "skypilot"
 RUNNER = CliRunner()
 
@@ -343,6 +344,22 @@ def test_accelerator_name_override_preserves_each_profile_gpu_count(
     )
 
 
+def test_gpu_memory_override_targets_only_accelerator_profiles(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NPA_WORKFLOW_GPU_MEMORY", "384Gi")
+    assert normalize_resources(
+        {
+            "cloud": "kubernetes",
+            "accelerators": "RTXPRO6000:4",
+            "memory": "128Gi",
+        }
+    )["memory"] == "384+"
+    assert normalize_resources(
+        {"cloud": "kubernetes", "cpus": 4, "memory": "16Gi"}
+    )["memory"] == "16+"
+
+
 def test_submit_time_accelerator_override_preserves_profile_gpu_count() -> None:
     assert (
         normalize_resources(
@@ -353,13 +370,12 @@ def test_submit_time_accelerator_override_preserves_profile_gpu_count() -> None:
     )
 
 
-def test_nebius_cloud_render_injects_docker_secrets(
+def test_nebius_cloud_render_injects_exact_host_docker_secrets(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("SKYPILOT_DOCKER_PASSWORD", "test-token")
     monkeypatch.setenv("SKYPILOT_DOCKER_USERNAME", "iam")
-    # Use a GPU twin that resolves a Nebius registry image (Token Factory no
-    # longer pins npa-cosmos — it is API-only and uses SkyPilot's default image).
+    monkeypatch.setenv("SKYPILOT_DOCKER_SERVER", "registry.example")
     path = NPA_SPECS / "vlm-eval-single.yaml"
     spec = load_spec(path)
     for profile in spec.resources.values():
@@ -370,13 +386,13 @@ def test_nebius_cloud_render_injects_docker_secrets(
         spec,
         plan,
         run_id="demo",
-        options=SkypilotRenderOptions(registry="cr.eu-north1.nebius.cloud/reg"),
+        options=SkypilotRenderOptions(registry="registry.example/reg"),
     )
     docs = [doc for doc in yaml.safe_load_all(rendered) if doc is not None]
     task = docs[1]
     assert task["resources"]["cloud"] == "nebius"
     assert "image_id" in task["resources"]
-    assert task["secrets"]["SKYPILOT_DOCKER_SERVER"] == "cr.eu-north1.nebius.cloud"
+    assert task["secrets"]["SKYPILOT_DOCKER_SERVER"] == "registry.example"
     assert task["secrets"]["SKYPILOT_DOCKER_USERNAME"] == "iam"
     assert task["secrets"]["SKYPILOT_DOCKER_PASSWORD"] == "test-token"
 
@@ -393,19 +409,44 @@ def _nebius_gpu_spec():
 def test_render_errors_on_registry_credentials_mismatch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Image pinned to us-central1 but Docker creds authenticate to eu-north1 →
-    # a 403 ErrImagePull for EVERY stage image. Must fail fast at render, not stall.
     monkeypatch.setenv("SKYPILOT_DOCKER_PASSWORD", "test-token")
     monkeypatch.setenv("SKYPILOT_DOCKER_USERNAME", "iam")
-    monkeypatch.setenv("SKYPILOT_DOCKER_SERVER", "cr.eu-north1.nebius.cloud")
+    monkeypatch.setenv("SKYPILOT_DOCKER_SERVER", "registry.example")
     spec, plan = _nebius_gpu_spec()
-    with pytest.raises(NpaWorkflowRenderError, match="registry mismatch"):
+    with pytest.raises(NpaWorkflowRenderError) as exc_info:
         render_skypilot_yaml(
             spec,
             plan,
             run_id="demo",
-            options=SkypilotRenderOptions(registry="cr.us-central1.nebius.cloud/reg"),
+            options=SkypilotRenderOptions(registry="registry-us.example/reg"),
         )
+
+    message = str(exc_info.value)
+    assert "registry mismatch" in message
+    assert "registry-us.example" in message
+    assert "registry.example" in message
+    assert "test-token" not in message
+
+
+def test_render_public_image_ignores_unrelated_private_registry_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SKYPILOT_DOCKER_PASSWORD", "test-token")
+    monkeypatch.setenv("SKYPILOT_DOCKER_USERNAME", "operator")
+    monkeypatch.setenv("SKYPILOT_DOCKER_SERVER", "registry.example")
+    spec, plan = _nebius_gpu_spec()
+
+    rendered = render_skypilot_yaml(
+        spec,
+        plan,
+        run_id="demo",
+        options=SkypilotRenderOptions(
+            registry="ghcr.io/nebius/nebius-physical-ai"
+        ),
+    )
+
+    task = [doc for doc in yaml.safe_load_all(rendered) if doc is not None][1]
+    assert "secrets" not in task or "SKYPILOT_DOCKER_PASSWORD" not in task["secrets"]
 
 
 def test_render_ok_when_registry_matches_credentials(
@@ -413,16 +454,16 @@ def test_render_ok_when_registry_matches_credentials(
 ) -> None:
     monkeypatch.setenv("SKYPILOT_DOCKER_PASSWORD", "test-token")
     monkeypatch.setenv("SKYPILOT_DOCKER_USERNAME", "iam")
-    monkeypatch.setenv("SKYPILOT_DOCKER_SERVER", "cr.eu-north1.nebius.cloud")
+    monkeypatch.setenv("SKYPILOT_DOCKER_SERVER", "registry.example")
     spec, plan = _nebius_gpu_spec()
     rendered = render_skypilot_yaml(
         spec,
         plan,
         run_id="demo",
-        options=SkypilotRenderOptions(registry="cr.eu-north1.nebius.cloud/reg"),
+        options=SkypilotRenderOptions(registry="registry.example/reg"),
     )
     task = [doc for doc in yaml.safe_load_all(rendered) if doc is not None][1]
-    assert task["secrets"]["SKYPILOT_DOCKER_SERVER"] == "cr.eu-north1.nebius.cloud"
+    assert task["secrets"]["SKYPILOT_DOCKER_SERVER"] == "registry.example"
 
 
 def test_kubernetes_private_image_references_the_refreshed_pull_secret(
@@ -436,21 +477,35 @@ def test_kubernetes_private_image_references_the_refreshed_pull_secret(
         spec,
         plan,
         run_id="demo",
-        options=SkypilotRenderOptions(registry="cr.eu-north1.nebius.cloud/reg"),
+        options=SkypilotRenderOptions(registry="registry.example/reg"),
     )
     task = [doc for doc in yaml.safe_load_all(rendered) if doc is not None][1]
 
-    assert task["config"]["kubernetes"]["pod_config"]["spec"]["imagePullSecrets"] == [
-        {"name": "npa-nebius-registry"}
-    ]
+    assert "config" not in task or "imagePullSecrets" not in (
+        ((task.get("config") or {}).get("kubernetes") or {}).get("pod_config") or {}
+    ).get("spec", {})
 
     authorities = plan_image_pull_secrets(
         spec,
         plan.steps,
         run_id="demo",
-        options=SkypilotRenderOptions(registry="cr.eu-north1.nebius.cloud/reg"),
+        options=SkypilotRenderOptions(registry="registry.example/reg"),
     )
-    assert set(authorities.values()) == {("npa-nebius-registry",)}
+    assert set(authorities.values()) == {()}
+
+
+def test_public_plan_has_no_implicit_kubernetes_pull_authority() -> None:
+    spec = load_spec(NPA_SPECS / "vlm-eval-single.yaml")
+    plan = build_plan(spec, run_id="demo")
+
+    authorities = plan_image_pull_secrets(
+        spec,
+        plan.steps,
+        run_id="demo",
+        options=SkypilotRenderOptions(registry="registry.example/customer"),
+    )
+
+    assert set(authorities.values()) == {()}
 
 
 def test_nurec_plan_exposes_its_ngc_pull_authority_to_preflight() -> None:
@@ -555,6 +610,221 @@ def test_render_transfer_forwards_explicit_runtime_tuning(
     assert transfer["envs"]["NPA_COSMOS_VALIDATION_SCOPE"] == "demo"
     assert transfer["envs"]["NPA_COSMOS_VALIDATION_DELAY_RANK"] == "1"
     assert transfer["envs"]["NPA_COSMOS_DISABLE_CONTENT_GUARDRAILS"] == "1"
+    ray_node = next(
+        container
+        for container in transfer["config"]["kubernetes"]["pod_config"]["spec"][
+            "containers"
+        ]
+        if container["name"] == "ray-node"
+    )
+    assert ray_node["imagePullPolicy"] == "IfNotPresent"
+
+
+def test_transfer_execute_old_spec_uses_backward_compatible_optional_defaults(
+    tmp_path: Path,
+) -> None:
+    """A pre-refinement/SAM2 external spec must still validate and render."""
+
+    old_spec = tmp_path / "old-transfer-execute.yaml"
+    old_spec.write_text(
+        """
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: old-transfer-execute
+config:
+  trigger_uri: s3://example/input/
+  augment_uri: s3://example/output/
+  configs_uri: s3://example/configs/
+resources:
+  gpu:
+    cloud: kubernetes
+    accelerators: RTXPRO6000:1
+initial: transfer
+states:
+  transfer:
+    toolRef: workbench.cosmos2.transfer_execute
+    resources: gpu
+    terminal: true
+""".lstrip()
+    )
+    spec = load_spec(old_spec)
+    plan = build_plan(spec, run_id="old-compatible")
+    argv = plan.steps[0].argv
+    assert argv[argv.index("--control-weight") + 1] == "1.0"
+    assert argv[argv.index("--guidance") + 1] == "3.0"
+    assert argv[argv.index("--refinement-uri") + 1] == ""
+    assert argv[argv.index("--protected-chroma-mode") + 1] == "off"
+    assert argv[argv.index("--segmentation-mode") + 1] == "off"
+
+    rendered = render_skypilot_yaml(
+        spec,
+        plan,
+        run_id="old-compatible",
+        options=SkypilotRenderOptions(
+            registry="cr.example.invalid/reg",
+            materialize_registry_secrets=False,
+        ),
+    )
+    assert_no_unresolved_placeholders(rendered)
+    assert "--condition-on-input" in rendered
+    assert "--execute" in rendered
+
+
+def test_paidf_planner_uses_compatible_first_pass_and_committed_retry_pointer() -> None:
+    spec = load_spec(PAIDF)
+    plan = build_plan(spec, run_id="planner-settings")
+    prepare = next(step for step in plan.steps if step.state == "prepare-refinement")
+    augment = next(step for step in plan.steps if step.state == "augment")
+
+    assert augment.argv[augment.argv.index("--control-weight") + 1] == "1.0"
+    assert augment.argv[augment.argv.index("--guidance") + 1] == "3.0"
+    assert (
+        augment.argv[augment.argv.index("--refinement-uri") + 1]
+        == "s3://example-bucket/physical-ai-data-factory/planner-settings/configs/refinement.json"
+    )
+    # The prepare argv carries the exact baseline, adaptive bounds, authoritative
+    # decision artifact, and matching quality threshold used to create a retry.
+    assert prepare.argv[-11:] == [
+        "true",
+        "1.0",
+        "3.0",
+        "0.25",
+        "1.0",
+        "1.0",
+        "1.0",
+        "s3://example-bucket/physical-ai-data-factory/planner-settings/grade/decision.json",
+        "0.75",
+        "1",
+        "",
+    ]
+
+
+def test_paidf_refinement_iterations_use_append_only_artifact_prefixes() -> None:
+    spec = load_spec(PAIDF)
+    plan = build_plan(
+        spec,
+        run_id="append-only-refinement",
+        assume_decision="loop_back",
+    )
+
+    augments = [step for step in plan.steps if step.state == "augment"]
+    evaluates = [step for step in plan.steps if step.state == "evaluate"]
+    gates = [step for step in plan.steps if step.state == "quality-gate"]
+    prepares = [step for step in plan.steps if step.state == "prepare-refinement"]
+    assert [step.outputs[0]["uri"] for step in augments] == [
+        "s3://example-bucket/physical-ai-data-factory/append-only-refinement/"
+        "cosmos_augmented/iteration-1/manifest.json",
+        "s3://example-bucket/physical-ai-data-factory/append-only-refinement/"
+        "cosmos_augmented/iteration-2/manifest.json",
+    ]
+    assert [
+        step.argv[step.argv.index("--output-uri") + 1] for step in evaluates
+    ] == [
+        "s3://example-bucket/physical-ai-data-factory/append-only-refinement/"
+        "grade/iteration-1/ranking/",
+        "s3://example-bucket/physical-ai-data-factory/append-only-refinement/"
+        "grade/iteration-2/ranking/",
+    ]
+    assert [step.outputs[0]["uri"] for step in gates] == [
+        "s3://example-bucket/physical-ai-data-factory/append-only-refinement/"
+        "grade/iteration-1/decision.json",
+        "s3://example-bucket/physical-ai-data-factory/append-only-refinement/"
+        "grade/iteration-2/decision.json",
+    ]
+    assert [step.argv[-2] for step in prepares] == ["1", "2"]
+
+    reject = next(step for step in plan.steps if step.state == "reject-quality")
+    assert (
+        reject.argv[-3]
+        == "s3://example-bucket/physical-ai-data-factory/append-only-refinement/"
+        "grade/iteration-2/"
+    )
+
+
+def test_paidf_bare_static_plan_previews_promoted_path_with_fail_closed_guard(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The preview is useful, but its accepted stages stay behind a real guard."""
+
+    monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/npa-src/npa")
+    spec = load_spec(NPA_SPECS / "physical-ai-data-factory.yaml")
+    plan = build_plan(spec, run_id="paidf-static-promote")
+    states = [step.state for step in plan.steps]
+
+    assert plan.assume_decision == "promote_checkpoint"
+    assert states.index("quality-disposition") < states.index(
+        "require-accepted-quality"
+    ) < states.index("annotate-augmented")
+    assert states[-2:] == ["visualize", "finalize"]
+    assert "visualize-rejected" not in states
+    assert "reject-quality" not in states
+
+    rendered = render_skypilot_yaml(
+        spec,
+        plan,
+        run_id="paidf-static-promote",
+        options=SkypilotRenderOptions(
+            registry="cr.example.invalid/reg",
+            materialize_registry_secrets=False,
+        ),
+    )
+    docs = [doc for doc in yaml.safe_load_all(rendered) if doc]
+    task_names = [doc.get("name") for doc in docs[1:]]
+    guard_index = task_names.index("require-accepted-quality") + 1
+    guard_run = docs[guard_index]["run"]
+    assert "enforce_quality_disposition" in guard_run
+    assert "set -euo pipefail" in guard_run
+    assert task_names.index("require-accepted-quality") < task_names.index(
+        "annotate-augmented"
+    )
+
+
+def test_paidf_static_rejection_plan_cannot_render_accepted_or_final_stages(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/npa-src/npa")
+    spec = load_spec(NPA_SPECS / "physical-ai-data-factory.yaml")
+    plan = build_plan(
+        spec,
+        run_id="paidf-static-reject",
+        assume_decision="loop_back",
+    )
+    states = [step.state for step in plan.steps]
+
+    assert states[-2:] == ["visualize-rejected", "reject-quality"]
+    for forbidden in (
+        "require-accepted-quality",
+        "annotate-augmented",
+        "cosmos-curate",
+        "curate",
+        "visualize",
+        "finalize",
+    ):
+        assert forbidden not in states
+
+    rendered = render_skypilot_yaml(
+        spec,
+        plan,
+        run_id="paidf-static-reject",
+        options=SkypilotRenderOptions(
+            registry="cr.example.invalid/reg",
+            materialize_registry_secrets=False,
+        ),
+    )
+    docs = [doc for doc in yaml.safe_load_all(rendered) if doc]
+    task_names = [doc.get("name") for doc in docs[1:]]
+    assert task_names[-2:] == ["visualize-rejected", "reject-quality"]
+    assert "enforce_quality_disposition" in docs[-1]["run"]
+    assert "set -euo pipefail" in docs[-1]["run"]
+    assert not set(task_names) & {
+        "require-accepted-quality",
+        "annotate-augmented",
+        "cosmos-curate",
+        "curate",
+        "visualize",
+        "finalize",
+    }
 
 
 def test_render_vlm_eval_single_produces_serial_pipeline() -> None:
@@ -712,6 +982,7 @@ def test_plan_only_registry_secrets_use_placeholder(
 
     monkeypatch.setenv("SKYPILOT_DOCKER_PASSWORD", "live-should-not-appear")
     monkeypatch.setenv("SKYPILOT_DOCKER_USERNAME", "iam")
+    monkeypatch.setenv("SKYPILOT_DOCKER_SERVER", "registry.example")
     path = NPA_SPECS / "vlm-eval-single.yaml"
     spec = load_spec(path)
     for profile in spec.resources.values():
@@ -723,7 +994,7 @@ def test_plan_only_registry_secrets_use_placeholder(
         plan,
         run_id="demo",
         options=SkypilotRenderOptions(
-            registry="cr.eu-north1.nebius.cloud/reg",
+            registry="registry.example/reg",
             materialize_registry_secrets=False,
         ),
     )
@@ -731,6 +1002,30 @@ def test_plan_only_registry_secrets_use_placeholder(
     task = docs[1]
     assert task["secrets"]["SKYPILOT_DOCKER_PASSWORD"] == "<SKYPILOT_DOCKER_PASSWORD>"
     assert "live-should-not-appear" not in rendered
+
+
+def test_plan_only_anonymous_public_registry_omits_empty_username(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SKYPILOT_DOCKER_SERVER", "ghcr.io")
+    monkeypatch.delenv("SKYPILOT_DOCKER_USERNAME", raising=False)
+    monkeypatch.delenv("SKYPILOT_DOCKER_PASSWORD", raising=False)
+    monkeypatch.delenv("NPA_REGISTRY_USERNAME", raising=False)
+    monkeypatch.delenv("NPA_REGISTRY_PASSWORD", raising=False)
+    spec, plan = _nebius_gpu_spec()
+
+    rendered = render_skypilot_yaml(
+        spec,
+        plan,
+        run_id="demo",
+        options=SkypilotRenderOptions(
+            registry="ghcr.io/nebius/nebius-physical-ai",
+            materialize_registry_secrets=False,
+        ),
+    )
+    task = [doc for doc in yaml.safe_load_all(rendered) if doc is not None][1]
+    assert "secrets" not in task
+    assert "SKYPILOT_DOCKER_USERNAME: ''" not in rendered
 
 
 def test_render_bdd100k_task_count() -> None:
@@ -772,7 +1067,7 @@ def test_resolve_task_image_uses_override() -> None:
 def test_first_party_image_rejects_uid_zero_pod_override(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("NPA_REGISTRY", "cr.us-central1.nebius.cloud/project")
+    monkeypatch.setenv("NPA_REGISTRY", "registry-us.example/project")
     spec = load_spec(NPA_SPECS / "vlm-eval-single.yaml")
     for profile in spec.resources.values():
         if isinstance(profile, dict):
@@ -795,7 +1090,7 @@ def test_first_party_image_rejects_uid_zero_pod_override(
             run_id="no-root",
             options=SkypilotRenderOptions(
                 image_overrides={
-                    "*": "cr.us-central1.nebius.cloud/project/npa-fiftyone:validation"
+                    "*": "registry-us.example/project/npa-fiftyone:validation"
                 },
                 materialize_registry_secrets=False,
             ),
@@ -935,6 +1230,8 @@ def test_workbench_workflow_submit_plan_only_redacts_registry_password(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("SKYPILOT_DOCKER_PASSWORD", "live-plan-only-token")
+    monkeypatch.setenv("SKYPILOT_DOCKER_USERNAME", "operator")
+    monkeypatch.setenv("SKYPILOT_DOCKER_SERVER", "registry.example")
     result = RUNNER.invoke(
         app,
         [
@@ -947,7 +1244,7 @@ def test_workbench_workflow_submit_plan_only_redacts_registry_password(
             "--plan-only",
             "--details",
             "--registry",
-            "cr.eu-north1.nebius.cloud/reg",
+            "registry.example/reg",
             "--skip-preflight",
         ],
     )

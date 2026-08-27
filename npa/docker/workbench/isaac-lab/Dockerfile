@@ -62,6 +62,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     ISAAC_LAB_PYTHON=/isaac-sim/python.sh \
     NPA_ISAAC_LAB_OUTPUT_DIR=/workspace/isaaclab/npa-runs \
     NPA_ISAAC_LAB_WORKDIR=/workspace/isaaclab \
+    IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg \
     OMNI_USER_DIR=/tmp/isaac-sim-cache \
     OMNI_LOG_DIR=/tmp/isaac-sim-cache/logs \
     XDG_RUNTIME_DIR=/tmp/xdg-runtime \
@@ -96,7 +97,16 @@ RUN chmod +x /opt/npa/docker/workbench/common/*.sh \
     && test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
     && NPA_RUNTIME_USER="${NPA_RUNTIME_USER}" \
        NPA_ISAAC_VENV=/opt/npa/sim/venv \
-       /opt/npa/docker/workbench/common/install_isaac_runtime_base.sh
+       /opt/npa/docker/workbench/common/install_isaac_runtime_base.sh \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/* \
+    && find /opt/npa/sim/venv -type f \
+      -path '*/imageio_ffmpeg/binaries/ffmpeg*' -delete \
+    && test -z "$(find /opt/npa/sim/venv -type f \
+      -path '*/imageio_ffmpeg/binaries/ffmpeg*' -print -quit)" \
+    && test "$(/opt/npa/sim/venv/bin/python -c \
+      'import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_exe())')" = /usr/bin/ffmpeg
 
 COPY --chmod=0755 docker/workbench/isaac-lab/npa_cli.sh /usr/local/bin/npa
 

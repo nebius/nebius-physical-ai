@@ -20,6 +20,9 @@ Nebius Physical AI.
 | [architecture/cli-namespaces.md](architecture/cli-namespaces.md) | CLI namespace conventions |
 | [cluster-backends.md](cluster-backends.md) | Shared Managed Kubernetes and soperator backend architecture, fleet specs, state ownership, and safe teardown |
 | [quickstart.md](quickstart.md) | Full `npa` CLI quickstart (macOS, Linux, WSL2 install blocks) |
+| [run-lifecycle.md](run-lifecycle.md) | What `workflow submit` checks before it spends a GPU-hour: gates, run identity, restart safety, and status semantics |
+| [agent.md](agent.md) | The self-hosted `npa agent` browser workbench VM — deploy, what it can see, and its artifact paging contract |
+| [teardown.md](teardown.md) | Stop spend safely: the ordered teardown sequence, what each phase guards, and receipt-based recovery |
 | [cli/README.md](cli/README.md) | CLI command reference index |
 | [cli-errors.md](cli-errors.md) | End-user CLI error formatting, exit codes, and JSON error output |
 | [sdk/errors.md](sdk/errors.md) | Typed exceptions for programmatic SDK consumers and agents |

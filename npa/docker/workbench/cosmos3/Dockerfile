@@ -56,6 +56,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     COSMOS_TRAINING=0 \
     HF_HOME=/tmp/hf_home \
     COSMOS_DOWNLOAD_CACHE_DIR=/tmp/hf_home/cosmos-downloads \
+    IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg \
     TRITON_PTXAS_PATH=/usr/local/cuda/bin/ptxas \
     PATH=/opt/npa/.venv/bin:${PATH}
 
@@ -114,6 +115,9 @@ RUN cd "${COSMOS3_REPO}" \
        --extra "${COSMOS3_UV_EXTRA}" --group "${COSMOS3_UV_GROUP}" \
     && UV_CACHE_DIR=/tmp/uv-cache uv pip install --python .venv/bin/python \
        ${COSMOS3_INFERENCE_DEPS} \
+    && find .venv -type f -path '*/imageio_ffmpeg/binaries/ffmpeg*' -delete \
+    && test "$(.venv/bin/python -c 'import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_exe())')" = /usr/bin/ffmpeg \
+    && test -z "$(find .venv -type f -path '*/imageio_ffmpeg/binaries/ffmpeg*' -print -quit)" \
     && COSMOS_DEVICE=cpu .venv/bin/python /opt/cosmos3/verify_env.py \
     && rm -rf /tmp/uv-cache
 
@@ -130,7 +134,7 @@ RUN UV_CACHE_DIR=/tmp/uv-cache uv venv --python 3.12 /opt/npa/.venv \
     && rm -rf /tmp/uv-cache
 
 COPY --chown=ubuntu:ubuntu --chmod=755 docker/workbench/cosmos3/smoke_functional.sh /opt/cosmos3/smoke_functional.sh
-COPY --chown=ubuntu:ubuntu --chmod=755 docker/workbench/cosmos3/entrypoint.sh /usr/local/bin/npa-cosmos3-entrypoint
+COPY --chown=ubuntu:ubuntu --chmod=755 docker/workbench/cosmos3/entrypoint.sh /usr/local/bin/entrypoint.sh
 
 # Distribution guard: fail the build if any model weight was baked into a layer.
 RUN baked="$(find /opt/cosmos3 /opt/npa /tmp/hf_home -type f \
@@ -144,5 +148,5 @@ RUN baked="$(find /opt/cosmos3 /opt/npa /tmp/hf_home -type f \
 
 WORKDIR /workspace
 
-ENTRYPOINT ["/usr/local/bin/npa-cosmos3-entrypoint"]
-CMD ["generate", "--help"]
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+CMD ["sleep", "infinity"]

@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
+import fcntl
 import os
 from pathlib import Path
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import threading
@@ -22,6 +26,46 @@ class BackendCommandError(RuntimeError):
         self.stdout = _redact(stdout)
         self.stderr = _redact(stderr)
         super().__init__(message)
+
+
+@contextmanager
+def terraform_plugin_cache_lock(env: dict[str, str]) -> Iterator[None]:
+    """Serialize Terraform init operations which share a provider cache.
+
+    Terraform's plugin cache is not concurrency safe. Even after a cache has
+    been pre-warmed, ``terraform init`` may rewrite a cached package while
+    computing its dependency-lock checksum. A second concurrent init can then
+    record a checksum for the transient package and fail at apply time. Use a
+    sibling lock file so Terraform never sees it as cache content, and use an
+    OS lock so separate NPA processes are serialized as well as local threads.
+    """
+
+    configured = env.get("TF_PLUGIN_CACHE_DIR", "").strip()
+    if not configured:
+        yield
+        return
+    cache_dir = Path(configured).expanduser()
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    lock_name = cache_dir.name
+    if not lock_name.startswith("."):
+        lock_name = f".{lock_name}"
+    lock_path = cache_dir.parent / f"{lock_name}.npa-init.lock"
+    flags = os.O_CREAT | os.O_RDWR | os.O_CLOEXEC | os.O_NOFOLLOW
+    descriptor = os.open(lock_path, flags, 0o600)
+    try:
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+            raise BackendCommandError(
+                f"Unsafe Terraform plugin cache lock target: {lock_path}"
+            )
+        os.fchmod(descriptor, 0o600)
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+    finally:
+        os.close(descriptor)
 
 
 def _sensitive_values(env: dict[str, str] | None) -> tuple[str, ...]:
@@ -144,23 +188,36 @@ def run_capture(
 
 
 def _stop_process(process: subprocess.Popen[str]) -> None:
+    def group_exists() -> bool:
+        try:
+            os.killpg(process.pid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        return True
+
     for signal_name, grace in (("interrupt", 30.0), ("terminate", 10.0)):
-        if process.poll() is not None:
+        if not group_exists():
             return
         try:
             if signal_name == "interrupt":
-                process.send_signal(signal.SIGINT)
+                os.killpg(process.pid, signal.SIGINT)
             else:
-                process.terminate()
+                os.killpg(process.pid, signal.SIGTERM)
         except OSError:
             return
         try:
             process.wait(timeout=grace)
-            return
         except subprocess.TimeoutExpired:
-            continue
-    if process.poll() is None:
-        process.kill()
+            pass
+        if not group_exists():
+            return
+    if group_exists():
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except OSError:
+            pass
 
 
 def run_stream(
@@ -184,6 +241,7 @@ def run_stream(
                 bufsize=1,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
+                start_new_session=True,
             )
         except OSError as exc:
             raise BackendCommandError(
@@ -228,6 +286,9 @@ def run_stream(
             raise BackendCommandError(
                 f"Command timed out after {timeout} seconds: {_command_text(args)}"
             ) from exc
+        except KeyboardInterrupt:
+            _stop_process(process)
+            raise
         finally:
             for reader in readers:
                 reader.join(timeout=5)
@@ -256,6 +317,7 @@ def run_stream(
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
+            start_new_session=True,
         )
     except OSError as exc:
         raise BackendCommandError(

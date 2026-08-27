@@ -12,9 +12,8 @@
 # the burst Python-API path. Multi-stage workbench pipelines should use
 # `npa workbench workflow submit`.
 #
-# `npa burst submit-yaml` injects SkyPilot Docker-login secrets for private
-# Nebius Container Registry image pulls when the submitter can mint a Nebius IAM
-# token.
+# `npa burst submit-yaml` forwards explicit exact-host SkyPilot Docker-login
+# secrets for private images. Public GHCR release images need no registry auth.
 name: isaac-lab-cosmos-sdg-burst-smoke
 resources:
   cloud: nebius

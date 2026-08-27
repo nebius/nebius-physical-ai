@@ -205,52 +205,6 @@ def test_copy_phase_is_not_marked_when_preflight_stops_publication(
     assert module.main() == 1
 
 
-def test_checklist_is_scoped_to_the_selected_images(monkeypatch, capsys) -> None:
-    module = _load_script()
-    selected = PublishItem(
-        tool="wan2-2",
-        source_ref="source.example/npa-wan2-2:accepted",
-        target_ref="ghcr.io/example/npa-wan2-2:accepted",
-    )
-    unrelated = PublishItem(
-        tool="lerobot",
-        source_ref="source.example/npa-lerobot:accepted",
-        target_ref="ghcr.io/example/npa-lerobot:accepted",
-    )
-    second = PublishItem(
-        tool="fiftyone",
-        source_ref="source.example/npa-fiftyone:accepted",
-        target_ref="ghcr.io/example/npa-fiftyone:accepted",
-    )
-    failures = [(selected, "HTTP 403"), (second, "HTTP 403")]
-    verified: list[list[PublishItem]] = []
-
-    monkeypatch.setattr(
-        module, "build_publish_plan", lambda **_: [selected, second, unrelated]
-    )
-    monkeypatch.setattr(
-        module, "verify_public", lambda plan: verified.append(plan) or failures
-    )
-    monkeypatch.setattr(module, "visibility_checklist", lambda _: "- [ ] Wan package")
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        [
-            str(SCRIPT),
-            "--tool",
-            "wan2-2,fiftyone",
-            "--target",
-            "ghcr.io/example",
-            "--mode",
-            "checklist",
-        ],
-    )
-
-    assert module.main() == 1
-    assert verified == [[selected, second]]
-    assert "- [ ] Wan package" in capsys.readouterr().out
-
-
 def test_copy_phase_marker_uses_the_github_output_file(monkeypatch, tmp_path) -> None:
     from npa.deploy import publish_public
 

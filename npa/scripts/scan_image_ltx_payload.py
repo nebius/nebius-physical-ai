@@ -272,20 +272,28 @@ def scan_tars(tars: list[Path], config: dict[str, Any]) -> list[walker.Finding]:
         return walker.scan_tars(tars, config)
 
 
+docker_save_material = walker.docker_save_material
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("image", nargs="?")
     parser.add_argument("--rootfs-tar", type=Path)
+    parser.add_argument("--docker-save", type=Path)
     parser.add_argument("--config-json", type=Path)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args(argv)
-    if bool(args.image) == bool(args.rootfs_tar):
-        parser.error("provide exactly one IMAGE or --rootfs-tar")
+    if sum(bool(value) for value in (args.image, args.rootfs_tar, args.docker_save)) != 1:
+        parser.error("provide exactly one IMAGE, --rootfs-tar, or --docker-save")
+    if args.config_json and not args.rootfs_tar:
+        parser.error("--config-json is valid only with --rootfs-tar")
 
     try:
         with tempfile.TemporaryDirectory(prefix="npa-ltx-byte-scan-") as tmp:
             if args.image:
                 tars, config = walker.remote_material(args.image, Path(tmp))
+            elif args.docker_save:
+                tars, config = docker_save_material(args.docker_save, Path(tmp))
             else:
                 tars = [args.rootfs_tar]
                 config = (
@@ -298,7 +306,7 @@ def main(argv: list[str] | None = None) -> int:
 
     result = {
         "format": "npa_ltx_image_byte_scan_v1",
-        "image": args.image or "offline-rootfs",
+        "image": args.image or ("docker-save" if args.docker_save else "offline-rootfs"),
         "status": "pass" if not findings else "fail",
         "archives_scanned": len(tars),
         "findings": [asdict(item) for item in findings],

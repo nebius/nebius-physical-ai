@@ -94,6 +94,7 @@ module "k8s_training" {
   filestore_block_size_kibibytes = var.filestore_block_size_kibibytes
   filestore_mount_path           = var.filestore_mount_path
   filesystem_csi = {
+    chart_repository                    = var.filesystem_csi_chart_repository
     chart_version                       = var.filesystem_csi_chart_version
     namespace                           = "kube-system"
     make_default_storage_class          = true

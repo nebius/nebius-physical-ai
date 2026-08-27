@@ -72,13 +72,12 @@ TEMP_DOCS_DIR=""
 PREV_DOCS_DIR=""
 HELP_CACHE_DIR=""
 cleanup() {
+  local status=$?
   [ -n "$TMP_FILE" ] && rm -f "$TMP_FILE"
   [ -n "$TEMP_DOCS_DIR" ] && rm -rf "$TEMP_DOCS_DIR"
   [ -n "$PREV_DOCS_DIR" ] && rm -rf "$PREV_DOCS_DIR"
   [ -n "$HELP_CACHE_DIR" ] && rm -rf "$HELP_CACHE_DIR"
-  # An EXIT trap's final command can replace an otherwise successful status.
-  # Keep normal regeneration successful when TEMP_DOCS_DIR is intentionally empty.
-  return 0
+  return "$status"
 }
 trap cleanup EXIT
 
@@ -229,6 +228,9 @@ done
 prefetch_help "${top_paths[@]}"
 
 for group in $groups; do
+  # A nested group may share a leaf name with a top-level command. The public
+  # reference page for that filename belongs to the top-level command.
+  rm -f "$DOCS_DIR/${group}.md"
   if is_group "$NPA_BIN" "$group"; then
     document_group_recursive "$group" "$NPA_BIN" "$group"
   else

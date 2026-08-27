@@ -54,6 +54,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     NPA_OUTPUT_PATH=/output \
     INPUT_PATH=/input \
     OUTPUT_PATH=/output \
+    IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg \
     PATH=/opt/npa/venv/bin:/usr/local/cuda/bin:$PATH
 
 SHELL ["/bin/bash", "-lc"]
@@ -120,7 +121,12 @@ RUN python -m pip install \
       scipy \
       tensorboard \
       transformers \
-      wandb
+      wandb \
+    && find /opt/npa/venv -type f \
+      -path '*/imageio_ffmpeg/binaries/ffmpeg*' -delete \
+    && test -z "$(find /opt/npa/venv -type f \
+      -path '*/imageio_ffmpeg/binaries/ffmpeg*' -print -quit)" \
+    && python -c 'import importlib.util; assert importlib.util.find_spec("imageio_ffmpeg") is None or __import__("imageio_ffmpeg").get_ffmpeg_exe() == "/usr/bin/ffmpeg"'
 
 ARG CUTLASS_DSL_VERSION
 ARG QUACK_KERNELS_VERSION

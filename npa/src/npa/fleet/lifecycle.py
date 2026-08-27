@@ -34,6 +34,7 @@ from npa.cluster_backends.process import (
     require_bin as _require_bin,
     run_capture as _run_capture,
     run_stream as _run_stream,
+    terraform_plugin_cache_lock,
     terraform_env as _terraform_env,
 )
 from npa.cluster_backends import (
@@ -849,8 +850,9 @@ def _prewarm_plugin_cache(
     """Populate a shared terraform plugin cache with a single ``init`` before fan-out.
 
     Concurrent ``terraform init`` writes to a shared ``TF_PLUGIN_CACHE_DIR`` can
-    corrupt provider binaries (a real failure hit in testing). Pre-warming the
-    cache as the sole writer means the parallel per-cluster inits only *read* it.
+    corrupt provider binaries (a real failure hit in testing). Pre-warming avoids
+    duplicate downloads; the shared cache lock also serializes later per-cluster
+    init operations because Terraform may still mutate an already-warm cache.
     """
 
     cache_dir = Path(
@@ -869,13 +871,15 @@ def _prewarm_plugin_cache(
         on_status=None,
     )
     _log(on_status, f"pre-warming terraform provider cache at {cache_dir}")
-    _tf_run(
-        [terraform_bin, "init", "-input=false"],
-        cwd=workdir,
-        env=_terraform_env(nebius_bin, profile=profile),
-        timeout=900,
-        log_path=log_path,
-    )
+    env = _terraform_env(nebius_bin, profile=profile)
+    with terraform_plugin_cache_lock(env):
+        _tf_run(
+            [terraform_bin, "init", "-input=false"],
+            cwd=workdir,
+            env=env,
+            timeout=900,
+            log_path=log_path,
+        )
 
 
 def _find_cluster_id_by_name(
@@ -994,6 +998,9 @@ def plan_fleet(
                 ],
                 "filestore_mount_path": backend_plan["filestore_mount_path"],
                 "filestore_mount_tag": backend_plan["filestore_mount_tag"],
+                "filesystem_csi_enabled": backend_plan[
+                    "filesystem_csi_enabled"
+                ],
                 "k8s_version": backend_plan["k8s_version"],
                 "mig": backend_plan["mig"],
             }
@@ -1386,6 +1393,7 @@ def _deploy_mk8s_fleet(
     concurrency: int = 1,
     profile: str | None = None,
     preflight: bool = True,
+    repair_stopped_placeholder: bool = False,
     stream_terraform: bool = True,
     on_status: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
@@ -1397,8 +1405,9 @@ def _deploy_mk8s_fleet(
 
     ``concurrency`` > 1 applies that many clusters in parallel (each has its own
     isolated terraform state, so there is no cross-cluster lock contention). The
-    provider plugin cache is pre-warmed once to avoid concurrent-init corruption,
-    and each cluster streams to its own ``<install_dir>/deploy.log``. Project
+    provider plugin cache is pre-warmed once and shared-cache init operations are
+    serialized to avoid corruption; each cluster streams to its own
+    ``<install_dir>/deploy.log``. Project
     subnet discovery/creation is resolved once, sequentially, before the
     parallel apply phase. Clusters without an explicit ``subnet_id`` therefore
     share one authoritative project subnet without a create race; explicit
@@ -1644,6 +1653,7 @@ def _deploy_mk8s_fleet(
                 timeout_minutes=timeout_minutes,
                 on_status=on_status,
                 log_path=log_path,
+                repair_stopped_placeholder=repair_stopped_placeholder,
             )
         return get_backend("mk8s").apply(
             t["cluster"],
@@ -1674,6 +1684,7 @@ def _deploy_mk8s_fleet(
                 timeout_minutes=timeout_minutes,
                 on_status=on_status,
                 log_path=log_path,
+                repair_stopped_placeholder=repair_stopped_placeholder,
             ),
         )
 

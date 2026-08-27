@@ -43,6 +43,7 @@ class MK8sApplyRequest:
     log_path: Path | None = None
     provider_env: dict[str, str] | None = None
     provider_preflight: bool = False
+    repair_stopped_placeholder: bool = False
     # Legacy-state compatibility only. New standalone targets use the native
     # one-target request below; existing deploy/cluster state must continue to
     # reconcile in place rather than being silently orphaned.
@@ -132,6 +133,7 @@ def desired_state(cluster: MK8sDesired) -> dict[str, Any]:
         "filestore_disk_size_gibibytes": cluster.filestore_disk_size_gibibytes,
         "filestore_mount_path": cluster.filestore_mount_path,
         "filestore_mount_tag": cluster.filestore_mount_tag,
+        "filesystem_csi_enabled": bool(cluster.filesystem_csi_chart_repository),
         "k8s_version": cluster.resolved_k8s_version() or "backend-default",
         "mig": (
             {"strategy": cluster.mig.strategy, "config": cluster.mig.config}
@@ -296,6 +298,7 @@ class MK8sBackend:
             validation_policy=request.post_deploy_validation,
             basic_validation_timeout_minutes=request.basic_validation_timeout_minutes,
             kubectl_bin=request.kubectl_bin,
+            repair_stopped_placeholder=request.repair_stopped_placeholder,
         )
         if request.standalone_context and result.get("status") == "deployed":
             result = self._adopt_standalone_result(desired, request, result)

@@ -597,9 +597,28 @@ run_mujoco_eval() {
     download_s3_file "$checkpoint_uri" "$checkpoint_path"
   fi
   export SONIC_EVAL_CHECKPOINT_PATH="$checkpoint_path"
-  "$PYTHON_BIN" /opt/npa/docker/workbench/sonic/mujoco_eval.py
-  write_gpu_device_proof
-  write_image_pull_proof
+  "$PYTHON_BIN" /opt/npa/docker/workbench/sonic/mujoco_eval.py || return $?
+  write_gpu_device_proof || return $?
+  write_image_pull_proof || return $?
+}
+
+run_mujoco_smoke() {
+  local checkpoint_path="$OUTPUT_DIR/input/golden_eval_checkpoint.pt"
+  mkdir -p "$(dirname "$checkpoint_path")"
+  NPA_GOLDEN_CHECKPOINT="$checkpoint_path" "$PYTHON_BIN" <<'PY'
+import os
+from pathlib import Path
+
+import torch
+
+path = Path(os.environ["NPA_GOLDEN_CHECKPOINT"])
+path.parent.mkdir(parents=True, exist_ok=True)
+torch.save(
+    {"policy_state_dict": {"golden_eval.weight": torch.linspace(-1.0, 1.0, 512)}},
+    path,
+)
+PY
+  SONIC_EVAL_CHECKPOINT_PATH="$checkpoint_path" run_mujoco_eval || return $?
 }
 
 write_upload_and_exit() {
@@ -627,6 +646,14 @@ case "$MODE" in
   mujoco-eval|mujoco_eval)
     set +e
     run_mujoco_eval
+    rc=$?
+    set -e
+    upload_outputs
+    exit "$rc"
+    ;;
+  mujoco-smoke|mujoco_smoke)
+    set +e
+    run_mujoco_smoke
     rc=$?
     set -e
     upload_outputs

@@ -24,6 +24,7 @@ _EXACT_SOURCE_DOCKERFILES = (
     "cosmos3-reason/Dockerfile",
     "isaac-lab/Dockerfile",
     "lerobot-vlm-rl/Dockerfile",
+    "rerun-viewer/Dockerfile",
     "sim2real-envgen/Dockerfile",
     "sim2real-eval/Dockerfile",
     "sim2real-control/Dockerfile",
@@ -73,11 +74,11 @@ def test_canonical_sim2real_workflow_requires_operator_pinned_images() -> None:
         "controller_image",
         "transfer_image",
         "envgen_image",
-        "reason_image",
         "isaac_image",
         "viewer_image",
     )
     assert config["require_baked_npa"] == "1"
+    assert config["baked_npa_import"] == "npa.workflows.sim2real.workflow_stage"
     assert all(config[name] == "" for name in image_inputs)
     resources = runbook["resources"]
     assert all(
@@ -195,6 +196,35 @@ def test_standard_workflow_entrypoint_execs_orchestrator_argv() -> None:
     assert result.stdout == "standard-workflow-ready"
 
 
+def test_rerun_viewer_is_exact_source_stage14_runtime() -> None:
+    root = Path(__file__).resolve().parents[2] / "docker" / "workbench"
+    dockerfile = (root / "rerun-viewer" / "Dockerfile").read_text(encoding="utf-8")
+    requirements = (root / "common" / "sim2real-viewer-requirements.txt").read_text(
+        encoding="utf-8"
+    )
+    assert 'org.opencontainers.image.revision="${NPA_SOURCE_SHA}"' in dockerfile
+    assert "NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA}" in dockerfile
+    assert "NPA_BAKED_PYTHON=/opt/rerun/venv/bin/python" in dockerfile
+    assert "npa-exact-source.pth" in dockerfile
+    assert "sim2real-viewer-requirements.txt" in dockerfile
+    assert "--no-deps" in dockerfile
+    assert "pip check" in dockerfile
+    assert (
+        'ENTRYPOINT ["/opt/npa/docker/workbench/rerun-viewer/entrypoint.sh"]'
+        in dockerfile
+    )
+    for prerequisite in ("openssh-server", "rsync", "sudo", "netcat-openbsd"):
+        assert prerequisite in dockerfile
+    lines = [
+        line.strip()
+        for line in requirements.splitlines()
+        if line.strip() and not line.startswith("#")
+    ]
+    assert all(line.count("==") == 1 for line in lines)
+    for dependency in ("boto3==1.43.62", "mcap==1.4.0", "rerun-sdk==0.31.4"):
+        assert dependency in lines
+
+
 @pytest.mark.parametrize("relative_path", _STANDARD_WORKFLOW_PASSTHROUGH_DOCKERFILES)
 def test_standard_workflow_images_use_passthrough_entrypoint(
     relative_path: str,
@@ -293,9 +323,39 @@ def test_cosmos3_baked_runtime_survives_skypilot_pythonpath_scrubbing() -> None:
         / "Dockerfile"
     ).read_text(encoding="utf-8")
     assert "NPA_BAKED_PYTHON=/opt/npa/venv/bin/python" in dockerfile
+    assert "python -m pip uninstall -y npa" in dockerfile
     assert "npa-exact-source.pth" in dockerfile
     assert "env -u PYTHONPATH /opt/npa/venv/bin/python -c" in dockerfile
     assert "from npa.workflows.sim2real.workflow_stage import main" in dockerfile
+
+
+def test_envgen_baked_runtime_survives_skypilot_pythonpath_scrubbing() -> None:
+    """EnvGen's exact source remains importable when Sky clears PYTHONPATH."""
+
+    dockerfile = (
+        Path(__file__).resolve().parents[2]
+        / "docker"
+        / "workbench"
+        / "sim2real-envgen"
+        / "Dockerfile"
+    ).read_text(encoding="utf-8")
+    assert "NPA_BAKED_PYTHON=/opt/npa/venv/bin/python" in dockerfile
+    assert "npa-exact-source.pth" in dockerfile
+    assert "env -u PYTHONPATH /opt/npa/venv/bin/python -c" in dockerfile
+    assert "from npa.workflows.sim2real.workflow_stage import main" in dockerfile
+
+
+def test_cosmos3_reason_has_complete_skypilot_bootstrap_runtime() -> None:
+    dockerfile = (
+        Path(__file__).resolve().parents[2]
+        / "docker"
+        / "workbench"
+        / "cosmos3-reason"
+        / "Dockerfile"
+    ).read_text(encoding="utf-8")
+    for package in ("openssh-server", "procps", "rsync", "sudo"):
+        assert package in dockerfile
+    assert "rm -f /etc/ssh/ssh_host_*" in dockerfile
 
 
 def test_sim2real_control_plane_requirement_closure_is_exact() -> None:

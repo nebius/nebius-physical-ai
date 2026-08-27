@@ -1,39 +1,31 @@
 # Cosmos3 serving redistribution decision
 
-Decision: `restricted` / build-your-own. Do not mirror
-`npa-cosmos3-serving` to an anonymous public registry.
+Decision: `public`, subject to the repository's exact-image build, scan, GPU
+acceptance, and digest promotion gates.
 
-## Three-layer classification
+## Artifact classification
 
-- Source wrapper: repository code under this repository's license.
-- Baked runtime: `vllm/vllm-omni` at manifest-list digest
-  `sha256:6d2630c7d637b699557573f2c3fee8df5d4d0cd718977aa22549ed6a6ef30587`.
-  The upstream vLLM-Omni project declares Apache-2.0, but the actual amd64
-  image embeds `/NGC-DL-CONTAINER-LICENSE` from its NVIDIA CUDA base.
-- Weights/data: none baked. `nvidia/Cosmos3-Super` and guardrail weights are
-  fetched at runtime with the operator's own Hugging Face credential and
-  license acceptance.
+- Source: vLLM-Omni 0.26.0 at commit
+  `a4ea67a21b20054dacc6e83952f9bd407e8ee4e7`, Apache-2.0, fetched from
+  upstream and verified by SHA-256 at runtime.
+- Base: digest-pinned official Python 3.12 slim image. It is not an NVIDIA Deep
+  Learning Container and contains no `NGC-DL-CONTAINER-LICENSE` payload.
+- Serving closure: exact versions in `requirements.lock`, including vLLM 0.26.0,
+  CUDA-enabled PyTorch 2.11.0, and Cosmos Guardrail 0.3.1. CUDA Python packages
+  carry the NVIDIA Software License (v. May 12, 2021), whose downstream-terms
+  requirements are not satisfied by anonymous GHCR. Therefore none of this
+  closure is baked: the operator must explicitly set
+  `NPA_COSMOS3_ACCEPT_NVIDIA_SOFTWARE_LICENSE=YES`, after which upstream delivers
+  it directly into a writable runtime volume.
+- Weights and data: none. `nvidia/Cosmos3-Super` and
+  `nvidia/Cosmos-1.0-Guardrail` are fetched only at runtime into an
+  operator-writable cache after authenticated access to each repository is
+  independently confirmed.
+- Credentials and terms: neither is accepted, persisted, or baked. The operator
+  supplies a token for an account that already has each upstream entitlement.
 
-## Why the image is restricted
-
-The NVIDIA Deep Learning Container License grants distribution of a compatible
-derived container only subject to conditions that include material additional
-primary functionality and downstream terms at least as protective as NVIDIA's
-license; it also prohibits distributing the container as a standalone product.
-This image is a thin preflight/configuration wrapper around the upstream serving
-runtime, and an anonymous GHCR package does not establish those downstream
-terms. That is not a sufficiently clear basis for public redistribution.
-
-The safe path is for each operator to build the checked-in Dockerfile into its
-own registry and use the vendor base under its own acceptance. A future public
-release requires human legal approval of a distribution mechanism that satisfies
-the vendor terms, or a replacement base whose public redistribution is clear.
-
-## Authoritative evidence
-
-- NVIDIA Deep Learning Container License:
-  https://developer.download.nvidia.com/licenses/NVIDIA_Deep_Learning_Container_License.pdf
-- vLLM-Omni package license metadata:
-  https://github.com/vllm-project/vllm-omni/blob/main/pyproject.toml
-
-The packaging contract and `OMNIVERSE_RESTRICTED_TOOLS` enforce this decision.
+The former `vllm/vllm-omni` parent is prohibited because its built filesystem
+contained NVIDIA's Deep Learning Container license. Baking the replacement
+CUDA Python closure is also prohibited. Mutation tests and built-image scanners
+reject either runtime, their license markers, cached models, credentials, and
+pre-accepted terms if any return.

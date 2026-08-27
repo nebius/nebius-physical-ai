@@ -13,7 +13,7 @@ KUBECONFIG="${KUBECONFIG:-${HOME}/.npa/clusters/npa-rtxpro-mk8s/kubeconfig}"
 
 export KUBECONFIG
 # Full registry hostname so sibling Jobs pull real workbench images (not local reference).
-export NPA_REGISTRY="${NPA_REGISTRY:-cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw}"
+export NPA_REGISTRY="${NPA_REGISTRY:-ghcr.io/nebius/nebius-physical-ai}"
 
 eval "$("${ROOT}/npa/.venv/bin/python" <<'PY'
 from npa.clients.credentials import load_credentials, storage_endpoint_url

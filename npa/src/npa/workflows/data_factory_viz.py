@@ -14,15 +14,20 @@ is pip-installed.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import logging
 import os
 import re
 import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlparse
 
 if TYPE_CHECKING:
     from npa.clients.storage import StorageClient
+
+_log = logging.getLogger(__name__)
 
 APPLICATION_ID = "physical-ai-data-factory"
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
@@ -110,6 +115,21 @@ def _subsample(items: list, cap: int) -> list:
     return out
 
 
+def _latest_iteration_dir(root: Path) -> Path:
+    """Select the newest append-only PAIDF loop directory, with legacy fallback."""
+
+    if not root.is_dir():
+        return root
+    candidates: list[tuple[int, Path]] = []
+    for path in root.iterdir():
+        if not path.is_dir():
+            continue
+        match = re.fullmatch(r"iteration-(\d+)", path.name)
+        if match:
+            candidates.append((int(match.group(1)), path))
+    return max(candidates, default=(-1, root), key=lambda item: item[0])[1]
+
+
 def _log_frame(rr: Any, rec: Any, entity: str, arr: Any) -> None:
     """Log a frame as a JPEG-encoded image (small) with a raw-RGB fallback."""
     try:
@@ -163,12 +183,43 @@ def build_run_rrd(
         raise DataFactoryVizError(f"rerun-sdk is required to build the recording: {exc}") from exc
 
     run_id = _run_id_from_uri(input_uri)
+    active_storage = storage_client
+    source_inventory: list[dict[str, Any]] = []
+    output_object_key = ""
+    output_exists = False
+    if input_uri.startswith("s3://"):
+        if active_storage is None:
+            from npa.clients.storage import StorageClient
+
+            active_storage = StorageClient.from_environment()
+        source_bucket, source_prefix = _split_s3_prefix(input_uri)
+        output_bucket, output_object_key = _split_s3_object(output_uri)
+        if (
+            output_bucket != source_bucket
+            or not output_object_key.startswith(source_prefix)
+        ):
+            raise DataFactoryVizError(
+                "remote RRD publication must remain inside the canonical run prefix"
+            )
+        source_inventory = _s3_inventory(active_storage, input_uri)
+        output_exists = any(
+            row["key"] == output_object_key for row in source_inventory
+        )
 
     with tempfile.TemporaryDirectory(prefix="npa-df-viz-") as tmp:
-        local = _materialize_run(input_uri, Path(tmp) / "run", storage_client=storage_client)
+        local = _materialize_run(
+            input_uri, Path(tmp) / "run", storage_client=active_storage
+        )
         captions = _load_captions(local)
 
+        out_path = Path(tmp) / "sim2real.rrd"
         rec = rr.RecordingStream(app_id, recording_id=run_id)
+        # A file sink must be attached before the first log call. Attaching it
+        # afterwards happens to replay buffered rows, but leaves a streaming RRD
+        # without its footer/manifest when the temporary directory is published.
+        # Rerun can often read that stream, while `rerun rrd verify` correctly
+        # rejects it as incomplete.
+        rec.save(str(out_path))
         logged = 0
 
         input_root = local / "input"
@@ -203,17 +254,80 @@ def build_run_rrd(
                 recording=rec,
             )
 
-        aug_root = local / "cosmos_augmented"
-        if aug_root.is_dir():
-            for d in _committed_variant_dirs(local):
+        augmented_entities: set[str] = set()
+        augmented_frame_count = 0
+        augmented_video_count = 0
+        variant_records = _committed_variant_records(local)
+        if variant_records:
+            disposition = _read_json(local / "grade" / "quality_disposition.json")
+            quality_status = str(
+                disposition.get("quality_status") or "UNKNOWN"
+            ).upper() if isinstance(disposition, dict) else "UNKNOWN"
+            for record in variant_records:
+                d = record["directory"]
                 label = _augmentation_label(d)
-                entity = f"augmented/{d.name}"
+                candidate = str(record["candidate_id"])
+                entity = f"augmented/{candidate}"
+                augmented_entities.add(entity)
                 for png in _subsample(sorted(d.glob("*.png")), RRD_MAX_FRAMES_PER_ENTITY):
                     _set_frame(rr, rec, _frame_index(png.stem))
                     _log_frame(rr, rec, entity, _load_rgb(png))
                     logged += 1
+                    augmented_frame_count += 1
+                video = record.get("video")
+                if isinstance(video, Path) and video.is_file():
+                    asset = rr.AssetVideo(path=video)
+                    rr.log(f"{entity}/video", asset, static=True, recording=rec)
+                    try:
+                        timestamps = asset.read_frame_timestamps_nanos()
+                        if len(timestamps):
+                            rr.send_columns(
+                                f"{entity}/video",
+                                indexes=[
+                                    rr.TimeColumn(
+                                        "video_time", duration=1e-9 * timestamps
+                                    )
+                                ],
+                                columns=rr.VideoFrameReference.columns_nanos(
+                                    timestamps
+                                ),
+                                recording=rec,
+                            )
+                    except Exception as exc:  # noqa: BLE001 - asset remains reviewable
+                        _log.debug(
+                            "could not attach video frame references for %s: %s",
+                            video,
+                            exc,
+                        )
+                    augmented_video_count += 1
                 if label:
                     rr.log(entity, rr.TextDocument(f"{d.name}: {label}"), static=True, recording=rec)
+                rr.log(
+                    f"{entity}/disposition",
+                    rr.TextDocument(
+                        _candidate_disposition_document(
+                            local,
+                            iteration=int(record["iteration"]),
+                            clip=str(record["clip"]),
+                            candidate_id=candidate,
+                            quality_status=quality_status,
+                            disposition=disposition,
+                        ),
+                        media_type="text/markdown",
+                    ),
+                    static=True,
+                    recording=rec,
+                )
+
+            # A terminal PAIDF recording may never imply that a candidate was
+            # reviewable when it contains only conditioning frames and text. A
+            # committed candidate must contribute actual augmented image or video
+            # components, including on the rejected branch.
+            if augmented_frame_count == 0 and augmented_video_count == 0:
+                rec.disconnect()
+                raise DataFactoryVizError(
+                    "committed augmented candidates produced no augmented media entities"
+                )
 
         # The conditioning signal each variant was rendered from, as its own
         # entity tree. A segmentation-conditioned run is only reviewable if the
@@ -255,14 +369,42 @@ def build_run_rrd(
                 recording=rec,
             )
 
-        if logged == 0:
+        if logged == 0 and augmented_video_count == 0:
+            rec.disconnect()
             raise DataFactoryVizError(
-                f"no input/augmented frames found under {input_uri}; nothing to visualize"
+                f"no input/augmented media found under {input_uri}; nothing to visualize"
             )
 
-        out_path = Path(tmp) / "sim2real.rrd"
-        rr.save(str(out_path), recording=rec)
-        written_uri = _publish(str(out_path), output_uri, storage_client=storage_client)
+        # Flush batched rows and close the file sink before upload so the object
+        # always contains Rerun's terminal manifest/footer.
+        rec.flush()
+        rec.disconnect()
+        if output_exists:
+            existing_path = Path(tmp) / "existing-sim2real.rrd"
+            assert active_storage is not None
+            active_storage.download_file(output_uri, str(existing_path))
+            _verify_terminal_rrd_media(
+                existing_path,
+                variant_records=variant_records,
+                quality_status=quality_status if variant_records else "UNKNOWN",
+            )
+            written_uri = output_uri
+        else:
+            written_uri = _publish(
+                str(out_path), output_uri, storage_client=active_storage
+            )
+
+    inventory_proof: dict[str, Any] = {}
+    if source_inventory:
+        after = _s3_inventory(active_storage, input_uri)
+        source_rows = _verify_additive_publication(
+            source_inventory, after, output_object_key
+        )
+        inventory_proof = {
+            "source_inventory_object_count": len(source_rows),
+            "source_inventory_sha256": _inventory_sha256(source_rows),
+            "source_inventory_unchanged_after_publication": True,
+        }
 
     return {
         "status": "completed",
@@ -270,7 +412,169 @@ def build_run_rrd(
         "input_uri": input_uri,
         "output_uri": written_uri,
         "frames_logged": logged,
+        "augmented_media_entities": len(augmented_entities),
+        "augmented_frame_components": augmented_frame_count,
+        "augmented_video_components": augmented_video_count,
+        **inventory_proof,
     }
+
+
+def _split_s3_prefix(uri: str) -> tuple[str, str]:
+    parsed = urlparse(uri)
+    if parsed.scheme != "s3" or not parsed.netloc:
+        raise DataFactoryVizError("expected an s3:// prefix")
+    return parsed.netloc, parsed.path.lstrip("/").rstrip("/") + "/"
+
+
+def _split_s3_object(uri: str) -> tuple[str, str]:
+    parsed = urlparse(uri)
+    key = parsed.path.lstrip("/")
+    if parsed.scheme != "s3" or not parsed.netloc or not key or key.endswith("/"):
+        raise DataFactoryVizError("expected an s3:// object URI")
+    return parsed.netloc, key
+
+
+def _s3_inventory(storage_client: Any, uri: str) -> list[dict[str, Any]]:
+    bucket, prefix = _split_s3_prefix(uri)
+    rows: list[dict[str, Any]] = []
+    paginator = storage_client.s3.get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+        rows.extend(
+            {
+                "key": str(item.get("Key") or ""),
+                "size": int(item.get("Size") or 0),
+                "etag": str(item.get("ETag") or ""),
+            }
+            for item in page.get("Contents", [])
+            if item.get("Key")
+        )
+    return sorted(rows, key=lambda row: row["key"])
+
+
+def _inventory_sha256(rows: list[dict[str, Any]]) -> str:
+    wire = json.dumps(rows, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(wire).hexdigest()
+
+
+def _verify_additive_publication(
+    before: list[dict[str, Any]], after: list[dict[str, Any]], output_key: str
+) -> list[dict[str, Any]]:
+    before_by_key = {str(row["key"]): row for row in before}
+    after_by_key = {str(row["key"]): row for row in after}
+    marker = "/reports/"
+    run_prefix = output_key.split(marker, 1)[0] + "/" if marker in output_key else ""
+    workflow_prefix = run_prefix + "npa-workflow/"
+    source_before = [
+        row
+        for row in before
+        if str(row["key"]) != output_key
+        and not str(row["key"]).startswith(workflow_prefix)
+    ]
+    source_after = [
+        row
+        for row in after
+        if str(row["key"]) != output_key
+        and not str(row["key"]).startswith(workflow_prefix)
+    ]
+    if source_before != source_after:
+        raise DataFactoryVizError(
+            "RRD publication changed the canonical source object inventory"
+        )
+    workflow_before = {
+        key for key in before_by_key if key.startswith(workflow_prefix)
+    }
+    if not workflow_before.issubset(after_by_key):
+        raise DataFactoryVizError("RRD publication removed workflow evidence")
+    unexpected = {
+        key
+        for key in after_by_key.keys() - before_by_key.keys()
+        if key != output_key and not key.startswith(workflow_prefix)
+    }
+    if unexpected:
+        raise DataFactoryVizError("RRD publication added undeclared run artifacts")
+    output = after_by_key.get(output_key)
+    if output is None or int(output.get("size") or 0) <= 0:
+        raise DataFactoryVizError("RRD publication did not produce a non-empty artifact")
+    if output_key in before_by_key and output != before_by_key[output_key]:
+        raise DataFactoryVizError("RRD publication changed an existing recording")
+    return source_before
+
+
+def _verify_terminal_rrd_media(
+    rrd_path: Path,
+    *,
+    variant_records: list[dict[str, Any]],
+    quality_status: str,
+) -> dict[str, int]:
+    """Prove a preserved RRD contains each candidate's exact video and disposition."""
+
+    try:
+        from rerun.recording import load_recording
+    except ImportError as exc:  # pragma: no cover - rerun is a runtime dependency
+        raise DataFactoryVizError(
+            "rerun recording loader is required to verify an existing RRD"
+        ) from exc
+    if not rrd_path.is_file() or rrd_path.stat().st_size <= 0:
+        raise DataFactoryVizError("existing RRD is empty")
+    chunks = list(load_recording(rrd_path).chunks())
+    by_entity: dict[str, list[Any]] = {}
+    for chunk in chunks:
+        by_entity.setdefault(str(chunk.entity_path), []).append(chunk)
+
+    verified_videos = 0
+    verified_dispositions = 0
+    expected_status = str(quality_status or "UNKNOWN").upper()
+    for record in variant_records:
+        candidate = str(record.get("candidate_id") or "")
+        video_path = record.get("video")
+        if not candidate or not isinstance(video_path, Path) or not video_path.is_file():
+            raise DataFactoryVizError(
+                "existing RRD verification requires every committed candidate video"
+            )
+        video_entity = f"/augmented/{candidate}/video"
+        disposition_entity = f"/augmented/{candidate}/disposition"
+        embedded: list[bytes] = []
+        for chunk in by_entity.get(video_entity, []):
+            batch = chunk.to_record_batch()
+            if "AssetVideo:blob" not in batch.schema.names:
+                continue
+            for row in batch.column("AssetVideo:blob").to_pylist():
+                if row:
+                    embedded.append(bytes(row[0]))
+        if len(embedded) != 1 or hashlib.sha256(embedded[0]).hexdigest() != _sha256_path(
+            video_path
+        ):
+            raise DataFactoryVizError(
+                "existing RRD augmented video differs from its canonical candidate"
+            )
+        verified_videos += 1
+
+        text_values: list[str] = []
+        for chunk in by_entity.get(disposition_entity, []):
+            batch = chunk.to_record_batch()
+            for name in batch.schema.names:
+                if "text" not in name.lower() and "body" not in name.lower():
+                    continue
+                text_values.extend(str(value) for value in batch.column(name).to_pylist())
+        if not text_values or not any(expected_status in value.upper() for value in text_values):
+            raise DataFactoryVizError(
+                "existing RRD candidate disposition is missing or inconsistent"
+            )
+        verified_dispositions += 1
+    if not variant_records:
+        raise DataFactoryVizError("existing RRD has no committed candidates to verify")
+    return {
+        "augmented_video_entities": verified_videos,
+        "augmented_disposition_entities": verified_dispositions,
+    }
+
+
+def _sha256_path(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        while chunk := stream.read(1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _image_files(root: Path) -> list[Path]:
@@ -341,29 +645,36 @@ def _log_control_entities(rr: Any, rec: Any, local: Path) -> int:
     """
 
     logged = 0
-    manifest_path = local / "cosmos_augmented" / "manifest.json"
-    committed = _read_json(manifest_path)
     selected: list[tuple[str, Path]] = []
-    if isinstance(committed, dict):
-        for variant in _validated_viz_manifest(committed):
-            clip = str(variant.get("clip") or "")
-            for uri in (variant.get("control_uris") or {}).values():
-                value = str(uri or "")
-                marker = "/cosmos_control/"
-                if marker not in value:
-                    continue
-                relative = value.split(marker, 1)[1]
-                signal_dir = (
-                    local / "cosmos_control" / Path(relative).parent / Path(value).stem
-                )
-                selected.append((clip, signal_dir))
-    else:
+    augment_roots = _augment_roots(local)
+    for iteration, augment_root in augment_roots:
+        manifest_path = augment_root / "manifest.json"
+        committed = _read_json(manifest_path)
+        if isinstance(committed, dict):
+            for variant in _validated_viz_manifest(committed):
+                clip = str(variant.get("clip") or "")
+                candidate = f"iteration-{iteration}/{clip}" if iteration else clip
+                for uri in (variant.get("control_uris") or {}).values():
+                    value = str(uri or "")
+                    marker = "/cosmos_control/"
+                    if marker not in value:
+                        continue
+                    relative = value.split(marker, 1)[1]
+                    signal_dir = (
+                        local
+                        / "cosmos_control"
+                        / Path(relative).parent
+                        / Path(value).stem
+                    )
+                    selected.append((candidate, signal_dir))
+            continue
         if manifest_path.exists():
             raise DataFactoryVizError("canonical augment manifest is unreadable")
-        if (local / "cosmos_augmented" / "_attempts").exists():
+        if (augment_root / "_attempts").exists():
             raise DataFactoryVizError(
                 "augment attempts exist without a valid canonical manifest"
             )
+    if not selected:
         root = local / "cosmos_control"
         if root.is_dir():
             selected = [
@@ -385,37 +696,172 @@ def _log_control_entities(rr: Any, rec: Any, local: Path) -> int:
     return logged
 
 
-def _committed_variant_dirs(local: Path) -> list[Path]:
-    """Map canonical manifest variants onto the downloaded attempt tree."""
+def _augment_roots(local: Path) -> list[tuple[int, Path]]:
+    """Return every append-only augmentation iteration, or the legacy root."""
 
     root = local / "cosmos_augmented"
-    manifest_path = root / "manifest.json"
-    manifest = _read_json(manifest_path)
-    if isinstance(manifest, dict):
-        selected: list[Path] = []
-        for variant in _validated_viz_manifest(manifest):
-            uri = str(variant.get("augmented_video_uri") or "")
-            marker = "/cosmos_augmented/"
-            if marker not in uri:
-                raise DataFactoryVizError(
-                    "canonical augment manifest variant has an invalid generated video URI"
-                )
-            selected.append(root / Path(uri.split(marker, 1)[1]).parent)
-        if any(not path.is_dir() for path in selected):
-            raise DataFactoryVizError(
-                "canonical augment manifest references an absent variant directory"
-            )
-        return sorted(selected)
     if not root.is_dir():
         return []
-    if manifest_path.exists():
-        raise DataFactoryVizError("canonical augment manifest is unreadable")
-    if (root / "_attempts").exists():
-        raise DataFactoryVizError(
-            "augment attempts exist without a valid canonical manifest"
-        )
-    return sorted(
-        path for path in root.iterdir() if path.is_dir() and path.name != "_attempts"
+    iterations = sorted(
+        (
+            (int(match.group(1)), path)
+            for path in root.iterdir()
+            if path.is_dir()
+            if (match := re.fullmatch(r"iteration-(\d+)", path.name))
+        ),
+        key=lambda item: item[0],
+    )
+    return iterations or [(0, root)]
+
+
+def _committed_variant_records(local: Path) -> list[dict[str, Any]]:
+    """Map every canonical manifest candidate onto its preserved media tree."""
+
+    root = local / "cosmos_augmented"
+    records: list[dict[str, Any]] = []
+    for iteration, iteration_root in _augment_roots(local):
+        manifest_path = iteration_root / "manifest.json"
+        manifest = _read_json(manifest_path)
+        if isinstance(manifest, dict):
+            for variant in _validated_viz_manifest(manifest):
+                uri = str(variant.get("augmented_video_uri") or "")
+                clip = str(variant.get("clip") or "").strip()
+                marker = "/cosmos_augmented/"
+                if marker not in uri or not clip:
+                    raise DataFactoryVizError(
+                        "canonical augment manifest variant has an invalid generated video URI"
+                    )
+                relative = Path(uri.split(marker, 1)[1])
+                directory = root / relative.parent
+                video = root / relative
+                if not directory.is_dir() or not video.is_file():
+                    raise DataFactoryVizError(
+                        "canonical augment manifest references absent candidate media"
+                    )
+                records.append(
+                    {
+                        "iteration": iteration,
+                        "clip": clip,
+                        "candidate_id": (
+                            f"iteration-{iteration}/{clip}" if iteration else clip
+                        ),
+                        "directory": directory,
+                        "video": video,
+                    }
+                )
+            continue
+        if manifest_path.exists():
+            raise DataFactoryVizError("canonical augment manifest is unreadable")
+        if (iteration_root / "_attempts").exists():
+            raise DataFactoryVizError(
+                "augment attempts exist without a valid canonical manifest"
+            )
+        for directory in sorted(
+            path
+            for path in iteration_root.iterdir()
+            if path.is_dir() and path.name != "_attempts"
+        ):
+            videos = sorted(directory.glob("*.mp4"))
+            records.append(
+                {
+                    "iteration": iteration,
+                    "clip": directory.name,
+                    "candidate_id": (
+                        f"iteration-{iteration}/{directory.name}"
+                        if iteration
+                        else directory.name
+                    ),
+                    "directory": directory,
+                    "video": videos[0] if videos else None,
+                }
+            )
+    return records
+
+
+def _committed_variant_dirs(local: Path) -> list[Path]:
+    """Compatibility projection of every committed candidate directory."""
+
+    return [record["directory"] for record in _committed_variant_records(local)]
+
+
+def _candidate_evaluation(local: Path, iteration: int, clip: str) -> dict[str, Any]:
+    grade_root = local / "grade"
+    grade_dir = (
+        grade_root / f"iteration-{iteration}" / "ranking"
+        if iteration
+        else grade_root
+    )
+    try:
+        from npa.workbench.cosmos_evaluator import RESULT_FILENAME as result_name
+    except Exception:  # noqa: BLE001
+        result_name = "cosmos_evaluator.json"
+    report = _read_json(grade_dir / result_name)
+    if not isinstance(report, dict):
+        return {}
+    return next(
+        (
+            item
+            for item in report.get("clips", [])
+            if isinstance(item, dict) and str(item.get("clip_id") or "") == clip
+        ),
+        {},
+    )
+
+
+def _candidate_disposition_document(
+    local: Path,
+    *,
+    iteration: int,
+    clip: str,
+    candidate_id: str,
+    quality_status: str,
+    disposition: Any,
+) -> str:
+    """Truthful per-candidate disposition shown beside its actual media."""
+
+    evaluation = _candidate_evaluation(local, iteration, clip)
+    attributes = (
+        evaluation.get("attribute_verification", {})
+        if isinstance(evaluation.get("attribute_verification"), dict)
+        else {}
+    )
+    failed_attributes = [
+        str(check.get("variable") or "unknown")
+        for check in attributes.get("checks", [])
+        if isinstance(check, dict) and check.get("passed") is not True
+    ]
+    hallucination = (
+        evaluation.get("hallucination", {})
+        if isinstance(evaluation.get("hallucination"), dict)
+        else {}
+    )
+    summary = {
+        "candidate_id": candidate_id,
+        "iteration": iteration,
+        "clip_id": clip,
+        "run_disposition": quality_status,
+        "candidate_passed": evaluation.get("passed") is True,
+        "promotion_eligible": quality_status == "ACCEPTED"
+        and evaluation.get("passed") is True,
+        "score": evaluation.get("score"),
+        "failed_attributes": failed_attributes,
+        "attribute_results": attributes.get("checks", []),
+        "hallucination_status": (
+            "passed" if hallucination.get("passed") is True else "failed"
+        ),
+        "hallucination": hallucination,
+        "temporal_consistency": evaluation.get("temporal_consistency"),
+        "appearance_fidelity": evaluation.get("appearance_fidelity"),
+        "source_comparison_entity": "source/* or conditioning/derived",
+        "output_media_entity": f"augmented/{candidate_id}",
+        "final_disposition": disposition if isinstance(disposition, dict) else {},
+    }
+    return (
+        f"# {quality_status} — candidate `{candidate_id}`\n\n"
+        "This panel is review evidence only. Rejected media is never relabeled, "
+        "curated, finalized, or promoted. Compare it directly with the source or "
+        "conditioning entities on the shared timeline.\n\n"
+        + _json_block("Candidate quality evidence", summary)
     )
 
 
@@ -492,7 +938,8 @@ def _load_stage_docs(local: Path) -> dict[str, str]:
         )
 
     # Augment fan-out — how many Cosmos Transfer 2.5 variants were produced.
-    aug = _read_json(local / "cosmos_augmented" / "manifest.json")
+    aug_dir = _latest_iteration_dir(local / "cosmos_augmented")
+    aug = _read_json(aug_dir / "manifest.json")
     if isinstance(aug, dict):
         variants = aug.get("variants") or aug.get("clips") or []
         docs["pipeline/2_augment"] = _json_block("Augment — Cosmos Transfer 2.5 (multiply)", aug)
@@ -508,22 +955,45 @@ def _load_stage_docs(local: Path) -> dict[str, str]:
         )
 
     # Evaluate & Validate — the hallucination / attribute-verification grade.
-    grade_dir = local / "grade"
+    grade_root = local / "grade"
+    grade_dir = _latest_iteration_dir(grade_root)
     grade_docs: list[str] = []
+    try:
+        from npa.workbench.cosmos_evaluator import (
+            RESULT_FILENAME as _cosmos_evaluator_result_filename,
+        )
+    except Exception:  # noqa: BLE001
+        _cosmos_evaluator_result_filename = "cosmos_evaluator.json"
     try:
         from npa.workbench.vlm_eval import RESULT_FILENAME as _vlm_result_filename
     except Exception:  # noqa: BLE001
         _vlm_result_filename = "vlm_eval_stub.json"
-    for name in (_vlm_result_filename, "vlm_eval.json"):
+    for name in (
+        _cosmos_evaluator_result_filename,
+        _vlm_result_filename,
+        "vlm_eval.json",
+    ):
         ev = _read_json(grade_dir / name)
         if isinstance(ev, dict):
-            grade_docs.append(_json_block("Attribute verification / hallucination check (VLM)", ev))
-            stage_log.append(f"grade: vlm score={ev.get('score')}, model={ev.get('model', 'n/a')}")
+            grade_docs.append(
+                _json_block("Evaluator — integrity and appearance checks", ev)
+            )
+            stage_log.append(
+                f"grade: score={ev.get('score')}, status={ev.get('status', 'n/a')}"
+            )
             break
     dec = _read_json(grade_dir / "decision.json")
     if isinstance(dec, dict):
         grade_docs.append(_json_block("Quality gate decision", dec))
         stage_log.append(f"grade: decision={dec.get('decision', 'n/a')}")
+    disposition = _read_json(grade_root / "quality_disposition.json")
+    if isinstance(disposition, dict):
+        grade_docs.append(_json_block("Final quality disposition", disposition))
+        stage_log.append(
+            "grade: disposition="
+            f"{disposition.get('quality_status', 'n/a')}, "
+            f"score={disposition.get('score', 'n/a')}"
+        )
     if grade_docs:
         docs["pipeline/3_grade"] = "\n".join(grade_docs)
 
@@ -718,4 +1188,10 @@ def _publish(local_path: str, output_uri: str, *, storage_client: "StorageClient
     from npa.clients.storage import StorageClient
 
     client = storage_client or StorageClient.from_environment()
-    return client.upload_file(local_path, output_uri)
+    client.put_bytes_conditional(
+        Path(local_path).read_bytes(),
+        output_uri,
+        if_none_match=True,
+        content_type="application/octet-stream",
+    )
+    return output_uri

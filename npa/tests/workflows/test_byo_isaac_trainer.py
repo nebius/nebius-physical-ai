@@ -355,6 +355,9 @@ def test_scenario_wrapper_consumes_reward_and_native_ppo_contract() -> None:
     assert "ROBOT_CONVERGENCE_ACTION_NOISE_STD=0.05" in args
     assert "ROBOT_VALIDATION_INTERVAL=100" in args
     assert "ROBOT_OBJECT_USD=https://assets.example/cube.usd" in args
+    assert "base64 --decode > /tmp/npa_robot/scenarios.jsonl" in args
+    assert "NPA_TRAINER_SCENARIOS_B64" in args
+    assert "--payload" not in args
     assert "/opt/npa/isaac-runtime/isaac_robot_train.py" in args
     # Those markers are produced by the wrapper baked into the immutable image,
     # not by source text injected into the live Job manifest.

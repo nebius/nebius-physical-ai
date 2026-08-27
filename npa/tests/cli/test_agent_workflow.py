@@ -257,8 +257,15 @@ def test_generate_data_factory_yaml_validates_and_plans() -> None:
         "augment",
         "grade",
         "evaluate",
+        "select-candidates",
+        "evaluate-selected",
         "quality-gate",
         "quality-disposition",
+        "review-terminal-candidates",
+        "route-terminal-quality",
+        "require-accepted-quality",
+        "visualize-rejected",
+        "reject-quality",
         "annotate-augmented",
         "cosmos-curate",
         "curate",
@@ -266,7 +273,11 @@ def test_generate_data_factory_yaml_validates_and_plans() -> None:
         "finalize",
     }
     assert expected.issubset(set(result["states"]))
-    plan = plan_workflow_yaml_text(yaml_text, run_id="paidf-demo")
+    plan = plan_workflow_yaml_text(
+        yaml_text,
+        run_id="paidf-demo",
+        assume_decision="promote_checkpoint",
+    )
     assert plan["ok"] is True
     tool_refs = [step.get("tool_ref") for step in plan["steps"]]
     assert "workbench.cosmos2.transfer_execute" in tool_refs
@@ -274,13 +285,44 @@ def test_generate_data_factory_yaml_validates_and_plans() -> None:
     assert "workbench.cosmos_evaluator.evaluate" in tool_refs
     assert "workbench.cosmos_curate.curate" in tool_refs
     assert "workbench.fiftyone.curate_augmented" in tool_refs
+    assert "workbench.fiftyone.review_augmented" in tool_refs
     assert generated["states"]["cosmos-curate"]["resources"] == "gpu"
     assert generated["config"]["trigger_uri"] == generated["config"]["input_uri"]
     assert generated["config"]["grade_threshold"] == "0.75"
+    assert generated["config"]["plan_assume_decision"] == "promote_checkpoint"
+    assert generated["config"]["augment_control_weight"] == "1.0"
+    assert generated["config"]["augment_guidance"] == "3.0"
     assert generated["config"]["default_decision"] == "loop_back"
     assert generated["config"]["appearance_fidelity_mode"] == "advisory"
     assert generated["states"]["grade"]["next"] == "quality-disposition"
-    assert generated["states"]["annotate-augmented"]["needs"] == ["quality-disposition"]
+    assert generated["states"]["annotate-augmented"]["needs"] == [
+        "require-accepted-quality"
+    ]
+    assert generated["states"]["quality-disposition"]["transitions"] == [
+        {"when": "promote_checkpoint", "goto": "review-terminal-candidates"},
+        {"when": "loop_back", "goto": "review-terminal-candidates"},
+    ]
+    assert generated["states"]["review-terminal-candidates"]["next"] == (
+        "route-terminal-quality"
+    )
+    assert generated["states"]["route-terminal-quality"]["transitions"] == [
+        {"when": "promote_checkpoint", "goto": "require-accepted-quality"},
+        {"when": "loop_back", "goto": "visualize-rejected"},
+    ]
+    assert "enforce_quality_disposition" in " ".join(
+        generated["states"]["require-accepted-quality"]["run"]["argv"]
+    )
+    assert generated["states"]["visualize-rejected"]["toolRef"] == (
+        "workbench.nurec.visualize"
+    )
+    rejected_plan = plan_workflow_yaml_text(
+        yaml_text,
+        run_id="paidf-rejected",
+        assume_decision="loop_back",
+    )
+    rejected_states = [step["state"] for step in rejected_plan["steps"]]
+    assert rejected_states[-2:] == ["visualize-rejected", "reject-quality"]
+    assert "annotate-augmented" not in rejected_states
     assert "supported video" in generated["states"]["augment"]["description"].lower()
 
 
@@ -332,12 +374,16 @@ def test_data_factory_subject_is_an_argv_value_not_shell_source() -> None:
     run = spec["states"]["generate-configs"]["run"]
     assert "shell" not in run
     assert spec["config"]["augment_subject"] == "worker's robot clips"
-    assert run["argv"][-1] == "{{config.augment_subject}}"
+    assert run["argv"][-3:] == [
+        "{{config.augment_subject}}",
+        "{{config.augmentation_seed}}",
+        "{{config.quality_anchor_uri}}",
+    ]
     plan = plan_workflow_yaml_text(workflow, run_id="subject-safe")
     argv = next(step for step in plan["steps"] if step["state"] == "generate-configs")[
         "argv"
     ]
-    assert argv[-1] == "worker's robot clips"
+    assert argv[-3:] == ["worker's robot clips", "", ""]
 
 
 def test_data_factory_chat_propagates_quality_and_curator_knobs() -> None:
@@ -393,7 +439,10 @@ def test_sim2real_staged_chat_parameters_validate_and_plan() -> None:
     assert spec["config"]["env_count"] == "12000"
     assert spec["config"]["threshold"] == "0.82"
     assert spec["config"]["task_id"] == "Isaac-Lift-Cube-Franka-v0"
-    assert len(spec["states"]) == 20
+    assert len(spec["states"]) == 24
+    assert "stage-08-cosmos3" in spec["states"]
+    assert "stage-08-wave" not in spec["states"]
+    assert "stage-08-reason2" not in spec["states"]
     assert "run-sim2real" not in spec["states"]
     validation = validate_workflow_yaml_text(workflow)
     assert validation["ok"] is True
@@ -475,7 +524,7 @@ def test_sim2real_named_text_and_clause_boundaries_are_exact() -> None:
         ("rollout length 3", "--steps-per-rollout", "3"),
         ("12 held-out environments", "--gold-count", "12"),
         ("5000 environments", "--env-count", "5000"),
-        ("2 envgen shards", "--shard-count", "2"),
+        ("8 envgen shards", "--shard-count", "8"),
         ("seed 9", "--seed", "9"),
         ("80% success threshold", "--threshold", "0.8"),
         ("75% train fraction", "--train-fraction", "0.75"),
@@ -505,7 +554,7 @@ def test_unsupported_envgen_shards_fail_draft_planning() -> None:
     )
     assert draft["plan"]["ok"] is False
     assert "parallelCount resolves to 16" in draft["plan"]["error"]
-    assert "declares 2 members" in draft["plan"]["error"]
+    assert "declares 8 members" in draft["plan"]["error"]
 
 
 @pytest.mark.parametrize(

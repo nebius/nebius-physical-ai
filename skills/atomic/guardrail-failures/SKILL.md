@@ -62,6 +62,7 @@ change hits most.
 | `test_develop_skills` | A development skill names a repo path or guardrail that does not exist, or a new guardrail file is undocumented. Update the skill. |
 | `test_no_dangling_workflow_references` | A doc, skill, or script names a workflow YAML that does not exist. Repoint or remove the reference. |
 | `test_docs_green_path` | The documented path from README to a real submit is no longer runnable end to end. Update the quickstart with the new step. |
+| `test_agent_workflow_operations` | The agent operations guide omitted a lifecycle stage, exposed a non-NPA subprocess, or coupled workflow operation to a model/provider flag. Restore the fixed, provider-neutral NPA command journey. |
 | `test_audit_container_docs_skill` | The public container catalog disagrees with the publish inventory. Update `docs/workbench/container-image-catalog.md`. |
 | `test_solution_licensing_skill` | The licensing skill no longer covers an artifact boundary. Update the skill, not the test. |
 | `test_third_party_eula_preflight_skill` | The EULA preflight skill is not discoverable from the operational skills that need it. Add the link. |
@@ -91,7 +92,8 @@ Treat every failure here as blocking. Do not add an exemption to make one pass.
 | `test_workbench_image_k8s_prereqs` | An image lacks what SkyPilot needs on Kubernetes (python3, rsync, sudo with NOPASSWD, or the Isaac group/PATH rules). Update the Dockerfile and the shared install script together. |
 | `test_unbuilt_image_records_agree` | The four files that record whether an image is built disagree. Make them agree; do not mark an image built that is not. |
 | `test_trivy_policy` | `trivy.yaml` no longer matches the current nested schema. Update the config. |
-| `test_public_mirror_workflows` | The public-mirror workflows stopped sharing one credential path, or the health check gained write behavior. Route through `npa/scripts/ci_source_registry_login.sh`. |
+| `test_public_release_workflows` | The single public GHCR channel drifted: development tags must be immutable full-SHA references, all pre-publication gates must precede the push, promotion must remain exact-digest-bound, failed-build cleanup must refuse shared digests, and release health must stay anonymous/read-only. Restore those contracts in the public publication workflows; never recreate a private candidate channel. |
+| `test_secure_image_build_skill` | The secure image procedure no longer names every irreversible publication gate or its governing licensing, build, validation, and confidentiality procedures. Restore the missing gate or delegation in `skills/atomic/secure-image-build/SKILL.md`; do not weaken the test or substitute labels for artifact evidence. |
 | `test_paidf_starter_asset` | The PAIDF starter asset was bundled instead of runtime-fetched, or its contract drifted. Keep the runtime-fetch model. |
 
 ## Retired Surfaces And Example Boundaries

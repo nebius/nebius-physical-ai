@@ -13,7 +13,7 @@ from typing import Any, Iterator
 from urllib.parse import urlparse
 
 from npa.clients import config as config_module
-from npa.clients.config import ConfigError, EnvironmentConfig, StorageConfig
+from npa.clients.config import EnvironmentConfig, StorageConfig
 from npa.cluster.gpu_driver import DEFAULT_MANAGED_DRIVER_PRESET
 from npa.cluster.gpu_health import (
     DEFAULT_CUDA_SMOKE_IMAGE,
@@ -532,6 +532,7 @@ def provision_if_absent(
                     count=desired_cpu_count,
                     platform=cpu_platform,
                     preset=cpu_preset,
+                    disk_size_gib=topology.cpu_disk_gib,
                 )
                 if desired_cpu_count
                 else None
@@ -541,7 +542,9 @@ def provision_if_absent(
                     count=desired_gpu_count,
                     platform=gpu_platform,
                     preset=gpu_preset,
-                    disk_size_gib=128 if mig_enabled else 0,
+                    disk_size_gib=(
+                        128 if mig_enabled else topology.gpu_disk_gib
+                    ),
                     capacity_block_group=capacity_block_group,
                     preemptible=bool(preemptible),
                 )
@@ -653,7 +656,10 @@ def provision_if_absent(
     needs_gpu_setup = bool(requested_accelerator or sky_smoke)
     if needs_gpu_setup and k8s_ready and not skip_k8s and not dry_run:
         from npa.controller_ownership import ensure_controller_owner
-        from npa.cli.cluster.terraform_lifecycle import _run_skypilot_smoke
+        from npa.cli.cluster.terraform_lifecycle import (
+            _check_skypilot_kubernetes,
+            _run_skypilot_smoke,
+        )
         from npa.orchestration.skypilot.k8s_gpu_catalog import (
             wait_for_kubernetes_accelerators,
         )
@@ -663,6 +669,13 @@ def provision_if_absent(
             actions.append(
                 f"controller:bound {owner.project_alias}/{owner.context}/{owner.cluster_id}"
             )
+
+            _check_skypilot_kubernetes(
+                Path(kubeconfig_path),
+                context,
+                sky_bin=sky_bin,
+            )
+            actions.append("skypilot:kubernetes-enabled")
 
             def report_gpu_status(message: str) -> None:
                 actions.append(f"gpu:{message}")
@@ -689,6 +702,7 @@ def provision_if_absent(
                     cluster_name,
                     requested_accelerator,
                     sky_bin=sky_bin,
+                    credentials_checked=True,
                 )
                 actions.append("sky-smoke:passed")
         except Exception as exc:  # noqa: BLE001 - return a resumable partial result
@@ -769,6 +783,8 @@ def _build_provision_plan(
     )
 
     cluster_exists = skip_k8s or _has_cached_kubeconfig(context, kubeconfig)
+    cpu_disk_gib = _terraform_disk_size_gib("TF_VAR_cpu_disk_size", 128)
+    gpu_disk_gib = _terraform_disk_size_gib("TF_VAR_gpu_disk_size", 1023)
     requested = resolve_topology(
         cluster_name=cluster_name,
         accelerator=accelerator,
@@ -780,6 +796,8 @@ def _build_provision_plan(
         gpu_platform=gpu_platform,
         gpu_preset=gpu_preset,
         preemptible=preemptible,
+        cpu_disk_gib=cpu_disk_gib,
+        gpu_disk_gib=gpu_disk_gib,
     )
     checks = []
     if skip_k8s:
@@ -825,6 +843,8 @@ def _build_provision_plan(
         gpu_platform=requested.gpu_platform,
         gpu_preset=requested.gpu_preset,
         preemptible=requested.gpu_preemptible,
+        cpu_disk_gib=requested.cpu_disk_gib,
+        gpu_disk_gib=requested.gpu_disk_gib,
     )
     return build_whole_path_plan(
         project_alias=alias,
@@ -835,6 +855,27 @@ def _build_provision_plan(
         checks=checks,
         mutation=not dry_run,
     )
+
+
+def _terraform_disk_size_gib(name: str, default: int) -> int:
+    """Resolve the Terraform worker-disk override used by ``cluster up``.
+
+    ``provision-if-absent`` delegates the real apply to ``cluster up``, which
+    already honors ``TF_VAR_cpu_disk_size`` and ``TF_VAR_gpu_disk_size``. The
+    immutable outer preflight must account for those same values or it can
+    reject an otherwise valid topology before Terraform sees it.
+    """
+
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be a positive integer GiB value") from exc
+    if value <= 0:
+        raise ValueError(f"{name} must be a positive integer GiB value")
+    return value
 
 
 def resolve_provision_plan(
@@ -1073,21 +1114,11 @@ def _runtime_env(
     storage: StorageConfig,
     registry: str,
 ) -> Iterator[None]:
-    yml = config_module._load_yaml()
-    registry_id = ""
-    try:
-        proj = config_module._resolve_project_section(yml, alias)
-        if isinstance(proj, dict):
-            registry_id = str(proj.get("registry_id", "") or "")
-    except ConfigError:
-        pass
-
     values = {
         "NPA_PROJECT_ID": environment.project_id,
         "NPA_TENANT_ID": environment.tenant_id,
         "NPA_REGION": environment.region,
         "NPA_REGISTRY": registry,
-        "NPA_REGISTRY_ID": registry_id,
         # Consumers of NPA_S3_BUCKET pass it as the provider Bucket argument;
         # keep URI/prefix forms in checkpoint_bucket only.
         "NPA_S3_BUCKET": _bucket_name(storage.checkpoint_bucket),

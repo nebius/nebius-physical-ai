@@ -31,6 +31,24 @@ config:
   # Optional Config-Gen manifest. The transfer input itself is always required and
   # is converted into an on-the-fly control signal; no upstream media is bundled.
   configs_uri: ""
+  # PAIDF-specific policy hooks are empty/off here; keeping the defaults makes
+  # the shared transfer_execute toolRef safe for standalone transfer workflows.
+  refinement_uri: ""
+  protected_chroma_mode: "off"
+  protected_chroma_regions_json: ""
+  protected_luma_max_delta: "32"
+  protected_feather_pixels: "12"
+  segmentation_mode: "off"
+  segmentation_uri: ""
+  sam2_model: "facebook/sam2.1-hiera-tiny"
+  sam2_model_revision: "de431c4043854a71d8101e17995dfe596bf101a5"
+  sam2_points_per_side: "16"
+  sam2_predicted_iou_threshold: "0.86"
+  sam2_stability_threshold: "0.92"
+  sam2_min_area_fraction: "0.002"
+  sam2_max_area_fraction: "0.65"
+  sam2_max_objects: "6"
+  appearance_regions_json: ""
 
   # Conditioning shape. edge is the on-the-fly Canny default; seg swaps in a
   # GroundingDINO+SAM2 segmentation of the same input, and the mask keys restrict
@@ -38,6 +56,7 @@ config:
   # byte-identical to the plain edge conditioning it has always done.
   augment_control: "edge"
   augment_control_weight: "1.0"
+  augment_guidance: "3.0"
   augment_control_prompt: ""
   augment_control_asset_uri: ""
   augment_mask_prompt: ""

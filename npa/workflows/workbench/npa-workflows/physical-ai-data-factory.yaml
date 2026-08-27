@@ -81,6 +81,9 @@ metadata:
 config:
   bucket: example-bucket
   prefix: "physical-ai-data-factory/{{run.id}}"
+  # Planning preview only. The runtime orchestrator still reads the real decision
+  # artifact after each gate; this default makes bare plan-spec show the happy path.
+  plan_assume_decision: promote_checkpoint
 
   # --- Augmentation + grading knobs (Stage 1 + Evaluate loop) ---
   # Synthetic geometry is an explicit developer/test opt-in via --seed-fixture.
@@ -111,6 +114,7 @@ config:
   # ControlNet checkpoint, so switching downloads different gated weights.
   augment_control: "edge"
   augment_control_weight: "1.0"
+  augment_guidance: "3.0"
   # Objects on-the-fly seg should segment, e.g. "robot arm, conveyor, bin".
   # Upstream falls back to the first 128 words of the appearance prompt.
   augment_control_prompt: ""
@@ -123,8 +127,47 @@ config:
   # Precomputed control video (e.g. a segmentation map produced upstream of this
   # run) to condition on instead of computing the modality on-the-fly.
   augment_control_asset_uri: ""
+  # Optional stable seed for controlled baseline/component comparisons. Empty
+  # preserves the existing behavior of sampling deterministically from run.id.
+  augmentation_seed: ""
+  # Optional prior canonical run/report used only as an evidence-derived search
+  # anchor. The code selects its best independently hard-passing 4/4 candidate
+  # and reads actual render settings from preserved metadata; no scene-specific
+  # values are hardcoded.
+  quality_anchor_uri: ""
   refinement_iterations: "2"      # max evaluate/validate passes before reject
   grade_threshold: "0.75"         # min aggregate score to promote (else loop_back)
+  # Ranking and final validation use deterministic, disjoint frame samples. The
+  # selected evaluator state overrides this to holdout after hard-pass selection.
+  attribute_sample_policy: ranking
+  # Retain the established first-pass control weight of 1.0. A retry must not
+  # replay identical inference settings: the default schedule lowers guidance;
+  # custom baselines below the ceiling may also increase structure control.
+  adaptive_refinement_enabled: "true"
+  refinement_control_weight_step: "0.25"
+  refinement_max_control_weight: "1.0"
+  refinement_guidance_step: "1.0"
+  refinement_min_guidance: "1.0"
+  # Optional per-pixel source-chroma restoration inside dedicated protected
+  # regions. This keeps generated luminance/illumination while protecting
+  # identity-bearing material colour. Leave off unless meaningful regions exist.
+  protected_chroma_mode: "off"
+  protected_chroma_regions_json: ""
+  protected_luma_max_delta: "32"
+  protected_feather_pixels: "12"
+  # Optional real Meta SAM2 masks. `off` preserves the existing/default path.
+  # `sam2-auto` discovers stable first-frame objects and tracks them through the
+  # video, then uses the masks for frame-aligned protected-chroma preservation.
+  # Prompt coordinates are intentionally not accepted through rendered argv.
+  segmentation_mode: "off"
+  sam2_model: "facebook/sam2.1-hiera-tiny"
+  sam2_model_revision: "de431c4043854a71d8101e17995dfe596bf101a5"
+  sam2_points_per_side: "16"
+  sam2_predicted_iou_threshold: "0.86"
+  sam2_stability_threshold: "0.92"
+  sam2_min_area_fraction: "0.002"
+  sam2_max_area_fraction: "0.65"
+  sam2_max_objects: "6"
   # NPA temporal residual is advisory until a deployment calibrates its fixed
   # noise floor. Set mode=required only with representative encoded clips.
   temporal_consistency_mode: advisory
@@ -188,7 +231,10 @@ config:
   augment_control_uri: "s3://{{config.bucket}}/{{config.prefix}}/cosmos_control/"
   rollouts_uri: "s3://{{config.bucket}}/{{config.prefix}}/cosmos_augmented/"
   scores_uri: "s3://{{config.bucket}}/{{config.prefix}}/grade/"
+  selection_uri: "s3://{{config.bucket}}/{{config.prefix}}/selection/"
   decision_uri: "s3://{{config.bucket}}/{{config.prefix}}/grade/decision.json"
+  refinement_uri: "s3://{{config.bucket}}/{{config.prefix}}/configs/refinement.json"
+  segmentation_uri: "s3://{{config.bucket}}/{{config.prefix}}/segmentation/"
   quality_disposition_uri: "s3://{{config.bucket}}/{{config.prefix}}/grade/quality_disposition.json"
   augmented_frames_uri: "s3://{{config.bucket}}/{{config.prefix}}/cosmos_augmented/"
   labeled_augmented_uri: "s3://{{config.bucket}}/{{config.prefix}}/labeled_augmented/"
@@ -205,6 +251,13 @@ config:
   curated_clips_uri: "s3://{{config.bucket}}/{{config.prefix}}/curation/cosmos_curator/"
   curator_report_uri: "s3://{{config.bucket}}/{{config.prefix}}/curation/cosmos_curator.json"
   curation_report_uri: "s3://{{config.bucket}}/{{config.prefix}}/curation/report.json"
+  # Every terminal batch, accepted or rejected, is exported as a portable real
+  # FiftyOneDataset for human review. This path is explicitly non-promoting;
+  # accepted-only Cosmos Curator + Brain curation remains below.
+  terminal_review_dataset_uri: "s3://{{config.bucket}}/{{config.prefix}}/review/fiftyone-dataset/"
+  terminal_review_report_uri: "s3://{{config.bucket}}/{{config.prefix}}/review/fiftyone-review.json"
+  terminal_review_decision_uri: "s3://{{config.bucket}}/{{config.prefix}}/review/decision.json"
+  terminal_review_dataset_name: "paidf-review-{{run.id}}"
   # run_root_uri = the run prefix (holds input/ + cosmos_augmented/ + labeled_*/);
   # the visualize stage reads it to build a Rerun recording.
   run_root_uri: "s3://{{config.bucket}}/{{config.prefix}}/"
@@ -212,6 +265,7 @@ config:
   finalize_report_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/final.json"
   input_provenance_uri: "s3://{{config.bucket}}/{{config.prefix}}/input/provenance.json"
   input_source_kind: ""
+  input_source_format: "video"
   input_origin: ""
   input_origin_label: ""
   input_sha256: ""
@@ -244,6 +298,16 @@ resources:
     # override instead of OOM-killing four concurrent Cosmos workers.
     cpus: 16
     memory: 128Gi
+    kubernetes:
+      pod_config:
+        spec:
+          # PAIDF images use versioned, immutable release tags. Reuse an exact
+          # node-local image when it has already passed the image preflight and
+          # byte scan; otherwise Kubernetes still pulls it normally. This also
+          # keeps large Cosmos images from being fetched again on refinement.
+          containers:
+            - name: ray-node
+              imagePullPolicy: IfNotPresent
     # Provision the cluster through npa before submit if its context is absent,
     # so one `npa workbench workflow submit ...` covers the whole
     # path (prerequisite check -> provision -> stage source -> launch) without a
@@ -290,6 +354,8 @@ states:
         - "{{config.seed_default_input}}"
         - "{{config.seed_fixture}}"
         - "{{config.augment_subject}}"
+        - "{{config.augmentation_seed}}"
+        - "{{config.quality_anchor_uri}}"
     outputs:
       - uri: "{{config.configs_uri}}manifest.json"
         schema: npa.data_factory.configs.v1
@@ -313,6 +379,37 @@ states:
       - uri: "{{config.captions_uri}}captions.json"
         schema: npa.token_factory.captions.v1
     next: grade
+
+  prepare-refinement:
+    description: >
+      Build an auditable per-attempt Cosmos policy. The baseline is used on the
+      first pass; after a failed evaluation the next pass raises edge-control
+      strength and lowers prompt guidance instead of replaying identical inference.
+    needs: [annotate-original]
+    resources: cpu
+    run:
+      argv:
+        - python3
+        - -c
+        - >-
+          import sys; from npa.workflows.data_factory_stages import prepare_refinement;
+          prepare_refinement(*sys.argv[1:])
+        - "{{config.scores_uri}}"
+        - "{{config.refinement_uri}}"
+        - "{{config.adaptive_refinement_enabled}}"
+        - "{{config.augment_control_weight}}"
+        - "{{config.augment_guidance}}"
+        - "{{config.refinement_control_weight_step}}"
+        - "{{config.refinement_max_control_weight}}"
+        - "{{config.refinement_guidance_step}}"
+        - "{{config.refinement_min_guidance}}"
+        - "{{config.decision_uri}}"
+        - "{{config.grade_threshold}}"
+        - "{{loop.grade}}"
+        - "{{config.quality_anchor_uri}}"
+    outputs:
+      - uri: "{{config.refinement_uri}}"
+        schema: npa.data_factory.refinement.v1
 
   augment:
     description: >
@@ -342,7 +439,10 @@ states:
       This is a member of the `grade`
       refinement loop: on a loop_back decision the loop re-runs augment (re-render),
       re-verify, and re-gate, so a failed batch is actually re-augmented.
-    needs: [annotate-original]
+    needs: [prepare-refinement]
+    params:
+      augment_uri: "{{config.augment_uri}}iteration-{{loop.grade}}/"
+      augment_manifest_uri: "{{config.augment_uri}}iteration-{{loop.grade}}/manifest.json"
     toolRef: workbench.cosmos2.transfer_execute
     resources: gpu
     inputs:
@@ -354,8 +454,9 @@ states:
 
   grade:
     description: >
-      Augment & Evaluate refinement loop. Each iteration: augment (Cosmos Transfer
-      2.5, GPU) -> evaluate (Cosmos Evaluator) -> quality-gate. Loops back to
+      Augment & Evaluate refinement loop. Each iteration: prepare an adaptive
+      render policy -> augment (Cosmos Transfer 2.5, GPU) -> evaluate (Cosmos
+      Evaluator) -> quality-gate. Loops back to
       RE-AUGMENT on failure, up to refinement_iterations, and breaks as soon as the
       gate promotes. augment lives INSIDE the loop so loop_back genuinely re-renders
       (the gate's loop_back decision drives another augment pass via loop.until).
@@ -364,8 +465,11 @@ states:
       max: "{{config.refinement_iterations}}"
       until: promote_checkpoint
     sequence:
+      - prepare-refinement
       - augment
       - evaluate
+      - select-candidates
+      - evaluate-selected
       - quality-gate
     next: quality-disposition
 
@@ -394,6 +498,63 @@ states:
       workflows that intentionally recolour materials are not silently blocked;
       deployments that promise stable base colours may set it to required and
       optionally restrict it to normalized protected regions.
+    params:
+      rollouts_uri: "{{config.augment_uri}}iteration-{{loop.grade}}/"
+      scores_uri: "{{config.scores_uri}}iteration-{{loop.grade}}/ranking/"
+      attribute_sample_policy: ranking
+    toolRef: workbench.cosmos_evaluator.evaluate
+    resources: cpu
+    inputs:
+      - uri: "{{config.rollouts_uri}}"
+        schema: npa.cosmos2.transfer.v1
+    outputs:
+      - uri: "{{config.scores_uri}}cosmos_evaluator.json"
+        schema: npa.cosmos_evaluator.report.v1
+
+  select-candidates:
+    description: >
+      Select only candidates that independently passed every hard check and the
+      unchanged score threshold in the ranking evaluation. Copy their complete
+      media directories into an additive final-validation batch; the original
+      ranking pool remains immutable and complete. A zero-selection manifest is
+      preserved truthfully and causes final validation to reject without treating
+      an infrastructure error as measured quality.
+    needs: [evaluate]
+    params:
+      augment_uri: "{{config.augment_uri}}iteration-{{loop.grade}}/"
+      ranking_scores_uri: "{{config.scores_uri}}iteration-{{loop.grade}}/ranking/"
+      selected_uri: "{{config.selection_uri}}iteration-{{loop.grade}}/"
+      selection_report_uri: "{{config.selection_uri}}iteration-{{loop.grade}}/selection.json"
+    resources: cpu
+    run:
+      argv:
+        - python3
+        - -c
+        - >-
+          import sys; from npa.workflows.data_factory_stages import select_hard_passing_candidates;
+          select_hard_passing_candidates(*sys.argv[1:])
+        - "{{config.augment_uri}}"
+        - "{{config.ranking_scores_uri}}"
+        - "{{config.selected_uri}}"
+        - "{{config.selection_report_uri}}"
+        - "{{config.grade_threshold}}"
+    outputs:
+      - uri: "{{config.selected_uri}}manifest.json"
+        schema: npa.cosmos2.transfer.v1
+      - uri: "{{config.selection_report_uri}}"
+        schema: npa.paidf.candidate-selection/v1
+
+  evaluate-selected:
+    description: >
+      Fail-closed final re-evaluation of only the independently hard-passing
+      selection. Attribute verification uses deterministic decoded frames disjoint
+      from the ranking beginning/middle/end observation; hallucination and every
+      configured hard companion check run again unchanged.
+    needs: [select-candidates]
+    params:
+      rollouts_uri: "{{config.selection_uri}}iteration-{{loop.grade}}/"
+      scores_uri: "{{config.scores_uri}}iteration-{{loop.grade}}/"
+      attribute_sample_policy: holdout
     toolRef: workbench.cosmos_evaluator.evaluate
     resources: cpu
     inputs:
@@ -408,16 +569,20 @@ states:
       Real quality gate — read the Cosmos Evaluator score and write a
       promote_checkpoint / loop_back decision. The enclosing `grade` loop reads this
       decision (loop.until: promote_checkpoint): promote breaks the loop and proceeds
-      to annotate-augmented; loop_back re-runs the loop body (augment -> evaluate ->
-      gate). No explicit transitions here -- the loop drives control flow, and
+      to the accepted-quality guard; loop_back re-runs the loop body (augment ->
+      evaluate -> gate). No explicit transitions here -- the loop drives control flow, and
       transitions on a loop-sequence member are not evaluated at runtime.
     writesDecision: true
-    needs: [evaluate]
+    needs: [evaluate-selected]
+    params:
+      scores_uri: "{{config.scores_uri}}iteration-{{loop.grade}}/"
+      decision_uri: "{{config.scores_uri}}iteration-{{loop.grade}}/decision.json"
     resources: cpu
     run:
       shell: >
         python3 -c "from npa.workflows.data_factory_stages import grade_gate;
-        grade_gate('{{config.scores_uri}}', '{{config.decision_uri}}', '{{config.grade_threshold}}')"
+        grade_gate('{{config.scores_uri}}', '{{config.decision_uri}}',
+        '{{config.grade_threshold}}', '{{config.refinement_uri}}')"
     outputs:
       - uri: "{{config.decision_uri}}"
         schema: npa.sim2real.threshold_decision.v1
@@ -427,24 +592,143 @@ states:
       Fail-closed post-loop disposition. A refinement loop may stop after promotion
       or after exhausting its iterations, so re-read the final evaluator report and
       require completed status, the aggregate threshold, and every hard check. Write
-      an auditable accepted/rejected artifact before rejecting the workflow.
+      an auditable accepted/rejected artifact and route rejected runs through the
+      evidence-only Rerun stage before failing the workflow.
+    writesDecision: true
     needs: [grade]
+    params:
+      scores_uri: "{{config.scores_uri}}iteration-{{loop.grade}}/"
+      decision_uri: "{{config.scores_uri}}iteration-{{loop.grade}}/decision.json"
     resources: cpu
     run:
-      shell: >
-        python3 -c "from npa.workflows.data_factory_stages import enforce_quality_disposition;
-        enforce_quality_disposition('{{config.scores_uri}}',
-        '{{config.quality_disposition_uri}}', '{{config.grade_threshold}}')"
+      argv:
+        - python3
+        - -c
+        - >-
+          import sys; from npa.workflows.data_factory_stages import write_quality_disposition;
+          write_quality_disposition(*sys.argv[1:])
+        - "{{config.scores_uri}}"
+        - "{{config.quality_disposition_uri}}"
+        - "{{config.decision_uri}}"
+        - "{{config.grade_threshold}}"
     outputs:
       - uri: "{{config.quality_disposition_uri}}"
         schema: npa.data_factory.quality_disposition.v1
+      - uri: "{{config.decision_uri}}"
+        schema: npa.sim2real.threshold_decision.v1
+    transitions:
+      - when: promote_checkpoint
+        goto: review-terminal-candidates
+      - when: loop_back
+        goto: review-terminal-candidates
+
+  review-terminal-candidates:
+    description: >
+      Build a portable REAL FiftyOneDataset from every evaluated candidate across
+      every append-only refinement iteration. Rejected samples are tagged
+      review-only with promotion_eligible=false and retain scores, per-attribute
+      results, hallucination status, iteration, and candidate identity. This
+      common review path never performs accepted-only relabeling, Cosmos Curator,
+      Brain selection, or finalization. It verifies that publishing the dataset
+      archive did not alter any pre-existing canonical run object.
+    needs: [quality-disposition]
+    toolRef: workbench.fiftyone.review_augmented
+    resources: cpu
+    outputs:
+      - uri: "{{config.terminal_review_report_uri}}"
+        schema: npa.paidf.fiftyone-terminal-review/v1
+      - uri: "{{config.terminal_review_dataset_uri}}"
+        schema: fiftyone.types.FiftyOneDataset
+    next: route-terminal-quality
+
+  route-terminal-quality:
+    description: >
+      Re-read the durable quality disposition after the common review stage and
+      write a separate route decision. The canonical disposition is never
+      overwritten merely to resume branching.
+    writesDecision: true
+    needs: [review-terminal-candidates]
+    resources: cpu
+    run:
+      argv:
+        - python3
+        - -c
+        - >-
+          import sys; from npa.workflows.data_factory_stages import route_terminal_quality;
+          route_terminal_quality(*sys.argv[1:])
+        - "{{config.quality_disposition_uri}}"
+        - "{{config.terminal_review_decision_uri}}"
+    outputs:
+      - uri: "{{config.terminal_review_decision_uri}}"
+        schema: npa.sim2real.threshold_decision.v1
+    transitions:
+      - when: promote_checkpoint
+        goto: require-accepted-quality
+      - when: loop_back
+        goto: visualize-rejected
+
+  require-accepted-quality:
+    description: >
+      Static-plan fail-closed guard. A one-shot plan follows its preview branch
+      rather than re-reading transitions, so re-check the durable disposition
+      before any accepted-only labeling, curation, visualization, or finalize
+      stage. Runtime execution also passes through this guard on promotion.
+    needs: [quality-disposition]
+    params:
+      scores_uri: "{{config.scores_uri}}iteration-{{loop.grade}}/"
+    resources: cpu
+    run:
+      argv:
+        - python3
+        - -c
+        - >-
+          import sys; from npa.workflows.data_factory_stages import enforce_quality_disposition;
+          enforce_quality_disposition(*sys.argv[1:])
+        - "{{config.scores_uri}}"
+        - "{{config.quality_disposition_uri}}"
+        - "{{config.grade_threshold}}"
     next: annotate-augmented
+
+  visualize-rejected:
+    description: >
+      Build reports/sim2real.rrd for a rejected run from the available input,
+      augmented frames, evaluator report, gate decision, and quality disposition.
+      Missing downstream curation/finalization artifacts are intentionally skipped.
+    needs: [quality-disposition]
+    resources: cpu
+    toolRef: workbench.nurec.visualize
+    outputs:
+      - uri: "{{config.rrd_uri}}"
+        schema: npa.sim2real.rerun.v1
+    next: reject-quality
+
+  reject-quality:
+    description: >
+      Fail the workflow only after the rejected run's disposition and Rerun evidence
+      are durable. This preserves fail-closed promotion semantics.
+    needs: [visualize-rejected]
+    params:
+      scores_uri: "{{config.scores_uri}}iteration-{{loop.grade}}/"
+    resources: cpu
+    run:
+      argv:
+        - python3
+        - -c
+        - >-
+          import sys; from npa.workflows.data_factory_stages import enforce_quality_disposition;
+          enforce_quality_disposition(*sys.argv[1:])
+        - "{{config.scores_uri}}"
+        - "{{config.quality_disposition_uri}}"
+        - "{{config.grade_threshold}}"
+    terminal: true
 
   annotate-augmented:
     description: >
       Stage 3 - Pseudo-Label Augmented. Re-caption the promoted augmented clips with
       the same hosted VLM so the amplified dataset ships fully labeled.
-    needs: [quality-disposition]
+    needs: [require-accepted-quality]
+    params:
+      augmented_frames_uri: "{{config.augment_uri}}iteration-{{loop.grade}}/"
     resources: cpu
     run:
       shell: >
@@ -473,6 +757,8 @@ states:
       and an ffmpeg carrying libopenh264. The stage fails closed if the real
       upstream curator cannot run or publish its output.
     needs: [annotate-augmented]
+    params:
+      augment_uri: "{{config.augment_uri}}iteration-{{loop.grade}}/"
     toolRef: workbench.cosmos_curate.curate
     resources: cpu
     inputs:
@@ -496,6 +782,9 @@ states:
       unavailable the stage fails closed; it never markets counts-only output as
       FiftyOne review.
     needs: [cosmos-curate]
+    params:
+      augment_uri: "{{config.augment_uri}}iteration-{{loop.grade}}/"
+      lance_uri: "{{config.augment_uri}}iteration-{{loop.grade}}/"
     toolRef: workbench.fiftyone.curate_augmented
     resources: cpu
     inputs:

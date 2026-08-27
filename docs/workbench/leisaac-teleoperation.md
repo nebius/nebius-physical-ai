@@ -298,13 +298,13 @@ curl -sk -u "${AGENT_USER}:${AGENT_PASSWORD}" "${AGENT_URL}/api/health"
 
 ```bash
 # ACCEPT_EULA defaults to Y for Isaac-backed routes. To opt out, set it to N.
-# On shared operator hosts, select the registry-authorized identity separately
-# from the Nebius/Kubernetes access profile used by the rest of the command.
+# On shared operator hosts, select the Nebius/Kubernetes access profile used by
+# the command. The repository-selected public GHCR image needs no pull secret.
 export NPA_NEBIUS_PROFILE=agent-sa
 
 npa workbench leisaac launch \
   --run-id leisaac-teleop-example \
-  --image cr.us-central1.nebius.cloud/REGISTRY/npa-leisaac@sha256:DIGEST \
+  --image ghcr.io/nebius/nebius-physical-ai/npa-leisaac@sha256:DIGEST \
   --context YOUR_KUBECTL_CONTEXT \
   --source-range OPERATOR_PUBLIC_IP/32 \
   --transport agent-relay \

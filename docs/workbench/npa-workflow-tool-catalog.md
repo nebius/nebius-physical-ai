@@ -26,6 +26,11 @@ except the explicitly public composition primitives `infra.fleet.deploy`,
 | `workbench.nurec.render` | `npa workbench nurec render` | `config.reconstruction_uri`, `config.rig_translation_offset` | `config.novel_views_uri` (novel-view PNGs + mp4) | no |
 | `workbench.nurec.visualize` | `npa workbench nurec visualize` | `config.run_root_uri` | `config.rrd_uri` (`reports/sim2real.rrd`) | no |
 | `workbench.nurec.finalize` | `npa workbench nurec finalize` | `config.run_root_uri` | `config.final_report_uri` | no |
+| `workbench.content_agents.acquire` | `python -m npa.workflows.content_agents acquire` | generated or customer-owned self-contained USD/USDZ | normalized USDA + stage report in `config.run_uri` | no |
+| `workbench.content_agents.materials` | `python -m npa.workflows.content_agents materials` | acquired USDA, generated material library, hosted VLM | Material Agent-enriched USDA + real OVRTX renders/report | yes (real upstream `material-agent run`; no echo/stub path) |
+| `workbench.content_agents.physics` | `python -m npa.workflows.content_agents physics` | materialized USDA + hosted VLM | Physics Agent rigid/collider/mass/friction USDA + OVRTX renders/report | yes (real upstream `physics-agent run`) |
+| `workbench.content_agents.validate` | `python -m npa.workflows.content_agents validate` | rigid-ready USDA | upstream `render_valid` + `physics_sane` result and fresh OVRTX evidence | yes (real upstream `validation-agent validate`) |
+| `workbench.content_agents.package` | `python -m npa.workflows.content_agents package` | validated physics USDA | self-contained USD/USDZ, provenance, reports, narrow Isaac Stage 2 adapter | no |
 | `workbench.vlm_eval.run` | `npa workbench vlm-eval run` | `config.rollouts_uri` | `config.scores_uri` | no |
 | `workbench.vlm_eval.benchmark` | `npa workbench vlm-eval benchmark` | `config.benchmark_dataset` | `config.benchmark_output` | no |
 | `workbench.vlm_eval.judge_against_plan` | `npa workbench vlm-eval run --task-from` | `config.rollouts_uri`, `config.plan_uri` | `<scores_uri>/vlm_eval_stub.json` | no |
@@ -34,7 +39,7 @@ except the explicitly public composition primitives `infra.fleet.deploy`,
 | `workbench.token_factory.caption` | `npa workbench token-factory caption` | `config.images_uri` | `config.captions_uri` | no |
 | `workbench.token_factory.generate` | `npa workbench token-factory generate` | `config.prompts_uri` | `config.generations_uri` | no |
 | `workbench.cosmos2.transfer` | `npa workbench cosmos2 transfer` | `config.trigger_uri` | `config.augment_uri` | no |
-| `workbench.cosmos2.transfer_execute` | `npa workbench cosmos2 transfer --execute` | supported video or PNG/JPEG frames under `config.trigger_uri` (required) | `config.augment_uri` | yes (real, input-conditioned Cosmos Transfer 2.5 on GPU; uploads video + frames to S3 and fails closed without input) |
+| `workbench.cosmos2.transfer_execute` | `npa workbench cosmos2 transfer --execute` | supported video or PNG/JPEG frames under `config.trigger_uri` (required); optional run-scoped `config.segmentation_uri` when `segmentation_mode=sam2-auto` | `config.augment_uri` plus optional frame-aligned SAM2 masks | yes (real, input-conditioned Cosmos Transfer 2.5 on GPU; optional official Meta SAM2 runs once per immutable run input and its masks are reused across variants/retries; both paths fail closed) |
 | `workbench.cosmos2.transfer_conditioned_execute` | `npa workbench cosmos2 transfer --execute --condition-on-input` | `config.trigger_uri` | `config.augment_uri` | yes (real input-conditioned Cosmos Transfer 2.5; publishes exact frames in the canonical manifest) |
 | `workbench.cosmos3.generate` | `npa workbench cosmos3 generate` | `config.prompt`, `config.cosmos3_mode`, `config.cosmos3_checkpoint`, optional `config.cosmos3_input_path` | `config.output_uri` | yes (real Cosmos 3 omni-model generation on GPU in `npa-cosmos3`; conditioned modes pass `--input-path`; gated weights download at runtime with the operator's HF token) |
 | `workbench.cosmos3.prepare_video_input` | `npa workbench cosmos3 prepare-video-input` | generic MP4 or LeRobot v2/v3 dataset URI plus episode/camera selector | canonical `config.input_uri` video, frames, and provenance | no (strict source selector and media preparation) |
@@ -114,6 +119,7 @@ except the explicitly public composition primitives `infra.fleet.deploy`,
 | `workbench.detection_training.eval_*` | `npa workbench detection-training eval --service` | checkpoint + view | metrics JSON | no |
 | `workbench.fiftyone.launch_app` | FiftyOne review hook | `config.lance_uri` | review session | yes |
 | `workbench.fiftyone.curate_augmented` | `npa workbench fiftyone curate-augmented` | `config.augment_uri`, `config.curator_report_uri` | `config.curation_report_uri` (real FiftyOne Brain keep/drop report) | no |
+| `workbench.fiftyone.review_augmented` | `npa workbench fiftyone review-augmented` | canonical run + quality disposition | portable real FiftyOneDataset for every accepted/rejected terminal candidate, with non-promoting rejected fields | no |
 
 Creative mashup example: `tokenfactory-cosmos-gate.yaml` (reason → augment → VLM gate loop).
 
@@ -122,6 +128,14 @@ OSS onboarding ladder (BYOF → workflow → first-class tool):
 
 Add new entries in `npa/src/npa/orchestration/npa_workflow/catalog.py` when
 exposing a tool to workflow specs, then update this table.
+
+`workbench.cosmos2.transfer_execute` retains defaults for every option added by
+the PAIDF refinement and SAM2 integration. Existing external specs that provide
+only `trigger_uri`, `augment_uri`, and `configs_uri` continue to validate and
+render with the established effective `augment_control_weight` of `1.0`,
+`augment_guidance` of `3.0`,
+and optional protection/segmentation disabled. Explicit spec config takes
+precedence over these compatibility defaults.
 
 ## Tokens
 

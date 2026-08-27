@@ -16,19 +16,19 @@ npa workbench workflow submit \
   --var controller_image=<immutable-ref> \
   --var transfer_image=<immutable-ref> \
   --var envgen_image=<immutable-ref> \
-  --var reason_image=<immutable-ref> \
   --var isaac_image=<immutable-ref> \
   --var viewer_image=<immutable-ref> \
   --var isaac_cache_pvc=<bound-rwx-pvc> \
   --secret-env AWS_ACCESS_KEY_ID \
   --secret-env AWS_SECRET_ACCESS_KEY \
-  --secret-env HF_TOKEN
+  --secret-env HF_TOKEN \
+  --secret-env NEBIUS_TOKEN_FACTORY_KEY
 ```
 
 The YAML exposes all 14 stages and runs through the standard workflow runtime.
 Each real solution has its own image/resource state, S3 inputs and outputs, and
-ComponentRecord. Parallel Stage 4/8 leaves publish attributable lane records,
-and their barrier consumers own the canonical aggregate record. Stage 11 early
+ComponentRecord. Parallel Stage 4 leaves publish attributable lane records;
+Stage 8 is one CPU-only hosted Cosmos3 evaluator with a direct Stage 9 barrier. Stage 11 early
 exit is explicit (`allow_early_exit`), Stage 13/14 use the completed loop
 iteration, shard cardinality is validated before submission, and visualization
 downloads only its declared artifact set into cleaned ephemeral storage.

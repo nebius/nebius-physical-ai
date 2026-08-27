@@ -43,6 +43,10 @@ Load these as needed before making decisions:
 - `skills/atomic/solution-licensing/SKILL.md` — satisfy the License admission
   gate below: classify what the image actually bakes, decide whether it may be
   redistributed, and record it in the packaging contract.
+- `skills/atomic/audit-container-docs/SKILL.md` — reconcile
+  `docs/workbench/container-image-catalog.md` for every new or changed
+  image-backed solution without confusing registry admission with public-mirror
+  publication.
 - Relevant tool skill (`skills/tools/isaac-lab`, `lerobot`, `genesis`,
   `cosmos`, `groot`, `sonic`, `fiftyone`, `lancedb`, `mjlab`, or
   `retargeting`) when the upstream repo depends on that stack.
@@ -160,7 +164,7 @@ Registry admission requires all of:
 
 | Check | Pass criteria |
 | --- | --- |
-| Build/push | Image in Nebius registry with `npa_source_metadata.json` |
+| Build/push | Image in the authorized registry with `npa_source_metadata.json` |
 | K8s pull | Pod starts from pushed image (`sky launch --down` path) |
 | Capability smoke | `smoke_command` exit 0 |
 | Artifact | Named JSON present under smoke output dir and uploaded to S3 |
@@ -173,6 +177,13 @@ Registry admission requires all of:
 Update `docs/workbench/oss-solution-catalog.md` with **this solution's**
 capability table. Mark only live-passing capabilities as accepted. Keep deferred
 blockers explicit (assets, Vulkan, GCS, dataset size, VRAM).
+
+Then load `skills/atomic/audit-container-docs/SKILL.md` and reconcile
+`docs/workbench/container-image-catalog.md`. Add the solution's image to the
+public table only if repository publication policy selects its resolved pin and
+anonymous registry inspection proves that exact tag is available. A BYOF-only,
+restricted, deferred, private-registry, or not-yet-published solution belongs in
+its solution documentation, not in the public-image table.
 
 ## Current Onboarded Solutions
 
@@ -465,7 +476,7 @@ A solution is registry-ready only after all applicable gates pass:
 | Documentation | Upstream docs read and cited for every claimed capability |
 | License | Upstream license and asset/model/data restrictions recorded, and the image's redistribution class set per `skills/atomic/solution-licensing/SKILL.md` |
 | Packaging | BYOF image builds and includes `npa_source_metadata.json` |
-| Registry | Image pushed to the resolved Nebius registry; no hardcoded registry IDs |
+| Registry | Redistributable candidate pushed to private GHCR with an immutable dev SHA, or restricted image pushed only to an operator-controlled registry |
 | Contract | Inputs, outputs, runtime, GPU, credentials, and failure modes documented |
 | Workflow | NPA workflow validates/plans if a workflow is part of the registry entry |
 | Smoke | Capability-level smoke commands pass in the container or service |

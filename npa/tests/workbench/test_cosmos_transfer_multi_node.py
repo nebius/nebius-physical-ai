@@ -1033,6 +1033,56 @@ def test_shard_manifests_merge_into_the_single_node_run_manifest() -> None:
     )
 
 
+def test_shard_merge_preserves_failed_attempt_and_keeps_successful_siblings() -> None:
+    storage = FakeStorage()
+    output_uri = "s3://bkt/run1/cosmos_augmented/"
+    attempt_uri = tx.attempt_output_uri_for(output_uri, ATTEMPT)
+    failure = tx.publish_transfer_failure(
+        {
+            "run_id": "run1",
+            "variant_index": 2,
+            "variables": {"prompt": "private candidate prompt"},
+            "error_type": "RuntimeError",
+            "failure_category": "inference-or-output",
+            "retryable": True,
+        },
+        attempt_uri,
+        storage_client=storage,
+    )
+    _write_shard(
+        [_clip(1), _clip(3)],
+        output_uri,
+        run_id="run1",
+        rank=1,
+        node_count=2,
+        variant_parallelism=2,
+        variant_total=4,
+        storage_client=storage,
+    )
+    _write_shard(
+        [_clip(0)],
+        output_uri,
+        run_id="run1",
+        rank=0,
+        node_count=2,
+        variant_parallelism=2,
+        variant_total=4,
+        failures=[failure],
+        storage_client=storage,
+    )
+
+    manifest = _merge_shards(
+        output_uri, run_id="run1", node_count=2, storage_client=storage
+    )
+
+    assert manifest["variant_count"] == 3
+    assert manifest["attempted_variant_count"] == 4
+    assert manifest["failed_variant_count"] == 1
+    assert manifest["failed_variants"][0]["variant_index"] == 2
+    assert manifest["failed_variants"][0]["promotion_eligible"] is False
+    assert manifest["clips"] == ["aug-run1-0", "aug-run1-1", "aug-run1-3"]
+
+
 def test_shard_manifests_and_clips_are_scoped_to_the_attempt_prefix() -> None:
     """Late recovery writes cannot touch the current attempt's object keys."""
 
@@ -1836,12 +1886,11 @@ def test_a_worker_renders_only_its_stride_and_publishes_a_shard(
     assert payload["node_rank"] == 1
     assert payload["node_count"] == 2
     assert payload["shard_variant_count"] == 2
-    assert payload["augmentation_variables"] == [
-        {"lighting": "l1", "prompt": "scene 1"},
-        {"lighting": "l3", "prompt": "scene 3"},
-    ]
-    assert payload["prompts"] == ["scene 1", "scene 3"]
-    assert payload["prompt"] == "scene 1"
+    # Customer-derived prompts and variables remain only in durable private
+    # manifests; the operator-facing CLI result is deliberately aggregate-only.
+    assert "augmentation_variables" not in payload
+    assert "prompts" not in payload
+    assert "prompt" not in payload
 
 
 def test_rank_zero_merges_the_gang_into_one_run_manifest(
@@ -1936,9 +1985,9 @@ def test_an_explicit_local_surplus_rank_reports_an_empty_payload(
     assert rendered == []
     payload = json.loads(result.output)
     assert payload["shard_variant_count"] == 0
-    assert payload["augmentation_variables"] == []
-    assert payload["prompts"] == []
-    assert payload["prompt"] == ""
+    assert "augmentation_variables" not in payload
+    assert "prompts" not in payload
+    assert "prompt" not in payload
 
 
 def test_single_node_augment_writes_no_shard_and_keeps_todays_manifest(
@@ -1968,6 +2017,125 @@ def test_single_node_augment_writes_no_shard_and_keeps_todays_manifest(
     assert manifest["variant_count"] == 4
     assert manifest["node_count"] == 1
     assert "shards" not in manifest
+
+
+def test_single_node_variant_failure_is_additive_and_does_not_drop_successes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    storage = FakeStorage()
+    _multiply_cli(monkeypatch, tmp_path, storage)
+    successful_run = tx.run_cosmos_transfer
+
+    def flaky_run(**kwargs):
+        if kwargs["run_id"] == "run1-v1":
+            raise RuntimeError("vendor detail must not enter the CLI payload")
+        return successful_run(**kwargs)
+
+    monkeypatch.setattr(tx, "run_cosmos_transfer", flaky_run)
+    for name in (
+        "NPA_COSMOS_NODE_COUNT",
+        "NPA_COSMOS_NODE_RANK",
+        "NPA_COSMOS_ATTEMPT_ID",
+        "SKYPILOT_NUM_NODES",
+        "SKYPILOT_NODE_RANK",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    result = _invoke_multiply(tmp_path / "configs")
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["variant_count"] == 3
+    assert payload["attempted_variant_count"] == 4
+    assert payload["failed_variant_count"] == 1
+    assert "failed_variants" not in payload
+    assert "vendor detail" not in result.output
+    manifest = json.loads(
+        storage.objects["s3://bkt/run1/cosmos_augmented/manifest.json"]
+    )
+    assert manifest["clips"] == ["aug-run1-0", "aug-run1-2", "aug-run1-3"]
+    assert manifest["failed_variants"][0]["variant_index"] == 1
+    failure_uri = manifest["failed_variants"][0]["failure_uri"]
+    assert failure_uri in storage.objects
+    failure = json.loads(storage.objects[failure_uri])
+    assert failure["promotion_eligible"] is False
+    assert failure["variables"]["prompt"] == "scene 1"
+    committed = tx.validate_committed_run_manifest(
+        manifest, "s3://bkt/run1/cosmos_augmented/"
+    )
+    assert [item["variant_index"] for item in committed] == [0, 2, 3]
+
+    missing_failure = dict(manifest)
+    missing_failure["failed_variants"] = []
+    missing_failure["failed_variant_count"] = 0
+    with pytest.raises(ValueError, match="attempt counts"):
+        tx.validate_committed_run_manifest(
+            missing_failure, "s3://bkt/run1/cosmos_augmented/"
+        )
+
+
+def test_committed_manifest_rejects_failed_variant_outside_attempt_prefix() -> None:
+    output_uri = "s3://bkt/run1/cosmos_augmented/"
+    manifest = tx.build_run_manifest(
+        [_clip(0), _clip(2)],
+        run_id="run1",
+        attempt_id=ATTEMPT,
+        failures=[
+            {
+                "variant_index": 1,
+                "status": "failed",
+                "promotion_eligible": False,
+                "failure_uri": (
+                    f"{output_uri}_attempts/another-attempt/"
+                    "_failures/variant-00001.json"
+                ),
+            }
+        ],
+    )
+    manifest.update(
+        {
+            "publication_generation": 1,
+            "logical_publication": "conditional",
+            "logical_wave_id": "wave-1",
+            "membership_digest": "members",
+            "scheduler_fence_sequence": 1,
+            "scheduler_fence_attempt": 1,
+            "scheduler_launch_id": "job-1",
+        }
+    )
+
+    with pytest.raises(ValueError, match="failed variant provenance"):
+        tx.validate_committed_run_manifest(manifest, output_uri)
+
+
+def test_all_variant_failures_preserve_attempts_without_empty_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    storage = FakeStorage()
+    _multiply_cli(monkeypatch, tmp_path, storage)
+    monkeypatch.setattr(
+        tx,
+        "run_cosmos_transfer",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("private vendor output must stay private")
+        ),
+    )
+    for name in (
+        "NPA_COSMOS_NODE_COUNT",
+        "NPA_COSMOS_NODE_RANK",
+        "NPA_COSMOS_ATTEMPT_ID",
+        "SKYPILOT_NUM_NODES",
+        "SKYPILOT_NODE_RANK",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    result = _invoke_multiply(tmp_path / "configs")
+
+    assert result.exit_code != 0
+    failure_uris = sorted(uri for uri in storage.objects if "/_failures/" in uri)
+    assert len(failure_uris) == 4
+    assert "s3://bkt/run1/cosmos_augmented/manifest.json" not in storage.objects
+    assert "private vendor output" not in result.output
 
 
 def test_scheduler_single_node_uses_attempt_prefix_and_conditional_manifest(

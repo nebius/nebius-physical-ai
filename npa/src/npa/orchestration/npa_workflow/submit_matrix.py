@@ -48,6 +48,8 @@ class SubmitLiveCase:
     #: the one-shot serial path. Required for specs with a ``parallel:`` group or
     #: a loop that must early-exit on the real decision artifact.
     runtime: bool = False
+    #: Explicit workflow preset passed through the same CLI used by operators.
+    preset: str = ""
     #: Config overrides applied at submit time (``--var k=v``), e.g. to drive a
     #: gate threshold in one live run.
     config_vars: tuple[tuple[str, str], ...] = ()
@@ -507,6 +509,22 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         ),
     ),
     SubmitLiveCase(
+        "content-agents-rigid-object.yaml",
+        "gpu",
+        secret_envs=(
+            "NEBIUS_TOKEN_FACTORY_KEY",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+        ),
+        requires_token_factory=True,
+        image_tool="content-agents",
+        notes=(
+            "Public zero-vendor-payload NVIDIA Content Agents v0.5.2 adapter: "
+            "generated/customer USD -> real OVRTX material + physics pipelines -> "
+            "Validation Agent profiles -> rigid-ready USD/USDZ and Isaac Stage-2 manifest."
+        ),
+    ),
+    SubmitLiveCase(
         "tokenfactory-rollout-judge.yaml",
         "gpu",
         secret_envs=(
@@ -715,18 +733,25 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
         "sim2real.yaml",
         "multi",
-        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "HF_TOKEN"),
+        secret_envs=(
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "HF_TOKEN",
+            "NEBIUS_TOKEN_FACTORY_KEY",
+        ),
         runtime=True,
-        expected_parallel_tasks=2,
+        preset="public-franka-lift",
+        expected_parallel_tasks=8,
         rotation_skip=True,
         skip_reason=(
-            "The canonical live case requires six project-local immutable image "
+            "The canonical live case requires five immutable component image "
             "digests, a prewarmed Isaac cache PVC, and task-aligned trigger data."
         ),
         notes=(
-            "Canonical compositional 14-stage Sim2Real runtime. Repository CI "
-            "validates the dynamic plan; an operator live run supplies six "
-            "registry-qualified immutable component images, an Isaac cache PVC, "
+            "Canonical compositional 14-stage Sim2Real runtime using the explicit "
+            "public-franka-lift preset. Repository CI validates the dynamic plan; "
+            "an operator live run first stages the pinned public seed and supplies five "
+            "immutable component images, an Isaac cache PVC, "
             "and task-aligned trigger data. The reduced real-GPU proof is archived "
             "separately because the component images are project-local."
         ),
@@ -813,15 +838,14 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         ),
         plan_only=True,
         plan_only_justification=(
-            "the npa-ltx2 image has not been built, so no live submit can run yet"
+            "the shared submit harness cannot establish that its HF token has the "
+            "operator-specific gated Lightricks entitlement required at runtime"
         ),
         notes=(
-            "BYOF LTX-2.5 candidate. Plan-only for a reason the other entries do "
-            "not share: the image does not exist yet. It also cannot be submitted "
-            "on an operator's behalf at all — both fetches refuse without that "
-            "operator's own entitlement on the gated Lightricks/LTX-2.5 "
-            "repository. test_ltx2_live_e2e.py owns the gated live path once an "
-            "image exists."
+            "The accepted zero-payload digest has passed a real RTX PRO 6000 "
+            "text-to-video run. This shared matrix remains plan-only because both "
+            "runtime fetches require the submitting operator's gated "
+            "Lightricks/LTX-2.5 entitlement; test_ltx2_live_e2e.py owns that live path."
         ),
     ),
     SubmitLiveCase(

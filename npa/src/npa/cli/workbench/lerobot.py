@@ -2547,7 +2547,6 @@ def deploy(
                         image_ref=container_image,
                         server_config=server_config,
                         ssh_user=ssh_user,
-                        registry_token=merged_vars.get("iam_token", ""),
                     )
                 except (SSHError, ConfiguratorError) as exc:
                     fail_app(f"Container deployment failed: {exc}")

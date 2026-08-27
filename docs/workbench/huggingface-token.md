@@ -76,13 +76,19 @@ variable → `~/.npa/credentials.yaml`.
 ```bash
 npa workbench health access          # checks selected HF assets and NGC entitlement
 npa workbench health access --capability paidf    # Cosmos Transfer only
+# authenticate the configured token itself (no model download):
+npa workbench health preflight --checks hf
 # or, credentials-presence only (no network):
 npa workbench health preflight --offline
 ```
 
 `health access` reports `HF access ok: <repo>` for each model your token can
 reach and, for anything still gated, the exact **Agree and access repository**
-URL to open.
+URL to open. Interactive `npa configure` runs the same repository-aware probe
+(including the dataset API for gated datasets) and prints a bounded advisory
+summary; use `health access` when you need an enforcing PASS/FAIL gate.
+Generic online preflight calls Hugging Face's authenticated `whoami-v2`
+endpoint; public repository metadata is not accepted as token proof.
 
 ## Troubleshooting
 

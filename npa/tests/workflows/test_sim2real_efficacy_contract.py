@@ -52,6 +52,7 @@ from npa.workflows.sim2real.isaac_scenario_task import (
     strict_basin_settling_signal,
     goal_curriculum_fraction,
     read_scenarios,
+    scenario_assignment_indices,
 )
 from npa.workflows.sim2real.task_contract import (
     LIFT_DATASET_ID,
@@ -116,6 +117,25 @@ def test_matching_unimplemented_task_cannot_reuse_lift_contract() -> None:
             dataset_id=PUSHT_DATASET_ID,
             dataset_uri="s3://bucket/pusht/",
         )
+
+
+def test_scenario_assignment_cursor_covers_tail_before_wrapping() -> None:
+    first = scenario_assignment_indices(count=16, row_count=18)
+    second = scenario_assignment_indices(count=4, row_count=18, cursor=len(first))
+
+    assert first == list(range(16))
+    assert second == [16, 17, 0, 1]
+    assert set(first + second) == set(range(18))
+
+
+def test_scenario_assignment_cursor_applies_offset_and_validates_bounds() -> None:
+    assert scenario_assignment_indices(
+        count=5, row_count=3, cursor=2, offset=1
+    ) == [0, 1, 2, 0, 1]
+    with pytest.raises(ValueError, match="non-negative"):
+        scenario_assignment_indices(count=-1, row_count=3)
+    with pytest.raises(ValueError, match="at least one"):
+        scenario_assignment_indices(count=1, row_count=0)
 
 
 def test_curated_splits_are_disjoint_and_consume_stage3_lineage(

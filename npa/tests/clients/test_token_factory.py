@@ -8,11 +8,13 @@ import pytest
 
 from npa.clients.token_factory import (
     DEFAULT_BASE_URL,
+    DEFAULT_TIMEOUT_S,
     TokenFactoryClient,
     TokenFactoryConfig,
     TokenFactoryError,
     resolve_config,
     split_reasoning,
+    validate_model_access,
 )
 
 
@@ -56,6 +58,9 @@ def test_transient_overload_retries_then_succeeds() -> None:
 
     assert client.chat_completion_text(model="model", messages=[{"role": "user", "content": "hi"}]) == "ok"
     assert sleeps == [1.0, 2.0]
+    assert client.last_request_metrics["attempts"] == 3
+    assert client.last_request_metrics["retries"] == 2
+    assert client.last_request_metrics["latency_seconds"] >= 0
 
 
 def test_auth_failure_is_not_retried() -> None:
@@ -78,9 +83,46 @@ def test_auth_failure_is_not_retried() -> None:
     assert calls == 1
 
 
+def test_validate_model_access_requires_listing_and_inference(monkeypatch) -> None:
+    calls = []
+
+    class Client:
+        def __init__(self, _config):
+            pass
+
+        def list_models(self):
+            calls.append("models")
+            return ["nvidia/Cosmos3-Super-Reasoner"]
+
+        def chat_completion(self, **kwargs):
+            calls.append(kwargs["model"])
+            return {"id": "request-1", "choices": [{"message": {"content": "{}"}}]}
+
+    monkeypatch.setattr("npa.clients.token_factory.TokenFactoryClient", Client)
+    result = validate_model_access("secret-not-rendered", "nvidia/Cosmos3-Super-Reasoner")
+    assert result.ok is True
+    assert result.request_id == "request-1"
+    assert calls == ["models", "nvidia/Cosmos3-Super-Reasoner"]
+
+
+def test_validate_model_access_rejects_key_scoped_unavailable_model(monkeypatch) -> None:
+    class Client:
+        def __init__(self, _config):
+            pass
+
+        def list_models(self):
+            return []
+
+    monkeypatch.setattr("npa.clients.token_factory.TokenFactoryClient", Client)
+    result = validate_model_access("secret-not-rendered", "nvidia/Cosmos3-Super-Reasoner")
+    assert result.ok is False
+    assert result.error == "model unavailable to this key"
+
+
 def test_resolve_config_defaults_to_token_factory_base_url() -> None:
     config = resolve_config(api_key="abc", environ={})
     assert config.base_url == DEFAULT_BASE_URL
+    assert config.timeout_s == DEFAULT_TIMEOUT_S == 600.0
     assert config.chat_completions_url == "https://api.tokenfactory.nebius.com/v1/chat/completions"
     assert config.models_url == "https://api.tokenfactory.nebius.com/v1/models"
 

@@ -32,6 +32,7 @@ from npa.clients.config import (
     WorkbenchConfig,
 )
 from npa.clients.serverless import EndpointNotFoundError
+from npa.deploy.images import public_release_tag_for_tool
 
 
 runner = CliRunner()
@@ -554,9 +555,12 @@ def test_fiftyone_deploy_runtime_container_starts_image(tmp_path: Path, mocker) 
     deploy_container.assert_called_once()
     assert deploy_container.call_args.kwargs["container_name"] == "npa-fiftyone"
     assert deploy_container.call_args.kwargs["image_ref"].endswith(
-        "/npa-fiftyone:1.15.0.post1"
+        f"/npa-fiftyone:{public_release_tag_for_tool('fiftyone')}"
     )
     assert deploy_container.call_args.kwargs["gpu"] is False
+    assert deploy_container.call_args.kwargs["command"] == (
+        "bash -lc 'exec /opt/fiftyone/venv/bin/python /opt/fiftyone/app.py'"
+    )
     wb_cfg = write_config.call_args_list[0].args[0]["projects"]["proj"]["workbenches"][
         "curate-container"
     ]
@@ -570,6 +574,39 @@ def test_fiftyone_deploy_runtime_container_starts_image(tmp_path: Path, mocker) 
         "proj",
         "curate-container",
         "healthy",
+    )
+
+    custom_image = "registry.example/npa-fiftyone@sha256:" + "a" * 64
+    deploy_container.reset_mock()
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "fiftyone",
+            "-p",
+            "proj",
+            "-n",
+            "curate-container-custom",
+            "deploy",
+            "--project-id",
+            "project",
+            "--tenant-id",
+            "tenant",
+            "--region",
+            "eu-north1",
+            "--tf-dir",
+            str(tmp_path),
+            "--runtime",
+            "container",
+            "--image",
+            custom_image,
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert deploy_container.call_args.kwargs["image_ref"] == custom_image
+    assert deploy_container.call_args.kwargs["command"] == (
+        "bash -lc 'exec /opt/fiftyone/venv/bin/python /opt/fiftyone/app.py'"
     )
 
 
@@ -2081,3 +2118,47 @@ def test_curate_augmented_reports_real_fiftyone_engine(mocker) -> None:
 
     assert result.exit_code == 0, result.output
     assert json.loads(result.output)["engine"] == "fiftyone-brain"
+
+
+def test_review_augmented_exports_rejected_candidates_without_promotion(mocker) -> None:
+    review = mocker.patch(
+        "npa.workflows.data_factory_stages.review_terminal_candidates",
+        return_value={
+            "status": "completed",
+            "engine": "fiftyone",
+            "dataset_name": "paidf-review-run",
+            "candidate_count": 8,
+            "quality_disposition": "rejected",
+            "review_only": True,
+            "promotion_eligible_count": 0,
+            "written_uri": "s3://bucket/run/review/fiftyone-review.json",
+        },
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "fiftyone",
+            "review-augmented",
+            "--run-root-uri",
+            "s3://bucket/run/",
+            "--quality-disposition-uri",
+            "s3://bucket/run/grade/quality_disposition.json",
+            "--dataset-uri",
+            "s3://bucket/run/review/fiftyone-dataset/",
+            "--report-uri",
+            "s3://bucket/run/review/fiftyone-review.json",
+            "--dataset-name",
+            "paidf-review-run",
+            "--output",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["quality_disposition"] == "rejected"
+    assert payload["review_only"] is True
+    assert payload["promotion_eligible_count"] == 0
+    review.assert_called_once()

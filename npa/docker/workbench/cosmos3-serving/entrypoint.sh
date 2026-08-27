@@ -8,16 +8,16 @@
 # guardrail repo, an unwritable Hugging Face cache mount, and a GPU count that
 # does not match the pinned parallel config.
 set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 MODEL="${NPA_COSMOS3_SERVE_MODEL:-nvidia/Cosmos3-Super}"
+MODEL_REVISION="${NPA_COSMOS3_SERVE_MODEL_REVISION:-e0262be9d8f7586bc24c069a2aed2b665bdff266}"
 HOST="${NPA_COSMOS3_SERVE_HOST:-0.0.0.0}"
 PORT="${NPA_COSMOS3_SERVE_PORT:-8000}"
 GUARDRAILS="${NPA_COSMOS3_SERVE_GUARDRAILS:-on}"
 INIT_TIMEOUT="${NPA_COSMOS3_SERVE_INIT_TIMEOUT:-1800}"
 EXPECTED_GPUS="${NPA_COSMOS3_SERVE_GPUS:-8}"
 EXTRA_ARGS="${NPA_COSMOS3_SERVE_EXTRA_ARGS:-}"
-DRY_RUN="${NPA_COSMOS3_SERVE_DRY_RUN:-0}"
-SKIP_GPU_CHECK="${NPA_COSMOS3_SERVE_SKIP_GPU_CHECK:-0}"
 
 fail() {
   echo "[npa-cosmos3-serving] ERROR: $*" >&2
@@ -33,25 +33,11 @@ case "${GUARDRAILS}" in
   *) fail "NPA_COSMOS3_SERVE_GUARDRAILS must be 'on' or 'off', got '${GUARDRAILS}'" ;;
 esac
 
-# --- preflight 1: gated guardrail access -------------------------------------
-#
-# The serving path pulls nvidia/Cosmos-1.0-Guardrail, which is gated separately
-# from the batch path's nvidia/Cosmos-Guardrail1: accepting one license does not
-# accept the other. Without a token the fetch goes out anonymous and dies mid
-# startup with a 401 that reads like a bad token rather than a missing one.
-if [ "${GUARDRAILS}" = "on" ] && [ -z "${HF_TOKEN:-}${HUGGING_FACE_HUB_TOKEN:-}" ]; then
-  fail "guardrails are on but no HF_TOKEN (or HUGGING_FACE_HUB_TOKEN) is set.
-       This image bakes no weights, so the gated guardrail repo
-       nvidia/Cosmos-1.0-Guardrail downloads at run time under YOUR Hugging Face
-       license acceptance. Without a token the download is anonymous and fails
-       with 401 several minutes into startup. Accept the license at
-       https://huggingface.co/nvidia/Cosmos-1.0-Guardrail and pass the token, or
-       set NPA_COSMOS3_SERVE_GUARDRAILS=off to serve without guardrails.
-       Diagnostic if a token IS set and the download still fails: 401 from an
-       anonymous request means the token never reached Hugging Face, 403 from an
-       authenticated one means the account has not accepted this repo's license.
-       Accepting nvidia/Cosmos-Guardrail1 does not clear this repo."
-fi
+# --- preflight 1: real gated-repository access -------------------------------
+# A credential is not consent and its mere presence proves nothing. Probe the
+# selected model and (when enabled) the separately gated guardrail repository
+# before allocating distributed workers or downloading checkpoint bytes.
+python "${SCRIPT_DIR}/access_preflight.py"
 
 # --- preflight 2: writable Hugging Face cache --------------------------------
 #
@@ -73,19 +59,12 @@ fi
 # is an 8-GPU decomposition. Handing it a different GPU count fails inside
 # distributed init with a shape error, so check it here where the message can
 # name the cause.
-if [ "${SKIP_GPU_CHECK}" != "1" ]; then
-  if ! command -v nvidia-smi >/dev/null 2>&1; then
-    fail "nvidia-smi not found: this container serves on GPUs only.
-         Set NPA_COSMOS3_SERVE_SKIP_GPU_CHECK=1 to bypass this check, or
-         NPA_COSMOS3_SERVE_DRY_RUN=1 to print the serve command and exit."
-  fi
-  visible="$(nvidia-smi --query-gpu=index --format=csv,noheader | wc -l | tr -d ' ')"
-  if [ "${visible}" != "${EXPECTED_GPUS}" ]; then
-    fail "the pinned parallel config needs ${EXPECTED_GPUS} GPUs, found ${visible}.
-         This image pins an 8-GPU single-node decomposition. For a different GPU
-         count, override the strategy through NPA_COSMOS3_SERVE_EXTRA_ARGS and set
-         NPA_COSMOS3_SERVE_GPUS to match."
-  fi
+if ! command -v nvidia-smi >/dev/null 2>&1; then
+  fail "nvidia-smi not found: this service requires the documented 8-GPU topology."
+fi
+visible="$(nvidia-smi --query-gpu=index --format=csv,noheader | wc -l | tr -d ' ')"
+if [ "${visible}" != "${EXPECTED_GPUS}" ]; then
+  fail "the pinned parallel config needs ${EXPECTED_GPUS} GPUs, found ${visible}."
 fi
 
 # --- serve -------------------------------------------------------------------
@@ -99,6 +78,7 @@ fi
 # part of this surface.
 argv=(
   vllm serve "${MODEL}"
+  --revision "${MODEL_REVISION}"
   --omni
   --host "${HOST}"
   --port "${PORT}"
@@ -119,15 +99,10 @@ if [ -n "${EXTRA_ARGS}" ]; then
   argv+=(${EXTRA_ARGS})
 fi
 
-note "model=${MODEL} guardrails=${GUARDRAILS} port=${PORT} xet_disabled=${HF_HUB_DISABLE_XET:-unset}"
+note "model=${MODEL} guardrails=${GUARDRAILS} port=${PORT} access=confirmed"
 note "startup to 'Application startup complete' takes minutes, not seconds: HSDP-sharded"
 note "configs reached ready in roughly 280-290 s on a warm page cache and about 320 s"
 note "longer on a cold one. Readiness probes tighter than that kill healthy boots."
 note "exec: ${argv[*]}"
-
-if [ "${DRY_RUN}" = "1" ]; then
-  note "dry run: not starting the server"
-  exit 0
-fi
 
 exec "${argv[@]}"

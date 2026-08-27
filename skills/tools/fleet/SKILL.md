@@ -73,6 +73,9 @@ defaults:
   filestore_disk_size_gibibytes: 1024
   filestore_mount_path: /mnt/data
   filestore_mount_tag: npa-shared-fs
+  # Runtime/operator-supplied standards-based chart source. Keep private
+  # registry endpoints out of committed specs and PR evidence.
+  filesystem_csi_chart_repository: ""
 projects:
   - name: a                  # -> project fleet1-test-a (identical profile)
   - name: b                  # -> project fleet1-test-b (identical profile)
@@ -321,7 +324,10 @@ Both `deploy` and `destroy` confirm before acting (bypass with `--yes`/`-y`;
   persists the same tag at `filestore_mount_path` as virtiofs with
   `defaults,nofail`. Nebius warns that omitting `nofail` can prevent a node from
   booting after the filesystem is missing. The bundled CSI chart version is
-  `0.1.6`, matching the current official filesystem-over-CSI guide.
+  `0.1.6`, matching the current official filesystem-over-CSI guide. Set
+  `filesystem_csi_chart_repository` at runtime when the selected recipe has no
+  public chart default; `fleet plan` reports only whether CSI is enabled and
+  never echoes that repository endpoint.
 - **Auto-created VPC on destroy**: when a target project has no subnet, deploy
   resolves one project network/subnet before parallel cluster applies and stores
   ownership in `.npa-fleet-network.json`. All clusters without explicit

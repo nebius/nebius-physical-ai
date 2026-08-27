@@ -11,7 +11,6 @@ from typing import Any, Sequence
 
 import yaml
 
-from npa.clients.nebius_auth import NebiusTokenError, mint_nebius_iam_token
 from npa.cluster.config import DEFAULT_REGION, SUPPORTED_REGIONS
 from npa.deploy.images import container_image_for_tool, sonic_image_entry
 from npa.orchestration.skypilot.controller import DEFAULT_CONTROLLER_BACKEND, ControllerBackend
@@ -34,8 +33,6 @@ UNRESOLVED_SUBMIT_TOKENS = (
 SKYPILOT_DOCKER_USERNAME = "SKYPILOT_DOCKER_USERNAME"
 SKYPILOT_DOCKER_PASSWORD = "SKYPILOT_DOCKER_PASSWORD"
 SKYPILOT_DOCKER_SERVER = "SKYPILOT_DOCKER_SERVER"
-DEFAULT_NEBIUS_REGISTRY_USERNAME = "iam"
-NEBIUS_REGISTRY_SERVER_SUFFIX = ".nebius.cloud"
 REGISTRY_AUTH_USERNAME_ENVS = ("NPA_REGISTRY_USERNAME", SKYPILOT_DOCKER_USERNAME)
 REGISTRY_AUTH_PASSWORD_ENVS = ("NPA_REGISTRY_PASSWORD", SKYPILOT_DOCKER_PASSWORD)
 REGISTRY_AUTH_SERVER_ENVS = ("NPA_REGISTRY_SERVER", SKYPILOT_DOCKER_SERVER)
@@ -505,13 +502,7 @@ def _resolve_registry_auth(
     resolved_password = password or env_password
     source = "explicit" if explicit else "env" if env_provided else ""
 
-    if resolved_server and _is_nebius_registry_server(resolved_server):
-        if not resolved_username:
-            resolved_username = DEFAULT_NEBIUS_REGISTRY_USERNAME
-        if not resolved_password:
-            resolved_password = _mint_nebius_registry_token()
-            source = "nebius-iam-token"
-    elif explicit or env_provided:
+    if explicit or env_provided:
         source = source or "explicit"
     else:
         return None
@@ -547,14 +538,6 @@ def _first_env(names: Sequence[str]) -> str:
     return ""
 
 
-def _mint_nebius_registry_token() -> str:
-    cli = os.environ.get("NEBIUS_CLI", "nebius")
-    try:
-        return mint_nebius_iam_token(nebius_cli=cli)
-    except NebiusTokenError as exc:
-        raise ValueError(str(exc)) from exc
-
-
 def _registry_server_for_images(*images: str) -> str:
     for image in images:
         server = _registry_server_from_image(image)
@@ -577,11 +560,6 @@ def _normalize_registry_server(server: str) -> str:
     normalized = server.strip()
     normalized = normalized.removeprefix("https://").removeprefix("http://")
     return normalized.rstrip("/")
-
-
-def _is_nebius_registry_server(server: str) -> bool:
-    normalized = _normalize_registry_server(server)
-    return normalized.startswith("cr.") and normalized.endswith(NEBIUS_REGISTRY_SERVER_SUFFIX)
 
 
 def _uses_registry_auth_target(doc: dict[str, Any], server: str, policy_image: str) -> bool:

@@ -1179,7 +1179,8 @@ describe("NPA agent UI — embedded Foxglove viewer", () => {
         "https://agent.example/foxglove/data/mock-run.mcap",
       );
     });
-    cy.get("#foxgloveOpenWeb").click();
+    cy.get("@layoutNavigate").should("have.been.calledOnce");
+    cy.get("#foxgloveOpenWeb").should("not.be.disabled").click();
     cy.wait("@layoutExport").then(({ response }) => {
       const parsed = new URL(response.body.export.web_url);
       expect(parsed.searchParams.get("layoutId")).to.eq(null);
