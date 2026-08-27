@@ -894,6 +894,26 @@ def _env(name: str, default: str = "") -> str:
     return os.environ.get(name, default).strip()
 
 
+def _expected_camera_frame_count(capture: dict[str, object]) -> int:
+    """Return the decision-synchronized camera count for one rollout.
+
+    The Isaac job invokes ``capture`` only at policy decision points and once
+    more for the terminal state.  Physics horizon/stride metadata describes
+    simulator stepping, not additional camera calls.
+    """
+
+    decision_points = int(capture.get("decision_points") or 0)
+    if decision_points > 0:
+        return decision_points + 1
+    horizon_steps = int(capture.get("horizon_steps") or 0)
+    capture_stride = max(1, int(capture.get("rollout_stride") or 1))
+    return (
+        len(range(0, horizon_steps, capture_stride)) + 1
+        if horizon_steps > 0
+        else 0
+    )
+
+
 def materialize_rollout_dirs(
     output_dir: Path,
     meta: dict[str, Any],
@@ -963,13 +983,7 @@ def materialize_rollout_dirs(
         expected_views = {
             str(item.get("name") or "") for item in camera_meta if item.get("name")
         }
-        horizon_steps = int(capture.get("horizon_steps") or 0)
-        capture_stride = max(1, int(capture.get("rollout_stride") or 1))
-        expected_frame_count = (
-            len(range(0, horizon_steps, capture_stride)) + 1
-            if horizon_steps > 0
-            else 0
-        )
+        expected_frame_count = _expected_camera_frame_count(capture)
         missing_views = sorted(
             name for name in expected_views if not view_frames.get(name)
         )
