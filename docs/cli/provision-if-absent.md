@@ -35,6 +35,7 @@ Options
 --mig-strategy  <str>  [default: mixed]
 --mig-config  <str>  [default: all-balanced]
 --capacity-block-group  <str>  Runtime-only strict GPU capacity block selector.
+--infiniband-fabric  <str>  InfiniBand fabric required by NVSwitch GPU clusters, matching `npa cluster up`.
 --preemptible  --on-demand  Run the GPU node group as preemptible, matching `npa cluster up`. This changes the capacity pool but not hard
     instance/disk/IP quotas; a reclaim stops the node mid-run.
 --dry-run  Resolve settings and print intended actions only.
@@ -77,6 +78,7 @@ Options
 | `--mig-strategy` | <str>  [default: mixed] |
 | `--mig-config` | <str>  [default: all-balanced] |
 | `--capacity-block-group` | <str>  Runtime-only strict GPU capacity block selector. |
+| `--infiniband-fabric` | <str>  InfiniBand fabric required by NVSwitch GPU clusters, matching `npa cluster up`. |
 | `--preemptible` | --on-demand  Run the GPU node group as preemptible, matching `npa cluster up`. This changes the capacity pool but not hard instance/disk/IP quotas; a reclaim stops the node mid-run. |
 | `--dry-run` | Resolve settings and print intended actions only. |
 | `--timeout` | <int>  Terraform apply timeout in minutes. [default: 120] |

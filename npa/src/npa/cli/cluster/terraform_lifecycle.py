@@ -301,6 +301,14 @@ def up_cmd(
             "reservation selection. Equivalent to TF_VAR_capacity_block_group."
         ),
     ),
+    infiniband_fabric: str = typer.Option(
+        "",
+        "--infiniband-fabric",
+        help=(
+            "InfiniBand fabric required by NVSwitch GPU clusters "
+            "(overrides TF_VAR_infiniband_fabric)."
+        ),
+    ),
     gpu_nodes: int = typer.Option(
         -1,
         "--gpu-nodes",
@@ -535,8 +543,9 @@ def up_cmd(
                 else None
             ),
             enable_gpu_cluster=_tfvar_bool(tfvars, env, "enable_gpu_cluster", False),
-            infiniband_fabric=str(
-                _tfvar_value(tfvars, env, "infiniband_fabric", "") or ""
+            infiniband_fabric=(
+                infiniband_fabric.strip()
+                or str(_tfvar_value(tfvars, env, "infiniband_fabric", "") or "")
             ),
             enable_filestore=(
                 _tfvar_bool(tfvars, env, "enable_filestore", False)
@@ -777,6 +786,7 @@ def up_cmd(
             # explicitly so `--capacity-block-group` is not silently dropped by a
             # `capacity_block_group = ""` line in a checked-in tfvars file.
             *_capacity_block_group_var_args(capacity_block_group),
+            *_string_var_args("infiniband_fabric", infiniband_fabric),
             *_string_var_args(
                 "cluster_name", str(tfvars.get("cluster_name") or "npa-cluster")
             ),

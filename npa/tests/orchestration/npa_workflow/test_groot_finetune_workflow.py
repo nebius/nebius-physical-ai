@@ -80,7 +80,7 @@ def test_groot_workflow_is_short_honest_operational_pipeline() -> None:
     assert _option_value(preflight.argv, "--max-steps") == "4"
     assert _option_value(preflight.argv, "--save-steps") == "4"
     assert _option_value(preflight.argv, "--save-total-limit") == "1"
-    assert trainer.resources_profile["accelerators"] == "RTXPRO6000:2"
+    assert trainer.resources_profile["accelerators"] == "B200:2"
     assert _option_value(trainer.argv, "--num-gpus") == "2"
     assert _option_value(trainer.argv, "--logging-steps") == "1"
     assert _option_value(trainer.argv, "--save-steps") == "4"
@@ -143,7 +143,7 @@ def test_groot_workflow_reaches_plan_scheduler_and_vendor_render(
             prepared.spec, prepared.plan.steps, run_id="groot-operational-render"
         )
         assert [task["name"] for task in scheduler["tasks"]] == STATES
-        assert scheduler["tasks"][3]["resources"]["accelerators"] == "RTXPRO6000:2"
+        assert scheduler["tasks"][3]["resources"]["accelerators"] == "B200:2"
 
         documents = [
             doc
@@ -196,10 +196,10 @@ def test_groot_workflow_gpu_count_matrix(gpu_count: int) -> None:
     scheduler = build_scheduler_plan(spec, plan.steps, run_id=run_id)
 
     trainer = plan.steps[3]
-    assert trainer.resources_profile["accelerators"] == f"RTXPRO6000:{gpu_count}"
+    assert trainer.resources_profile["accelerators"] == f"B200:{gpu_count}"
     assert _option_value(trainer.argv, "--num-gpus") == str(gpu_count)
     assert _option_value(trainer.argv, "--global-batch-size") == str(gpu_count)
     assert _option_value(trainer.argv, "--gradient-accumulation-steps") == "1"
     assert scheduler["tasks"][3]["resources"]["accelerators"] == (
-        f"RTXPRO6000:{gpu_count}"
+        f"B200:{gpu_count}"
     )

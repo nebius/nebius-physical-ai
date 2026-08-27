@@ -30,7 +30,8 @@ LABEL npa.tool="groot" \
       npa.isaac_lab_version="${ISAAC_LAB_VERSION}" \
       npa.isaac_provisioning="runtime-fetch" \
       npa.architecture="no-baked-omniverse-kit" \
-      npa.cosmos_reason_revision="${COSMOS_REASON_REVISION}"
+      npa.cosmos_reason_revision="${COSMOS_REASON_REVISION}" \
+      org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"
 
 # NOTE the absence of ACCEPT_EULA / ISAACSIM_ACCEPT_EULA / OMNI_KIT_ACCEPT_EULA /
 # PRIVACY_CONSENT. All four used to be baked here. Acceptance is now the operator's to
@@ -266,6 +267,13 @@ RUN chmod +x /opt/npa/docker/workbench/common/*.sh \
        REQUIRE_TORCH_SM120=1 \
        NPA_INSTALL_SKYPILOT_PREREQS=1 \
        /opt/npa/docker/workbench/common/install_isaac_runtime_base.sh \
+    `# Assert the exact packages promised by the image bootstrap contract.` \
+    && dpkg-query -W openssh-server rsync sudo \
+    && grep -Fx 'ubuntu ALL=(ALL) NOPASSWD:ALL' /etc/sudoers.d/99-npa-runtime-user \
+    `# Generate unique SSH host keys only when SkyPilot starts the pod service.` \
+    && sed -i '/^  start)$/a\    ssh-keygen -A' /etc/init.d/ssh \
+    && grep -q 'ssh-keygen -A' /etc/init.d/ssh \
+    && rm -f /etc/ssh/ssh_host_* \
     && chown -R ubuntu:ubuntu /opt/isaac-lab
 # common/ deliberately stays root-owned 0755: the bootstrap downloads and executes code at
 # run time, so the runtime user must not be able to rewrite it.
@@ -296,6 +304,9 @@ COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa
 COPY --chown=ubuntu:ubuntu workflows /opt/npa/workflows
 COPY --chown=ubuntu:ubuntu docker/workbench/groot/smoke_env.py /opt/npa/docker/workbench/groot/smoke_env.py
 COPY --chown=ubuntu:ubuntu docker/workbench/groot/smoke_functional.py /opt/npa/docker/workbench/groot/smoke_functional.py
+COPY --chown=ubuntu:ubuntu docker/workbench/groot/entrypoint.sh /opt/npa/docker/workbench/groot/entrypoint.sh
+
+RUN chmod 0755 /opt/npa/docker/workbench/groot/entrypoint.sh
 
 RUN uv pip install --python "${GROOT_VENV}/bin/python" --no-deps -e /opt/npa \
     && "${GROOT_VENV}/bin/python" - <<'PY'
@@ -361,4 +372,4 @@ USER ubuntu
 
 WORKDIR /opt/groot
 EXPOSE 8080
-ENTRYPOINT ["/bin/bash"]
+ENTRYPOINT ["/opt/npa/docker/workbench/groot/entrypoint.sh"]

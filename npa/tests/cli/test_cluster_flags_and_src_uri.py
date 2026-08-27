@@ -47,6 +47,7 @@ def test_gpu_driver_and_health_flags_align_across_direct_entrypoints() -> None:
         "--gpu-cuda-smoke",
         "--skip-gpu-cuda-smoke",
         "--gpu-cuda-smoke-image",
+        "--infiniband-fabric",
     }
     assert expected <= _option_names(["cluster", "up"])
     assert expected <= _option_names(["provision-if-absent"])
