@@ -1769,7 +1769,11 @@ def test_isaac_lab_train_export_trajectories_marks_masked_failure(mocker) -> Non
     ssh = mocker.MagicMock()
     ssh.run.side_effect = [
         (0, "", ""),
-        (0, "ISAAC_LAB_TRAJ_EXPORT_START ...\nISAAC_LAB_TRAJ_EXPORT_POLICY_LOADED\n", ""),
+        (
+            1,
+            "ISAAC_LAB_TRAJ_EXPORT_START ...\nPOLICY_LOAD_FAILURE\n",
+            "runtime warning",
+        ),
     ]
     mocker.patch("npa.cli.isaac_lab.resolve_ssh_config", return_value=_ssh_cfg())
     mocker.patch("npa.cli.isaac_lab.SSHClient", return_value=ssh)
@@ -1795,7 +1799,8 @@ def test_isaac_lab_train_export_trajectories_marks_masked_failure(mocker) -> Non
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
     assert payload["trajectory_export"] == "failed"
-    assert "trajectory_export_error" in payload
+    assert "POLICY_LOAD_FAILURE" in payload["trajectory_export_error"]
+    assert "runtime warning" in payload["trajectory_export_error"]
 
 
 def test_isaac_lab_train_without_export_flag_runs_single_command(mocker) -> None:

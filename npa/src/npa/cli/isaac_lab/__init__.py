@@ -2731,10 +2731,18 @@ def train_cmd(
             result["trajectory_export"] = "success" if traj_ok else "failed"
             if not traj_ok:
                 # The checkpoint is still good; report the export failure
-                # without failing the training run.
-                result["trajectory_export_error"] = (
-                    traj_stderr or traj_stdout
-                ).strip()[-500:]
+                # without failing the training run. Isaac/Kit can split the
+                # exception and its surrounding context across stdout/stderr;
+                # retaining only stderr can leave a trailing warning while
+                # discarding the actual policy-load failure.
+                diagnostic_parts = []
+                if traj_stdout and traj_stdout.strip():
+                    diagnostic_parts.append("stdout:\n" + traj_stdout.strip())
+                if traj_stderr and traj_stderr.strip():
+                    diagnostic_parts.append("stderr:\n" + traj_stderr.strip())
+                result["trajectory_export_error"] = "\n".join(diagnostic_parts)[
+                    -4000:
+                ]
         if output_is_s3:
             try:
                 try:
