@@ -125,6 +125,25 @@ def _fail(msg: str, code: int = 1) -> None:
     raise typer.Exit(code)
 
 
+def _emit_image_bootstrap_observing_progress(
+    *, digest: str, timeout_seconds: int
+) -> None:
+    """Report that an immutable image capability probe is being observed."""
+
+    typer.echo(
+        json.dumps(
+            {
+                "apiVersion": "npa.image-bootstrap-progress/v1",
+                "digest": digest,
+                "state": "observing",
+                "timeout_seconds": timeout_seconds,
+            },
+            sort_keys=True,
+        ),
+        err=True,
+    )
+
+
 @app.command("prepare-run")
 def prepare_run_cmd(
     yaml_path: Path = typer.Argument(help="npa.workflow/v0.0.1 YAML path."),
@@ -361,6 +380,15 @@ def submit_cmd(
             "For npa.workflow specs: reproduce each step's image pull with this run's "
             "own registry credentials before submitting, so a 403 fails here instead of "
             "leaving workers in ImagePullBackOff."
+        ),
+    ),
+    image_bootstrap_timeout_seconds: int = typer.Option(
+        1800,
+        "--image-bootstrap-timeout-seconds",
+        min=0,
+        help=(
+            "Seconds to observe each digest-bound image capability probe; "
+            "0 waits without a deadline for large cold pulls."
         ),
     ),
     resolve_accelerators: bool = typer.Option(
@@ -1209,6 +1237,7 @@ def submit_cmd(
             assume_decision=assume_decision,
             enabled=preflight_images and not plan_only,
             infra=infra,
+            image_bootstrap_timeout_seconds=image_bootstrap_timeout_seconds,
         )
 
         # Provision/adopt the exact submission target before any writable-S3
@@ -2559,6 +2588,7 @@ def _preflight_submit_images(
     assume_decision: str,
     enabled: bool,
     infra: str = "",
+    image_bootstrap_timeout_seconds: int = 1800,
 ) -> dict[str, str]:
     """Fail before the run starts when a step's image cannot actually be pulled.
 
@@ -2627,6 +2657,7 @@ def _preflight_submit_images(
         pull_checks=checks,
         context=context_from_infra(infra),
         pull_secrets_by_image=pull_secrets_by_image,
+        observation_timeout_seconds=image_bootstrap_timeout_seconds,
     )
     typer.echo(
         f"image-preflight: {len(checks)} image(s) pullable and bootstrap-compatible",
@@ -2644,6 +2675,7 @@ def _preflight_image_bootstrap_contracts(
     pull_checks: Sequence[object],
     context: str,
     pull_secrets_by_image: Mapping[str, tuple[str, ...]] | None = None,
+    observation_timeout_seconds: int = 1800,
 ) -> list[dict[str, object]]:
     """Verify each selected digest, never a mutable tag, against one contract."""
 
@@ -2664,6 +2696,8 @@ def _preflight_image_bootstrap_contracts(
     from npa.deploy.images import requires_skypilot_bootstrap_runtime_probe
 
     check_by_image = {str(getattr(item, "image", "")): item for item in pull_checks}
+    if observation_timeout_seconds < 0:
+        _fail("image bootstrap observation timeout must be zero or greater")
     cache_path = Path.home() / ".npa" / "cache" / "sky-image-bootstrap.json"
     results: list[dict[str, object]] = []
     for image in dict.fromkeys(
@@ -2695,11 +2729,19 @@ def _preflight_image_bootstrap_contracts(
                     # does not implement the full contract, so the label cannot
                     # establish provenance. Probe the selected immutable bytes and
                     # ignore stale label-backed cache entries for the same digest.
+                    _emit_image_bootstrap_observing_progress(
+                        digest=digest,
+                        timeout_seconds=observation_timeout_seconds,
+                    )
                     evidence = probe_image_capabilities(
                         image=image,
                         digest=digest,
                         context=context,
                         kubeconfig=str(os.environ.get("KUBECONFIG") or ""),
+                        image_pull_secrets=tuple(
+                            (pull_secrets_by_image or {}).get(image, ())
+                        ),
+                        observation_timeout_seconds=observation_timeout_seconds,
                     )
                 elif attested.ok:
                     evidence = attested
@@ -2711,6 +2753,10 @@ def _preflight_image_bootstrap_contracts(
                     # to substitute a runtime probe for that build contract.
                     evidence = attested
                 else:
+                    _emit_image_bootstrap_observing_progress(
+                        digest=digest,
+                        timeout_seconds=observation_timeout_seconds,
+                    )
                     evidence = probe_image_capabilities(
                         image=image,
                         digest=digest,
@@ -2719,6 +2765,7 @@ def _preflight_image_bootstrap_contracts(
                         image_pull_secrets=tuple(
                             (pull_secrets_by_image or {}).get(image, ())
                         ),
+                        observation_timeout_seconds=observation_timeout_seconds,
                     )
                 store_cached_evidence(cache_path, evidence)
         except (ImageBootstrapContractError, RuntimeError, OSError, ValueError) as exc:
@@ -2730,6 +2777,19 @@ def _preflight_image_bootstrap_contracts(
             _fail(
                 f"image bootstrap contract {CONTRACT_VERSION} failed for "
                 f"{evidence.image}: {evidence.detail or evidence.state}"
+            )
+        if evidence.source == "ephemeral_capability_probe":
+            typer.echo(
+                json.dumps(
+                    {
+                        "apiVersion": "npa.image-bootstrap-progress/v1",
+                        "cleanup": evidence.cleanup,
+                        "digest": evidence.digest,
+                        "state": "compatible",
+                    },
+                    sort_keys=True,
+                ),
+                err=True,
             )
         results.append(evidence.to_dict())
     return results
@@ -6618,6 +6678,23 @@ def preflight_images_cmd(
     infra: str = typer.Option(
         "", "--infra", help="Exact k8s/<context> used for unattested image probes."
     ),
+    image_pull_secret: list[str] = typer.Option(
+        [],
+        "--image-pull-secret",
+        help=(
+            "Existing operator-managed Kubernetes dockerconfigjson Secret used by "
+            "bootstrap capability probes. Repeat for multiple Secrets."
+        ),
+    ),
+    image_bootstrap_timeout_seconds: int = typer.Option(
+        1800,
+        "--image-bootstrap-timeout-seconds",
+        min=0,
+        help=(
+            "Seconds to observe each digest-bound capability probe; "
+            "0 waits without a deadline for large cold pulls."
+        ),
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit JSON report."),
 ) -> None:
     """Prove every image this spec pulls is pullable, with the run's own credentials.
@@ -6666,6 +6743,12 @@ def preflight_images_cmd(
     pull_secrets_by_image = plan_image_pull_secrets(
         spec, plan.steps, run_id=run_id, options=options
     )
+    if image_pull_secret:
+        explicit = tuple(dict.fromkeys(item.strip() for item in image_pull_secret if item.strip()))
+        pull_secrets_by_image = {
+            selected: tuple(dict.fromkeys((*pull_secrets_by_image.get(selected, ()), *explicit)))
+            for selected in images
+        }
     if not images:
         typer.echo("images: none pinned by this spec")
         return
@@ -6685,6 +6768,7 @@ def preflight_images_cmd(
             pull_checks=checks,
             context=context_from_infra(infra),
             pull_secrets_by_image=pull_secrets_by_image,
+            observation_timeout_seconds=image_bootstrap_timeout_seconds,
         )
     if json_output:
         typer.echo(

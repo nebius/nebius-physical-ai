@@ -547,10 +547,7 @@ def up_cmd(
             ),
             filesystem_csi_chart_repository=str(
                 _tfvar_value(
-                    tfvars,
-                    env,
-                    "filesystem_csi_chart_repository",
-                    "",
+                    tfvars, env, "filesystem_csi_chart_repository", ""
                 )
                 or ""
             ),
@@ -2653,7 +2650,19 @@ def _preflight_filestore_quota(
     existing_filestore = str(
         _tfvar_value(tfvars, env, "existing_filestore", "") or ""
     ).strip()
-    if not enable_filestore or existing_filestore:
+    if not enable_filestore and not existing_filestore:
+        return
+    chart_repository = str(
+        _tfvar_value(tfvars, env, "filesystem_csi_chart_repository", "") or ""
+    ).strip()
+    if not chart_repository:
+        raise typer.BadParameter(
+            "Shared filesystem CSI requires filesystem_csi_chart_repository when "
+            "enable_filestore or existing_filestore is set. Supply the operator-approved "
+            "Helm repository through terraform.tfvars or "
+            "TF_VAR_filesystem_csi_chart_repository before running apply."
+        )
+    if existing_filestore:
         return
     tenant_id = str(_tfvar_value(tfvars, env, "tenant_id", "") or "").strip()
     region = str(_tfvar_value(tfvars, env, "region", "") or "").strip()

@@ -22,7 +22,9 @@ CANONICAL_PUBLIC_REGISTRY = "ghcr.io/nebius/nebius-physical-ai"
 # A cold Workbench image pull can spend several minutes downloading and
 # extracting layers before the capability process starts. Keep this bounded,
 # but leave enough room for the real multi-GB images the preflight protects.
-PROBE_TIMEOUT_SECONDS = 900
+DEFAULT_PROBE_TIMEOUT_SECONDS = 1800
+# Backward-compatible import alias. New callers should use the explicit default name.
+PROBE_TIMEOUT_SECONDS = DEFAULT_PROBE_TIMEOUT_SECONDS
 _KUBERNETES_NAME_RE = re.compile(r"^[a-z0-9](?:[-a-z0-9.]*[a-z0-9])?$")
 
 
@@ -276,6 +278,7 @@ def probe_image_capabilities(
     context: str,
     kubeconfig: str = "",
     image_pull_secrets: tuple[str, ...] = (),
+    observation_timeout_seconds: int = DEFAULT_PROBE_TIMEOUT_SECONDS,
     runner: Runner = _run,
     terminal_observer: TerminalObserver = _observe_terminal_phase,
     nonce_factory: Callable[[], str] = lambda: secrets.token_hex(8),
@@ -283,6 +286,10 @@ def probe_image_capabilities(
     """Run and exactly clean one bounded capability pod for an unattested image."""
 
     immutable = immutable_image_reference(image, digest)
+    if observation_timeout_seconds < 0:
+        raise ImageBootstrapContractError(
+            "image bootstrap observation timeout must be zero or greater"
+        )
     if not str(context or "").strip():
         raise ImageBootstrapContractError("an exact Kubernetes context is required")
     pull_secret_names = tuple(
@@ -380,68 +387,27 @@ def probe_image_capabilities(
             detail="probe name collisions exhausted the bounded retry",
         )
 
-    identity, identity_error = _read_owned_probe_identity(
-        common=common,
-        name=name,
-        probe_id=probe_id,
-        immutable=immutable,
-        runner=runner,
-        env=env,
-    )
-    if identity is None:
-        return _probe_evidence(
-            immutable,
-            digest,
-            state="indeterminate",
-            cleanup="refused_identity_mismatch",
-            detail=identity_error,
-        )
-
     primary = ""
     observation_indeterminate = False
     interrupted: BaseException | None = None
-    try:
-        wait = terminal_observer(
-            [
-                *common,
-                "get",
-                "pod",
-                name,
-                "--watch",
-                f"--request-timeout={PROBE_TIMEOUT_SECONDS}s",
-                "-o",
-                'jsonpath={.status.phase}{"\\n"}',
-            ],
-            env,
-        )
-        terminal_phase = (wait.stdout or "").strip().splitlines()[-1:] or [""]
-        terminal_phase = terminal_phase[0]
-        if terminal_phase == "Failed":
-            primary = _probe_failure_diagnostic(
-                common=common, name=name, runner=runner, env=env
-            )
-        elif terminal_phase != "Succeeded":
-            observation_indeterminate = True
-            primary = (wait.stderr or wait.stdout).strip()
-            if not primary:
-                primary = "probe observation ended without a terminal pod phase"
-    except BaseException as exc:  # cleanup must run even on operator interruption
-        interrupted = exc
-        primary = f"probe wait interrupted: {type(exc).__name__}"
+    identity: str | None = None
+    identity_error = ""
+    identity_checked = False
+    cleanup = "failed"
+    cleanup_detail = "cleanup was not attempted"
 
-    current, current_error = _read_owned_probe_identity(
-        common=common,
-        name=name,
-        probe_id=probe_id,
-        immutable=immutable,
-        runner=runner,
-        env=env,
-        expected_uid=identity,
-    )
-    if current is None:
-        cleanup = "refused_identity_mismatch"
-        cleanup_detail = current_error
-    else:
+    def cleanup_owned_probe(expected_uid: str | None) -> tuple[str, str]:
+        current, current_error = _read_owned_probe_identity(
+            common=common,
+            name=name,
+            probe_id=probe_id,
+            immutable=immutable,
+            runner=runner,
+            env=env,
+            expected_uid=expected_uid,
+        )
+        if current is None:
+            return "refused_identity_mismatch", current_error
         try:
             delete = runner(
                 [
@@ -454,11 +420,71 @@ def probe_image_capabilities(
                 ],
                 env,
             )
-            cleanup = "verified" if delete.returncode == 0 else "failed"
-            cleanup_detail = (delete.stderr or delete.stdout).strip()
+            state = "verified" if delete.returncode == 0 else "failed"
+            return state, (delete.stderr or delete.stdout).strip()
         except (OSError, subprocess.SubprocessError) as exc:
-            cleanup = "failed"
-            cleanup_detail = f"{type(exc).__name__}: {exc}"
+            return "failed", f"{type(exc).__name__}: {exc}"
+
+    try:
+        identity, identity_error = _read_owned_probe_identity(
+            common=common,
+            name=name,
+            probe_id=probe_id,
+            immutable=immutable,
+            runner=runner,
+            env=env,
+        )
+        identity_checked = True
+        if identity is None:
+            primary = identity_error
+        else:
+            wait = terminal_observer(
+                [
+                    *common,
+                    "get",
+                    "pod",
+                    name,
+                    "--watch",
+                    f"--request-timeout={observation_timeout_seconds}s",
+                    "-o",
+                    'jsonpath={.status.phase}{"\\n"}',
+                ],
+                env,
+            )
+            terminal_phase = (wait.stdout or "").strip().splitlines()[-1:] or [""]
+            terminal_phase = terminal_phase[0]
+            if terminal_phase == "Failed":
+                primary = _probe_failure_diagnostic(
+                    common=common, name=name, runner=runner, env=env
+                )
+            elif terminal_phase != "Succeeded":
+                observation_indeterminate = True
+                primary = (wait.stderr or wait.stdout).strip()
+                if not primary:
+                    primary = "probe observation ended without a terminal pod phase"
+    except BaseException as exc:  # cleanup must run even on operator interruption
+        interrupted = exc
+        primary = f"probe lifecycle interrupted: {type(exc).__name__}"
+    finally:
+        if identity_checked and identity is None:
+            cleanup = "refused_identity_mismatch"
+            cleanup_detail = identity_error
+        else:
+            try:
+                cleanup, cleanup_detail = cleanup_owned_probe(identity)
+            except BaseException as cleanup_exc:
+                if interrupted is None:
+                    interrupted = cleanup_exc
+                try:
+                    # A one-shot signal may interrupt the ownership re-read itself.
+                    # Retry once so the exact owned pod still gets best-effort cleanup.
+                    cleanup, cleanup_detail = cleanup_owned_probe(identity)
+                except BaseException as retry_exc:
+                    cleanup = "failed"
+                    cleanup_detail = (
+                        f"cleanup interrupted twice: {type(cleanup_exc).__name__}, "
+                        f"{type(retry_exc).__name__}"
+                    )
     if interrupted is not None:
         if cleanup != "verified":
             note = f"probe cleanup={cleanup}: {cleanup_detail[:300]}"

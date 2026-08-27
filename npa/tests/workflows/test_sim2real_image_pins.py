@@ -78,6 +78,7 @@ def test_canonical_sim2real_workflow_requires_operator_pinned_images() -> None:
         "viewer_image",
     )
     assert config["require_baked_npa"] == "1"
+    assert config["baked_npa_import"] == "npa.workflows.sim2real.workflow_stage"
     assert all(config[name] == "" for name in image_inputs)
     resources = runbook["resources"]
     assert all(
@@ -329,6 +330,22 @@ def test_cosmos3_baked_runtime_survives_skypilot_pythonpath_scrubbing() -> None:
     ).read_text(encoding="utf-8")
     assert "NPA_BAKED_PYTHON=/opt/npa/venv/bin/python" in dockerfile
     assert "python -m pip uninstall -y npa" in dockerfile
+    assert "npa-exact-source.pth" in dockerfile
+    assert "env -u PYTHONPATH /opt/npa/venv/bin/python -c" in dockerfile
+    assert "from npa.workflows.sim2real.workflow_stage import main" in dockerfile
+
+
+def test_envgen_baked_runtime_survives_skypilot_pythonpath_scrubbing() -> None:
+    """EnvGen's exact source remains importable when Sky clears PYTHONPATH."""
+
+    dockerfile = (
+        Path(__file__).resolve().parents[2]
+        / "docker"
+        / "workbench"
+        / "sim2real-envgen"
+        / "Dockerfile"
+    ).read_text(encoding="utf-8")
+    assert "NPA_BAKED_PYTHON=/opt/npa/venv/bin/python" in dockerfile
     assert "npa-exact-source.pth" in dockerfile
     assert "env -u PYTHONPATH /opt/npa/venv/bin/python -c" in dockerfile
     assert "from npa.workflows.sim2real.workflow_stage import main" in dockerfile

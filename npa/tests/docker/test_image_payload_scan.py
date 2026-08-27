@@ -122,6 +122,39 @@ def test_leisaac_dockerfile_removes_parent_imageio_ffmpeg_payload() -> None:
     assert 'test ! -e /home/"${NPA_RUNTIME_USER}"/.cache' in dockerfile
 
 
+def test_shared_isaac_runtime_uses_system_ffmpeg_without_bundled_payload() -> None:
+    installer = (
+        REPO_ROOT
+        / "npa"
+        / "docker"
+        / "workbench"
+        / "common"
+        / "install_isaac_runtime_base.sh"
+    ).read_text(encoding="utf-8")
+
+    assert "  ffmpeg \\\n" in installer
+    assert "*/imageio_ffmpeg/binaries/ffmpeg*" in installer
+    assert "imageio_ffmpeg.get_ffmpeg_exe()" in installer
+    assert ' = "ffmpeg"' in installer
+
+
+def test_blackwell_envgen_chain_uses_system_ffmpeg_without_bundled_payload() -> None:
+    paths = (
+        REPO_ROOT / "npa" / "docker" / "workbench" / "base" / "cuda13-b300" / "Dockerfile",
+        REPO_ROOT / "npa" / "docker" / "workbench" / "genesis" / "Dockerfile.sm120",
+        REPO_ROOT / "npa" / "docker" / "workbench" / "sim2real-envgen" / "Dockerfile",
+    )
+    for path in paths:
+        dockerfile = path.read_text(encoding="utf-8")
+        assert "IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg" in dockerfile
+        assert "*/imageio_ffmpeg/binaries/ffmpeg*" in dockerfile
+        assert "get_ffmpeg_exe()" in dockerfile
+        assert '== "/usr/bin/ffmpeg"' in dockerfile
+    envgen = paths[-1].read_text(encoding="utf-8")
+    assert "python -m pip uninstall -y npa" in envgen
+    assert "pip install --no-deps -e /opt/npa" not in envgen
+
+
 def test_isaac_lab_dockerfile_excludes_bundled_imageio_ffmpeg_payload() -> None:
     dockerfile = (
         REPO_ROOT / "npa" / "docker" / "workbench" / "isaac-lab" / "Dockerfile"

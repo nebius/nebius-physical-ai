@@ -10,8 +10,10 @@ import pytest
 from npa.orchestration.skypilot.image_bootstrap_contract import (
     ATTESTATION_LABEL,
     CONTRACT_VERSION,
+    DEFAULT_PROBE_TIMEOUT_SECONDS,
     ImageBootstrapContractError,
     ImageContractEvidence,
+    PROBE_TIMEOUT_SECONDS,
     cache_key,
     immutable_image_reference,
     is_trusted_npa_image,
@@ -175,7 +177,42 @@ def test_probe_allows_cold_workbench_image_pull_to_finish() -> None:
     )
 
     assert evidence.ok
-    assert "--request-timeout=900s" in observed[0]
+    assert "--request-timeout=1800s" in observed[0]
+
+
+def test_probe_observation_timeout_is_configurable_and_zero_means_no_deadline() -> None:
+    observed: list[list[str]] = []
+
+    def observe(argv, _env):
+        observed.append(argv)
+        return subprocess.CompletedProcess(argv, 0, "Succeeded", "")
+
+    evidence = probe_image_capabilities(
+        image=IMAGE,
+        digest=DIGEST,
+        context="ctx-exact",
+        observation_timeout_seconds=0,
+        runner=_successful_runner([]),
+        terminal_observer=observe,
+        nonce_factory=lambda: "0" * 16,
+    )
+
+    assert evidence.ok
+    assert "--request-timeout=0s" in observed[0]
+
+
+def test_legacy_probe_timeout_constant_remains_a_compatibility_alias() -> None:
+    assert PROBE_TIMEOUT_SECONDS == DEFAULT_PROBE_TIMEOUT_SECONDS
+
+
+def test_probe_rejects_negative_observation_timeout_before_creation() -> None:
+    with pytest.raises(ImageBootstrapContractError, match="zero or greater"):
+        probe_image_capabilities(
+            image=IMAGE,
+            digest=DIGEST,
+            context="ctx-exact",
+            observation_timeout_seconds=-1,
+        )
 
 
 def test_probe_attaches_declared_image_pull_secrets() -> None:
@@ -516,3 +553,40 @@ def test_operator_interruption_preserves_primary_when_cleanup_fails() -> None:
     notes = getattr(caught.value, "__notes__", [])
     fallback = getattr(caught.value, "__npa_cleanup_note__", "")
     assert "cleanup denied" in " ".join([*notes, fallback])
+
+
+def test_interruption_during_cleanup_identity_read_retries_exact_cleanup() -> None:
+    calls: list[list[str]] = []
+    reads = 0
+
+    def runner(argv, _env):
+        nonlocal reads
+        calls.append(argv)
+        action = argv[3]
+        if action == "run":
+            return subprocess.CompletedProcess(argv, 0, "", "")
+        if action == "get":
+            reads += 1
+            if reads == 2:
+                raise KeyboardInterrupt
+            name = argv[5]
+            probe_id = name.rsplit("-", 1)[-1]
+            return subprocess.CompletedProcess(
+                argv, 0, _pod_payload(name, probe_id), ""
+            )
+        if action == "delete":
+            return subprocess.CompletedProcess(argv, 0, "", "")
+        raise AssertionError(argv)
+
+    with pytest.raises(KeyboardInterrupt):
+        probe_image_capabilities(
+            image=IMAGE,
+            digest=DIGEST,
+            context="ctx",
+            runner=runner,
+            terminal_observer=_terminal_observer(),
+            nonce_factory=lambda: "8" * 16,
+        )
+
+    assert reads == 3
+    assert len([argv for argv in calls if argv[3] == "delete"]) == 1

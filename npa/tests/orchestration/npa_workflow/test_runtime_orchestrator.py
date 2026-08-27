@@ -1872,6 +1872,58 @@ def test_resume_preserves_an_in_flight_job_that_actually_failed(tmp_path: Path) 
     assert submitter.calls == []
 
 
+def test_resume_explicitly_retries_an_in_flight_job_proven_terminal(
+    tmp_path: Path,
+) -> None:
+    spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
+    store = MemoryStore()
+    state = RuntimeRunState(workflow=spec.name, run_id="rt-adopt-failed-retry")
+    state.record_wave(
+        {
+            "key": "001|shards|shards:shard-a:-,shards:shard-b:-",
+            "status": "running",
+            "job_id": "77",
+            "job_name": "rt-adopt-failed-retry-01-shards",
+            "attempt": 1,
+        }
+    )
+    store.write_runtime_state(state)
+
+    options = RuntimeOptions(
+        poll_seconds=0,
+        max_wait_seconds=60,
+        resume=True,
+        retries=1,
+        retry_backoff_seconds=0,
+    )
+    submitter = FakeSubmitter()
+    executor = _executor(
+        spec,
+        run_id="rt-adopt-failed-retry",
+        submitter=submitter,
+        status_fn=FakeStatus(["FAILED"]),
+        options=options,
+        store=store,
+    )
+    report = run_workflow_runtime(
+        spec,
+        run_id="rt-adopt-failed-retry",
+        executor=executor,
+        options=options,
+    )
+
+    assert report.status == "succeeded"
+    assert [call["tasks"] for call in submitter.calls] == [
+        ["shard-a", "shard-b"],
+        ["shard-c"],
+        ["join"],
+    ]
+    assert submitter.calls[0]["job_name"].endswith("-a2")
+    retried = report.waves[0]
+    assert retried["attempt"] == 2
+    assert retried["status"] == "succeeded"
+
+
 def test_resume_relaunches_only_authoritatively_absent_transient_wave(
     tmp_path: Path,
 ) -> None:

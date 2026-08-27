@@ -20,6 +20,7 @@ config:
   workflow_preset: ""
   source_sha: ""
   require_baked_npa: "1"
+  baked_npa_import: npa.workflows.sim2real.workflow_stage
   bucket: example-bucket
   prefix: "sim2real/{{run.id}}"
   root_uri: "s3://{{config.bucket}}/{{config.prefix}}"

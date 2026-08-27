@@ -2530,6 +2530,32 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{run.id}}",
         ],
     ),
+    "workbench.cosmos3.ray_batch": ToolEntry(
+        name="workbench.cosmos3.ray_batch",
+        description=(
+            "Submit a durable SDG batch to a persistent Cosmos Framework native "
+            "Ray Serve endpoint and publish inputs, structured outputs, media, "
+            "integrity hashes, and provenance through S3."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "cosmos3",
+            "ray-batch",
+            "--input-path",
+            "{{config.input_uri}}",
+            "--output-path",
+            "{{config.output_uri}}",
+            "--endpoint",
+            "{{config.ray_endpoint}}",
+            "--token-env",
+            "{{config.ray_token_env}}",
+            "--timeout",
+            "{{config.request_timeout}}",
+            "--run-id",
+            "{{run.id}}",
+        ],
+    ),
     "workbench.cosmos3.prepare_video_input": ToolEntry(
         name="workbench.cosmos3.prepare_video_input",
         description=(

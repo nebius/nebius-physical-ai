@@ -899,6 +899,35 @@ def test_preflight_images_accepts_the_same_config_vars_as_submit(mocker) -> None
     assert set(checked_images) == {digest_image}
 
 
+def test_preflight_images_adds_explicit_pull_secret_to_every_image(mocker) -> None:
+    digest_image = f"cr.example.invalid/npa@sha256:{'a' * 64}"
+    mocker.patch(
+        "npa.orchestration.skypilot.registry_preflight.check_image_pulls_with_credentials",
+        return_value=[],
+    )
+    contracts = mocker.patch(
+        "npa.cli.workbench.workflow._preflight_image_bootstrap_contracts",
+        return_value=[],
+    )
+    args = [
+        "workbench", "workflow", "preflight-images", str(SIM2REAL_SPEC),
+        "--assume-decision", "promote_checkpoint",
+        "--image-pull-secret", "operator-registry",
+    ]
+    for name in (
+        "controller_image", "transfer_image", "envgen_image",
+        "reason_image", "isaac_image", "viewer_image",
+    ):
+        args.extend(["--var", f"{name}={digest_image}"])
+
+    result = runner.invoke(app, args)
+
+    assert result.exit_code == 0, result.output
+    assert contracts.call_args.kwargs["pull_secrets_by_image"] == {
+        digest_image: ("operator-registry",)
+    }
+
+
 def test_image_none_automatically_plans_npa_source_staging() -> None:
     """`--image none` uses the automatic documented source-staging path."""
     result = _submit("--image", "none")

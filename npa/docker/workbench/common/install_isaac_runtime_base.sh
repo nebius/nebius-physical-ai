@@ -77,6 +77,7 @@ apt-get update
 apt-get install -y --no-install-recommends \
   ca-certificates \
   curl \
+  ffmpeg \
   git \
   git-lfs \
   libegl1 \
@@ -171,6 +172,14 @@ log "OSS dependency closure for Isaac Sim / Isaac Lab"
 "$ISAAC_VENV/bin/python" -m pip install --no-cache-dir \
   --no-deps \
   -r "${COMMON_DIR}/isaac-oss-deps.txt"
+# PyPI's imageio-ffmpeg wheel bundles a separately licensed static executable.
+# Keep the BSD-2-Clause Python wrapper, use Ubuntu's dynamically packaged
+# ffmpeg, and fail the build if the bundled payload or system fallback drifts.
+find "$ISAAC_VENV" -type f -path '*/imageio_ffmpeg/binaries/ffmpeg*' -delete
+test "$(PATH=/usr/bin:/bin "$ISAAC_VENV/bin/python" -c \
+  'import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_exe())')" = "ffmpeg"
+test -z "$(find "$ISAAC_VENV" -type f \
+  -path '*/imageio_ffmpeg/binaries/ffmpeg*' -print -quit)"
 # wheel is a build tool, not part of the runtime. Removing it resolves the
 # otherwise impossible wheel>=24 / Isaac-Lab<24 packaging constraint without
 # weakening Isaac Lab's declared runtime contract.

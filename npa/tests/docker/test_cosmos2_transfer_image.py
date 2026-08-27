@@ -140,6 +140,10 @@ def test_lfs_media_models_and_build_credentials_are_excluded() -> None:
     assert (
         "NPA_BAKED_PYTHON=/opt/cosmos/cosmos-transfer2.5/.venv/bin/python" in text
     )
+    assert "IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg" in text
+    assert "*/imageio_ffmpeg/binaries/ffmpeg*" in text
+    assert "imageio_ffmpeg.get_ffmpeg_exe()" in text
+    assert '== "/usr/bin/ffmpeg"' in text
     assert "ln -sfn /opt/npa/src/npa" in text
     assert 'env -u PYTHONPATH "${NPA_BAKED_PYTHON}" -c' in text
     assert "no build backend or package index is consulted" in text

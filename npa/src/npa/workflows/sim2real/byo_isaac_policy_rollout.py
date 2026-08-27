@@ -298,6 +298,7 @@ def upload_and_exit(rollouts, note, applied=None):
             "capture": {"width": CAPTURE_WIDTH, "height": CAPTURE_HEIGHT,
                         "rollout_stride": CAPTURE_STRIDE,
                         "decision_points": STEPS, "horizon_steps": HORIZON_STEPS,
+                        "sample_steps": SAMPLE_STEPS,
                         "png_compress_level": PNG_COMPRESS_LEVEL, "fps": CAPTURE_FPS}}
     json.dump(meta, open("/tmp/rollwork/rollouts.json", "w"))
     print("ROLLOUT_WROTE", note, "rollouts", len(rollouts), flush=True)
@@ -894,24 +895,33 @@ def _env(name: str, default: str = "") -> str:
     return os.environ.get(name, default).strip()
 
 
-def _expected_camera_frame_count(capture: dict[str, object]) -> int:
-    """Return the decision-synchronized camera count for one rollout.
+def _expected_camera_frame_count(capture: dict[str, Any]) -> int:
+    """Return frames emitted by sampled decisions plus the terminal horizon.
 
-    The Isaac job invokes ``capture`` only at policy decision points and once
-    more for the terminal state.  Physics horizon/stride metadata describes
-    simulator stepping, not additional camera calls.
+    The Isaac loop advances every simulation step but captures only at the evenly
+    spaced decision points, subject to the capture stride, and once more at the
+    terminal horizon. Counting every simulation step made reduced live proofs demand
+    301 frames after correctly producing eight decision frames plus the terminal one.
     """
 
-    decision_points = int(capture.get("decision_points") or 0)
-    if decision_points > 0:
-        return decision_points + 1
     horizon_steps = int(capture.get("horizon_steps") or 0)
+    decision_points = int(capture.get("decision_points") or 0)
     capture_stride = max(1, int(capture.get("rollout_stride") or 1))
-    return (
-        len(range(0, horizon_steps, capture_stride)) + 1
-        if horizon_steps > 0
-        else 0
-    )
+    if horizon_steps <= 0 or decision_points <= 0:
+        return 0
+    declared = capture.get("sample_steps")
+    if isinstance(declared, list) and declared:
+        sample_steps = [int(step) for step in declared]
+    elif decision_points == 1:
+        sample_steps = [0]
+    else:
+        sample_steps = [
+            (index * (horizon_steps - 1)) // (decision_points - 1)
+            for index in range(decision_points)
+        ]
+    captured = {step for step in sample_steps if step % capture_stride == 0}
+    captured.add(horizon_steps)
+    return len(captured)
 
 
 def materialize_rollout_dirs(

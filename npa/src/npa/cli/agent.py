@@ -10230,6 +10230,11 @@ def fresh_setup_cmd(
     tf_var: list[str] = typer.Option(
         [], "--tf-var", help="Additional Terraform var key=value."
     ),
+    agent_only: bool = typer.Option(
+        False,
+        "--agent-only",
+        help="Provision the fresh agent VM without reserving capacity for a follow-on cluster.",
+    ),
     agent_port: int = typer.Option(
         DEFAULT_AGENT_PORT, "--agent-port", help="Public agent UI port."
     ),
@@ -10299,6 +10304,7 @@ def fresh_setup_cmd(
         ssh_user=ssh_user,
         ssh_public_key_path=ssh_public_key_path,
         tf_var=tf_var,
+        agent_only=agent_only,
         agent_port=agent_port,
         backend_port=backend_port,
         rerun_port=rerun_port,

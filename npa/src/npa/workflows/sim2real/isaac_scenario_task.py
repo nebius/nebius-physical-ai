@@ -213,6 +213,25 @@ def scenario_contract_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def scenario_assignment_indices(
+    *, count: int, row_count: int, cursor: int = 0, offset: int = 0
+) -> list[int]:
+    """Return a deterministic round-robin window over curated scenarios.
+
+    Reset callbacks can contain only a subset of vector environments.  Advancing
+    each environment independently can therefore revisit already-seen records
+    before the tail of the curated split is ever assigned.  A single monotonic
+    cursor guarantees complete coverage after ``row_count`` assignments while
+    retaining deterministic wraparound and an operator-selected offset.
+    """
+
+    if count < 0:
+        raise ValueError("scenario assignment count must be non-negative")
+    if row_count <= 0:
+        raise ValueError("scenario assignment requires at least one row")
+    return [int((cursor + offset + index) % row_count) for index in range(count)]
+
+
 def _ensure_runtime_buffers(env: Any, rows: list[dict[str, Any]]) -> None:
     import torch
 
@@ -224,6 +243,7 @@ def _ensure_runtime_buffers(env: Any, rows: list[dict[str, Any]]) -> None:
         env.npa_scenario_applied_counts = torch.zeros(
             len(rows), dtype=torch.long, device=env.device
         )
+        env.npa_scenario_assignment_cursor = 0
         env.npa_scenario_rows = rows
     if not hasattr(env, "npa_stable_placement_steps"):
         env.npa_stable_placement_steps = torch.zeros(
@@ -255,11 +275,18 @@ def _assign(env: Any, env_ids: Any, rows: list[dict[str, Any]]) -> Any:
     rotate = os.environ.get("NPA_SIM2REAL_SCENARIO_ROTATE_ON_RESET", "1") != "0"
     offset = int(os.environ.get("NPA_SIM2REAL_SCENARIO_OFFSET", "0") or 0)
     if rotate:
-        # A prime stride makes complete passes through non-prime split sizes while
-        # different vector env indices cover adjacent records in parallel.
-        scenario_ids = (
-            ids + offset + env.npa_scenario_episode_counts[ids] * 104729
-        ) % len(rows)
+        cursor = int(env.npa_scenario_assignment_cursor)
+        scenario_ids = torch.tensor(
+            scenario_assignment_indices(
+                count=int(ids.numel()),
+                row_count=len(rows),
+                cursor=cursor,
+                offset=offset,
+            ),
+            dtype=torch.long,
+            device=env.device,
+        )
+        env.npa_scenario_assignment_cursor = cursor + int(ids.numel())
         env.npa_scenario_episode_counts[ids] += 1
     else:
         scenario_ids = (ids + offset) % len(rows)

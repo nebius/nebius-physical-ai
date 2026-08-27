@@ -99,12 +99,6 @@ def test_camera_coverage_tracks_decision_points_plus_terminal_frame():
     ) == 33
 
 
-def test_camera_coverage_legacy_metadata_falls_back_to_horizon_stride():
-    assert pr._expected_camera_frame_count(
-        {"horizon_steps": 300, "rollout_stride": 10}
-    ) == 31
-
-
 def test_write_dryrun_rollouts_layout(tmp_path):
     dirs = pr.write_dryrun_rollouts(
         tmp_path, count=3, steps_per_rollout=4, checkpoint_uri=""
@@ -218,6 +212,26 @@ def test_build_isaac_rollout_job_manifest_shape():
         pr.ISAAC_ROLLOUT_SCRIPT
     )
     assert '"simulation_device": SIM_DEVICE' in pr.ISAAC_ROLLOUT_SCRIPT
+    assert '"sample_steps": SAMPLE_STEPS' in pr.ISAAC_ROLLOUT_SCRIPT
+
+
+def test_camera_coverage_counts_sampled_decisions_plus_terminal_frame():
+    capture = {
+        "decision_points": 8,
+        "horizon_steps": 300,
+        "rollout_stride": 1,
+    }
+    assert pr._expected_camera_frame_count(capture) == 9
+
+
+def test_camera_coverage_applies_stride_to_samples_but_always_keeps_terminal():
+    capture = {
+        "decision_points": 8,
+        "horizon_steps": 300,
+        "rollout_stride": 2,
+        "sample_steps": [0, 42, 85, 128, 170, 213, 256, 299],
+    }
+    assert pr._expected_camera_frame_count(capture) == 6
 
 
 def test_rollout_job_can_select_cpu_physics_without_releasing_gpu(

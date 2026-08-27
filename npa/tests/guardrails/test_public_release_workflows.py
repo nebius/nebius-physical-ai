@@ -79,11 +79,13 @@ def test_prepublication_gates_run_before_the_public_dev_push() -> None:
         "test_packaging_contract.py",
         "npa.guardrails.confidentiality",
         "gitleaks detect",
-        "Prove an existing destination package is public",
+        "Prove destination cannot expose unvalidated tagged bytes",
         "scan_image_omniverse_payload.py",
         "scan_image_ltx_payload.py",
         "scan_image_wan_payload.py",
+        "scan_image_cosmos3_ray_serve_payload.py",
         "test_ltx_runtime_bootstrap.py",
+        "test_cosmos3_ray_serve_image_contract.py",
         "scanners: vuln,secret,license",
         "format: spdx-json",
         "non-root runtime required",
@@ -91,8 +93,15 @@ def test_prepublication_gates_run_before_the_public_dev_push() -> None:
     ):
         assert required in text
         assert text.index(required) < push
-    assert "organisation policy and post-push anonymous verification apply" in text
+    assert "exact pushed-byte gates and post-push anonymous verification apply" in text
     assert "if matrix and head != sha" in text
+
+
+def test_public_image_workflow_preserves_large_image_security_scans() -> None:
+    text = PUBLISH.read_text(encoding="utf-8")
+    assert "docker buildx prune --all --force" in text
+    assert text.count("TMPDIR: /mnt/npa-trivy") == 2
+    assert "scanners: vuln,secret,license" in text
 
 
 def test_post_push_and_promotion_gates_are_digest_bound() -> None:
@@ -103,13 +112,24 @@ def test_post_push_and_promotion_gates_are_digest_bound() -> None:
         "subject-name: ${{ steps.push.outputs.repository }}",
         "Require both digest-bound attestation results",
         "crane digest",
-        "DOCKER_CONFIG=\"$anonymous_config\" crane manifest",
+        'DOCKER_CONFIG="$anonymous_config" crane manifest',
         "--development-sha",
         "--mode preflight",
         "--mode publish",
         "Retained immutable dev tags as release provenance",
     ):
         assert required in text
+    visibility = text.index('gh api --method PATCH "$package_api" -f visibility=public')
+    anonymous = text.index('DOCKER_CONFIG="$anonymous_config" crane manifest')
+    pushed_scan = text.index(
+        "scan_image_cosmos3_ray_serve_payload.py", text.index("Verify pushed bytes")
+    )
+    assert pushed_scan < visibility < anonymous
+    prepush = text.index("Prove destination cannot expose unvalidated tagged bytes")
+    push = text.index("Push only after every pre-publication gate passes")
+    assert prepush < push
+    assert "Private destination contains tagged versions" in text[prepush:push]
+    assert "tagged_count" in text[prepush:push]
 
 
 def test_build_and_cleanup_dispatches_cannot_fall_through_to_promotion() -> None:

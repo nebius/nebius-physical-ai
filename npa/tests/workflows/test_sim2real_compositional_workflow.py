@@ -767,6 +767,21 @@ def test_baked_setup_executes_and_records_the_declared_interpreter(
     assert b"must be an absolute path" in failed.stderr
 
 
+def test_baked_setup_rejects_an_unsafe_import_module() -> None:
+    with pytest.raises(
+        NpaWorkflowError,
+        match="config.baked_npa_import must be a dotted Python module name",
+    ):
+        render_setup_for_tool(
+            "run.shell",
+            config={
+                "require_baked_npa": "1",
+                "baked_npa_import": "npa.cli.main; raise SystemExit(0)",
+            },
+            options=SkypilotRenderOptions(),
+        )
+
+
 def test_baked_raw_module_setup_probes_the_executed_module() -> None:
     setup = render_setup_for_tool(
         "",
@@ -821,10 +836,24 @@ def test_exact_source_and_per_state_immutable_images_reach_rendered_tasks() -> N
         )
         assert "NPA_BAKED_PYTHON" in task["setup"]
         assert "/tmp/npa-python" in task["setup"]
+        assert "/opt/npa/src" in task["setup"]
+        assert "/tmp/npa-baked-pythonpath" in task["setup"]
+        assert "/tmp/npa-baked-pythonpath" in task["run"]
         assert "baked NPA interpreter must be an absolute path" in task["setup"]
         assert "baked NPA interpreter is not executable" in task["setup"]
         assert "pip install" not in task["setup"]
         assert "NPA_SRC_S3_URI" not in task["envs"]
+        pod_containers = task["config"]["kubernetes"]["pod_config"]["spec"][
+            "containers"
+        ]
+        ray_node = next(
+            container for container in pod_containers if container["name"] == "ray-node"
+        )
+        bootstrap_env = {
+            item["name"]: item["value"] for item in ray_node.get("env", [])
+        }
+        assert bootstrap_env["XDG_CACHE_HOME"] == "/tmp/npa-skypilot-xdg-cache"
+        assert bootstrap_env["UV_CACHE_DIR"] == "/tmp/npa-skypilot-uv-cache"
 
     gpu_tasks = [task for task in tasks if task["resources"].get("accelerators")]
     assert gpu_tasks

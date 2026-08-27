@@ -92,9 +92,22 @@ def _migrate_legacy(
 ) -> None:
     legacy_fields = {
         key: deepcopy(document[key])
-        for key in ("storage", "storage_iam", "nebius")
+        for key in ("storage_iam", "nebius")
         if isinstance(document.get(key), Mapping) and document.get(key)
     }
+    storage = document.get("storage")
+    if isinstance(storage, Mapping) and any(
+        str(storage.get(key) or "").strip()
+        for key in (
+            "aws_access_key_id",
+            "aws_secret_access_key",
+            "aws_session_token",
+            "access_key_id",
+            "secret_access_key",
+            "session_token",
+        )
+    ):
+        legacy_fields["storage"] = deepcopy(storage)
     if not legacy_fields:
         return
     owner = _legacy_owner(document)
