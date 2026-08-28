@@ -36,6 +36,7 @@ TORCH_VERSION="${TORCH_VERSION:-2.9.0}"
 TORCHVISION_VERSION="${TORCHVISION_VERSION:-0.24.0}"
 TORCHAUDIO_VERSION="${TORCHAUDIO_VERSION:-2.9.0}"
 UBUNTU_SNAPSHOT="${NPA_UBUNTU_SNAPSHOT:-20260801T053000Z}"
+LINUX_LIBC_DEV_VERSION="${NPA_LINUX_LIBC_DEV_VERSION:-5.15.0-186.196}"
 PYTHON_VERSION="${NPA_ISAAC_PYTHON_VERSION:-3.11.15-1+jammy1}"
 DEADSNAKES_POOL="${NPA_DEADSNAKES_POOL:-https://ppa.launchpadcontent.net/deadsnakes/ppa/ubuntu/pool/main/p/python3.11}"
 # cu128 wheels carry sm_120 kernels, which RTX PRO 6000 Blackwell (compute capability
@@ -87,7 +88,7 @@ apt-get install -y --no-install-recommends \
   libx11-6 \
   libxext6 \
   libxrender1 \
-  linux-libc-dev=5.15.0-186.196 \
+  "linux-libc-dev=${LINUX_LIBC_DEV_VERSION}" \
   libxt6 `# MaterialX render libs dlopen libXt.so.6; without it Kit logs three
           # "Could not load the dynamic library ... libMaterialXRender*.so" errors` \
   vulkan-tools

@@ -628,7 +628,11 @@ def test_base_installer_upgrades_linux_headers_from_the_fixed_snapshot() -> None
 
     installer = BASE_INSTALLER.read_text(encoding="utf-8")
     assert 'UBUNTU_SNAPSHOT="${NPA_UBUNTU_SNAPSHOT:-20260801T053000Z}"' in installer
-    assert "linux-libc-dev=5.15.0-186.196" in installer
+    assert (
+        'LINUX_LIBC_DEV_VERSION="${NPA_LINUX_LIBC_DEV_VERSION:-5.15.0-186.196}"'
+        in installer
+    )
+    assert '"linux-libc-dev=${LINUX_LIBC_DEV_VERSION}"' in installer
 
 
 # --------------------------------------------------------------------------------------
