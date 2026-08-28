@@ -1284,6 +1284,7 @@ def _build_train_trajectory_export_script(
 import hashlib
 import importlib.metadata as metadata
 import json
+import math
 import time
 from pathlib import Path
 
@@ -1325,6 +1326,92 @@ def _robot(env):
         return None
 
 
+def _normalize(vector):
+    length = math.sqrt(sum(component * component for component in vector))
+    if length < 1e-9:
+        raise RuntimeError("cannot orient rollout camera from a zero-length vector")
+    return [component / length for component in vector]
+
+
+def _cross(left, right):
+    return [
+        left[1] * right[2] - left[2] * right[1],
+        left[2] * right[0] - left[0] * right[2],
+        left[0] * right[1] - left[1] * right[0],
+    ]
+
+
+def _look_at_quaternion(eye, target):
+    # Isaac Lab's ``world`` camera convention looks along +X with +Z up.
+    forward = _normalize([target[i] - eye[i] for i in range(3)])
+    world_up = [0.0, 0.0, 1.0]
+    dot_up = sum(world_up[i] * forward[i] for i in range(3))
+    up = [world_up[i] - dot_up * forward[i] for i in range(3)]
+    if math.sqrt(sum(component * component for component in up)) < 1e-6:
+        up = [1.0, 0.0, 0.0]
+        dot_up = sum(up[i] * forward[i] for i in range(3))
+        up = [up[i] - dot_up * forward[i] for i in range(3)]
+    up = _normalize(up)
+    left = _cross(up, forward)
+    matrix = [
+        [forward[0], left[0], up[0]],
+        [forward[1], left[1], up[1]],
+        [forward[2], left[2], up[2]],
+    ]
+    trace = matrix[0][0] + matrix[1][1] + matrix[2][2]
+    if trace > 0.0:
+        scale = math.sqrt(trace + 1.0) * 2.0
+        return (
+            0.25 * scale,
+            (matrix[2][1] - matrix[1][2]) / scale,
+            (matrix[0][2] - matrix[2][0]) / scale,
+            (matrix[1][0] - matrix[0][1]) / scale,
+        )
+    if matrix[0][0] > matrix[1][1] and matrix[0][0] > matrix[2][2]:
+        scale = math.sqrt(1.0 + matrix[0][0] - matrix[1][1] - matrix[2][2]) * 2.0
+        return (
+            (matrix[2][1] - matrix[1][2]) / scale,
+            0.25 * scale,
+            (matrix[0][1] + matrix[1][0]) / scale,
+            (matrix[0][2] + matrix[2][0]) / scale,
+        )
+    if matrix[1][1] > matrix[2][2]:
+        scale = math.sqrt(1.0 + matrix[1][1] - matrix[0][0] - matrix[2][2]) * 2.0
+        return (
+            (matrix[0][2] - matrix[2][0]) / scale,
+            (matrix[0][1] + matrix[1][0]) / scale,
+            0.25 * scale,
+            (matrix[1][2] + matrix[2][1]) / scale,
+        )
+    scale = math.sqrt(1.0 + matrix[2][2] - matrix[0][0] - matrix[1][1]) * 2.0
+    return (
+        (matrix[1][0] - matrix[0][1]) / scale,
+        (matrix[0][2] + matrix[2][0]) / scale,
+        (matrix[1][2] + matrix[2][1]) / scale,
+        0.25 * scale,
+    )
+
+
+def _rgb_frame(render_env):
+    camera = render_env.unwrapped.scene["npa_rollout_camera"]
+    output = getattr(getattr(camera, "data", None), "output", None)
+    if not output or "rgb" not in output:
+        raise RuntimeError("Isaac rollout camera produced no RGB sensor output")
+    frame = output["rgb"]
+    if hasattr(frame, "detach"):
+        frame = frame.detach()
+    if hasattr(frame, "cpu"):
+        frame = frame.cpu()
+    frame = np.asarray(frame)
+    if frame.ndim == 4:
+        frame = frame[0]
+    if frame.ndim != 3 or frame.shape[-1] not in (3, 4):
+        raise RuntimeError(f"Isaac rollout camera returned invalid shape {{frame.shape}}")
+    if frame.dtype != np.uint8:
+        frame = np.clip(frame, 0, 255).astype(np.uint8)
+    return np.ascontiguousarray(frame[..., :3])
+
+
 try:
     print(
         f"ISAAC_LAB_TRAJ_EXPORT_START task={{task}} episodes={{num_episodes}} "
@@ -1332,12 +1419,36 @@ try:
         flush=True,
     )
     env_cfg = parse_env_cfg(task, device=device, num_envs=1)
-    if capture_rgb and hasattr(env_cfg, "viewer"):
-        env_cfg.viewer.resolution = (rgb_width, rgb_height)
+    if capture_rgb:
+        import isaaclab.sim as sim_utils
+        from isaaclab.sensors import TiledCameraCfg
+
+        # A viewport render can be an all-black allocation in headless Kit even
+        # though it has the requested shape. A real RTX sensor in the task scene
+        # is updated by the same simulation step as policy/state telemetry.
+        camera_eye = (3.0, 3.0, 2.0)
+        camera_target = (0.0, 0.0, 0.8)
+        env_cfg.scene.npa_rollout_camera = TiledCameraCfg(
+            prim_path="{{ENV_REGEX_NS}}/NpaRolloutCamera",
+            offset=TiledCameraCfg.OffsetCfg(
+                pos=camera_eye,
+                rot=_look_at_quaternion(camera_eye, camera_target),
+                convention="world",
+            ),
+            data_types=["rgb"],
+            spawn=sim_utils.PinholeCameraCfg(
+                focal_length=24.0,
+                focus_distance=400.0,
+                horizontal_aperture=20.955,
+                clipping_range=(0.1, 20.0),
+            ),
+            width=rgb_width,
+            height=rgb_height,
+            update_period=0.0,
+        )
     render_env = gym.make(
         task,
         cfg=env_cfg,
-        render_mode="rgb_array" if capture_rgb else None,
     )
     env = render_env
 
@@ -1415,6 +1526,8 @@ try:
 
     total_frames = 0
     total_rgb_frames = 0
+    total_rgb_content_frames = 0
+    total_rgb_motion_pairs = 0
     episode_lengths = []
     action_dim = None
     rgb_dimensions = None
@@ -1425,28 +1538,21 @@ try:
         actions_out = []
         rgb_frames = []
         for step in range(steps_per_episode):
+            actions = _act(obs)
+            actions_np = _to_numpy(actions)
+            action_values = actions_np[0] if actions_np.ndim > 1 else actions_np
+            action_dim = int(action_values.shape[-1])
+
+            obs, _rewards, done, _info = _step_env(env, actions)
             robot = _robot(env)
             if robot is not None and joint_names:
                 state_values = _to_numpy(robot.data.joint_pos)[0]
             else:
                 obs_np = _to_numpy(obs)
                 state_values = obs_np[0] if obs_np.ndim > 1 else obs_np
-            actions = _act(obs)
-            actions_np = _to_numpy(actions)
-            action_values = actions_np[0] if actions_np.ndim > 1 else actions_np
-            action_dim = int(action_values.shape[-1])
 
             if capture_rgb:
-                frame = np.asarray(render_env.render())
-                if frame.ndim != 3 or frame.shape[-1] not in (3, 4):
-                    raise RuntimeError(
-                        f"Isaac RGB render returned invalid shape {{frame.shape}}"
-                    )
-                if frame.dtype != np.uint8:
-                    raise RuntimeError(
-                        f"Isaac RGB render returned {{frame.dtype}}, expected uint8"
-                    )
-                frame = np.ascontiguousarray(frame[..., :3])
+                frame = _rgb_frame(render_env)
                 dimensions = tuple(int(value) for value in frame.shape)
                 if rgb_dimensions is None:
                     rgb_dimensions = dimensions
@@ -1458,8 +1564,6 @@ try:
 
             states.append(np.asarray(state_values, dtype=np.float32))
             actions_out.append(np.asarray(action_values, dtype=np.float32))
-
-            obs, _rewards, done, _info = _step_env(env, actions)
             if done:
                 break
 
@@ -1475,8 +1579,30 @@ try:
                     f"episode {{episode_index}} RGB/state length mismatch "
                     f"{{len(rgb_frames)}} != {{len(states)}}"
                 )
-            np.save(episode_dir / "rgb.npy", np.stack(rgb_frames))
+            rgb_array = np.stack(rgb_frames)
+            dynamic_ranges = np.ptp(rgb_array.astype(np.int16), axis=(1, 2, 3))
+            content_frames = int(np.count_nonzero(dynamic_ranges >= 8))
+            minimum_content_frames = max(1, math.ceil(len(rgb_frames) * 0.9))
+            if content_frames < minimum_content_frames:
+                raise RuntimeError(
+                    f"episode {{episode_index}} RGB content validation failed: "
+                    f"{{content_frames}}/{{len(rgb_frames)}} non-uniform frames"
+                )
+            motion_pairs = 0
+            if len(rgb_frames) > 1:
+                changes = np.mean(
+                    np.abs(np.diff(rgb_array.astype(np.int16), axis=0)),
+                    axis=(1, 2, 3),
+                )
+                motion_pairs = int(np.count_nonzero(changes >= 0.01))
+                if motion_pairs == 0:
+                    raise RuntimeError(
+                        f"episode {{episode_index}} RGB motion validation failed"
+                    )
+            np.save(episode_dir / "rgb.npy", rgb_array)
             total_rgb_frames += len(rgb_frames)
+            total_rgb_content_frames += content_frames
+            total_rgb_motion_pairs += motion_pairs
         (episode_dir / "episode_meta.json").write_text(json.dumps({{
             "episode_index": episode_index,
             "length": len(states),
@@ -1518,10 +1644,17 @@ try:
         "total_frames": total_frames,
         "rgb_enabled": capture_rgb,
         "rgb_frame_count": total_rgb_frames,
+        "rgb_content_frame_count": total_rgb_content_frames,
+        "rgb_motion_pair_count": total_rgb_motion_pairs,
         "rgb_dimensions": list(rgb_dimensions or ()),
         "rgb_feature_key": "observation.images.workspace",
-        "renderer": "isaac_sim_rgb_array",
-        "genuine_simulator_pixels": capture_rgb and total_rgb_frames == total_frames,
+        "renderer": "isaac_sim_tiled_camera_rtx",
+        "genuine_simulator_pixels": (
+            capture_rgb
+            and total_rgb_frames == total_frames
+            and total_rgb_content_frames >= math.ceil(total_frames * 0.9)
+            and total_rgb_motion_pairs > 0
+        ),
         "timeline": "episode_index/frame_index/timestamp",
         "created_unix": round(time.time(), 3),
         "duration_seconds": round(time.time() - started, 3),

@@ -1761,9 +1761,18 @@ def test_isaac_lab_train_export_trajectories_runs_second_remote_script(mocker) -
     assert "ISAAC_LAB_TRAJ_EXPORT_FAILED" in traj_cmd
     assert "capture_rgb = True" in traj_cmd
     assert "enable_cameras=capture_rgb" in traj_cmd
-    assert 'render_mode="rgb_array" if capture_rgb else None' in traj_cmd
+    assert "TiledCameraCfg(" in traj_cmd
+    assert 'prim_path="{ENV_REGEX_NS}/NpaRolloutCamera"' in traj_cmd
+    assert 'camera = render_env.unwrapped.scene["npa_rollout_camera"]' in traj_cmd
+    assert traj_cmd.index("obs, _rewards, done, _info = _step_env") < traj_cmd.index(
+        "frame = _rgb_frame(render_env)"
+    )
     assert 'np.save(episode_dir / "rgb.npy"' in traj_cmd
-    assert '"renderer": "isaac_sim_rgb_array"' in traj_cmd
+    assert "RGB content validation failed" in traj_cmd
+    assert "RGB motion validation failed" in traj_cmd
+    assert '"renderer": "isaac_sim_tiled_camera_rtx"' in traj_cmd
+    assert '"rgb_content_frame_count": total_rgb_content_frames' in traj_cmd
+    assert '"rgb_motion_pair_count": total_rgb_motion_pairs' in traj_cmd
     assert '"checkpoint_sha256": hashlib.sha256' in traj_cmd
     payload = json.loads(result.output)
     assert payload["trajectory_export"] == "success"
