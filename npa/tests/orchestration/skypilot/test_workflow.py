@@ -927,17 +927,17 @@ def test_controller_cwd_probe_rejects_deleted_working_directory() -> None:
         "--output",
         "json",
     ]
-    assert calls[1][-3:] == [
-        "/bin/sh",
-        "-c",
-        "pwd -P >/dev/null && test -d /proc/1/cwd",
-    ]
+    assert calls[1][-3:-1] == ["/bin/sh", "-c"]
+    probe = calls[1][-1]
+    assert "cd /proc/1/cwd" in probe
+    assert 'cat "$proc/comm"' in probe
+    assert "= sshd" in probe
+    assert 'cd "$proc/cwd"' in probe
+    assert '[ "$found" -eq 1 ]' in probe
 
 
 def test_controller_up_is_rejected_when_execution_probe_fails(monkeypatch) -> None:
-    monkeypatch.setattr(
-        workflow_module.subprocess, "run", _controller_status_run("UP")
-    )
+    monkeypatch.setattr(workflow_module.subprocess, "run", _controller_status_run("UP"))
 
     with pytest.raises(SkyPilotSubmitError) as caught:
         workflow_module._wait_for_healthy_jobs_controller(

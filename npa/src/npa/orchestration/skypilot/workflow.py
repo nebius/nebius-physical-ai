@@ -314,9 +314,7 @@ def submit_workflow(
         # The task YAML can carry registry/docker auth + S3 creds; keep it owner-only.
         _chmod_owner_only(prepared_yaml)
         sky_executable = str(ensure_skypilot_version(runtime_config.sky_bin))
-        controller_context = _controller_region_from_infra(
-            infra, controller_backend
-        )
+        controller_context = _controller_region_from_infra(infra, controller_backend)
         global_config = apply_controller_override(
             _load_base_config(runtime_config.global_config_path),
             controller_backend=controller_backend,
@@ -1249,7 +1247,9 @@ def _probe_kubernetes_controller_cwd(
         )
     if not executable:
         return ControllerExecutionProbe(
-            False, "kubectl_missing", error="kubectl is required for controller cwd health"
+            False,
+            "kubectl_missing",
+            error="kubectl is required for controller cwd health",
         )
     selector = f"skypilot-cluster-name={controller_name}"
     try:
@@ -1296,10 +1296,13 @@ def _probe_kubernetes_controller_cwd(
         if not isinstance(pod, dict):
             continue
         metadata = pod.get("metadata") if isinstance(pod.get("metadata"), dict) else {}
-        labels = metadata.get("labels") if isinstance(metadata.get("labels"), dict) else {}
-        if labels.get("ray-node-type") == "head" or labels.get(
-            "skypilot-head-node"
-        ) == "1":
+        labels = (
+            metadata.get("labels") if isinstance(metadata.get("labels"), dict) else {}
+        )
+        if (
+            labels.get("ray-node-type") == "head"
+            or labels.get("skypilot-head-node") == "1"
+        ):
             heads.append(pod)
     if len(heads) != 1:
         return ControllerExecutionProbe(
@@ -1311,7 +1314,9 @@ def _probe_kubernetes_controller_cwd(
     head = heads[0]
     metadata = head.get("metadata") if isinstance(head.get("metadata"), dict) else {}
     status = head.get("status") if isinstance(head.get("status"), dict) else {}
-    conditions = status.get("conditions") if isinstance(status.get("conditions"), list) else []
+    conditions = (
+        status.get("conditions") if isinstance(status.get("conditions"), list) else []
+    )
     ready = any(
         isinstance(condition, dict)
         and condition.get("type") == "Ready"
@@ -1344,7 +1349,20 @@ def _probe_kubernetes_controller_cwd(
                 "--",
                 "/bin/sh",
                 "-c",
-                "pwd -P >/dev/null && test -d /proc/1/cwd",
+                (
+                    "set -eu; "
+                    "pwd -P >/dev/null; "
+                    "(cd /proc/1/cwd && pwd -P >/dev/null); "
+                    "found=0; "
+                    "for proc in /proc/[0-9]*; do "
+                    '[ "$(cat "$proc/comm" 2>/dev/null || true)" = sshd ] '
+                    "|| continue; "
+                    '[ -L "$proc/cwd" ] || continue; '
+                    "found=1; "
+                    '(cd "$proc/cwd" && pwd -P >/dev/null) || exit 1; '
+                    "done; "
+                    '[ "$found" -eq 1 ]'
+                ),
             ],
             env=dict(env),
             text=True,
@@ -1510,9 +1528,7 @@ def _wait_for_healthy_jobs_controller(
         time.sleep(max(interval, 0.1))
 
 
-_CONTROLLER_NAME_RE = re.compile(
-    r"\bsky-jobs-controller-[A-Za-z0-9][A-Za-z0-9-]*\b"
-)
+_CONTROLLER_NAME_RE = re.compile(r"\bsky-jobs-controller-[A-Za-z0-9][A-Za-z0-9-]*\b")
 
 
 def _can_ignore_foreign_controller_refresh(
