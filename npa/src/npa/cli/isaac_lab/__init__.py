@@ -1073,6 +1073,7 @@ def _build_export_lerobot_script(
     state_names_json = json.dumps(G1_STATE_NAMES_43)
     return f"""\
 import json
+import importlib.metadata as metadata
 import time
 from pathlib import Path
 
@@ -1329,9 +1330,15 @@ try:
     policy_loaded = False
     try:
         try:
-            from isaaclab_rl.rsl_rl import RslRlVecEnvWrapper
+            from isaaclab_rl.rsl_rl import (
+                RslRlVecEnvWrapper,
+                handle_deprecated_rsl_rl_cfg,
+            )
         except Exception:
-            from omni.isaac.lab_rl.rsl_rl import RslRlVecEnvWrapper
+            from omni.isaac.lab_rl.rsl_rl import (
+                RslRlVecEnvWrapper,
+                handle_deprecated_rsl_rl_cfg,
+            )
         from rsl_rl.runners import OnPolicyRunner
         agent_cfg = None
         config_errors = []
@@ -1346,6 +1353,9 @@ try:
             raise RuntimeError(
                 "could not load rsl_rl_cfg_entry_point: " + "; ".join(config_errors)
             )
+        agent_cfg = handle_deprecated_rsl_rl_cfg(
+            agent_cfg, metadata.version("rsl-rl-lib")
+        )
         acfg = agent_cfg.to_dict() if hasattr(agent_cfg, "to_dict") else dict(agent_cfg)
         clip_actions = (
             getattr(agent_cfg, "clip_actions", None)
