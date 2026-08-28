@@ -231,7 +231,10 @@ def _probe_local_api_daemon_cwd(
     """
 
     expected_uid = os.getuid() if uid is None else uid
-    sky_bin_dir = Path(sky_executable).expanduser().resolve().parent
+    # Keep the venv path lexical here: ``bin/python`` is commonly a symlink to
+    # the system interpreter, while ``bin/sky`` is a script. Resolving both
+    # would put them in different parent directories and miss the real daemon.
+    sky_bin_dir = Path(sky_executable).expanduser().absolute().parent
     records: dict[int, tuple[int, tuple[str, ...], Path]] = {}
     try:
         candidates = tuple(proc_root.iterdir())
@@ -276,7 +279,7 @@ def _probe_local_api_daemon_cwd(
         pid
         for pid, (_ppid, cmdline, _process) in records.items()
         if cmdline
-        and Path(cmdline[0]).expanduser().resolve().parent == sky_bin_dir
+        and Path(cmdline[0]).expanduser().absolute().parent == sky_bin_dir
         and "-m" in cmdline
         and "sky.server.server" in cmdline
     }

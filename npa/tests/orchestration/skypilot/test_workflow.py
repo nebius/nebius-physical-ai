@@ -301,6 +301,35 @@ def test_local_api_daemon_probe_accepts_durable_process_tree(tmp_path) -> None:
     assert result.process_count == 2
 
 
+def test_local_api_daemon_probe_keeps_venv_python_symlink_lexical(tmp_path) -> None:
+    proc_root = tmp_path / "proc"
+    bin_dir = tmp_path / "venv" / "bin"
+    bin_dir.mkdir(parents=True)
+    system_python = tmp_path / "system" / "python"
+    system_python.parent.mkdir()
+    system_python.touch()
+    python = bin_dir / "python"
+    python.symlink_to(system_python)
+    sky = bin_dir / "sky"
+    sky.touch()
+    missing = tmp_path / "deleted"
+    _fake_proc_process(
+        proc_root,
+        pid=100,
+        ppid=1,
+        uid=1234,
+        cmdline=(str(python), "-m", "sky.server.server"),
+        cwd=missing,
+    )
+
+    result = workflow_module._probe_local_api_daemon_cwd(
+        str(sky), proc_root=proc_root, uid=1234
+    )
+
+    assert result.healthy is False
+    assert result.outcome == "cwd_deleted"
+
+
 def test_deleted_api_daemon_is_restarted_from_durable_cwd() -> None:
     probes = iter(
         (
