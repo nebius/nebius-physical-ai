@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import hashlib
 import shutil
@@ -197,6 +198,206 @@ class SkyPilotSubmitError(RuntimeError):
         self.transaction = transaction
 
 
+@dataclass(frozen=True)
+class ApiDaemonCwdProbe:
+    """Process-level health of the local SkyPilot API server tree."""
+
+    healthy: bool
+    outcome: str
+    process_count: int = 0
+    error: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "healthy": self.healthy,
+            "outcome": self.outcome,
+            "process_count": self.process_count,
+            "error": redact_text(self.error)[:1000],
+        }
+
+
+def _probe_local_api_daemon_cwd(
+    sky_executable: str,
+    *,
+    proc_root: Path = Path("/proc"),
+    uid: int | None = None,
+) -> ApiDaemonCwdProbe:
+    """Inspect the actual local API daemon and descendants through procfs.
+
+    ``sky api status`` starts a fresh client shell and cannot reveal that an
+    already-running server or executor inherited a directory which was later
+    deleted.  Those executor processes perform controller provisioning and
+    rsync, so every cwd in the local server process tree must remain resolvable.
+    """
+
+    expected_uid = os.getuid() if uid is None else uid
+    sky_bin_dir = Path(sky_executable).expanduser().resolve().parent
+    records: dict[int, tuple[int, tuple[str, ...], Path]] = {}
+    try:
+        candidates = tuple(proc_root.iterdir())
+    except OSError as exc:
+        return ApiDaemonCwdProbe(
+            False, "procfs_unavailable", error=redact_text(str(exc))
+        )
+    for candidate in candidates:
+        if not candidate.name.isdigit():
+            continue
+        try:
+            raw_cmdline = (candidate / "cmdline").read_bytes()
+            cmdline = tuple(
+                item.decode(errors="replace")
+                for item in raw_cmdline.split(b"\0")
+                if item
+            )
+            status = (candidate / "status").read_text(
+                encoding="utf-8", errors="replace"
+            )
+            status_fields = {
+                line.split(":", 1)[0]: line.split(":", 1)[1].strip()
+                for line in status.splitlines()
+                if ":" in line
+            }
+            process_uid = int(status_fields.get("Uid", "-1").split()[0])
+            if process_uid != expected_uid:
+                continue
+            ppid = int(status_fields.get("PPid", "-1").split()[0])
+        except (FileNotFoundError, ProcessLookupError):
+            continue
+        except (OSError, ValueError) as exc:
+            return ApiDaemonCwdProbe(
+                False,
+                "process_inspection_failed",
+                process_count=len(records),
+                error=redact_text(str(exc)),
+            )
+        records[int(candidate.name)] = (ppid, cmdline, candidate)
+
+    roots = {
+        pid
+        for pid, (_ppid, cmdline, _process) in records.items()
+        if cmdline
+        and Path(cmdline[0]).expanduser().resolve().parent == sky_bin_dir
+        and "-m" in cmdline
+        and "sky.server.server" in cmdline
+    }
+    if not roots:
+        return ApiDaemonCwdProbe(True, "absent")
+
+    process_tree = set(roots)
+    changed = True
+    while changed:
+        changed = False
+        for pid, (ppid, _cmdline, _process) in records.items():
+            if ppid in process_tree and pid not in process_tree:
+                process_tree.add(pid)
+                changed = True
+
+    unusable = []
+    for pid in process_tree:
+        try:
+            cwd = os.readlink(records[pid][2] / "cwd")
+        except (FileNotFoundError, ProcessLookupError):
+            continue
+        except OSError as exc:
+            return ApiDaemonCwdProbe(
+                False,
+                "process_inspection_failed",
+                process_count=len(process_tree),
+                error=redact_text(str(exc)),
+            )
+        if cwd.endswith(" (deleted)") or not Path(cwd).is_dir():
+            unusable.append(pid)
+    if unusable:
+        return ApiDaemonCwdProbe(
+            False,
+            "cwd_deleted",
+            process_count=len(process_tree),
+            error=(
+                f"{len(unusable)} of {len(process_tree)} local SkyPilot API "
+                "server processes have an unresolvable working directory"
+            ),
+        )
+    return ApiDaemonCwdProbe(True, "cwd_live", process_count=len(process_tree))
+
+
+def _ensure_local_api_daemon_cwd(
+    sky_executable: str,
+    *,
+    env: Mapping[str, str],
+    cwd: str,
+    runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+    probe: Callable[[], ApiDaemonCwdProbe] | None = None,
+    sleeper: Callable[[float], None] = time.sleep,
+    attempts: int = 20,
+) -> ApiDaemonCwdProbe:
+    """Restart a poisoned local API daemon from NPA's durable cwd."""
+
+    inspect = probe or (lambda: _probe_local_api_daemon_cwd(sky_executable))
+    before = inspect()
+    if before.healthy:
+        return before
+    if before.outcome != "cwd_deleted":
+        raise SkyPilotSubmitError(
+            "SkyPilot local API server cwd health could not be established: "
+            f"{before.outcome}: {before.error}"
+        )
+
+    stop = runner(
+        [sky_executable, "api", "stop"],
+        env=dict(env),
+        cwd=cwd,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=60,
+        check=False,
+    )
+    if stop.returncode != 0:
+        raise SkyPilotSubmitError(
+            "SkyPilot local API server has a deleted working directory and "
+            f"could not be stopped safely: {redact_text(_command_detail(stop))}"
+        )
+    for _ in range(max(attempts, 1)):
+        stopped = inspect()
+        if stopped.healthy and stopped.outcome == "absent":
+            break
+        sleeper(0.25)
+    else:
+        raise SkyPilotSubmitError(
+            "SkyPilot local API server stop completed but poisoned processes "
+            "remain; no controller submission was attempted."
+        )
+
+    start = runner(
+        [sky_executable, "api", "start"],
+        env=dict(env),
+        cwd=cwd,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=120,
+        check=False,
+    )
+    if start.returncode != 0:
+        raise SkyPilotSubmitError(
+            "SkyPilot local API server was stopped after a deleted-cwd failure "
+            f"but did not restart from the durable cwd: {redact_text(_command_detail(start))}"
+        )
+    for _ in range(max(attempts, 1)):
+        restarted = inspect()
+        if restarted.healthy and restarted.outcome == "cwd_live":
+            return ApiDaemonCwdProbe(
+                True,
+                "restarted_from_durable_cwd",
+                process_count=restarted.process_count,
+            )
+        sleeper(0.25)
+    raise SkyPilotSubmitError(
+        "SkyPilot local API server restarted but its durable cwd could not be verified; "
+        "no controller submission was attempted."
+    )
+
+
 class _SkyPilotLaunchCommandError(RuntimeError):
     """Preserve launch command evidence for the central failure classifier."""
 
@@ -362,6 +563,11 @@ def submit_workflow(
             if env.get(secret_name):
                 cmd[-1:-1] = ["--secret", secret_name]
         stable_cwd = _stable_sky_cwd(runtime_config.isolated_config_dir)
+        api_daemon_health = _ensure_local_api_daemon_cwd(
+            sky_executable,
+            env=env,
+            cwd=stable_cwd,
+        )
         selected_context = _selected_kube_context(
             infra,
             env=env,
@@ -482,6 +688,7 @@ def submit_workflow(
             enriched["controller"] = {
                 **controller_health.to_dict(),
                 "selected_context": selected_context,
+                "local_api_daemon": api_daemon_health.to_dict(),
             }
             transaction_recorder(enriched)
 
@@ -504,6 +711,7 @@ def submit_workflow(
             exc.result.controller = {
                 **controller_health.to_dict(),
                 "selected_context": selected_context,
+                "local_api_daemon": api_daemon_health.to_dict(),
             }
             if exc.result.state in {
                 LaunchState.INDETERMINATE,
@@ -522,6 +730,7 @@ def submit_workflow(
         transaction.controller = {
             **controller_health.to_dict(),
             "selected_context": selected_context,
+            "local_api_daemon": api_daemon_health.to_dict(),
         }
         launch_pair = transaction.launch_result
         result = launch_pair[0] if isinstance(launch_pair, tuple) else None
@@ -1349,20 +1558,7 @@ def _probe_kubernetes_controller_cwd(
                 "--",
                 "/bin/sh",
                 "-c",
-                (
-                    "set -eu; "
-                    "pwd -P >/dev/null; "
-                    "(cd /proc/1/cwd && pwd -P >/dev/null); "
-                    "found=0; "
-                    "for proc in /proc/[0-9]*; do "
-                    '[ "$(cat "$proc/comm" 2>/dev/null || true)" = sshd ] '
-                    "|| continue; "
-                    '[ -L "$proc/cwd" ] || continue; '
-                    "found=1; "
-                    '(cd "$proc/cwd" && pwd -P >/dev/null) || exit 1; '
-                    "done; "
-                    '[ "$found" -eq 1 ]'
-                ),
+                "pwd -P >/dev/null && test -d /proc/1/cwd",
             ],
             env=dict(env),
             text=True,

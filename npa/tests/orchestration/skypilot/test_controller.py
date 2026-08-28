@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from npa.orchestration.skypilot.controller import (
     DEFAULT_CONTROLLER_INSTANCE_TYPE,
-    KUBERNETES_SKYPILOT_WORKING_DIR,
     apply_controller_override,
     controller_resources_kubernetes,
     controller_resources_nebius_vm,
@@ -44,57 +43,15 @@ def test_apply_controller_override_injects_idempotently() -> None:
     assert first == second
     assert first["jobs"]["controller"]["resources"] == controller_resources_kubernetes()
     assert "disk_size" not in first["jobs"]["controller"]["resources"]
-    assert first["kubernetes"]["pod_config"]["spec"]["containers"] == [
-        {
-            "name": "ray-node",
-            "workingDir": KUBERNETES_SKYPILOT_WORKING_DIR,
-        }
-    ]
-
-
-def test_apply_controller_override_merges_durable_cwd_with_existing_pod_config() -> (
-    None
-):
-    config = apply_controller_override(
-        {
-            "kubernetes": {
-                "pod_config": {
-                    "spec": {
-                        "imagePullSecrets": [{"name": "registry-auth"}],
-                        "containers": [
-                            {
-                                "name": "ray-node",
-                                "env": [{"name": "OPT_OUT", "value": "1"}],
-                                "workingDir": "/deleted/setup/path",
-                            }
-                        ],
-                    }
-                }
-            }
-        }
-    )
-
-    pod_spec = config["kubernetes"]["pod_config"]["spec"]
-    assert pod_spec["imagePullSecrets"] == [{"name": "registry-auth"}]
-    assert pod_spec["containers"] == [
-        {
-            "name": "ray-node",
-            "env": [{"name": "OPT_OUT", "value": "1"}],
-            "workingDir": "/tmp",
-        }
-    ]
 
 
 def test_apply_controller_override_can_emit_nebius_vm_fallback() -> None:
     config = apply_controller_override({"name": "dag"}, controller_backend="nebius")
 
     assert config["jobs"]["controller"]["resources"] == controller_resources_nebius_vm()
-    assert "kubernetes" not in config
 
 
-def test_apply_controller_override_preserves_explicitly_larger_kubernetes_controller() -> (
-    None
-):
+def test_apply_controller_override_preserves_explicitly_larger_kubernetes_controller() -> None:
     existing = {
         "jobs": {
             "controller": {
@@ -137,9 +94,7 @@ def test_apply_controller_override_drops_disk_and_preserves_larger_shape() -> No
     }
 
 
-def test_apply_controller_override_preserves_explicitly_larger_nebius_controller() -> (
-    None
-):
+def test_apply_controller_override_preserves_explicitly_larger_nebius_controller() -> None:
     existing = {
         "jobs": {
             "controller": {
@@ -182,9 +137,7 @@ def test_apply_controller_override_disables_existing_controller_autostop() -> No
 
 
 def test_apply_controller_override_pins_kubernetes_region_on_fresh_config() -> None:
-    config = apply_controller_override(
-        {"name": "dag"}, controller_region="npa-rtxpro-mk8s"
-    )
+    config = apply_controller_override({"name": "dag"}, controller_region="npa-rtxpro-mk8s")
 
     assert config["jobs"]["controller"]["resources"]["region"] == "npa-rtxpro-mk8s"
 
@@ -233,10 +186,7 @@ def test_apply_controller_override_without_region_is_unchanged() -> None:
 
 
 def test_controller_region_from_infra_extracts_kubernetes_context() -> None:
-    assert (
-        _controller_region_from_infra("k8s/npa-rtxpro-mk8s", "kubernetes")
-        == "npa-rtxpro-mk8s"
-    )
+    assert _controller_region_from_infra("k8s/npa-rtxpro-mk8s", "kubernetes") == "npa-rtxpro-mk8s"
     assert _controller_region_from_infra("kubernetes/ctx-x", "kubernetes") == "ctx-x"
 
 

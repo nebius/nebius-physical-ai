@@ -212,6 +212,148 @@ def test_stable_sky_cwd_prefers_existing_isolated_dir(tmp_path) -> None:
     assert _stable_sky_cwd(isolated) == str(isolated)
 
 
+def _fake_proc_process(
+    proc_root: Path,
+    *,
+    pid: int,
+    ppid: int,
+    uid: int,
+    cmdline: tuple[str, ...],
+    cwd: Path,
+) -> None:
+    process = proc_root / str(pid)
+    process.mkdir(parents=True)
+    (process / "cmdline").write_bytes(b"\0".join(item.encode() for item in cmdline))
+    (process / "status").write_text(
+        f"Name:\ttest\nPPid:\t{ppid}\nUid:\t{uid}\t{uid}\t{uid}\t{uid}\n",
+        encoding="utf-8",
+    )
+    (process / "cwd").symlink_to(cwd)
+
+
+def test_local_api_daemon_probe_finds_deleted_executor_cwd(tmp_path) -> None:
+    proc_root = tmp_path / "proc"
+    bin_dir = tmp_path / "venv" / "bin"
+    bin_dir.mkdir(parents=True)
+    sky = bin_dir / "sky"
+    python = bin_dir / "python"
+    sky.touch()
+    python.touch()
+    durable = tmp_path / "durable"
+    durable.mkdir()
+    deleted = tmp_path / "deleted-request-cwd"
+    _fake_proc_process(
+        proc_root,
+        pid=100,
+        ppid=1,
+        uid=1234,
+        cmdline=(str(python), "-m", "sky.server.server", "--host=127.0.0.1"),
+        cwd=durable,
+    )
+    _fake_proc_process(
+        proc_root,
+        pid=101,
+        ppid=100,
+        uid=1234,
+        cmdline=("SkyPilot:executor:long:101",),
+        cwd=deleted,
+    )
+
+    result = workflow_module._probe_local_api_daemon_cwd(
+        str(sky), proc_root=proc_root, uid=1234
+    )
+
+    assert result.healthy is False
+    assert result.outcome == "cwd_deleted"
+    assert result.process_count == 2
+    assert "1 of 2" in result.error
+
+
+def test_local_api_daemon_probe_accepts_durable_process_tree(tmp_path) -> None:
+    proc_root = tmp_path / "proc"
+    bin_dir = tmp_path / "venv" / "bin"
+    bin_dir.mkdir(parents=True)
+    sky = bin_dir / "sky"
+    python = bin_dir / "python"
+    sky.touch()
+    python.touch()
+    durable = tmp_path / "durable"
+    durable.mkdir()
+    for pid, ppid, cmdline in (
+        (100, 1, (str(python), "-m", "sky.server.server")),
+        (101, 100, ("SkyPilot:executor:long:101",)),
+    ):
+        _fake_proc_process(
+            proc_root,
+            pid=pid,
+            ppid=ppid,
+            uid=1234,
+            cmdline=cmdline,
+            cwd=durable,
+        )
+
+    result = workflow_module._probe_local_api_daemon_cwd(
+        str(sky), proc_root=proc_root, uid=1234
+    )
+
+    assert result.healthy is True
+    assert result.outcome == "cwd_live"
+    assert result.process_count == 2
+
+
+def test_deleted_api_daemon_is_restarted_from_durable_cwd() -> None:
+    probes = iter(
+        (
+            workflow_module.ApiDaemonCwdProbe(False, "cwd_deleted", 8),
+            workflow_module.ApiDaemonCwdProbe(True, "absent"),
+            workflow_module.ApiDaemonCwdProbe(True, "cwd_live", 7),
+        )
+    )
+    calls: list[tuple[list[str], str]] = []
+
+    def runner(cmd, **kwargs):
+        calls.append((cmd, kwargs["cwd"]))
+        return subprocess.CompletedProcess(cmd, 0, stdout="ok", stderr="")
+
+    result = workflow_module._ensure_local_api_daemon_cwd(
+        "/opt/sky/bin/sky",
+        env={},
+        cwd="/durable",
+        runner=runner,
+        probe=lambda: next(probes),
+        sleeper=lambda _seconds: None,
+    )
+
+    assert result.outcome == "restarted_from_durable_cwd"
+    assert result.process_count == 7
+    assert calls == [
+        (["/opt/sky/bin/sky", "api", "stop"], "/durable"),
+        (["/opt/sky/bin/sky", "api", "start"], "/durable"),
+    ]
+
+
+def test_deleted_api_daemon_repair_is_bounded_when_stop_does_not_drain() -> None:
+    poisoned = workflow_module.ApiDaemonCwdProbe(False, "cwd_deleted", 8)
+    calls = []
+
+    def runner(cmd, **kwargs):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, stdout="ok", stderr="")
+
+    with pytest.raises(SkyPilotSubmitError, match="poisoned processes remain"):
+        workflow_module._ensure_local_api_daemon_cwd(
+            "/opt/sky/bin/sky",
+            env={},
+            cwd="/durable",
+            runner=runner,
+            probe=lambda: poisoned,
+            sleeper=lambda _seconds: None,
+            attempts=2,
+        )
+
+    assert calls == [["/opt/sky/bin/sky", "api", "stop"]]
+
+
 def test_submit_workflow_network_failure_raises_typed_error(
     monkeypatch, tmp_path
 ) -> None:
@@ -927,13 +1069,11 @@ def test_controller_cwd_probe_rejects_deleted_working_directory() -> None:
         "--output",
         "json",
     ]
-    assert calls[1][-3:-1] == ["/bin/sh", "-c"]
-    probe = calls[1][-1]
-    assert "cd /proc/1/cwd" in probe
-    assert 'cat "$proc/comm"' in probe
-    assert "= sshd" in probe
-    assert 'cd "$proc/cwd"' in probe
-    assert '[ "$found" -eq 1 ]' in probe
+    assert calls[1][-3:] == [
+        "/bin/sh",
+        "-c",
+        "pwd -P >/dev/null && test -d /proc/1/cwd",
+    ]
 
 
 def test_controller_up_is_rejected_when_execution_probe_fails(monkeypatch) -> None:

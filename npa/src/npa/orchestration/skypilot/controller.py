@@ -27,13 +27,6 @@ DEFAULT_CONTROLLER_CPUS = 2
 DEFAULT_CONTROLLER_MEMORY_GB = 8
 DEFAULT_CONTROLLER_DISK_SIZE_GB = 64
 DEFAULT_JOBS_CONTROLLER_AUTOSTOP = False
-# Kubernetes starts SkyPilot's long-lived sshd from the container working
-# directory.  If that directory is an ephemeral setup path which SkyPilot later
-# removes, every subsequent rsync receiver inherits a deleted cwd and fails
-# before a managed workload can become observable.  /tmp is part of the base
-# filesystem contract for both controller and workload images and is not one of
-# SkyPilot's per-launch cleanup directories.
-KUBERNETES_SKYPILOT_WORKING_DIR = "/tmp"
 
 
 def controller_resources_kubernetes() -> dict[str, Any]:
@@ -94,7 +87,6 @@ def apply_controller_override(
     if isinstance(existing, dict) and _is_at_least_default(existing, default):
         existing["autostop"] = DEFAULT_JOBS_CONTROLLER_AUTOSTOP
         _apply_controller_region(existing, controller_backend, controller_region)
-        _apply_kubernetes_durable_working_directory(updated, controller_backend)
         return updated
 
     merged = deepcopy(default)
@@ -112,50 +104,7 @@ def apply_controller_override(
 
     _apply_controller_region(merged, controller_backend, controller_region)
     controller["resources"] = merged
-    _apply_kubernetes_durable_working_directory(updated, controller_backend)
     return updated
-
-
-def _apply_kubernetes_durable_working_directory(
-    config: dict[str, Any], controller_backend: ControllerBackend
-) -> None:
-    """Start SkyPilot's Kubernetes container processes from a durable cwd.
-
-    SkyPilot applies the global Kubernetes pod config to the controller it
-    creates before submission transport begins.  Kubernetes patch-merges the
-    named ``ray-node`` container, so this preserves image pull secrets, mounts,
-    environment, and other operator configuration while making the cwd used by
-    the controller's sshd explicit.
-    """
-
-    if controller_backend != "kubernetes":
-        return
-    kubernetes = config.setdefault("kubernetes", {})
-    if not isinstance(kubernetes, dict):
-        raise ValueError("SkyPilot global config kubernetes section must be a mapping")
-    pod_config = kubernetes.setdefault("pod_config", {})
-    if not isinstance(pod_config, dict):
-        raise ValueError("SkyPilot kubernetes.pod_config must be a mapping")
-    spec = pod_config.setdefault("spec", {})
-    if not isinstance(spec, dict):
-        raise ValueError("SkyPilot kubernetes.pod_config.spec must be a mapping")
-    containers = spec.setdefault("containers", [])
-    if not isinstance(containers, list):
-        raise ValueError(
-            "SkyPilot kubernetes.pod_config.spec.containers must be a list"
-        )
-    ray_node = next(
-        (
-            item
-            for item in containers
-            if isinstance(item, dict) and item.get("name") == "ray-node"
-        ),
-        None,
-    )
-    if ray_node is None:
-        ray_node = {"name": "ray-node"}
-        containers.append(ray_node)
-    ray_node["workingDir"] = KUBERNETES_SKYPILOT_WORKING_DIR
 
 
 def _apply_controller_region(
