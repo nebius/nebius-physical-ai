@@ -2101,17 +2101,34 @@ def test_rendered_backend_registers_no_shadowed_routes(monkeypatch, tmp_path) ->
 
     module_name = "npa_rendered_route_uniqueness_backend"
     module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
-    try:
-        registered = Counter(
+
+    def registered_methods(app) -> Counter:
+        return Counter(
             (method, getattr(route, "path", ""))
-            for route in module.app.routes
+            for route in app.routes
             for method in sorted(getattr(route, "methods", None) or ())
+        )
+
+    try:
+        registered = registered_methods(module.app)
+        # Without this the assertion below passes vacuously if `app.routes` ever
+        # stops yielding what this reads -- an empty counter has no duplicates.
+        assert ("GET", "/health") in registered, (
+            "route inventory did not include a known route, so this guard would "
+            f"pass without inspecting anything: {len(registered)} entries"
         )
         shadowed = {key: count for key, count in registered.items() if count > 1}
         assert not shadowed, (
             "these method+path pairs are registered more than once; every "
             f"registration after the first is unreachable: {sorted(shadowed)}"
         )
+
+        # Prove the detector is sensitive: re-registering a live path must be
+        # caught. Otherwise "no duplicates" only means "nothing was measured".
+        module.app.add_api_route("/health", lambda: {}, methods=["GET"])
+        assert ("GET", "/health") in {
+            key for key, count in registered_methods(module.app).items() if count > 1
+        }
     finally:
         sys.modules.pop(module_name, None)
 
