@@ -186,27 +186,11 @@ def _write_logical_lerobot_recording(
     )
     camera_keys = _camera_keys(metadata)
 
-    blueprint = rrb.Blueprint(
-        rrb.Horizontal(
-            rrb.Spatial2DView(
-                origin="input_dataset",
-                contents="input_dataset/**",
-                name="Input demos",
-            ),
-            rrb.Spatial2DView(
-                origin="policy_rollout",
-                contents="policy_rollout/**",
-                name="Policy rollout",
-            ),
-            rrb.TimeSeriesView(
-                origin="eval",
-                contents="eval/**",
-                name="VLM/VLA eval",
-            ),
-            column_shares=[2.0, 2.0, 1.0],
-        ),
-        rrb.TimePanel(state=rrb.PanelState.Expanded, timeline=TIMELINE),
-        auto_layout=False,
+    blueprint = _build_logical_blueprint(
+        rrb,
+        camera_keys,
+        input_episode_indices=input_episode_indices,
+        rollout_episode_indices=rollout_episode_indices,
     )
     recording = rr.RecordingStream(APPLICATION_ID)
     rr.save(output_rrd_path, default_blueprint=blueprint, recording=recording)
@@ -244,6 +228,83 @@ def _write_logical_lerobot_recording(
     if not output_rrd_path.exists() or output_rrd_path.stat().st_size == 0:
         raise RerunAdapterError(f"Rerun recording was not written: {output_rrd_path}")
     return counts
+
+
+def _build_logical_blueprint(
+    rrb: Any,
+    camera_keys: list[str],
+    *,
+    input_episode_indices: list[int],
+    rollout_episode_indices: list[int],
+) -> Any:
+    """Open generic datasets on views that match the entities they contain."""
+
+    state_contents = [
+        *[
+            f"input_dataset/episodes/episode_{int(episode):06d}/state/**"
+            for episode in input_episode_indices
+        ],
+        *[
+            f"policy_rollout/episodes/episode_{int(episode):06d}/state/**"
+            for episode in rollout_episode_indices
+        ],
+    ]
+    action_contents = [
+        f"policy_rollout/episodes/episode_{int(episode):06d}/actions/**"
+        for episode in rollout_episode_indices
+    ]
+    input_camera_contents = [
+        f"input_dataset/episodes/episode_{int(episode):06d}/camera/**"
+        for episode in input_episode_indices
+    ]
+    rollout_camera_contents = [
+        f"policy_rollout/episodes/episode_{int(episode):06d}/camera/**"
+        for episode in rollout_episode_indices
+    ]
+    state_view = rrb.TimeSeriesView(
+        origin="/",
+        contents=state_contents,
+        name="State",
+    )
+    action_view = rrb.TimeSeriesView(
+        origin="/",
+        contents=action_contents,
+        name="Policy actions",
+    )
+    eval_view = rrb.TimeSeriesView(
+        origin="eval",
+        contents="eval/**",
+        name="VLM/VLA eval",
+    )
+    if camera_keys:
+        viewport = rrb.Horizontal(
+            rrb.Spatial2DView(
+                origin="/",
+                contents=input_camera_contents,
+                name="Input demos",
+            ),
+            rrb.Spatial2DView(
+                origin="/",
+                contents=rollout_camera_contents,
+                name="Policy rollout",
+            ),
+            rrb.Vertical(state_view, action_view, eval_view),
+            column_shares=[2.0, 2.0, 1.5],
+        )
+    else:
+        viewport = rrb.Horizontal(
+            state_view,
+            action_view,
+            eval_view,
+            column_shares=[2.0, 1.4, 1.0],
+        )
+    return rrb.Blueprint(
+        viewport,
+        rrb.BlueprintPanel(state=rrb.PanelState.Hidden),
+        rrb.SelectionPanel(state=rrb.PanelState.Hidden),
+        rrb.TimePanel(state=rrb.PanelState.Expanded, timeline=TIMELINE),
+        auto_layout=False,
+    )
 
 
 def _logical_entity_counts(

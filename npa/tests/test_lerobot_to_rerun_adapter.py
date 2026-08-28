@@ -9,7 +9,12 @@ import pyarrow.parquet as pq
 import pytest
 
 from npa.adapter.isaac_lab_lerobot import G1_BONE_PAIRS, G1_STATE_DIM, convert
-from npa.viz.adapters.lerobot_to_rerun import REPRESENTATIVE_JOINTS, lerobot_to_rerun, verify_rerun_entities
+from npa.viz.adapters.lerobot_to_rerun import (
+    REPRESENTATIVE_JOINTS,
+    _build_logical_blueprint,
+    lerobot_to_rerun,
+    verify_rerun_entities,
+)
 from npa.viz.lerobot import VizDataError
 
 
@@ -190,3 +195,76 @@ def test_verify_rerun_entities_uses_fallback_counts_without_recording_loader(tmp
         ["input_dataset/episodes/episode_000000/state/dim_00"],
         fallback_counts=counts,
     ) == counts
+
+
+class _FakePanelState:
+    Hidden = "hidden"
+    Expanded = "expanded"
+
+
+class _FakeBlueprintApi:
+    PanelState = _FakePanelState
+
+    def __getattr__(self, name: str):
+        def construct(*args, **kwargs):
+            return {"kind": name, "children": list(args), **kwargs}
+
+        return construct
+
+
+def _view_nodes(node: object) -> list[dict]:
+    if not isinstance(node, dict):
+        return []
+    found = [node] if str(node.get("kind", "")).endswith("View") else []
+    for child in node.get("children", []):
+        found.extend(_view_nodes(child))
+    return found
+
+
+def test_logical_blueprint_without_cameras_opens_state_and_actions() -> None:
+    blueprint = _build_logical_blueprint(
+        _FakeBlueprintApi(),
+        [],
+        input_episode_indices=[],
+        rollout_episode_indices=[0, 1],
+    )
+    views = _view_nodes(blueprint)
+
+    assert not any(view["kind"] == "Spatial2DView" for view in views)
+    assert {view.get("name") for view in views} == {"State", "Policy actions", "VLM/VLA eval"}
+    assert next(view for view in views if view.get("name") == "State")["contents"] == [
+        "policy_rollout/episodes/episode_000000/state/**",
+        "policy_rollout/episodes/episode_000001/state/**",
+    ]
+    assert next(view for view in views if view.get("name") == "Policy actions")["contents"] == (
+        [
+            "policy_rollout/episodes/episode_000000/actions/**",
+            "policy_rollout/episodes/episode_000001/actions/**",
+        ]
+    )
+
+
+def test_logical_blueprint_with_cameras_keeps_images_and_signals_visible() -> None:
+    blueprint = _build_logical_blueprint(
+        _FakeBlueprintApi(),
+        ["observation.images.workspace"],
+        input_episode_indices=[0],
+        rollout_episode_indices=[1],
+    )
+    views = _view_nodes(blueprint)
+
+    assert [view.get("name") for view in views if view["kind"] == "Spatial2DView"] == [
+        "Input demos",
+        "Policy rollout",
+    ]
+    assert next(view for view in views if view.get("name") == "Input demos")["contents"] == [
+        "input_dataset/episodes/episode_000000/camera/**"
+    ]
+    assert next(view for view in views if view.get("name") == "Policy rollout")["contents"] == [
+        "policy_rollout/episodes/episode_000001/camera/**"
+    ]
+    assert {view.get("name") for view in views if view["kind"] == "TimeSeriesView"} == {
+        "State",
+        "Policy actions",
+        "VLM/VLA eval",
+    }
