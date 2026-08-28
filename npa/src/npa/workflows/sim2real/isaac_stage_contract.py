@@ -24,40 +24,40 @@ def _root_parts(root_uri: str, run_id: str) -> tuple[str, str]:
     return parsed.netloc, path[: -len(suffix)]
 
 
-def _input_dir() -> Path:
-    return Path(tempfile.mkdtemp(prefix="npa-s2r-isaac-contract-"))
-
-
 def common_environment(args: Any, *, split_uri: str) -> dict[str, Any]:
     """Build the stock environment, adding custom values only for a BYO contract."""
 
     root = str(args.root_uri).rstrip("/")
     bucket, base_prefix = _root_parts(root, args.run_id)
-    task_contract = read_json(
-        f"{root}/stage_02_assets/task-contract.json", directory=_input_dir()
-    )
-    env = {
-        "NPA_SIM2REAL_INLINE_TASK": "1",
-        "NPA_SIM2REAL_RUN_ID": args.run_id,
-        "NPA_SIM2REAL_BUCKET": bucket,
-        "NPA_SIM2REAL_S3_BUCKET": bucket,
-        "NPA_SIM2REAL_PREFIX": base_prefix,
-        "NPA_SIM2REAL_ISAAC_IMAGE": os.environ["NPA_TASK_IMAGE"],
-        "ISAAC_IMAGE": os.environ["NPA_TASK_IMAGE"],
-        "NPA_SIM2REAL_SOURCE_SHA": source_sha(),
-        "NPA_SIM2REAL_ISAAC_TASK": args.task_id,
-        "NPA_BYO_ISAAC_TASK": args.task_id,
-        "NPA_SIM2REAL_TASK_CONTRACT_DIGEST": task_contract["task_contract_digest"],
-        "NPA_SIM2REAL_TRAIN_ENVS_URI": split_uri,
-        "NPA_SIM2REAL_CAMERA_VIEWS": "primary,side,overhead",
-        "NPA_SIM2REAL_CAPTURE_FPS": args.capture_fps,
-        "NPA_SIM2REAL_CAPTURE_WIDTH": args.capture_width,
-        "NPA_SIM2REAL_CAPTURE_HEIGHT": args.capture_height,
-        "NPA_SIM2REAL_PNG_COMPRESS_LEVEL": args.png_compress_level,
-    }
-    robot_uri = f"{root}/stage_02_assets/consumed_robot_spec.json"
-    robot = read_json(robot_uri, directory=_input_dir())
-    env.update(isaac_environment(robot, contract_uri=robot_uri, stage=args.stage))
+    with tempfile.TemporaryDirectory(prefix="npa-s2r-isaac-contract-") as raw:
+        input_dir = Path(raw)
+        task_contract = read_json(
+            f"{root}/stage_02_assets/task-contract.json", directory=input_dir
+        )
+        env = {
+            "NPA_SIM2REAL_INLINE_TASK": "1",
+            "NPA_SIM2REAL_RUN_ID": args.run_id,
+            "NPA_SIM2REAL_BUCKET": bucket,
+            "NPA_SIM2REAL_S3_BUCKET": bucket,
+            "NPA_SIM2REAL_PREFIX": base_prefix,
+            "NPA_SIM2REAL_ISAAC_IMAGE": os.environ["NPA_TASK_IMAGE"],
+            "ISAAC_IMAGE": os.environ["NPA_TASK_IMAGE"],
+            "NPA_SIM2REAL_SOURCE_SHA": source_sha(),
+            "NPA_SIM2REAL_ISAAC_TASK": args.task_id,
+            "NPA_BYO_ISAAC_TASK": args.task_id,
+            "NPA_SIM2REAL_TASK_CONTRACT_DIGEST": task_contract[
+                "task_contract_digest"
+            ],
+            "NPA_SIM2REAL_TRAIN_ENVS_URI": split_uri,
+            "NPA_SIM2REAL_CAMERA_VIEWS": "primary,side,overhead",
+            "NPA_SIM2REAL_CAPTURE_FPS": args.capture_fps,
+            "NPA_SIM2REAL_CAPTURE_WIDTH": args.capture_width,
+            "NPA_SIM2REAL_CAPTURE_HEIGHT": args.capture_height,
+            "NPA_SIM2REAL_PNG_COMPRESS_LEVEL": args.png_compress_level,
+        }
+        robot_uri = f"{root}/stage_02_assets/consumed_robot_spec.json"
+        robot = read_json(robot_uri, directory=input_dir)
+        env.update(isaac_environment(robot, contract_uri=robot_uri, stage=args.stage))
     return env
 
 
@@ -66,7 +66,9 @@ def verify_evidence(
 ) -> dict[str, Any]:
     """Load Stage 2's contract and verify one downstream stage's evidence."""
 
-    contract = read_json(
-        f"{root}/stage_02_assets/consumed_robot_spec.json", directory=_input_dir()
-    )
-    return assert_embodiment_evidence(contract, payload=payload, stage=stage)
+    with tempfile.TemporaryDirectory(prefix="npa-s2r-isaac-contract-") as raw:
+        contract = read_json(
+            f"{root}/stage_02_assets/consumed_robot_spec.json",
+            directory=Path(raw),
+        )
+        return assert_embodiment_evidence(contract, payload=payload, stage=stage)

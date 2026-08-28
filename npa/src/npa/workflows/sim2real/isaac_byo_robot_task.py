@@ -104,7 +104,7 @@ def _num_list(value: Any) -> list[float]:
             x = float(item)
         except (TypeError, ValueError):
             continue
-        if x == x:  # not NaN
+        if math.isfinite(x):
             out.append(x)
     return out
 
@@ -455,7 +455,9 @@ def _range_dict(value: Any) -> dict[str, tuple[float, float]]:
         pair = value.get(axis)
         if isinstance(pair, (list, tuple)) and len(pair) == 2:
             try:
-                out[axis] = (float(pair[0]), float(pair[1]))
+                parsed = (float(pair[0]), float(pair[1]))
+                if all(math.isfinite(item) for item in parsed):
+                    out[axis] = parsed
             except (TypeError, ValueError):
                 continue
     return out
@@ -476,13 +478,13 @@ def _scale_triple(value: Any) -> tuple[float, float, float] | None:
         return None
     if isinstance(value, (int, float)):
         s = float(value)
-        return (s, s, s) if s > 0 else None
+        return (s, s, s) if math.isfinite(s) and s > 0 else None
     if isinstance(value, (list, tuple)) and len(value) == 3:
         try:
             triple = (float(value[0]), float(value[1]), float(value[2]))
         except (TypeError, ValueError):
             return None
-        return triple if all(v > 0 for v in triple) else None
+        return triple if all(math.isfinite(v) and v > 0 for v in triple) else None
     return None
 
 
@@ -502,7 +504,9 @@ def task_config_overrides(task_cfg: dict[str, Any] | None) -> dict[str, Any]:
     action_scale = task_cfg.get("action_scale")
     if action_scale is not None:
         try:
-            out["action_scale"] = float(action_scale)
+            parsed = float(action_scale)
+            if math.isfinite(parsed):
+                out["action_scale"] = parsed
         except (TypeError, ValueError):
             pass
 
@@ -533,7 +537,9 @@ def task_config_overrides(task_cfg: dict[str, Any] | None) -> dict[str, Any]:
         val = task_cfg.get(key)
         if val is not None:
             try:
-                out[key] = float(val)
+                parsed = float(val)
+                if math.isfinite(parsed):
+                    out[key] = parsed
             except (TypeError, ValueError):
                 continue
 
@@ -547,10 +553,14 @@ def task_config_overrides(task_cfg: dict[str, Any] | None) -> dict[str, Any]:
     if dlw is not None:
         try:
             w = float(dlw)
-            if w > 0:
+            if math.isfinite(w) and w > 0:
                 out["dense_lift_weight"] = w
                 std = task_cfg.get("dense_lift_std")
-                out["dense_lift_std"] = float(std) if std is not None else 0.05
+                parsed_std = float(std) if std is not None else 0.05
+                if math.isfinite(parsed_std) and parsed_std > 0:
+                    out["dense_lift_std"] = parsed_std
+                else:
+                    out.pop("dense_lift_weight", None)
         except (TypeError, ValueError):
             pass
 
@@ -560,10 +570,14 @@ def task_config_overrides(task_cfg: dict[str, Any] | None) -> dict[str, Any]:
     if gsw is not None:
         try:
             w = float(gsw)
-            if w > 0:
+            if math.isfinite(w) and w > 0:
                 out["grasp_shaping_weight"] = w
                 std = task_cfg.get("grasp_shaping_std")
-                out["grasp_shaping_std"] = float(std) if std is not None else 0.06
+                parsed_std = float(std) if std is not None else 0.06
+                if math.isfinite(parsed_std) and parsed_std > 0:
+                    out["grasp_shaping_std"] = parsed_std
+                else:
+                    out.pop("grasp_shaping_weight", None)
         except (TypeError, ValueError):
             pass
 
@@ -576,10 +590,14 @@ def task_config_overrides(task_cfg: dict[str, Any] | None) -> dict[str, Any]:
     if ghw is not None:
         try:
             w = float(ghw)
-            if w > 0:
+            if math.isfinite(w) and w > 0:
                 out["grasp_hold_weight"] = w
                 std = task_cfg.get("grasp_hold_std")
-                out["grasp_hold_std"] = float(std) if std is not None else 0.05
+                parsed_std = float(std) if std is not None else 0.05
+                if math.isfinite(parsed_std) and parsed_std > 0:
+                    out["grasp_hold_std"] = parsed_std
+                else:
+                    out.pop("grasp_hold_weight", None)
         except (TypeError, ValueError):
             pass
 

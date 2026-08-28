@@ -34,6 +34,7 @@ a full URDF plus minimal config.
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
+import math
 from pathlib import Path
 from typing import Any
 
@@ -237,6 +238,18 @@ class RobotSpec:
                 f"home_qpos must have dof_count ({self.dof_count}) entries, "
                 f"got {len(self.home_qpos)}"
             )
+        numeric_fields = {
+            "kp": self.kp,
+            "kv": self.kv,
+            "force_lower": self.force_lower,
+            "force_upper": self.force_upper,
+            "home_qpos": self.home_qpos,
+            "gripper_open": (self.gripper_open,),
+            "gripper_close": (self.gripper_close,),
+        }
+        for label, values in numeric_fields.items():
+            if not all(math.isfinite(float(value)) for value in values):
+                raise RobotSpecError(f"{label} values must be finite")
         if not self.ee_link:
             raise RobotSpecError("ee_link must be a non-empty link name")
         if self.is_byo():
@@ -412,9 +425,12 @@ def _coerce_float_tuple(value: Any, label: str) -> tuple[float, ...]:
     if not isinstance(value, (list, tuple)):
         raise RobotSpecError(f"{label} must be a list of numbers, got {value!r}")
     try:
-        return tuple(float(v) for v in value)
+        result = tuple(float(v) for v in value)
     except (TypeError, ValueError) as exc:
         raise RobotSpecError(f"{label} must be numeric: {value!r}") from exc
+    if not all(math.isfinite(item) for item in result):
+        raise RobotSpecError(f"{label} entries must be finite: {value!r}")
+    return result
 
 
 def _coerce_str_tuple(value: Any, label: str) -> tuple[str, ...]:

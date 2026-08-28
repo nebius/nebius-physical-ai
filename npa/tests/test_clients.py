@@ -156,6 +156,35 @@ def test_storage_client_uploads_and_downloads_directories(
     )
 
 
+@pytest.mark.parametrize(
+    "key",
+    [
+        "prefix/../../escape.txt",
+        "prefix/nested/../escape.txt",
+        "prefix/./escape.txt",
+        "prefix//tmp/escape.txt",
+        "prefix/nested\\escape.txt",
+        "other/escape.txt",
+    ],
+)
+def test_storage_client_rejects_unsafe_directory_object_keys(
+    tmp_path: Path, mock_s3, key: str
+) -> None:
+    paginator = mock_s3.get_paginator.return_value
+    paginator.paginate.return_value = [{"Contents": [{"Key": key}]}]
+    client = StorageClient(
+        endpoint_url="https://storage",
+        aws_access_key_id="key",
+        aws_secret_access_key="secret",
+    )
+
+    with pytest.raises(StorageError, match="outside|unsafe"):
+        client.download_directory("s3://bucket/prefix", str(tmp_path / "download"))
+
+    mock_s3.download_file.assert_not_called()
+    assert not (tmp_path / "escape.txt").exists()
+
+
 def test_storage_client_downloads_object_via_head_object_when_list_is_empty(
     tmp_path: Path, mock_s3
 ) -> None:

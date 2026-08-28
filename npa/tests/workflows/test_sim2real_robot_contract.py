@@ -17,6 +17,7 @@ from npa.workflows.sim2real.robot_contract import (
     RobotContractError,
     assert_robot_contract,
     materialize_robot_contract,
+    _mesh_dependencies,
     stock_robot_contract,
 )
 from npa.workflows.sim2real import (
@@ -217,6 +218,60 @@ def test_missing_urdf_mesh_is_actionable(tmp_path: Path) -> None:
         _materialize(tmp_path, FakeStorage(_doc(), include_mesh=False))
 
 
+def test_stage2_rejects_non_finite_task_numeric(tmp_path: Path) -> None:
+    document = _doc(task={"skill": "lift", "dense_lift_weight": float("inf")})
+    with pytest.raises(RobotContractError, match="must be finite"):
+        _materialize(tmp_path, FakeStorage(document))
+
+
+def test_stage2_rejects_robot_uri_traversal_before_upload(tmp_path: Path) -> None:
+    document = _doc(
+        robot_source="byo_usd",
+        robot_uri="s3://inputs/robot/pkg/../../outside.usd",
+    )
+    storage = FakeStorage(document)
+    (tmp_path / "outside.usd").write_bytes(b"known readable data")
+
+    with pytest.raises(RobotContractError, match="not contained"):
+        materialize_robot_contract(
+            robot_spec_uri="s3://inputs/spec.json",
+            root_uri="s3://private-run/root",
+            work_dir=tmp_path / "work",
+            client=storage,
+        )
+    assert storage.uploads == {}
+
+
+@pytest.mark.parametrize(
+    "mesh_uri",
+    ["../../outside.stl", "package://../../outside.stl"],
+)
+def test_urdf_mesh_dependency_cannot_escape_bundle(
+    tmp_path: Path, mesh_uri: str
+) -> None:
+    bundle = tmp_path / "workspace" / "bundle"
+    bundle.mkdir(parents=True)
+    (tmp_path / "outside.stl").write_bytes(b"outside")
+    urdf = bundle / "robot.urdf"
+    urdf.write_text(URDF.replace("meshes/arm.stl", mesh_uri), encoding="utf-8")
+
+    with pytest.raises(RobotContractError, match="unsafe"):
+        _mesh_dependencies(urdf, bundle)
+
+
+def test_urdf_mesh_dependency_rejects_symlink(tmp_path: Path) -> None:
+    bundle = tmp_path / "bundle"
+    meshes = bundle / "meshes"
+    meshes.mkdir(parents=True)
+    outside = tmp_path / "outside.stl"
+    outside.write_bytes(b"outside")
+    (bundle / "robot.urdf").write_text(URDF, encoding="utf-8")
+    (meshes / "arm.stl").symlink_to(outside)
+
+    with pytest.raises(RobotContractError, match="symbolic links"):
+        _mesh_dependencies(bundle / "robot.urdf", bundle)
+
+
 def test_invalid_link_is_actionable(tmp_path: Path) -> None:
     with pytest.raises(RobotContractError, match="links absent.*unknown_hand"):
         _materialize(tmp_path, FakeStorage(_doc(ee_link="unknown_hand")))
@@ -345,6 +400,46 @@ def test_stock_contract_does_not_change_isaac_environment(
     assert "NPA_BYO_ROBOT_TASK" not in env
     assert "NPA_SIM2REAL_ROBOT_SPEC_URI" not in env
     assert "NPA_SIM2REAL_ROBOT_ASSET_OPERATION" not in env
+
+
+def test_isaac_contract_inputs_are_cleaned_on_success_and_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = "s3://private-run/prefix/run-123"
+    contract = stock_robot_contract()
+
+    def fake_read(uri: str, *, directory: Path) -> dict:
+        (directory / "downloaded.json").write_text("{}", encoding="utf-8")
+        if uri.endswith("task-contract.json"):
+            return {"task_contract_digest": "task-digest"}
+        return contract
+
+    monkeypatch.setattr(isaac_stage_contract.tempfile, "tempdir", str(tmp_path))
+    monkeypatch.setattr(isaac_stage_contract, "read_json", fake_read)
+    monkeypatch.setattr(isaac_stage_contract, "source_sha", lambda: "a" * 40)
+    monkeypatch.setenv("NPA_TASK_IMAGE", "registry.invalid/isaac@sha256:" + "b" * 64)
+    args = SimpleNamespace(
+        root_uri=root,
+        run_id="run-123",
+        stage=7,
+        task_id="Isaac-Lift-Cube-Franka-v0",
+        capture_fps="10",
+        capture_width="64",
+        capture_height="64",
+        png_compress_level="2",
+    )
+
+    isaac_stage_contract.common_environment(args, split_uri=root + "/split.jsonl")
+    assert list(tmp_path.iterdir()) == []
+
+    def failing_read(_uri: str, *, directory: Path) -> dict:
+        (directory / "partial.json").write_text("{}", encoding="utf-8")
+        raise RuntimeError("download failed")
+
+    monkeypatch.setattr(isaac_stage_contract, "read_json", failing_read)
+    with pytest.raises(RuntimeError, match="download failed"):
+        isaac_stage_contract.verify_evidence(root=root, payload={}, stage="stage-07")
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_resolved_usd_fetch_verifies_manifest_and_bytes(
@@ -565,3 +660,35 @@ def test_isaac_prepare_converts_urdf_and_publishes_digest_manifest(
     )
     published_manifest = json.loads(uploads[spec["resolved_manifest_uri"]])
     assert published_manifest["embodiment_digest"] == spec["embodiment_digest"]
+
+
+def test_isaac_download_tree_rejects_traversal_keys(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class FakePaginator:
+        def paginate(self, **_kwargs: object) -> list[dict]:
+            return [
+                {
+                    "Contents": [
+                        {"Key": "source/../../escape.usd"},
+                    ]
+                }
+            ]
+
+    class FakeS3:
+        def get_paginator(self, name: str) -> FakePaginator:
+            assert name == "list_objects_v2"
+            return FakePaginator()
+
+        def download_file(self, *_args: object) -> None:
+            pytest.fail("unsafe object keys must be rejected before download")
+
+    monkeypatch.setattr(isaac_robot_asset, "_s3", lambda: FakeS3())
+
+    with pytest.raises(
+        isaac_robot_asset.IsaacRobotAssetError, match="unsafe object key"
+    ):
+        isaac_robot_asset._download_tree(
+            "s3://private-run/source/", tmp_path / "download"
+        )
+    assert not (tmp_path / "escape.usd").exists()

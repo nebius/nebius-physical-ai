@@ -4,6 +4,7 @@ import json
 import os
 import re
 import subprocess
+import threading
 from pathlib import Path
 
 import pytest
@@ -448,7 +449,7 @@ def test_local_api_daemon_probe_rejects_deleted_inherited_global_config(
     assert result.outcome == "stale_global_config"
 
 
-def test_local_api_daemon_probe_rejects_mismatched_isolated_home(tmp_path) -> None:
+def test_local_api_daemon_probe_ignores_other_isolated_home(tmp_path) -> None:
     proc_root = tmp_path / "proc"
     bin_dir = tmp_path / "venv" / "bin"
     bin_dir.mkdir(parents=True)
@@ -475,12 +476,12 @@ def test_local_api_daemon_probe_rejects_mismatched_isolated_home(tmp_path) -> No
         expected_home=str(tmp_path / "isolated-home"),
     )
 
-    assert result.healthy is False
-    assert result.outcome == "stale_runtime_environment"
-    assert result.process_count == 1
+    assert result.healthy is True
+    assert result.outcome == "absent"
+    assert result.process_count == 0
 
 
-def test_local_api_daemon_probe_rejects_mismatched_user_id(tmp_path) -> None:
+def test_local_api_daemon_probe_ignores_other_user_id(tmp_path) -> None:
     proc_root = tmp_path / "proc"
     bin_dir = tmp_path / "venv" / "bin"
     bin_dir.mkdir(parents=True)
@@ -511,9 +512,79 @@ def test_local_api_daemon_probe_rejects_mismatched_user_id(tmp_path) -> None:
         expected_user_id="shared-user",
     )
 
-    assert result.healthy is False
-    assert result.outcome == "stale_runtime_environment"
-    assert result.process_count == 1
+    assert result.healthy is True
+    assert result.outcome == "absent"
+    assert result.process_count == 0
+
+
+def test_api_daemon_repair_lock_serializes_same_runtime(tmp_path) -> None:
+    first_entered = threading.Event()
+    release_first = threading.Event()
+    second_attempting = threading.Event()
+    second_entered = threading.Event()
+
+    def first() -> None:
+        with workflow_module._api_daemon_repair_lock(tmp_path):
+            first_entered.set()
+            release_first.wait()
+
+    def second() -> None:
+        second_attempting.set()
+        with workflow_module._api_daemon_repair_lock(tmp_path):
+            second_entered.set()
+
+    first_thread = threading.Thread(target=first)
+    second_thread = threading.Thread(target=second)
+    first_thread.start()
+    first_entered.wait()
+    second_thread.start()
+    second_attempting.wait()
+    assert not second_entered.wait(0.05)
+    release_first.set()
+    first_thread.join()
+    second_thread.join()
+    assert second_entered.is_set()
+
+
+def test_locked_api_daemon_repair_serializes_call_path(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    first_entered = threading.Event()
+    release_first = threading.Event()
+    second_entered = threading.Event()
+    calls = 0
+
+    def fake_ensure(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            first_entered.set()
+            release_first.wait()
+        else:
+            second_entered.set()
+        return workflow_module.ApiDaemonCwdProbe(True, "cwd_live")
+
+    monkeypatch.setattr(workflow_module, "_ensure_local_api_daemon_cwd", fake_ensure)
+
+    def repair() -> None:
+        workflow_module._ensure_local_api_daemon_cwd_locked(
+            "/opt/sky/bin/sky",
+            env={},
+            cwd=str(tmp_path),
+            runtime_dir=tmp_path,
+        )
+
+    first_thread = threading.Thread(target=repair)
+    second_thread = threading.Thread(target=repair)
+    first_thread.start()
+    first_entered.wait()
+    second_thread.start()
+    assert not second_entered.wait(0.05)
+    release_first.set()
+    first_thread.join()
+    second_thread.join()
+    assert calls == 2
+    assert second_entered.is_set()
 
 
 def test_deleted_api_daemon_is_restarted_from_durable_cwd() -> None:

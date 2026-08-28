@@ -6,6 +6,7 @@ import json
 import os
 import re
 import hashlib
+import fcntl
 import shutil
 import subprocess
 import sys
@@ -13,6 +14,7 @@ import tempfile
 import threading
 import time
 from collections.abc import Callable
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -313,6 +315,7 @@ def _probe_local_api_daemon_cwd(
     if not roots:
         return ApiDaemonCwdProbe(True, "absent")
 
+    runtime_roots: set[int] = set()
     for pid in roots:
         try:
             raw_environment = (records[pid][2] / "environ").read_bytes()
@@ -332,41 +335,29 @@ def _probe_local_api_daemon_cwd(
             for item in raw_environment.split(b"\0")
             if b"=" in item
         }
+        daemon_home = environment.get("HOME", "").strip()
+        if expected_home and Path(daemon_home).expanduser().absolute() != Path(
+            expected_home
+        ).expanduser().absolute():
+            continue
+        daemon_user_id = environment.get("SKYPILOT_USER_ID", "").strip()
+        if expected_user_id and daemon_user_id != expected_user_id:
+            continue
+        runtime_roots.add(pid)
         inherited_config = environment.get("SKYPILOT_GLOBAL_CONFIG", "").strip()
         if inherited_config and not Path(inherited_config).is_file():
             return ApiDaemonCwdProbe(
                 False,
                 "stale_global_config",
-                process_count=len(roots),
+                process_count=len(runtime_roots),
                 error=(
                     "local SkyPilot API server inherited a global config path "
                     "which no longer exists"
                 ),
             )
-        daemon_home = environment.get("HOME", "").strip()
-        if expected_home and Path(daemon_home).expanduser().absolute() != Path(
-            expected_home
-        ).expanduser().absolute():
-            return ApiDaemonCwdProbe(
-                False,
-                "stale_runtime_environment",
-                process_count=len(roots),
-                error=(
-                    "local SkyPilot API server HOME does not match the requested "
-                    "isolated runtime"
-                ),
-            )
-        daemon_user_id = environment.get("SKYPILOT_USER_ID", "").strip()
-        if expected_user_id and daemon_user_id != expected_user_id:
-            return ApiDaemonCwdProbe(
-                False,
-                "stale_runtime_environment",
-                process_count=len(roots),
-                error=(
-                    "local SkyPilot API server user identity does not match the "
-                    "requested runtime"
-                ),
-            )
+    roots = runtime_roots
+    if not roots:
+        return ApiDaemonCwdProbe(True, "absent")
 
     process_tree = set(roots)
     changed = True
@@ -498,6 +489,38 @@ def _ensure_local_api_daemon_cwd(
     )
 
 
+@contextmanager
+def _api_daemon_repair_lock(runtime_dir: Path):
+    """Serialize process-wide daemon repair for one isolated SkyPilot runtime."""
+
+    runtime_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    lock_path = runtime_dir / ".npa-api-daemon-repair.lock"
+    with lock_path.open("a+", encoding="utf-8") as handle:
+        lock_path.chmod(0o600)
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def _ensure_local_api_daemon_cwd_locked(
+    sky_executable: str,
+    *,
+    env: Mapping[str, str],
+    cwd: str,
+    runtime_dir: Path,
+) -> ApiDaemonCwdProbe:
+    """Run the daemon health/repair transaction under its runtime identity lock."""
+
+    with _api_daemon_repair_lock(runtime_dir):
+        return _ensure_local_api_daemon_cwd(
+            sky_executable,
+            env=env,
+            cwd=cwd,
+        )
+
+
 def ensure_local_api_daemon_health(
     *,
     sky_bin: SkyBin = None,
@@ -517,10 +540,12 @@ def ensure_local_api_daemon_health(
     sky_executable = str(runtime_config.sky_bin)
     env = sky_environment(runtime_config.isolated_config_dir)
     stable_cwd = _stable_sky_cwd(runtime_config.isolated_config_dir)
-    return _ensure_local_api_daemon_cwd(
+    runtime_dir = runtime_config.isolated_config_dir or Path(stable_cwd)
+    return _ensure_local_api_daemon_cwd_locked(
         sky_executable,
         env=env,
         cwd=stable_cwd,
+        runtime_dir=runtime_dir,
     )
 
 
@@ -689,10 +714,11 @@ def submit_workflow(
             if env.get(secret_name):
                 cmd[-1:-1] = ["--secret", secret_name]
         stable_cwd = _stable_sky_cwd(runtime_config.isolated_config_dir)
-        api_daemon_health = _ensure_local_api_daemon_cwd(
+        api_daemon_health = _ensure_local_api_daemon_cwd_locked(
             sky_executable,
             env=env,
             cwd=stable_cwd,
+            runtime_dir=runtime_config.isolated_config_dir or Path(stable_cwd),
         )
         selected_context = _selected_kube_context(
             infra,

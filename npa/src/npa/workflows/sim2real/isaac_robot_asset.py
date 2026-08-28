@@ -10,6 +10,8 @@ import shutil
 from pathlib import Path, PurePosixPath
 from urllib.parse import urlparse
 
+from npa.clients.storage import StorageError, safe_s3_tree_relative_path
+
 
 class IsaacRobotAssetError(RuntimeError):
     """Raised when Isaac cannot honor the immutable robot asset contract."""
@@ -80,7 +82,12 @@ def _download_tree(uri: str, destination: Path) -> None:
             key = str(item.get("Key") or "")
             if not key or key.endswith("/"):
                 continue
-            relative = key[len(prefix) :]
+            try:
+                relative = safe_s3_tree_relative_path(key, prefix)
+            except StorageError as exc:
+                raise IsaacRobotAssetError(
+                    f"robot asset_root_uri returned an unsafe object key: {key!r}"
+                ) from exc
             target = destination / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             client.download_file(bucket, key, str(target))

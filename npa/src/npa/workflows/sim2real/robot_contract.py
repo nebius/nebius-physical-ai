@@ -63,14 +63,31 @@ def _s3_relative(uri: str, root_uri: str) -> str:
         raise RobotContractError(
             "robot_uri and asset_root_uri must be s3:// URIs in the same bucket"
         )
-    source_key = PurePosixPath(source.path.lstrip("/"))
-    root_key = PurePosixPath(root.path.lstrip("/"))
-    try:
-        return source_key.relative_to(root_key).as_posix()
-    except ValueError as exc:
+    source_raw = source.path.lstrip("/")
+    root_raw = root.path.lstrip("/").rstrip("/")
+    prefix = root_raw + "/"
+    relative = source_raw[len(prefix) :] if source_raw.startswith(prefix) else ""
+    relative_path = PurePosixPath(relative)
+    root_path = PurePosixPath(root_raw)
+    unsafe = (
+        not root_raw
+        or root_path.is_absolute()
+        or root_raw != root_path.as_posix()
+        or any(part in {"", ".", ".."} for part in root_path.parts)
+        or not relative
+        or relative_path.is_absolute()
+        or relative != relative_path.as_posix()
+        or any(part in {"", ".", ".."} for part in relative_path.parts)
+        or "\\" in source_raw
+        or "\\" in root_raw
+        or "\x00" in source_raw
+        or "\x00" in root_raw
+    )
+    if unsafe:
         raise RobotContractError(
             f"robot_uri {uri!r} is not contained by asset_root_uri {root_uri!r}"
-        ) from exc
+        )
+    return relative_path.as_posix()
 
 
 def _mesh_dependencies(urdf_path: Path, bundle_root: Path) -> list[str]:
@@ -91,6 +108,43 @@ def _mesh_dependencies(urdf_path: Path, bundle_root: Path) -> list[str]:
     if len(set(links)) != len(links) or len(set(joints)) != len(joints):
         raise RobotContractError("URDF link and joint names must be unique")
 
+    resolved_root = bundle_root.resolve()
+
+    def safe_candidate(relative: PurePosixPath) -> Path | None:
+        raw = relative.as_posix()
+        if (
+            relative.is_absolute()
+            or not relative.parts
+            or any(part in {"", ".", ".."} for part in relative.parts)
+            or "\\" in raw
+            or "\x00" in raw
+        ):
+            raise RobotContractError(
+                f"URDF dependency path {raw!r} is unsafe; mesh references must "
+                "remain below RobotSpec.asset_root_uri"
+            )
+        candidate = bundle_root.joinpath(*relative.parts)
+        if not candidate.is_file():
+            return None
+        cursor = bundle_root
+        for part in relative.parts:
+            cursor /= part
+            if cursor.is_symlink():
+                raise RobotContractError(
+                    f"URDF dependency path {raw!r} is unsafe; symbolic links are "
+                    "not accepted in robot asset bundles"
+                )
+        resolved = candidate.resolve()
+        try:
+            resolved.relative_to(resolved_root)
+        except ValueError as exc:
+            raise RobotContractError(
+                f"URDF dependency path {raw!r} is unsafe; mesh references must "
+                "remain below RobotSpec.asset_root_uri"
+            ) from exc
+        return resolved
+
+    urdf_parent = urdf_path.resolve().parent.relative_to(resolved_root)
     dependencies: list[str] = []
     for mesh in root.findall(".//mesh"):
         filename = str(mesh.get("filename") or "").strip()
@@ -98,24 +152,27 @@ def _mesh_dependencies(urdf_path: Path, bundle_root: Path) -> list[str]:
             raise RobotContractError("URDF mesh element has no filename")
         if filename.startswith("package://"):
             relative = filename.removeprefix("package://")
-            candidates = [bundle_root / relative]
+            candidates = [PurePosixPath(relative)]
             parts = PurePosixPath(relative).parts
             if len(parts) > 1:
-                candidates.append(bundle_root / PurePosixPath(*parts[1:]))
+                candidates.append(PurePosixPath(*parts[1:]))
         elif "://" in filename:
             raise RobotContractError(
                 f"URDF mesh URI {filename!r} is unsupported; stage dependencies "
                 "under asset_root_uri and use package:// or relative references"
             )
         else:
-            candidates = [urdf_path.parent / filename]
-        resolved = next((path for path in candidates if path.is_file()), None)
+            candidates = [PurePosixPath(urdf_parent.as_posix()) / filename]
+        resolved = next(
+            (path for candidate in candidates if (path := safe_candidate(candidate))),
+            None,
+        )
         if resolved is None:
             raise RobotContractError(
                 f"URDF dependency {filename!r} is missing. Upload the complete "
                 "package (including meshes) below RobotSpec.asset_root_uri."
             )
-        dependencies.append(resolved.relative_to(bundle_root).as_posix())
+        dependencies.append(resolved.relative_to(resolved_root).as_posix())
     return sorted(set(dependencies))
 
 
@@ -170,6 +227,12 @@ def _task_config(doc: dict[str, Any], spec: robot_assets.RobotSpec) -> dict[str,
     supplied = doc.get("task") or doc.get("task_config") or {}
     if supplied and not isinstance(supplied, dict):
         raise RobotContractError("RobotSpec.task/task_config must be a JSON object")
+    try:
+        json.dumps(supplied, allow_nan=False)
+    except ValueError as exc:
+        raise RobotContractError(
+            "RobotSpec.task/task_config numeric values must be finite"
+        ) from exc
     reach = onboarding_derive.PRESET_REACH_M.get(
         str(doc.get("preset") or spec.name).lower(),
         onboarding_derive.FRANKA_REACH_M,
@@ -290,6 +353,12 @@ def materialize_robot_contract(
                 f"RobotSpec.robot_uri is inaccessible: {spec.robot_uri!r}: {exc}"
             ) from exc
         source_relative = source_path.relative_to(bundle).as_posix()
+    try:
+        source_path.resolve().relative_to(bundle.resolve())
+    except ValueError as exc:
+        raise RobotContractError(
+            "RobotSpec.robot_uri resolved outside RobotSpec.asset_root_uri"
+        ) from exc
     if not source_path.is_file() or source_path.stat().st_size == 0:
         raise RobotContractError(
             f"RobotSpec.robot_uri did not resolve to a non-empty file: {spec.robot_uri!r}"

@@ -52,12 +52,12 @@ npa workbench workflow submit "$SPEC" --runtime \
   --var controller_image="$CONTROLLER_IMAGE" \
   --var transfer_image="$TRANSFER_IMAGE" \
   --var envgen_image="$ENVGEN_IMAGE" \
-  --var reason_image="$REASON_IMAGE" \
   --var isaac_image="$ISAAC_IMAGE" \
   --var viewer_image="$VIEWER_IMAGE" \
   --var isaac_cache_pvc="$ISAAC_CACHE_PVC" \
   --secret-env AWS_ACCESS_KEY_ID \
   --secret-env AWS_SECRET_ACCESS_KEY \
+  --secret-env NEBIUS_TOKEN_FACTORY_KEY \
   --secret-env HF_TOKEN
 ```
 
