@@ -74,7 +74,7 @@ READY_CONTROLLER_STATUSES = frozenset({HEALTHY_CONTROLLER_STATUS, "STOPPED"})
 
 @dataclass(frozen=True)
 class ControllerExecutionProbe:
-    """Structured proof that an UP controller can execute from a live cwd."""
+    """Structured proof that an existing controller can execute from a live cwd."""
 
     healthy: bool
     outcome: str
@@ -1381,6 +1381,33 @@ def _wait_for_healthy_jobs_controller(
 ) -> ControllerHealthResult:
     """Block launch while an existing managed-jobs controller is not ready."""
 
+    def checked_execution_probe(
+        state: ControllerState, name: str
+    ) -> ControllerExecutionProbe | None:
+        if execution_probe is None or not name:
+            return None
+        probe = execution_probe(name)
+        if probe.healthy:
+            return probe
+        # A STOPPED controller legitimately may have no pod yet; the ensuing
+        # SkyPilot ensure path will create one. Any pod that does exist must pass
+        # the cwd probe before that ensure path is allowed to reuse it.
+        if (
+            state is ControllerState.STOPPED
+            and probe.outcome == "head_pod_ambiguous"
+            and probe.pod_count == 0
+        ):
+            return ControllerExecutionProbe(True, "controller_absent", pod_count=0)
+        raise SkyPilotSubmitError(
+            "SkyPilot jobs controller execution health check failed: "
+            f"{probe.outcome}: {probe.error or 'cwd unavailable'}. "
+            f"A cached {state.value.upper()} status is not sufficient when an existing "
+            "controller pod cannot resolve its working directory. Inspect/cancel "
+            "the exact workflow with `npa workbench workflow status|cancel`, then "
+            "repair the shared controller with `npa skypilot cleanup-controller` "
+            "and resume the same run ID."
+        )
+
     deadline = time.monotonic() + max(timeout, 0)
     last_summary = "no jobs-controller found" if require_existing else ""
     unhealthy: list[tuple[str, str]] = []
@@ -1454,25 +1481,13 @@ def _wait_for_healthy_jobs_controller(
                     ]
                     if len(candidates) == 1:
                         expected_name = candidates[0]
-                    elif state is ControllerState.UP and execution_probe is not None:
+                    elif execution_probe is not None:
                         raise SkyPilotSubmitError(
                             "SkyPilot controller execution health is ambiguous: "
-                            "multiple UP jobs controllers are cached and no exact "
+                            "multiple ready jobs controllers are cached and no exact "
                             "SKYPILOT_USER_ID selects one. Refusing to probe or launch."
                         )
-                probe_result = None
-                if state is ControllerState.UP and execution_probe is not None:
-                    probe_result = execution_probe(expected_name)
-                    if not probe_result.healthy:
-                        raise SkyPilotSubmitError(
-                            "SkyPilot jobs controller execution health check failed: "
-                            f"{probe_result.outcome}: {probe_result.error or 'cwd unavailable'}. "
-                            "A cached UP status is not sufficient when the controller "
-                            "cannot resolve its working directory. Inspect/cancel the exact "
-                            "workflow with `npa workbench workflow status|cancel`, then repair "
-                            "the shared controller with `npa skypilot cleanup-controller` and "
-                            "resume the same run ID."
-                        )
+                probe_result = checked_execution_probe(state, expected_name)
                 return ControllerHealthResult(state, expected_name, probe_result)
             last_summary = ", ".join(
                 f"{name}={status or 'UNKNOWN'}" for name, status in unhealthy

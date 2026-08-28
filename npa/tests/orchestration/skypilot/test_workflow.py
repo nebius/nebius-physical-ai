@@ -959,6 +959,60 @@ def test_controller_up_is_rejected_when_execution_probe_fails(monkeypatch) -> No
     assert "npa skypilot cleanup-controller" in message
 
 
+def test_controller_stopped_rejects_existing_pod_with_deleted_cwd(monkeypatch) -> None:
+    """A STOPPED cache row can still have a reusable live pod.
+
+    This is the exact live failure shape: SkyPilot's ensure path reused the pod,
+    then rsync failed with code 3 before any workload became observable.
+    """
+
+    monkeypatch.setattr(
+        workflow_module.subprocess, "run", _controller_status_run("STOPPED")
+    )
+
+    with pytest.raises(SkyPilotSubmitError) as caught:
+        workflow_module._wait_for_healthy_jobs_controller(
+            "sky",
+            env={"SKYPILOT_USER_ID": "abc123"},
+            timeout=0,
+            interval=0.01,
+            execution_probe=lambda _name: workflow_module.ControllerExecutionProbe(
+                False,
+                "cwd_unusable",
+                pod_count=1,
+                error="rsync: getcwd() failed; code 3",
+            ),
+        )
+
+    assert "cached STOPPED status is not sufficient" in str(caught.value)
+
+
+def test_controller_stopped_allows_launch_when_controller_pod_is_absent(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        workflow_module.subprocess, "run", _controller_status_run("STOPPED")
+    )
+
+    result = workflow_module._wait_for_healthy_jobs_controller(
+        "sky",
+        env={"SKYPILOT_USER_ID": "abc123"},
+        timeout=0,
+        interval=0.01,
+        execution_probe=lambda _name: workflow_module.ControllerExecutionProbe(
+            False,
+            "head_pod_ambiguous",
+            pod_count=0,
+            error="expected one controller head pod, found 0",
+        ),
+    )
+
+    assert result.state is workflow_module.ControllerState.STOPPED
+    assert result.execution_probe is not None
+    assert result.execution_probe.healthy is True
+    assert result.execution_probe.outcome == "controller_absent"
+
+
 @pytest.mark.parametrize(
     ("row", "observable", "marker"),
     [
