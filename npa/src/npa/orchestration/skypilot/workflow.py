@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import hashlib
 import shutil
@@ -71,6 +72,39 @@ HEALTHY_CONTROLLER_STATUS = "UP"
 READY_CONTROLLER_STATUSES = frozenset({HEALTHY_CONTROLLER_STATUS, "STOPPED"})
 
 
+@dataclass(frozen=True)
+class ControllerExecutionProbe:
+    """Structured proof that an UP controller can execute from a live cwd."""
+
+    healthy: bool
+    outcome: str
+    pod_count: int = 0
+    error: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "healthy": self.healthy,
+            "outcome": self.outcome,
+            "pod_count": self.pod_count,
+            "error": redact_text(self.error)[:1000],
+        }
+
+
+@dataclass(frozen=True)
+class ControllerHealthResult:
+    """Durable controller status plus execution-health evidence."""
+
+    state: ControllerState
+    name: str = ""
+    execution_probe: ControllerExecutionProbe | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {"state": self.state.value, "name": self.name}
+        if self.execution_probe is not None:
+            payload["execution_probe"] = self.execution_probe.to_dict()
+        return payload
+
+
 def _stable_sky_cwd(isolated_config_dir: Path | None) -> str:
     """Return a durable directory to run the ``sky`` CLI from.
 
@@ -123,7 +157,31 @@ class ManagedJobEvidence:
     job_id: str = ""
     status: str = ""
     task_rows: tuple[dict[str, Any], ...] = ()
+    workload_observable: bool = True
+    workload_evidence: str = ""
     error: str = ""
+
+
+def _managed_job_workload_markers(row: Mapping[str, Any]) -> set[str]:
+    """Return scheduler/runtime fields that cannot exist in a pre-sync row."""
+
+    markers: set[str] = set()
+    status = str(row.get("status") or "UNKNOWN").upper()
+    if status not in {"", "PENDING", "UNKNOWN"}:
+        markers.add(f"status:{status.lower()}")
+    schedule_state = str(row.get("schedule_state") or "").upper()
+    if schedule_state and not schedule_state.endswith("INACTIVE"):
+        markers.add("scheduler_state")
+    for marker_field in (
+        "submitted_at",
+        "start_at",
+        "end_at",
+        "controller_pid",
+        "controller_pid_started_at",
+    ):
+        if row.get(marker_field) not in (None, "", 0, 0.0):
+            markers.add(marker_field)
+    return markers
 
 
 class SkyPilotSubmitError(RuntimeError):
@@ -306,13 +364,29 @@ def submit_workflow(
             if env.get(secret_name):
                 cmd[-1:-1] = ["--secret", secret_name]
         stable_cwd = _stable_sky_cwd(runtime_config.isolated_config_dir)
-        controller_state = _wait_for_healthy_jobs_controller(
+        selected_context = _selected_kube_context(
+            infra,
+            env=env,
+            controller_backend=controller_backend,
+        )
+        controller_health = _wait_for_healthy_jobs_controller(
             sky_executable,
             env=env,
             timeout=controller_preflight_timeout,
             interval=controller_preflight_interval,
             require_existing=require_controller_up,
             cwd=stable_cwd,
+            execution_probe=(
+                (
+                    lambda controller_name: _probe_kubernetes_controller_cwd(
+                        controller_name,
+                        context=selected_context,
+                        env=env,
+                    )
+                )
+                if controller_backend == "kubernetes"
+                else None
+            ),
         )
         streamer = (
             _LaunchStreamer(
@@ -325,11 +399,6 @@ def submit_workflow(
             )
             if stream_output
             else None
-        )
-        selected_context = _selected_kube_context(
-            infra,
-            env=env,
-            controller_backend=controller_backend,
         )
         readiness_probe = stability_probe
         if readiness_probe is None and controller_backend == "kubernetes":
@@ -413,7 +482,7 @@ def submit_workflow(
                 return
             enriched = dict(payload)
             enriched["controller"] = {
-                "state": controller_state.value,
+                **controller_health.to_dict(),
                 "selected_context": selected_context,
             }
             transaction_recorder(enriched)
@@ -435,7 +504,7 @@ def submit_workflow(
             )
         except LaunchTransactionError as exc:
             exc.result.controller = {
-                "state": controller_state.value,
+                **controller_health.to_dict(),
                 "selected_context": selected_context,
             }
             if exc.result.state in {
@@ -453,7 +522,7 @@ def submit_workflow(
                 message = f"{message}\n{exc.result.operator_remedy}"
             raise SkyPilotSubmitError(message, transaction=exc.result) from exc
         transaction.controller = {
-            "state": controller_state.value,
+            **controller_health.to_dict(),
             "selected_context": selected_context,
         }
         launch_pair = transaction.launch_result
@@ -798,11 +867,21 @@ def lookup_managed_job(
         )
     selected = str(max(matching_ids))
     rows = tuple(parse_task_statuses(result.stdout, selected))
+    markers = sorted(
+        {
+            marker
+            for row in jobs
+            if str(row.get("job_id") or row.get("id") or "") == selected
+            for marker in _managed_job_workload_markers(row)
+        }
+    )
     return ManagedJobEvidence(
         "found",
         job_id=selected,
         status=_status_from_queue_payload(result.stdout, selected) or "UNKNOWN",
         task_rows=rows,
+        workload_observable=bool(markers),
+        workload_evidence=",".join(markers),
     )
 
 
@@ -856,6 +935,7 @@ def _reconcile_managed_job_env(
         rows = parsed_rows
     matching: set[str] = set()
     statuses: dict[str, str] = {}
+    workload_markers: dict[str, set[str]] = {}
     for row in rows:
         if not isinstance(row, Mapping):
             continue
@@ -865,6 +945,9 @@ def _reconcile_managed_job_env(
         if job_id.isdigit():
             matching.add(job_id)
             statuses[job_id] = str(row.get("status") or "UNKNOWN").upper()
+            workload_markers.setdefault(job_id, set()).update(
+                _managed_job_workload_markers(row)
+            )
     if not matching:
         return ReconciliationEvidence(ReconciliationState.ABSENT)
     if len(matching) != 1:
@@ -876,10 +959,13 @@ def _reconcile_managed_job_env(
             ),
         )
     selected = next(iter(matching))
+    markers = sorted(workload_markers.get(selected) or ())
     return ReconciliationEvidence(
         ReconciliationState.FOUND,
         job_id=selected,
         status=statuses.get(selected, "UNKNOWN"),
+        workload_observable=bool(markers),
+        workload_evidence=",".join(markers),
     )
 
 
@@ -1137,6 +1223,152 @@ def _read_text(path: Path) -> str:
         return ""
 
 
+def _probe_kubernetes_controller_cwd(
+    controller_name: str,
+    *,
+    context: str,
+    env: Mapping[str, str],
+    runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+    kubectl: str | None = None,
+    timeout: int = 30,
+) -> ControllerExecutionProbe:
+    """Prove the live Kubernetes controller head can resolve its cwd.
+
+    SkyPilot records a managed-job row before it syncs the submitted YAML. A
+    controller pod whose working directory was deleted can therefore remain
+    cached as ``UP`` while every sync fails and leaves a permanent PENDING row.
+    The pod readiness bit cannot detect that process-level filesystem failure,
+    so execute a read-only cwd probe in the exact head pod before launch.
+    """
+
+    exact_context = str(context or "").strip()
+    executable = kubectl or shutil.which("kubectl") or ""
+    if not exact_context:
+        return ControllerExecutionProbe(
+            False, "context_missing", error="controller cwd probe has no exact context"
+        )
+    if not executable:
+        return ControllerExecutionProbe(
+            False, "kubectl_missing", error="kubectl is required for controller cwd health"
+        )
+    selector = f"skypilot-cluster-name={controller_name}"
+    try:
+        listed = runner(
+            [
+                executable,
+                "--context",
+                exact_context,
+                "get",
+                "pods",
+                "--all-namespaces",
+                "--selector",
+                selector,
+                "--output",
+                "json",
+            ],
+            env=dict(env),
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=timeout,
+            check=False,
+        )
+    except (KeyboardInterrupt, InterruptedError):
+        raise
+    except BaseException as exc:
+        return ControllerExecutionProbe(
+            False, "pod_query_failed", error=redact_text(str(exc))
+        )
+    if listed.returncode != 0:
+        return ControllerExecutionProbe(
+            False, "pod_query_failed", error=redact_text(_command_detail(listed))
+        )
+    try:
+        payload = json.loads(listed.stdout or "{}")
+    except (TypeError, json.JSONDecodeError) as exc:
+        return ControllerExecutionProbe(
+            False, "pod_query_malformed", error=redact_text(str(exc))
+        )
+    items = payload.get("items") if isinstance(payload, dict) else None
+    pods = items if isinstance(items, list) else []
+    heads = []
+    for pod in pods:
+        if not isinstance(pod, dict):
+            continue
+        metadata = pod.get("metadata") if isinstance(pod.get("metadata"), dict) else {}
+        labels = metadata.get("labels") if isinstance(metadata.get("labels"), dict) else {}
+        if labels.get("ray-node-type") == "head" or labels.get(
+            "skypilot-head-node"
+        ) == "1":
+            heads.append(pod)
+    if len(heads) != 1:
+        return ControllerExecutionProbe(
+            False,
+            "head_pod_ambiguous",
+            pod_count=len(heads),
+            error=f"expected one controller head pod, found {len(heads)}",
+        )
+    head = heads[0]
+    metadata = head.get("metadata") if isinstance(head.get("metadata"), dict) else {}
+    status = head.get("status") if isinstance(head.get("status"), dict) else {}
+    conditions = status.get("conditions") if isinstance(status.get("conditions"), list) else []
+    ready = any(
+        isinstance(condition, dict)
+        and condition.get("type") == "Ready"
+        and str(condition.get("status") or "").lower() == "true"
+        for condition in conditions
+    )
+    if status.get("phase") != "Running" or not ready:
+        return ControllerExecutionProbe(
+            False,
+            "head_pod_not_ready",
+            pod_count=1,
+            error="controller head pod is not Running and Ready",
+        )
+    pod_name = str(metadata.get("name") or "")
+    namespace = str(metadata.get("namespace") or "default")
+    if not pod_name:
+        return ControllerExecutionProbe(
+            False, "head_pod_malformed", pod_count=1, error="head pod has no name"
+        )
+    try:
+        cwd = runner(
+            [
+                executable,
+                "--context",
+                exact_context,
+                "exec",
+                "--namespace",
+                namespace,
+                pod_name,
+                "--",
+                "/bin/sh",
+                "-c",
+                "pwd -P >/dev/null && test -d /proc/1/cwd",
+            ],
+            env=dict(env),
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=timeout,
+            check=False,
+        )
+    except (KeyboardInterrupt, InterruptedError):
+        raise
+    except BaseException as exc:
+        return ControllerExecutionProbe(
+            False, "cwd_probe_failed", pod_count=1, error=redact_text(str(exc))
+        )
+    if cwd.returncode != 0:
+        return ControllerExecutionProbe(
+            False,
+            "cwd_unusable",
+            pod_count=1,
+            error=redact_text(_command_detail(cwd)),
+        )
+    return ControllerExecutionProbe(True, "cwd_live", pod_count=1)
+
+
 def _wait_for_healthy_jobs_controller(
     sky_executable: str,
     *,
@@ -1145,7 +1377,8 @@ def _wait_for_healthy_jobs_controller(
     interval: float,
     require_existing: bool = False,
     cwd: str | None = None,
-) -> ControllerState:
+    execution_probe: Callable[[str], ControllerExecutionProbe] | None = None,
+) -> ControllerHealthResult:
     """Block launch while an existing managed-jobs controller is not ready."""
 
     deadline = time.monotonic() + max(timeout, 0)
@@ -1199,13 +1432,48 @@ def _wait_for_healthy_jobs_controller(
             ]
             if not unhealthy:
                 if not controllers:
-                    return ControllerState.ABSENT
+                    return ControllerHealthResult(ControllerState.ABSENT)
                 statuses = {status.upper() for _name, status in controllers}
-                return (
+                state = (
                     ControllerState.UP
                     if HEALTHY_CONTROLLER_STATUS in statuses
                     else ControllerState.STOPPED
                 )
+                expected_name = ""
+                user_id = str(env.get("SKYPILOT_USER_ID") or "").strip()
+                if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]*", user_id):
+                    candidate = f"{JOBS_CONTROLLER_PREFIX}{user_id}"
+                    if any(name == candidate for name, _status in controllers):
+                        expected_name = candidate
+                if not expected_name:
+                    candidates = [
+                        name
+                        for name, status in controllers
+                        if state is ControllerState.STOPPED
+                        or status.upper() == HEALTHY_CONTROLLER_STATUS
+                    ]
+                    if len(candidates) == 1:
+                        expected_name = candidates[0]
+                    elif state is ControllerState.UP and execution_probe is not None:
+                        raise SkyPilotSubmitError(
+                            "SkyPilot controller execution health is ambiguous: "
+                            "multiple UP jobs controllers are cached and no exact "
+                            "SKYPILOT_USER_ID selects one. Refusing to probe or launch."
+                        )
+                probe_result = None
+                if state is ControllerState.UP and execution_probe is not None:
+                    probe_result = execution_probe(expected_name)
+                    if not probe_result.healthy:
+                        raise SkyPilotSubmitError(
+                            "SkyPilot jobs controller execution health check failed: "
+                            f"{probe_result.outcome}: {probe_result.error or 'cwd unavailable'}. "
+                            "A cached UP status is not sufficient when the controller "
+                            "cannot resolve its working directory. Inspect/cancel the exact "
+                            "workflow with `npa workbench workflow status|cancel`, then repair "
+                            "the shared controller with `npa skypilot cleanup-controller` and "
+                            "resume the same run ID."
+                        )
+                return ControllerHealthResult(state, expected_name, probe_result)
             last_summary = ", ".join(
                 f"{name}={status or 'UNKNOWN'}" for name, status in unhealthy
             )

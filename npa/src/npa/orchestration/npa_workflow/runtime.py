@@ -547,6 +547,11 @@ class SkyPilotWaveExecutor:
                     and str(latest.get("recovery_decision") or "")
                     == "operator_authorized_verified_absent_relaunch"
                 )
+                verified_phantom_retry = (
+                    category == "controller"
+                    and str(latest.get("recovery_decision") or "")
+                    == "phantom_record_cancelled_verified_relaunch"
+                )
                 terminal_workload = is_terminal_fail(sky_status) or category in {
                     "auth",
                     "rbac",
@@ -558,10 +563,14 @@ class SkyPilotWaveExecutor:
                     "workload",
                     "schema",
                 }
-                if safe_transport_retry or explicit_absence_retry:
+                if (
+                    safe_transport_retry
+                    or explicit_absence_retry
+                    or verified_phantom_retry
+                ):
                     retrying_prior_terminal = True
                     self._log(
-                        f"wave {key}: prior exact-absence recovery permits a new "
+                        f"wave {key}: prior verified recovery permits a new "
                         f"attempt after attempt {prior_attempt}"
                     )
                 elif terminal_workload and self.options.retries <= 0:
@@ -720,6 +729,55 @@ class SkyPilotWaveExecutor:
         if outcome == "found":
             attempt.job_id = str(getattr(evidence, "job_id", "") or job_id)
             status = str(getattr(evidence, "status", "") or "UNKNOWN").upper()
+            if not bool(getattr(evidence, "workload_observable", True)):
+                marker = str(getattr(evidence, "workload_evidence", "") or "")
+                attempt.status = "failed"
+                attempt.error_category = "controller"
+                attempt.error = (
+                    f"wave {key}: exact managed job {attempt.job_id} is only a "
+                    "pre-submit queue record; no scheduler or workload evidence "
+                    f"became observable{f' ({marker})' if marker else ''}"
+                )
+                attempt.reconciliation.append(
+                    {
+                        "outcome": "found_unobservable",
+                        "job_id": attempt.job_id,
+                        "status": status,
+                        "workload_observable": False,
+                        "workload_evidence": marker,
+                        "checked_at": utc_now(),
+                    }
+                )
+                cancel_state, cancel_error = self._cancel(
+                    attempt.job_id, attempt.job_name
+                )
+                attempt.cancellation_state = cancel_state
+                attempt.cancellation_error = cancel_error
+                attempt.ended_at = utc_now()
+                if cancel_state == "verified":
+                    attempt.sky_status = "CANCELLED"
+                    attempt.recovery_decision = (
+                        "phantom_record_cancelled_verified_relaunch"
+                    )
+                    attempt.operator_remedy = (
+                        "The exact phantom record was cancelled and verified; launch "
+                        "the incomplete wave as a new immutable attempt."
+                    )
+                    self.ledger.record(attempt)
+                    self._log(
+                        f"wave {key}: cancelled verified unobservable queue record "
+                        f"{attempt.job_id}; preparing a new attempt identity"
+                    )
+                    self.attempts.pop()
+                    return None
+                attempt.recovery_decision = "block_unobservable_in_flight_record"
+                attempt.operator_remedy = (
+                    "Verify exact cancellation with `npa workbench workflow cancel`, "
+                    "repair the controller with `npa skypilot cleanup-controller`, "
+                    "then resume the same run ID."
+                )
+                self.ledger.record(attempt)
+                return attempt
         elif outcome == "absent":
             automatic_retry = attempt.launch_sequence == 0 or (
                 attempt.error_category

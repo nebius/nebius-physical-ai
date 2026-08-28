@@ -181,6 +181,8 @@ class ReconciliationEvidence:
     state: ReconciliationState
     job_id: str = ""
     status: str = ""
+    workload_observable: bool = False
+    workload_evidence: str = ""
     error: str = ""
 
     def to_dict(self) -> dict[str, Any]:
@@ -188,6 +190,8 @@ class ReconciliationEvidence:
             "state": self.state.value,
             "job_id": self.job_id,
             "status": self.status,
+            "workload_observable": self.workload_observable,
+            "workload_evidence": redact_text(self.workload_evidence)[:1000],
             "error": redact_text(self.error)[:1000],
         }
 
@@ -559,6 +563,23 @@ def run_launch_transaction(
         transaction.reconciliations.append(initial.to_dict())
         if initial.state is ReconciliationState.FOUND:
             transaction.existence = "found"
+            transaction.job_id = initial.job_id
+            if not initial.workload_observable:
+                transaction.state = LaunchState.INDETERMINATE
+                transaction.reconciliation_error = (
+                    "the exact managed-job queue record has no scheduler or workload "
+                    "observability evidence"
+                )
+                transaction.recovery_decision = "block_unobservable_existing_record"
+                transaction.operator_remedy = (
+                    "Treat this as a possible pre-submit phantom, not a healthy job. "
+                    "Inspect the run with `npa workbench workflow status`, cancel the "
+                    "exact stale run with `npa workbench workflow cancel`, repair the "
+                    "shared controller with `npa skypilot cleanup-controller`, and "
+                    "resume the same run ID."
+                )
+                checkpoint()
+                _raise_result(transaction)
             transaction.state = LaunchState.ADOPTED
             transaction.job_id = initial.job_id
             transaction.recovery_decision = "adopt_existing"
@@ -661,8 +682,31 @@ def run_launch_transaction(
             transaction.reconciliations.append(after_failure.to_dict())
             if after_failure.state is ReconciliationState.FOUND:
                 transaction.existence = "found"
-                transaction.state = LaunchState.ADOPTED
                 transaction.job_id = after_failure.job_id
+                if not after_failure.workload_observable:
+                    transaction.state = (
+                        LaunchState.INTERRUPTED
+                        if category is FailureCategory.INTERRUPTED
+                        else LaunchState.TERMINAL_FAILURE
+                        if state is EvidenceState.TERMINAL
+                        else LaunchState.INDETERMINATE
+                    )
+                    transaction.reconciliation_error = (
+                        "launch failed and the exact queue record never became "
+                        "observable to the scheduler or workload runtime"
+                    )
+                    transaction.recovery_decision = (
+                        "reject_unobservable_queue_record_after_launch_failure"
+                    )
+                    transaction.operator_remedy = (
+                        "The queue row may have been allocated before controller file "
+                        "sync. Do not poll it as a submitted workload. Inspect and cancel "
+                        "the exact run with NPA commands, repair the shared controller, "
+                        "then resume the same run ID."
+                    )
+                    checkpoint()
+                    _raise_result(transaction)
+                transaction.state = LaunchState.ADOPTED
                 transaction.recovery_decision = "adopt_after_uncertain_launch"
                 if progress is not None:
                     progress(

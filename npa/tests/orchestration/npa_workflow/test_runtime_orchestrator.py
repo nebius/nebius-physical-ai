@@ -1839,6 +1839,69 @@ def test_resume_attaches_to_an_in_flight_job_instead_of_resubmitting(
     assert [call["tasks"] for call in second_submitter.calls] == [["shard-c"], ["join"]]
 
 
+def test_resume_cancels_phantom_pending_record_before_new_attempt(
+    tmp_path: Path,
+) -> None:
+    from npa.orchestration.skypilot.workflow import ManagedJobEvidence
+
+    spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
+    store = MemoryStore()
+    state = RuntimeRunState(workflow=spec.name, run_id="rt-phantom")
+    state.record_wave(
+        {
+            "key": "001|shards|shards:shard-a:-,shards:shard-b:-",
+            "status": "running",
+            "job_id": "125",
+            "job_name": "rt-phantom-01-shards",
+            "attempt": 1,
+            "sky_status": "PENDING",
+            "logical_launch_id": "logical-phantom",
+            "launch_sequence": 1,
+            "recovery_decision": "adopt_after_uncertain_launch",
+        }
+    )
+    store.write_runtime_state(state)
+    cancellations: list[dict[str, Any]] = []
+    submitter = FakeSubmitter()
+    options = RuntimeOptions(poll_seconds=0, max_wait_seconds=60, resume=True)
+    executor = _executor(
+        spec,
+        run_id="rt-phantom",
+        submitter=submitter,
+        status_fn=FakeStatus(["CANCELLED"]),
+        options=options,
+        store=store,
+        cancels=cancellations,
+        reconcile_fn=lambda *_args, **_kwargs: ManagedJobEvidence(
+            "found",
+            job_id="125",
+            status="PENDING",
+            workload_observable=False,
+        ),
+    )
+
+    report = run_workflow_runtime(
+        spec, run_id="rt-phantom", executor=executor, options=options
+    )
+
+    assert report.status == "succeeded"
+    assert cancellations == [
+        {"job_id": "125", "run_id": "rt-phantom-01-shards", "cluster": "rt-phantom-01-shards"}
+    ]
+    assert submitter.calls[0]["job_name"].endswith("-a2")
+    attempts = [
+        item
+        for item in store.read_runtime_state().waves
+        if item["key"] == "001|shards|shards:shard-a:-,shards:shard-b:-"
+    ]
+    assert [item["attempt"] for item in attempts[:2]] == [1, 2]
+    assert (
+        attempts[0]["recovery_decision"]
+        == "phantom_record_cancelled_verified_relaunch"
+    )
+    assert attempts[0]["cancellation"]["state"] == "verified"
+
+
 def test_resume_preserves_an_in_flight_job_that_actually_failed(tmp_path: Path) -> None:
     spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
     store = MemoryStore()

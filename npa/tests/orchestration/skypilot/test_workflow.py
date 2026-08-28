@@ -554,6 +554,13 @@ def test_submit_workflow_require_controller_up_uses_canonical_preflight(
         )
 
     monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        workflow_module,
+        "_probe_kubernetes_controller_cwd",
+        lambda *_args, **_kwargs: workflow_module.ControllerExecutionProbe(
+            True, "cwd_live", pod_count=1
+        ),
+    )
 
     result = submit_workflow(
         yaml_path,
@@ -867,6 +874,138 @@ def test_wait_for_controller_proceeds_when_up(monkeypatch) -> None:
     workflow_module._wait_for_healthy_jobs_controller(
         "sky", env={}, timeout=0, interval=0.01
     )
+
+
+def test_controller_cwd_probe_rejects_deleted_working_directory() -> None:
+    calls: list[list[str]] = []
+    pod_payload = json.dumps(
+        {
+            "items": [
+                {
+                    "metadata": {
+                        "name": "controller-head",
+                        "namespace": "controller-ns",
+                        "labels": {
+                            "skypilot-cluster-name": "sky-jobs-controller-test",
+                            "ray-node-type": "head",
+                        },
+                    },
+                    "status": {
+                        "phase": "Running",
+                        "conditions": [{"type": "Ready", "status": "True"}],
+                    },
+                }
+            ]
+        }
+    )
+
+    def runner(cmd, **_kwargs):
+        calls.append(cmd)
+        if "get" in cmd:
+            return subprocess.CompletedProcess(cmd, 0, stdout=pod_payload, stderr="")
+        return subprocess.CompletedProcess(
+            cmd,
+            3,
+            stdout="",
+            stderr="sh: getcwd() failed: No such file or directory",
+        )
+
+    result = workflow_module._probe_kubernetes_controller_cwd(
+        "sky-jobs-controller-test",
+        context="exact-context",
+        env={},
+        runner=runner,
+        kubectl="/usr/bin/kubectl",
+    )
+
+    assert result.healthy is False
+    assert result.outcome == "cwd_unusable"
+    assert "getcwd" in result.error
+    assert calls[0][-4:] == [
+        "--selector",
+        "skypilot-cluster-name=sky-jobs-controller-test",
+        "--output",
+        "json",
+    ]
+    assert calls[1][-3:] == [
+        "/bin/sh",
+        "-c",
+        "pwd -P >/dev/null && test -d /proc/1/cwd",
+    ]
+
+
+def test_controller_up_is_rejected_when_execution_probe_fails(monkeypatch) -> None:
+    monkeypatch.setattr(
+        workflow_module.subprocess, "run", _controller_status_run("UP")
+    )
+
+    with pytest.raises(SkyPilotSubmitError) as caught:
+        workflow_module._wait_for_healthy_jobs_controller(
+            "sky",
+            env={"SKYPILOT_USER_ID": "abc123"},
+            timeout=0,
+            interval=0.01,
+            execution_probe=lambda _name: workflow_module.ControllerExecutionProbe(
+                False,
+                "cwd_unusable",
+                pod_count=1,
+                error="getcwd() failed: No such file or directory",
+            ),
+        )
+
+    message = str(caught.value)
+    assert "cached UP status is not sufficient" in message
+    assert "npa workbench workflow status|cancel" in message
+    assert "npa skypilot cleanup-controller" in message
+
+
+@pytest.mark.parametrize(
+    ("row", "observable", "marker"),
+    [
+        (
+            {
+                "job_id": 125,
+                "job_name": "exact-run",
+                "status": "PENDING",
+                "schedule_state": "INACTIVE",
+                "submitted_at": None,
+                "controller_pid": None,
+            },
+            False,
+            "",
+        ),
+        (
+            {
+                "job_id": 126,
+                "job_name": "exact-run",
+                "status": "PENDING",
+                "schedule_state": "WAITING",
+                "submitted_at": None,
+                "controller_pid": 4321,
+            },
+            True,
+            "controller_pid,scheduler_state",
+        ),
+    ],
+)
+def test_reconciliation_distinguishes_phantom_from_scheduler_observable_job(
+    monkeypatch, row, observable, marker
+) -> None:
+    monkeypatch.setattr(
+        workflow_module.subprocess,
+        "run",
+        lambda cmd, **_kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout=json.dumps([row]), stderr=""
+        ),
+    )
+
+    evidence = workflow_module._reconcile_managed_job_env(
+        "exact-run", env={}, sky_executable="sky", cwd="/durable"
+    )
+
+    assert evidence.state.value == "found"
+    assert evidence.workload_observable is observable
+    assert evidence.workload_evidence == marker
 
 
 def test_wait_for_controller_ignores_only_foreign_explicit_identity(
