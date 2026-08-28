@@ -1768,6 +1768,10 @@ def test_isaac_lab_train_export_trajectories_runs_second_remote_script(mocker) -
     assert "ISAAC_LAB_TRAJ_EXPORT_FAILED" in traj_cmd
     assert "capture_rgb = True" in traj_cmd
     assert "enable_cameras=capture_rgb" in traj_cmd
+    assert 'kit_args="--portable-root /tmp/npa-isaac-kit"' in traj_cmd
+    assert 'rtx_settings.set_float("/rtx/dataWindowNDC/0", 0.0)' in traj_cmd
+    assert 'rtx_settings.set_float("/rtx/dataWindowNDC/3", 1.0)' in traj_cmd
+    assert 'rtx_settings.set_bool("/rtx/dataWindow/fitOutputToDataWindow", False)' in traj_cmd
     assert "TiledCameraCfg(" in traj_cmd
     assert 'prim_path="{ENV_REGEX_NS}/NpaRolloutCamera"' in traj_cmd
     assert 'camera = render_env.unwrapped.scene["npa_rollout_camera"]' in traj_cmd

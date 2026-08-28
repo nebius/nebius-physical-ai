@@ -1283,8 +1283,27 @@ from isaaclab.app import AppLauncher
 capture_rgb = {capture_rgb!r}
 rgb_width = {rgb_width}
 rgb_height = {rgb_height}
-app_launcher = AppLauncher(headless=True, enable_cameras=capture_rgb)
+app_launcher = AppLauncher(
+    headless=True,
+    enable_cameras=capture_rgb,
+    kit_args="--portable-root /tmp/npa-isaac-kit",
+)
 simulation_app = app_launcher.app
+
+if capture_rgb:
+    # Isaac Sim 5.1 can leave the RTX data-window unset under a portable root.
+    # Replicator/TiledCamera then operates on an invalid window, which has
+    # produced both black viewport allocations and CUDA illegal-address errors
+    # on real RTX hosts. Initialize the documented full-frame window before any
+    # camera sensor is created.
+    import carb
+
+    rtx_settings = carb.settings.get_settings()
+    rtx_settings.set_float("/rtx/dataWindowNDC/0", 0.0)
+    rtx_settings.set_float("/rtx/dataWindowNDC/1", 0.0)
+    rtx_settings.set_float("/rtx/dataWindowNDC/2", 1.0)
+    rtx_settings.set_float("/rtx/dataWindowNDC/3", 1.0)
+    rtx_settings.set_bool("/rtx/dataWindow/fitOutputToDataWindow", False)
 
 import gymnasium as gym
 import numpy as np
