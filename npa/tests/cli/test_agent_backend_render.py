@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import ast
 import builtins
+import hashlib
 import json
 import re
 import secrets
@@ -21,6 +22,23 @@ from types import SimpleNamespace
 import pytest
 
 from npa.cli.agent_embed import embedded_python_source
+from npa.cli.agent_viewer_runtime import _sha256_file
+
+
+def test_sha256_file_streams_recording_without_read_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    recording = tmp_path / "large.rrd"
+    payload = (b"RRF2" + b"recording-block") * 1000
+    recording.write_bytes(payload)
+
+    monkeypatch.setattr(
+        Path,
+        "read_bytes",
+        lambda _path: (_ for _ in ()).throw(AssertionError("must stream file")),
+    )
+
+    assert _sha256_file(recording, chunk_size=31) == hashlib.sha256(payload).hexdigest()
 
 
 def _clear_rendered_agent_backend_modules() -> None:

@@ -11,6 +11,15 @@ import hashlib
 import shutil
 from pathlib import Path
 
+
+def _sha256_file(path: Path, *, chunk_size: int = 1024 * 1024) -> str:
+    """Hash a recording without materializing the whole artifact in memory."""
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(chunk_size), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
 # NPA_EMBED_STANDALONE_START
 # The rendered backend supplies these globals. Explicit sentinels keep this
 # module importable for direct helper tests without hiding undefined names from
@@ -351,9 +360,7 @@ def _apply_loaded_artifact(
             rrd_tmp = RRD_PATH.with_suffix(".rrd.tmp")
             shutil.copy2(local_path, rrd_tmp)
             rrd_tmp.replace(RRD_PATH)
-        sim_viz["served_recording_sha256"] = hashlib.sha256(
-            RECORDING_PATH.read_bytes()
-        ).hexdigest()
+        sim_viz["served_recording_sha256"] = _sha256_file(RECORDING_PATH)
         restarted = _restart_rerun_serve(force=True)
         rerun_ready = _wait_rerun_web_viewer_healthy() if restarted else False
         sim_viz["rrd_uri"] = f"file://{RECORDING_PATH}"
