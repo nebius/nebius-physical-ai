@@ -168,6 +168,7 @@ cosmos2-transfer = "2.5.1-sam2-multigpu-20260817-r2"
 # earlier tags remain provenance; r5 excludes wheel-bundled FFmpeg and keeps the
 # no-argv worker pod alive for SkyPilot bootstrap; weights stay out.
 cosmos3 = "1.2.2-cu130-r6"
+cosmos3-ray-serve = "ray1-cu130"
 cosmos3-serving = "0.2.0-oss"
 cosmos3-reason = "cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
 # Cosmos Curator: NVIDIA upstream checkout + GPU-free curation stage deps.

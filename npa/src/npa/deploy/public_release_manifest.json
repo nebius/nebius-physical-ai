@@ -7,6 +7,7 @@
     "cosmos-evaluator": {"tag": "0.1.2-skypilot-v1-20260813T164700Z-r2", "published_digest": "sha256:7f6a71d6528a0daea614a96afec342df2d9d3238dd9874a2848eee15e1f52a29"},
     "cosmos2-transfer": {"tag": "2.5.1-skypilot-ready-20260801T053000Z", "published_digest": "sha256:9b4c5eb505353aa3dea37284c662f3cff306fa7c902f040e559f7939173345cc"},
     "cosmos3": {"tag": "1.2.2-cu130-r6", "published_digest": "sha256:0eb459769eba9942b5b9004c4df68721f2c3e5490a6614e85ced67e8a6f9cd5d"},
+    "cosmos3-ray-serve": {"tag": "ray1-cu130", "published_digest": "sha256:6e42f553a0d14712dc1ed7fa42c72b0f083f4ae3f89b30eaf0e93cfdf64e820d", "development_sha": "56d8c4f3f05db7aa3b03323441a3e0d7b97ac8da"},
     "cosmos3-reason": {"tag": "cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z", "published_digest": "sha256:e708aa32b9247eaedf1a7a5b0d82adbe65b95a9af50721b9d09fddbfd508bbc9"},
     "cosmos3-serving": {"tag": "0.2.0-oss", "published_digest": "sha256:3342bbe44bd1c00ebf05ab4c9d7286058a94bb5ce90b49b164b23604d3acf180", "development_sha": "d854f6a76cd87ec05ad97ccde6d596f3329efa0e"},
     "detection-training": {"tag": "bdd100k-golden-eval-smoke-20260614T210000Z", "published_digest": "sha256:a432dd2a9e6bafed4b78466ac806f584c7fcf549cf3be0edaf75f2fecdadfdd9"},

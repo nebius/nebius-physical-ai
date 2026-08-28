@@ -177,6 +177,7 @@ jobs:
             npa/tests/docker/test_ltx_runtime_bootstrap.py \
             npa/tests/docker/test_ltx_image_payload_scan.py \
             npa/tests/docker/test_cosmos3_serving_image_contract.py \
+            npa/tests/docker/test_cosmos3_ray_serve_image_contract.py \
             npa/tests/docker/test_sonic_mujoco_public_image_contract.py \
             npa/tests/deploy/test_public_publish.py \
             npa/tests/guardrails/test_secure_image_build_skill.py \
@@ -194,7 +195,7 @@ jobs:
           sudo install -m 0755 gitleaks /usr/local/bin/gitleaks
           gitleaks detect --source . --config .gitleaks.toml --redact --no-banner --log-opts="origin/main..HEAD"
 
-      - name: Prove an existing destination package is public
+      - name: Prove destination cannot expose unvalidated tagged bytes
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -206,14 +207,34 @@ jobs:
           encoded="${package//\//%2F}"
           response="$(mktemp)"
           status="$(gh api --silent --include "/orgs/${owner}/packages/container/${encoded}" >"$response" 2>/dev/null; printf '%s' "$?")"
+          package_api="/orgs/${owner}/packages/container/${encoded}"
           if [ "$status" = 0 ]; then
-            test "$(gh api "/orgs/${owner}/packages/container/${encoded}" --jq .visibility)" = public
+            visibility="$(gh api "$package_api" --jq .visibility)"
+            if [ "$visibility" = public ]; then
+              echo "Existing package is already public." >> "$GITHUB_STEP_SUMMARY"
+            elif [ "$visibility" = private ]; then
+              # A failed first publication can leave private, untagged OCI
+              # attestations behind after its exact tagged image version is deleted.
+              # Those referrers must not prevent a clean retry, but a private package
+              # containing any tagged image could expose unvalidated bytes when the
+              # successful retry switches the package to public below.
+              versions="$(mktemp)"
+              gh api --paginate --slurp "${package_api}/versions?per_page=100" | jq 'add' > "$versions"
+              tagged_count="$(jq '[.[] | select((.metadata.container.tags // []) | length > 0)] | length' "$versions")"
+              if [ "$tagged_count" != 0 ]; then
+                echo "::error::Private destination contains tagged versions; refusing a visibility change"
+                exit 1
+              fi
+              echo "Private destination contains no tagged image versions; exact pushed-byte gates and visibility verification apply." >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "::error::Unsupported destination visibility: $visibility"
+              exit 1
+            fi
           elif grep -q '^HTTP/.* 404 ' "$response"; then
-            # The organisation policy forbids private package creation. A new package
-            # can therefore be created only after every byte-level gate below passes;
-            # the post-push anonymous check remains mandatory and failure triggers the
-            # exact run-owned version cleanup job.
-            echo "New package; organisation policy and post-push anonymous verification apply." >> "$GITHUB_STEP_SUMMARY"
+            # A new package is created only after every local byte-level gate below
+            # passes. The pushed digest is scanned again before the package visibility
+            # changes, and any failure triggers exact run-owned version cleanup.
+            echo "New package; exact pushed-byte gates and post-push anonymous verification apply." >> "$GITHUB_STEP_SUMMARY"
           else
             echo "::error::Could not prove destination package state"
             exit 1
@@ -284,13 +305,29 @@ jobs:
               --tarball "$RUNNER_TEMP/${TOOL}.tar" \
               --json "$RUNNER_TEMP/${TOOL}-cosmos3-serving-payload.json"
           fi
+          if [ "$TOOL" = cosmos3-ray-serve ]; then
+            npa/.venv/bin/python npa/scripts/scan_image_cosmos3_ray_serve_payload.py \
+              --tarball "$RUNNER_TEMP/${TOOL}.tar" \
+              --json "$RUNNER_TEMP/${TOOL}-cosmos3-ray-serve-payload.json"
+          fi
           if [ "$TOOL" = sonic-mujoco ]; then
             docker run --rm --entrypoint /opt/npa/venv/bin/python "$IMAGE" \
               /opt/npa/docker/workbench/sonic/verify_mujoco_image.py
           fi
 
+      # CUDA/AI images can exceed 25 GB. Once the exact loaded image passes its
+      # contract, BuildKit's duplicate cache is no longer evidence and can be
+      # discarded. Trivy's export goes on the hosted runner's large temp disk so
+      # the unchanged vulnerability/secret/license gates inspect every layer.
+      - name: Prepare capacity for full-image security scans
+        run: |
+          docker buildx prune --all --force
+          sudo install -d -m 0777 /mnt/npa-trivy
+
       - name: Pre-publication vulnerability, secret, and license scan
         uses: aquasecurity/trivy-action@v0.36.0
+        env:
+          TMPDIR: /mnt/npa-trivy
         with:
           image-ref: ${{ matrix.image }}
           scanners: vuln,secret,license
@@ -301,6 +338,8 @@ jobs:
 
       - name: Generate pre-publication SBOM
         uses: aquasecurity/trivy-action@v0.36.0
+        env:
+          TMPDIR: /mnt/npa-trivy
         with:
           image-ref: ${{ matrix.image }}
           scanners: vuln
@@ -350,9 +389,10 @@ jobs:
           test -n "$PROVENANCE_URL" && test -s "$PROVENANCE_BUNDLE"
           test -n "$SBOM_URL" && test -s "$SBOM_BUNDLE"
 
-      - name: Verify pushed bytes, revision, payload, and anonymous pull
+      - name: Verify pushed bytes, revision, payload, visibility, and anonymous pull
         env:
           DIGEST: ${{ steps.push.outputs.digest }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           repository="${IMAGE%:*}"
@@ -376,11 +416,28 @@ jobs:
               --tarball "$RUNNER_TEMP/${TOOL}-pushed.tar" \
               --json "$RUNNER_TEMP/${TOOL}-pushed-cosmos3-serving-payload.json"
           fi
+          if [ "$TOOL" = cosmos3-ray-serve ]; then
+            docker pull "$exact"
+            docker save --output "$RUNNER_TEMP/${TOOL}-pushed.tar" "$exact"
+            npa/.venv/bin/python npa/scripts/scan_image_cosmos3_ray_serve_payload.py \
+              --tarball "$RUNNER_TEMP/${TOOL}-pushed.tar" \
+              --json "$RUNNER_TEMP/${TOOL}-pushed-cosmos3-ray-serve-payload.json"
+          fi
           if [ "$TOOL" = sonic-mujoco ]; then
             docker pull "$exact"
             docker run --rm --entrypoint /opt/npa/venv/bin/python "$exact" \
               /opt/npa/docker/workbench/sonic/verify_mujoco_image.py
           fi
+          path="${IMAGE#ghcr.io/}"
+          owner="${path%%/*}"
+          package_and_tag="${path#*/}"
+          package="${package_and_tag%:*}"
+          encoded="${package//\//%2F}"
+          package_api="/orgs/${owner}/packages/container/${encoded}"
+          if [ "$(gh api "$package_api" --jq .visibility)" != public ]; then
+            gh api --method PATCH "$package_api" -f visibility=public >/dev/null
+          fi
+          test "$(gh api "$package_api" --jq .visibility)" = public
           anonymous_config="$(mktemp -d)"
           DOCKER_CONFIG="$anonymous_config" crane manifest "$IMAGE" >/dev/null
           echo "Validated public development digest: $DIGEST" >> "$GITHUB_STEP_SUMMARY"
@@ -396,6 +453,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: imjasonh/setup-crane@v0.4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Delete only the exact unpromoted development version
         env:
@@ -451,6 +514,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: imjasonh/setup-crane@v0.4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Remove an exact run-owned dev tag after a failed build batch
         env:

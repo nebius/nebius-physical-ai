@@ -587,6 +587,26 @@
       "published_registries": ["public-development", "public-release"]
     },
     {
+      "name": "npa-cosmos3-ray-serve",
+      "dockerfile": "cosmos3-ray-serve/Dockerfile",
+      "build_script": "cosmos3-ray-serve/build.sh",
+      "redistribution": "public",
+      "verdict": "ready",
+      "validation": "validated",
+      "torch": "2.10.0+cu130 inherited from the exact accepted npa-cosmos3 digest",
+      "source_compiled_extensions": [],
+      "smoke": "guarded two-sample Cosmos3-Nano request through native @ray.serve.batch with structured outputs",
+      "notes": "The exact public development digest passed payload, vulnerability, secret, license, SBOM, provenance, and anonymous-pull gates, then independent guarded two-sample native Ray Serve generation on B200 sm_100 and RTX PRO 6000 sm_120. Each target produced two structured outputs and two decoded images with durable S3 request, response, media, hashes, and provenance; no result was inferred across CUDA majors.",
+      "measured_torch": "2.10.0+cu130",
+      "measured_arch_list": ["sm_75", "sm_80", "sm_86", "sm_90", "sm_100", "sm_120", "compute_120"],
+      "validated_tag": "dev-56d8c4f3f05db7aa3b03323441a3e0d7b97ac8da",
+      "validated_digest": "sha256:6e42f553a0d14712dc1ed7fa42c72b0f083f4ae3f89b30eaf0e93cfdf64e820d",
+      "published_tag": "ray1-cu130",
+      "published_digest": "sha256:6e42f553a0d14712dc1ed7fa42c72b0f083f4ae3f89b30eaf0e93cfdf64e820d",
+      "publication_model": "exact-digest-promoted",
+      "published_registries": ["public-development", "public-release"]
+    },
+    {
       "name": "npa-content-agents",
       "dockerfile": "content-agents/Dockerfile",
       "build_script": "content-agents/build.sh",

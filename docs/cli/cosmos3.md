@@ -10,6 +10,9 @@ Cosmos3 omni-model generation and reasoning workflow contracts.
 Options
 --help  Show this message and exit.
 Commands
+ray-batch  Submit a durable SDG batch through Cosmos Framework's native Ray Serve path.
+ray-health  Check authenticated model readiness, not merely process liveness.
+ray-serve  Launch the persistent native Ray Serve model inside its GPU image.
 prepare-video-input  Select a direct video or one LeRobot v2/v3 episode/camera for conditioning.
 generate-variants  Generate and publish real source-video-conditioned Cosmos 3 variants.
 checkpoint-eval  Evaluate Cosmos3 text-to-image checkpoints in guarded, load-once batches.
@@ -28,6 +31,9 @@ text-to-image  Generate an image from a prompt with the Cosmos3 framework, and p
 
 | Command | Description |
 | --- | --- |
+| `ray-batch` | Submit a durable SDG batch through Cosmos Framework's native Ray Serve path. |
+| `ray-health` | Check authenticated model readiness, not merely process liveness. |
+| `ray-serve` | Launch the persistent native Ray Serve model inside its GPU image. |
 | `prepare-video-input` | Select a direct video or one LeRobot v2/v3 episode/camera for conditioning. |
 | `generate-variants` | Generate and publish real source-video-conditioned Cosmos 3 variants. |
 | `checkpoint-eval` | Evaluate Cosmos3 text-to-image checkpoints in guarded, load-once batches. |
@@ -39,7 +45,7 @@ text-to-image  Generate an image from a prompt with the Cosmos3 framework, and p
 
 ```bash
 npa workbench cosmos3 --help
-npa workbench cosmos3 prepare-video-input --help
+npa workbench cosmos3 ray-batch --help
 ```
 
 Regenerate this page with `bash scripts/build_docs.sh` after changing `cosmos3`.
