@@ -17,7 +17,7 @@ def uri_join(base: str, *parts: str) -> str:
 
 
 def write_bytes_uri(uri: str, payload: bytes) -> None:
-    target = authorize_uri(uri, operation="write", env_prefix="DATASET")
+    target = authorize_uri(uri, operation="write")
     if target.kind == "s3":
         _s3_client().put_object(Bucket=target.bucket, Key=target.key, Body=payload)
         return
@@ -28,7 +28,7 @@ def write_bytes_uri(uri: str, payload: bytes) -> None:
 
 
 def read_bytes_uri(uri: str) -> bytes:
-    target = authorize_uri(uri, operation="read", env_prefix="DATASET")
+    target = authorize_uri(uri, operation="read")
     if target.kind == "s3":
         response = _s3_client().get_object(Bucket=target.bucket, Key=target.key)
         return response["Body"].read()

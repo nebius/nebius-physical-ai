@@ -17,9 +17,9 @@ export INSIGHTS_TOKEN='<owner-provided-token>'
 `DATASET_AUTH_MODE=none` and `INSIGHTS_AUTH_MODE=none` remain explicit opt-ins
 for a deliberately local or isolated test service. They are never the default.
 
-Storage access also starts with no authorized roots. Configure one or more exact
-S3 bucket/prefix roots as a comma-separated list and local sandbox roots as a
-platform path-separated list:
+For deployed FastAPI requests, storage access also starts with no authorized
+roots. Configure one or more exact S3 bucket/prefix roots as a comma-separated
+list and local sandbox roots as a platform path-separated list:
 
 ```bash
 export DATASET_ALLOWED_S3_ROOTS='s3://<bucket>/<dataset-prefix>'
@@ -32,6 +32,13 @@ Every read, write, existence check, and prefix listing is checked in the storage
 layer. Foreign buckets/prefixes, unsupported schemes, traversal, and canonical
 local paths that escape through a symlink are rejected. A bucket root is allowed
 only when the operator explicitly configures `s3://<bucket>`.
+
+The allowlist variables are service-boundary configuration. Default embedded
+CLI commands, SDK calls with `service=False` / `mode="local"`, and workflow
+toolRef processes execute in the caller's existing filesystem and S3 security
+context and do not require these variables. They retain the pre-service path
+contract; deploying the FastAPI application is what activates the additional
+request-scoped containment boundary.
 
 Existing deployments must set their current roots before upgrade. Prefer the
 narrowest prefix each service needs; do not configure a whole bucket when one

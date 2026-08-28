@@ -12,6 +12,8 @@ import json
 from datetime import datetime, timezone
 from typing import Any
 
+from npa.workbench.storage_scope import StorageAuthorizationError
+
 from .integrations import index_metrics_in_lancedb
 from .schemas import (
     ACCELERATORS_LABEL,
@@ -234,6 +236,8 @@ def record_metrics(request: RecordRequest) -> RecordResponse:
     if request.input_uri.strip():
         try:
             payload = read_json_uri(request.input_uri)
+        except StorageAuthorizationError:
+            raise
         except FileNotFoundError as exc:
             raise InsightsStoreError(f"record input not found: {request.input_uri}") from exc
         except Exception as exc:  # noqa: BLE001
@@ -284,6 +288,8 @@ def ingest_run(request: IngestRunRequest) -> IngestRunResponse:
         scanned += 1
         try:
             payload = read_json_uri(uri)
+        except StorageAuthorizationError:
+            raise
         except Exception:  # noqa: BLE001 - skip unreadable/non-object artifacts.
             continue
         if not isinstance(payload, dict):

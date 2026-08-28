@@ -1,4 +1,4 @@
-"""Fail-closed URI authorization for workbench storage services."""
+"""Request-scoped URI authorization for workbench storage services."""
 
 from __future__ import annotations
 
@@ -63,30 +63,16 @@ class StorageScope:
         return cls.from_config(s3_roots=s3_values, local_roots=local_values)
 
     def authorize(self, uri: str, *, operation: str) -> AuthorizedUri:
-        value = str(uri or "").strip()
-        if not value:
-            raise StorageAuthorizationError(f"{operation} URI must not be empty")
-        parsed = urlparse(value)
-        if parsed.scheme == "s3":
-            return self._authorize_s3(value, parsed, operation=operation)
-        if parsed.scheme not in {"", "file"}:
-            raise StorageAuthorizationError(
-                f"{operation} URI scheme {parsed.scheme!r} is not allowed; use s3://, file://, or a local path"
-            )
-        return self._authorize_local(value, parsed, operation=operation)
+        target = _parse_uri(uri, operation=operation)
+        if target.kind == "s3":
+            return self._authorize_s3(target, operation=operation)
+        return self._authorize_local(target, operation=operation)
 
-    def _authorize_s3(self, value: str, parsed, *, operation: str) -> AuthorizedUri:
-        if (
-            not parsed.netloc
-            or parsed.username is not None
-            or parsed.password is not None
-            or parsed.port is not None
-            or parsed.query
-            or parsed.fragment
-        ):
-            raise StorageAuthorizationError(f"{operation} S3 URI is malformed")
-        bucket = parsed.hostname or ""
-        key = _canonical_s3_key(parsed.path)
+    def _authorize_s3(
+        self, target: AuthorizedUri, *, operation: str
+    ) -> AuthorizedUri:
+        bucket = target.bucket
+        key = target.key
         if not any(
             bucket == root.bucket
             and (
@@ -99,18 +85,13 @@ class StorageScope:
             raise StorageAuthorizationError(
                 f"{operation} S3 URI is outside the configured bucket/prefix roots"
             )
-        return AuthorizedUri(kind="s3", original=value, bucket=bucket, key=key)
+        return target
 
-    def _authorize_local(self, value: str, parsed, *, operation: str) -> AuthorizedUri:
-        if parsed.scheme == "file":
-            if parsed.netloc or parsed.query or parsed.fragment:
-                raise StorageAuthorizationError(
-                    f"{operation} file URI hosts, queries, and fragments are not allowed"
-                )
-            raw_path = unquote(parsed.path)
-        else:
-            raw_path = value
-        candidate = Path(raw_path).expanduser().resolve(strict=False)
+    def _authorize_local(
+        self, target: AuthorizedUri, *, operation: str
+    ) -> AuthorizedUri:
+        assert target.local_path is not None
+        candidate = target.local_path
         if not any(
             candidate == root or candidate.is_relative_to(root)
             for root in self.local_roots
@@ -118,7 +99,57 @@ class StorageScope:
             raise StorageAuthorizationError(
                 f"{operation} local path is outside the configured sandbox roots"
             )
-        return AuthorizedUri(kind="local", original=value, local_path=candidate)
+        return target
+
+
+def _parse_uri(uri: str, *, operation: str) -> AuthorizedUri:
+    """Parse a URI without applying service-only containment policy."""
+
+    value = str(uri or "").strip()
+    if not value:
+        raise StorageAuthorizationError(f"{operation} URI must not be empty")
+    parsed = urlparse(value)
+    if parsed.scheme == "s3":
+        return _parse_s3_uri(value, parsed, operation=operation)
+    if parsed.scheme not in {"", "file"}:
+        raise StorageAuthorizationError(
+            f"{operation} URI scheme {parsed.scheme!r} is not allowed; use s3://, file://, or a local path"
+        )
+    return _parse_local_uri(value, parsed, operation=operation)
+
+
+def _parse_s3_uri(value: str, parsed, *, operation: str) -> AuthorizedUri:
+    if (
+        not parsed.netloc
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.port is not None
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise StorageAuthorizationError(f"{operation} S3 URI is malformed")
+    return AuthorizedUri(
+        kind="s3",
+        original=value,
+        bucket=parsed.hostname or "",
+        key=_canonical_s3_key(parsed.path),
+    )
+
+
+def _parse_local_uri(value: str, parsed, *, operation: str) -> AuthorizedUri:
+    if parsed.scheme == "file":
+        if parsed.netloc or parsed.query or parsed.fragment:
+            raise StorageAuthorizationError(
+                f"{operation} file URI hosts, queries, and fragments are not allowed"
+            )
+        raw_path = unquote(parsed.path)
+    else:
+        raw_path = value
+    return AuthorizedUri(
+        kind="local",
+        original=value,
+        local_path=Path(raw_path).expanduser().resolve(strict=False),
+    )
 
 
 _ACTIVE_SCOPE: ContextVar[StorageScope | None] = ContextVar(
@@ -136,8 +167,12 @@ def use_storage_scope(scope: StorageScope) -> Iterator[None]:
         _ACTIVE_SCOPE.reset(token)
 
 
-def authorize_uri(uri: str, *, operation: str, env_prefix: str) -> AuthorizedUri:
-    scope = _ACTIVE_SCOPE.get() or StorageScope.from_env(env_prefix)
+def authorize_uri(uri: str, *, operation: str) -> AuthorizedUri:
+    """Authorize inside an active service request; otherwise preserve embedded I/O."""
+
+    scope = _ACTIVE_SCOPE.get()
+    if scope is None:
+        return _parse_uri(uri, operation=operation)
     return scope.authorize(uri, operation=operation)
 
 

@@ -19,7 +19,7 @@ def uri_join(base: str, *parts: str) -> str:
 
 
 def write_bytes_uri(uri: str, payload: bytes) -> None:
-    target = authorize_uri(uri, operation="write", env_prefix="INSIGHTS")
+    target = authorize_uri(uri, operation="write")
     if target.kind == "s3":
         _s3_client().put_object(Bucket=target.bucket, Key=target.key, Body=payload)
         return
@@ -30,7 +30,7 @@ def write_bytes_uri(uri: str, payload: bytes) -> None:
 
 
 def read_bytes_uri(uri: str) -> bytes:
-    target = authorize_uri(uri, operation="read", env_prefix="INSIGHTS")
+    target = authorize_uri(uri, operation="read")
     if target.kind == "s3":
         response = _s3_client().get_object(Bucket=target.bucket, Key=target.key)
         return response["Body"].read()
@@ -39,7 +39,7 @@ def read_bytes_uri(uri: str) -> bytes:
 
 
 def uri_exists(uri: str) -> bool:
-    target = authorize_uri(uri, operation="read", env_prefix="INSIGHTS")
+    target = authorize_uri(uri, operation="read")
     if target.kind == "s3":
         try:
             _s3_client().head_object(Bucket=target.bucket, Key=target.key)
@@ -88,7 +88,7 @@ def shard_prefix_for(uri: str) -> str:
 
 def list_jsonl_uris(prefix: str) -> list[str]:
     """List ``*.jsonl`` object URIs under a prefix (S3 or local), sorted."""
-    target = authorize_uri(prefix, operation="read", env_prefix="INSIGHTS")
+    target = authorize_uri(prefix, operation="read")
     if target.kind == "s3":
         client = _s3_client()
         paginator = client.get_paginator("list_objects_v2")
@@ -153,7 +153,7 @@ def utc_stamp() -> str:
 
 def list_json_uris(prefix: str) -> list[str]:
     """List all ``*.json`` object URIs under a prefix (S3 or local)."""
-    target = authorize_uri(prefix, operation="read", env_prefix="INSIGHTS")
+    target = authorize_uri(prefix, operation="read")
     if target.kind == "s3":
         client = _s3_client()
         paginator = client.get_paginator("list_objects_v2")

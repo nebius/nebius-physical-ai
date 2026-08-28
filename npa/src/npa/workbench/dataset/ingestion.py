@@ -6,6 +6,8 @@ import hashlib
 import json
 from typing import Any
 
+from npa.workbench.storage_scope import StorageAuthorizationError
+
 from .integrations import fiftyone_handoff, index_in_lancedb
 from .schemas import (
     COMPLETENESS_FIELDS,
@@ -42,6 +44,8 @@ def load_raw_records(input_uri: str) -> list[dict[str, Any]]:
     """Read raw sensor records from an input manifest URI."""
     try:
         payload = read_json_uri(input_uri)
+    except StorageAuthorizationError:
+        raise
     except FileNotFoundError as exc:
         raise DatasetIngestError(f"raw sensor data not found: {input_uri}") from exc
     except Exception as exc:

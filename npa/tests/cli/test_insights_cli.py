@@ -6,16 +6,10 @@ from typing import Any
 
 from fastapi.testclient import TestClient
 from typer.testing import CliRunner
-import pytest
 
 from npa.cli.main import app
 
 runner = CliRunner()
-
-
-@pytest.fixture(autouse=True)
-def _allow_test_storage(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("INSIGHTS_ALLOWED_LOCAL_ROOTS", str(tmp_path))
 
 
 def _record(tmp_path: Path, store: str, run_id: str, metric: str, value: float) -> None:
@@ -132,7 +126,9 @@ def test_insights_service_mode_parity(monkeypatch: Any, tmp_path: Path) -> None:
     import npa.cli.workbench.insights as cli_module
     from npa.workbench.insights.service import create_app
 
-    client = TestClient(create_app(auth_mode="none"))
+    client = TestClient(
+        create_app(auth_mode="none", allowed_local_roots=[tmp_path])
+    )
 
     def fake_request(method: str, endpoint: str, path: str, **kwargs: Any) -> dict[str, Any]:
         response = client.request(method, path, json=kwargs.get("payload"), params=kwargs.get("params"))
@@ -164,3 +160,43 @@ def test_insights_service_mode_parity(monkeypatch: Any, tmp_path: Path) -> None:
     )
     assert result.exit_code == 0, result.output
     assert json.loads(result.output)["recorded_count"] == 1
+
+
+def test_insights_service_storage_denial_is_a_command_error(
+    monkeypatch: Any, tmp_path: Path
+) -> None:
+    import npa.cli.workbench.insights as cli_module
+    from npa.workbench.insights.service import create_app
+
+    client = TestClient(create_app(auth_mode="none"))
+
+    def fake_request(method: str, url: str, **kwargs: Any):
+        return client.request(
+            method,
+            url.removeprefix("http://insights.example"),
+            json=kwargs.get("json"),
+            params=kwargs.get("params"),
+        )
+
+    monkeypatch.setattr(cli_module.httpx, "request", fake_request)
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "insights",
+            "record",
+            "--service",
+            "--endpoint",
+            "http://insights.example",
+            "--output-path",
+            str(tmp_path / "store"),
+            "--run-id",
+            "scoped",
+            "--metric",
+            "accuracy",
+            "--value",
+            "0.9",
+        ],
+    )
+    assert result.exit_code == 1
+    assert "Insights request failed (403)" in result.output

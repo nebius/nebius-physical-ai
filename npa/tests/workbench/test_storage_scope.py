@@ -128,3 +128,39 @@ def test_storage_helpers_enforce_s3_read_write_parity(
 
     client.put_object.assert_called_once()
     client.get_object.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    ("module_name", "env_prefix"),
+    [
+        ("npa.workbench.dataset.storage", "DATASET"),
+        ("npa.workbench.insights.storage", "INSIGHTS"),
+    ],
+)
+def test_embedded_storage_does_not_require_service_allowlists(
+    module_name: str,
+    env_prefix: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import importlib
+    from unittest.mock import Mock
+
+    monkeypatch.delenv(f"{env_prefix}_ALLOWED_LOCAL_ROOTS", raising=False)
+    monkeypatch.delenv(f"{env_prefix}_ALLOWED_S3_ROOTS", raising=False)
+    module = importlib.import_module(module_name)
+
+    local_uri = str(tmp_path / "embedded.bin")
+    module.write_bytes_uri(local_uri, b"local")
+    assert module.read_bytes_uri(local_uri) == b"local"
+
+    client = Mock()
+    body = Mock()
+    body.read.return_value = b"s3"
+    client.get_object.return_value = {"Body": body}
+    monkeypatch.setattr(module, "_s3_client", lambda: client)
+    s3_uri = "s3://example-bucket/valid-prefix/embedded.bin"
+    module.write_bytes_uri(s3_uri, b"s3")
+    assert module.read_bytes_uri(s3_uri) == b"s3"
+    client.put_object.assert_called_once()
+    client.get_object.assert_called_once()
