@@ -718,16 +718,6 @@ def _validate_gpu_selection(gpu_type: str, gpu_preset: str) -> None:
     _isaac_lab_require_rt_gpu(platform)
 
 
-def _build_install_command() -> str:
-    _fail(
-        "Native VM installation is not supported for Isaac Lab 3 because its "
-        "third-party runtime cannot be reproduced from the public image's "
-        "hash-pinned, payload-clean build contract. Use --runtime container "
-        "for a managed VM, or --runtime byovm for an existing host."
-    )
-    raise AssertionError("unreachable")
-
-
 def _activate_prefix() -> str:
     _require_isaac_consent("Isaac Lab use", "npa workbench isaac-lab <command> ...")
     return (
@@ -1681,7 +1671,7 @@ def deploy_cmd(
     disk_size: int | None = typer.Option(
         None,
         "--disk-size",
-        help="Boot disk size in GiB. Defaults to 250 for container runtime; VM runtime keeps the Terraform default.",
+        help="Boot disk size in GiB. Defaults to 250 for the supported container runtime.",
     ),
     default: bool = typer.Option(
         False, "--default", help="Set this workbench as the default."
@@ -1702,7 +1692,12 @@ def deploy_cmd(
             "Isaac Lab deploy does not use --runtime serverless; use `npa workbench isaac-lab train --runtime serverless`."
         )
     if runtime == WorkbenchRuntime.vm and not destroy:
-        _build_install_command()
+        _fail(
+            "Native VM installation is not supported for Isaac Lab 3 because its "
+            "third-party runtime cannot be reproduced from the public image's "
+            "hash-pinned, payload-clean build contract. Use --runtime container "
+            "for a managed VM, or --runtime byovm for an existing host."
+        )
     if not destroy and not byovm:
         _validate_gpu_selection(gpu_type, gpu_preset)
 
@@ -2190,86 +2185,67 @@ def deploy_cmd(
                 fail_app(f"SSH connection test failed (exit {code})")
                 return
 
-        if runtime_uses_container(runtime):
-            step += 1
-            console.print(f"  [{step}/{total_steps}] Starting Isaac Lab container...")
-            if dry_run:
-                console.print(
-                    "    [dry-run] Would pull and run the Isaac Lab container image"
-                )
-            else:
-                from npa.deploy.configurator import (
-                    deploy_workbench_container,
-                    write_remote_docker_env_file,
-                )
-
-                try:
-                    service_env = {
-                        "ACCEPT_EULA": "Y",
-                        "AWS_ACCESS_KEY_ID": merged_vars.get("nebius_api_key", ""),
-                        "AWS_SECRET_ACCESS_KEY": merged_vars.get(
-                            "nebius_secret_key", ""
-                        ),
-                        "AWS_ENDPOINT_URL": storage_ep,
-                        "NEBIUS_S3_ENDPOINT": storage_ep,
-                        "NEBIUS_S3_BUCKET": bucket,
-                        "NEBIUS_REGION": env_region,
-                        "PYTHONUNBUFFERED": "1",
-                        **gpu_env_fields(
-                            byovm_gpu_info,
-                            effective_count=byovm_effective_gpu_count or None,
-                            visible_devices=byovm_visible_devices,
-                        ),
-                    }
-                    apply_shared_credential_env(
-                        service_env, credentials, include=not no_shared_creds
-                    )
-                    write_remote_docker_env_file(
-                        ssh,
-                        "/etc/npa-isaac-lab/env",
-                        service_env,
-                        owner=ssh_user,
-                    )
-                    image_ref = container_image_for_tool(
-                        "isaac-lab",
-                        registry=resolve_container_registry(proj_alias),
-                    )
-                    deploy_workbench_container(
-                        ssh,
-                        image_ref=image_ref,
-                        container_name=ISAAC_CONTAINER_NAME,
-                        env_file="/etc/npa-isaac-lab/env",
-                        volumes=[
-                            f"{ISAAC_LAB_HOME}/runs:{ISAAC_LAB_HOME}/runs",
-                            f"{ISAAC_LAB_HOME}/evals:{ISAAC_LAB_HOME}/evals",
-                            f"{ISAAC_LAB_HOME}/inputs:{ISAAC_LAB_HOME}/inputs",
-                        ],
-                        work_dirs=[
-                            f"{ISAAC_LAB_HOME}/runs",
-                            f"{ISAAC_LAB_HOME}/evals",
-                            f"{ISAAC_LAB_HOME}/inputs",
-                        ],
-                    )
-                except SSHError as exc:
-                    fail_app(f"Isaac Lab container deployment failed: {exc}")
-                    return
-        else:
-            step += 1
+        assert runtime_uses_container(runtime)
+        step += 1
+        console.print(f"  [{step}/{total_steps}] Starting Isaac Lab container...")
+        if dry_run:
             console.print(
-                f"  [{step}/{total_steps}] Installing Isaac Lab {ISAAC_LAB_VERSION}..."
+                "    [dry-run] Would pull and run the Isaac Lab container image"
             )
-            if dry_run:
-                console.print(
-                    "    [dry-run] Would install Python 3.12, Isaac Lab, and Isaac Sim"
+        else:
+            from npa.deploy.configurator import (
+                deploy_workbench_container,
+                write_remote_docker_env_file,
+            )
+
+            try:
+                service_env = {
+                    "ACCEPT_EULA": "Y",
+                    "AWS_ACCESS_KEY_ID": merged_vars.get("nebius_api_key", ""),
+                    "AWS_SECRET_ACCESS_KEY": merged_vars.get("nebius_secret_key", ""),
+                    "AWS_ENDPOINT_URL": storage_ep,
+                    "NEBIUS_S3_ENDPOINT": storage_ep,
+                    "NEBIUS_S3_BUCKET": bucket,
+                    "NEBIUS_REGION": env_region,
+                    "PYTHONUNBUFFERED": "1",
+                    **gpu_env_fields(
+                        byovm_gpu_info,
+                        effective_count=byovm_effective_gpu_count or None,
+                        visible_devices=byovm_visible_devices,
+                    ),
+                }
+                apply_shared_credential_env(
+                    service_env, credentials, include=not no_shared_creds
                 )
-            else:
-                try:
-                    ssh.run_or_raise(
-                        _build_install_command(), stream=True, label="Isaac Lab install"
-                    )
-                except SSHError as exc:
-                    fail_app(f"Isaac Lab installation failed: {exc}")
-                    return
+                write_remote_docker_env_file(
+                    ssh,
+                    "/etc/npa-isaac-lab/env",
+                    service_env,
+                    owner=ssh_user,
+                )
+                image_ref = container_image_for_tool(
+                    "isaac-lab",
+                    registry=resolve_container_registry(proj_alias),
+                )
+                deploy_workbench_container(
+                    ssh,
+                    image_ref=image_ref,
+                    container_name=ISAAC_CONTAINER_NAME,
+                    env_file="/etc/npa-isaac-lab/env",
+                    volumes=[
+                        f"{ISAAC_LAB_HOME}/runs:{ISAAC_LAB_HOME}/runs",
+                        f"{ISAAC_LAB_HOME}/evals:{ISAAC_LAB_HOME}/evals",
+                        f"{ISAAC_LAB_HOME}/inputs:{ISAAC_LAB_HOME}/inputs",
+                    ],
+                    work_dirs=[
+                        f"{ISAAC_LAB_HOME}/runs",
+                        f"{ISAAC_LAB_HOME}/evals",
+                        f"{ISAAC_LAB_HOME}/inputs",
+                    ],
+                )
+            except SSHError as exc:
+                fail_app(f"Isaac Lab container deployment failed: {exc}")
+                return
 
         step += 1
         console.print(f"  [{step}/{total_steps}] Writing deployment manifest...")

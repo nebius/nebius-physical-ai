@@ -380,7 +380,7 @@ def scan(
     """
     if docker_image is not None:
         report = ScanReport(image=docker_image, source="local-docker-stream")
-        entries = _iter_docker_save(docker_image)
+        entries = () if history_only else _iter_docker_save(docker_image)
         history = _local_image_history(docker_image)
     elif tarball is not None:
         report = ScanReport(image=str(tarball), source="tarball")

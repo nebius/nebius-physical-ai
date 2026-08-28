@@ -302,8 +302,30 @@ def test_local_docker_scan_combines_streamed_layers_and_history(monkeypatch) -> 
     report = scanner.scan(None, None, docker_image="local:test")
 
     assert report.source == "local-docker-stream"
+    assert report.entries_scanned == 1
     assert report.payload_hits
     assert report.history_hits
+
+
+def test_local_docker_history_only_skips_filesystem_export(monkeypatch) -> None:
+    monkeypatch.setattr(
+        scanner,
+        "_iter_docker_save",
+        lambda image: pytest.fail("history-only must not run docker save"),
+    )
+    monkeypatch.setattr(
+        scanner,
+        "_local_image_history",
+        lambda image: ["RUN pip install isaacsim==6.0.1.0"],
+    )
+
+    report = scanner.scan(None, None, docker_image="local:test", history_only=True)
+
+    assert report.source == "local-docker-stream"
+    assert report.history_only is True
+    assert report.entries_scanned == 0
+    assert report.history_hits
+    assert not report.clean
 
 
 # --------------------------------------------------------------------------------------

@@ -117,7 +117,8 @@ def _apply_controller_region(
     For Kubernetes the SkyPilot ``region`` is the kube context; co-locating the
     controller with the target context keeps the controller and its jobs in the
     same region so bucket mounts resolve against the right object-storage
-    endpoint. An explicit region already in the block is preserved.
+    endpoint. The caller-supplied region is authoritative and replaces any
+    stale region already present in the controller resource block.
     """
 
     region = (controller_region or "").strip()

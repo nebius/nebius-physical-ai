@@ -177,25 +177,32 @@ def test_isaac_lab_deploy_defaults_to_reproducible_container(tmp_path: Path, moc
     assert update_status.call_args_list[-1].args == ("proj", "isaac", "healthy")
 
 
-def test_isaac_lab_deploy_rejects_unpinned_native_vm_install() -> None:
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_isaac_lab_deploy_rejects_native_vm_install_consistently(
+    dry_run: bool,
+) -> None:
+    args = [
+        "workbench",
+        "isaac-lab",
+        "deploy",
+        "--runtime",
+        "vm",
+        "--gpu-type",
+        "gpu-l40s-a",
+        "--gpu-preset",
+        "1gpu-40vcpu-160gb",
+    ]
+    if dry_run:
+        args.append("--dry-run")
     result = runner.invoke(
         app,
-        [
-            "workbench",
-            "isaac-lab",
-            "deploy",
-            "--runtime",
-            "vm",
-            "--gpu-type",
-            "gpu-l40s-a",
-            "--gpu-preset",
-            "1gpu-40vcpu-160gb",
-        ],
+        args,
     )
 
     assert result.exit_code == 1
     assert "Native VM installation is not supported for Isaac Lab 3" in result.output
     assert "--runtime container" in result.output
+    assert "Would install" not in result.output
 
 
 def _isaac_existing_config() -> dict:
