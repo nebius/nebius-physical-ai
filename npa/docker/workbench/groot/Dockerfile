@@ -21,6 +21,8 @@ ARG GROOT_REPO_REF=3df8b3825d67f755e69141446f4315f281b9b7e6
 ARG ISAAC_LAB_VERSION=2.3.2.post1
 ARG ISAAC_SIM_VERSION=5.1.0.0
 ARG ISAAC_LAB_SRC_COMMIT=37ddf626871758333d6ed89cf64ad702aef127d0
+ARG GROOT_UBUNTU_SNAPSHOT=20260827T000000Z
+ARG GROOT_LINUX_LIBC_DEV_VERSION=5.15.0-190.200
 ARG COSMOS_REASON_MODEL=nvidia/Cosmos-Reason2-2B
 ARG COSMOS_REASON_REVISION=9ce19a195e423419c349abfc86fd07178b230561
 
@@ -264,6 +266,7 @@ RUN chmod +x /opt/npa/docker/workbench/common/*.sh \
     && NPA_RUNTIME_USER=ubuntu \
        NPA_ISAAC_VENV=/opt/isaac-lab/venv \
        NPA_ISAAC_SKIP_TORCH=0 \
+       NPA_UBUNTU_SNAPSHOT=${GROOT_UBUNTU_SNAPSHOT} \
        REQUIRE_TORCH_SM120=1 \
        NPA_INSTALL_SKYPILOT_PREREQS=1 \
        /opt/npa/docker/workbench/common/install_isaac_runtime_base.sh \
@@ -352,7 +355,8 @@ USER root
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends --only-upgrade \
-      gpgv openssl libssl3 linux-libc-dev \
+      gpgv openssl libssl3 \
+      "linux-libc-dev=${GROOT_LINUX_LIBC_DEV_VERSION}" \
     && apt-get purge -y --auto-remove \
       dirmngr \
       gnupg \
