@@ -11,6 +11,8 @@ from npa.adapter.isaac_lab_lerobot import (
     G1_STATE_DIM,
     G1_STATE_NAMES_43,
     IsaacLabLeRobotError,
+    LeRobotFeatureSpec,
+    WORKSPACE_VIEW_KEY,
     convert,
     discover_episodes,
 )
@@ -131,3 +133,84 @@ def test_convert_with_spec_rejects_mismatched_dims(tmp_path):
 
     with pytest.raises(IsaacLabLeRobotError, match="tiny_bot"):
         convert(input_dir, tmp_path / "lerobot", spec=spec)
+
+
+def test_convert_carries_real_isaac_rgb_and_provenance(tmp_path, mocker) -> None:
+    spec = LeRobotFeatureSpec(
+        state_names=["cart", "pole"],
+        action_names=["force"],
+        robot_type="cartpole",
+    )
+    raw = tmp_path / "raw"
+    for episode_index, frame_count in enumerate((3, 2)):
+        episode = raw / f"episode_{episode_index:06d}"
+        episode.mkdir(parents=True)
+        np.save(episode / "state.npy", np.zeros((frame_count, 2), dtype=np.float32))
+        np.save(episode / "actions.npy", np.zeros((frame_count, 1), dtype=np.float32))
+        pixels = np.zeros((frame_count, 24, 32, 3), dtype=np.uint8)
+        pixels[..., 0] = 20 + episode_index
+        pixels[:, 5:10, 8:16, 1] = 220
+        np.save(episode / "rgb.npy", pixels)
+    (raw / "meta.json").write_text(
+        json.dumps(
+            {
+                "task": "Isaac-Cartpole-v0",
+                "runtime_version": "3.0.0b2.post1",
+                "policy_loaded": True,
+                "checkpoint_sha256": "a" * 64,
+                "renderer": "isaac_sim_rgb_array",
+            }
+        )
+    )
+
+    def fake_encode(frames: np.ndarray, output_path: Path, *, fps: int) -> None:
+        assert frames.dtype == np.uint8
+        assert frames.shape[1:] == (24, 32, 3)
+        assert fps == 50
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(b"encoded-isaac-rgb")
+
+    mocker.patch("npa.adapter.isaac_lab_lerobot._encode_video", side_effect=fake_encode)
+    out = convert(raw, tmp_path / "lerobot", spec=spec)
+
+    info = json.loads((out / "meta" / "info.json").read_text())
+    assert info["features"][WORKSPACE_VIEW_KEY]["dtype"] == "video"
+    assert info["features"][WORKSPACE_VIEW_KEY]["shape"] == [24, 32, 3]
+    assert info["visual_provenance"] == {
+        "source": "isaac_sim_rgb_array",
+        "genuine_simulator_pixels": True,
+        "synchronized_timeline": "episode_index/frame_index/timestamp",
+        "frame_count": 5,
+        "dimensions": [24, 32, 3],
+        "task": "Isaac-Cartpole-v0",
+        "runtime_version": "3.0.0b2.post1",
+        "policy_loaded": True,
+        "checkpoint_sha256": "a" * 64,
+        "renderer": "isaac_sim_rgb_array",
+    }
+    episodes = pq.read_table(
+        out / "meta" / "episodes" / "chunk-000" / "file-000.parquet"
+    )
+    assert episodes[f"videos/{WORKSPACE_VIEW_KEY}/file_index"].to_pylist() == [0, 1]
+
+
+def test_convert_rejects_partial_or_unsynchronized_rgb(tmp_path) -> None:
+    spec = LeRobotFeatureSpec(
+        state_names=["cart", "pole"],
+        action_names=["force"],
+        robot_type="cartpole",
+    )
+    raw = tmp_path / "raw"
+    for episode_index in range(2):
+        episode = raw / f"episode_{episode_index:06d}"
+        episode.mkdir(parents=True)
+        np.save(episode / "state.npy", np.zeros((3, 2), dtype=np.float32))
+        np.save(episode / "actions.npy", np.zeros((3, 1), dtype=np.float32))
+    np.save(raw / "episode_000000" / "rgb.npy", np.zeros((3, 8, 8, 3), dtype=np.uint8))
+
+    with pytest.raises(IsaacLabLeRobotError, match="cover every episode"):
+        convert(raw, tmp_path / "partial", spec=spec)
+
+    np.save(raw / "episode_000001" / "rgb.npy", np.zeros((2, 8, 8, 3), dtype=np.uint8))
+    with pytest.raises(IsaacLabLeRobotError, match="RGB/state length mismatch"):
+        convert(raw, tmp_path / "unsynchronized", spec=spec)

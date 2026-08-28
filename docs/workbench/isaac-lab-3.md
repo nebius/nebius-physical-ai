@@ -51,6 +51,26 @@ npa workbench workflow submit \
   --secret-env AWS_SECRET_ACCESS_KEY
 ```
 
+For a reviewable trained-policy rollout, use VM training with trajectory
+export. RGB capture is enabled by default for that post-training rollout:
+
+```bash
+npa workbench isaac-lab train \
+  --task Isaac-Cartpole-v0 \
+  --output-dir <output-directory> \
+  --export-trajectories
+```
+
+The exporter loads the produced RSL-RL checkpoint fail-closed, enables Isaac
+Sim cameras only for the rollout, and stores `rgb.npy` beside each episode's
+state and action arrays. Frames come from the environment's real
+`rgb_array` renderer and share the episode/frame/timestamp timeline with state
+and actions. The LeRobot converter recognizes this image-bearing contract,
+encodes one video per episode, records checkpoint/runtime/render provenance,
+and the Rerun adapter opens the trained-policy environment view as the primary
+pane. Metadata-only datasets remain supported and are labeled without a visual
+claim. `--no-export-rgb` is an explicit opt-out for scalar-only exports.
+
 ## Generation 2 comparison
 
 The reproducible comparison uses the public 2.3.2 baseline and the 3.0 beta

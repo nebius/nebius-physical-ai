@@ -1256,6 +1256,10 @@ def _build_train_trajectory_export_script(
     steps_per_episode: int,
     checkpoint: str,
     output_dir: str,
+    *,
+    capture_rgb: bool = True,
+    rgb_width: int = 640,
+    rgb_height: int = 480,
 ) -> str:
     """Roll out the trained checkpoint and write the numpy episode contract.
 
@@ -1267,6 +1271,7 @@ def _build_train_trajectory_export_script(
     policy.
     """
     return f"""\
+import hashlib
 import importlib.metadata as metadata
 import json
 import time
@@ -1274,7 +1279,10 @@ from pathlib import Path
 
 from isaaclab.app import AppLauncher
 
-app_launcher = AppLauncher(headless=True)
+capture_rgb = {capture_rgb!r}
+rgb_width = {rgb_width}
+rgb_height = {rgb_height}
+app_launcher = AppLauncher(headless=True, enable_cameras=capture_rgb)
 simulation_app = app_launcher.app
 
 import gymnasium as gym
@@ -1314,7 +1322,14 @@ try:
         flush=True,
     )
     env_cfg = parse_env_cfg(task, device=device, num_envs=1)
-    env = gym.make(task, cfg=env_cfg)
+    if capture_rgb and hasattr(env_cfg, "viewer"):
+        env_cfg.viewer.resolution = (rgb_width, rgb_height)
+    render_env = gym.make(
+        task,
+        cfg=env_cfg,
+        render_mode="rgb_array" if capture_rgb else None,
+    )
+    env = render_env
 
     policy = None
     policy_loaded = False
@@ -1389,13 +1404,16 @@ try:
     joint_names = list(getattr(getattr(robot, "data", None), "joint_names", []) or [])
 
     total_frames = 0
+    total_rgb_frames = 0
     episode_lengths = []
     action_dim = None
+    rgb_dimensions = None
     for episode_index in range(num_episodes):
         reset_out = env.reset()
         obs = reset_out[0] if isinstance(reset_out, tuple) else reset_out
         states = []
         actions_out = []
+        rgb_frames = []
         for step in range(steps_per_episode):
             robot = _robot(env)
             if robot is not None and joint_names:
@@ -1407,6 +1425,26 @@ try:
             actions_np = _to_numpy(actions)
             action_values = actions_np[0] if actions_np.ndim > 1 else actions_np
             action_dim = int(action_values.shape[-1])
+
+            if capture_rgb:
+                frame = np.asarray(render_env.render())
+                if frame.ndim != 3 or frame.shape[-1] not in (3, 4):
+                    raise RuntimeError(
+                        f"Isaac RGB render returned invalid shape {{frame.shape}}"
+                    )
+                if frame.dtype != np.uint8:
+                    raise RuntimeError(
+                        f"Isaac RGB render returned {{frame.dtype}}, expected uint8"
+                    )
+                frame = np.ascontiguousarray(frame[..., :3])
+                dimensions = tuple(int(value) for value in frame.shape)
+                if rgb_dimensions is None:
+                    rgb_dimensions = dimensions
+                elif dimensions != rgb_dimensions:
+                    raise RuntimeError(
+                        f"Isaac RGB dimensions changed {{rgb_dimensions}} -> {{dimensions}}"
+                    )
+                rgb_frames.append(frame)
 
             states.append(np.asarray(state_values, dtype=np.float32))
             actions_out.append(np.asarray(action_values, dtype=np.float32))
@@ -1421,11 +1459,22 @@ try:
         episode_dir.mkdir(parents=True, exist_ok=True)
         np.save(episode_dir / "state.npy", np.stack(states))
         np.save(episode_dir / "actions.npy", np.stack(actions_out))
+        if capture_rgb:
+            if len(rgb_frames) != len(states):
+                raise RuntimeError(
+                    f"episode {{episode_index}} RGB/state length mismatch "
+                    f"{{len(rgb_frames)}} != {{len(states)}}"
+                )
+            np.save(episode_dir / "rgb.npy", np.stack(rgb_frames))
+            total_rgb_frames += len(rgb_frames)
         (episode_dir / "episode_meta.json").write_text(json.dumps({{
             "episode_index": episode_index,
             "length": len(states),
             "task": task,
             "policy_loaded": policy_loaded,
+            "rgb_frame_count": len(rgb_frames),
+            "rgb_dimensions": list(rgb_dimensions or ()),
+            "timeline": "episode_index/frame_index/timestamp",
         }}, indent=2))
         total_frames += len(states)
         episode_lengths.append(len(states))
@@ -1447,6 +1496,8 @@ try:
         "task": task,
         "checkpoint": str(checkpoint_path),
         "policy_loaded": policy_loaded,
+        "runtime_version": metadata.version("isaaclab"),
+        "checkpoint_sha256": hashlib.sha256(checkpoint_path.read_bytes()).hexdigest(),
         "fps": 50,
         "state_names": state_names,
         "action_names": action_names,
@@ -1455,6 +1506,13 @@ try:
         "steps_per_episode": steps_per_episode,
         "episode_lengths": episode_lengths,
         "total_frames": total_frames,
+        "rgb_enabled": capture_rgb,
+        "rgb_frame_count": total_rgb_frames,
+        "rgb_dimensions": list(rgb_dimensions or ()),
+        "rgb_feature_key": "observation.images.workspace",
+        "renderer": "isaac_sim_rgb_array",
+        "genuine_simulator_pixels": capture_rgb and total_rgb_frames == total_frames,
+        "timeline": "episode_index/frame_index/timestamp",
         "created_unix": round(time.time(), 3),
         "duration_seconds": round(time.time() - started, 3),
     }}
@@ -2569,6 +2627,14 @@ def train_cmd(
     export_steps_per_episode: int = typer.Option(
         50, "--export-steps-per-episode", help="Max steps per exported episode."
     ),
+    export_rgb: bool = typer.Option(
+        True,
+        "--export-rgb/--no-export-rgb",
+        help=(
+            "Capture genuine Isaac Sim RGB frames synchronized with trained-policy "
+            "trajectory export."
+        ),
+    ),
     output_format: OutputFormat = typer.Option(
         OutputFormat.text, "--output-format", help="Output format."
     ),
@@ -2702,6 +2768,7 @@ def train_cmd(
                     export_steps_per_episode,
                     f"{remote_output_dir}/npa_isaac_lab_checkpoint.pt",
                     trajectories_dir,
+                    capture_rgb=export_rgb,
                 )
                 + "PY\n",
             )
@@ -2714,6 +2781,7 @@ def train_cmd(
             except SSHError as exc:
                 traj_exit, traj_stdout, traj_stderr = 1, "", str(exc)
             result["trajectories_dir"] = trajectories_dir
+            result["trajectory_rgb_requested"] = export_rgb
             # Isaac Sim's kit app can exit 0 even when the Python rollout raised
             # (the same reason the training path checks ISAAC_LAB_TRAIN_COMPLETE
             # above), so a clean exit code alone is not proof the export ran.
