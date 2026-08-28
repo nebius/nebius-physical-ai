@@ -2843,6 +2843,10 @@ def test_fresh_shared_up_resolves_subnet_and_uses_id_backed_project(
             "TF_VAR_tenant_id": "tenant-test",
             "TF_VAR_parent_id": "project-test",
             "TF_VAR_region": "region-test",
+            "TF_VAR_enable_filestore": "true",
+            "TF_VAR_filesystem_csi_chart_repository": (
+                "oci://charts.example.invalid/nebius"
+            ),
         },
     )
 
@@ -2860,6 +2864,9 @@ def test_fresh_shared_up_resolves_subnet_and_uses_id_backed_project(
 
     assert result.exit_code == 0, result.output
     assert applied["desired"].subnet_id == "subnet-created"
+    assert applied["desired"].filesystem_csi_chart_repository == (
+        "oci://charts.example.invalid/nebius"
+    )
     assert applied["request"].subnet_id == "subnet-created"
     assert applied["request"].project.name == ""
     assert applied["request"].project.project_id == "project-test"

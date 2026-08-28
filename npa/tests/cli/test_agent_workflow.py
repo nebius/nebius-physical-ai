@@ -32,6 +32,7 @@ from npa.cli.agent_workflow import (
     generate_workflow_yaml,
     plan_workflow_yaml_text,
     validate_workflow_yaml_text,
+    _TEMPLATES,
 )
 from npa.cli.main import app
 
@@ -1391,6 +1392,23 @@ def test_generate_workflow_draft_sets_not_runnable_when_plan_fails(monkeypatch) 
     assert draft["validation"]["ok"] is True
     assert draft["plan"]["ok"] is False
     assert draft["runnable"] is False
+
+
+def test_every_agent_template_toolref_resolves_catalog() -> None:
+    """Agent drafts must not surface retired or doc-only workflow toolRefs."""
+    from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
+
+    emitted = []
+    for template in _TEMPLATES:
+        spec = yaml.safe_load(generate_workflow_yaml(template))
+        emitted.extend(
+            state["toolRef"]
+            for state in spec["states"].values()
+            if "toolRef" in state
+        )
+
+    unknown = sorted(set(emitted) - set(TOOL_CATALOG))
+    assert unknown == []
 
 
 def test_generate_workflow_yaml_aliases() -> None:

@@ -1272,10 +1272,17 @@ def _submitted_workflow_state(
     return submitted, sorted(run_ids)
 
 
-def _prepared_action_consumed_state(messages: list[dict[str, Any]]) -> bool:
+def _prepared_action_consumed_state(
+    messages: list[dict[str, Any]], action_id: str = ""
+) -> bool:
+    current_action_id = ""
     for message in messages:
         content = str(message.get("content") or "")
         if message.get("role") == "user":
+            if content.startswith(PREPARED_ACTION_MARKER):
+                match = re.search(r"Action ID: ([A-Za-z0-9._-]+)", content)
+                if match:
+                    current_action_id = match.group(1).rstrip(".")
             for line in content.splitlines():
                 if not line.startswith("Durable prepared action state: "):
                     continue
@@ -1283,7 +1290,12 @@ def _prepared_action_consumed_state(messages: list[dict[str, Any]]) -> bool:
                     state = json.loads(line.split(": ", 1)[1])
                 except json.JSONDecodeError:
                     continue
-                if state.get("consumed") is True:
+                state_action_id = str(state.get("action_id") or "")
+                if state.get("consumed") is True and (
+                    not action_id
+                    or state_action_id == action_id
+                    or (not state_action_id and current_action_id == action_id)
+                ):
                     return True
         if message.get("role") != "tool":
             continue
@@ -1295,6 +1307,11 @@ def _prepared_action_consumed_state(messages: list[dict[str, Any]]) -> bool:
             result.get("schema")
             == "npa.sim2real.prepared_workflow_action.result.v1"
             and result.get("action_consumed") is True
+            and (
+                not action_id
+                or str(result.get("action_id") or "") == action_id
+                or current_action_id == action_id
+            )
         ):
             return True
     return False
@@ -1345,9 +1362,8 @@ def _workflow_submission_block_reason(
 ) -> str | None:
     prepared_consumed = durable_prepared_state != "unused"
     if tool_name == "submit_prepared_workflow":
-        if _submitted_workflow_state(messages)[0] or _prepared_action_consumed_state(
-            messages
-        ) or prepared_consumed:
+        action_id = str(arguments.get("action_id") or "").strip()
+        if _prepared_action_consumed_state(messages, action_id) or prepared_consumed:
             return "DuplicateWorkflowSubmissionBlocked"
         return None
     if tool_name != "run_command":
@@ -1518,9 +1534,19 @@ def _context_checkpoint(
     recent_groups.reverse()
     recent = [message for group in recent_groups for message in group]
     workflow_submitted, submitted_run_ids = _submitted_workflow_state(messages[2:])
+    prepared_checkpoints = [
+        str(message.get("content") or "")
+        for message in messages[2:]
+        if message.get("role") == "user"
+        and str(message.get("content") or "").startswith(PREPARED_ACTION_MARKER)
+    ]
+    prepared_action_id = ""
+    if prepared_checkpoints:
+        match = re.search(r"Action ID: ([A-Za-z0-9._-]+)", prepared_checkpoints[-1])
+        prepared_action_id = match.group(1).rstrip(".") if match else ""
     prepared_action_consumed = (
         durable_prepared_state != "unused"
-        or _prepared_action_consumed_state(messages[2:])
+        or _prepared_action_consumed_state(messages[2:], prepared_action_id)
     )
     active_submit_attempts = _recent_standalone_submit_attempts(messages[2:])
     submit_attempts = _merge_submit_attempts(
@@ -1559,16 +1585,6 @@ def _context_checkpoint(
         if recovery_reason
         else ""
     )
-    prepared_checkpoints = [
-        str(message.get("content") or "")
-        for message in messages[2:]
-        if message.get("role") == "user"
-        and str(message.get("content") or "").startswith(PREPARED_ACTION_MARKER)
-    ]
-    prepared_action_id = ""
-    if prepared_checkpoints:
-        match = re.search(r"Action ID: ([A-Za-z0-9._-]+)", prepared_checkpoints[-1])
-        prepared_action_id = match.group(1) if match else ""
     checkpoint = {
         "role": "user",
         "content": (
@@ -1607,6 +1623,7 @@ def _context_checkpoint(
             + "Durable prepared action state: "
             + json.dumps(
                 {
+                    "action_id": prepared_action_id,
                     "consumed": prepared_action_consumed,
                     "available": bool(prepared_action_id) and not prepared_action_consumed,
                 },
@@ -1797,7 +1814,11 @@ def _request_active_token_estimate(
 
 
 def _workspace_preflight(
-    workspace: Path, expected_commit: str, *, require_clean: bool
+    workspace: Path,
+    expected_commit: str,
+    *,
+    require_clean: bool,
+    allow_descendant: bool = False,
 ) -> str:
     if not workspace.is_dir():
         raise ValueError(f"workspace is missing: {workspace}")
@@ -1810,9 +1831,20 @@ def _workspace_preflight(
     status = subprocess.check_output(
         ["git", "status", "--porcelain"], cwd=workspace, text=True
     )
-    if head != expected_commit or branch or (require_clean and status):
+    expected_matches = head == expected_commit
+    if allow_descendant and not expected_matches:
+        expected_matches = (
+            subprocess.run(
+                ["git", "merge-base", "--is-ancestor", expected_commit, head],
+                cwd=workspace,
+                check=False,
+            ).returncode
+            == 0
+        )
+    if not expected_matches or branch or (require_clean and status):
         raise ValueError(
             "trial workspace must be detached at the recorded origin/main commit"
+            + (" or a descendant commit" if allow_descendant else "")
             + (" and clean" if require_clean else "")
         )
     return status
@@ -1875,16 +1907,34 @@ def _inject_prepared_action_checkpoint(
 ) -> list[dict[str, Any]]:
     action_id = str(receipt["action_id"])
     consumed = durable_prepared_state != "unused" or _prepared_action_consumed_state(
-        messages[2:]
+        messages[2:], action_id
     )
     expected_availability = "Typed action available: none" if consumed else "Typed action available: submit_prepared_workflow"
-    if any(
-        message.get("role") == "user"
-        and str(message.get("content") or "").startswith(PREPARED_ACTION_MARKER)
-        and f"Action ID: {action_id}" in str(message.get("content") or "")
-        and expected_availability in str(message.get("content") or "")
-        for message in messages
-    ):
+    latest_marker_index = -1
+    latest_attempt_index = -1
+    for index, message in enumerate(messages):
+        content = str(message.get("content") or "")
+        if message.get("role") == "user" and content.startswith(
+            PREPARED_ACTION_MARKER
+        ):
+            match = re.search(r"Action ID: ([A-Za-z0-9._-]+)", content)
+            marker_action_id = match.group(1).rstrip(".") if match else ""
+            if marker_action_id == action_id and expected_availability in content:
+                latest_marker_index = index
+        if message.get("role") != "tool":
+            continue
+        try:
+            result = json.loads(content)
+        except json.JSONDecodeError:
+            continue
+        result_action_id = str(result.get("action_id") or "").rstrip(".")
+        if (
+            result.get("schema")
+            == "npa.sim2real.prepared_workflow_action.result.v1"
+            and result_action_id == action_id
+        ):
+            latest_attempt_index = index
+    if latest_marker_index >= 0 and latest_marker_index > latest_attempt_index:
         return messages
     submitted, run_ids = _submitted_workflow_state(messages[2:])
     checkpoint = {
@@ -1953,6 +2003,7 @@ def run(config_path: Path) -> int:
         workspace,
         str(config["origin_main_commit"]),
         require_clean=not is_resume,
+        allow_descendant=is_resume,
     )
     system_prompt_path = Path(config["system_prompt_file"]).resolve()
     system = system_prompt_path.read_text(encoding="utf-8")
@@ -1967,7 +2018,15 @@ def run(config_path: Path) -> int:
     env = os.environ.copy()
     env.update({str(k): str(v) for k, v in (config.get("environment") or {}).items()})
     endpoint = str(config["endpoint"])
-    api_key = str(config.get("api_key") or "benchmark-local")
+    api_key_env = str(config.get("api_key_env") or "").strip()
+    if api_key_env:
+        api_key = str(os.environ.get(api_key_env) or "").strip()
+        if not api_key:
+            raise ValueError(
+                "configured API key environment variable is unset: " + api_key_env
+            )
+    else:
+        api_key = str(config.get("api_key") or "benchmark-local")
     transcript_path = evidence / "transcript.jsonl"
     telemetry_path = evidence / "requests.jsonl"
     tool_results_path = evidence / "tool-results.jsonl"

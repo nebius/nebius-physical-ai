@@ -673,7 +673,9 @@ def test_cost_basis_survives_ingest_query_compare_dashboard_sdk_service_cli(
     assert query_metrics(QueryRequest(input_uri=store, cost_basis="billed")).count == 1
     assert sdk_query(input_uri=store, cost_basis="estimated").count == 1
 
-    client = TestClient(create_app(auth_mode="none"))
+    client = TestClient(
+        create_app(auth_mode="none", allowed_local_roots=[tmp_path])
+    )
     response = client.get(
         "/query", params={"input_uri": store, "cost_basis": "billed"}
     )
@@ -747,7 +749,9 @@ def test_new_signal_facets_thread_through_service_sdk_and_cli(tmp_path: Path) ->
     )
     assert sdk_result.count == 2
 
-    service_result = TestClient(create_app(auth_mode="none")).get(
+    service_result = TestClient(
+        create_app(auth_mode="none", allowed_local_roots=[tmp_path])
+    ).get(
         "/query",
         params={
             "input_uri": store,
@@ -917,7 +921,9 @@ def test_dashboard_groups_and_writes_html(tmp_path: Path) -> None:
 def test_service_record_query_lineage_compare_dashboard(tmp_path: Path) -> None:
     from npa.workbench.insights.service import create_app
 
-    client = TestClient(create_app(auth_mode="none"))
+    client = TestClient(
+        create_app(auth_mode="none", allowed_local_roots=[tmp_path])
+    )
     store = str(tmp_path / "store")
     record = client.post(
         "/record",
@@ -959,7 +965,9 @@ def test_service_record_query_lineage_compare_dashboard(tmp_path: Path) -> None:
 def test_service_ingest_run_endpoint_and_failure(tmp_path: Path) -> None:
     from npa.workbench.insights.service import create_app
 
-    client = TestClient(create_app(auth_mode="none"))
+    client = TestClient(
+        create_app(auth_mode="none", allowed_local_roots=[tmp_path])
+    )
     _write_run_prefix(tmp_path / "run")
     ok = client.post(
         "/ingest-run",
@@ -976,11 +984,36 @@ def test_service_ingest_run_endpoint_and_failure(tmp_path: Path) -> None:
 def test_service_compare_failure_returns_400(tmp_path: Path) -> None:
     from npa.workbench.insights.service import create_app
 
-    client = TestClient(create_app(auth_mode="none"))
+    client = TestClient(
+        create_app(auth_mode="none", allowed_local_roots=[tmp_path])
+    )
     store = str(tmp_path / "store")
     _seed_two_runs(store)
     bad = client.get("/compare", params={"input_uri": store, "base_run": "r1", "candidate_run": "nope"})
     assert bad.status_code == 400
+
+
+def test_service_storage_scope_fails_closed_and_enforces_configured_root(
+    tmp_path: Path,
+) -> None:
+    from npa.workbench.insights.service import create_app
+
+    allowed = tmp_path / "allowed"
+    allowed.mkdir()
+    payload = {
+        "output_uri": str(allowed / "store"),
+        "records": [_metric("scoped", "accuracy", 0.9)],
+    }
+
+    unconfigured = TestClient(create_app(auth_mode="none"))
+    assert unconfigured.post("/record", json=payload).status_code == 403
+
+    configured = TestClient(
+        create_app(auth_mode="none", allowed_local_roots=[allowed])
+    )
+    assert configured.post("/record", json=payload).status_code == 200
+    payload["output_uri"] = str(tmp_path / "outside")
+    assert configured.post("/record", json=payload).status_code == 403
 
 
 def test_service_health_system_info_and_token_auth() -> None:
@@ -995,12 +1028,41 @@ def test_service_health_system_info_and_token_auth() -> None:
     assert secure.get("/health", headers={"Authorization": "Bearer s3cr3t"}).status_code == 200
 
 
+def test_deployed_default_is_not_unauthenticated(monkeypatch: pytest.MonkeyPatch) -> None:
+    from npa.workbench.insights.service import create_app
+
+    monkeypatch.delenv("INSIGHTS_AUTH_MODE", raising=False)
+    monkeypatch.delenv("INSIGHTS_TOKEN", raising=False)
+    assert TestClient(create_app()).get("/health").status_code == 503
+
+
+def test_explicit_auth_none_remains_an_opt_in() -> None:
+    from npa.workbench.insights.service import create_app
+
+    assert TestClient(create_app(auth_mode="none")).get("/health").status_code == 200
+
+
 def test_sdk_workbench_namespace_exports_insights() -> None:
     from npa.sdk import workbench
 
     assert workbench.insights.__name__ == "npa.sdk.workbench.insights"
     for attr in ("record", "ingest_run", "query", "lineage", "compare", "dashboard"):
         assert hasattr(workbench.insights, attr)
+
+
+def test_embedded_sdk_does_not_require_service_allowlists(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from npa.sdk.workbench.insights import record
+
+    monkeypatch.delenv("INSIGHTS_ALLOWED_LOCAL_ROOTS", raising=False)
+    monkeypatch.delenv("INSIGHTS_ALLOWED_S3_ROOTS", raising=False)
+    result = record(
+        output_uri=str(tmp_path / "sdk-store"),
+        records=[_metric("embedded", "accuracy", 0.9)],
+    )
+    assert result.recorded_count == 1
+    assert Path(result.store_uri).exists()
 
 
 def test_cli_and_sdk_do_not_import_heavy_ml_dependencies_at_module_level() -> None:

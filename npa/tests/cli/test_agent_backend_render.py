@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import ast
 import builtins
+import hashlib
 import json
 import re
 import secrets
@@ -21,6 +22,23 @@ from types import SimpleNamespace
 import pytest
 
 from npa.cli.agent_embed import embedded_python_source
+from npa.cli.agent_viewer_runtime import _sha256_file
+
+
+def test_sha256_file_streams_recording_without_read_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    recording = tmp_path / "large.rrd"
+    payload = (b"RRF2" + b"recording-block") * 1000
+    recording.write_bytes(payload)
+
+    monkeypatch.setattr(
+        Path,
+        "read_bytes",
+        lambda _path: (_ for _ in ()).throw(AssertionError("must stream file")),
+    )
+
+    assert _sha256_file(recording, chunk_size=31) == hashlib.sha256(payload).hexdigest()
 
 
 def _clear_rendered_agent_backend_modules() -> None:
@@ -1726,8 +1744,14 @@ def test_source_qualified_rrd_loads_keep_independent_history(
         assert snapshots[ref_one]["served_recording_sha256"] == (
             hashlib.sha256(selections["npa1_source_one"][2]).hexdigest()
         )
+        assert snapshots[ref_one]["served_recording_size_bytes"] == len(
+            selections["npa1_source_one"][2]
+        )
         assert snapshots[ref_two]["served_recording_sha256"] == (
             hashlib.sha256(selections["npa1_source_two"][2]).hexdigest()
+        )
+        assert snapshots[ref_two]["served_recording_size_bytes"] == len(
+            selections["npa1_source_two"][2]
         )
         assert (
             snapshots[ref_one]["served_recording_sha256"]
@@ -1832,6 +1856,38 @@ def test_rerun_self_heal_preserves_same_run_canonical_mcap(
         assert repaired["foxglove_url"] == current["foxglove_url"]
         assert state["sim_viz"] == repaired
         assert state["sim_viz_runs"][run_id]["canonical_mcap_sha256"] == "a" * 64
+    finally:
+        sys.modules.pop(module_name, None)
+
+
+def test_active_run_recording_does_not_republish_on_page_refresh(
+    monkeypatch, tmp_path
+) -> None:
+    """Selection/status refreshes must remain metadata-only for a bound RRD."""
+    import sys
+
+    module_name = "npa_rendered_bound_rrd_refresh_backend"
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+    recording = tmp_path / "sim2real.rrd"
+    recording.write_bytes(b"RRF2run-specific-recording")
+    module.RECORDING_PATH = recording
+    run_id = "run-already-loaded"
+    current = {
+        "run_id": run_id,
+        "rrd_uri": f"file://{recording}",
+        "served_recording_sha256": hashlib.sha256(recording.read_bytes()).hexdigest(),
+        "served_recording_size_bytes": recording.stat().st_size,
+    }
+    state = {"sim_viz": current, "latest_submit": {"run_id": run_id}}
+    monkeypatch.setattr(module, "_load_state", lambda: state)
+    monkeypatch.setattr(
+        module,
+        "_publish_rrd_recording",
+        lambda _source: (_ for _ in ()).throw(AssertionError("must not republish")),
+    )
+
+    try:
+        assert module._wire_active_sim2real_recording(state) is current
     finally:
         sys.modules.pop(module_name, None)
 

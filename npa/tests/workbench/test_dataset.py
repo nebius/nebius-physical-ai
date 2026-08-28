@@ -187,7 +187,9 @@ def test_query_lancedb_backend_when_endpoint_set(tmp_path: Path, monkeypatch: py
 def test_ingest_endpoint_success_and_status_list(tmp_path: Path) -> None:
     from npa.workbench.dataset.service import create_app
 
-    client = TestClient(create_app(auth_mode="none"))
+    client = TestClient(
+        create_app(auth_mode="none", allowed_local_roots=[tmp_path])
+    )
     response = client.post(
         "/ingest",
         json={"input_uri": _raw(tmp_path), "output_uri": str(tmp_path / "ds"), "dataset_id": "fleet", "version": "v1"},
@@ -205,7 +207,9 @@ def test_ingest_endpoint_success_and_status_list(tmp_path: Path) -> None:
 def test_ingest_endpoint_failure_returns_400(tmp_path: Path) -> None:
     from npa.workbench.dataset.service import create_app
 
-    client = TestClient(create_app(auth_mode="none"))
+    client = TestClient(
+        create_app(auth_mode="none", allowed_local_roots=[tmp_path])
+    )
     empty = tmp_path / "empty.json"
     empty.write_text(json.dumps({"records": []}))
     response = client.post(
@@ -218,7 +222,9 @@ def test_ingest_endpoint_failure_returns_400(tmp_path: Path) -> None:
 def test_validate_and_curate_and_query_endpoints(tmp_path: Path) -> None:
     from npa.workbench.dataset.service import create_app
 
-    client = TestClient(create_app(auth_mode="none"))
+    client = TestClient(
+        create_app(auth_mode="none", allowed_local_roots=[tmp_path])
+    )
     ingested = client.post(
         "/ingest",
         json={"input_uri": _raw(tmp_path), "output_uri": str(tmp_path / "ds"), "dataset_id": "fleet"},
@@ -240,6 +246,31 @@ def test_validate_and_curate_and_query_endpoints(tmp_path: Path) -> None:
     assert bad.status_code == 400
 
 
+def test_service_storage_scope_fails_closed_and_enforces_configured_root(
+    tmp_path: Path,
+) -> None:
+    from npa.workbench.dataset.service import create_app
+
+    allowed = tmp_path / "allowed"
+    allowed.mkdir()
+    raw = _raw(allowed)
+    payload = {
+        "input_uri": raw,
+        "output_uri": str(allowed / "dataset"),
+        "dataset_id": "scoped",
+    }
+
+    unconfigured = TestClient(create_app(auth_mode="none"))
+    assert unconfigured.post("/ingest", json=payload).status_code == 403
+
+    configured = TestClient(
+        create_app(auth_mode="none", allowed_local_roots=[allowed])
+    )
+    assert configured.post("/ingest", json=payload).status_code == 200
+    payload["output_uri"] = str(tmp_path / "outside")
+    assert configured.post("/ingest", json=payload).status_code == 403
+
+
 def test_health_system_info_and_token_auth() -> None:
     from npa.workbench.dataset.service import create_app
 
@@ -250,6 +281,20 @@ def test_health_system_info_and_token_auth() -> None:
     secure = TestClient(create_app(auth_mode="token", token="s3cr3t"))
     assert secure.get("/health").status_code == 401
     assert secure.get("/health", headers={"Authorization": "Bearer s3cr3t"}).status_code == 200
+
+
+def test_deployed_default_is_not_unauthenticated(monkeypatch: pytest.MonkeyPatch) -> None:
+    from npa.workbench.dataset.service import create_app
+
+    monkeypatch.delenv("DATASET_AUTH_MODE", raising=False)
+    monkeypatch.delenv("DATASET_TOKEN", raising=False)
+    assert TestClient(create_app()).get("/health").status_code == 503
+
+
+def test_explicit_auth_none_remains_an_opt_in() -> None:
+    from npa.workbench.dataset.service import create_app
+
+    assert TestClient(create_app(auth_mode="none")).get("/health").status_code == 200
 
 
 def test_cli_ingest_validate_curate_query(tmp_path: Path) -> None:
@@ -272,6 +317,22 @@ def test_cli_ingest_validate_curate_query(tmp_path: Path) -> None:
         ["query", "--input-path", manifest_uri, "--event", "cut_in", "--output", "json"],
     )
     assert json.loads(query.output)["count"] == 2
+
+
+def test_embedded_sdk_does_not_require_service_allowlists(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from npa.sdk.workbench.dataset import ingest
+
+    monkeypatch.delenv("DATASET_ALLOWED_LOCAL_ROOTS", raising=False)
+    monkeypatch.delenv("DATASET_ALLOWED_S3_ROOTS", raising=False)
+    result = ingest(
+        input_uri=_raw(tmp_path),
+        output_uri=str(tmp_path / "sdk-dataset"),
+        dataset_id="embedded",
+    )
+    assert result.record_count == 3
+    assert Path(result.manifest_uri).exists()
 
 
 def test_cli_and_sdk_do_not_import_heavy_ml_dependencies_at_module_level() -> None:

@@ -29,8 +29,6 @@ write_files:
       FIFTYONE_MODEL_ZOO_DIR=/opt/fiftyone/zoo/models
       FIFTYONE_DO_NOT_TRACK=true
       FIFTYONE_DATASET_NAME=
-      AWS_ACCESS_KEY_ID=${aws_access_key}
-      AWS_SECRET_ACCESS_KEY=${aws_secret_key}
       AWS_ENDPOINT_URL=${s3_endpoint}
       NEBIUS_S3_ENDPOINT=${s3_endpoint}
       NEBIUS_S3_BUCKET=${s3_bucket}
@@ -99,8 +97,6 @@ write_files:
     owner: ${ssh_user}:${ssh_user}
     permissions: "0600"
     content: |
-      AWS_ACCESS_KEY_ID=${aws_access_key}
-      AWS_SECRET_ACCESS_KEY=${aws_secret_key}
       NEBIUS_S3_ENDPOINT=${s3_endpoint}
       NEBIUS_S3_BUCKET=${s3_bucket}
       NEBIUS_REGION=${nebius_region}

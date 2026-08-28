@@ -11,11 +11,18 @@ ROOT = Path(__file__).resolve().parents[4]
 DOC_PATH = ROOT / "docs" / "workbench" / "npa-workflow-tool-catalog.md"
 
 
-def _doc_tool_refs() -> set[str]:
+def _doc_table_tool_refs() -> set[str]:
+    """Parse only the first-column toolRef, so prose examples are not contracts."""
     text = DOC_PATH.read_text(encoding="utf-8")
-    # Match backtick-wrapped toolRefs, including train_* / eval_* wildcards.
-    refs = set(re.findall(r"`([a-z0-9_.]+(?:_\*)?)`", text))
-    return {ref for ref in refs if "." in ref}
+    text = text.split("\n## Tokens", 1)[0]
+    rows = set()
+    for line in text.splitlines():
+        if not line.startswith("| `"):
+            continue
+        match = re.match(r"\| `([^`]+)`", line)
+        if match:
+            rows.add(match.group(1))
+    return rows
 
 
 def _catalog_keys_for_doc() -> set[str]:
@@ -34,10 +41,16 @@ def _catalog_keys_for_doc() -> set[str]:
 
 def test_catalog_doc_lists_every_tool_ref() -> None:
     assert DOC_PATH.is_file()
-    documented = _doc_tool_refs()
+    documented = _doc_table_tool_refs()
     expected = _catalog_keys_for_doc()
     missing = sorted(expected - documented)
     assert not missing, f"toolRefs missing from {DOC_PATH.name}: {missing}"
+
+
+def test_doc_table_has_no_stale_tool_refs() -> None:
+    documented = _doc_table_tool_refs()
+    unknown = sorted(documented - _catalog_keys_for_doc())
+    assert not unknown, f"toolRefs advertised but absent from TOOL_CATALOG: {unknown}"
 
 
 def test_stub_flags_match_echo_stubs() -> None:

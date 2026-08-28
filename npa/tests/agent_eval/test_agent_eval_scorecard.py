@@ -159,7 +159,9 @@ def test_no_task_crashes():
     assert not crashed, crashed
 
 
-def test_operate_eval_mocked_round_trip_is_grounded(tmp_path: Path):
+def test_operate_eval_mocked_round_trip_is_grounded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     from npa.cli.agent_actions import summarize_observations
     from npa.workbench.insights.analytics import query_metrics
     from npa.workbench.insights.schemas import IngestRunRequest, QueryRequest
@@ -169,6 +171,7 @@ def test_operate_eval_mocked_round_trip_is_grounded(tmp_path: Path):
     fixture = tmp_path / "fixture"
     store = str(tmp_path / "store")
     empty_store = str(tmp_path / "empty-store")
+    monkeypatch.setenv("INSIGHTS_ALLOWED_LOCAL_ROOTS", str(tmp_path))
 
     def submit(observed_run_id: str) -> dict:
         fixture.mkdir()

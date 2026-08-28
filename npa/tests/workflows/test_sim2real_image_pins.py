@@ -185,6 +185,12 @@ def test_cpu_controller_is_small_pinned_and_resolver_closed() -> None:
     ]
     assert lines
     assert all(line.count("==") == 1 for line in lines)
+    assert "httpx==0.28.1" in lines
+    assert "PyYAML==6.0.3" in lines
+    assert "from npa.clients.token_factory import TokenFactoryClient" in dockerfile
+    assert "NEBIUS_TOKEN_FACTORY_KEY" in dockerfile
+    assert "build-smoke" in dockerfile
+    assert "TokenFactoryClient()" in dockerfile
 
     control_requirements = (
         root / "common" / "sim2real-control-requirements.txt"
