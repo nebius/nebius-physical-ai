@@ -148,6 +148,11 @@ def test_cpu_controller_is_small_pinned_and_resolver_closed() -> None:
     assert "CUDA" not in dockerfile
     assert "--no-deps" in dockerfile
     assert "pip check" in dockerfile
+    assert "sim2real-controller-requirements.txt" in dockerfile
+    assert "sim2real-control-requirements.txt" in dockerfile
+    assert "from npa.clients.token_factory import TokenFactoryClient" in dockerfile
+    assert "from npa.workbench.cosmos.reason import run_token_factory_rollout_vlm" in dockerfile
+    assert "from npa.workflows.sim2real.stage8_cosmos3 import run" in dockerfile
     assert "NPA_SOURCE_SHA" in dockerfile
     assert "NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA}" in dockerfile
     assert "NPA_SKIP_EAGER_IMPORTS=1" in dockerfile
@@ -180,6 +185,23 @@ def test_cpu_controller_is_small_pinned_and_resolver_closed() -> None:
     ]
     assert lines
     assert all(line.count("==") == 1 for line in lines)
+
+    control_requirements = (
+        root / "common" / "sim2real-control-requirements.txt"
+    ).read_text()
+    control_lines = {
+        line.strip()
+        for line in control_requirements.splitlines()
+        if line.strip() and not line.startswith("#")
+    }
+    for dependency in (
+        "anyio==4.14.2",
+        "h11==0.16.0",
+        "httpcore==1.0.9",
+        "httpx==0.28.1",
+        "typing-extensions==4.16.0",
+    ):
+        assert dependency in control_lines
 
 
 def test_isaac_cache_warmer_is_nonroot_and_uses_fs_group() -> None:
