@@ -221,6 +221,7 @@ def _fake_proc_process(
     cmdline: tuple[str, ...],
     cwd: Path,
     environment: dict[str, str] | None = None,
+    mount_namespace: str | None = None,
 ) -> None:
     process = proc_root / str(pid)
     process.mkdir(parents=True)
@@ -235,6 +236,16 @@ def _fake_proc_process(
             f"{key}={value}".encode() for key, value in (environment or {}).items()
         )
     )
+    if mount_namespace is not None:
+        namespace_dir = process / "ns"
+        namespace_dir.mkdir()
+        (namespace_dir / "mnt").symlink_to(mount_namespace)
+
+
+def _fake_proc_self_mount_namespace(proc_root: Path, namespace: str) -> None:
+    namespace_dir = proc_root / "self" / "ns"
+    namespace_dir.mkdir(parents=True)
+    (namespace_dir / "mnt").symlink_to(namespace)
 
 
 def test_local_api_daemon_probe_finds_deleted_executor_cwd(tmp_path) -> None:
@@ -305,6 +316,77 @@ def test_local_api_daemon_probe_accepts_durable_process_tree(tmp_path) -> None:
     assert result.healthy is True
     assert result.outcome == "cwd_live"
     assert result.process_count == 2
+
+
+def test_local_api_daemon_probe_ignores_other_mount_namespaces(tmp_path) -> None:
+    proc_root = tmp_path / "proc"
+    bin_dir = tmp_path / "venv" / "bin"
+    bin_dir.mkdir(parents=True)
+    sky = bin_dir / "sky"
+    python = bin_dir / "python"
+    sky.touch()
+    python.touch()
+    durable = tmp_path / "durable"
+    durable.mkdir()
+    deleted = tmp_path / "deleted-container-cwd"
+    caller_namespace = "mnt:[100]"
+    _fake_proc_self_mount_namespace(proc_root, caller_namespace)
+    _fake_proc_process(
+        proc_root,
+        pid=100,
+        ppid=1,
+        uid=1234,
+        cmdline=(str(python), "-m", "sky.server.server"),
+        cwd=durable,
+        mount_namespace=caller_namespace,
+    )
+    _fake_proc_process(
+        proc_root,
+        pid=200,
+        ppid=1,
+        uid=1234,
+        cmdline=(str(python), "-m", "sky.server.server"),
+        cwd=deleted,
+        mount_namespace="mnt:[200]",
+    )
+
+    result = workflow_module._probe_local_api_daemon_cwd(
+        str(sky), proc_root=proc_root, uid=1234
+    )
+
+    assert result.healthy is True
+    assert result.outcome == "cwd_live"
+    assert result.process_count == 1
+
+
+def test_local_api_daemon_probe_checks_same_mount_namespace(tmp_path) -> None:
+    proc_root = tmp_path / "proc"
+    bin_dir = tmp_path / "venv" / "bin"
+    bin_dir.mkdir(parents=True)
+    sky = bin_dir / "sky"
+    python = bin_dir / "python"
+    sky.touch()
+    python.touch()
+    deleted = tmp_path / "deleted-local-cwd"
+    caller_namespace = "mnt:[100]"
+    _fake_proc_self_mount_namespace(proc_root, caller_namespace)
+    _fake_proc_process(
+        proc_root,
+        pid=100,
+        ppid=1,
+        uid=1234,
+        cmdline=(str(python), "-m", "sky.server.server"),
+        cwd=deleted,
+        mount_namespace=caller_namespace,
+    )
+
+    result = workflow_module._probe_local_api_daemon_cwd(
+        str(sky), proc_root=proc_root, uid=1234
+    )
+
+    assert result.healthy is False
+    assert result.outcome == "cwd_deleted"
+    assert result.process_count == 1
 
 
 def test_local_api_daemon_probe_keeps_venv_python_symlink_lexical(tmp_path) -> None:

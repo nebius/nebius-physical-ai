@@ -231,6 +231,12 @@ def _probe_local_api_daemon_cwd(
     """
 
     expected_uid = os.getuid() if uid is None else uid
+    try:
+        caller_mount_namespace = os.readlink(proc_root / "self" / "ns" / "mnt")
+    except OSError:
+        # Hermetic procfs fixtures and restricted proc mounts may not expose
+        # namespace links. Preserve the conservative legacy scan in that case.
+        caller_mount_namespace = None
     # Keep the venv path lexical here: ``bin/python`` is commonly a symlink to
     # the system interpreter, while ``bin/sky`` is a script. Resolving both
     # would put them in different parent directories and miss the real daemon.
@@ -283,6 +289,25 @@ def _probe_local_api_daemon_cwd(
         and "-m" in cmdline
         and "sky.server.server" in cmdline
     }
+    if caller_mount_namespace is not None:
+        scoped_roots = set()
+        for pid in roots:
+            try:
+                candidate_mount_namespace = os.readlink(
+                    records[pid][2] / "ns" / "mnt"
+                )
+            except (FileNotFoundError, ProcessLookupError, PermissionError):
+                continue
+            except OSError as exc:
+                return ApiDaemonCwdProbe(
+                    False,
+                    "process_inspection_failed",
+                    process_count=len(scoped_roots),
+                    error=redact_text(str(exc)),
+                )
+            if candidate_mount_namespace == caller_mount_namespace:
+                scoped_roots.add(pid)
+        roots = scoped_roots
     if not roots:
         return ApiDaemonCwdProbe(True, "absent")
 
