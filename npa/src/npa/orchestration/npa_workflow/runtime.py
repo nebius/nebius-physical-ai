@@ -1320,15 +1320,26 @@ class SkyPilotWaveExecutor:
         self, steps: Sequence[PlanStep], *, group: str, attempt: WaveAttempt
     ) -> str:
         label = group or steps[0].state
-        suffix = f"-a{attempt.attempt}" if attempt.attempt > 1 else ""
+        membership_suffix = ""
+        if group:
+            # One parallel group may be split into different batches when an
+            # operator resumes with a tighter capacity cap.  Group-only names
+            # then collide with historical queue rows and can adopt a terminal
+            # job whose task membership is different.  Bind the immutable name
+            # to the exact wave key while retaining a readable group label.
+            membership = hashlib.sha256(attempt.key.encode("utf-8")).hexdigest()[:8]
+            membership_suffix = f"-m{membership}"
+        attempt_suffix = f"-a{attempt.attempt}" if attempt.attempt > 1 else ""
+        suffix = f"{membership_suffix}{attempt_suffix}"
         iteration = steps[0].iteration
         if iteration is not None:
             label = f"{label}-{iteration}"
         base = _sanitize_job_name(f"{self.run_id}-{self._sequence:02d}-{label}")
         if suffix:
-            # Preserve the immutable attempt discriminator even when a long run
-            # ID exhausts SkyPilot/Kubernetes' name budget. Truncating the suffix
-            # makes an explicit retry reconcile and adopt the prior failed job.
+            # Preserve both immutable discriminators even when a long run ID
+            # exhausts SkyPilot/Kubernetes' name budget. Truncating either makes
+            # resume reconciliation capable of adopting a different batch or a
+            # prior failed attempt.
             base = base[: 60 - len(suffix)].rstrip("-_")
         return f"{base}{suffix}"
 

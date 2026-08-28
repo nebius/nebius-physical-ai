@@ -28,6 +28,7 @@ from npa.orchestration.npa_workflow.runtime import (
     WaveAttempt,
     run_workflow_runtime,
     s3_trigger_waiter,
+    wave_key,
 )
 from npa.orchestration.npa_workflow.skypilot_render import SkypilotRenderOptions
 
@@ -1374,6 +1375,52 @@ def test_long_run_id_preserves_retry_attempt_suffix(tmp_path: Path) -> None:
 
     assert len(name) <= 60
     assert name.endswith("-a3")
+
+
+def test_parallel_job_name_fingerprints_exact_batch_membership(tmp_path: Path) -> None:
+    spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
+    executor = _executor(spec, run_id="rt-batch-name")
+    steps = list(build_plan(spec, run_id="rt-batch-name").steps)[:3]
+    executor._sequence = 1
+
+    first_key = wave_key(steps[:2], group="shards", sequence_number=1)
+    full_key = wave_key(steps, group="shards", sequence_number=1)
+    first = executor._job_name(
+        steps[:2],
+        group="shards",
+        attempt=WaveAttempt(
+            key=first_key,
+            states=[step.state for step in steps[:2]],
+            kind="parallel",
+            attempt=1,
+        ),
+    )
+    full = executor._job_name(
+        steps,
+        group="shards",
+        attempt=WaveAttempt(
+            key=full_key,
+            states=[step.state for step in steps],
+            kind="parallel",
+            attempt=1,
+        ),
+    )
+    retried = executor._job_name(
+        steps[:2],
+        group="shards",
+        attempt=WaveAttempt(
+            key=first_key,
+            states=[step.state for step in steps[:2]],
+            kind="parallel",
+            attempt=2,
+        ),
+    )
+
+    assert first != full
+    assert "-m" in first
+    assert retried.startswith(first)
+    assert retried.endswith("-a2")
+    assert max(map(len, (first, full, retried))) <= 60
 
 
 def _canonical_sim2real_1x1():
