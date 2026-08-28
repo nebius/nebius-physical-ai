@@ -1752,6 +1752,9 @@ def test_isaac_lab_train_export_trajectories_runs_second_remote_script(mocker) -
     assert "RslRlVecEnvWrapper(env, clip_actions=clip_actions)" in traj_cmd
     assert "handle_deprecated_rsl_rl_cfg" in traj_cmd
     assert 'metadata.version("rsl-rl-lib")' in traj_cmd
+    assert traj_cmd.index("import importlib.metadata as metadata") < traj_cmd.index(
+        'metadata.version("rsl-rl-lib")'
+    )
     assert "device=runner_device" in traj_cmd
     assert "random fallback" not in traj_cmd
     assert "trained-policy checkpoint load failed" in traj_cmd

@@ -1073,7 +1073,6 @@ def _build_export_lerobot_script(
     state_names_json = json.dumps(G1_STATE_NAMES_43)
     return f"""\
 import json
-import importlib.metadata as metadata
 import time
 from pathlib import Path
 
@@ -1278,6 +1277,7 @@ def _build_train_trajectory_export_script(
     policy.
     """
     return f"""\
+import importlib.metadata as metadata
 import json
 import time
 from pathlib import Path
