@@ -31,6 +31,10 @@ on:
         description: "Comma/space-separated public tools to build and push as dev-<sha>"
         required: false
         default: ""
+      build_runner_label:
+        description: "Runner label for public development image builds"
+        required: false
+        default: "ubuntu-latest"
       cleanup_development_tools:
         description: "Exact failed/superseded dev tags to delete without promotion"
         required: false
@@ -146,7 +150,7 @@ jobs:
       fail-fast: false
       matrix:
         include: ${{ fromJSON(needs.resolve.outputs.build_matrix) }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.build_runner_label || 'ubuntu-latest' }}
     env:
       IMAGE: ${{ matrix.image }}
       TOOL: ${{ matrix.tool }}
