@@ -1677,6 +1677,15 @@ def _wait_for_healthy_jobs_controller(
             and probe.pod_count == 0
         ):
             return ControllerExecutionProbe(True, "controller_absent", pod_count=0)
+        if state is ControllerState.UP and (
+            (probe.outcome == "head_pod_ambiguous" and probe.pod_count == 0)
+            or probe.outcome == "head_pod_not_ready"
+        ):
+            # SkyPilot may replace the controller pod immediately after a
+            # managed workload is cleaned up while its cached state still says
+            # UP. Let the normal preflight deadline bound that lifecycle race;
+            # a truly missing cached controller then fails actionably.
+            return probe
         raise SkyPilotSubmitError(
             "SkyPilot jobs controller execution health check failed: "
             f"{probe.outcome}: {probe.error or 'cwd unavailable'}. "
@@ -1767,7 +1776,13 @@ def _wait_for_healthy_jobs_controller(
                             "SKYPILOT_USER_ID selects one. Refusing to probe or launch."
                         )
                 probe_result = checked_execution_probe(state, expected_name)
-                return ControllerHealthResult(state, expected_name, probe_result)
+                if probe_result is None or probe_result.healthy:
+                    return ControllerHealthResult(state, expected_name, probe_result)
+                last_summary = (
+                    f"{expected_name}=UP but {probe_result.outcome}: "
+                    f"{probe_result.error or 'controller head pod unavailable'}"
+                )
+                unhealthy = [(expected_name, "UP_NO_READY_HEAD_POD")]
             last_summary = ", ".join(
                 f"{name}={status or 'UNKNOWN'}" for name, status in unhealthy
             )

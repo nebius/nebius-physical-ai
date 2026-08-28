@@ -1165,6 +1165,53 @@ def test_controller_up_is_rejected_when_execution_probe_fails(monkeypatch) -> No
     assert "npa skypilot cleanup-controller" in message
 
 
+def test_controller_up_waits_for_replacement_head_pod(monkeypatch) -> None:
+    monkeypatch.setattr(workflow_module.subprocess, "run", _controller_status_run("UP"))
+    probes = iter(
+        (
+            workflow_module.ControllerExecutionProbe(
+                False,
+                "head_pod_ambiguous",
+                pod_count=0,
+                error="expected one controller head pod, found 0",
+            ),
+            workflow_module.ControllerExecutionProbe(True, "cwd_live", pod_count=1),
+        )
+    )
+
+    result = workflow_module._wait_for_healthy_jobs_controller(
+        "sky",
+        env={"SKYPILOT_USER_ID": "abc123"},
+        timeout=1,
+        interval=0.01,
+        execution_probe=lambda _name: next(probes),
+    )
+
+    assert result.state is workflow_module.ControllerState.UP
+    assert result.execution_probe is not None
+    assert result.execution_probe.outcome == "cwd_live"
+
+
+def test_controller_up_missing_head_pod_fails_at_preflight_deadline(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(workflow_module.subprocess, "run", _controller_status_run("UP"))
+
+    with pytest.raises(SkyPilotSubmitError, match="UP_NO_READY_HEAD_POD"):
+        workflow_module._wait_for_healthy_jobs_controller(
+            "sky",
+            env={"SKYPILOT_USER_ID": "abc123"},
+            timeout=0,
+            interval=0.01,
+            execution_probe=lambda _name: workflow_module.ControllerExecutionProbe(
+                False,
+                "head_pod_ambiguous",
+                pod_count=0,
+                error="expected one controller head pod, found 0",
+            ),
+        )
+
+
 def test_controller_stopped_rejects_existing_pod_with_deleted_cwd(monkeypatch) -> None:
     """A STOPPED cache row can still have a reusable live pod.
 
