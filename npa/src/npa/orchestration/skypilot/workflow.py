@@ -455,10 +455,11 @@ def ensure_local_api_daemon_health(
     # daemon; an absent daemon is left for the regular pinned-version path.
     sky_executable = str(runtime_config.sky_bin)
     env = sky_environment(runtime_config.isolated_config_dir)
+    stable_cwd = _stable_sky_cwd(runtime_config.isolated_config_dir)
     return _ensure_local_api_daemon_cwd(
         sky_executable,
         env=env,
-        cwd=_stable_sky_cwd(runtime_config.isolated_config_dir),
+        cwd=stable_cwd,
     )
 
 
