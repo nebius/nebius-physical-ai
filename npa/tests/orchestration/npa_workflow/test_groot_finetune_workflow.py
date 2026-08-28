@@ -74,12 +74,14 @@ def test_groot_workflow_is_short_honest_operational_pipeline() -> None:
     assert spec.config["action_representation"] == "ABSOLUTE"
 
     preflight = plan.steps[0]
+    baseline = plan.steps[2]
     trainer = plan.steps[3]
     resolver = plan.steps[4]
     posttrain = plan.steps[5]
     assert _option_value(preflight.argv, "--max-steps") == "4"
     assert _option_value(preflight.argv, "--save-steps") == "4"
     assert _option_value(preflight.argv, "--save-total-limit") == "1"
+    assert _option_value(baseline.argv, "--robot-embodiment") == "NEW_EMBODIMENT"
     assert trainer.resources_profile["accelerators"] == "B200:2"
     assert _option_value(trainer.argv, "--num-gpus") == "2"
     assert _option_value(trainer.argv, "--logging-steps") == "1"
@@ -89,6 +91,7 @@ def test_groot_workflow_is_short_honest_operational_pipeline() -> None:
     )
     assert _option_value(resolver.argv, "--expected-gpu-count") == "2"
     assert "--checkpoint-uri" not in posttrain.argv
+    assert _option_value(posttrain.argv, "--robot-embodiment") == "NEW_EMBODIMENT"
     assert _option_value(posttrain.argv, "--checkpoint-ref-uri").endswith(
         "/reports/trained-checkpoint.json"
     )
@@ -154,8 +157,10 @@ def test_groot_workflow_reaches_plan_scheduler_and_vendor_render(
         by_name = {stage["name"]: stage for stage in documents[1:]}
         assert "groot_learning preflight-rigor" in by_name[STATES[0]]["run"]
         assert "groot_learning prepare-split" in by_name[STATES[1]]["run"]
+        assert "--robot-embodiment NEW_EMBODIMENT" in by_name[STATES[2]]["run"]
         assert "workbench groot finetune" in by_name[STATES[3]]["run"]
         assert "groot_learning posttrain-eval" in by_name[STATES[5]]["run"]
+        assert "--robot-embodiment NEW_EMBODIMENT" in by_name[STATES[5]]["run"]
         assert "groot_learning compare-learning" in by_name[STATES[6]]["run"]
         assert "groot_learning emit-rrd" in by_name[STATES[7]]["run"]
         assert "groot_learning emit-mcap" in by_name[STATES[8]]["run"]
