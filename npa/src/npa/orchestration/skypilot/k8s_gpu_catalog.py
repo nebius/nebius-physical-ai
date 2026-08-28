@@ -877,8 +877,12 @@ def discover_kubernetes_gpu_catalog(
         ) from exc
     output = "\n".join(part for part in (result.stdout, result.stderr) if part)
     if result.returncode == 0 and "kubernetes is not enabled" in output.casefold():
+        check_cmd = [sky_executable, "check"]
+        if config_override:
+            check_cmd.extend(["--config", config_override])
+        check_cmd.append("kubernetes")
         checked = execute(
-            [sky_executable, "check", "kubernetes"],
+            check_cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -886,7 +890,13 @@ def discover_kubernetes_gpu_catalog(
             check=False,
             env=_kubeconfig_env(kubeconfig),
         )
-        if checked.returncode != 0:
+        checked_output = "\n".join(
+            part for part in (checked.stdout, checked.stderr) if part
+        )
+        if (
+            checked.returncode != 0
+            or "kubernetes: disabled" in checked_output.casefold()
+        ):
             detail = (
                 checked.stderr or checked.stdout or f"exit {checked.returncode}"
             ).strip()

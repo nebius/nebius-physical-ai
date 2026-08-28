@@ -253,7 +253,7 @@ def test_discover_reenables_kubernetes_after_api_server_restart(
 
     def fake_run(cmd, **kwargs):  # noqa: ANN001 - test stub
         calls.append(cmd)
-        if cmd[1:3] == ["check", "kubernetes"]:
+        if cmd[1] == "check":
             return subprocess.CompletedProcess(cmd, 0, stdout="enabled", stderr="")
         if len(calls) == 1:
             return subprocess.CompletedProcess(
@@ -276,7 +276,12 @@ def test_discover_reenables_kubernetes_after_api_server_restart(
             "--infra",
             "k8s/npa-rtxpro-mk8s",
         ],
-        ["check", "kubernetes"],
+        [
+            "check",
+            "--config",
+            'kubernetes.allowed_contexts=["npa-rtxpro-mk8s"]',
+            "kubernetes",
+        ],
         [
             "show-gpus",
             "--config",
@@ -290,7 +295,7 @@ def test_discover_reenables_kubernetes_after_api_server_restart(
 
 def test_discover_reports_failed_kubernetes_reenable(sky_bin: str) -> None:
     def fake_run(cmd, **kwargs):  # noqa: ANN001 - test stub
-        if cmd[1:3] == ["check", "kubernetes"]:
+        if cmd[1] == "check":
             return subprocess.CompletedProcess(
                 cmd, 1, stdout="", stderr="exact context unavailable"
             )
