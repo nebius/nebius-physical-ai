@@ -278,6 +278,7 @@ def _apply_loaded_artifact(
         sim_viz.update(current)
     # Never let a previous RRD's binding survive a later media load.
     sim_viz.pop("served_recording_sha256", None)
+    sim_viz.pop("served_recording_size_bytes", None)
     clear_cross_run_mcap_state(sim_viz, run_id)
     camera = str(sim_viz.get("camera") or "workspace")
     contract = artifact_contract if isinstance(artifact_contract, dict) else {}
@@ -361,6 +362,7 @@ def _apply_loaded_artifact(
             shutil.copy2(local_path, rrd_tmp)
             rrd_tmp.replace(RRD_PATH)
         sim_viz["served_recording_sha256"] = _sha256_file(RECORDING_PATH)
+        sim_viz["served_recording_size_bytes"] = RECORDING_PATH.stat().st_size
         restarted = _restart_rerun_serve(force=True)
         rerun_ready = _wait_rerun_web_viewer_healthy() if restarted else False
         sim_viz["rrd_uri"] = f"file://{RECORDING_PATH}"
