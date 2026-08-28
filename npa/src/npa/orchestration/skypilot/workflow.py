@@ -437,6 +437,31 @@ def _ensure_local_api_daemon_cwd(
     )
 
 
+def ensure_local_api_daemon_health(
+    *,
+    sky_bin: SkyBin = None,
+    isolated_config_dir: Path | None = None,
+    config_path: Path | None = None,
+) -> ApiDaemonCwdProbe:
+    """Run the shared local-daemon repair gate before SkyPilot preflights."""
+
+    runtime_config = resolve_config(
+        sky_bin=sky_bin,
+        global_config_path=config_path,
+        isolated_config_dir=isolated_config_dir,
+    )
+    # This gate runs before accelerator discovery's normal version validation.
+    # It only needs the exact configured executable to identify an already-live
+    # daemon; an absent daemon is left for the regular pinned-version path.
+    sky_executable = str(runtime_config.sky_bin)
+    env = sky_environment(runtime_config.isolated_config_dir)
+    return _ensure_local_api_daemon_cwd(
+        sky_executable,
+        env=env,
+        cwd=_stable_sky_cwd(runtime_config.isolated_config_dir),
+    )
+
+
 class _SkyPilotLaunchCommandError(RuntimeError):
     """Preserve launch command evidence for the central failure classifier."""
 
