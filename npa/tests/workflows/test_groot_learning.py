@@ -100,7 +100,7 @@ def test_configurable_evaluation_repeats_reuse_one_policy_with_seed_isolation(
         "run_id": "run",
         "split_hash": "sha256:split",
         "integrity": {"leakage_free": True},
-        "source": {"embodiment": "NEW_EMBODIMENT"},
+        "source": {"embodiment": "so101_follower"},
         "train": {"uri": "s3://bucket/train"},
         "heldout": {"uri": "s3://bucket/heldout"},
     }
@@ -114,11 +114,15 @@ def test_configurable_evaluation_repeats_reuse_one_policy_with_seed_isolation(
             )
 
     monkeypatch.setattr(learning, "_download_prefix", fake_download)
-    monkeypatch.setattr(
-        learning,
-        "_initialize_baseline_checkpoint",
-        lambda **kwargs: (kwargs["output_path"].mkdir(parents=True), (kwargs["output_path"] / "model.safetensors").write_bytes(b"x")),
-    )
+    initialized: dict[str, object] = {}
+
+    def fake_initialize(**kwargs: object) -> None:
+        initialized.update(kwargs)
+        output_path = Path(str(kwargs["output_path"]))
+        output_path.mkdir(parents=True)
+        (output_path / "model.safetensors").write_bytes(b"x")
+
+    monkeypatch.setattr(learning, "_initialize_baseline_checkpoint", fake_initialize)
     monkeypatch.setattr(
         learning,
         "_upload_directory",
@@ -133,13 +137,13 @@ def test_configurable_evaluation_repeats_reuse_one_policy_with_seed_isolation(
         lambda _client, uri, payload: {"uri": uri, "bytes": len(payload)},
     )
     monkeypatch.setattr(learning, "_put_json", lambda *_args: None)
-    calls: list[tuple[int, object]] = []
+    calls: list[tuple[int, object, str]] = []
     runtime = {"policy": object(), "loader": object(), "tag": object()}
 
     def fake_evaluate(**kwargs: object) -> dict:
         seed = int(kwargs["seed"])
         supplied_runtime = kwargs.get("runtime")
-        calls.append((seed, supplied_runtime))
+        calls.append((seed, supplied_runtime, str(kwargs["embodiment"])))
         prediction = np.asarray([[float(seed)]], dtype=np.float32)
         return {
             "expert": np.asarray([[0.0]], dtype=np.float32),
@@ -177,6 +181,7 @@ def test_configurable_evaluation_repeats_reuse_one_policy_with_seed_isolation(
         "s3://bucket/actions.npz",
         "run",
         "baseline",
+        robot_embodiment="NEW_EMBODIMENT",
         base_model="nvidia/GR00T-N1.7-3B",
         baseline_checkpoint_uri="s3://bucket/baseline",
         action_horizon=1,
@@ -185,12 +190,20 @@ def test_configurable_evaluation_repeats_reuse_one_policy_with_seed_isolation(
         s3_client=object(),
     )
 
-    assert [seed for seed, _runtime in calls] == [11, 11, 22, 33]
+    assert [seed for seed, _runtime, _embodiment in calls] == [11, 11, 22, 33]
     assert calls[0][1] is None
-    assert all(supplied is runtime for _seed, supplied in calls[1:])
+    assert all(supplied is runtime for _seed, supplied, _embodiment in calls[1:])
+    assert {embodiment for _seed, _runtime, embodiment in calls} == {
+        "NEW_EMBODIMENT"
+    }
+    assert initialized["embodiment"] == "NEW_EMBODIMENT"
     assert result["repeat_evaluation"]["configured_repeats"] == 4
     assert result["repeat_evaluation"]["policy_constructions"] == 1
     assert "scales linearly" in result["repeat_evaluation"]["cost_note"]
+    assert result["embodiment"] == {
+        "configured": "NEW_EMBODIMENT",
+        "source": "so101_follower",
+    }
 
 
 def test_deterministic_split_is_episode_disjoint_and_stable() -> None:
@@ -317,12 +330,14 @@ def test_posttrain_evaluation_consumes_resolved_checkpoint_reference(
         "s3://bucket/eval.json",
         "s3://bucket/actions.npz",
         "run",
+        "NEW_EMBODIMENT",
         s3_client=object(),
     )
     assert result == {"ok": True}
     assert captured["args"][1] == "s3://bucket/candidate/checkpoint-17/"
     assert captured["kwargs"]["expected_checkpoint_step"] == 17
     assert captured["kwargs"]["expected_checkpoint_sha256"] == "a" * 64
+    assert captured["kwargs"]["robot_embodiment"] == "NEW_EMBODIMENT"
 
 
 def test_episode_timebase_covers_every_episode_and_is_contiguous() -> None:

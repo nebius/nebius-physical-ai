@@ -120,6 +120,14 @@ def provision_if_absent_cmd(
         "--capacity-block-group",
         help="Runtime-only strict GPU capacity block selector.",
     ),
+    infiniband_fabric: str = typer.Option(
+        "",
+        "--infiniband-fabric",
+        help=(
+            "InfiniBand fabric required by NVSwitch GPU clusters, matching "
+            "`npa cluster up`."
+        ),
+    ),
     preemptible: bool | None = typer.Option(
         None,
         "--preemptible/--on-demand",
@@ -185,6 +193,7 @@ def provision_if_absent_cmd(
         mig_strategy=mig_strategy,
         mig_config=mig_config,
         capacity_block_group=capacity_block_group,
+        infiniband_fabric=infiniband_fabric,
         preemptible=preemptible,
         accelerator=accelerator,
         gpu_readiness_timeout=gpu_readiness_timeout,

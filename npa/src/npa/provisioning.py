@@ -313,6 +313,7 @@ def provision_if_absent(
     mig_strategy: str = "mixed",
     mig_config: str = "all-balanced",
     capacity_block_group: str = "",
+    infiniband_fabric: str = "",
     preemptible: bool | None = None,
     accelerator: str = "",
     gpu_readiness_timeout: float = 600.0,
@@ -560,6 +561,7 @@ def provision_if_absent(
             gpu_health_timeout_minutes=gpu_health_timeout_minutes,
             gpu_cuda_smoke=gpu_cuda_smoke,
             gpu_cuda_smoke_image=gpu_cuda_smoke_image,
+            infiniband_fabric=infiniband_fabric,
             mig=(
                 MigSpec(enabled=True, strategy=mig_strategy, config=mig_config)
                 if mig_enabled
@@ -630,6 +632,7 @@ def provision_if_absent(
                 sky_gpus="",
                 sky_bin=sky_bin,
                 capacity_block_group=capacity_block_group,
+                infiniband_fabric=infiniband_fabric,
                 gpu_nodes=gpu_nodes,
                 cpu_nodes=cpu_nodes,
                 cpu_platform=cpu_platform,

@@ -216,7 +216,7 @@ def test_publication_accepts_exact_digest_bootstrap_attestation(monkeypatch) -> 
     assert digest in detail
 
 
-@pytest.mark.parametrize("tool", ["cosmos", "groot"])
+@pytest.mark.parametrize("tool", ["cosmos"])
 def test_preflight_skips_bootstrap_gate_for_uncontracted_image(
     monkeypatch, tool: str
 ) -> None:
@@ -241,13 +241,16 @@ def test_preflight_skips_bootstrap_gate_for_uncontracted_image(
     assert publish_public.preflight_sources([item]) == []
 
 
-def test_preflight_runs_bootstrap_gate_for_contracted_image(monkeypatch) -> None:
+@pytest.mark.parametrize("tool", ["fiftyone", "groot"])
+def test_preflight_runs_bootstrap_gate_for_contracted_image(
+    monkeypatch, tool: str
+) -> None:
     from npa.deploy import publish_public
 
     item = PublishItem(
-        tool="fiftyone",
-        source_ref="source.example/npa-fiftyone@sha256:" + "a" * 64,
-        target_ref="target.example/npa-fiftyone:release",
+        tool=tool,
+        source_ref=f"source.example/npa-{tool}@sha256:" + "a" * 64,
+        target_ref=f"target.example/npa-{tool}:release",
     )
     monkeypatch.setattr(
         publish_public, "_crane_manifest_readable", lambda ref, **_: (True, "ok")

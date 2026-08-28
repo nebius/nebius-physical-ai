@@ -595,7 +595,11 @@ class RunStateStore:
         else:
             from npa.clients.storage import StorageClient
 
-            client = StorageClient.from_environment()
+            client = StorageClient.from_environment(
+                endpoint_url=self._endpoint_url,
+                aws_access_key_id=self._aws_access_key_id,
+                aws_secret_access_key=self._aws_secret_access_key,
+            )
             client._s3.put_object(
                 Bucket=self.bucket,
                 Key=target,

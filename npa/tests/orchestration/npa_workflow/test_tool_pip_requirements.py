@@ -143,6 +143,18 @@ def test_groot_finetune_installs_python310_tomli_into_the_recorded_environment()
     assert "uv pip install -q --python \"$npa_req_python\" 'tomli>=2.0.0'" in setup
 
 
+def test_groot_mcap_stage_installs_and_probes_native_writer_dependency() -> None:
+    requirements = tool_pip_requirements("workflow.groot.emit_learning_mcap")
+    assert requirements == (
+        ("python:av", "av>=12,<17"),
+        ("python:mcap", "mcap>=1.3,<2"),
+    )
+    setup = render_pip_requirements_setup(requirements)
+    assert '"$npa_req_python" -c \'import mcap\'' in setup
+    assert "-m pip install -q 'mcap>=1.3,<2'" in setup
+    assert 'uv pip install -q --python "$npa_req_python" \'mcap>=1.3,<2\'' in setup
+
+
 def test_executable_and_module_probes_can_coexist() -> None:
     setup = render_pip_requirements_setup(
         (("huggingface-cli", "huggingface_hub[cli]"), ("python:numpy", "numpy>=1.24"))

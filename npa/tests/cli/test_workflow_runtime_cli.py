@@ -456,6 +456,68 @@ def test_runtime_uses_configured_secrets_for_local_ledger_without_leaking_env(
     assert secret not in result.output
 
 
+def test_runtime_automatically_uses_resolved_project_storage_credentials(
+    mocker, monkeypatch, satisfied_preflight
+) -> None:
+    monkeypatch.delenv("AWS_ACCESS_KEY_ID", raising=False)
+    monkeypatch.delenv("AWS_SECRET_ACCESS_KEY", raising=False)
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.submit_credentials.resolve_submit_credentials",
+        lambda **kwargs: type(
+            "Context",
+            (),
+            {
+                "endpoint_url": "https://storage.example.invalid",
+                "access_key_id": "project-access",
+                "secret_access_key": "project-secret",
+                "secret_values": {},
+                "missing": (),
+            },
+        )(),
+    )
+    observed: dict[str, object] = {}
+
+    def fake_run(spec, **kwargs):  # noqa: ANN001
+        observed["access"] = os.environ.get("AWS_ACCESS_KEY_ID")
+        observed["secret"] = os.environ.get("AWS_SECRET_ACCESS_KEY")
+        observed["secret_envs"] = kwargs["options"].secret_envs
+        return RuntimeReport(
+            workflow=spec.name,
+            run_id=str(kwargs["run_id"]),
+            status="succeeded",
+        )
+
+    mocker.patch(
+        "npa.orchestration.npa_workflow.runtime.run_workflow_runtime",
+        side_effect=fake_run,
+    )
+    result = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(FANOUT),
+            "--run-id",
+            "rt-project-storage-creds",
+            "--runtime",
+            "--var",
+            "bucket=rt-bucket",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert observed == {
+        "access": "project-access",
+        "secret": "project-secret",
+        "secret_envs": ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+    }
+    assert "project-access" not in result.output
+    assert "project-secret" not in result.output
+    assert "AWS_ACCESS_KEY_ID" not in os.environ
+    assert "AWS_SECRET_ACCESS_KEY" not in os.environ
+
+
 def test_submit_runtime_text_output_lists_waves_and_decisions(fake_runtime) -> None:
     result = RUNNER.invoke(
         app,

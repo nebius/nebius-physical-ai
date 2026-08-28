@@ -18,7 +18,9 @@ config:
   base_model: nvidia/GR00T-N1.7-3B
   robot_embodiment: NEW_EMBODIMENT
   action_representation: ABSOLUTE
-  gpu_type: RTXPRO6000
+  # GR00T fine-tuning and offline evaluation are headless tensor workloads.
+  # B200 is the canonical reserved-capacity target; no stage requires RT cores.
+  gpu_type: B200
   gpu_count: "2"
   per_device_batch_size: "1"
   gradient_accumulation_steps: "1"

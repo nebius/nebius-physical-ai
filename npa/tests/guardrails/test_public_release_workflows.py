@@ -56,6 +56,24 @@ def test_public_publisher_builds_only_immutable_public_development_refs() -> Non
         assert stale_variable not in text
 
 
+def test_public_development_build_runner_is_dispatch_scoped_and_defaults_hosted() -> None:
+    spec = _spec(PUBLISH)
+    triggers = spec.get("on") or spec[True]
+    inputs = triggers["workflow_dispatch"]["inputs"]
+
+    assert inputs["build_runner_label"] == {
+        "description": "Runner label for public development image builds",
+        "required": False,
+        "default": "ubuntu-latest",
+    }
+    assert spec["jobs"]["build-development"]["runs-on"] == (
+        "${{ inputs.build_runner_label || 'ubuntu-latest' }}"
+    )
+    for name, job in spec["jobs"].items():
+        if name != "build-development":
+            assert job["runs-on"] == "ubuntu-latest"
+
+
 def test_public_channel_workflows_do_not_restore_retired_channel_language() -> None:
     combined = "\n".join(
         path.read_text(encoding="utf-8").lower()

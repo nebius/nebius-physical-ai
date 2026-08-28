@@ -21,6 +21,8 @@ ARG GROOT_REPO_REF=3df8b3825d67f755e69141446f4315f281b9b7e6
 ARG ISAAC_LAB_VERSION=2.3.2.post1
 ARG ISAAC_SIM_VERSION=5.1.0.0
 ARG ISAAC_LAB_SRC_COMMIT=37ddf626871758333d6ed89cf64ad702aef127d0
+ARG GROOT_UBUNTU_SNAPSHOT=20260827T000000Z
+ARG GROOT_LINUX_LIBC_DEV_VERSION=5.15.0-190.200
 ARG COSMOS_REASON_MODEL=nvidia/Cosmos-Reason2-2B
 ARG COSMOS_REASON_REVISION=9ce19a195e423419c349abfc86fd07178b230561
 
@@ -30,7 +32,8 @@ LABEL npa.tool="groot" \
       npa.isaac_lab_version="${ISAAC_LAB_VERSION}" \
       npa.isaac_provisioning="runtime-fetch" \
       npa.architecture="no-baked-omniverse-kit" \
-      npa.cosmos_reason_revision="${COSMOS_REASON_REVISION}"
+      npa.cosmos_reason_revision="${COSMOS_REASON_REVISION}" \
+      org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"
 
 # NOTE the absence of ACCEPT_EULA / ISAACSIM_ACCEPT_EULA / OMNI_KIT_ACCEPT_EULA /
 # PRIVACY_CONSENT. All four used to be baked here. Acceptance is now the operator's to
@@ -118,7 +121,8 @@ WORKDIR /opt/groot
 
 ENV PATH=/home/ubuntu/.local/bin:/opt/groot/Isaac-GR00T/.venv/bin:$PATH \
     PYTHONPATH=/opt/npa/src \
-    NPA_SKIP_EAGER_IMPORTS=1
+    NPA_SKIP_EAGER_IMPORTS=1 \
+    NPA_LIGHT_WORKBENCH_TOOL=groot
 
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
     && git lfs install \
@@ -233,6 +237,7 @@ RUN cd "${GROOT_REPO}" \
       pyyaml==6.0.3 \
       rich==15.0.0 \
       jinja2==3.1.6 \
+      "mcap>=1.3,<2" \
     && uv pip install --python "${GROOT_VENV}/bin/python" --no-deps --upgrade \
       "GitPython>=3.1.50" \
       "PyJWT>=2.13.0" \
@@ -263,9 +268,18 @@ RUN chmod +x /opt/npa/docker/workbench/common/*.sh \
     && NPA_RUNTIME_USER=ubuntu \
        NPA_ISAAC_VENV=/opt/isaac-lab/venv \
        NPA_ISAAC_SKIP_TORCH=0 \
+       NPA_UBUNTU_SNAPSHOT=${GROOT_UBUNTU_SNAPSHOT} \
+       NPA_LINUX_LIBC_DEV_VERSION=${GROOT_LINUX_LIBC_DEV_VERSION} \
        REQUIRE_TORCH_SM120=1 \
        NPA_INSTALL_SKYPILOT_PREREQS=1 \
        /opt/npa/docker/workbench/common/install_isaac_runtime_base.sh \
+    `# Assert the exact packages promised by the image bootstrap contract.` \
+    && dpkg-query -W openssh-server rsync sudo \
+    && grep -Fx 'ubuntu ALL=(ALL) NOPASSWD:ALL' /etc/sudoers.d/99-npa-runtime-user \
+    `# Generate unique SSH host keys only when SkyPilot starts the pod service.` \
+    && sed -i '/^  start)$/a\    ssh-keygen -A' /etc/init.d/ssh \
+    && grep -q 'ssh-keygen -A' /etc/init.d/ssh \
+    && rm -f /etc/ssh/ssh_host_* \
     && chown -R ubuntu:ubuntu /opt/isaac-lab
 # common/ deliberately stays root-owned 0755: the bootstrap downloads and executes code at
 # run time, so the runtime user must not be able to rewrite it.
@@ -296,19 +310,33 @@ COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa
 COPY --chown=ubuntu:ubuntu workflows /opt/npa/workflows
 COPY --chown=ubuntu:ubuntu docker/workbench/groot/smoke_env.py /opt/npa/docker/workbench/groot/smoke_env.py
 COPY --chown=ubuntu:ubuntu docker/workbench/groot/smoke_functional.py /opt/npa/docker/workbench/groot/smoke_functional.py
+COPY --chown=ubuntu:ubuntu docker/workbench/groot/entrypoint.sh /opt/npa/docker/workbench/groot/entrypoint.sh
+
+RUN chmod 0755 /opt/npa/docker/workbench/groot/entrypoint.sh
 
 RUN uv pip install --python "${GROOT_VENV}/bin/python" --no-deps -e /opt/npa \
+    && "${GROOT_VENV}/bin/python" -c 'from npa.cli.entry import main; main()' \
+      workbench groot finetune --help >/dev/null \
     && "${GROOT_VENV}/bin/python" - <<'PY'
 import os
+from io import BytesIO
 from importlib import metadata
 from pathlib import Path
 
+from mcap.reader import make_reader
+from mcap.writer import Writer
 from npa.cli.groot import DEFAULT_EMBODIMENT_TAG, DEFAULT_MODEL, _build_server_py
 
 expected = os.environ["GROOT_RUNTIME_VERSION"]
 actual = metadata.version("gr00t")
 if actual != expected:
     raise RuntimeError(f"expected gr00t {expected}, found {actual}")
+buffer = BytesIO()
+writer = Writer(buffer)
+writer.start(profile="", library="npa-groot-build-smoke")
+writer.finish()
+if make_reader(BytesIO(buffer.getvalue())).get_summary() is None:
+    raise RuntimeError("GR00T image could not write and read a native MCAP recording")
 Path("/opt/groot/server.py").write_text(_build_server_py(DEFAULT_MODEL, DEFAULT_EMBODIMENT_TAG))
 print(f"GROOT_BUILD_IMPORT_OK {actual}")
 PY
@@ -341,7 +369,8 @@ USER root
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends --only-upgrade \
-      gpgv openssl libssl3 linux-libc-dev \
+      gpgv openssl libssl3 \
+      "linux-libc-dev=${GROOT_LINUX_LIBC_DEV_VERSION}" \
     && apt-get purge -y --auto-remove \
       dirmngr \
       gnupg \
@@ -361,4 +390,4 @@ USER ubuntu
 
 WORKDIR /opt/groot
 EXPOSE 8080
-ENTRYPOINT ["/bin/bash"]
+ENTRYPOINT ["/opt/npa/docker/workbench/groot/entrypoint.sh"]
