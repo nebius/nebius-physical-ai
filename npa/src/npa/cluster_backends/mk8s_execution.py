@@ -22,6 +22,7 @@ from npa.cluster_backends.process import (
     require_bin as _require_bin,
     run_capture as _run_capture,
     run_stream as _run_stream,
+    terraform_plugin_cache_lock,
     terraform_env as _terraform_env,
 )
 from npa.cluster_backends.mk8s_model import (
@@ -2098,13 +2099,14 @@ def _deploy_one_cluster(
             on_status,
             f"[{label}] terraform init" + (f" (-> {log_path})" if log_path else ""),
         )
-        _tf_run(
-            [terraform_bin, "init", "-input=false"],
-            cwd=workdir,
-            env=env,
-            timeout=900,
-            log_path=log_path,
-        )
+        with terraform_plugin_cache_lock(env):
+            _tf_run(
+                [terraform_bin, "init", "-input=false"],
+                cwd=workdir,
+                env=env,
+                timeout=900,
+                log_path=log_path,
+            )
         recovered_identity = _reconcile_tainted_node_groups(
             terraform_bin=terraform_bin,
             workdir=workdir,
@@ -2458,13 +2460,14 @@ def _destroy_one_cluster(
     try:
         if log_path is not None:
             _ensure_private_log_parent(log_path, fleet_root)
-        _tf_run(
-            [terraform_bin, "init", "-input=false"],
-            cwd=workdir,
-            env=env,
-            timeout=900,
-            log_path=log_path,
-        )
+        with terraform_plugin_cache_lock(env):
+            _tf_run(
+                [terraform_bin, "init", "-input=false"],
+                cwd=workdir,
+                env=env,
+                timeout=900,
+                log_path=log_path,
+            )
         _tf_run(
             [terraform_bin, "destroy", "-auto-approve", "-input=false"],
             cwd=workdir,

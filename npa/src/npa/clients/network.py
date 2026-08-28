@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from ipaddress import ip_network
 import re
 from typing import Any
 from collections.abc import Callable, Sequence
@@ -173,6 +174,23 @@ class _SecurityGroupContext:
     rules: tuple[dict[str, Any], ...]
     covered_ports: frozenset[int]
     warnings: tuple[str, ...]
+
+
+def _validate_ingress_source(source: str, *, allow_world_open: bool) -> str:
+    value = str(source or "").strip()
+    if not value:
+        raise NetworkIngressError("an explicit source CIDR is required")
+    try:
+        network = ip_network(value, strict=False)
+    except ValueError as exc:
+        raise NetworkIngressError(f"invalid source CIDR {value!r}") from exc
+    if network.version != 4:
+        raise NetworkIngressError("source CIDR must be IPv4")
+    if network.prefixlen == 0 and not allow_world_open:
+        raise NetworkIngressError(
+            "world-open ingress requires explicit operator acknowledgement"
+        )
+    return str(network)
 
 
 def parse_ports(value: str) -> tuple[int, ...]:
@@ -358,7 +376,8 @@ def ensure_ingress(
     ip: str | None = None,
     project_id: str | None = None,
     ports: tuple[int, ...],
-    source: str = "0.0.0.0/0",
+    source: str = "",
+    allow_world_open: bool = False,
     tool: str = "manual",
     protocol: str = "TCP",
 ) -> EnsureIngressResult:
@@ -367,6 +386,7 @@ def ensure_ingress(
 
     forbid_destructive_provisioning("ensure_ingress")
     normalized_protocol = _normalize_protocol(protocol)
+    source = _validate_ingress_source(source, allow_world_open=allow_world_open)
     if bool(vm_id) == bool(ip and project_id):
         raise NetworkIngressError("pass exactly one of --vm or (--ip and --project)")
     if ip and not project_id:

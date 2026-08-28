@@ -605,10 +605,12 @@ def test_retry_keeps_the_owned_partial_bucket_when_a_new_default_is_proposed(
     )
     interrupted.begin()
     interrupted.record_created("bucket", {"name": "owned-partial-bucket"})
-    requested: list[str] = []
+    requested: list[tuple[str, bool]] = []
 
-    def bootstrap(*_args, bucket_name, **_kwargs):
-        requested.append(bucket_name)
+    def bootstrap(
+        *_args, bucket_name, allow_existing_bucket=True, **_kwargs
+    ):
+        requested.append((bucket_name, allow_existing_bucket))
         return _result() | {"s3_bucket": bucket_name}
 
     monkeypatch.setattr(nebius, "bootstrap_environment", bootstrap)
@@ -619,9 +621,10 @@ def test_retry_keeps_the_owned_partial_bucket_when_a_new_default_is_proposed(
         tenant_id="tenant-a",
         region="eu-north1",
         bucket_name="different-new-default",
+        allow_existing_bucket=False,
     )
 
-    assert requested == ["owned-partial-bucket"]
+    assert requested == [("owned-partial-bucket", True)]
     record = storage_setup.storage_setup_record("project-a")
     assert record["resources"]["bucket"]["name"] == "owned-partial-bucket"
     assert record["resources"]["bucket"]["attempt_id"] == interrupted.attempt_id

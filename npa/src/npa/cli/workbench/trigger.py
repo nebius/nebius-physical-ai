@@ -10,6 +10,7 @@ from typing import Any
 import typer
 from rich.console import Console
 
+from npa.lifecycle_intent import json_stdout_contract
 from npa.workflows.sim_to_real import DEFAULT_GPU_FAILOVER, DEFAULT_GPU_TYPE
 from npa.workflows.sim_to_real_trigger import (
     DEFAULT_TRIGGER_POLL_INTERVAL,
@@ -36,6 +37,82 @@ class OutputFormat(str, Enum):
 class TaskCloudOption(str, Enum):
     kubernetes = "kubernetes"
     nebius = "nebius"
+
+
+@app.command("list-presets")
+@json_stdout_contract
+def list_presets_cmd(
+    output_format: OutputFormat = typer.Option(
+        OutputFormat.text, "--output-format", help="Output format."
+    ),
+) -> None:
+    """List explicit workflow trigger/seed presets."""
+
+    from npa.orchestration.npa_workflow.presets import available_presets
+
+    payload = {"presets": list(available_presets()), "count": len(available_presets())}
+    _emit(payload, output_format)
+
+
+@app.command("stage-preset")
+@json_stdout_contract
+def stage_preset_cmd(
+    preset: str = typer.Option(..., "--preset", help="Explicit public seed preset."),
+    bucket: str = typer.Option(..., "--bucket", help="Destination S3 bucket."),
+    run_id: str = typer.Option(..., "--run-id", help="Run-scoped workflow id."),
+    project: str = typer.Option(
+        "", "--project", "-p", help="Configured project alias for S3 credentials."
+    ),
+    s3_endpoint: str = typer.Option(
+        "", "--s3-endpoint", help="S3-compatible endpoint override."
+    ),
+    output_format: OutputFormat = typer.Option(
+        OutputFormat.text, "--output-format", help="Output format."
+    ),
+) -> None:
+    """Runtime-fetch and stage a verified preset into a run-scoped trigger prefix."""
+
+    from npa.clients.storage import StorageClient
+    from npa.orchestration.npa_workflow.presets import PUBLIC_FRANKA_LIFT
+    from npa.orchestration.npa_workflow.submit_credentials import (
+        resolve_submit_credentials,
+    )
+    from npa.workflows.sim2real.public_seed import (
+        PublicSeedError,
+        stage_public_franka_lift,
+    )
+
+    if preset != PUBLIC_FRANKA_LIFT:
+        _fail(
+            f"unsupported preset {preset!r}; use `npa workbench workflow trigger "
+            "list-presets`"
+        )
+    try:
+        credentials = resolve_submit_credentials(
+            project=project,
+            explicit_endpoint=s3_endpoint,
+            requested=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        )
+        if credentials.missing:
+            raise PublicSeedError(
+                "missing S3 credentials: " + ", ".join(credentials.missing)
+            )
+        client = StorageClient.from_environment(
+            endpoint_url=credentials.endpoint_url,
+            aws_access_key_id=credentials.secret_values.get("AWS_ACCESS_KEY_ID", ""),
+            aws_secret_access_key=credentials.secret_values.get(
+                "AWS_SECRET_ACCESS_KEY", ""
+            ),
+        )
+        result = stage_public_franka_lift(
+            bucket=bucket,
+            run_id=run_id,
+            client=client,
+        )
+    except Exception as exc:  # noqa: BLE001 - stable operator-facing boundary
+        _fail(str(exc))
+        return
+    _emit(result, output_format)
 
 
 @app.command("run")

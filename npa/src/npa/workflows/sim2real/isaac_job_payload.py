@@ -5,12 +5,17 @@ from __future__ import annotations
 import base64
 import gzip
 import os
+import re
+import shlex
 import subprocess
+import tempfile
+from pathlib import Path
 from typing import Any
 
 _ARG_CHUNK_CHARS = 60_000
 _SCRIPT_PATH = "/tmp/npa-isaac-job-script.sh"
 _ISAAC_EULA_ENV = "ACCEPT_EULA"
+_INLINE_SCRIPT_STUB = 'exec /bin/bash "$1"'
 _DECODE_STUB = (
     "set -euo pipefail; "
     f"printf '%s' \"$@\" | base64 --decode | gzip --decompress > {_SCRIPT_PATH}; "
@@ -49,6 +54,26 @@ def decode_compressed_bash_args(args: list[str]) -> str:
     return gzip.decompress(base64.b64decode("".join(args[2:]))).decode("utf-8")
 
 
+def embedded_base64_file_block(payload: str, *, destination: str, marker: str) -> str:
+    """Materialize embedded text without passing it through a process argv.
+
+    Curated Isaac scenario sets can be several MiB. The generated program is
+    already transported as a compressed script, but invoking Python with that
+    data in ``--payload`` expands it back into one process argument and exceeds
+    Linux ``ARG_MAX``. A quoted here-document keeps the bytes in file transport
+    and gives ``base64`` only fixed-size argv entries.
+    """
+
+    if not re.fullmatch(r"[A-Z][A-Z0-9_]*", marker):
+        raise ValueError("embedded payload marker must be an uppercase shell token")
+    encoded = base64.b64encode(payload.encode("utf-8")).decode("ascii")
+    return (
+        f"base64 --decode > {shlex.quote(destination)} <<'{marker}'\n"
+        f"{encoded}\n"
+        f"{marker}\n"
+    )
+
+
 def _require_isaac_route_enabled(env: dict[str, str]) -> None:
     """Apply the shared default and fail before Kit starts on explicit opt-out."""
 
@@ -58,6 +83,18 @@ def _require_isaac_route_enabled(env: dict[str, str]) -> None:
         raise RuntimeError(
             "inline Isaac execution was explicitly opted out through ACCEPT_EULA"
         )
+
+
+def _report_cleanup_error(exc: OSError) -> None:
+    """Emit a best-effort cleanup diagnostic without masking workload state."""
+
+    message = f"could not remove temporary Isaac script: {exc}\n".encode(
+        "utf-8", errors="replace"
+    )
+    try:
+        os.write(2, message)
+    except OSError:
+        return
 
 
 def execute_manifest_container_inline(manifest: dict[str, Any]) -> dict[str, Any]:
@@ -97,7 +134,41 @@ def execute_manifest_container_inline(manifest: dict[str, Any]) -> dict[str, Any
         if name and "value" in item:
             env[name] = str(item["value"])
     _require_isaac_route_enabled(env)
-    subprocess.run([*command, *args], env=env, check=True)
+    if command == ["/bin/bash", "-lc"] and args[:2] == [
+        _DECODE_STUB,
+        "npa-isaac-payload",
+    ]:
+        # The chunked container argv stays below Linux's per-argument limit, but
+        # a large generated program can still exceed the process-wide ARG_MAX
+        # when it is re-executed inside an already-running SkyPilot task. Decode
+        # the exact payload in-process and pass Bash only a bounded script path.
+        script = decode_compressed_bash_args(args)
+        script_path: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                prefix="npa-isaac-job-script-",
+                suffix=".sh",
+                dir="/tmp",
+                delete=False,
+            ) as handle:
+                script_path = Path(handle.name)
+                os.fchmod(handle.fileno(), 0o700)
+                handle.write(script)
+            subprocess.run(
+                [*command, _INLINE_SCRIPT_STUB, "npa-isaac-payload", str(script_path)],
+                env=env,
+                check=True,
+            )
+        finally:
+            if script_path is not None:
+                try:
+                    script_path.unlink(missing_ok=True)
+                except OSError as exc:
+                    _report_cleanup_error(exc)
+    else:
+        subprocess.run([*command, *args], env=env, check=True)
     return {
         "mode": "npa_workflow_skypilot_task",
         "job_name": os.environ.get("SKYPILOT_TASK_ID", "")

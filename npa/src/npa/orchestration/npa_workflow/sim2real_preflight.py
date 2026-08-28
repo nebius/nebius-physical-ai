@@ -22,7 +22,6 @@ _IMAGE_KEYS = (
     "controller_image",
     "transfer_image",
     "envgen_image",
-    "reason_image",
     "isaac_image",
     "viewer_image",
 )
@@ -30,6 +29,7 @@ _REQUIRED_SECRET_ENVS = (
     "AWS_ACCESS_KEY_ID",
     "AWS_SECRET_ACCESS_KEY",
     "HF_TOKEN",
+    "NEBIUS_TOKEN_FACTORY_KEY",
 )
 _DIGEST_IMAGE = re.compile(r"^[^/\s]+/.+@sha256:[0-9a-fA-F]{64}$")
 _SIM2REAL_CPU_MILLICORES = (8 + DEFAULT_K8S_CONTROLLER_CPUS) * 1000
@@ -48,6 +48,7 @@ def static_prerequisites(
     requested_secret_envs: Sequence[str],
     secret_values: Mapping[str, str],
     hf_validator: Callable[[str, str], Any],
+    token_factory_validator: Callable[[str, str], Any],
 ) -> list[Issue]:
     """Validate immutable inputs, consent, secret forwarding, and gated access."""
 
@@ -87,22 +88,15 @@ def static_prerequisites(
                 "required runtime credentials are not forwarded with --secret-env: "
                 + ", ".join(not_forwarded),
                 "add `--secret-env AWS_ACCESS_KEY_ID --secret-env "
-                "AWS_SECRET_ACCESS_KEY --secret-env HF_TOKEN`; values resolve from the "
+                "AWS_SECRET_ACCESS_KEY --secret-env HF_TOKEN --secret-env "
+                "NEBIUS_TOKEN_FACTORY_KEY`; values resolve from the "
                 "environment or the selected project's NPA credential store",
             )
         )
 
     hf_token = str(secret_values.get("HF_TOKEN") or "").strip()
     if hf_token:
-        repos = list(
-            dict.fromkeys(
-                [
-                    "nvidia/Cosmos-Transfer2.5-2B",
-                    str(config.get("reason2_model") or "").strip(),
-                    str(config.get("reason3_model") or "").strip(),
-                ]
-            )
-        )
+        repos = ["nvidia/Cosmos-Transfer2.5-2B"]
         denied: list[str] = []
         for repo in (item for item in repos if item):
             result = hf_validator(hf_token, repo)
@@ -116,9 +110,31 @@ def static_prerequisites(
                     + "; ".join(denied),
                     "accept each model's terms while signed in to the account that owns "
                     "HF_TOKEN, then run `npa workbench health access --capability "
-                    "sim2real` until all three repositories PASS",
+                    "sim2real` until the repository passes",
                 )
             )
+    token_factory_key = str(secret_values.get("NEBIUS_TOKEN_FACTORY_KEY") or "").strip()
+    if token_factory_key:
+        model = str(config.get("cosmos3_model") or "nvidia/Cosmos3-Super-Reasoner").strip()
+        result = token_factory_validator(token_factory_key, model)
+        if not getattr(result, "ok", False):
+            detail = str(getattr(result, "error", "") or "access not verified")
+            issues.append(
+                (
+                    f"Token Factory access failed for {model}: {detail}",
+                    "verify the selected key, project-specific model availability, and "
+                    "balance with `npa workbench token-factory models` and a minimal "
+                    "inference before workflow submission",
+                )
+            )
+    elif "NEBIUS_TOKEN_FACTORY_KEY" in requested:
+        issues.append(
+            (
+                "NEBIUS_TOKEN_FACTORY_KEY could not be resolved for Sim2Real",
+                "store the key in the selected project's private NPA credential store "
+                "or runtime environment, then rerun Token Factory model preflight",
+            )
+        )
     return issues
 
 

@@ -5,17 +5,10 @@ from __future__ import annotations
 import json
 import os
 import uuid
-from dataclasses import dataclass
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
 
-
-@dataclass(frozen=True)
-class S3Uri:
-    bucket: str
-    key: str
+from npa.workbench.storage_scope import authorize_uri
 
 
 def uri_join(base: str, *parts: str) -> str:
@@ -25,44 +18,36 @@ def uri_join(base: str, *parts: str) -> str:
     return f"{prefix}/{suffix}" if suffix else prefix
 
 
-def parse_s3_uri(uri: str) -> S3Uri:
-    parsed = urlparse(uri)
-    if parsed.scheme != "s3" or not parsed.netloc:
-        raise ValueError(f"not an S3 URI: {uri}")
-    return S3Uri(bucket=parsed.netloc, key=parsed.path.lstrip("/"))
-
-
-def is_s3_uri(uri: str) -> bool:
-    return uri.startswith("s3://")
-
-
 def write_bytes_uri(uri: str, payload: bytes) -> None:
-    if is_s3_uri(uri):
-        target = parse_s3_uri(uri)
+    target = authorize_uri(uri, operation="write")
+    if target.kind == "s3":
         _s3_client().put_object(Bucket=target.bucket, Key=target.key, Body=payload)
         return
-    path = _local_path(uri)
+    assert target.local_path is not None
+    path = target.local_path
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(payload)
 
 
 def read_bytes_uri(uri: str) -> bytes:
-    if is_s3_uri(uri):
-        target = parse_s3_uri(uri)
+    target = authorize_uri(uri, operation="read")
+    if target.kind == "s3":
         response = _s3_client().get_object(Bucket=target.bucket, Key=target.key)
         return response["Body"].read()
-    return _local_path(uri).read_bytes()
+    assert target.local_path is not None
+    return target.local_path.read_bytes()
 
 
 def uri_exists(uri: str) -> bool:
-    if is_s3_uri(uri):
-        target = parse_s3_uri(uri)
+    target = authorize_uri(uri, operation="read")
+    if target.kind == "s3":
         try:
             _s3_client().head_object(Bucket=target.bucket, Key=target.key)
             return True
         except Exception:
             return False
-    return _local_path(uri).exists()
+    assert target.local_path is not None
+    return target.local_path.exists()
 
 
 def write_json_uri(uri: str, payload: dict[str, Any]) -> None:
@@ -103,8 +88,8 @@ def shard_prefix_for(uri: str) -> str:
 
 def list_jsonl_uris(prefix: str) -> list[str]:
     """List ``*.jsonl`` object URIs under a prefix (S3 or local), sorted."""
-    if is_s3_uri(prefix):
-        target = parse_s3_uri(prefix)
+    target = authorize_uri(prefix, operation="read")
+    if target.kind == "s3":
         client = _s3_client()
         paginator = client.get_paginator("list_objects_v2")
         found: list[str] = []
@@ -114,7 +99,8 @@ def list_jsonl_uris(prefix: str) -> list[str]:
                 if key.endswith(".jsonl"):
                     found.append(f"s3://{target.bucket}/{key}")
         return sorted(found)
-    base = _local_path(prefix)
+    assert target.local_path is not None
+    base = target.local_path
     if not base.exists():
         return []
     return sorted(str(path) for path in base.rglob("*.jsonl"))
@@ -167,8 +153,8 @@ def utc_stamp() -> str:
 
 def list_json_uris(prefix: str) -> list[str]:
     """List all ``*.json`` object URIs under a prefix (S3 or local)."""
-    if is_s3_uri(prefix):
-        target = parse_s3_uri(prefix)
+    target = authorize_uri(prefix, operation="read")
+    if target.kind == "s3":
         client = _s3_client()
         paginator = client.get_paginator("list_objects_v2")
         found: list[str] = []
@@ -178,18 +164,13 @@ def list_json_uris(prefix: str) -> list[str]:
                 if key.endswith(".json"):
                     found.append(f"s3://{target.bucket}/{key}")
         return sorted(found)
-    base = _local_path(prefix)
+    assert target.local_path is not None
+    base = target.local_path
     if base.is_file():
         return [str(base)] if base.suffix == ".json" else []
     if not base.exists():
         return []
     return sorted(str(path) for path in base.rglob("*.json"))
-
-
-def _local_path(uri: str) -> Path:
-    if uri.startswith("file://"):
-        return Path(urlparse(uri).path)
-    return Path(uri)
 
 
 def _s3_client():

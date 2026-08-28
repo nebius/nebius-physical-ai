@@ -202,6 +202,26 @@ def test_build_isaac_rollout_job_manifest_shape():
         pr.ISAAC_ROLLOUT_SCRIPT
     )
     assert '"simulation_device": SIM_DEVICE' in pr.ISAAC_ROLLOUT_SCRIPT
+    assert '"sample_steps": SAMPLE_STEPS' in pr.ISAAC_ROLLOUT_SCRIPT
+
+
+def test_camera_coverage_counts_sampled_decisions_plus_terminal_frame():
+    capture = {
+        "decision_points": 8,
+        "horizon_steps": 300,
+        "rollout_stride": 1,
+    }
+    assert pr._expected_camera_frame_count(capture) == 9
+
+
+def test_camera_coverage_applies_stride_to_samples_but_always_keeps_terminal():
+    capture = {
+        "decision_points": 8,
+        "horizon_steps": 300,
+        "rollout_stride": 2,
+        "sample_steps": [0, 42, 85, 128, 170, 213, 256, 299],
+    }
+    assert pr._expected_camera_frame_count(capture) == 6
 
 
 def test_rollout_job_can_select_cpu_physics_without_releasing_gpu(
@@ -282,7 +302,9 @@ def test_rollout_manifest_embeds_scenario_and_byo_robot_contract():
         task_config={"task_id": "Isaac-Lift-Cube-Franka-v0"},
     )
     script = _manifest_script(manifest)
-    assert "npa.workflows.sim2real.isaac_job_io write-base64" in script
+    assert "base64 --decode > /tmp/rollwork/scenarios.jsonl" in script
+    assert "NPA_ROLLOUT_SCENARIOS_B64" in script
+    assert "--payload" not in script
     assert "/opt/npa/isaac-runtime/isaac_rollout.py" in script
     # Scenario and robot application lives in source baked into the immutable
     # runtime image; it must never be copied into the live Job manifest.

@@ -185,6 +185,11 @@ Kit was already in the layers. So the images were changed to make the statement 
 4. Is idempotent, concurrency-safe (`flock` + a version-stamped tree + atomic rename +
    `.complete` written last), and verifies the install before publishing it.
 
+The shared OSS dependency layer keeps the BSD-2-Clause `imageio-ffmpeg` Python
+wrapper but deletes its wheel-bundled static executable and resolves video work
+through Ubuntu's dynamically packaged `/usr/bin/ffmpeg`. The built-image payload
+scanner fails if that bundled executable returns.
+
 `pypi.nvidia.com` serves these wheels **anonymously**, so the credential was never the
 gate — acceptance is. NVIDIA delivers Isaac to each operator under that operator's own
 acceptance, and we redistribute nothing. This is the same pattern already used for gated

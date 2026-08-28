@@ -12,6 +12,12 @@ from npa.workbench.cosmos.generate import (
     Cosmos3GenerateError,
     generate_and_publish,
 )
+from npa.workbench.cosmos.ray_serve import (
+    DEFAULT_TOKEN_ENV,
+    Cosmos3RayServeError,
+    service_health,
+    submit_batch,
+)
 from npa.workflows.cosmos_split import Cosmos3ReasonConfig, build_cosmos3_reason_manifest
 
 
@@ -81,10 +87,44 @@ def reason(
     )
 
 
+def ray_batch(
+    *,
+    input_path: str,
+    output_path: str,
+    endpoint: str = "",
+    token_env: str = DEFAULT_TOKEN_ENV,
+    timeout: float = 1800.0,
+    run_id: str = "",
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """Submit a durable batch to native Cosmos Framework Ray Serve."""
+
+    return submit_batch(
+        input_path=input_path,
+        output_path=output_path,
+        endpoint=endpoint,
+        token_env=token_env,
+        timeout=timeout,
+        run_id=run_id,
+        dry_run=dry_run,
+    )
+
+
+def ray_health(
+    *, endpoint: str = "", token_env: str = DEFAULT_TOKEN_ENV, timeout: float = 30.0
+) -> dict[str, Any]:
+    """Return model-backed readiness for native Cosmos Framework Ray Serve."""
+
+    return service_health(endpoint=endpoint, token_env=token_env, timeout=timeout)
+
+
 __all__ = [
     "Cosmos3GenerateError",
+    "Cosmos3RayServeError",
     "Cosmos3ReasonConfig",
     "GENERATE_MODES",
     "generate",
+    "ray_batch",
+    "ray_health",
     "reason",
 ]

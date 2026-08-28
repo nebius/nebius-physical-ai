@@ -1,4 +1,4 @@
-"""Unit tests for workbench-hosted Cosmos Reason2/3 helpers."""
+"""Unit tests for workbench-hosted Cosmos Reason2/Cosmos3 helpers."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import json
 import os
 import subprocess
 import sys
+from pathlib import Path
 
 from npa.workbench.cosmos import reason as reason_module
 
@@ -13,17 +14,21 @@ from npa.workbench.cosmos.reason import (
     DEFAULT_REASON2_CACHE,
     DEFAULT_REASON2_MODEL,
     DEFAULT_REASON3_CACHE,
-    DEFAULT_REASON3_MODEL,
+    DEFAULT_COSMOS3_MODEL,
     DEFAULT_REASON_EVENT_FRAMES,
     DEFAULT_REASON_MAX_NEW_TOKENS,
     apply_cosmos_reason_kubernetes_env,
     cosmos_reason_k8s_shell_preamble,
     cosmos_reason_runtime_env,
     default_reason_cache_dir,
+    cosmos_reason_family,
+    merge_reason_evaluations,
     merge_dual_reason_evaluations,
     prepare_cosmos_reason_cache,
     resolve_cosmos_reason_model_id,
     task_description_from_manifest,
+    run_token_factory_rollout_vlm,
+    select_hosted_event_frames,
     vlm_k8s_component,
 )
 
@@ -54,7 +59,7 @@ def test_default_reason_cache_dir_uses_writable_tmp_hf_home(monkeypatch) -> None
     monkeypatch.delenv("NPA_COSMOS_REASON2_CACHE", raising=False)
     monkeypatch.delenv("NPA_COSMOS_REASON3_CACHE", raising=False)
     assert default_reason_cache_dir(DEFAULT_REASON2_MODEL) == DEFAULT_REASON2_CACHE
-    assert default_reason_cache_dir(DEFAULT_REASON3_MODEL) == DEFAULT_REASON3_CACHE
+    assert default_reason_cache_dir("nvidia/Cosmos-Reason2-2B") == DEFAULT_REASON3_CACHE
     assert DEFAULT_REASON2_CACHE.startswith("/tmp/hf_home/")
 
 
@@ -122,6 +127,7 @@ def test_vlm_k8s_shell_preamble_creates_hf_home() -> None:
     assert 'export HF_HOME="${HF_HOME:-/tmp/hf_home}"' in preamble
     assert "mkdir -p" in preamble
     assert vlm_k8s_component("vlm_eval_reason2")
+    assert vlm_k8s_component("vlm_eval_cosmos3")
     assert not vlm_k8s_component("policy_actions")
 
 
@@ -140,6 +146,99 @@ def test_engine_vlm_job_script_prepares_hf_cache(monkeypatch) -> None:
     assert safe["NPA_COSMOS_REASON3_CACHE"] == DEFAULT_REASON3_CACHE
 
 
+def test_model_family_distinguishes_real_cosmos3_edge_from_reason2() -> None:
+    assert cosmos_reason_family(DEFAULT_REASON2_MODEL) == "reason2"
+    assert cosmos_reason_family(DEFAULT_COSMOS3_MODEL) == "cosmos3"
+    assert cosmos_reason_family("nvidia/Cosmos-Reason2-2B") == "reason2"
+
+
+def test_hosted_frame_selection_is_bounded_and_rollout_wide() -> None:
+    frames = [Path(f"camera-{index:03d}.png") for index in range(32)]
+    selected = select_hosted_event_frames(frames)
+    assert len(selected) == 8
+    assert selected[0] == frames[0]
+    assert selected[-1] == frames[-1]
+    assert selected == select_hosted_event_frames(frames)
+
+
+def test_token_factory_rollout_evaluator_returns_event_local_contract(tmp_path) -> None:
+    frames = []
+    for index in range(10):
+        frame = tmp_path / f"camera-{index:03d}.png"
+        frame.write_bytes(b"public-synthetic-frame")
+        frames.append(frame)
+
+    class Client:
+        last_request_metrics = {"latency_seconds": 1.25, "retries": 1}
+
+        def chat_completion(self, **kwargs):
+            assert kwargs["model"] == DEFAULT_COSMOS3_MODEL
+            images = kwargs["messages"][0]["content"][1:]
+            assert len(images) == 8
+            assert all(item["image_url"]["url"].startswith("data:image/png;base64,") for item in images)
+            return {
+                "id": "request-public-1",
+                "choices": [{"message": {"content": json.dumps({
+                    "success": True,
+                    "score": 0.9,
+                    "summary": "stable cube grasp",
+                    "per_step": [
+                        {"step": index, "critique_text": f"event {index} stable", "error_tags": ["ok"], "confidence": 0.8}
+                        for index in range(10)
+                    ],
+                })}}],
+                "usage": {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150},
+            }
+
+    result = run_token_factory_rollout_vlm(
+        model_id=DEFAULT_COSMOS3_MODEL,
+        image_paths=frames,
+        actions=[{"step": index, "action": [0.0]} for index in range(10)],
+        task_description="strict cube grasp",
+        rollout_id="rollout-0000",
+        threshold=0.5,
+        client=Client(),
+    )
+    assert len(result["per_step"]) == 10
+    assert result["schema"] == "npa.sim2real.vlm_eval.v3"
+    assert result["backend"] == "token_factory"
+    assert result["request"] == {
+        "request_id": "request-public-1",
+        "input_tokens": 100,
+        "output_tokens": 50,
+        "total_tokens": 150,
+        "latency_seconds": 1.25,
+        "retries": 1,
+        "cost_usd": None,
+        "cost_source": "unavailable",
+    }
+
+
+def test_cosmos3_success_cannot_bypass_the_fixed_threshold() -> None:
+    payload = reason_module._parse_cosmos_reason_output(
+        json.dumps(
+            {
+                "success": True,
+                "score": 0.49,
+                "summary": "model claimed success below the workflow threshold",
+                "per_step": [
+                    {
+                        "step": 0,
+                        "critique_text": "cube remains unstable",
+                        "error_tags": ["unstable"],
+                    }
+                ],
+            }
+        ),
+        actions=[{"step": 0, "action": [0.0]}],
+        rollout_id="rollout-threshold",
+        threshold=0.5,
+        family="cosmos3",
+    )
+    assert payload["schema"] == "npa.sim2real.vlm_eval.v3"
+    assert payload["success"] is False
+
+
 def test_task_description_from_manifest_prefers_task_description() -> None:
     manifest = {"task_description": "Pick up the cube.", "task": "ignored"}
     assert task_description_from_manifest(manifest) == "Pick up the cube."
@@ -152,7 +251,7 @@ def test_merge_dual_reason_evaluations_averages_scores_and_requires_both_success
         "rollout_id": "rollout-0000",
         "model": DEFAULT_REASON2_MODEL,
         "success": True,
-        "score": 0.8,
+        "score": 0.9,
         "per_step": [
             {
                 "step": 0,
@@ -164,11 +263,11 @@ def test_merge_dual_reason_evaluations_averages_scores_and_requires_both_success
         ],
         "summary": "reason2 ok",
     }
-    reason3 = {
+    cosmos3 = {
         "rollout_id": "rollout-0000",
-        "model": DEFAULT_REASON3_MODEL,
+        "model": DEFAULT_COSMOS3_MODEL,
         "success": False,
-        "score": 0.4,
+        "score": 0.8,
         "per_step": [
             {
                 "step": 0,
@@ -178,18 +277,25 @@ def test_merge_dual_reason_evaluations_averages_scores_and_requires_both_success
                 "camera_observation": "camera-000.ppm",
             }
         ],
-        "summary": "reason3 miss",
+        "summary": "cosmos3 miss",
     }
 
-    merged = merge_dual_reason_evaluations(reason2, reason3, threshold=0.75)
+    merged = merge_reason_evaluations(reason2, cosmos3, threshold=0.75)
 
-    assert merged["dual_reason"] is True
-    assert merged["component_source"] == "cosmos_dual_reason_vlm"
-    assert merged["score"] == 0.6
+    assert merged["two_evaluator"] is True
+    assert merged["schema"] == "npa.sim2real.vlm_eval.v2"
+    assert merged["component_source"] == "cosmos_reason2_cosmos3_vlm"
+    assert merged["score"] == 0.85
     assert merged["success"] is False
     assert merged["per_step"][0]["error_tags"] == ["ok", "late_grasp"]
     assert "reason2_critique" in merged["per_step"][0]
-    assert "reason3_critique" in merged["per_step"][0]
+    assert "cosmos3_critique" in merged["per_step"][0]
+    assert "cosmos3_tags" in merged["per_step"][0]
+    assert merged["cosmos3"]["model"] == DEFAULT_COSMOS3_MODEL
+
+    archived_alias = merge_dual_reason_evaluations(reason2, cosmos3, threshold=0.75)
+    assert archived_alias["score"] == 0.85
+    assert archived_alias["success"] is False
 
 
 def test_summary_only_output_is_rejected_without_temporal_broadcast() -> None:
@@ -241,7 +347,7 @@ def test_single_array_wrapped_evaluation_preserves_event_local_critiques() -> No
         ],
         rollout_id="rollout-array-wrapper",
         threshold=0.5,
-        family="reason3",
+        family="cosmos3",
     )
 
     assert payload["summary"] == "no stable grasp"
@@ -306,7 +412,7 @@ def test_malformed_step_is_rejected_instead_of_copying_summary() -> None:
         actions=[{"step": 0, "action": [0.0]}],
         rollout_id="rollout-0002",
         threshold=0.5,
-        family="reason3",
+        family="cosmos3",
     )
 
     step = payload["per_step"][0]
@@ -361,9 +467,9 @@ def test_dual_reason_rejects_missing_local_model_label() -> None:
             }
         ],
     }
-    reason3 = {
+    cosmos3 = {
         **base,
-        "model": DEFAULT_REASON3_MODEL,
+        "model": DEFAULT_COSMOS3_MODEL,
         "per_step": [
             {
                 "step": 0,
@@ -375,7 +481,7 @@ def test_dual_reason_rejects_missing_local_model_label() -> None:
         ],
     }
 
-    merged = merge_dual_reason_evaluations(reason2, reason3, threshold=0.5)
+    merged = merge_reason_evaluations(reason2, cosmos3, threshold=0.5)
 
     assert merged["per_step"][0]["critique_source"] == "model_missing"
     assert merged["per_step"][0]["confidence"] == 0.0

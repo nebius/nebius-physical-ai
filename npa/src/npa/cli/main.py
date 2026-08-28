@@ -9,11 +9,14 @@ import json
 import logging
 import os
 from pathlib import Path
+import secrets
 import shlex
 import shutil
 import subprocess
 import sys
 import traceback
+from datetime import datetime, timezone
+from enum import Enum
 from typing import Any, Callable, Iterable, Optional
 
 import typer
@@ -368,11 +371,14 @@ installed Nebius CLI binary internally (profile setup stays inside
 `npa configure`; no separate Nebius CLI onboarding commands), bootstraps a profile
 when needed, then with an authenticated profile
 auto-creates an S3 bucket (and access key) when you press Enter at the bucket
-prompt, so you supply your Nebius tenant id, project id, and region plus optional
-bucket name, storage class (standard or enhanced), bucket size, Hugging Face,
-Token Factory, and NGC tokens. Use `npa configure --no-provision` to enter
-existing S3 credentials instead, or create ~/.npa/credentials.yaml by hand for
-user-level tokens, object storage, and BYOVM SSH defaults:
+prompt. Enter an exact existing bucket name only when you intend to reuse it;
+otherwise pressing Enter generates a fresh collision-safe name. Use
+`npa configure --no-provision` for provider-free project and token configuration,
+or create ~/.npa/credentials.yaml by hand for user-level tokens, object storage,
+and BYOVM SSH defaults. Prompt-free known-project setup is also provider-free
+unless `--provision` is explicit. Hugging Face and NGC checks performed during
+provisioning or credential import are informational; use
+`npa workbench health access` as the enforcing gate:
 
 tokens:
   # Hugging Face access token (for model + dataset downloads, incl. gated repos).
@@ -703,10 +709,17 @@ def _collision_bucket_name(bucket_name: str, *, tenant_id: str, project_id: str)
     from npa.lifecycle_intent import forbid_destructive_provisioning
 
     forbid_destructive_provisioning("collision_bucket_name")
-    suffix = hashlib.sha256(
-        f"{tenant_id}\0{project_id}\0{bucket_name}\0collision".encode("utf-8")
-    ).hexdigest()[:8]
-    return f"{bucket_name[:54].rstrip('-')}-{suffix}"
+    return _generated_configure_bucket_name(tenant_id, project_id)
+
+
+def _generated_configure_bucket_name(tenant_id: str, project_id: str) -> str:
+    """Return a fresh, globally collision-resistant configure bucket name."""
+
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dt%H%M%Sz")
+    identity = hashlib.sha256(
+        f"{tenant_id}\0{project_id}".encode("utf-8")
+    ).hexdigest()[:6]
+    return f"npa-bucket-{timestamp}-{identity}-{secrets.token_hex(4)}"
 
 
 def _storage_relationship_verified(credentials: Any, project_id: str) -> bool:
@@ -729,6 +742,9 @@ def _provision_object_storage(
     region: str,
     existing_bucket: str = "",
     interactive: bool = True,
+    bucket_storage_class: str = "",
+    bucket_max_size_bytes: int | None = None,
+    _generated_name: bool = False,
 ) -> dict[str, str] | None:
     """Auto-create the S3 bucket + access key for the project."""
     if not (project_id and tenant_id):
@@ -736,24 +752,33 @@ def _provision_object_storage(
 
     if interactive:
         typer.echo(
-            "\nObject storage: enter a bucket name to reuse it (or create it if it "
-            "does not exist yet), or press Enter to use npa's default bucket for this "
-            "project. The default name is derived from your tenant + project, so it "
-            "is stable across runs and reused rather than duplicated."
+            "\nObject storage: enter an exact existing bucket name to reuse it, or "
+            "enter a new name to create it. Press Enter for a fresh collision-safe "
+            "name containing a UTC timestamp and random suffix. Existing buckets "
+            "are reused only after this explicit selection."
         )
         bucket_name = ask("Object-storage bucket name", default=existing_bucket).strip()
     else:
         bucket_name = str(existing_bucket or "").strip()
-        selected = bucket_name or nebius_client.bucket_name_for(tenant_id, project_id)
+        selected = bucket_name or _generated_configure_bucket_name(
+            tenant_id, project_id
+        )
+        _generated_name = _generated_name or not bool(bucket_name)
+        bucket_name = selected
         typer.echo(
-            "Object storage (non-interactive): selected "
-            f"'{selected}'; it will be reused if present or provisioned if absent."
+            "Object storage (non-interactive): "
+            + (
+                f"generated fresh name '{selected}'."
+                if _generated_name
+                else f"explicitly selected exact name '{selected}'."
+            )
         )
     if not bucket_name:
-        bucket_name = nebius_client.bucket_name_for(tenant_id, project_id)
+        bucket_name = _generated_configure_bucket_name(tenant_id, project_id)
+        _generated_name = True
         typer.echo(
-            f"  No bucket name provided; using npa's default bucket "
-            f"'{bucket_name}' (reused if it already exists)."
+            f"  No bucket name provided; generated fresh bucket name "
+            f"'{bucket_name}'."
         )
 
     # Whether the named bucket already exists: True (reuse), False (create), or
@@ -771,18 +796,71 @@ def _provision_object_storage(
         )
         return None
 
-    bucket_max_size_bytes = 0
-    bucket_storage_class = DEFAULT_BUCKET_STORAGE_CLASS
+    requested_storage_class = str(bucket_storage_class or "").strip()
+    requested_max_size_bytes = bucket_max_size_bytes
+    create_max_size_bytes = 0
+    create_storage_class = DEFAULT_BUCKET_STORAGE_CLASS
     if exists is True:
-        typer.echo(f"Reusing existing object-storage bucket '{bucket_name}'.")
+        if _generated_name:
+            typer.echo(
+                f"  Generated name collision: exact bucket '{bucket_name}' already "
+                "exists. It will not be adopted or changed; re-run configure to "
+                "generate another fresh name."
+            )
+            return None
+        if requested_storage_class or requested_max_size_bytes is not None:
+            item = nebius_client.get_bucket_by_name(project_id, bucket_name)
+            spec = (item or {}).get("spec", {})
+            actual_storage_class = nebius_client.normalize_bucket_storage_class(
+                str(spec.get("default_storage_class", ""))
+            )
+            actual_max_size_bytes = int(spec.get("max_size_bytes", 0) or 0)
+            expected_storage_class = (
+                nebius_client.normalize_bucket_storage_class(requested_storage_class)
+                if requested_storage_class
+                else actual_storage_class
+            )
+            expected_max_size_bytes = (
+                int(requested_max_size_bytes)
+                if requested_max_size_bytes is not None
+                else actual_max_size_bytes
+            )
+            if (
+                actual_storage_class != expected_storage_class
+                or actual_max_size_bytes != expected_max_size_bytes
+            ):
+                typer.echo(
+                    "Existing object-storage bucket does not match the requested "
+                    "create-only storage class and size; refusing to reuse it."
+                )
+                return None
+        typer.echo(
+            f"Reusing existing object-storage bucket '{bucket_name}'. Explicitly "
+            f"reusing exact existing bucket '{bucket_name}'; no bucket was created."
+        )
     elif exists is False:
         typer.echo(
-            f"No existing bucket named '{bucket_name}' found; npa will create it."
+            f"Exact lookup found no bucket named '{bucket_name}'; npa will create it."
         )
-        bucket_storage_class, bucket_max_size_bytes = _prompt_new_bucket_settings(
-            ask,
-            bucket_name=bucket_name,
-        )
+        if interactive:
+            create_storage_class, create_max_size_bytes = _prompt_new_bucket_settings(
+                ask,
+                bucket_name=bucket_name,
+            )
+        else:
+            create_storage_class = nebius_client.normalize_bucket_storage_class(
+                requested_storage_class
+            )
+            create_max_size_bytes = int(requested_max_size_bytes or 0)
+            typer.echo(
+                f"  Will create '{bucket_name}' with {create_storage_class} storage "
+                f"and "
+                + (
+                    f"a {create_max_size_bytes} byte cap."
+                    if create_max_size_bytes
+                    else "no size limit."
+                )
+            )
     # exists is None: existence unknown, so skip the create-only prompts and let
     # provisioning get-or-create with defaults rather than risk creating a
     # duplicate of a bucket that may already exist.
@@ -796,8 +874,9 @@ def _provision_object_storage(
             tenant_id=tenant_id,
             region=region,
             bucket_name=bucket_name,
-            bucket_max_size_bytes=bucket_max_size_bytes,
-            bucket_storage_class=bucket_storage_class,
+            bucket_max_size_bytes=create_max_size_bytes,
+            bucket_storage_class=create_storage_class,
+            allow_existing_bucket=not _generated_name,
             on_status=lambda msg: typer.echo(f"  - {msg}"),
         )
     except nebius_client.NebiusError as exc:
@@ -808,8 +887,8 @@ def _provision_object_storage(
                 project_id=project_id,
             )
             typer.echo(
-                f"  Bucket name collision: preserving the unrelated bucket and "
-                f"proposing '{alternate}' instead."
+                "  Global bucket-name collision: the exact name is not in this "
+                f"project and will not be adopted; retrying with '{alternate}'."
             )
             return _provision_object_storage(
                 nebius_client,
@@ -819,6 +898,9 @@ def _provision_object_storage(
                 region=region,
                 existing_bucket=alternate,
                 interactive=interactive,
+                bucket_storage_class=requested_storage_class,
+                bucket_max_size_bytes=requested_max_size_bytes,
+                _generated_name=True,
             )
         if nebius_client.is_permission_denied(str(exc)):
             typer.echo(
@@ -854,13 +936,20 @@ def _provision_object_storage(
         return None
 
     bucket = _as_bucket_uri(creds.get("s3_bucket", ""))
-    typer.echo(f"  Provisioned bucket {bucket} and an S3 access key; {probe.summary}")
+    disposition = str(creds.get("bucket_disposition") or "").strip().lower()
+    if disposition not in {"created", "reused"}:
+        disposition = "reused" if exists is True else "created"
+    if disposition == "reused":
+        typer.echo(f"  Configured existing bucket {bucket}; {probe.summary}")
+    else:
+        typer.echo(f"  Created object-storage bucket {bucket}; {probe.summary}")
     payload: dict[str, str] = {
         "aws_access_key_id": access_key,
         "aws_secret_access_key": secret_key,
         "endpoint_url": creds.get("s3_endpoint", "") or _endpoint_for_region(region),
         "bucket": bucket,
         "_validated": "true",
+        "_disposition": disposition,
     }
     sa_id = creds.get("service_account_id", "").strip()
     if sa_id:
@@ -1052,6 +1141,20 @@ def _warn_repointed_alias(alias: str, stanza: dict[str, Any], project_id: str) -
             else ""
         ),
         err=True,
+    )
+
+
+def _validate_alias_project_identity(
+    alias: str, stanza: dict[str, Any], project_id: str
+) -> None:
+    """Refuse to merge a new project into an alias holding another project."""
+
+    previous = str((stanza or {}).get("project_id", "") or "").strip()
+    if not previous or previous == project_id:
+        return
+    raise typer.BadParameter(
+        f"Project alias '{alias}' already belongs to {previous}; choose a new "
+        "--project-alias instead of mixing project-scoped state."
     )
 
 
@@ -1300,11 +1403,26 @@ def _run_interactive_configure(
     from npa.clients.credentials import load_credentials, write_credentials_file
     from npa.clients import nebius as nebius_client
 
+    provider_free = not provision
+    typer.echo(
+        "Intent: "
+        + (
+            "interactive setup with explicit object-storage provisioning"
+            if provision
+            else "interactive project configuration only (no provider calls)"
+        )
+        + ".\n"
+    )
     typer.echo(
         "Interactive npa setup. Existing values are shown as defaults — press "
         "Enter to keep them, or type a new value to update.\n"
     )
-    profile_ready = _ensure_nebius_profile()
+    profile_ready = _ensure_nebius_profile() if provision else False
+    if not provision:
+        typer.echo(
+            "Provider discovery and object-storage checks are skipped by "
+            "--no-provision."
+        )
     typer.echo("")
 
     # Object-storage auto-provisioning needs an authenticated Nebius CLI profile.
@@ -1317,8 +1435,9 @@ def _run_interactive_configure(
             "profile, which is not available yet. Choose one of:\n"
             "  - Install and authenticate the Nebius CLI "
             "(https://docs.nebius.com/cli/install), then re-run `npa configure`.\n"
-            "  - Re-run `npa configure --no-provision` to enter existing S3 "
-            "credentials manually."
+            "  - Re-run `npa configure --no-provision` for provider-free project "
+            "and token configuration; add storage later with an explicit "
+            "provisioning run."
         )
         if already_written:
             # The requested write succeeded; only the rest of setup is pending.
@@ -1465,11 +1584,15 @@ def _run_interactive_configure(
         )
 
     storage: dict[str, str] | None = None
+    if not provision:
+        storage = {}
+        typer.echo(
+            "  Object storage not selected; no bucket, access key, or profile "
+            "state will be created, probed, or adopted."
+        )
 
-    # Object storage is opt-in: `npa configure` sets up the Nebius connection and
-    # optional model/inference tokens. Storage (an S3 bucket + access key) is only
-    # needed by workbench data workflows, so when projects were discovered we ask
-    # before provisioning instead of doing it by default.
+    # Interactive configure offers storage by default because agent and workbench
+    # data paths need it, but the user can decline before any storage mutation.
     if discovered_selection and provision:
         want_storage = ask(
             "Set up object storage (S3 bucket + access key) now? "
@@ -1739,6 +1862,8 @@ def _run_interactive_configure(
         if not alias:
             project_name = ""
             try:
+                if not profile_ready:
+                    raise RuntimeError("provider discovery disabled")
                 project_name = nebius_client.get_project_name(project_id)
             except Exception:  # noqa: BLE001 - alias derivation is best-effort
                 project_name = ""
@@ -1753,18 +1878,28 @@ def _run_interactive_configure(
         write_config({"projects": {alias: project_stanza}, "default_project": alias})
         wrote_config = True
 
-    if project_id and storage:
-        from npa.clients.project_credential_store import write_project_credentials
-
-        write_project_credentials(
-            project_id,
-            {
-                key: value
-                for key, value in credentials_payload.items()
-                if key in {"storage", "storage_iam", "nebius"}
-            },
-            alias=alias,
+    if project_id:
+        from npa.clients.project_credential_store import (
+            select_project_credentials,
+            write_project_credentials,
         )
+
+        if storage:
+            write_project_credentials(
+                project_id,
+                {
+                    key: value
+                    for key, value in credentials_payload.items()
+                    if key in {"storage", "storage_iam", "nebius"}
+                },
+                alias=alias,
+            )
+        else:
+            select_project_credentials(
+                project_id,
+                alias=alias,
+                select_storage=False,
+            )
 
     if permissions_warning:
         note = (
@@ -1789,7 +1924,27 @@ def _run_interactive_configure(
             "project profile."
         )
 
-    typer.echo(_model_access_note(hf_token, ngc_api_key))
+    storage_disposition = (
+        str(storage.get("_disposition") or "configured")
+        if storage
+        else "not selected"
+    )
+    typer.echo(
+        f"Summary: mode={'provision' if provision else 'project-only'}; "
+        f"project={alias or 'not set'}; storage={storage_disposition}; "
+        "configuration=saved."
+    )
+    typer.echo(
+        _skipped_model_access_note()
+        if provider_free
+        else _model_access_note(hf_token, ngc_api_key)
+    )
+    if not provision:
+        typer.echo(
+            "Project configuration saved without object storage. Re-run with "
+            "--provision when cloud storage should be created or explicitly reused."
+        )
+        return
     storage_complete = storage.get("_validated") == "true"
     if storage_complete:
         typer.echo("Setup complete. Run `npa configure --show` to see the file layout.")
@@ -1866,50 +2021,156 @@ def _probe_hf_assets_parallel(
 
 
 def _model_access_note(hf_token: str, ngc_key: str) -> str:
-    """Return a one-line ``[NOTE]`` on which gated workbench models the tokens can access.
-
-    Runs the same repository-aware checks as ``npa workbench health access``:
-    each license-gated Hugging Face model or dataset is probed through the right
-    API, and NGC performs a real token-exchange/tag-listing entitlement probe.
-    Configure keeps these advisory: HF probes run in parallel under a wall-clock
-    budget, NGC uses the same short per-probe timeout, and failures never break
-    setup. The health command remains the authoritative enforcement gate.
-    """
+    """Return a redacted, non-gating HF/NGC access summary for configure."""
 
     try:
-        from npa.clients import huggingface
-        from npa.clients.huggingface import HFAccessResult
-        from npa.workbench.model_access import (
-            access_note,
-            check_workbench_access,
-            gated_hf_assets,
+        return _build_model_access_note(hf_token, ngc_key)
+    except Exception as exc:  # noqa: BLE001 - the whole advisory is non-gating
+        logger.debug(
+            "Configure model-access advisory unavailable (%s)",
+            type(exc).__name__,
         )
-        from npa.workbench.nurec.nurec import check_ngc_image_access
+        return (
+            "[NOTE] Access checks are informational; HF/NGC access advisory "
+            "unavailable. Configuration remains saved. Use `npa workbench health "
+            "access` when model access must be enforced."
+        )
 
-        cache: dict[tuple[str, str], Any] = {}
-        if hf_token:
+
+def _build_model_access_note(hf_token: str, ngc_key: str) -> str:
+    """Build the advisory inside the fail-safe configure boundary."""
+
+    from npa.clients import huggingface
+    from npa.clients.huggingface import HFAccessResult
+    from npa.workbench.model_access import gated_hf_assets
+    from npa.workbench.nurec.nurec import check_ngc_image_access
+
+    if not hf_token:
+        hf_summary = (
+            "HF token missing; gated model(s) unverified"
+        )
+    else:
+        try:
+            identity = huggingface.validate_hf_identity(hf_token, timeout=2.0)
+        except Exception:  # noqa: BLE001 - advisory probes never gate configure
+            identity = HFAccessResult(repo="whoami-v2", ok=False)
+        assets = gated_hf_assets()
+        if identity.ok:
             cache = _probe_hf_assets_parallel(
-                huggingface.validate_hf_access, hf_token, gated_hf_assets()
+                huggingface.validate_hf_access, hf_token, assets
             )
+            denied = 0
+            unverified = 0
+            for asset in assets:
+                result = cache.get((asset.repo, asset.repo_type))
+                if result is None or (
+                    not result.ok and result.status_code not in {401, 403}
+                ):
+                    unverified += 1
+                elif not result.ok:
+                    denied += 1
+            if denied:
+                names = ", ".join(
+                    asset.repo
+                    for asset in assets
+                    if (
+                        (result := cache.get((asset.repo, asset.repo_type)))
+                        is not None
+                        and not result.ok
+                        and result.status_code in {401, 403}
+                    )
+                )
+                hf_summary = (
+                    f"HF token valid; gated access missing for {denied} "
+                    f"checked asset(s); HF has no access to: {names}. Accept gated "
+                    "licenses at https://huggingface.co/<model>"
+                )
+            elif unverified:
+                hf_summary = (
+                    f"HF token valid; gated access unverified for {unverified} "
+                    "checked asset(s)"
+                )
+            else:
+                hf_summary = (
+                    f"HF token valid; gated access confirmed for {len(assets)} "
+                    "checked asset(s)"
+                )
+        else:
+            # A successful exact repository probe still proves useful access if
+            # the identity endpoint is independently unavailable. Conversely,
+            # no completed repository probes means the provider/network path is
+            # genuinely unverified. A definitive identity rejection wins.
+            if identity.status_code in {401, 403}:
+                hf_summary = "HF token rejected"
+            else:
+                cache = _probe_hf_assets_parallel(
+                    huggingface.validate_hf_access, hf_token, assets
+                )
+                if cache and all(result.ok for result in cache.values()):
+                    hf_summary = (
+                        f"HF token valid; gated access confirmed for {len(cache)} "
+                        "checked asset(s)"
+                    )
+                else:
+                    hf_summary = (
+                        "HF provider/network unavailable; token validity unverified"
+                    )
 
-        def _validator(token: str, repo: str, repo_type: str = "model"):
-            return cache.get((repo, repo_type)) or HFAccessResult(
-                repo=repo, ok=False, error="not verified (timed out)"
+    if not ngc_key:
+        ngc_summary = "NGC key missing; NGC not configured (blocks nurec pulls)"
+    elif not ngc_key.lower().startswith(("nvapi-", "nvapi_")):
+        ngc_summary = "NGC key invalid format"
+    else:
+        try:
+            ngc_outcome = check_ngc_image_access(ngc_key, timeout=2.0)
+        except Exception:  # noqa: BLE001 - advisory probes never gate configure
+            ngc_outcome = "unreachable"
+        if ngc_outcome == "reachable":
+            ngc_summary = "NGC key valid; repository access confirmed"
+        elif ngc_outcome in {"auth-no-token", "auth-401", "auth-403"}:
+            ngc_summary = "NGC key rejected"
+        elif ngc_outcome in {
+            "entitlement-required",
+            "tags-401",
+            "tags-403",
+        }:
+            ngc_summary = (
+                "NGC entitlement denied; NGC repository entitlement denied for: "
+                "nurec"
             )
+        else:
+            ngc_summary = "NGC provider/network unavailable; access unverified"
 
-        def _ngc_validator(api_key: str) -> str:
-            return check_ngc_image_access(api_key, timeout=2.0)
+    return (
+        "[NOTE] Access checks are informational and never block configuration: "
+        f"{hf_summary}; {ngc_summary}. Use `npa workbench health access` when "
+        "model access must be enforced."
+    )
 
-        results = check_workbench_access(
-            hf_token=hf_token,
-            ngc_key=ngc_key,
-            hf_validator=_validator if hf_token else None,
-            ngc_validator=_ngc_validator,
-            gated_only=True,
+
+def _saved_model_access_note() -> str:
+    """Return the advisory using persisted credentials without exposing values."""
+
+    try:
+        from npa.clients.credentials import load_credentials
+
+        credentials = load_credentials(environ={})
+        return _model_access_note(credentials.hf_token, credentials.ngc_api_key)
+    except Exception:  # noqa: BLE001 - malformed/unreadable state stays non-gating
+        return (
+            "[NOTE] Access checks are informational; saved credentials could not "
+            "be read. Use `npa workbench health access` after fixing the store."
         )
-        return access_note(results)
-    except Exception:  # noqa: BLE001 - a preflight note must never break configure
-        return "[NOTE] Skipped model-access check (verify later with `npa workbench health access`)."
+
+
+def _skipped_model_access_note() -> str:
+    """Return the explicit provider-free advisory for ``--no-provision``."""
+
+    return (
+        "[NOTE] Access checks are informational; HF/NGC access probes skipped by "
+        "--no-provision. Run `npa workbench health access` when model access must "
+        "be enforced."
+    )
 
 
 def _store_token_factory_key(api_key: str) -> None:
@@ -2206,6 +2467,8 @@ def _run_known_project_configure(
     region: str,
     project_alias: str,
     provision: bool,
+    bucket_storage_class: str = "",
+    bucket_size_gb: str = "",
 ) -> None:
     """Configure a known project without profile creation, discovery, or prompts."""
 
@@ -2213,7 +2476,6 @@ def _run_known_project_configure(
 
     from npa.clients import nebius as nebius_client
     from npa.clients.config import CONFIG_PATH, list_projects, write_config
-    from npa.clients.credentials import load_credentials
 
     values = {
         "--tenant-id": str(tenant_id or "").strip(),
@@ -2227,70 +2489,142 @@ def _run_known_project_configure(
             "Known-project non-interactive configure requires all of --tenant-id, "
             "--project-id, --region, and --project-alias; missing " + ", ".join(missing)
         )
+    typer.echo(
+        "Intent: "
+        + (
+            "provision object storage explicitly"
+            if provision
+            else "save project configuration only (no provider calls)"
+        )
+        + "."
+    )
     alias = values["--project-alias"]
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", alias):
         raise typer.BadParameter(
             "--project-alias must start with a letter or digit and contain only "
             "letters, digits, '.', '_', or '-' (maximum 64 characters)"
         )
-
-    # This path consumes existing local profile/credential material only. It
-    # never invokes profile creation or tenant/project discovery, so a valid
-    # federation/service-account profile cannot fall into a browser flow or a
-    # large tenant picker.
-    try:
-        nebius_client.get_iam_token()
-    except nebius_client.NebiusError as exc:
+    requested_storage_class = str(bucket_storage_class or "").strip()
+    requested_size_gb = str(bucket_size_gb or "").strip()
+    if (requested_storage_class or requested_size_gb) and not provision:
         raise typer.BadParameter(
-            "The active Nebius CLI profile cannot authenticate non-interactively. "
-            "Activate or refresh a profile/service-account credential outside this "
-            f"command, then retry. Diagnostic: {exc}"
-        ) from exc
+            "--bucket-storage-class and --bucket-size-gb require --provision"
+        )
+    if requested_storage_class:
+        normalized_label = (
+            requested_storage_class.lower().replace("-", "_").replace(" ", "_")
+        )
+        if normalized_label not in {
+            "standard",
+            "std",
+            "storage_class_unspecified",
+            "enhanced",
+            "enhanced_throughput",
+            "enhancedthroughput",
+            "intelligent",
+        }:
+            raise typer.BadParameter(
+                "--bucket-storage-class must be standard, enhanced, or intelligent"
+            )
+        requested_storage_class = nebius_client.normalize_bucket_storage_class(
+            requested_storage_class
+        )
+    requested_max_size_bytes: int | None = None
+    if requested_size_gb:
+        from decimal import Decimal, InvalidOperation
+
+        try:
+            parsed_size = Decimal(requested_size_gb)
+        except InvalidOperation as exc:
+            raise typer.BadParameter(
+                "--bucket-size-gb must be a finite non-negative number"
+            ) from exc
+        if not parsed_size.is_finite() or parsed_size < 0:
+            raise typer.BadParameter(
+                "--bucket-size-gb must be a finite non-negative number"
+            )
+        requested_max_size_bytes = _gb_to_bytes(requested_size_gb)
+        if parsed_size > 0 and requested_max_size_bytes == 0:
+            raise typer.BadParameter(
+                "--bucket-size-gb must resolve to at least one byte, or be 0 for unlimited"
+            )
 
     existing_projects = list_projects()
-    _warn_repointed_alias(
+    _validate_alias_project_identity(
         alias, existing_projects.get(alias) or {}, values["--project-id"]
     )
-    existing = load_credentials(environ={})
+    # Project-only setup is deliberately local. Provider authentication, bucket
+    # probes, and profile rebinding occur only behind the explicit --provision
+    # intent.
+    from npa.clients.project_credential_store import (
+        project_credential_record,
+        select_project_credentials,
+    )
+
+    if provision:
+        try:
+            nebius_client.get_iam_token()
+        except nebius_client.NebiusError as exc:
+            raise typer.BadParameter(
+                "The active Nebius CLI profile cannot authenticate "
+                "non-interactively. Activate or refresh it, then retry."
+            ) from exc
+        existing_record = project_credential_record(values["--project-id"])
+    else:
+        existing_record = {}
+        select_project_credentials(
+            values["--project-id"],
+            alias=alias,
+            select_storage=False,
+        )
+
+    existing_storage = existing_record.get("storage")
+    existing_storage = (
+        dict(existing_storage) if isinstance(existing_storage, dict) else {}
+    )
     storage: dict[str, str] = {}
     existing_complete = bool(
-        existing.s3_access_key_id
-        and existing.s3_secret_access_key
-        and existing.s3_bucket
+        existing_storage.get("aws_access_key_id")
+        and existing_storage.get("aws_secret_access_key")
+        and existing_storage.get("bucket")
     )
-    existing_relationship_verified = _storage_relationship_verified(
-        existing, values["--project-id"]
-    )
-    if existing_complete and existing_relationship_verified:
+    existing_relationship_verified = bool(existing_complete and existing_record)
+    if (
+        provision
+        and existing_complete
+        and existing_relationship_verified
+        and not (requested_storage_class or requested_size_gb)
+    ):
         from npa.clients.storage_validation import probe_storage_write
 
         probe = probe_storage_write(
-            bucket=existing.s3_bucket,
-            endpoint_url=existing.s3_endpoint
+            bucket=str(existing_storage.get("bucket") or ""),
+            endpoint_url=str(existing_storage.get("endpoint_url") or "")
             or _endpoint_for_region(values["--region"]),
-            access_key_id=existing.s3_access_key_id,
-            secret_access_key=existing.s3_secret_access_key,
+            access_key_id=str(existing_storage.get("aws_access_key_id") or ""),
+            secret_access_key=str(
+                existing_storage.get("aws_secret_access_key") or ""
+            ),
             region=values["--region"],
         )
         if probe.ok:
             storage = {
-                "aws_access_key_id": existing.s3_access_key_id,
-                "aws_secret_access_key": existing.s3_secret_access_key,
-                "endpoint_url": existing.s3_endpoint
+                "aws_access_key_id": str(
+                    existing_storage.get("aws_access_key_id") or ""
+                ),
+                "aws_secret_access_key": str(
+                    existing_storage.get("aws_secret_access_key") or ""
+                ),
+                "endpoint_url": str(existing_storage.get("endpoint_url") or "")
                 or _endpoint_for_region(values["--region"]),
-                "bucket": existing.s3_bucket,
+                "bucket": str(existing_storage.get("bucket") or ""),
                 "_validated": "true",
             }
             typer.echo(
                 "Reusing health-verified configured object-storage credentials; "
                 "no access keys were listed, created, or rotated."
             )
-        elif not provision:
-            raise typer.BadParameter(
-                f"Existing object-storage credentials are not writable: {probe.summary}"
-            )
-
-    elif existing_complete:
+    elif provision and existing_complete:
         typer.echo(
             "Ignoring saved object storage for this non-interactive configure: "
             "its durable ownership record does not match the selected project."
@@ -2310,11 +2644,13 @@ def _run_known_project_configure(
             tenant_id=values["--tenant-id"],
             region=values["--region"],
             existing_bucket=(
-                _bucket_name_from_uri(existing.s3_bucket)
+                _bucket_name_from_uri(str(existing_storage.get("bucket") or ""))
                 if existing_relationship_verified
                 else ""
             ),
             interactive=False,
+            bucket_storage_class=requested_storage_class,
+            bucket_max_size_bytes=requested_max_size_bytes,
         )
         if provisioned is None or provisioned.get("_validated") != "true":
             raise typer.BadParameter(
@@ -2370,7 +2706,7 @@ def _run_known_project_configure(
             "default_project": alias,
         }
     )
-    if not nebius_client.set_profile_project(
+    if provision and not nebius_client.set_profile_project(
         values["--project-id"], values["--tenant-id"]
     ):
         typer.echo(
@@ -2389,13 +2725,131 @@ def _run_known_project_configure(
             "Project setup complete without object storage (--no-provision). "
             "Configure writable storage before agent or workflow submission."
         )
+    storage_disposition = str(storage.get("_disposition") or "configured") if storage else "not selected"
+    typer.echo(
+        f"Summary: mode={'provision' if provision else 'project-only'}; "
+        f"project={alias}; storage={storage_disposition}; configuration=saved."
+    )
+    typer.echo(
+        _saved_model_access_note() if provision else _skipped_model_access_note()
+    )
+
+
+class ConfigureMode(str, Enum):
+    DISPLAY = "display"
+    GUIDANCE = "guidance"
+    SOURCE_URI = "source-uri"
+    FORGET_PROJECT = "forget-project"
+    IMPORT_CREDENTIALS = "import-credentials"
+    KNOWN_PROJECT = "known-project"
+    INTERACTIVE = "interactive"
+
+
+def _configure_mode(arguments: dict[str, Any]) -> ConfigureMode:
+    """Resolve one configure intent and reject ambiguous combinations."""
+
+    show = bool(arguments.get("show"))
+    env_output = bool(arguments.get("env_output"))
+    source_uri = str(arguments.get("src_s3_uri") or "").strip()
+    forget = str(arguments.get("forget_project") or "").strip()
+    save_env = bool(arguments.get("save_env_credentials"))
+    interactive = arguments.get("interactive")
+    provision = arguments.get("provision")
+    known_names = ("tenant_id", "project_id", "region", "project_alias")
+    bucket_names = ("bucket_storage_class", "bucket_size_gb")
+    known = {
+        name: str(arguments.get(name) or "").strip()
+        for name in known_names
+        if str(arguments.get(name) or "").strip()
+    }
+
+    requested: list[ConfigureMode] = []
+    if show or env_output:
+        requested.append(ConfigureMode.DISPLAY)
+    if source_uri:
+        requested.append(ConfigureMode.SOURCE_URI)
+    if forget:
+        requested.append(ConfigureMode.FORGET_PROJECT)
+    if save_env:
+        requested.append(ConfigureMode.IMPORT_CREDENTIALS)
+    if known or any(str(arguments.get(name) or "").strip() for name in bucket_names):
+        requested.append(ConfigureMode.KNOWN_PROJECT)
+    if requested == [ConfigureMode.DISPLAY, ConfigureMode.IMPORT_CREDENTIALS]:
+        requested = [ConfigureMode.IMPORT_CREDENTIALS]
+    if requested == [ConfigureMode.IMPORT_CREDENTIALS, ConfigureMode.KNOWN_PROJECT]:
+        # One deterministic prompt-free transaction: import supported environment
+        # credentials, then save the explicit project (and provision only when the
+        # caller also passed --provision).
+        requested = [ConfigureMode.KNOWN_PROJECT]
+    if len(requested) > 1:
+        raise typer.BadParameter(
+            "Configure modes cannot be combined: choose exactly one of display "
+            "(--show/--env), --src-s3-uri, --forget-project, "
+            "--save-env-credentials, or known-project setup."
+        )
+
+    mode = (
+        requested[0]
+        if requested
+        else (
+            ConfigureMode.INTERACTIVE
+            if interactive is True or (interactive is None and sys.stdin.isatty())
+            else ConfigureMode.GUIDANCE
+        )
+    )
+    if mode == ConfigureMode.DISPLAY and (
+        interactive is True or provision is not None
+    ):
+        raise typer.BadParameter(
+            f"{mode.value} mode is read-only or self-contained and cannot be "
+            "combined with interactive/provisioning options."
+        )
+    if mode in {
+        ConfigureMode.SOURCE_URI,
+        ConfigureMode.FORGET_PROJECT,
+    } and (interactive is not None or provision is not None):
+        raise typer.BadParameter(
+            f"{mode.value} mode is read-only or self-contained and cannot be "
+            "combined with interactive/provisioning options."
+        )
+    if mode == ConfigureMode.IMPORT_CREDENTIALS and (
+        interactive is True or provision is not None
+    ):
+        raise typer.BadParameter(
+            "--save-env-credentials is a prompt-free import mode and cannot be "
+            "combined with interactive/provisioning options."
+        )
+    if mode == ConfigureMode.KNOWN_PROJECT:
+        missing = [name for name in known_names if name not in known]
+        if missing:
+            flags = ", ".join("--" + name.replace("_", "-") for name in missing)
+            raise typer.BadParameter(
+                "Known-project configure requires --tenant-id, --project-id, "
+                f"--region, and --project-alias; missing {flags}"
+            )
+        if interactive is True:
+            raise typer.BadParameter(
+                "Known-project flags select prompt-free setup; omit --interactive "
+                "or use --no-interactive."
+            )
+        if any(str(arguments.get(name) or "").strip() for name in bucket_names) and provision is not True:
+            raise typer.BadParameter(
+                "--bucket-storage-class and --bucket-size-gb require explicit "
+                "--provision"
+            )
+    if mode == ConfigureMode.GUIDANCE and provision is True:
+        raise typer.BadParameter(
+            "--provision requires either interactive setup or all known-project "
+            "flags."
+        )
+    return mode
 
 
 def _configure_impl(
     *,
     show: bool,
     interactive: Optional[bool],
-    provision: bool = True,
+    provision: Optional[bool] = None,
     save_env_credentials: bool = False,
     env_output: bool = False,
     forget_project: str = "",
@@ -2404,11 +2858,20 @@ def _configure_impl(
     project_id: str = "",
     region: str = "",
     project_alias: str = "",
+    bucket_storage_class: str = "",
+    bucket_size_gb: str = "",
 ) -> None:
-    if src_s3_uri.strip():
+    mode = _configure_mode(locals())
+    effective_provision = (
+        bool(provision)
+        if provision is not None
+        else mode == ConfigureMode.INTERACTIVE
+    )
+    if mode == ConfigureMode.SOURCE_URI:
         _store_src_s3_uri(src_s3_uri.strip())
+        typer.echo(_saved_model_access_note())
         return
-    if forget_project.strip():
+    if mode == ConfigureMode.FORGET_PROJECT:
         # Deconfigure a single project: the inverse of the stanza configure
         # writes. Storage credentials (host-scoped) and a deleted bucket's
         # remote-state keys are handled by `npa storage bucket delete`.
@@ -2420,100 +2883,94 @@ def _configure_impl(
         persist_supported_env_credentials,
     )
 
-    detected = [name for name in SUPPORTED_ENV_CREDENTIALS if os.environ.get(name)]
-    persisted: list[str] = []
-    if save_env_credentials:
+    def persist_environment_credentials(*, diagnostics_to_stderr: bool = False) -> None:
         report = persist_supported_env_credentials()
-        persisted = list(report["persisted"])
         typer.echo(
             "Credential environment sources detected: "
             + (", ".join(report["detected"]) if report["detected"] else "none"),
-            err=env_output,
+            err=diagnostics_to_stderr,
         )
         typer.echo(
             "Credential fields persisted (values redacted): "
-            + (", ".join(persisted) if persisted else "none")
+            + (", ".join(report["persisted"]) if report["persisted"] else "none")
             + f"; store={CREDENTIALS_PATH}",
-            err=env_output,
+            err=diagnostics_to_stderr,
+        )
+        typer.echo(
+            f"Environment credentials (values redacted) saved to {CREDENTIALS_PATH}.",
+            err=diagnostics_to_stderr,
         )
         for warning in report["warnings"]:
             typer.echo(f"Credential warning: {warning}", err=True)
-    elif detected and interactive is not True:
-        typer.echo(
-            f"Credential environment sources detected: {', '.join(detected)}",
-            err=env_output,
-        )
-        typer.echo(
-            "Credential persistence: skipped. These values remain process-only; "
-            "use --save-env-credentials to make later agent/workflow commands durable.",
-            err=env_output,
-        )
-    elif interactive is False:
-        typer.echo(
-            "Credential environment sources detected: none; persistence: none.",
-            err=env_output,
-        )
-    already_written = "Environment credentials (values redacted)" if persisted else ""
-    if env_output:
-        # Machine-readable form first: runbooks eval this instead of asking the
-        # operator to hand-substitute the alias, bucket and kube context.
-        typer.echo(_configured_env_lines())
-        return
-    if show:
-        # What is actually saved first: leading with the blank template made an
-        # operator read `hf_REPLACE_ME` and conclude nothing was configured.
-        typer.echo(_configured_summary())
-        typer.echo("")
-        typer.echo(_SETUP_GUIDANCE)
-        return
-    known_project_values = (tenant_id, project_id, region, project_alias)
-    if any(str(value or "").strip() for value in known_project_values):
-        if interactive is True:
-            raise typer.BadParameter(
-                "Known-project flags select the non-interactive configure path; "
-                "use --no-interactive (or omit --interactive)."
+
+    if mode == ConfigureMode.DISPLAY:
+        detected = [
+            name for name in SUPPORTED_ENV_CREDENTIALS if os.environ.get(name)
+        ]
+        if detected:
+            typer.echo(
+                "Credential environment sources detected: " + ", ".join(detected),
+                err=env_output,
             )
+            typer.echo(
+                "Credential persistence: skipped in display mode; use "
+                "--save-env-credentials separately to persist values.",
+                err=env_output,
+            )
+        if env_output:
+            typer.echo(_configured_env_lines())
+        else:
+            typer.echo(_configured_summary())
+            typer.echo("")
+            typer.echo(_SETUP_GUIDANCE)
+        return
+    if mode == ConfigureMode.IMPORT_CREDENTIALS:
+        machine_output = env_output
+        persist_environment_credentials(diagnostics_to_stderr=machine_output)
+        typer.echo(_saved_model_access_note(), err=machine_output)
+        if show or env_output:
+            typer.echo(_configured_env_lines() if env_output else _configured_summary())
+        return
+    if mode == ConfigureMode.KNOWN_PROJECT:
+        if save_env_credentials:
+            persist_environment_credentials()
         _run_known_project_configure(
             tenant_id=tenant_id,
             project_id=project_id,
             region=region,
             project_alias=project_alias,
-            provision=provision,
+            provision=effective_provision,
+            bucket_storage_class=bucket_storage_class,
+            bucket_size_gb=bucket_size_gb,
         )
         return
-    preset_tokens: set[str] = set()
 
-    should_prompt = interactive if interactive is not None else sys.stdin.isatty()
-    if not should_prompt:
-        if already_written:
-            # We DID persist the token flags; dumping the whole setup template as
-            # if nothing happened made scripted `--token-* --no-interactive` runs
-            # look like they failed. Confirm what landed and how to finish the rest.
-            typer.echo(f"{already_written} saved to {CREDENTIALS_PATH}.")
-            typer.echo(
-                "Run `npa configure` in a terminal (or `npa configure --show` for "
-                "the file layout) to set up the project, bucket and cluster."
-            )
-            return
+    detected = [name for name in SUPPORTED_ENV_CREDENTIALS if os.environ.get(name)]
+    if detected and interactive is not True:
+        typer.echo(
+            f"Credential environment sources detected: {', '.join(detected)}",
+        )
+        typer.echo(
+            "Credential persistence: skipped. These values remain process-only; "
+            "use --save-env-credentials to make later agent/workflow commands durable.",
+        )
+    elif interactive is False:
+        typer.echo(
+            "Credential environment sources detected: none; persistence: none.",
+        )
+    if mode == ConfigureMode.GUIDANCE:
         typer.echo(_SETUP_GUIDANCE)
         return
     try:
         _run_interactive_configure(
-            provision=provision,
-            already_written=already_written,
-            preset_tokens=preset_tokens,
+            provision=effective_provision,
         )
     except (EOFError, typer.Abort):
         # Cancelling mid-flow (Ctrl-C / Ctrl-D / no more input) previously exited
         # 0 having written nothing under ~/.npa, so the next cloud command failed
         # mysteriously. Fail loudly instead so the missing setup is obvious.
         typer.echo("")
-        written = (
-            f"{already_written} was saved, but setup was cancelled before the rest "
-            "of ~/.npa was written."
-            if already_written
-            else "Setup was cancelled before anything was written under ~/.npa."
-        )
+        written = "Setup was cancelled before anything was written under ~/.npa."
         typer.echo(
             f"{written} Re-run `npa configure` in a terminal to finish, or run "
             "`npa configure --show` for the file layout to create it by hand."
@@ -2530,19 +2987,17 @@ def _transactional_configure(function):
     def wrapped(*args, **kwargs):
         bound = signature.bind_partial(*args, **kwargs)
         bound.apply_defaults()
+        mode = _configure_mode(bound.arguments)
         if current_operation() is not None:
-            nested_forget = str(bound.arguments.get("forget_project") or "").strip()
             from npa.lifecycle_intent import operation_intent
 
             with operation_intent(
                 OperationIntent.DESTROY
-                if nested_forget
+                if mode == ConfigureMode.FORGET_PROJECT
                 else OperationIntent.ENSURE_PRESENT
             ):
                 return function(*args, **kwargs)
-        if (
-            bool(bound.arguments.get("show")) or bool(bound.arguments.get("env_output"))
-        ) and not bool(bound.arguments.get("save_env_credentials")):
+        if mode in {ConfigureMode.DISPLAY, ConfigureMode.GUIDANCE}:
             return function(*args, **kwargs)
         forget = str(bound.arguments.get("forget_project") or "").strip()
         alias = str(bound.arguments.get("project_alias") or "").strip()
@@ -2567,6 +3022,10 @@ def _transactional_configure(function):
                 f" --no-interactive --tenant-id {tenant_id} --project-id {project_id}"
                 f" --region {region} --project-alias {alias}"
             )
+            if bound.arguments.get("provision") is True:
+                resume += " --provision"
+            elif bound.arguments.get("provision") is False:
+                resume += " --no-provision"
         operation = ProvisioningOperation.prepare(
             command=("npa configure --forget-project" if forget else "npa configure"),
             project_alias=alias,
@@ -2581,19 +3040,34 @@ def _transactional_configure(function):
         from npa.clients.credentials import SUPPORTED_ENV_CREDENTIALS
 
         detected = [name for name in SUPPORTED_ENV_CREDENTIALS if os.environ.get(name)]
-        operation.record_config_mutation(
-            store="credentials.yaml",
-            fields=detected,
-            secret_fields=detected,
-        )
-        operation.record_config_mutation(
-            store="config.yaml",
-            fields=(
-                ["default_project", f"projects.{alias}"]
-                if alias
-                else ["interactive-selected-project"]
-            ),
-        )
+        writes_credentials = mode in {
+            ConfigureMode.IMPORT_CREDENTIALS,
+            ConfigureMode.KNOWN_PROJECT,
+            ConfigureMode.INTERACTIVE,
+        }
+        writes_config = mode in {
+            ConfigureMode.SOURCE_URI,
+            ConfigureMode.FORGET_PROJECT,
+            ConfigureMode.KNOWN_PROJECT,
+            ConfigureMode.INTERACTIVE,
+        }
+        if writes_credentials:
+            operation.record_config_mutation(
+                store="credentials.yaml",
+                fields=(detected if mode == ConfigureMode.IMPORT_CREDENTIALS else []),
+                secret_fields=(
+                    detected if mode == ConfigureMode.IMPORT_CREDENTIALS else []
+                ),
+            )
+        if writes_config:
+            operation.record_config_mutation(
+                store="config.yaml",
+                fields=(
+                    ["default_project", f"projects.{alias}"]
+                    if alias
+                    else [mode.value]
+                ),
+            )
         with operation_context(operation):
             from npa.clients.config import CONFIG_PATH
             from npa.clients.credentials import (
@@ -2604,8 +3078,10 @@ def _transactional_configure(function):
             # Configuration durability is a prerequisite, not a cleanup task:
             # prove both protected stores can be atomically replaced before any
             # profile, storage, or other provider mutation is attempted.
-            preflight_private_yaml_store(CONFIG_PATH)
-            preflight_private_yaml_store(CREDENTIALS_PATH)
+            if writes_config:
+                preflight_private_yaml_store(CONFIG_PATH)
+            if writes_credentials:
+                preflight_private_yaml_store(CREDENTIALS_PATH)
             operation.transition("mutating")
             try:
                 intent = (
@@ -2655,14 +3131,14 @@ def configure(
         "--interactive/--no-interactive",
         help="Force or disable interactive prompting (defaults to auto-detect TTY).",
     ),
-    provision: bool = typer.Option(
-        True,
+    provision: Optional[bool] = typer.Option(
+        None,
         "--provision/--no-provision",
         help=(
-            "Auto-create a Nebius S3 bucket (when missing) and an access key "
-            "(default). Reuse an existing bucket by name, or press Enter to "
-            "create a default npa-bucket with standard storage and a size cap. "
-            "Use --no-provision to enter existing S3 credentials."
+            "Explicitly create or reuse Nebius object storage. Interactive setup "
+            "offers provisioning by default; prompt-free known-project setup is "
+            "project-only unless --provision is passed. --no-provision performs "
+            "no provider calls or storage adoption."
         ),
     ),
     save_env_credentials: bool = typer.Option(
@@ -2721,6 +3197,16 @@ def configure(
         "--project-alias",
         help="Local NPA alias to write for the known project (prompt-free configure).",
     ),
+    bucket_storage_class: str = typer.Option(
+        "",
+        "--bucket-storage-class",
+        help="Storage class for a newly created known-project bucket: standard, enhanced, or intelligent.",
+    ),
+    bucket_size_gb: str = typer.Option(
+        "",
+        "--bucket-size-gb",
+        help="GiB cap for a newly created known-project bucket; 0 means unlimited.",
+    ),
 ) -> None:
     """Interactively write ~/.npa credentials and config, or show guidance."""
     _configure_impl(
@@ -2735,6 +3221,8 @@ def configure(
         project_id=project_id,
         region=region,
         project_alias=project_alias,
+        bucket_storage_class=bucket_storage_class,
+        bucket_size_gb=bucket_size_gb,
     )
 
 
@@ -2755,14 +3243,14 @@ def init(
         "--interactive/--no-interactive",
         help="Force or disable interactive prompting (defaults to auto-detect TTY).",
     ),
-    provision: bool = typer.Option(
-        True,
+    provision: Optional[bool] = typer.Option(
+        None,
         "--provision/--no-provision",
         help=(
-            "Auto-create a Nebius S3 bucket (when missing) and an access key "
-            "(default). Reuse an existing bucket by name, or press Enter to "
-            "create a default npa-bucket with standard storage and a size cap. "
-            "Use --no-provision to enter existing S3 credentials."
+            "Explicitly create or reuse Nebius object storage. Interactive setup "
+            "offers provisioning by default; prompt-free known-project setup is "
+            "project-only unless --provision is passed. --no-provision performs "
+            "no provider calls or storage adoption."
         ),
     ),
     save_env_credentials: bool = typer.Option(
@@ -2800,6 +3288,16 @@ def init(
     project_alias: str = typer.Option(
         "", "--project-alias", help="Local NPA alias for prompt-free configure."
     ),
+    bucket_storage_class: str = typer.Option(
+        "",
+        "--bucket-storage-class",
+        help="Storage class for a newly created known-project bucket: standard, enhanced, or intelligent.",
+    ),
+    bucket_size_gb: str = typer.Option(
+        "",
+        "--bucket-size-gb",
+        help="GiB cap for a newly created known-project bucket; 0 means unlimited.",
+    ),
 ) -> None:
     """Interactively write ~/.npa credentials and config, or show guidance."""
     _configure_impl(
@@ -2813,6 +3311,8 @@ def init(
         project_id=project_id,
         region=region,
         project_alias=project_alias,
+        bucket_storage_class=bucket_storage_class,
+        bucket_size_gb=bucket_size_gb,
     )
 
 

@@ -883,6 +883,15 @@ class SkyPilotWaveExecutor:
             attempt.sky_status = status
             attempt.error = attempt.error or f"managed job ended {status}"
             self.ledger.record(attempt)
+            if self.options.retries > 0:
+                # Reconciliation must happen before any relaunch. Once the exact
+                # adopted job is proven terminal, let the ordinary explicit
+                # terminal-retry path assign the next attempt identity and keep
+                # the failed evidence. Without this bridge, --retries works for
+                # an already-failed ledger wave but not for the equivalent
+                # in-flight record observed as failed during resume.
+                self.attempts.pop()
+                return None
             return attempt
 
         self._log(

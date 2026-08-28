@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -1618,6 +1619,13 @@ def sky_environment(isolated_config_dir: Path | None = None) -> dict[str, str]:
                 isolated_kubeconfig.symlink_to(selected_target)
     env["HOME"] = str(home)
     env["SKY_RUNTIME_DIR"] = str(runtime)
+    # SkyPilot otherwise derives its user hash from the unchanged operator and
+    # hostname, so two isolated homes still target the same jobs-controller
+    # name.  Give each isolated state root a stable identity while honoring an
+    # explicit operator-selected identity.
+    if not str(env.get("SKYPILOT_USER_ID") or "").strip():
+        state_digest = hashlib.sha256(str(root.resolve()).encode()).hexdigest()[:12]
+        env["SKYPILOT_USER_ID"] = f"npa-{state_digest}"
     env["PYTHONUNBUFFERED"] = "1"
     repo_src = Path(__file__).resolve().parents[3]
     env["PYTHONPATH"] = str(repo_src) + os.pathsep + env.get("PYTHONPATH", "")

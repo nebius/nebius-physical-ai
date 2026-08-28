@@ -613,6 +613,79 @@ def test_first_party_image_without_attestation_fails_instead_of_probing(
     assert excinfo.type.__name__ == "Exit"
 
 
+def test_image_bootstrap_observing_progress_preserves_exact_json(capsys) -> None:
+    digest = "sha256:" + "9" * 64
+
+    workflow_cli._emit_image_bootstrap_observing_progress(
+        digest=digest, timeout_seconds=0
+    )
+
+    assert capsys.readouterr().err == (
+        '{"apiVersion": "npa.image-bootstrap-progress/v1", '
+        f'"digest": "{digest}", "state": "observing", "timeout_seconds": 0}}\n'
+    )
+
+
+@pytest.mark.parametrize("runtime_probe_required", [True, False])
+def test_image_bootstrap_probe_paths_share_observing_progress_helper(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    runtime_probe_required: bool,
+) -> None:
+    digest = "sha256:" + "8" * 64
+    image = "registry.example.invalid/operator/image:tag"
+    immutable = image.rsplit(":", 1)[0] + "@" + digest
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.registry_preflight.resolve_registry_credentials",
+        lambda *_args, **_kwargs: ("iam", "opaque"),
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.registry_preflight.fetch_image_config_metadata",
+        lambda *_args, **_kwargs: (digest, {}),
+    )
+    monkeypatch.setattr(
+        "npa.deploy.images.requires_skypilot_bootstrap_runtime_probe",
+        lambda _image: runtime_probe_required,
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.image_bootstrap_contract.verify_attestation",
+        lambda **_kwargs: ImageContractEvidence(
+            image=immutable,
+            digest=digest,
+            contract_version=CONTRACT_VERSION,
+            state="incompatible",
+            source="oci_attestation",
+        ),
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.image_bootstrap_contract.probe_image_capabilities",
+        lambda **_kwargs: ImageContractEvidence(
+            image=immutable,
+            digest=digest,
+            contract_version=CONTRACT_VERSION,
+            state="compatible",
+            source="ephemeral_capability_probe",
+            cleanup="verified",
+        ),
+    )
+    progress: list[tuple[str, int]] = []
+    monkeypatch.setattr(
+        workflow_cli,
+        "_emit_image_bootstrap_observing_progress",
+        lambda *, digest, timeout_seconds: progress.append((digest, timeout_seconds)),
+    )
+
+    workflow_cli._preflight_image_bootstrap_contracts(
+        images=[image],
+        pull_checks=[ImagePullCheck(image=image, status="ok", digest=digest)],
+        context="exact-context",
+        observation_timeout_seconds=1800,
+    )
+
+    assert progress == [(digest, 1800)]
+
+
 def test_groot_label_and_label_backed_cache_cannot_bypass_runtime_probe(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -679,6 +752,94 @@ def test_groot_label_and_label_backed_cache_cannot_bypass_runtime_probe(
 
     assert calls == [(image, digest, "exact-context")]
     assert result[0]["source"] == "ephemeral_capability_probe"
+
+
+def test_runtime_bootstrap_probe_receives_declared_image_pull_secrets(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    digest = "sha256:" + "c" * 64
+    image = "registry-us.example/u000/npa-groot:0.1.0-sky1"
+    immutable = image.rsplit(":", 1)[0] + "@" + digest
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.registry_preflight.resolve_registry_credentials",
+        lambda *_args, **_kwargs: ("iam", "opaque"),
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.registry_preflight.fetch_image_config_metadata",
+        lambda *_args, **_kwargs: (digest, {}),
+    )
+    observed: dict[str, object] = {}
+
+    def probe(**kwargs):
+        observed.update(kwargs)
+        return ImageContractEvidence(
+            image=immutable,
+            digest=digest,
+            contract_version=CONTRACT_VERSION,
+            state="compatible",
+            source="ephemeral_capability_probe",
+            checks=("runtime_capabilities",),
+            cleanup="deleted",
+        )
+
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.image_bootstrap_contract.probe_image_capabilities",
+        probe,
+    )
+
+    workflow_cli._preflight_image_bootstrap_contracts(
+        images=[image],
+        pull_checks=[ImagePullCheck(image=image, status="ok", digest=digest)],
+        context="exact-context",
+        pull_secrets_by_image={image: ("operator-registry",)},
+    )
+
+    assert observed["image_pull_secrets"] == ("operator-registry",)
+
+
+def test_runtime_bootstrap_probe_receives_no_deadline_observation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    digest = "sha256:" + "d" * 64
+    image = "registry-us.example/u000/npa-groot:0.1.0-sky1"
+    immutable = image.rsplit(":", 1)[0] + "@" + digest
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.registry_preflight.resolve_registry_credentials",
+        lambda *_args, **_kwargs: ("iam", "opaque"),
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.registry_preflight.fetch_image_config_metadata",
+        lambda *_args, **_kwargs: (digest, {}),
+    )
+    observed: dict[str, object] = {}
+
+    def probe(**kwargs):
+        observed.update(kwargs)
+        return ImageContractEvidence(
+            image=immutable,
+            digest=digest,
+            contract_version=CONTRACT_VERSION,
+            state="compatible",
+            source="ephemeral_capability_probe",
+            checks=("runtime_capabilities",),
+            cleanup="verified",
+        )
+
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.image_bootstrap_contract.probe_image_capabilities",
+        probe,
+    )
+
+    workflow_cli._preflight_image_bootstrap_contracts(
+        images=[image],
+        pull_checks=[ImagePullCheck(image=image, status="ok", digest=digest)],
+        context="exact-context",
+        observation_timeout_seconds=0,
+    )
+
+    assert observed["observation_timeout_seconds"] == 0
 
 
 def test_preflight_is_skipped_when_disabled(

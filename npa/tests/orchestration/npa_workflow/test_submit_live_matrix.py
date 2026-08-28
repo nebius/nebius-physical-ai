@@ -112,6 +112,21 @@ def test_live_workflow_argv_builders_forward_selected_project_through_lifecycle(
     )
 
 
+def test_plan_submit_argv_forwards_preset_and_config_vars() -> None:
+    argv = _load_live_argv().plan_submit_args(
+        Path("/tmp/sim2real.yaml"),
+        run_id="plan-preset",
+        registry="registry.example/workbench",
+        project=None,
+        preset="public-franka-lift",
+        config_vars=(("controller_image", "registry.example/controller@sha256:00"),),
+    )
+    assert argv[argv.index("--preset") + 1] == "public-franka-lift"
+    assert argv[argv.index("--var") + 1] == (
+        "controller_image=registry.example/controller@sha256:00"
+    )
+
+
 def test_live_workflow_argv_builders_omit_project_only_when_unselected() -> None:
     argv = _load_live_argv()
     path = Path("/tmp/catalog-spec.yaml")
@@ -142,6 +157,22 @@ def test_submit_live_matrix_specs_exist() -> None:
         if resolve_npa_workflow_spec(case.spec) is None
     ]
     assert not missing, f"matrix references missing specs: {missing}"
+
+
+def test_sim2real_live_matrix_exercises_public_seed_preset() -> None:
+    case = next(case for case in SUBMIT_LIVE_MATRIX if case.spec == "sim2real.yaml")
+    assert case.preset == "public-franka-lift"
+    argv = _load_live_argv().runtime_submit_args(
+        Path("/tmp/sim2real.yaml"),
+        run_id="matrix-preset",
+        registry="registry.example/workbench",
+        project=None,
+        poll_seconds=2,
+        max_wait_seconds=30,
+        cancel_on_timeout=True,
+        preset=case.preset,
+    )
+    assert argv[argv.index("--preset") + 1] == "public-franka-lift"
 
 
 def test_every_shipped_catalog_spec_has_one_live_matrix_case() -> None:
@@ -483,8 +514,10 @@ def test_canonical_sim2real_registered_for_runtime_live_infra() -> None:
     matrix_case = next((case for case in SUBMIT_LIVE_MATRIX if case.spec == spec), None)
     assert matrix_case is not None
     assert matrix_case.runtime
-    assert matrix_case.expected_parallel_tasks == 2
+    assert matrix_case.expected_parallel_tasks == 8
     assert matrix_case.tier == "multi"
+    assert matrix_case.preset == "public-franka-lift"
+    assert "NEBIUS_TOKEN_FACTORY_KEY" in matrix_case.secret_envs
     helpers = _load_live_helpers()
     assert spec in helpers.DYNAMIC_SPECS
 

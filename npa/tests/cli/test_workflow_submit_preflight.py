@@ -415,6 +415,7 @@ def test_sim2real_submit_propagates_explicit_kubernetes_target(
         return CompletedProcess(args, 1, stdout="", stderr="NotFound")
 
     monkeypatch.setenv("KUBECONFIG", "/tmp/sim2real-kubeconfig")
+    monkeypatch.setenv("NPA_SIM2REAL_K8S_NAMESPACE", "sim2real-benchmark")
     monkeypatch.setattr(
         "npa.cli.workbench.workflow._adopt_npa_kubeconfig", lambda _context: True
     )
@@ -444,7 +445,22 @@ def test_sim2real_submit_propagates_explicit_kubernetes_target(
     assert result.exit_code == 1
     assert calls
     assert all(call[1]["context"] == "sim2real-review" for call in calls)
-    assert all(call[1]["kubeconfig"] == "/tmp/sim2real-kubeconfig" for call in calls)
+    assert all(
+        call[1]["kubeconfig"] == "/tmp/sim2real-kubeconfig" for call in calls
+    )
+    namespaced_calls = [
+        call[0]
+        for call in calls
+        if call[0][:2] in (
+            ["get", "pvc"],
+            ["get", "localqueue.kueue.x-k8s.io"],
+        )
+    ]
+    assert namespaced_calls
+    assert all(
+        args[args.index("-n") + 1] == "sim2real-benchmark"
+        for args in namespaced_calls
+    )
 
 
 def test_submit_preflight_clears_as_prerequisites_are_met(
@@ -830,7 +846,6 @@ def test_config_pinned_resource_images_satisfy_the_npa_source_requirement() -> N
             "controller_image",
             "transfer_image",
             "envgen_image",
-            "reason_image",
             "isaac_image",
             "viewer_image",
         )
@@ -871,7 +886,6 @@ def test_preflight_images_accepts_the_same_config_vars_as_submit(mocker) -> None
         "controller_image",
         "transfer_image",
         "envgen_image",
-        "reason_image",
         "isaac_image",
         "viewer_image",
     ):
@@ -883,6 +897,35 @@ def test_preflight_images_accepts_the_same_config_vars_as_submit(mocker) -> None
     checked_images = checks.call_args.args[0]
     assert checked_images
     assert set(checked_images) == {digest_image}
+
+
+def test_preflight_images_adds_explicit_pull_secret_to_every_image(mocker) -> None:
+    digest_image = f"cr.example.invalid/npa@sha256:{'a' * 64}"
+    mocker.patch(
+        "npa.orchestration.skypilot.registry_preflight.check_image_pulls_with_credentials",
+        return_value=[],
+    )
+    contracts = mocker.patch(
+        "npa.cli.workbench.workflow._preflight_image_bootstrap_contracts",
+        return_value=[],
+    )
+    args = [
+        "workbench", "workflow", "preflight-images", str(SIM2REAL_SPEC),
+        "--assume-decision", "promote_checkpoint",
+        "--image-pull-secret", "operator-registry",
+    ]
+    for name in (
+        "controller_image", "transfer_image", "envgen_image",
+        "reason_image", "isaac_image", "viewer_image",
+    ):
+        args.extend(["--var", f"{name}={digest_image}"])
+
+    result = runner.invoke(app, args)
+
+    assert result.exit_code == 0, result.output
+    assert contracts.call_args.kwargs["pull_secrets_by_image"] == {
+        digest_image: ("operator-registry",)
+    }
 
 
 def test_image_none_automatically_plans_npa_source_staging() -> None:

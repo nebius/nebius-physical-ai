@@ -328,7 +328,7 @@ common_args=(
   --source-repo "local-source-tarball"
   --source-ref "${NPA_SIM2REAL_RUN_ID}"
   --vlm-reason2-model "${VLM_REASON2_MODEL:-nvidia/Cosmos-Reason2-8B}"
-  --vlm-reason3-model "${VLM_REASON3_MODEL:-nvidia/Cosmos-Reason2-2B}"
+  --vlm-cosmos3-model "${VLM_COSMOS3_MODEL:-nvidia/Cosmos3-Super-Reasoner}"
   --vlm-dual-reason
   --rerun
   --upload-artifacts
@@ -392,7 +392,7 @@ run_env = [
     env_entry("INITIAL_QUALITY", env.get("INITIAL_QUALITY", "0.42")),
     env_entry("SUCCESS_THRESHOLD", env.get("SUCCESS_THRESHOLD", "0.50")),
     env_entry("VLM_REASON2_MODEL", env.get("VLM_REASON2_MODEL", "nvidia/Cosmos-Reason2-8B")),
-    env_entry("VLM_REASON3_MODEL", env.get("VLM_REASON3_MODEL", "nvidia/Cosmos-Reason2-2B")),
+    env_entry("VLM_COSMOS3_MODEL", env.get("VLM_COSMOS3_MODEL", "nvidia/Cosmos3-Super-Reasoner")),
     env_entry("NPA_SIM2REAL_VLM_DUAL_REASON", env.get("NPA_SIM2REAL_VLM_DUAL_REASON", "1")),
     env_entry("NPA_SIM2REAL_RERUN", "1"),
     env_entry("NPA_SIM2REAL_RERUN_SERVE", "0"),

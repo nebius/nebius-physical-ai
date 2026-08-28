@@ -186,7 +186,6 @@ def coherence_failures(repo_root: Path) -> list[str]:
         "controller_image",
         "transfer_image",
         "envgen_image",
-        "reason_image",
         "isaac_image",
         "viewer_image",
         "isaac_cache_pvc",

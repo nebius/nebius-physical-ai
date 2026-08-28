@@ -209,7 +209,7 @@ which is the failure this exists to remove.
 | `TORCH_HOME` | `torch` | `torch.hub`, torchvision weights |
 | `NLTK_DATA` | `nltk` | Cosmos-Transfer2.5 prompt tooling |
 | `NPA_COSMOS3_CACHE`, `COSMOS_DOWNLOAD_CACHE_DIR` | `cosmos3`, `cosmos3/downloads` | Cosmos 3 framework checkout + checkpoints |
-| `NPA_COSMOS_REASON_CACHE`, `NPA_COSMOS_REASON2_CACHE`, `NPA_COSMOS_REASON3_CACHE` | `huggingface/cosmos-reason*` | Cosmos Reason families |
+| `NPA_COSMOS_REASON_CACHE`, `NPA_COSMOS_REASON2_CACHE`, `NPA_COSMOS_REASON3_CACHE` | `huggingface/cosmos-reason*` | Self-hosted Cosmos Reason families |
 | `NPA_COSMOS_CURATE_WEIGHTS_DIR` | `cosmos-curate/models` | rebinds upstream Cosmos-Curate's hardcoded `/config/models` |
 | `HF_LEROBOT_HOME`, `LEROBOT_HF_HOME` | `lerobot` | LeRobot datasets and policies |
 | `WAN22_CACHE_DIR`, `NPA_LTX_MODEL_CACHE` | `wan2.2`, `ltx-2.5` | the BYOF video models |

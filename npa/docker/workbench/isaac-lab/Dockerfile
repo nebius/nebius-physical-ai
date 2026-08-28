@@ -105,7 +105,16 @@ RUN chmod +x /opt/npa/docker/workbench/common/*.sh \
        TORCH_VERSION=2.11.0 \
        TORCHVISION_VERSION=0.26.0 \
        TORCHAUDIO_VERSION=2.11.0 \
-       /opt/npa/docker/workbench/common/install_isaac_runtime_base.sh
+       /opt/npa/docker/workbench/common/install_isaac_runtime_base.sh \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/* \
+    && find /opt/npa/sim/venv -type f \
+      -path '*/imageio_ffmpeg/binaries/ffmpeg*' -delete \
+    && test -z "$(find /opt/npa/sim/venv -type f \
+      -path '*/imageio_ffmpeg/binaries/ffmpeg*' -print -quit)" \
+    && test "$(/opt/npa/sim/venv/bin/python -c \
+      'import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_exe())')" = /usr/bin/ffmpeg
 
 COPY --chmod=0755 docker/workbench/isaac-lab/npa_cli.sh /usr/local/bin/npa
 

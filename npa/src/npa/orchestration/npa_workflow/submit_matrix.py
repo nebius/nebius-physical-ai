@@ -48,6 +48,8 @@ class SubmitLiveCase:
     #: the one-shot serial path. Required for specs with a ``parallel:`` group or
     #: a loop that must early-exit on the real decision artifact.
     runtime: bool = False
+    #: Explicit workflow preset passed through the same CLI used by operators.
+    preset: str = ""
     #: Config overrides applied at submit time (``--var k=v``), e.g. to drive a
     #: gate threshold in one live run.
     config_vars: tuple[tuple[str, str], ...] = ()
@@ -246,6 +248,23 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
             "Runs the real Cosmos 3 omni-model generate path in the npa-cosmos3 image. "
             "The image contains the framework but no weights. Cosmos3-Nano is public; "
             "HF_TOKEN is required here only because this workflow keeps gated guardrails on."
+        ),
+    ),
+    SubmitLiveCase(
+        "cosmos3-ray-batch.yaml",
+        "cpu",
+        secret_envs=(
+            "NPA_COSMOS3_RAY_TOKEN",
+            "HF_TOKEN",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+        ),
+        image_tool="cosmos3-ray-serve",
+        notes=(
+            "Submits a real prepared batch to a separately deployed persistent "
+            "Cosmos3-Nano native Ray Serve service and publishes its structured "
+            "outputs and media through S3. The dedicated B200/RTX validation "
+            "starts the model-backed service before this client path runs."
         ),
     ),
     SubmitLiveCase(
@@ -731,18 +750,25 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
         "sim2real.yaml",
         "multi",
-        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "HF_TOKEN"),
+        secret_envs=(
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "HF_TOKEN",
+            "NEBIUS_TOKEN_FACTORY_KEY",
+        ),
         runtime=True,
-        expected_parallel_tasks=2,
+        preset="public-franka-lift",
+        expected_parallel_tasks=8,
         rotation_skip=True,
         skip_reason=(
-            "The canonical live case requires six project-local immutable image "
+            "The canonical live case requires five immutable component image "
             "digests, a prewarmed Isaac cache PVC, and task-aligned trigger data."
         ),
         notes=(
-            "Canonical compositional 14-stage Sim2Real runtime. Repository CI "
-            "validates the dynamic plan; an operator live run supplies six "
-            "registry-qualified immutable component images, an Isaac cache PVC, "
+            "Canonical compositional 14-stage Sim2Real runtime using the explicit "
+            "public-franka-lift preset. Repository CI validates the dynamic plan; "
+            "an operator live run first stages the pinned public seed and supplies five "
+            "immutable component images, an Isaac cache PVC, "
             "and task-aligned trigger data. The reduced real-GPU proof is archived "
             "separately because the component images are project-local."
         ),

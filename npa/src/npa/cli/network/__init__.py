@@ -147,9 +147,14 @@ def ensure_ingress(
         help="Comma-separated TCP port list, for example 5151,8081,8082.",
     ),
     source: str = typer.Option(
-        "0.0.0.0/0",
+        ...,
         "--source",
         help="Source CIDR allowed to reach the requested ports.",
+    ),
+    allow_world_open: bool = typer.Option(
+        False,
+        "--allow-world-open",
+        help="Acknowledge that a /0 source exposes the ports to the world.",
     ),
     tool: str = typer.Option(
         "manual",
@@ -169,12 +174,15 @@ def ensure_ingress(
         raise typer.BadParameter(str(exc), param_hint="--ports") from exc
 
     try:
+        from npa.cli.ingress import validate_ingress_source
+
         result = ensure_ingress_impl(
             vm_id=vm,
             ip=ip,
             project_id=project,
             ports=parsed_ports,
-            source=source,
+            source=validate_ingress_source(source, allow_world_open=allow_world_open),
+            allow_world_open=allow_world_open,
             tool=tool,
         )
     except NetworkIngressError as exc:

@@ -125,6 +125,9 @@ RUN set -eux; \
     test ! -e .venv/lib/python3.10/site-packages/matplotlib/mpl-data/sample_data; \
     test ! -e .venv/lib/python3.10/site-packages/skimage/data; \
     test ! -e .venv/lib/python3.10/site-packages/wandb/bin; \
+    find .venv -type f -path '*/imageio_ffmpeg/binaries/ffmpeg*' -delete; \
+    test -z "$(find .venv -type f \
+      -path '*/imageio_ffmpeg/binaries/ffmpeg*' -print -quit)"; \
     test "$(readlink -f .venv/bin/python)" = \
       "$(find "${UV_PYTHON_INSTALL_DIR}" -path '*/bin/python3.10' -type f -print -quit)"; \
     ! grep -q '/root' .venv/pyvenv.cfg; \
@@ -231,12 +234,19 @@ COPY docker/workbench/cosmos2-transfer/REDISTRIBUTION.md \
 # require CLI/viewer extras.
 ENV NPA_SKIP_EAGER_IMPORTS=1 \
     PYTHONPATH=/opt/npa/src \
-    NPA_BAKED_PYTHON=/opt/cosmos/cosmos-transfer2.5/.venv/bin/python
+    NPA_BAKED_PYTHON=/opt/cosmos/cosmos-transfer2.5/.venv/bin/python \
+    IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg
 
 # Deliberately shadow the global python3: SkyPilot and orchestrator-supplied
 # commands invoke python3; /usr/bin/python3 remains available to system tooling.
 RUN set -eux; \
     test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40; \
+    find /opt/cosmos/cosmos-transfer2.5/.venv \
+      -type f -path '*/imageio_ffmpeg/binaries/ffmpeg*' -delete; \
+    test -z "$(find /opt/cosmos/cosmos-transfer2.5/.venv \
+      -type f -path '*/imageio_ffmpeg/binaries/ffmpeg*' -print -quit)"; \
+    /opt/cosmos/cosmos-transfer2.5/.venv/bin/python -c \
+      'import imageio_ffmpeg; assert imageio_ffmpeg.get_ffmpeg_exe() == "/usr/bin/ffmpeg"'; \
     id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu; \
     ln -sfn /opt/npa/src/npa \
       /opt/cosmos/cosmos-transfer2.5/.venv/lib/python3.10/site-packages/npa; \

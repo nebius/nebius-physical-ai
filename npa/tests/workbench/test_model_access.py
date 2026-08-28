@@ -37,7 +37,7 @@ def _public_asset():
 
 
 def test_catalog_matches_current_nvidia_hf_gating() -> None:
-    assert HF_GATING_LAST_VERIFIED == "2026-08-17"
+    assert HF_GATING_LAST_VERIFIED == "2026-08-25"
     repos = {a.repo for a in WORKBENCH_ASSETS}
     assert "nvidia/GR00T-N1.7-3B" in repos
     assert "nvidia/Alpamayo2-Super" in repos
@@ -408,7 +408,7 @@ def test_catalog_covers_light_default_constants() -> None:
         tf.DEFAULT_TEXT_MODEL,
         tf.DEFAULT_VISION_MODEL,
         constants.DEFAULT_REASON2_MODEL,
-        constants.DEFAULT_REASON3_MODEL,
+        constants.DEFAULT_COSMOS3_MODEL,
         constants.DEFAULT_REFERENCE_VLM_MODEL,
     }
     # DEFAULT_LEROBOT_DATASET_ID names the S3 task-seed contract, not a model

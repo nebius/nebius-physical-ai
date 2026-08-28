@@ -246,6 +246,17 @@ def _task_conditioned_transfer_input(
         for path in input_dir.rglob("camera-*.png")
         if path.stem.removeprefix("camera-").isdigit()
     )
+    if not primary:
+        # The task-seed contract publishes ordinary trajectory frames as
+        # ``frame-N.png``; real Isaac rollout artifacts use ``camera-N.png``.
+        # Both are primary-camera observations. Prefer the explicit Isaac name
+        # when present, then accept only strictly numbered seed frames rather
+        # than broadening discovery to arbitrary PNG assets under the trigger.
+        primary = sorted(
+            path
+            for path in input_dir.rglob("frame-*.png")
+            if path.stem.removeprefix("frame-").isdigit()
+        )
     if len(primary) < 4:
         raise Sim2RealLoopError(
             "task-aligned seed dataset must contain at least four primary Isaac "

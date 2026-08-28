@@ -14,7 +14,7 @@ prepare-run  Prepare a project/workflow-scoped fresh or explicit-resume run ID.
 submit  Submit a SkyPilot or npa.workflow/v0.0.1 YAML through the NPA controller.
 run  Run a named workflow end-to-end.
 status  Check the status of a workflow run.
-logs  Show logs for a specific stage of a workflow run.
+logs  Show a bounded log tail for a specific stage of a workflow run.
 artifacts  List durable S3 artifact URIs for a workflow run.
 load-artifact  Retry only the final artifact load; never relaunch workflow stages.
 list  List durable S3 workflow runs.
@@ -44,7 +44,7 @@ trigger  Watch S3-compatible data prefixes and retrigger Workbench workflows.
 | `submit` | Submit a SkyPilot or npa.workflow/v0.0.1 YAML through the NPA controller. |
 | `run` | Run a named workflow end-to-end. |
 | `status` | Check the status of a workflow run. |
-| `logs` | Show logs for a specific stage of a workflow run. |
+| `logs` | Show a bounded log tail for a specific stage of a workflow run. |
 | `artifacts` | List durable S3 artifact URIs for a workflow run. |
 | `load-artifact` | Retry only the final artifact load; never relaunch workflow stages. |
 | `list` | List durable S3 workflow runs. |

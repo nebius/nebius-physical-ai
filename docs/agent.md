@@ -37,6 +37,18 @@ npa agent fresh-setup --project <alias> \
   --project-id <project-id> --tenant-id <tenant-id> --region <region>
 ```
 
+By default, the preflight also reserves quota for the canonical follow-on GPU
+cluster so a successful VM does not make the next quickstart step impossible.
+When the agent UI is intentionally the only new infrastructure, or a separately
+managed cluster has already been prepared, pass `--agent-only` to check and
+provision only the VM's capacity:
+
+```bash
+npa agent fresh-setup --project <alias> \
+  --project-id <project-id> --tenant-id <tenant-id> --region <region> \
+  --agent-only
+```
+
 `fresh-setup` provisions the VM with Terraform. `npa agent bootstrap` refreshes
 only the UI/backend/nginx layer on an existing VM, without touching infra.
 
