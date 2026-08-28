@@ -1668,23 +1668,21 @@ def _wait_for_healthy_jobs_controller(
         probe = execution_probe(name)
         if probe.healthy:
             return probe
-        # A STOPPED controller legitimately may have no pod yet; the ensuing
-        # SkyPilot ensure path will create one. Any pod that does exist must pass
-        # the cwd probe before that ensure path is allowed to reuse it.
+        # Kubernetes may remove the controller pod after a managed workload is
+        # cleaned up while SkyPilot's cache still says UP (or STOPPED).  The
+        # ensuing SkyPilot ensure path recreates an absent pod. Any pod that does
+        # exist must pass the readiness/cwd probe before it may be reused.
         if (
-            state is ControllerState.STOPPED
+            state in {ControllerState.UP, ControllerState.STOPPED}
             and probe.outcome == "head_pod_ambiguous"
             and probe.pod_count == 0
         ):
             return ControllerExecutionProbe(True, "controller_absent", pod_count=0)
-        if state is ControllerState.UP and (
-            (probe.outcome == "head_pod_ambiguous" and probe.pod_count == 0)
-            or probe.outcome == "head_pod_not_ready"
-        ):
+        if state is ControllerState.UP and probe.outcome == "head_pod_not_ready":
             # SkyPilot may replace the controller pod immediately after a
             # managed workload is cleaned up while its cached state still says
             # UP. Let the normal preflight deadline bound that lifecycle race;
-            # a truly missing cached controller then fails actionably.
+            # an existing pod must become ready before reuse.
             return probe
         raise SkyPilotSubmitError(
             "SkyPilot jobs controller execution health check failed: "
@@ -1700,8 +1698,17 @@ def _wait_for_healthy_jobs_controller(
     last_summary = "no jobs-controller found" if require_existing else ""
     unhealthy: list[tuple[str, str]] = []
     while True:
+        # Kubernetes has a stronger source of truth below: the exact controller
+        # pod is selected and its readiness/cwd are probed directly.  Avoid a
+        # global SkyPilot refresh in that case because it also refreshes every
+        # cached workload cluster and can block controller preflight for minutes
+        # after a completed job has already been cleaned up.
+        status_args = [sky_executable, "status"]
+        if execution_probe is None:
+            status_args.append("--refresh")
+        status_args.extend(["--output", "json"])
         result = subprocess.run(
-            [sky_executable, "status", "--refresh", "--output", "json"],
+            status_args,
             env=env,
             cwd=cwd,
             text=True,
@@ -1710,8 +1717,12 @@ def _wait_for_healthy_jobs_controller(
             timeout=min(max(timeout, 1), 300),
             check=False,
         )
-        if result.returncode != 0 and _can_ignore_foreign_controller_refresh(
-            result, env
+        if (
+            "--refresh" in status_args
+            and result.returncode != 0
+            and _can_ignore_foreign_controller_refresh(
+                result, env
+            )
         ):
             # A Kubernetes cloud can expose a controller from another namespace
             # while this process has an explicit, distinct SkyPilot user ID.  A

@@ -114,7 +114,7 @@ def test_submit_workflow_loads_yaml_applies_controller_and_calls_subprocess(
 
     assert result.status == "SUBMITTED"
     assert result.job_id == "42"
-    assert calls[0][0] == [str(sky_bin), "status", "--refresh", "--output", "json"]
+    assert calls[0][0] == [str(sky_bin), "status", "--output", "json"]
     cmd, kwargs = calls[1]
     assert cmd[:5] == [str(sky_bin), "jobs", "launch", "--name", "run-abc"]
     assert "--config" not in cmd
@@ -754,7 +754,7 @@ def test_submit_workflow_require_controller_up_uses_canonical_preflight(
 
     def fake_run(cmd, **kwargs):
         calls.append(cmd)
-        if cmd[1:4] == ["status", "--refresh", "--output"]:
+        if _is_status_cmd(cmd):
             stdout = '[{"name": "sky-jobs-controller-abc123", "status": "UP"}]'
             return subprocess.CompletedProcess(cmd, 0, stdout=stdout, stderr="")
         return subprocess.CompletedProcess(
@@ -779,7 +779,7 @@ def test_submit_workflow_require_controller_up_uses_canonical_preflight(
     )
 
     assert result.job_id == "77"
-    assert calls[0] == [str(sky_bin), "status", "--refresh", "--output", "json"]
+    assert calls[0] == [str(sky_bin), "status", "--output", "json"]
     assert calls[1][:5] == [str(sky_bin), "jobs", "launch", "--name", "run-guard"]
 
 
@@ -810,7 +810,7 @@ def test_submit_workflow_require_controller_up_blocks_missing_controller(
             controller_preflight_interval=0,
         )
 
-    assert calls == [[str(sky_bin), "status", "--refresh", "--output", "json"]]
+    assert calls == [[str(sky_bin), "status", "--output", "json"]]
 
 
 def test_submit_workflow_blocks_unhealthy_existing_jobs_controller(
@@ -849,7 +849,7 @@ def test_submit_workflow_blocks_unhealthy_existing_jobs_controller(
             controller_preflight_interval=0,
         )
 
-    assert calls == [[str(sky_bin), "status", "--refresh", "--output", "json"]]
+    assert calls == [[str(sky_bin), "status", "--output", "json"]]
     assert not owned_dir.exists()
 
 
@@ -886,7 +886,7 @@ def test_submit_workflow_controller_preflight_parses_warning_prefixed_json(
             controller_preflight_interval=0,
         )
 
-    assert calls == [[str(sky_bin), "status", "--refresh", "--output", "json"]]
+    assert calls == [[str(sky_bin), "status", "--output", "json"]]
 
 
 def test_workflow_status_reads_json_queue(monkeypatch, tmp_path) -> None:
@@ -1165,34 +1165,61 @@ def test_controller_up_is_rejected_when_execution_probe_fails(monkeypatch) -> No
     assert "npa skypilot cleanup-controller" in message
 
 
-def test_controller_up_waits_for_replacement_head_pod(monkeypatch) -> None:
-    monkeypatch.setattr(workflow_module.subprocess, "run", _controller_status_run("UP"))
-    probes = iter(
-        (
-            workflow_module.ControllerExecutionProbe(
-                False,
-                "head_pod_ambiguous",
-                pod_count=0,
-                error="expected one controller head pod, found 0",
-            ),
-            workflow_module.ControllerExecutionProbe(True, "cwd_live", pod_count=1),
-        )
+def test_controller_up_allows_recreation_when_cleaned_up_pod_is_absent(
+    monkeypatch,
+) -> None:
+    calls: list[list[str]] = []
+
+    def status_run(cmd, **_kwargs):
+        calls.append(cmd)
+        return _controller_status_run("UP")(cmd)
+
+    monkeypatch.setattr(workflow_module.subprocess, "run", status_run)
+    probe = workflow_module.ControllerExecutionProbe(
+        False,
+        "head_pod_ambiguous",
+        pod_count=0,
+        error="expected one controller head pod, found 0",
     )
 
     result = workflow_module._wait_for_healthy_jobs_controller(
         "sky",
         env={"SKYPILOT_USER_ID": "abc123"},
-        timeout=1,
+        timeout=0,
         interval=0.01,
-        execution_probe=lambda _name: next(probes),
+        execution_probe=lambda _name: probe,
     )
 
     assert result.state is workflow_module.ControllerState.UP
     assert result.execution_probe is not None
-    assert result.execution_probe.outcome == "cwd_live"
+    assert result.execution_probe.outcome == "controller_absent"
+    assert calls
+    assert all("--refresh" not in cmd for cmd in calls)
 
 
-def test_controller_up_missing_head_pod_fails_at_preflight_deadline(
+def test_controller_status_refresh_is_retained_without_execution_probe(
+    monkeypatch,
+) -> None:
+    calls: list[list[str]] = []
+
+    def status_run(cmd, **_kwargs):
+        calls.append(cmd)
+        return _controller_status_run("UP")(cmd)
+
+    monkeypatch.setattr(workflow_module.subprocess, "run", status_run)
+
+    result = workflow_module._wait_for_healthy_jobs_controller(
+        "sky",
+        env={"SKYPILOT_USER_ID": "abc123"},
+        timeout=0,
+        interval=0.01,
+    )
+
+    assert result.state is workflow_module.ControllerState.UP
+    assert calls == [["sky", "status", "--refresh", "--output", "json"]]
+
+
+def test_controller_up_not_ready_head_pod_fails_at_preflight_deadline(
     monkeypatch,
 ) -> None:
     monkeypatch.setattr(workflow_module.subprocess, "run", _controller_status_run("UP"))
@@ -1205,9 +1232,9 @@ def test_controller_up_missing_head_pod_fails_at_preflight_deadline(
             interval=0.01,
             execution_probe=lambda _name: workflow_module.ControllerExecutionProbe(
                 False,
-                "head_pod_ambiguous",
-                pod_count=0,
-                error="expected one controller head pod, found 0",
+                "head_pod_not_ready",
+                pod_count=1,
+                error="controller head pod is not Ready",
             ),
         )
 
