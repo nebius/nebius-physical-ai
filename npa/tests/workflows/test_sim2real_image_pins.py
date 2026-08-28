@@ -163,6 +163,12 @@ def test_cpu_controller_is_small_pinned_and_resolver_closed() -> None:
     ]
     assert lines
     assert all(line.count("==") == 1 for line in lines)
+    assert "httpx==0.28.1" in lines
+    assert "PyYAML==6.0.3" in lines
+    assert "from npa.clients.token_factory import TokenFactoryClient" in dockerfile
+    assert "NEBIUS_TOKEN_FACTORY_KEY" in dockerfile
+    assert "build-smoke" in dockerfile
+    assert "TokenFactoryClient()" in dockerfile
 
 
 def test_isaac_cache_warmer_is_nonroot_and_uses_fs_group() -> None:

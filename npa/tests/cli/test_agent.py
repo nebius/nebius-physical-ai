@@ -3542,9 +3542,13 @@ def test_bootstrap_emitted_ui_script_is_valid_javascript(monkeypatch) -> None:
     assert shell_proc.returncode == 0, shell_proc.stderr
     assert "RERUN_CAPABILITY_NAME_RE" in setup_script
     assert "RERUN_RECORDING_HTTP_PATH" not in setup_script
-    assert 'sim_viz["served_recording_sha256"] = hashlib.sha256(' in setup_script
+    assert 'sim_viz["served_recording_sha256"] = _sha256_file(' in setup_script
+    assert 'sim_viz["served_recording_size_bytes"] = RECORDING_PATH.stat().st_size' in setup_script
     assert 'sim_viz.pop("served_recording_sha256", None)' in setup_script
-    assert "hashlib.sha256(recording_bytes).hexdigest() == bound_sha256" in setup_script
+    assert 'sim_viz.pop("served_recording_size_bytes", None)' in setup_script
+    assert 'stream.read(4) == b"RRF2"' in setup_script
+    assert "recording_size == bound_size" in setup_script
+    assert 'and _served_recording_is_run_specific()' in setup_script
     html_match = re.search(
         r"cat <<'HTML' \| sudo tee /opt/npa-agent/ui\.html >/dev/null\n(?P<html>.*?)\nHTML",
         setup_script,

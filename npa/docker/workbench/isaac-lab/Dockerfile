@@ -43,8 +43,8 @@ LABEL npa.tool="isaac-lab" \
       npa.isaac_lab_release_channel="beta" \
       npa.isaac_provisioning="runtime-fetch" \
       npa.architecture="no-baked-omniverse-kit" \
-      org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1" \
-      org.opencontainers.image.revision="${NPA_SOURCE_SHA}"
+      org.opencontainers.image.revision="${NPA_SOURCE_SHA}" \
+      org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"
 
 # NOTE the absence of ACCEPT_EULA / ISAACSIM_ACCEPT_EULA / OMNI_KIT_ACCEPT_EULA /
 # PRIVACY_CONSENT. Every one of those used to be baked here. They are now the operator's

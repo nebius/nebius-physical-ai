@@ -75,7 +75,7 @@ RUN test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
       /opt/npa/src/npa/workflows/sim2real/stage14_finalize.py \
       /opt/npa/src/npa/workflows/sim2real/workflow_io.py \
       /opt/npa/src/npa/workflows/sim2real/workflow_stage.py \
-    && env -u PYTHONPATH python -c "import boto3; from npa.workflows.sim2real.workflow_stage import main; assert callable(main)" \
+    && env -u PYTHONPATH python -c "import os; os.environ['NEBIUS_TOKEN_FACTORY_KEY']='build-smoke'; import boto3, httpx, yaml; from npa.clients.token_factory import TokenFactoryClient; from npa.workflows.sim2real.workflow_stage import main; assert callable(main); TokenFactoryClient()" \
     && chown -R ubuntu:ubuntu /workspace
 
 USER ubuntu

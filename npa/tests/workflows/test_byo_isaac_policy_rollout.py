@@ -89,6 +89,16 @@ def test_latest_checkpoint_uri_empty_inputs():
     assert pr.latest_checkpoint_uri("bucket", "") == ""
 
 
+def test_camera_coverage_tracks_decision_points_plus_terminal_frame():
+    assert pr._expected_camera_frame_count(
+        {
+            "decision_points": 32,
+            "horizon_steps": 300,
+            "rollout_stride": 1,
+        }
+    ) == 33
+
+
 def test_write_dryrun_rollouts_layout(tmp_path):
     dirs = pr.write_dryrun_rollouts(
         tmp_path, count=3, steps_per_rollout=4, checkpoint_uri=""

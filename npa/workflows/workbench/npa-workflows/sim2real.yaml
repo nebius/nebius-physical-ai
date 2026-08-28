@@ -169,9 +169,9 @@ resources:
             - name: ray-node
               resources:
                 requests:
-                  ephemeral-storage: 8Gi
+                  ephemeral-storage: 24Gi
                 limits:
-                  ephemeral-storage: 16Gi
+                  ephemeral-storage: 48Gi
 
 initial: stage-01-trigger
 

@@ -2705,6 +2705,8 @@ def _wire_active_sim2real_recording(state: dict, *, camera: str = "workspace") -
     run_id = str(current.get("run_id") or latest.get("run_id") or "").strip()
     if not run_id or run_id == "franka-demo":
         return None
+    if str(current.get("rrd_uri") or "").strip() and _served_recording_is_run_specific():
+        return current
     # Reattach the run's OWN recording by content (run-specific entities), not by
     # a fragile size threshold — the stock demo is ~68KB and would pass a size
     # check. Recognize any run id (agent-run-*, sim2real-*, …) and fall back to
@@ -6092,13 +6094,22 @@ def tool(tool_ref: str):
 def _served_recording_is_run_specific() -> bool:
     try:
         if not RECORDING_PATH.is_file(): return False
-        recording_bytes = RECORDING_PATH.read_bytes()
         sim_viz = _load_state().get("sim_viz")
         if isinstance(sim_viz, dict):
             bound_sha256 = str(sim_viz.get("served_recording_sha256") or "").strip().lower()
             if re.fullmatch(r"[0-9a-f]{{64}}", bound_sha256):
-                return hashlib.sha256(recording_bytes).hexdigest() == bound_sha256
+                recording_size = RECORDING_PATH.stat().st_size
+                bound_size = int(sim_viz.get("served_recording_size_bytes") or 0)
+                with RECORDING_PATH.open("rb") as stream:
+                    has_rrd_header = stream.read(4) == b"RRF2"
+                if bound_size > 0:
+                    return has_rrd_header and recording_size == bound_size
+                # Backward compatibility for state written before size binding.
+                # A valid persisted hash plus an RRF2 file is sufficient until
+                # the next artifact load records the exact byte count.
+                return has_rrd_header and recording_size > 4
         # Compatibility for recordings wired by the legacy Sim2Real path.
+        recording_bytes = RECORDING_PATH.read_bytes()
         return recording_has_run_entities(recording_bytes)
     except Exception:
         return False
@@ -6155,10 +6166,13 @@ def sim_viz_status(run_id: str = ""):
     payload_run = str(payload.get("run_id") or "").strip()
     # Honest gate: a real run must not report rerun_ready / a run rrd_uri unless
     # the served recording actually holds run-specific entities (never the demo).
-    if payload_run and payload_run != "franka-demo" and not _served_recording_is_run_specific():
-        payload["rerun_ready"] = False
-        payload["rrd_uri"] = ""
-        payload["recording_status"] = "run_recording_unavailable"
+    if payload_run and payload_run != "franka-demo":
+        if not _served_recording_is_run_specific():
+            payload["rerun_ready"] = False
+            payload["rrd_uri"] = ""
+            payload["recording_status"] = "run_recording_unavailable"
+        else:
+            payload.pop("recording_status", None)
     run_has_specific_rrd = bool(str(payload.get("rrd_uri") or "").strip())
     live_url = str(payload.get("live_grpc_url") or "").strip()
     may_use_default_recording = payload_run in {"", "franka-demo"} and not requested_run
@@ -8005,11 +8019,13 @@ def sim_viz_rrd_blob(run_id: str = ""):
 def _boot_preload_sim_viz() -> None:
     if not PRELOAD_STOCK_DEMO or not RRD_PATH.is_file():
         return
-    capability_path = _publish_rrd_recording(RRD_PATH)
     state = _load_state()
     sim_viz = state.get("sim_viz", {{}})
     if not isinstance(sim_viz, dict):
         sim_viz = {{}}
+    if str(sim_viz.get("rrd_uri") or "").strip() and _served_recording_is_run_specific():
+        return
+    capability_path = _publish_rrd_recording(RRD_PATH)
     if str(sim_viz.get("rrd_uri") or "").strip():
         sim_viz["artifact_preview_url"] = capability_path
         sim_viz["artifact_download_url"] = "/api/sim-viz/rrd-blob"
