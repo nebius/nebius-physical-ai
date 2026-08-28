@@ -237,6 +237,7 @@ RUN cd "${GROOT_REPO}" \
       pyyaml==6.0.3 \
       rich==15.0.0 \
       jinja2==3.1.6 \
+      "mcap>=1.3,<2" \
     && uv pip install --python "${GROOT_VENV}/bin/python" --no-deps --upgrade \
       "GitPython>=3.1.50" \
       "PyJWT>=2.13.0" \
@@ -318,15 +319,24 @@ RUN uv pip install --python "${GROOT_VENV}/bin/python" --no-deps -e /opt/npa \
       workbench groot finetune --help >/dev/null \
     && "${GROOT_VENV}/bin/python" - <<'PY'
 import os
+from io import BytesIO
 from importlib import metadata
 from pathlib import Path
 
+from mcap.reader import make_reader
+from mcap.writer import Writer
 from npa.cli.groot import DEFAULT_EMBODIMENT_TAG, DEFAULT_MODEL, _build_server_py
 
 expected = os.environ["GROOT_RUNTIME_VERSION"]
 actual = metadata.version("gr00t")
 if actual != expected:
     raise RuntimeError(f"expected gr00t {expected}, found {actual}")
+buffer = BytesIO()
+writer = Writer(buffer)
+writer.start(profile="", library="npa-groot-build-smoke")
+writer.finish()
+if make_reader(BytesIO(buffer.getvalue())).get_summary() is None:
+    raise RuntimeError("GR00T image could not write and read a native MCAP recording")
 Path("/opt/groot/server.py").write_text(_build_server_py(DEFAULT_MODEL, DEFAULT_EMBODIMENT_TAG))
 print(f"GROOT_BUILD_IMPORT_OK {actual}")
 PY
