@@ -222,6 +222,7 @@ def _probe_local_api_daemon_cwd(
     proc_root: Path = Path("/proc"),
     uid: int | None = None,
     expected_home: str = "",
+    expected_user_id: str = "",
 ) -> ApiDaemonCwdProbe:
     """Inspect the actual local API daemon and descendants through procfs.
 
@@ -355,6 +356,17 @@ def _probe_local_api_daemon_cwd(
                     "isolated runtime"
                 ),
             )
+        daemon_user_id = environment.get("SKYPILOT_USER_ID", "").strip()
+        if expected_user_id and daemon_user_id != expected_user_id:
+            return ApiDaemonCwdProbe(
+                False,
+                "stale_runtime_environment",
+                process_count=len(roots),
+                error=(
+                    "local SkyPilot API server user identity does not match the "
+                    "requested runtime"
+                ),
+            )
 
     process_tree = set(roots)
     changed = True
@@ -407,7 +419,9 @@ def _ensure_local_api_daemon_cwd(
 
     inspect = probe or (
         lambda: _probe_local_api_daemon_cwd(
-            sky_executable, expected_home=str(env.get("HOME") or "")
+            sky_executable,
+            expected_home=str(env.get("HOME") or ""),
+            expected_user_id=str(env.get("SKYPILOT_USER_ID") or ""),
         )
     )
     before = inspect()
