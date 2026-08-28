@@ -117,9 +117,18 @@ def test_prepublication_gates_run_before_the_public_dev_push() -> None:
 
 def test_public_image_workflow_preserves_large_image_security_scans() -> None:
     text = PUBLISH.read_text(encoding="utf-8")
+    steps = _spec(PUBLISH)["jobs"]["build-development"]["steps"]
+    trivy_steps = [
+        step
+        for step in steps
+        if step.get("uses") == "aquasecurity/trivy-action@v0.36.0"
+    ]
+
     assert "docker buildx prune --all --force" in text
     assert text.count("TMPDIR: /mnt/npa-trivy") == 2
     assert "scanners: vuln,secret,license" in text
+    assert len(trivy_steps) == 2
+    assert all(step["with"]["timeout"] == "30m" for step in trivy_steps)
 
 
 def test_post_push_and_promotion_gates_are_digest_bound() -> None:

@@ -338,6 +338,7 @@ jobs:
           severity: CRITICAL
           exit-code: "1"
           ignore-unfixed: true
+          timeout: 30m
           format: table
 
       - name: Generate pre-publication SBOM
@@ -347,6 +348,7 @@ jobs:
         with:
           image-ref: ${{ matrix.image }}
           scanners: vuln
+          timeout: 30m
           format: spdx-json
           output: ${{ runner.temp }}/${{ matrix.tool }}-sbom.spdx.json
 
