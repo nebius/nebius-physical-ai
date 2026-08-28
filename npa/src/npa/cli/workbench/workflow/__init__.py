@@ -868,6 +868,21 @@ def submit_cmd(
         return
     s3_endpoint = submit_credentials.endpoint_url
     extra_env: dict[str, str] = dict(submit_credentials.secret_values)
+    # Storage is an intrinsic runtime dependency for npa.workflow specs, not an
+    # optional user-requested secret.  The writable-storage preflight already
+    # uses these project-scoped values; keep the local ledger and every runtime
+    # wave on that same credential boundary without requiring callers to repeat
+    # AWS credential names via --secret-env.
+    resolved_access_key = str(getattr(submit_credentials, "access_key_id", "") or "")
+    resolved_secret_key = str(
+        getattr(submit_credentials, "secret_access_key", "") or ""
+    )
+    if resolved_access_key:
+        extra_env.setdefault("AWS_ACCESS_KEY_ID", resolved_access_key)
+    if resolved_secret_key:
+        extra_env.setdefault(
+            "AWS_SECRET_ACCESS_KEY", resolved_secret_key
+        )
     missing_secrets = list(submit_credentials.missing)
     if checkpoint_access_required and "HF_TOKEN" in missing_secrets:
         missing_secrets.remove("HF_TOKEN")
