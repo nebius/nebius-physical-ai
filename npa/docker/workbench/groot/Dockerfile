@@ -121,7 +121,8 @@ WORKDIR /opt/groot
 
 ENV PATH=/home/ubuntu/.local/bin:/opt/groot/Isaac-GR00T/.venv/bin:$PATH \
     PYTHONPATH=/opt/npa/src \
-    NPA_SKIP_EAGER_IMPORTS=1
+    NPA_SKIP_EAGER_IMPORTS=1 \
+    NPA_LIGHT_WORKBENCH_TOOL=groot
 
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
     && git lfs install \
@@ -313,6 +314,8 @@ COPY --chown=ubuntu:ubuntu docker/workbench/groot/entrypoint.sh /opt/npa/docker/
 RUN chmod 0755 /opt/npa/docker/workbench/groot/entrypoint.sh
 
 RUN uv pip install --python "${GROOT_VENV}/bin/python" --no-deps -e /opt/npa \
+    && "${GROOT_VENV}/bin/python" -c 'from npa.cli.entry import main; main()' \
+      workbench groot finetune --help >/dev/null \
     && "${GROOT_VENV}/bin/python" - <<'PY'
 import os
 from importlib import metadata
