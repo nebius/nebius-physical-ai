@@ -765,6 +765,42 @@ def test_skypilot_controller_cleanup_requires_confirmation_and_is_npa_only(
     assert json.loads(failed.output)["outcome"] == "verification_failed"
 
 
+def test_skypilot_controller_cleanup_forwards_explicit_orphan_recovery_attestation(
+    monkeypatch,
+) -> None:
+    from types import SimpleNamespace
+
+    calls: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.cleanup.cleanup_jobs_controller",
+        lambda **kwargs: calls.append(kwargs)
+        or SimpleNamespace(ok=True, resources_removed=[], errors=[], commands=[]),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "skypilot",
+            "cleanup-controller",
+            "--yes",
+            "--recover-orphan-controller",
+            "--attest-no-active-jobs",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert calls == [
+        {
+            "project": "",
+            "context": "",
+            "sky_bin": None,
+            "recover_orphan_controller": True,
+            "attest_no_active_jobs": True,
+        }
+    ]
+
+
 def test_skypilot_uninstall_refuses_to_delete_the_npa_environment(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

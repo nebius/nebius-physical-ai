@@ -382,6 +382,22 @@ def cleanup_controller_cmd(
     project_id: str = typer.Option("", "--project-id", help="Exact Nebius project ID."),
     cluster_id: str = typer.Option("", "--cluster-id", help="Exact immutable cluster ID."),
     cluster_name: str = typer.Option("", "--cluster-name", help="Exact provider cluster name."),
+    recover_orphan_controller: bool = typer.Option(
+        False,
+        "--recover-orphan-controller",
+        help=(
+            "Delete exact controller pods when verified NPA ownership exists but "
+            "SkyPilot metadata is absent; requires --attest-no-active-jobs."
+        ),
+    ),
+    attest_no_active_jobs: bool = typer.Option(
+        False,
+        "--attest-no-active-jobs",
+        help=(
+            "Attest that exact workflow status/cancel evidence proves no active "
+            "managed jobs before orphan-controller recovery."
+        ),
+    ),
     output_json: bool = typer.Option(
         False, "--json", help="Emit a machine-readable result."
     ),
@@ -417,6 +433,11 @@ def cleanup_controller_cmd(
             "context": context,
             "sky_bin": sky_bin or None,
         }
+        if recover_orphan_controller or attest_no_active_jobs:
+            cleanup_kwargs.update(
+                recover_orphan_controller=recover_orphan_controller,
+                attest_no_active_jobs=attest_no_active_jobs,
+            )
         cleanup_kwargs.update(
             {
                 key: value

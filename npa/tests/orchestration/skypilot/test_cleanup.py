@@ -697,6 +697,53 @@ def test_controller_pod_inventory_never_directly_deletes_a_lingering_pod(
     assert not any("delete" in call for call in calls)
 
 
+def test_orphan_controller_recovery_deletes_only_exact_discovered_pod(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    kubeconfig = tmp_path / "kubeconfig"
+    kubeconfig.write_text("{}\n", encoding="utf-8")
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, **_kwargs):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, stdout="deleted", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    commands, error = cleanup_module._delete_orphan_controller_pods(
+        [("controller-ns", "exact-head", "sky-jobs-controller-owned")],
+        kubeconfig=kubeconfig,
+        context="verified",
+    )
+
+    assert error == ""
+    assert commands == calls
+    assert calls == [
+        [
+            "kubectl",
+            "--context",
+            "verified",
+            "delete",
+            "pod",
+            "exact-head",
+            "--namespace",
+            "controller-ns",
+            "--wait=true",
+            "--timeout=180s",
+        ]
+    ]
+
+
+def test_orphan_controller_recovery_requires_both_explicit_safety_flags() -> None:
+    result = cleanup_module.cleanup_jobs_controller(
+        recover_orphan_controller=True,
+        attest_no_active_jobs=False,
+    )
+
+    assert result.outcome == "unsafe"
+    assert result.commands == []
+    assert "requires both" in result.errors[0]
+
+
 def test_no_code_path_sets_autostop_down_true() -> None:
     sources = "\n".join(
         [
