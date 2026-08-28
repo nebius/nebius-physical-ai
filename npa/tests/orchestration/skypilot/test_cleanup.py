@@ -599,6 +599,20 @@ def test_jobs_controller_inventory_discovers_exact_name_without_refresh(
     assert error == ""
 
 
+def test_controller_pod_scope_excludes_unrelated_shared_controller() -> None:
+    pods = [
+        ("default", "shared-head", "sky-jobs-controller-shared"),
+        ("default", "target-head", "sky-jobs-controller-target"),
+    ]
+    clusters = [{"name": "sky-jobs-controller-target", "status": "UP"}]
+
+    targeted = cleanup_module._controller_pods_for_clusters(pods, clusters)
+
+    assert targeted == [
+        ("default", "target-head", "sky-jobs-controller-target")
+    ]
+
+
 def test_exact_context_controller_pod_inventory_can_prove_absence(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:

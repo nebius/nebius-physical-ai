@@ -420,6 +420,8 @@ def cleanup_jobs_controller(
         _record_controller_result(identity, cleanup, "verification_failed")
         return cleanup
     controller_clusters = context_clusters
+    remote_pods = _controller_pods_for_clusters(remote_pods, controller_clusters)
+    remote_names = {item[2] for item in remote_pods if item[2]}
     # Unrelated controller rows are deliberately ignored; they are neither
     # targets nor cleanup results for this exact project/context transaction.
     if controller_clusters:
@@ -545,6 +547,16 @@ def cleanup_jobs_controller(
         remote_pods=[],
     )
     return cleanup
+
+
+def _controller_pods_for_clusters(
+    remote_pods: Sequence[tuple[str, str, str]],
+    controller_clusters: Sequence[dict[str, Any]],
+) -> list[tuple[str, str, str]]:
+    """Keep only remote pods owned by the selected controller metadata rows."""
+
+    target_names = {_cluster_name(item) for item in controller_clusters}
+    return [item for item in remote_pods if item[2] in target_names]
 
 
 def _record_remote_controller_absence(identity: Any, cleanup: CleanupResult) -> bool:
