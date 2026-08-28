@@ -448,6 +448,38 @@ def test_local_api_daemon_probe_rejects_deleted_inherited_global_config(
     assert result.outcome == "stale_global_config"
 
 
+def test_local_api_daemon_probe_rejects_mismatched_isolated_home(tmp_path) -> None:
+    proc_root = tmp_path / "proc"
+    bin_dir = tmp_path / "venv" / "bin"
+    bin_dir.mkdir(parents=True)
+    sky = bin_dir / "sky"
+    python = bin_dir / "python"
+    sky.touch()
+    python.touch()
+    durable = tmp_path / "durable"
+    durable.mkdir()
+    _fake_proc_process(
+        proc_root,
+        pid=100,
+        ppid=1,
+        uid=1234,
+        cmdline=(str(python), "-m", "sky.server.server"),
+        cwd=durable,
+        environment={"HOME": str(tmp_path / "operator-home")},
+    )
+
+    result = workflow_module._probe_local_api_daemon_cwd(
+        str(sky),
+        proc_root=proc_root,
+        uid=1234,
+        expected_home=str(tmp_path / "isolated-home"),
+    )
+
+    assert result.healthy is False
+    assert result.outcome == "stale_runtime_environment"
+    assert result.process_count == 1
+
+
 def test_deleted_api_daemon_is_restarted_from_durable_cwd() -> None:
     probes = iter(
         (

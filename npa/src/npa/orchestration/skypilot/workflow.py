@@ -221,6 +221,7 @@ def _probe_local_api_daemon_cwd(
     *,
     proc_root: Path = Path("/proc"),
     uid: int | None = None,
+    expected_home: str = "",
 ) -> ApiDaemonCwdProbe:
     """Inspect the actual local API daemon and descendants through procfs.
 
@@ -341,6 +342,19 @@ def _probe_local_api_daemon_cwd(
                     "which no longer exists"
                 ),
             )
+        daemon_home = environment.get("HOME", "").strip()
+        if expected_home and Path(daemon_home).expanduser().absolute() != Path(
+            expected_home
+        ).expanduser().absolute():
+            return ApiDaemonCwdProbe(
+                False,
+                "stale_runtime_environment",
+                process_count=len(roots),
+                error=(
+                    "local SkyPilot API server HOME does not match the requested "
+                    "isolated runtime"
+                ),
+            )
 
     process_tree = set(roots)
     changed = True
@@ -391,11 +405,19 @@ def _ensure_local_api_daemon_cwd(
 ) -> ApiDaemonCwdProbe:
     """Restart a poisoned local API daemon from NPA's durable cwd."""
 
-    inspect = probe or (lambda: _probe_local_api_daemon_cwd(sky_executable))
+    inspect = probe or (
+        lambda: _probe_local_api_daemon_cwd(
+            sky_executable, expected_home=str(env.get("HOME") or "")
+        )
+    )
     before = inspect()
     if before.healthy:
         return before
-    if before.outcome not in {"cwd_deleted", "stale_global_config"}:
+    if before.outcome not in {
+        "cwd_deleted",
+        "stale_global_config",
+        "stale_runtime_environment",
+    }:
         raise SkyPilotSubmitError(
             "SkyPilot local API server cwd health could not be established: "
             f"{before.outcome}: {before.error}"
@@ -418,7 +440,7 @@ def _ensure_local_api_daemon_cwd(
     )
     if stop.returncode != 0:
         raise SkyPilotSubmitError(
-            "SkyPilot local API server has a deleted working directory and "
+            "SkyPilot local API server has an unhealthy runtime environment and "
             f"could not be stopped safely: {redact_text(_command_detail(stop))}"
         )
     for _ in range(max(attempts, 1)):
