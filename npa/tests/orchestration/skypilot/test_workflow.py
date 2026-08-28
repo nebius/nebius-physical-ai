@@ -220,6 +220,7 @@ def _fake_proc_process(
     uid: int,
     cmdline: tuple[str, ...],
     cwd: Path,
+    environment: dict[str, str] | None = None,
 ) -> None:
     process = proc_root / str(pid)
     process.mkdir(parents=True)
@@ -229,6 +230,11 @@ def _fake_proc_process(
         encoding="utf-8",
     )
     (process / "cwd").symlink_to(cwd)
+    (process / "environ").write_bytes(
+        b"\0".join(
+            f"{key}={value}".encode() for key, value in (environment or {}).items()
+        )
+    )
 
 
 def test_local_api_daemon_probe_finds_deleted_executor_cwd(tmp_path) -> None:
@@ -330,6 +336,36 @@ def test_local_api_daemon_probe_keeps_venv_python_symlink_lexical(tmp_path) -> N
     assert result.outcome == "cwd_deleted"
 
 
+def test_local_api_daemon_probe_rejects_deleted_inherited_global_config(
+    tmp_path,
+) -> None:
+    proc_root = tmp_path / "proc"
+    bin_dir = tmp_path / "venv" / "bin"
+    bin_dir.mkdir(parents=True)
+    sky = bin_dir / "sky"
+    python = bin_dir / "python"
+    sky.touch()
+    python.touch()
+    durable = tmp_path / "durable"
+    durable.mkdir()
+    _fake_proc_process(
+        proc_root,
+        pid=100,
+        ppid=1,
+        uid=1234,
+        cmdline=(str(python), "-m", "sky.server.server"),
+        cwd=durable,
+        environment={"SKYPILOT_GLOBAL_CONFIG": str(tmp_path / "deleted.yaml")},
+    )
+
+    result = workflow_module._probe_local_api_daemon_cwd(
+        str(sky), proc_root=proc_root, uid=1234
+    )
+
+    assert result.healthy is False
+    assert result.outcome == "stale_global_config"
+
+
 def test_deleted_api_daemon_is_restarted_from_durable_cwd() -> None:
     probes = iter(
         (
@@ -342,11 +378,12 @@ def test_deleted_api_daemon_is_restarted_from_durable_cwd() -> None:
 
     def runner(cmd, **kwargs):
         calls.append((cmd, kwargs["cwd"]))
+        assert "SKYPILOT_GLOBAL_CONFIG" not in kwargs["env"]
         return subprocess.CompletedProcess(cmd, 0, stdout="ok", stderr="")
 
     result = workflow_module._ensure_local_api_daemon_cwd(
         "/opt/sky/bin/sky",
-        env={},
+        env={"SKYPILOT_GLOBAL_CONFIG": "/tmp/request/config.yaml"},
         cwd="/durable",
         runner=runner,
         probe=lambda: next(probes),

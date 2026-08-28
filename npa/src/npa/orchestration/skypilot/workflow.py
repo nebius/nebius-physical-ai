@@ -286,6 +286,37 @@ def _probe_local_api_daemon_cwd(
     if not roots:
         return ApiDaemonCwdProbe(True, "absent")
 
+    for pid in roots:
+        try:
+            raw_environment = (records[pid][2] / "environ").read_bytes()
+        except (FileNotFoundError, ProcessLookupError):
+            continue
+        except OSError as exc:
+            return ApiDaemonCwdProbe(
+                False,
+                "process_inspection_failed",
+                process_count=len(roots),
+                error=redact_text(str(exc)),
+            )
+        environment = {
+            item.split(b"=", 1)[0].decode(errors="replace"): item.split(b"=", 1)[
+                1
+            ].decode(errors="replace")
+            for item in raw_environment.split(b"\0")
+            if b"=" in item
+        }
+        inherited_config = environment.get("SKYPILOT_GLOBAL_CONFIG", "").strip()
+        if inherited_config and not Path(inherited_config).is_file():
+            return ApiDaemonCwdProbe(
+                False,
+                "stale_global_config",
+                process_count=len(roots),
+                error=(
+                    "local SkyPilot API server inherited a global config path "
+                    "which no longer exists"
+                ),
+            )
+
     process_tree = set(roots)
     changed = True
     while changed:
@@ -339,15 +370,20 @@ def _ensure_local_api_daemon_cwd(
     before = inspect()
     if before.healthy:
         return before
-    if before.outcome != "cwd_deleted":
+    if before.outcome not in {"cwd_deleted", "stale_global_config"}:
         raise SkyPilotSubmitError(
             "SkyPilot local API server cwd health could not be established: "
             f"{before.outcome}: {before.error}"
         )
 
+    daemon_env = dict(env)
+    # The per-submit config is loaded by the client request. It must not become
+    # process-global state on a daemon that outlives the owner-only submission
+    # directory.
+    daemon_env.pop("SKYPILOT_GLOBAL_CONFIG", None)
     stop = runner(
         [sky_executable, "api", "stop"],
-        env=dict(env),
+        env=daemon_env,
         cwd=cwd,
         text=True,
         stdout=subprocess.PIPE,
@@ -373,7 +409,7 @@ def _ensure_local_api_daemon_cwd(
 
     start = runner(
         [sky_executable, "api", "start"],
-        env=dict(env),
+        env=daemon_env,
         cwd=cwd,
         text=True,
         stdout=subprocess.PIPE,
