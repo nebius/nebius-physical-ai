@@ -105,6 +105,25 @@ on `passed` (the Sim2Real workflow does this in Stage 11). With
 `passed` are top-level structured CLI fields; callers do not need to scrape
 the remote log tail.
 
+### Trained-policy visual export
+
+`npa workbench isaac-lab train --export-trajectories` captures genuine Isaac
+Sim RGB by default during the post-training policy rollout. The exporter must
+load the trained RSL-RL checkpoint fail-closed, launch Isaac with cameras
+enabled, call the environment's `rgb_array` renderer, and write one `rgb.npy`
+array per episode with exactly the same frame count as `state.npy` and
+`actions.npy`. It records runtime version, checkpoint hash, renderer, image
+dimensions/count, `policy_loaded`, and the shared
+episode/frame/timestamp timeline in `trajectories/meta.json`.
+
+The Isaac-to-LeRobot adapter automatically encodes these frames as the
+`observation.images.workspace` video feature and preserves their provenance.
+The LeRobot-to-Rerun adapter maps each episode to its own video asset and
+`VideoFrameReference` timeline, makes the trained-policy environment the
+prominent view, and omits evaluation panes when no evaluation entities exist.
+Metadata-only rollouts remain valid but must not be described as containing an
+environment visual. `--no-export-rgb` is the explicit scalar-only opt-out.
+
 ## Custom Forks
 
 Canonical onboarding starts at `docs/workbench/getting-started.md`; do not

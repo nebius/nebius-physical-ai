@@ -27,6 +27,8 @@ DATA_PATH_TPL = "data/chunk-{chunk_index:03d}/file-{file_index:03d}.parquet"
 EPISODES_PATH_TPL = "meta/episodes/chunk-{chunk_index:03d}/file-{file_index:03d}.parquet"
 VIDEO_PATH_TPL = "videos/{video_key}/chunk-{chunk_index:03d}/file-{file_index:03d}.mp4"
 EGO_VIEW_KEY = "observation.images.ego_view"
+WORKSPACE_VIEW_KEY = "observation.images.workspace"
+RGB_FRAMES_FILENAME = "rgb.npy"
 
 G1_STATE_NAMES_43 = [
     "left_hip_pitch_joint",
@@ -196,6 +198,22 @@ def convert(
     output_dir = Path(output_dir)
     episodes = discover_episodes(input_dir)
     top_meta = _load_optional_json(input_dir / "meta.json")
+    rgb_episode_paths = [episode / RGB_FRAMES_FILENAME for episode in episodes]
+    rgb_presence = [path.is_file() for path in rgb_episode_paths]
+    if any(rgb_presence) and not all(rgb_presence):
+        missing = [
+            episodes[index].name
+            for index, present in enumerate(rgb_presence)
+            if not present
+        ]
+        raise IsaacLabLeRobotError(
+            "Isaac RGB capture must cover every episode; missing rgb.npy in "
+            + ", ".join(missing)
+        )
+    has_simulator_rgb = all(rgb_presence)
+    include_video = has_simulator_rgb or include_placeholder_video
+    video_key = WORKSPACE_VIEW_KEY if has_simulator_rgb else EGO_VIEW_KEY
+    video_source = "isaac_sim_rgb_array" if has_simulator_rgb else "synthetic_placeholder"
     resolved_spec = spec or G1_FEATURE_SPEC
     default_task = (
         "Isaac Lab G1 rollout"
@@ -229,10 +247,11 @@ def convert(
         "index": [],
         "task_index": [],
     }
-    if include_placeholder_video:
-        stats_accum[EGO_VIEW_KEY] = []
+    if include_video:
+        stats_accum[video_key] = []
 
     global_index = 0
+    video_shape: tuple[int, int, int] | None = None
     for episode_index, episode_dir in enumerate(episodes):
         state, actions = _load_episode_arrays(episode_dir, spec=resolved_spec)
         ep_len = int(state.shape[0])
@@ -274,21 +293,33 @@ def convert(
         stats_accum["index"].append(np.arange(dataset_from_index, dataset_to_index, dtype=np.int64))
         stats_accum["task_index"].append(np.zeros(ep_len, dtype=np.int64))
 
-        if include_placeholder_video:
-            frames = _placeholder_video_frames(state, size=video_size)
+        if include_video:
+            frames = (
+                _load_rgb_frames(episode_dir, expected_frames=ep_len)
+                if has_simulator_rgb
+                else _placeholder_video_frames(state, size=video_size)
+            )
+            current_shape = tuple(int(value) for value in frames.shape[1:])
+            if video_shape is None:
+                video_shape = current_shape
+            elif current_shape != video_shape:
+                raise IsaacLabLeRobotError(
+                    f"{episode_dir.name}: RGB dimensions {current_shape} do not match "
+                    f"the first episode {video_shape}"
+                )
             video_path = (
                 output_dir
                 / "videos"
-                / EGO_VIEW_KEY
+                / video_key
                 / "chunk-000"
                 / f"file-{episode_index:03d}.mp4"
             )
             _encode_video(frames, video_path, fps=fps)
-            stats_accum[EGO_VIEW_KEY].append(frames)
-            episode_row[f"videos/{EGO_VIEW_KEY}/chunk_index"] = 0
-            episode_row[f"videos/{EGO_VIEW_KEY}/file_index"] = episode_index
-            episode_row[f"videos/{EGO_VIEW_KEY}/from_timestamp"] = 0.0
-            episode_row[f"videos/{EGO_VIEW_KEY}/to_timestamp"] = ep_len / fps
+            stats_accum[video_key].append(frames)
+            episode_row[f"videos/{video_key}/chunk_index"] = 0
+            episode_row[f"videos/{video_key}/file_index"] = episode_index
+            episode_row[f"videos/{video_key}/from_timestamp"] = 0.0
+            episode_row[f"videos/{video_key}/to_timestamp"] = ep_len / fps
 
         episode_rows.append(episode_row)
 
@@ -313,8 +344,15 @@ def convert(
         total_frames=total_frames,
         state_names=state_names,
         action_names=action_names,
-        include_video=include_placeholder_video,
-        video_size=video_size,
+        include_video=include_video,
+        video_key=video_key,
+        video_shape=video_shape,
+        visual_provenance=_visual_provenance(
+            top_meta,
+            source=video_source,
+            frame_count=total_frames if include_video else 0,
+            video_shape=video_shape,
+        ),
         spec=resolved_spec,
     )
     return output_dir
@@ -379,6 +417,53 @@ def _load_episode_arrays(
     if state.shape[0] == 0:
         raise IsaacLabLeRobotError(f"{episode_dir.name}: episode has zero frames")
     return state, actions
+
+
+def _load_rgb_frames(episode_dir: Path, *, expected_frames: int) -> np.ndarray:
+    path = episode_dir / RGB_FRAMES_FILENAME
+    frames = np.load(path, allow_pickle=False)
+    if frames.ndim != 4 or frames.shape[-1] not in {3, 4}:
+        raise IsaacLabLeRobotError(
+            f"{path} must contain [frames,height,width,RGB(A)] pixels, got {frames.shape}"
+        )
+    if frames.shape[0] != expected_frames:
+        raise IsaacLabLeRobotError(
+            f"{episode_dir.name}: RGB/state length mismatch "
+            f"({frames.shape[0]} != {expected_frames})"
+        )
+    if frames.dtype != np.uint8:
+        raise IsaacLabLeRobotError(f"{path} must contain uint8 pixels, got {frames.dtype}")
+    if frames.shape[-1] == 4:
+        frames = frames[..., :3]
+    if frames.shape[1] <= 1 or frames.shape[2] <= 1:
+        raise IsaacLabLeRobotError(f"{path} has invalid image dimensions {frames.shape[1:3]}")
+    return np.ascontiguousarray(frames)
+
+
+def _visual_provenance(
+    top_meta: dict[str, Any],
+    *,
+    source: str,
+    frame_count: int,
+    video_shape: tuple[int, int, int] | None,
+) -> dict[str, Any]:
+    provenance: dict[str, Any] = {
+        "source": source,
+        "genuine_simulator_pixels": source == "isaac_sim_rgb_array",
+        "synchronized_timeline": "episode_index/frame_index/timestamp",
+        "frame_count": frame_count,
+        "dimensions": list(video_shape or ()),
+    }
+    for key in (
+        "task",
+        "runtime_version",
+        "policy_loaded",
+        "checkpoint_sha256",
+        "renderer",
+    ):
+        if key in top_meta:
+            provenance[key] = top_meta[key]
+    return provenance
 
 
 def _write_data_parquet(
@@ -456,7 +541,9 @@ def _write_tasks_parquet(task: str, output_path: Path) -> None:
 
 def _write_stats(stats_accum: dict[str, list[np.ndarray]], output_path: Path) -> None:
     stats = {
-        key: _compute_feature_stats(arrays, is_video=(key == EGO_VIEW_KEY))
+        key: _compute_feature_stats(
+            arrays, is_video=key.startswith("observation.images.")
+        )
         for key, arrays in stats_accum.items()
     }
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -498,7 +585,9 @@ def _write_info(
     state_names: list[str],
     action_names: list[str],
     include_video: bool,
-    video_size: int,
+    video_key: str,
+    video_shape: tuple[int, int, int] | None,
+    visual_provenance: dict[str, Any],
     spec: LeRobotFeatureSpec | None = None,
 ) -> None:
     resolved = spec or G1_FEATURE_SPEC
@@ -533,11 +622,15 @@ def _write_info(
         "features": features,
     }
     if include_video:
+        if video_shape is None:
+            raise IsaacLabLeRobotError("video_shape is required when video is enabled")
+        height, width, channels = video_shape
         info["video_path"] = VIDEO_PATH_TPL
         info["video_files_size_in_mb"] = DEFAULT_VIDEO_SIZE_MB
-        features[EGO_VIEW_KEY] = {
+        info["visual_provenance"] = visual_provenance
+        features[video_key] = {
             "dtype": "video",
-            "shape": [video_size, video_size, 3],
+            "shape": [height, width, channels],
             "names": ["height", "width", "channel"],
             "video_info": {
                 "video.fps": float(fps),

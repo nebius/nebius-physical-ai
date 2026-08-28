@@ -1759,9 +1759,51 @@ def test_isaac_lab_train_export_trajectories_runs_second_remote_script(mocker) -
     assert "random fallback" not in traj_cmd
     assert "trained-policy checkpoint load failed" in traj_cmd
     assert "ISAAC_LAB_TRAJ_EXPORT_FAILED" in traj_cmd
+    assert "capture_rgb = True" in traj_cmd
+    assert "enable_cameras=capture_rgb" in traj_cmd
+    assert 'render_mode="rgb_array" if capture_rgb else None' in traj_cmd
+    assert 'np.save(episode_dir / "rgb.npy"' in traj_cmd
+    assert '"renderer": "isaac_sim_rgb_array"' in traj_cmd
+    assert '"checkpoint_sha256": hashlib.sha256' in traj_cmd
     payload = json.loads(result.output)
     assert payload["trajectory_export"] == "success"
     assert payload["trajectories_dir"] == "/tmp/isaac-out/trajectories"
+    assert payload["trajectory_rgb_requested"] is True
+
+
+def test_isaac_lab_train_can_explicitly_disable_rgb_trajectory_capture(mocker) -> None:
+    ssh = mocker.MagicMock()
+    ssh.run.side_effect = [
+        (0, "", ""),
+        (0, "ISAAC_LAB_TRAJ_EXPORT_COMPLETE\n", ""),
+    ]
+    mocker.patch("npa.cli.isaac_lab.resolve_ssh_config", return_value=_ssh_cfg())
+    mocker.patch("npa.cli.isaac_lab.SSHClient", return_value=ssh)
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "isaac-lab",
+            "train",
+            "--task",
+            "Isaac-Cartpole-v0",
+            "--steps",
+            "1",
+            "--output-dir",
+            "/tmp/isaac-out",
+            "--export-trajectories",
+            "--no-export-rgb",
+            "--output-format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    traj_cmd = ssh.run.call_args_list[1].args[0]
+    assert "capture_rgb = False" in traj_cmd
+    assert "enable_cameras=capture_rgb" in traj_cmd
+    assert json.loads(result.output)["trajectory_rgb_requested"] is False
 
 
 def test_isaac_lab_train_export_trajectories_marks_masked_failure(mocker) -> None:
