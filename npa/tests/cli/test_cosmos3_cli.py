@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 
 from typer.testing import CliRunner
 
@@ -190,3 +191,61 @@ def test_cosmos3_skill_commands_are_not_cli_surface() -> None:
     assert result.exit_code == 0
     assert " skills " not in result.output
     assert " skill " not in result.output
+
+
+def test_cosmos3_ray_batch_dry_run_uses_standard_path_contract(tmp_path) -> None:
+    batch = tmp_path / "batch.json"
+    batch.write_text(
+        '{"samples":[{"name":"one","model_mode":"text2image","prompt":"cube"}]}',
+        encoding="utf-8",
+    )
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "cosmos3",
+            "ray-batch",
+            "--input-path",
+            str(batch),
+            "--output-path",
+            str(tmp_path / "out"),
+            "--endpoint",
+            "http://service.invalid:8000",
+            "--dry-run",
+        ],
+    )
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["backend"] == "cosmos-framework-native-ray-serve"
+    assert payload["batch_size"] == 1
+
+
+def test_cosmos3_ray_serve_refuses_outside_the_service_image(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setenv("NPA_COSMOS3_FRAMEWORK_PYTHON", str(tmp_path / "missing"))
+    result = runner.invoke(app, ["workbench", "cosmos3", "ray-serve"])
+    assert result.exit_code == 1
+    assert "requires the npa-cosmos3-ray-serve image" in result.output
+
+
+def test_cosmos3_ray_serve_wires_standard_model_cache(tmp_path, monkeypatch) -> None:
+    framework = tmp_path / "framework-python"
+    framework.write_text("", encoding="utf-8")
+    cache = tmp_path / "model-cache"
+    observed = {}
+
+    def execve(path, argv, env) -> None:
+        observed.update({"path": path, "argv": argv, "env": env})
+        raise RuntimeError("exec captured")
+
+    monkeypatch.setenv("NPA_COSMOS3_FRAMEWORK_PYTHON", str(framework))
+    monkeypatch.setenv("NPA_MODEL_CACHE_DIR", str(cache))
+    monkeypatch.setattr(os, "execve", execve)
+    result = runner.invoke(app, ["workbench", "cosmos3", "ray-serve"])
+    assert isinstance(result.exception, RuntimeError)
+    assert observed["env"]["HF_HOME"] == str(cache / "huggingface")
+    assert observed["env"]["COSMOS_DOWNLOAD_CACHE_DIR"] == str(
+        cache / "cosmos3/downloads"
+    )
+    assert (cache / "huggingface/hub").is_dir()

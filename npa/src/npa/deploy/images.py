@@ -40,6 +40,7 @@ CONTAINER_IMAGE_NAMES = {
     "cosmos": "npa-cosmos",
     "cosmos2-transfer": "npa-cosmos2-transfer",
     "cosmos3": "npa-cosmos3",
+    "cosmos3-ray-serve": "npa-cosmos3-ray-serve",
     "cosmos3-serving": "npa-cosmos3-serving",
     "cosmos3-reason": "npa-cosmos3-reason",
     "cosmos-curate": "npa-cosmos-curate",
@@ -126,7 +127,12 @@ OMNIVERSE_RESTRICTED_DERIVED_IMAGES = RESTRICTED_DERIVED_IMAGES
 # digest and its payload-scan/GPU evidence — not before.
 UNVALIDATED_PUBLICATION_TOOLS: frozenset[str] = frozenset()
 VALIDATION_CANDIDATE_TOOLS: frozenset[str] = frozenset()
-PUBLICATION_QUARANTINE_TOOLS: frozenset[str] = frozenset()
+# Compatibility view used by publication callers and public imports. Derive it
+# from the two canonical validation-state inventories; never maintain it
+# independently.
+PUBLICATION_QUARANTINE_TOOLS: frozenset[str] = (
+    UNVALIDATED_PUBLICATION_TOOLS | VALIDATION_CANDIDATE_TOOLS
+)
 
 # Some newer operator/BYOF pins have not yet been promoted to the supported
 # anonymous channel. Public execution stays on the last accepted release while
@@ -141,6 +147,10 @@ PUBLIC_RELEASE_TAG_OVERRIDES: dict[str, str] = {
 # whose filesystem/layers were scanned and whose advertised GPU capability ran.
 # A newly built dev tag must earn fresh evidence before this mapping changes.
 GPU_ACCEPTED_PUBLIC_IMAGE_SOURCES: dict[str, dict[str, str]] = {
+    "cosmos3-ray-serve": {
+        "development_sha": "56d8c4f3f05db7aa3b03323441a3e0d7b97ac8da",
+        "oci_digest": "sha256:6e42f553a0d14712dc1ed7fa42c72b0f083f4ae3f89b30eaf0e93cfdf64e820d",
+    },
     "cosmos3-serving": {
         "development_sha": "d854f6a76cd87ec05ad97ccde6d596f3329efa0e",
         "oci_digest": "sha256:3342bbe44bd1c00ebf05ab4c9d7286058a94bb5ce90b49b164b23604d3acf180",
@@ -184,6 +194,7 @@ SUPPORTED_TOOL_VERSIONS = {
     # torch cu130. The immutable predecessor remains rollback provenance.
     # No weights baked; gated Cosmos3 checkpoints download at runtime.
     "cosmos3": "1.2.2-cu130-r6",
+    "cosmos3-ray-serve": "ray1-cu130",
     "cosmos3-serving": "0.2.0-oss",
     "cosmos3-reason": "cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
     "cosmos-curate": "0.1.2-skypilot-v1-20260813T164700Z",
@@ -690,15 +701,18 @@ def omniverse_restricted_image_names() -> list[str]:
 
 
 def publicly_publishable_tools() -> list[str]:
-    """Return the workbench tools that are OSS-redistributable to a public registry.
+    """Return tools accepted for the supported anonymous release inventory.
 
-    Excludes anything in ``RESTRICTED_PUBLICATION_TOOLS``. The Isaac images now
-    fetch Isaac Sim / Isaac Lab at run time under the operator's own EULA
-    acceptance. Cosmos3 serving and SONIC MuJoCo have exact accepted public
-    development digests and GPU evidence recorded for their current releases.
+    Redistribution eligibility is necessary but not sufficient: tools remain out
+    while ``PUBLICATION_QUARANTINE_TOOLS`` records that their built-image or GPU
+    evidence is incomplete. The trusted build workflow can still create their
+    immutable development artifact directly from the public packaging contract.
     """
     return sorted(
-        tool for tool in CONTAINER_IMAGE_NAMES if is_publicly_redistributable(tool)
+        tool
+        for tool in CONTAINER_IMAGE_NAMES
+        if is_publicly_redistributable(tool)
+        and tool not in PUBLICATION_QUARANTINE_TOOLS
     )
 
 

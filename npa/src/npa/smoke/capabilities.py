@@ -80,6 +80,13 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
         "decodable image artifact produced (capability, not a CUDA probe)",
         "no baked weights: checkpoint fetched with the operator's HF token",
     ],
+    "cosmos3-ray-serve": [
+        "native cosmos-framework OmniModelDeployment loads Cosmos3-Nano once",
+        "two requests coalesce through upstream @ray.serve.batch",
+        "guardrails remain enabled and authenticated readiness reports the model",
+        "structured SampleOutputs and two decodable artifacts persist with provenance",
+        "no model, VAE, or guardrail weights are baked",
+    ],
     "cosmos3-serving": [
         "vLLM-Omni serving stack imports in the pinned build",
         "pin-specific Hugging Face Xet workaround remains justified",

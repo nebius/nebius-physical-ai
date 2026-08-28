@@ -40,6 +40,9 @@ TOOL_REF_IMAGE_TOOL: dict[str, str] = {
     "workbench.cosmos3.generate_variants": "cosmos3",
     "workbench.cosmos3.prepare_video_input": "cosmos3",
     "workbench.cosmos3.checkpoint_eval": "cosmos3",
+    # The image's command-forwarding entrypoint runs only the CPU/S3 client for
+    # this toolRef; it does not start or reload the resident service model.
+    "workbench.cosmos3.ray_batch": "cosmos3-ray-serve",
     "workbench.cosmos3": "cosmos3-reason",
     "workbench.cosmos_curate": "cosmos-curate",
     "workbench.cosmos_evaluator": "cosmos-evaluator",
