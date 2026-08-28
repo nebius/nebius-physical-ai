@@ -1303,13 +1303,10 @@ def submit_cmd(
             return
         if infra_context and not plan_only:
             from npa.controller_ownership import ClusterOwnerIdentityMismatchError
-            from npa.orchestration.skypilot._bin import resolve_config as resolve_sky_config
+            from npa.orchestration.skypilot._bin import resolve_isolated_config_dir
 
             try:
-                isolated_config_dir = resolve_sky_config(
-                    sky_bin=sky_bin or None,
-                    isolated_config_dir=isolated_config_dir,
-                ).isolated_config_dir
+                isolated_config_dir = resolve_isolated_config_dir(isolated_config_dir)
                 _verify_submit_controller_owner(
                     project=project,
                     context=infra_context,
