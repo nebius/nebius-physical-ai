@@ -91,3 +91,34 @@ def test_public_unrelated_workflow_has_no_approval_gate() -> None:
         "ngc": 0,
         "artifacts": [],
     }
+
+
+def test_enforcement_uses_explicit_project_scoped_credentials(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from npa.cli.workbench.workflow import _enforce_workflow_access
+
+    monkeypatch.setenv("NPA_ACCESS_APPROVAL_STATE_PATH", str(tmp_path / "state.json"))
+    monkeypatch.setattr(
+        "npa.clients.credentials.load_credentials",
+        lambda: (_ for _ in ()).throw(AssertionError("must not load default credentials")),
+    )
+    monkeypatch.setattr(
+        "npa.clients.huggingface.validate_hf_access",
+        lambda token, *_args: SimpleNamespace(
+            ok=token == "hf-project-scoped", status_code=200, error=""
+        ),
+    )
+    spec = SimpleNamespace(
+        states={"train": SimpleNamespace(tool_ref="workbench.groot.finetune")}
+    )
+
+    plan = _enforce_workflow_access(
+        spec,
+        json_output=True,
+        resume_command="npa workbench workflow submit workflow.yaml",
+        hf_token="hf-project-scoped",
+        ngc_key="",
+    )
+
+    assert plan["status"] == "ready"

@@ -172,6 +172,8 @@ def _enforce_workflow_access(
     json_output: bool,
     resume_command: str,  # noqa: ANN001
     excluded_repos: frozenset[str] = frozenset(),
+    hf_token: str | None = None,
+    ngc_key: str | None = None,
 ) -> dict[str, object]:
     """Fail before execution/provisioning when exact HF/NGC access is not Ready."""
 
@@ -192,14 +194,24 @@ def _enforce_workflow_access(
     )
     from npa.workbench.nurec.nurec import check_ngc_image_access
 
-    credentials = load_credentials()
+    credentials = load_credentials() if hf_token is None or ngc_key is None else None
+    resolved_hf = (
+        str(getattr(credentials, "hf_token", "") or "")
+        if hf_token is None
+        else hf_token
+    )
+    resolved_ngc = (
+        str(getattr(credentials, "ngc_api_key", "") or "")
+        if ngc_key is None
+        else ngc_key
+    )
     state_path = Path(
         os.environ.get("NPA_ACCESS_APPROVAL_STATE_PATH", str(DEFAULT_STATE_PATH))
     )
     evidence = probe_requirements(
         requirements,
-        hf_token=credentials.hf_token,
-        ngc_key=credentials.ngc_api_key,
+        hf_token=resolved_hf,
+        ngc_key=resolved_ngc,
         hf_validator=validate_hf_access,
         ngc_validator=check_ngc_image_access,
         state_path=state_path,
@@ -956,8 +968,16 @@ def submit_cmd(
 
     checkpoint_access_error = ""
     checkpoint_modalities: set[str] = set()
+    workflow_access_secret_names: set[str] = set()
     try:
         required_secret_env = list(secret_env)
+        if merged_npa_spec is not None and not plan_only:
+            selected_access = _workflow_access_requirements(merged_npa_spec)
+            if any(item.provider == "huggingface" for item in selected_access):
+                workflow_access_secret_names.add("HF_TOKEN")
+            if any(item.provider == "ngc" for item in selected_access):
+                workflow_access_secret_names.add("NGC_API_KEY")
+            required_secret_env.extend(sorted(workflow_access_secret_names))
         checkpoint_tool_refs = {
             "workbench.cosmos2.transfer_execute",
             "workbench.cosmos2.transfer_conditioned_execute",
@@ -1005,6 +1025,11 @@ def submit_cmd(
             "HF_TOKEN is required to verify the exact gated Cosmos Transfer "
             "checkpoint before provisioning or GPU work"
         )
+    for provider_secret in workflow_access_secret_names:
+        if provider_secret in missing_secrets:
+            # The typed approval plan reports missing provider credentials as
+            # Pending with official links and a safe resume command.
+            missing_secrets.remove(provider_secret)
     if missing_secrets and not plan_only:
         _fail(
             "Required secret values are not present in the process environment "
@@ -1343,6 +1368,8 @@ def submit_cmd(
                     if checkpoint_access_required
                     else frozenset()
                 ),
+                hf_token=str(submit_credentials.secret_values.get("HF_TOKEN") or ""),
+                ngc_key=str(submit_credentials.secret_values.get("NGC_API_KEY") or ""),
             )
 
         if checkpoint_access_required and not plan_only:
