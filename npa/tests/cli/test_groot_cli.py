@@ -1000,6 +1000,12 @@ def test_groot_container_dockerfile_pins_runtime_versions() -> None:
     assert "isaaclab[isaacsim,all]==" not in dockerfile
     assert "GROOT_MODEL_DIR=/opt/groot-data/models" in dockerfile
     assert "huggingface-cli download nvidia/GR00T-N1.7-3B" not in dockerfile
+    assert "NPA_SKIP_EAGER_IMPORTS=1" in dockerfile
+    assert "NPA_LIGHT_WORKBENCH_TOOL=groot" in dockerfile
+    assert "workbench groot finetune --help >/dev/null" in dockerfile
+    assert '"mcap>=1.3,<2"' in dockerfile
+    assert "from mcap.writer import Writer" in dockerfile
+    assert "make_reader(BytesIO(buffer.getvalue())).get_summary()" in dockerfile
     assert "--platform linux/amd64" in build_script
 
 

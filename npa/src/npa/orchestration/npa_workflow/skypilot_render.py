@@ -151,7 +151,10 @@ TOOL_REF_PIP_REQUIREMENTS: dict[str, tuple[tuple[str, str], ...]] = {
         ("python:av", "av>=12,<17"),
         ("python:PIL", "Pillow>=10,<12"),
     ),
-    "workflow.groot.emit_learning_mcap": (("python:av", "av>=12,<17"),),
+    "workflow.groot.emit_learning_mcap": (
+        ("python:av", "av>=12,<17"),
+        ("python:mcap", "mcap>=1.3,<2"),
+    ),
     "workflow.groot.emit_learning_rrd": (("python:av", "av>=12,<17"),),
     "workflow.groot.publish_learning": (("python:av", "av>=12,<17"),),
     "workbench.cosmos.fetch": (("huggingface-cli", "huggingface_hub[cli]>=0.23,<1.0"),),

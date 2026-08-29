@@ -173,6 +173,28 @@ def test_provision_if_absent_dry_run_reports_actions(
     assert result.storage_bucket == "s3://bucket/checkpoints/"
 
 
+def test_provision_if_absent_dry_run_forwards_infiniband_fabric(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_runtime(tmp_path, monkeypatch)
+
+    result = provisioning.provision_if_absent(
+        project="proj",
+        kubeconfig=tmp_path / "missing-kubeconfig",
+        dry_run=True,
+        skip_s3=True,
+        gpu_nodes=1,
+        gpu_platform="gpu-b200-sxm",
+        gpu_preset="8gpu-160vcpu-1792gb",
+        gpu_driver_mode="managed-image",
+        capacity_block_group="capacityblockgroup-example",
+        infiniband_fabric="us-central1-b",
+    )
+
+    assert result.status == "ready"
+    assert any("provider_mutation=false" in action for action in result.actions)
+
+
 def test_provision_if_absent_preflight_uses_terraform_disk_overrides(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

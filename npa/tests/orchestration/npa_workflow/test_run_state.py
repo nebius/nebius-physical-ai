@@ -181,6 +181,49 @@ def test_run_state_store_persists_exact_nonempty_workflow_artifact() -> None:
         state_store.write_artifact("../escape.yaml", body)
 
 
+def test_run_state_store_artifact_uses_explicit_storage_credentials(
+    monkeypatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeS3:
+        def put_object(self, **kwargs: object) -> None:
+            captured["put"] = kwargs
+
+    class FakeStorage:
+        _s3 = FakeS3()
+
+    def fake_from_environment(**kwargs: str) -> FakeStorage:
+        captured["credentials"] = kwargs
+        return FakeStorage()
+
+    monkeypatch.setattr(
+        "npa.clients.storage.StorageClient.from_environment",
+        fake_from_environment,
+    )
+    state_store = RunStateStore(
+        bucket="bucket",
+        prefix="runs/groot",
+        endpoint_url="https://storage.example.invalid",
+        aws_access_key_id="project-access",
+        aws_secret_access_key="project-secret",
+    )
+
+    state_store.write_artifact("workflow.yaml", b"kind: Workflow\n")
+
+    assert captured["credentials"] == {
+        "endpoint_url": "https://storage.example.invalid",
+        "aws_access_key_id": "project-access",
+        "aws_secret_access_key": "project-secret",
+    }
+    assert captured["put"] == {
+        "Bucket": "bucket",
+        "Key": "runs/groot/workflow.yaml",
+        "Body": b"kind: Workflow\n",
+        "ContentType": "application/octet-stream",
+    }
+
+
 def test_completed_wave_ignores_failed_attempts() -> None:
     from npa.orchestration.npa_workflow.run_state import RuntimeRunState
 

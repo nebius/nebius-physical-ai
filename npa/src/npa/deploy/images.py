@@ -79,6 +79,7 @@ SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS: frozenset[str] = frozenset(
         "cosmos-evaluator",
         "content-agents",
         "fiftyone",
+        "groot",
         "isaac-lab",
         "rerun-viewer",
     }

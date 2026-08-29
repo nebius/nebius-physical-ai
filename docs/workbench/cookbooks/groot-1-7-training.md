@@ -36,7 +36,7 @@ npa/.venv/bin/npa workbench workflow plan-spec "$SPEC" \
   --run-id "$RUN_ID"
 ```
 
-The default trainer requests two GPUs, one sample per device, no gradient
+The default trainer requests two reserved-capacity B200 GPUs on one node, one sample per device, no gradient
 accumulation, four optimizer steps, logging every step, and one final
 `checkpoint-N` resolved from the trainer manifest (`N=4` for the defaults).
 `save_steps` must equal `max_steps`, and the CPU preflight rejects an impossible
@@ -49,6 +49,10 @@ global_batch_size = gpu_count * per_device_batch_size * gradient_accumulation_st
 Planning tests cover GPU counts 1, 2, 7, 8, and 16. A live validation claim must
 name only the GPU count actually run.
 
+Fine-tuning and both offline evaluations are headless tensor workloads, so the
+workflow uses B200 for all GPU stages. It does not request RTX PRO 6000: RRD and
+MCAP production are CPU artifact conversions and no stage renders with RT cores.
+
 ## Submit
 
 Supply the bucket, real source dataset, registry image, deployed agent URL, and
@@ -60,6 +64,7 @@ npa/.venv/bin/npa workbench workflow submit "$SPEC" \
   --var bucket=<bucket> \
   --var source_data_uri=s3://<bucket>/datasets/my-groot-dataset/ \
   --var agent_url=https://<agent-host> \
+  --var gpu_type=B200 \
   --var gpu_count=2 \
   --var per_device_batch_size=1 \
   --var gradient_accumulation_steps=1 \

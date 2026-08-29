@@ -18,6 +18,7 @@ from npa.orchestration.skypilot._bin import (
     clear_skypilot_version_cache,
     ensure_skypilot_version,
     resolve_config,
+    resolve_isolated_config_dir,
     resolve_sky_bin,
 )
 
@@ -120,6 +121,35 @@ def test_resolve_config_precedence_explicit_env_config(monkeypatch: pytest.Monke
     assert resolved.sky_bin == default.resolve()
     assert resolved.global_config_path == config_global
     assert resolved.isolated_config_dir == config_isolated
+
+
+def test_resolve_isolated_config_dir_does_not_require_sky_bin(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    config_isolated = tmp_path / "config-isolated"
+    env_isolated = tmp_path / "env-isolated"
+    explicit_isolated = tmp_path / "explicit-isolated"
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        f"skypilot:\n  isolated_config_dir: {config_isolated}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(bin_module, "CONFIG_PATH", config)
+    monkeypatch.setenv("NPA_SKYPILOT_ISOLATED_CONFIG_DIR", str(env_isolated))
+
+    assert resolve_isolated_config_dir(explicit_isolated) == explicit_isolated
+    assert resolve_isolated_config_dir() == env_isolated
+
+    monkeypatch.delenv("NPA_SKYPILOT_ISOLATED_CONFIG_DIR")
+    assert resolve_isolated_config_dir() == config_isolated
+
+
+def test_resolve_isolated_config_dir_defaults_to_shared_state(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(bin_module, "CONFIG_PATH", tmp_path / "missing.yaml")
+
+    assert resolve_isolated_config_dir() is None
 
 
 def test_resolve_config_rejects_unknown_config_keys(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

@@ -56,6 +56,24 @@ def test_public_publisher_builds_only_immutable_public_development_refs() -> Non
         assert stale_variable not in text
 
 
+def test_public_development_build_runner_is_dispatch_scoped_and_defaults_hosted() -> None:
+    spec = _spec(PUBLISH)
+    triggers = spec.get("on") or spec[True]
+    inputs = triggers["workflow_dispatch"]["inputs"]
+
+    assert inputs["build_runner_label"] == {
+        "description": "Runner label for public development image builds",
+        "required": False,
+        "default": "ubuntu-latest",
+    }
+    assert spec["jobs"]["build-development"]["runs-on"] == (
+        "${{ inputs.build_runner_label || 'ubuntu-latest' }}"
+    )
+    for name, job in spec["jobs"].items():
+        if name != "build-development":
+            assert job["runs-on"] == "ubuntu-latest"
+
+
 def test_public_channel_workflows_do_not_restore_retired_channel_language() -> None:
     combined = "\n".join(
         path.read_text(encoding="utf-8").lower()
@@ -136,9 +154,18 @@ def test_large_image_security_gates_have_no_early_scanner_deadline() -> None:
 
 def test_public_image_workflow_preserves_large_image_security_scans() -> None:
     text = PUBLISH.read_text(encoding="utf-8")
+    steps = _spec(PUBLISH)["jobs"]["build-development"]["steps"]
+    trivy_steps = [
+        step
+        for step in steps
+        if step.get("uses") == "aquasecurity/trivy-action@v0.36.0"
+    ]
+
     assert "docker buildx prune --all --force" in text
     assert text.count("TMPDIR: /mnt/npa-trivy") == 2
     assert "scanners: vuln,secret,license" in text
+    assert len(trivy_steps) == 2
+    assert all(step["with"]["timeout"] == "6h0m0s" for step in trivy_steps)
 
 
 def test_post_push_and_promotion_gates_are_digest_bound() -> None:
