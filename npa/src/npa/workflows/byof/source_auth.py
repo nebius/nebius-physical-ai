@@ -83,15 +83,29 @@ def _token_from_github_cli(path: Path) -> str:
             stderr=subprocess.PIPE,
             check=False,
         )
-    if proc.returncode != 0:
-        raise RepositoryAuthenticationError(
-            "private GitHub authentication is unavailable; set the requested token "
-            "environment variable or run `gh auth login --hostname github.com`"
-        )
-    token = path.read_text(encoding="utf-8").strip()
+    token = path.read_text(encoding="utf-8").strip() if proc.returncode == 0 else ""
+    if not token:
+        # Older gh releases have no `auth token` command. The credential helper
+        # installed by `gh auth setup-git` exposes the same existing login via
+        # Git's stdin/stdout credential protocol, without putting it in argv.
+        with path.open("wb") as output:
+            proc = subprocess.run(
+                ["git", "credential", "fill"],
+                input=b"protocol=https\nhost=github.com\n\n",
+                stdout=output,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+        if proc.returncode == 0:
+            for line in path.read_text(encoding="utf-8").splitlines():
+                key, separator, value = line.partition("=")
+                if separator and key == "password":
+                    token = value.strip()
+                    break
     if not token:
         raise RepositoryAuthenticationError(
-            "GitHub authentication returned no credential; refresh `gh auth login`"
+            "private GitHub authentication is unavailable; set the requested token "
+            "environment variable or refresh `gh auth login --hostname github.com`"
         )
     path.write_text(token, encoding="utf-8")
     path.chmod(stat.S_IRUSR | stat.S_IWUSR)

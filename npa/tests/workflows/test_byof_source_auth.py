@@ -79,3 +79,32 @@ def test_private_access_preflight_keeps_token_out_of_argv_and_output(monkeypatch
     assert token not in " ".join(seen["cmd"])
     assert token not in repr(seen["env"])
     assert seen["cmd"][:2] == ["git", "ls-remote"]
+
+
+def test_existing_git_credential_fallback_supports_older_gh(monkeypatch) -> None:
+    token = "existing-auth-token-canary"
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(list(cmd))
+        if cmd[:2] == ["gh", "auth"]:
+            return subprocess.CompletedProcess(cmd, 1, stdout=b"", stderr=b"old gh")
+        assert cmd == ["git", "credential", "fill"]
+        assert kwargs["input"] == b"protocol=https\nhost=github.com\n\n"
+        kwargs["stdout"].write(f"protocol=https\nhost=github.com\npassword={token}\n".encode())
+        return subprocess.CompletedProcess(cmd, 0, stdout=b"", stderr=b"")
+
+    monkeypatch.setattr(source_auth.subprocess, "run", fake_run)
+    with source_auth.private_repository_secrets(
+        "https://github.com/example/private.git",
+        "main",
+        environ={},
+        preflight=False,
+    ) as secrets:
+        assert secrets.token.read_text(encoding="utf-8") == token
+        assert token not in repr(secrets)
+
+    assert calls == [
+        ["gh", "auth", "token", "--hostname", "github.com"],
+        ["git", "credential", "fill"],
+    ]
