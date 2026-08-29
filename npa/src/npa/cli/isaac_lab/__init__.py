@@ -1349,13 +1349,12 @@ try:
         # A viewport render can be an all-black allocation in headless Kit even
         # though it has the requested shape. A real RTX sensor in the task scene
         # is updated by the same simulation step as policy/state telemetry.
-        camera_eye = (3.0, 3.0, 2.0)
-        camera_target = (0.0, 0.0, 0.8)
+        camera_eye, camera_target = _rollout_camera_view(task)
         env_cfg.scene.npa_rollout_camera = TiledCameraCfg(
             prim_path="{{ENV_REGEX_NS}}/NpaRolloutCamera",
             offset=TiledCameraCfg.OffsetCfg(
                 pos=camera_eye,
-                rot=_look_at_quaternion(camera_eye, camera_target),
+                rot=(1.0, 0.0, 0.0, 0.0),
                 convention="world",
             ),
             data_types=["rgb"],
@@ -1373,6 +1372,16 @@ try:
         task,
         cfg=env_cfg,
     )
+    if capture_rgb:
+        # Let Isaac Lab perform the world/OpenGL frame conversion.  Hand-built
+        # side-view quaternions can roll the image even when their forward
+        # vector is correct, leaving moving ground-grid pixels to masquerade
+        # as task geometry.
+        camera = render_env.unwrapped.scene["npa_rollout_camera"]
+        origins = render_env.unwrapped.scene.env_origins[:1]
+        eye = torch.tensor(camera_eye, device=origins.device).unsqueeze(0) + origins
+        target = torch.tensor(camera_target, device=origins.device).unsqueeze(0) + origins
+        camera.set_world_poses_from_view(eyes=eye, targets=target)
     env = render_env
 
     policy = None
@@ -1450,6 +1459,7 @@ try:
     total_frames = 0
     total_rgb_frames = 0
     total_rgb_content_frames = 0
+    total_rgb_center_content_frames = 0
     total_rgb_motion_pairs = 0
     episode_lengths = []
     action_dim = None
@@ -1503,13 +1513,34 @@ try:
                     f"{{len(rgb_frames)}} != {{len(states)}}"
                 )
             rgb_array = np.stack(rgb_frames)
+            # Persist synchronized pixels before validation so a rejected real
+            # capture can be inspected without weakening any acceptance gate.
+            np.save(episode_dir / "rgb.npy", rgb_array)
             dynamic_ranges = np.ptp(rgb_array.astype(np.int16), axis=(1, 2, 3))
             content_frames = int(np.count_nonzero(dynamic_ranges >= 8))
+            height, width = rgb_array.shape[1:3]
+            center = rgb_array[
+                :,
+                height // 4 : (3 * height) // 4,
+                width // 4 : (3 * width) // 4,
+                :,
+            ]
+            center_dynamic_ranges = np.ptp(
+                center.astype(np.int16), axis=(1, 2, 3)
+            )
+            center_content_frames = int(
+                np.count_nonzero(center_dynamic_ranges >= 8)
+            )
             minimum_content_frames = max(1, math.ceil(len(rgb_frames) * 0.9))
             if content_frames < minimum_content_frames:
                 raise RuntimeError(
                     f"episode {{episode_index}} RGB content validation failed: "
                     f"{{content_frames}}/{{len(rgb_frames)}} non-uniform frames"
+                )
+            if center_content_frames < minimum_content_frames:
+                raise RuntimeError(
+                    f"episode {{episode_index}} RGB center framing validation failed: "
+                    f"{{center_content_frames}}/{{len(rgb_frames)}} center-content frames"
                 )
             motion_pairs = 0
             if len(rgb_frames) > 1:
@@ -1522,9 +1553,9 @@ try:
                     raise RuntimeError(
                         f"episode {{episode_index}} RGB motion validation failed"
                     )
-            np.save(episode_dir / "rgb.npy", rgb_array)
             total_rgb_frames += len(rgb_frames)
             total_rgb_content_frames += content_frames
+            total_rgb_center_content_frames += center_content_frames
             total_rgb_motion_pairs += motion_pairs
         (episode_dir / "episode_meta.json").write_text(json.dumps({{
             "episode_index": episode_index,
@@ -1568,6 +1599,7 @@ try:
         "rgb_enabled": capture_rgb,
         "rgb_frame_count": total_rgb_frames,
         "rgb_content_frame_count": total_rgb_content_frames,
+        "rgb_center_content_frame_count": total_rgb_center_content_frames,
         "rgb_motion_pair_count": total_rgb_motion_pairs,
         "rgb_dimensions": list(rgb_dimensions or ()),
         "rgb_feature_key": "observation.images.workspace",
@@ -1576,6 +1608,7 @@ try:
             capture_rgb
             and total_rgb_frames == total_frames
             and total_rgb_content_frames >= math.ceil(total_frames * 0.9)
+            and total_rgb_center_content_frames >= math.ceil(total_frames * 0.9)
             and total_rgb_motion_pairs > 0
         ),
         "timeline": "episode_index/frame_index/timestamp",

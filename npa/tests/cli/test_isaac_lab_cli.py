@@ -1774,15 +1774,20 @@ def test_isaac_lab_train_export_trajectories_runs_second_remote_script(mocker) -
     assert 'rtx_settings.set_bool("/rtx/dataWindow/fitOutputToDataWindow", False)' in traj_cmd
     assert "TiledCameraCfg(" in traj_cmd
     assert 'prim_path="{ENV_REGEX_NS}/NpaRolloutCamera"' in traj_cmd
+    assert 'task == "Isaac-Cartpole-v0"' in traj_cmd
+    assert "return (0.0, -5.0, 3.0), (0.0, 0.0, 3.0)" in traj_cmd
+    assert "camera.set_world_poses_from_view(eyes=eye, targets=target)" in traj_cmd
     assert 'camera = render_env.unwrapped.scene["npa_rollout_camera"]' in traj_cmd
     assert traj_cmd.index("obs, _rewards, done, _info = _step_env") < traj_cmd.index(
         "frame = _rgb_frame(render_env)"
     )
     assert 'np.save(episode_dir / "rgb.npy"' in traj_cmd
     assert "RGB content validation failed" in traj_cmd
+    assert "RGB center framing validation failed" in traj_cmd
     assert "RGB motion validation failed" in traj_cmd
     assert '"renderer": "isaac_sim_tiled_camera_rtx"' in traj_cmd
     assert '"rgb_content_frame_count": total_rgb_content_frames' in traj_cmd
+    assert '"rgb_center_content_frame_count": total_rgb_center_content_frames' in traj_cmd
     assert '"rgb_motion_pair_count": total_rgb_motion_pairs' in traj_cmd
     assert '"checkpoint_sha256": hashlib.sha256' in traj_cmd
     payload = json.loads(result.output)

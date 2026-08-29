@@ -1,6 +1,17 @@
 """Generated-script fragments for Isaac Lab trajectory export."""
 
 TRAJECTORY_CAMERA_HELPERS = r'''
+def _rollout_camera_view(task):
+    if task == "Isaac-Cartpole-v0":
+        # The manager-based Cartpole asset is rooted at z=2 m.  View it from
+        # the side at the pole midpoint so cart translation and pole rotation
+        # are both visible; the lower upstream RGB-camera pose points below
+        # this task's elevated articulation and clips it at the top edge.
+        return (0.0, -5.0, 3.0), (0.0, 0.0, 3.0)
+    eye = (3.0, 3.0, 2.0)
+    target = (0.0, 0.0, 0.8)
+    return eye, target
+
 def _normalize(vector):
     length = math.sqrt(sum(component * component for component in vector))
     if length < 1e-9:
