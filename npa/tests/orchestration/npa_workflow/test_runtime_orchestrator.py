@@ -249,6 +249,8 @@ states:
 class FakeResult:
     status: str = "SUBMITTED"
     job_id: str = "1"
+    returncode: int = 0
+    error: str = ""
 
 
 class FakeSubmitter:
@@ -1725,6 +1727,29 @@ def test_persistent_status_errors_cancel_the_job_and_fail(tmp_path: Path) -> Non
     assert cancels and cancels[0]["job_id"] == "1"
     assert report.waves[0]["sky_status"] == "SUBMITTED"
     assert report.waves[0]["cancellation"]["state"] == "requested"
+
+
+def test_unknown_status_result_is_counted_as_a_failed_query(tmp_path: Path) -> None:
+    spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
+    cancels: list[dict[str, Any]] = []
+
+    def unreadable(job_id: str, **_: Any) -> FakeResult:
+        return FakeResult(
+            status="UNKNOWN",
+            job_id=job_id,
+            returncode=2,
+            error="invalid relative config path",
+        )
+
+    executor = _executor(spec, status_fn=unreadable, cancels=cancels)
+    report = run_workflow_runtime(
+        spec, run_id="rt-unknown-status", executor=executor, options=executor.options
+    )
+
+    assert report.status == "failed"
+    assert "consecutive" in report.error
+    assert len(report.waves[0]["status_errors"]) == 6
+    assert cancels and cancels[0]["job_id"] == "1"
 
 
 def test_exact_cancellation_is_verified_without_masking_primary_error(

@@ -269,4 +269,7 @@ def _optional_path(value: Any | None) -> Path | None:
     text = os.fspath(value).strip()
     if not text:
         return None
-    return Path(text).expanduser()
+    # SkyPilot subprocesses deliberately execute from a durable cwd. Resolve
+    # operator-supplied relative paths while we still have the caller's cwd so a
+    # later status poll addresses the same config file as the original launch.
+    return Path(text).expanduser().resolve()

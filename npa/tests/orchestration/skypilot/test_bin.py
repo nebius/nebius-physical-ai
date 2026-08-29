@@ -152,6 +152,24 @@ def test_resolve_isolated_config_dir_defaults_to_shared_state(
     assert resolve_isolated_config_dir() is None
 
 
+def test_resolve_config_makes_relative_runtime_paths_cwd_independent(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    sky = _executable(tmp_path / "sky")
+    workdir = tmp_path / "operator"
+    workdir.mkdir()
+    monkeypatch.chdir(workdir)
+
+    resolved = resolve_config(
+        sky_bin=sky,
+        global_config_path=Path("sky.yaml"),
+        isolated_config_dir=Path("sky-state"),
+    )
+
+    assert resolved.global_config_path == workdir / "sky.yaml"
+    assert resolved.isolated_config_dir == workdir / "sky-state"
+
+
 def test_resolve_config_rejects_unknown_config_keys(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     sky = _executable(tmp_path / "sky")
     config = tmp_path / "config.yaml"
