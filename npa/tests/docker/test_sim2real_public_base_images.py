@@ -115,3 +115,5 @@ def test_isaac_runtime_uses_system_ffmpeg_without_wheel_bundled_binary() -> None
     assert "--no-binary imageio-ffmpeg" in installer
     assert "imageio_ffmpeg/binaries/ffmpeg*" in installer
     assert "IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg" in dockerfile
+    assert "rm -rf /opt/nvidia/nsight-compute" in dockerfile
+    assert "test ! -e /opt/nvidia/nsight-compute" in dockerfile
