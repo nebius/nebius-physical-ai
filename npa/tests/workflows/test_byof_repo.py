@@ -195,6 +195,8 @@ def test_private_build_uses_only_secret_mounts_and_sanitized_metadata(
     assert "npa_byof_repo_token" in command
     assert "BYOF_SOURCE_CACHE_KEY=" + "a" * 64 + "b" * 64 in command
     assert "type=secret,id=npa_byof_repo_token" in dockerfile
+    assert "username=x-access-token" in dockerfile
+    assert "password=" in dockerfile
     assert 'ARG OSS_REPO_URL=""' in dockerfile
     assert 'ARG OSS_REPO_REF=""' in dockerfile
     assert "private-byof" in dockerfile
