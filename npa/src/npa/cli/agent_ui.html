@@ -8707,17 +8707,10 @@
       let rerunCaptureBridge = null;
       let rerunCapturePrimeGeneration = 0;
       function captureStreamWithFrameFallback(canvas) {
-        // A zero-rate canvas stream is useful only when the browser exposes a
-        // requestFrame-capable track. Partial implementations otherwise leave a
-        // static Rerun scene permanently idle, so replace them with a 30 fps stream.
-        const manual = canvas.captureStream(0);
-        const track = manual && manual.getVideoTracks && manual.getVideoTracks()[0];
-        if (track && typeof track.requestFrame === "function") return manual;
-        if (manual && manual.getTracks) {
-          manual.getTracks().forEach((item) => {
-            try { item.stop(); } catch (_err) { /* ignore */ }
-          });
-        }
+        // Rerun's non-preserved WebGL canvas needs a stream that stays active
+        // across presents. A zero-rate/requestFrame track can freeze the first
+        // in-canvas loading paint even though later environment frames are
+        // visible in the browser compositor.
         return canvas.captureStream(30);
       }
       function disposeRerunCaptureBridge() {

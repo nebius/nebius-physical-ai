@@ -2948,26 +2948,20 @@ describe("NPA agent UI with mocked APIs", () => {
     });
   });
 
-  it("falls back to 30 fps when captureStream(0) lacks requestFrame", () => {
+  it("keeps the primed Rerun bridge continuous across later canvas paints", () => {
     cy.window().then((win) => {
       const api = win.__NPA_AGENT_TEST__;
       const rates = [];
-      const stopped = cy.stub();
-      const fallback = { getVideoTracks: () => [{ requestFrame() {} }], getTracks: () => [] };
-      const partial = {
-        getVideoTracks: () => [{}],
-        getTracks: () => [{ stop: stopped }],
-      };
+      const continuous = { getVideoTracks: () => [{}], getTracks: () => [] };
       const canvas = {
         captureStream(rate) {
           rates.push(rate);
-          return rate === 0 ? partial : fallback;
+          return continuous;
         },
       };
 
-      expect(api.captureStreamWithFrameFallback(canvas)).to.eq(fallback);
-      expect(rates).to.deep.eq([0, 30]);
-      expect(stopped).to.have.been.calledOnce;
+      expect(api.captureStreamWithFrameFallback(canvas)).to.eq(continuous);
+      expect(rates).to.deep.eq([30]);
     });
   });
 
