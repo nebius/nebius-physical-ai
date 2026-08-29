@@ -358,6 +358,7 @@ images:
     tier: job
     passwordless_root_exemption: "SkyPilot Kubernetes bootstrap only; non-root runtime user, no default sshd service, and no baked credentials."
     redistribution: public
+    skypilot_bootstrap_contract: skypilot-0.12.2-v1
   cosmos-curate:
     dockerfile: cosmos-curate/Dockerfile
     tier: job
@@ -393,6 +394,7 @@ images:
       that installs the Python environment. Isaac Sim/Lab and task assets remain
       cryptographically verified runtime fetches after EULA preflight.
     redistribution: public
+    skypilot_bootstrap_contract: skypilot-0.12.2-v1
   leisaac:
     dockerfile: leisaac/Dockerfile
     isaac_runtime_fetch: true
@@ -480,10 +482,11 @@ images:
     ports: [9090]
     final_user: ubuntu
     notes: >-
-      Purpose-built standard-workflow Stage 14 image with exact NPA source,
-      resolver-closed Rerun/MCAP dependencies, and SkyPilot Kubernetes bootstrap
-      prerequisites. Its command-passthrough entrypoint preserves orchestrator
-      argv, while an empty argv starts the interactive Rerun server.
+      Command-passthrough entrypoint supports SkyPilot Kubernetes setup as the
+      non-root ubuntu user; an empty argv starts the interactive Rerun server.
+      The image also bakes the exact NPA source revision and resolver-closed
+      Stage 14 S3/MCAP dependencies so the canonical no-overlay workflow can
+      finalize Rerun and MCAP artifacts with source attestation.
     passwordless_root_exemption: >-
       SkyPilot's Kubernetes bootstrap installs and starts its in-pod SSH runtime
       as the non-root ubuntu user. The image deletes all build-time SSH host keys,

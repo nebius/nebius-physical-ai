@@ -74,11 +74,13 @@ SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS: frozenset[str] = frozenset(
     {
         "cosmos2-transfer",
         "cosmos3",
+        "cosmos3-reason",
         "cosmos-curate",
         "cosmos-evaluator",
         "content-agents",
         "fiftyone",
         "groot",
+        "isaac-lab",
         "rerun-viewer",
     }
 )

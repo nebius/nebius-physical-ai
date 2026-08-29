@@ -239,12 +239,17 @@ def _ensure_runtime_buffers(env: Any, rows: list[dict[str, Any]]) -> None:
         env.npa_scenario_indices = torch.zeros(
             env.num_envs, dtype=torch.long, device=env.device
         )
-        env.npa_scenario_episode_counts = torch.zeros_like(env.npa_scenario_indices)
+        env.npa_scenario_assignment_cursor = 0
         env.npa_scenario_applied_counts = torch.zeros(
             len(rows), dtype=torch.long, device=env.device
         )
-        env.npa_scenario_assignment_cursor = 0
         env.npa_scenario_rows = rows
+    if not hasattr(env, "npa_scenario_assignment_cursor"):
+        env.npa_scenario_assignment_cursor = 0
+    if not hasattr(env, "npa_scenario_episode_counts"):
+        env.npa_scenario_episode_counts = torch.zeros(
+            env.num_envs, dtype=torch.long, device=env.device
+        )
     if not hasattr(env, "npa_stable_placement_steps"):
         env.npa_stable_placement_steps = torch.zeros(
             env.num_envs, dtype=torch.long, device=env.device

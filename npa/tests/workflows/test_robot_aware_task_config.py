@@ -65,6 +65,22 @@ def test_overrides_drops_bad_ranges():
     assert over == {}
 
 
+def test_overrides_drop_non_finite_values():
+    cfg = {
+        "action_scale": float("nan"),
+        "object_scale": float("inf"),
+        "object_init_range": {"x": [0.1, float("inf")]},
+        "goal_range": {"x": [float("nan"), 0.2]},
+        "goal_pos": [0.1, 0.2, float("inf")],
+        "minimal_height_m": float("nan"),
+        "success_distance_m": float("inf"),
+        "dense_lift_weight": float("inf"),
+        "grasp_shaping_weight": float("nan"),
+        "grasp_hold_weight": float("inf"),
+    }
+    assert robotmod.task_config_overrides(cfg) == {}
+
+
 def test_dense_lift_weight_passthrough():
     # A positive dense_lift_weight is carried (with a default std) so the variant
     # adds the continuous lift-progress reward; a non-positive / bad value is not.

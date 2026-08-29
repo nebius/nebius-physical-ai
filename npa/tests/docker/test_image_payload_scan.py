@@ -135,7 +135,9 @@ def test_shared_isaac_runtime_uses_system_ffmpeg_without_bundled_payload() -> No
     assert "  ffmpeg \\\n" in installer
     assert "*/imageio_ffmpeg/binaries/ffmpeg*" in installer
     assert "imageio_ffmpeg.get_ffmpeg_exe()" in installer
-    assert ' = "ffmpeg"' in installer
+    assert "--no-binary imageio-ffmpeg" in installer
+    assert "IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg" in installer
+    assert '!= "/usr/bin/ffmpeg"' in installer
 
 
 def test_blackwell_envgen_chain_uses_system_ffmpeg_without_bundled_payload() -> None:

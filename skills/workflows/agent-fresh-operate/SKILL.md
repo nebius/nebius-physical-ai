@@ -118,6 +118,125 @@ target branch to the dev VM before live tests.
    bash npa/scripts/agent_fresh_setup_loop.sh
    ```
 
+## Preflight Before You Spend
+
+```bash
+npa/.venv/bin/npa agent preflight --project <alias> --name <name> [--agent-only]
+```
+
+Pass the **same `--name`** you will deploy. Capacity depends on it: an existing
+agent of that name already holds its public IP and needs no headroom, while a new
+name needs a free one. Preflighting the default `agent` and then deploying
+`--name something-else` is how a "capacity ready" report is followed immediately
+by a public-IP shortfall.
+
+`--agent-only` drops the reserved PAIDF cluster shape, so it reserves no cluster
+nodes and does not inspect mk8s. Use it when the operator can create a VM but
+cannot `resource.mk8scluster.list` in the target project.
+
+Read the `whole_path_capacity` diagnostic literally — it names the exact quota,
+required, used, limit, and shortfall. Two facts make it confusing:
+
+- **Public-IPv4 quota is tenant + region scoped, not per project.** Several
+  project aliases pointing into one tenant/region share one allowance, so
+  freeing capacity in "your" project may be impossible while a sibling project
+  holds the addresses. Audit with `nebius vpc allocation list --parent-id
+  <project-id>` and look for `state=ALLOCATED` with `used_by=null` — an
+  unattached public allocation is a leaked address still consuming quota.
+- **Placement follows the project's real region, not the stanza's `region`
+  field or `--region`.** A config stanza can claim `eu-north1` for a project that
+  actually lives in `us-central1`; npa resolves the real one. If a quota number
+  looks like it came from a different region than you expected, trust npa and
+  re-check the project's actual region before assuming a bug.
+
+### Deploying Into A Tenant That Needs A Non-Default Profile
+
+Quota reads are profile-scoped, and the profile comes from `NPA_NEBIUS_PROFILE` /
+`NEBIUS_PROFILE` — **not** from the target project's `nebius_profile` config
+field, which npa stores but does not load into the environment for you. Export it
+before preflight or deploy:
+
+```bash
+NPA_NEBIUS_PROFILE=<profile> npa agent preflight --project <alias> --name <name> --agent-only
+```
+
+Without it, the CLI queries whichever profile is active, and a tenant that
+profile cannot read answers `PermissionDenied`. Because the quota API fails
+closed by design, that denial surfaces as `unverified mutation prerequisite:
+compute.instance.count: provider/RBAC query failed` — which reads like a quota
+problem but is an identity problem. Distinguish the two in one command: if
+
+```bash
+nebius quotas quota-allowance list --parent-id <tenant> --all --profile <profile>
+```
+
+succeeds while the same call without `--profile` is denied, the profile is the
+issue, not capacity. `nebius profile list` plus a `nebius iam project get --id
+<project> --profile <p>` confirms which profile actually reaches the tenant.
+
+## Verifying A Deployed Agent
+
+`npa agent verify-live --project <alias> --name <name>` runs the smoke, CLI, and
+live e2e tiers against the real VM and prints `verify-live: ok`.
+
+Expect skips, not failures, on an `--agent-only` agent. Chat returns workflow
+YAML only after validation *and* planning succeed, and the Sim2Real template
+cannot plan a submit with no Kubernetes backend, so it declines with `a
+configured Kubernetes backend is required before Sim2Real submit`. That is
+correct behavior; templates that need no cluster (PAIDF, the generic
+`create_workflow` shapes) still emit runnable YAML on the same agent. Confirm the
+precondition with `GET /api/infra/backends` — `has_infra: false` and an empty
+`configured` list means cluster-backed templates cannot be exercised there.
+
+Preflight fails closed when it cannot *read* a quota (`PermissionDenied` on
+`list_quota_allowances` reports an unverified mutation prerequisite). This is
+deliberate spend safety, not a bug: an operator with create rights but no
+quota-read grant in that tenant cannot deploy until the read grant exists.
+
+`ssh_egress` is a generic heuristic that probes the first public IP found in
+*any* saved agent record, so its "your Nebius agent VM" wording can name an
+unrelated — even deleted — VM. It never FAILs; do not read it as project-scoped
+evidence.
+
+## Stale Records vs Live VMs
+
+`npa agent list` and `npa agent status` render saved records. A record can
+survive its VM, so a listed `public_ip` and `https://<ip>/` URL are not proof the
+deployment exists. Confirm liveness before reusing or reporting one:
+
+```bash
+curl -sk -o /dev/null -w '%{http_code}\n' --max-time 8 "https://<ip>/healthz"
+npa/.venv/bin/npa agent bootstrap --project <alias> --name <name>   # NotFound => record only
+```
+
+A `Resource not found ... service compute` from bootstrap means the record is an
+orphan to clean up, not a VM to repair.
+
+## Pinned Nebius CLI On A Shared Dev VM
+
+NPA accepts only the CLI versions it has tested (`_TESTED_NEBIUS_CLI_VERSIONS` in
+`npa/src/npa/clients/nebius.py`, plus `nebius-cli` in
+`npa/src/npa/deploy/images.py`). Any other version fails every provider call with
+`Unsupported Nebius CLI <actual>`, which surfaces as several unrelated-looking
+preflight failures at once — quota, RBAC, and profile checks all report the same
+underlying refusal. Read the version line, not the individual checks.
+
+`npa/scripts/dev_vm_isolated_session.sh` isolates the worktree, venv, and tmux
+session, but **not** the Nebius CLI: it is resolved from `PATH` and the host copy
+is shared. When the host version is untested, install the tested one into a
+private prefix rather than overwriting the shared binary other runs depend on:
+
+```bash
+curl -fsSL https://storage.eu-north1.nebius.cloud/cli/install.sh \
+  -o /tmp/nebius-install.sh
+NEBIUS_INSTALL_FOLDER="$PWD/.tools/bin" NEBIUS_CLI_VERSION=<tested> \
+  bash /tmp/nebius-install.sh
+export PATH="$PWD/.tools/bin:$PATH"   # confirm with `nebius version`
+```
+
+The CLI reads the shared `~/.nebius/config.yaml`, so an existing authenticated
+profile keeps working through the private binary.
+
 ## Verify Tiers
 
 | Tier | Checks | Use when |

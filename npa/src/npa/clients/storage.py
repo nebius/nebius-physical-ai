@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from urllib.parse import urlparse
 
 import boto3
@@ -27,6 +27,27 @@ def _parse_bucket_uri(uri: str) -> tuple[str, str]:
     bucket = parsed.netloc
     prefix = parsed.path.lstrip("/")
     return bucket, prefix
+
+
+def safe_s3_tree_relative_path(key: str, prefix: str) -> Path:
+    """Return a local-safe path for one object listed under an S3 prefix."""
+
+    if not key.startswith(prefix):
+        raise StorageError(
+            f"Object storage returned a key outside the requested prefix: {key!r}"
+        )
+    relative = key[len(prefix) :]
+    path = PurePosixPath(relative)
+    if (
+        not relative
+        or path.is_absolute()
+        or relative != path.as_posix()
+        or "\\" in relative
+        or "\x00" in relative
+        or any(part in {"", ".", ".."} for part in path.parts)
+    ):
+        raise StorageError(f"Object storage returned an unsafe relative key: {key!r}")
+    return Path(*path.parts)
 
 
 class LazyStorageClient:
@@ -252,9 +273,9 @@ class StorageClient:
         for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
             for obj in page.get("Contents", []):
                 key = obj["Key"]
-                rel_path = key[len(prefix) :]
-                if not rel_path:
+                if key == prefix or key.endswith("/"):
                     continue
+                rel_path = safe_s3_tree_relative_path(key, prefix)
                 local_path = os.path.join(local_dir, rel_path)
                 os.makedirs(os.path.dirname(local_path), exist_ok=True)
                 self._s3.download_file(bucket, key, local_path)

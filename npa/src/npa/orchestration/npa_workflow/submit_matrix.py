@@ -105,6 +105,21 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         requires_token_factory=True,
     ),
     SubmitLiveCase(
+        "token-factory-batch-generate.yaml",
+        "cpu",
+        secret_envs=(
+            "NEBIUS_TOKEN_FACTORY_KEY",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+        ),
+        requires_token_factory=True,
+        notes=(
+            "Batch inference is a separate model entitlement from real-time chat, "
+            "and the stage waits out a completion window, so this case takes far "
+            "longer than the generate case it mirrors."
+        ),
+    ),
+    SubmitLiveCase(
         "token-factory-cosmos-reason.yaml",
         "cpu",
         secret_envs=(

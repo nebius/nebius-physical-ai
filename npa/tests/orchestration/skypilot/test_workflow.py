@@ -4,6 +4,7 @@ import json
 import os
 import re
 import subprocess
+import threading
 from pathlib import Path
 
 import pytest
@@ -114,7 +115,7 @@ def test_submit_workflow_loads_yaml_applies_controller_and_calls_subprocess(
 
     assert result.status == "SUBMITTED"
     assert result.job_id == "42"
-    assert calls[0][0] == [str(sky_bin), "status", "--refresh", "--output", "json"]
+    assert calls[0][0] == [str(sky_bin), "status", "--output", "json"]
     cmd, kwargs = calls[1]
     assert cmd[:5] == [str(sky_bin), "jobs", "launch", "--name", "run-abc"]
     assert "--config" not in cmd
@@ -210,6 +211,434 @@ def test_stable_sky_cwd_prefers_existing_isolated_dir(tmp_path) -> None:
     isolated = tmp_path / "sky-state"
     isolated.mkdir()
     assert _stable_sky_cwd(isolated) == str(isolated)
+
+
+def _fake_proc_process(
+    proc_root: Path,
+    *,
+    pid: int,
+    ppid: int,
+    uid: int,
+    cmdline: tuple[str, ...],
+    cwd: Path,
+    environment: dict[str, str] | None = None,
+    mount_namespace: str | None = None,
+) -> None:
+    process = proc_root / str(pid)
+    process.mkdir(parents=True)
+    (process / "cmdline").write_bytes(b"\0".join(item.encode() for item in cmdline))
+    (process / "status").write_text(
+        f"Name:\ttest\nPPid:\t{ppid}\nUid:\t{uid}\t{uid}\t{uid}\t{uid}\n",
+        encoding="utf-8",
+    )
+    (process / "cwd").symlink_to(cwd)
+    (process / "environ").write_bytes(
+        b"\0".join(
+            f"{key}={value}".encode() for key, value in (environment or {}).items()
+        )
+    )
+    if mount_namespace is not None:
+        namespace_dir = process / "ns"
+        namespace_dir.mkdir()
+        (namespace_dir / "mnt").symlink_to(mount_namespace)
+
+
+def _fake_proc_self_mount_namespace(proc_root: Path, namespace: str) -> None:
+    namespace_dir = proc_root / "self" / "ns"
+    namespace_dir.mkdir(parents=True)
+    (namespace_dir / "mnt").symlink_to(namespace)
+
+
+def test_local_api_daemon_probe_finds_deleted_executor_cwd(tmp_path) -> None:
+    proc_root = tmp_path / "proc"
+    bin_dir = tmp_path / "venv" / "bin"
+    bin_dir.mkdir(parents=True)
+    sky = bin_dir / "sky"
+    python = bin_dir / "python"
+    sky.touch()
+    python.touch()
+    durable = tmp_path / "durable"
+    durable.mkdir()
+    deleted = tmp_path / "deleted-request-cwd"
+    _fake_proc_process(
+        proc_root,
+        pid=100,
+        ppid=1,
+        uid=1234,
+        cmdline=(str(python), "-m", "sky.server.server", "--host=127.0.0.1"),
+        cwd=durable,
+    )
+    _fake_proc_process(
+        proc_root,
+        pid=101,
+        ppid=100,
+        uid=1234,
+        cmdline=("SkyPilot:executor:long:101",),
+        cwd=deleted,
+    )
+
+    result = workflow_module._probe_local_api_daemon_cwd(
+        str(sky), proc_root=proc_root, uid=1234
+    )
+
+    assert result.healthy is False
+    assert result.outcome == "cwd_deleted"
+    assert result.process_count == 2
+    assert "1 of 2" in result.error
+
+
+def test_local_api_daemon_probe_accepts_durable_process_tree(tmp_path) -> None:
+    proc_root = tmp_path / "proc"
+    bin_dir = tmp_path / "venv" / "bin"
+    bin_dir.mkdir(parents=True)
+    sky = bin_dir / "sky"
+    python = bin_dir / "python"
+    sky.touch()
+    python.touch()
+    durable = tmp_path / "durable"
+    durable.mkdir()
+    for pid, ppid, cmdline in (
+        (100, 1, (str(python), "-m", "sky.server.server")),
+        (101, 100, ("SkyPilot:executor:long:101",)),
+    ):
+        _fake_proc_process(
+            proc_root,
+            pid=pid,
+            ppid=ppid,
+            uid=1234,
+            cmdline=cmdline,
+            cwd=durable,
+        )
+
+    result = workflow_module._probe_local_api_daemon_cwd(
+        str(sky), proc_root=proc_root, uid=1234
+    )
+
+    assert result.healthy is True
+    assert result.outcome == "cwd_live"
+    assert result.process_count == 2
+
+
+def test_local_api_daemon_probe_ignores_other_mount_namespaces(tmp_path) -> None:
+    proc_root = tmp_path / "proc"
+    bin_dir = tmp_path / "venv" / "bin"
+    bin_dir.mkdir(parents=True)
+    sky = bin_dir / "sky"
+    python = bin_dir / "python"
+    sky.touch()
+    python.touch()
+    durable = tmp_path / "durable"
+    durable.mkdir()
+    deleted = tmp_path / "deleted-container-cwd"
+    caller_namespace = "mnt:[100]"
+    _fake_proc_self_mount_namespace(proc_root, caller_namespace)
+    _fake_proc_process(
+        proc_root,
+        pid=100,
+        ppid=1,
+        uid=1234,
+        cmdline=(str(python), "-m", "sky.server.server"),
+        cwd=durable,
+        mount_namespace=caller_namespace,
+    )
+    _fake_proc_process(
+        proc_root,
+        pid=200,
+        ppid=1,
+        uid=1234,
+        cmdline=(str(python), "-m", "sky.server.server"),
+        cwd=deleted,
+        mount_namespace="mnt:[200]",
+    )
+
+    result = workflow_module._probe_local_api_daemon_cwd(
+        str(sky), proc_root=proc_root, uid=1234
+    )
+
+    assert result.healthy is True
+    assert result.outcome == "cwd_live"
+    assert result.process_count == 1
+
+
+def test_local_api_daemon_probe_checks_same_mount_namespace(tmp_path) -> None:
+    proc_root = tmp_path / "proc"
+    bin_dir = tmp_path / "venv" / "bin"
+    bin_dir.mkdir(parents=True)
+    sky = bin_dir / "sky"
+    python = bin_dir / "python"
+    sky.touch()
+    python.touch()
+    deleted = tmp_path / "deleted-local-cwd"
+    caller_namespace = "mnt:[100]"
+    _fake_proc_self_mount_namespace(proc_root, caller_namespace)
+    _fake_proc_process(
+        proc_root,
+        pid=100,
+        ppid=1,
+        uid=1234,
+        cmdline=(str(python), "-m", "sky.server.server"),
+        cwd=deleted,
+        mount_namespace=caller_namespace,
+    )
+
+    result = workflow_module._probe_local_api_daemon_cwd(
+        str(sky), proc_root=proc_root, uid=1234
+    )
+
+    assert result.healthy is False
+    assert result.outcome == "cwd_deleted"
+    assert result.process_count == 1
+
+
+def test_local_api_daemon_probe_keeps_venv_python_symlink_lexical(tmp_path) -> None:
+    proc_root = tmp_path / "proc"
+    bin_dir = tmp_path / "venv" / "bin"
+    bin_dir.mkdir(parents=True)
+    system_python = tmp_path / "system" / "python"
+    system_python.parent.mkdir()
+    system_python.touch()
+    python = bin_dir / "python"
+    python.symlink_to(system_python)
+    sky = bin_dir / "sky"
+    sky.touch()
+    missing = tmp_path / "deleted"
+    _fake_proc_process(
+        proc_root,
+        pid=100,
+        ppid=1,
+        uid=1234,
+        cmdline=(str(python), "-m", "sky.server.server"),
+        cwd=missing,
+    )
+
+    result = workflow_module._probe_local_api_daemon_cwd(
+        str(sky), proc_root=proc_root, uid=1234
+    )
+
+    assert result.healthy is False
+    assert result.outcome == "cwd_deleted"
+
+
+def test_local_api_daemon_probe_rejects_deleted_inherited_global_config(
+    tmp_path,
+) -> None:
+    proc_root = tmp_path / "proc"
+    bin_dir = tmp_path / "venv" / "bin"
+    bin_dir.mkdir(parents=True)
+    sky = bin_dir / "sky"
+    python = bin_dir / "python"
+    sky.touch()
+    python.touch()
+    durable = tmp_path / "durable"
+    durable.mkdir()
+    _fake_proc_process(
+        proc_root,
+        pid=100,
+        ppid=1,
+        uid=1234,
+        cmdline=(str(python), "-m", "sky.server.server"),
+        cwd=durable,
+        environment={"SKYPILOT_GLOBAL_CONFIG": str(tmp_path / "deleted.yaml")},
+    )
+
+    result = workflow_module._probe_local_api_daemon_cwd(
+        str(sky), proc_root=proc_root, uid=1234
+    )
+
+    assert result.healthy is False
+    assert result.outcome == "stale_global_config"
+
+
+def test_local_api_daemon_probe_ignores_other_isolated_home(tmp_path) -> None:
+    proc_root = tmp_path / "proc"
+    bin_dir = tmp_path / "venv" / "bin"
+    bin_dir.mkdir(parents=True)
+    sky = bin_dir / "sky"
+    python = bin_dir / "python"
+    sky.touch()
+    python.touch()
+    durable = tmp_path / "durable"
+    durable.mkdir()
+    _fake_proc_process(
+        proc_root,
+        pid=100,
+        ppid=1,
+        uid=1234,
+        cmdline=(str(python), "-m", "sky.server.server"),
+        cwd=durable,
+        environment={"HOME": str(tmp_path / "operator-home")},
+    )
+
+    result = workflow_module._probe_local_api_daemon_cwd(
+        str(sky),
+        proc_root=proc_root,
+        uid=1234,
+        expected_home=str(tmp_path / "isolated-home"),
+    )
+
+    assert result.healthy is True
+    assert result.outcome == "absent"
+    assert result.process_count == 0
+
+
+def test_local_api_daemon_probe_ignores_other_user_id(tmp_path) -> None:
+    proc_root = tmp_path / "proc"
+    bin_dir = tmp_path / "venv" / "bin"
+    bin_dir.mkdir(parents=True)
+    sky = bin_dir / "sky"
+    python = bin_dir / "python"
+    sky.touch()
+    python.touch()
+    durable = tmp_path / "durable"
+    durable.mkdir()
+    _fake_proc_process(
+        proc_root,
+        pid=100,
+        ppid=1,
+        uid=1234,
+        cmdline=(str(python), "-m", "sky.server.server"),
+        cwd=durable,
+        environment={
+            "HOME": str(tmp_path / "isolated-home"),
+            "SKYPILOT_USER_ID": "temporary-user",
+        },
+    )
+
+    result = workflow_module._probe_local_api_daemon_cwd(
+        str(sky),
+        proc_root=proc_root,
+        uid=1234,
+        expected_home=str(tmp_path / "isolated-home"),
+        expected_user_id="shared-user",
+    )
+
+    assert result.healthy is True
+    assert result.outcome == "absent"
+    assert result.process_count == 0
+
+
+def test_api_daemon_repair_lock_serializes_same_runtime(tmp_path) -> None:
+    first_entered = threading.Event()
+    release_first = threading.Event()
+    second_attempting = threading.Event()
+    second_entered = threading.Event()
+
+    def first() -> None:
+        with workflow_module._api_daemon_repair_lock(tmp_path):
+            first_entered.set()
+            release_first.wait()
+
+    def second() -> None:
+        second_attempting.set()
+        with workflow_module._api_daemon_repair_lock(tmp_path):
+            second_entered.set()
+
+    first_thread = threading.Thread(target=first)
+    second_thread = threading.Thread(target=second)
+    first_thread.start()
+    first_entered.wait()
+    second_thread.start()
+    second_attempting.wait()
+    assert not second_entered.wait(0.05)
+    release_first.set()
+    first_thread.join()
+    second_thread.join()
+    assert second_entered.is_set()
+
+
+def test_locked_api_daemon_repair_serializes_call_path(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    first_entered = threading.Event()
+    release_first = threading.Event()
+    second_entered = threading.Event()
+    calls = 0
+
+    def fake_ensure(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            first_entered.set()
+            release_first.wait()
+        else:
+            second_entered.set()
+        return workflow_module.ApiDaemonCwdProbe(True, "cwd_live")
+
+    monkeypatch.setattr(workflow_module, "_ensure_local_api_daemon_cwd", fake_ensure)
+
+    def repair() -> None:
+        workflow_module._ensure_local_api_daemon_cwd_locked(
+            "/opt/sky/bin/sky",
+            env={},
+            cwd=str(tmp_path),
+            runtime_dir=tmp_path,
+        )
+
+    first_thread = threading.Thread(target=repair)
+    second_thread = threading.Thread(target=repair)
+    first_thread.start()
+    first_entered.wait()
+    second_thread.start()
+    assert not second_entered.wait(0.05)
+    release_first.set()
+    first_thread.join()
+    second_thread.join()
+    assert calls == 2
+    assert second_entered.is_set()
+
+
+def test_deleted_api_daemon_is_restarted_from_durable_cwd() -> None:
+    probes = iter(
+        (
+            workflow_module.ApiDaemonCwdProbe(False, "cwd_deleted", 8),
+            workflow_module.ApiDaemonCwdProbe(True, "absent"),
+            workflow_module.ApiDaemonCwdProbe(True, "cwd_live", 7),
+        )
+    )
+    calls: list[tuple[list[str], str]] = []
+
+    def runner(cmd, **kwargs):
+        calls.append((cmd, kwargs["cwd"]))
+        assert "SKYPILOT_GLOBAL_CONFIG" not in kwargs["env"]
+        return subprocess.CompletedProcess(cmd, 0, stdout="ok", stderr="")
+
+    result = workflow_module._ensure_local_api_daemon_cwd(
+        "/opt/sky/bin/sky",
+        env={"SKYPILOT_GLOBAL_CONFIG": "/tmp/request/config.yaml"},
+        cwd="/durable",
+        runner=runner,
+        probe=lambda: next(probes),
+        sleeper=lambda _seconds: None,
+    )
+
+    assert result.outcome == "restarted_from_durable_cwd"
+    assert result.process_count == 7
+    assert calls == [
+        (["/opt/sky/bin/sky", "api", "stop"], "/durable"),
+        (["/opt/sky/bin/sky", "api", "start"], "/durable"),
+    ]
+
+
+def test_deleted_api_daemon_repair_is_bounded_when_stop_does_not_drain() -> None:
+    poisoned = workflow_module.ApiDaemonCwdProbe(False, "cwd_deleted", 8)
+    calls = []
+
+    def runner(cmd, **kwargs):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, stdout="ok", stderr="")
+
+    with pytest.raises(SkyPilotSubmitError, match="poisoned processes remain"):
+        workflow_module._ensure_local_api_daemon_cwd(
+            "/opt/sky/bin/sky",
+            env={},
+            cwd="/durable",
+            runner=runner,
+            probe=lambda: poisoned,
+            sleeper=lambda _seconds: None,
+            attempts=2,
+        )
+
+    assert calls == [["/opt/sky/bin/sky", "api", "stop"]]
 
 
 def test_submit_workflow_network_failure_raises_typed_error(
@@ -546,7 +975,7 @@ def test_submit_workflow_require_controller_up_uses_canonical_preflight(
 
     def fake_run(cmd, **kwargs):
         calls.append(cmd)
-        if cmd[1:4] == ["status", "--refresh", "--output"]:
+        if _is_status_cmd(cmd):
             stdout = '[{"name": "sky-jobs-controller-abc123", "status": "UP"}]'
             return subprocess.CompletedProcess(cmd, 0, stdout=stdout, stderr="")
         return subprocess.CompletedProcess(
@@ -554,6 +983,13 @@ def test_submit_workflow_require_controller_up_uses_canonical_preflight(
         )
 
     monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        workflow_module,
+        "_probe_kubernetes_controller_cwd",
+        lambda *_args, **_kwargs: workflow_module.ControllerExecutionProbe(
+            True, "cwd_live", pod_count=1
+        ),
+    )
 
     result = submit_workflow(
         yaml_path,
@@ -564,7 +1000,7 @@ def test_submit_workflow_require_controller_up_uses_canonical_preflight(
     )
 
     assert result.job_id == "77"
-    assert calls[0] == [str(sky_bin), "status", "--refresh", "--output", "json"]
+    assert calls[0] == [str(sky_bin), "status", "--output", "json"]
     assert calls[1][:5] == [str(sky_bin), "jobs", "launch", "--name", "run-guard"]
 
 
@@ -595,7 +1031,7 @@ def test_submit_workflow_require_controller_up_blocks_missing_controller(
             controller_preflight_interval=0,
         )
 
-    assert calls == [[str(sky_bin), "status", "--refresh", "--output", "json"]]
+    assert calls == [[str(sky_bin), "status", "--output", "json"]]
 
 
 def test_submit_workflow_blocks_unhealthy_existing_jobs_controller(
@@ -634,7 +1070,7 @@ def test_submit_workflow_blocks_unhealthy_existing_jobs_controller(
             controller_preflight_interval=0,
         )
 
-    assert calls == [[str(sky_bin), "status", "--refresh", "--output", "json"]]
+    assert calls == [[str(sky_bin), "status", "--output", "json"]]
     assert not owned_dir.exists()
 
 
@@ -671,7 +1107,7 @@ def test_submit_workflow_controller_preflight_parses_warning_prefixed_json(
             controller_preflight_interval=0,
         )
 
-    assert calls == [[str(sky_bin), "status", "--refresh", "--output", "json"]]
+    assert calls == [[str(sky_bin), "status", "--output", "json"]]
 
 
 def test_workflow_status_reads_json_queue(monkeypatch, tmp_path) -> None:
@@ -867,6 +1303,264 @@ def test_wait_for_controller_proceeds_when_up(monkeypatch) -> None:
     workflow_module._wait_for_healthy_jobs_controller(
         "sky", env={}, timeout=0, interval=0.01
     )
+
+
+def test_controller_cwd_probe_rejects_deleted_working_directory() -> None:
+    calls: list[list[str]] = []
+    pod_payload = json.dumps(
+        {
+            "items": [
+                {
+                    "metadata": {
+                        "name": "controller-head",
+                        "namespace": "controller-ns",
+                        "labels": {
+                            "skypilot-cluster-name": "sky-jobs-controller-test",
+                            "ray-node-type": "head",
+                        },
+                    },
+                    "status": {
+                        "phase": "Running",
+                        "conditions": [{"type": "Ready", "status": "True"}],
+                    },
+                }
+            ]
+        }
+    )
+
+    def runner(cmd, **_kwargs):
+        calls.append(cmd)
+        if "get" in cmd:
+            return subprocess.CompletedProcess(cmd, 0, stdout=pod_payload, stderr="")
+        return subprocess.CompletedProcess(
+            cmd,
+            3,
+            stdout="",
+            stderr="sh: getcwd() failed: No such file or directory",
+        )
+
+    result = workflow_module._probe_kubernetes_controller_cwd(
+        "sky-jobs-controller-test",
+        context="exact-context",
+        env={},
+        runner=runner,
+        kubectl="/usr/bin/kubectl",
+    )
+
+    assert result.healthy is False
+    assert result.outcome == "cwd_unusable"
+    assert "getcwd" in result.error
+    assert calls[0][-4:] == [
+        "--selector",
+        "skypilot-cluster-name=sky-jobs-controller-test",
+        "--output",
+        "json",
+    ]
+    assert calls[1][-3:] == [
+        "/bin/sh",
+        "-c",
+        "pwd -P >/dev/null && test -d /proc/1/cwd",
+    ]
+
+
+def test_controller_up_is_rejected_when_execution_probe_fails(monkeypatch) -> None:
+    monkeypatch.setattr(workflow_module.subprocess, "run", _controller_status_run("UP"))
+
+    with pytest.raises(SkyPilotSubmitError) as caught:
+        workflow_module._wait_for_healthy_jobs_controller(
+            "sky",
+            env={"SKYPILOT_USER_ID": "abc123"},
+            timeout=0,
+            interval=0.01,
+            execution_probe=lambda _name: workflow_module.ControllerExecutionProbe(
+                False,
+                "cwd_unusable",
+                pod_count=1,
+                error="getcwd() failed: No such file or directory",
+            ),
+        )
+
+    message = str(caught.value)
+    assert "cached UP status is not sufficient" in message
+    assert "npa workbench workflow status|cancel" in message
+    assert "npa skypilot cleanup-controller" in message
+
+
+def test_controller_up_allows_recreation_when_cleaned_up_pod_is_absent(
+    monkeypatch,
+) -> None:
+    calls: list[list[str]] = []
+
+    def status_run(cmd, **_kwargs):
+        calls.append(cmd)
+        return _controller_status_run("UP")(cmd)
+
+    monkeypatch.setattr(workflow_module.subprocess, "run", status_run)
+    probe = workflow_module.ControllerExecutionProbe(
+        False,
+        "head_pod_ambiguous",
+        pod_count=0,
+        error="expected one controller head pod, found 0",
+    )
+
+    result = workflow_module._wait_for_healthy_jobs_controller(
+        "sky",
+        env={"SKYPILOT_USER_ID": "abc123"},
+        timeout=0,
+        interval=0.01,
+        execution_probe=lambda _name: probe,
+    )
+
+    assert result.state is workflow_module.ControllerState.UP
+    assert result.execution_probe is not None
+    assert result.execution_probe.outcome == "controller_absent"
+    assert calls
+    assert all("--refresh" not in cmd for cmd in calls)
+
+
+def test_controller_status_refresh_is_retained_without_execution_probe(
+    monkeypatch,
+) -> None:
+    calls: list[list[str]] = []
+
+    def status_run(cmd, **_kwargs):
+        calls.append(cmd)
+        return _controller_status_run("UP")(cmd)
+
+    monkeypatch.setattr(workflow_module.subprocess, "run", status_run)
+
+    result = workflow_module._wait_for_healthy_jobs_controller(
+        "sky",
+        env={"SKYPILOT_USER_ID": "abc123"},
+        timeout=0,
+        interval=0.01,
+    )
+
+    assert result.state is workflow_module.ControllerState.UP
+    assert calls == [["sky", "status", "--refresh", "--output", "json"]]
+
+
+def test_controller_up_not_ready_head_pod_fails_at_preflight_deadline(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(workflow_module.subprocess, "run", _controller_status_run("UP"))
+
+    with pytest.raises(SkyPilotSubmitError, match="UP_NO_READY_HEAD_POD"):
+        workflow_module._wait_for_healthy_jobs_controller(
+            "sky",
+            env={"SKYPILOT_USER_ID": "abc123"},
+            timeout=0,
+            interval=0.01,
+            execution_probe=lambda _name: workflow_module.ControllerExecutionProbe(
+                False,
+                "head_pod_not_ready",
+                pod_count=1,
+                error="controller head pod is not Ready",
+            ),
+        )
+
+
+def test_controller_stopped_rejects_existing_pod_with_deleted_cwd(monkeypatch) -> None:
+    """A STOPPED cache row can still have a reusable live pod.
+
+    This is the exact live failure shape: SkyPilot's ensure path reused the pod,
+    then rsync failed with code 3 before any workload became observable.
+    """
+
+    monkeypatch.setattr(
+        workflow_module.subprocess, "run", _controller_status_run("STOPPED")
+    )
+
+    with pytest.raises(SkyPilotSubmitError) as caught:
+        workflow_module._wait_for_healthy_jobs_controller(
+            "sky",
+            env={"SKYPILOT_USER_ID": "abc123"},
+            timeout=0,
+            interval=0.01,
+            execution_probe=lambda _name: workflow_module.ControllerExecutionProbe(
+                False,
+                "cwd_unusable",
+                pod_count=1,
+                error="rsync: getcwd() failed; code 3",
+            ),
+        )
+
+    assert "cached STOPPED status is not sufficient" in str(caught.value)
+
+
+def test_controller_stopped_allows_launch_when_controller_pod_is_absent(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        workflow_module.subprocess, "run", _controller_status_run("STOPPED")
+    )
+
+    result = workflow_module._wait_for_healthy_jobs_controller(
+        "sky",
+        env={"SKYPILOT_USER_ID": "abc123"},
+        timeout=0,
+        interval=0.01,
+        execution_probe=lambda _name: workflow_module.ControllerExecutionProbe(
+            False,
+            "head_pod_ambiguous",
+            pod_count=0,
+            error="expected one controller head pod, found 0",
+        ),
+    )
+
+    assert result.state is workflow_module.ControllerState.STOPPED
+    assert result.execution_probe is not None
+    assert result.execution_probe.healthy is True
+    assert result.execution_probe.outcome == "controller_absent"
+
+
+@pytest.mark.parametrize(
+    ("row", "observable", "marker"),
+    [
+        (
+            {
+                "job_id": 125,
+                "job_name": "exact-run",
+                "status": "PENDING",
+                "schedule_state": "INACTIVE",
+                "submitted_at": None,
+                "controller_pid": None,
+            },
+            False,
+            "",
+        ),
+        (
+            {
+                "job_id": 126,
+                "job_name": "exact-run",
+                "status": "PENDING",
+                "schedule_state": "WAITING",
+                "submitted_at": None,
+                "controller_pid": 4321,
+            },
+            True,
+            "controller_pid,scheduler_state",
+        ),
+    ],
+)
+def test_reconciliation_distinguishes_phantom_from_scheduler_observable_job(
+    monkeypatch, row, observable, marker
+) -> None:
+    monkeypatch.setattr(
+        workflow_module.subprocess,
+        "run",
+        lambda cmd, **_kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout=json.dumps([row]), stderr=""
+        ),
+    )
+
+    evidence = workflow_module._reconcile_managed_job_env(
+        "exact-run", env={}, sky_executable="sky", cwd="/durable"
+    )
+
+    assert evidence.state.value == "found"
+    assert evidence.workload_observable is observable
+    assert evidence.workload_evidence == marker
 
 
 def test_wait_for_controller_ignores_only_foreign_explicit_identity(

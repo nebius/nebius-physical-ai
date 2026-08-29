@@ -54,7 +54,9 @@ class ControllerBackendOption(str, Enum):
     nebius = "nebius"
 
 
-def _bounded_log_text(text: str, max_output_chars: int) -> tuple[str, dict[str, object]]:
+def _bounded_log_text(
+    text: str, max_output_chars: int
+) -> tuple[str, dict[str, object]]:
     """Return the diagnostic tail and a machine-readable truncation contract."""
 
     if not 1 <= max_output_chars <= MAX_LOG_OUTPUT_CHARS:
@@ -1556,6 +1558,8 @@ def submit_cmd(
                 sky_bin=sky_bin,
                 assume_decision=assume_decision,
                 enabled=resolve_accelerators and not plan_only,
+                config_path=config_path,
+                isolated_config_dir=isolated_config_dir,
                 readiness_timeout=gpu_readiness_timeout,
                 readiness_poll_interval=gpu_readiness_poll_interval,
             ),
@@ -2816,6 +2820,8 @@ def _resolve_submit_accelerators(
     sky_bin: str,
     assume_decision: str = "",
     enabled: bool,
+    config_path: Path | None = None,
+    isolated_config_dir: Path | None = None,
     readiness_timeout: float = 600.0,
     readiness_poll_interval: float = 10.0,
 ) -> dict[str, str]:
@@ -2844,6 +2850,10 @@ def _resolve_submit_accelerators(
         spec_accelerators,
         wait_for_kubernetes_accelerators,
     )
+    from npa.orchestration.skypilot.workflow import (
+        SkyPilotSubmitError,
+        ensure_local_api_daemon_health,
+    )
 
     try:
         resolved_spec = spec or load_spec(yaml_path)
@@ -2861,6 +2871,16 @@ def _resolve_submit_accelerators(
     except NpaWorkflowError:
         return {}
     if not requested:
+        return {}
+
+    try:
+        ensure_local_api_daemon_health(
+            sky_bin=sky_bin or None,
+            isolated_config_dir=isolated_config_dir,
+            config_path=config_path,
+        )
+    except (SkyPilotSubmitError, SkyPilotNotInstalledError, ValueError) as exc:
+        _fail(f"SkyPilot API daemon preflight failed: {exc}")
         return {}
 
     context = context_from_infra(infra) or os.environ.get("KUBECONTEXT", "").strip()
@@ -5285,9 +5305,7 @@ def logs_cmd(
                                 "stage": str(state_name),
                                 "attempt": int(wave.get("attempt") or 1),
                                 "managed_job_id": str(wave.get("job_id") or ""),
-                                "logical_state": str(
-                                    wave.get("status") or "unknown"
-                                ),
+                                "logical_state": str(wave.get("status") or "unknown"),
                                 "provenance": "legacy_runtime_wave_reconstruction",
                             }
                             if len(wave_tasks) == len(wave_states):
@@ -5332,14 +5350,9 @@ def logs_cmd(
                         for wave in resolution.runtime_state.get("waves") or []
                         if isinstance(wave, dict)
                         and selected_stage in list(wave.get("states") or [])
-                        and (
-                            not job_id
-                            or str(wave.get("job_id") or "") == job_id
-                        )
+                        and (not job_id or str(wave.get("job_id") or "") == job_id)
                     ]
-                    matching_waves.sort(
-                        key=lambda wave: int(wave.get("attempt") or 1)
-                    )
+                    matching_waves.sort(key=lambda wave: int(wave.get("attempt") or 1))
                     if matching_waves:
                         selected_wave = matching_waves[-1]
                         wave_states = list(selected_wave.get("states") or [])
@@ -5604,9 +5617,7 @@ def logs_cmd(
 
     from npa.orchestration.skypilot.workflow_state import redact_text
 
-    bounded_logs, log_metadata = _bounded_log_text(
-        redact_text(logs), max_output_chars
-    )
+    bounded_logs, log_metadata = _bounded_log_text(redact_text(logs), max_output_chars)
     typer.echo(bounded_logs)
     _emit_log_truncation(log_metadata)
 
@@ -6785,9 +6796,13 @@ def preflight_images_cmd(
         spec, plan.steps, run_id=run_id, options=options
     )
     if image_pull_secret:
-        explicit = tuple(dict.fromkeys(item.strip() for item in image_pull_secret if item.strip()))
+        explicit = tuple(
+            dict.fromkeys(item.strip() for item in image_pull_secret if item.strip())
+        )
         pull_secrets_by_image = {
-            selected: tuple(dict.fromkeys((*pull_secrets_by_image.get(selected, ()), *explicit)))
+            selected: tuple(
+                dict.fromkeys((*pull_secrets_by_image.get(selected, ()), *explicit))
+            )
             for selected in images
         }
     if not images:

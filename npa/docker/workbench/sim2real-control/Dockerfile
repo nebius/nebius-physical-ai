@@ -59,6 +59,8 @@ COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa
 COPY --chown=ubuntu:ubuntu workflows /opt/npa/workflows
 COPY docker/workbench/common/sim2real-controller-requirements.txt \
     /opt/npa/sim2real-controller-requirements.txt
+COPY docker/workbench/common/sim2real-control-requirements.txt \
+    /opt/npa/sim2real-control-requirements.txt
 COPY --chmod=0755 docker/workbench/common/workflow_runtime_entrypoint.sh \
     /usr/local/bin/npa-workflow-entrypoint
 
@@ -68,6 +70,7 @@ RUN test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
     && chmod a+r /opt/npa/pyproject.toml \
     && python -m pip install --no-cache-dir --no-deps \
       -r /opt/npa/sim2real-controller-requirements.txt \
+      -r /opt/npa/sim2real-control-requirements.txt \
     && python -m pip check \
     && python -c "import site; from pathlib import Path; Path(site.getsitepackages()[0], 'npa-exact-source.pth').write_text('/opt/npa/src\n', encoding='utf-8')" \
     && python -m py_compile \
@@ -75,7 +78,7 @@ RUN test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
       /opt/npa/src/npa/workflows/sim2real/stage14_finalize.py \
       /opt/npa/src/npa/workflows/sim2real/workflow_io.py \
       /opt/npa/src/npa/workflows/sim2real/workflow_stage.py \
-    && env -u PYTHONPATH python -c "import os; os.environ['NEBIUS_TOKEN_FACTORY_KEY']='build-smoke'; import boto3, httpx, yaml; from npa.clients.token_factory import TokenFactoryClient; from npa.workflows.sim2real.workflow_stage import main; assert callable(main); TokenFactoryClient()" \
+    && env -u PYTHONPATH python -c "import os; os.environ['NEBIUS_TOKEN_FACTORY_KEY']='build-smoke'; import boto3, httpx, yaml; from npa.clients.token_factory import TokenFactoryClient; from npa.workbench.cosmos.reason import run_token_factory_rollout_vlm; from npa.workflows.sim2real.stage8_cosmos3 import run; from npa.workflows.sim2real.workflow_stage import main; assert callable(run_token_factory_rollout_vlm) and callable(run) and callable(main); TokenFactoryClient()" \
     && chown -R ubuntu:ubuntu /workspace
 
 USER ubuntu

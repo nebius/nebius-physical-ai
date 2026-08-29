@@ -152,6 +152,8 @@ def cleanup_jobs_controller(
     project_id: str = "",
     cluster_id: str = "",
     cluster_name: str = "",
+    recover_orphan_controller: bool = False,
+    attest_no_active_jobs: bool = False,
 ) -> CleanupResult:
     """Transactionally remove the controller for one verified NPA cluster.
 
@@ -171,6 +173,13 @@ def cleanup_jobs_controller(
             else "live_configuration"
         ),
     )
+    if recover_orphan_controller != attest_no_active_jobs:
+        cleanup.outcome = "unsafe"
+        cleanup.errors.append(
+            "orphan controller recovery requires both recover_orphan_controller "
+            "and attest_no_active_jobs"
+        )
+        return cleanup
     from npa.cluster.identity import (
         ClusterIdentityError,
         resolve_verified_cluster_identity,
@@ -368,6 +377,40 @@ def cleanup_jobs_controller(
         or _cluster_name(item) in remote_names
     ]
     if remote_names and not context_clusters:
+        if recover_orphan_controller and attest_no_active_jobs:
+            commands, delete_error = _delete_orphan_controller_pods(
+                remote_pods,
+                kubeconfig=identity.kubeconfig,
+                context=identity.context,
+            )
+            cleanup.commands.extend(commands)
+            if delete_error:
+                cleanup.errors.append(delete_error)
+                _record_controller_result(
+                    identity, cleanup, "verification_failed", remote_pods=remote_pods
+                )
+                return cleanup
+            remaining, verify_error = _wait_for_controller_pods_absent(
+                remote_names,
+                kubeconfig=identity.kubeconfig,
+                context=identity.context,
+            )
+            if verify_error or remaining:
+                cleanup.errors.append(
+                    "orphan controller pod deletion was not verified: "
+                    + (verify_error or "controller pod was recreated")
+                )
+                _record_controller_result(
+                    identity, cleanup, "verification_failed", remote_pods=remaining
+                )
+                return cleanup
+            if not _record_remote_controller_absence(identity, cleanup):
+                return cleanup
+            cleanup.resources_removed.extend(sorted(remote_names))
+            cleanup.verified = True
+            cleanup.outcome = "cleaned"
+            _record_controller_result(identity, cleanup, "verified_deleted")
+            return cleanup
         cleanup.errors.append(
             "The verified context contains controller pod(s) "
             + ", ".join(sorted(remote_names))
@@ -377,6 +420,8 @@ def cleanup_jobs_controller(
         _record_controller_result(identity, cleanup, "verification_failed")
         return cleanup
     controller_clusters = context_clusters
+    remote_pods = _controller_pods_for_clusters(remote_pods, controller_clusters)
+    remote_names = {item[2] for item in remote_pods if item[2]}
     # Unrelated controller rows are deliberately ignored; they are neither
     # targets nor cleanup results for this exact project/context transaction.
     if controller_clusters:
@@ -502,6 +547,16 @@ def cleanup_jobs_controller(
         remote_pods=[],
     )
     return cleanup
+
+
+def _controller_pods_for_clusters(
+    remote_pods: Sequence[tuple[str, str, str]],
+    controller_clusters: Sequence[dict[str, Any]],
+) -> list[tuple[str, str, str]]:
+    """Keep only remote pods owned by the selected controller metadata rows."""
+
+    target_names = {_cluster_name(item) for item in controller_clusters}
+    return [item for item in remote_pods if item[2] in target_names]
 
 
 def _record_remote_controller_absence(identity: Any, cleanup: CleanupResult) -> bool:
@@ -1487,6 +1542,53 @@ def _kubernetes_controller_pods(
             )
         )
     return matches, ""
+
+
+def _delete_orphan_controller_pods(
+    pods: Sequence[tuple[str, str, str]],
+    *,
+    kubeconfig: Path,
+    context: str,
+) -> tuple[list[list[str]], str]:
+    """Delete exact orphan controller pods after explicit terminal attestation."""
+
+    from npa.cluster.drain import _noninteractive_kubeconfig_env
+
+    commands: list[list[str]] = []
+    with _noninteractive_kubeconfig_env(str(kubeconfig)) as (env, issue):
+        if issue is not None:
+            return commands, issue.summary
+        for namespace, pod, _controller in pods:
+            if not namespace or not pod:
+                return commands, "orphan controller pod identity is incomplete"
+            cmd = [
+                "kubectl",
+                "--context",
+                context,
+                "delete",
+                "pod",
+                pod,
+                "--namespace",
+                namespace,
+                "--wait=true",
+                "--timeout=180s",
+            ]
+            commands.append(cmd)
+            try:
+                result = subprocess.run(
+                    cmd,
+                    env=env,
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    timeout=240,
+                    check=False,
+                )
+            except (OSError, subprocess.SubprocessError) as exc:
+                return commands, f"orphan controller pod deletion failed: {exc}"
+            if result.returncode != 0:
+                return commands, _format_command_error(cmd, result)
+    return commands, ""
 
 
 def _wait_for_controller_pods_absent(

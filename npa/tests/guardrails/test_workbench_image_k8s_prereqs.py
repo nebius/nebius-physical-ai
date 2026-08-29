@@ -279,7 +279,7 @@ def test_genesis_derived_workflow_images_pin_the_bootstrap_closure(tool: str) ->
     """The two Genesis-derived canonical stages failed identically without sudo."""
 
     dockerfile = (DOCKER_ROOT / tool / "Dockerfile").read_text(encoding="utf-8")
-    assert "ARG UBUNTU_SNAPSHOT=20260801T053000Z" in dockerfile
+    assert "ARG UBUNTU_SNAPSHOT=20260820T000000Z" in dockerfile
     assert "install_workflow_runtime_prereqs.sh" in dockerfile
     assert 'install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}"' in dockerfile
 
@@ -289,6 +289,7 @@ def test_genesis_derived_workflow_images_pin_the_bootstrap_closure(tool: str) ->
     assert "snapshot.ubuntu.com/ubuntu/${snapshot}" in installer
     assert "ubuntu:22.04" in installer
     assert "apt-get --fix-broken install -y --no-install-recommends" in installer
+    assert "linux-libc-dev=5.15.0-190.200" in installer
     assert "sudo" in installer and "rsync" in installer
     assert "NOPASSWD" in installer
     assert "sudo -n true" in installer

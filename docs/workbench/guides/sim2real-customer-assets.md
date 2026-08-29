@@ -122,19 +122,14 @@ Set **one of**:
 BYO meshes are downloaded and validated in Stage 2 (sha256 + provenance). A failed
 download **raises** — there is no silent fallback to stock geometry.
 
-### BYO robot path — Franka today; UR / Flexiv next
+### Canonical BYO robot path
 
-| Preset (`ROBOT_PRESET`) | Monday status | Customer action |
-| --- | --- | --- |
-| `franka` (default) | **WORKS** — built-in MJCF / Isaac Franka hint | None |
-| `ur5e`, `ur10e` | **SEAM** — `preset_pending_urdf` | Upload articulated URDF (+ meshes) via `ROBOT_SPEC_URI` or `robot_source` |
-| `flexiv`, `flexiv_rizon`, `rizon` | **SEAM** — `preset_pending_urdf` | Same as UR: URDF required; visual-only meshes are rejected |
-
-Presets seed joint names, EE link, and Isaac hints. Until the URDF lands, envgen and
-eval record the preset metadata; held-out rollouts enforce load success for BYO robots
-(**no silent fallback to Franka** on eval).
-
-Full override: `ROBOT_SPEC_URI` pointing at `npa.sim2real.robot_spec.v1` JSON.
+The canonical YAML exposes `config.robot_spec_uri`. Empty selects the unchanged
+stock Franka execution. A non-empty exact S3 object must contain a complete
+`npa.sim2real.robot_spec.v1` and causes Stage 2 to validate and content-address the
+URDF package. Stage 7 resolves it to Isaac USD; rollout, PPO, validation, gold
+evaluation, and final reports enforce the same embodiment and dimensions without
+silent Franka fallback. See [the RobotSpec guide](./sim2real-robot-spec.md).
 
 Wire all customer asset seams at submit (CLI flag, SDK kwarg, and YAML env are 1:1 —
 see [runbook README](../../../npa/workflows/workbench/sim2real/README.md#one-byo-seam-one-value)):
@@ -148,7 +143,9 @@ export ASSETS_URI="s3://<bucket>/sim2real-assets/<task>/"
 export SCENE_SPEC_URI="s3://<bucket>/sim2real-assets/<task>/scene-spec.json"
 export CAMERAS_URI="s3://<bucket>/sim2real-assets/<task>/cameras.json"
 export ROBOT_PRESET="ur5e"
-export ROBOT_SPEC_URI="s3://<bucket>/sim2real-assets/<task>/robot-spec.json"
+ROBOT_SPEC_URI="s3://<bucket>/sim2real-assets/<task>/robot-spec.json"
+npa workbench workflow submit npa/workflows/workbench/npa-workflows/sim2real.yaml \
+  --runtime --var robot_spec_uri="$ROBOT_SPEC_URI" # plus required runtime vars
 ```
 
 ---
@@ -208,7 +205,7 @@ the operator supplies a registry-qualified image or customer asset.
 | 1 | Task-aligned seed trigger | **WORKS** | Verified Isaac trajectory manifest at `NPA_SIM2REAL_TRIGGER_DATASET_URI` |
 | 2 | LanceDB curation | **SEAM** | Trigger path only; no LanceDB stage |
 | 3 | Cosmos augment | **WORKS** | Canonical submit requires qualified Cosmos Transfer 2.5 and real Job evidence |
-| 4 | Sim assets / catalog | **WORKS** | Stock SceneSpec + Franka; BYO mesh / SceneSpec / RobotSpec; UR/Flexiv pending URDF |
+| 4 | Sim assets / catalog | **WORKS** | Stock SceneSpec + Franka; BYO RobotSpec validates and content-addresses complete URDF packages |
 | 5 | 10K envgen | **WORKS** | `NPA_ENV_COUNT=10000` via `sim2real_envgen` |
 | 5–6 | Curated train/validation/gold splits and feature lineage | **WORKS** | `NPA_TRAIN_FRACTION=0.8`; state carries all three disjoint split URIs and Stage 6 declares state-PPO consumption honestly |
 | 7 | Policy action rollouts | **WORKS** | Real Isaac standard-workflow task; every frame names the loaded checkpoint |

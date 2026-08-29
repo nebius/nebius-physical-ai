@@ -262,6 +262,15 @@ def test_stage_adapters_do_not_submit_hidden_kubernetes_jobs() -> None:
     source = (
         ROOT / "npa" / "src" / "npa" / "workflows" / "sim2real" / "workflow_stage.py"
     ).read_text()
+    source += (
+        ROOT
+        / "npa"
+        / "src"
+        / "npa"
+        / "workflows"
+        / "sim2real"
+        / "isaac_stage_contract.py"
+    ).read_text()
     assert "KubernetesJobClient" not in source
     assert "run_gpu_job_with_fallback" not in source
     assert "submit_sim2real" not in source

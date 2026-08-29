@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import json
+import os
 import re
 import hashlib
+import fcntl
 import shutil
 import subprocess
 import sys
@@ -11,6 +14,7 @@ import tempfile
 import threading
 import time
 from collections.abc import Callable
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -71,6 +75,39 @@ HEALTHY_CONTROLLER_STATUS = "UP"
 READY_CONTROLLER_STATUSES = frozenset({HEALTHY_CONTROLLER_STATUS, "STOPPED"})
 
 
+@dataclass(frozen=True)
+class ControllerExecutionProbe:
+    """Structured proof that an existing controller can execute from a live cwd."""
+
+    healthy: bool
+    outcome: str
+    pod_count: int = 0
+    error: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "healthy": self.healthy,
+            "outcome": self.outcome,
+            "pod_count": self.pod_count,
+            "error": redact_text(self.error)[:1000],
+        }
+
+
+@dataclass(frozen=True)
+class ControllerHealthResult:
+    """Durable controller status plus execution-health evidence."""
+
+    state: ControllerState
+    name: str = ""
+    execution_probe: ControllerExecutionProbe | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {"state": self.state.value, "name": self.name}
+        if self.execution_probe is not None:
+            payload["execution_probe"] = self.execution_probe.to_dict()
+        return payload
+
+
 def _stable_sky_cwd(isolated_config_dir: Path | None) -> str:
     """Return a durable directory to run the ``sky`` CLI from.
 
@@ -123,7 +160,31 @@ class ManagedJobEvidence:
     job_id: str = ""
     status: str = ""
     task_rows: tuple[dict[str, Any], ...] = ()
+    workload_observable: bool = True
+    workload_evidence: str = ""
     error: str = ""
+
+
+def _managed_job_workload_markers(row: Mapping[str, Any]) -> set[str]:
+    """Return scheduler/runtime fields that cannot exist in a pre-sync row."""
+
+    markers: set[str] = set()
+    status = str(row.get("status") or "UNKNOWN").upper()
+    if status not in {"", "PENDING", "UNKNOWN"}:
+        markers.add(f"status:{status.lower()}")
+    schedule_state = str(row.get("schedule_state") or "").upper()
+    if schedule_state and not schedule_state.endswith("INACTIVE"):
+        markers.add("scheduler_state")
+    for marker_field in (
+        "submitted_at",
+        "start_at",
+        "end_at",
+        "controller_pid",
+        "controller_pid_started_at",
+    ):
+        if row.get(marker_field) not in (None, "", 0, 0.0):
+            markers.add(marker_field)
+    return markers
 
 
 class SkyPilotSubmitError(RuntimeError):
@@ -137,6 +198,355 @@ class SkyPilotSubmitError(RuntimeError):
     ) -> None:
         super().__init__(message)
         self.transaction = transaction
+
+
+@dataclass(frozen=True)
+class ApiDaemonCwdProbe:
+    """Process-level health of the local SkyPilot API server tree."""
+
+    healthy: bool
+    outcome: str
+    process_count: int = 0
+    error: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "healthy": self.healthy,
+            "outcome": self.outcome,
+            "process_count": self.process_count,
+            "error": redact_text(self.error)[:1000],
+        }
+
+
+def _probe_local_api_daemon_cwd(
+    sky_executable: str,
+    *,
+    proc_root: Path = Path("/proc"),
+    uid: int | None = None,
+    expected_home: str = "",
+    expected_user_id: str = "",
+) -> ApiDaemonCwdProbe:
+    """Inspect the actual local API daemon and descendants through procfs.
+
+    ``sky api status`` starts a fresh client shell and cannot reveal that an
+    already-running server or executor inherited a directory which was later
+    deleted.  Those executor processes perform controller provisioning and
+    rsync, so every cwd in the local server process tree must remain resolvable.
+    """
+
+    expected_uid = os.getuid() if uid is None else uid
+    try:
+        caller_mount_namespace = os.readlink(proc_root / "self" / "ns" / "mnt")
+    except OSError:
+        # Hermetic procfs fixtures and restricted proc mounts may not expose
+        # namespace links. Preserve the conservative legacy scan in that case.
+        caller_mount_namespace = None
+    # Keep the venv path lexical here: ``bin/python`` is commonly a symlink to
+    # the system interpreter, while ``bin/sky`` is a script. Resolving both
+    # would put them in different parent directories and miss the real daemon.
+    sky_bin_dir = Path(sky_executable).expanduser().absolute().parent
+    records: dict[int, tuple[int, tuple[str, ...], Path]] = {}
+    try:
+        candidates = tuple(proc_root.iterdir())
+    except OSError as exc:
+        return ApiDaemonCwdProbe(
+            False, "procfs_unavailable", error=redact_text(str(exc))
+        )
+    for candidate in candidates:
+        if not candidate.name.isdigit():
+            continue
+        try:
+            raw_cmdline = (candidate / "cmdline").read_bytes()
+            cmdline = tuple(
+                item.decode(errors="replace")
+                for item in raw_cmdline.split(b"\0")
+                if item
+            )
+            status = (candidate / "status").read_text(
+                encoding="utf-8", errors="replace"
+            )
+            status_fields = {
+                line.split(":", 1)[0]: line.split(":", 1)[1].strip()
+                for line in status.splitlines()
+                if ":" in line
+            }
+            process_uid = int(status_fields.get("Uid", "-1").split()[0])
+            if process_uid != expected_uid:
+                continue
+            ppid = int(status_fields.get("PPid", "-1").split()[0])
+        except (FileNotFoundError, ProcessLookupError):
+            continue
+        except (OSError, ValueError) as exc:
+            return ApiDaemonCwdProbe(
+                False,
+                "process_inspection_failed",
+                process_count=len(records),
+                error=redact_text(str(exc)),
+            )
+        records[int(candidate.name)] = (ppid, cmdline, candidate)
+
+    roots = {
+        pid
+        for pid, (_ppid, cmdline, _process) in records.items()
+        if cmdline
+        and Path(cmdline[0]).expanduser().absolute().parent == sky_bin_dir
+        and "-m" in cmdline
+        and "sky.server.server" in cmdline
+    }
+    if caller_mount_namespace is not None:
+        scoped_roots = set()
+        for pid in roots:
+            try:
+                candidate_mount_namespace = os.readlink(
+                    records[pid][2] / "ns" / "mnt"
+                )
+            except (FileNotFoundError, ProcessLookupError, PermissionError):
+                continue
+            except OSError as exc:
+                return ApiDaemonCwdProbe(
+                    False,
+                    "process_inspection_failed",
+                    process_count=len(scoped_roots),
+                    error=redact_text(str(exc)),
+                )
+            if candidate_mount_namespace == caller_mount_namespace:
+                scoped_roots.add(pid)
+        roots = scoped_roots
+    if not roots:
+        return ApiDaemonCwdProbe(True, "absent")
+
+    runtime_roots: set[int] = set()
+    for pid in roots:
+        try:
+            raw_environment = (records[pid][2] / "environ").read_bytes()
+        except (FileNotFoundError, ProcessLookupError):
+            continue
+        except OSError as exc:
+            return ApiDaemonCwdProbe(
+                False,
+                "process_inspection_failed",
+                process_count=len(roots),
+                error=redact_text(str(exc)),
+            )
+        environment = {
+            item.split(b"=", 1)[0].decode(errors="replace"): item.split(b"=", 1)[
+                1
+            ].decode(errors="replace")
+            for item in raw_environment.split(b"\0")
+            if b"=" in item
+        }
+        daemon_home = environment.get("HOME", "").strip()
+        if expected_home and Path(daemon_home).expanduser().absolute() != Path(
+            expected_home
+        ).expanduser().absolute():
+            continue
+        daemon_user_id = environment.get("SKYPILOT_USER_ID", "").strip()
+        if expected_user_id and daemon_user_id != expected_user_id:
+            continue
+        runtime_roots.add(pid)
+        inherited_config = environment.get("SKYPILOT_GLOBAL_CONFIG", "").strip()
+        if inherited_config and not Path(inherited_config).is_file():
+            return ApiDaemonCwdProbe(
+                False,
+                "stale_global_config",
+                process_count=len(runtime_roots),
+                error=(
+                    "local SkyPilot API server inherited a global config path "
+                    "which no longer exists"
+                ),
+            )
+    roots = runtime_roots
+    if not roots:
+        return ApiDaemonCwdProbe(True, "absent")
+
+    process_tree = set(roots)
+    changed = True
+    while changed:
+        changed = False
+        for pid, (ppid, _cmdline, _process) in records.items():
+            if ppid in process_tree and pid not in process_tree:
+                process_tree.add(pid)
+                changed = True
+
+    unusable = []
+    for pid in process_tree:
+        try:
+            cwd = os.readlink(records[pid][2] / "cwd")
+        except (FileNotFoundError, ProcessLookupError):
+            continue
+        except OSError as exc:
+            return ApiDaemonCwdProbe(
+                False,
+                "process_inspection_failed",
+                process_count=len(process_tree),
+                error=redact_text(str(exc)),
+            )
+        if cwd.endswith(" (deleted)") or not Path(cwd).is_dir():
+            unusable.append(pid)
+    if unusable:
+        return ApiDaemonCwdProbe(
+            False,
+            "cwd_deleted",
+            process_count=len(process_tree),
+            error=(
+                f"{len(unusable)} of {len(process_tree)} local SkyPilot API "
+                "server processes have an unresolvable working directory"
+            ),
+        )
+    return ApiDaemonCwdProbe(True, "cwd_live", process_count=len(process_tree))
+
+
+def _ensure_local_api_daemon_cwd(
+    sky_executable: str,
+    *,
+    env: Mapping[str, str],
+    cwd: str,
+    runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+    probe: Callable[[], ApiDaemonCwdProbe] | None = None,
+    sleeper: Callable[[float], None] = time.sleep,
+    attempts: int = 20,
+) -> ApiDaemonCwdProbe:
+    """Restart a poisoned local API daemon from NPA's durable cwd."""
+
+    inspect = probe or (
+        lambda: _probe_local_api_daemon_cwd(
+            sky_executable,
+            expected_home=str(env.get("HOME") or ""),
+            expected_user_id=str(env.get("SKYPILOT_USER_ID") or ""),
+        )
+    )
+    before = inspect()
+    if before.healthy:
+        return before
+    if before.outcome not in {
+        "cwd_deleted",
+        "stale_global_config",
+        "stale_runtime_environment",
+    }:
+        raise SkyPilotSubmitError(
+            "SkyPilot local API server cwd health could not be established: "
+            f"{before.outcome}: {before.error}"
+        )
+
+    daemon_env = dict(env)
+    # The per-submit config is loaded by the client request. It must not become
+    # process-global state on a daemon that outlives the owner-only submission
+    # directory.
+    daemon_env.pop("SKYPILOT_GLOBAL_CONFIG", None)
+    stop = runner(
+        [sky_executable, "api", "stop"],
+        env=daemon_env,
+        cwd=cwd,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=60,
+        check=False,
+    )
+    if stop.returncode != 0:
+        raise SkyPilotSubmitError(
+            "SkyPilot local API server has an unhealthy runtime environment and "
+            f"could not be stopped safely: {redact_text(_command_detail(stop))}"
+        )
+    for _ in range(max(attempts, 1)):
+        stopped = inspect()
+        if stopped.healthy and stopped.outcome == "absent":
+            break
+        sleeper(0.25)
+    else:
+        raise SkyPilotSubmitError(
+            "SkyPilot local API server stop completed but poisoned processes "
+            "remain; no controller submission was attempted."
+        )
+
+    start = runner(
+        [sky_executable, "api", "start"],
+        env=daemon_env,
+        cwd=cwd,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=120,
+        check=False,
+    )
+    if start.returncode != 0:
+        raise SkyPilotSubmitError(
+            "SkyPilot local API server was stopped after a deleted-cwd failure "
+            f"but did not restart from the durable cwd: {redact_text(_command_detail(start))}"
+        )
+    for _ in range(max(attempts, 1)):
+        restarted = inspect()
+        if restarted.healthy and restarted.outcome == "cwd_live":
+            return ApiDaemonCwdProbe(
+                True,
+                "restarted_from_durable_cwd",
+                process_count=restarted.process_count,
+            )
+        sleeper(0.25)
+    raise SkyPilotSubmitError(
+        "SkyPilot local API server restarted but its durable cwd could not be verified; "
+        "no controller submission was attempted."
+    )
+
+
+@contextmanager
+def _api_daemon_repair_lock(runtime_dir: Path):
+    """Serialize process-wide daemon repair for one isolated SkyPilot runtime."""
+
+    runtime_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    lock_path = runtime_dir / ".npa-api-daemon-repair.lock"
+    with lock_path.open("a+", encoding="utf-8") as handle:
+        lock_path.chmod(0o600)
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def _ensure_local_api_daemon_cwd_locked(
+    sky_executable: str,
+    *,
+    env: Mapping[str, str],
+    cwd: str,
+    runtime_dir: Path,
+) -> ApiDaemonCwdProbe:
+    """Run the daemon health/repair transaction under its runtime identity lock."""
+
+    with _api_daemon_repair_lock(runtime_dir):
+        return _ensure_local_api_daemon_cwd(
+            sky_executable,
+            env=env,
+            cwd=cwd,
+        )
+
+
+def ensure_local_api_daemon_health(
+    *,
+    sky_bin: SkyBin = None,
+    isolated_config_dir: Path | None = None,
+    config_path: Path | None = None,
+) -> ApiDaemonCwdProbe:
+    """Run the shared local-daemon repair gate before SkyPilot preflights."""
+
+    runtime_config = resolve_config(
+        sky_bin=sky_bin,
+        global_config_path=config_path,
+        isolated_config_dir=isolated_config_dir,
+    )
+    # This gate runs before accelerator discovery's normal version validation.
+    # It only needs the exact configured executable to identify an already-live
+    # daemon; an absent daemon is left for the regular pinned-version path.
+    sky_executable = str(runtime_config.sky_bin)
+    env = sky_environment(runtime_config.isolated_config_dir)
+    stable_cwd = _stable_sky_cwd(runtime_config.isolated_config_dir)
+    runtime_dir = runtime_config.isolated_config_dir or Path(stable_cwd)
+    return _ensure_local_api_daemon_cwd_locked(
+        sky_executable,
+        env=env,
+        cwd=stable_cwd,
+        runtime_dir=runtime_dir,
+    )
 
 
 class _SkyPilotLaunchCommandError(RuntimeError):
@@ -256,9 +666,7 @@ def submit_workflow(
         # The task YAML can carry registry/docker auth + S3 creds; keep it owner-only.
         _chmod_owner_only(prepared_yaml)
         sky_executable = str(ensure_skypilot_version(runtime_config.sky_bin))
-        controller_context = _controller_region_from_infra(
-            infra, controller_backend
-        )
+        controller_context = _controller_region_from_infra(infra, controller_backend)
         global_config = apply_controller_override(
             _load_base_config(runtime_config.global_config_path),
             controller_backend=controller_backend,
@@ -306,13 +714,35 @@ def submit_workflow(
             if env.get(secret_name):
                 cmd[-1:-1] = ["--secret", secret_name]
         stable_cwd = _stable_sky_cwd(runtime_config.isolated_config_dir)
-        controller_state = _wait_for_healthy_jobs_controller(
+        api_daemon_health = _ensure_local_api_daemon_cwd_locked(
+            sky_executable,
+            env=env,
+            cwd=stable_cwd,
+            runtime_dir=runtime_config.isolated_config_dir or Path(stable_cwd),
+        )
+        selected_context = _selected_kube_context(
+            infra,
+            env=env,
+            controller_backend=controller_backend,
+        )
+        controller_health = _wait_for_healthy_jobs_controller(
             sky_executable,
             env=env,
             timeout=controller_preflight_timeout,
             interval=controller_preflight_interval,
             require_existing=require_controller_up,
             cwd=stable_cwd,
+            execution_probe=(
+                (
+                    lambda controller_name: _probe_kubernetes_controller_cwd(
+                        controller_name,
+                        context=selected_context,
+                        env=env,
+                    )
+                )
+                if controller_backend == "kubernetes"
+                else None
+            ),
         )
         streamer = (
             _LaunchStreamer(
@@ -325,11 +755,6 @@ def submit_workflow(
             )
             if stream_output
             else None
-        )
-        selected_context = _selected_kube_context(
-            infra,
-            env=env,
-            controller_backend=controller_backend,
         )
         readiness_probe = stability_probe
         if readiness_probe is None and controller_backend == "kubernetes":
@@ -413,8 +838,9 @@ def submit_workflow(
                 return
             enriched = dict(payload)
             enriched["controller"] = {
-                "state": controller_state.value,
+                **controller_health.to_dict(),
                 "selected_context": selected_context,
+                "local_api_daemon": api_daemon_health.to_dict(),
             }
             transaction_recorder(enriched)
 
@@ -435,8 +861,9 @@ def submit_workflow(
             )
         except LaunchTransactionError as exc:
             exc.result.controller = {
-                "state": controller_state.value,
+                **controller_health.to_dict(),
                 "selected_context": selected_context,
+                "local_api_daemon": api_daemon_health.to_dict(),
             }
             if exc.result.state in {
                 LaunchState.INDETERMINATE,
@@ -453,8 +880,9 @@ def submit_workflow(
                 message = f"{message}\n{exc.result.operator_remedy}"
             raise SkyPilotSubmitError(message, transaction=exc.result) from exc
         transaction.controller = {
-            "state": controller_state.value,
+            **controller_health.to_dict(),
             "selected_context": selected_context,
+            "local_api_daemon": api_daemon_health.to_dict(),
         }
         launch_pair = transaction.launch_result
         result = launch_pair[0] if isinstance(launch_pair, tuple) else None
@@ -798,11 +1226,21 @@ def lookup_managed_job(
         )
     selected = str(max(matching_ids))
     rows = tuple(parse_task_statuses(result.stdout, selected))
+    markers = sorted(
+        {
+            marker
+            for row in jobs
+            if str(row.get("job_id") or row.get("id") or "") == selected
+            for marker in _managed_job_workload_markers(row)
+        }
+    )
     return ManagedJobEvidence(
         "found",
         job_id=selected,
         status=_status_from_queue_payload(result.stdout, selected) or "UNKNOWN",
         task_rows=rows,
+        workload_observable=bool(markers),
+        workload_evidence=",".join(markers),
     )
 
 
@@ -856,6 +1294,7 @@ def _reconcile_managed_job_env(
         rows = parsed_rows
     matching: set[str] = set()
     statuses: dict[str, str] = {}
+    workload_markers: dict[str, set[str]] = {}
     for row in rows:
         if not isinstance(row, Mapping):
             continue
@@ -865,6 +1304,9 @@ def _reconcile_managed_job_env(
         if job_id.isdigit():
             matching.add(job_id)
             statuses[job_id] = str(row.get("status") or "UNKNOWN").upper()
+            workload_markers.setdefault(job_id, set()).update(
+                _managed_job_workload_markers(row)
+            )
     if not matching:
         return ReconciliationEvidence(ReconciliationState.ABSENT)
     if len(matching) != 1:
@@ -876,10 +1318,13 @@ def _reconcile_managed_job_env(
             ),
         )
     selected = next(iter(matching))
+    markers = sorted(workload_markers.get(selected) or ())
     return ReconciliationEvidence(
         ReconciliationState.FOUND,
         job_id=selected,
         status=statuses.get(selected, "UNKNOWN"),
+        workload_observable=bool(markers),
+        workload_evidence=",".join(markers),
     )
 
 
@@ -1137,6 +1582,159 @@ def _read_text(path: Path) -> str:
         return ""
 
 
+def _probe_kubernetes_controller_cwd(
+    controller_name: str,
+    *,
+    context: str,
+    env: Mapping[str, str],
+    runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+    kubectl: str | None = None,
+    timeout: int = 30,
+) -> ControllerExecutionProbe:
+    """Prove the live Kubernetes controller head can resolve its cwd.
+
+    SkyPilot records a managed-job row before it syncs the submitted YAML. A
+    controller pod whose working directory was deleted can therefore remain
+    cached as ``UP`` while every sync fails and leaves a permanent PENDING row.
+    The pod readiness bit cannot detect that process-level filesystem failure,
+    so execute a read-only cwd probe in the exact head pod before launch.
+    """
+
+    exact_context = str(context or "").strip()
+    executable = kubectl or shutil.which("kubectl") or ""
+    if not exact_context:
+        return ControllerExecutionProbe(
+            False, "context_missing", error="controller cwd probe has no exact context"
+        )
+    if not executable:
+        return ControllerExecutionProbe(
+            False,
+            "kubectl_missing",
+            error="kubectl is required for controller cwd health",
+        )
+    selector = f"skypilot-cluster-name={controller_name}"
+    try:
+        listed = runner(
+            [
+                executable,
+                "--context",
+                exact_context,
+                "get",
+                "pods",
+                "--all-namespaces",
+                "--selector",
+                selector,
+                "--output",
+                "json",
+            ],
+            env=dict(env),
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=timeout,
+            check=False,
+        )
+    except (KeyboardInterrupt, InterruptedError):
+        raise
+    except BaseException as exc:
+        return ControllerExecutionProbe(
+            False, "pod_query_failed", error=redact_text(str(exc))
+        )
+    if listed.returncode != 0:
+        return ControllerExecutionProbe(
+            False, "pod_query_failed", error=redact_text(_command_detail(listed))
+        )
+    try:
+        payload = json.loads(listed.stdout or "{}")
+    except (TypeError, json.JSONDecodeError) as exc:
+        return ControllerExecutionProbe(
+            False, "pod_query_malformed", error=redact_text(str(exc))
+        )
+    items = payload.get("items") if isinstance(payload, dict) else None
+    pods = items if isinstance(items, list) else []
+    heads = []
+    for pod in pods:
+        if not isinstance(pod, dict):
+            continue
+        metadata = pod.get("metadata") if isinstance(pod.get("metadata"), dict) else {}
+        labels = (
+            metadata.get("labels") if isinstance(metadata.get("labels"), dict) else {}
+        )
+        if (
+            labels.get("ray-node-type") == "head"
+            or labels.get("skypilot-head-node") == "1"
+        ):
+            heads.append(pod)
+    if len(heads) != 1:
+        return ControllerExecutionProbe(
+            False,
+            "head_pod_ambiguous",
+            pod_count=len(heads),
+            error=f"expected one controller head pod, found {len(heads)}",
+        )
+    head = heads[0]
+    metadata = head.get("metadata") if isinstance(head.get("metadata"), dict) else {}
+    status = head.get("status") if isinstance(head.get("status"), dict) else {}
+    conditions = (
+        status.get("conditions") if isinstance(status.get("conditions"), list) else []
+    )
+    ready = any(
+        isinstance(condition, dict)
+        and condition.get("type") == "Ready"
+        and str(condition.get("status") or "").lower() == "true"
+        for condition in conditions
+    )
+    if status.get("phase") != "Running" or not ready:
+        return ControllerExecutionProbe(
+            False,
+            "head_pod_not_ready",
+            pod_count=1,
+            error="controller head pod is not Running and Ready",
+        )
+    pod_name = str(metadata.get("name") or "")
+    namespace = str(metadata.get("namespace") or "default")
+    if not pod_name:
+        return ControllerExecutionProbe(
+            False, "head_pod_malformed", pod_count=1, error="head pod has no name"
+        )
+    try:
+        cwd = runner(
+            [
+                executable,
+                "--context",
+                exact_context,
+                "exec",
+                "--namespace",
+                namespace,
+                pod_name,
+                "--",
+                "/bin/sh",
+                "-c",
+                "pwd -P >/dev/null && test -d /proc/1/cwd",
+            ],
+            env=dict(env),
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=timeout,
+            check=False,
+        )
+    except (KeyboardInterrupt, InterruptedError):
+        raise
+    except BaseException as exc:
+        return ControllerExecutionProbe(
+            False, "cwd_probe_failed", pod_count=1, error=redact_text(str(exc))
+        )
+    if cwd.returncode != 0:
+        return ControllerExecutionProbe(
+            False,
+            "cwd_unusable",
+            pod_count=1,
+            error=redact_text(_command_detail(cwd)),
+        )
+    return ControllerExecutionProbe(True, "cwd_live", pod_count=1)
+
+
 def _wait_for_healthy_jobs_controller(
     sky_executable: str,
     *,
@@ -1145,15 +1743,59 @@ def _wait_for_healthy_jobs_controller(
     interval: float,
     require_existing: bool = False,
     cwd: str | None = None,
-) -> ControllerState:
+    execution_probe: Callable[[str], ControllerExecutionProbe] | None = None,
+) -> ControllerHealthResult:
     """Block launch while an existing managed-jobs controller is not ready."""
+
+    def checked_execution_probe(
+        state: ControllerState, name: str
+    ) -> ControllerExecutionProbe | None:
+        if execution_probe is None or not name:
+            return None
+        probe = execution_probe(name)
+        if probe.healthy:
+            return probe
+        # Kubernetes may remove the controller pod after a managed workload is
+        # cleaned up while SkyPilot's cache still says UP (or STOPPED).  The
+        # ensuing SkyPilot ensure path recreates an absent pod. Any pod that does
+        # exist must pass the readiness/cwd probe before it may be reused.
+        if (
+            state in {ControllerState.UP, ControllerState.STOPPED}
+            and probe.outcome == "head_pod_ambiguous"
+            and probe.pod_count == 0
+        ):
+            return ControllerExecutionProbe(True, "controller_absent", pod_count=0)
+        if state is ControllerState.UP and probe.outcome == "head_pod_not_ready":
+            # SkyPilot may replace the controller pod immediately after a
+            # managed workload is cleaned up while its cached state still says
+            # UP. Let the normal preflight deadline bound that lifecycle race;
+            # an existing pod must become ready before reuse.
+            return probe
+        raise SkyPilotSubmitError(
+            "SkyPilot jobs controller execution health check failed: "
+            f"{probe.outcome}: {probe.error or 'cwd unavailable'}. "
+            f"A cached {state.value.upper()} status is not sufficient when an existing "
+            "controller pod cannot resolve its working directory. Inspect/cancel "
+            "the exact workflow with `npa workbench workflow status|cancel`, then "
+            "repair the shared controller with `npa skypilot cleanup-controller` "
+            "and resume the same run ID."
+        )
 
     deadline = time.monotonic() + max(timeout, 0)
     last_summary = "no jobs-controller found" if require_existing else ""
     unhealthy: list[tuple[str, str]] = []
     while True:
+        # Kubernetes has a stronger source of truth below: the exact controller
+        # pod is selected and its readiness/cwd are probed directly.  Avoid a
+        # global SkyPilot refresh in that case because it also refreshes every
+        # cached workload cluster and can block controller preflight for minutes
+        # after a completed job has already been cleaned up.
+        status_args = [sky_executable, "status"]
+        if execution_probe is None:
+            status_args.append("--refresh")
+        status_args.extend(["--output", "json"])
         result = subprocess.run(
-            [sky_executable, "status", "--refresh", "--output", "json"],
+            status_args,
             env=env,
             cwd=cwd,
             text=True,
@@ -1162,8 +1804,12 @@ def _wait_for_healthy_jobs_controller(
             timeout=min(max(timeout, 1), 300),
             check=False,
         )
-        if result.returncode != 0 and _can_ignore_foreign_controller_refresh(
-            result, env
+        if (
+            "--refresh" in status_args
+            and result.returncode != 0
+            and _can_ignore_foreign_controller_refresh(
+                result, env
+            )
         ):
             # A Kubernetes cloud can expose a controller from another namespace
             # while this process has an explicit, distinct SkyPilot user ID.  A
@@ -1199,13 +1845,42 @@ def _wait_for_healthy_jobs_controller(
             ]
             if not unhealthy:
                 if not controllers:
-                    return ControllerState.ABSENT
+                    return ControllerHealthResult(ControllerState.ABSENT)
                 statuses = {status.upper() for _name, status in controllers}
-                return (
+                state = (
                     ControllerState.UP
                     if HEALTHY_CONTROLLER_STATUS in statuses
                     else ControllerState.STOPPED
                 )
+                expected_name = ""
+                user_id = str(env.get("SKYPILOT_USER_ID") or "").strip()
+                if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]*", user_id):
+                    candidate = f"{JOBS_CONTROLLER_PREFIX}{user_id}"
+                    if any(name == candidate for name, _status in controllers):
+                        expected_name = candidate
+                if not expected_name:
+                    candidates = [
+                        name
+                        for name, status in controllers
+                        if state is ControllerState.STOPPED
+                        or status.upper() == HEALTHY_CONTROLLER_STATUS
+                    ]
+                    if len(candidates) == 1:
+                        expected_name = candidates[0]
+                    elif execution_probe is not None:
+                        raise SkyPilotSubmitError(
+                            "SkyPilot controller execution health is ambiguous: "
+                            "multiple ready jobs controllers are cached and no exact "
+                            "SKYPILOT_USER_ID selects one. Refusing to probe or launch."
+                        )
+                probe_result = checked_execution_probe(state, expected_name)
+                if probe_result is None or probe_result.healthy:
+                    return ControllerHealthResult(state, expected_name, probe_result)
+                last_summary = (
+                    f"{expected_name}=UP but {probe_result.outcome}: "
+                    f"{probe_result.error or 'controller head pod unavailable'}"
+                )
+                unhealthy = [(expected_name, "UP_NO_READY_HEAD_POD")]
             last_summary = ", ".join(
                 f"{name}={status or 'UNKNOWN'}" for name, status in unhealthy
             )
@@ -1227,9 +1902,7 @@ def _wait_for_healthy_jobs_controller(
         time.sleep(max(interval, 0.1))
 
 
-_CONTROLLER_NAME_RE = re.compile(
-    r"\bsky-jobs-controller-[A-Za-z0-9][A-Za-z0-9-]*\b"
-)
+_CONTROLLER_NAME_RE = re.compile(r"\bsky-jobs-controller-[A-Za-z0-9][A-Za-z0-9-]*\b")
 
 
 def _can_ignore_foreign_controller_refresh(

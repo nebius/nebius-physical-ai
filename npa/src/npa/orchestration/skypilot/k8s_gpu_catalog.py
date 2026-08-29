@@ -876,6 +876,44 @@ def discover_kubernetes_gpu_catalog(
             f"Unable to run `{' '.join(cmd)}`: {exc}"
         ) from exc
     output = "\n".join(part for part in (result.stdout, result.stderr) if part)
+    if result.returncode == 0 and "kubernetes is not enabled" in output.casefold():
+        check_cmd = [sky_executable, "check"]
+        if config_override:
+            check_cmd.extend(["--config", config_override])
+        check_cmd.append("kubernetes")
+        checked = execute(
+            check_cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=timeout,
+            check=False,
+            env=_kubeconfig_env(kubeconfig),
+        )
+        checked_output = "\n".join(
+            part for part in (checked.stdout, checked.stderr) if part
+        )
+        if (
+            checked.returncode != 0
+            or "kubernetes: disabled" in checked_output.casefold()
+        ):
+            detail = (
+                checked.stderr or checked.stdout or f"exit {checked.returncode}"
+            ).strip()
+            raise KubernetesGpuCatalogError(
+                "SkyPilot Kubernetes discovery was disabled after API-server "
+                f"restart and `sky check kubernetes` failed: {detail}"
+            )
+        result = execute(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=timeout,
+            check=False,
+            env=_kubeconfig_env(kubeconfig),
+        )
+        output = "\n".join(part for part in (result.stdout, result.stderr) if part)
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or f"exit {result.returncode}").strip()
         raise KubernetesGpuCatalogError(f"`{' '.join(cmd)}` failed: {detail}")

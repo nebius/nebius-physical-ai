@@ -204,6 +204,26 @@ def merge_reason_evaluations(
     for step in sorted(set(steps2) | set(steps3)):
         left = steps2.get(step, {})
         right = steps3.get(step, {})
+        left_truth = dict(left.get("simulator_ground_truth") or {})
+        right_truth = dict(right.get("simulator_ground_truth") or {})
+        if left_truth and right_truth and left_truth != right_truth:
+            raise CosmosReasonError(
+                f"Reason lanes disagree on simulator ground truth for step {step}"
+            )
+        simulator_ground_truth = left_truth or right_truth
+        scenario_digests = {
+            str(value)
+            for value in (
+                left.get("scenario_config_digest"),
+                right.get("scenario_config_digest"),
+                simulator_ground_truth.get("scenario_config_digest"),
+            )
+            if str(value or "").strip()
+        }
+        if len(scenario_digests) > 1:
+            raise CosmosReasonError(
+                f"Reason lanes disagree on scenario config digest for step {step}"
+            )
         left_tags = _normalize_error_tags(left.get("error_tags") or [])
         right_tags = _normalize_error_tags(right.get("error_tags") or [])
         tags = list(dict.fromkeys(left_tags + right_tags))
@@ -239,6 +259,8 @@ def merge_reason_evaluations(
                 "critique_text": " | ".join(critique_parts),
                 "error_tags": _normalize_error_tags(tags),
                 "action": left.get("action") or right.get("action") or [],
+                "simulator_ground_truth": simulator_ground_truth,
+                "scenario_config_digest": next(iter(scenario_digests), ""),
                 "camera_observation": str(
                     left.get("camera_observation")
                     or right.get("camera_observation")
@@ -725,6 +747,20 @@ def _parse_cosmos_reason_output(
                 "critique_text": critique,
                 "error_tags": normalized_tags,
                 "action": expected_actions[step].get("action", []),
+                # Ground truth is deliberately excluded from the model prompt, then
+                # reattached from the authoritative rollout row for calibration.
+                # Without this post-inference join, temporal credit had no grounded
+                # state and a stationary trace collapsed to zero PPO advantages.
+                "simulator_ground_truth": dict(
+                    expected_actions[step].get("simulator_ground_truth") or {}
+                ),
+                "scenario_config_digest": str(
+                    expected_actions[step].get("scenario_config_digest")
+                    or (
+                        expected_actions[step].get("simulator_ground_truth") or {}
+                    ).get("scenario_config_digest")
+                    or ""
+                ),
                 "camera_observation": str(
                     raw.get("camera_observation") or f"camera-{step:03d}.ppm"
                 ),

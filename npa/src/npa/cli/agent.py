@@ -9326,6 +9326,11 @@ def preflight_cmd(
         "--project",
         help="Configured project alias whose writable S3 must be verified.",
     ),
+    name: str = typer.Option(
+        DEFAULT_AGENT_NAME,
+        "--name",
+        help="Agent deployment name this preflight is gating (capacity depends on it).",
+    ),
     ssh_public_key_path: str = typer.Option(
         "~/.ssh/id_ed25519.pub",
         "--ssh-public-key-path",
@@ -9344,6 +9349,10 @@ def preflight_cmd(
     current-platform provider lock; the storage check executes the exact
     health-verified credential selection deploy will reuse, without listing or
     rotating IAM access keys. Exits non-zero on any FAIL.
+
+    Capacity is resolved for ``--name`` so the gate matches the deploy it
+    precedes: an existing agent of that name already holds its public IP, while a
+    new name needs fresh headroom.
     """
     results = list(_agent_hard_prereq_results(ssh_public_key_path))
     if not skip_nebius:
@@ -9359,7 +9368,9 @@ def preflight_cmd(
                 str(getattr(saved, "tenant_id", "") or ""),
                 str(getattr(saved, "region", "") or ""),
                 agent_exists=bool(
-                    _agent_record(project_alias, DEFAULT_AGENT_NAME).get("public_ip")
+                    _agent_record(
+                        project_alias, str(name or DEFAULT_AGENT_NAME).strip()
+                    ).get("public_ip")
                 ),
                 include_paidf=not agent_only,
             )

@@ -63,6 +63,24 @@ def test_transient_overload_retries_then_succeeds() -> None:
     assert client.last_request_metrics["latency_seconds"] >= 0
 
 
+def test_file_download_follows_redirects_and_records_metrics() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/content"):
+            return httpx.Response(
+                302,
+                headers={"Location": "https://example.test/signed/blob.jsonl"},
+                request=request,
+            )
+        return httpx.Response(200, text='{"custom_id": "p1"}\n', request=request)
+
+    client = _client(handler)
+
+    assert client.download_file("file-1") == '{"custom_id": "p1"}\n'
+    assert client.last_request_metrics["status_code"] == 200
+    assert client.last_request_metrics["attempts"] == 1
+    assert client.last_request_metrics["latency_seconds"] >= 0
+
+
 def test_auth_failure_is_not_retried() -> None:
     calls = 0
 

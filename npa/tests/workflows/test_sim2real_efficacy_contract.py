@@ -2,9 +2,13 @@ from __future__ import annotations
 
 import json
 import math
+import sys
+import types
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
+import numpy as np
 import pytest
 
 from npa.workflows.sim2real.byo_isaac_eval import (
@@ -41,6 +45,7 @@ from npa.workflows.sim2real.isaac_scenario_task import (
     STABLE_PLACEMENT_SPEED_MPS,
     STABLE_PLACEMENT_STEPS,
     ScenarioContractError,
+    _assign,
     _scheduled_drop_penalty_type,
     drop_penalty_schedule_fraction,
     module_source,
@@ -136,6 +141,70 @@ def test_scenario_assignment_cursor_applies_offset_and_validates_bounds() -> Non
         scenario_assignment_indices(count=-1, row_count=3)
     with pytest.raises(ValueError, match="at least one"):
         scenario_assignment_indices(count=1, row_count=0)
+
+
+def test_rotating_scenario_assignment_initializes_and_tracks_episode_counts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeTensor:
+        def __init__(self, values: Any) -> None:
+            self.values = np.asarray(values)
+
+        def flatten(self) -> FakeTensor:
+            return FakeTensor(self.values.flatten())
+
+        def numel(self) -> int:
+            return int(self.values.size)
+
+        def tolist(self) -> list[Any]:
+            return self.values.tolist()
+
+        def __getitem__(self, key: Any) -> Any:
+            if isinstance(key, FakeTensor):
+                key = key.values
+            return self.values[key]
+
+        def __setitem__(self, key: Any, value: Any) -> None:
+            if isinstance(key, FakeTensor):
+                key = key.values
+            if isinstance(value, FakeTensor):
+                value = value.values
+            self.values[key] = value
+
+        def __iadd__(self, other: Any) -> FakeTensor:
+            if isinstance(other, FakeTensor):
+                other = other.values
+            self.values += other
+            return self
+
+    fake_torch = types.ModuleType("torch")
+    fake_torch.long = np.int64
+    fake_torch.bool = np.bool_
+    fake_torch.float = np.float64
+    fake_torch.zeros = lambda size, **kwargs: FakeTensor(  # type: ignore[attr-defined]
+        np.zeros(size, dtype=kwargs.get("dtype"))
+    )
+    fake_torch.full = lambda size, value, **kwargs: FakeTensor(  # type: ignore[attr-defined]
+        np.full(size, value, dtype=kwargs.get("dtype"))
+    )
+    fake_torch.as_tensor = lambda values, **kwargs: FakeTensor(  # type: ignore[attr-defined]
+        np.asarray(values, dtype=kwargs.get("dtype"))
+    )
+    fake_torch.tensor = fake_torch.as_tensor  # type: ignore[attr-defined]
+    fake_torch.bincount = lambda values, minlength: FakeTensor(  # type: ignore[attr-defined]
+        np.bincount(values.values, minlength=minlength)
+    )
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+
+    env = SimpleNamespace(num_envs=3, device="cpu")
+    rows = [{"scenario_config_digest": f"scenario-{index}"} for index in range(4)]
+
+    _assign(env, [0, 2], rows)
+    _assign(env, [1, 2], rows)
+
+    assert env.npa_scenario_episode_counts.tolist() == [1, 1, 2]
+    assert env.npa_scenario_indices.tolist() == [0, 2, 3]
+    assert env.npa_scenario_assignment_cursor == 4
 
 
 def test_curated_splits_are_disjoint_and_consume_stage3_lineage(
@@ -603,6 +672,39 @@ def test_temporal_credit_is_grounded_bounded_and_non_degenerate() -> None:
     assert signal["calibration"]["vlm_disagreement_downweighted_steps"] == 1
     assert signal["calibration"]["vlm_contradictory_steps"] == 1
     assert signal["per_step"][1]["confidence"] < signal["per_step"][0]["confidence"]
+
+
+def test_temporal_credit_fallback_preserves_normalized_source_actions() -> None:
+    static_truth = {
+        "object_goal_distance_m": 0.30,
+        "end_effector_object_distance_m": 0.20,
+        "contact": False,
+        "stable_grasp": False,
+        "object_lift_m": 0.0,
+        "placement_stable": False,
+        "scenario_config_digest": "cfg",
+    }
+    evaluation = {
+        "rollout_id": "stationary-with-policy-cadence",
+        "per_step": [
+            {
+                "step": index,
+                "action": [magnitude, -0.1],
+                "error_tags": ["minor_alignment"],
+                "confidence": 0.9,
+                "simulator_ground_truth": static_truth,
+            }
+            for index, magnitude in enumerate((0.10, 0.12, 0.15, 0.18))
+        ],
+    }
+
+    signal = convert_evaluation(evaluation)
+
+    calibration = signal["calibration"]
+    assert calibration["degenerate_simulator_fallback_used"] is True
+    assert calibration["nonzero_advantage_count"] > 0
+    assert len({row["reward"] for row in signal["per_step"]}) > 1
+    assert all(row["action_credit"]["source_action"] for row in signal["per_step"])
 
 
 def test_temporal_credit_calibration_rejects_untrustworthy_vlm_rows() -> None:

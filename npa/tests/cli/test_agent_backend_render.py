@@ -2064,6 +2064,9 @@ def test_rendered_artifact_routes_reject_foreign_buckets_and_malformed_keys(
                 module._safe_artifact_key(key)
             assert exc_info.value.status_code == 400
 
+        # /artifacts/download is served by the embedded secure module, whose
+        # handler takes the request. Every rejection below happens before any S3
+        # call, so the stubbed client is never touched.
         request = module.Request(
             {"type": "http", "method": "GET", "path": "/artifacts/download", "headers": []}
         )
@@ -2079,6 +2082,17 @@ def test_rendered_artifact_routes_reject_foreign_buckets_and_malformed_keys(
                 request, s3_uri="s3://configured-bucket/../secret.bin"
             )
         assert exc_info.value.status_code == 400
+
+        # A run_id alone is not enough: the object must still be named, and a
+        # caller cannot smuggle a second bucket/key past the one in the URI.
+        for kwargs in (
+            {"run_id": "run-one"},
+            {"run_id": "run-one", "s3_uri": "s3://b/k", "key": "other"},
+            {"run_id": "run-one", "s3_uri": "s3://b/k", "resource_bucket": "other"},
+        ):
+            with pytest.raises(module.HTTPException) as exc_info:
+                module.artifacts_download(request, **kwargs)
+            assert exc_info.value.status_code == 400
 
         allowed_key = "nested/root/category/run-one/reports/run.rrd"
         allowed_artifact = module.Artifact(
@@ -2123,6 +2137,54 @@ def test_rendered_artifact_routes_reject_foreign_buckets_and_malformed_keys(
                 }
             )
         assert exc_info.value.status_code == 400
+    finally:
+        sys.modules.pop(module_name, None)
+
+
+def test_rendered_backend_registers_no_shadowed_routes(monkeypatch, tmp_path) -> None:
+    """No method+path may be registered twice in the emitted backend.
+
+    Starlette resolves the first matching route, so a second registration of the
+    same method+path is unreachable code that still reads as authoritative. That
+    is how ``/artifacts/file`` and ``/artifacts/download`` ended up with copies in
+    agent.py shadowed by the hardened versions in the embedded artifact-content
+    module: the copies lacked the ``Content-Disposition``/``nosniff`` headers and
+    the inventory authorization, so whichever one won changed the security
+    posture of the deployment.
+    """
+    import sys
+    from collections import Counter
+
+    module_name = "npa_rendered_route_uniqueness_backend"
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+
+    def registered_methods(app) -> Counter:
+        return Counter(
+            (method, getattr(route, "path", ""))
+            for route in app.routes
+            for method in sorted(getattr(route, "methods", None) or ())
+        )
+
+    try:
+        registered = registered_methods(module.app)
+        # Without this the assertion below passes vacuously if `app.routes` ever
+        # stops yielding what this reads -- an empty counter has no duplicates.
+        assert ("GET", "/health") in registered, (
+            "route inventory did not include a known route, so this guard would "
+            f"pass without inspecting anything: {len(registered)} entries"
+        )
+        shadowed = {key: count for key, count in registered.items() if count > 1}
+        assert not shadowed, (
+            "these method+path pairs are registered more than once; every "
+            f"registration after the first is unreachable: {sorted(shadowed)}"
+        )
+
+        # Prove the detector is sensitive: re-registering a live path must be
+        # caught. Otherwise "no duplicates" only means "nothing was measured".
+        module.app.add_api_route("/health", lambda: {}, methods=["GET"])
+        assert ("GET", "/health") in {
+            key for key, count in registered_methods(module.app).items() if count > 1
+        }
     finally:
         sys.modules.pop(module_name, None)
 

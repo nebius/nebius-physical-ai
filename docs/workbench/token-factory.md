@@ -116,7 +116,7 @@ npa workbench token-factory caption \
   --output json
 ```
 
-Batch text generation from a JSONL prompt file (`{"id": ..., "prompt": ...}`
+Text generation from a JSONL prompt file (`{"id": ..., "prompt": ...}`
 per line) or a `.txt` file (one prompt per line):
 
 ```bash
@@ -126,6 +126,71 @@ npa workbench token-factory generate \
   --model meta-llama/Llama-3.3-70B-Instruct \
   --output json
 ```
+
+## 4a. Batch inference
+
+`generate` issues one request per prompt and waits for each. `batch-generate`
+submits the whole prompt file as a single Token Factory batch operation instead:
+tokens are billed at batch rates, and the prompt count is not bounded by how
+long a stage can sit in a request loop. It takes the same input file and writes
+the same `generations.jsonl`, so it is a drop-in replacement for `generate`.
+
+```bash
+npa workbench token-factory batch-generate \
+  --input-path ./prompts.jsonl \
+  --output-path /tmp/generations \
+  --model openai/gpt-oss-120b \
+  --completion-window 24h \
+  --output json
+```
+
+Three things differ from every other command in this tool, and all of them
+matter:
+
+**Batch routing is a per-model entitlement, unrelated to real-time chat.** Most
+models that serve `/chat/completions` are rejected for batch: measured across
+eight text models on one key, only `openai/gpt-oss-120b` was batch routable.
+That is why the default here is not the default text model. Confirm a model on a
+few prompts before pointing a large run at it.
+
+**Batch is text-to-text only.** A vision model is rejected at submit, so there is
+no batch captioning path — `caption` is real-time by necessity.
+
+**It is asynchronous.** The completion window is a deadline, not an expected
+latency: batches of a few prompts have been observed still running after an hour
+against a 24h window. Use `--no-wait` when you do not want to hold the process
+open. That writes a `batch_operation.json` handle next to the eventual output and
+exits, and the run is collected later:
+
+```bash
+npa workbench token-factory batch-generate \
+  --input-path ./prompts.jsonl --output-path s3://<bucket>/run/out/ --no-wait
+
+npa workbench token-factory batch-status \
+  --operation-id <operation-id> --output-path s3://<bucket>/run/out/ --wait
+```
+
+`batch-status` without `--wait` reports the current status and exits, so a caller
+can poll on its own schedule. It reports `request_counts` (`total`, `completed`,
+`failed`, `invalid`) — the only real progress signal a pending batch offers — and
+recovers prompts from the operation's own source dataset, so collecting does not
+need the original prompt file.
+
+When a batch does fail, the reason is not where the operations API suggests:
+`/operations/{id}/errors` returns a single empty string. The per-row reason lives
+in the batch record's error file, and `batch-generate` reads it and reports it
+verbatim, so a rejected model produces a message naming the model and the reason
+rather than an empty failure.
+
+A batch that is accepted and then sits at `completed: 0` for hours is usually a
+degraded platform rather than a bad job — batch execution has been observed
+unavailable while submissions were still accepted. Cancel what you queued and
+fall back to `generate` until it recovers.
+
+The request and response datasets Token Factory creates server-side are scratch
+state: they are deleted once results are collected, unless `--keep-datasets` is
+passed. A `--no-wait` run deliberately leaves its request dataset in place,
+because the operation reads it after the submitting process exits.
 
 Reason over a scene with NVIDIA Cosmos3-Super-Reasoner — point it at scene
 images and ask what a robot should do (scene understanding + plan of action):

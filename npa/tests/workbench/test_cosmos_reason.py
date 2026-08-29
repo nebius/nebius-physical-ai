@@ -258,6 +258,10 @@ def test_merge_dual_reason_evaluations_averages_scores_and_requires_both_success
                 "critique_text": "aligned",
                 "error_tags": ["ok"],
                 "action": [0.0, 0.0, 0.0],
+                "simulator_ground_truth": {
+                    "object_goal_distance_m": 0.2,
+                    "scenario_config_digest": "cfg",
+                },
                 "camera_observation": "camera-000.ppm",
             }
         ],
@@ -289,6 +293,11 @@ def test_merge_dual_reason_evaluations_averages_scores_and_requires_both_success
     assert merged["success"] is False
     assert merged["per_step"][0]["error_tags"] == ["ok", "late_grasp"]
     assert "reason2_critique" in merged["per_step"][0]
+    assert merged["per_step"][0]["simulator_ground_truth"] == {
+        "object_goal_distance_m": 0.2,
+        "scenario_config_digest": "cfg",
+    }
+    assert merged["per_step"][0]["scenario_config_digest"] == "cfg"
     assert "cosmos3_critique" in merged["per_step"][0]
     assert "cosmos3_tags" in merged["per_step"][0]
     assert merged["cosmos3"]["model"] == DEFAULT_COSMOS3_MODEL
@@ -330,6 +339,9 @@ def test_summary_only_output_is_rejected_without_temporal_broadcast() -> None:
         "The rollout missed the target" not in row["critique_text"]
         for row in payload["per_step"]
     )
+    assert [row["simulator_ground_truth"] for row in payload["per_step"]] == [
+        {"secret": step} for step in range(4)
+    ]
 
 
 def test_single_array_wrapped_evaluation_preserves_event_local_critiques() -> None:

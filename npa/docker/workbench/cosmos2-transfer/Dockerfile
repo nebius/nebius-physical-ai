@@ -98,11 +98,16 @@ COPY docker/workbench/cosmos2-transfer/security-overrides.txt \
 # Python itself and the complete cu128 inference environment are exact-version or
 # lockfile pinned. `--no-editable` makes the venv independent of removed source-only
 # material while retaining the Apache source tree used for provenance and debugging.
+# Keep the BSD-2-Clause imageio-ffmpeg Python package while dropping its
+# wheel-bundled static FFmpeg; the final runtime supplies snapshot-pinned Ubuntu
+# FFmpeg and binds the package to that executable explicitly.
 RUN set -eux; \
     uv python install "${COSMOS_PYTHON_VERSION}"; \
     printf '%s\n' "${COSMOS_PYTHON_VERSION}" > .python-version; \
     uv sync --locked --no-dev --no-editable --extra=cu128 \
       --python "${COSMOS_PYTHON_VERSION}"; \
+    find .venv -type f -path '*/imageio_ffmpeg/binaries/ffmpeg*' -delete; \
+    test -z "$(find .venv -type f -path '*/imageio_ffmpeg/binaries/ffmpeg*' -print -quit)"; \
     uv pip install --python .venv/bin/python --no-deps \
       --requirement /tmp/cosmos2-security-overrides.txt; \
     uv pip uninstall --python .venv/bin/python sam2; \
@@ -169,6 +174,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     TORCH_HOME=/opt/cosmos/model-cache/torch \
     XDG_CACHE_HOME=/opt/cosmos/model-cache/xdg \
     TOKENIZERS_PARALLELISM=false \
+    IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg \
     UV_PYTHON_INSTALL_DIR=/opt/cosmos/uv-python
 
 # Upstream deliberately invokes `uvx hf ...` to download gated model files at
@@ -265,6 +271,8 @@ RUN set -eux; \
     chown -R ubuntu:ubuntu /opt/cosmos/model-cache /opt/cosmos2-transfer /opt/cosmos-data; \
     assert-no-forbidden-cosmos2-payload /opt/cosmos/cosmos-transfer2.5; \
     assert-no-forbidden-cosmos2-payload /opt/cosmos/meta-sam2; \
+    /opt/cosmos/cosmos-transfer2.5/.venv/bin/python -c \
+      'import imageio_ffmpeg; assert imageio_ffmpeg.get_ffmpeg_exe() == "/usr/bin/ffmpeg"'; \
     su ubuntu -s /bin/bash -c \
       '/opt/cosmos/cosmos-transfer2.5/.venv/bin/python -c "import sys, torch, flash_attn; from distutils.sysconfig import get_config_var; assert \"/root\" not in (sys._home or \"\"); get_config_var(\"prefix\")"'; \
     su ubuntu -s /bin/bash -c \

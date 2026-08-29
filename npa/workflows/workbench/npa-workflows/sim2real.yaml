@@ -31,6 +31,9 @@ config:
   task_id: Isaac-Lift-Cube-Franka-v0
   assets_uri: ""
   scene_spec_uri: ""
+  # Optional immutable RobotSpec JSON. Empty keeps the stock Franka execution
+  # path; a non-empty s3:// URI is consumed and content-addressed by Stage 2.
+  robot_spec_uri: ""
 
   # Production-quality defaults remain available; a reduced live piping proof
   # overrides these without changing component, split, or strict metric contracts.
@@ -196,9 +199,10 @@ states:
     inputs:
       - {uri: "{{config.root_uri}}/stage_01_trigger/trigger.json", schema: npa.sim2real.trigger.v1}
     run:
-      argv: [python3, -m, npa.workflows.sim2real.workflow_stage, --stage, "2", --root-uri, "{{config.root_uri}}", --run-id, "{{run.id}}", --assets-uri, "{{config.assets_uri}}", --scene-spec-uri, "{{config.scene_spec_uri}}"]
+      argv: [python3, -m, npa.workflows.sim2real.workflow_stage, --stage, "2", --root-uri, "{{config.root_uri}}", --run-id, "{{run.id}}", --assets-uri, "{{config.assets_uri}}", --scene-spec-uri, "{{config.scene_spec_uri}}", --robot-spec-uri, "{{config.robot_spec_uri}}"]
     outputs:
       - {uri: "{{config.root_uri}}/stage_02_assets/task-contract.json", schema: npa.sim2real.task_contract.v1}
+      - {uri: "{{config.root_uri}}/stage_02_assets/consumed_robot_spec.json", schema: npa.sim2real.robot_contract.v1}
     next: stage-03-transfer
 
   stage-03-transfer:

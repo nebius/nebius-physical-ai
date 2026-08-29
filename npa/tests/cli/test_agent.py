@@ -5305,6 +5305,133 @@ def test_agent_check_compute_instance_quota_fails_when_exhausted(monkeypatch) ->
         _agent_check_compute_instance_quota("project-x", "tenant-x", "eu-north1")
 
 
+def test_agent_only_capacity_skips_cluster_inventory(monkeypatch) -> None:
+    """`--agent-only` must not probe mk8s: it reserves no cluster nodes.
+
+    Regression: an operator whose IAM can create the CPU agent VM but cannot
+    `resource.mk8scluster.list` had every agent deploy blocked as an "unverified
+    mutation prerequisite", and `--agent-only` did not help because the existing
+    cluster inventory ran regardless of the requested topology.
+    """
+    from npa.cli.agent_quota import _agent_check_whole_path_capacity
+    from npa.provisioning_preflight import GIB, NETWORK_SSD_BYTES_QUOTA
+
+    monkeypatch.setattr(
+        "npa.clients.nebius.get_project_region", lambda _project: "eu-test1"
+    )
+
+    def deny_cluster_inventory(**_kwargs):  # pragma: no cover - must not be reached
+        raise AssertionError("agent-only capacity must not inspect mk8s clusters")
+
+    monkeypatch.setattr(
+        "npa.provisioning_preflight.discover_existing_capacity",
+        deny_cluster_inventory,
+    )
+    monkeypatch.setattr(
+        "npa.clients.nebius.list_quota_allowances",
+        lambda _tenant: {
+            "items": [
+                {
+                    "metadata": {"name": name},
+                    "spec": {"region": "eu-test1", "limit": str(limit)},
+                    "status": {"usage": "0"},
+                }
+                for name, limit in {
+                    "compute.instance.count": 20,
+                    "compute.disk.count": 20,
+                    NETWORK_SSD_BYTES_QUOTA: 4096 * GIB,
+                    "vpc.ipv4-address.public.count": 20,
+                }.items()
+            ]
+        },
+    )
+
+    plan = _agent_check_whole_path_capacity(
+        "project-demo",
+        "tenant-demo",
+        "eu-test1",
+        agent_exists=False,
+        include_paidf=False,
+    )
+
+    assert plan.topology.required_public_ips == 1
+    assert plan.topology.cpu_nodes == 0
+    assert plan.topology.gpu_nodes == 0
+
+
+def _passing_check(name: str = "stub"):
+    from npa.workflows.sim2real_health import PASS, CheckResult
+
+    return CheckResult(name=name, status=PASS, summary=f"{name} stubbed for test")
+
+
+def test_agent_preflight_capacity_follows_requested_agent_name(
+    monkeypatch, tmp_path
+) -> None:
+    """Preflight capacity must gate the `--name` deploy it precedes.
+
+    Regression: preflight always resolved the default `agent` record, so a
+    project whose `agent` already held the only public IP reported "capacity
+    ready" and the very next `deploy --name other` failed on a public-IP
+    shortfall.
+    """
+    from npa.cli import agent as agent_module
+
+    (tmp_path / "id_ed25519.pub").write_text(
+        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f test\n"
+    )
+    (tmp_path / "id_ed25519").write_text("-----BEGIN OPENSSH PRIVATE KEY-----\n")
+    monkeypatch.setenv("NPA_TERRAFORM_BIN", "/usr/bin/terraform")
+    monkeypatch.setattr(
+        agent_module, "_resolve_deploy_llm_credentials", lambda: ("tf-key", "m")
+    )
+    monkeypatch.setattr(agent_module, "_agent_nebius_auth_result", _passing_check)
+    monkeypatch.setattr(agent_module, "_agent_ssh_egress_result", _passing_check)
+    monkeypatch.setattr(
+        agent_module, "_agent_storage_result", lambda *_a, **_k: _passing_check()
+    )
+    monkeypatch.setattr(
+        agent_module, "_resolve_project_alias", lambda _project: "demo"
+    )
+    monkeypatch.setattr(
+        agent_module,
+        "resolve_environment",
+        lambda _project=None: SimpleNamespace(
+            project_id="project-demo", tenant_id="tenant-demo", region="eu-test1"
+        ),
+    )
+    monkeypatch.setattr(
+        agent_module,
+        "_agent_record",
+        lambda _project, name: (
+            {"public_ip": "203.0.113.50"} if name == "agent" else {}
+        ),
+    )
+
+    seen: list[bool] = []
+
+    def capacity(_pid, _tid, _region, *, agent_exists=False, include_paidf=True):
+        seen.append(agent_exists)
+        return _passing_check("whole_path_capacity")
+
+    monkeypatch.setattr(agent_module, "_agent_whole_path_capacity_result", capacity)
+
+    for name, expected in (("agent", True), ("auditor", False)):
+        seen.clear()
+        result = runner.invoke(
+            app,
+            [
+                "preflight",
+                "--name",
+                name,
+                "--ssh-public-key-path",
+                str(tmp_path / "id_ed25519.pub"),
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert seen == [expected], f"{name}: {seen}"
+
+
 def test_agent_check_compute_instance_quota_skips_a_redeploy(monkeypatch) -> None:
     """`agent_exists` (a re-deploy reusing the VM) never blocks on the quota."""
     from npa.cli.agent import _agent_check_compute_instance_quota

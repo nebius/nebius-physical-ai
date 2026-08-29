@@ -895,27 +895,37 @@ def delete_network(network_id: str, *, profile: str | None = None) -> None:
             raise
 
 
-def list_quota_allowances(tenant_id: str) -> dict[str, Any]:
+def list_quota_allowances(
+    tenant_id: str, *, profile: str | None = None
+) -> dict[str, Any]:
     """Return one provider quota snapshot for *tenant_id*.
 
     Unlike the historical per-quota best-effort helpers, this API preserves
     provider/RBAC/malformed failures.  Mutation preflights must fail closed, and
     cannot distinguish "plenty of quota" from "the query was denied" if errors
     are normalized to ``(None, None)`` here.
+
+    The query is profile-scoped like every other read here. Without that, a
+    tenant only reachable through a non-default profile answers
+    ``PermissionDenied``, and because this API fails closed that denial blocks a
+    deploy the operator is fully entitled to make.
     """
 
     tenant = str(tenant_id or "").strip()
     if not tenant:
         raise NebiusError("tenant_id is required to list quota allowances")
+    profile_args, _resolved = _iam_profile_args(profile)
     payload = _run_json(
-        ["quotas", "quota-allowance", "list", "--parent-id", tenant, "--all"]
+        [*profile_args, "quotas", "quota-allowance", "list", "--parent-id", tenant, "--all"]
     )
     if not isinstance(payload.get("items"), list):
         raise NebiusError("quota allowance response is malformed: items is not a list")
     return payload
 
 
-def get_public_ipv4_quota(tenant_id: str, region: str) -> tuple[int | None, int | None]:
+def get_public_ipv4_quota(
+    tenant_id: str, region: str, *, profile: str | None = None
+) -> tuple[int | None, int | None]:
     """Return ``(usage, limit)`` for the tenant public IPv4 quota in *region*.
 
     Nebius meters public IPv4 addresses per (tenant, region) via the
@@ -928,9 +938,18 @@ def get_public_ipv4_quota(tenant_id: str, region: str) -> tuple[int | None, int 
     reg = str(region or "").strip()
     if not tenant or not reg:
         return (None, None)
+    profile_args, _resolved = _iam_profile_args(profile)
     try:
         data = _run_json(
-            ["quotas", "quota-allowance", "list", "--parent-id", tenant, "--all"]
+            [
+                *profile_args,
+                "quotas",
+                "quota-allowance",
+                "list",
+                "--parent-id",
+                tenant,
+                "--all",
+            ]
         )
     except Exception:
         return (None, None)
@@ -954,7 +973,7 @@ def get_public_ipv4_quota(tenant_id: str, region: str) -> tuple[int | None, int 
 
 
 def get_compute_instance_quota(
-    tenant_id: str, region: str
+    tenant_id: str, region: str, *, profile: str | None = None
 ) -> tuple[int | None, int | None]:
     """Return ``(usage, limit)`` for the tenant compute-instance quota in *region*.
 
@@ -970,9 +989,18 @@ def get_compute_instance_quota(
     reg = str(region or "").strip()
     if not tenant or not reg:
         return (None, None)
+    profile_args, _resolved = _iam_profile_args(profile)
     try:
         data = _run_json(
-            ["quotas", "quota-allowance", "list", "--parent-id", tenant, "--all"]
+            [
+                *profile_args,
+                "quotas",
+                "quota-allowance",
+                "list",
+                "--parent-id",
+                tenant,
+                "--all",
+            ]
         )
     except Exception:
         return (None, None)

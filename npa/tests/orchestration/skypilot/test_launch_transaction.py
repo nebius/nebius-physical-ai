@@ -249,7 +249,11 @@ def test_launch_accepted_but_client_failed_is_adopted() -> None:
         readiness=_stable,
         launch=launch,
         reconcile=lambda: ReconciliationEvidence(
-            ReconciliationState.FOUND, "41", "PENDING"
+            ReconciliationState.FOUND,
+            "41",
+            "PENDING",
+            workload_observable=True,
+            workload_evidence="scheduler_state",
         )
         if exists
         else ReconciliationEvidence(ReconciliationState.ABSENT),
@@ -258,6 +262,74 @@ def test_launch_accepted_but_client_failed_is_adopted() -> None:
     assert result.state is LaunchState.ADOPTED
     assert result.job_id == "41"
     assert result.launch_sequence == 1
+    assert result.reconciliations[-1]["workload_observable"] is True
+
+
+def test_getcwd_rsync_failure_rejects_phantom_pending_queue_record() -> None:
+    """A row allocated before controller file sync is not a submitted workload."""
+
+    exists = False
+
+    def launch() -> None:
+        nonlocal exists
+        exists = True
+        raise RuntimeError(
+            "getcwd() failed: No such file or directory; "
+            "rsync failed with return code 3"
+        )
+
+    with pytest.raises(LaunchTransactionError) as caught:
+        run_launch_transaction(
+            logical_id="getcwd-rsync-phantom",
+            readiness=_stable,
+            launch=launch,
+            reconcile=lambda: ReconciliationEvidence(
+                ReconciliationState.FOUND,
+                "125",
+                "PENDING",
+                workload_observable=False,
+                workload_evidence="",
+            )
+            if exists
+            else ReconciliationEvidence(ReconciliationState.ABSENT),
+            classify_launch_error=_transient,
+        )
+
+    result = caught.value.result
+    assert result.state is LaunchState.TERMINAL_FAILURE
+    assert result.category is FailureCategory.CONFIG
+    assert (
+        result.recovery_decision
+        == "reject_unobservable_queue_record_after_launch_failure"
+    )
+    assert result.job_id == "125"
+    assert result.reconciliations[-1] == {
+        "state": "found",
+        "job_id": "125",
+        "status": "PENDING",
+        "workload_observable": False,
+        "workload_evidence": "",
+        "error": "",
+    }
+
+
+def test_resume_rejects_existing_unobservable_phantom_record() -> None:
+    with pytest.raises(LaunchTransactionError) as caught:
+        run_launch_transaction(
+            logical_id="resume-phantom",
+            readiness=_stable,
+            launch=lambda: pytest.fail("phantom record must block relaunch"),
+            reconcile=lambda: ReconciliationEvidence(
+                ReconciliationState.FOUND, "125", "PENDING"
+            ),
+            classify_launch_error=_transient,
+        )
+
+    assert caught.value.result.state is LaunchState.INDETERMINATE
+    assert (
+        caught.value.result.recovery_decision
+        == "block_unobservable_existing_record"
+    )
 
 
 def test_authoritative_absence_allows_one_safe_retry() -> None:
@@ -377,7 +449,13 @@ def test_two_local_callers_produce_at_most_one_launch_and_second_adopts(
     def reconcile() -> ReconciliationEvidence:
         with guard:
             return (
-                ReconciliationEvidence(ReconciliationState.FOUND, job_id, "PENDING")
+                ReconciliationEvidence(
+                    ReconciliationState.FOUND,
+                    job_id,
+                    "PENDING",
+                    workload_observable=True,
+                    workload_evidence="scheduler_state",
+                )
                 if job_id
                 else ReconciliationEvidence(ReconciliationState.ABSENT)
             )

@@ -248,6 +248,17 @@ jobs:
 
       - uses: imjasonh/setup-crane@v0.4
 
+      # Some public workbench Dockerfiles inherit other immutable public NPA
+      # packages. Authenticate pulls here because setup-crane installs an
+      # intentionally invalid placeholder credential; no registry write occurs
+      # until the separately gated push step below.
+      - name: Authenticate immutable public base pulls
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       # Build locally first. Every gate below inspects these exact bytes; no registry write
       # occurs until the final explicit docker push.
       - name: Build immutable development image locally
@@ -290,12 +301,15 @@ jobs:
           if any(value in history for value in forbidden):
               raise SystemExit("cached EULA acceptance found in layer history")
           PY
+          # The loaded runtime image remains in Docker's image store. BuildKit's
+          # disposable construction cache can be larger than the image itself and
+          # otherwise leaves insufficient space to serialize large GPU images for
+          # the mandatory layer-by-layer payload scan.
+          docker buildx prune --all --force
+          docker save --output "$RUNNER_TEMP/${TOOL}.tar" "$IMAGE"
           npa/.venv/bin/python npa/scripts/scan_image_omniverse_payload.py \
-            --docker-image "$IMAGE" \
+            --tarball "$RUNNER_TEMP/${TOOL}.tar" \
             --json "$RUNNER_TEMP/${TOOL}-payload.json"
-          if [[ "$TOOL" =~ ^(ltx2|wan2-2|cosmos3-serving)$ ]]; then
-            docker save --output "$RUNNER_TEMP/${TOOL}.tar" "$IMAGE"
-          fi
           if [ "$TOOL" = ltx2 ]; then
             npa/.venv/bin/python npa/scripts/scan_image_ltx_payload.py \
               --docker-save "$RUNNER_TEMP/${TOOL}.tar" \
@@ -320,6 +334,7 @@ jobs:
             docker run --rm --entrypoint /opt/npa/venv/bin/python "$IMAGE" \
               /opt/npa/docker/workbench/sonic/verify_mujoco_image.py
           fi
+          rm -f "$RUNNER_TEMP/${TOOL}.tar"
 
       # CUDA/AI images can exceed 25 GB. Once the exact loaded image passes its
       # contract, BuildKit's duplicate cache is no longer evidence and can be
