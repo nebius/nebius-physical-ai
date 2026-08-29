@@ -479,8 +479,10 @@ images:
       The flattened public runtime removes the parent image's optional AGPL
       tetgen wrapper, W&B client, and Nsight Compute tree. Canonical Sim2Real
       environment generation does not use tetrahedralization, experiment
-      tracking, or profiler tooling; build-time imports and pip consistency
-      checks protect that capability-reduced contract.
+      tracking, or profiler tooling. The runtime correspondingly removes the
+      Genesis/LeRobot metadata edges for those absent optional dependencies;
+      build-time imports and pip consistency checks protect that reduced
+      contract.
     redistribution: public
   rerun-viewer:
     dockerfile: rerun-viewer/Dockerfile

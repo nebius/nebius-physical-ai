@@ -71,9 +71,15 @@ def test_envgen_removes_unrelated_nonredistributable_parent_binary() -> None:
 
 def test_envgen_removes_optional_forbidden_and_vulnerable_parent_tools() -> None:
     text = (WORKBENCH / "sim2real-envgen/Dockerfile").read_text(encoding="utf-8")
+    sanitizer = (
+        WORKBENCH / "common/sanitize_sim2real_envgen_parent.py"
+    ).read_text(encoding="utf-8")
 
     assert "pip uninstall -y transformers imageio-ffmpeg wandb tetgen" in text
-    assert 'startswith("requires-dist: tetgen")' in text
+    assert "sanitize-sim2real-envgen-parent.py" in text
+    assert '("genesis-world", "tetgen")' in sanitizer
+    assert '("lerobot", "wandb")' in sanitizer
+    assert "len(filtered) != len(lines) - 1" in sanitizer
     assert "rm -rf /opt/nvidia/nsight-compute" in text
     assert 'names.isdisjoint({"tetgen", "wandb"})' in text
     assert "test ! -e /opt/nvidia/nsight-compute" in text
