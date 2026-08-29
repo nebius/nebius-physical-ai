@@ -349,6 +349,7 @@ def test_ui_and_backend_visual_feedback_contract() -> None:
     assert "sampleFrameStats" in ui_html
     assert "captureCanvasDataUrl" in ui_html
     assert "ensureRerunCaptureBridge" in ui_html
+    assert "primeRerunCaptureBridge" in ui_html
     assert "grabFromRerunCaptureBridge" in ui_html
     assert "pickBestIframeCanvas" in ui_html
     assert "skipUserAppend" in ui_html
@@ -376,6 +377,20 @@ def test_ui_and_backend_visual_feedback_contract() -> None:
     assert "meta.origin" in ui_html
     assert "grounded-provenance" in source
     assert "build_run_origin" in _embedded_agent_provenance_source()
+
+    mount_source = ui_html.split("async function mountRerunIframe(camera, runId)", 1)[
+        1
+    ].split("async function mountRerunIframeUntilSuccess", 1)[0]
+    iframe_src = mount_source.index("iframe.src = src;")
+    prime_bridge = mount_source.index("primeRerunCaptureBridge(iframe, 12000);")
+    wait_for_load = mount_source.index("await waitForIframeLoad(iframe, 12000);")
+    assert iframe_src < prime_bridge < wait_for_load
+
+    quality_source = ui_html.split("async function waitForQualityRerunFrame", 1)[1].split(
+        "async function captureRerunViewerFrame", 1
+    )[0]
+    assert "ensureRerunCaptureBridge(iframe);" in quality_source
+    assert "ensureRerunCaptureBridge(iframe, { forceRestart: true })" not in quality_source
 
 
 def test_build_multimodal_user_content() -> None:

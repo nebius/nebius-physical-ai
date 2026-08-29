@@ -2894,6 +2894,60 @@ describe("NPA agent UI with mocked APIs", () => {
     });
   });
 
+  it("primes the Rerun MediaStream bridge before the first non-preserved paint", () => {
+    cy.get("#tabRerun").click();
+    cy.window().then(async (win) => {
+      const api = win.__NPA_AGENT_TEST__;
+      const iframe = win.document.getElementById("rerunFrame");
+      iframe.hidden = false;
+      iframe.srcdoc = `<!doctype html><html><body><script>
+        const canvas = document.createElement("canvas");
+        canvas.width = 320;
+        canvas.height = 180;
+        document.body.appendChild(canvas);
+        const nativeCaptureStream = canvas.captureStream.bind(canvas);
+        const state = { painted: false, capturedBeforePaint: false };
+        canvas.captureStream = (rate) => {
+          if (!state.painted) state.capturedBeforePaint = true;
+          return nativeCaptureStream(rate);
+        };
+        window.__NPA_CAPTURE_LIFECYCLE__ = state;
+        window.setTimeout(() => {
+          state.painted = true;
+          const ctx = canvas.getContext("2d");
+          ctx.fillStyle = "#07111f";
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          ctx.fillStyle = "#ff8a1f";
+          ctx.fillRect(35, 35, 110, 90);
+          ctx.fillStyle = "#5eead4";
+          ctx.fillRect(175, 55, 100, 75);
+        }, 1200);
+      <\/script></body></html>`;
+
+      const documentDeadline = Date.now() + 1500;
+      while (
+        Date.now() < documentDeadline
+        && !iframe.contentWindow.__NPA_CAPTURE_LIFECYCLE__
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      api.primeRerunCaptureBridge(iframe, 3000);
+      const deadline = Date.now() + 2500;
+      while (
+        Date.now() < deadline
+        && !(iframe.contentWindow.__NPA_CAPTURE_LIFECYCLE__ || {}).painted
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 40));
+      }
+      const lifecycle = iframe.contentWindow.__NPA_CAPTURE_LIFECYCLE__;
+      expect(lifecycle, "lifecycle fixture").to.exist;
+      expect(lifecycle.capturedBeforePaint, "stream armed before first paint").to.eq(true);
+      const grabbed = await api.grabFromRerunCaptureBridge(3000, { forceRestart: false });
+      expect(grabbed).to.match(/^data:image\/jpeg;base64,/);
+      expect(grabbed.length).to.be.greaterThan(1000);
+    });
+  });
+
   it("falls back to 30 fps when captureStream(0) lacks requestFrame", () => {
     cy.window().then((win) => {
       const api = win.__NPA_AGENT_TEST__;
