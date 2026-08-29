@@ -102,6 +102,7 @@ RUN chmod +x /opt/npa/docker/workbench/common/*.sh \
        NPA_ISAAC_VENV=/opt/npa/sim/venv \
        NPA_UBUNTU_SNAPSHOT=20260825T000000Z \
        NPA_UBUNTU_SUITE=noble \
+       NPA_LINUX_LIBC_DEV_VERSION=6.8.0-138.138 \
        NPA_ISAAC_PYTHON_MINOR=3.12 \
        TORCH_VERSION=2.11.0 \
        TORCHVISION_VERSION=0.26.0 \

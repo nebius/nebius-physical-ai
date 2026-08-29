@@ -697,6 +697,7 @@ def test_isaac3_image_uses_fixed_noble_snapshot_and_removes_optional_nsight() ->
     installer = BASE_INSTALLER.read_text(encoding="utf-8")
 
     assert "NPA_UBUNTU_SNAPSHOT=20260825T000000Z" in dockerfile
+    assert "NPA_LINUX_LIBC_DEV_VERSION=6.8.0-138.138" in dockerfile
     assert "linux-libc-dev=6.8.0-138.138" in installer
     assert "apt-get purge -y nsight-compute-2025.1.1 cuda-nsight-compute-12-8" in installer
     assert "test ! -e /opt/nvidia/nsight-compute" in installer
