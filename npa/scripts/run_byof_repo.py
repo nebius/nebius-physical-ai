@@ -314,8 +314,8 @@ def _dockerfile_text() -> str:
         "# syntax=docker/dockerfile:1.7\n"
         "ARG BYOF_BASE_IMAGE\n"
         "FROM ${BYOF_BASE_IMAGE}\n"
-        "ARG OSS_REPO_URL\n"
-        "ARG OSS_REPO_REF\n"
+        'ARG OSS_REPO_URL=""\n'
+        'ARG OSS_REPO_REF=""\n'
         "ARG BYOF_SOURCE_VISIBILITY=public\n"
         "ARG BYOF_SOURCE_CACHE_KEY=public\n"
         "ARG BYOF_SOURCE_LABEL_REPO\n"
