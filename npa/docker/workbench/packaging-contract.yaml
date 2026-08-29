@@ -475,6 +475,12 @@ images:
   sim2real-envgen:
     dockerfile: sim2real-envgen/Dockerfile
     tier: interactive
+    notes: >-
+      The flattened public runtime removes the parent image's optional AGPL
+      tetgen wrapper, W&B client, and Nsight Compute tree. Canonical Sim2Real
+      environment generation does not use tetrahedralization, experiment
+      tracking, or profiler tooling; build-time imports and pip consistency
+      checks protect that capability-reduced contract.
     redistribution: public
   rerun-viewer:
     dockerfile: rerun-viewer/Dockerfile

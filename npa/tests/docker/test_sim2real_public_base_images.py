@@ -69,6 +69,16 @@ def test_envgen_removes_unrelated_nonredistributable_parent_binary() -> None:
         assert runtime_contract in text
 
 
+def test_envgen_removes_optional_forbidden_and_vulnerable_parent_tools() -> None:
+    text = (WORKBENCH / "sim2real-envgen/Dockerfile").read_text(encoding="utf-8")
+
+    assert "pip uninstall -y transformers imageio-ffmpeg wandb tetgen" in text
+    assert 'startswith("requires-dist: tetgen")' in text
+    assert "rm -rf /opt/nvidia/nsight-compute" in text
+    assert 'names.isdisjoint({"tetgen", "wandb"})' in text
+    assert "test ! -e /opt/nvidia/nsight-compute" in text
+
+
 def test_genesis_workflow_runtime_upgrades_fixed_kernel_headers() -> None:
     installer = (WORKBENCH / "common/install_workflow_runtime_prereqs.sh").read_text(
         encoding="utf-8"
