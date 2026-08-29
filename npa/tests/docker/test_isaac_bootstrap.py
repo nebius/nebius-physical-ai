@@ -665,6 +665,17 @@ def test_isaac3_image_pins_runtime_source_and_python_contract() -> None:
     assert "read_pin isaac-lab" not in build_script
 
 
+def test_base_installer_uses_the_selected_isaac_dependency_lock() -> None:
+    """Isaac 3 must not silently install the legacy Isaac dependency closure."""
+
+    installer = BASE_INSTALLER.read_text(encoding="utf-8")
+    assert 'sed -E \'/^imageio-ffmpeg==/d\' "${OSS_DEPS_FILE}"' in installer
+    assert (
+        'sed -E \'/^imageio-ffmpeg==/d\' "${COMMON_DIR}/isaac-oss-deps.txt"'
+        not in installer
+    )
+
+
 def test_base_installer_upgrades_linux_headers_from_the_fixed_snapshot() -> None:
     """Do not retain the stale kernel-header package inherited from CUDA.
 

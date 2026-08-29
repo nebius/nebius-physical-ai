@@ -213,7 +213,7 @@ else
 fi
 
 log "OSS dependency closure for Isaac Sim / Isaac Lab"
-sed -E '/^imageio-ffmpeg==/d' "${COMMON_DIR}/isaac-oss-deps.txt" \
+sed -E '/^imageio-ffmpeg==/d' "${OSS_DEPS_FILE}" \
   > /tmp/npa-isaac-oss-deps.txt
 "$ISAAC_VENV/bin/python" -m pip install --no-cache-dir \
   --no-deps \
