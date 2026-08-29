@@ -220,7 +220,6 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
     ),
     "workbench.nurec.fetch": ToolEntry(
         name="workbench.nurec.fetch",
-        access_capabilities=("nurec",),
         description=(
             "Download and unpack real NCore V4 shards and derive the rig->world "
             "pose edge NRE requires for object-centric captures."
@@ -327,7 +326,6 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
     ),
     "workbench.nurec.visualize": ToolEntry(
         name="workbench.nurec.visualize",
-        access_capabilities=("nurec",),
         description=(
             "Build the run's Rerun recording (reports/sim2real.rrd) so the "
             "reconstruction renders in the NPA agent's embedded viewer."
@@ -347,7 +345,6 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
     ),
     "workbench.nurec.finalize": ToolEntry(
         name="workbench.nurec.finalize",
-        access_capabilities=("nurec",),
         description="Aggregate a NuRec run tree into a real final report.",
         argv_template=[
             "npa",

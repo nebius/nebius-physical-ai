@@ -40,6 +40,7 @@ def test_catalog_uses_existing_pinned_revisions() -> None:
         DEFAULT_MODEL_ID,
         DEFAULT_MODEL_REVISION,
     )
+    from npa.workbench.cosmos.control_contract import COSMOS_TRANSFER_CHECKPOINTS
 
     revisions = {
         item.repo: item.revision for item in exact_requirements(gated_only=False)
@@ -47,6 +48,14 @@ def test_catalog_uses_existing_pinned_revisions() -> None:
     assert revisions[DEFAULT_MODEL_ID] == DEFAULT_MODEL_REVISION
     assert revisions[DEFAULT_DATASET_REPO] == DEFAULT_DATASET_REVISION
     assert revisions[COSMOS_REASON_MODEL] == COSMOS_REASON_REVISION
+    transfer_revisions = {
+        item.revision
+        for item in exact_requirements(["cosmos2"])
+        if item.repo == "nvidia/Cosmos-Transfer2.5-2B"
+    }
+    assert transfer_revisions == {
+        checkpoint.revision for checkpoint in COSMOS_TRANSFER_CHECKPOINTS.values()
+    }
 
 
 def test_approval_layer_has_no_fake_provider_acceptance_flag() -> None:

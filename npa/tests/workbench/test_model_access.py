@@ -75,8 +75,13 @@ def test_assets_for_filters_by_capability() -> None:
 
 
 def test_paidf_access_is_scoped_to_the_gated_transfer_model() -> None:
+    from npa.workbench.cosmos.control_contract import COSMOS_TRANSFER_CHECKPOINTS
+
     assets = assets_for(["paidf"])
-    assert [asset.repo for asset in assets] == ["nvidia/Cosmos-Transfer2.5-2B"]
+    assert {asset.repo for asset in assets} == {"nvidia/Cosmos-Transfer2.5-2B"}
+    assert {asset.revision for asset in assets} == {
+        checkpoint.revision for checkpoint in COSMOS_TRANSFER_CHECKPOINTS.values()
+    }
     assert all(asset.gated for asset in assets)
 
 

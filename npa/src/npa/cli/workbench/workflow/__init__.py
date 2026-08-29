@@ -171,10 +171,15 @@ def _enforce_workflow_access(
     *,
     json_output: bool,
     resume_command: str,  # noqa: ANN001
+    excluded_repos: frozenset[str] = frozenset(),
 ) -> dict[str, object]:
     """Fail before execution/provisioning when exact HF/NGC access is not Ready."""
 
-    requirements = _workflow_access_requirements(spec)
+    requirements = tuple(
+        item
+        for item in _workflow_access_requirements(spec)
+        if item.repo not in excluded_repos
+    )
     if not requirements:
         return {"status": "ready", "counts": {"hf": 0, "ngc": 0}}
     from npa.clients.credentials import load_credentials
@@ -807,14 +812,6 @@ def submit_cmd(
         except Exception as exc:
             _fail(str(exc))
             return
-        if not plan_only:
-            _enforce_workflow_access(
-                merged_npa_spec,
-                json_output=output_format == OutputFormat.json,
-                resume_command=_current_workflow_resume_command(
-                    ["npa", "workbench", "workflow", "submit", str(yaml_path)]
-                ),
-            )
     if image_override and not is_npa_spec:
         _fail(
             "--image-override/--tool-image is supported only for "
@@ -1329,6 +1326,24 @@ def submit_cmd(
                 _fail_missing_prerequisites(yaml_path, placement_missing)
                 return
             paidf_placement_prechecked = True
+
+        if not plan_only:
+            # Cosmos Transfer already has the stronger state-local pinned-file
+            # fence immediately below. Avoid replacing that exact probe with a
+            # broader repository-level check; all other catalog requirements
+            # use the provider-neutral adapter here.
+            _enforce_workflow_access(
+                merged_npa_spec,
+                json_output=output_format == OutputFormat.json,
+                resume_command=_current_workflow_resume_command(
+                    ["npa", "workbench", "workflow", "submit", str(yaml_path)]
+                ),
+                excluded_repos=(
+                    frozenset({"nvidia/Cosmos-Transfer2.5-2B"})
+                    if checkpoint_access_required
+                    else frozenset()
+                ),
+            )
 
         if checkpoint_access_required and not plan_only:
             from npa.workbench.cosmos.checkpoint_access import (
