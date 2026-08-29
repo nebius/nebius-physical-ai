@@ -1476,7 +1476,6 @@ try:
             action_values = actions_np[0] if actions_np.ndim > 1 else actions_np
             action_dim = int(action_values.shape[-1])
 
-            obs, _rewards, done, _info = _step_env(env, actions)
             robot = _robot(env)
             if robot is not None and joint_names:
                 state_values = _to_numpy(robot.data.joint_pos)[0]
@@ -1497,11 +1496,17 @@ try:
 
             states.append(np.asarray(state_values, dtype=np.float32))
             actions_out.append(np.asarray(action_values, dtype=np.float32))
+            obs, _rewards, done, _info = _step_env(env, actions)
             if done:
                 break
 
         if not states:
             raise RuntimeError(f"episode {{episode_index}} produced no frames")
+        if len(actions_out) != len(states):
+            raise RuntimeError(
+                f"episode {{episode_index}} action/state length mismatch "
+                f"{{len(actions_out)}} != {{len(states)}}"
+            )
         episode_dir = output_dir / f"episode_{{episode_index:06d}}"
         episode_dir.mkdir(parents=True, exist_ok=True)
         np.save(episode_dir / "state.npy", np.stack(states))

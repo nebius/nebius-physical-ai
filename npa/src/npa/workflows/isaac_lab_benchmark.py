@@ -9,6 +9,7 @@ can contain different rollout lengths across task configurations.
 from __future__ import annotations
 
 import json
+import re
 import statistics
 from pathlib import Path
 from typing import Any, Iterable
@@ -40,7 +41,7 @@ def compare_records(records: list[dict[str, Any]]) -> dict[str, Any]:
         digest = str(item.get("image_digest") or "")
         if not isinstance(duration, (int, float)) or float(duration) <= 0:
             raise ValueError("every successful record needs positive duration_seconds")
-        if not digest.startswith("sha256:") or len(digest) != 71:
+        if re.fullmatch(r"sha256:[0-9a-f]{64}", digest) is None:
             raise ValueError("every successful record needs an immutable image_digest")
 
     by_generation = {
@@ -49,6 +50,9 @@ def compare_records(records: list[dict[str, Any]]) -> dict[str, Any]:
         ]
         for generation in ("2", "3")
     }
+    for generation, items in by_generation.items():
+        if len({str(item["image_digest"]) for item in items}) != 1:
+            raise ValueError(f"generation {generation} has multiple image digests")
     pair_sets = {
         generation: {tuple(item.get(field) for field in PAIR_FIELDS) for item in items}
         for generation, items in by_generation.items()

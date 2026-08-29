@@ -58,6 +58,37 @@ def test_compare_records_requires_immutable_digest() -> None:
         compare_records(records)
 
 
+def test_compare_records_rejects_mixed_digest_within_generation() -> None:
+    records = [
+        _record("2", 12),
+        _record("2", 10),
+        _record("3", 8),
+        _record("3", 6),
+    ]
+    for index, item in enumerate(records):
+        item["seed"] = 7 + (index % 2)
+        item["repetition"] = 1 + (index % 2)
+    records[1]["image_digest"] = "sha256:" + "a" * 64
+
+    with pytest.raises(ValueError, match="generation 2 has multiple image digests"):
+        compare_records(records)
+
+
+def test_compare_records_allows_different_digest_between_generations() -> None:
+    report = compare_records([_record("2", 10), _record("3", 8)])
+
+    assert report["baseline"]["image_digests"] == ["sha256:" + "2" * 64]
+    assert report["candidate"]["image_digests"] == ["sha256:" + "3" * 64]
+
+
+def test_compare_records_rejects_malformed_digest() -> None:
+    records = [_record("2", 10), _record("3", 8)]
+    records[0]["image_digest"] = "sha256:" + "g" * 64
+
+    with pytest.raises(ValueError, match="immutable image_digest"):
+        compare_records(records)
+
+
 def test_compare_records_rejects_failed_or_unpaired_campaign() -> None:
     records = [_record("2", 10), _record("3", 8)]
     records[1]["status"] = "failed"

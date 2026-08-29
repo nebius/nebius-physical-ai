@@ -1778,8 +1778,8 @@ def test_isaac_lab_train_export_trajectories_runs_second_remote_script(mocker) -
     assert "return (0.0, -5.0, 3.0), (0.0, 0.0, 3.0)" in traj_cmd
     assert "camera.set_world_poses_from_view(eyes=eye, targets=target)" in traj_cmd
     assert 'camera = render_env.unwrapped.scene["npa_rollout_camera"]' in traj_cmd
-    assert traj_cmd.index("obs, _rewards, done, _info = _step_env") < traj_cmd.index(
-        "frame = _rgb_frame(render_env)"
+    assert traj_cmd.index("frame = _rgb_frame(render_env)") < traj_cmd.index(
+        "obs, _rewards, done, _info = _step_env"
     )
     assert 'np.save(episode_dir / "rgb.npy"' in traj_cmd
     assert "RGB content validation failed" in traj_cmd
