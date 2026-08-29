@@ -8777,20 +8777,18 @@
         // canvas does not preserve the presented buffer, so a stream first
         // created by a later Describe-this click can remain live yet never
         // produce a decodable frame. Poll through iframe/WASM startup and keep
-        // the first bridge that has actually decoded a frame.
+        // the latest bridge through the whole startup window. Rerun can decode
+        // and paint its loading canvas, then replace that canvas when the real
+        // recording view is installed. Stopping at the first decoded frame
+        // leaves Describe-this attached to the detached loading canvas.
         const generation = ++rerunCapturePrimeGeneration;
         const deadline = Date.now() + Math.max(800, Number(timeoutMs || 12000));
         const tick = () => {
           if (generation !== rerunCapturePrimeGeneration) return;
           const bridge = ensureRerunCaptureBridge(iframe);
-          if (
-            bridge
-            && bridge.video
-            && bridge.video.readyState >= 2
-            && bridge.video.videoWidth > 0
-          ) {
-            return;
-          }
+          // Keep following canvas replacements through the full startup window,
+          // even after the current canvas has produced a decodable video frame.
+          // ensureRerunCaptureBridge is a cheap identity check when it is stable.
           if (Date.now() < deadline && iframe && !iframe.hidden) {
             window.setTimeout(tick, 40);
           }

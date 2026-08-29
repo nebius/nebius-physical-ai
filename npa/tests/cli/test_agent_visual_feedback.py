@@ -386,6 +386,13 @@ def test_ui_and_backend_visual_feedback_contract() -> None:
     wait_for_load = mount_source.index("await waitForIframeLoad(iframe, 12000);")
     assert iframe_src < prime_bridge < wait_for_load
 
+    primer_source = ui_html.split("function primeRerunCaptureBridge", 1)[1].split(
+        "async function grabFromRerunCaptureBridge", 1
+    )[0]
+    assert "Keep following canvas replacements through the full startup window" in primer_source
+    assert "Date.now() < deadline" in primer_source
+    assert "bridge.video.readyState >= 2" not in primer_source
+
     quality_source = ui_html.split("async function waitForQualityRerunFrame", 1)[1].split(
         "async function captureRerunViewerFrame", 1
     )[0]
