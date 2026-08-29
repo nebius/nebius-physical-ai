@@ -670,7 +670,7 @@ def test_isaac_lab_serverless_requires_rt_cores_gpu_type(mocker) -> None:
     assert kwargs["preset"] == "1gpu-40vcpu-160gb"
 
 
-def test_isaac_lab_serverless_rejects_non_rt_gpu_type(mocker) -> None:
+def _invoke_isaac_serverless_train(mocker, *, task: str, gpu_type: str):
     _mock_isaac_serverless_env(mocker)
     client = mocker.Mock()
     client.get_job.side_effect = EndpointNotFoundError("missing")
@@ -681,15 +681,55 @@ def test_isaac_lab_serverless_rejects_non_rt_gpu_type(mocker) -> None:
         app,
         [
             "workbench", "isaac-lab", "-p", "proj", "-n", "isaac", "train",
-            "--runtime", "serverless", "--task", "Isaac-Reach-Franka-v0",
+            "--runtime", "serverless", "--task", task,
             "--output-path", "s3://bucket/isaac/", "--submit-only",
-            "--gpu-type", "h200", "--job-name", "isaac-job",
+            "--gpu-type", gpu_type, "--job-name", "isaac-job",
         ],
+    )
+    return result, client
+
+
+@pytest.mark.parametrize(
+    ("gpu_type", "expected_platform"),
+    [
+        ("h200", "gpu-h200-sxm"),
+        ("h100", "gpu-h100-sxm"),
+        ("b200", "gpu-b200-sxm"),
+    ],
+)
+def test_isaac_lab_serverless_allows_datacenter_gpu_for_headless_task(
+    mocker, gpu_type: str, expected_platform: str
+) -> None:
+    """State-based RL does not rasterize, so RT cores are not required for it."""
+
+    result, client = _invoke_isaac_serverless_train(
+        mocker, task="Isaac-Reach-Franka-v0", gpu_type=gpu_type
+    )
+
+    assert result.exit_code == 0, result.output
+    assert client.create_job.call_args.kwargs["gpu_type"] == expected_platform
+
+
+def test_isaac_lab_serverless_rejects_datacenter_gpu_for_camera_task(mocker) -> None:
+    """A task that declares camera observations still needs RT cores."""
+
+    result, client = _invoke_isaac_serverless_train(
+        mocker, task="Isaac-Cartpole-RGB-Camera-Direct-v0", gpu_type="h200"
     )
 
     assert result.exit_code == 1
-    assert "requires RT-core GPUs" in result.output
+    assert "cannot run on the datacenter-headless GPU" in result.output
+    assert "camera or rendered observations" in result.output
     client.create_job.assert_not_called()
+
+
+def test_isaac_lab_serverless_allows_rt_core_gpu_for_camera_task(mocker) -> None:
+    result, client = _invoke_isaac_serverless_train(
+        mocker, task="Isaac-Cartpole-RGB-Camera-Direct-v0", gpu_type="l40s"
+    )
+
+    assert result.exit_code == 0, result.output
+    assert client.create_job.call_args.kwargs["gpu_type"] == "gpu-l40s-a"
 
 
 def test_isaac_lab_serverless_uses_shared_env_builder(mocker) -> None:

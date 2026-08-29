@@ -7,6 +7,20 @@ a versioned heading when a release is cut.
 
 ## Unreleased
 
+### GPU routing selects on workload, not just on the GPU
+
+- SONIC image resolution now intersects the GPU target with the workload. Each
+  variant in `sonic_image_manifest.json` declares the pipeline stages it serves,
+  so a fine-tune or train request on a datacenter-Blackwell target fails with the
+  capability gap named instead of silently resolving `npa-sonic-mujoco`, whose
+  published variant serves MuJoCo evaluation only.
+- Isaac Lab's RT-core requirement now applies to rendering rather than to every
+  submit. Headless state-based training may target H100/H200/B200; a task id that
+  declares camera or rendered observations is still restricted to L40S and
+  RTX PRO 6000, as is `isaac-lab deploy`. GPU classification moved to the
+  tool-neutral `npa.workbench.gpu_classes`, with per-tool policy in
+  `npa.workbench.sonic.routing` and the new `npa.workbench.isaac_lab.routing`.
+
 - Agent artifact loading now requires a discovered `run_id`/`run_ref` inventory
   context with every S3 URI. URI-only requests return structured error
   `npa.agent.api_error/v1` (`run_id_required_for_s3_uri`) instead of reading an

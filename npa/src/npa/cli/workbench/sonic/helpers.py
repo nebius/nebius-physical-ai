@@ -249,6 +249,7 @@ def sonic_image(
     *,
     gpu_target: str = "",
     image_variant: str = "",
+    workload: str = "",
 ) -> str:
     if image:
         return image
@@ -262,11 +263,13 @@ def sonic_image(
             registry=registry or None,
             gpu_target=gpu_target or None,
             image_variant=image_variant or None,
+            workload=workload or None,
         )
         if registry
         else container_image_for_tool(
             "sonic",
             gpu_target=gpu_target or None,
             image_variant=image_variant or None,
+            workload=workload or None,
         )
     )

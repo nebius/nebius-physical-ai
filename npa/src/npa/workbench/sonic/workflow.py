@@ -13,6 +13,7 @@ import yaml
 
 from npa.cluster.config import DEFAULT_REGION, SUPPORTED_REGIONS
 from npa.deploy.images import container_image_for_tool, sonic_image_entry
+from npa.workbench.sonic.routing import FINETUNE
 from npa.orchestration.skypilot.controller import DEFAULT_CONTROLLER_BACKEND, ControllerBackend
 from npa.orchestration.skypilot.workflow import WorkflowResult
 from npa.orchestration.skypilot.workflow import submit_workflow as _submit_skypilot_workflow
@@ -99,9 +100,13 @@ def materialize_sonic_workflow(
     docs = _load_yaml_documents(yaml_path)
     resolved_run_id = run_id or _default_run_id(yaml_path)
     resolved_gpu_target = (gpu_target or DEFAULT_GPU_TARGET).strip()
+    # The locomotion workflow runs the Isaac fine-tune stage out of this one
+    # image, so resolve it for that workload rather than for the GPU alone. A
+    # MuJoCo-only variant matching the same GPU target must not be substituted.
     entry = sonic_image_entry(
         gpu_target=resolved_gpu_target or None,
         image_variant=image_variant or None,
+        workload=FINETUNE,
     )
     resolved_variant = str(entry["id"])
     resolved_policy_image = image or container_image_for_tool(
@@ -109,6 +114,7 @@ def materialize_sonic_workflow(
         registry=registry or None,
         gpu_target=resolved_gpu_target or None,
         image_variant=resolved_variant,
+        workload=FINETUNE,
     )
     resolved_retargeting_image = container_image_for_tool("retargeting", registry=registry or None)
     resolved_npa_image = npa_image

@@ -414,13 +414,49 @@ def resolve_lerobot_image_tag(version: str | None = None) -> str:
     return str(entry.get("image_tag") or entry["version"])
 
 
-def sonic_image_variant_for_gpu(gpu_target: str | None = None) -> str:
-    """Return an active SONIC variant or reject unsupported GPU/runtime pairs."""
+def sonic_variant_workloads(variant: str) -> tuple[str, ...]:
+    """Return the SONIC pipeline stages a variant is published to serve."""
+
+    entry = sonic_image_variants().get(variant, {})
+    declared = entry.get("workloads")
+    if not isinstance(declared, list) or not declared:
+        raise ValueError(
+            f"SONIC image variant {variant!r} declares no 'workloads' in "
+            "sonic_image_manifest.json. Declare the stages it can serve so GPU "
+            "resolution cannot hand a caller a variant with the wrong capability."
+        )
+    return tuple(str(item) for item in declared)
+
+
+def sonic_image_variant_for_gpu(
+    gpu_target: str | None = None,
+    *,
+    workload: str | None = None,
+) -> str:
+    """Return an active SONIC variant or reject unsupported GPU/runtime pairs.
+
+    ``gpu_target`` alone is not enough to pick an image. The variants differ in
+    capability, not just in driver provisioning: the only variant that matches a
+    datacenter-Blackwell target serves MuJoCo evaluation and cannot fine-tune. So
+    when the caller states its ``workload`` (a
+    :mod:`npa.workbench.sonic.routing` identifier), the GPU-matched variant must
+    also be published for that workload, and a mismatch fails loud instead of
+    substituting a different capability.
+    """
 
     manifest = sonic_image_manifest()
     default = str(manifest.get("default_variant", "sonic-k8s-host-mounted"))
     normalized = _normalize_gpu_target(gpu_target)
+    requested = (workload or "").strip().lower()
     if not normalized:
+        if requested and requested not in sonic_variant_workloads(default):
+            raise ValueError(
+                f"The default SONIC variant {default!r} does not serve workload "
+                f"{workload!r}; it serves "
+                f"{', '.join(sonic_variant_workloads(default))}. Select a variant "
+                "explicitly with --image-variant or pass a separately validated "
+                "image with --image."
+            )
         return default
     for rule in manifest.get("gpu_selection", []):
         if not isinstance(rule, dict):
@@ -428,7 +464,26 @@ def sonic_image_variant_for_gpu(gpu_target: str | None = None) -> str:
         variant = str(rule.get("variant", ""))
         for match in rule.get("matches", []):
             if str(match).lower() in normalized:
-                return variant
+                if not requested:
+                    return variant
+                served = sonic_variant_workloads(variant)
+                if requested in served:
+                    return variant
+                capable = sorted(
+                    other
+                    for other in sonic_image_variants()
+                    if requested in sonic_variant_workloads(other)
+                )
+                raise ValueError(
+                    f"No published SONIC image serves workload {workload!r} on GPU "
+                    f"target {gpu_target!r}. That target selects variant "
+                    f"{variant!r}, which is published for "
+                    f"{', '.join(served)} only. Variants that do serve "
+                    f"{workload!r}: {', '.join(capable) or 'none'}. Choose a GPU "
+                    "target those variants support, or pass a separately validated "
+                    "runtime with --image; npa will not substitute a variant with a "
+                    "different capability."
+                )
     raise ValueError(
         f"Unsupported SONIC GPU target {gpu_target!r}. The only published active "
         "variant is sonic-k8s-host-mounted on RTX PRO 6000 Blackwell Kubernetes "
@@ -442,14 +497,31 @@ def sonic_image_entry(
     *,
     gpu_target: str | None = None,
     image_variant: str | None = None,
+    workload: str | None = None,
 ) -> dict[str, Any]:
-    """Return the SONIC manifest entry selected by variant or GPU target."""
+    """Return the SONIC manifest entry selected by variant or GPU target.
+
+    Pass ``workload`` whenever the caller knows which pipeline stage it is
+    resolving an image for, so a GPU target cannot select a variant published for
+    a different capability. An explicit ``image_variant`` is still honored, but is
+    checked against the workload for the same reason.
+    """
 
     variants = sonic_image_variants()
     if image_variant:
         resolved = _normalize_sonic_variant(image_variant, variants)
+        requested = (workload or "").strip().lower()
+        if requested and resolved in variants:
+            served = sonic_variant_workloads(resolved)
+            if requested not in served:
+                raise ValueError(
+                    f"SONIC image variant {resolved!r} is published for "
+                    f"{', '.join(served)} and cannot serve workload {workload!r}. "
+                    "Pass a separately validated runtime with --image if that is "
+                    "what you intend."
+                )
     else:
-        resolved = sonic_image_variant_for_gpu(gpu_target)
+        resolved = sonic_image_variant_for_gpu(gpu_target, workload=workload)
     try:
         entry = variants[resolved]
     except KeyError as exc:
@@ -475,17 +547,27 @@ def container_image_for_tool(
     tag: str | None = None,
     gpu_target: str | None = None,
     image_variant: str | None = None,
+    workload: str | None = None,
 ) -> str:
     """Return the fully qualified image ref for a Workbench tool."""
     resolved_registry = registry or execution_container_registry()
     if tool == "sonic":
-        entry = sonic_image_entry(gpu_target=gpu_target, image_variant=image_variant)
+        entry = sonic_image_entry(
+            gpu_target=gpu_target,
+            image_variant=image_variant,
+            workload=workload,
+        )
         image_name = str(entry["name"])
         resolved_tag = tag or str(entry["tag"])
     else:
         if image_variant:
             raise ValueError(
                 f"Image variants are only defined for SONIC, got tool={tool!r}"
+            )
+        if workload:
+            raise ValueError(
+                f"Workload-specific image selection is only defined for SONIC, "
+                f"got tool={tool!r}"
             )
         image_name = CONTAINER_IMAGE_NAMES[tool]
         resolved_tag = tag or (

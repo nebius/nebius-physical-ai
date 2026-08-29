@@ -31,6 +31,7 @@ from npa.serverless_common import (
     split_serverless_env,
     validate_output_path,
 )
+from npa.workbench.sonic.routing import TRAIN as ROUTING_TRAIN
 from npa.workbench.training_config import (
     TrainingConfig,
     TrainingConfigError,
@@ -152,6 +153,7 @@ def _run_serverless_train(
             ctx.project,
             image,
             gpu_target=platform,
+            workload=ROUTING_TRAIN,
         )
     except ValueError as exc:
         fail(str(exc))

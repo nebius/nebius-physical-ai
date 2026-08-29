@@ -11,6 +11,12 @@
       "name": "npa-sonic",
       "tag": "0.1.2",
       "purpose": "Self-contained SONIC runtime for compute-only VM hosts that do not mount NVIDIA graphics userspace.",
+      "workloads": [
+        "finetune",
+        "train",
+        "isaac-render",
+        "mujoco-eval"
+      ],
       "base": {
         "cuda": "12.8",
         "torch": "2.7.0+cu128",
@@ -46,6 +52,12 @@
       "name": "npa-sonic",
       "tag": "cuda13-b300-0.1.2-k8s-runtime-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
       "purpose": "SONIC runtime for GPU-operator-managed Kubernetes nodes where the NVIDIA host driver is mounted into the container.",
+      "workloads": [
+        "finetune",
+        "train",
+        "isaac-render",
+        "mujoco-eval"
+      ],
       "base": {
         "cuda": "12.8 wheel closure",
         "torch": "2.9.0",
@@ -81,6 +93,11 @@
       "name": "npa-sonic-mujoco",
       "tag": "0.1.3-mvp",
       "purpose": "Combined SONIC fine-tuning and MuJoCo evaluation runtime for the first G1 MVP milestone.",
+      "workloads": [
+        "finetune",
+        "train",
+        "mujoco-eval"
+      ],
       "base": {
         "cuda": "12.8",
         "torch": "2.7.0+cu128",
@@ -121,6 +138,9 @@
       "name": "npa-sonic-mujoco",
       "tag": "0.2.0-runtime",
       "purpose": "Public SONIC runtime plus pinned headless MuJoCo evaluation, with Isaac retained as operator-consented runtime fetch only.",
+      "workloads": [
+        "mujoco-eval"
+      ],
       "headless_geometry": "Upstream dynamics with primitive collision proxies when public checkout mesh paths are Git-LFS pointers; no LFS asset is baked.",
       "base": {
         "cuda": "12.8 wheel closure",
@@ -184,5 +204,6 @@
         "mujoco-b200"
       ]
     }
-  ]
+  ],
+  "workload_note": "workloads is the set of SONIC pipeline stages a variant can serve, using the npa.workbench.sonic.routing identifiers. gpu_selection maps a GPU target to a variant, so resolution must intersect the two: sonic-mujoco-runtime-fetch is the only variant that matches a B200 target and it serves mujoco-eval only, which means a finetune or train request on B200 has no published image and must fail rather than silently resolve the evaluation runtime."
 }
