@@ -481,7 +481,8 @@ images:
       environment generation does not use tetrahedralization, experiment
       tracking, or profiler tooling. The runtime correspondingly removes the
       Genesis/LeRobot metadata edges for those absent optional dependencies;
-      build-time imports and pip consistency checks protect that reduced
+      a repository-owned fail-closed import shim rejects tetrahedralization,
+      while build-time imports and pip consistency checks protect the reduced
       contract.
     redistribution: public
   rerun-viewer:

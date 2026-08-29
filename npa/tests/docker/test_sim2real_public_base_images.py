@@ -77,12 +77,20 @@ def test_envgen_removes_optional_forbidden_and_vulnerable_parent_tools() -> None
 
     assert "pip uninstall -y transformers imageio-ffmpeg wandb tetgen" in text
     assert "sanitize-sim2real-envgen-parent.py" in text
+    assert "COPY docker/workbench/common/envgen_compat /opt/npa/compat" in text
+    assert "PYTHONPATH=/opt/npa/compat:/opt/npa/src" in text
     assert '("genesis-world", "tetgen")' in sanitizer
     assert '("lerobot", "wandb")' in sanitizer
     assert "len(filtered) != len(lines) - 1" in sanitizer
     assert "rm -rf /opt/nvidia/nsight-compute" in text
     assert 'names.isdisjoint({"tetgen", "wandb"})' in text
     assert "test ! -e /opt/nvidia/nsight-compute" in text
+
+    compat = (
+        WORKBENCH / "common/envgen_compat/tetgen.py"
+    ).read_text(encoding="utf-8")
+    assert "class TetGen:" in compat
+    assert "raise RuntimeError(" in compat
 
 
 def test_genesis_workflow_runtime_upgrades_fixed_kernel_headers() -> None:

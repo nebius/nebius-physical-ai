@@ -19,6 +19,7 @@ COPY --chmod=0755 docker/workbench/common/install_workflow_runtime_prereqs.sh \
     /usr/local/bin/install-workflow-runtime-prereqs
 COPY docker/workbench/common/sanitize_sim2real_envgen_parent.py \
     /usr/local/lib/npa/sanitize-sim2real-envgen-parent.py
+COPY docker/workbench/common/envgen_compat /opt/npa/compat
 
 # The public Genesis parent includes three payloads that are outside this
 # capability's public packaging/security contract:
@@ -55,7 +56,7 @@ RUN /usr/local/bin/install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}" \
     && IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg python -c \
       'import imageio_ffmpeg; assert imageio_ffmpeg.get_ffmpeg_exe() == "/usr/bin/ffmpeg"' \
     && python -m pip check \
-    && python -c "import site; from pathlib import Path; Path(site.getsitepackages()[0], 'npa-exact-source.pth').write_text('/opt/npa/src\\n', encoding='utf-8')" \
+    && python -c "import site; from pathlib import Path; Path(site.getsitepackages()[0], 'npa-exact-source.pth').write_text('/opt/npa/compat\\n/opt/npa/src\\n', encoding='utf-8')" \
     && env -u PYTHONPATH /opt/npa/venv/bin/python -c \
       'import boto3, genesis; from npa.workflows.sim2real.workflow_stage import main; assert callable(main)' \
     && python -c 'import importlib.metadata as m; assert not any(d.metadata["Name"].lower() == "transformers" for d in m.distributions())' \
@@ -106,7 +107,7 @@ ENV PATH=/opt/npa/venv/bin:/usr/local/cuda/bin:/usr/local/nvidia/bin:/usr/local/
     NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA} \
     NPA_BAKED_PYTHON=/opt/npa/venv/bin/python \
     IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg \
-    PYTHONPATH=/opt/npa/src
+    PYTHONPATH=/opt/npa/compat:/opt/npa/src
 
 WORKDIR /opt/npa
 USER ubuntu
