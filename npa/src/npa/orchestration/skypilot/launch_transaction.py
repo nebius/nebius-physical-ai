@@ -40,6 +40,32 @@ DEFAULT_BACKOFF_CAP_SECONDS = 20.0
 DEFAULT_BACKOFF_MULTIPLIER = 2.0
 DEFAULT_BACKOFF_JITTER_RATIO = 0.20
 
+# A failed terminal queue row is evidence that an earlier launch with the same
+# logical name is over, not a workload that a resumed driver can safely adopt.
+# Keep this local to the launch boundary so callers do not need to import the
+# higher-level workflow runtime (which itself depends on this module).
+TERMINAL_FAILURE_JOB_STATUSES = frozenset(
+    {
+        "FAILED",
+        "FAIL",
+        "FAILED_PRECHECKS",
+        "FAILED_SETUP",
+        "FAILED_RUNTIME",
+        "FAILED_CONTROLLER",
+        "FAILED_NO_RESOURCE",
+        "CANCELLED",
+        "CANCELED",
+        "STOPPED",
+    }
+)
+
+
+def is_terminal_failure_job_status(status: str) -> bool:
+    """Return whether a managed-job status is an unsuccessful terminal state."""
+
+    upper = status.upper()
+    return upper in TERMINAL_FAILURE_JOB_STATUSES or upper.startswith("FAILED")
+
 
 class FailureCategory(str, Enum):
     """Stable machine-readable failure taxonomy."""
@@ -562,31 +588,45 @@ def run_launch_transaction(
         initial = reconcile()
         transaction.reconciliations.append(initial.to_dict())
         if initial.state is ReconciliationState.FOUND:
-            transaction.existence = "found"
-            transaction.job_id = initial.job_id
-            if not initial.workload_observable:
-                transaction.state = LaunchState.INDETERMINATE
-                transaction.reconciliation_error = (
-                    "the exact managed-job queue record has no scheduler or workload "
-                    "observability evidence"
-                )
-                transaction.recovery_decision = "block_unobservable_existing_record"
-                transaction.operator_remedy = (
-                    "Treat this as a possible pre-submit phantom, not a healthy job. "
-                    "Inspect the run with `npa workbench workflow status`, cancel the "
-                    "exact stale run with `npa workbench workflow cancel`, repair the "
-                    "shared controller with `npa skypilot cleanup-controller`, and "
-                    "resume the same run ID."
-                )
+            if is_terminal_failure_job_status(initial.status):
+                # A prior failed/cancelled attempt cannot make progress and must
+                # not be presented to the runtime as a newly submitted job.  The
+                # reconciler will prefer any new viable row over this historical
+                # terminal row after launch.
+                transaction.existence = "absent"
+                transaction.recovery_decision = "relaunch_after_terminal_failure"
+                if progress is not None:
+                    progress(
+                        "reconciliation found terminal managed job "
+                        f"{initial.job_id} ({initial.status}); launching a new attempt"
+                    )
+                initial = ReconciliationEvidence(ReconciliationState.ABSENT)
+            else:
+                transaction.existence = "found"
+                transaction.job_id = initial.job_id
+                if not initial.workload_observable:
+                    transaction.state = LaunchState.INDETERMINATE
+                    transaction.reconciliation_error = (
+                        "the exact managed-job queue record has no scheduler or workload "
+                        "observability evidence"
+                    )
+                    transaction.recovery_decision = "block_unobservable_existing_record"
+                    transaction.operator_remedy = (
+                        "Treat this as a possible pre-submit phantom, not a healthy job. "
+                        "Inspect the run with `npa workbench workflow status`, cancel the "
+                        "exact stale run with `npa workbench workflow cancel`, repair the "
+                        "shared controller with `npa skypilot cleanup-controller`, and "
+                        "resume the same run ID."
+                    )
+                    checkpoint()
+                    _raise_result(transaction)
+                transaction.state = LaunchState.ADOPTED
+                transaction.job_id = initial.job_id
+                transaction.recovery_decision = "adopt_existing"
+                if progress is not None:
+                    progress(f"reconciliation adopted exact managed job {initial.job_id}")
                 checkpoint()
-                _raise_result(transaction)
-            transaction.state = LaunchState.ADOPTED
-            transaction.job_id = initial.job_id
-            transaction.recovery_decision = "adopt_existing"
-            if progress is not None:
-                progress(f"reconciliation adopted exact managed job {initial.job_id}")
-            checkpoint()
-            return transaction
+                return transaction
         if initial.state is not ReconciliationState.ABSENT:
             transaction.existence = "indeterminate"
             transaction.reconciliation_error = initial.error

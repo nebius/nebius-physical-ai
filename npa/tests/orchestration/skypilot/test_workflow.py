@@ -1563,6 +1563,60 @@ def test_reconciliation_distinguishes_phantom_from_scheduler_observable_job(
     assert evidence.workload_evidence == marker
 
 
+def test_reconciliation_prefers_viable_job_over_cancelled_history(monkeypatch) -> None:
+    rows = [
+        {
+            "job_id": 125,
+            "job_name": "exact-run",
+            "status": "CANCELLED",
+            "schedule_state": "DONE",
+        },
+        {
+            "job_id": 126,
+            "job_name": "exact-run",
+            "status": "PENDING",
+            "schedule_state": "WAITING",
+        },
+    ]
+    monkeypatch.setattr(
+        workflow_module.subprocess,
+        "run",
+        lambda cmd, **_kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout=json.dumps(rows), stderr=""
+        ),
+    )
+
+    evidence = workflow_module._reconcile_managed_job_env(
+        "exact-run", env={}, sky_executable="sky", cwd="/durable"
+    )
+
+    assert evidence.state.value == "found"
+    assert evidence.job_id == "126"
+    assert evidence.status == "PENDING"
+
+
+def test_reconciliation_selects_latest_when_all_named_jobs_failed(monkeypatch) -> None:
+    rows = [
+        {"job_id": 125, "job_name": "exact-run", "status": "CANCELLED"},
+        {"job_id": 127, "job_name": "exact-run", "status": "FAILED"},
+    ]
+    monkeypatch.setattr(
+        workflow_module.subprocess,
+        "run",
+        lambda cmd, **_kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout=json.dumps(rows), stderr=""
+        ),
+    )
+
+    evidence = workflow_module._reconcile_managed_job_env(
+        "exact-run", env={}, sky_executable="sky", cwd="/durable"
+    )
+
+    assert evidence.state.value == "found"
+    assert evidence.job_id == "127"
+    assert evidence.status == "FAILED"
+
+
 def test_wait_for_controller_ignores_only_foreign_explicit_identity(
     monkeypatch,
 ) -> None:

@@ -57,6 +57,7 @@ from npa.orchestration.skypilot.launch_transaction import (
     RecoveryPolicy,
     StabilityPolicy,
     classify_failure,
+    is_terminal_failure_job_status,
     logical_launch_identity,
     run_launch_transaction,
     wait_for_api_stability,
@@ -1309,15 +1310,25 @@ def _reconcile_managed_job_env(
             )
     if not matching:
         return ReconciliationEvidence(ReconciliationState.ABSENT)
-    if len(matching) != 1:
+    # Historical cancelled/failed attempts retain the same deterministic name
+    # in SkyPilot's all-jobs queue.  Once a viable replacement exists, those
+    # terminal rows must not make exact-name reconciliation ambiguous.
+    viable = {
+        job_id
+        for job_id in matching
+        if not is_terminal_failure_job_status(statuses.get(job_id, "UNKNOWN"))
+    }
+    if len(viable) > 1:
         return ReconciliationEvidence(
             ReconciliationState.AMBIGUOUS,
             error=(
                 f"exact managed-job name {job_name!r} maps to multiple immutable IDs: "
-                + ", ".join(sorted(matching, key=int))
+                + ", ".join(sorted(viable, key=int))
             ),
         )
-    selected = next(iter(matching))
+    # Multiple historical failures are all inert. Select their latest immutable
+    # ID so the launch transaction can record what it superseded and retry.
+    selected = next(iter(viable)) if viable else max(matching, key=int)
     markers = sorted(workload_markers.get(selected) or ())
     return ReconciliationEvidence(
         ReconciliationState.FOUND,

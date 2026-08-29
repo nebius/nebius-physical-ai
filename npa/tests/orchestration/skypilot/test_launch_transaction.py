@@ -332,6 +332,45 @@ def test_resume_rejects_existing_unobservable_phantom_record() -> None:
     )
 
 
+def test_resume_relaunches_instead_of_adopting_cancelled_job() -> None:
+    reconciliations = iter(
+        [
+            ReconciliationEvidence(
+                ReconciliationState.FOUND,
+                "125",
+                "CANCELLED",
+                workload_observable=True,
+                workload_evidence="scheduler_state",
+            ),
+            ReconciliationEvidence(
+                ReconciliationState.FOUND,
+                "126",
+                "PENDING",
+                workload_observable=True,
+                workload_evidence="scheduler_state",
+            ),
+        ]
+    )
+    launches = 0
+
+    def launch() -> None:
+        nonlocal launches
+        launches += 1
+
+    result = run_launch_transaction(
+        logical_id="resume-after-cancel",
+        readiness=_stable,
+        launch=launch,
+        reconcile=lambda: next(reconciliations),
+        classify_launch_error=_transient,
+    )
+
+    assert launches == 1
+    assert result.state is LaunchState.SUBMITTED
+    assert result.job_id == "126"
+    assert result.recovery_decision == "submitted_and_reconciled"
+
+
 def test_authoritative_absence_allows_one_safe_retry() -> None:
     clock = FakeClock()
     launches = 0
