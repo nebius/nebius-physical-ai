@@ -10,6 +10,7 @@ import os
 import re
 import tempfile
 import time
+import sys
 from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -125,6 +126,113 @@ def _fail(msg: str, code: int = 1) -> None:
     error.append(str(msg))
     console.print(error, soft_wrap=True)
     raise typer.Exit(code)
+
+
+def _workflow_access_requirements(spec) -> tuple:  # noqa: ANN001
+    from npa.workbench.access_approval import requirements_for_tool_refs
+
+    return requirements_for_tool_refs(
+        state.tool_ref for state in spec.states.values() if state.tool_ref
+    )
+
+
+def _workflow_access_requirement_payload(spec) -> dict[str, object]:  # noqa: ANN001
+    requirements = _workflow_access_requirements(spec)
+    return {
+        "hf": sum(item.provider == "huggingface" for item in requirements),
+        "ngc": sum(item.provider == "ngc" for item in requirements),
+        "artifacts": [
+            {
+                "provider": item.provider,
+                "artifact": item.repo,
+                "artifact_type": item.repo_type,
+                "revision": item.revision,
+                "official_url": item.official_url,
+            }
+            for item in requirements
+        ],
+    }
+
+
+def _current_workflow_resume_command(fallback: list[str]) -> str:
+    """Return real process argv, with a deterministic CliRunner fallback."""
+
+    from npa.workbench.access_approval import safe_resume_command
+
+    process = list(sys.argv)
+    executable = Path(process[0]).name if process else ""
+    if executable == "npa" or ("-m" in process and "npa" in process):
+        return safe_resume_command(process)
+    return safe_resume_command(fallback)
+
+
+def _enforce_workflow_access(
+    spec,
+    *,
+    json_output: bool,
+    resume_command: str,  # noqa: ANN001
+) -> dict[str, object]:
+    """Fail before execution/provisioning when exact HF/NGC access is not Ready."""
+
+    requirements = _workflow_access_requirements(spec)
+    if not requirements:
+        return {"status": "ready", "counts": {"hf": 0, "ngc": 0}}
+    from npa.clients.credentials import load_credentials
+    from npa.clients.huggingface import validate_hf_access
+    from npa.workbench.access_approval import (
+        DEFAULT_STATE_PATH,
+        approval_plan,
+        blocked,
+        probe_requirements,
+    )
+    from npa.workbench.nurec.nurec import check_ngc_image_access
+
+    credentials = load_credentials()
+    state_path = Path(
+        os.environ.get("NPA_ACCESS_APPROVAL_STATE_PATH", str(DEFAULT_STATE_PATH))
+    )
+    evidence = probe_requirements(
+        requirements,
+        hf_token=credentials.hf_token,
+        ngc_key=credentials.ngc_api_key,
+        hf_validator=validate_hf_access,
+        ngc_validator=check_ngc_image_access,
+        state_path=state_path,
+    )
+    plan = approval_plan(evidence, resume_command=resume_command)
+    if not blocked(plan):
+        return plan
+    if json_output:
+        typer.echo(json.dumps(plan, indent=2, sort_keys=True))
+        raise typer.Exit(code=1)
+    counts = plan["counts"]
+    typer.echo(
+        "This workflow needs approval for "
+        f"{counts['hf']} Hugging Face resource(s) and "
+        f"{counts['ngc']} NVIDIA NGC artifact(s).",
+        err=True,
+    )
+    if sys.stdin.isatty() and typer.confirm(
+        "Open only the missing official approval pages now?", default=False
+    ):
+        import webbrowser
+
+        for url in plan["official_urls"]:
+            webbrowser.open_new_tab(str(url))
+    for provider, rows in plan["providers"].items():
+        typer.echo(f"{provider}:", err=True)
+        for row in rows:
+            typer.echo(
+                f"  - {row['artifact']} ({row['status']}): {row['official_url']}",
+                err=True,
+            )
+    typer.echo(
+        "NPA did not accept any terms or start provisioning. Complete any "
+        "user-bound approval, then resume exactly with:",
+        err=True,
+    )
+    typer.echo(f"  {plan['resume_command']}", err=True)
+    raise typer.Exit(code=1)
 
 
 def _emit_image_bootstrap_observing_progress(
@@ -699,6 +807,14 @@ def submit_cmd(
         except Exception as exc:
             _fail(str(exc))
             return
+        if not plan_only:
+            _enforce_workflow_access(
+                merged_npa_spec,
+                json_output=output_format == OutputFormat.json,
+                resume_command=_current_workflow_resume_command(
+                    ["npa", "workbench", "workflow", "submit", str(yaml_path)]
+                ),
+            )
     if image_override and not is_npa_spec:
         _fail(
             "--image-override/--tool-image is supported only for "
@@ -6492,6 +6608,7 @@ def validate_spec_cmd(
         "task_id": str(spec.config.get("task_id") or ""),
         "trigger_uri": str(spec.config.get("trigger_uri") or ""),
         "seed_manifest_uri": str(spec.config.get("seed_manifest_uri") or ""),
+        "access_requirements": _workflow_access_requirement_payload(spec),
     }
     if json_output:
         typer.echo(json.dumps(payload, indent=2, sort_keys=True))
@@ -6564,7 +6681,9 @@ def plan_spec_cmd(
 
         wave_plan = wave_plan_from_plan(spec, plan, run_id=resolved_run_id)
         if json_output:
-            typer.echo(json.dumps(wave_plan.to_dict(), indent=2, sort_keys=True))
+            payload = wave_plan.to_dict()
+            payload["access_requirements"] = _workflow_access_requirement_payload(spec)
+            typer.echo(json.dumps(payload, indent=2, sort_keys=True))
             return
         typer.echo(f"workflow: {wave_plan.workflow}")
         typer.echo(f"waves: {len(wave_plan.waves)}")
@@ -6582,6 +6701,7 @@ def plan_spec_cmd(
 
     if json_output:
         payload = plan.to_dict()
+        payload["access_requirements"] = _workflow_access_requirement_payload(spec)
         # The human warning is suppressed under --json to keep the document clean,
         # which made a placeholder plan look valid. Say it in the document instead.
         if _is_placeholder_bucket(str(spec.config.get("bucket", "") or "")):
@@ -6589,6 +6709,13 @@ def plan_spec_cmd(
         typer.echo(json.dumps(payload, indent=2, sort_keys=True))
         return
     typer.echo(f"workflow: {plan.workflow}")
+    access = _workflow_access_requirement_payload(spec)
+    if access["hf"] or access["ngc"]:
+        typer.echo(
+            "access_requirements: "
+            f"hf={access['hf']} ngc={access['ngc']} "
+            "(exact artifact access is probed before execution)"
+        )
     if plan.assume_decision:
         typer.echo(f"assume_decision: {plan.assume_decision}")
     for index, step in enumerate(plan.steps, start=1):
@@ -6670,6 +6797,37 @@ def run_spec_cmd(
     resolved_assume = assume_decision or str(
         spec.config.get("plan_assume_decision") or ""
     )
+    if execute:
+        _enforce_workflow_access(
+            spec,
+            json_output=json_output,
+            resume_command=_current_workflow_resume_command(
+                [
+                    "npa",
+                    "workbench",
+                    "workflow",
+                    "run-spec",
+                    str(yaml_path),
+                    *(["--run-id", run_id] if run_id else []),
+                    "--execute",
+                    *(
+                        ["--assume-decision", assume_decision]
+                        if assume_decision
+                        else []
+                    ),
+                    *(
+                        item
+                        for pair in (("--var", item) for item in var)
+                        for item in pair
+                    ),
+                    *(["--preset", preset] if preset else []),
+                    *(["--persist-state"] if persist_state else []),
+                    *(["--require-inputs"] if require_inputs else []),
+                    *(["--scheduler-plan"] if scheduler_plan else []),
+                    *(["--json"] if json_output else []),
+                ]
+            ),
+        )
     try:
         report = run_workflow(
             spec,

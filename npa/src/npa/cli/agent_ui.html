@@ -8449,6 +8449,22 @@
             if (data && data.session_id) {
               activeChatSessionId = String(data.session_id);
             }
+            if (data && Array.isArray(data.open_urls)) {
+              const allowedApprovalHosts = new Set([
+                "huggingface.co",
+                "catalog.ngc.nvidia.com",
+                "ngc.nvidia.com",
+                "docs.nvidia.com",
+              ]);
+              for (const rawUrl of data.open_urls) {
+                try {
+                  const approvalUrl = new URL(String(rawUrl));
+                  if (approvalUrl.protocol !== "https:" || !allowedApprovalHosts.has(approvalUrl.hostname)) continue;
+                  const opened = window.open(approvalUrl.href, "_blank", "noopener,noreferrer");
+                  if (opened) opened.opener = null;
+                } catch (_approvalUrlError) { /* invalid or blocked URL: reply retains clickable official links */ }
+              }
+            }
             const reply = normalizeAssistantReply(data.reply || "");
             if (reply) {
               appendChat("assistant", reply);

@@ -1939,6 +1939,14 @@ def _run_interactive_configure(
         if provider_free
         else _model_access_note(hf_token, ngc_api_key)
     )
+    if sys.stdin.isatty():
+        prepare_access = ask(
+            "Prepare access for the full known Workbench HF/NGC catalog now? "
+            "This is optional and does not affect unrelated capabilities. [y/N]",
+            default="N",
+        )
+        if prepare_access.lower() in {"y", "yes"}:
+            _prepare_full_catalog_access()
     if not provision:
         typer.echo(
             "Project configuration saved without object storage. Re-run with "
@@ -2171,6 +2179,69 @@ def _skipped_model_access_note() -> str:
         "--no-provision. Run `npa workbench health access` when model access must "
         "be enforced."
     )
+
+
+def _prepare_full_catalog_access(*, open_pages: bool = False) -> dict[str, object]:
+    """Audit the full HF/NGC catalog without making Workbench depend on it."""
+
+    import webbrowser
+
+    from npa.clients.credentials import load_credentials
+    from npa.clients.huggingface import validate_hf_access
+    from npa.workbench.access_approval import (
+        DEFAULT_STATE_PATH,
+        approval_plan,
+        blocked,
+        exact_requirements,
+        probe_requirements,
+    )
+    from npa.workbench.nurec.nurec import check_ngc_image_access
+
+    credentials = load_credentials()
+    state_path = Path(
+        os.environ.get("NPA_ACCESS_APPROVAL_STATE_PATH", str(DEFAULT_STATE_PATH))
+    )
+    evidence = probe_requirements(
+        exact_requirements(),
+        hf_token=credentials.hf_token,
+        ngc_key=credentials.ngc_api_key,
+        hf_validator=validate_hf_access,
+        ngc_validator=check_ngc_image_access,
+        state_path=state_path,
+    )
+    plan = approval_plan(
+        evidence, resume_command="npa configure --prepare-catalog-access"
+    )
+    counts = plan["counts"]
+    typer.echo(
+        "Full Workbench catalog access audit: "
+        f"{counts['hf']} Hugging Face resource(s), "
+        f"{counts['ngc']} NVIDIA NGC artifact(s) need attention."
+    )
+    if blocked(plan) and not open_pages and sys.stdin.isatty():
+        open_pages = typer.confirm(
+            "Open the exact official HF/NGC approval pages now?",
+            default=False,
+        )
+    if open_pages:
+        for url in plan["official_urls"]:
+            webbrowser.open_new_tab(str(url))
+    for provider, rows in plan["providers"].items():
+        typer.echo(f"{provider}:")
+        for row in rows:
+            typer.echo(
+                f"  - {row['artifact']}@{row['revision'] or 'provider-current'}: "
+                f"{row['status']} — {row['official_url']}"
+            )
+    if blocked(plan):
+        typer.echo(
+            "NPA did not accept any terms. Other Workbench capabilities remain "
+            "usable. After completing any user-bound approval, resume with:"
+        )
+        typer.echo(f"  {plan['resume_command']}")
+    else:
+        typer.echo("All exact gated HF/NGC artifacts are Ready.")
+    return plan
 
 
 def _store_token_factory_key(api_key: str) -> None:
@@ -2743,6 +2814,7 @@ class ConfigureMode(str, Enum):
     IMPORT_CREDENTIALS = "import-credentials"
     KNOWN_PROJECT = "known-project"
     INTERACTIVE = "interactive"
+    CATALOG_ACCESS = "catalog-access"
 
 
 def _configure_mode(arguments: dict[str, Any]) -> ConfigureMode:
@@ -2753,6 +2825,8 @@ def _configure_mode(arguments: dict[str, Any]) -> ConfigureMode:
     source_uri = str(arguments.get("src_s3_uri") or "").strip()
     forget = str(arguments.get("forget_project") or "").strip()
     save_env = bool(arguments.get("save_env_credentials"))
+    prepare_catalog_access = bool(arguments.get("prepare_catalog_access"))
+    open_approval_pages = bool(arguments.get("open_approval_pages"))
     interactive = arguments.get("interactive")
     provision = arguments.get("provision")
     known_names = ("tenant_id", "project_id", "region", "project_alias")
@@ -2772,6 +2846,8 @@ def _configure_mode(arguments: dict[str, Any]) -> ConfigureMode:
         requested.append(ConfigureMode.FORGET_PROJECT)
     if save_env:
         requested.append(ConfigureMode.IMPORT_CREDENTIALS)
+    if prepare_catalog_access or open_approval_pages:
+        requested.append(ConfigureMode.CATALOG_ACCESS)
     if known or any(str(arguments.get(name) or "").strip() for name in bucket_names):
         requested.append(ConfigureMode.KNOWN_PROJECT)
     if requested == [ConfigureMode.DISPLAY, ConfigureMode.IMPORT_CREDENTIALS]:
@@ -2807,6 +2883,7 @@ def _configure_mode(arguments: dict[str, Any]) -> ConfigureMode:
     if mode in {
         ConfigureMode.SOURCE_URI,
         ConfigureMode.FORGET_PROJECT,
+        ConfigureMode.CATALOG_ACCESS,
     } and (interactive is not None or provision is not None):
         raise typer.BadParameter(
             f"{mode.value} mode is read-only or self-contained and cannot be "
@@ -2860,6 +2937,8 @@ def _configure_impl(
     project_alias: str = "",
     bucket_storage_class: str = "",
     bucket_size_gb: str = "",
+    prepare_catalog_access: bool = False,
+    open_approval_pages: bool = False,
 ) -> None:
     mode = _configure_mode(locals())
     effective_provision = (
@@ -2876,6 +2955,9 @@ def _configure_impl(
         # writes. Storage credentials (host-scoped) and a deleted bucket's
         # remote-state keys are handled by `npa storage bucket delete`.
         _forget_project(forget_project.strip())
+        return
+    if mode == ConfigureMode.CATALOG_ACCESS:
+        _prepare_full_catalog_access(open_pages=open_approval_pages)
         return
     from npa.clients.credentials import (
         CREDENTIALS_PATH,
@@ -2997,7 +3079,11 @@ def _transactional_configure(function):
                 else OperationIntent.ENSURE_PRESENT
             ):
                 return function(*args, **kwargs)
-        if mode in {ConfigureMode.DISPLAY, ConfigureMode.GUIDANCE}:
+        if mode in {
+            ConfigureMode.DISPLAY,
+            ConfigureMode.GUIDANCE,
+            ConfigureMode.CATALOG_ACCESS,
+        }:
             return function(*args, **kwargs)
         forget = str(bound.arguments.get("forget_project") or "").strip()
         alias = str(bound.arguments.get("project_alias") or "").strip()
@@ -3207,6 +3293,22 @@ def configure(
         "--bucket-size-gb",
         help="GiB cap for a newly created known-project bucket; 0 means unlimited.",
     ),
+    prepare_catalog_access: bool = typer.Option(
+        False,
+        "--prepare-catalog-access",
+        help=(
+            "Audit every exact gated HF/NGC artifact in the current Workbench "
+            "catalog without changing project or storage configuration."
+        ),
+    ),
+    open_approval_pages: bool = typer.Option(
+        False,
+        "--open-approval-pages",
+        help=(
+            "Affirmatively open missing official HF/NGC pages during the catalog "
+            "audit; NPA never submits acceptance."
+        ),
+    ),
 ) -> None:
     """Interactively write ~/.npa credentials and config, or show guidance."""
     _configure_impl(
@@ -3223,6 +3325,8 @@ def configure(
         project_alias=project_alias,
         bucket_storage_class=bucket_storage_class,
         bucket_size_gb=bucket_size_gb,
+        prepare_catalog_access=prepare_catalog_access,
+        open_approval_pages=open_approval_pages,
     )
 
 
@@ -3298,6 +3402,14 @@ def init(
         "--bucket-size-gb",
         help="GiB cap for a newly created known-project bucket; 0 means unlimited.",
     ),
+    prepare_catalog_access: bool = typer.Option(
+        False, "--prepare-catalog-access", help="Audit full HF/NGC catalog access."
+    ),
+    open_approval_pages: bool = typer.Option(
+        False,
+        "--open-approval-pages",
+        help="Affirmatively open missing official HF/NGC approval pages.",
+    ),
 ) -> None:
     """Interactively write ~/.npa credentials and config, or show guidance."""
     _configure_impl(
@@ -3313,6 +3425,8 @@ def init(
         project_alias=project_alias,
         bucket_storage_class=bucket_storage_class,
         bucket_size_gb=bucket_size_gb,
+        prepare_catalog_access=prepare_catalog_access,
+        open_approval_pages=open_approval_pages,
     )
 
 

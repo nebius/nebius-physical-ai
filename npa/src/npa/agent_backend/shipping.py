@@ -23,6 +23,7 @@ SHIPPED_BACKEND_MODULES = (
     "foxglove_routes",
     "gpu_allocation_fallback",
     "gpu_allocation_routes",
+    "access_approval",
     "artifact_routes",
     "leisaac_registry",
     "leisaac",

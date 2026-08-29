@@ -197,7 +197,7 @@ DEFAULT_LLM_MODELS = (
     DEFAULT_LLM_MODEL,
     "Qwen/Qwen2.5-VL-72B-Instruct",
 )
-AGENT_UI_VERSION = "2026081903"
+AGENT_UI_VERSION = "2026082901"
 ARTIFACT_DISCOVERY_CONTRACT = "s3-source-qualified-v1"
 DEFAULT_HTTPS_PORT = 443
 AGENT_SOURCE_ROOT = "/opt/npa-agent/npa-src"
@@ -3209,6 +3209,7 @@ from agent_backend.memory import RunMemory, JsonFileStore
 from agent_backend import retrieval as _retrieval
 from agent_backend import trace as _agent_tracing
 from agent_backend import gpu_allocation_fallback as _gpu_fallback
+from agent_backend import access_approval as _access_approval
 
 {_AGENT_WORKFLOW_EMBED}
 
@@ -4726,6 +4727,62 @@ def chat(payload: dict):
     # Preserve merged session history across the LLM path (do not rebuild from a
     # short client payload and wipe prior turns after the model returns).
     merged_history = list(history)
+    pending_access = state.get("access_approval")
+    if not isinstance(pending_access, dict):
+        pending_access = {{}}
+    access_action = _access_approval.classify_followup(
+        last_content, has_pending_plan=bool(pending_access)
+    )
+    if access_action:
+        open_urls = []
+        if access_action in {{"plan", "recheck"}}:
+            access_plan = _access_approval.build_plan(
+                capabilities=None,
+                resume_command="npa configure --prepare-catalog-access",
+                state_path=Path("/opt/npa-agent/access-approvals.json"),
+                force=access_action == "recheck",
+            )
+            state["access_approval"] = access_plan
+            reply = _access_approval.format_plan_reply(access_plan)
+        elif access_action == "open":
+            access_plan = pending_access
+            open_urls = [
+                str(url)
+                for url in (access_plan.get("official_urls") or [])
+                if str(url).startswith("https://")
+            ]
+            reply = _access_approval.format_open_reply(access_plan)
+            state["access_approval"] = {{**access_plan, "pages_opened": True}}
+        else:
+            access_plan = pending_access
+            reply = _access_approval.format_later_reply(access_plan)
+            state["access_approval"] = access_plan
+        history = [*merged_history, {{"role": "assistant", "content": reply}}][-80:]
+        session.update(
+            {{
+                "id": session_id,
+                "title": str(session.get("title") or _chat_session_title(history)),
+                "chat_history": history,
+            }}
+        )
+        session = _save_chat_session(state, session, active=True)
+        _save_state(state)
+        response = {{
+            "ok": True,
+            "model": "grounded",
+            "reply": reply,
+            "reasoning": None,
+            "grounded": True,
+            "tier": "grounded-access-approval",
+            "apis_used": ["access-approvals"],
+            "approval_plan": access_plan,
+            "open_urls": open_urls,
+            "safe_handoff": access_action in {{"open", "later"}},
+            "resume_ready": str(access_plan.get("status") or "") == "ready",
+            "session_id": session["id"],
+            "session": public_chat_session_payload(session),
+        }}
+        return response
     # Grounded "where did this come from / what was the original input" answer.
     # Resolved from the active run's real artifacts. For a metadata/text turn we
     # return it directly (deterministic, 0 tokens); for a framed vision turn we

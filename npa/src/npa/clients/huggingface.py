@@ -55,12 +55,19 @@ def validate_hf_identity(token: str, *, timeout: float = 10.0) -> HFAccessResult
 
 
 def validate_hf_access(
-    token: str, repo: str, repo_type: str = "model", *, timeout: float = 10.0
+    token: str,
+    repo: str,
+    repo_type: str = "model",
+    revision: str = "",
+    *,
+    timeout: float = 10.0,
 ) -> HFAccessResult:
-    """Check authenticated or anonymous access to a Hugging Face repository."""
+    """Check access to a Hugging Face repository or one exact revision."""
     headers = {"Authorization": f"Bearer {token}"} if token else {}
     kind = "datasets" if repo_type == "dataset" else "models"
     url = f"https://huggingface.co/api/{kind}/{repo}"
+    if revision:
+        url += f"/revision/{quote(revision, safe='')}"
     try:
         response = httpx.head(
             url, headers=headers, timeout=timeout, follow_redirects=True
@@ -75,6 +82,7 @@ def validate_hf_access(
     if response.status_code in {401, 403}:
         return HFAccessResult(
             repo=repo,
+            revision=revision,
             ok=False,
             status_code=response.status_code,
             error=(
@@ -83,9 +91,15 @@ def validate_hf_access(
             ),
         )
     if 200 <= response.status_code < 400:
-        return HFAccessResult(repo=repo, ok=True, status_code=response.status_code)
+        return HFAccessResult(
+            repo=repo,
+            revision=revision,
+            ok=True,
+            status_code=response.status_code,
+        )
     return HFAccessResult(
         repo=repo,
+        revision=revision,
         ok=False,
         status_code=response.status_code,
         error=f"Unable to validate Hugging Face access to {repo}: HTTP {response.status_code}",

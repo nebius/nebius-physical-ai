@@ -23,6 +23,8 @@ Options
 --project-alias  <str>  Local NPA alias for prompt-free configure.
 --bucket-storage-class  <str>  Storage class for a newly created known-project bucket: standard, enhanced, or intelligent.
 --bucket-size-gb  <str>  GiB cap for a newly created known-project bucket; 0 means unlimited.
+--prepare-catalog-access  Audit full HF/NGC catalog access.
+--open-approval-pages  Affirmatively open missing official HF/NGC approval pages.
 --help  Show this message and exit.
 ```
 
@@ -42,6 +44,8 @@ Options
 | `--project-alias` | <str>  Local NPA alias for prompt-free configure. |
 | `--bucket-storage-class` | <str>  Storage class for a newly created known-project bucket: standard, enhanced, or intelligent. |
 | `--bucket-size-gb` | <str>  GiB cap for a newly created known-project bucket; 0 means unlimited. |
+| `--prepare-catalog-access` | Audit full HF/NGC catalog access. |
+| `--open-approval-pages` | Affirmatively open missing official HF/NGC approval pages. |
 | `--help` | Show this message and exit. |
 
 ## Subcommands

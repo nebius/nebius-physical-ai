@@ -5,7 +5,8 @@ and `nvcr.io`. An NGC API key authenticates the pull; the owning account must
 also have repository entitlement. NPA does not add an independent manual EULA
 flag for NGC pulls.
 
-> **TL;DR:** create a key at <https://org.ngc.nvidia.com/setup/api-key>, run
+> **TL;DR:** sign up or sign in at <https://ngc.nvidia.com/signin>, create a
+> personal key, run
 > `npa configure`, and paste it at the `NGC_API_KEY` prompt. The key starts with
 > `nvapi-`.
 
@@ -15,14 +16,15 @@ and Cosmos Hugging Face paths do not globally require NGC.
 
 ## 1. Create the API key
 
-1. Sign in (or create a free account) at <https://ngc.nvidia.com>.
+1. Sign in or create an ordinary individual account at <https://ngc.nvidia.com/signin>.
 2. Go to **Setup → Generate API Key**:
    <https://org.ngc.nvidia.com/setup/api-key>.
 3. Click **Generate Personal Key** (or **Generate API Key**). Give it a name and,
    for a personal key, select the services you need (include **NGC Catalog**).
 4. **Copy it now** — NGC shows the value once. It starts with `nvapi-`.
 
-> Personal keys are scoped to your account and are the simplest choice. If your
+> A personal key does not require enterprise organization access, an organization
+> administrator, or a service key. If your
 > organization uses **org/team**-scoped keys, note the org and team names — you
 > can set them alongside the key (see below).
 
@@ -57,7 +59,8 @@ export NGC_API_KEY=nvapi-XXXXXXXXXXXXXXXXXXXX
 ## 3. Verify
 
 ```bash
-npa workbench health access          # checks NGC repository entitlement + HF access
+npa workbench health access --prepare
+npa configure --prepare-catalog-access  # optional full-catalog audit
 # authenticate the configured key through NGC token exchange:
 npa workbench health preflight --checks ngc
 # or presence-only, no network:

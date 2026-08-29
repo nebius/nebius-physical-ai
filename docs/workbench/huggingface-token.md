@@ -8,8 +8,9 @@ NPA does not add another acceptance switch.
 
 > **TL;DR:** for gated or private assets, create a **Read** token at
 > <https://huggingface.co/settings/tokens>, run `npa configure` and paste it at
-> the `HF_TOKEN` prompt, then click **Agree and access repository** on each
-> gated model page while signed in.
+> the `HF_TOKEN` prompt, then run `npa configure --prepare-catalog-access`.
+> NPA can open exact official pages after you consent, but only you can complete
+> an access request while signed in.
 
 ## 1. Create the token
 
@@ -23,18 +24,15 @@ NPA does not add another acceptance switch.
 ## 2. Accept gated-model licenses (required for gated repos)
 
 Gated repositories require account access upstream — there is no API for NPA to
-grant it. For each gated model you plan to use, open its page while signed in
-and complete its access request. As reverified against the authoritative
-Hugging Face API on 2026-08-14, the workbench's gated models include:
+grant it. The catalog evolves, so use its source-of-truth audit instead of a
+copied list:
 
-- <https://huggingface.co/nvidia/Cosmos-Transfer2.5-2B>
-- <https://huggingface.co/nvidia/Cosmos-Reason2-2B>
-- <https://huggingface.co/nvidia/Cosmos-Reason2-8B>
-- <https://huggingface.co/nvidia/Cosmos-Guardrail1>
-- <https://huggingface.co/nvidia/Cosmos-1.0-Guardrail>
-- <https://huggingface.co/nvidia/Cosmos-1.0-Diffusion-7B-Text2World>
-- <https://huggingface.co/meta-llama/Llama-3.3-70B-Instruct> (only needed if you
-  self-host it; Nebius Token Factory serves it hosted with no HF gating)
+```bash
+npa configure --prepare-catalog-access
+```
+
+Token Factory is a separate optional hosted product and is not included in this
+HF/NGC approval plan.
 
 The public defaults `nvidia/GR00T-N1.7-3B`, `nvidia/GEAR-SONIC`,
 `nvidia/Cosmos-Reason1-7B`, `nvidia/Cosmos3-Nano`, and the
@@ -74,19 +72,19 @@ variable → `~/.npa/credentials.yaml`.
 ## 4. Verify access
 
 ```bash
-npa workbench health access          # checks selected HF assets and NGC entitlement
-npa workbench health access --capability paidf    # Cosmos Transfer only
+npa workbench health access --prepare
+npa workbench health access --capability paidf --prepare
+npa workbench health access --capability paidf --prepare --json  # never prompts/opens
 # authenticate the configured token itself (no model download):
 npa workbench health preflight --checks hf
 # or, credentials-presence only (no network):
 npa workbench health preflight --offline
 ```
 
-`health access` reports `HF access ok: <repo>` for each model your token can
-reach and, for anything still gated, the exact **Agree and access repository**
-URL to open. Interactive `npa configure` runs the same repository-aware probe
-(including the dataset API for gated datasets) and prints a bounded advisory
-summary; use `health access` when you need an enforcing PASS/FAIL gate.
+`health access --prepare` probes the exact model or dataset revision, records
+only Ready/Pending/Denied/Unavailable evidence, and prints official pages plus a
+safe resume command. It asks before opening pages in a terminal; JSON mode never
+prompts or opens a browser. NPA never performs acceptance or claims that it did.
 Generic online preflight calls Hugging Face's authenticated `whoami-v2`
 endpoint; public repository metadata is not accepted as token proof.
 
