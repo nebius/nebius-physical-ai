@@ -10,6 +10,8 @@ config:
   bucket: example-bucket
   repo_url: "https://github.com/robocasa/robocasa.git"
   repo_ref: "v1.0"
+  repo_auth: none
+  repo_token_env: GH_TOKEN
   base_profile: ubuntu
   base_image: "nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04"
   build_command: >

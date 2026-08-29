@@ -35,6 +35,8 @@ config:
   # claim ran, and ltx_runtime.sh verifies the fetched HEAD against it before
   # installing.
   repo_ref: "fd4ded7f2d88d3da713abcdd4ad41ecc4a9314ca"
+  repo_auth: none
+  repo_token_env: GH_TOKEN
   base_profile: prebuilt
   base_image: "tool://ltx2"
   build_command: ""
