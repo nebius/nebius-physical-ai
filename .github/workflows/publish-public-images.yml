@@ -442,8 +442,23 @@ jobs:
           exact="${repository}@${DIGEST}"
           test "$(crane digest "$IMAGE")" = "$DIGEST"
           test "$(crane config "$exact" | jq -r '.config.Labels["org.opencontainers.image.revision"] // ""')" = "$DEVELOPMENT_SHA"
-          npa/.venv/bin/python npa/scripts/scan_image_omniverse_payload.py \
-            "$exact" --json "$RUNNER_TEMP/${TOOL}-pushed-payload.json"
+          payload_attempt=1
+          while true; do
+            payload_log="$RUNNER_TEMP/${TOOL}-pushed-payload-attempt-${payload_attempt}.log"
+            if npa/.venv/bin/python npa/scripts/scan_image_omniverse_payload.py \
+              "$exact" --json "$RUNNER_TEMP/${TOOL}-pushed-payload.json" \
+              >"$payload_log" 2>&1; then
+              cat "$payload_log"
+              break
+            fi
+            cat "$payload_log" >&2
+            if ! grep -Eq 'TOOMANYREQUESTS|429 Too Many Requests' "$payload_log"; then
+              exit 1
+            fi
+            echo "GHCR throttled pushed-byte payload scan attempt ${payload_attempt}; retrying" >&2
+            payload_attempt=$((payload_attempt + 1))
+            sleep 5
+          done
           if [ "$TOOL" = ltx2 ]; then
             npa/.venv/bin/python npa/scripts/scan_image_ltx_payload.py \
               "$exact" --output "$RUNNER_TEMP/${TOOL}-pushed-ltx-payload.json"
@@ -482,7 +497,21 @@ jobs:
           fi
           test "$(gh api "$package_api" --jq .visibility)" = public
           anonymous_config="$(mktemp -d)"
-          DOCKER_CONFIG="$anonymous_config" crane manifest "$IMAGE" >/dev/null
+          anonymous_attempt=1
+          while true; do
+            anonymous_log="$RUNNER_TEMP/${TOOL}-anonymous-manifest-attempt-${anonymous_attempt}.log"
+            if DOCKER_CONFIG="$anonymous_config" crane manifest "$IMAGE" \
+              >/dev/null 2>"$anonymous_log"; then
+              break
+            fi
+            cat "$anonymous_log" >&2
+            if ! grep -Eq 'TOOMANYREQUESTS|429 Too Many Requests' "$anonymous_log"; then
+              exit 1
+            fi
+            echo "GHCR throttled anonymous manifest attempt ${anonymous_attempt}; retrying" >&2
+            anonymous_attempt=$((anonymous_attempt + 1))
+            sleep 5
+          done
           echo "Validated public development digest: $DIGEST" >> "$GITHUB_STEP_SUMMARY"
           echo "The dev tag is public; later deletion cannot revoke prior downloads." >> "$GITHUB_STEP_SUMMARY"
 

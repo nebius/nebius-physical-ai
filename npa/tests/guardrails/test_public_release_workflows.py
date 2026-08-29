@@ -184,6 +184,12 @@ def test_post_push_and_promotion_gates_are_digest_bound() -> None:
     assert prepush < push
     assert "Private destination contains tagged versions" in text[prepush:push]
     assert "tagged_count" in text[prepush:push]
+    verify = text[text.index("Verify pushed bytes") :]
+    assert "pushed-payload-attempt-${payload_attempt}.log" in verify
+    assert "anonymous-manifest-attempt-${anonymous_attempt}.log" in verify
+    assert verify.count("TOOMANYREQUESTS|429 Too Many Requests") == 2
+    assert verify.count("while true; do") >= 2
+    assert "if ! grep -Eq" in verify
 
 
 def test_build_and_cleanup_dispatches_cannot_fall_through_to_promotion() -> None:
