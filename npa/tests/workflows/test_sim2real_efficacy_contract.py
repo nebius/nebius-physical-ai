@@ -812,6 +812,32 @@ def test_checkpoint_selection_accepts_component_native_strict_rate() -> None:
     assert selected["rank_key"][0] == pytest.approx(1 / 3)
 
 
+def test_checkpoint_selection_does_not_rank_table_contact_above_reach() -> None:
+    def candidate(name: str, *, reach: float, contact: float) -> dict[str, Any]:
+        return {
+            "evaluation_split": "validation",
+            "training_iteration": 100,
+            "checkpoint_uri": f"s3://bucket/{name}.pt",
+            "validation_report": {
+                "success_rate": 0.0,
+                "per_env": [{"env_id": "validation-0"}],
+                "success_summary": {"mean_object_goal_distance_m": 0.2},
+                "decomposed_metrics": {
+                    "reach": {"rate": reach},
+                    "contact": {"rate": contact},
+                },
+            },
+        }
+
+    selected = select_best_checkpoint(
+        [
+            candidate("table-contact", reach=0.0, contact=1.0),
+            candidate("real-reach", reach=1.0, contact=0.0),
+        ]
+    )
+    assert selected["checkpoint_uri"] == "s3://bucket/real-reach.pt"
+
+
 def test_eval_is_stratified_and_strict_success_requires_stability() -> None:
     rows = [
         {

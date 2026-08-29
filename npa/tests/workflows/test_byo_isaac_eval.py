@@ -52,6 +52,18 @@ def test_per_env_from_distances_scoring():
     assert rows[0]["details"]["object_goal_distance_m"] == 0.0
 
 
+def test_manipulator_contact_rejects_table_force_without_reach() -> None:
+    ee_distance = np.array([0.20, 0.02, 0.02])
+    force_contact = np.array([True, False, True])
+
+    assert ev.manipulator_contact_signal(ee_distance, force_contact).tolist() == [
+        False,
+        False,
+        True,
+    ]
+    assert ev.manipulator_contact_signal(ee_distance).tolist() == [False, True, True]
+
+
 def test_build_isaac_eval_job_manifest_shape():
     m = ev.build_isaac_eval_job_manifest(
         job_name="s2r-byo-isaac-eval-run1",

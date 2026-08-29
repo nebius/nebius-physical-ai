@@ -51,7 +51,10 @@ config:
   rollout_count: "64"
   steps_per_rollout: "32"
   ppo_num_envs: "1024"
-  ppo_iterations: "500"
+  # Three resumed 2,000-update passes cover the manipulation curriculum's
+  # observed convergence window; 500-update passes terminate before grasp/place
+  # behavior emerges even when reward improves.
+  ppo_iterations: "2000"
   ppo_steps_per_env: "24"
   validation_count: "64"
   gold_count: "64"

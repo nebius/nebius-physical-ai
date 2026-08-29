@@ -44,6 +44,7 @@ DEFAULT_ISAAC_TASK = "Isaac-Lift-Cube-Franka-v0"
 DEFAULT_GPU_PRODUCT = "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition"
 # Object-to-goal distance (metres) under which a Lift episode counts as success.
 DEFAULT_SUCCESS_DIST_M = 0.05
+MANIPULATOR_CONTACT_DISTANCE_M = 0.035
 _MAX_EMBEDDED_SCENARIOS_BYTES = 32_000
 
 # Set by main() so run_isaac_eval_job can sync rendered frames to the heldout
@@ -77,6 +78,24 @@ def first_episode_masks(completed: Any, done: Any) -> tuple[Any, Any, Any]:
     active = ~completed
     newly_terminal = active & done
     return active, newly_terminal, completed | done
+
+
+def manipulator_contact_signal(
+    ee_distance: Any, force_contact: Any | None = None
+) -> Any:
+    """Return contact attributable to the manipulator, not the support plane.
+
+    The object contact sensor also observes the cube resting on the table.  Its
+    force signal is therefore necessary but not sufficient evidence of a robot
+    contact.  When the force sensor is available, require both force and end-
+    effector proximity; retain proximity-only behavior if the optional sensor
+    cannot be read.
+    """
+
+    near_end_effector = ee_distance < MANIPULATOR_CONTACT_DISTANCE_M
+    if force_contact is None:
+        return near_end_effector
+    return near_end_effector & force_contact
 
 
 def extract_checkpoint_uri(inner_evidence: dict[str, Any]) -> str:
@@ -836,14 +855,15 @@ try:
                     initial_obj_z = obj[:, 2].detach().cpu().numpy()
                 height = obj[:, 2].detach().cpu().numpy() - initial_obj_z
                 lift |= active & (height >= 0.05)
-                contact_now = ee_dist < 0.035
+                force_contact = None
                 try:
                     forces = uenv.scene["object_contact"].data.net_forces_w_history
-                    contact_now = np.linalg.norm(
+                    force_contact = np.linalg.norm(
                         forces.detach().cpu().numpy(), axis=-1
                     ).reshape(N, -1).max(axis=1) > 1.0e-3
                 except Exception:
                     pass
+                contact_now = manipulator_contact_signal(ee_dist, force_contact)
                 contact |= active & contact_now
                 stable_grasp_steps = np.where(
                     active,
