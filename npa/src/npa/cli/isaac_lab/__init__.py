@@ -1276,6 +1276,7 @@ import hashlib
 import importlib.metadata as metadata
 import json
 import math
+import os
 import time
 from pathlib import Path
 
@@ -1284,10 +1285,22 @@ from isaaclab.app import AppLauncher
 capture_rgb = {capture_rgb!r}
 rgb_width = {rgb_width}
 rgb_height = {rgb_height}
+# Isaac Sim 6 enables anonymous structured telemetry in its application config.
+# Disable it before Kit starts; the environment override is the container-safe
+# early-start escape hatch, while the settings disable local structured logging
+# as well as transmission.
+os.environ["OMNI_TELEMETRY_DISABLE_ANONYMOUS_DATA"] = "1"
 app_launcher = AppLauncher(
     headless=True,
     enable_cameras=capture_rgb,
-    kit_args="--portable-root /tmp/npa-isaac-kit",
+    kit_args=(
+        "--portable-root /tmp/npa-isaac-kit "
+        "--/structuredLog/enable=false "
+        "--/telemetry/enableAnonymousData=false "
+        "--/privacy/usage=false "
+        "--/privacy/performance=false "
+        "--/privacy/personalization=false"
+    ),
 )
 simulation_app = app_launcher.app
 

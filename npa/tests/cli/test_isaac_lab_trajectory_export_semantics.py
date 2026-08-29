@@ -43,6 +43,50 @@ def _call_lines(loop: ast.For, name: str) -> list[int]:
 
 
 @pytest.mark.parametrize("capture_rgb", [False, True])
+def test_generated_rollout_disables_kit_telemetry_before_launch(
+    capture_rgb: bool,
+) -> None:
+    tree = _generated_tree(capture_rgb=capture_rgb)
+    launcher = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "AppLauncher"
+    )
+    launcher_line = launcher.lineno
+    disable_assignment = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Subscript)
+            and isinstance(target.value, ast.Attribute)
+            and isinstance(target.value.value, ast.Name)
+            and target.value.value.id == "os"
+            and target.value.attr == "environ"
+            and isinstance(target.slice, ast.Constant)
+            and target.slice.value == "OMNI_TELEMETRY_DISABLE_ANONYMOUS_DATA"
+            for target in node.targets
+        )
+    )
+    kit_args = next(
+        keyword.value
+        for keyword in launcher.keywords
+        if keyword.arg == "kit_args"
+    )
+    rendered_args = ast.literal_eval(kit_args)
+
+    assert disable_assignment.lineno < launcher_line
+    assert rendered_args.startswith("--portable-root /tmp/npa-isaac-kit ")
+    assert "--/structuredLog/enable=false" in rendered_args
+    assert "--/telemetry/enableAnonymousData=false" in rendered_args
+    assert "--/privacy/usage=false" in rendered_args
+    assert "--/privacy/performance=false" in rendered_args
+    assert "--/privacy/personalization=false" in rendered_args
+
+
+@pytest.mark.parametrize("capture_rgb", [False, True])
 def test_generated_rollout_records_pre_step_timeline(capture_rgb: bool) -> None:
     """Each exported row is state_t/action_t/(RGB_t) before step(action_t)."""
 
