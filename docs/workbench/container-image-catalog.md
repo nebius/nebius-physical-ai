@@ -17,10 +17,9 @@ docker pull ghcr.io/nebius/nebius-physical-ai/npa-retargeting:0.1.1
 existing saved `container_registry` overrides remain compatible.
 
 The accepted-release manifest was verified against the public GHCR tag and OCI
-manifest APIs on 2026-08-26. All 29 recorded release digests resolved
-anonymously; the active publication plan also records LeIsaac as pending rather
-than treating it as an accepted release claim. **Built** is the UTC build date
-of the newest listed variant; reproducible images that
+manifest APIs on 2026-08-29. All 31 recorded release digests resolved
+anonymously. **Built** is the UTC build date of the newest listed variant;
+reproducible images that
 intentionally zero their OCI `created` field use the timestamp in the immutable
 tag and `npa.build_ts` label.
 
@@ -29,6 +28,18 @@ tags can be moved, so resolve and retain the manifest digest as well when strict
 reproducibility is required.
 
 Rows are ordered by **Built** date, then by friendly name.
+
+## 2026-08-29 main publication audit
+
+The main-branch publishing plan, packaging contract, accepted-release manifest,
+and catalog were compared with GHCR without credentials. All 31 exact plan tags
+resolved anonymously, so no image build or registry write was required. The
+accepted-release manifest's stale LeIsaac pending marker was replaced with its
+already-published exact digest. That digest matched the earlier publication
+record, ran as the non-root `ubuntu` user, and passed the full layer/history
+payload scanner across 98,792 filesystem entries with zero restricted-payload
+findings. Public contract entries outside the tool publishing plan remain
+intentionally excluded rather than being treated as missing releases.
 
 ## 2026-08-19 main publication audit
 

@@ -18,6 +18,7 @@
     "groot": {"tag": "0.1.0", "published_digest": "sha256:47fd6b727f249fbdb0ec237dc748c8bdc7cbf38474dc12c1cffe82f17fdde37b"},
     "isaac-lab": {"tag": "2.3.2.post1", "published_digest": "sha256:c2e142c5312c903fd2a165028ca17e34335813d034ce036b936c6dc3a886bea8"},
     "lancedb": {"tag": "cuda13-b300-0.30.3-sm80-sm90-sm100-sm103-sm120-20260803T031514Z", "published_digest": "sha256:a303b53d0769e612101d468ba957656997838f4b8e6a03430f2b5a2c89e3f8b5"},
+    "leisaac": {"tag": "0.4.0-20260817T231825Z", "published_digest": "sha256:82069eb74a18a88f77ad3149b6c5ed220c4eed33b1d550c26d361947805e8280"},
     "lerobot": {"tag": "cuda13-b300-0.5.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z", "published_digest": "sha256:14a2e0dfe61fb2c46c6e4b8d75f1a06f2f68f9cfa4a6428a175411afaf93749e"},
     "lerobot-policy": {"tag": "0.1.1", "published_digest": "sha256:fe787495c11747995539b93f6192a1fee3e14b0f1683ea188a95109d762e6adb"},
     "lerobot-vlm-rl": {"tag": "cuda13-b300-0.1.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z", "published_digest": "sha256:7bd5b21d487f3ab6614197b8a8af81fe3ed001247b4501740615540cb55998e5"},
@@ -33,7 +34,5 @@
     "alpamayo2-super": {"tag": "0.1.0-cu128", "published_digest": "sha256:2164450f8baf57d8798f64063ea27bf11611f5b695c467de0c2e319e3134ebd5"},
     "content-agents": {"tag": "0.5.2-npa2", "published_digest": "sha256:c64aaf6201bdaa013f9d16e8497290cf166907932f036297d7abaa430cbad7db"}
   },
-  "publication_pending": {
-    "leisaac": "The supported tag is not yet anonymously pullable; it is not an accepted public release claim."
-  }
+  "publication_pending": {}
 }
