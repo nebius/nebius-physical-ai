@@ -804,7 +804,7 @@ class ServerlessClient:
         self, *, project_id: str, name: str, image: str, command: str, gpu_type: str,
         gpu_count: int, output_path: str, extra_env: Mapping[str, str] | None = None,
         env: Mapping[str, str] | None = None, preset: str = "", timeout: str = "1h",
-        subnet_id: str = "",
+        subnet_id: str = "", preemptible: bool = False,
     ) -> JobInfo:
         for label, value in {
             "Job name": name,
@@ -819,6 +819,8 @@ class ServerlessClient:
         args = ["ai", "job", "create", "--parent-id", project_id, "--name", name]
         args += ["--image", image, "--container-command", command, "--platform", gpu_type]
         args += ["--preset", preset or f"{gpu_count}gpu-16vcpu-200gb"]
+        if preemptible:
+            args.append("--preemptible")
         args += self._registry_auth_args(image)
         # A Serverless Job allocates its GPU before the container starts, so a gated
         # checkpoint that has to be downloaded again is billed GPU time on every

@@ -20,14 +20,14 @@
 #
 # Variants (npa/docker/workbench/sonic/build.sh):
 #   baked  BASE_IMAGE = digest-pinned Docker Hub CUDA; this Dockerfile builds the
-#          python3.11 + torch cu128 layer itself.
+#          python3.11 + torch cu130 layer itself.
 #   k8s    BASE_IMAGE = ${REGISTRY}/npa-base:cuda13-b300-...; reuses that image's
 #          python3.11 venv and its cu130 torch (NPA_ISAAC_SKIP_TORCH=1).
 #
-ARG BASE_IMAGE=nvidia/cuda:12.8.1-cudnn-devel-ubuntu22.04@sha256:ad6d59a3bbf3e82c1c849c9ac09cfc2a3e0bbb8655042fd899be6681b3fe2a85
+ARG BASE_IMAGE=nvidia/cuda:13.0.2-cudnn-devel-ubuntu22.04@sha256:36c66a3ad4608580cf937f7ec3add9323a610956cfe8c9e2f99ef2ea0c896f01
 FROM --platform=linux/amd64 ${BASE_IMAGE}
 
-ARG BASE_IMAGE=nvidia/cuda:12.8.1-cudnn-devel-ubuntu22.04@sha256:ad6d59a3bbf3e82c1c849c9ac09cfc2a3e0bbb8655042fd899be6681b3fe2a85
+ARG BASE_IMAGE=nvidia/cuda:13.0.2-cudnn-devel-ubuntu22.04@sha256:36c66a3ad4608580cf937f7ec3add9323a610956cfe8c9e2f99ef2ea0c896f01
 ARG ISAAC_LAB_VERSION=2.3.2.post1
 ARG ISAAC_SIM_VERSION=5.1.0.0
 ARG ISAAC_LAB_SRC_COMMIT=37ddf626871758333d6ed89cf64ad702aef127d0
@@ -38,9 +38,10 @@ ARG SONIC_VERSION=0.1.2
 ARG ISAAC_LAB_PYTHON=/isaac-sim/python.sh
 ARG NPA_ISAAC_VENV=/opt/npa/sim/venv
 ARG NPA_ISAAC_SKIP_TORCH=0
+ARG TORCH_INDEX_URL=https://download.pytorch.org/whl/cu130
 ARG REQUIRE_TORCH_SM120=1
 ARG NPA_DRIVER_PROVISIONING=host-mounted
-ARG NPA_CUDA_ARCHITECTURES=sm80,sm90,sm120
+ARG NPA_CUDA_ARCHITECTURES=sm80,sm90,sm100,sm103,sm120
 ARG NPA_RUNTIME_USER=ubuntu
 ARG BUILD_SONIC_DEPLOY=0
 
@@ -117,7 +118,9 @@ RUN chmod +x /opt/npa/docker/workbench/common/*.sh \
     && NPA_RUNTIME_USER="${NPA_RUNTIME_USER}" \
        NPA_ISAAC_VENV="${NPA_ISAAC_VENV}" \
        NPA_ISAAC_SKIP_TORCH="${NPA_ISAAC_SKIP_TORCH}" \
+       TORCH_INDEX_URL="${TORCH_INDEX_URL}" \
        REQUIRE_TORCH_SM120="${REQUIRE_TORCH_SM120}" \
+       NPA_CUDA_ARCHITECTURES="${NPA_CUDA_ARCHITECTURES}" \
        NPA_INSTALL_SKYPILOT_PREREQS=1 \
        /opt/npa/docker/workbench/common/install_isaac_runtime_base.sh
 
@@ -213,7 +216,16 @@ import os
 from importlib import metadata
 from pathlib import Path
 
-for module in ("gear_sonic", "sonic", "torch", "numpy", "scipy", "lxml.etree", "open3d"):
+for module in (
+    "gear_sonic",
+    "sonic",
+    "torch",
+    "numpy",
+    "scipy",
+    "lxml.etree",
+    "open3d",
+    "vector_quantize_pytorch",
+):
     importlib.import_module(module)
 
 # No NVIDIA Isaac bytes may ship in this image; that is the whole point.
@@ -333,6 +345,8 @@ RUN id -u "${NPA_RUNTIME_USER}" >/dev/null 2>&1 || useradd -m -s /bin/bash -u 10
       /tmp/isaac-sim-cache/logs \
     && install -d -m 0700 -o "${NPA_RUNTIME_USER}" -g "${NPA_RUNTIME_USER}" /tmp/xdg-runtime \
     && chown "${NPA_RUNTIME_USER}:${NPA_RUNTIME_USER}" /opt/sonic \
+    && find "${SONIC_HOME}/gear_sonic" -type f -name '*.urdf' \
+      -exec chown "${NPA_RUNTIME_USER}:${NPA_RUNTIME_USER}" {} + \
     && chown -R "${NPA_RUNTIME_USER}:${NPA_RUNTIME_USER}" /tmp/npa-sonic-output
 
 # --- SkyPilot-on-Kubernetes runtime prerequisites -----------------------------------

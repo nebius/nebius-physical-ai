@@ -40,6 +40,65 @@ from npa.workbench.training_config import (
 import typer
 
 
+_B300_STATE_ONLY_URDF_PREP = r'''import hashlib
+import json
+import os
+import xml.etree.ElementTree as ET
+from pathlib import Path
+
+source_root = Path("/opt/sonic/gear_sonic")
+prepared = []
+for path in source_root.rglob("*.urdf"):
+    tree = ET.parse(path)
+    root = tree.getroot()
+    if root.tag != "robot" or root.attrib.get("name", "").lower() != "g1":
+        continue
+    removed_visuals = 0
+    removed_mesh_collisions = 0
+    for link in root.findall("link"):
+        for visual in list(link.findall("visual")):
+            link.remove(visual)
+            removed_visuals += 1
+        for collision in list(link.findall("collision")):
+            if collision.find("./geometry/mesh") is not None:
+                link.remove(collision)
+                removed_mesh_collisions += 1
+    if root.findall(".//mesh"):
+        raise SystemExit("B300 state-only URDF preparation left mesh references behind")
+    primitive_collisions = sum(
+        len(root.findall(f".//collision/geometry/{shape}"))
+        for shape in ("box", "sphere", "cylinder", "capsule")
+    )
+    if not removed_visuals or not primitive_collisions:
+        continue
+    tree.write(path, encoding="utf-8", xml_declaration=True)
+    prepared.append(
+        {
+            "visuals_removed": removed_visuals,
+            "mesh_collisions_removed": removed_mesh_collisions,
+            "primitive_collisions_retained": primitive_collisions,
+            "urdf_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        }
+    )
+if not prepared:
+    raise SystemExit("B300 state-only URDF preparation found no G1 physics asset")
+output_dir = Path(os.environ.get("NPA_LOCAL_OUTPUT_DIR", "/tmp/npa-sonic-train"))
+output_dir.mkdir(parents=True, exist_ok=True)
+(output_dir / "b300_state_only_urdf.json").write_text(
+    json.dumps({"format": "npa_sonic_b300_state_only_urdf_v1", "assets": prepared}, sort_keys=True) + "\n",
+    encoding="utf-8",
+)
+print(
+    "NPA_SONIC_B300_STATE_ONLY_URDF "
+    f"assets_prepared={len(prepared)} "
+    f"visuals_removed={sum(item['visuals_removed'] for item in prepared)} "
+    f"mesh_collisions_removed={sum(item['mesh_collisions_removed'] for item in prepared)} "
+    f"primitive_collisions_retained={sum(item['primitive_collisions_retained'] for item in prepared)}",
+    flush=True,
+)
+'''
+
+
 def build_sonic_serverless_train_command(
     *,
     checkpoint: str,
@@ -50,16 +109,39 @@ def build_sonic_serverless_train_command(
     headless: bool,
     max_iterations: int,
     isaac_lab_version: str,
+    b300_state_only: bool = False,
     training_config: TrainingConfig | None = None,
 ) -> str:
     """Build the remote command for a real SONIC serverless train job."""
 
     config = training_config or TrainingConfig()
     local_dir = "/tmp/npa-sonic-train"
+    checkpoint_path = checkpoint
+    if not checkpoint.startswith(("s3://", "http://", "https://")):
+        repo, separator, candidate = checkpoint.partition(":")
+        if separator and "/" in repo and candidate:
+            checkpoint_path = candidate
     upload = build_serverless_output_upload_cmd(local_dir, "")
     training_env = config.env()
     env_lines = "\n".join(
         f"export {key}={value!r}" for key, value in training_env.items()
+    )
+    b300_prep = (
+        "NPA_B300_PREP_PYTHON=''\n"
+        "for candidate in /opt/npa/sim/venv/bin/python /opt/npa/venv/bin/python "
+        "/opt/isaac-lab/venv/bin/python \"$(command -v python3 || true)\"; do\n"
+        "  if [ -n \"$candidate\" ] && [ -x \"$candidate\" ]; then "
+        "NPA_B300_PREP_PYTHON=\"$candidate\"; break; fi\n"
+        "done\n"
+        "if [ -z \"$NPA_B300_PREP_PYTHON\" ]; then "
+        "echo 'B300 state-only URDF preparation has no baked Python' >&2; exit 127; fi\n"
+        "\"$NPA_B300_PREP_PYTHON\" - <<'NPA_B300_STATE_ONLY_URDF'\n"
+        f"{_B300_STATE_ONLY_URDF_PREP}"
+        "NPA_B300_STATE_ONLY_URDF\n"
+        "b300_prep_rc=$?\n"
+        "if [ \"$b300_prep_rc\" -ne 0 ]; then exit \"$b300_prep_rc\"; fi\n"
+        if b300_state_only
+        else ""
     )
     body = (
         "if [ -x /isaac-sim/python.sh ]; then NPA_PYTHON_BIN=/isaac-sim/python.sh; "
@@ -68,16 +150,24 @@ def build_sonic_serverless_train_command(
         'if ! command -v "$NPA_PYTHON_BIN" >/dev/null 2>&1; then NPA_PYTHON_BIN=python; fi\n'
         f"{env_lines}\n"
         f"export NPA_LOCAL_OUTPUT_DIR={local_dir!r}\n"
+        # Current launchers derive these private compatibility variables from
+        # ACCEPT_EULA themselves.  The pinned public SONIC runtime predates that
+        # normalization, so derive them here as well without exposing another
+        # user-facing consent switch.
+        'if [ "${ACCEPT_EULA:-}" = "Y" ]; then '
+        "export OMNI_KIT_ACCEPT_EULA=YES ISAACSIM_ACCEPT_EULA=YES; fi\n"
         "export SONIC_RUN_REAL_TRAIN=1\n"
         f"export SONIC_CHECKPOINT={checkpoint!r}\n"
-        f"export SONIC_CHECKPOINT_PATH={checkpoint!r}\n"
+        f"export SONIC_CHECKPOINT_PATH={checkpoint_path!r}\n"
         f"export SONIC_DATA_PATH={(config.data_path or data_path)!r}\n"
         f"export SONIC_SAMPLE_DATA={'1' if sample_data else '0'}\n"
+        f"export SONIC_DOWNLOAD_SAMPLE_DATA={'1' if sample_data else '0'}\n"
         f"export SONIC_EMBODIMENT={embodiment!r}\n"
         f"export SONIC_NUM_ENVS={str(num_envs)!r}\n"
         f"export SONIC_HEADLESS={'True' if headless else 'False'}\n"
         f"export SONIC_MAX_ITERATIONS={str(max_iterations)!r}\n"
         f"export SONIC_ISAAC_LAB_VERSION={isaac_lab_version!r}\n"
+        f"{b300_prep}"
         "if [ -x /entrypoint.sh ]; then /entrypoint.sh train; "
         'else echo "/entrypoint.sh not found in SONIC image" >&2; exit 127; fi\n'
         "sonic_rc=$?\n"
@@ -103,6 +193,7 @@ def _run_serverless_train(
     gpu_type: str,
     gpu_count: int,
     gpu_preset: str,
+    preemptible: bool,
     subnet_id: str,
     job_name: str,
     submit_only: bool,
@@ -127,6 +218,9 @@ def _run_serverless_train(
         fail(str(exc))
     if gpu_preset:
         preset = gpu_preset
+    b300_state_only = platform == "gpu-b300-sxm"
+    if b300_state_only and not headless:
+        fail("SONIC B300 training supports only the headless state-based path.")
 
     ctx = context()
     resolved_project_id = resolve_project_id(project_id)
@@ -212,11 +306,13 @@ def _run_serverless_train(
                 headless=headless,
                 max_iterations=max_iterations,
                 isaac_lab_version=isaac_lab_version,
+                b300_state_only=b300_state_only,
                 training_config=training_config,
             ),
             gpu_type=platform,
             gpu_count=resolved_gpu_count,
             preset=preset,
+            preemptible=preemptible,
             subnet_id=subnet,
             output_path=out,
             env=safe_env,
@@ -369,6 +465,11 @@ def train_cmd(
     gpu_preset: str = typer.Option(
         "", "--gpu-preset", help="Nebius GPU preset override."
     ),
+    preemptible: bool = typer.Option(
+        False,
+        "--preemptible/--on-demand",
+        help="Use the preemptible capacity pool for the serverless Job.",
+    ),
     subnet_id: str = typer.Option(
         "", "--subnet-id", help="Nebius VPC subnet ID for serverless Jobs."
     ),
@@ -445,6 +546,7 @@ def train_cmd(
             gpu_type=gpu_type,
             gpu_count=gpu_count,
             gpu_preset=gpu_preset,
+            preemptible=preemptible,
             subnet_id=subnet_id,
             job_name=job_name,
             submit_only=submit_only,

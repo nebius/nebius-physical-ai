@@ -205,6 +205,16 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         ),
     ),
     SubmitLiveCase(
+        "sonic-b300-routing-evidence.yaml",
+        "cpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        notes=(
+            "CPU-only fail-closed execution of the installed SONIC accelerator "
+            "resolver; publishes a manifest, test report, and time-structured RRD. "
+            "Provider recognition and GPU execution remain separate assertions."
+        ),
+    ),
+    SubmitLiveCase(
         "dataset-of-record-smoke.yaml",
         "cpu",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),

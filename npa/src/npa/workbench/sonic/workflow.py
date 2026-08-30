@@ -309,6 +309,8 @@ def _default_accelerators(gpu_target: str) -> str:
         return "H200:1"
     if "h100" in normalized:
         return "H100:1"
+    if "b300" in normalized:
+        return "B300:1"
     if "b200" in normalized:
         return "B200:1"
     return "L40S:1"
