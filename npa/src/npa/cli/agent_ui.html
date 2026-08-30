@@ -12091,6 +12091,7 @@
       let activeArtifactRunRef = "";
       let activeArtifactInventoryRunId = "";
       let activeArtifactInventory = [];
+      let activeArtifactInventoryComplete = false;
       let activeLearningArtifactContract = null;
       // Load the whole run list into the picker by default so every run shows
       // without the operator having to guess a search fragment. The server still
@@ -12360,6 +12361,12 @@
           const active = mergedRunsCache.find((item) => item.entry_key === activeRunEntryKey && item.run_id === rid);
           if (active) return active;
         }
+        if (activeArtifactRunRef && activeRunId === rid) {
+          const activeSource = mergedRunsCache.find((item) =>
+            String(item.run_ref || "") === activeArtifactRunRef && item.run_id === rid
+          );
+          if (activeSource) return activeSource;
+        }
         const matches = mergedRunsCache.filter((item) => String(item.run_id || "") === rid);
         return matches.length === 1 ? matches[0] : null;
       }
@@ -12381,6 +12388,9 @@
         activeRunResourceScope = null;
         autoLoadedPreferredKey = "";
         activeArtifactRender = "";
+        activeArtifactInventoryRunId = "";
+        activeArtifactInventory = [];
+        activeArtifactInventoryComplete = false;
         currentLichtblickSimViz = null;
         const replacements = {
           runSummary: "Select a run to load its result.",
@@ -12877,6 +12887,7 @@
         const context = requestContext && typeof requestContext === "object"
           ? requestContext
           : (priorPage && !seededPage && typeof priorPage === "object" ? priorPage : {});
+        const deferInventoryCompletion = context.deferInventoryCompletion === true;
         // No path prefix: the server locates the run by id across the whole run root.
         const previous = seededPage ? seededPage.artifacts : [];
         const params = new URLSearchParams();
@@ -12945,7 +12956,7 @@
           const seenCursors = new Set();
           let page = firstPage;
           let nextCursor = String(firstPage.next_cursor || "").trim();
-          while (nextCursor) {
+          while (nextCursor && !deferInventoryCompletion) {
             if (!requestIsCurrent() || (signal && signal.aborted)) return false;
             if (seenCursors.has(nextCursor)) {
               throw new Error("Artifact inventory pagination repeated a server cursor; reload the run before selecting media.");
@@ -12976,7 +12987,7 @@
             page = nextPage;
             nextCursor = String(nextPage.next_cursor || "").trim();
           }
-          if (page && page.truncated) {
+          if (!deferInventoryCompletion && page && page.truncated) {
             throw new Error("Artifact inventory is truncated but the server returned no continuation cursor.");
           }
           const sourceFields = {
@@ -12989,7 +13000,11 @@
             source_selected: true,
           };
           const artifacts = [...merged.values()].map((item) => Object.assign({}, item, sourceFields));
-          const preferred = selectPreferredArtifact(artifacts);
+          const inventoryComplete = !nextCursor;
+          // A partial page is useful for loading run identity and stage evidence,
+          // but it must never nominate a page-local artifact as the run-wide
+          // preferred recording. A later page may contain the RRD/MCAP.
+          const preferred = inventoryComplete ? selectPreferredArtifact(artifacts) : null;
           const roleCounts = artifacts.reduce((acc, item) => {
             const artifactRole = String((item && item.role) || "output");
             acc[artifactRole] = (acc[artifactRole] || 0) + 1;
@@ -13003,7 +13018,7 @@
             input_artifact_count: Number(roleCounts.input || 0),
             metadata_artifact_count: Number(roleCounts.metadata || 0),
             total_bytes: artifacts.reduce((total, item) => total + Number((item && item.size) || 0), 0),
-            has_recording: hasRecording,
+            has_recording: inventoryComplete ? hasRecording : null,
           });
           data = Object.assign({}, firstPage, {
             run_id: selectedSource.run_id,
@@ -13014,15 +13029,17 @@
             artifacts,
             count: artifacts.length,
             preferred,
-            truncated: false,
-            next_cursor: "",
-            pagination_complete: true,
+            truncated: !inventoryComplete,
+            next_cursor: nextCursor,
+            pagination_complete: inventoryComplete,
             output_artifact_count: Number(roleCounts.output || 0),
             input_artifact_count: Number(roleCounts.input || 0),
             metadata_artifact_count: Number(roleCounts.metadata || 0),
             summary,
-            no_recording: !hasRecording,
-            recording_state: hasRecording ? "recording_available" : String(firstPage.recording_state || "no_recording"),
+            no_recording: inventoryComplete && !hasRecording,
+            recording_state: inventoryComplete
+              ? (hasRecording ? "recording_available" : String(firstPage.recording_state || "no_recording"))
+              : "Artifact inventory is still being scanned; use List artifacts to merge every page.",
           });
         } catch (err) {
           if (!requestIsCurrent() || (signal && signal.aborted)) return false;
@@ -13045,6 +13062,7 @@
         const artifacts = Array.isArray(data.artifacts) ? data.artifacts : [];
         activeArtifactInventoryRunId = runId;
         activeArtifactInventory = artifacts;
+        activeArtifactInventoryComplete = data.pagination_complete === true;
         const contractCandidate = data && data.summary && data.summary.learning && data.summary.learning.artifact_contract;
         activeLearningArtifactContract = contractCandidate && contractCandidate.authoritative === true
           ? contractCandidate
@@ -15136,12 +15154,16 @@
               // WASM viewer mount. Viewer artifacts remain one click away and
               // their explicit load paths retain independent failure semantics.
               deferPreferredViewer: true,
+              // A direct run load is a status/timeline action. Do not make it
+              // wait for a six-figure frame inventory; the explicit artifact
+              // browser still follows every cursor before choosing preference.
+              deferInventoryCompletion: true,
             });
             if (loaded && activeArtifactInventory.length) {
-              const hasRecording = activeArtifactInventory.some((item) =>
+              const hasRecording = activeArtifactInventoryComplete && activeArtifactInventory.some((item) =>
                 ["rerun", "mcap"].includes(String((item && item.render) || ""))
               );
-              if (!hasRecording) {
+              if (activeArtifactInventoryComplete && !hasRecording) {
                 updateRenderedDataSummary({
                   run_id: runId,
                   preview_status: "no_previewable_recording",
@@ -15170,6 +15192,7 @@
         const artifactsPromise = preferredEntry && preferredEntry.source_type === "workflow_history"
           ? loadArtifactsForSelectedRun(runRef || runId, null, exactEntry, {
               pendingSelection: true,
+              deferInventoryCompletion: true,
             }).catch(() => false)
           : Promise.resolve(false);
         const data = await dataPromise;

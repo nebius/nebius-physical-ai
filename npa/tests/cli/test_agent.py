@@ -2416,7 +2416,7 @@ def test_artifact_inventory_autopaginates_before_global_preference_and_selection
     )[0]
 
     assert "const seenCursors = new Set();" in block
-    assert "while (nextCursor)" in block
+    assert "while (nextCursor && !deferInventoryCompletion)" in block
     assert "seenCursors.has(nextCursor)" in block
     assert "paginationEmptyPageCount" in block
     assert "paginationDuplicateCount" in block
@@ -2431,11 +2431,38 @@ def test_artifact_inventory_autopaginates_before_global_preference_and_selection
         'continuation.set("resolved_prefix", selectedSource.resolved_prefix);' in block
     )
     assert 'continuation.set("source_selected", "1");' in block
-    assert "const preferred = selectPreferredArtifact(artifacts);" in block
-    assert block.index("while (nextCursor)") < block.index("setActiveRunId(runId)")
     assert block.index("selectPreferredArtifact(artifacts)") < block.index(
         "setActiveRunId(runId)"
     )
+    assert (
+        "const preferred = inventoryComplete ? "
+        "selectPreferredArtifact(artifacts) : null;"
+    ) in block
+    assert "has_recording: inventoryComplete ? hasRecording : null" in block
+    assert "no_recording: inventoryComplete && !hasRecording" in block
+
+
+def test_direct_run_load_does_not_wait_for_complete_large_inventory() -> None:
+    source = _agent_ui_bundle()
+    load_run = source.split("async function loadRunData", 1)[1].split(
+        "async function selectCamera", 1
+    )[0]
+
+    assert "deferInventoryCompletion: true" in load_run
+    assert (
+        "activeArtifactInventoryComplete && activeArtifactInventory.some" in load_run
+    )
+    assert "activeArtifactInventoryComplete && !hasRecording" in load_run
+
+
+def test_active_duplicate_run_source_remains_selectable_by_pasted_id() -> None:
+    source = _agent_ui_bundle()
+    preferred = source.split("function preferredRunEntry", 1)[1].split(
+        "function clearVisibleRunState", 1
+    )[0]
+
+    assert "activeArtifactRunRef && activeRunId === rid" in preferred
+    assert 'String(item.run_ref || "") === activeArtifactRunRef' in preferred
 
 
 def test_artifact_backed_training_run_loads_without_rerun_recording() -> None:
