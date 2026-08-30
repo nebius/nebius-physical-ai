@@ -32,17 +32,21 @@ class RepositorySecretFiles:
     repo_ref: Path
     repository_sha256: str
     ref_sha256: str
-    _redaction_value: str = field(repr=False)
+    _redaction_values: tuple[str, ...] = field(repr=False)
 
     @property
     def redaction_values(self) -> tuple[str, ...]:
-        return (self._redaction_value,)
+        return self._redaction_values
 
 
 def validate_repository_url(repo_url: str, *, private: bool) -> str:
     """Reject URL-carried credentials and constrain private auth to GitHub HTTPS."""
 
     value = str(repo_url or "").strip()
+    if not value or any(ord(char) < 0x20 or ord(char) == 0x7F for char in value):
+        raise RepositoryAuthenticationError(
+            "repository URLs must be non-empty and contain no control characters"
+        )
     parsed = urlsplit(value)
     if parsed.username is not None or parsed.password is not None:
         raise RepositoryAuthenticationError(
@@ -142,6 +146,38 @@ def _resolve_token(
     return token_path, token
 
 
+def _git_config_quote(value: str) -> str:
+    """Quote one validated value for an owner-only Git config file."""
+
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def _remote_advertises_ref(output: str, requested_ref: str) -> bool:
+    advertised: list[tuple[str, str]] = []
+    for line in output.splitlines():
+        oid, separator, name = line.partition("\t")
+        if separator and oid and name:
+            advertised.append((oid, name))
+
+    names = {name for _oid, name in advertised}
+    candidates = {
+        requested_ref,
+        f"refs/heads/{requested_ref}",
+        f"refs/tags/{requested_ref}",
+    }
+    if requested_ref.startswith("origin/"):
+        candidates.add(f"refs/heads/{requested_ref.removeprefix('origin/')}")
+    if names.intersection(candidates):
+        return True
+
+    # The clone fallback accepts an advertised commit id (including an
+    # unambiguous abbreviated id), so the access preflight does too.
+    if re.fullmatch(r"[0-9a-fA-F]{4,40}", requested_ref):
+        requested_oid = requested_ref.lower()
+        return any(oid.lower().startswith(requested_oid) for oid, _name in advertised)
+    return False
+
+
 def _preflight_access(repo_url: str, repo_ref: str, token_path: Path) -> None:
     helper = token_path.parent / "git-askpass"
     helper.write_text(
@@ -162,8 +198,9 @@ def _preflight_access(repo_url: str, repo_ref: str, token_path: Path) -> None:
             "NPA_BYOF_GIT_TOKEN_FILE": str(token_path),
         }
     )
-    proc = subprocess.run(
-        ["git", "ls-remote", "--exit-code", repo_url, "HEAD"],
+    repository = token_path.parent / "preflight.git"
+    initialized = subprocess.run(
+        ["git", "init", "--bare", "--quiet", str(repository)],
         cwd=token_path.parent,
         env=env,
         stdin=subprocess.DEVNULL,
@@ -172,10 +209,35 @@ def _preflight_access(repo_url: str, repo_ref: str, token_path: Path) -> None:
         text=True,
         check=False,
     )
+    if initialized.returncode != 0:
+        raise RepositoryAuthenticationError(
+            "private GitHub repository access preflight could not initialize safely"
+        )
+    config_path = repository / "config"
+    config_path.chmod(stat.S_IRUSR | stat.S_IWUSR)
+    with config_path.open("a", encoding="utf-8") as config:
+        config.write(
+            "\n[remote \"origin\"]\n"
+            f"\turl = {_git_config_quote(repo_url)}\n"
+        )
+    proc = subprocess.run(
+        ["git", "ls-remote", "origin"],
+        cwd=repository,
+        env=env,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=False,
+    )
     if proc.returncode != 0:
         raise RepositoryAuthenticationError(
             "private GitHub repository access failed for the requested repository/ref; "
             "verify repository permission, token scope, and ref name"
+        )
+    if not _remote_advertises_ref(proc.stdout or "", repo_ref):
+        raise RepositoryAuthenticationError(
+            "private GitHub repository access succeeded, but the requested ref is unavailable"
         )
 
 
@@ -192,8 +254,12 @@ def private_repository_secrets(
 
     clean_url = validate_repository_url(repo_url, private=True)
     clean_ref = str(repo_ref or "").strip()
-    if not clean_ref:
-        raise RepositoryAuthenticationError("private repository ref must not be empty")
+    if not clean_ref or any(
+        ord(char) < 0x20 or ord(char) == 0x7F for char in clean_ref
+    ):
+        raise RepositoryAuthenticationError(
+            "private repository ref must be non-empty and contain no control characters"
+        )
     with tempfile.TemporaryDirectory(prefix="npa-byof-private-source-") as tmp:
         directory = Path(tmp)
         token_path, token = _resolve_token(
@@ -213,5 +279,5 @@ def private_repository_secrets(
             repo_ref=repo_ref_path,
             repository_sha256=hashlib.sha256(clean_url.encode("utf-8")).hexdigest(),
             ref_sha256=hashlib.sha256(clean_ref.encode("utf-8")).hexdigest(),
-            _redaction_value=token,
+            _redaction_values=(token, clean_url, clean_ref),
         )

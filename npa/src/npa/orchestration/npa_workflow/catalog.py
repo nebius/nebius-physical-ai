@@ -103,6 +103,10 @@ _BYOF_REPO_ARGV = [
     "{{config.poll_interval}}",
     "--cleanup",
 ]
+_BYOF_REPO_CONFIG_DEFAULTS = {
+    "repo_auth": "none",
+    "repo_token_env": "",
+}
 
 _OPENPI_PIPELINE = ["python3", "-m", "npa.workflows.byof.openpi_pipeline"]
 _OPENPI_VENDOR_PIPELINE = [
@@ -953,6 +957,7 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "RL, datagen, container-verify, or solution smoke."
         ),
         argv_template=_BYOF_REPO_ARGV,
+        config_defaults=dict(_BYOF_REPO_CONFIG_DEFAULTS),
     ),
     "workbench.openpi.prepare_data": ToolEntry(
         name="workbench.openpi.prepare_data",
@@ -1162,6 +1167,7 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
         name="workbench.isaac_lab.byof_repo",
         description="Compatibility alias for workbench.byof.repo.",
         argv_template=_BYOF_REPO_ARGV,
+        config_defaults=dict(_BYOF_REPO_CONFIG_DEFAULTS),
     ),
     "workbench.rl.policy_train": ToolEntry(
         name="workbench.rl.policy_train",

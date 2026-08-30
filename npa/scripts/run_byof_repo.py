@@ -73,6 +73,13 @@ WAN_POSTPROCESS_CONTRACTS = {
 }
 
 
+def _redact_text(value: str, redactions: tuple[str, ...]) -> str:
+    result = value
+    for secret in sorted((item for item in redactions if item), key=len, reverse=True):
+        result = result.replace(secret, "<redacted>")
+    return result
+
+
 def _utc_stamp() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
@@ -186,24 +193,17 @@ def _run(
         kwargs["stdout"] = subprocess.PIPE
         kwargs["stderr"] = subprocess.PIPE
     kwargs["env"] = runtime_env
-    def redacted(value: str) -> str:
-        result = value
-        for secret in redactions:
-            if secret:
-                result = result.replace(secret, "<redacted>")
-        return result
-
-    print("+", redacted(" ".join(cmd)))
+    print("+", _redact_text(" ".join(cmd), redactions))
     proc = subprocess.run(cmd, **kwargs)
     if proc.returncode != 0:
         if capture:
             raise RuntimeError(
-                f"command failed ({proc.returncode}): {redacted(' '.join(cmd))}\n"
-                f"stdout:\n{redacted(proc.stdout or '')}\n"
-                f"stderr:\n{redacted(proc.stderr or '')}"
+                f"command failed ({proc.returncode}): {_redact_text(' '.join(cmd), redactions)}\n"
+                f"stdout:\n{_redact_text(proc.stdout or '', redactions)}\n"
+                f"stderr:\n{_redact_text(proc.stderr or '', redactions)}"
             )
         raise RuntimeError(
-            f"command failed ({proc.returncode}): {redacted(' '.join(cmd))}"
+            f"command failed ({proc.returncode}): {_redact_text(' '.join(cmd), redactions)}"
         )
     return proc
 
@@ -657,6 +657,7 @@ def main(argv: list[str] | None = None) -> int:
     # must already exist in the caller's Docker config; NPA never mints provider IAM
     # registry tokens or creates a hidden registry-specific credential directory.
     docker_env: dict[str, str] = {}
+    redactions: tuple[str, ...] = ()
     try:
         with ExitStack() as secret_stack:
             source_secrets: RepositorySecretFiles | None = None
@@ -690,7 +691,7 @@ def main(argv: list[str] | None = None) -> int:
                 skip_push=skip_push,
             )
     except Exception as exc:
-        message = str(exc)
+        message = _redact_text(str(exc), redactions)
         summary["status"] = "failed"
         summary["error"] = message
         if isinstance(exc, RepositoryAuthenticationError):
@@ -957,10 +958,9 @@ def _run_byof(
         print(json.dumps(summary, indent=2, sort_keys=True))
         return 0
     except Exception as exc:
-        for secret in redactions:
-            if secret:
-                exc = RuntimeError(str(exc).replace(secret, "<redacted>"))
-        raise exc
+        # Do not retain an unsanitized exception as ``__cause__``: callers may
+        # serialize the exception chain even though the top-level message is safe.
+        raise RuntimeError(_redact_text(str(exc), redactions)) from None
 
 
 if __name__ == "__main__":

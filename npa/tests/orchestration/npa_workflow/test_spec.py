@@ -50,6 +50,61 @@ def test_token_unknown_config_raises() -> None:
         resolve_tokens("{{config.missing}}", config={}, run={"id": "x"})
 
 
+@pytest.mark.parametrize(
+    "tool_ref",
+    ["workbench.byof.repo", "workbench.isaac_lab.byof_repo"],
+)
+def test_public_byof_toolrefs_default_new_auth_config_for_existing_specs(
+    tmp_path: Path, tool_ref: str
+) -> None:
+    spec_path = tmp_path / "existing-customer-byof.yaml"
+    spec_path.write_text(
+        f"""\
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: existing-customer-byof
+config:
+  repo_url: https://github.com/example/public.git
+  repo_ref: main
+  base_profile: ubuntu
+  base_image: ubuntu:22.04
+  build_command: ""
+  workload: container-verify
+  smoke_command: ""
+  solution_name: ""
+  capability_name: ""
+  smoke_artifact_name: ""
+  resource_profile_yaml: ""
+  task: Isaac-Cartpole-v0
+  iterations: "1"
+  num_envs: "1"
+  num_demos: "1"
+  output_root: ""
+  wait_timeout: "60"
+  poll_interval: "1"
+resources:
+  cpu:
+    cloud: kubernetes
+    cpus: 2
+initial: package
+states:
+  package:
+    toolRef: {tool_ref}
+    resources: cpu
+    terminal: true
+""",
+        encoding="utf-8",
+    )
+
+    spec = load_spec(spec_path)
+    validate_spec(spec)
+    plan = build_plan(spec, run_id="compat-defaults")
+    argv = plan.steps[0].argv
+    assert argv[argv.index("--repo-auth") + 1] == "none"
+    assert argv[argv.index("--repo-token-env") + 1] == ""
+
+
 def test_base64_token_transform_keeps_shell_metacharacters_as_data() -> None:
     hostile = '"; echo INJECTED; $(touch /tmp/never) #'
     text = resolve_tokens(

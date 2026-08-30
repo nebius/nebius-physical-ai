@@ -117,6 +117,13 @@ Omit `--repo-token-env` to use `GH_TOKEN`, `GITHUB_TOKEN`, or the existing
 pass the same name through `workflow submit --secret-env`; never store the value
 in YAML.
 
+Repository URLs are intentionally canonical and credential-free for both public
+and private sources. URLs containing embedded credentials, a query string, or a
+fragment are rejected before registry resolution or build. This is a deliberate
+compatibility boundary: those URL components can carry secrets and do not form a
+stable source identity. Put authentication in `--repo-auth` / `--repo-token-env`
+and put the requested branch, tag, or commit in `--repo-ref` instead.
+
 Equivalent script (same flags; used by older docs and shims):
 
 ```bash
