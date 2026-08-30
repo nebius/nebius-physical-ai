@@ -13388,9 +13388,12 @@
           String((preferred && preferred.key) || ""),
         ].join("|");
         const preferredViewerIntent = artifactLoadRequestId;
-        const shouldLoadPreferred = !context.deferPreferredViewer && !context.suppressPreferredAutoload && preferred && ["rerun", "mcap", "video", "image", "json", "text", "download"].includes(preferredRender) &&
+        const shouldLoadPreferred = preferred && ["rerun", "mcap", "video", "image", "json", "text", "download"].includes(preferredRender) &&
           !(preferredRender === "rerun" && isMobileLayout()) &&
-          preferredLoadKey !== autoLoadedPreferredKey;
+          (context.forcePreferredViewer || (
+            !context.deferPreferredViewer && !context.suppressPreferredAutoload &&
+            preferredLoadKey !== autoLoadedPreferredKey
+          ));
         // Render the authoritative workflow timeline before attempting the
         // preferred viewer. A slow or temporarily unavailable Rerun mount must
         // not erase the exact run's stages and physical job identities.
@@ -13399,7 +13402,7 @@
           shouldLoadPreferred &&
           viewerIntentRequestId === artifactLoadRequestId &&
           preferredViewerIntent === artifactLoadRequestId &&
-          !operatorMediaPreviewActive
+          (!operatorMediaPreviewActive || context.forcePreferredViewer)
         ) {
           autoLoadedPreferredKey = preferredLoadKey;
           try {
@@ -14679,7 +14682,10 @@
             searchResult.textContent = "Checking exact discovered NPA run: " + chosen + "…" +
               (activeRunId ? " Currently loaded run remains " + activeRunId + " until lookup succeeds." : "");
           }
-          return loadArtifactsForSelectedRun(chosen, null, entry, { pendingSelection: true });
+          return loadArtifactsForSelectedRun(chosen, null, entry, {
+            pendingSelection: true,
+            forcePreferredViewer: true,
+          });
         }
         clearVisibleRunState("Loading " + chosen + "…");
         setActiveRunId(chosen);
@@ -14715,7 +14721,10 @@
         if (artifactEntry) {
           const searchResult = document.getElementById("stagesRunSearchResult");
           if (searchResult) searchResult.textContent = "Loading published recording for Agent-memory run: " + target + "…";
-          return loadArtifactsForSelectedRun(target, null, artifactEntry, { pendingSelection: true });
+          return loadArtifactsForSelectedRun(target, null, artifactEntry, {
+            pendingSelection: true,
+            forcePreferredViewer: true,
+          });
         }
         clearVisibleRunState("Loading Agent run memory " + target + "…");
         setActiveRunId(target);
