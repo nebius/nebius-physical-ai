@@ -14690,6 +14690,19 @@
         const target = String(runId || "").trim();
         const data = await apiJson("/api/agent/memory/run/" + encodeURIComponent(target));
         const record = data && data.record && typeof data.record === "object" ? data.record : {};
+        // A collected Agent episode may also publish viewer artifacts under the
+        // same run id. Prefer that real S3-backed recording (RRD/MCAP) while
+        // retaining the protected memory record as the grounded run index.
+        await refreshArtifactRuns(target).catch(() => false);
+        const artifactEntry = mergedRunsCache.find((candidate) =>
+          String((candidate && candidate.run_id) || "") === target &&
+          String((candidate && candidate.source_type) || "") === "artifact_storage"
+        );
+        if (artifactEntry) {
+          const searchResult = document.getElementById("stagesRunSearchResult");
+          if (searchResult) searchResult.textContent = "Loading published recording for Agent-memory run: " + target + "…";
+          return loadArtifactsForSelectedRun(target, null, artifactEntry, { pendingSelection: true });
+        }
         clearVisibleRunState("Loading Agent run memory " + target + "…");
         setActiveRunId(target);
         activeRunEntryKey = String((entry && entry.entry_key) || runEntryIdentity(target, "agent_memory", {}));
