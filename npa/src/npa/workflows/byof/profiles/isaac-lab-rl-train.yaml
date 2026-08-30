@@ -10,7 +10,7 @@ resources:
   memory: 64
   # Public GHCR release; override with a full operator registry prefix if needed.
   # Keep this image on an RT-core-capable Isaac Lab build.
-  image_id: "docker:ghcr.io/nebius/nebius-physical-ai/npa-isaac-lab:2.3.2.post1"
+  image_id: "docker:ghcr.io/nebius/nebius-physical-ai/npa-isaac-lab:3.0.0b2.post1"
 envs:
   # NVIDIA licence acceptance for the runtime-fetched Isaac Sim / Isaac Lab.
   # NPA's non-interactive Isaac product default is acceptance. Override with an
@@ -88,7 +88,7 @@ run: |
     --task "${ISAAC_LAB_TASK}"
     --num_envs "${ISAAC_LAB_NUM_ENVS}"
     --max_iterations "${ISAAC_LAB_ITERATIONS}"
-    --headless
+    --visualizer none
     --experiment_name "${ISAAC_LAB_EXPERIMENT_NAME}"
     --run_name "${ISAAC_LAB_RUN_NAME}"
     "${WANDB_ARGS[@]}"

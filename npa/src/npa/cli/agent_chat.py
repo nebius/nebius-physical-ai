@@ -573,7 +573,7 @@ _DEFAULT_TOOL_IMAGE_TAGS: dict[str, tuple[str, str]] = {
         "npa-lancedb",
         "cuda13-b300-0.30.3-sm80-sm90-sm100-sm103-sm120-20260803T031514Z",
     ),
-    "isaac-lab": ("npa-isaac-lab", "2.3.2.post1"),
+    "isaac-lab": ("npa-isaac-lab", "3.0.0b2.post1"),
 }
 
 

@@ -24,6 +24,7 @@ SWEEP_SPEC = (
     / "isaac-lab-rl-sweep.yaml"
 )
 WRAPPER_PATH = ROOT / "npa" / "scripts" / "run_isaac_lab_rl.py"
+FUNCTIONAL_SMOKE = ROOT / "npa" / "docker" / "workbench" / "isaac-lab" / "smoke_functional.py"
 
 
 def _docs(path: Path) -> list[dict]:
@@ -39,6 +40,15 @@ def _load_wrapper_module():
     return module
 
 
+def test_functional_smoke_is_explicitly_an_environment_step_probe() -> None:
+    text = FUNCTIONAL_SMOKE.read_text(encoding="utf-8")
+
+    assert "npa_isaac_lab_environment_step_trace_v1" in text
+    assert "action_source" in text
+    assert "run short training session" not in text
+    assert "checkpoint" not in text.lower()
+
+
 def test_isaac_lab_single_job_yaml_uses_rt_core_gpu_and_rsl_rl_entrypoint() -> None:
     docs = _docs(SINGLE_YAML)
 
@@ -48,10 +58,11 @@ def test_isaac_lab_single_job_yaml_uses_rt_core_gpu_and_rsl_rl_entrypoint() -> N
     assert task["resources"]["accelerators"] == "L40S:1"
     assert task["resources"]["cpus"] == 16
     assert task["resources"]["memory"] == 64
-    assert "npa-isaac-lab:2.3.2.post1" in task["resources"]["image_id"]
+    assert "npa-isaac-lab:3.0.0b2.post1" in task["resources"]["image_id"]
     assert "scripts/reinforcement_learning/rsl_rl/train.py" in task["run"]
     assert "--num_envs" in task["run"]
     assert "--max_iterations" in task["run"]
+    assert "--visualizer none" in task["run"]
     assert "agent.save_interval=1" in task["envs"]["ISAAC_LAB_HYDRA_OVERRIDES"]
     # SkyPilot does not interpolate ${VAR} in envs; ship a concrete endpoint.
     assert task["envs"]["AWS_ENDPOINT_URL"] == "https://storage.eu-north1.nebius.cloud"
@@ -100,7 +111,7 @@ def test_isaac_lab_sweep_spec_uses_parallel_group_and_distinct_variants() -> Non
     ]
     for name in members:
         member = spec.states[name]
-        assert spec.resources[member.resources]["accelerators"] == "L40S:1"
+        assert spec.resources[member.resources]["accelerators"] == "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"
         # Each variant writes under its own prefix, as the template's envs did.
         assert member.params["variant_uri"].rstrip("/").endswith(member.params["variant"])
 

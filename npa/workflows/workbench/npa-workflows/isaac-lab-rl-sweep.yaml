@@ -14,9 +14,6 @@ kind: Workflow
 #   npa workbench workflow submit isaac-lab-rl-sweep.yaml --run-id <id> --runtime \
 #     --registry <registry> --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY
 #
-# Cost control: `max_concurrency` caps how many GPUs the sweep holds at once
-# (the runtime tier submits the group in batches of that size).
-
 metadata:
   name: isaac-lab-rl-sweep
   description: >
@@ -33,6 +30,7 @@ config:
   task_name: Isaac-Cartpole-v0
   num_envs: "64"
   iterations: "10"
+  expected_variants: "lr-1e-3 lr-3e-4 entropy-0 entropy-0-01"
 
   sweep_uri: "s3://{{config.bucket}}/{{config.prefix}}/variants/"
   report_uri: "s3://{{config.bucket}}/{{config.prefix}}/report/npa_rl_sweep_best.json"
@@ -41,7 +39,7 @@ config:
 resources:
   trainer-gpu:
     cloud: kubernetes
-    accelerators: L40S:1
+    accelerators: RTXPRO-6000-BLACKWELL-SERVER-EDITION:1
     cpus: 16
     memory: 64Gi
   cpu:
@@ -145,7 +143,7 @@ states:
       shell: >
         python3 -c "from npa.workflows.rl_sweep import select_best;
         select_best(sweep_uri='{{config.sweep_uri}}', report_uri='{{config.report_uri}}',
-        run_id='{{run.id}}')"
+        run_id='{{run.id}}', expected_variants='{{config.expected_variants}}')"
     inputs:
       - uri: "{{config.sweep_uri}}"
         schema: npa.rl_sweep.variant_metrics.v1

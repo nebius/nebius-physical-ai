@@ -104,8 +104,8 @@ def test_prepublication_gates_run_before_the_public_dev_push() -> None:
         "scan_image_cosmos3_ray_serve_payload.py",
         "test_ltx_runtime_bootstrap.py",
         "test_cosmos3_ray_serve_image_contract.py",
-        "scanners: vuln,secret,license",
-        "format: spdx-json",
+        "--scanners vuln,secret,license",
+        "--format spdx-json",
         "non-root runtime required",
         "cached EULA acceptance",
     ):
@@ -141,31 +141,21 @@ def test_large_image_scan_reclaims_only_disposable_build_cache_and_tar() -> None
     assert 'rm -f "$RUNNER_TEMP/${TOOL}.tar"' in script
 
 
-def test_large_image_security_gates_have_no_early_scanner_deadline() -> None:
-    steps = _spec(PUBLISH)["jobs"]["build-development"]["steps"]
-    trivy_steps = [
-        step
-        for step in steps
-        if step.get("uses") == "aquasecurity/trivy-action@v0.36.0"
-    ]
-    assert len(trivy_steps) == 2
-    assert all(step["with"]["timeout"] == "6h0m0s" for step in trivy_steps)
-
-
-def test_public_image_workflow_preserves_large_image_security_scans() -> None:
+def test_large_image_scan_reclaims_build_cache_and_reuses_large_volume() -> None:
     text = PUBLISH.read_text(encoding="utf-8")
-    steps = _spec(PUBLISH)["jobs"]["build-development"]["steps"]
-    trivy_steps = [
-        step
-        for step in steps
-        if step.get("uses") == "aquasecurity/trivy-action@v0.36.0"
-    ]
-
-    assert "docker buildx prune --all --force" in text
-    assert text.count("TMPDIR: /mnt/npa-trivy") == 2
-    assert "scanners: vuln,secret,license" in text
-    assert len(trivy_steps) == 2
-    assert all(step["with"]["timeout"] == "6h0m0s" for step in trivy_steps)
+    prepare = text.index("Prepare capacity for full-image security scans")
+    scan = text.index("Pre-publication vulnerability, secret, and license scan")
+    sbom = text.index("Generate pre-publication SBOM")
+    push = text.index("Push only after every pre-publication gate passes")
+    assert prepare < scan < sbom < push
+    assert "docker buildx prune --all --force" in text[prepare:scan]
+    assert text[scan:push].count("TRIVY_TEMP_DIR: /mnt/npa-trivy") == 2
+    assert text[scan:push].count("--cache-dir /tmp/trivy/cache") == 2
+    assert text[scan:push].count("--timeout 2562047h47m16s") == 2
+    assert text[scan:push].count("-e TMPDIR=/tmp/trivy") == 2
+    trivy = "aquasec/trivy:0.70.0@sha256:be1190afcb28352bfddc4ddeb71470835d16462af68d310f9f4bca710961a41e image"
+    assert text[scan:push].count(trivy) == 2
+    assert "docker image prune" not in text[scan:push]
 
 
 def test_post_push_and_promotion_gates_are_digest_bound() -> None:
@@ -194,6 +184,12 @@ def test_post_push_and_promotion_gates_are_digest_bound() -> None:
     assert prepush < push
     assert "Private destination contains tagged versions" in text[prepush:push]
     assert "tagged_count" in text[prepush:push]
+    verify = text[text.index("Verify pushed bytes") :]
+    assert "pushed-payload-attempt-${payload_attempt}.log" in verify
+    assert "anonymous-manifest-attempt-${anonymous_attempt}.log" in verify
+    assert verify.count("TOOMANYREQUESTS|429 Too Many Requests") == 2
+    assert verify.count("while true; do") >= 2
+    assert "if ! grep -Eq" in verify
 
 
 def test_build_and_cleanup_dispatches_cannot_fall_through_to_promotion() -> None:

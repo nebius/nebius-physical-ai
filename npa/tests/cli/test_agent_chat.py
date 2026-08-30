@@ -9,10 +9,18 @@ import yaml
 from npa.cli import agent as agent_module
 from npa.cli import agent_actions
 from npa.cli.agent_chat import (
+    _image_for_tool,
     build_grounded_reply,
     format_sim2real_status,
     match_chat_intent,
 )
+from npa.deploy.images import supported_tool_version
+
+
+def test_agent_isaac_image_guidance_matches_canonical_pin() -> None:
+    assert _image_for_tool("isaac-lab").endswith(
+        f"/npa-isaac-lab:{supported_tool_version('isaac-lab')}"
+    )
 
 
 def _planner(script):

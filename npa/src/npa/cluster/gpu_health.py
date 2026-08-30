@@ -214,6 +214,20 @@ def _pod_errors(pods: list[dict[str, Any]], namespace: str) -> list[str]:
     return errors
 
 
+def _is_device_plugin_pod(pod: dict[str, Any]) -> bool:
+    """Recognize the managed-image plugin across old and current layouts."""
+    metadata = pod.get("metadata") or {}
+    labels = metadata.get("labels") or {}
+    containers = (pod.get("spec") or {}).get("containers") or []
+    candidates = [
+        metadata.get("name"),
+        labels.get("app"),
+        labels.get("app.kubernetes.io/name"),
+        *(container.get("name") for container in containers),
+    ]
+    return any("nvidia-device-plugin" in str(value or "").lower() for value in candidates)
+
+
 def probe_gpu_health(
     capture: CaptureFn,
     *,
@@ -263,11 +277,7 @@ def probe_gpu_health(
             "nodes have no observable boot ID: " + ", ".join(missing_boot_ids)
         )
 
-    namespace = (
-        "nvidia-device-plugin"
-        if config.driver_mode == "managed-image"
-        else "gpu-operator"
-    )
+    namespace = "nvidia-device-plugin" if config.driver_mode == "managed-image" else "gpu-operator"
     pods_payload = _run_json(
         capture,
         kubectl_bin,
@@ -275,6 +285,22 @@ def probe_gpu_health(
         ["get", "pods", "-n", namespace, "-o", "json"],
     )
     pods = [item for item in pods_payload.get("items", []) if isinstance(item, dict)]
+    if config.driver_mode == "managed-image" and not pods:
+        # Current Nebius managed images install the device-plugin DaemonSet in
+        # kube-system; older images used a dedicated namespace. Accept only
+        # positively identified plugin pods, never arbitrary kube-system pods.
+        namespace = "kube-system (nvidia-device-plugin)"
+        pods_payload = _run_json(
+            capture,
+            kubectl_bin,
+            kubeconfig_path,
+            ["get", "pods", "-n", "kube-system", "-o", "json"],
+        )
+        pods = [
+            item
+            for item in pods_payload.get("items", [])
+            if isinstance(item, dict) and _is_device_plugin_pod(item)
+        ]
     errors.extend(_pod_errors(pods, namespace))
     return {
         "observed_at_monotonic": time.monotonic(),

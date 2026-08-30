@@ -16,7 +16,7 @@
     "foxglove-embed": {"tag": "0.58.0", "published_digest": "sha256:dc8e55ca8697bae7e9473d32451614b7c4a1d508b29d98e2bc8063bde2ec7828"},
     "genesis": {"tag": "cuda13-b300-0.4.6-sm80-sm90-sm100-sm103-sm120-20260803T034152Z", "published_digest": "sha256:80cd1c4c7f7a5466533de29ee5cad1213202f348545346fea9ed6746fa03b1ca"},
     "groot": {"tag": "0.1.0", "published_digest": "sha256:47fd6b727f249fbdb0ec237dc748c8bdc7cbf38474dc12c1cffe82f17fdde37b"},
-    "isaac-lab": {"tag": "2.3.2.post1", "published_digest": "sha256:c2e142c5312c903fd2a165028ca17e34335813d034ce036b936c6dc3a886bea8"},
+    "isaac-lab": {"tag": "3.0.0b2.post1", "published_digest": "sha256:bb735577809f9b427493fda78efebc543dcf02e3deac2ec8a36ac019bff8ee46", "development_sha": "4a7967ce8ffff8c484ef2b573d7e9cf7d38e302e"},
     "lancedb": {"tag": "cuda13-b300-0.30.3-sm80-sm90-sm100-sm103-sm120-20260803T031514Z", "published_digest": "sha256:a303b53d0769e612101d468ba957656997838f4b8e6a03430f2b5a2c89e3f8b5"},
     "leisaac": {"tag": "0.4.0-20260817T231825Z", "published_digest": "sha256:82069eb74a18a88f77ad3149b6c5ed220c4eed33b1d550c26d361947805e8280"},
     "lerobot": {"tag": "cuda13-b300-0.5.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z", "published_digest": "sha256:14a2e0dfe61fb2c46c6e4b8d75f1a06f2f68f9cfa4a6428a175411afaf93749e"},

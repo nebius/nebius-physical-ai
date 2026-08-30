@@ -31,8 +31,8 @@ usage() {
   cat <<'EOF'
 Usage: build.sh [--registry REGISTRY] [--push] [--tag TAG]
 
-Builds npa-isaac-lab:<version>, where <version> is the isaac-lab pin in
-npa/pyproject.toml ([tool.npa.supported-tools].isaac-lab).
+Builds npa-isaac-lab:<version>, where <version> is the canonical image pin in
+npa/docker/workbench/isaac-lab/Dockerfile.
 
   --registry REGISTRY  also tag REGISTRY/npa-isaac-lab:<tag>
   --push               push to REGISTRY (requires --registry)
@@ -72,48 +72,18 @@ if [ "$PUSH" -eq 1 ] && [ -z "$REGISTRY" ]; then
   exit 2
 fi
 
-PYTHON_BIN="${NPA_PYTHON_BIN:-$NPA_ROOT/.venv/bin/python}"
-if [ ! -x "$PYTHON_BIN" ]; then
-  PYTHON_BIN="$(command -v python3)"
-fi
-
-read_pin() {
-  cd "$NPA_ROOT"
-  NPA_PIN_KEY="$1" "$PYTHON_BIN" - <<'PY'
-import os
-import re
-from pathlib import Path
-
-key = os.environ["NPA_PIN_KEY"]
-try:
-    import tomllib
-except ModuleNotFoundError:
-    text = Path("pyproject.toml").read_text()
-    section = text.split("[tool.npa.supported-tools]", 1)[1]
-    match = re.search(rf'^{re.escape(key)}\s*=\s*"([^"]+)"', section, re.MULTILINE)
-    if not match:
-        raise SystemExit(f"Could not find [tool.npa.supported-tools].{key}")
-    print(match.group(1))
-else:
-    with Path("pyproject.toml").open("rb") as handle:
-        data = tomllib.load(handle)
-    print(data["tool"]["npa"]["supported-tools"][key])
-PY
-}
-
-VERSION="$(read_pin isaac-lab)"
-IMAGE_TAG="${IMAGE_TAG_OVERRIDE:-$VERSION}"
-LOCAL_IMAGE="${IMAGE_NAME}:${IMAGE_TAG}"
-
-# Keep the Isaac Sim pin and the Isaac Lab source commit in one place: the bootstrap's
-# defaults. Reading them here means the build cannot drift from what runs.
-BOOTSTRAP="$SCRIPT_DIR/../common/isaac_bootstrap.sh"
-ISAAC_SIM_VERSION="$(sed -n 's/^ISAAC_SIM_VERSION="${ISAAC_SIM_VERSION:-\(.*\)}"$/\1/p' "$BOOTSTRAP")"
-ISAAC_LAB_SRC_COMMIT="$(sed -n 's/^ISAAC_LAB_SRC_COMMIT="${NPA_ISAAC_LAB_SRC_COMMIT:-\(.*\)}"$/\1/p' "$BOOTSTRAP")"
-if [ -z "$ISAAC_SIM_VERSION" ] || [ -z "$ISAAC_LAB_SRC_COMMIT" ]; then
-  echo "ERROR: could not read the Isaac pins out of $BOOTSTRAP" >&2
+# The shared bootstrap retains Isaac 2 defaults for SONIC/GR00T/LeIsaac
+# compatibility. The canonical Isaac Lab image owns its explicit 3.x pins.
+DOCKERFILE="$SCRIPT_DIR/Dockerfile"
+VERSION="$(sed -n 's/^ARG ISAAC_LAB_VERSION=//p' "$DOCKERFILE")"
+ISAAC_SIM_VERSION="$(sed -n 's/^ARG ISAAC_SIM_VERSION=//p' "$DOCKERFILE")"
+ISAAC_LAB_SRC_COMMIT="$(sed -n 's/^ARG ISAAC_LAB_SRC_COMMIT=//p' "$DOCKERFILE")"
+if [ -z "$VERSION" ] || [ -z "$ISAAC_SIM_VERSION" ] || [ -z "$ISAAC_LAB_SRC_COMMIT" ]; then
+  echo "ERROR: could not read the Isaac pins out of $DOCKERFILE" >&2
   exit 1
 fi
+IMAGE_TAG="${IMAGE_TAG_OVERRIDE:-$VERSION}"
+LOCAL_IMAGE="${IMAGE_NAME}:${IMAGE_TAG}"
 
 BUILD_ARGS=(
   --platform linux/amd64

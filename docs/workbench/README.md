@@ -10,6 +10,7 @@ workflows, and operational runbooks.
 | [getting-started.md](getting-started.md) | Fresh-clone onboarding path for install, credentials, and first Workbench runs |
 | [container-image-catalog.md](container-image-catalog.md) | Verified public GHCR image names, exact published tags, build dates, and capabilities |
 | [container-packaging.md](container-packaging.md) | Container packaging tiers, security baseline, and feature exposure contract |
+| [isaac-lab-3.md](isaac-lab-3.md) | Isaac Lab 3 beta pin, payload-clean runtime bootstrap, hardened RL sweep, and generation 2 comparison method |
 | [model-weight-cache.md](model-weight-cache.md) | Durable cache for model weights and reviewed SDKs the public images do not bake, so a second run is a cache hit |
 | [cosmos3-b200-checkpoint-evaluation-20260814.md](cosmos3-b200-checkpoint-evaluation-20260814.md) | Reserved-B200, 72-image Cosmos3 checkpoint evaluation and three-seed investment decision |
 | [cosmos3-ray-serve.md](cosmos3-ray-serve.md) | Persistent Cosmos3-Nano serving through native Ray Serve batching with durable S3 outputs |

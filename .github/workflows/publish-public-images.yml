@@ -346,31 +346,48 @@ jobs:
           sudo install -d -m 0777 /mnt/npa-trivy
 
       - name: Pre-publication vulnerability, secret, and license scan
-        uses: aquasecurity/trivy-action@v0.36.0
         env:
-          TMPDIR: /mnt/npa-trivy
-        with:
-          image-ref: ${{ matrix.image }}
-          scanners: vuln,secret,license
-          severity: CRITICAL
-          exit-code: "1"
-          ignore-unfixed: true
-          format: table
-          # Trivy otherwise imposes its own five-minute deadline. Match the
-          # hosted runner's outer six-hour job ceiling so this gate adds no
-          # earlier time limit for large GPU images.
-          timeout: 6h0m0s
+          TRIVY_TEMP_DIR: /mnt/npa-trivy
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Trivy 0.70 always wraps scans in context.WithTimeout and a zero
+          # duration expires immediately. Go's largest whole-second duration
+          # gives this mandatory gate no practical analysis deadline.
+          docker run --rm \
+            -e TMPDIR=/tmp/trivy \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "$TRIVY_TEMP_DIR:/tmp/trivy" \
+            -v "$GITHUB_WORKSPACE/.trivyignore:/.trivyignore:ro" \
+            aquasec/trivy:0.70.0@sha256:be1190afcb28352bfddc4ddeb71470835d16462af68d310f9f4bca710961a41e image \
+              --cache-dir /tmp/trivy/cache \
+              --timeout 2562047h47m16s \
+              --scanners vuln,secret,license \
+              --severity CRITICAL \
+              --exit-code 1 \
+              --ignore-unfixed \
+              --ignorefile /.trivyignore \
+              --format table \
+              "$IMAGE"
 
       - name: Generate pre-publication SBOM
-        uses: aquasecurity/trivy-action@v0.36.0
         env:
-          TMPDIR: /mnt/npa-trivy
-        with:
-          image-ref: ${{ matrix.image }}
-          scanners: vuln
-          format: spdx-json
-          output: ${{ runner.temp }}/${{ matrix.tool }}-sbom.spdx.json
-          timeout: 6h0m0s
+          TRIVY_TEMP_DIR: /mnt/npa-trivy
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -e TMPDIR=/tmp/trivy \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "$TRIVY_TEMP_DIR:/tmp/trivy" \
+            -v "$RUNNER_TEMP:/output" \
+            aquasec/trivy:0.70.0@sha256:be1190afcb28352bfddc4ddeb71470835d16462af68d310f9f4bca710961a41e image \
+              --cache-dir /tmp/trivy/cache \
+              --timeout 2562047h47m16s \
+              --scanners vuln \
+              --format spdx-json \
+              --output "/output/${TOOL}-sbom.spdx.json" \
+              "$IMAGE"
 
       - uses: docker/login-action@v3
         with:
@@ -425,8 +442,23 @@ jobs:
           exact="${repository}@${DIGEST}"
           test "$(crane digest "$IMAGE")" = "$DIGEST"
           test "$(crane config "$exact" | jq -r '.config.Labels["org.opencontainers.image.revision"] // ""')" = "$DEVELOPMENT_SHA"
-          npa/.venv/bin/python npa/scripts/scan_image_omniverse_payload.py \
-            "$exact" --json "$RUNNER_TEMP/${TOOL}-pushed-payload.json"
+          payload_attempt=1
+          while true; do
+            payload_log="$RUNNER_TEMP/${TOOL}-pushed-payload-attempt-${payload_attempt}.log"
+            if npa/.venv/bin/python npa/scripts/scan_image_omniverse_payload.py \
+              "$exact" --json "$RUNNER_TEMP/${TOOL}-pushed-payload.json" \
+              >"$payload_log" 2>&1; then
+              cat "$payload_log"
+              break
+            fi
+            cat "$payload_log" >&2
+            if ! grep -Eq 'TOOMANYREQUESTS|429 Too Many Requests' "$payload_log"; then
+              exit 1
+            fi
+            echo "GHCR throttled pushed-byte payload scan attempt ${payload_attempt}; retrying" >&2
+            payload_attempt=$((payload_attempt + 1))
+            sleep 5
+          done
           if [ "$TOOL" = ltx2 ]; then
             npa/.venv/bin/python npa/scripts/scan_image_ltx_payload.py \
               "$exact" --output "$RUNNER_TEMP/${TOOL}-pushed-ltx-payload.json"
@@ -465,7 +497,21 @@ jobs:
           fi
           test "$(gh api "$package_api" --jq .visibility)" = public
           anonymous_config="$(mktemp -d)"
-          DOCKER_CONFIG="$anonymous_config" crane manifest "$IMAGE" >/dev/null
+          anonymous_attempt=1
+          while true; do
+            anonymous_log="$RUNNER_TEMP/${TOOL}-anonymous-manifest-attempt-${anonymous_attempt}.log"
+            if DOCKER_CONFIG="$anonymous_config" crane manifest "$IMAGE" \
+              >/dev/null 2>"$anonymous_log"; then
+              break
+            fi
+            cat "$anonymous_log" >&2
+            if ! grep -Eq 'TOOMANYREQUESTS|429 Too Many Requests' "$anonymous_log"; then
+              exit 1
+            fi
+            echo "GHCR throttled anonymous manifest attempt ${anonymous_attempt}; retrying" >&2
+            anonymous_attempt=$((anonymous_attempt + 1))
+            sleep 5
+          done
           echo "Validated public development digest: $DIGEST" >> "$GITHUB_STEP_SUMMARY"
           echo "The dev tag is public; later deletion cannot revoke prior downloads." >> "$GITHUB_STEP_SUMMARY"
 

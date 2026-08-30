@@ -957,7 +957,7 @@ def build_isaac_job_manifest(
             )
         train_line = (
             f'"$PY" {TRAIN_SCRIPT} --task {task} --num_envs {num_envs} '
-            f"--max_iterations {iterations} --headless "
+            f'--max_iterations {iterations} "${{VIZ_ARGS[@]}}" '
             f"--kit_args {shlex.quote(kit_args)}"
             f"{seed_arg} "
             f"agent.num_steps_per_env={steps_per_env} agent.save_interval=25 {override_str}"
@@ -965,6 +965,8 @@ def build_isaac_job_manifest(
         preflight_block = resume_block
         train_block = (
             f'echo "VLM_REWARD_OVERRIDES: {override_str}"\n'
+            'VIZ_ARGS=(--visualizer none)\n'
+            'case "${ISAAC_LAB_VERSION:-}" in 2.*) VIZ_ARGS=(--headless) ;; esac\n'
             # tee the FULL training output to a file (the per-iteration Mean reward
             # curve) before tailing to stdout — `| tail -120` alone discards the
             # early reward history, making the learning curve unrecoverable.

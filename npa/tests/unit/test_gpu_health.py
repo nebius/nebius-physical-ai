@@ -187,6 +187,55 @@ def test_probe_validates_generalized_topology_and_managed_components(
     assert kubectl.component_namespaces == ["nvidia-device-plugin"]
 
 
+def test_probe_accepts_current_managed_plugin_in_kube_system(tmp_path: Path) -> None:
+    class CurrentManagedImage(_Kubectl):
+        def __call__(self, args, **kwargs):
+            command = args[1:]
+            if command[:2] == ["get", "pods"]:
+                namespace = command[command.index("-n") + 1]
+                self.component_namespaces.append(namespace)
+                if namespace == "nvidia-device-plugin":
+                    return self._result({"items": []})
+                return self._result(
+                    {
+                        "items": [
+                            {
+                                "metadata": {"name": "unrelated-system-pod"},
+                                "spec": {"containers": [{"name": "system"}]},
+                                "status": {"phase": "Pending"},
+                            },
+                            {
+                                "metadata": {
+                                    "name": "nvidia-device-plugin-daemonset-pod"
+                                },
+                                "spec": {
+                                    "containers": [
+                                        {"name": "nvidia-device-plugin-ctr"}
+                                    ]
+                                },
+                                "status": {
+                                    "phase": "Running",
+                                    "containerStatuses": [{"ready": True}],
+                                },
+                            },
+                        ]
+                    }
+                )
+            return super().__call__(args, **kwargs)
+
+    kubectl = CurrentManagedImage([_healthy_nodes()])
+    snapshot = probe_gpu_health(
+        kubectl,
+        kubectl_bin="kubectl",
+        kubeconfig_path=tmp_path / "kubeconfig",
+        config=_config(),
+    )
+
+    assert snapshot["errors"] == []
+    assert snapshot["component_namespace"] == "kube-system (nvidia-device-plugin)"
+    assert kubectl.component_namespaces == ["nvidia-device-plugin", "kube-system"]
+
+
 def test_probe_fails_on_nebius_gpu_error_and_incomplete_fabric(tmp_path: Path) -> None:
     nodes = _healthy_nodes()
     nodes[0] = _node(

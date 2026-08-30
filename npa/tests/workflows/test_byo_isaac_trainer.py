@@ -190,6 +190,9 @@ def test_build_isaac_job_manifest_shape():
     assert "Isaac-Lift-Cube-Franka-v0" in args
     assert "--max_iterations 150" in args
     assert "--num_envs 1024" in args
+    assert 'VIZ_ARGS=(--visualizer none)' in args
+    assert '2.*) VIZ_ARGS=(--headless)' in args
+    assert '"${VIZ_ARGS[@]}"' in args
     assert "agent.num_steps_per_env=24" in args
     assert byo.TRAIN_SCRIPT in args
     assert "npa.workflows.sim2real.runtime_attestation" in args
