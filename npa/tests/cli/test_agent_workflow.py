@@ -1212,6 +1212,8 @@ def test_generate_isaac_byof_yaml_validates() -> None:
     assert result["ok"] is True, f"isaac-byof validate failed: {result.get('error')}"
     assert result["name"] == "byof"
     assert "<repo-url>" in yaml_text
+    assert "repo_auth: none" in yaml_text
+    assert "repo_token_env: GH_TOKEN" in yaml_text
     assert "base_profile: ubuntu" in yaml_text
     assert "byof-run" in set(result["states"])
 
