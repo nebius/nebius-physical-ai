@@ -9,6 +9,7 @@ unit proof can never be mistaken for GPU execution.
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import re
@@ -248,11 +249,11 @@ def generate_routing_evidence(
     if verified_output_bytes < 0:
         raise SonicRoutingEvidenceError("output_bytes must be non-negative")
 
-    from npa.workbench.sonic.workflow import _default_accelerators
+    from npa.workbench.sonic.workflow import default_accelerators
 
     routes = []
     for target, expected in EXPECTED_ROUTES:
-        resolved = _default_accelerators(target)
+        resolved = default_accelerators(target)
         routes.append(
             {
                 "target": target,
@@ -389,10 +390,49 @@ def generate_routing_evidence(
     return result
 
 
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--manifest-uri", required=True)
+    parser.add_argument("--report-uri", required=True)
+    parser.add_argument("--rrd-uri", required=True)
+    parser.add_argument("--run-id", required=True)
+    parser.add_argument("--tested-commit-sha", default="unknown")
+    parser.add_argument("--provider-accelerator", default="not recorded")
+    parser.add_argument("--allocated-count", default="0")
+    parser.add_argument("--provider-recognition-status", default="unverified")
+    parser.add_argument("--scheduling-status", default="unverified")
+    parser.add_argument("--workload-status", default="unverified")
+    parser.add_argument("--terminal-status", default="not recorded")
+    parser.add_argument("--job-evidence-digest", default="")
+    parser.add_argument("--image-digest", default="")
+    parser.add_argument("--workload-kind", default="not-recorded")
+    parser.add_argument("--output-kind", default="not-recorded")
+    parser.add_argument("--output-bytes", default="0")
+    parser.add_argument("--output-digest", default="")
+    parser.add_argument("--semantic-verification", default="not recorded")
+    parser.add_argument("--output-verification-status", default="unverified")
+    parser.add_argument("--cleanup-status", default="unverified")
+    parser.add_argument("--pool-type", default="not recorded")
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Run the evidence publisher through an argv-safe module entry point."""
+
+    args = _parser().parse_args(argv)
+    generate_routing_evidence(**vars(args))
+    return 0
+
+
 __all__ = [
     "EXPECTED_ROUTES",
     "MANIFEST_SCHEMA",
     "REPORT_SCHEMA",
     "SonicRoutingEvidenceError",
     "generate_routing_evidence",
+    "main",
 ]
+
+
+if __name__ == "__main__":  # pragma: no cover - exercised through subprocess
+    raise SystemExit(main())

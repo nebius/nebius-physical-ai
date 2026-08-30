@@ -58,26 +58,52 @@ states:
       This CPU stage is not SONIC training or policy execution.
     resources: cpu
     run:
-      shell: >
-        python3 -c "from npa.workflows.sonic_routing_evidence import
-        generate_routing_evidence; generate_routing_evidence(
-        manifest_uri='{{config.manifest_uri}}', report_uri='{{config.report_uri}}',
-        rrd_uri='{{config.rrd_uri}}', run_id='{{run.id}}',
-        tested_commit_sha='{{config.tested_commit_sha}}',
-        provider_accelerator='{{config.provider_accelerator}}',
-        allocated_count='{{config.allocated_count}}',
-        provider_recognition_status='{{config.provider_recognition_status}}',
-        scheduling_status='{{config.scheduling_status}}',
-        workload_status='{{config.workload_status}}',
-        terminal_status='{{config.terminal_status}}',
-        job_evidence_digest='{{config.job_evidence_digest}}',
-        image_digest='{{config.image_digest}}',
-        workload_kind='{{config.workload_kind}}',
-        output_kind='{{config.output_kind}}', output_bytes='{{config.output_bytes}}',
-        output_digest='{{config.output_digest}}',
-        semantic_verification='{{config.semantic_verification}}',
-        output_verification_status='{{config.output_verification_status}}',
-        cleanup_status='{{config.cleanup_status}}', pool_type='{{config.pool_type}}')"
+      argv:
+        - python3
+        - -m
+        - npa.workflows.sonic_routing_evidence
+        - --manifest-uri
+        - "{{config.manifest_uri}}"
+        - --report-uri
+        - "{{config.report_uri}}"
+        - --rrd-uri
+        - "{{config.rrd_uri}}"
+        - --run-id
+        - "{{run.id}}"
+        - --tested-commit-sha
+        - "{{config.tested_commit_sha}}"
+        - --provider-accelerator
+        - "{{config.provider_accelerator}}"
+        - --allocated-count
+        - "{{config.allocated_count}}"
+        - --provider-recognition-status
+        - "{{config.provider_recognition_status}}"
+        - --scheduling-status
+        - "{{config.scheduling_status}}"
+        - --workload-status
+        - "{{config.workload_status}}"
+        - --terminal-status
+        - "{{config.terminal_status}}"
+        - --job-evidence-digest
+        - "{{config.job_evidence_digest}}"
+        - --image-digest
+        - "{{config.image_digest}}"
+        - --workload-kind
+        - "{{config.workload_kind}}"
+        - --output-kind
+        - "{{config.output_kind}}"
+        - --output-bytes
+        - "{{config.output_bytes}}"
+        - --output-digest
+        - "{{config.output_digest}}"
+        - --semantic-verification
+        - "{{config.semantic_verification}}"
+        - --output-verification-status
+        - "{{config.output_verification_status}}"
+        - --cleanup-status
+        - "{{config.cleanup_status}}"
+        - --pool-type
+        - "{{config.pool_type}}"
     outputs:
       - uri: "{{config.manifest_uri}}"
         schema: npa.sonic.routing_evidence.v1

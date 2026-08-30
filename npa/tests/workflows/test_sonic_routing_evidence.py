@@ -7,9 +7,19 @@ from pathlib import Path
 
 import pytest
 
+from npa.orchestration.npa_workflow import build_plan, load_spec
+from npa.orchestration.npa_workflow.submit import merge_config_overrides
 from npa.workflows.sonic_routing_evidence import (
     SonicRoutingEvidenceError,
     generate_routing_evidence,
+)
+
+SPEC = (
+    Path(__file__).parents[2]
+    / "workflows"
+    / "workbench"
+    / "npa-workflows"
+    / "sonic-b300-routing-evidence.yaml"
 )
 
 
@@ -116,10 +126,10 @@ def test_wrong_checked_in_route_raises_after_writing_failed_evidence(
 ) -> None:
     from npa.workbench.sonic import workflow
 
-    original = workflow._default_accelerators
+    original = workflow.default_accelerators
     monkeypatch.setattr(
         workflow,
-        "_default_accelerators",
+        "default_accelerators",
         lambda target: "L40S:1" if target == "b300" else original(target),
     )
     with pytest.raises(SonicRoutingEvidenceError, match="failed closed"):
@@ -141,3 +151,17 @@ def test_publication_fields_reject_unsanitized_values(
 ) -> None:
     with pytest.raises(SonicRoutingEvidenceError):
         _generate(tmp_path, **{field: value})
+
+
+def test_workflow_uses_argv_without_shell_interpolation() -> None:
+    hostile = "value'; touch /tmp/sonic-token-injection; #"
+    spec = merge_config_overrides(
+        load_spec(SPEC),
+        {"semantic_verification": hostile},
+    )
+    step = build_plan(spec, run_id="sonic-argv-test").steps[0]
+
+    assert step.shell == ""
+    assert step.argv[:3] == ["python3", "-m", "npa.workflows.sonic_routing_evidence"]
+    assert step.argv[step.argv.index("--semantic-verification") + 1] == hostile
+    assert all("python3 -c" not in argument for argument in step.argv)

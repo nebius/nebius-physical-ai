@@ -143,6 +143,6 @@ def test_unknown_workload_fails_loud() -> None:
 def test_default_accelerators_map_gpu_target(gpu_target: str, expected: str) -> None:
     """Explicit datacenter Blackwell targets must not fall through to L40S."""
 
-    from npa.workbench.sonic.workflow import _default_accelerators
+    from npa.workbench.sonic.workflow import default_accelerators
 
-    assert _default_accelerators(gpu_target) == expected
+    assert default_accelerators(gpu_target) == expected
