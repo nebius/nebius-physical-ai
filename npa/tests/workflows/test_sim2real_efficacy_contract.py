@@ -51,6 +51,8 @@ from npa.workflows.sim2real.isaac_scenario_task import (
     STOCK_GRIPPER_CLOSED_POSITION,
     STOCK_GRIPPER_JOINT_NAMES,
     STOCK_GRIPPER_OPEN_POSITION,
+    STOCK_DENSE_LIFT_REWARD_WEIGHT,
+    STOCK_DENSE_LIFT_STD_M,
     ScenarioContractError,
     _assign,
     _scheduled_drop_penalty_type,
@@ -431,6 +433,8 @@ def test_scenario_task_ships_strict_stable_placement_curriculum() -> None:
     assert GRASP_CLOSURE_STD_M == 0.06
     assert GRASP_LIFT_ATTEMPT_REWARD_WEIGHT == 32.0
     assert GRASP_LIFT_ATTEMPT_STD_M == 0.05
+    assert STOCK_DENSE_LIFT_REWARD_WEIGHT == 32.0
+    assert STOCK_DENSE_LIFT_STD_M == 0.08
     assert STOCK_GRIPPER_JOINT_NAMES == (
         "panda_finger_joint1",
         "panda_finger_joint2",
@@ -465,6 +469,8 @@ def test_scenario_task_ships_strict_stable_placement_curriculum() -> None:
     assert "func=robot_task.grasp_shaping" in source
     assert "env_cfg.rewards.grasp_lift_attempt_curriculum" in source
     assert "func=robot_task.grasp_lift_hold" in source
+    assert "env_cfg.rewards.dense_object_lift_curriculum" in source
+    assert "func=robot_task.object_lift_progress" in source
     assert "def stable_placement_curriculum" in source
     assert "lifted * (dense + strict)" in source
     assert "env_cfg.rewards.stable_placement_curriculum" in source

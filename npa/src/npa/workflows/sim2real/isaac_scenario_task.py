@@ -36,6 +36,16 @@ GRASP_CLOSURE_REWARD_WEIGHT = 16.0
 GRASP_CLOSURE_STD_M = 0.06
 GRASP_LIFT_ATTEMPT_REWARD_WEIGHT = 32.0
 GRASP_LIFT_ATTEMPT_STD_M = 0.05
+# The first real stock-Franka run with the grasp precursors converted 0/64
+# contact into 64/64 contact and 53/64 stable grasps, but deterministic rollouts
+# repeatedly stopped at 0.040-0.044 m object lift.  The stock Lift reward is a
+# step at its minimal-height boundary, so the last centimetre before the strict
+# 5 cm evaluator threshold still had no object-space gradient.  Reuse the
+# existing robot-agnostic continuous object-height term on the stock task.  Its
+# weight matches the lift-attempt precursor: the hand signal bootstraps motion,
+# then real object displacement—not a scripted action—must retain the reward.
+STOCK_DENSE_LIFT_REWARD_WEIGHT = 32.0
+STOCK_DENSE_LIFT_STD_M = 0.08
 STOCK_GRIPPER_JOINT_NAMES = (
     "panda_finger_joint1",
     "panda_finger_joint2",
@@ -1104,6 +1114,14 @@ def install_env_cfg(env_cfg: Any) -> bool:
             "gripper_joint_names": STOCK_GRIPPER_JOINT_NAMES,
             "gripper_open": STOCK_GRIPPER_OPEN_POSITION,
             "gripper_close": STOCK_GRIPPER_CLOSED_POSITION,
+        },
+    )
+    env_cfg.rewards.dense_object_lift_curriculum = RewardTermCfg(
+        func=robot_task.object_lift_progress,
+        weight=STOCK_DENSE_LIFT_REWARD_WEIGHT,
+        params={
+            "std": STOCK_DENSE_LIFT_STD_M,
+            "object_name": "object",
         },
     )
     env_cfg.rewards.stable_placement_curriculum = RewardTermCfg(
