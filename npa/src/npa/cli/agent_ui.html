@@ -14694,7 +14694,13 @@
         setActiveRunId(target);
         activeRunEntryKey = String((entry && entry.entry_key) || runEntryIdentity(target, "agent_memory", {}));
         syncRunChooserFields(target, activeRunEntryKey);
-        const collectionStatus = String(record.collection_status || record.status || "recorded");
+        const collection = record.collection && typeof record.collection === "object" ? record.collection : {};
+        const outcome = record.outcome && typeof record.outcome === "object" ? record.outcome : {};
+        const timing = record.timing && typeof record.timing === "object" ? record.timing : {};
+        const trajectory = Array.isArray(record.trajectory) ? record.trajectory : [];
+        const isSanitizedTrajectory = String(record.schema_version || "") === "npa.agent.trajectory.v1" &&
+          record.redaction && record.redaction.applied === true;
+        const collectionStatus = String(collection.status || record.collection_status || record.status || "recorded");
         const integrityBits = [];
         if (record.integrity_verified === true) integrityBits.push("integrity verified");
         if (record.idempotency_verified === true) integrityBits.push("idempotency verified");
@@ -14702,14 +14708,43 @@
         const evidenceSummary = integrityBits.length
           ? "Sanitized trajectory collected; " + integrityBits.join("; ") + "."
           : "Sanitized Agent run-memory record is available.";
+        const eventStatus = (value) => {
+          const status = String(value || "").toLowerCase();
+          if (status === "ok") return "succeeded";
+          if (status === "error") return "failed";
+          if (status === "rejected") return "skipped";
+          if (status === "cancelled") return "failed";
+          return status || "status_unavailable";
+        };
+        const eventSummary = (event) => {
+          const observation = event && event.observation;
+          if (observation && typeof observation === "object") {
+            for (const key of ["summary", "message", "result", "status", "evidence"]) {
+              if (typeof observation[key] === "string" && observation[key].trim()) {
+                return observation[key].trim().slice(0, 320);
+              }
+            }
+          }
+          if (typeof observation === "string" && observation.trim()) return observation.trim().slice(0, 320);
+          return "Recorded sanitized " + String((event && event.phase) || "event") + " event.";
+        };
+        const eventStages = isSanitizedTrajectory ? trajectory.map((event, index) => ({
+          id: "event-" + String(event.sequence ?? index),
+          label: String(event.phase || "event") + (event.tool ? " · " + String(event.tool) : ""),
+          status: eventStatus(event.status),
+          summary: eventSummary(event),
+          evidence_source: "sanitized_agent_trajectory",
+          authority: "recorded",
+          confidence: "high",
+        })) : [];
         renderRunDetails({ run: {
           run_id: target,
           source_type: "agent_memory",
           source_label: "Agent run memory",
           status: collectionStatus,
-          result: collectionStatus === "collected" ? "run_ready" : "recorded",
-          updated_at: String(record.recorded_at || record.updated_at || ""),
-          stages: [{
+          result: String(outcome.status || (collectionStatus === "collected" ? "run_ready" : "recorded")),
+          updated_at: String(timing.ended_at || record.recorded_at || record.updated_at || ""),
+          stages: eventStages.length ? eventStages : [{
             id: "agent-run-data-collection",
             label: "Agent run data collection",
             status: collectionStatus === "collected" ? "succeeded" : collectionStatus,
@@ -14718,15 +14753,60 @@
             authority: "recorded",
             confidence: "high",
           }],
-          logs: [{
-            timestamp: String(record.recorded_at || record.updated_at || ""),
+          logs: eventStages.length ? eventStages.map((stage, index) => ({
+            timestamp: "event " + String(index + 1),
+            level: stage.status === "failed" ? "error" : "info",
+            message: stage.label + ": " + stage.summary,
+          })) : [{
+            timestamp: String(timing.ended_at || record.recorded_at || record.updated_at || ""),
             level: "info",
             message: evidenceSummary,
           }],
         }});
+        if (isSanitizedTrajectory) {
+          operatorMediaPreviewActive = true;
+          activeArtifactRender = "json";
+          setRenderMode("data", { operator: true });
+          const host = document.getElementById("artifactPreviewHost");
+          if (host) {
+            if (host._previewObjectUrl) {
+              try { URL.revokeObjectURL(host._previewObjectUrl); } catch (_err) { /* ignore */ }
+            }
+            const pretty = JSON.stringify(record, null, 2);
+            host._previewObjectUrl = URL.createObjectURL(new Blob([pretty], { type: "application/json" }));
+            host.hidden = false;
+            host.replaceChildren();
+            const pre = document.createElement("pre");
+            pre.className = "artifact-text-preview";
+            pre.textContent = pretty;
+            host.appendChild(pre);
+            appendArtifactDownloadLink(host, host._previewObjectUrl, target + ".json");
+          }
+          updateRenderedDataSummary({
+            run_id: target,
+            artifact_key: "agent-memory/" + target + ".json",
+            artifact_render: "json",
+            visualization_note: String(trajectory.length) + " sanitized trajectory events. This episode did not produce an RRD/MCAP recording.",
+          });
+        }
         const artifactList = document.getElementById("artifactList");
-        if (artifactList) artifactList.innerHTML = "<p>This sanitized Agent-memory record does not expose workflow artifacts.</p>";
-        showRerunPlaceholder("Agent run-memory evidence loaded. This record does not contain an RRD recording.", { force: true });
+        if (artifactList) {
+          artifactList.innerHTML = isSanitizedTrajectory
+            ? '<div class="artifact-card"><strong>Sanitized Agent trajectory</strong><p>' +
+              escapeHtml(String(trajectory.length)) + ' recorded events · JSON data artifact · no RRD/MCAP was produced.</p>' +
+              '<button class="btn" type="button" id="openAgentMemoryData">Open trajectory data</button></div>'
+            : "<p>The trajectory payload is not attached to this Agent-memory index record.</p>";
+          const openData = document.getElementById("openAgentMemoryData");
+          if (openData) openData.addEventListener("click", () => {
+            setRenderMode("data", { operator: true });
+            activateMainTab("rerun").catch(() => null);
+          });
+        }
+        if (isSanitizedTrajectory) {
+          await activateMainTab("rerun");
+        } else {
+          showRerunPlaceholder("Agent run-memory index loaded, but its trajectory payload is unavailable.", { force: true });
+        }
         const searchResult = document.getElementById("stagesRunSearchResult");
         if (searchResult) searchResult.textContent = "Loaded exact Agent-memory run: " + target + ".";
         return data;

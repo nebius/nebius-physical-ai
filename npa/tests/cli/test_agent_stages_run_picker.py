@@ -58,6 +58,11 @@ def test_stages_and_rerun_selectors_share_load_path() -> None:
     assert 'entry.source_type === "artifact_storage"' in load_fn
     assert 'entry.source_type === "agent_memory"' in load_fn
     assert "loadAgentMemoryRun(chosen, entry)" in load_fn
+    assert 'record.schema_version || "") === "npa.agent.trajectory.v1"' in load_fn
+    assert 'setRenderMode("data", { operator: true })' in load_fn
+    assert "Sanitized Agent trajectory" in load_fn
+    assert "Open trajectory data" in load_fn
+    assert "did not produce an RRD/MCAP recording" in load_fn
     assert (
         "loadArtifactsForSelectedRun(chosen, null, entry, { pendingSelection: true })"
         in load_fn
