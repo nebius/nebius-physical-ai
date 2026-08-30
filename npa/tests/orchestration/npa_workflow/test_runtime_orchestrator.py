@@ -2303,7 +2303,12 @@ def test_explicit_resume_relaunches_typed_pre_id_transport_failure(
             "job_id": "76",
             "job_name": "rt-pre-id-transport-prior-wave",
             "attempt": 1,
-            "outputs": ["s3://unit-bucket/unit-prefix/shared.json"],
+            "outputs": [
+                {
+                    "uri": "s3://unit-bucket/unit-prefix/shared.json",
+                    "schema": "unit.shared.v1",
+                }
+            ],
         }
     )
     state.record_wave(

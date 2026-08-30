@@ -1604,13 +1604,14 @@ class RuntimeLedger:
         unique output remains, the caller fails closed as indeterminate.
         """
 
-        previously_succeeded = {
-            str(uri)
-            for wave in self.state.waves
-            if str(wave.get("status") or "") == "succeeded"
-            for uri in wave.get("outputs") or []
-            if str(uri)
-        }
+        previously_succeeded: set[str] = set()
+        for wave in self.state.waves:
+            if str(wave.get("status") or "") != "succeeded":
+                continue
+            for output in wave.get("outputs") or []:
+                uri = output.get("uri") if isinstance(output, Mapping) else output
+                if str(uri or ""):
+                    previously_succeeded.add(str(uri))
         return [str(uri) for uri in outputs if str(uri) not in previously_succeeded]
 
     def record(self, attempt: WaveAttempt) -> None:
