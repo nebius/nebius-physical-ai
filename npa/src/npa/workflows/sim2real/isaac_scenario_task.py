@@ -26,6 +26,22 @@ EXPECTED_LIGHT_INTENSITY = 3000.0
 STABLE_PLACEMENT_DISTANCE_M = 0.05
 STABLE_PLACEMENT_SPEED_MPS = 0.03
 STABLE_PLACEMENT_STEPS = 3
+# A real nine-pass Franka run drove deterministic held-out reach from 0/64 to
+# 64/64 while contact stayed 0/64 throughout. PPO's sampled training episodes
+# still reported lift reward, but the actor mean kept the binary gripper open.
+# Install the already-proven robot-agnostic grasp terms on the stock scenario
+# task as well: closure is rewarded only near the object, and lift intent remains
+# gated by near + closed so raising an empty hand cannot retain the signal.
+GRASP_CLOSURE_REWARD_WEIGHT = 16.0
+GRASP_CLOSURE_STD_M = 0.06
+GRASP_LIFT_ATTEMPT_REWARD_WEIGHT = 32.0
+GRASP_LIFT_ATTEMPT_STD_M = 0.05
+STOCK_GRIPPER_JOINT_NAMES = (
+    "panda_finger_joint1",
+    "panda_finger_joint2",
+)
+STOCK_GRIPPER_OPEN_POSITION = 0.04
+STOCK_GRIPPER_CLOSED_POSITION = 0.0
 # The first validation canary learned reach/contact and 2/3 grasp+lift, but the
 # closest goal distance remained 0.205-0.364 m.  A 0.15 m tanh scale multiplied
 # by weight 8 is effectively flat at that boundary, so lifting remains the much
@@ -1059,6 +1075,37 @@ def install_env_cfg(env_cfg: Any) -> bool:
     )
     env_cfg.commands.object_pose.class_type = _scenario_command_type()
     env_cfg.commands.object_pose.resampling_time_range = (1.0e9, 1.0e9)
+    # The stock task's sparse lift reward did not teach the deterministic actor
+    # mean to close its gripper on the curated distribution. Reuse the same
+    # embodiment-aware shaping functions as BYO robots, with the stock Franka
+    # finger contract made explicit. Both terms are precursors only; strict
+    # placement remains the unchanged object-space verdict below.
+    import isaac_byo_robot_task as robot_task  # noqa: WPS433 - baked runtime module
+
+    env_cfg.rewards.grasp_closure_curriculum = RewardTermCfg(
+        func=robot_task.grasp_shaping,
+        weight=GRASP_CLOSURE_REWARD_WEIGHT,
+        params={
+            "std": GRASP_CLOSURE_STD_M,
+            "object_name": "object",
+            "ee_frame_name": "ee_frame",
+            "gripper_joint_names": STOCK_GRIPPER_JOINT_NAMES,
+            "gripper_open": STOCK_GRIPPER_OPEN_POSITION,
+            "gripper_close": STOCK_GRIPPER_CLOSED_POSITION,
+        },
+    )
+    env_cfg.rewards.grasp_lift_attempt_curriculum = RewardTermCfg(
+        func=robot_task.grasp_lift_hold,
+        weight=GRASP_LIFT_ATTEMPT_REWARD_WEIGHT,
+        params={
+            "std": GRASP_LIFT_ATTEMPT_STD_M,
+            "object_name": "object",
+            "ee_frame_name": "ee_frame",
+            "gripper_joint_names": STOCK_GRIPPER_JOINT_NAMES,
+            "gripper_open": STOCK_GRIPPER_OPEN_POSITION,
+            "gripper_close": STOCK_GRIPPER_CLOSED_POSITION,
+        },
+    )
     env_cfg.rewards.stable_placement_curriculum = RewardTermCfg(
         func=stable_placement_curriculum,
         weight=STABLE_PLACEMENT_REWARD_WEIGHT,
@@ -1180,6 +1227,15 @@ def install_env_cfg(env_cfg: Any) -> bool:
         json.dumps(
             {
                 **scenario_contract_summary(rows),
+                "grasp_curriculum": {
+                    "closure_reward_weight": GRASP_CLOSURE_REWARD_WEIGHT,
+                    "closure_std_m": GRASP_CLOSURE_STD_M,
+                    "lift_attempt_reward_weight": GRASP_LIFT_ATTEMPT_REWARD_WEIGHT,
+                    "lift_attempt_std_m": GRASP_LIFT_ATTEMPT_STD_M,
+                    "gripper_joint_names": list(STOCK_GRIPPER_JOINT_NAMES),
+                    "gripper_open_position": STOCK_GRIPPER_OPEN_POSITION,
+                    "gripper_closed_position": STOCK_GRIPPER_CLOSED_POSITION,
+                },
                 "placement_curriculum": {
                     "weight": STABLE_PLACEMENT_REWARD_WEIGHT,
                     "approach_std_m": PLACEMENT_APPROACH_STD_M,
