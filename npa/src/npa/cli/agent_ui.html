@@ -12187,10 +12187,77 @@
         const resolvedPrefix = String((run && run.resolved_prefix) || "").trim();
         return [sourceType, project, bucket, resolvedPrefix, runId].join("|");
       }
+      function artifactSourceGroupIdentity(run) {
+        return [
+          String((run && run.project_id) || "").trim(),
+          String((run && run.bucket) || "").trim(),
+          String((run && run.run_id) || "").trim(),
+        ].join("|");
+      }
+      function artifactSourceStableIdentity(run) {
+        return [
+          String((run && run.project_id) || "").trim(),
+          String((run && run.bucket) || "").trim(),
+          String((run && run.resolved_prefix) || "").trim(),
+          String((run && run.run_ref) || "").trim(),
+        ].join("|");
+      }
+      function compareArtifactSourcePreference(a, b) {
+        const activeRef = String(activeArtifactRunRef || "").trim();
+        const activeRun = String(activeRunId || "").trim();
+        const activeScore = (run) => Number(Boolean(
+          activeRef && String((run && run.run_ref) || "").trim() === activeRef &&
+          (!activeRun || String((run && run.run_id) || "").trim() === activeRun)
+        ));
+        const booleanScore = (run, field) => Number(run && run[field] === true);
+        const numericScore = (run, field) => Number((run && run[field]) || 0) || 0;
+        const comparisons = [
+          activeScore(b) - activeScore(a),
+          booleanScore(b, "has_viewable") - booleanScore(a, "has_viewable"),
+          booleanScore(b, "summary_complete") - booleanScore(a, "summary_complete"),
+          numericScore(b, "artifact_count") - numericScore(a, "artifact_count"),
+          String((b && b.last_modified) || "").localeCompare(String((a && a.last_modified) || "")),
+        ];
+        for (const result of comparisons) if (result) return result;
+        return artifactSourceStableIdentity(a).localeCompare(artifactSourceStableIdentity(b));
+      }
+      function consolidateArtifactRunSources(discoveredRuns) {
+        const groups = new Map();
+        for (const run of Array.isArray(discoveredRuns) ? discoveredRuns : []) {
+          const runId = String((run && run.run_id) || "").trim();
+          if (!runId) continue;
+          const key = artifactSourceGroupIdentity(run);
+          const values = groups.get(key) || [];
+          values.push(run);
+          groups.set(key, values);
+        }
+        const consolidated = [];
+        for (const values of groups.values()) {
+          const ranked = [...values].sort(compareArtifactSourcePreference);
+          const primary = Object.assign({}, ranked[0]);
+          // Keep alternate exact provenance internally. It remains a source
+          // option, never evidence that seed/demo media came from policy execution.
+          primary.alternate_sources = ranked.slice(1).map((source) => ({
+            run_id: String(source.run_id || ""),
+            run_ref: String(source.run_ref || ""),
+            project_id: String(source.project_id || ""),
+            bucket: String(source.bucket || ""),
+            resolved_prefix: String(source.resolved_prefix || ""),
+            source_selected: true,
+            has_viewable: source.has_viewable,
+            summary_complete: source.summary_complete,
+            artifact_count: Number(source.artifact_count || 0),
+            last_modified: String(source.last_modified || ""),
+          }));
+          consolidated.push(primary);
+        }
+        return consolidated;
+      }
       function mergeRunsLatestFirst(knownRuns, discoveredRuns) {
         const map = new Map();
         const discoveredByRunId = new Map();
-        for (const run of Array.isArray(discoveredRuns) ? discoveredRuns : []) {
+        const consolidatedDiscovered = consolidateArtifactRunSources(discoveredRuns);
+        for (const run of consolidatedDiscovered) {
           const runId = String((run && run.run_id) || "").trim();
           if (!runId) continue;
           const values = discoveredByRunId.get(runId) || [];
@@ -12205,7 +12272,8 @@
           const identity = String(
             forcedKey || runRef || runEntryIdentity(runId, sourceType, run)
           );
-          const prev = map.get(identity) || {
+          const existing = map.get(identity);
+          const prev = existing || {
             run_id: runId,
             entry_key: identity,
             run_ref: runRef,
@@ -12238,17 +12306,20 @@
           if (run && run.summary_complete === true) prev.summary_complete = true;
           else if (run && run.summary_complete === false && prev.summary_complete !== true) prev.summary_complete = false;
           if (run && run.artifact_count) prev.artifact_count = Number(run.artifact_count) || prev.artifact_count;
-          if (run && run.project_id) prev.project_id = String(run.project_id || "");
-          if (run && run.bucket) prev.bucket = String(run.bucket || "");
-          if (run && run.resolved_prefix) prev.resolved_prefix = String(run.resolved_prefix || "");
+          if (run && run.project_id && !(existing && source === "known")) prev.project_id = String(run.project_id || "");
+          if (run && run.bucket && !(existing && source === "known")) prev.bucket = String(run.bucket || "");
+          if (run && run.resolved_prefix && !(existing && source === "known")) prev.resolved_prefix = String(run.resolved_prefix || "");
           if (run && run.stage) prev.stage = String(run.stage || "");
           prev.entry_key = identity;
-          if (runRef) prev.run_ref = runRef;
+          if (runRef && !(existing && source === "known")) prev.run_ref = runRef;
+          if (run && Array.isArray(run.alternate_sources)) {
+            prev.alternate_sources = run.alternate_sources.map((item) => Object.assign({}, item));
+          }
           if (run && run.source_prefix) prev.source_prefix = String(run.source_prefix || "");
           prev.source = prev.source === "both" || (prev.source && prev.source !== source) ? "both" : source;
           map.set(identity, prev);
         };
-        for (const run of Array.isArray(discoveredRuns) ? discoveredRuns : []) ingest(run, "discovered");
+        for (const run of consolidatedDiscovered) ingest(run, "discovered");
         for (const run of Array.isArray(knownRuns) ? knownRuns : []) {
           const runId = String((run && run.run_id) || run || "").trim();
           const matches = discoveredByRunId.get(runId) || [];
@@ -12266,10 +12337,19 @@
           // of manufacturing a third `history:<run-id>` option.
           const knownRunRef = String((run && run.run_ref) || "").trim();
           const matchingRunRef = knownRunRef && matches.some((match) =>
-            String((match && match.run_ref) || "").trim() === knownRunRef
+            String((match && match.run_ref) || "").trim() === knownRunRef ||
+            (Array.isArray(match && match.alternate_sources) && match.alternate_sources.some((alternate) =>
+              String((alternate && alternate.run_ref) || "").trim() === knownRunRef
+            ))
           );
-          const key = matchingRunRef
-            ? knownRunRef
+          const matchedSource = matchingRunRef && matches.find((match) =>
+            String((match && match.run_ref) || "").trim() === knownRunRef ||
+            (Array.isArray(match && match.alternate_sources) && match.alternate_sources.some((alternate) =>
+              String((alternate && alternate.run_ref) || "").trim() === knownRunRef
+            ))
+          );
+          const key = matchedSource
+            ? String(matchedSource.run_ref || runId)
             : matches.length === 1
             ? String(matches[0].run_ref || runId)
             : "history:" + runId;
@@ -15593,6 +15673,19 @@
           captureMediaViewerFrame,
           previewArtifact,
           artifactContentUrl,
+          consolidateArtifactRunSources,
+          mergeRunsLatestFirst,
+          preferredRunEntry,
+          loadRunData,
+          setArtifactRunsForTest: (knownRuns, discoveredRuns, activeSource) => {
+            const active = activeSource && typeof activeSource === "object" ? activeSource : {};
+            activeRunId = String(active.run_id || "").trim();
+            activeArtifactRunRef = String(active.run_ref || "").trim();
+            activeRunEntryKey = String(active.entry_key || active.run_ref || "").trim();
+            knownAvailableRuns = Array.isArray(knownRuns) ? knownRuns.slice() : [];
+            discoveredArtifactRuns = Array.isArray(discoveredRuns) ? discoveredRuns.slice() : [];
+            return applyMergedRunSelectors(activeRunEntryKey || activeArtifactRunRef || activeRunId);
+          },
           captureDataPaneExcerpt,
           captureVisualContext,
           describeVisual,

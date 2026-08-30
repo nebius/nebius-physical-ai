@@ -36,6 +36,93 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#runSummary").should("contain.text", "mock-run");
   });
 
+  it("consolidates same-bucket aliases and loads a pasted basename from the exact primary source", () => {
+    const runId = "shared-logical-run";
+    const projectId = "project-a";
+    const bucket = "project-artifacts";
+    const output = {
+      run_id: runId,
+      run_ref: "npa1_stronger_output",
+      project_id: projectId,
+      bucket,
+      resolved_prefix: "workflow-output",
+      source_type: "artifact_storage",
+      has_viewable: true,
+      summary_complete: true,
+      artifact_count: 154000,
+      last_modified: "2026-08-30T04:00:00Z",
+    };
+    const seed = {
+      run_id: runId,
+      run_ref: "npa1_seed_input",
+      project_id: projectId,
+      bucket,
+      resolved_prefix: "trigger-input",
+      source_type: "artifact_storage",
+      has_viewable: true,
+      summary_complete: true,
+      artifact_count: 13,
+      last_modified: "2026-08-30T05:00:00Z",
+    };
+    const crossBucket = { ...seed, run_ref: "npa1_other_bucket", bucket: "archive-artifacts" };
+    const crossProject = { ...seed, run_ref: "npa1_other_project", project_id: "project-b" };
+
+    cy.window().then((win) => {
+      const merged = win.__NPA_AGENT_TEST__.mergeRunsLatestFirst(
+        [], [seed, output, crossBucket, crossProject]
+      );
+      expect(merged).to.have.length(3);
+      const sameScope = merged.find((item) => item.project_id === projectId && item.bucket === bucket);
+      expect(sameScope.run_ref).to.eq(output.run_ref);
+      expect(sameScope.alternate_sources).to.deep.include({
+        run_id: runId,
+        run_ref: seed.run_ref,
+        project_id: projectId,
+        bucket,
+        resolved_prefix: seed.resolved_prefix,
+        source_selected: true,
+        has_viewable: true,
+        summary_complete: true,
+        artifact_count: 13,
+        last_modified: seed.last_modified,
+      });
+      const activeMerged = win.__NPA_AGENT_TEST__.setArtifactRunsForTest(
+        [], [seed, output], { run_id: runId, run_ref: seed.run_ref }
+      );
+      expect(activeMerged).to.have.length(1);
+      expect(activeMerged[0].run_ref).to.eq(seed.run_ref);
+      const primaryMerged = win.__NPA_AGENT_TEST__.setArtifactRunsForTest([], [seed, output], {});
+      expect(primaryMerged).to.have.length(1);
+      expect(primaryMerged[0].run_ref).to.eq(output.run_ref);
+    });
+
+    const rrdKey = `${output.resolved_prefix}/${runId}/000-policy-view/policy-rollout.rrd`;
+    cy.intercept("GET", `/api/artifacts/run/${output.run_ref}*`, (req) => {
+      const url = new URL(req.url);
+      expect(url.searchParams.get("project_id")).to.eq(projectId);
+      expect(url.searchParams.get("resource_bucket")).to.eq(bucket);
+      expect(url.searchParams.get("resolved_prefix")).to.eq(output.resolved_prefix);
+      expect(url.searchParams.get("source_selected")).to.eq("1");
+      req.alias = "consolidatedPrimaryArtifacts";
+      req.reply({
+        statusCode: 200,
+        body: {
+          ok: true,
+          ...output,
+          artifacts: [{ key: rrdKey, render: "rerun", role: "output", size: 4096 }],
+          count: 1,
+          truncated: false,
+          next_cursor: "",
+          pagination_complete: true,
+        },
+      });
+    });
+    cy.get("#stagesRunInput").clear().type(runId);
+    cy.get("#stagesRunSelect option").should("have.length", 2);
+    cy.get("#stagesLoadRun").click();
+    cy.wait("@consolidatedPrimaryArtifacts");
+  });
+
   it("merges every artifact page before globally preferring a later-page RRD", () => {
     const runId = "paginated-preference-run";
     const runRef = "npa1_paginated_preference";
@@ -1240,7 +1327,7 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#chatLog").should("contain.text", "Latest workflow status");
 
     cy.get("#tabRerun").click();
-    cy.get('#runIdSelect option[value="mock-run"][data-source-type="workflow_history"]').then(($opt) => {
+    cy.get('#runIdSelect option[value="cosmos-reason-run"][data-source-type="workflow_history"]').then(($opt) => {
       const select = $opt[0].parentElement;
       select.selectedIndex = [...select.options].indexOf($opt[0]);
       cy.wrap(select).trigger("change");
@@ -1248,7 +1335,7 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.wait("@loadRun");
     cy.get("#tabMain").click();
     cy.get("#chatLog").should("contain.text", "Loaded run context");
-    cy.get("#runLog").should("contain.text", "mock run log");
+    cy.get("#runLog").should("contain.text", "generic workflow stages active");
     cy.get("#stagesPanel h3").should("have.text", "Stages");
 
     cy.get("#tabRerun").click();
@@ -2509,7 +2596,7 @@ describe("NPA agent UI with mocked APIs", () => {
     });
   });
 
-  it("keeps duplicate run basenames as separate source-qualified cards", () => {
+  it("consolidates duplicate same-bucket basenames onto the stronger exact source", () => {
     const RUN_ID = "duplicate-run";
     const REF_A = "npa1_source_a";
     const REF_B = "npa1_source_b";
@@ -2519,8 +2606,8 @@ describe("NPA agent UI with mocked APIs", () => {
         ok: true,
         contract: "s3-source-qualified-v1",
         runs: [
-          { run_id: RUN_ID, run_ref: REF_A, bucket: "mock", project_id: "project-local", resolved_prefix: "shared/category-a", source_prefix: "shared/category-a", has_viewable: true, artifact_count: 1 },
-          { run_id: RUN_ID, run_ref: REF_B, bucket: "mock", project_id: "project-local", resolved_prefix: "shared/category-b", source_prefix: "shared/category-b", has_viewable: true, artifact_count: 1 },
+          { run_id: RUN_ID, run_ref: REF_A, bucket: "mock", project_id: "project-local", resolved_prefix: "shared/category-a", source_prefix: "shared/category-a", has_viewable: true, summary_complete: true, artifact_count: 1 },
+          { run_id: RUN_ID, run_ref: REF_B, bucket: "mock", project_id: "project-local", resolved_prefix: "shared/category-b", source_prefix: "shared/category-b", has_viewable: true, summary_complete: true, artifact_count: 2 },
         ],
         total_runs: 2,
         truncated: false,
@@ -2549,8 +2636,9 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#artifactRefreshRuns").should("be.enabled").and("have.attr", "aria-busy", "false");
     cy.get("#runIdSelect option").should(($opts) => {
       const values = [...$opts].map((option) => option.value).filter(Boolean);
-      expect(values).to.include(REF_A);
       expect(values).to.include(REF_B);
+      expect(values).not.to.include(REF_A);
+      expect(values.filter((value) => value === REF_B)).to.have.length(1);
       expect(values.filter((value) => value === RUN_ID)).to.have.length(0);
     });
     cy.get("#runIdSelect").select(REF_B, { force: true });
