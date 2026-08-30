@@ -181,6 +181,26 @@ def test_run_state_store_persists_exact_nonempty_workflow_artifact() -> None:
         state_store.write_artifact("../escape.yaml", body)
 
 
+def test_run_state_store_uses_explicit_artifact_listing_capability() -> None:
+    listed: list[tuple[str, str]] = []
+
+    def artifact_lister(bucket: str, prefix: str) -> list[str]:
+        listed.append((bucket, prefix))
+        return [f"{prefix}b.json", f"{prefix}a.json", "other/key.json"]
+
+    state_store = RunStateStore(
+        bucket="bucket",
+        prefix="runs/demo",
+        artifact_lister=artifact_lister,
+    )
+
+    assert state_store.list_artifacts("supervisor") == [
+        "supervisor/a.json",
+        "supervisor/b.json",
+    ]
+    assert listed == [("bucket", "runs/demo/supervisor/")]
+
+
 def test_run_state_store_artifact_uses_explicit_storage_credentials(
     monkeypatch,
 ) -> None:

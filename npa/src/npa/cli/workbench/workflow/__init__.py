@@ -366,7 +366,21 @@ def submit_cmd(
     retries: int = typer.Option(
         0,
         "--retries",
-        help="With --runtime: retry a failed wave this many times before failing the run.",
+        min=0,
+        help=(
+            "With --runtime: retry payload/terminal wave failures this many times. "
+            "Infrastructure recovery uses --max-infrastructure-recoveries instead."
+        ),
+    ),
+    max_infrastructure_recoveries: int = typer.Option(
+        1,
+        "--max-infrastructure-recoveries",
+        min=0,
+        help=(
+            "With --runtime: maximum typed infrastructure recoveries per wave "
+            "(capacity, quota, node-not-ready, or provider interruption). "
+            "Zero disables automatic infrastructure relaunch."
+        ),
     ),
     max_concurrency: int = typer.Option(
         0,
@@ -1648,6 +1662,7 @@ def submit_cmd(
                 max_wait_seconds=max_wait_seconds,
                 cancel_on_timeout=cancel_on_timeout,
                 retries=retries,
+                max_infrastructure_recoveries=max_infrastructure_recoveries,
                 max_concurrency=max_concurrency,
                 resume=resume,
                 retry_absent_in_flight=retry_absent_in_flight,
@@ -2224,6 +2239,7 @@ def _run_npa_workflow_runtime(
     max_wait_seconds: int,
     cancel_on_timeout: bool,
     retries: int,
+    max_infrastructure_recoveries: int,
     max_concurrency: int,
     resume: bool,
     retry_absent_in_flight: bool,
@@ -2288,6 +2304,7 @@ def _run_npa_workflow_runtime(
         poll_seconds=poll_seconds,
         max_wait_seconds=max_wait_seconds,
         retries=max(0, retries),
+        max_infrastructure_recoveries=max(0, max_infrastructure_recoveries),
         cancel_on_timeout=cancel_on_timeout,
         max_concurrency=max(0, max_concurrency),
         secret_envs=resolved_secret_envs,

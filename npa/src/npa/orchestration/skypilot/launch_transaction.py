@@ -650,6 +650,28 @@ def run_launch_transaction(
             else:
                 after_success = reconcile()
                 transaction.reconciliations.append(after_success.to_dict())
+                # `sky jobs launch --async` returns after the API request is
+                # accepted, before the managed-job row is necessarily visible.
+                # Reconcile the exact logical name under the existing finite
+                # launch-transaction deadline; never interpret temporary
+                # absence as permission for a second provider submission.
+                reconciliation_sequence = 0
+                while (
+                    after_success.state is ReconciliationState.ABSENT
+                    and clock() < deadline
+                ):
+                    reconciliation_sequence += 1
+                    delay = recovery_policy.delay(
+                        reconciliation_sequence,
+                        random_value=random_source(),
+                    )
+                    if progress is not None:
+                        progress(
+                            "launch accepted; waiting for exact managed-job observability"
+                        )
+                    sleeper(delay)
+                    after_success = reconcile()
+                    transaction.reconciliations.append(after_success.to_dict())
                 if after_success.state is ReconciliationState.FOUND:
                     transaction.existence = "found"
                     transaction.state = LaunchState.SUBMITTED

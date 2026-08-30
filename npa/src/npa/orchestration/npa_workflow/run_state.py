@@ -6,7 +6,7 @@ import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import re
-from typing import Any, Mapping, Sequence
+from typing import Any, Callable, Iterable, Mapping, Sequence
 
 RUN_SCHEMA_VERSION = "npa.workflow.run.v1"
 RUNTIME_SCHEMA_VERSION = "npa.workflow.runtime.v1"
@@ -504,6 +504,7 @@ class RunStateStore:
         prefix: str,
         reader: Any | None = None,
         writer: Any | None = None,
+        artifact_lister: Callable[[str, str], Iterable[str]] | None = None,
         endpoint_url: str = "",
         aws_access_key_id: str = "",
         aws_secret_access_key: str = "",
@@ -512,6 +513,7 @@ class RunStateStore:
         self.prefix = prefix.rstrip("/")
         self._reader = reader
         self._writer = writer
+        self._artifact_lister = artifact_lister
         self._endpoint_url = endpoint_url
         self._aws_access_key_id = aws_access_key_id
         self._aws_secret_access_key = aws_secret_access_key
@@ -623,22 +625,11 @@ class RunStateStore:
         if ".." in prefix.split("/"):
             raise ValueError("run artifact prefix must be safe")
         target = f"{self.prefix}/{prefix}".rstrip("/") + "/"
-        writer_owner = getattr(self._writer, "__self__", self._writer)
-        reader_owner = getattr(self._reader, "__self__", self._reader)
-        if writer_owner is not None and hasattr(writer_owner, "objects"):
-            # Test adapters may expose their backing object map on the writer.
-            objects = getattr(writer_owner, "objects")
+        if self._artifact_lister is not None:
             return sorted(
-                key.removeprefix(f"{self.prefix}/")
-                for key in objects
-                if key.startswith(target)
-            )
-        if reader_owner is not None and hasattr(reader_owner, "objects"):
-            objects = getattr(reader_owner, "objects")
-            return sorted(
-                key.removeprefix(f"{self.prefix}/")
-                for key in objects
-                if key.startswith(target)
+                str(key).removeprefix(f"{self.prefix}/")
+                for key in self._artifact_lister(self.bucket, target)
+                if str(key).startswith(target)
             )
         from npa.clients.storage import StorageClient
 

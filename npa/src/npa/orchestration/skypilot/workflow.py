@@ -704,6 +704,7 @@ def submit_workflow(
             "launch",
             "--name",
             run_id,
+            "--async",
             "--detach-run",
             "--yes",
             str(prepared_yaml),

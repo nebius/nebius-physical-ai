@@ -20,6 +20,7 @@ from npa.orchestration.npa_workflow.supervisor import (
     RecoveryContext,
     ServerlessRecoverySpec,
     ServerlessSupervisorAdapter,
+    SkyPilotSupervisorAdapter,
     SupervisorLedger,
     WorkflowRunSupervisor,
     classify_observation,
@@ -36,6 +37,7 @@ class MemoryStore(RunStateStore):
             prefix="runs/run-1",
             reader=self._read_object,
             writer=self._write_object,
+            artifact_lister=self._list_objects,
         )
 
     def _read_object(self, _bucket: str, key: str) -> bytes:
@@ -45,6 +47,9 @@ class MemoryStore(RunStateStore):
 
     def _write_object(self, _bucket: str, key: str, body: bytes) -> None:
         self.objects[key] = body
+
+    def _list_objects(self, _bucket: str, prefix: str) -> list[str]:
+        return [key for key in self.objects if key.startswith(prefix)]
 
 
 def identity(**overrides: Any) -> AttemptIdentity:
@@ -275,6 +280,48 @@ def test_partial_output_evidence_blocks_transient_relaunch() -> None:
     assert decision.reason_code == "OUTPUT_EVIDENCE_AMBIGUOUS"
 
 
+def test_infrastructure_recovery_policy_exhaustion_is_terminal() -> None:
+    decision = decide_recovery(
+        identity(),
+        BackendObservation(BackendState.QUEUED, reason_code="NODE_NOT_READY"),
+        replace(
+            context(),
+            infrastructure_recoveries=2,
+            max_infrastructure_recoveries=2,
+        ),
+    )
+
+    assert decision.action is RecoveryAction.CANCEL_AND_TERMINALIZE
+    assert decision.reason_code == "INFRASTRUCTURE_RECOVERY_EXHAUSTED"
+    assert not decision.relaunch_allowed
+
+
+def test_exhaustion_requires_verified_exact_cancellation() -> None:
+    adapter = RecordingAdapter(
+        BackendObservation(BackendState.QUEUED, reason_code="NODE_NOT_READY")
+    )
+    adapter.cancel_exact = lambda _attempt: {  # type: ignore[method-assign]
+        "provider_job_id": "job-1",
+        "status": "cancelling",
+        "exact": True,
+    }
+
+    result = WorkflowRunSupervisor(
+        adapter=adapter, ledger=SupervisorLedger(MemoryStore())
+    ).reconcile(
+        identity(),
+        replace(
+            context(),
+            infrastructure_recoveries=1,
+            max_infrastructure_recoveries=1,
+        ),
+    )
+
+    assert result["recovery"]["action"] == "block_relaunch"
+    assert result["recovery"]["reason_code"] == "CANCELLATION_UNVERIFIED"
+    assert adapter.launched == []
+
+
 def test_checkpoint_recovery_requires_real_loader_and_valid_checkpoint() -> None:
     unsupported = decide_recovery(
         identity(),
@@ -303,6 +350,39 @@ def test_checkpoint_recovery_requires_real_loader_and_valid_checkpoint() -> None
     assert not unsupported.relaunch_allowed
     assert supported.action is RecoveryAction.RESUME_APPLICATION_CHECKPOINT
     assert supported.checkpoint_mode == "application_checkpoint"
+
+
+def test_skypilot_adapter_prefers_typed_event_over_unknown_pod_diagnostic() -> None:
+    from npa.orchestration.skypilot.job_blockers import JobBlockerReport, PodBlocker
+    from npa.orchestration.skypilot.workflow import ManagedJobEvidence
+
+    adapter = SkyPilotSupervisorAdapter(
+        lookup=lambda _name, *, job_id="": ManagedJobEvidence(
+            "found", job_id=job_id, status="PENDING"
+        ),
+        blocker_inspector=lambda **_kwargs: JobBlockerReport(
+            blockers=[
+                PodBlocker(
+                    pod="exact-pod",
+                    phase="Pending",
+                    reason="SchedulingGated",
+                    reason_code="PENDING_UNKNOWN",
+                ),
+                PodBlocker(
+                    pod="exact-pod",
+                    phase="Pending",
+                    reason="FailedScheduling",
+                    message="quota exhausted",
+                    reason_code="CAPACITY_OR_QUOTA",
+                ),
+            ]
+        ),
+    )
+
+    observation = adapter.observe(identity())
+
+    assert observation.reason_code == "CAPACITY_OR_QUOTA"
+    assert classify_observation(observation) is FailureClass.TRANSIENT_INFRASTRUCTURE
 
 
 def test_process_restart_reads_content_addressed_immutable_history() -> None:

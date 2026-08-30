@@ -230,6 +230,8 @@ class RecoveryContext:
     outputs: ArtifactValidation
     preflight: PreflightEvidence = field(default_factory=PreflightEvidence)
     checkpoint: CheckpointValidation = field(default_factory=CheckpointValidation)
+    infrastructure_recoveries: int = 0
+    max_infrastructure_recoveries: int = 1
 
 
 @dataclass(frozen=True)
@@ -361,6 +363,19 @@ def decide_recovery(
             "IMMUTABLE_IDENTITY_MISMATCH",
             "Restore the recorded workflow, source, and image identities or start a new NPA run ID.",
         )
+    if context.infrastructure_recoveries >= context.max_infrastructure_recoveries:
+        action = (
+            RecoveryAction.CANCEL_AND_TERMINALIZE
+            if observation.state in {BackendState.QUEUED, BackendState.RUNNING}
+            and identity.provider_job_id
+            else RecoveryAction.TERMINALIZE
+        )
+        return RecoveryDecision(
+            action,
+            failure_class,
+            "INFRASTRUCTURE_RECOVERY_EXHAUSTED",
+            "The finite infrastructure recovery policy is exhausted; cancel the exact live attempt when present, then inspect the durable attempt history before explicitly starting or resuming a run.",
+        )
     if context.outputs.all_valid:
         return RecoveryDecision(
             RecoveryAction.REUSE_COMPLETED_WAVE,
@@ -439,7 +454,12 @@ class SupervisorLedger:
                 continue
             if isinstance(payload, dict) and payload.get("schema_version") == SUPERVISOR_SCHEMA_VERSION:
                 result.append(payload)
-        phase_order = {"decision": 0, "cancellation": 1, "launch": 2}
+        phase_order = {
+            "decision": 0,
+            "cancellation": 1,
+            "recovery_reserved": 2,
+            "launch": 2,
+        }
         return sorted(
             result,
             key=lambda item: (
@@ -480,11 +500,39 @@ class WorkflowRunSupervisor:
             "outputs": context.outputs.to_dict(),
             "checkpoint": context.checkpoint.to_dict(),
             "preflight": context.preflight.to_dict(),
+            "infrastructure_recovery_policy": {
+                "used": context.infrastructure_recoveries,
+                "limit": context.max_infrastructure_recoveries,
+                "exhausted": (
+                    context.infrastructure_recoveries
+                    >= context.max_infrastructure_recoveries
+                ),
+            },
         }
         base["event_uri"] = self.ledger.record(base)
         if decision.action is RecoveryAction.CANCEL_AND_TERMINALIZE:
             cancellation = _sanitized_mapping(self.adapter.cancel_exact(identity))
-            result = {**base, "recorded_at": utc_now(), "phase": "cancellation", "cancellation": cancellation}
+            result = {
+                **base,
+                "recorded_at": utc_now(),
+                "phase": "cancellation",
+                "cancellation": cancellation,
+            }
+            cancel_status = str(cancellation.get("status") or "").lower()
+            if not bool(cancellation.get("exact")) or cancel_status not in {
+                "cancelled",
+                "canceled",
+                "failed",
+                "succeeded",
+            }:
+                blocked = RecoveryDecision(
+                    RecoveryAction.BLOCK_RELAUNCH,
+                    FailureClass.UNKNOWN,
+                    "CANCELLATION_UNVERIFIED",
+                    "Verify terminal state for the exact provider attempt before terminalizing recovery.",
+                )
+                result["classification"] = blocked.failure_class.value
+                result["recovery"] = blocked.to_dict()
             result["event_uri"] = self.ledger.record(result)
             return result
         if decision.relaunch_allowed:
@@ -521,10 +569,11 @@ class WorkflowRunSupervisor:
             launched = self.adapter.launch_recovery(
                 identity, checkpoint=context.checkpoint
             )
+            deferred = bool(getattr(self.adapter, "deferred_launch", False))
             result = {
                 **base,
                 "recorded_at": utc_now(),
-                "phase": "launch",
+                "phase": "recovery_reserved" if deferred else "launch",
                 "new_attempt_identity": launched.to_dict(),
             }
             result["event_uri"] = self.ledger.record(result)
@@ -534,6 +583,10 @@ class WorkflowRunSupervisor:
 
 class SkyPilotSupervisorAdapter:
     runtime = "skypilot"
+    # SkyPilot provider creation remains inside the runtime's existing
+    # crash-safe launch transaction. The adapter reserves the next immutable
+    # identity; the outer wave loop crosses the provider boundary.
+    deferred_launch = True
 
     def __init__(
         self,
@@ -602,12 +655,27 @@ class SkyPilotSupervisorAdapter:
                     }
                 )
             if blocker_payload:
-                reason = blocker_payload[0]["reason_code"]
-                message = blocker_payload[0]["message"]
+                typed_codes = (
+                    CONFIGURATION_REASON_CODES
+                    | TRANSIENT_REASON_CODES
+                    | PAYLOAD_REASON_CODES
+                )
+                selected = next(
+                    (
+                        blocker
+                        for blocker in blocker_payload
+                        if blocker["reason_code"] in typed_codes
+                    ),
+                    blocker_payload[0],
+                )
+                reason = selected["reason_code"]
+                message = selected["message"]
             elif getattr(report, "unready_nodes", None):
                 reason = "NODE_NOT_READY"
             elif getattr(report, "error", ""):
-                reason = "CONTROLLER_UNAVAILABLE"
+                # The exact managed-job queue observation above is authoritative.
+                # Failure of the optional pod diagnostic must not manufacture a
+                # transient failure and trigger cancellation/relaunch.
                 message = str(getattr(report, "error", ""))
         return BackendObservation(
             state,

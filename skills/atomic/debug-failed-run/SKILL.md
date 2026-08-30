@@ -40,7 +40,10 @@ Runtime-supervised runs also expose `supervisor.classification` and
 `supervisor.recovery` in JSON status. `actionable_configuration` means automatic
 retry has stopped and only the exact recorded attempt was cancelled;
 `transient_infrastructure` records adoption or a new attempt under the same run
-ID; `payload` is not retried; `unknown` blocks relaunch to prevent duplicates.
+ID until the finite `--max-infrastructure-recoveries` policy is exhausted;
+`payload` uses only explicit `--retries`; `unknown` blocks relaunch to prevent
+duplicates. `INFRASTRUCTURE_RECOVERY_EXHAUSTED` is terminal durable evidence, not
+permission to increase payload retries implicitly.
 
 Add `--watch --interval 10` to follow a run to a terminal state. Use `--cached`
 only when the live controller is unreachable: its output is explicitly marked
