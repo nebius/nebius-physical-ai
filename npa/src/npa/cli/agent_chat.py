@@ -1660,6 +1660,26 @@ def apis_for_intent(intent: str) -> list[str]:
 #: which is a different file from the SkyPilot template of the same name, so the
 #: agent must lead with the spec-authoring skill rather than the SkyPilot one.
 KEYWORD_SKILL_RULES: tuple[tuple[tuple[str, ...], tuple[str, ...], str], ...] = (
+    (
+        ("approval",),
+        ("hugging face", "hf", "ngc", "catalog", "model", "dataset", "artifact"),
+        "access-approval",
+    ),
+    (
+        ("approve",),
+        ("hugging face", "hf", "ngc", "catalog", "model", "dataset", "artifact"),
+        "access-approval",
+    ),
+    (
+        ("access",),
+        ("hugging face", "hf", "ngc", "catalog", "gated"),
+        "access-approval",
+    ),
+    (
+        ("prepare",),
+        ("hugging face", "hf", "ngc", "catalog", "gated"),
+        "access-approval",
+    ),
     (("cosmos3",), ("workflow", "yaml", "spec"), "cosmos3-npa-workflow"),
     (("cosmos 3",), ("workflow", "yaml", "spec"), "cosmos3-npa-workflow"),
 )

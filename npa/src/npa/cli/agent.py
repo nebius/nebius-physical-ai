@@ -4775,6 +4775,7 @@ def chat(payload: dict):
             "grounded": True,
             "tier": "grounded-access-approval",
             "apis_used": ["access-approvals"],
+            "skills_used": ["access-approval"],
             "approval_plan": access_plan,
             "open_urls": open_urls,
             "safe_handoff": access_action in {{"open", "later"}},

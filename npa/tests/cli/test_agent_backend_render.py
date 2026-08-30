@@ -3156,8 +3156,61 @@ def test_rendered_backend_loads_real_skill_excerpts(monkeypatch, tmp_path):
         )
         assert names[0] == "cosmos3-npa-workflow", names
         assert "npa.workflow" in context
+
+        access_excerpt = module._skill_excerpt("access-approval")
+        assert access_excerpt, "access-approval excerpt is empty"
+        access_names, access_context = module._resolve_skill_context(
+            user_text="prepare full catalog access", intent=None
+        )
+        assert access_names[0] == "access-approval", access_names
+        assert "human-bound" in access_context
     finally:
         sys.modules.pop("npa_rendered_skill_backend", None)
+
+
+def test_rendered_grounded_access_approval_reports_skill_without_model_call(
+    monkeypatch, tmp_path
+) -> None:
+    module_name = "npa_rendered_access_approval_skill_backend"
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+    state: dict[str, object] = {}
+    plan = {
+        "status": "blocked",
+        "counts": {"hf": 1, "ngc": 0},
+        "official_urls": ["https://huggingface.co/vendor/repo"],
+        "resume_command": "npa configure --prepare-catalog-access",
+    }
+    monkeypatch.setattr(module, "_load_state", lambda: state)
+    monkeypatch.setattr(module, "_save_state", lambda _state: None)
+    monkeypatch.setattr(module._access_approval, "build_plan", lambda **_kwargs: plan)
+    monkeypatch.setattr(
+        module,
+        "_provider_chat",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("approval interaction must remain zero-token grounded")
+        ),
+    )
+    try:
+        response = module.chat(
+            {
+                "messages": [
+                    {"role": "user", "content": "prepare full catalog access"}
+                ]
+            }
+        )
+        assert response["grounded"] is True
+        assert response["tier"] == "grounded-access-approval"
+        assert response["skills_used"] == ["access-approval"]
+        assert response["open_urls"] == []
+
+        opened = module.chat(
+            {"messages": [{"role": "user", "content": "yes"}]}
+        )
+        assert opened["grounded"] is True
+        assert opened["skills_used"] == ["access-approval"]
+        assert opened["open_urls"] == ["https://huggingface.co/vendor/repo"]
+    finally:
+        sys.modules.pop(module_name, None)
 
 
 def test_rendered_backend_has_no_mangled_regex_escapes(monkeypatch) -> None:
