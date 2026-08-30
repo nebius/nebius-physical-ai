@@ -819,8 +819,11 @@ class SkyPilotWaveExecutor:
                 }
             )
             if explicit_retry:
-                outputs_absent, output_state = self._declared_outputs_absent(
+                recovery_outputs = self.ledger.outputs_not_from_succeeded_waves(
                     attempt.outputs
+                )
+                outputs_absent, output_state = self._declared_outputs_absent(
+                    recovery_outputs
                 )
                 if not outputs_absent:
                     attempt.status = "failed"
@@ -1590,6 +1593,25 @@ class RuntimeLedger:
 
     def latest_wave(self, key: str) -> dict[str, Any] | None:
         return self.state.latest_wave(key)
+
+    def outputs_not_from_succeeded_waves(self, outputs: Sequence[str]) -> list[str]:
+        """Return outputs that are not already attributed to completed waves.
+
+        Looping workflows may intentionally rewrite a shared component record while
+        also emitting an iteration-unique result.  A shared record from an earlier
+        succeeded wave cannot prove that an indeterminate later launch ran, so only
+        wave-unique outputs participate in explicit absent-launch recovery.  If no
+        unique output remains, the caller fails closed as indeterminate.
+        """
+
+        previously_succeeded = {
+            str(uri)
+            for wave in self.state.waves
+            if str(wave.get("status") or "") == "succeeded"
+            for uri in wave.get("outputs") or []
+            if str(uri)
+        }
+        return [str(uri) for uri in outputs if str(uri) not in previously_succeeded]
 
     def record(self, attempt: WaveAttempt) -> None:
         self.state.record_wave(attempt.to_dict())

@@ -2229,6 +2229,7 @@ def test_explicit_absent_resume_refuses_existing_declared_output(
         "    resources: cpu\n\n  shard-b:",
         "    resources: cpu\n"
         "    outputs:\n"
+        '      - uri: "s3://{{config.bucket}}/{{config.prefix}}/shared.json"\n'
         '      - uri: "s3://{{config.bucket}}/{{config.prefix}}/shard-a.json"\n\n'
         "  shard-b:",
         1,
@@ -2297,6 +2298,16 @@ def test_explicit_resume_relaunches_typed_pre_id_transport_failure(
     state = RuntimeRunState(workflow=spec.name, run_id="rt-pre-id-transport")
     state.record_wave(
         {
+            "key": "000|serial|:prior-wave:-",
+            "status": "succeeded",
+            "job_id": "76",
+            "job_name": "rt-pre-id-transport-prior-wave",
+            "attempt": 1,
+            "outputs": ["s3://unit-bucket/unit-prefix/shared.json"],
+        }
+    )
+    state.record_wave(
+        {
             "key": "001|shards|shards:shard-a:-,shards:shard-b:-",
             "status": "failed",
             "job_id": "",
@@ -2323,7 +2334,8 @@ def test_explicit_resume_relaunches_typed_pre_id_transport_failure(
         submitter=submitter,
         options=options,
         store=store,
-        output_checker=lambda _uri: bool(submitter.calls),
+        output_checker=lambda uri: uri.endswith("/shared.json")
+        or bool(submitter.calls),
         reconcile_fn=lambda *_args, **_kwargs: ManagedJobEvidence("absent"),
     )
 
