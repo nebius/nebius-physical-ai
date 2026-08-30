@@ -393,6 +393,18 @@ def test_ui_and_backend_visual_feedback_contract() -> None:
     assert "Date.now() < deadline" in primer_source
     assert "bridge.video.readyState >= 2" not in primer_source
 
+    probe_source = ui_html.split("async function probeRerunCanvasContent", 1)[1].split(
+        "function rerunViewerShowsBundleSplash", 1
+    )[0]
+    assert "grabFromRerunCaptureBridge(500, { forceRestart: false })" in probe_source
+    assert "grabFromRerunCaptureBridge(500, { forceRestart: true })" not in probe_source
+
+    grab_source = ui_html.split("async function grabFromRerunCaptureBridge", 1)[1].split(
+        "async function captureCanvasDataUrl", 1
+    )[0]
+    assert "restartAt" not in grab_source
+    assert "ensureRerunCaptureBridge(iframe, { forceRestart: true })" not in grab_source
+
     quality_source = ui_html.split("async function waitForQualityRerunFrame", 1)[1].split(
         "async function captureRerunViewerFrame", 1
     )[0]

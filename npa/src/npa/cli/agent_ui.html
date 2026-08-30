@@ -8799,14 +8799,15 @@
         const budget = Math.max(200, Number(timeoutMs || 2500));
         const run = async () => {
           const iframe = document.getElementById("rerunFrame");
-          // Fresh stream avoids returning stale composited frames after canvas repaints (gray/splash).
-          let restarted = Boolean(opts && opts.forceRestart);
-          let bridge = ensureRerunCaptureBridge(iframe, { forceRestart: restarted });
+          // Preserve the mount-time stream unless a caller explicitly requests
+          // a restart. A live late-created track can expose the right canvas
+          // dimensions while never producing its first decodable video frame.
+          const forceRestart = Boolean(opts && opts.forceRestart);
+          let bridge = ensureRerunCaptureBridge(iframe, { forceRestart });
           if (!bridge || !bridge.video) return "";
           await playVideoSoon(bridge.video, Math.min(300, budget));
           const fallbackBudget = Math.min(1200, Math.max(400, Math.floor(budget / 3)));
           const deadline = Date.now() + Math.max(200, budget - fallbackBudget);
-          const restartAt = Date.now() + Math.max(120, Math.floor((budget - fallbackBudget) * 0.55));
           while (Date.now() < deadline) {
             try {
               const track = bridge.stream && bridge.stream.getVideoTracks && bridge.stream.getVideoTracks()[0];
@@ -8822,16 +8823,6 @@
                 }
               }
             } catch (_grabErr) { /* retry */ }
-            // Chromium can retain a captureStream track that is live but stops
-            // publishing after the WebGL canvas repaints.  Give the existing
-            // bridge a fair chance, then replace it within the same bounded
-            // budget instead of returning a false metadata-only result.
-            if (!restarted && Date.now() >= restartAt) {
-              restarted = true;
-              bridge = ensureRerunCaptureBridge(iframe, { forceRestart: true });
-              if (!bridge || !bridge.video) return "";
-              await playVideoSoon(bridge.video, Math.min(300, Math.max(100, deadline - Date.now())));
-            }
             await new Promise((r) => window.setTimeout(r, 80));
           }
           // Some headless/accelerated browsers expose a valid capture stream but
@@ -9692,7 +9683,7 @@
             Date.now() - rerunRecordingActivatedAt < activationSettleMs
           ) return false;
           if (rerunViewerShowsBundleSplash(iframe)) return false;
-          const bridged = await grabFromRerunCaptureBridge(500, { forceRestart: true });
+          const bridged = await grabFromRerunCaptureBridge(500, { forceRestart: false });
           if (bridged) {
             lastRerunNonBlankAt = Date.now();
             return true;
