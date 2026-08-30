@@ -321,6 +321,12 @@ def classify_pending_reason(
         return "IMAGE_PULL_FAILED"
     if "invalidimagename" in normalized:
         return "IMAGE_REFERENCE_INVALID"
+    if "createcontainerconfigerror" in normalized:
+        if "secret" in combined:
+            return "MISSING_SECRET"
+        if "configmap" in combined:
+            return "MISSING_CONFIGMAP"
+        return "CREATE_CONTAINER_CONFIG_ERROR"
     if source == "init" or "init" in combined:
         return "INIT_CONTAINER_FAILED"
     if "crashloopbackoff" in normalized or "containercannotrun" in normalized:

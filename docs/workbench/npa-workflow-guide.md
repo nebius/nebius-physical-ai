@@ -180,10 +180,57 @@ npa workbench workflow submit <spec.yaml> --run-id <id> --runtime \
 | Data-dependent branching | `transitions` outside a loop body are resolved from the real decision artifact (`goto`) |
 | Trigger / watch | A state's `trigger:` prefix is polled by the driver before its wave is submitted |
 | Retry / resume | Every wave attempt is written to `<config.prefix>/npa-workflow/runtime.json` (`npa.workflow.runtime.v1`); `--resume` replays succeeded waves instead of resubmitting them |
+| Automated supervision | The CPU-side runtime observes the exact recorded SkyPilot job and Kubernetes pods, classifies stalls, cancels only an exact actionable configuration attempt, and recovers only a proven transient incomplete wave |
 | Timeout | A positive `--max-wait-seconds` bounds each wave; `0` waits indefinitely. `--no-cancel-on-timeout` preserves a timed-out job as in-flight so `--resume` adopts it instead of submitting a duplicate |
 
 Design notes: [`DESIGN.md`](../../DESIGN.md). Live evidence:
 [`EVIDENCE.md`](../../EVIDENCE.md).
+
+#### Durable run supervision and recovery
+
+The supervisor is part of the standard workflow runtime, runs outside ephemeral
+payload pods, and needs no GPU. SkyPilot remains the sole Kubernetes
+orchestrator. The durable runtime ledger and content-addressed events under
+`npa-workflow/supervisor/attempts/` are the source of truth; restarting the
+driver with the same explicit run ID reconciles those records instead of relying
+on process memory.
+
+Before any initial or recovered launch, submit reuses the normal exact-image,
+credential/access, accelerator-resolution, per-node GPU-shape, and gang-capacity
+preflights. A recovered attempt is permitted only after all of those checks pass
+again, the workflow/source/image identity matches, declared S3 output evidence
+is authoritative, and any live prior attempt is cancelled by exact provider ID
+with terminal verification.
+
+Machine-readable evidence distinguishes:
+
+- `actionable_configuration`: image pull/auth/reference errors, missing
+  Secrets/ConfigMaps, malformed pod configuration, and impossible accelerator or
+  per-node GPU placement. Retry stops immediately and the exact attempt is
+  terminalized with remediation.
+- `transient_infrastructure`: provider interruption/preemption, node loss,
+  capacity, Kubernetes transport/rate-limit/server failures. Recovery adopts an
+  exact live attempt or records a new provider attempt for only the incomplete
+  wave under the same NPA run ID.
+- `payload`: the workload ran and failed, or claimed success without its declared
+  outputs. Infrastructure retry is disabled.
+- `unknown`: missing, conflicting, or ambiguous backend identity/evidence.
+  Relaunch and fuzzy cancellation are blocked to prevent duplicates.
+
+`npa workbench workflow status <run-id> --json` includes the latest supervisor
+classification, recovery action, exact attempt identity, output/checkpoint
+validation, preflight evidence, and remediation. Evidence is credential-redacted.
+The shared Python contract also includes a Nebius Serverless Jobs adapter; a
+serverless recovery creates a deterministic new provider attempt under the same
+run ID and verified output/checkpoint prefix, and adopts that attempt after a
+process restart instead of creating a duplicate.
+
+Checkpoint semantics are deliberately narrow. A completed wave may be reused
+only when every declared non-empty S3 output validates. An incomplete wave is
+restarted from its boundary by default. Mid-stage recovery is allowed only when
+the tool explicitly supplies a compatible checkpoint loader and the checkpoint
+is validated; tools without that implementation are reported as unsupported,
+not checkpoint-resumable.
 
 ### Live submit E2E
 
@@ -252,9 +299,9 @@ NPA_INTEGRATION_E2E=1 npa/.venv/bin/python -m pytest npa/tests/e2e/test_npa_work
 - Gang scheduling and runtime manifest-driven `foreach`
 - Multi-step branches inside a `parallel:` group (members are leaf states)
 - JSON Schema validation of artifact payloads
-- A detached/daemonized `--runtime` driver, and a unified `workflow status` for
-  npa.workflow runs (the runtime ledger JSON is the source of truth today; the
-  sim2real path is separate)
+- A detached/daemonized `--runtime` service. The lightweight supervisor runs in
+  the CPU-side runtime process and resumes durably through `--resume-run`; it is
+  not deployed into ephemeral GPU payloads.
 
 Parallel fan-out **is** supported as of the `parallel:` / `maxConcurrency` fields
 above — the explicit-field direction this section originally deferred to v0.0.2.

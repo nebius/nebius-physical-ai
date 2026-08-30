@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import replace
 import hashlib
 import json
 import logging
@@ -1580,6 +1581,55 @@ def submit_cmd(
                 return
 
         if runtime and not plan_only:
+            def refresh_runtime_preflight(_wave_yaml: Path) -> None:
+                """Re-establish mutable launch facts before every runtime wave."""
+
+                refreshed_pins = _preflight_submit_images(
+                    yaml_path,
+                    spec=merged_npa_spec,
+                    options=replace(npa_render_options, image_digest_pins={}),
+                    assume_decision=assume_decision,
+                    enabled=preflight_images,
+                    infra=infra,
+                    image_bootstrap_timeout_seconds=(
+                        image_bootstrap_timeout_seconds
+                    ),
+                )
+                if preflight_images and refreshed_pins != image_digest_pins:
+                    raise RuntimeError(
+                        "immutable image identity changed after initial preflight"
+                    )
+                refreshed_accelerators = _resolve_submit_accelerators(
+                    yaml_path,
+                    spec=merged_npa_spec,
+                    infra=infra,
+                    sky_bin=sky_bin,
+                    assume_decision=assume_decision,
+                    enabled=resolve_accelerators,
+                    config_path=config_path,
+                    isolated_config_dir=isolated_config_dir,
+                    readiness_timeout=gpu_readiness_timeout,
+                    readiness_poll_interval=gpu_readiness_poll_interval,
+                )
+                if (
+                    resolve_accelerators
+                    and refreshed_accelerators
+                    != npa_render_options.gpu_accelerator_overrides
+                ):
+                    raise RuntimeError(
+                        "accelerator resolution changed after initial preflight"
+                    )
+                if not skip_preflight:
+                    _preflight_submit_gang_capacity(
+                        merged_npa_spec,
+                        context=infra_context,
+                        accelerator_overrides=refreshed_accelerators,
+                        allowed_nodes=None,
+                        sky_bin=sky_bin,
+                        config_path=config_path,
+                        isolated_config_dir=isolated_config_dir,
+                    )
+
             _run_npa_workflow_runtime(
                 yaml_path,
                 run_id=resolved_run_id,
@@ -1601,6 +1651,20 @@ def submit_cmd(
                 max_concurrency=max_concurrency,
                 resume=resume,
                 retry_absent_in_flight=retry_absent_in_flight,
+                preflight_evidence={
+                    "exact_image_pull": (
+                        "pass" if preflight_images else "unknown"
+                    ),
+                    "credentials_access": "pass",
+                    "accelerator_resolution": (
+                        "pass" if resolve_accelerators else "unknown"
+                    ),
+                    "per_node_gpu_shape": (
+                        "pass" if resolve_accelerators else "unknown"
+                    ),
+                    "gang_capacity": "pass" if not skip_preflight else "unknown",
+                },
+                pre_submit_hook=refresh_runtime_preflight,
                 output_format=output_format,
                 project=project,
                 auto_load=auto_load,
@@ -2163,6 +2227,8 @@ def _run_npa_workflow_runtime(
     max_concurrency: int,
     resume: bool,
     retry_absent_in_flight: bool,
+    preflight_evidence: Mapping[str, str],
+    pre_submit_hook: Callable[[Path], None] | None,
     output_format: "OutputFormat",
     project: str = "",
     auto_load: bool = True,
@@ -2239,6 +2305,8 @@ def _run_npa_workflow_runtime(
             project=project,
             requested=list(resolved_secret_envs),
         ),
+        preflight_evidence=dict(preflight_evidence or {}),
+        pre_submit_hook=pre_submit_hook,
     )
     runtime_env = dict(secret_env_values)
     endpoint = str(getattr(render_options, "aws_endpoint_url", "") or "").strip()
@@ -4120,6 +4188,25 @@ def _durable_workflow_status(
                 "verification": "found",
             }
         )
+        try:
+            from npa.orchestration.npa_workflow.run_state import RunStateStore
+            from npa.orchestration.npa_workflow.supervisor import SupervisorLedger
+
+            supervisor_store = RunStateStore(
+                bucket=state.bucket,
+                prefix=state.prefix.removesuffix("/npa-workflow"),
+                endpoint_url=state.endpoint_url,
+                aws_access_key_id=state.aws_access_key_id,
+                aws_secret_access_key=state.aws_secret_access_key,
+            )
+            latest_supervision = SupervisorLedger(supervisor_store).latest()
+            if latest_supervision is not None:
+                run_payload["supervisor"] = latest_supervision
+        except Exception as exc:  # noqa: BLE001 - status remains useful without enrichment
+            run_payload["supervisor"] = {
+                "state": "evidence_unavailable",
+                "error": sanitize_reason(exc),
+            }
         if diagnostics:
             run_payload["diagnostics"] = diagnostics
         blockers = [

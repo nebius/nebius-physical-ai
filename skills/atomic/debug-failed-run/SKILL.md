@@ -36,6 +36,12 @@ the whole triage:
   (threshold `--startup-failure-threshold`, default 3). This is infrastructure,
   not your payload.
 
+Runtime-supervised runs also expose `supervisor.classification` and
+`supervisor.recovery` in JSON status. `actionable_configuration` means automatic
+retry has stopped and only the exact recorded attempt was cancelled;
+`transient_infrastructure` records adoption or a new attempt under the same run
+ID; `payload` is not retried; `unknown` blocks relaunch to prevent duplicates.
+
 Add `--watch --interval 10` to follow a run to a terminal state. Use `--cached`
 only when the live controller is unreachable: its output is explicitly marked
 CACHED and is **not automation-trustworthy** — never gate a decision on it.
@@ -125,6 +131,10 @@ spec: SkyPilot 0.12.2 does not cap the client version and client 36+ makes every
   waves are valid. Submit with `--resume-run <same-id>`; the runtime adopts
   complete waves from declared S3 outputs and resubmits only incomplete work.
   Never resume to paper over a bad input — you will inherit the bad artifacts.
+  Completed waves are reused only after every declared non-empty S3 output is
+  validated. Mid-stage resume additionally requires a tool-provided compatible
+  checkpoint loader; otherwise the honest recovery boundary is the whole
+  incomplete wave.
 - **Re-load artifacts only** when every stage succeeded and only the final
   artifact load failed. This never relaunches stages:
 

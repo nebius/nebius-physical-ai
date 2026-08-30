@@ -334,9 +334,12 @@ npa workbench workflow plan-spec <spec> --waves [--json]
 
 `--runtime` runs the driver in the foreground and prints a JSON summary (status,
 waves with job ids and timelines, decisions, run prefix, runtime-state URI);
-without it, `submit` behaves exactly as before. A detached driver (submit and
-poll from a supervisor process) is deliberately out of scope here — it needs a
-process supervisor story of its own.
+without it, `submit` behaves exactly as before. The lightweight run supervisor
+is CPU-side in this process, never in the GPU payload. It observes exact
+SkyPilot/provider identities, persists content-addressed S3 decisions, stops
+actionable configuration stalls, and recovers only identity/output-verified
+transient attempts. A separately deployed daemon remains out of scope; process
+restart uses the same run ID and durable S3 evidence.
 
 ---
 

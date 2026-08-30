@@ -2623,3 +2623,116 @@ def test_resume_accepts_an_unchanged_plan(tmp_path: Path) -> None:
     )
     assert report.status == "succeeded"
     assert not submitter.calls, "an unchanged plan must replay, not resubmit"
+
+
+def _supervisor_preflight() -> dict[str, str]:
+    return {
+        "exact_image_pull": "pass",
+        "credentials_access": "pass",
+        "accelerator_resolution": "pass",
+        "per_node_gpu_shape": "pass",
+        "gang_capacity": "pass",
+    }
+
+
+def test_runtime_supervisor_stops_configuration_retry_immediately(
+    tmp_path: Path, mocker
+) -> None:
+    from npa.orchestration.skypilot.job_blockers import JobBlockerReport, PodBlocker
+
+    spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
+    gate = next(
+        step
+        for step in build_plan(
+            spec, run_id="rt-config-stall", assume_decision="promote_checkpoint"
+        ).steps
+        if step.state == "gate"
+    )
+    mocker.patch(
+        "npa.orchestration.skypilot.job_blockers.inspect_job_blockers",
+        return_value=JobBlockerReport(
+            job_id="1",
+            blockers=[
+                PodBlocker(
+                    pod="worker",
+                    phase="Pending",
+                    reason="CreateContainerConfigError",
+                    reason_code="MISSING_SECRET",
+                )
+            ],
+        ),
+    )
+    submitter = FakeSubmitter()
+    statuses = FakeStatus(["PENDING", "CANCELLED"])
+    cancels: list[dict[str, Any]] = []
+    options = RuntimeOptions(
+        poll_seconds=0,
+        retries=3,
+        preflight_evidence=_supervisor_preflight(),
+    )
+    executor = _executor(
+        spec,
+        run_id="rt-config-stall",
+        submitter=submitter,
+        status_fn=statuses,
+        options=options,
+        cancels=cancels,
+        output_checker=lambda _uri: False,
+    )
+
+    with pytest.raises(NpaWorkflowError, match="MISSING_SECRET"):
+        executor.execute(gate)
+
+    assert len(submitter.calls) == 1, "configuration failures must ignore --retries"
+    assert cancels == [
+        {"job_id": "1", "run_id": "rt-config-stall-01-gate", "cluster": "rt-config-stall-01-gate"}
+    ]
+    assert executor.attempts[0].error_category == "actionable_configuration"
+    assert executor.attempts[0].recovery_decision == "cancel_and_terminalize"
+
+
+def test_runtime_supervisor_recovers_transient_once_without_duplicate(
+    tmp_path: Path, mocker
+) -> None:
+    from npa.orchestration.skypilot.job_blockers import JobBlockerReport
+
+    spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
+    gate = next(
+        step
+        for step in build_plan(
+            spec, run_id="rt-transient", assume_decision="promote_checkpoint"
+        ).steps
+        if step.state == "gate"
+    )
+    mocker.patch(
+        "npa.orchestration.skypilot.job_blockers.inspect_job_blockers",
+        return_value=JobBlockerReport(
+            job_id="1", unready_nodes=["worker (NodeNotReady)"]
+        ),
+    )
+    submitter = FakeSubmitter()
+    statuses = FakeStatus(["PENDING", "CANCELLED", "SUCCEEDED"])
+    cancels: list[dict[str, Any]] = []
+    checks = iter([False, True])
+    options = RuntimeOptions(
+        poll_seconds=0,
+        retries=0,
+        preflight_evidence=_supervisor_preflight(),
+    )
+    executor = _executor(
+        spec,
+        run_id="rt-transient",
+        submitter=submitter,
+        status_fn=statuses,
+        options=options,
+        cancels=cancels,
+        output_checker=lambda _uri: next(checks),
+    )
+
+    result = executor.execute(gate)
+
+    assert result["status"] == "ok"
+    assert [attempt.attempt for attempt in executor.attempts] == [1, 2]
+    assert len(submitter.calls) == 2
+    assert submitter.calls[0]["job_name"] != submitter.calls[1]["job_name"]
+    assert cancels[0]["job_id"] == "1"

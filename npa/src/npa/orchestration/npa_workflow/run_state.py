@@ -608,9 +608,92 @@ class RunStateStore:
             )
         return f"s3://{self.bucket}/{target}"
 
+    def read_artifact(self, relative_key: str) -> bytes:
+        """Read one run-scoped artifact without exposing storage credentials."""
+
+        key = str(relative_key or "").strip().lstrip("/")
+        if not key or ".." in key.split("/"):
+            raise ValueError("run artifact key must be a safe relative path")
+        return self._read_bytes(f"{self.prefix}/{key}")
+
+    def list_artifacts(self, relative_prefix: str) -> list[str]:
+        """List run-relative artifact keys beneath an exact prefix."""
+
+        prefix = str(relative_prefix or "").strip().lstrip("/")
+        if ".." in prefix.split("/"):
+            raise ValueError("run artifact prefix must be safe")
+        target = f"{self.prefix}/{prefix}".rstrip("/") + "/"
+        writer_owner = getattr(self._writer, "__self__", self._writer)
+        reader_owner = getattr(self._reader, "__self__", self._reader)
+        if writer_owner is not None and hasattr(writer_owner, "objects"):
+            # Test adapters may expose their backing object map on the writer.
+            objects = getattr(writer_owner, "objects")
+            return sorted(
+                key.removeprefix(f"{self.prefix}/")
+                for key in objects
+                if key.startswith(target)
+            )
+        if reader_owner is not None and hasattr(reader_owner, "objects"):
+            objects = getattr(reader_owner, "objects")
+            return sorted(
+                key.removeprefix(f"{self.prefix}/")
+                for key in objects
+                if key.startswith(target)
+            )
+        from npa.clients.storage import StorageClient
+
+        client = StorageClient.from_environment(
+            endpoint_url=self._endpoint_url,
+            aws_access_key_id=self._aws_access_key_id,
+            aws_secret_access_key=self._aws_secret_access_key,
+        )
+        keys: list[str] = []
+        token = ""
+        while True:
+            kwargs: dict[str, Any] = {"Bucket": self.bucket, "Prefix": target}
+            if token:
+                kwargs["ContinuationToken"] = token
+            page = client._s3.list_objects_v2(**kwargs)
+            keys.extend(
+                str(item.get("Key") or "").removeprefix(f"{self.prefix}/")
+                for item in page.get("Contents") or []
+                if str(item.get("Key") or "").startswith(target)
+            )
+            if not page.get("IsTruncated"):
+                return sorted(keys)
+            token = str(page.get("NextContinuationToken") or "")
+
+    def write_immutable_artifact(
+        self,
+        relative_key: str,
+        body: bytes,
+        *,
+        content_type: str = "application/octet-stream",
+    ) -> str:
+        """Create one immutable artifact, accepting only idempotent retries."""
+
+        key = str(relative_key or "").strip().lstrip("/")
+        if not key or ".." in key.split("/"):
+            raise ValueError("run artifact key must be a safe relative path")
+        if not body:
+            raise ValueError("run artifact body must be non-empty")
+        try:
+            existing = self.read_artifact(key)
+        except FileNotFoundError:
+            existing = None
+        if existing is not None:
+            if existing != body:
+                raise ValueError(f"immutable run artifact already differs: {key}")
+            return f"s3://{self.bucket}/{self.prefix}/{key}"
+        return self.write_artifact(key, body, content_type=content_type)
+
     def _read(self, key: str) -> str:
+        return self._read_bytes(key).decode("utf-8")
+
+    def _read_bytes(self, key: str) -> bytes:
         if self._reader is not None:
-            return str(self._reader(self.bucket, key))
+            value = self._reader(self.bucket, key)
+            return value if isinstance(value, bytes) else str(value).encode("utf-8")
         from npa.clients.storage import StorageClient
 
         client = StorageClient.from_environment(
@@ -622,7 +705,7 @@ class RunStateStore:
             response = client._s3.get_object(Bucket=self.bucket, Key=key)
         except Exception as exc:
             raise FileNotFoundError(f"s3://{self.bucket}/{key}") from exc
-        return response["Body"].read().decode("utf-8")
+        return response["Body"].read()
 
     def _write(self, key: str, payload: Mapping[str, Any]) -> None:
         body = (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode("utf-8")

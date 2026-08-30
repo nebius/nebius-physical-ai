@@ -111,3 +111,11 @@ failure category, reconciliation/adoption, recovery decision, and cancellation
 verification. `UP` and `STOPPED` controllers are usable; controller absence is a
 distinct state that requires stable Kubernetes API readiness before creation.
 Unknown/ambiguous queue evidence blocks both relaunch and fuzzy cancellation.
+
+The standard runtime's lightweight supervisor stays outside payload pods and
+persists content-addressed attempt decisions in S3. It classifies actionable
+configuration, transient infrastructure, payload, and unknown evidence. Only a
+typed transient with matching immutable workflow/source/image identity, verified
+declared-output state, passing launch preflights, and exact cancellation may
+advance to a new attempt. Completed-wave reuse validates declared S3 outputs;
+mid-stage resume additionally requires a real compatible tool checkpoint loader.

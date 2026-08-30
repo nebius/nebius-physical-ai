@@ -83,6 +83,18 @@ successful `npa skypilot verify --cluster <exact-context>`:
   adopted in-flight job is proven terminal, `--retries` advances through the same
   durable terminal-retry path and assigns a new attempt identity. With no explicit
   retries, the terminal outcome remains preserved and no duplicate is launched.
+- **Runtime supervision is durable and fail closed.** Pending pods are inspected
+  by exact managed-job ID. Image/auth/reference, missing Secret/ConfigMap,
+  malformed pod config, and impossible GPU shape failures stop immediately and
+  cancel only that ID. Proven transient infrastructure failures may create a new
+  immutable attempt under the same run ID only after immutable workflow/source/
+  image identity, declared S3 output absence, preflight readiness, and exact
+  cancellation are verified. Unknown evidence blocks relaunch.
+- **Checkpoint recovery is capability-based.** Completed waves require validated
+  declared outputs. Mid-stage resume requires an explicit compatible loader and
+  validated application checkpoint; otherwise recovery restarts the incomplete
+  wave and must not claim checkpoint resume. The same adapter contract covers
+  deterministic Nebius Serverless Job re-attempts without a GPU supervisor VM.
 - Transaction recovery uses capped exponential jitter and a 180-second recovery
   deadline. This is product behavior, not an operator job/time budget. A
   recovered launch proceeds in the same command; use `--resume-run <same-id>`
