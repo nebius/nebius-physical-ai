@@ -12252,6 +12252,15 @@
         for (const run of Array.isArray(knownRuns) ? knownRuns : []) {
           const runId = String((run && run.run_id) || run || "").trim();
           const matches = discoveredByRunId.get(runId) || [];
+          // A stock/demo viewer can briefly retain a newly selected artifact
+          // run's basename while its run-specific recording is still absent.
+          // That is not a third run source: exposing it beside the real S3
+          // prefixes creates a bogus `workflow history · stage demo` match and
+          // can route the operator back to the stock Franka recording.
+          const staleDemoAlias = runId !== "franka-demo" && matches.length > 0 &&
+            String((run && run.stage) || "").trim().toLowerCase() === "demo" &&
+            !String((run && run.run_ref) || "").trim();
+          if (staleDemoAlias) continue;
           const key = matches.length === 1
             ? String(matches[0].run_ref || runId)
             : "history:" + runId;

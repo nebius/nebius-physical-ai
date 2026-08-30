@@ -103,3 +103,16 @@ def test_client_consumes_incomplete_viewability_without_fabricating_false() -> N
     assert "run.summary_complete === false" in merge_fn
     assert 'bits.push("viewable")' in picker_fn
     assert 'bits.push("viewability unknown")' in picker_fn
+
+
+def test_client_omits_stale_stock_demo_alias_for_artifact_run() -> None:
+    """A stock viewer state relabeled with a real run id is not another source."""
+    ui = _embedded_ui_html()
+    merge_fn = ui.split("function mergeRunsLatestFirst")[1].split(
+        "function fillRunSelectOptionsRich"
+    )[0]
+
+    assert 'const staleDemoAlias = runId !== "franka-demo"' in merge_fn
+    assert 'String((run && run.stage) || "").trim().toLowerCase() === "demo"' in merge_fn
+    assert '!String((run && run.run_ref) || "").trim()' in merge_fn
+    assert "if (staleDemoAlias) continue;" in merge_fn
