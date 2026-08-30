@@ -13400,8 +13400,10 @@
         await loadRunDetails(runId, detailOptions);
         if (
           shouldLoadPreferred &&
-          viewerIntentRequestId === artifactLoadRequestId &&
-          preferredViewerIntent === artifactLoadRequestId &&
+          (context.forcePreferredViewer || (
+            viewerIntentRequestId === artifactLoadRequestId &&
+            preferredViewerIntent === artifactLoadRequestId
+          )) &&
           (!operatorMediaPreviewActive || context.forcePreferredViewer)
         ) {
           autoLoadedPreferredKey = preferredLoadKey;
