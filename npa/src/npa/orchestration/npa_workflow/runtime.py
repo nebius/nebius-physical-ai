@@ -817,9 +817,17 @@ class SkyPilotWaveExecutor:
                     "resume_block_output_indeterminate",
                 }
             )
+            verified_pre_id_launch_failure = (
+                not job_id
+                and attempt.recovery_decision == "verified_absent_no_retry"
+            )
             explicit_retry = (
                 self.options.retry_absent_in_flight
-                and (bool(job_id) or typed_pre_id_launch_failure)
+                and (
+                    bool(job_id)
+                    or typed_pre_id_launch_failure
+                    or verified_pre_id_launch_failure
+                )
                 and bool(job_name)
                 and bool(attempt.logical_launch_id)
                 and attempt.launch_sequence > 0
@@ -831,6 +839,7 @@ class SkyPilotWaveExecutor:
                     "resume_block_output_present",
                     "resume_block_output_indeterminate",
                     "block_indeterminate",
+                    "verified_absent_no_retry",
                 }
             )
             if explicit_retry:

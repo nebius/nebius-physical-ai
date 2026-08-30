@@ -2436,11 +2436,15 @@ def test_recovery_uses_durable_store_credentials_not_process_global_storage(
 
 
 @pytest.mark.parametrize(
-    "persisted_decision",
-    ["resume_block_output_present", "resume_block_output_indeterminate"],
+    ("error_category", "persisted_decision"),
+    [
+        ("kubernetes_transport", "resume_block_output_present"),
+        ("kubernetes_transport", "resume_block_output_indeterminate"),
+        ("unknown", "verified_absent_no_retry"),
+    ],
 )
 def test_explicit_typed_pre_id_recovery_rechecks_persisted_output_block(
-    tmp_path: Path, persisted_decision: str
+    tmp_path: Path, error_category: str, persisted_decision: str
 ) -> None:
     from npa.orchestration.skypilot.workflow import ManagedJobEvidence
 
@@ -2465,7 +2469,7 @@ def test_explicit_typed_pre_id_recovery_rechecks_persisted_output_block(
             "sky_status": "",
             "logical_launch_id": "logical-recheck-output-block",
             "launch_sequence": 1,
-            "error_category": "kubernetes_transport",
+            "error_category": error_category,
             "recovery_decision": persisted_decision,
         }
     )

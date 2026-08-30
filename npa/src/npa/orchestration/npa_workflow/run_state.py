@@ -202,6 +202,7 @@ class RuntimeRunState:
                 "resume_block_terminal_or_legacy_absence",
                 "resume_block_output_present",
                 "resume_block_output_indeterminate",
+                "verified_absent_no_retry",
             }
             return dict(record) if status == "running" or unresolved else None
         return None
