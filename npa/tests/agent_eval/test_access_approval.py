@@ -38,6 +38,7 @@ def test_new_approval_plan_requires_unambiguous_provider_or_access_language() ->
         "prepare the gated catalog",
         "open the approval pages",
         "review catalog access",
+        "approve the NGC artifact",
     )
     for text in positives:
         assert classify_followup(text, has_pending_plan=False) == "plan", text

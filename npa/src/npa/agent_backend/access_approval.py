@@ -10,7 +10,7 @@ from typing import Iterable, Mapping
 def classify_followup(text: str, *, has_pending_plan: bool) -> str:
     value = str(text or "").strip().lower()
     starts_plan = bool(
-        re.search(r"\b(?:prepare|check|audit|review|open|start|help)\b", value)
+        re.search(r"\b(?:prepare|check|audit|review|open|start|help|approve)\b", value)
     )
     explicit_provider = bool(re.search(r"\b(?:hugging\s*face|hf|ngc)\b", value))
     explicit_access = bool(
