@@ -26,7 +26,7 @@ def test_stages_panel_has_run_picker_and_load() -> None:
     stages = ui.split('id="stagesPanel"')[1].split('id="panelRerun"')[0]
     assert 'id="stagesRunSelect"' in stages
     assert 'id="stagesLoadRun"' in stages
-    assert "Search NPA workflow/artifact runs" in stages
+    assert "Search workflow, artifact, or Agent-memory runs" in stages
     assert "Codex maintenance job IDs" in stages
     assert 'id="stagesRunSearchResult"' in stages
     assert "filterStagesRunSelect" in ui
@@ -37,6 +37,8 @@ def test_stages_panel_has_run_picker_and_load() -> None:
     assert 'fillRunSelectOptionsRich(document.getElementById("stagesRunSelect")' in ui
     assert "mergeRunsLatestFirst" in ui
     assert "applyMergedRunSelectors" in ui
+    assert "refreshAgentMemoryRuns" in ui
+    assert 'source_type: "agent_memory"' in ui
 
 
 def test_stages_and_rerun_selectors_share_load_path() -> None:
@@ -54,6 +56,8 @@ def test_stages_and_rerun_selectors_share_load_path() -> None:
     # compatible load path instead of blindly POSTing every run to load-run.
     assert 'entry.source_type === "local_demo"' in load_fn
     assert 'entry.source_type === "artifact_storage"' in load_fn
+    assert 'entry.source_type === "agent_memory"' in load_fn
+    assert "loadAgentMemoryRun(chosen, entry)" in load_fn
     assert (
         "loadArtifactsForSelectedRun(chosen, null, entry, { pendingSelection: true })"
         in load_fn

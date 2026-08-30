@@ -5647,8 +5647,8 @@ def agent_memory_record(payload: dict):
     return {{"ok": True, "record": record}}
 
 @app.get("/agent/memory/runs")
-def agent_memory_runs(limit: int = 20):
-    return {{"ok": True, "runs": _agent_run_memory().list_runs(limit=limit)}}
+def agent_memory_runs(limit: int = 20, q: str = ""):
+    return {{"ok": True, "runs": _agent_run_memory().list_runs(limit=limit, query=q)}}
 
 @app.get("/agent/memory/run/{{run_id:path}}")
 def agent_memory_run(run_id: str):
@@ -11358,7 +11358,7 @@ def verify_live_cmd(
         "loadSelectedRun",
         "stages-run-picker",
         "filterStagesRunSelect",
-        "Search NPA workflow/artifact runs",
+        "Search workflow, artifact, or Agent-memory runs",
         "function sendChat(",
         "function wireUi(",
         "activateMainTab",

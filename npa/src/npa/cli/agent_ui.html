@@ -2368,7 +2368,7 @@
         </section>
         <section class="panel stages-panel" id="stagesPanel" data-testid="stages-panel">
           <h3>Stages</h3>
-          <p class="hint">Pick a discovered NPA workflow/artifact run (latest first) to load its evidence-backed timeline and artifacts.</p>
+          <p class="hint">Pick a discovered workflow, artifact, or Agent-memory run (latest first) to load its evidence-backed status.</p>
           <div class="stages-run-picker field-row" data-testid="stages-run-picker">
             <div class="field" style="flex:1;">
               <label for="stagesRunSelect">Run</label>
@@ -2377,8 +2377,8 @@
               </select>
             </div>
             <div class="field" style="flex:1;">
-              <label for="stagesRunInput">Search NPA workflow/artifact runs</label>
-              <input id="stagesRunInput" type="search" placeholder="franka-topdown…" autocomplete="off" aria-label="Search NPA workflow or artifact run ID for stages" />
+              <label for="stagesRunInput">Search workflow, artifact, or Agent-memory runs</label>
+              <input id="stagesRunInput" type="search" placeholder="private-byof-review…" autocomplete="off" aria-label="Search workflow, artifact, or Agent-memory run ID for stages" />
               <p class="hint" id="stagesRunSearchHint" style="margin:4px 0 0;">Codex maintenance job IDs under <code>/home/ubuntu/codex-runs</code> are not NPA run IDs.</p>
               <p class="hint" id="stagesRunSearchResult" style="margin:4px 0 0;" aria-live="polite"></p>
             </div>
@@ -7734,7 +7734,10 @@
             }
             stagesSearchTimer = setTimeout(async () => {
               try {
-                await refreshArtifactRuns(value);
+                await Promise.allSettled([
+                  refreshArtifactRuns(value),
+                  refreshAgentMemoryRuns(value),
+                ]);
                 filterStagesRunSelect(String(stagesRunInput.value || ""));
               } catch (_err) { /* keep client-side view on search failure */ }
             }, 350);
@@ -12096,10 +12099,12 @@
       }
       let knownAvailableRuns = [];
       let discoveredArtifactRuns = [];
+      let agentMemoryRuns = [];
       let mergedRunsCache = [];
       let activeRunEntryKey = "";
       let autoLoadedPreferredKey = "";
       let runSearchRequestId = 0;
+      let agentMemorySearchRequestId = 0;
       let artifactRunsAbortController = null;
       let artifactLoadRequestId = 0;
       let artifactListRequestId = 0;
@@ -12198,6 +12203,7 @@
           local_demo: "local demo",
           workflow_history: "workflow history",
           artifact_storage: "S3 artifacts",
+          agent_memory: "Agent run memory",
         }[sourceType] || String(sourceType || "run").replaceAll("_", " ");
       }
       function runEntryIdentity(runId, sourceType, run) {
@@ -12206,7 +12212,7 @@
         const resolvedPrefix = String((run && run.resolved_prefix) || "").trim();
         return [sourceType, project, bucket, resolvedPrefix, runId].join("|");
       }
-      function mergeRunsLatestFirst(knownRuns, discoveredRuns) {
+      function mergeRunsLatestFirst(knownRuns, discoveredRuns, memoryRuns) {
         const map = new Map();
         const discoveredByRunId = new Map();
         for (const run of Array.isArray(discoveredRuns) ? discoveredRuns : []) {
@@ -12276,10 +12282,13 @@
             : "history:" + runId;
           ingest(run, "known", key);
         }
+        for (const run of Array.isArray(memoryRuns) ? memoryRuns : agentMemoryRuns) {
+          ingest(run, "memory");
+        }
         return [...map.values()].sort((a, b) => {
           const cmp = effectiveRunTs(b).localeCompare(effectiveRunTs(a));
           if (cmp !== 0) return cmp;
-          const priority = { artifact_storage: 0, local_demo: 1, workflow_history: 2 };
+          const priority = { artifact_storage: 0, agent_memory: 1, local_demo: 2, workflow_history: 3 };
           const sourceCmp = (priority[a.source_type] ?? 9) - (priority[b.source_type] ?? 9);
           if (sourceCmp !== 0) return sourceCmp;
           return String(b.run_id || "").localeCompare(String(a.run_id || ""));
@@ -12440,9 +12449,9 @@
         fillRunSelectOptionsRich(select, filtered, activeRunEntryKey || current);
         if (hint) {
           if (!needle) {
-            hint.textContent = "Searches discovered NPA workflow/artifact runs across accessible projects and buckets.";
+            hint.textContent = "Searches workflow history, S3 artifacts, and this Agent's sanitized run memory.";
           } else if (!filtered.length) {
-            hint.textContent = "No discovered NPA runs match [" + needle + "]. Load performs an exact server lookup.";
+            hint.textContent = "No cached runs match [" + needle + "]. Load checks S3 and Agent memory exactly.";
           } else {
             hint.textContent = String(filtered.length) + " run" + (filtered.length === 1 ? "" : "s") + " match [" + needle + "].";
           }
@@ -12514,6 +12523,28 @@
           defaultRunDiscoveryPromise = null;
         });
         return defaultRunDiscoveryPromise;
+      }
+      async function refreshAgentMemoryRuns(query) {
+        const q = typeof query === "string" ? query.trim() : "";
+        const requestId = ++agentMemorySearchRequestId;
+        const url = "/api/agent/memory/runs?limit=" + ARTIFACT_RUN_LIST_LIMIT +
+          (q ? "&q=" + encodeURIComponent(q) : "");
+        const data = await apiJson(url);
+        if (requestId !== agentMemorySearchRequestId) return false;
+        const runs = (Array.isArray(data.runs) ? data.runs : []).map((runId) => ({
+          run_id: String(runId || "").trim(),
+          source_type: "agent_memory",
+          source_label: "Agent run memory",
+        })).filter((run) => run.run_id);
+        if (q) {
+          const byId = new Map(agentMemoryRuns.map((run) => [run.run_id, run]));
+          for (const run of runs) byId.set(run.run_id, run);
+          agentMemoryRuns = [...byId.values()];
+        } else {
+          agentMemoryRuns = runs;
+        }
+        applyMergedRunSelectors(activeRunEntryKey || activeRunId);
+        return true;
       }
       async function _refreshArtifactRuns(query, options) {
         // Discover runs generically across the whole bucket. When a search query
@@ -14601,7 +14632,10 @@
         }
         let entry = supplied || preferredRunEntry(selection.entry_key || selection.run_ref || chosen);
         if (!entry) {
-          await refreshArtifactRuns(chosen).catch(() => false);
+          await Promise.allSettled([
+            refreshArtifactRuns(chosen),
+            refreshAgentMemoryRuns(chosen),
+          ]);
           entry = preferredRunEntry(chosen);
         }
         // A pasted id absent from workflow history is treated as an artifact run:
@@ -14622,6 +14656,9 @@
         const input = document.getElementById("runIdInput");
         if (input) input.value = chosen;
         activeArtifactRunRef = String((entry && entry.run_ref) || selection.run_ref || "");
+        if (entry.source_type === "agent_memory") {
+          return loadAgentMemoryRun(chosen, entry);
+        }
         if (entry.source_type === "artifact_storage") {
           const searchResult = document.getElementById("stagesRunSearchResult");
           if (searchResult) {
@@ -14648,6 +14685,51 @@
           return data;
         }
         return loadWorkflowHistoryRun(chosen, activeArtifactRunRef);
+      }
+      async function loadAgentMemoryRun(runId, entry) {
+        const target = String(runId || "").trim();
+        const data = await apiJson("/api/agent/memory/run/" + encodeURIComponent(target));
+        const record = data && data.record && typeof data.record === "object" ? data.record : {};
+        clearVisibleRunState("Loading Agent run memory " + target + "…");
+        setActiveRunId(target);
+        activeRunEntryKey = String((entry && entry.entry_key) || runEntryIdentity(target, "agent_memory", {}));
+        syncRunChooserFields(target, activeRunEntryKey);
+        const collectionStatus = String(record.collection_status || record.status || "recorded");
+        const integrityBits = [];
+        if (record.integrity_verified === true) integrityBits.push("integrity verified");
+        if (record.idempotency_verified === true) integrityBits.push("idempotency verified");
+        if (Number(record.byte_size || 0) > 0) integrityBits.push(String(record.byte_size) + " bytes");
+        const evidenceSummary = integrityBits.length
+          ? "Sanitized trajectory collected; " + integrityBits.join("; ") + "."
+          : "Sanitized Agent run-memory record is available.";
+        renderRunDetails({ run: {
+          run_id: target,
+          source_type: "agent_memory",
+          source_label: "Agent run memory",
+          status: collectionStatus,
+          result: collectionStatus === "collected" ? "run_ready" : "recorded",
+          updated_at: String(record.recorded_at || record.updated_at || ""),
+          stages: [{
+            id: "agent-run-data-collection",
+            label: "Agent run data collection",
+            status: collectionStatus === "collected" ? "succeeded" : collectionStatus,
+            summary: evidenceSummary,
+            evidence_source: "agent_run_memory",
+            authority: "recorded",
+            confidence: "high",
+          }],
+          logs: [{
+            timestamp: String(record.recorded_at || record.updated_at || ""),
+            level: "info",
+            message: evidenceSummary,
+          }],
+        }});
+        const artifactList = document.getElementById("artifactList");
+        if (artifactList) artifactList.innerHTML = "<p>This sanitized Agent-memory record does not expose workflow artifacts.</p>";
+        showRerunPlaceholder("Agent run-memory evidence loaded. This record does not contain an RRD recording.", { force: true });
+        const searchResult = document.getElementById("stagesRunSearchResult");
+        if (searchResult) searchResult.textContent = "Loaded exact Agent-memory run: " + target + ".";
+        return data;
       }
       function normalizeStageStatus(value) {
         const raw = String(value || "status_unavailable").trim().toLowerCase();
@@ -15459,6 +15541,9 @@
             .catch((_artifactErr) => {
             // artifact discovery is optional when S3 credentials are missing.
           });
+          const memoryRunsPromise = refreshAgentMemoryRuns("").catch((_memoryErr) => {
+            // Agent memory is optional for deployments without persisted episodes.
+          });
           // Capability discovery may involve remote artifact/service probes. Let it
           // reveal the optional tab asynchronously instead of delaying the existing
           // viewer boot path.
@@ -15478,6 +15563,7 @@
             setStatus("Ready");
             showToast("Mobile chat ready", "success");
             void artifactsPromise;
+            void memoryRunsPromise;
             void accessPromise;
             void warmPromise;
           } else {
@@ -15495,6 +15581,7 @@
               lb.setAttribute("src", "/lichtblick/");
             }
             void artifactsPromise;
+            void memoryRunsPromise;
             await warmPromise;
             const mountMode = await ensureFrankaRerunLoaded();
             const iframe = document.getElementById("rerunFrame");
