@@ -116,3 +116,16 @@ def test_client_omits_stale_stock_demo_alias_for_artifact_run() -> None:
     assert 'String((run && run.stage) || "").trim().toLowerCase() === "demo"' in merge_fn
     assert '!String((run && run.run_ref) || "").trim()' in merge_fn
     assert "if (staleDemoAlias) continue;" in merge_fn
+
+
+def test_client_reuses_discovered_identity_for_bound_viewer_history() -> None:
+    """A history row bound to one of two S3 sources must not become a third row."""
+    ui = _embedded_ui_html()
+    merge_fn = ui.split("function mergeRunsLatestFirst")[1].split(
+        "function fillRunSelectOptionsRich"
+    )[0]
+
+    assert "const knownRunRef" in merge_fn
+    assert "const matchingRunRef = knownRunRef && matches.some" in merge_fn
+    assert "const key = matchingRunRef" in merge_fn
+    assert "? knownRunRef" in merge_fn

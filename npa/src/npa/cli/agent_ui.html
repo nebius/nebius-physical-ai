@@ -12261,7 +12261,16 @@
             String((run && run.stage) || "").trim().toLowerCase() === "demo" &&
             !String((run && run.run_ref) || "").trim();
           if (staleDemoAlias) continue;
-          const key = matches.length === 1
+          // A viewer-history row can already be bound to one of several S3
+          // sources for the same basename. Reuse that source identity instead
+          // of manufacturing a third `history:<run-id>` option.
+          const knownRunRef = String((run && run.run_ref) || "").trim();
+          const matchingRunRef = knownRunRef && matches.some((match) =>
+            String((match && match.run_ref) || "").trim() === knownRunRef
+          );
+          const key = matchingRunRef
+            ? knownRunRef
+            : matches.length === 1
             ? String(matches[0].run_ref || runId)
             : "history:" + runId;
           ingest(run, "known", key);
