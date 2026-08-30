@@ -367,7 +367,17 @@ class SkyPilotWaveExecutor:
         self._timeline_fn = timeline_fn
         self._canceller = canceller
         self._name_lookup_fn = name_lookup_fn
-        self._output_checker = output_checker or s3_artifact_exists
+        if output_checker is not None:
+            self._output_checker = output_checker
+        elif ledger is not None and callable(
+            getattr(ledger.store, "artifact_exists", None)
+        ):
+            # Recovery, completion, and durable state must all address the same
+            # object-store endpoint and account.  Process-global storage config may
+            # legitimately belong to a different NPA project.
+            self._output_checker = ledger.store.artifact_exists
+        else:
+            self._output_checker = s3_artifact_exists
         self._reconcile_fn = reconcile_fn
         self._sleep = sleeper or time.sleep
         self._clock = clock

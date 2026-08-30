@@ -430,6 +430,7 @@ def _executor(
     cancels: list[dict[str, Any]] | None = None,
     name_lookup_fn: Any | None = None,
     output_checker: Any | None = None,
+    use_default_output_checker: bool = False,
     reconcile_fn: Any | None = None,
 ) -> SkyPilotWaveExecutor:
     opts = options or RuntimeOptions(poll_seconds=0, max_wait_seconds=60)
@@ -471,7 +472,11 @@ def _executor(
         else None,
         # Default: the launched name resolves to the id the fake submitter reported.
         name_lookup_fn=effective_lookup,
-        output_checker=output_checker or (lambda _uri: True),
+        output_checker=(
+            None
+            if use_default_output_checker
+            else output_checker or (lambda _uri: True)
+        ),
         reconcile_fn=reconcile_fn or default_reconcile,
         sleeper=(sleeps.append if sleeps is not None else (lambda _seconds: None)),
         clock=_fake_clock(),
@@ -2360,6 +2365,74 @@ def test_explicit_resume_relaunches_typed_pre_id_transport_failure(
         attempts[0]["recovery_decision"]
         == "operator_authorized_verified_absent_relaunch"
     )
+
+
+def test_recovery_uses_durable_store_credentials_not_process_global_storage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from npa.orchestration.skypilot.workflow import ManagedJobEvidence
+
+    output_spec = FANOUT_SPEC.replace(
+        "    resources: cpu\n\n  shard-b:",
+        "    resources: cpu\n"
+        "    outputs:\n"
+        '      - uri: "s3://{{config.bucket}}/{{config.prefix}}/shard-a.json"\n\n'
+        "  shard-b:",
+        1,
+    )
+    spec = load_spec(_write_spec(tmp_path, output_spec))
+    store = MemoryStore()
+    state = RuntimeRunState(workflow=spec.name, run_id="rt-project-storage")
+    state.record_wave(
+        {
+            "key": "001|shards|shards:shard-a:-,shards:shard-b:-",
+            "status": "failed",
+            "job_id": "",
+            "job_name": "rt-project-storage-01-shards",
+            "attempt": 1,
+            "sky_status": "",
+            "logical_launch_id": "logical-project-storage",
+            "launch_sequence": 1,
+            "error_category": "kubernetes_transport",
+            "recovery_decision": "block_indeterminate",
+        }
+    )
+    store.write_runtime_state(state)
+    options = RuntimeOptions(
+        poll_seconds=0,
+        max_wait_seconds=60,
+        resume=True,
+        retry_absent_in_flight=True,
+    )
+    submitter = FakeSubmitter()
+    checked: list[str] = []
+
+    def project_artifact_exists(uri: str) -> bool:
+        checked.append(uri)
+        return bool(submitter.calls)
+
+    store.artifact_exists = project_artifact_exists  # type: ignore[attr-defined]
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.runtime.s3_artifact_exists",
+        lambda _uri: True,
+    )
+    executor = _executor(
+        spec,
+        run_id="rt-project-storage",
+        submitter=submitter,
+        options=options,
+        store=store,
+        use_default_output_checker=True,
+        reconcile_fn=lambda *_args, **_kwargs: ManagedJobEvidence("absent"),
+    )
+
+    report = run_workflow_runtime(
+        spec, run_id="rt-project-storage", executor=executor, options=options
+    )
+
+    assert report.status == "succeeded"
+    assert submitter.calls[0]["job_name"].endswith("-a2")
+    assert checked
 
 
 def test_resume_blocks_indeterminate_incomplete_wave_without_submit(
