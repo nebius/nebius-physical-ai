@@ -177,20 +177,24 @@ def test_ngc_skipped_when_not_needed() -> None:
     assert "not required" in result.summary
 
 
-def test_ngc_pass_with_valid_prefix() -> None:
+@pytest.mark.parametrize("credential", ["nvapi-abc", "registry-credential"])
+def test_ngc_online_accepts_provider_validated_credential_shapes(
+    credential: str,
+) -> None:
+    observed: list[str] = []
+
     def validator(key: str) -> str:
+        observed.append(key)
         return "reachable"
 
-    assert (
-        check_ngc_key("nvapi-abc", needed=True, ngc_validator=validator).status == PASS
-    )
-    assert (
-        check_ngc_key("nvapi_abc", needed=True, ngc_validator=validator).status == PASS
-    )
+    result = check_ngc_key(credential, needed=True, ngc_validator=validator)
+    assert result.status == PASS
+    assert observed == [credential]
+    assert credential not in " ".join((result.summary, result.remedy, *result.details))
 
 
-def test_ngc_well_formed_key_is_unverified_offline() -> None:
-    result = check_ngc_key("nvapi-abc", needed=True)
+def test_ngc_nonempty_credential_is_unverified_offline() -> None:
+    result = check_ngc_key("registry-credential", needed=True)
 
     assert result.status == WARN
     assert "not probed in offline mode" in result.summary
@@ -259,8 +263,10 @@ def test_ngc_validator_exception_is_sanitized() -> None:
     assert result.details == ("probe failed (RuntimeError)",)
 
 
-def test_ngc_warns_on_bad_prefix() -> None:
-    assert check_ngc_key("bogus", needed=True).status == WARN
+def test_ngc_offline_does_not_infer_validity_from_format() -> None:
+    result = check_ngc_key("bogus", needed=True)
+    assert result.status == WARN
+    assert "not probed" in result.summary
 
 
 def test_check_workbench_access_ngc_first_then_hf() -> None:

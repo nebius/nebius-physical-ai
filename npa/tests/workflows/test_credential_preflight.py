@@ -76,35 +76,38 @@ def test_ngc_warns_when_missing() -> None:
     assert check_ngc(_Creds(), CredentialProbes()).status == WARN
 
 
-def test_ngc_warns_on_bad_prefix() -> None:
-    result = check_ngc(_Creds(ngc_api_key="not-a-key"), CredentialProbes())
-    assert result.status == FAIL
-    assert "nvapi-" in result.remedy
+@pytest.mark.parametrize("credential", ["nvapi-abc123", "registry-credential"])
+def test_ngc_nonempty_credential_passes_presence_only_offline(credential: str) -> None:
+    result = check_ngc(_Creds(ngc_api_key=credential), CredentialProbes())
+    assert result.status == PASS
+    assert "not verified" in result.summary
 
 
-def test_ngc_pass_with_hyphen_key() -> None:
-    # Real personal NGC keys are prefixed 'nvapi-'.
-    assert (
-        check_ngc(_Creds(ngc_api_key="nvapi-abc123"), CredentialProbes()).status == PASS
+@pytest.mark.parametrize("credential", ["nvapi-abc123", "registry-credential"])
+def test_ngc_live_probe_proves_token_exchange_without_implying_entitlement(
+    credential: str,
+) -> None:
+    observed: list[str] = []
+
+    def validate(key: str) -> str:
+        observed.append(key)
+        return "entitlement-required"
+
+    result = check_ngc(
+        _Creds(ngc_api_key=credential), CredentialProbes(ngc_validator=validate)
     )
-
-
-def test_ngc_pass_with_underscore_key() -> None:
-    # Older docs sometimes show 'nvapi_'; accept it too.
-    assert check_ngc(_Creds(ngc_api_key="nvapi_abc"), CredentialProbes()).status == PASS
-
-
-def test_ngc_live_probe_proves_token_exchange_without_implying_entitlement() -> None:
-    probes = CredentialProbes(ngc_validator=lambda key: "entitlement-required")
-    result = check_ngc(_Creds(ngc_api_key="nvapi-abc123"), probes)
     assert result.status == PASS
     assert "not implied" in result.summary
+    assert observed == [credential]
+    assert credential not in " ".join((result.summary, result.remedy, *result.details))
 
 
 def test_ngc_live_probe_fails_when_key_is_rejected() -> None:
+    secret = "registry-bad-credential"
     probes = CredentialProbes(ngc_validator=lambda key: "auth-401")
-    result = check_ngc(_Creds(ngc_api_key="nvapi-bad"), probes)
+    result = check_ngc(_Creds(ngc_api_key=secret), probes)
     assert result.status == FAIL
+    assert secret not in " ".join((result.summary, result.remedy, *result.details))
 
 
 def test_s3_warns_without_keys() -> None:

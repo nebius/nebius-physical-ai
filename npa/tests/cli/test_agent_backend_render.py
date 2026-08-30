@@ -3176,8 +3176,11 @@ def test_rendered_grounded_access_approval_reports_skill_without_model_call(
     state: dict[str, object] = {}
     plan = {
         "status": "blocked",
-        "counts": {"hf": 1, "ngc": 0},
-        "official_urls": ["https://huggingface.co/vendor/repo"],
+        "counts": {"hf": 1, "ngc": 1},
+        "official_urls": [
+            "https://huggingface.co/vendor/repo",
+            "https://catalog.ngc.nvidia.com/orgs/vendor/models/repo",
+        ],
         "resume_command": "npa configure --prepare-catalog-access",
     }
     monkeypatch.setattr(module, "_load_state", lambda: state)
@@ -3208,7 +3211,14 @@ def test_rendered_grounded_access_approval_reports_skill_without_model_call(
         )
         assert opened["grounded"] is True
         assert opened["skills_used"] == ["access-approval"]
-        assert opened["open_urls"] == ["https://huggingface.co/vendor/repo"]
+        assert opened["open_urls"] == plan["official_urls"]
+
+        declined = module.chat(
+            {"messages": [{"role": "user", "content": "later"}]}
+        )
+        assert declined["grounded"] is True
+        assert declined["open_urls"] == []
+        assert "npa configure --prepare-catalog-access" in declined["reply"]
     finally:
         sys.modules.pop(module_name, None)
 

@@ -1432,6 +1432,29 @@ def test_configure_prints_model_access_note_all_ok(monkeypatch, tmp_path) -> Non
     assert "NGC key valid; repository access confirmed" in note
 
 
+def test_configure_ngc_audit_defers_registry_credential_validity_to_provider(
+    monkeypatch, caplog
+) -> None:
+    secret = "registry-credential"
+    observed: list[str] = []
+
+    def validate(key: str, *, timeout: float = 30.0) -> str:
+        del timeout
+        observed.append(key)
+        return "reachable"
+
+    monkeypatch.setattr(
+        "npa.workbench.nurec.nurec.check_ngc_image_access", validate
+    )
+    caplog.set_level("DEBUG", logger="npa.cli.main")
+    note = cli_main._model_access_note("hf_good", secret)
+
+    assert observed == [secret]
+    assert "NGC key valid; repository access confirmed" in note
+    assert secret not in note
+    assert secret not in caplog.text
+
+
 def test_configure_hf_probe_preserves_gated_dataset_type(monkeypatch, tmp_path) -> None:
     from npa.clients import huggingface
     from npa.clients.huggingface import HFAccessResult

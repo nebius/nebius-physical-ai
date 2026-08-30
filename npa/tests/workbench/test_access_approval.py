@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from npa.workbench.access_approval import (
     AccessStatus,
     approval_plan,
@@ -152,7 +154,10 @@ def test_hf_ready_pending_denied_unavailable_and_public_anonymous(tmp_path: Path
     assert anonymous[0].status == AccessStatus.READY
 
 
-def test_ngc_personal_key_probe_is_exact_and_denials_are_typed(tmp_path: Path) -> None:
+@pytest.mark.parametrize("credential", ["nvapi-personal", "registry-credential"])
+def test_ngc_credential_probe_is_exact_and_denials_are_typed(
+    tmp_path: Path, credential: str
+) -> None:
     item = GatedAsset(
         "nvcr.io/nvidia/nre/nre-ga:26.04",
         NGC,
@@ -166,29 +171,62 @@ def test_ngc_personal_key_probe_is_exact_and_denials_are_typed(tmp_path: Path) -
     images: list[str] = []
 
     def reachable(key: str, *, image: str) -> str:
-        assert key.startswith("nvapi-")
+        assert key == credential
         images.append(image)
         return "reachable"
 
+    state_path = tmp_path / "ngc.json"
     evidence = probe_requirements(
         [item],
         hf_token="",
-        ngc_key="nvapi-personal",
+        ngc_key=credential,
         hf_validator=None,
         ngc_validator=reachable,
-        state_path=tmp_path / "ngc.json",
+        state_path=state_path,
     )
     assert evidence[0].status == AccessStatus.READY
     assert images == [item.repo]
+    assert credential not in state_path.read_text(encoding="utf-8")
     denied = probe_requirements(
         [item],
         hf_token="",
-        ngc_key="nvapi-personal",
+        ngc_key=credential,
         hf_validator=None,
         ngc_validator=lambda *_args, **_kwargs: "entitlement-required",
         state_path=tmp_path / "ngc-denied.json",
     )
     assert denied[0].status == AccessStatus.DENIED
+
+
+def test_ngc_nonempty_bad_credential_is_denied_only_by_provider(
+    tmp_path: Path,
+) -> None:
+    secret = "registry-bad-credential"
+    item = GatedAsset(
+        "nvcr.io/nvidia/nre/nre-ga:26.04",
+        NGC,
+        ("nurec",),
+        True,
+        repo_type="container",
+        revision="26.04",
+        official_url="https://catalog.ngc.nvidia.com/orgs/nvidia/nre/containers/nre-ga",
+        terms_revision="v1",
+    )
+    state_path = tmp_path / "rejected.json"
+    evidence = probe_requirements(
+        [item],
+        hf_token="",
+        ngc_key=secret,
+        hf_validator=None,
+        ngc_validator=lambda *_args, **_kwargs: "auth-401",
+        state_path=state_path,
+        force=True,
+    )
+
+    assert evidence[0].status == AccessStatus.DENIED
+    assert evidence[0].reason == "credential_denied"
+    assert secret not in json.dumps(evidence[0].as_dict(), sort_keys=True)
+    assert secret not in state_path.read_text(encoding="utf-8")
 
 
 def test_ready_cache_reuses_only_unchanged_credential_revision_and_terms(

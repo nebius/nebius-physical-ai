@@ -206,8 +206,6 @@ def _ngc_evidence(
 ) -> tuple[AccessStatus, str]:
     if not key:
         return AccessStatus.PENDING, "missing_credentials"
-    if not key.lower().startswith(("nvapi-", "nvapi_")):
-        return AccessStatus.DENIED, "invalid_credential_format"
     if validator is None:
         return AccessStatus.UNAVAILABLE, "probe_unavailable"
     try:

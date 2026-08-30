@@ -395,7 +395,8 @@ tokens:
 ngc:
   # NVIDIA NGC API key (only for entitlement-controlled NGC artifact pulls).
   # Get one at https://org.ngc.nvidia.com/setup/api-key -> "Generate API Key"
-  # (sign in / create a free NGC account first). The key starts with "nvapi-".
+  # (sign in / create a free NGC account first). Personal keys commonly start
+  # with "nvapi-"; online NGC authentication accepts other credential shapes.
   # Step-by-step guide: docs/workbench/ngc-api-key.md
   api_key: nvapi-REPLACE_ME
   # org: optional-ngc-org
@@ -1025,7 +1026,8 @@ def _prompt_setup_tokens(
         typer.echo(
             "\nNVIDIA NGC API key (for entitlement-controlled NGC artifact pulls): create one at "
             "https://org.ngc.nvidia.com/setup/api-key (sign in or make a free NGC "
-            "account first). The key starts with 'nvapi-'. "
+            "account first). Personal keys commonly start with 'nvapi-'; NGC "
+            "authentication is the authority for other credential shapes. "
             "Guide: docs/workbench/ngc-api-key.md."
         )
         ngc_api_key = _normalize_pasted_secret(
@@ -2126,8 +2128,6 @@ def _build_model_access_note(hf_token: str, ngc_key: str) -> str:
 
     if not ngc_key:
         ngc_summary = "NGC key missing; NGC not configured (blocks nurec pulls)"
-    elif not ngc_key.lower().startswith(("nvapi-", "nvapi_")):
-        ngc_summary = "NGC key invalid format"
     else:
         try:
             ngc_outcome = check_ngc_image_access(ngc_key, timeout=2.0)

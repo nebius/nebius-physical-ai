@@ -428,20 +428,13 @@ def check_ngc_key(
                 "NGC_API_KEY set in the environment."
             ),
         )
-    if not key.lower().startswith(("nvapi-", "nvapi_")):
-        return CheckResult(
-            name="ngc",
-            status=WARN,
-            summary="NGC_API_KEY is set but does not look like an NGC key.",
-            remedy="NGC keys start with 'nvapi-'. Re-check the value.",
-        )
     if ngc_validator is None:
         return CheckResult(
             name="ngc",
             status=WARN,
             summary=(
-                "NGC_API_KEY is present and well-formed; repository entitlement "
-                "was not probed in offline mode."
+                "NGC_API_KEY is present; validity and repository entitlement were "
+                "not probed in offline mode."
             ),
         )
     try:

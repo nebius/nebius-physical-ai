@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from typer.testing import CliRunner
 
 from npa.cli.main import app
+from npa.workbench.model_access import GatedAsset, HF, NGC
 
 runner = CliRunner()
 
@@ -138,6 +139,53 @@ def test_configure_catalog_audit_is_optional_and_non_blocking(
     assert "Other Workbench capabilities remain usable" in result.output
     assert "did not accept any terms" in result.output
     assert opened == []
+
+
+def test_configure_open_approval_pages_opens_exact_official_hf_and_ngc_urls(
+    monkeypatch, tmp_path: Path
+) -> None:
+    hf_url = "https://huggingface.co/nvidia/Cosmos-Reason2-2B"
+    ngc_url = "https://catalog.ngc.nvidia.com/orgs/nvidia/nre/containers/nre-ga"
+    requirements = (
+        GatedAsset(
+            "nvidia/Cosmos-Reason2-2B",
+            HF,
+            ("groot",),
+            True,
+            revision="revision-hf",
+            official_url=hf_url,
+            terms_revision="terms-hf",
+        ),
+        GatedAsset(
+            "nvcr.io/nvidia/nre/nre-ga:26.04",
+            NGC,
+            ("nurec",),
+            True,
+            repo_type="container",
+            revision="26.04",
+            official_url=ngc_url,
+            terms_revision="terms-ngc",
+        ),
+    )
+    monkeypatch.setenv("NPA_ACCESS_APPROVAL_STATE_PATH", str(tmp_path / "state.json"))
+    monkeypatch.setattr(
+        "npa.clients.credentials.load_credentials", lambda: _credentials()
+    )
+    monkeypatch.setattr(
+        "npa.workbench.access_approval.exact_requirements", lambda: requirements
+    )
+    opened: list[str] = []
+    monkeypatch.setattr("webbrowser.open_new_tab", opened.append)
+
+    result = runner.invoke(
+        app,
+        ["configure", "--prepare-catalog-access", "--open-approval-pages"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert opened == [hf_url, ngc_url]
+    assert "did not accept any terms" in result.output
+    assert "legal_assent_performed" not in result.output
 
 
 def test_configure_catalog_mode_conflict_names_all_participants() -> None:
