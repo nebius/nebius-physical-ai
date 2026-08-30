@@ -31,6 +31,8 @@ def test_stages_panel_has_run_picker_and_load() -> None:
     assert 'id="stagesRunSearchResult"' in stages
     assert "filterStagesRunSelect" in ui
     assert "resolveStagesRunChoice" in ui
+    assert 'run.source_type) || "") === "artifact_storage"' in ui
+    assert "if (recorded) return String(recorded.run_ref).trim()" in ui
     assert "mergedRunsCache" in ui
     assert "loadSelectedRun" in ui
     assert "updateRunSelector" in ui

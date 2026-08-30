@@ -12155,6 +12155,13 @@
         if (exact.length > 1 && exact.some((run) => String((run && run.run_ref) || "") === fallback)) {
           return fallback;
         }
+        if (exact.length > 1) {
+          const recorded = exact.find((run) =>
+            String((run && run.source_type) || "") === "artifact_storage" &&
+            String((run && run.run_ref) || "").trim()
+          );
+          if (recorded) return String(recorded.run_ref).trim();
+        }
         const lowered = query.toLowerCase();
         const matches = mergedRunsCache.filter((run) =>
           String((run && run.run_id) || "").toLowerCase().includes(lowered)
@@ -12459,6 +12466,13 @@
         // When exactly one run matches the search, preselect it for one-click Load.
         if (filtered.length === 1 && select) {
           select.value = String(filtered[0].run_ref || filtered[0].run_id || "");
+        } else if (filtered.length > 1 && select && needle) {
+          const exactRecorded = filtered.find((run) =>
+            String((run && run.run_id) || "").toLowerCase() === needle &&
+            String((run && run.source_type) || "") === "artifact_storage" &&
+            String((run && run.run_ref) || "").trim()
+          );
+          if (exactRecorded) select.value = String(exactRecorded.run_ref).trim();
         }
         return filtered;
       }
