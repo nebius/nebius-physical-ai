@@ -13420,6 +13420,7 @@
             }, {
               ...(signal ? { signal } : {}),
               isCurrent: requestIsCurrent,
+              forceCapabilityMount: Boolean(context.forcePreferredViewer),
             });
           } catch (viewerErr) {
             showToast("Run loaded; preferred viewer failed: " + String(
@@ -14103,6 +14104,14 @@
           setRenderMode("rerun", renderModeOptions);
           hideArtifactPreview();
           lastRrdUpdatedAt = "";
+          if (context.forceCapabilityMount && rerunMountInFlight) {
+            try { await rerunMountInFlight; } catch (_priorMountErr) { /* selected run supersedes it */ }
+          }
+          if (context.forceCapabilityMount) {
+            rerunIframeLoaded = false;
+            mountedRerunRunKey = "";
+            lastRerunRecordingUrl = "";
+          }
           const frameMatchesSelectedRecording = () => {
             const frame = document.getElementById("rerunFrame");
             const frameSrc = String((frame && frame.getAttribute("src")) || "");
