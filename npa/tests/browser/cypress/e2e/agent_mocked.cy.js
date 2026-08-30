@@ -2894,26 +2894,136 @@ describe("NPA agent UI with mocked APIs", () => {
     });
   });
 
-  it("falls back to 30 fps when captureStream(0) lacks requestFrame", () => {
+  it("primes the Rerun MediaStream bridge before the first non-preserved paint", () => {
+    cy.get("#tabRerun").click();
+    cy.window().then(async (win) => {
+      const api = win.__NPA_AGENT_TEST__;
+      const iframe = win.document.getElementById("rerunFrame");
+      iframe.hidden = false;
+      iframe.srcdoc = `<!doctype html><html><body><script>
+        const canvas = document.createElement("canvas");
+        canvas.width = 320;
+        canvas.height = 180;
+        document.body.appendChild(canvas);
+        const nativeCaptureStream = canvas.captureStream.bind(canvas);
+        const state = { painted: false, capturedBeforePaint: false };
+        canvas.captureStream = (rate) => {
+          if (!state.painted) state.capturedBeforePaint = true;
+          return nativeCaptureStream(rate);
+        };
+        window.__NPA_CAPTURE_LIFECYCLE__ = state;
+        window.setTimeout(() => {
+          state.painted = true;
+          const ctx = canvas.getContext("2d");
+          ctx.fillStyle = "#07111f";
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          ctx.fillStyle = "#ff8a1f";
+          ctx.fillRect(35, 35, 110, 90);
+          ctx.fillStyle = "#5eead4";
+          ctx.fillRect(175, 55, 100, 75);
+        }, 1200);
+      <\/script></body></html>`;
+
+      const documentDeadline = Date.now() + 1500;
+      while (
+        Date.now() < documentDeadline
+        && !iframe.contentWindow.__NPA_CAPTURE_LIFECYCLE__
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      api.primeRerunCaptureBridge(iframe, 3000);
+      const deadline = Date.now() + 2500;
+      while (
+        Date.now() < deadline
+        && !(iframe.contentWindow.__NPA_CAPTURE_LIFECYCLE__ || {}).painted
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 40));
+      }
+      const lifecycle = iframe.contentWindow.__NPA_CAPTURE_LIFECYCLE__;
+      expect(lifecycle, "lifecycle fixture").to.exist;
+      expect(lifecycle.capturedBeforePaint, "stream armed before first paint").to.eq(true);
+      const grabbed = await api.grabFromRerunCaptureBridge(3000, { forceRestart: false });
+      expect(grabbed).to.match(/^data:image\/jpeg;base64,/);
+      expect(grabbed.length).to.be.greaterThan(1000);
+    });
+  });
+
+  it("keeps priming when Rerun replaces a decoded loading canvas", () => {
+    cy.get("#tabRerun").click();
+    cy.window().then(async (win) => {
+      const api = win.__NPA_AGENT_TEST__;
+      const iframe = win.document.getElementById("rerunFrame");
+      iframe.hidden = false;
+      iframe.srcdoc = `<!doctype html><html><body><script>
+        const state = { initialCaptured: false, replacementCaptured: false };
+        const paint = (canvas, color) => {
+          canvas.width = 320;
+          canvas.height = 180;
+          const ctx = canvas.getContext("2d");
+          ctx.fillStyle = color;
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          ctx.fillStyle = "#5eead4";
+          ctx.fillRect(170, 45, 110, 85);
+        };
+        const initial = document.createElement("canvas");
+        const initialCapture = initial.captureStream.bind(initial);
+        initial.captureStream = (rate) => {
+          state.initialCaptured = true;
+          return initialCapture(rate);
+        };
+        document.body.appendChild(initial);
+        paint(initial, "#07111f");
+        window.__NPA_CAPTURE_REPLACEMENT__ = state;
+        window.setTimeout(() => {
+          const replacement = document.createElement("canvas");
+          const replacementCapture = replacement.captureStream.bind(replacement);
+          replacement.captureStream = (rate) => {
+            state.replacementCaptured = true;
+            return replacementCapture(rate);
+          };
+          initial.replaceWith(replacement);
+          paint(replacement, "#ff8a1f");
+        }, 700);
+      <\/script></body></html>`;
+
+      const documentDeadline = Date.now() + 1500;
+      while (
+        Date.now() < documentDeadline
+        && !iframe.contentWindow.__NPA_CAPTURE_REPLACEMENT__
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      api.primeRerunCaptureBridge(iframe, 2200);
+      const replacementDeadline = Date.now() + 1800;
+      while (
+        Date.now() < replacementDeadline
+        && !(iframe.contentWindow.__NPA_CAPTURE_REPLACEMENT__ || {}).replacementCaptured
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 40));
+      }
+      const lifecycle = iframe.contentWindow.__NPA_CAPTURE_REPLACEMENT__;
+      expect(lifecycle.initialCaptured, "loading canvas stream").to.eq(true);
+      expect(lifecycle.replacementCaptured, "replacement canvas stream").to.eq(true);
+      const grabbed = await api.grabFromRerunCaptureBridge(3000, { forceRestart: false });
+      expect(grabbed).to.match(/^data:image\/jpeg;base64,/);
+      expect(grabbed.length).to.be.greaterThan(1000);
+    });
+  });
+
+  it("keeps the primed Rerun bridge continuous across later canvas paints", () => {
     cy.window().then((win) => {
       const api = win.__NPA_AGENT_TEST__;
       const rates = [];
-      const stopped = cy.stub();
-      const fallback = { getVideoTracks: () => [{ requestFrame() {} }], getTracks: () => [] };
-      const partial = {
-        getVideoTracks: () => [{}],
-        getTracks: () => [{ stop: stopped }],
-      };
+      const continuous = { getVideoTracks: () => [{}], getTracks: () => [] };
       const canvas = {
         captureStream(rate) {
           rates.push(rate);
-          return rate === 0 ? partial : fallback;
+          return continuous;
         },
       };
 
-      expect(api.captureStreamWithFrameFallback(canvas)).to.eq(fallback);
-      expect(rates).to.deep.eq([0, 30]);
-      expect(stopped).to.have.been.calledOnce;
+      expect(api.captureStreamWithFrameFallback(canvas)).to.eq(continuous);
+      expect(rates).to.deep.eq([30]);
     });
   });
 

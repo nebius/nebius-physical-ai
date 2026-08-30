@@ -195,17 +195,11 @@ gate — acceptance is. NVIDIA delivers Isaac to each operator under that operat
 acceptance, and we redistribute nothing. This is the same pattern already used for gated
 model weights (Cosmos, GR00T N1, Cosmos-Reason).
 
-**What it costs.** Measured on an RTX PRO 6000 Blackwell node:
-
-| | |
-| --- | --- |
-| cold start (~4.5 GB downloaded) | **111 s** |
-| warm start | **32 ms** |
-| cache volume per pinned version | **10.04 GiB** |
-| 8 pods racing one cache | 114 s total; one installer, seven waiters, no corruption |
-
-A per-pod `emptyDir` makes every pod pay that, and a node running 8 GPU pods downloads
-~36 GB. Warm a **shared** volume once instead:
+**What it costs.** Runtime size and cold-bootstrap cost are version-specific.
+Do not apply the old Isaac Lab 2 / Isaac Sim 5 cache measurements to the Isaac
+Lab 3 / Isaac Sim 6 runtime. The current paired measurements and exact method
+are in [Isaac Lab 3 workbench](isaac-lab-3.md). A per-pod `emptyDir` makes every
+pod pay its generation's cold fetch. Warm a **shared** volume once instead:
 
 ```bash
 kubectl apply -f npa/docker/workbench/common/warm-isaac-cache.yaml
@@ -223,7 +217,7 @@ reading the Dockerfile:
 
 ```bash
 npa/.venv/bin/python npa/scripts/scan_image_omniverse_payload.py \
-    <your-registry>/<namespace>/npa-isaac-lab:2.3.2.post1
+    <your-registry>/<namespace>/npa-isaac-lab:3.0.0b2.post1
 ```
 
 The scanner streams the image's flattened filesystem and its layer history, matching Kit
@@ -232,9 +226,13 @@ payload signatures (`libcarb`, `kit/kernel/`, `omni.*` extension dirs, `extscach
 grep for "isaac": the images deliberately keep a `/isaac-sim/python.sh` **shim**, because
 ~30 call sites already invoke Isaac through that path and Kubernetes pods override
 `ENTRYPOINT`, making the shim the only reliable bootstrap trigger. On
-`npa-isaac-lab` it scans 83,043 entries and reports 21 allowlisted paths — the shim, the
-bootstrap, the pinned manifests, two smoke scripts and two empty mount points — and
-`VERDICT: clean`.
+The trusted generation 3 publication job scanned 126,709 local-layer entries
+(35 reviewed allowlist hits) through a streaming
+`docker save` pipe before push, then scans the exact pushed digest as a flattened
+filesystem through the anonymous registry path (122,593 entries and 29
+reviewed allowlist hits). Both scans reported `VERDICT: clean`. This avoids an image-sized
+temporary archive without weakening the pre-publication layer-byte check. Both
+reports must finish with `VERDICT: clean`.
 
 **Build-your-own still works, and no longer needs NGC credentials at all**, because there
 is nothing credentialed left to pull:
@@ -276,11 +274,10 @@ digest. It checks config, licensing, payload scans, SBOM/provenance attestations
 and any declared bootstrap contract before exposing a release tag, then verifies
 anonymous pullability and exact digest parity.
 
-**The honest trade.** `npa-isaac-lab` went from 8.41 GB to 10.66 GB compressed (+27%).
-Removing Isaac Sim saved less than adding a standalone PyTorch cu128 wheel set cost — its
-bundled `nvidia-*` CUDA libraries are ~5 GB uncompressed, where the old nvcr.io base
-shared its CUDA runtime with Kit's. Slimming the CUDA base from `-devel` to `-runtime` is
-the obvious next lever.
+**The honest trade.** The payload-clean image still carries the selected CUDA,
+PyTorch, and OSS training stack; only the proprietary runtime moves to the
+operator cache. Image size and bootstrap-cache size are therefore separate
+measurements, and neither should be inferred from the other.
 
 Model weights are a separate axis and are never baked into any image: Cosmos,
 GR00T N1, and Cosmos-Reason weights (and VLMs) are downloaded at **runtime**

@@ -33,6 +33,6 @@ relocated the BYOF resource profiles to `npa/src/npa/workflows/byof/profiles/` (
 npa burst submit-yaml npa/src/npa/burst/examples/isaac-lab-cosmos-sdg-burst-smoke.yaml \
   --name <run-id> \
   --var NPA_RUN_ID=<run-id> \
-  --var ISAAC_LAB_IMAGE=<registry>/npa-isaac-lab:2.3.2.post1 \
+  --var ISAAC_LAB_IMAGE=<registry>/npa-isaac-lab:3.0.0b2.post1 \
   --var NPA_OUTPUT_URI=s3://<your-bucket>/<prefix>/<run-id>/
 ```

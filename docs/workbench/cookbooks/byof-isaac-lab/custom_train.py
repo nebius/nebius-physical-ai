@@ -39,6 +39,7 @@ def main() -> None:
         "num_envs": args.num_envs,
         "max_iterations": args.max_iterations,
         "headless": args.headless,
+        "visualizer": args.visualizer,
         "hydra_args": hydra_args,
         "created_unix": round(time.time(), 3),
     }
@@ -61,6 +62,7 @@ def _parse_args(argv: list[str]) -> tuple[argparse.Namespace, list[str]]:
     parser.add_argument("--num_envs", default="")
     parser.add_argument("--max_iterations", default="")
     parser.add_argument("--headless", action="store_true")
+    parser.add_argument("--visualizer", default="")
     parser.add_argument("--experiment_name", default="")
     parser.add_argument("--run_name", default="")
     return parser.parse_known_args(argv)

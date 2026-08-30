@@ -8705,21 +8705,15 @@
         return copy;
       }
       let rerunCaptureBridge = null;
+      let rerunCapturePrimeGeneration = 0;
       function captureStreamWithFrameFallback(canvas) {
-        // A zero-rate canvas stream is useful only when the browser exposes a
-        // requestFrame-capable track. Partial implementations otherwise leave a
-        // static Rerun scene permanently idle, so replace them with a 30 fps stream.
-        const manual = canvas.captureStream(0);
-        const track = manual && manual.getVideoTracks && manual.getVideoTracks()[0];
-        if (track && typeof track.requestFrame === "function") return manual;
-        if (manual && manual.getTracks) {
-          manual.getTracks().forEach((item) => {
-            try { item.stop(); } catch (_err) { /* ignore */ }
-          });
-        }
+        // Rerun's non-preserved WebGL canvas needs a stream that stays active
+        // across presents. A zero-rate/requestFrame track can freeze the first
+        // in-canvas loading paint even though later environment frames are
+        // visible in the browser compositor.
         return canvas.captureStream(30);
       }
-      function stopRerunCaptureBridge() {
+      function disposeRerunCaptureBridge() {
         if (!rerunCaptureBridge) return;
         try {
           if (rerunCaptureBridge.stream && rerunCaptureBridge.stream.getTracks) {
@@ -8732,6 +8726,10 @@
           }
         } catch (_err) { /* ignore */ }
         rerunCaptureBridge = null;
+      }
+      function stopRerunCaptureBridge() {
+        rerunCapturePrimeGeneration += 1;
+        disposeRerunCaptureBridge();
       }
       function ensureRerunCaptureBridge(iframe, opts) {
         // Keep a live MediaStream→<video> mirror of the Rerun canvas. Sync WebGL
@@ -8752,7 +8750,9 @@
           ) {
             return rerunCaptureBridge;
           }
-          stopRerunCaptureBridge();
+          // Replacing a stale canvas must not cancel the mount-time primer: the
+          // iframe document can replace its canvas while Rerun WASM starts.
+          disposeRerunCaptureBridge();
           const stream = captureStreamWithFrameFallback(canvas);
           const video = document.createElement("video");
           video.setAttribute("playsinline", "");
@@ -8772,18 +8772,42 @@
           return null;
         }
       }
+      function primeRerunCaptureBridge(iframe, timeoutMs) {
+        // captureStream must be attached while Rerun is painting. Its WebGL
+        // canvas does not preserve the presented buffer, so a stream first
+        // created by a later Describe-this click can remain live yet never
+        // produce a decodable frame. Poll through iframe/WASM startup and keep
+        // the latest bridge through the whole startup window. Rerun can decode
+        // and paint its loading canvas, then replace that canvas when the real
+        // recording view is installed. Stopping at the first decoded frame
+        // leaves Describe-this attached to the detached loading canvas.
+        const generation = ++rerunCapturePrimeGeneration;
+        const deadline = Date.now() + Math.max(800, Number(timeoutMs || 12000));
+        const tick = () => {
+          if (generation !== rerunCapturePrimeGeneration) return;
+          const bridge = ensureRerunCaptureBridge(iframe);
+          // Keep following canvas replacements through the full startup window,
+          // even after the current canvas has produced a decodable video frame.
+          // ensureRerunCaptureBridge is a cheap identity check when it is stable.
+          if (Date.now() < deadline && iframe && !iframe.hidden) {
+            window.setTimeout(tick, 40);
+          }
+        };
+        tick();
+      }
       async function grabFromRerunCaptureBridge(timeoutMs, opts) {
         const budget = Math.max(200, Number(timeoutMs || 2500));
         const run = async () => {
           const iframe = document.getElementById("rerunFrame");
-          // Fresh stream avoids returning stale composited frames after canvas repaints (gray/splash).
-          let restarted = Boolean(opts && opts.forceRestart);
-          let bridge = ensureRerunCaptureBridge(iframe, { forceRestart: restarted });
+          // Preserve the mount-time stream unless a caller explicitly requests
+          // a restart. A live late-created track can expose the right canvas
+          // dimensions while never producing its first decodable video frame.
+          const forceRestart = Boolean(opts && opts.forceRestart);
+          let bridge = ensureRerunCaptureBridge(iframe, { forceRestart });
           if (!bridge || !bridge.video) return "";
           await playVideoSoon(bridge.video, Math.min(300, budget));
           const fallbackBudget = Math.min(1200, Math.max(400, Math.floor(budget / 3)));
           const deadline = Date.now() + Math.max(200, budget - fallbackBudget);
-          const restartAt = Date.now() + Math.max(120, Math.floor((budget - fallbackBudget) * 0.55));
           while (Date.now() < deadline) {
             try {
               const track = bridge.stream && bridge.stream.getVideoTracks && bridge.stream.getVideoTracks()[0];
@@ -8799,16 +8823,6 @@
                 }
               }
             } catch (_grabErr) { /* retry */ }
-            // Chromium can retain a captureStream track that is live but stops
-            // publishing after the WebGL canvas repaints.  Give the existing
-            // bridge a fair chance, then replace it within the same bounded
-            // budget instead of returning a false metadata-only result.
-            if (!restarted && Date.now() >= restartAt) {
-              restarted = true;
-              bridge = ensureRerunCaptureBridge(iframe, { forceRestart: true });
-              if (!bridge || !bridge.video) return "";
-              await playVideoSoon(bridge.video, Math.min(300, Math.max(100, deadline - Date.now())));
-            }
             await new Promise((r) => window.setTimeout(r, 80));
           }
           // Some headless/accelerated browsers expose a valid capture stream but
@@ -8974,8 +8988,10 @@
           const iframe = document.getElementById("rerunFrame");
           if (!iframe || iframe.hidden) return { dataUrl: "", quality: "missing" };
           const deadline = Date.now() + budget;
-          // Restart bridge so we never return frames composited before the latest canvas paint.
-          ensureRerunCaptureBridge(iframe, { forceRestart: true });
+          // Preserve the mount-time bridge. Replacing it here creates a stream
+          // after Rerun's non-preserved WebGL buffer was presented and cleared,
+          // which Chromium reports as live but never turns into a video frame.
+          ensureRerunCaptureBridge(iframe);
           let heavyAttempts = 0;
           while (Date.now() < deadline) {
             try {
@@ -9667,7 +9683,7 @@
             Date.now() - rerunRecordingActivatedAt < activationSettleMs
           ) return false;
           if (rerunViewerShowsBundleSplash(iframe)) return false;
-          const bridged = await grabFromRerunCaptureBridge(500, { forceRestart: true });
+          const bridged = await grabFromRerunCaptureBridge(500, { forceRestart: false });
           if (bridged) {
             lastRerunNonBlankAt = Date.now();
             return true;
@@ -11525,12 +11541,16 @@
         stopRerunCaptureBridge();
         iframe.hidden = false;
         iframe.src = src;
+        // Arm capture before the Rerun WASM canvas performs its first paints.
+        // The primer follows canvas replacement during iframe startup and
+        // leaves a decoded MediaStream bridge alive for Describe-this.
+        primeRerunCaptureBridge(iframe, 12000);
         rerunRecordingActivatedAt = Date.now();
         iframe.dataset.rerunRunKey = mountKey;
         hideRerunPlaceholder();
         await waitForIframeLoad(iframe, 12000);
-        // Start composited-frame bridge as soon as the canvas exists.
-        ensureRerunCaptureBridge(iframe);
+        // The mount-time primer continues until the stream decodes a frame.
+        primeRerunCaptureBridge(iframe, 12000);
         try {
           lastRerunRecordingUrl = await resolveRerunRecordingUrl();
           if (lastRerunRecordingUrl.startsWith("/")) {
@@ -15544,6 +15564,7 @@
           sampleFrameStats,
           captureCanvasDataUrl,
           captureStreamWithFrameFallback,
+          primeRerunCaptureBridge,
           ensureRerunCaptureBridge,
           grabFromRerunCaptureBridge,
           pickBestIframeCanvas,
