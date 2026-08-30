@@ -4730,7 +4730,11 @@ def chat(payload: dict):
     pending_access = state.get("access_approval")
     if not isinstance(pending_access, dict):
         pending_access = {{}}
-    access_action = _access_approval.classify_followup(
+    # Describe-this/multimodal turns must reach the visual path even when their
+    # scene metadata happens to contain words such as model, dataset, catalog,
+    # or approval.  Match the other grounded shortcuts: never classify a visual
+    # turn as a deterministic access-approval conversation.
+    access_action = "" if visual_turn else _access_approval.classify_followup(
         last_content, has_pending_plan=bool(pending_access)
     )
     if access_action:

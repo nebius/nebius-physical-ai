@@ -9440,7 +9440,12 @@
         const runRef = String(activeArtifactRunRef || "").trim();
         const operation = foxgloveWebOperation;
         let staleOperationCancelled = false;
-        if (operation && (operation.runId !== runId || operation.runRef !== runRef)) {
+        // Discovery refreshes may replace an empty/legacy run_ref with the
+        // canonical reference for the same active run.  That is metadata
+        // normalization, not an operator selection change, and must not cancel
+        // a popup after its export request has already succeeded. Exact artifact
+        // opens verify the server's echoed key/source before navigation below.
+        if (operation && operation.runId !== runId) {
           operation.stale = true;
           if (operation.popup) {
             try { operation.popup.close(); } catch (_closeErr) { /* best effort */ }
@@ -11130,14 +11135,13 @@
           const selectedResult = (data && data.selected_artifact) ||
             (data && data.export && data.export.selected_artifact) || {};
           // Artifact inventory refreshes legitimately replace card DOM nodes
-          // during a slow preparation. Staleness is the immutable run/ref
-          // selection, while the exact key is verified from the server echo
-          // below; DOM-node identity is not provenance.
+          // and normalize run_ref during a slow preparation. The stable user
+          // selection boundary is the active run; exact artifact identity is
+          // independently verified from the server echo below.
           if (
             operation.stale ||
             foxgloveWebOperation !== operation ||
-            String(activeRunId || "").trim() !== runId ||
-            String(activeArtifactRunRef || "").trim() !== runRef
+            String(activeRunId || "").trim() !== runId
           ) {
             try { popup.close(); } catch (_closeErr) { /* best effort */ }
             return false;
@@ -11174,10 +11178,7 @@
           void (async () => {
             try {
               await refreshArtifactRuns(runId);
-              if (
-                String(activeRunId || "").trim() !== runId ||
-                String(activeArtifactRunRef || "").trim() !== runRef
-              ) return;
+              if (String(activeRunId || "").trim() !== runId) return;
               await loadArtifactsForSelectedRun(runRef || runId, {
                 suppressPreferredAutoload: true,
               });

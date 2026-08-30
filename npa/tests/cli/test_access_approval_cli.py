@@ -138,3 +138,14 @@ def test_configure_catalog_audit_is_optional_and_non_blocking(
     assert "Other Workbench capabilities remain usable" in result.output
     assert "did not accept any terms" in result.output
     assert opened == []
+
+
+def test_configure_catalog_mode_conflict_names_all_participants() -> None:
+    result = runner.invoke(
+        app,
+        ["configure", "--show", "--prepare-catalog-access"],
+    )
+
+    assert result.exit_code == 2
+    assert "--show/--env" in result.output
+    assert "--prepare-catalog-access/--open-approval-pages" in result.output

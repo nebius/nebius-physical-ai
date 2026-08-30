@@ -9,10 +9,18 @@ from typing import Iterable, Mapping
 
 def classify_followup(text: str, *, has_pending_plan: bool) -> str:
     value = str(text or "").strip().lower()
-    if re.search(
-        r"\b(?:prepare|check|audit|approve|approval|access)\b.{0,80}\b(?:hugging\s*face|hf|ngc|catalog|model|dataset|artifact)\b",
-        value,
-    ):
+    starts_plan = bool(
+        re.search(r"\b(?:prepare|check|audit|review|open|start|help)\b", value)
+    )
+    explicit_provider = bool(re.search(r"\b(?:hugging\s*face|hf|ngc)\b", value))
+    explicit_access = bool(
+        re.search(
+            r"\b(?:gated(?:[-\s]+(?:access|catalog|model|dataset|artifact))?|"
+            r"approval(?:[-\s]+pages?)?|access[-\s]+approval|catalog[-\s]+access)\b",
+            value,
+        )
+    )
+    if starts_plan and (explicit_provider or explicit_access):
         return "plan"
     if not has_pending_plan:
         return ""

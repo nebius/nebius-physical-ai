@@ -3213,6 +3213,115 @@ def test_rendered_grounded_access_approval_reports_skill_without_model_call(
         sys.modules.pop(module_name, None)
 
 
+def test_rendered_visual_turn_with_approval_words_stays_on_vision_path(
+    monkeypatch, tmp_path
+) -> None:
+    module_name = "npa_rendered_visual_approval_words_backend"
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+    state: dict[str, object] = {
+        "access_approval": {
+            "status": "blocked",
+            "official_urls": ["https://huggingface.co/vendor/repo"],
+        }
+    }
+    captured: dict[str, object] = {}
+
+    def visual_chat(*, messages, requested_model="", tier="standard", interactive=True):
+        captured.update(
+            messages=messages,
+            requested_model=requested_model,
+            tier=tier,
+            interactive=interactive,
+        )
+        return (
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": (
+                                "**What I see**: A model evaluation chart.\n\n"
+                                "**Likely meaning**: Dataset quality varies by split.\n\n"
+                                "**Operator feedback**: Inspect the lowest bar.\n\n"
+                                "**Next actions**: Compare it with the gated-catalog baseline."
+                            )
+                        }
+                    }
+                ],
+                "usage": {"prompt_tokens": 12, "completion_tokens": 18},
+            },
+            "mock-provider",
+            "mock-vision-model",
+        )
+
+    monkeypatch.setattr(module, "_load_state", lambda: state)
+    monkeypatch.setattr(module, "_save_state", lambda _state: None)
+    monkeypatch.setattr(
+        module._access_approval,
+        "classify_followup",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("visual turns must not enter access-approval classification")
+        ),
+    )
+    monkeypatch.setattr(
+        module._access_approval,
+        "build_plan",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("visual turns must not build an approval plan")
+        ),
+    )
+    monkeypatch.setattr(module, "_chat_with_resilience", visual_chat)
+    monkeypatch.setattr(
+        module,
+        "_append_chat_turn",
+        lambda session_id, *_args, **_kwargs: module._normalize_chat_session(
+            session_id,
+            {"id": session_id, "title": "Visual review", "chat_history": []},
+        ),
+    )
+    try:
+        response = module.chat(
+            {
+                "visual_context": {
+                    "kind": "image",
+                    "run_id": "evaluation-run",
+                    "artifact_key": "reports/model-dataset-catalog.png",
+                    "capture": "frame",
+                },
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": (
+                                    "[npa-visual-feedback] Describe this model dataset "
+                                    "catalog approval status image."
+                                ),
+                            },
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": "data:image/jpeg;base64,c3ludGhldGlj"
+                                },
+                            },
+                        ],
+                    }
+                ],
+            }
+        )
+
+        assert captured["tier"] == module.TIER_VISION
+        assert response["tier"] == module.TIER_VISION
+        assert response["model"] == "mock-vision-model"
+        assert response["visual_kind"] == "image"
+        assert response["skills_used"][0] == "agent-visual-feedback"
+        assert response.get("approval_plan") is None
+        assert response.get("open_urls") is None
+        assert "What I see" in response["reply"]
+    finally:
+        sys.modules.pop(module_name, None)
+
+
 def test_rendered_backend_has_no_mangled_regex_escapes(monkeypatch) -> None:
     """Regex escapes must survive the outer f-string intact.
 

@@ -2861,7 +2861,8 @@ def _configure_mode(arguments: dict[str, Any]) -> ConfigureMode:
         raise typer.BadParameter(
             "Configure modes cannot be combined: choose exactly one of display "
             "(--show/--env), --src-s3-uri, --forget-project, "
-            "--save-env-credentials, or known-project setup."
+            "--save-env-credentials, --prepare-catalog-access/"
+            "--open-approval-pages, or known-project setup."
         )
 
     mode = (
