@@ -2435,6 +2435,76 @@ def test_recovery_uses_durable_store_credentials_not_process_global_storage(
     assert checked
 
 
+@pytest.mark.parametrize(
+    "persisted_decision",
+    ["resume_block_output_present", "resume_block_output_indeterminate"],
+)
+def test_explicit_typed_pre_id_recovery_rechecks_persisted_output_block(
+    tmp_path: Path, persisted_decision: str
+) -> None:
+    from npa.orchestration.skypilot.workflow import ManagedJobEvidence
+
+    output_spec = FANOUT_SPEC.replace(
+        "    resources: cpu\n\n  shard-b:",
+        "    resources: cpu\n"
+        "    outputs:\n"
+        '      - uri: "s3://{{config.bucket}}/{{config.prefix}}/shard-a.json"\n\n'
+        "  shard-b:",
+        1,
+    )
+    spec = load_spec(_write_spec(tmp_path, output_spec))
+    store = MemoryStore()
+    state = RuntimeRunState(workflow=spec.name, run_id="rt-recheck-output-block")
+    state.record_wave(
+        {
+            "key": "001|shards|shards:shard-a:-,shards:shard-b:-",
+            "status": "failed",
+            "job_id": "",
+            "job_name": "rt-recheck-output-block-01-shards",
+            "attempt": 1,
+            "sky_status": "",
+            "logical_launch_id": "logical-recheck-output-block",
+            "launch_sequence": 1,
+            "error_category": "kubernetes_transport",
+            "recovery_decision": persisted_decision,
+        }
+    )
+    store.write_runtime_state(state)
+    options = RuntimeOptions(
+        poll_seconds=0,
+        max_wait_seconds=60,
+        resume=True,
+        retry_absent_in_flight=True,
+    )
+    submitter = FakeSubmitter()
+    executor = _executor(
+        spec,
+        run_id="rt-recheck-output-block",
+        submitter=submitter,
+        options=options,
+        store=store,
+        output_checker=lambda _uri: bool(submitter.calls),
+        reconcile_fn=lambda *_args, **_kwargs: ManagedJobEvidence("absent"),
+    )
+
+    report = run_workflow_runtime(
+        spec, run_id="rt-recheck-output-block", executor=executor, options=options
+    )
+
+    assert report.status == "succeeded"
+    assert submitter.calls[0]["job_name"].endswith("-a2")
+    attempts = [
+        item
+        for item in store.read_runtime_state().waves
+        if item["key"] == "001|shards|shards:shard-a:-,shards:shard-b:-"
+    ]
+    assert [item["attempt"] for item in attempts] == [1, 2]
+    assert (
+        attempts[0]["recovery_decision"]
+        == "operator_authorized_verified_absent_relaunch"
+    )
+
+
 def test_resume_blocks_indeterminate_incomplete_wave_without_submit(
     tmp_path: Path,
 ) -> None:

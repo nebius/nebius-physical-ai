@@ -810,7 +810,12 @@ class SkyPilotWaveExecutor:
                     "kubernetes_rate_limit",
                     "kubernetes_server",
                 }
-                and attempt.recovery_decision == "block_indeterminate"
+                and attempt.recovery_decision
+                in {
+                    "block_indeterminate",
+                    "resume_block_output_present",
+                    "resume_block_output_indeterminate",
+                }
             )
             explicit_retry = (
                 self.options.retry_absent_in_flight
