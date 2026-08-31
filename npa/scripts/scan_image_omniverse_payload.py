@@ -40,6 +40,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -255,25 +256,42 @@ def _require(tool: str) -> str:
     return path
 
 
-def _iter_crane_export(image: str):
+def _iter_crane_export(image: str, *, max_attempts: int = 4):
     """Stream the flattened filesystem of a remote image, member by member."""
     crane = _require("crane")
     command = [crane, "export", image, "-"]
-    process = subprocess.Popen(  # noqa: S603 - fixed argv
-        command, stdout=subprocess.PIPE
-    )
-    assert process.stdout is not None
-    try:
-        # r|* streams without seeking, so a multi-GB image never lands on disk.
-        with tarfile.open(fileobj=process.stdout, mode="r|*") as archive:
-            for member in archive:
-                yield member.name + ("/" if member.isdir() else "")
-    finally:
-        if process.stdout:
+    if max_attempts < 1:
+        raise ValueError("max_attempts must be positive")
+
+    for attempt in range(1, max_attempts + 1):
+        process = subprocess.Popen(  # noqa: S603 - fixed argv
+            command, stdout=subprocess.PIPE
+        )
+        assert process.stdout is not None
+        archive_error: tarfile.TarError | None = None
+        try:
+            # r|* streams without seeking, so a multi-GB image never lands on disk.
+            with tarfile.open(fileobj=process.stdout, mode="r|*") as archive:
+                for member in archive:
+                    yield member.name + ("/" if member.isdir() else "")
+        except tarfile.TarError as exc:
+            archive_error = exc
+        finally:
             process.stdout.close()
-        returncode = process.wait()
-    if returncode != 0:
-        raise subprocess.CalledProcessError(returncode, command)
+            returncode = process.wait()
+
+        if returncode == 0 and archive_error is None:
+            return
+        if attempt == max_attempts:
+            if returncode != 0:
+                raise subprocess.CalledProcessError(returncode, command) from archive_error
+            assert archive_error is not None
+            raise archive_error
+
+        # Registry exports are large enough to encounter transient 429s even after
+        # crane's internal retries. Restart the stream from byte zero; scan() ignores
+        # duplicate paths yielded by an interrupted attempt.
+        time.sleep(min(2 ** (attempt - 1), 30))
 
 
 def _iter_saved_image(fileobj, *, mode: str):
@@ -393,7 +411,11 @@ def scan(
         entries = () if history_only else _iter_crane_export(image)
     report.history_only = history_only
 
+    seen_paths: set[str] = set()
     for path in entries:
+        if path in seen_paths:
+            continue
+        seen_paths.add(path)
         report.entries_scanned += 1
         if is_allowed(path):
             report.allowlisted_hits.append(_normalize(path))

@@ -442,12 +442,23 @@ jobs:
           exact="${repository}@${DIGEST}"
           test "$(crane digest "$IMAGE")" = "$DIGEST"
           test "$(crane config "$exact" | jq -r '.config.Labels["org.opencontainers.image.revision"] // ""')" = "$DEVELOPMENT_SHA"
+          # Bind the remote digest back to the exact local image whose complete
+          # filesystem tar was scanned before publication. Pulling immediately after
+          # push reuses local layers and avoids a second multi-GB `crane export`, which
+          # GHCR can rate-limit even for authenticated callers. Matching image IDs binds
+          # the remote manifest's config/rootfs diff IDs to that scanned tar.
           payload_attempt=1
           while true; do
             payload_log="$RUNNER_TEMP/${TOOL}-pushed-payload-attempt-${payload_attempt}.log"
-            if npa/.venv/bin/python npa/scripts/scan_image_omniverse_payload.py \
-              "$exact" --json "$RUNNER_TEMP/${TOOL}-pushed-payload.json" \
-              >"$payload_log" 2>&1; then
+            if {
+              docker pull "$exact" &&
+              test "$(docker image inspect --format '{{.Id}}' "$exact")" = \
+                "$(docker image inspect --format '{{.Id}}' "$IMAGE")" &&
+              docker save --output "$RUNNER_TEMP/${TOOL}-pushed.tar" "$exact" &&
+              npa/.venv/bin/python npa/scripts/scan_image_omniverse_payload.py \
+                --tarball "$RUNNER_TEMP/${TOOL}-pushed.tar" \
+                --json "$RUNNER_TEMP/${TOOL}-pushed-payload.json"
+            } >"$payload_log" 2>&1; then
               cat "$payload_log"
               break
             fi
@@ -461,22 +472,20 @@ jobs:
           done
           if [ "$TOOL" = ltx2 ]; then
             npa/.venv/bin/python npa/scripts/scan_image_ltx_payload.py \
-              "$exact" --output "$RUNNER_TEMP/${TOOL}-pushed-ltx-payload.json"
+              --docker-save "$RUNNER_TEMP/${TOOL}-pushed.tar" \
+              --output "$RUNNER_TEMP/${TOOL}-pushed-ltx-payload.json"
           fi
           if [ "$TOOL" = wan2-2 ]; then
             npa/.venv/bin/python npa/scripts/scan_image_wan_payload.py \
-              "$exact" --output "$RUNNER_TEMP/${TOOL}-pushed-wan-payload.json"
+              --docker-save "$RUNNER_TEMP/${TOOL}-pushed.tar" \
+              --output "$RUNNER_TEMP/${TOOL}-pushed-wan-payload.json"
           fi
           if [ "$TOOL" = cosmos3-serving ]; then
-            docker pull "$exact"
-            docker save --output "$RUNNER_TEMP/${TOOL}-pushed.tar" "$exact"
             npa/.venv/bin/python npa/scripts/scan_image_cosmos3_serving_payload.py \
               --tarball "$RUNNER_TEMP/${TOOL}-pushed.tar" \
               --json "$RUNNER_TEMP/${TOOL}-pushed-cosmos3-serving-payload.json"
           fi
           if [ "$TOOL" = cosmos3-ray-serve ]; then
-            docker pull "$exact"
-            docker save --output "$RUNNER_TEMP/${TOOL}-pushed.tar" "$exact"
             npa/.venv/bin/python npa/scripts/scan_image_cosmos3_ray_serve_payload.py \
               --tarball "$RUNNER_TEMP/${TOOL}-pushed.tar" \
               --json "$RUNNER_TEMP/${TOOL}-pushed-cosmos3-ray-serve-payload.json"
@@ -512,6 +521,7 @@ jobs:
             anonymous_attempt=$((anonymous_attempt + 1))
             sleep 5
           done
+          rm -f "$RUNNER_TEMP/${TOOL}-pushed.tar"
           echo "Validated public development digest: $DIGEST" >> "$GITHUB_STEP_SUMMARY"
           echo "The dev tag is public; later deletion cannot revoke prior downloads." >> "$GITHUB_STEP_SUMMARY"
 

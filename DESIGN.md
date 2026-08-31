@@ -282,22 +282,32 @@ same reason.
 
 **Never leave a job running after an abort.** Every wave failure path — workflow
 error, unexpected tooling error, `KeyboardInterrupt` — goes through `_abort_wave`,
-which cancels the managed job (by id, or by cluster name when the submit reported no
-id) before recording the failure. Status queries are treated as unreliable rather
+which cancels the exact managed job by its provider job id before recording the
+failure. A submit without an exact job id is rejected, and ambiguous identity blocks
+cancellation rather than falling back to a shared cluster name. Status queries are treated as unreliable rather
 than fatal: up to `MAX_CONSECUTIVE_STATUS_ERRORS` transient `sky jobs queue`
 failures are tolerated (and recorded in the ledger) because a failed *query* says
 nothing about the job, while the wave deadline still applies. A submit that reports
 no job id is rejected outright, since polling would otherwise sit on `UNKNOWN` for
 the whole deadline while the job ran.
 
+The launch transaction submits through SkyPilot's asynchronous API mode, then
+reconciles the exact logical name to an immutable provider job ID under the
+existing finite launch-transaction deadline. This prevents a Pending workload
+from trapping the submit call before the runtime supervisor can observe it. An
+exact cancel is likewise polled for a finite number of provider observations;
+relaunch remains blocked until that exact attempt is terminal.
+
 ### Failure, retry, cancellation
 
-* A wave whose managed job reaches a terminal failure is retried up to
-  `--retries` times with a backoff; each attempt is a separate ledger entry
-  (`attempt: 1, 2, ...`) so a flaky node is visible rather than hidden.
+* A payload/terminal wave failure is retried up to `--retries` times with a
+  backoff. Typed capacity, quota, node-not-ready, and provider failures instead
+  use the independent finite `--max-infrastructure-recoveries` policy (default
+  1; 0 disables automatic relaunch). Exhaustion is persisted on the exact
+  attempt; neither policy silently extends the other.
 * A wave that does not reach a terminal state within `--max-wait-seconds` is
-  cancelled (job + cluster) unless `--no-cancel-on-timeout`, then fails the run —
-  no leaked clusters.
+  cancelled by exact provider job ID unless `--no-cancel-on-timeout`, then fails
+  the run. Shared controller/cluster teardown is a separate operator action.
 * A failed batch of a parallel group stops the group; the remaining members are
   recorded as skipped, and the run fails with the **root cause** (the first
   failure), not the cascade.
@@ -326,7 +336,8 @@ SkyPilot-specific watcher is unchanged; this is the npa.workflow-native analogue
 ```
 npa workbench workflow submit <spec> --runtime \
   [--resume] [--poll-seconds N] [--max-wait-seconds N] \
-  [--retries N] [--max-concurrency N] [--no-cancel-on-timeout] \
+  [--retries N] [--max-infrastructure-recoveries N] \
+  [--max-concurrency N] [--no-cancel-on-timeout] \
   [--var k=v] [--secret-env NAME] [--registry ...] [--output-format json]
 
 npa workbench workflow plan-spec <spec> --waves [--json]
@@ -334,9 +345,20 @@ npa workbench workflow plan-spec <spec> --waves [--json]
 
 `--runtime` runs the driver in the foreground and prints a JSON summary (status,
 waves with job ids and timelines, decisions, run prefix, runtime-state URI);
-without it, `submit` behaves exactly as before. A detached driver (submit and
-poll from a supervisor process) is deliberately out of scope here — it needs a
-process supervisor story of its own.
+without it, `submit` behaves exactly as before. The lightweight run supervisor
+is CPU-side in this process, never in the GPU payload. It observes exact
+SkyPilot/provider identities, persists content-addressed S3 decisions, stops
+actionable configuration stalls, and recovers only identity/output-verified
+transient attempts. A separately deployed daemon remains out of scope; process
+restart uses the same run ID and durable S3 evidence.
+
+Before recovery, expected workflow, selected source, and digest-set identities
+are recomputed from the current process and compared to the prior attempt's
+durable values. The SkyPilot adapter reserves the next immutable identity only
+after exact cancellation; the existing launch transaction remains the sole
+provider-creation boundary. The same supervisor contract is active in Genesis'
+production Serverless Jobs command. It does not add mixed per-stage Serverless
+routing to `npa.workflow/v0.0.1`; workflow waves remain SkyPilot/Kubernetes.
 
 ---
 

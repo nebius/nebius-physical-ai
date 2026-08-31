@@ -192,6 +192,18 @@ def test_post_push_and_promotion_gates_are_digest_bound() -> None:
     assert "if ! grep -Eq" in verify
 
 
+def test_post_push_payload_scan_binds_remote_digest_to_local_full_tar() -> None:
+    text = PUBLISH.read_text(encoding="utf-8")
+    post_push = text[text.index("Verify pushed bytes") :]
+
+    assert 'docker pull "$exact"' in post_push
+    assert post_push.count("docker image inspect --format '{{.Id}}'") == 2
+    assert 'docker save --output "$RUNNER_TEMP/${TOOL}-pushed.tar" "$exact"' in post_push
+    assert '--tarball "$RUNNER_TEMP/${TOOL}-pushed.tar"' in post_push
+    assert 'rm -f "$RUNNER_TEMP/${TOOL}-pushed.tar"' in post_push
+    assert 'scan_image_omniverse_payload.py \\\n+            "$exact"' not in post_push
+
+
 def test_build_and_cleanup_dispatches_cannot_fall_through_to_promotion() -> None:
     promote = _spec(PUBLISH)["jobs"]["promote"]
     condition = str(promote["if"])

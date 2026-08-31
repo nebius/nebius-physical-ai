@@ -236,15 +236,34 @@ def inspect_job_blockers(
     )
     if not report.blockers:
         # A pod pending because its node vanished has no waiting reason of its own;
-        # the cause is on the node, which is why this looked like a silent PENDING.
+        # the cause is on that pod's assigned node. Do not classify an unrelated
+        # NotReady node elsewhere in the cluster as evidence for this exact job.
+        assigned_nodes = {
+            str(_as_dict(item.get("spec")).get("nodeName") or "")
+            for item in items
+            if isinstance(item, dict)
+            and str(_as_dict(item.get("spec")).get("nodeName") or "")
+        }
         report.unready_nodes = _unready_nodes(
-            context=context, timeout=timeout, runner=execute
+            context=context,
+            timeout=timeout,
+            runner=execute,
+            assigned_nodes=assigned_nodes,
         )
     return report
 
 
-def _unready_nodes(*, context: str, timeout: int, runner: Runner) -> list[str]:
-    """Return nodes whose kubelet is not Ready (reclaimed/preempted instances)."""
+def _unready_nodes(
+    *,
+    context: str,
+    timeout: int,
+    runner: Runner,
+    assigned_nodes: set[str],
+) -> list[str]:
+    """Return assigned nodes whose kubelet is not Ready."""
+
+    if not assigned_nodes:
+        return []
 
     cmd = ["kubectl", "get", "nodes", "-o", "json"]
     if context.strip():
@@ -271,6 +290,8 @@ def _unready_nodes(*, context: str, timeout: int, runner: Runner) -> list[str]:
         if not isinstance(item, dict):
             continue
         name = str(_as_dict(item.get("metadata")).get("name") or "")
+        if name not in assigned_nodes:
+            continue
         conditions = _as_dict(item.get("status")).get("conditions") or []
         if not isinstance(conditions, list):
             continue
@@ -321,6 +342,12 @@ def classify_pending_reason(
         return "IMAGE_PULL_FAILED"
     if "invalidimagename" in normalized:
         return "IMAGE_REFERENCE_INVALID"
+    if "createcontainerconfigerror" in normalized:
+        if "secret" in combined:
+            return "MISSING_SECRET"
+        if "configmap" in combined:
+            return "MISSING_CONFIGMAP"
+        return "CREATE_CONTAINER_CONFIG_ERROR"
     if source == "init" or "init" in combined:
         return "INIT_CONTAINER_FAILED"
     if "crashloopbackoff" in normalized or "containercannotrun" in normalized:

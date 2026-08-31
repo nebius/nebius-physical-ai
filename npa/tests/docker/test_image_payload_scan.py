@@ -649,19 +649,61 @@ def test_registry_export_failure_is_fatal_after_a_valid_partial_tar(
     """A truncated export must never become a clean redistribution report."""
 
     class FailedExport:
-        stdout = _empty_tar_stream()
+        def __init__(self) -> None:
+            self.stdout = _empty_tar_stream()
 
         @staticmethod
         def wait() -> int:
             return 17
 
     monkeypatch.setattr(scanner, "_require", lambda _tool: "/usr/bin/crane")
+    calls = 0
+
+    def failed_export(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        return FailedExport()
+
     monkeypatch.setattr(
-        scanner.subprocess, "Popen", lambda *_args, **_kwargs: FailedExport()
+        scanner.subprocess, "Popen", failed_export
     )
+    monkeypatch.setattr(scanner.time, "sleep", lambda _seconds: None)
 
     with pytest.raises(subprocess.CalledProcessError, match="exit status 17"):
         list(scanner._iter_crane_export("registry.example/image:tag"))
+    assert calls == 4
+
+
+def test_registry_export_retry_deduplicates_partial_paths(monkeypatch) -> None:
+    partial = io.BytesIO()
+    with tarfile.open(fileobj=partial, mode="w") as archive:
+        member = tarfile.TarInfo("opt/shared")
+        member.size = 0
+        archive.addfile(member)
+    partial.seek(0)
+
+    complete = io.BytesIO()
+    with tarfile.open(fileobj=complete, mode="w") as archive:
+        for name in ("opt/shared", "opt/final"):
+            member = tarfile.TarInfo(name)
+            member.size = 0
+            archive.addfile(member)
+    complete.seek(0)
+
+    processes = iter(
+        (
+            SimpleNamespace(stdout=partial, wait=lambda: 17),
+            SimpleNamespace(stdout=complete, wait=lambda: 0),
+        )
+    )
+    monkeypatch.setattr(scanner, "_require", lambda _tool: "/usr/bin/crane")
+    monkeypatch.setattr(scanner.subprocess, "Popen", lambda *_args, **_kwargs: next(processes))
+    monkeypatch.setattr(scanner.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(scanner, "_image_history", lambda _image: ([], "sha256:" + "a" * 64))
+
+    report = scanner.scan("registry.example/image:tag", None)
+
+    assert report.entries_scanned == 2
 
 
 def test_registry_config_failure_is_fatal(monkeypatch) -> None:

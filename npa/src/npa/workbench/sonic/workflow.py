@@ -116,7 +116,7 @@ def materialize_sonic_workflow(
     resolved_endpoint = _resolve_s3_endpoint(s3_endpoint)
     resolved_bucket = s3_bucket or os.environ.get("NPA_S3_BUCKET", "")
     resolved_prefix = _resolve_s3_prefix(s3_prefix, resolved_run_id)
-    resolved_accelerators = accelerators or _default_accelerators(resolved_gpu_target)
+    resolved_accelerators = accelerators or default_accelerators(resolved_gpu_target)
     resolved_cloud = cloud or _default_cloud(resolved_gpu_target)
     resolved_region = _resolve_region(region)
     resolved_registry_auth = _resolve_registry_auth(
@@ -301,7 +301,9 @@ def _resolve_s3_prefix(explicit: str, run_id: str) -> str:
     return prefix.rstrip("/") + "/"
 
 
-def _default_accelerators(gpu_target: str) -> str:
+def default_accelerators(gpu_target: str) -> str:
+    """Return the SkyPilot accelerator request for a SONIC GPU target."""
+
     normalized = gpu_target.strip().lower().replace("_", "-")
     if "rtx" in normalized or "blackwell" in normalized or "sm-120" in normalized:
         return "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"
@@ -309,9 +311,17 @@ def _default_accelerators(gpu_target: str) -> str:
         return "H200:1"
     if "h100" in normalized:
         return "H100:1"
+    if "b300" in normalized:
+        return "B300:1"
     if "b200" in normalized:
         return "B200:1"
     return "L40S:1"
+
+
+def _default_accelerators(gpu_target: str) -> str:
+    """Compatibility wrapper for callers that used the former private helper."""
+
+    return default_accelerators(gpu_target)
 
 
 def _default_cloud(gpu_target: str) -> str:

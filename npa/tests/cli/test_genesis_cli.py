@@ -270,6 +270,59 @@ def test_genesis_serverless_uses_shared_env_builder(mocker) -> None:
     resolver.assert_called_once_with(project_id="project-1", explicit_subnet_id="")
 
 
+def test_genesis_serverless_production_path_invokes_shared_supervisor(mocker) -> None:
+    _mock_genesis_serverless_env(mocker)
+    mocker.patch(
+        "npa.cli.genesis._pin_serverless_image",
+        return_value="registry.example/npa-genesis@sha256:" + "a" * 64,
+    )
+    client = mocker.Mock()
+    client.get_job.side_effect = EndpointNotFoundError("missing")
+    submitted = SimpleNamespace(
+        id="job-1", name="genesis-job", status="running", output_uris=()
+    )
+    completed = SimpleNamespace(
+        id="job-1", name="genesis-job", status="succeeded", output_uris=()
+    )
+    client.create_job.return_value = submitted
+    mocker.patch("npa.cli.genesis.ServerlessClient", return_value=client)
+    supervise = mocker.patch(
+        "npa.cli.genesis._supervise_genesis_serverless_job",
+        return_value=completed,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "genesis",
+            "train-teacher",
+            "--runtime",
+            "serverless",
+            "--n-envs",
+            "1",
+            "--max-iterations",
+            "1",
+            "--output-path",
+            "s3://bucket/genesis/",
+            "--gpu-type",
+            "h200",
+            "--job-name",
+            "genesis-job",
+            "--max-infrastructure-recoveries",
+            "2",
+            "--output-format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert json.loads(result.output)["status"] == "succeeded"
+    supervise.assert_called_once()
+    assert supervise.call_args.kwargs["max_infrastructure_recoveries"] == 2
+    client.poll_job.assert_not_called()
+
+
 def test_genesis_serverless_warns_non_hopper_gpu_type(mocker) -> None:
     _mock_genesis_serverless_env(mocker)
     client = mocker.Mock()

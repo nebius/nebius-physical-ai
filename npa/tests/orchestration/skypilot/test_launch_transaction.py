@@ -436,6 +436,41 @@ def test_indeterminate_reconciliation_never_launches_or_retries() -> None:
     assert caught.value.result.state is LaunchState.INDETERMINATE
 
 
+def test_async_launch_waits_for_exact_job_observability_without_relaunch() -> None:
+    clock = FakeClock()
+    launches = 0
+    observations = iter(
+        [
+            ReconciliationEvidence(ReconciliationState.ABSENT),
+            ReconciliationEvidence(ReconciliationState.ABSENT),
+            ReconciliationEvidence(ReconciliationState.ABSENT),
+            ReconciliationEvidence(ReconciliationState.FOUND, "88", "PENDING"),
+        ]
+    )
+
+    def launch() -> object:
+        nonlocal launches
+        launches += 1
+        return object()
+
+    result = run_launch_transaction(
+        logical_id="async-observability",
+        readiness=_stable,
+        launch=launch,
+        reconcile=lambda: next(observations),
+        classify_launch_error=_transient,
+        recovery_policy=RecoveryPolicy(30, 1, 1, 2, 0),
+        clock=clock,
+        sleeper=clock.sleep,
+        random_source=lambda: 0.5,
+    )
+
+    assert result.state is LaunchState.SUBMITTED
+    assert result.job_id == "88"
+    assert launches == 1
+    assert len(result.reconciliations) == 4
+
+
 def test_two_local_callers_produce_at_most_one_launch_and_second_adopts(
     tmp_path: Path,
 ) -> None:

@@ -205,7 +205,17 @@ if [ "$SKIP_TORCH" = "1" ]; then
   "$ISAAC_VENV/bin/python" -c 'import torch; print(f"base torch {torch.__version__}")'
 else
   log "PyTorch ${TORCH_VERSION} from ${TORCH_INDEX_URL}"
-  "$ISAAC_VENV/bin/python" -m pip install --no-cache-dir --no-deps \
+  TORCH_DEP_ARGS=(--no-deps)
+  if [[ "$TORCH_INDEX_URL" == */cu130 ]]; then
+    # CUDA 13 wheels use the new exact NVIDIA package names (for example
+    # nvidia-cuda-nvrtc==13.0.48) rather than the cu12-suffixed Isaac closure.
+    # Let pip install the versions declared by these three exact torch wheels;
+    # the pinned Isaac OSS closure is installed immediately afterwards and pip
+    # check verifies that the cu12 Isaac and cu13 torch closures coexist.
+    TORCH_DEP_ARGS=()
+  fi
+  "$ISAAC_VENV/bin/python" -m pip install --no-cache-dir \
+    "${TORCH_DEP_ARGS[@]}" \
     --index-url "$TORCH_INDEX_URL" \
     "torch==${TORCH_VERSION}" \
     "torchvision==${TORCHVISION_VERSION}" \
@@ -283,7 +293,9 @@ rm -f /tmp/eula-refusal.txt
 echo "NPA_ISAAC_BOOTSTRAP_REFUSES_WITHOUT_EULA_OK"
 
 log "verifying torch and that NO Isaac wheel is present in the image"
-NPA_REQUIRE_TORCH_SM120="${REQUIRE_TORCH_SM120:-1}" "$ISAAC_VENV/bin/python" - <<'PY'
+NPA_REQUIRE_TORCH_SM120="${REQUIRE_TORCH_SM120:-1}" \
+NPA_CUDA_ARCHITECTURES="${NPA_CUDA_ARCHITECTURES:-}" \
+  "$ISAAC_VENV/bin/python" - <<'PY'
 import importlib.util
 import os
 import sys
@@ -298,14 +310,37 @@ import torch
 # and the GPU golden evals. Asserting arch_list here would have meant a build that only
 # passes on GPU builders, which is a worse contract, not a stronger one.
 arch_list = torch.cuda.get_arch_list()
+compiled_arches = set(arch_list)
+if not compiled_arches and hasattr(torch._C, "_cuda_getArchFlags"):
+    compiled_arches.update(str(torch._C._cuda_getArchFlags()).split())
 cuda_version = torch.version.cuda or ""
-print(f"torch {torch.__version__} cuda={cuda_version or 'cpu'} arch_list={arch_list}")
+print(
+    f"torch {torch.__version__} cuda={cuda_version or 'cpu'} "
+    f"compiled_arches={sorted(compiled_arches)}"
+)
+
+requested_arches = {
+    f"sm_{value.removeprefix('sm')}"
+    for value in os.environ.get("NPA_CUDA_ARCHITECTURES", "").split(",")
+    if value.strip().startswith("sm")
+}
+if "sm_103" in requested_arches:
+    if cuda_version and tuple(int(value) for value in cuda_version.split(".")[:2]) < (13, 0):
+        raise SystemExit(f"B300 sm_103 requires torch CUDA >= 13.0, got {cuda_version}")
+    # The official cu130 torch wheel publishes Blackwell 10.x family SASS as
+    # sm_100, not a separate sm_103 entry.  B300-specific Warp kernels are JIT
+    # compiled by CUDA 13 NVRTC on the device, where compute_103 is supported.
+    if compiled_arches and not ({"sm_100", "sm_103"} & compiled_arches):
+        raise SystemExit(
+            f"expected Blackwell 10.x kernels for B300, got {sorted(compiled_arches)}"
+        )
+    print("NPA_TORCH_BLACKWELL_10X_CUDA13_OK")
 
 if os.environ.get("NPA_REQUIRE_TORCH_SM120") == "1":
-    if arch_list:
-        if "sm_120" not in arch_list:
+    if compiled_arches:
+        if "sm_120" not in compiled_arches:
             raise SystemExit(
-                f"expected sm_120 kernels for RTX PRO 6000 Blackwell, got {arch_list}"
+                f"expected sm_120 kernels for RTX PRO 6000 Blackwell, got {sorted(compiled_arches)}"
             )
         print("NPA_TORCH_SM120_OK (arch list observed on a GPU-capable builder)")
     else:
