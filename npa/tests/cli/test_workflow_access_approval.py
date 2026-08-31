@@ -135,6 +135,7 @@ def _blocked_hf_ngc_requirements() -> tuple[GatedAsset, ...]:
             ("groot",),
             True,
             revision="revision-hf",
+            probe_path="weights/model.safetensors",
             official_url="https://huggingface.co/nvidia/Cosmos-Reason2-2B",
             terms_revision="terms-hf",
         ),
@@ -244,3 +245,52 @@ def test_nurec_workflow_gate_accepts_provider_validated_registry_credential(
     assert plan["status"] == "ready"
     assert observed == [(secret, "nvcr.io/nvidia/nre/nre-ga:26.04")]
     assert secret not in json.dumps(plan, sort_keys=True)
+
+
+def test_hf_workflow_gate_rechecks_pending_then_resumes_after_byte_entitlement(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from npa.cli.workbench.workflow import _enforce_workflow_access
+
+    monkeypatch.setenv("NPA_ACCESS_APPROVAL_STATE_PATH", str(tmp_path / "state.json"))
+    monkeypatch.setattr(
+        "npa.cli.workbench.workflow._workflow_access_requirements",
+        lambda _spec: (_blocked_hf_ngc_requirements()[0],),
+    )
+    entitled = False
+    observed: list[tuple[str, str]] = []
+
+    def validate(_token, _repo, _repo_type, revision, probe_path):
+        observed.append((revision, probe_path))
+        return SimpleNamespace(
+            ok=entitled,
+            status_code=200 if entitled else 403,
+            error="pending" if not entitled else "",
+        )
+
+    monkeypatch.setattr("npa.clients.huggingface.validate_hf_access", validate)
+    spec = SimpleNamespace(states={})
+
+    with pytest.raises(typer.Exit):
+        _enforce_workflow_access(
+            spec,
+            json_output=True,
+            resume_command="npa workbench workflow run-spec workflow.yaml --execute",
+            hf_token="hf-synthetic",
+            ngc_key="",
+        )
+
+    entitled = True
+    plan = _enforce_workflow_access(
+        spec,
+        json_output=True,
+        resume_command="npa workbench workflow run-spec workflow.yaml --execute",
+        hf_token="hf-synthetic",
+        ngc_key="",
+    )
+
+    assert plan["status"] == "ready"
+    assert observed == [
+        ("revision-hf", "weights/model.safetensors"),
+        ("revision-hf", "weights/model.safetensors"),
+    ]

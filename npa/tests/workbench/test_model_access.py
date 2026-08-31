@@ -37,7 +37,7 @@ def _public_asset():
 
 
 def test_catalog_matches_current_nvidia_hf_gating() -> None:
-    assert HF_GATING_LAST_VERIFIED == "2026-08-25"
+    assert HF_GATING_LAST_VERIFIED == "2026-08-31"
     repos = {a.repo for a in WORKBENCH_ASSETS}
     assert "nvidia/GR00T-N1.7-3B" in repos
     assert "nvidia/Alpamayo2-Super" in repos
@@ -99,7 +99,7 @@ def test_hf_present_unverified_offline() -> None:
 
 def test_hf_pass_when_validator_ok() -> None:
     result = check_hf_asset(
-        _gated_asset(), "hf_x", hf_validator=lambda t, r, k: _HFResult(ok=True)
+        _gated_asset(), "hf_x", hf_validator=lambda *args: _HFResult(ok=True)
     )
     assert result.status == PASS
     assert "access ok" in result.summary.lower()
@@ -110,7 +110,7 @@ def test_hf_gated_fail_points_at_acceptance_url() -> None:
     result = check_hf_asset(
         asset,
         "hf_x",
-        hf_validator=lambda t, r, k: _HFResult(
+        hf_validator=lambda *args: _HFResult(
             ok=False, status_code=403, error="no access"
         ),
     )
@@ -123,7 +123,7 @@ def test_hf_public_401_is_token_problem_not_gating() -> None:
     result = check_hf_asset(
         _public_asset(),
         "hf_bad",
-        hf_validator=lambda t, r, k: _HFResult(ok=False, status_code=401, error="bad"),
+        hf_validator=lambda *args: _HFResult(ok=False, status_code=401, error="bad"),
     )
     assert result.status == FAIL
     assert "settings/tokens" in result.remedy
@@ -133,7 +133,7 @@ def test_hf_transient_error_warns() -> None:
     result = check_hf_asset(
         _gated_asset(),
         "hf_x",
-        hf_validator=lambda t, r, k: _HFResult(
+        hf_validator=lambda *args: _HFResult(
             ok=False, status_code=None, error="timeout"
         ),
     )
@@ -145,8 +145,8 @@ def test_hf_validator_diagnostic_redacts_token() -> None:
     result = check_hf_asset(
         _gated_asset(),
         token,
-        hf_validator=lambda t, r, k: _HFResult(
-            ok=False, status_code=403, error=f"upstream echoed {t}"
+        hf_validator=lambda token, *_args: _HFResult(
+            ok=False, status_code=403, error=f"upstream echoed {token}"
         ),
     )
 
@@ -157,8 +157,8 @@ def test_hf_validator_diagnostic_redacts_token() -> None:
 def test_hf_validator_exception_is_sanitized() -> None:
     token = "hf_synthetic_exception_secret"
 
-    def _raise(t, r, k):
-        raise RuntimeError(f"upstream echoed {t}")
+    def _raise(token, *_args):
+        raise RuntimeError(f"upstream echoed {token}")
 
     result = check_hf_asset(_gated_asset(), token, hf_validator=_raise)
 
@@ -294,7 +294,7 @@ def test_check_workbench_access_flags_failure_on_gated_denial() -> None:
     results = check_workbench_access(
         hf_token="hf_x",
         ngc_key="nvapi-x",
-        hf_validator=lambda t, r, k: _HFResult(
+        hf_validator=lambda *args: _HFResult(
             ok=False, status_code=403, error="denied"
         ),
         capabilities=["groot"],
@@ -337,7 +337,7 @@ def test_access_note_all_ok_is_one_positive_line() -> None:
     results = check_workbench_access(
         hf_token="hf_x",
         ngc_key="nvapi-x",
-        hf_validator=lambda t, r, k: _HFResult(ok=True),
+        hf_validator=lambda *args: _HFResult(ok=True),
         ngc_validator=lambda key: "reachable",
         gated_only=True,
     )
@@ -350,7 +350,8 @@ def test_access_note_all_ok_is_one_positive_line() -> None:
 def test_access_note_lists_hf_failures_on_one_line() -> None:
     denied = {"nvidia/Cosmos-Reason2-2B"}
 
-    def _validator(token, repo, repo_type):
+    def _validator(token, repo, repo_type, revision, probe_path):
+        del token, repo_type, revision, probe_path
         return _HFResult(
             ok=repo not in denied, status_code=403 if repo in denied else 200
         )
@@ -369,7 +370,7 @@ def test_access_note_ngc_missing_names_capabilities() -> None:
     results = check_workbench_access(
         hf_token="hf_x",
         ngc_key="",
-        hf_validator=lambda t, r, k: _HFResult(ok=True),
+        hf_validator=lambda *args: _HFResult(ok=True),
         gated_only=True,
     )
     note = access_note(results)
@@ -383,7 +384,7 @@ def test_access_note_distinguishes_ngc_credential_rejection() -> None:
     results = check_workbench_access(
         hf_token="hf_synthetic",
         ngc_key="nvapi-synthetic",
-        hf_validator=lambda t, r, k: _HFResult(ok=True),
+        hf_validator=lambda *args: _HFResult(ok=True),
         ngc_validator=lambda key: "auth-401",
         gated_only=True,
     )

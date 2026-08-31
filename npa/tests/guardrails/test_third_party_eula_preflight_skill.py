@@ -6,6 +6,8 @@ from pathlib import Path
 
 import yaml
 
+from npa.workbench.model_access import HF, WORKBENCH_ASSETS, usable_hf_payload_probe
+
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SKILL = REPO_ROOT / "skills/atomic/third-party-eula-preflight/SKILL.md"
@@ -121,3 +123,16 @@ def test_openpi_product_policy_keeps_its_scoped_runtime_gate() -> None:
 
     workflow = REPO_ROOT / "npa/workflows/workbench/npa-workflows/byof-openpi.yaml"
     assert "NPA_OPENPI_ACCEPT_GEMMA_TERMS" in workflow.read_text(encoding="utf-8")
+
+
+def test_every_gated_hf_catalog_asset_has_a_pinned_payload_byte_probe() -> None:
+    gated_hf = [
+        asset for asset in WORKBENCH_ASSETS if asset.provider == HF and asset.gated
+    ]
+
+    assert gated_hf
+    for asset in gated_hf:
+        assert usable_hf_payload_probe(asset), (
+            f"{asset.repo} must pin a revision and a payload probe_path; README, "
+            "model-card, license, tokenizer, and config files are not entitlement proof"
+        )

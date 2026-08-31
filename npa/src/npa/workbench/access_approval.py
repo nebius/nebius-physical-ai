@@ -18,7 +18,13 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
-from npa.workbench.model_access import HF, NGC, GatedAsset, assets_for
+from npa.workbench.model_access import (
+    HF,
+    NGC,
+    GatedAsset,
+    assets_for,
+    usable_hf_payload_probe,
+)
 
 SCHEMA_VERSION = "npa.workbench.access-approval.v1"
 DEFAULT_STATE_PATH = Path.home() / ".npa" / "access-approvals.json"
@@ -51,6 +57,7 @@ class AccessEvidence:
             "capabilities": list(item.capabilities),
             "official_url": item.official_url,
             "terms_revision": item.terms_revision,
+            "probe_path": item.probe_path,
             "status": self.status.value,
             "reason": self.reason,
             "checked_at": self.checked_at,
@@ -91,6 +98,7 @@ def exact_requirements(
             revision=item.revision,
             official_url=item.official_url,
             terms_revision=item.terms_revision,
+            probe_path=item.probe_path,
         )
     return tuple(
         by_identity[key]
@@ -119,6 +127,7 @@ def catalog_digest(requirements: Iterable[GatedAsset]) -> str:
             "artifact_type": item.repo_type,
             "revision": item.revision,
             "terms_revision": item.terms_revision,
+            "probe_path": item.probe_path,
         }
         for item in requirements
     ]
@@ -140,6 +149,7 @@ def _cache_key(item: GatedAsset, fingerprint: str) -> str:
             item.repo_type,
             item.revision,
             item.terms_revision,
+            item.probe_path,
             fingerprint,
         )
     )
@@ -174,25 +184,28 @@ def save_state(payload: Mapping[str, Any], path: Path = DEFAULT_STATE_PATH) -> N
 def _hf_evidence(
     item: GatedAsset,
     token: str,
-    validator: Callable[[str, str, str], Any] | None,
+    validator: Callable[..., Any] | None,
 ) -> tuple[AccessStatus, str]:
     if not token and item.gated:
         return AccessStatus.PENDING, "missing_credentials"
     if validator is None:
         return AccessStatus.UNAVAILABLE, "probe_unavailable"
+    if not usable_hf_payload_probe(item):
+        return AccessStatus.UNAVAILABLE, "exact_payload_probe_missing"
     try:
-        try:
-            result = validator(token, item.repo, item.repo_type, item.revision)
-        except TypeError:
-            # Preserve compatibility with injected/provider adapters that predate
-            # exact-revision probing.
-            result = validator(token, item.repo, item.repo_type)
+        result = validator(
+            token,
+            item.repo,
+            item.repo_type,
+            item.revision,
+            item.probe_path,
+        )
     except Exception:  # noqa: BLE001 - provider diagnostics may echo secrets
         return AccessStatus.UNAVAILABLE, "provider_unavailable"
     if bool(getattr(result, "ok", False)):
         return AccessStatus.READY, "exact_artifact_access_verified"
     status_code = getattr(result, "status_code", None)
-    if status_code == 403 and item.gated:
+    if status_code in {401, 403} and item.gated:
         return AccessStatus.PENDING, "manual_approval_required_or_pending"
     if status_code in {401, 403}:
         return AccessStatus.DENIED, "credential_or_entitlement_denied"
@@ -229,7 +242,7 @@ def probe_requirements(
     *,
     hf_token: str,
     ngc_key: str,
-    hf_validator: Callable[[str, str, str], Any] | None,
+    hf_validator: Callable[..., Any] | None,
     ngc_validator: Callable[..., str] | None,
     state_path: Path = DEFAULT_STATE_PATH,
     force: bool = False,
@@ -287,6 +300,7 @@ def probe_requirements(
             "artifact_type": item.repo_type,
             "revision": item.revision,
             "terms_revision": item.terms_revision,
+            "probe_path": item.probe_path,
             "credential_fingerprint": fingerprint,
             "status": status.value,
             "reason": reason,

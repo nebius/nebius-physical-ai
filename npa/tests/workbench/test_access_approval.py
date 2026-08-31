@@ -89,6 +89,8 @@ def test_hf_ready_pending_denied_unavailable_and_public_anonymous(tmp_path: Path
         HF,
         ("demo",),
         True,
+        revision="rev-gated",
+        probe_path="weights/model.safetensors",
         official_url="https://huggingface.co/vendor/gated",
         terms_revision="v1",
     )
@@ -100,11 +102,12 @@ def test_hf_ready_pending_denied_unavailable_and_public_anonymous(tmp_path: Path
         official_url="https://huggingface.co/vendor/public",
     )
 
-    def probe(token: str, repo: str, repo_type: str):
+    def probe(token: str, repo: str, repo_type: str, revision: str, probe_path: str):
         del repo_type
         if repo.endswith("public"):
             assert token == ""
             return _hf_result(ok=True)
+        assert (revision, probe_path) == ("rev-gated", "weights/model.safetensors")
         return _hf_result(ok=token == "ready", status_code=403 if token else 401)
 
     ready = probe_requirements(
@@ -152,6 +155,42 @@ def test_hf_ready_pending_denied_unavailable_and_public_anonymous(tmp_path: Path
         state_path=tmp_path / "public.json",
     )
     assert anonymous[0].status == AccessStatus.READY
+
+
+@pytest.mark.parametrize("payload_status", [401, 403])
+def test_metadata_visibility_cannot_make_denied_payload_ready(
+    tmp_path: Path, payload_status: int
+) -> None:
+    item = GatedAsset(
+        "vendor/gated",
+        HF,
+        ("demo",),
+        True,
+        revision="rev-gated",
+        probe_path="weights/model.safetensors",
+        official_url="https://huggingface.co/vendor/gated",
+        terms_revision="terms-a",
+    )
+    observed: list[tuple[str, str, str]] = []
+
+    def payload_probe(_token, repo, _repo_type, revision, probe_path):
+        observed.append((repo, revision, probe_path))
+        return _hf_result(ok=False, status_code=payload_status)
+
+    evidence = probe_requirements(
+        [item],
+        hf_token="identity-valid-token",
+        ngc_key="",
+        hf_validator=payload_probe,
+        ngc_validator=None,
+        state_path=tmp_path / "state.json",
+    )
+
+    assert evidence[0].status == AccessStatus.PENDING
+    assert evidence[0].reason == "manual_approval_required_or_pending"
+    assert observed == [
+        ("vendor/gated", "rev-gated", "weights/model.safetensors")
+    ]
 
 
 @pytest.mark.parametrize("credential", ["nvapi-personal", "registry-credential"])
@@ -235,8 +274,8 @@ def test_ready_cache_reuses_only_unchanged_credential_revision_and_terms(
     state_path = tmp_path / "state.json"
     calls: list[str] = []
 
-    def probe(token: str, repo: str, repo_type: str):
-        del repo, repo_type
+    def probe(token: str, repo: str, repo_type: str, revision: str, probe_path: str):
+        del repo, repo_type, revision, probe_path
         calls.append(token)
         return _hf_result(ok=True)
 
@@ -246,6 +285,7 @@ def test_ready_cache_reuses_only_unchanged_credential_revision_and_terms(
         ("demo",),
         True,
         revision="rev-a",
+        probe_path="weights/model.safetensors",
         official_url="https://huggingface.co/vendor/model",
         terms_revision="terms-a",
     )
@@ -299,6 +339,91 @@ def test_ready_cache_reuses_only_unchanged_credential_revision_and_terms(
     assert state_path.stat().st_mode & 0o777 == 0o600
     serialized = state_path.read_text(encoding="utf-8")
     assert "token-a" not in serialized and "token-b" not in serialized
+
+
+def test_ready_cache_is_invalidated_when_exact_probe_path_changes(tmp_path: Path) -> None:
+    state_path = tmp_path / "state.json"
+    calls: list[tuple[str, str]] = []
+
+    def probe(_token, _repo, _repo_type, revision, probe_path):
+        calls.append((revision, probe_path))
+        return _hf_result(ok=True)
+
+    base = GatedAsset(
+        "vendor/model",
+        HF,
+        ("demo",),
+        True,
+        revision="rev-a",
+        probe_path="weights/first.safetensors",
+        official_url="https://huggingface.co/vendor/model",
+        terms_revision="terms-a",
+    )
+    first = probe_requirements(
+        [base],
+        hf_token="token-a",
+        ngc_key="",
+        hf_validator=probe,
+        ngc_validator=None,
+        state_path=state_path,
+    )
+    changed = GatedAsset(
+        **{**base.__dict__, "probe_path": "weights/second.safetensors"}
+    )
+    second = probe_requirements(
+        [changed],
+        hf_token="token-a",
+        ngc_key="",
+        hf_validator=probe,
+        ngc_validator=None,
+        state_path=state_path,
+    )
+
+    assert first[0].status == AccessStatus.READY
+    assert second[0].status == AccessStatus.READY
+    assert second[0].cached is False
+    assert calls == [
+        ("rev-a", "weights/first.safetensors"),
+        ("rev-a", "weights/second.safetensors"),
+    ]
+
+
+@pytest.mark.parametrize(
+    "probe_path",
+    ["", "README.md", "LICENSE", "config.json", "../weights/model.safetensors"],
+)
+def test_gated_hf_without_usable_payload_probe_fails_closed(
+    tmp_path: Path, probe_path: str
+) -> None:
+    item = GatedAsset(
+        "vendor/model",
+        HF,
+        ("demo",),
+        True,
+        revision="rev-a",
+        probe_path=probe_path,
+        official_url="https://huggingface.co/vendor/model",
+        terms_revision="terms-a",
+    )
+    called = False
+
+    def probe(*_args):
+        nonlocal called
+        called = True
+        return _hf_result(ok=True)
+
+    evidence = probe_requirements(
+        [item],
+        hf_token="token-a",
+        ngc_key="",
+        hf_validator=probe,
+        ngc_validator=None,
+        state_path=tmp_path / "state.json",
+    )
+
+    assert evidence[0].status == AccessStatus.UNAVAILABLE
+    assert evidence[0].reason == "exact_payload_probe_missing"
+    assert called is False
 
 
 def test_plan_and_resume_contract_never_claim_acceptance_or_expose_secrets(

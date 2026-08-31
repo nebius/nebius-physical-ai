@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from npa.clients import huggingface
@@ -118,11 +120,13 @@ def test_transient_or_unknown_access_failure_fails_closed() -> None:
 def test_exact_file_probe_accepts_only_known_hf_redirects(
     monkeypatch: pytest.MonkeyPatch, location: str
 ) -> None:
-    class Response:
-        status_code = 302
-        headers = {"location": location}
-
-    monkeypatch.setattr(huggingface.httpx, "head", lambda *_a, **_k: Response())
+    responses = iter(
+        [
+            SimpleNamespace(status_code=302, headers={"location": location}),
+            SimpleNamespace(status_code=200, headers={}),
+        ]
+    )
+    monkeypatch.setattr(huggingface.httpx, "head", lambda *_a, **_k: next(responses))
     result = huggingface.validate_hf_file_access(
         "caller-owned", "nvidia/model", "revision", "checkpoint.pt"
     )

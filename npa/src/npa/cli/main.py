@@ -1981,14 +1981,15 @@ def _probe_hf_assets_parallel(
     *,
     per_probe_timeout: float = 2.0,
     total_budget: float = 5.0,
-) -> dict[tuple[str, str], Any]:
+) -> dict[tuple[str, str, str, str], Any]:
     """Probe HF access for *assets* concurrently within a wall-clock budget.
 
-    Cache keys include ``repo_type`` so datasets are never accidentally checked
-    through the model API. Assets that do not finish inside ``total_budget`` (or
-    whose probe raises) are omitted, so the caller treats them as unverified
-    rather than stalling the primary onboarding command. Exception messages are
-    deliberately not logged because an injected client may echo its credential.
+    Cache keys include repository type, exact revision, and payload path so
+    datasets and multiple pinned revisions cannot collapse into metadata-only
+    or cross-revision evidence. Assets that do not finish inside ``total_budget``
+    (or whose probe raises) are omitted, so the caller treats them as unverified.
+    Exception messages are deliberately not logged because an injected client
+    may echo its credential.
     """
 
     from concurrent.futures import ThreadPoolExecutor
@@ -1996,7 +1997,7 @@ def _probe_hf_assets_parallel(
     from concurrent.futures import as_completed
 
     asset_list = list(assets)
-    results: dict[tuple[str, str], Any] = {}
+    results: dict[tuple[str, str, str, str], Any] = {}
     if not asset_list:
         return results
     pool = ThreadPoolExecutor(max_workers=min(8, len(asset_list)))
@@ -2007,8 +2008,10 @@ def _probe_hf_assets_parallel(
                 token,
                 asset.repo,
                 asset.repo_type,
+                asset.revision,
+                asset.probe_path,
                 timeout=per_probe_timeout,
-            ): (asset.repo, asset.repo_type)
+            ): (asset.repo, asset.repo_type, asset.revision, asset.probe_path)
             for asset in asset_list
         }
         try:
@@ -2072,7 +2075,9 @@ def _build_model_access_note(hf_token: str, ngc_key: str) -> str:
             denied = 0
             unverified = 0
             for asset in assets:
-                result = cache.get((asset.repo, asset.repo_type))
+                result = cache.get(
+                    (asset.repo, asset.repo_type, asset.revision, asset.probe_path)
+                )
                 if result is None or (
                     not result.ok and result.status_code not in {401, 403}
                 ):
@@ -2084,7 +2089,16 @@ def _build_model_access_note(hf_token: str, ngc_key: str) -> str:
                     asset.repo
                     for asset in assets
                     if (
-                        (result := cache.get((asset.repo, asset.repo_type)))
+                        (
+                            result := cache.get(
+                                (
+                                    asset.repo,
+                                    asset.repo_type,
+                                    asset.revision,
+                                    asset.probe_path,
+                                )
+                            )
+                        )
                         is not None
                         and not result.ok
                         and result.status_code in {401, 403}
@@ -2240,7 +2254,10 @@ def _prepare_full_catalog_access(*, open_pages: bool = False) -> dict[str, objec
         )
         typer.echo(f"  {plan['resume_command']}")
     else:
-        typer.echo("All exact gated HF/NGC artifacts are Ready.")
+        typer.echo(
+            "All exact gated HF/NGC artifacts have technical fetch access Ready; "
+            "NPA performed no legal assent."
+        )
     return plan
 
 

@@ -28,17 +28,22 @@ For the maintained readiness commands and credential resolution rules, read
 
 Interpret evidence, not credentials:
 
-- `Ready`: the exact repository or registry artifact probe succeeded, or a
-  cached success still matches the credential fingerprint, artifact revision,
-  and terms revision.
+- `Ready`: an exact-revision HF payload-byte authorization probe or exact NGC
+  registry artifact probe succeeded, or a cached success still matches the
+  credential fingerprint, artifact revision, payload probe, and terms revision.
+  It means technical fetch entitlement at that moment, never legal acceptance.
 - `Pending`: credentials or a human-bound upstream approval are still needed.
 - `Denied`: the provider rejected the credential or exact entitlement.
 - `Unavailable`: the exact probe could not produce reliable evidence; do not
   convert this into success.
 
-An HF token or NGC key proves identity only. A generic login or registry token
-exchange is not entitlement evidence. Probe every exact model, dataset,
-revision, or container needed by the selected operation.
+An HF token or NGC key proves identity only. Tokens inherit account access; they
+do not own licences. A generic login, HF repository/revision metadata response,
+or registry token exchange is not entitlement evidence. Probe a representative
+payload path for every exact model or dataset revision and the exact NGC
+container needed by the selected operation. Never select README, model-card,
+licence, tokenizer, or config-only files because those can remain public before
+approval.
 
 ## Preserve human consent
 
@@ -65,7 +70,9 @@ When a solution adds or changes an exact gated dependency:
 
 1. Add or update its `GatedAsset` in
    `npa/src/npa/workbench/model_access.py`, including provider, capability,
-   artifact type, exact revision, official page, and terms revision.
+   artifact type, exact revision, representative gated `probe_path`, official
+   page, and terms revision. The path must identify payload bytes, not metadata;
+   catalog guardrails fail when a gated HF entry lacks a usable probe.
 2. Add that capability to `ToolDefinition.access_capabilities` for every
    consuming toolRef in
    `npa/src/npa/orchestration/npa_workflow/catalog.py`.

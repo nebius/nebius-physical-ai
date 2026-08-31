@@ -473,8 +473,10 @@ npa demo stage --source-project project-a --target-project project-b \
 
 Some capability selections pull **gated** Hugging Face models or entitlement-controlled
 NGC artifacts. Complete access upstream on the owning account. NPA does not invent a
-second acceptance flag: the account token plus a successful repository probe is the
-automated access preflight, while the artifact's upstream licence still governs use.
+second acceptance flag: the account token plus a successful exact-revision payload-byte
+authorization probe is the automated access preflight. Repository metadata is public
+for many gated assets and is never entitlement proof; the upstream licence still
+governs use.
 
 Workbench remains usable without either provider. To explicitly audit the full
 current catalog, including newly added gated artifacts, run:
@@ -486,8 +488,10 @@ npa configure --prepare-catalog-access
 The interactive audit groups missing resources by provider and asks before
 opening official pages. NPA never clicks an acceptance control or submits legal
 assent. After completing user-bound steps, run the printed resume command to
-re-check exact upstream access. A previous Ready result is reused only while the
-credential, artifact revision, and terms evidence are unchanged.
+re-check exact upstream access. `Ready` means only that the provider authorized a
+representative payload fetch at the pinned revision; it never means NPA accepted terms
+or established legal assent. A previous Ready result is reused only while the
+credential, artifact revision, payload probe, and terms evidence are unchanged.
 
 For a selected capability, verify the exact assets it will use:
 

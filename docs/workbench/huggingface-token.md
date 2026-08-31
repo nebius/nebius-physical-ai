@@ -2,9 +2,10 @@
 
 Many workbench models and datasets are hosted on [Hugging Face](https://huggingface.co).
 A Hugging Face access token lets `npa` download private or **gated** assets and
-raises rate limits. Public assets work anonymously. A token authenticating an
-account that already has repository access is the complete automated preflight;
-NPA does not add another acceptance switch.
+raises rate limits. Public assets work anonymously. Tokens inherit the owning
+account's access; tokens do not own or accept licences. NPA verifies entitlement
+with an exact-revision payload-byte authorization probe and does not add another
+acceptance switch.
 
 > **TL;DR:** for gated or private assets, create a **Read** token at
 > <https://huggingface.co/settings/tokens>, run `npa configure` and paste it at
@@ -81,17 +82,22 @@ npa workbench health preflight --checks hf
 npa workbench health preflight --offline
 ```
 
-`health access --prepare` probes the exact model or dataset revision, records
-only Ready/Pending/Denied/Unavailable evidence, and prints official pages plus a
-safe resume command. It asks before opening pages in a terminal; JSON mode never
+`health access --prepare` probes a catalogued payload path at the exact model or
+dataset revision with HEAD or a one-byte Range request; it never downloads the
+payload. Repository/revision metadata, README, model-card, licence, tokenizer,
+and config files cannot produce Ready. Ready means exact technical fetch
+entitlement only, never legal acceptance. The command records only
+Ready/Pending/Denied/Unavailable evidence and prints official pages plus a safe
+resume command. It asks before opening pages in a terminal; JSON mode never
 prompts or opens a browser. NPA never performs acceptance or claims that it did.
 Generic online preflight calls Hugging Face's authenticated `whoami-v2`
 endpoint; public repository metadata is not accepted as token proof.
 
 ## Troubleshooting
 
-- **`401`/`403` on a gated repo** — you have not accepted that model's license.
-  Open the model page while signed in and click **Agree and access repository**.
+- **`401`/`403` on a gated payload** — the token cannot fetch that exact payload;
+  its account may still need approval, or the token may be invalid. Verify identity,
+  then open the printed official page while signed in and complete any user-bound step.
 - **Token rejected everywhere** — the token is wrong or was revoked. Regenerate
   it at <https://huggingface.co/settings/tokens> and re-run `npa configure`.
 - **Downloads are slow / rate-limited without a token** — public repos work

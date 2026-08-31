@@ -28,7 +28,15 @@ def _stub_model_access(monkeypatch):
     from npa.clients import huggingface
     from npa.clients.huggingface import HFAccessResult
 
-    def _ok(token, repo, repo_type="model", *, timeout=10.0):
+    def _ok(
+        token,
+        repo,
+        repo_type="model",
+        revision="",
+        probe_path="",
+        *,
+        timeout=10.0,
+    ):
         return HFAccessResult(repo=repo, ok=True, status_code=200)
 
     monkeypatch.setattr(
@@ -1461,7 +1469,15 @@ def test_configure_hf_probe_preserves_gated_dataset_type(monkeypatch, tmp_path) 
 
     observed: dict[str, str] = {}
 
-    def _record(token, repo, repo_type="model", *, timeout=10.0):
+    def _record(
+        token,
+        repo,
+        repo_type="model",
+        revision="",
+        probe_path="",
+        *,
+        timeout=10.0,
+    ):
         observed[repo] = repo_type
         return HFAccessResult(repo=repo, ok=True, status_code=200)
 
@@ -1481,7 +1497,15 @@ def test_configure_note_lists_inaccessible_hf_models(monkeypatch, tmp_path) -> N
 
     denied = "nvidia/Cosmos-Reason2-2B"
 
-    def _deny_one(token, repo, repo_type="model", *, timeout=10.0):
+    def _deny_one(
+        token,
+        repo,
+        repo_type="model",
+        revision="",
+        probe_path="",
+        *,
+        timeout=10.0,
+    ):
         if repo == denied:
             return HFAccessResult(
                 repo=repo, ok=False, status_code=403, error="no access"
@@ -1555,7 +1579,15 @@ def test_configure_note_never_breaks_on_probe_error(
 
     secret = "hf_synthetic_not_for_logs"
 
-    def _boom(token, repo, repo_type="model", *, timeout=10.0):
+    def _boom(
+        token,
+        repo,
+        repo_type="model",
+        revision="",
+        probe_path="",
+        *,
+        timeout=10.0,
+    ):
         raise RuntimeError(f"network exploded for {token}")
 
     monkeypatch.setattr(huggingface, "validate_hf_access", _boom)
