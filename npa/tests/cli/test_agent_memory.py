@@ -72,17 +72,6 @@ def test_list_runs_is_most_recent_first():
     assert set(mem.list_runs()) == {"run-1", "run-2"}
 
 
-def test_list_runs_filters_all_indexed_ids_before_applying_limit():
-    mem = M.RunMemory(M.InMemoryStore())
-    mem.record_run("private-byof-review-old", {"status": "collected"})
-    for index in range(30):
-        mem.record_run(f"newer-{index}", {"status": "collected"})
-
-    assert mem.list_runs(limit=20, query="private-byof") == [
-        "private-byof-review-old"
-    ]
-
-
 def test_compare_runs_uses_injected_comparator():
     mem = M.RunMemory(M.InMemoryStore(), comparator=V.compare_rollouts)
     mem.record_run("base", {"success_rate": 0.9})

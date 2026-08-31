@@ -2368,7 +2368,7 @@
         </section>
         <section class="panel stages-panel" id="stagesPanel" data-testid="stages-panel">
           <h3>Stages</h3>
-          <p class="hint">Pick a discovered workflow, artifact, or Agent-memory run (latest first) to load its evidence-backed status.</p>
+          <p class="hint">Pick a discovered NPA workflow/artifact run (latest first) to load its evidence-backed timeline and artifacts.</p>
           <div class="stages-run-picker field-row" data-testid="stages-run-picker">
             <div class="field" style="flex:1;">
               <label for="stagesRunSelect">Run</label>
@@ -2377,8 +2377,8 @@
               </select>
             </div>
             <div class="field" style="flex:1;">
-              <label for="stagesRunInput">Search workflow, artifact, or Agent-memory runs</label>
-              <input id="stagesRunInput" type="search" placeholder="private-byof-review…" autocomplete="off" aria-label="Search workflow, artifact, or Agent-memory run ID for stages" />
+              <label for="stagesRunInput">Search NPA workflow/artifact runs</label>
+              <input id="stagesRunInput" type="search" placeholder="franka-topdown…" autocomplete="off" aria-label="Search NPA workflow or artifact run ID for stages" />
               <p class="hint" id="stagesRunSearchHint" style="margin:4px 0 0;">Codex maintenance job IDs under <code>/home/ubuntu/codex-runs</code> are not NPA run IDs.</p>
               <p class="hint" id="stagesRunSearchResult" style="margin:4px 0 0;" aria-live="polite"></p>
             </div>
@@ -7734,10 +7734,7 @@
             }
             stagesSearchTimer = setTimeout(async () => {
               try {
-                await Promise.allSettled([
-                  refreshArtifactRuns(value),
-                  refreshAgentMemoryRuns(value),
-                ]);
+                await refreshArtifactRuns(value);
                 filterStagesRunSelect(String(stagesRunInput.value || ""));
               } catch (_err) { /* keep client-side view on search failure */ }
             }, 350);
@@ -12099,12 +12096,10 @@
       }
       let knownAvailableRuns = [];
       let discoveredArtifactRuns = [];
-      let agentMemoryRuns = [];
       let mergedRunsCache = [];
       let activeRunEntryKey = "";
       let autoLoadedPreferredKey = "";
       let runSearchRequestId = 0;
-      let agentMemorySearchRequestId = 0;
       let artifactRunsAbortController = null;
       let artifactLoadRequestId = 0;
       let artifactListRequestId = 0;
@@ -12155,13 +12150,6 @@
         if (exact.length > 1 && exact.some((run) => String((run && run.run_ref) || "") === fallback)) {
           return fallback;
         }
-        if (exact.length > 1) {
-          const recorded = exact.find((run) =>
-            String((run && run.source_type) || "") === "artifact_storage" &&
-            String((run && run.run_ref) || "").trim()
-          );
-          if (recorded) return String(recorded.run_ref).trim();
-        }
         const lowered = query.toLowerCase();
         const matches = mergedRunsCache.filter((run) =>
           String((run && run.run_id) || "").toLowerCase().includes(lowered)
@@ -12210,7 +12198,6 @@
           local_demo: "local demo",
           workflow_history: "workflow history",
           artifact_storage: "S3 artifacts",
-          agent_memory: "Agent run memory",
         }[sourceType] || String(sourceType || "run").replaceAll("_", " ");
       }
       function runEntryIdentity(runId, sourceType, run) {
@@ -12219,7 +12206,7 @@
         const resolvedPrefix = String((run && run.resolved_prefix) || "").trim();
         return [sourceType, project, bucket, resolvedPrefix, runId].join("|");
       }
-      function mergeRunsLatestFirst(knownRuns, discoveredRuns, memoryRuns) {
+      function mergeRunsLatestFirst(knownRuns, discoveredRuns) {
         const map = new Map();
         const discoveredByRunId = new Map();
         for (const run of Array.isArray(discoveredRuns) ? discoveredRuns : []) {
@@ -12289,13 +12276,10 @@
             : "history:" + runId;
           ingest(run, "known", key);
         }
-        for (const run of Array.isArray(memoryRuns) ? memoryRuns : agentMemoryRuns) {
-          ingest(run, "memory");
-        }
         return [...map.values()].sort((a, b) => {
           const cmp = effectiveRunTs(b).localeCompare(effectiveRunTs(a));
           if (cmp !== 0) return cmp;
-          const priority = { artifact_storage: 0, agent_memory: 1, local_demo: 2, workflow_history: 3 };
+          const priority = { artifact_storage: 0, local_demo: 1, workflow_history: 2 };
           const sourceCmp = (priority[a.source_type] ?? 9) - (priority[b.source_type] ?? 9);
           if (sourceCmp !== 0) return sourceCmp;
           return String(b.run_id || "").localeCompare(String(a.run_id || ""));
@@ -12456,9 +12440,9 @@
         fillRunSelectOptionsRich(select, filtered, activeRunEntryKey || current);
         if (hint) {
           if (!needle) {
-            hint.textContent = "Searches workflow history, S3 artifacts, and this Agent's sanitized run memory.";
+            hint.textContent = "Searches discovered NPA workflow/artifact runs across accessible projects and buckets.";
           } else if (!filtered.length) {
-            hint.textContent = "No cached runs match [" + needle + "]. Load checks S3 and Agent memory exactly.";
+            hint.textContent = "No discovered NPA runs match [" + needle + "]. Load performs an exact server lookup.";
           } else {
             hint.textContent = String(filtered.length) + " run" + (filtered.length === 1 ? "" : "s") + " match [" + needle + "].";
           }
@@ -12466,13 +12450,6 @@
         // When exactly one run matches the search, preselect it for one-click Load.
         if (filtered.length === 1 && select) {
           select.value = String(filtered[0].run_ref || filtered[0].run_id || "");
-        } else if (filtered.length > 1 && select && needle) {
-          const exactRecorded = filtered.find((run) =>
-            String((run && run.run_id) || "").toLowerCase() === needle &&
-            String((run && run.source_type) || "") === "artifact_storage" &&
-            String((run && run.run_ref) || "").trim()
-          );
-          if (exactRecorded) select.value = String(exactRecorded.run_ref).trim();
         }
         return filtered;
       }
@@ -12537,28 +12514,6 @@
           defaultRunDiscoveryPromise = null;
         });
         return defaultRunDiscoveryPromise;
-      }
-      async function refreshAgentMemoryRuns(query) {
-        const q = typeof query === "string" ? query.trim() : "";
-        const requestId = ++agentMemorySearchRequestId;
-        const url = "/api/agent/memory/runs?limit=" + ARTIFACT_RUN_LIST_LIMIT +
-          (q ? "&q=" + encodeURIComponent(q) : "");
-        const data = await apiJson(url);
-        if (requestId !== agentMemorySearchRequestId) return false;
-        const runs = (Array.isArray(data.runs) ? data.runs : []).map((runId) => ({
-          run_id: String(runId || "").trim(),
-          source_type: "agent_memory",
-          source_label: "Agent run memory",
-        })).filter((run) => run.run_id);
-        if (q) {
-          const byId = new Map(agentMemoryRuns.map((run) => [run.run_id, run]));
-          for (const run of runs) byId.set(run.run_id, run);
-          agentMemoryRuns = [...byId.values()];
-        } else {
-          agentMemoryRuns = runs;
-        }
-        applyMergedRunSelectors(activeRunEntryKey || activeRunId);
-        return true;
       }
       async function _refreshArtifactRuns(query, options) {
         // Discover runs generically across the whole bucket. When a search query
@@ -13388,23 +13343,18 @@
           String((preferred && preferred.key) || ""),
         ].join("|");
         const preferredViewerIntent = artifactLoadRequestId;
-        const shouldLoadPreferred = preferred && ["rerun", "mcap", "video", "image", "json", "text", "download"].includes(preferredRender) &&
+        const shouldLoadPreferred = !context.deferPreferredViewer && !context.suppressPreferredAutoload && preferred && ["rerun", "mcap", "video", "image", "json", "text", "download"].includes(preferredRender) &&
           !(preferredRender === "rerun" && isMobileLayout()) &&
-          (context.forcePreferredViewer || (
-            !context.deferPreferredViewer && !context.suppressPreferredAutoload &&
-            preferredLoadKey !== autoLoadedPreferredKey
-          ));
+          preferredLoadKey !== autoLoadedPreferredKey;
         // Render the authoritative workflow timeline before attempting the
         // preferred viewer. A slow or temporarily unavailable Rerun mount must
         // not erase the exact run's stages and physical job identities.
         await loadRunDetails(runId, detailOptions);
         if (
           shouldLoadPreferred &&
-          (context.forcePreferredViewer || (
-            viewerIntentRequestId === artifactLoadRequestId &&
-            preferredViewerIntent === artifactLoadRequestId
-          )) &&
-          (!operatorMediaPreviewActive || context.forcePreferredViewer)
+          viewerIntentRequestId === artifactLoadRequestId &&
+          preferredViewerIntent === artifactLoadRequestId &&
+          !operatorMediaPreviewActive
         ) {
           autoLoadedPreferredKey = preferredLoadKey;
           try {
@@ -13420,7 +13370,6 @@
             }, {
               ...(signal ? { signal } : {}),
               isCurrent: requestIsCurrent,
-              forceCapabilityMount: Boolean(context.forcePreferredViewer),
             });
           } catch (viewerErr) {
             showToast("Run loaded; preferred viewer failed: " + String(
@@ -14104,14 +14053,6 @@
           setRenderMode("rerun", renderModeOptions);
           hideArtifactPreview();
           lastRrdUpdatedAt = "";
-          if (context.forceCapabilityMount && rerunMountInFlight) {
-            try { await rerunMountInFlight; } catch (_priorMountErr) { /* selected run supersedes it */ }
-          }
-          if (context.forceCapabilityMount) {
-            rerunIframeLoaded = false;
-            mountedRerunRunKey = "";
-            lastRerunRecordingUrl = "";
-          }
           const frameMatchesSelectedRecording = () => {
             const frame = document.getElementById("rerunFrame");
             const frameSrc = String((frame && frame.getAttribute("src")) || "");
@@ -14660,10 +14601,7 @@
         }
         let entry = supplied || preferredRunEntry(selection.entry_key || selection.run_ref || chosen);
         if (!entry) {
-          await Promise.allSettled([
-            refreshArtifactRuns(chosen),
-            refreshAgentMemoryRuns(chosen),
-          ]);
+          await refreshArtifactRuns(chosen).catch(() => false);
           entry = preferredRunEntry(chosen);
         }
         // A pasted id absent from workflow history is treated as an artifact run:
@@ -14684,19 +14622,13 @@
         const input = document.getElementById("runIdInput");
         if (input) input.value = chosen;
         activeArtifactRunRef = String((entry && entry.run_ref) || selection.run_ref || "");
-        if (entry.source_type === "agent_memory") {
-          return loadAgentMemoryRun(chosen, entry);
-        }
         if (entry.source_type === "artifact_storage") {
           const searchResult = document.getElementById("stagesRunSearchResult");
           if (searchResult) {
             searchResult.textContent = "Checking exact discovered NPA run: " + chosen + "…" +
               (activeRunId ? " Currently loaded run remains " + activeRunId + " until lookup succeeds." : "");
           }
-          return loadArtifactsForSelectedRun(chosen, null, entry, {
-            pendingSelection: true,
-            forcePreferredViewer: true,
-          });
+          return loadArtifactsForSelectedRun(chosen, null, entry, { pendingSelection: true });
         }
         clearVisibleRunState("Loading " + chosen + "…");
         setActiveRunId(chosen);
@@ -14716,147 +14648,6 @@
           return data;
         }
         return loadWorkflowHistoryRun(chosen, activeArtifactRunRef);
-      }
-      async function loadAgentMemoryRun(runId, entry) {
-        const target = String(runId || "").trim();
-        const data = await apiJson("/api/agent/memory/run/" + encodeURIComponent(target));
-        const record = data && data.record && typeof data.record === "object" ? data.record : {};
-        // A collected Agent episode may also publish viewer artifacts under the
-        // same run id. Prefer that real S3-backed recording (RRD/MCAP) while
-        // retaining the protected memory record as the grounded run index.
-        await refreshArtifactRuns(target).catch(() => false);
-        const artifactEntry = mergedRunsCache.find((candidate) =>
-          String((candidate && candidate.run_id) || "") === target &&
-          String((candidate && candidate.source_type) || "") === "artifact_storage"
-        );
-        if (artifactEntry) {
-          const searchResult = document.getElementById("stagesRunSearchResult");
-          if (searchResult) searchResult.textContent = "Loading published recording for Agent-memory run: " + target + "…";
-          return loadArtifactsForSelectedRun(target, null, artifactEntry, {
-            pendingSelection: true,
-            forcePreferredViewer: true,
-          });
-        }
-        clearVisibleRunState("Loading Agent run memory " + target + "…");
-        setActiveRunId(target);
-        activeRunEntryKey = String((entry && entry.entry_key) || runEntryIdentity(target, "agent_memory", {}));
-        syncRunChooserFields(target, activeRunEntryKey);
-        const collection = record.collection && typeof record.collection === "object" ? record.collection : {};
-        const outcome = record.outcome && typeof record.outcome === "object" ? record.outcome : {};
-        const timing = record.timing && typeof record.timing === "object" ? record.timing : {};
-        const trajectory = Array.isArray(record.trajectory) ? record.trajectory : [];
-        const isSanitizedTrajectory = String(record.schema_version || "") === "npa.agent.trajectory.v1" &&
-          record.redaction && record.redaction.applied === true;
-        const collectionStatus = String(collection.status || record.collection_status || record.status || "recorded");
-        const integrityBits = [];
-        if (record.integrity_verified === true) integrityBits.push("integrity verified");
-        if (record.idempotency_verified === true) integrityBits.push("idempotency verified");
-        if (Number(record.byte_size || 0) > 0) integrityBits.push(String(record.byte_size) + " bytes");
-        const evidenceSummary = integrityBits.length
-          ? "Sanitized trajectory collected; " + integrityBits.join("; ") + "."
-          : "Sanitized Agent run-memory record is available.";
-        const eventStatus = (value) => {
-          const status = String(value || "").toLowerCase();
-          if (status === "ok") return "succeeded";
-          if (status === "error") return "failed";
-          if (status === "rejected") return "skipped";
-          if (status === "cancelled") return "failed";
-          return status || "status_unavailable";
-        };
-        const eventSummary = (event) => {
-          const observation = event && event.observation;
-          if (observation && typeof observation === "object") {
-            for (const key of ["summary", "message", "result", "status", "evidence"]) {
-              if (typeof observation[key] === "string" && observation[key].trim()) {
-                return observation[key].trim().slice(0, 320);
-              }
-            }
-          }
-          if (typeof observation === "string" && observation.trim()) return observation.trim().slice(0, 320);
-          return "Recorded sanitized " + String((event && event.phase) || "event") + " event.";
-        };
-        const eventStages = isSanitizedTrajectory ? trajectory.map((event, index) => ({
-          id: "event-" + String(event.sequence ?? index),
-          label: String(event.phase || "event") + (event.tool ? " · " + String(event.tool) : ""),
-          status: eventStatus(event.status),
-          summary: eventSummary(event),
-          evidence_source: "sanitized_agent_trajectory",
-          authority: "recorded",
-          confidence: "high",
-        })) : [];
-        renderRunDetails({ run: {
-          run_id: target,
-          source_type: "agent_memory",
-          source_label: "Agent run memory",
-          status: collectionStatus,
-          result: String(outcome.status || (collectionStatus === "collected" ? "run_ready" : "recorded")),
-          updated_at: String(timing.ended_at || record.recorded_at || record.updated_at || ""),
-          stages: eventStages.length ? eventStages : [{
-            id: "agent-run-data-collection",
-            label: "Agent run data collection",
-            status: collectionStatus === "collected" ? "succeeded" : collectionStatus,
-            summary: evidenceSummary,
-            evidence_source: "agent_run_memory",
-            authority: "recorded",
-            confidence: "high",
-          }],
-          logs: eventStages.length ? eventStages.map((stage, index) => ({
-            timestamp: "event " + String(index + 1),
-            level: stage.status === "failed" ? "error" : "info",
-            message: stage.label + ": " + stage.summary,
-          })) : [{
-            timestamp: String(timing.ended_at || record.recorded_at || record.updated_at || ""),
-            level: "info",
-            message: evidenceSummary,
-          }],
-        }});
-        if (isSanitizedTrajectory) {
-          operatorMediaPreviewActive = true;
-          activeArtifactRender = "json";
-          setRenderMode("data", { operator: true });
-          const host = document.getElementById("artifactPreviewHost");
-          if (host) {
-            if (host._previewObjectUrl) {
-              try { URL.revokeObjectURL(host._previewObjectUrl); } catch (_err) { /* ignore */ }
-            }
-            const pretty = JSON.stringify(record, null, 2);
-            host._previewObjectUrl = URL.createObjectURL(new Blob([pretty], { type: "application/json" }));
-            host.hidden = false;
-            host.replaceChildren();
-            const pre = document.createElement("pre");
-            pre.className = "artifact-text-preview";
-            pre.textContent = pretty;
-            host.appendChild(pre);
-            appendArtifactDownloadLink(host, host._previewObjectUrl, target + ".json");
-          }
-          updateRenderedDataSummary({
-            run_id: target,
-            artifact_key: "agent-memory/" + target + ".json",
-            artifact_render: "json",
-            visualization_note: String(trajectory.length) + " sanitized trajectory events. This episode did not produce an RRD/MCAP recording.",
-          });
-        }
-        const artifactList = document.getElementById("artifactList");
-        if (artifactList) {
-          artifactList.innerHTML = isSanitizedTrajectory
-            ? '<div class="artifact-card"><strong>Sanitized Agent trajectory</strong><p>' +
-              escapeHtml(String(trajectory.length)) + ' recorded events · JSON data artifact · no RRD/MCAP was produced.</p>' +
-              '<button class="btn" type="button" id="openAgentMemoryData">Open trajectory data</button></div>'
-            : "<p>The trajectory payload is not attached to this Agent-memory index record.</p>";
-          const openData = document.getElementById("openAgentMemoryData");
-          if (openData) openData.addEventListener("click", () => {
-            setRenderMode("data", { operator: true });
-            activateMainTab("rerun").catch(() => null);
-          });
-        }
-        if (isSanitizedTrajectory) {
-          await activateMainTab("rerun");
-        } else {
-          showRerunPlaceholder("Agent run-memory index loaded, but its trajectory payload is unavailable.", { force: true });
-        }
-        const searchResult = document.getElementById("stagesRunSearchResult");
-        if (searchResult) searchResult.textContent = "Loaded exact Agent-memory run: " + target + ".";
-        return data;
       }
       function normalizeStageStatus(value) {
         const raw = String(value || "status_unavailable").trim().toLowerCase();
@@ -15668,9 +15459,6 @@
             .catch((_artifactErr) => {
             // artifact discovery is optional when S3 credentials are missing.
           });
-          const memoryRunsPromise = refreshAgentMemoryRuns("").catch((_memoryErr) => {
-            // Agent memory is optional for deployments without persisted episodes.
-          });
           // Capability discovery may involve remote artifact/service probes. Let it
           // reveal the optional tab asynchronously instead of delaying the existing
           // viewer boot path.
@@ -15690,7 +15478,6 @@
             setStatus("Ready");
             showToast("Mobile chat ready", "success");
             void artifactsPromise;
-            void memoryRunsPromise;
             void accessPromise;
             void warmPromise;
           } else {
@@ -15708,7 +15495,6 @@
               lb.setAttribute("src", "/lichtblick/");
             }
             void artifactsPromise;
-            void memoryRunsPromise;
             await warmPromise;
             const mountMode = await ensureFrankaRerunLoaded();
             const iframe = document.getElementById("rerunFrame");

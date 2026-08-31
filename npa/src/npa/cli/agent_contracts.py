@@ -142,7 +142,7 @@ AGENT_STAGES_RUN_PICKER_CONTRACT = (
     "loadSelectedRun",
     "syncRunChooserFields",
     "filterStagesRunSelect",
-    "Search workflow, artifact, or Agent-memory runs",
+    "Search NPA workflow/artifact runs",
 )
 
 AGENT_READABLE_COLOR_CONTRACT = (

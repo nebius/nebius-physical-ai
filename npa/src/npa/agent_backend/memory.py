@@ -342,11 +342,8 @@ class RunMemory:
             return None
         return data if isinstance(data, dict) else None
 
-    def list_runs(self, *, limit: int = 20, query: str = "") -> list[str]:
+    def list_runs(self, *, limit: int = 20) -> list[str]:
         index = self._read_index()
-        needle = str(query or "").strip().lower()
-        if needle:
-            index = [run_id for run_id in index if needle in run_id.lower()]
         try:
             limit = int(limit)
         except (TypeError, ValueError):

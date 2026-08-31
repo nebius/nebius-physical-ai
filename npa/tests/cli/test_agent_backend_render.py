@@ -973,8 +973,6 @@ def test_rendered_backend_wires_action_loop_and_route(monkeypatch) -> None:
     assert "def extract_quantitative_signals" in body
     assert '@app.get("/agent/memory/compare")' in body
     assert '@app.get("/agent/memory/explain")' in body
-    assert 'def agent_memory_runs(limit: int = 20, q: str = "")' in body
-    assert ".list_runs(limit=limit, query=q)" in body
     assert '"memory_explain_regression": _tool_memory_explain_regression' in body
     assert 'diagnosis["run_memory"] = memory_evidence' in body
     # Phase G: run memory is SHIPPED (imported), not embedded, in backend.py.
