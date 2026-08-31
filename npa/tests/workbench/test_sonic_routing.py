@@ -125,3 +125,24 @@ def test_unknown_workload_fails_loud() -> None:
     with pytest.raises(SonicRoutingError) as excinfo:
         validate_gpu_routing(workload="teleport", gpu_target="l40s")
     assert "unknown SONIC workload" in str(excinfo.value)
+
+
+@pytest.mark.parametrize(
+    "gpu_target, expected",
+    [
+        ("l40s", "L40S:1"),
+        ("gpu-rtx6000", "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"),
+        ("h100", "H100:1"),
+        ("h200", "H200:1"),
+        ("b200", "B200:1"),
+        ("gpu-b200-sxm-a", "B200:1"),
+        ("b300", "B300:1"),
+        ("gpu-b300-sxm", "B300:1"),
+    ],
+)
+def test_default_accelerators_map_gpu_target(gpu_target: str, expected: str) -> None:
+    """Explicit datacenter Blackwell targets must not fall through to L40S."""
+
+    from npa.workbench.sonic.workflow import default_accelerators
+
+    assert default_accelerators(gpu_target) == expected

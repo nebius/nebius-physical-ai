@@ -52,9 +52,16 @@ workflow composition with retargeting or MJLab.
   exact clean, GPU-accepted public development digest.
 - Use the active host-mounted runtime-fetch image selected by
   `npa/src/npa/deploy/sonic_image_manifest.json` for RTX PRO 6000 Blackwell
-  Kubernetes targets with NVIDIA GPU Operator mounted drivers. The CUDA 13
-  image inherits the truthful `sm80-sm90-sm100-sm103-sm120` base alias; do not
-  reconstruct that tag in callers.
+  Kubernetes targets with NVIDIA GPU Operator mounted drivers. A B300
+  validation image uses the same Dockerfile but must be supplied explicitly by
+  immutable digest until its own accepted release updates the manifest. B300
+  is compute capability 10.3: that development image must use the
+  digest-pinned CUDA 13 base, PyTorch `cu130`, CUDA 13 NVRTC, and the truthful
+  `sm80-sm90-sm100-sm103-sm120` target contract. The official cu130 PyTorch
+  wheel exposes Blackwell 10.x family SASS as `sm_100`; the literal `sm_103`
+  requirement applies to CUDA 13 NVRTC JIT compilation on the B300 device.
+  CUDA 12.8 NVRTC rejects `sm_103`; do not treat environment startup before
+  that JIT boundary as B300 training evidence.
 - SONIC render validation requires RT-capable GPUs. Use RTX PRO 6000 Blackwell;
   do not silently fall back to the quarantined H100/L40S images.
 - The built-in serverless compute-only default is intentionally unavailable:
@@ -106,11 +113,12 @@ injects the host driver and the Vulkan ICD given `NVIDIA_DRIVER_CAPABILITIES=all
 (verified on RTX PRO 6000 — `vulkaninfo --summary` reports the discrete GPU at driver
 580.95.05). `VK_ICD_FILENAMES` is deliberately not pinned.
 
-The image must carry `lxml` and `open3d` in its baked Python environment. The real
-training path imports both while constructing the motion library, although the pinned
-upstream training extra declares neither. Keep the Dockerfile's build-time import
-assertions and the one-iteration real fine-tune smoke together; an import-only SONIC
-check is not enough.
+The image must carry `lxml`, `open3d`, and `vector_quantize_pytorch` in its baked Python
+environment. Real training imports the first two while constructing the motion library
+and instantiates `vector_quantize_pytorch.FSQ` while building the actor-critic, although
+the pinned upstream training extra declares none of them. Keep the Dockerfile's
+build-time import assertions and the one-iteration real fine-tune smoke together; an
+import-only SONIC check is not enough.
 
 ## Gotchas
 

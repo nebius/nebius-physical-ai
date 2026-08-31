@@ -186,32 +186,25 @@ def _write_logical_lerobot_recording(
     )
     camera_keys = _camera_keys(metadata)
 
-    blueprint = rrb.Blueprint(
-        rrb.Horizontal(
-            rrb.Spatial2DView(
-                origin="input_dataset",
-                contents="input_dataset/**",
-                name="Input demos",
-            ),
-            rrb.Spatial2DView(
-                origin="policy_rollout",
-                contents="policy_rollout/**",
-                name="Policy rollout",
-            ),
-            rrb.TimeSeriesView(
-                origin="eval",
-                contents="eval/**",
-                name="VLM/VLA eval",
-            ),
-            column_shares=[2.0, 2.0, 1.0],
-        ),
-        rrb.TimePanel(state=rrb.PanelState.Expanded, timeline=TIMELINE),
-        auto_layout=False,
+    blueprint = _build_logical_blueprint(
+        rrb,
+        camera_keys,
+        input_episode_indices=input_episode_indices,
+        rollout_episode_indices=rollout_episode_indices,
+        has_feedback=bool(feedback_by_episode),
     )
     recording = rr.RecordingStream(APPLICATION_ID)
     rr.save(output_rrd_path, default_blueprint=blueprint, recording=recording)
     rr.send_blueprint(blueprint, recording=recording)
-    video_entities = _log_dataset_videos(rr, recording, dataset_path, metadata, camera_keys)
+    selected_episodes = sorted(set(input_episode_indices + rollout_episode_indices))
+    video_entities = _log_dataset_videos(
+        rr,
+        recording,
+        dataset_path,
+        metadata,
+        camera_keys,
+        episode_indices=selected_episodes,
+    )
 
     for episode in input_episode_indices:
         _log_episode_rows(
@@ -221,6 +214,7 @@ def _write_logical_lerobot_recording(
             root=f"input_dataset/episodes/episode_{int(episode):06d}",
             video_entities=video_entities,
             camera_keys=camera_keys,
+            episode_index=int(episode),
         )
     for episode in rollout_episode_indices:
         _log_episode_rows(
@@ -230,8 +224,12 @@ def _write_logical_lerobot_recording(
             root=f"policy_rollout/episodes/episode_{int(episode):06d}",
             video_entities=video_entities,
             camera_keys=camera_keys,
+            episode_index=int(episode),
         )
-        _log_feedback(rr, recording, int(episode), feedback_by_episode.get(int(episode), {}))
+        if int(episode) in feedback_by_episode:
+            _log_feedback(
+                rr, recording, int(episode), feedback_by_episode[int(episode)]
+            )
     counts = _logical_entity_counts(
         frame_rows,
         input_episode_indices=input_episode_indices,
@@ -246,13 +244,104 @@ def _write_logical_lerobot_recording(
     return counts
 
 
+def _build_logical_blueprint(
+    rrb: Any,
+    camera_keys: list[str],
+    *,
+    input_episode_indices: list[int],
+    rollout_episode_indices: list[int],
+    has_feedback: bool = True,
+) -> Any:
+    """Open generic datasets on views that match the entities they contain."""
+
+    state_contents = [
+        *[
+            f"input_dataset/episodes/episode_{int(episode):06d}/state/**"
+            for episode in input_episode_indices
+        ],
+        *[
+            f"policy_rollout/episodes/episode_{int(episode):06d}/state/**"
+            for episode in rollout_episode_indices
+        ],
+    ]
+    action_contents = [
+        f"policy_rollout/episodes/episode_{int(episode):06d}/actions/**"
+        for episode in rollout_episode_indices
+    ]
+    input_camera_contents = [
+        f"input_dataset/episodes/episode_{int(episode):06d}/camera/**"
+        for episode in input_episode_indices
+    ]
+    rollout_camera_contents = [
+        f"policy_rollout/episodes/episode_{int(episode):06d}/camera/**"
+        for episode in rollout_episode_indices
+    ]
+    state_view = rrb.TimeSeriesView(
+        origin="/",
+        contents=state_contents,
+        name="State",
+    )
+    action_view = rrb.TimeSeriesView(
+        origin="/",
+        contents=action_contents,
+        name="Policy actions",
+    )
+    signal_views = [state_view, action_view]
+    if has_feedback:
+        signal_views.append(
+            rrb.TimeSeriesView(
+                origin="eval",
+                contents="eval/**",
+                name="VLM/VLA eval",
+            )
+        )
+    if camera_keys:
+        camera_views = []
+        camera_shares = []
+        if input_camera_contents:
+            camera_views.append(
+                rrb.Spatial2DView(
+                    origin="/",
+                    contents=input_camera_contents,
+                    name="Input demos",
+                )
+            )
+            camera_shares.append(2.0)
+        if rollout_camera_contents:
+            camera_views.append(
+                rrb.Spatial2DView(
+                    origin="/",
+                    contents=rollout_camera_contents,
+                    name="Isaac environment — trained policy",
+                )
+            )
+            camera_shares.append(4.0)
+        viewport = rrb.Horizontal(
+            *camera_views,
+            rrb.Vertical(*signal_views),
+            column_shares=[*camera_shares, 1.6],
+        )
+    else:
+        viewport = rrb.Horizontal(
+            *signal_views,
+            column_shares=[2.0, 1.4, *([1.0] if has_feedback else [])],
+        )
+    return rrb.Blueprint(
+        viewport,
+        rrb.BlueprintPanel(state=rrb.PanelState.Hidden),
+        rrb.SelectionPanel(state=rrb.PanelState.Hidden),
+        rrb.TimePanel(state=rrb.PanelState.Expanded, timeline=TIMELINE),
+        auto_layout=False,
+    )
+
+
 def _logical_entity_counts(
     frame_rows: dict[int, list[dict[str, Any]]],
     *,
     input_episode_indices: list[int],
     rollout_episode_indices: list[int],
     feedback_by_episode: dict[int, dict[str, Any]],
-    video_entities: dict[str, str],
+    video_entities: dict[int, dict[str, str]],
 ) -> dict[str, int]:
     counts: dict[str, int] = {}
     for episode in input_episode_indices:
@@ -260,14 +349,14 @@ def _logical_entity_counts(
             counts,
             rows=frame_rows.get(int(episode), []),
             root=f"input_dataset/episodes/episode_{int(episode):06d}",
-            video_entities=video_entities,
+            video_entities=video_entities.get(int(episode), {}),
         )
     for episode in rollout_episode_indices:
         _count_episode_rows(
             counts,
             rows=frame_rows.get(int(episode), []),
             root=f"policy_rollout/episodes/episode_{int(episode):06d}",
-            video_entities=video_entities,
+            video_entities=video_entities.get(int(episode), {}),
         )
         if int(episode) in feedback_by_episode:
             root = f"eval/episodes/episode_{int(episode):06d}"
@@ -311,14 +400,15 @@ def _log_episode_rows(
     *,
     rows: list[dict[str, Any]],
     root: str,
-    video_entities: dict[str, str],
+    video_entities: dict[int, dict[str, str]],
     camera_keys: list[str],
+    episode_index: int,
 ) -> None:
     for row in rows:
         timestamp = float(row.get("timestamp", 0.0) or 0.0)
         _set_time_seconds(rr, recording, timestamp)
         for camera_key in camera_keys:
-            video_entity = video_entities.get(camera_key, "")
+            video_entity = video_entities.get(episode_index, {}).get(camera_key, "")
             if video_entity:
                 rr.log(
                     f"{root}/camera/{_entity_key(camera_key)}",
@@ -353,23 +443,56 @@ def _log_dataset_videos(
     dataset_path: Path,
     metadata: dict[str, Any],
     camera_keys: list[str],
-) -> dict[str, str]:
-    video_entities: dict[str, str] = {}
+    *,
+    episode_indices: list[int],
+) -> dict[int, dict[str, str]]:
+    video_entities: dict[int, dict[str, str]] = {}
     video_path_pattern = str(metadata.get("video_path") or "videos/{video_key}/chunk-{chunk_index:03d}/file-{file_index:03d}.mp4")
-    for camera_key in camera_keys:
-        candidate = dataset_path / video_path_pattern.format(
-            video_key=camera_key,
-            chunk_index=0,
-            file_index=0,
-        )
-        if not candidate.exists():
-            matches = sorted((dataset_path / "videos" / camera_key).rglob("*.mp4"))
-            candidate = matches[0] if matches else candidate
-        if candidate.exists():
-            entity = f"input_dataset/videos/{_entity_key(camera_key)}"
-            rr.log(entity, rr.AssetVideo(path=candidate), static=True, recording=recording)
-            video_entities[camera_key] = entity
+    locations = _episode_video_locations(dataset_path)
+    for episode_index in episode_indices:
+        for camera_key in camera_keys:
+            location = locations.get(int(episode_index), {})
+            chunk_index = int(location.get(f"videos/{camera_key}/chunk_index", 0) or 0)
+            file_index = int(
+                location.get(f"videos/{camera_key}/file_index", episode_index)
+                or 0
+            )
+            candidate = dataset_path / video_path_pattern.format(
+                video_key=camera_key,
+                chunk_index=chunk_index,
+                file_index=file_index,
+            )
+            if not candidate.exists():
+                matches = sorted(
+                    (dataset_path / "videos" / camera_key).rglob(
+                        f"file-{file_index:03d}.mp4"
+                    )
+                )
+                candidate = matches[0] if matches else candidate
+            if candidate.exists():
+                entity = (
+                    f"videos/episode_{int(episode_index):06d}/"
+                    f"{_entity_key(camera_key)}"
+                )
+                rr.log(
+                    entity,
+                    rr.AssetVideo(path=candidate),
+                    static=True,
+                    recording=recording,
+                )
+                video_entities.setdefault(int(episode_index), {})[
+                    camera_key
+                ] = entity
     return video_entities
+
+
+def _episode_video_locations(dataset_path: Path) -> dict[int, dict[str, Any]]:
+    locations: dict[int, dict[str, Any]] = {}
+    for path in sorted((dataset_path / "meta" / "episodes").rglob("*.parquet")):
+        for row in pq.read_table(path).to_pylist():
+            if row.get("episode_index") is not None:
+                locations[int(row["episode_index"])] = row
+    return locations
 
 
 def _read_lerobot_metadata(dataset_path: Path) -> dict[str, Any]:
@@ -432,15 +555,19 @@ def _required_logical_entities(
 ) -> list[str]:
     required: list[str] = []
     first_camera = _entity_key(camera_keys[0]) if camera_keys else ""
+    if first_camera:
+        required.extend(
+            f"input_dataset/episodes/episode_{int(episode):06d}/camera/{first_camera}"
+            for episode in input_episode_indices
+        )
+        required.extend(
+            f"policy_rollout/episodes/episode_{int(episode):06d}/camera/{first_camera}"
+            for episode in rollout_episode_indices
+        )
     if input_episode_indices:
         episode = int(input_episode_indices[0])
         required.extend(
             [
-                *(
-                    [f"input_dataset/episodes/episode_{episode:06d}/camera/{first_camera}"]
-                    if first_camera
-                    else []
-                ),
                 f"input_dataset/episodes/episode_{episode:06d}/state/dim_00",
                 f"input_dataset/episodes/episode_{episode:06d}/state/transform",
                 f"input_dataset/episodes/episode_{episode:06d}/actions/dim_00",
@@ -450,11 +577,6 @@ def _required_logical_entities(
         episode = int(rollout_episode_indices[0])
         required.extend(
             [
-                *(
-                    [f"policy_rollout/episodes/episode_{episode:06d}/camera/{first_camera}"]
-                    if first_camera
-                    else []
-                ),
                 f"policy_rollout/episodes/episode_{episode:06d}/state/dim_00",
                 f"policy_rollout/episodes/episode_{episode:06d}/state/transform",
                 f"policy_rollout/episodes/episode_{episode:06d}/actions/dim_00",

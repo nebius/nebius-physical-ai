@@ -30,7 +30,9 @@ from pathlib import Path
 from typing import Any, Iterable, Sequence
 from urllib.parse import urlparse
 
-DEFAULT_TRAIN_SCRIPT = "/workspace/isaaclab/scripts/reinforcement_learning/rsl_rl/train.py"
+DEFAULT_TRAIN_SCRIPT = (
+    "/workspace/isaaclab/scripts/reinforcement_learning/rsl_rl/train.py"
+)
 DEFAULT_PYTHON = "/isaac-sim/python.sh"
 METRICS_FILENAME = "npa_rl_sweep_metrics.json"
 SUMMARY_FILENAME = "npa_rl_sweep_summary.json"
@@ -144,6 +146,31 @@ def _parse_reward(log_text: str) -> float | None:
         return None
 
 
+def ensure_training_entrypoint(
+    interpreter: str,
+    script: str,
+    *,
+    executor: Any = subprocess.run,
+) -> None:
+    """Trigger the cold runtime fetch before requiring the source entrypoint."""
+
+    if Path(script).is_file():
+        return
+    result = executor(
+        [interpreter, "-c", "pass"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if int(getattr(result, "returncode", 1)) != 0:
+        stderr = str(getattr(result, "stderr", "") or "")[-1000:]
+        raise RuntimeError(f"Isaac runtime bootstrap failed: {stderr}")
+    if not Path(script).is_file():
+        raise FileNotFoundError(
+            f"pinned upstream Isaac Lab training entrypoint not found after bootstrap: {script}"
+        )
+
+
 def train_variant(
     *,
     variant: str,
@@ -163,8 +190,14 @@ def train_variant(
     training script is executed with the variant's Hydra overrides.
     """
 
-    script = train_script or os.environ.get("ISAAC_LAB_TRAIN_SCRIPT", "") or DEFAULT_TRAIN_SCRIPT
+    script = (
+        train_script
+        or os.environ.get("ISAAC_LAB_TRAIN_SCRIPT", "")
+        or DEFAULT_TRAIN_SCRIPT
+    )
     interpreter = python_bin or resolve_python_bin()
+    if runner is None:
+        ensure_training_entrypoint(interpreter, script)
     argv = [
         interpreter,
         script,
@@ -174,7 +207,8 @@ def train_variant(
         str(num_envs),
         "--max_iterations",
         str(iterations),
-        "--headless",
+        "--visualizer",
+        "none",
         "--experiment_name",
         "npa_rl_sweep",
         "--run_name",
@@ -186,7 +220,9 @@ def train_variant(
     result = execute(argv)
     duration = round(time.time() - started, 3)
 
-    log_text = str(getattr(result, "stdout", "") or "") + str(getattr(result, "stderr", "") or "")
+    log_text = str(getattr(result, "stdout", "") or "") + str(
+        getattr(result, "stderr", "") or ""
+    )
     returncode = int(getattr(result, "returncode", 0) or 0)
     status = "success" if returncode == 0 else "failed"
 
@@ -204,6 +240,10 @@ def train_variant(
         "returncode": returncode,
         "duration_seconds": duration,
         "mean_reward": _parse_reward(log_text),
+        "isaac_lab_version": os.environ.get("ISAAC_LAB_VERSION", ""),
+        "isaac_sim_version": os.environ.get("ISAAC_SIM_VERSION", ""),
+        "source_commit": os.environ.get("NPA_ISAAC_LAB_SRC_COMMIT", ""),
+        "image_source_sha": os.environ.get("NPA_IMAGE_SOURCE_SHA", ""),
     }
 
     base = output_uri.rstrip("/")
@@ -249,6 +289,7 @@ def select_best(
     report_uri: str,
     metric: str = "mean_reward",
     run_id: str = "",
+    expected_variants: str | Iterable[str] = (),
 ) -> dict[str, Any]:
     """Barrier stage: rank every variant's metrics and publish the winner.
 
@@ -263,28 +304,51 @@ def select_best(
         try:
             variants.append(_download_json(f"s3://{bucket}/{key}"))
         except Exception as exc:  # noqa: BLE001 - one unreadable variant must not hide the rest
-            variants.append({"variant": key, "status": "unreadable", "error": str(exc)[:200]})
+            variants.append(
+                {"variant": key, "status": "unreadable", "error": str(exc)[:200]}
+            )
 
-    scored = [item for item in variants if isinstance(item.get(metric), (int, float))]
+    expected = set(parse_overrides(expected_variants))
+    observed = {str(item.get("variant") or "") for item in variants}
+    successful = [item for item in variants if item.get("status") == "success"]
+    scored = [item for item in successful if isinstance(item.get(metric), (int, float))]
     best = max(scored, key=lambda item: float(item[metric])) if scored else None
+    errors: list[str] = []
+    if expected and observed != expected:
+        errors.append(
+            f"variant set mismatch: expected={sorted(expected)!r} observed={sorted(observed)!r}"
+        )
+    if any(item.get("status") != "success" for item in variants):
+        errors.append("one or more variants did not report success")
+    if len(scored) != len(variants):
+        errors.append(f"one or more variants omitted numeric {metric}")
+    if any(not item.get("checkpoint_uri") for item in variants):
+        errors.append("one or more variants omitted checkpoint_uri")
     report = {
         "schema": "npa.rl_sweep.report.v1",
         "run_id": run_id,
         "sweep_uri": sweep_uri,
         "metric": metric,
         "variant_count": len(variants),
-        "succeeded": sum(1 for item in variants if item.get("status") == "success"),
-        "variants": sorted(
-            variants, key=lambda item: str(item.get("variant") or "")
-        ),
+        "status": "success" if variants and not errors else "failed",
+        "succeeded": len(successful),
+        "expected_variants": sorted(expected),
+        "errors": errors,
+        "variants": sorted(variants, key=lambda item: str(item.get("variant") or "")),
         "best_variant": (best or {}).get("variant", ""),
         "best_value": (best or {}).get(metric),
     }
     report["report_uri"] = _upload_json(
         report,
-        report_uri if report_uri.endswith(".json") else f"{report_uri.rstrip('/')}/{REPORT_FILENAME}",
+        report_uri
+        if report_uri.endswith(".json")
+        else f"{report_uri.rstrip('/')}/{REPORT_FILENAME}",
     )
     print(json.dumps(report))
+    if report["status"] != "success":
+        raise RuntimeError(
+            "incomplete Isaac Lab sweep: " + "; ".join(errors or ["no variants"])
+        )
     return report
 
 
@@ -292,6 +356,7 @@ __all__ = [
     "METRICS_FILENAME",
     "REPORT_FILENAME",
     "SUMMARY_FILENAME",
+    "ensure_training_entrypoint",
     "parse_overrides",
     "resolve_python_bin",
     "select_best",

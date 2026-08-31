@@ -278,13 +278,23 @@ def _node(name: str, ready: str, reason: str = "") -> dict:
     }
 
 
-def _pods_then_nodes(nodes: dict):
+def _pods_then_nodes(nodes: dict, *, assigned_nodes: tuple[str, ...] = ()):
     def run(cmd, **kwargs):  # noqa: ANN001 - test stub
         if "nodes" in cmd:
             return subprocess.CompletedProcess(
                 cmd, 0, stdout=json.dumps(nodes), stderr=""
             )
-        return subprocess.CompletedProcess(cmd, 0, stdout=_pods(), stderr="")
+        pods = _pods(
+            *(
+                {
+                    "metadata": {"name": f"worker-{index}"},
+                    "spec": {"nodeName": name},
+                    "status": {"phase": "Pending"},
+                }
+                for index, name in enumerate(assigned_nodes)
+            )
+        )
+        return subprocess.CompletedProcess(cmd, 0, stdout=pods, stderr="")
 
     return run
 
@@ -303,7 +313,8 @@ def test_a_pending_job_whose_nodes_were_reclaimed_says_so() -> None:
                 _node("gpu-1", "Unknown", "NodeStatusUnknown"),
                 _node("cpu-0", "True"),
             ]
-        }
+        },
+        assigned_nodes=("gpu-0", "gpu-1"),
     )
 
     report = inspect_job_blockers(job_id="1", cluster_name="sky-abc", runner=runner)
@@ -328,6 +339,23 @@ def test_healthy_nodes_and_no_blocked_pods_stays_quiet() -> None:
 
     assert report.blocked is False
     assert report.render() == "blockers: none found"
+
+
+def test_unready_node_unrelated_to_the_exact_job_is_ignored() -> None:
+    runner = _pods_then_nodes(
+        {
+            "items": [
+                _node("assigned-ready", "True"),
+                _node("unrelated-lost", "Unknown", "NodeStatusUnknown"),
+            ]
+        },
+        assigned_nodes=("assigned-ready",),
+    )
+
+    report = inspect_job_blockers(job_id="1", cluster_name="sky-abc", runner=runner)
+
+    assert report.blocked is False
+    assert report.unready_nodes == []
 
 
 def test_a_pod_level_reason_still_wins_over_the_node_check() -> None:

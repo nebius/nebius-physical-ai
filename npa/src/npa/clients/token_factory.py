@@ -36,6 +36,16 @@ DEFAULT_VISION_MODEL = "Qwen/Qwen2.5-VL-72B-Instruct"
 # Confirm availability for your key with `npa workbench token-factory models`.
 DEFAULT_REASONER_MODEL = "nvidia/Cosmos3-Super-Reasoner"
 
+# Batch inference is a separate entitlement from real-time chat: a model can
+# serve /chat/completions and still reject a batch operation. The batch default
+# is therefore not DEFAULT_TEXT_MODEL. Check a candidate with
+# `npa workbench token-factory batch-models`.
+DEFAULT_BATCH_MODEL = "openai/gpt-oss-120b"
+DEFAULT_COMPLETION_WINDOW = "24h"
+DEFAULT_BATCH_POLL_INTERVAL_S = 20.0
+DEFAULT_BATCH_TIMEOUT_S = 86_400.0
+BATCH_TERMINAL_STATUSES = frozenset({"succeeded", "failed", "cancelled"})
+
 BASE_URL_ENV_KEYS = (
     "NEBIUS_TOKEN_FACTORY_BASE_URL",
     "NEBIUS_BASE_URL",
@@ -74,6 +84,22 @@ class TokenFactoryConfig:
     @property
     def models_url(self) -> str:
         return _join_path(self.base_url, "models")
+
+    @property
+    def datasets_url(self) -> str:
+        return _join_path(self.base_url, "datasets")
+
+    @property
+    def operations_url(self) -> str:
+        return _join_path(self.base_url, "operations")
+
+    @property
+    def batches_url(self) -> str:
+        return _join_path(self.base_url, "batches")
+
+    @property
+    def files_url(self) -> str:
+        return _join_path(self.base_url, "files")
 
 
 def resolve_config(
@@ -277,6 +303,168 @@ class TokenFactoryClient:
             raise TokenFactoryError("Token Factory models response missing data list")
         return [str(item["id"]) for item in items if isinstance(item, dict) and item.get("id")]
 
+    # ------------------------------------------------------------------
+    # Batch inference.
+    #
+    # Unlike chat completions, batch inference is not OpenAI-compatible: rows are
+    # uploaded as a dataset, an operation runs the model over them
+    # asynchronously within a completion window, and the responses land in a
+    # destination dataset that is exported back. These wrappers keep callers from
+    # assembling dataset schemas and operation mappings by hand.
+    # ------------------------------------------------------------------
+
+    def create_dataset(
+        self,
+        *,
+        name: str,
+        folder: str,
+        columns: dict[str, str],
+        rows: Sequence[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Upload ``rows`` as a dataset and return the created dataset record.
+
+        ``columns`` maps a column name to a Token Factory primitive type name
+        (for example ``"string"`` or ``"json"``).
+        """
+
+        if not name:
+            raise TokenFactoryError("dataset name is required")
+        if not columns:
+            raise TokenFactoryError("dataset columns are required")
+        if not rows:
+            raise TokenFactoryError("dataset rows must be a non-empty sequence")
+        payload = {
+            "name": name,
+            "folder": folder or "/",
+            "schema": [{"name": key, "type": {"name": kind}} for key, kind in columns.items()],
+            "rows": list(rows),
+        }
+        return _expect_object(self._post_json(self._config.datasets_url, payload), "dataset")
+
+    def get_dataset(self, dataset_id: str) -> dict[str, Any]:
+        url = f"{self._config.datasets_url}/{dataset_id}"
+        return _expect_object(self._get_json(url), "dataset")
+
+    def delete_dataset(self, dataset_id: str) -> None:
+        """Delete a dataset, ignoring an already-absent one."""
+
+        url = f"{self._config.datasets_url}/{dataset_id}"
+        try:
+            self._request("DELETE", url)
+        except TokenFactoryError as exc:
+            if "(404)" not in str(exc):
+                raise
+
+    def export_dataset(self, dataset_id: str, *, output_format: str = "jsonl") -> str:
+        """Return the raw exported body of a dataset (``jsonl`` or ``csv``)."""
+
+        url = f"{self._config.datasets_url}/{dataset_id}/export"
+        return self._request_text("GET", url, params={"format": output_format})
+
+    def create_batch_inference(
+        self,
+        *,
+        model: str,
+        dataset_id: str,
+        dataset_version: str,
+        messages_column: str,
+        custom_id_column: str = "",
+        max_tokens: int | None = None,
+        completion_window: str = DEFAULT_COMPLETION_WINDOW,
+    ) -> dict[str, Any]:
+        """Start a ``text_messages`` batch-inference operation over a dataset."""
+
+        if not model:
+            raise TokenFactoryError("model is required")
+        if not dataset_id or not dataset_version:
+            raise TokenFactoryError("dataset_id and dataset_version are required")
+        mapping: dict[str, Any] = {
+            "type": "text_messages",
+            "messages": {"type": "column", "name": messages_column},
+        }
+        if custom_id_column:
+            mapping["custom_id"] = {"type": "column", "name": custom_id_column}
+        if max_tokens is not None:
+            mapping["max_tokens"] = {"type": "number", "value": int(max_tokens)}
+        payload = {
+            "type": "batch_inference",
+            "src": [{"id": dataset_id, "version": dataset_version, "mapping": mapping}],
+            "params": {"model": model, "completion_window": completion_window},
+        }
+        return _expect_object(self._post_json(self._config.operations_url, payload), "operation")
+
+    def get_operation(self, operation_id: str) -> dict[str, Any]:
+        url = f"{self._config.operations_url}/{operation_id}"
+        return _expect_object(self._get_json(url), "operation")
+
+    def operation_errors(self, operation_id: str) -> list[str]:
+        """Return the operation's error strings, dropping empty placeholders.
+
+        A failed batch operation frequently reports a single empty string, so an
+        empty list here does not mean the operation succeeded.
+        """
+
+        url = f"{self._config.operations_url}/{operation_id}/errors"
+        try:
+            data = self._get_json(url)
+        except TokenFactoryError:
+            return []
+        items = data.get("data") if isinstance(data, dict) else None
+        if not isinstance(items, list):
+            return []
+        return [str(item).strip() for item in items if str(item).strip()]
+
+    def get_batch(self, batch_id: str) -> dict[str, Any]:
+        """Return the OpenAI-compatible batch record for an operation.
+
+        A batch-inference operation id doubles as a batch id, and this view
+        carries what the operations endpoint omits: ``request_counts``, and the
+        ``output_file_id`` / ``error_file_id`` that hold the real per-row results
+        and errors.
+        """
+
+        url = f"{self._config.batches_url}/{batch_id}"
+        return _expect_object(self._get_json(url), "batch")
+
+    def download_file(self, file_id: str) -> str:
+        """Return the contents of a file, following the redirect it serves."""
+
+        url = f"{self._config.files_url}/{file_id}/content"
+        return self._request_text("GET", url, follow_redirects=True)
+
+    def cancel_operation(self, operation_id: str) -> dict[str, Any]:
+        url = f"{self._config.operations_url}/{operation_id}/cancel"
+        return _expect_object(self._post_json(url, {}), "operation")
+
+    def wait_for_operation(
+        self,
+        operation_id: str,
+        *,
+        poll_interval_s: float = DEFAULT_BATCH_POLL_INTERVAL_S,
+        timeout_s: float = DEFAULT_BATCH_TIMEOUT_S,
+        on_poll: Callable[[dict[str, Any]], None] | None = None,
+        monotonic: Callable[[], float] = time.monotonic,
+    ) -> dict[str, Any]:
+        """Poll an operation until it reaches a terminal status or times out."""
+
+        if poll_interval_s <= 0:
+            raise TokenFactoryError("poll_interval_s must be positive")
+        deadline = monotonic() + max(timeout_s, 0.0)
+        while True:
+            operation = self.get_operation(operation_id)
+            if on_poll is not None:
+                on_poll(operation)
+            if str(operation.get("status") or "") in BATCH_TERMINAL_STATUSES:
+                return operation
+            if monotonic() >= deadline:
+                raise TokenFactoryError(
+                    f"Token Factory operation {operation_id} did not finish within "
+                    f"{timeout_s:.0f}s (last status "
+                    f"{operation.get('status') or 'unknown'!r}). It keeps running "
+                    "server-side; poll it again or cancel it."
+                )
+            self._sleeper(poll_interval_s)
+
     def _headers(self) -> dict[str, str]:
         headers = {"Content-Type": "application/json"}
         if self._config.api_key:
@@ -289,7 +477,45 @@ class TokenFactoryClient:
     def _get_json(self, url: str) -> Any:
         return self._request("GET", url)
 
-    def _request(self, method: str, url: str, *, json_body: dict[str, Any] | None = None) -> Any:
+    def _request(
+        self,
+        method: str,
+        url: str,
+        *,
+        json_body: dict[str, Any] | None = None,
+        params: dict[str, Any] | None = None,
+    ) -> Any:
+        return self._send(
+            method, url, json_body=json_body, params=params, decode_json=True
+        )
+
+    def _request_text(
+        self,
+        method: str,
+        url: str,
+        *,
+        params: dict[str, Any] | None = None,
+        follow_redirects: bool = False,
+    ) -> str:
+        return self._send(
+            method,
+            url,
+            json_body=None,
+            params=params,
+            decode_json=False,
+            follow_redirects=follow_redirects,
+        )
+
+    def _send(
+        self,
+        method: str,
+        url: str,
+        *,
+        json_body: dict[str, Any] | None,
+        params: dict[str, Any] | None,
+        decode_json: bool,
+        follow_redirects: bool = False,
+    ) -> Any:
         owns_client = self._http_client is None
         client = self._http_client or httpx.Client(timeout=self._config.timeout_s)
         started = time.perf_counter()
@@ -300,7 +526,12 @@ class TokenFactoryClient:
                 attempts = attempt
                 try:
                     response = client.request(
-                        method, url, headers=self._headers(), json=json_body
+                        method,
+                        url,
+                        headers=self._headers(),
+                        json=json_body,
+                        params=params,
+                        follow_redirects=follow_redirects,
                     )
                 except httpx.TransportError as exc:
                     if attempt == self._retry_attempts:
@@ -322,6 +553,10 @@ class TokenFactoryClient:
                     "latency_seconds": round(time.perf_counter() - started, 6),
                     "status_code": response.status_code,
                 }
+                if not decode_json:
+                    return response.text
+                if not response.content:
+                    return {}
                 return response.json()
             raise AssertionError("unreachable Token Factory retry loop")
         except httpx.HTTPStatusError as exc:
@@ -384,6 +619,12 @@ def _join_path(base_url: str, suffix: str) -> str:
     if base.endswith("/v1"):
         return f"{base}/{suffix}"
     return f"{base}/v1/{suffix}"
+
+
+def _expect_object(data: Any, what: str) -> dict[str, Any]:
+    if not isinstance(data, dict):
+        raise TokenFactoryError(f"Token Factory returned a non-object {what} response")
+    return data
 
 
 def _truncate(text: str, *, limit: int = 500) -> str:

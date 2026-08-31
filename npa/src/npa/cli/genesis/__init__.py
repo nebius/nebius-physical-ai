@@ -8,6 +8,7 @@ workflow creates).
 from __future__ import annotations
 
 import json
+import hashlib
 import multiprocessing as mp
 import os
 import queue
@@ -57,7 +58,10 @@ from npa.serverless_common import (
     require_s3_credentials,
     resolve_gpu_platform,
     resolve_subnet,
+    ServerlessSupervisionConfig,
+    ServerlessSupervisionError,
     split_serverless_env,
+    supervise_serverless_job,
     validate_output_path,
 )
 from npa.workbench.training_config import (
@@ -180,6 +184,19 @@ def _remote_bash(script: str) -> str:
 def _serverless_job_name(project: str, name: str, tool: str) -> str:
     raw = f"npa-{tool}-jobs-{project}-{name}".lower()
     return re.sub(r"-+", "-", re.sub(r"[^a-z0-9-]+", "-", raw)).strip("-")[:63]
+
+
+def _pin_serverless_image(image: str) -> str:
+    """Resolve a mutable Serverless image reference to its exact OCI digest."""
+
+    from npa.orchestration.skypilot.registry_preflight import (
+        fetch_image_config_metadata,
+        parse_image_reference,
+    )
+
+    digest, _labels = fetch_image_config_metadata(image)
+    reference = parse_image_reference(image)
+    return f"{reference.registry}/{reference.repository}@{digest}"
 
 
 def _serverless_job_env(
@@ -308,6 +325,7 @@ def _genesis_serverless_train_teacher(
     submit_only: bool,
     poll_interval: float,
     timeout: float,
+    max_infrastructure_recoveries: int,
     seed: int,
     action_space: str,
     output_format: OutputFormat,
@@ -350,28 +368,55 @@ def _genesis_serverless_train_teacher(
     merged_env.update(extra_env)
     env, extra_env = split_serverless_env(merged_env)
     client = ServerlessClient()
+    selected_image = image or container_image_for_tool(
+        "genesis", registry=resolve_container_registry(proj_alias)
+    )
+    if not submit_only:
+        try:
+            selected_image = _pin_serverless_image(selected_image)
+        except Exception as exc:  # noqa: BLE001 - immutable image is a launch gate
+            _fail(f"Serverless image digest preflight failed: {exc}")
+    command = _genesis_serverless_train_teacher_command(
+        n_envs=n_envs,
+        max_iterations=max_iterations,
+        action_space=action_space,
+        seed=seed,
+        training_config=training_config,
+        env_overrides=env_overrides,
+        ppo_overrides=ppo_overrides,
+    )
     try:
         existing = client.get_job(name, resolved_project_id)
     except EndpointNotFoundError:
         existing = None
     try:
         if existing is not None:
-            info = existing if submit_only or existing.status in {"succeeded", "failed", "cancelled"} else client.poll_job(existing.id, resolved_project_id, interval_s=poll_interval, ceiling_s=timeout)
+            info = existing
+            if not submit_only:
+                info = _supervise_genesis_serverless_job(
+                    client=client,
+                    info=existing,
+                    project_id=resolved_project_id,
+                    image=selected_image,
+                    command=command,
+                    platform=platform,
+                    gpu_count=resolved_gpu_count,
+                    preset=preset,
+                    subnet=subnet,
+                    output_path=out,
+                    env=env,
+                    extra_env=extra_env,
+                    poll_interval=poll_interval,
+                    timeout=timeout,
+                    max_infrastructure_recoveries=max_infrastructure_recoveries,
+                )
             _output({"status": "existing", "job_id": info.id, "job_name": info.name, "job_status": info.status, "output_path": out}, output_format)
             return
         info = client.create_job(
             project_id=resolved_project_id,
             name=name,
-            image=image or container_image_for_tool("genesis", registry=resolve_container_registry(proj_alias)),
-            command=_genesis_serverless_train_teacher_command(
-                n_envs=n_envs,
-                max_iterations=max_iterations,
-                action_space=action_space,
-                seed=seed,
-                training_config=training_config,
-                env_overrides=env_overrides,
-                ppo_overrides=ppo_overrides,
-            ),
+            image=selected_image,
+            command=command,
             gpu_type=platform,
             gpu_count=resolved_gpu_count,
             preset=preset,
@@ -381,13 +426,31 @@ def _genesis_serverless_train_teacher(
             extra_env=extra_env,
         )
         if not submit_only:
-            info = client.poll_job(info.id, resolved_project_id, interval_s=poll_interval, ceiling_s=timeout)
+            info = _supervise_genesis_serverless_job(
+                client=client,
+                info=info,
+                project_id=resolved_project_id,
+                image=selected_image,
+                command=command,
+                platform=platform,
+                gpu_count=resolved_gpu_count,
+                preset=preset,
+                subnet=subnet,
+                output_path=out,
+                env=env,
+                extra_env=extra_env,
+                poll_interval=poll_interval,
+                timeout=timeout,
+                max_infrastructure_recoveries=max_infrastructure_recoveries,
+            )
     except ValueError as exc:
         _fail(str(exc))
     except ServerlessClientError as exc:
         _fail(f"Serverless Job failed: {exc}")
     except TimeoutError as exc:
         _fail(str(exc))
+    except ServerlessSupervisionError as exc:
+        _fail(f"Serverless Job supervision stopped: {exc}")
     _output(
         {
             "status": "submitted" if submit_only else info.status,
@@ -398,6 +461,159 @@ def _genesis_serverless_train_teacher(
         },
         output_format,
     )
+
+
+def _supervise_genesis_serverless_job(
+    *,
+    client: Any,
+    info: Any,
+    project_id: str,
+    image: str,
+    command: str,
+    platform: str,
+    gpu_count: int,
+    preset: str,
+    subnet: str,
+    output_path: str,
+    env: dict[str, str],
+    extra_env: dict[str, str],
+    poll_interval: float,
+    timeout: float,
+    max_infrastructure_recoveries: int,
+) -> Any:
+    """Run Genesis' production Serverless Jobs path through the shared adapter."""
+
+    from urllib.parse import urlparse
+
+    from botocore.exceptions import ClientError
+
+    from npa.clients.storage import StorageClient
+    from npa.orchestration.npa_workflow.run_state import RunStateStore
+    from npa.orchestration.npa_workflow.supervisor import (
+        AttemptIdentity,
+        PreflightEvidence,
+        ServerlessRecoverySpec,
+        ServerlessSupervisorAdapter,
+        SupervisorLedger,
+    )
+    from npa.orchestration.skypilot.registry_preflight import (
+        fetch_image_config_metadata,
+        parse_image_reference,
+    )
+
+    digest, _labels = fetch_image_config_metadata(image)
+    reference = parse_image_reference(image)
+    pinned_image = f"{reference.registry}/{reference.repository}@{digest}"
+    parsed_output = urlparse(output_path)
+    if parsed_output.scheme != "s3" or not parsed_output.netloc:
+        raise ValueError("supervised Serverless Jobs require an explicit S3 output path")
+    prefix = parsed_output.path.strip("/")
+    endpoint = str(env.get("AWS_ENDPOINT_URL") or extra_env.get("AWS_ENDPOINT_URL") or "")
+    access_key = str(extra_env.get("AWS_ACCESS_KEY_ID") or "")
+    secret_key = str(extra_env.get("AWS_SECRET_ACCESS_KEY") or "")
+    scope = hashlib.sha256(str(info.name).encode("utf-8")).hexdigest()[:16]
+    store = RunStateStore(
+        bucket=parsed_output.netloc,
+        prefix=f"{prefix}/npa-workflow/supervisor/serverless/{scope}",
+        endpoint_url=endpoint,
+        aws_access_key_id=access_key,
+        aws_secret_access_key=secret_key,
+    )
+    storage = StorageClient.from_environment(
+        endpoint_url=endpoint,
+        aws_access_key_id=access_key,
+        aws_secret_access_key=secret_key,
+    ).s3
+
+    def output_exists(uri: str) -> bool:
+        parsed = urlparse(uri)
+        key = parsed.path.lstrip("/")
+        try:
+            response = storage.head_object(Bucket=parsed.netloc, Key=key)
+        except ClientError as exc:
+            code = str(exc.response.get("Error", {}).get("Code", ""))
+            if code in {"404", "NoSuchKey", "NotFound"}:
+                return False
+            raise
+        return int(response.get("ContentLength") or 0) > 0
+
+    workflow_sha256 = hashlib.sha256(command.encode("utf-8")).hexdigest()
+    source_sha256 = hashlib.sha256(
+        f"genesis-serverless-baked:{digest}".encode("utf-8")
+    ).hexdigest()
+    identity = AttemptIdentity(
+        runtime="serverless",
+        run_id=str(info.name),
+        attempt=1,
+        logical_attempt_id=f"{info.name}:1",
+        provider_job_id=str(info.id),
+        provider_job_name=str(info.name),
+        workflow_sha256=workflow_sha256,
+        source_sha256=source_sha256,
+        image_digest=digest,
+        checkpoint_prefix=output_path,
+    )
+    ledger = SupervisorLedger(store)
+    events = ledger.events()
+    if events:
+        latest = events[-1]
+        prior = latest.get("new_attempt_identity") or latest.get("attempt_identity")
+        if isinstance(prior, dict) and prior.get("runtime") == "serverless":
+            identity = AttemptIdentity(**prior)
+    else:
+        ledger.record(
+            {
+                "recorded_at": str(getattr(info, "created_at", "") or ""),
+                "phase": "launch",
+                "attempt_identity": identity.to_dict(),
+                "classification": "none",
+                "recovery": {"action": "continue"},
+            }
+        )
+    adapter = ServerlessSupervisorAdapter(
+        ServerlessRecoverySpec(
+            project_id=project_id,
+            image=pinned_image,
+            command=command,
+            gpu_type=platform,
+            gpu_count=gpu_count,
+            output_path=output_path,
+            preset=preset,
+            subnet_id=subnet,
+            timeout=f"{max(1, int(timeout))}s",
+            env=env,
+            secret_env=extra_env,
+        ),
+        client=client,
+    )
+    _identity, final = supervise_serverless_job(
+        adapter=adapter,
+        ledger=ledger,
+        identity=identity,
+        config=ServerlessSupervisionConfig(
+            expected_workflow_sha256=workflow_sha256,
+            expected_source_sha256=source_sha256,
+            expected_image_digest=digest,
+            declared_outputs=(
+                f"{output_path}train_teacher_summary.json",
+                f"{output_path}npa_genesis_checkpoint_manifest.json",
+            ),
+            max_infrastructure_recoveries=max_infrastructure_recoveries,
+            preflight=PreflightEvidence(
+                checks={
+                    "exact_image_pull": "pass",
+                    "credentials_access": "pass",
+                    "accelerator_resolution": "pass",
+                    "per_node_gpu_shape": "pass",
+                    "gang_capacity": "not_required",
+                }
+            ),
+            poll_interval_seconds=poll_interval,
+            wait_ceiling_seconds=timeout,
+        ),
+        output_checker=output_exists,
+    )
+    return final
 
 
 def _parse_positive_int(value: str | None) -> int:
@@ -962,6 +1178,15 @@ def train_teacher_cmd(
     submit_only: bool = typer.Option(False, "--submit-only", help="Submit serverless Job and return before polling."),
     poll_interval: float = typer.Option(30.0, "--poll-interval", help="Seconds between serverless status checks."),
     timeout: float = typer.Option(3600.0, "--timeout", help="Seconds to wait for serverless completion."),
+    max_infrastructure_recoveries: int = typer.Option(
+        1,
+        "--max-infrastructure-recoveries",
+        min=0,
+        help=(
+            "Maximum typed Serverless infrastructure recoveries; payload failures "
+            "are never retried by this policy. Zero disables automatic relaunch."
+        ),
+    ),
     device: str = typer.Option("cuda", "--device", help="Torch device."),
     log_dir: str = typer.Option("./logs/teacher/", "--log-dir", help="Tensorboard log directory."),
     seed: int = typer.Option(42, "--seed", help="Random seed."),
@@ -1031,6 +1256,7 @@ def train_teacher_cmd(
             submit_only=submit_only,
             poll_interval=poll_interval,
             timeout=timeout,
+            max_infrastructure_recoveries=max_infrastructure_recoveries,
             seed=seed,
             action_space=action_space.value,
             output_format=output_format,

@@ -96,6 +96,7 @@ from npa.serverless_common import (
     split_serverless_env,
     validate_output_path,
 )
+from npa.cli.isaac_lab.trajectory_export_script import TRAJECTORY_CAMERA_HELPERS
 from npa.workbench.training_config import (
     TrainingConfig,
     TrainingConfigError,
@@ -117,13 +118,15 @@ logger = logging.getLogger(__name__)
 _project_alias: str = ""
 _workbench_name: str = ""
 
-ISAAC_LAB_VERSION = "2.3.2.post1"
+ISAAC_LAB_VERSION = "3.0.0b2.post1"
+ISAAC_SIM_VERSION = "6.0.1.0"
+ISAAC_LAB_SRC_COMMIT = "ffff603eafc6b74264a5261cc0183d6a65390d78"
 ISAAC_LAB_HOME = "/opt/isaac-lab"
 ISAAC_LAB_VENV = f"{ISAAC_LAB_HOME}/venv"
-ISAAC_LAB_SITE_PACKAGES = f"{ISAAC_LAB_VENV}/lib/python3.11/site-packages"
+ISAAC_LAB_SOURCE = f"{ISAAC_LAB_HOME}/source"
+ISAAC_LAB_SITE_PACKAGES = f"{ISAAC_LAB_VENV}/lib/python3.12/site-packages"
 ISAAC_LAB_PKG = f"{ISAAC_LAB_SITE_PACKAGES}/isaaclab"
 ISAAC_LAB_RSL_RL_TRAIN_REL = "scripts/reinforcement_learning/rsl_rl/train.py"
-PIP_EXTRA_INDEX_URL = "https://pypi.nvidia.com"
 
 
 class OutputFormat(str, Enum):
@@ -716,62 +719,13 @@ def _validate_gpu_selection(gpu_type: str, gpu_preset: str) -> None:
     _isaac_lab_require_rt_gpu(platform)
 
 
-def _build_install_command() -> str:
-    _require_isaac_consent(
-        "Isaac Lab installation", "npa workbench isaac-lab deploy ..."
-    )
-    script = f"""\
-set -euo pipefail
-export DEBIAN_FRONTEND=noninteractive
-export ACCEPT_EULA=Y
-sudo apt-get update
-sudo apt-get install -y software-properties-common build-essential git curl libglu1-mesa
-if ! command -v python3.11 >/dev/null 2>&1; then
-  sudo add-apt-repository -y ppa:deadsnakes/ppa || true
-  sudo apt-get update
-fi
-sudo apt-get install -y python3.11 python3.11-venv python3.11-dev
-sudo mkdir -p {ISAAC_LAB_HOME}
-sudo chown -R "$USER:$USER" {ISAAC_LAB_HOME}
-python3.11 -m venv {ISAAC_LAB_VENV}
-{ISAAC_LAB_VENV}/bin/python -m pip install --upgrade pip setuptools wheel
-{ISAAC_LAB_VENV}/bin/python -m pip install "isaaclab[isaacsim,all]=={ISAAC_LAB_VERSION}" --extra-index-url {PIP_EXTRA_INDEX_URL}
-source {ISAAC_LAB_VENV}/bin/activate
-python - <<'PY'
-from importlib import metadata
-
-from isaaclab.app import AppLauncher
-
-version = metadata.version("isaaclab")
-if version != "{ISAAC_LAB_VERSION}":
-    raise RuntimeError(f"expected isaaclab {ISAAC_LAB_VERSION}, found {{version}}")
-
-simulation_app = None
-try:
-    simulation_app = AppLauncher(headless=True).app
-    if simulation_app is None:
-        raise RuntimeError("AppLauncher.app is None")
-    update = getattr(simulation_app, "update", None)
-    if callable(update):
-        update()
-finally:
-    if simulation_app is not None:
-        close = getattr(simulation_app, "close", None)
-        if callable(close):
-            close()
-
-print("ISAAC_LAB_ENV_SMOKE_OK")
-PY
-"""
-    return _remote_bash(script)
-
-
 def _activate_prefix() -> str:
     _require_isaac_consent("Isaac Lab use", "npa workbench isaac-lab <command> ...")
     return (
         f"set -euo pipefail\n"
         f"source {ISAAC_LAB_VENV}/bin/activate\n"
         f"export ACCEPT_EULA=Y\n"
+        f"export ISAACLAB_PATH={ISAAC_LAB_SOURCE}\n"
         f"export ISAACLAB_PKG={ISAAC_LAB_PKG}\n"
         'export PYTHONPATH="$ISAACLAB_PKG/source/isaaclab:'
         "$ISAACLAB_PKG/source/isaaclab_tasks:"
@@ -880,176 +834,10 @@ if [ -z "$TRAIN_SCRIPT" ]; then
   fi
 fi
 if [ -z "$TRAIN_SCRIPT" ]; then
-  TRAIN_ROOT="$OUTPUT_DIR/npa_isaac_lab_generated"
-  TRAIN_SCRIPT="$TRAIN_ROOT/$TRAIN_REL"
-  mkdir -p "$(dirname "$TRAIN_SCRIPT")"
-  cat > "$TRAIN_SCRIPT" <<'PYTRAIN'
-# Generated Isaac Lab RSL-RL trainer fallback.
-#
-# This mirrors the Isaac Lab 2.3 RSL-RL training entrypoint for installations
-# that ship the Python packages but omit scripts/reinforcement_learning.
-
-from __future__ import annotations
-
-import argparse
-import logging
-import os
-import random
-import sys
-import time
-from datetime import datetime
-
-from isaaclab.app import AppLauncher
-
-
-def add_rsl_rl_args(parser: argparse.ArgumentParser) -> None:
-    arg_group = parser.add_argument_group("rsl_rl", description="Arguments for RSL-RL agent.")
-    arg_group.add_argument("--experiment_name", type=str, default=None)
-    arg_group.add_argument("--run_name", type=str, default=None)
-    arg_group.add_argument("--resume", action="store_true", default=False)
-    arg_group.add_argument("--load_run", type=str, default=None)
-    arg_group.add_argument("--checkpoint", type=str, default=None)
-    arg_group.add_argument("--logger", type=str, default=None, choices={"wandb", "tensorboard", "neptune"})
-    arg_group.add_argument("--log_project_name", type=str, default=None)
-
-
-def update_rsl_rl_cfg(agent_cfg, args_cli):
-    if hasattr(args_cli, "seed") and args_cli.seed is not None:
-        if args_cli.seed == -1:
-            args_cli.seed = random.randint(0, 10000)
-        agent_cfg.seed = args_cli.seed
-    if args_cli.resume is not None:
-        agent_cfg.resume = args_cli.resume
-    if args_cli.load_run is not None:
-        agent_cfg.load_run = args_cli.load_run
-    if args_cli.checkpoint is not None:
-        agent_cfg.load_checkpoint = args_cli.checkpoint
-    if args_cli.run_name is not None:
-        agent_cfg.run_name = args_cli.run_name
-    if args_cli.logger is not None:
-        agent_cfg.logger = args_cli.logger
-    if args_cli.experiment_name is not None:
-        agent_cfg.experiment_name = args_cli.experiment_name
-    if agent_cfg.logger in {"wandb", "neptune"} and args_cli.log_project_name:
-        agent_cfg.wandb_project = args_cli.log_project_name
-        agent_cfg.neptune_project = args_cli.log_project_name
-    return agent_cfg
-
-
-parser = argparse.ArgumentParser(description="Train an RL agent with RSL-RL.")
-parser.add_argument("--num_envs", type=int, default=None)
-parser.add_argument("--task", type=str, default=None)
-parser.add_argument("--agent", type=str, default="rsl_rl_cfg_entry_point")
-parser.add_argument("--seed", type=int, default=None)
-parser.add_argument("--max_iterations", type=int, default=None)
-parser.add_argument("--distributed", action="store_true", default=False)
-parser.add_argument("--export_io_descriptors", action="store_true", default=False)
-add_rsl_rl_args(parser)
-AppLauncher.add_app_launcher_args(parser)
-args_cli, hydra_args = parser.parse_known_args()
-sys.argv = [sys.argv[0]] + hydra_args
-
-app_launcher = AppLauncher(args_cli)
-simulation_app = app_launcher.app
-
-import gymnasium as gym
-import torch
-from rsl_rl.runners import DistillationRunner, OnPolicyRunner
-
-from isaaclab.envs import (
-    DirectMARLEnv,
-    DirectMARLEnvCfg,
-    DirectRLEnvCfg,
-    ManagerBasedRLEnvCfg,
-    multi_agent_to_single_agent,
-)
-from isaaclab.utils.io import dump_yaml
-from isaaclab_rl.rsl_rl import RslRlBaseRunnerCfg, RslRlVecEnvWrapper
-
-import isaaclab_tasks  # noqa: F401
-from isaaclab_tasks.utils import get_checkpoint_path
-from isaaclab_tasks.utils.hydra import hydra_task_config
-
-logger = logging.getLogger(__name__)
-
-torch.backends.cuda.matmul.allow_tf32 = True
-torch.backends.cudnn.allow_tf32 = True
-torch.backends.cudnn.deterministic = False
-torch.backends.cudnn.benchmark = False
-
-
-@hydra_task_config(args_cli.task, args_cli.agent)
-def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agent_cfg: RslRlBaseRunnerCfg) -> None:
-    agent_cfg = update_rsl_rl_cfg(agent_cfg, args_cli)
-    env_cfg.scene.num_envs = args_cli.num_envs if args_cli.num_envs is not None else env_cfg.scene.num_envs
-    agent_cfg.max_iterations = (
-        args_cli.max_iterations if args_cli.max_iterations is not None else agent_cfg.max_iterations
-    )
-    env_cfg.seed = agent_cfg.seed
-    env_cfg.sim.device = args_cli.device if args_cli.device is not None else env_cfg.sim.device
-    if args_cli.distributed and args_cli.device is not None and "cpu" in args_cli.device:
-        raise ValueError("Distributed training is not supported when using CPU device.")
-    if args_cli.distributed:
-        env_cfg.sim.device = f"cuda:{app_launcher.local_rank}"
-        agent_cfg.device = f"cuda:{app_launcher.local_rank}"
-        seed = agent_cfg.seed + app_launcher.local_rank
-        env_cfg.seed = seed
-        agent_cfg.seed = seed
-
-    log_root_path = os.path.abspath(os.path.join("logs", "rsl_rl", agent_cfg.experiment_name))
-    print(f"[INFO] Logging experiment in directory: {log_root_path}")
-    log_dir = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    print(f"Exact experiment name requested from command line: {log_dir}")
-    if agent_cfg.run_name:
-        log_dir += f"_{agent_cfg.run_name}"
-    log_dir = os.path.join(log_root_path, log_dir)
-
-    if isinstance(env_cfg, ManagerBasedRLEnvCfg):
-        env_cfg.export_io_descriptors = args_cli.export_io_descriptors
-    else:
-        logger.warning("IO descriptors are only supported for manager based RL environments.")
-    env_cfg.log_dir = log_dir
-
-    env = gym.make(args_cli.task, cfg=env_cfg)
-    if isinstance(env.unwrapped, DirectMARLEnv):
-        env = multi_agent_to_single_agent(env)
-
-    if agent_cfg.resume or agent_cfg.algorithm.class_name == "Distillation":
-        resume_path = get_checkpoint_path(log_root_path, agent_cfg.load_run, agent_cfg.load_checkpoint)
-
-    start_time = time.time()
-    env = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
-    if agent_cfg.class_name == "OnPolicyRunner":
-        runner = OnPolicyRunner(env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device)
-    elif agent_cfg.class_name == "DistillationRunner":
-        runner = DistillationRunner(env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device)
-    else:
-        raise ValueError(f"Unsupported runner class: {agent_cfg.class_name}")
-
-    try:
-        runner.add_git_repo_to_log(__file__)
-    except Exception as exc:
-        print(f"[WARN] Could not add git repo to log: {exc}", flush=True)
-    if agent_cfg.resume or agent_cfg.algorithm.class_name == "Distillation":
-        print(f"[INFO]: Loading model checkpoint from: {resume_path}")
-        runner.load(resume_path)
-
-    dump_yaml(os.path.join(log_dir, "params", "env.yaml"), env_cfg)
-    dump_yaml(os.path.join(log_dir, "params", "agent.yaml"), agent_cfg)
-    runner.learn(num_learning_iterations=agent_cfg.max_iterations, init_at_random_ep_len=True)
-    print(f"Training time: {round(time.time() - start_time, 2)} seconds")
-    env.close()
-
-
-if __name__ == "__main__":
-    try:
-        main()
-    finally:
-        simulation_app.close()
-PYTRAIN
-  echo "Generated Isaac Lab RSL-RL train script: $TRAIN_SCRIPT" >&2
+  echo "Isaac Lab source checkout is missing the real RSL-RL entrypoint: $TRAIN_REL" >&2
+  echo "Refusing to generate or run a compatibility trainer." >&2
+  exit 66
 fi
-
 cd "$OUTPUT_DIR"
 export NPA_ISAAC_LAB_RUN_DIR="$OUTPUT_DIR"
 export NPA_ISAAC_LAB_TASK="$TASK"
@@ -1066,7 +854,7 @@ cmd=(
   --task "$TASK"
   --num_envs "$NUM_ENVS"
   --max_iterations "$MAX_ITERATIONS"
-	  --headless
+	  --visualizer none
 	  --experiment_name "$EXPERIMENT_NAME"
 	  --run_name "$RUN_NAME"
 	{extra_cmd_lines.rstrip()}
@@ -1469,6 +1257,10 @@ def _build_train_trajectory_export_script(
     steps_per_episode: int,
     checkpoint: str,
     output_dir: str,
+    *,
+    capture_rgb: bool = True,
+    rgb_width: int = 640,
+    rgb_height: int = 480,
 ) -> str:
     """Roll out the trained checkpoint and write the numpy episode contract.
 
@@ -1480,14 +1272,52 @@ def _build_train_trajectory_export_script(
     policy.
     """
     return f"""\
+import hashlib
+import importlib.metadata as metadata
 import json
+import math
+import os
 import time
 from pathlib import Path
 
 from isaaclab.app import AppLauncher
 
-app_launcher = AppLauncher(headless=True)
+capture_rgb = {capture_rgb!r}
+rgb_width = {rgb_width}
+rgb_height = {rgb_height}
+# Isaac Sim 6 enables anonymous structured telemetry in its application config.
+# Disable it before Kit starts; the environment override is the container-safe
+# early-start escape hatch, while the settings disable local structured logging
+# as well as transmission.
+os.environ["OMNI_TELEMETRY_DISABLE_ANONYMOUS_DATA"] = "1"
+app_launcher = AppLauncher(
+    headless=True,
+    enable_cameras=capture_rgb,
+    kit_args=(
+        "--portable-root /tmp/npa-isaac-kit "
+        "--/structuredLog/enable=false "
+        "--/telemetry/enableAnonymousData=false "
+        "--/privacy/usage=false "
+        "--/privacy/performance=false "
+        "--/privacy/personalization=false"
+    ),
+)
 simulation_app = app_launcher.app
+
+if capture_rgb:
+    # Isaac Sim 5.1 can leave the RTX data-window unset under a portable root.
+    # Replicator/TiledCamera then operates on an invalid window, which has
+    # produced both black viewport allocations and CUDA illegal-address errors
+    # on real RTX hosts. Initialize the documented full-frame window before any
+    # camera sensor is created.
+    import carb
+
+    rtx_settings = carb.settings.get_settings()
+    rtx_settings.set_float("/rtx/dataWindowNDC/0", 0.0)
+    rtx_settings.set_float("/rtx/dataWindowNDC/1", 0.0)
+    rtx_settings.set_float("/rtx/dataWindowNDC/2", 1.0)
+    rtx_settings.set_float("/rtx/dataWindowNDC/3", 1.0)
+    rtx_settings.set_bool("/rtx/dataWindow/fitOutputToDataWindow", False)
 
 import gymnasium as gym
 import numpy as np
@@ -1506,11 +1336,9 @@ device = "cuda:0" if torch.cuda.is_available() else "cpu"
 started = time.time()
 env = None
 
-
 def _to_numpy(value):
     tensor = torch.as_tensor(value)
     return tensor.detach().cpu().numpy()
-
 
 def _robot(env):
     try:
@@ -1518,6 +1346,7 @@ def _robot(env):
     except Exception:
         return None
 
+{TRAJECTORY_CAMERA_HELPERS}
 
 try:
     print(
@@ -1526,40 +1355,104 @@ try:
         flush=True,
     )
     env_cfg = parse_env_cfg(task, device=device, num_envs=1)
-    env = gym.make(task, cfg=env_cfg)
+    if capture_rgb:
+        import isaaclab.sim as sim_utils
+        from isaaclab.sensors import TiledCameraCfg
+
+        # A viewport render can be an all-black allocation in headless Kit even
+        # though it has the requested shape. A real RTX sensor in the task scene
+        # is updated by the same simulation step as policy/state telemetry.
+        camera_eye, camera_target = _rollout_camera_view(task)
+        env_cfg.scene.npa_rollout_camera = TiledCameraCfg(
+            prim_path="{{ENV_REGEX_NS}}/NpaRolloutCamera",
+            offset=TiledCameraCfg.OffsetCfg(
+                pos=camera_eye,
+                rot=(1.0, 0.0, 0.0, 0.0),
+                convention="world",
+            ),
+            data_types=["rgb"],
+            spawn=sim_utils.PinholeCameraCfg(
+                focal_length=24.0,
+                focus_distance=400.0,
+                horizontal_aperture=20.955,
+                clipping_range=(0.1, 20.0),
+            ),
+            width=rgb_width,
+            height=rgb_height,
+            update_period=0.0,
+        )
+    render_env = gym.make(
+        task,
+        cfg=env_cfg,
+    )
+    if capture_rgb:
+        # Let Isaac Lab perform the world/OpenGL frame conversion.  Hand-built
+        # side-view quaternions can roll the image even when their forward
+        # vector is correct, leaving moving ground-grid pixels to masquerade
+        # as task geometry.
+        camera = render_env.unwrapped.scene["npa_rollout_camera"]
+        origins = render_env.unwrapped.scene.env_origins[:1]
+        eye = torch.tensor(camera_eye, device=origins.device).unsqueeze(0) + origins
+        target = torch.tensor(camera_target, device=origins.device).unsqueeze(0) + origins
+        camera.set_world_poses_from_view(eyes=eye, targets=target)
+    env = render_env
 
     policy = None
     policy_loaded = False
     try:
         try:
-            from isaaclab_rl.rsl_rl import RslRlVecEnvWrapper
+            from isaaclab_rl.rsl_rl import (
+                RslRlVecEnvWrapper,
+                handle_deprecated_rsl_rl_cfg,
+            )
         except Exception:
-            from omni.isaac.lab_rl.rsl_rl import RslRlVecEnvWrapper
+            from omni.isaac.lab_rl.rsl_rl import (
+                RslRlVecEnvWrapper,
+                handle_deprecated_rsl_rl_cfg,
+            )
         from rsl_rl.runners import OnPolicyRunner
-        wrapped = RslRlVecEnvWrapper(env)
         agent_cfg = None
+        config_errors = []
         for loader in ("isaaclab_tasks.utils", "omni.isaac.lab_tasks.utils"):
             try:
                 mod = __import__(loader, fromlist=["load_cfg_from_registry"])
                 agent_cfg = mod.load_cfg_from_registry(task, "rsl_rl_cfg_entry_point")
                 break
-            except Exception:
-                pass
+            except Exception as exc:
+                config_errors.append(f"{{loader}}: {{exc!r}}")
+        if agent_cfg is None:
+            raise RuntimeError(
+                "could not load rsl_rl_cfg_entry_point: " + "; ".join(config_errors)
+            )
+        agent_cfg = handle_deprecated_rsl_rl_cfg(
+            agent_cfg, metadata.version("rsl-rl-lib")
+        )
         acfg = agent_cfg.to_dict() if hasattr(agent_cfg, "to_dict") else dict(agent_cfg)
-        runner = OnPolicyRunner(wrapped, acfg, log_dir=None, device=device)
+        clip_actions = (
+            getattr(agent_cfg, "clip_actions", None)
+            if not isinstance(agent_cfg, dict)
+            else agent_cfg.get("clip_actions")
+        )
+        runner_device = (
+            getattr(agent_cfg, "device", None)
+            if not isinstance(agent_cfg, dict)
+            else agent_cfg.get("device")
+        ) or device
+        wrapped = RslRlVecEnvWrapper(env, clip_actions=clip_actions)
+        runner = OnPolicyRunner(wrapped, acfg, log_dir=None, device=runner_device)
         runner.load(str(checkpoint_path))
-        policy = runner.get_inference_policy(device=device)
+        policy = runner.get_inference_policy(device=runner_device)
         env = wrapped
         policy_loaded = True
         print("ISAAC_LAB_TRAJ_EXPORT_POLICY_LOADED", flush=True)
     except Exception as exc:
-        print(f"ISAAC_LAB_TRAJ_EXPORT_POLICY_LOAD_FAILED {{exc!r}} -- random fallback", flush=True)
+        raise RuntimeError(f"trained-policy checkpoint load failed: {{exc!r}}") from exc
 
     def _act(obs):
-        if policy_loaded and policy is not None and obs is not None:
-            with torch.inference_mode():
-                return policy(obs)
-        return torch.as_tensor(env.action_space.sample(), device=device, dtype=torch.float32)
+        if not policy_loaded or policy is None or obs is None:
+            raise RuntimeError("trained policy is unavailable during trajectory export")
+        with torch.inference_mode():
+            return policy(obs)
 
     def _step_env(env, actions):
         # Gymnasium envs return 5 values; the rsl_rl VecEnv wrapper installed
@@ -1577,43 +1470,119 @@ try:
     joint_names = list(getattr(getattr(robot, "data", None), "joint_names", []) or [])
 
     total_frames = 0
+    total_rgb_frames = 0
+    total_rgb_content_frames = 0
+    total_rgb_center_content_frames = 0
+    total_rgb_motion_pairs = 0
     episode_lengths = []
     action_dim = None
+    rgb_dimensions = None
     for episode_index in range(num_episodes):
         reset_out = env.reset()
         obs = reset_out[0] if isinstance(reset_out, tuple) else reset_out
         states = []
         actions_out = []
+        rgb_frames = []
         for step in range(steps_per_episode):
+            actions = _act(obs)
+            actions_np = _to_numpy(actions)
+            action_values = actions_np[0] if actions_np.ndim > 1 else actions_np
+            action_dim = int(action_values.shape[-1])
+
             robot = _robot(env)
             if robot is not None and joint_names:
                 state_values = _to_numpy(robot.data.joint_pos)[0]
             else:
                 obs_np = _to_numpy(obs)
                 state_values = obs_np[0] if obs_np.ndim > 1 else obs_np
-            actions = _act(obs)
-            actions_np = _to_numpy(actions)
-            action_values = actions_np[0] if actions_np.ndim > 1 else actions_np
-            action_dim = int(action_values.shape[-1])
+
+            if capture_rgb:
+                frame = _rgb_frame(render_env)
+                dimensions = tuple(int(value) for value in frame.shape)
+                if rgb_dimensions is None:
+                    rgb_dimensions = dimensions
+                elif dimensions != rgb_dimensions:
+                    raise RuntimeError(
+                        f"Isaac RGB dimensions changed {{rgb_dimensions}} -> {{dimensions}}"
+                    )
+                rgb_frames.append(frame)
 
             states.append(np.asarray(state_values, dtype=np.float32))
             actions_out.append(np.asarray(action_values, dtype=np.float32))
-
             obs, _rewards, done, _info = _step_env(env, actions)
             if done:
                 break
 
         if not states:
             raise RuntimeError(f"episode {{episode_index}} produced no frames")
+        if len(actions_out) != len(states):
+            raise RuntimeError(
+                f"episode {{episode_index}} action/state length mismatch "
+                f"{{len(actions_out)}} != {{len(states)}}"
+            )
         episode_dir = output_dir / f"episode_{{episode_index:06d}}"
         episode_dir.mkdir(parents=True, exist_ok=True)
         np.save(episode_dir / "state.npy", np.stack(states))
         np.save(episode_dir / "actions.npy", np.stack(actions_out))
+        if capture_rgb:
+            if len(rgb_frames) != len(states):
+                raise RuntimeError(
+                    f"episode {{episode_index}} RGB/state length mismatch "
+                    f"{{len(rgb_frames)}} != {{len(states)}}"
+                )
+            rgb_array = np.stack(rgb_frames)
+            # Persist synchronized pixels before validation so a rejected real
+            # capture can be inspected without weakening any acceptance gate.
+            np.save(episode_dir / "rgb.npy", rgb_array)
+            dynamic_ranges = np.ptp(rgb_array.astype(np.int16), axis=(1, 2, 3))
+            content_frames = int(np.count_nonzero(dynamic_ranges >= 8))
+            height, width = rgb_array.shape[1:3]
+            center = rgb_array[
+                :,
+                height // 4 : (3 * height) // 4,
+                width // 4 : (3 * width) // 4,
+                :,
+            ]
+            center_dynamic_ranges = np.ptp(
+                center.astype(np.int16), axis=(1, 2, 3)
+            )
+            center_content_frames = int(
+                np.count_nonzero(center_dynamic_ranges >= 8)
+            )
+            minimum_content_frames = max(1, math.ceil(len(rgb_frames) * 0.9))
+            if content_frames < minimum_content_frames:
+                raise RuntimeError(
+                    f"episode {{episode_index}} RGB content validation failed: "
+                    f"{{content_frames}}/{{len(rgb_frames)}} non-uniform frames"
+                )
+            if center_content_frames < minimum_content_frames:
+                raise RuntimeError(
+                    f"episode {{episode_index}} RGB center framing validation failed: "
+                    f"{{center_content_frames}}/{{len(rgb_frames)}} center-content frames"
+                )
+            motion_pairs = 0
+            if len(rgb_frames) > 1:
+                changes = np.mean(
+                    np.abs(np.diff(rgb_array.astype(np.int16), axis=0)),
+                    axis=(1, 2, 3),
+                )
+                motion_pairs = int(np.count_nonzero(changes >= 0.01))
+                if motion_pairs == 0:
+                    raise RuntimeError(
+                        f"episode {{episode_index}} RGB motion validation failed"
+                    )
+            total_rgb_frames += len(rgb_frames)
+            total_rgb_content_frames += content_frames
+            total_rgb_center_content_frames += center_content_frames
+            total_rgb_motion_pairs += motion_pairs
         (episode_dir / "episode_meta.json").write_text(json.dumps({{
             "episode_index": episode_index,
             "length": len(states),
             "task": task,
             "policy_loaded": policy_loaded,
+            "rgb_frame_count": len(rgb_frames),
+            "rgb_dimensions": list(rgb_dimensions or ()),
+            "timeline": "episode_index/frame_index/timestamp",
         }}, indent=2))
         total_frames += len(states)
         episode_lengths.append(len(states))
@@ -1635,6 +1604,8 @@ try:
         "task": task,
         "checkpoint": str(checkpoint_path),
         "policy_loaded": policy_loaded,
+        "runtime_version": metadata.version("isaaclab"),
+        "checkpoint_sha256": hashlib.sha256(checkpoint_path.read_bytes()).hexdigest(),
         "fps": 50,
         "state_names": state_names,
         "action_names": action_names,
@@ -1643,12 +1614,37 @@ try:
         "steps_per_episode": steps_per_episode,
         "episode_lengths": episode_lengths,
         "total_frames": total_frames,
+        "rgb_enabled": capture_rgb,
+        "rgb_frame_count": total_rgb_frames,
+        "rgb_content_frame_count": total_rgb_content_frames,
+        "rgb_center_content_frame_count": total_rgb_center_content_frames,
+        "rgb_motion_pair_count": total_rgb_motion_pairs,
+        "rgb_dimensions": list(rgb_dimensions or ()),
+        "rgb_feature_key": "observation.images.workspace",
+        "renderer": "isaac_sim_tiled_camera_rtx",
+        "genuine_simulator_pixels": (
+            capture_rgb
+            and total_rgb_frames == total_frames
+            and total_rgb_content_frames >= math.ceil(total_frames * 0.9)
+            and total_rgb_center_content_frames >= math.ceil(total_frames * 0.9)
+            and total_rgb_motion_pairs > 0
+        ),
+        "timeline": "episode_index/frame_index/timestamp",
         "created_unix": round(time.time(), 3),
         "duration_seconds": round(time.time() - started, 3),
     }}
     (output_dir / "meta.json").write_text(json.dumps(meta, indent=2))
     print("ISAAC_LAB_TRAJ_EXPORT_COMPLETE")
     print(json.dumps(meta, indent=2), flush=True)
+except Exception as exc:
+    # Isaac/Kit can consume the interpreter traceback during application
+    # shutdown. Emit a stable final marker before closing the app so remote
+    # callers retain the actual policy/rollout failure in stdout.
+    print(
+        f"ISAAC_LAB_TRAJ_EXPORT_FAILED {{type(exc).__name__}}: {{exc!r}}",
+        flush=True,
+    )
+    raise
 finally:
     if env is not None:
         env.close()
@@ -1831,7 +1827,7 @@ def deploy_cmd(
         True, "--preemptible/--no-preemptible", help="Preemptible (spot) instance."
     ),
     runtime: WorkbenchRuntime = typer.Option(
-        WorkbenchRuntime.vm, "--runtime", help=RUNTIME_HELP
+        WorkbenchRuntime.container, "--runtime", help=RUNTIME_HELP
     ),
     host: str = typer.Option(
         "", "--host", help="BYOVM SSH host/IP. Used only with --runtime byovm."
@@ -1850,7 +1846,7 @@ def deploy_cmd(
     disk_size: int | None = typer.Option(
         None,
         "--disk-size",
-        help="Boot disk size in GiB. Defaults to 250 for container runtime; VM runtime keeps the Terraform default.",
+        help="Boot disk size in GiB. Defaults to 250 for the supported container runtime.",
     ),
     default: bool = typer.Option(
         False, "--default", help="Set this workbench as the default."
@@ -1869,6 +1865,13 @@ def deploy_cmd(
     if _is_serverless_runtime(runtime):
         _fail(
             "Isaac Lab deploy does not use --runtime serverless; use `npa workbench isaac-lab train --runtime serverless`."
+        )
+    if runtime == WorkbenchRuntime.vm and not destroy:
+        _fail(
+            "Native VM installation is not supported for Isaac Lab 3 because its "
+            "third-party runtime cannot be reproduced from the public image's "
+            "hash-pinned, payload-clean build contract. Use --runtime container "
+            "for a managed VM, or --runtime byovm for an existing host."
         )
     if not destroy and not byovm:
         _validate_gpu_selection(gpu_type, gpu_preset)
@@ -2357,86 +2360,67 @@ def deploy_cmd(
                 fail_app(f"SSH connection test failed (exit {code})")
                 return
 
-        if runtime_uses_container(runtime):
-            step += 1
-            console.print(f"  [{step}/{total_steps}] Starting Isaac Lab container...")
-            if dry_run:
-                console.print(
-                    "    [dry-run] Would pull and run the Isaac Lab container image"
-                )
-            else:
-                from npa.deploy.configurator import (
-                    deploy_workbench_container,
-                    write_remote_docker_env_file,
-                )
-
-                try:
-                    service_env = {
-                        "ACCEPT_EULA": "Y",
-                        "AWS_ACCESS_KEY_ID": merged_vars.get("nebius_api_key", ""),
-                        "AWS_SECRET_ACCESS_KEY": merged_vars.get(
-                            "nebius_secret_key", ""
-                        ),
-                        "AWS_ENDPOINT_URL": storage_ep,
-                        "NEBIUS_S3_ENDPOINT": storage_ep,
-                        "NEBIUS_S3_BUCKET": bucket,
-                        "NEBIUS_REGION": env_region,
-                        "PYTHONUNBUFFERED": "1",
-                        **gpu_env_fields(
-                            byovm_gpu_info,
-                            effective_count=byovm_effective_gpu_count or None,
-                            visible_devices=byovm_visible_devices,
-                        ),
-                    }
-                    apply_shared_credential_env(
-                        service_env, credentials, include=not no_shared_creds
-                    )
-                    write_remote_docker_env_file(
-                        ssh,
-                        "/etc/npa-isaac-lab/env",
-                        service_env,
-                        owner=ssh_user,
-                    )
-                    image_ref = container_image_for_tool(
-                        "isaac-lab",
-                        registry=resolve_container_registry(proj_alias),
-                    )
-                    deploy_workbench_container(
-                        ssh,
-                        image_ref=image_ref,
-                        container_name=ISAAC_CONTAINER_NAME,
-                        env_file="/etc/npa-isaac-lab/env",
-                        volumes=[
-                            f"{ISAAC_LAB_HOME}/runs:{ISAAC_LAB_HOME}/runs",
-                            f"{ISAAC_LAB_HOME}/evals:{ISAAC_LAB_HOME}/evals",
-                            f"{ISAAC_LAB_HOME}/inputs:{ISAAC_LAB_HOME}/inputs",
-                        ],
-                        work_dirs=[
-                            f"{ISAAC_LAB_HOME}/runs",
-                            f"{ISAAC_LAB_HOME}/evals",
-                            f"{ISAAC_LAB_HOME}/inputs",
-                        ],
-                    )
-                except SSHError as exc:
-                    fail_app(f"Isaac Lab container deployment failed: {exc}")
-                    return
-        else:
-            step += 1
+        assert runtime_uses_container(runtime)
+        step += 1
+        console.print(f"  [{step}/{total_steps}] Starting Isaac Lab container...")
+        if dry_run:
             console.print(
-                f"  [{step}/{total_steps}] Installing Isaac Lab {ISAAC_LAB_VERSION}..."
+                "    [dry-run] Would pull and run the Isaac Lab container image"
             )
-            if dry_run:
-                console.print(
-                    "    [dry-run] Would install Python 3.11, Isaac Lab, and Isaac Sim"
+        else:
+            from npa.deploy.configurator import (
+                deploy_workbench_container,
+                write_remote_docker_env_file,
+            )
+
+            try:
+                service_env = {
+                    "ACCEPT_EULA": "Y",
+                    "AWS_ACCESS_KEY_ID": merged_vars.get("nebius_api_key", ""),
+                    "AWS_SECRET_ACCESS_KEY": merged_vars.get("nebius_secret_key", ""),
+                    "AWS_ENDPOINT_URL": storage_ep,
+                    "NEBIUS_S3_ENDPOINT": storage_ep,
+                    "NEBIUS_S3_BUCKET": bucket,
+                    "NEBIUS_REGION": env_region,
+                    "PYTHONUNBUFFERED": "1",
+                    **gpu_env_fields(
+                        byovm_gpu_info,
+                        effective_count=byovm_effective_gpu_count or None,
+                        visible_devices=byovm_visible_devices,
+                    ),
+                }
+                apply_shared_credential_env(
+                    service_env, credentials, include=not no_shared_creds
                 )
-            else:
-                try:
-                    ssh.run_or_raise(
-                        _build_install_command(), stream=True, label="Isaac Lab install"
-                    )
-                except SSHError as exc:
-                    fail_app(f"Isaac Lab installation failed: {exc}")
-                    return
+                write_remote_docker_env_file(
+                    ssh,
+                    "/etc/npa-isaac-lab/env",
+                    service_env,
+                    owner=ssh_user,
+                )
+                image_ref = container_image_for_tool(
+                    "isaac-lab",
+                    registry=resolve_container_registry(proj_alias),
+                )
+                deploy_workbench_container(
+                    ssh,
+                    image_ref=image_ref,
+                    container_name=ISAAC_CONTAINER_NAME,
+                    env_file="/etc/npa-isaac-lab/env",
+                    volumes=[
+                        f"{ISAAC_LAB_HOME}/runs:{ISAAC_LAB_HOME}/runs",
+                        f"{ISAAC_LAB_HOME}/evals:{ISAAC_LAB_HOME}/evals",
+                        f"{ISAAC_LAB_HOME}/inputs:{ISAAC_LAB_HOME}/inputs",
+                    ],
+                    work_dirs=[
+                        f"{ISAAC_LAB_HOME}/runs",
+                        f"{ISAAC_LAB_HOME}/evals",
+                        f"{ISAAC_LAB_HOME}/inputs",
+                    ],
+                )
+            except SSHError as exc:
+                fail_app(f"Isaac Lab container deployment failed: {exc}")
+                return
 
         step += 1
         console.print(f"  [{step}/{total_steps}] Writing deployment manifest...")
@@ -2760,6 +2744,14 @@ def train_cmd(
     export_steps_per_episode: int = typer.Option(
         50, "--export-steps-per-episode", help="Max steps per exported episode."
     ),
+    export_rgb: bool = typer.Option(
+        True,
+        "--export-rgb/--no-export-rgb",
+        help=(
+            "Capture genuine Isaac Sim RGB frames synchronized with trained-policy "
+            "trajectory export."
+        ),
+    ),
     output_format: OutputFormat = typer.Option(
         OutputFormat.text, "--output-format", help="Output format."
     ),
@@ -2893,6 +2885,7 @@ def train_cmd(
                     export_steps_per_episode,
                     f"{remote_output_dir}/npa_isaac_lab_checkpoint.pt",
                     trajectories_dir,
+                    capture_rgb=export_rgb,
                 )
                 + "PY\n",
             )
@@ -2905,6 +2898,7 @@ def train_cmd(
             except SSHError as exc:
                 traj_exit, traj_stdout, traj_stderr = 1, "", str(exc)
             result["trajectories_dir"] = trajectories_dir
+            result["trajectory_rgb_requested"] = export_rgb
             # Isaac Sim's kit app can exit 0 even when the Python rollout raised
             # (the same reason the training path checks ISAAC_LAB_TRAIN_COMPLETE
             # above), so a clean exit code alone is not proof the export ran.
@@ -2917,10 +2911,18 @@ def train_cmd(
             result["trajectory_export"] = "success" if traj_ok else "failed"
             if not traj_ok:
                 # The checkpoint is still good; report the export failure
-                # without failing the training run.
-                result["trajectory_export_error"] = (
-                    traj_stderr or traj_stdout
-                ).strip()[-500:]
+                # without failing the training run. Isaac/Kit can split the
+                # exception and its surrounding context across stdout/stderr;
+                # retaining only stderr can leave a trailing warning while
+                # discarding the actual policy-load failure.
+                diagnostic_parts = []
+                if traj_stdout and traj_stdout.strip():
+                    diagnostic_parts.append("stdout:\n" + traj_stdout.strip())
+                if traj_stderr and traj_stderr.strip():
+                    diagnostic_parts.append("stderr:\n" + traj_stderr.strip())
+                result["trajectory_export_error"] = "\n".join(diagnostic_parts)[
+                    -4000:
+                ]
         if output_is_s3:
             try:
                 try:

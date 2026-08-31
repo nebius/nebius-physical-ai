@@ -2014,6 +2014,47 @@ def test_nebius_public_ipv4_quota_requires_tenant_and_region() -> None:
     assert nebius.get_public_ipv4_quota("tenant-x", "") == (None, None)
 
 
+def test_nebius_quota_reads_are_profile_scoped(mocker, monkeypatch) -> None:
+    """Quota reads must carry the selected profile like every other read here.
+
+    A tenant reachable only through a non-default profile answers
+    PermissionDenied without it. `list_quota_allowances` fails closed, so that
+    denial became "unverified mutation prerequisite" and blocked an agent deploy
+    the operator was entitled to make.
+    """
+    monkeypatch.setenv("NPA_NEBIUS_PROFILE", "other-tenant")
+    run_json = mocker.patch(
+        "npa.clients.nebius._run_json", return_value=_public_ip_quota_items()
+    )
+
+    nebius.get_public_ipv4_quota("tenant-x", "us-central1")
+    nebius.get_compute_instance_quota("tenant-x", "us-central1")
+    nebius.list_quota_allowances("tenant-x")
+
+    assert run_json.call_count == 3
+    for call in run_json.call_args_list:
+        argv = call.args[0]
+        assert argv[:2] == ["--profile", "other-tenant"], argv
+        # The profile is a global flag, so it must precede the subcommand.
+        assert argv[2:5] == ["quotas", "quota-allowance", "list"], argv
+
+    # An explicit profile overrides the ambient one.
+    nebius.list_quota_allowances("tenant-x", profile="explicit")
+    assert run_json.call_args_list[-1].args[0][:2] == ["--profile", "explicit"]
+
+
+def test_nebius_quota_reads_omit_profile_flag_when_unset(mocker, monkeypatch) -> None:
+    monkeypatch.delenv("NPA_NEBIUS_PROFILE", raising=False)
+    monkeypatch.delenv("NEBIUS_PROFILE", raising=False)
+    run_json = mocker.patch(
+        "npa.clients.nebius._run_json", return_value=_public_ip_quota_items()
+    )
+
+    nebius.list_quota_allowances("tenant-x")
+
+    assert run_json.call_args_list[-1].args[0][0] == "quotas"
+
+
 def _compute_instance_quota_items() -> dict:
     return {
         "items": [

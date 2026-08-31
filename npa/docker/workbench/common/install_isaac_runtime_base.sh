@@ -36,6 +36,8 @@ TORCH_VERSION="${TORCH_VERSION:-2.9.0}"
 TORCHVISION_VERSION="${TORCHVISION_VERSION:-0.24.0}"
 TORCHAUDIO_VERSION="${TORCHAUDIO_VERSION:-2.9.0}"
 UBUNTU_SNAPSHOT="${NPA_UBUNTU_SNAPSHOT:-20260820T000000Z}"
+UBUNTU_SUITE="${NPA_UBUNTU_SUITE:-jammy}"
+ISAAC_PYTHON_MINOR="${NPA_ISAAC_PYTHON_MINOR:-3.11}"
 LINUX_LIBC_DEV_VERSION="${NPA_LINUX_LIBC_DEV_VERSION:-5.15.0-187.197}"
 PYTHON_VERSION="${NPA_ISAAC_PYTHON_VERSION:-3.11.15-1+jammy1}"
 DEADSNAKES_POOL="${NPA_DEADSNAKES_POOL:-https://ppa.launchpadcontent.net/deadsnakes/ppa/ubuntu/pool/main/p/python3.11}"
@@ -67,7 +69,7 @@ rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.list \
 printf '%s\n' \
   'Types: deb' \
   "URIs: https://snapshot.ubuntu.com/ubuntu/${UBUNTU_SNAPSHOT}/" \
-  'Suites: jammy jammy-updates jammy-backports jammy-security' \
+  "Suites: ${UBUNTU_SUITE} ${UBUNTU_SUITE}-updates ${UBUNTU_SUITE}-backports ${UBUNTU_SUITE}-security" \
   'Components: main restricted universe multiverse' \
   'Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg' \
   > /etc/apt/sources.list.d/ubuntu.sources
@@ -75,7 +77,7 @@ apt-get update
 # CUDA's Jammy base retains an old linux-libc-dev build. These are development
 # headers rather than the host kernel, but the fixed immutable-snapshot build is
 # available, so upgrade it explicitly instead of carrying avoidable critical CVEs.
-apt-get install -y --no-install-recommends \
+system_packages=(
   ca-certificates \
   curl \
   ffmpeg \
@@ -88,23 +90,49 @@ apt-get install -y --no-install-recommends \
   libx11-6 \
   libxext6 \
   libxrender1 \
-  "linux-libc-dev=${LINUX_LIBC_DEV_VERSION}" \
   libxt6 `# MaterialX render libs dlopen libXt.so.6; without it Kit logs three
           # "Could not load the dynamic library ... libMaterialXRender*.so" errors` \
   vulkan-tools
+)
+if [ -n "$LINUX_LIBC_DEV_VERSION" ]; then
+  system_packages+=("linux-libc-dev=${LINUX_LIBC_DEV_VERSION}")
+elif [ "$UBUNTU_SUITE" = jammy ]; then
+  system_packages+=(linux-libc-dev=5.15.0-186.196)
+elif [ "$UBUNTU_SUITE" = noble ]; then
+  # Fixed for CVE-2026-53215 in the repository's immutable Noble snapshot.
+  # Keep the exact build here so a future base/snapshot change cannot silently
+  # reintroduce the vulnerable userspace headers.
+  system_packages+=(linux-libc-dev=6.8.0-138.138)
+else
+  system_packages+=(linux-libc-dev)
+fi
+apt-get install -y --no-install-recommends "${system_packages[@]}"
+
+# CUDA's development base includes Nsight Compute, but Isaac Lab training neither
+# invokes nor needs it.  Its optional EFA metrics helper is a statically linked Go
+# binary inherited from the base and cannot be patched independently.  Remove the
+# owning packages (rather than deleting an untracked path) while retaining nvcc and
+# the CUDA development toolchain this image does need.
+if dpkg-query -W -f='${db:Status-Abbrev}' nsight-compute-2025.1.1 2>/dev/null \
+    | grep -q '^ii '; then
+  apt-get purge -y nsight-compute-2025.1.1 cuda-nsight-compute-12-8
+fi
+test ! -e /opt/nvidia/nsight-compute
+command -v nvcc >/dev/null
 
 # Isaac needs python3.11 exactly; Ubuntu 22.04 ships 3.10. Do not add the
 # moving deadsnakes apt repository. Fetch the reviewed version's immutable
 # package paths and verify every byte against the SHA-256 recorded in the PPA
 # Packages index before apt resolves their Ubuntu dependencies from the fixed
 # snapshot above.
-install -d -m 0755 /tmp/npa-python311
-while IFS='|' read -r filename digest; do
-  curl --fail --location --retry 3 \
-    "${DEADSNAKES_POOL}/${filename}" \
-    --output "/tmp/npa-python311/${filename}"
-  printf '%s  %s\n' "$digest" "/tmp/npa-python311/${filename}" | sha256sum --check --strict
-done <<'PYTHON311_DEBS'
+if [ "$ISAAC_PYTHON_MINOR" = 3.11 ]; then
+  install -d -m 0755 /tmp/npa-python311
+  while IFS='|' read -r filename digest; do
+    curl --fail --location --retry 3 \
+      "${DEADSNAKES_POOL}/${filename}" \
+      --output "/tmp/npa-python311/${filename}"
+    printf '%s  %s\n' "$digest" "/tmp/npa-python311/${filename}" | sha256sum --check --strict
+  done <<'PYTHON311_DEBS'
 libpython3.11_3.11.15-1+jammy1_amd64.deb|1ef8897f4f56b7e90a2c4bc07b68a7074b77567e4b112ded3331365eb3c10fc2
 libpython3.11-dev_3.11.15-1+jammy1_amd64.deb|1adc394918add62fb6e497382046d67b66d4d73cc887cb8be597d9e623db98ad
 libpython3.11-minimal_3.11.15-1+jammy1_amd64.deb|2242dc4450d5ef4bb51aa162229dcae9f921f13c44322aefc1a132631afe9493
@@ -114,9 +142,22 @@ python3.11-dev_3.11.15-1+jammy1_amd64.deb|f50550d76be43a305fa894ab001b76de635738
 python3.11-minimal_3.11.15-1+jammy1_amd64.deb|7de0e5a79cb46d2c017b3a882980d2ff9d943b3cd2a2c6fdccab6010f1fcd736
 python3.11-venv_3.11.15-1+jammy1_amd64.deb|65edd1c51e458d118bee721d0815e0cbcb940ab351d851037a29f5f07a1beef8
 PYTHON311_DEBS
-apt-get install -y --no-install-recommends /tmp/npa-python311/*.deb
-test "$(dpkg-query -W -f='${Version}' python3.11)" = "$PYTHON_VERSION"
-rm -rf /tmp/npa-python311
+  apt-get install -y --no-install-recommends /tmp/npa-python311/*.deb
+  test "$(dpkg-query -W -f='${Version}' python3.11)" = "$PYTHON_VERSION"
+  rm -rf /tmp/npa-python311
+elif [ "$ISAAC_PYTHON_MINOR" = 3.12 ]; then
+  # Isaac Sim 6 / Isaac Lab 3 require Python 3.12. The 3.x image uses the
+  # digest-pinned Ubuntu 24.04 CUDA base and the immutable Noble snapshot, so
+  # these distro packages are reproducible without adding a moving PPA.
+  [ "$UBUNTU_SUITE" = noble ] || {
+    echo "Isaac Python 3.12 requires NPA_UBUNTU_SUITE=noble" >&2
+    exit 2
+  }
+  apt-get install -y --no-install-recommends python3.12 python3.12-dev python3.12-venv
+else
+  echo "Unsupported NPA_ISAAC_PYTHON_MINOR=${ISAAC_PYTHON_MINOR}; expected 3.11 or 3.12" >&2
+  exit 2
+fi
 
 if [ "$INSTALL_SKYPILOT_PREREQS" = "1" ]; then
   # SkyPilot's in-pod Kubernetes bootstrap needs a SYSTEM python3 plus rsync, an SSH
@@ -135,8 +176,8 @@ rm -rf /var/lib/apt/lists/*
 if [ -x "$ISAAC_VENV/bin/python" ]; then
   log "reusing the base image's python venv at ${ISAAC_VENV}"
 else
-  log "python3.11 venv at ${ISAAC_VENV}"
-  python3.11 -m venv "$ISAAC_VENV"
+  log "python${ISAAC_PYTHON_MINOR} venv at ${ISAAC_VENV}"
+  "python${ISAAC_PYTHON_MINOR}" -m venv "$ISAAC_VENV"
 fi
 "$ISAAC_VENV/bin/python" -m pip install --no-cache-dir --no-deps \
   "pip==26.2.1" \
@@ -145,13 +186,15 @@ fi
   "packaging==26.3"
 "$ISAAC_VENV/bin/python" -m pip check
 
-# Isaac requires exactly python3.11; fail here rather than at first run.
-"$ISAAC_VENV/bin/python" - <<'PY'
+# Isaac releases require an exact Python minor; fail here rather than at first run.
+NPA_ISAAC_PYTHON_MINOR="$ISAAC_PYTHON_MINOR" "$ISAAC_VENV/bin/python" - <<'PY'
+import os
 import sys
 
-if sys.version_info[:2] != (3, 11):
+expected = tuple(int(part) for part in os.environ["NPA_ISAAC_PYTHON_MINOR"].split("."))
+if sys.version_info[:2] != expected:
     raise SystemExit(
-        f"Isaac requires python 3.11 (isaacsim/isaaclab declare Requires-Python: ==3.11.*), "
+        f"Isaac requires Python {expected[0]}.{expected[1]}, "
         f"but {sys.executable} is {sys.version_info.major}.{sys.version_info.minor}"
     )
 print(f"python {sys.version.split()[0]} at {sys.executable}")
@@ -162,7 +205,17 @@ if [ "$SKIP_TORCH" = "1" ]; then
   "$ISAAC_VENV/bin/python" -c 'import torch; print(f"base torch {torch.__version__}")'
 else
   log "PyTorch ${TORCH_VERSION} from ${TORCH_INDEX_URL}"
-  "$ISAAC_VENV/bin/python" -m pip install --no-cache-dir --no-deps \
+  TORCH_DEP_ARGS=(--no-deps)
+  if [[ "$TORCH_INDEX_URL" == */cu130 ]]; then
+    # CUDA 13 wheels use the new exact NVIDIA package names (for example
+    # nvidia-cuda-nvrtc==13.0.48) rather than the cu12-suffixed Isaac closure.
+    # Let pip install the versions declared by these three exact torch wheels;
+    # the pinned Isaac OSS closure is installed immediately afterwards and pip
+    # check verifies that the cu12 Isaac and cu13 torch closures coexist.
+    TORCH_DEP_ARGS=()
+  fi
+  "$ISAAC_VENV/bin/python" -m pip install --no-cache-dir \
+    "${TORCH_DEP_ARGS[@]}" \
     --index-url "$TORCH_INDEX_URL" \
     "torch==${TORCH_VERSION}" \
     "torchvision==${TORCHVISION_VERSION}" \
@@ -170,7 +223,7 @@ else
 fi
 
 log "OSS dependency closure for Isaac Sim / Isaac Lab"
-sed -E '/^imageio-ffmpeg==/d' "${COMMON_DIR}/isaac-oss-deps.txt" \
+sed -E '/^imageio-ffmpeg==/d' "${OSS_DEPS_FILE}" \
   > /tmp/npa-isaac-oss-deps.txt
 "$ISAAC_VENV/bin/python" -m pip install --no-cache-dir \
   --no-deps \
@@ -240,7 +293,9 @@ rm -f /tmp/eula-refusal.txt
 echo "NPA_ISAAC_BOOTSTRAP_REFUSES_WITHOUT_EULA_OK"
 
 log "verifying torch and that NO Isaac wheel is present in the image"
-NPA_REQUIRE_TORCH_SM120="${REQUIRE_TORCH_SM120:-1}" "$ISAAC_VENV/bin/python" - <<'PY'
+NPA_REQUIRE_TORCH_SM120="${REQUIRE_TORCH_SM120:-1}" \
+NPA_CUDA_ARCHITECTURES="${NPA_CUDA_ARCHITECTURES:-}" \
+  "$ISAAC_VENV/bin/python" - <<'PY'
 import importlib.util
 import os
 import sys
@@ -255,14 +310,37 @@ import torch
 # and the GPU golden evals. Asserting arch_list here would have meant a build that only
 # passes on GPU builders, which is a worse contract, not a stronger one.
 arch_list = torch.cuda.get_arch_list()
+compiled_arches = set(arch_list)
+if not compiled_arches and hasattr(torch._C, "_cuda_getArchFlags"):
+    compiled_arches.update(str(torch._C._cuda_getArchFlags()).split())
 cuda_version = torch.version.cuda or ""
-print(f"torch {torch.__version__} cuda={cuda_version or 'cpu'} arch_list={arch_list}")
+print(
+    f"torch {torch.__version__} cuda={cuda_version or 'cpu'} "
+    f"compiled_arches={sorted(compiled_arches)}"
+)
+
+requested_arches = {
+    f"sm_{value.removeprefix('sm')}"
+    for value in os.environ.get("NPA_CUDA_ARCHITECTURES", "").split(",")
+    if value.strip().startswith("sm")
+}
+if "sm_103" in requested_arches:
+    if cuda_version and tuple(int(value) for value in cuda_version.split(".")[:2]) < (13, 0):
+        raise SystemExit(f"B300 sm_103 requires torch CUDA >= 13.0, got {cuda_version}")
+    # The official cu130 torch wheel publishes Blackwell 10.x family SASS as
+    # sm_100, not a separate sm_103 entry.  B300-specific Warp kernels are JIT
+    # compiled by CUDA 13 NVRTC on the device, where compute_103 is supported.
+    if compiled_arches and not ({"sm_100", "sm_103"} & compiled_arches):
+        raise SystemExit(
+            f"expected Blackwell 10.x kernels for B300, got {sorted(compiled_arches)}"
+        )
+    print("NPA_TORCH_BLACKWELL_10X_CUDA13_OK")
 
 if os.environ.get("NPA_REQUIRE_TORCH_SM120") == "1":
-    if arch_list:
-        if "sm_120" not in arch_list:
+    if compiled_arches:
+        if "sm_120" not in compiled_arches:
             raise SystemExit(
-                f"expected sm_120 kernels for RTX PRO 6000 Blackwell, got {arch_list}"
+                f"expected sm_120 kernels for RTX PRO 6000 Blackwell, got {sorted(compiled_arches)}"
             )
         print("NPA_TORCH_SM120_OK (arch list observed on a GPU-capable builder)")
     else:

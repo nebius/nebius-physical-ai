@@ -167,7 +167,8 @@ resolve_base_python() {
   fi
   local candidate
   for candidate in /opt/npa/sim/venv/bin/python /opt/npa/venv/bin/python \
-                   /opt/isaac-lab/venv/bin/python "$(command -v python3.11 || true)"; do
+                   /opt/isaac-lab/venv/bin/python "$(command -v python3.12 || true)" \
+                   "$(command -v python3.11 || true)"; do
     if [ -n "$candidate" ] && [ -x "$candidate" ]; then
       printf '%s' "$candidate"
       return 0
@@ -352,7 +353,7 @@ ensure() {
   [ -f "$OSS_DEPS_FILE" ] \
     || die "$EX_CONFIG" "Isaac OSS dependency lock is missing: ${OSS_DEPS_FILE}"
   base_python="$(resolve_base_python)" \
-    || die "$EX_SOFTWARE" "no python3.11 interpreter found; set NPA_ISAAC_BASE_PYTHON"
+    || die "$EX_SOFTWARE" "no compatible Isaac base interpreter found; set NPA_ISAAC_BASE_PYTHON"
   target="${CACHE_DIR}/v/$(cache_stamp "$base_python")"
 
   # Consent is required before first acquisition and every use, including a

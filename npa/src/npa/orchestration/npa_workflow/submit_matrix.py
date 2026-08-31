@@ -105,6 +105,21 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         requires_token_factory=True,
     ),
     SubmitLiveCase(
+        "token-factory-batch-generate.yaml",
+        "cpu",
+        secret_envs=(
+            "NEBIUS_TOKEN_FACTORY_KEY",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+        ),
+        requires_token_factory=True,
+        notes=(
+            "Batch inference is a separate model entitlement from real-time chat, "
+            "and the stage waits out a completion window, so this case takes far "
+            "longer than the generate case it mirrors."
+        ),
+    ),
+    SubmitLiveCase(
         "token-factory-cosmos-reason.yaml",
         "cpu",
         secret_envs=(
@@ -187,6 +202,16 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
             "backend, which is GPU-free and needs no seeded inputs: the policy/base-config "
             "URIs are recorded in lineage, not read. The rank stage consumes the manifest "
             "the generate stage wrote."
+        ),
+    ),
+    SubmitLiveCase(
+        "sonic-b300-routing-evidence.yaml",
+        "cpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        notes=(
+            "CPU-only fail-closed execution of the installed SONIC accelerator "
+            "resolver; publishes a manifest, test report, and time-structured RRD. "
+            "Provider recognition and GPU execution remain separate assertions."
         ),
     ),
     SubmitLiveCase(

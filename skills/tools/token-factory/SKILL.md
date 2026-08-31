@@ -67,6 +67,76 @@ npa workbench token-factory generate \
 `--max-prompts 0` means all of them. Set a small non-zero value first: this is
 the command that turns a typo into a large token bill.
 
+**Batch text generation** — same prompt file, same `generations.jsonl`, batch
+token rates, default model `openai/gpt-oss-120b`:
+
+```bash
+npa workbench token-factory batch-generate \
+  --input-path prompts.jsonl \
+  --output-path s3://<bucket>/generations.jsonl \
+  --model openai/gpt-oss-120b --completion-window 24h
+
+# or submit now, collect later
+npa workbench token-factory batch-generate ... --no-wait
+npa workbench token-factory batch-status --operation-id <id> --output-path <same> --wait
+```
+
+Reach for `batch-generate` over `generate` whenever nothing is waiting on the
+answer, which is most bulk stages. Three properties are unique to it, and each
+one has already cost real debugging time:
+
+- **Batch routing is a per-model entitlement, unrelated to real-time chat.** Most
+  models that serve `generate` are rejected for batch. Measured live across eight
+  text models on one key, exactly one — `openai/gpt-oss-120b` — was batch
+  routable; `meta-llama/Llama-3.3-70B-Instruct`, `Qwen/Qwen3-32B`,
+  `Qwen/Qwen3-30B-A3B-Instruct-2507`, `Qwen/Qwen3-235B-A22B-Instruct-2507`,
+  `google/gemma-3-27b-it`, `deepseek-ai/DeepSeek-V4-Flash`,
+  `nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B`, and `zai-org/GLM-5.1` were not. That
+  is why `DEFAULT_BATCH_MODEL` is `openai/gpt-oss-120b` and not
+  `DEFAULT_TEXT_MODEL`. Treat the routable set as per-key and verify on a couple
+  of prompts before pointing a large run at a new model.
+- **Batch is text-to-text only.** A vision model is rejected at submit with
+  `Batch inference is only supported for text2text models`, so there is no batch
+  captioning path; use `caption`, which is real-time.
+- **The completion window is a deadline, not a latency.** Observed live: batches
+  of one and three prompts sat `in_progress` with `completed: 0` for over an hour
+  against a 24h window. Do not read a slow batch as a hung one, and never put
+  `--wait` on a path that has its own timeout.
+
+Where the failure reason actually lives matters. `GET /operations/{id}/errors`
+returns a single empty string for a failed batch — useless. The real per-row
+reason is in the batch record's error file
+(`GET /batches/{id}` → `error_file_id` → `GET /files/{id}/content`, which
+redirects, so redirects must be followed). `batch-generate` reads that file and
+reports it, and also surfaces `request_counts` (`total`, `completed`, `failed`,
+`invalid`) as the only genuine progress signal a pending batch offers.
+
+**Distinguish a degraded platform from your own bug.** A batch that is accepted,
+reports `in_progress` with rows validated (`total: 2, invalid: 0`), and holds
+`completed: 0` is usually not your job's fault. Batch execution has been observed
+unavailable while submissions were still accepted through the datasets/operations
+route. The cheapest tell is `POST /v1/batches`, the OpenAI-compatible submit,
+returning `403 Creating new batch job is temporarily unavailable`. Confirm it is a
+server-side switch rather than your request by checking where the 403 lands: an
+empty body returns `422` naming the missing fields, but a *valid* payload with a
+genuinely uploaded `input_file_id` still returns `403`, so the gate sits ahead of
+resource validation. Meanwhile the rest of the key stays healthy — real-time chat
+on the same model, `POST /v1/files` with `purpose=batch`, `GET /v1/batches`, and
+dataset create/delete all succeed — which rules out the key, the balance, the
+model, and the payload. When you see this, stop debugging your spec, cancel what
+you queued (`POST /batches/{id}/cancel`), and use `generate` until batch recovers.
+Do not wait it out: the same 403 was still being returned eight days after it was
+first seen, so "temporarily" can outlast any plausible stage timeout. Plan the
+run on `generate` and re-probe later rather than leaving a stage parked.
+
+**That 403 is not the quota rejection**, and conflating the two sends you down the
+wrong path. The documented limits are 10 active batches per customer and 100
+submissions per hour, a batch counts as active only until its processing
+finishes, and rate limiting surfaces as `429`. So before blaming a limit, list
+your batches (`GET /v1/batches?limit=100` — the default page is 10, which makes a
+long history look artificially short) and count the non-terminal ones. All
+terminal plus a 403 with no `x-ratelimit-*` headers means availability, not quota.
+
 **Physical-AI reasoning over a scene** — default model
 `nvidia/Cosmos3-Super-Reasoner`. Point it at scene images and ask what a robot
 should do:
@@ -89,8 +159,8 @@ steps, so pass it as a secret at submit time and never in the YAML:
 npa workbench workflow submit <spec.yaml> --secret-env NEBIUS_TOKEN_FACTORY_KEY
 ```
 
-toolRefs: `workbench.token_factory.caption`, `.generate`, `.reason`, `.triage`
-(digest a run's textual artifacts into a triage report).
+toolRefs: `workbench.token_factory.caption`, `.generate`, `.batch_generate`,
+`.reason`, `.triage` (digest a run's textual artifacts into a triage report).
 
 `npa workbench token-factory workflow` prints exactly four:
 `token-factory-caption.yaml`, `token-factory-generate.yaml`,
@@ -98,6 +168,8 @@ toolRefs: `workbench.token_factory.caption`, `.generate`, `.reason`, `.triage`
 more are checked in but not listed by that command, so do not treat its output as
 the full inventory:
 
+- `token-factory-batch-generate.yaml` — the batch-inference twin of
+  `token-factory-generate.yaml`.
 - `token-factory-parallel-fanout.yaml` — parallel batches.
 - `token-factory-gate-loop.yaml`, `tokenfactory-cosmos-gate.yaml` — a hosted
   model as a gate that decides whether the pipeline continues.

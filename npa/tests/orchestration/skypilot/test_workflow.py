@@ -119,6 +119,7 @@ def test_submit_workflow_loads_yaml_applies_controller_and_calls_subprocess(
     cmd, kwargs = calls[1]
     assert cmd[:5] == [str(sky_bin), "jobs", "launch", "--name", "run-abc"]
     assert "--config" not in cmd
+    assert "--async" in cmd
     assert "--detach-run" in cmd
     assert kwargs["env"]["HOME"] == str(tmp_path / "sky-state" / "home")
     assert kwargs["env"]["SKYPILOT_GLOBAL_CONFIG"] == result.log_paths["config"]

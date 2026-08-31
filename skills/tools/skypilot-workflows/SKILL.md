@@ -105,9 +105,27 @@ or unknown. Root-ID fan-out is compatible only with the legacy single-managed-
 job manifest contract.
 
 SkyPilot 0.12.2 job names are not idempotency keys. NPA wraps the non-idempotent
-launch POST in an owner-only logical-identity lock plus structured queue
-reconciliation. The durable wave records readiness samples, launch sequence,
+launch POST in an owner-only logical-identity lock. Production submit uses the
+asynchronous API surface, then performs structured exact-name/ID queue
+reconciliation before returning control to the runtime supervisor. The durable wave records readiness samples, launch sequence,
 failure category, reconciliation/adoption, recovery decision, and cancellation
 verification. `UP` and `STOPPED` controllers are usable; controller absence is a
 distinct state that requires stable Kubernetes API readiness before creation.
 Unknown/ambiguous queue evidence blocks both relaunch and fuzzy cancellation.
+
+The standard runtime's lightweight supervisor stays outside payload pods and
+persists content-addressed attempt decisions in S3. It classifies actionable
+configuration, transient infrastructure, payload, and unknown evidence. Only a
+typed transient with matching immutable workflow/source/image identity, verified
+declared-output state, passing launch preflights, and exact cancellation may
+advance to a new attempt. The expected identities are recomputed independently
+from current runtime inputs. `--max-infrastructure-recoveries` is finite and
+separate from payload `--retries`; exhaustion is durable and terminal.
+Cancellation is polled by exact provider ID until terminal under a finite
+verification policy; a merely requested cancellation blocks relaunch.
+Completed-wave reuse validates declared S3 outputs;
+mid-stage resume additionally requires a real compatible tool checkpoint loader.
+
+The shared supervisor is also active in Genesis' existing production Serverless
+Jobs command. This does not route individual `npa.workflow/v0.0.1` stages to
+Serverless; runtime workflow waves remain SkyPilot/Kubernetes.

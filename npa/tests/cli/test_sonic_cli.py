@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -500,6 +501,9 @@ def test_sonic_train_default_embodiment_is_unitree_g1(mocker) -> None:
     command = client.create_job.call_args.kwargs["command"]
     assert "UNITREE_G1_SONIC" in command
     assert "SONIC_RUN_REAL_TRAIN=1" in command
+    assert "SONIC_DOWNLOAD_SAMPLE_DATA=1" in command
+    assert 'if [ "${ACCEPT_EULA:-}" = "Y" ]' in command
+    assert "OMNI_KIT_ACCEPT_EULA=YES ISAACSIM_ACCEPT_EULA=YES" in command
     assert "/entrypoint.sh train" in command
     assert client.create_job.call_args.kwargs["gpu_type"] == "gpu-l40s-a"
     assert client.create_job.call_args.kwargs["preset"] == "1gpu-40vcpu-160gb"
@@ -539,6 +543,80 @@ def test_sonic_train_explicit_h100_has_no_availability_warning(mocker) -> None:
     assert "L40S on-demand availability" not in result.output
     assert client.create_job.call_args.kwargs["gpu_type"] == "gpu-h100-sxm"
     assert client.create_job.call_args.kwargs["preset"] == "1gpu-16vcpu-200gb"
+
+
+def test_sonic_train_b300_prepares_state_only_urdf(mocker) -> None:
+    client = _mock_sonic_serverless(mocker)
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "sonic",
+            "-p",
+            "proj",
+            "-n",
+            "sonic",
+            "train",
+            "--runtime",
+            "serverless",
+            "--project-id",
+            "project-1",
+            "--output-path",
+            "s3://bucket/sonic/",
+            "--submit-only",
+            "--gpu-type",
+            "b300",
+            "--image",
+            "registry.example/custom-sonic-compute:validated",
+        ],
+    )
+
+    assert result.exit_code == 0
+    command = client.create_job.call_args.kwargs["command"]
+    command_body = shlex.split(command)[2]
+    assert "NPA_SONIC_B300_STATE_ONLY_URDF" in command
+    assert "export SONIC_CHECKPOINT='nvidia/GEAR-SONIC:sonic_release/last.pt'" in command_body
+    assert "export SONIC_CHECKPOINT_PATH='sonic_release/last.pt'" in command_body
+    assert "mesh references behind" in command
+    assert 'source_root.rglob("*.urdf")' in command
+    assert "b300_state_only_urdf.json" in command
+    assert "NPA_B300_PREP_PYTHON" in command
+    assert "/opt/isaac-lab/venv/bin/python" in command
+    assert 'if [ "$b300_prep_rc" -ne 0 ]' in command
+    assert client.create_job.call_args.kwargs["gpu_type"] == "gpu-b300-sxm"
+    assert client.create_job.call_args.kwargs["gpu_count"] == 1
+
+
+def test_sonic_train_b300_rejects_non_headless(mocker) -> None:
+    client = _mock_sonic_serverless(mocker)
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "sonic",
+            "-p",
+            "proj",
+            "train",
+            "--runtime",
+            "serverless",
+            "--project-id",
+            "project-1",
+            "--output-path",
+            "s3://bucket/sonic/",
+            "--submit-only",
+            "--gpu-type",
+            "b300",
+            "--no-headless",
+            "--image",
+            "registry.example/custom-sonic-compute:validated",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "only the headless state-based path" in result.output
+    client.create_job.assert_not_called()
 
 
 def test_sonic_train_explicit_l40s_uses_l40s_manifest_default(mocker) -> None:
@@ -697,6 +775,13 @@ def test_sonic_container_build_script_uses_supported_version() -> None:
     # Flipped 0 -> 1: with torch installed by us rather than inherited from the
     # nvcr.io base, a Blackwell-capable build is something we can require, not hope for.
     assert "ARG REQUIRE_TORCH_SM120=1" in dockerfile
+    assert "ARG TORCH_INDEX_URL=https://download.pytorch.org/whl/cu130" in dockerfile
+    assert "sm80,sm90,sm100,sm103,sm120" in dockerfile
+    installer = (
+        PACKAGE_ROOT / "docker/workbench/common/install_isaac_runtime_base.sh"
+    ).read_text()
+    assert 'not ({"sm_100", "sm_103"} & compiled_arches)' in installer
+    assert "NPA_TORCH_BLACKWELL_10X_CUDA13_OK" in installer
     # Flipped baked -> host-mounted: the image no longer bakes NVIDIA driver userspace
     # libraries, so the container runtime injects the host driver -- which is how the
     # k8s variant always worked.
@@ -712,6 +797,10 @@ def test_sonic_container_build_script_uses_supported_version() -> None:
     assert "lxml>=5.3,<7" in requirements
     assert '"open3d"' in dockerfile
     assert "open3d>=0.19,<0.20" in requirements
+    assert '"vector_quantize_pytorch"' in dockerfile
+    assert "vector-quantize-pytorch==1.31.1" in requirements
+    assert 'find "${SONIC_HOME}/gear_sonic" -type f -name \'*.urdf\'' in dockerfile
+    assert '-exec chown "${NPA_RUNTIME_USER}:${NPA_RUNTIME_USER}" {} +' in dockerfile
     assert "COPY docker/workbench/sonic/entrypoint.sh" in dockerfile
     assert 'git clone --filter=blob:none --no-checkout "${SONIC_REPO_URL}"' in dockerfile
     assert "git sparse-checkout set" in dockerfile
@@ -725,6 +814,7 @@ def test_sonic_container_build_script_uses_supported_version() -> None:
     assert "cuda13-b300-sm80-sm90-sm100-sm103-sm120-v2-latest" in build_script
     assert 'TAG_SUFFIX="-k8s-runtime"' in build_script
     assert 'REQUIRE_TORCH_SM120=1' in build_script
+    assert 'TORCH_INDEX_URL="https://download.pytorch.org/whl/cu130"' in build_script
     assert "NPA_BUILDX_BUILDER" in build_script
     assert "--driver docker-container" in build_script
     assert 'docker buildx build --builder "$BUILDX_BUILDER"' in build_script

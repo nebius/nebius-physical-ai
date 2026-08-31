@@ -11,3 +11,7 @@ lxml>=5.3,<7
 # The same upstream motion-library module imports Open3D at module load time;
 # the training extra does not declare it either.
 open3d>=0.19,<0.20
+# The pinned upstream SONIC release config instantiates
+# vector_quantize_pytorch.FSQ during real training, but its training extra did
+# not declare the package. Upstream added the dependency after this pin.
+vector-quantize-pytorch==1.31.1

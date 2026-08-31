@@ -110,6 +110,13 @@ _AMBIENT_INFRA_TARGET_ENV_VARS = (
     "NPA_BYOF_KUBECONFIG",
     "NPA_BYOF_CLUSTER_NAME",
     "NPA_SKYPILOT_BIN",
+    # Nebius CLI profile selectors. Product code prepends `--profile <name>` to
+    # the argv it builds whenever either is set, so an operator who has selected
+    # a profile (the normal state on a machine that actually runs npa) shifts
+    # every argv assertion by two elements. Tests of the profile behavior itself
+    # set these via monkeypatch after this scrub.
+    "NPA_NEBIUS_PROFILE",
+    "NEBIUS_PROFILE",
 )
 
 

@@ -92,6 +92,7 @@ below (see `npa/src/npa/orchestration/npa_workflow/blueprints.py`). Deploy guide
 | `sonic-eval.yaml` | SONIC eval |
 | `sonic-export-eval.yaml` | Export → eval |
 | `sonic-locomotion-finetuning.yaml` | Retarget → train → mjlab |
+| `sonic-b300-routing-evidence.yaml` | CPU-only, fail-closed explicit B300 routing evidence with a time-structured RRD ([cookbook](../../../../docs/workbench/cookbooks/sonic-b300-routing-evidence.md)) |
 | `groot-1-7-finetune.yaml` | Real GR00T data → parameterized 1-to-many-GPU optimizer smoke → immutable checkpoint → aligned offline evaluation → outcome classification → RRD/MCAP → inspected S3 publication → NPA agent viewer handoff; no rollout or statistical-learning claim |
 | `cosmos3-reason.yaml` | Cosmos3 reason |
 | `cosmos3-checkpoint-eval.yaml` | B200-only guarded Cosmos3 still-image checkpoint evaluation |

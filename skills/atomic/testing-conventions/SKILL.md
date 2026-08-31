@@ -74,6 +74,18 @@ pip-installs the package, so a fix that only matters when the `npa` console scri
 is absent from `PATH` cannot regress-fail there: prune `PATH` inside the test, or
 assert on the helper directly, rather than relying on the ambient environment.
 
+Failures that appear only on an operator/dev VM are usually an ambient env var
+the conftest does not scrub, not a real regression. `tests/conftest.py` scrubs
+credential and infra-targeting variables for every non-live test precisely
+because CI runs with them unset and a working machine does not. When a test
+asserts on argv or rendered output, check that every env var the product reads to
+build it is in that scrub list: `NPA_NEBIUS_PROFILE` / `NEBIUS_PROFILE` were
+missing, and because product code prepends `--profile <name>` whenever either is
+set, ten `mk8s` argv assertions failed on any machine where an operator had
+selected a profile. Add the variable to the conftest tuple rather than working
+around it in the test; the tests that exercise the variable's own behavior set it
+with `monkeypatch.setenv` after the scrub runs.
+
 Use evidence-based convergence: report numeric pass counts and exact failure messages, not subjective assessment.
 
 ## Unit Test Rules

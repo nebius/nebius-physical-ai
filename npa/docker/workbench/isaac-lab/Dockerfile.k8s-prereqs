@@ -5,8 +5,8 @@
 # an operator can repair an existing published tag without rebuilding from scratch:
 #
 #   scripts/build-workbench-image-in-cluster.sh \
-#     --base <registry>/npa-isaac-lab:2.3.2.post1 \
-#     --tag  <registry>/npa-isaac-lab:2.3.2.post1-sky1 \
+#     --base <registry>/npa-isaac-lab:3.0.0b2.post1 \
+#     --tag  <registry>/npa-isaac-lab:3.0.0b2.post1-sky1 \
 #     --dockerfile npa/docker/workbench/isaac-lab/Dockerfile.k8s-prereqs
 #
 # Why it is needed: SkyPilot's Kubernetes runtime bootstrap runs inside the task container

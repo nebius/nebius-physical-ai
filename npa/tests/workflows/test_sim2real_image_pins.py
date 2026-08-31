@@ -62,6 +62,7 @@ def test_rerun_viewer_bakes_exact_stage14_runtime() -> None:
         ("DEFAULT_REFERENCE_POLICY_TAG", "reference-policy"),
         ("DEFAULT_TRAINER_TAG", "lerobot-vlm-rl"),
         ("DEFAULT_EVAL_TAG", "loop-eval"),
+        ("DEFAULT_ISAAC_TAG", "isaac-lab"),
     ],
 )
 def test_sim2real_constant_matches_supported_tool_version(

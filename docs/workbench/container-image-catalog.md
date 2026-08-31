@@ -17,10 +17,9 @@ docker pull ghcr.io/nebius/nebius-physical-ai/npa-retargeting:0.1.1
 existing saved `container_registry` overrides remain compatible.
 
 The accepted-release manifest was verified against the public GHCR tag and OCI
-manifest APIs on 2026-08-26. All 29 recorded release digests resolved
-anonymously; the active publication plan also records LeIsaac as pending rather
-than treating it as an accepted release claim. **Built** is the UTC build date
-of the newest listed variant; reproducible images that
+manifest APIs on 2026-08-29. All 31 recorded release digests resolved
+anonymously. **Built** is the UTC build date of the newest listed variant;
+reproducible images that
 intentionally zero their OCI `created` field use the timestamp in the immutable
 tag and `npa.build_ts` label.
 
@@ -29,6 +28,18 @@ tags can be moved, so resolve and retain the manifest digest as well when strict
 reproducibility is required.
 
 Rows are ordered by **Built** date, then by friendly name.
+
+## 2026-08-29 main publication audit
+
+The main-branch publishing plan, packaging contract, accepted-release manifest,
+and catalog were compared with GHCR without credentials. All 31 exact plan tags
+resolved anonymously, so no image build or registry write was required. The
+accepted-release manifest's stale LeIsaac pending marker was replaced with its
+already-published exact digest. That digest matched the earlier publication
+record, ran as the non-root `ubuntu` user, and passed the full layer/history
+payload scanner across 98,792 filesystem entries with zero restricted-payload
+findings. Public contract entries outside the tool publishing plan remain
+intentionally excluded rather than being treated as missing releases.
 
 ## 2026-08-19 main publication audit
 
@@ -74,7 +85,7 @@ published, and anonymously pullable status for this exact digest only.
 | BDD100K Detection Training | `npa-detection-training` | `bdd100k-golden-eval-smoke-20260614T210000Z` | 2026-07-22 | Object-detector train/eval service on port 8790 with torchvision detectors and COCO metrics. It provides the re-label and measurement stage in the data-factory loop. |
 | Lichtblick 1.26.0 | `npa-lichtblick` | `1.26.0` | 2026-07-23 | Fully open-source (MPL-2.0), Foxglove-compatible MCAP/ROS log viewer served by Caddy on port 8080. No account or proprietary component is required. |
 | GR00T N1.7-3B | `npa-groot` | `0.1.0` | 2026-08-01 | NVIDIA Isaac-GR00T humanoid foundation-model inference using public `nvidia/GR00T-N1.7-3B`; weights are pulled anonymously at runtime by default, with an optional Hugging Face token for rate limits or private overrides. GR00T inference itself does not require Isaac or EULA acceptance. |
-| Isaac Lab 2.3.2 (Isaac Sim 5.1) | `npa-isaac-lab` | `2.3.2.post1` | 2026-08-01 | Isaac Lab RL simulation. Contains no NVIDIA Isaac bytes: Isaac Sim and Isaac Lab are fetched from `pypi.nvidia.com` on first use. Isaac startup defaults the documented run-scoped `ACCEPT_EULA` value to `Y` and preserves explicit opt-out; expect an approximately 4.5 GB first-run download. |
+| Isaac Lab 3.0 beta 2 patch 1 (Isaac Sim 6.0.1) | `npa-isaac-lab` | `3.0.0b2.post1` | 2026-08-25 | Payload-clean Isaac Lab RL simulation image: every proprietary NVIDIA runtime wheel is hash-pinned and fetched from `pypi.nvidia.com` only after the operator's run-scoped EULA acceptance. The exact public digest passed layer and flattened payload scans, critical-CVE/secret/license scanning, anonymous resolution, a real RTX PRO 6000 four-variant RSL-RL workflow, and the paired generation 2 benchmark. Upstream still labels this release beta; see [Isaac Lab 3](isaac-lab-3.md) for the measured cold-start tradeoff. |
 | Cosmos 1.0 Diffusion 7B (Predict) | `npa-cosmos` | `1.0.9`, `cu128-torch27-sm100-1.0.9-20260803T002017Z` | 2026-08-03 | Cosmos world-model generation with `Cosmos-1.0-Diffusion-7B-Text2World`, plus the default self-hosted VLM image for workflows. Uses Torch 2.7 and CUDA 12.8 with flash-attn, NATTEN, and Transformer Engine. |
 | Cosmos Reason 2 / Predict 2.5 (3.0.1) | `npa-cosmos3-reason` | `3.0.1-genuine-sm120`, `cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z` | 2026-08-03 | VLM reasoning over video/images with `Cosmos-Reason2-8B` or `Cosmos-Reason2-2B`, serving as a judge/critic stage. Also wires Predict 2.5, Transfer 2.5, and Cosmos-Guardrail1 model IDs on a Blackwell-capable CUDA 13 base. |
 | Cosmos Transfer 2.5 | `npa-cosmos2-transfer` | `2.5.1-skypilot-ready-20260801T053000Z` | 2026-08-03 | Cosmos Transfer 2.5 Sim2Real video augmentation, built from source at an immutable commit with hash-locked dependencies. Gated weights are fetched at runtime with `HF_TOKEN`; baked-byte scans are a release gate. |

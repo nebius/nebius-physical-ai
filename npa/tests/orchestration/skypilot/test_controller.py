@@ -160,7 +160,7 @@ def test_apply_controller_override_pins_region_on_existing_default_controller() 
     assert config["jobs"]["controller"]["resources"]["region"] == "ctx-a"
 
 
-def test_apply_controller_override_preserves_explicit_region() -> None:
+def test_apply_controller_override_replaces_stale_explicit_region() -> None:
     existing = {
         "jobs": {
             "controller": {
@@ -176,7 +176,7 @@ def test_apply_controller_override_preserves_explicit_region() -> None:
 
     config = apply_controller_override(existing, controller_region="ctx-b")
 
-    assert config["jobs"]["controller"]["resources"]["region"] == "already-set"
+    assert config["jobs"]["controller"]["resources"]["region"] == "ctx-b"
 
 
 def test_apply_controller_override_without_region_is_unchanged() -> None:

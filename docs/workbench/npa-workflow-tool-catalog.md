@@ -39,6 +39,7 @@ accidental dead entries fail the guardrail. The retired monolithic
 | `workbench.token_factory.reason` | `npa workbench token-factory reason` | `config.scene_uri` | `config.plan_uri` | no |
 | `workbench.token_factory.caption` | `npa workbench token-factory caption` | `config.images_uri` | `config.captions_uri` | no |
 | `workbench.token_factory.generate` | `npa workbench token-factory generate` | `config.prompts_uri` | `config.generations_uri` | no |
+| `workbench.token_factory.batch_generate` | `npa workbench token-factory batch-generate` | `config.prompts_uri`, `config.batch_model`, `config.completion_window`, `config.batch_timeout_s` | `config.generations_uri` | no |
 | `workbench.cosmos2.transfer` | `npa workbench cosmos2 transfer` | `config.trigger_uri` | `config.augment_uri` | no |
 | `workbench.cosmos2.transfer_execute` | `npa workbench cosmos2 transfer --execute` | supported video or PNG/JPEG frames under `config.trigger_uri` (required); optional run-scoped `config.segmentation_uri` when `segmentation_mode=sam2-auto` | `config.augment_uri` plus optional frame-aligned SAM2 masks | yes (real, input-conditioned Cosmos Transfer 2.5 on GPU; optional official Meta SAM2 runs once per immutable run input and its masks are reused across variants/retries; both paths fail closed) |
 | `workbench.cosmos2.transfer_conditioned_execute` | `npa workbench cosmos2 transfer --execute --condition-on-input` | `config.trigger_uri` | `config.augment_uri` | yes (real input-conditioned Cosmos Transfer 2.5; publishes exact frames in the canonical manifest) |

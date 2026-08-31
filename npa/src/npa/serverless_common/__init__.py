@@ -16,6 +16,11 @@ from npa.serverless_common.output import (
     validate_output_path,
 )
 from npa.serverless_common.platform import resolve_gpu_platform
+from npa.serverless_common.supervision import (
+    ServerlessSupervisionConfig,
+    ServerlessSupervisionError,
+    supervise_serverless_job,
+)
 from npa.serverless_common.subnet import SubnetResolutionError, resolve_subnet
 
 __all__ = [
@@ -30,6 +35,9 @@ __all__ = [
     "split_serverless_env",
     "resolve_gpu_platform",
     "build_serverless_output_upload_cmd",
+    "ServerlessSupervisionConfig",
+    "ServerlessSupervisionError",
+    "supervise_serverless_job",
     "validate_output_path",
     "resolve_subnet",
     "SubnetResolutionError",

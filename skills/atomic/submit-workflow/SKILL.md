@@ -83,6 +83,32 @@ successful `npa skypilot verify --cluster <exact-context>`:
   adopted in-flight job is proven terminal, `--retries` advances through the same
   durable terminal-retry path and assigns a new attempt identity. With no explicit
   retries, the terminal outcome remains preserved and no duplicate is launched.
+- **Infrastructure recovery has its own finite policy.** `--retries` remains the
+  payload/terminal-wave retry count. `--max-infrastructure-recoveries` bounds
+  typed capacity, quota, node-not-ready, and provider recovery per wave (default
+  1; 0 disables automatic relaunch). Exhaustion is persisted and terminal; the
+  two policies never silently borrow from each other.
+- **Runtime supervision is durable and fail closed.** Pending pods are inspected
+  by exact managed-job ID. Image/auth/reference, missing Secret/ConfigMap,
+  malformed pod config, and impossible GPU shape failures stop immediately and
+  cancel only that ID. Proven transient infrastructure failures may create a new
+  immutable attempt under the same run ID only after immutable workflow/source/
+  image identity, declared S3 output absence, preflight readiness, and exact
+  cancellation are verified. Expected identities are independently recomputed
+  from the current spec, source selection, and digest pins rather than copied
+  from the attempt being checked. Unknown evidence blocks relaunch.
+- **Async acceptance is not workload observability.** SkyPilot launch uses its
+  asynchronous API mode, then the existing launch transaction reconciles the
+  exact logical name to a provider job ID before runtime polling begins. Exact
+  cancellation is polled to terminal; a request acknowledgement alone never
+  permits relaunch.
+- **Checkpoint recovery is capability-based.** Completed waves require validated
+  declared outputs. Mid-stage resume requires an explicit compatible loader and
+  validated application checkpoint; otherwise recovery restarts the incomplete
+  wave and must not claim checkpoint resume. The same adapter contract is active
+  in `npa workbench genesis train-teacher --runtime serverless` for deterministic
+  Nebius Serverless Job re-attempts without a GPU supervisor VM. It does not
+  enable mixed per-stage Serverless routing in `npa.workflow/v0.0.1`.
 - Transaction recovery uses capped exponential jitter and a 180-second recovery
   deadline. This is product behavior, not an operator job/time budget. A
   recovered launch proceeds in the same command; use `--resume-run <same-id>`

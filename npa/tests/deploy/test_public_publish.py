@@ -363,7 +363,20 @@ def test_publish_plan_still_refuses_a_restricted_image(monkeypatch) -> None:
     refusal and the whole plan raised. A defence-in-depth check holding a stale copy of the
     thing it defends is worse than no check.
     """
+    manifest = images.public_release_manifest()
     monkeypatch.setattr(images, "RESTRICTED_PUBLICATION_TOOLS", frozenset({"genesis"}))
+    monkeypatch.setattr(
+        images,
+        "public_release_manifest",
+        lambda: {
+            **manifest,
+            "releases": {
+                tool: entry
+                for tool, entry in manifest["releases"].items()
+                if tool != "genesis"
+            },
+        },
+    )
     plan = build_publish_plan(target_registry="ghcr.io/example/workbench")
     names = {item.source_ref.rsplit("/", 1)[-1].split(":", 1)[0] for item in plan}
     assert "npa-genesis" not in names
@@ -387,6 +400,7 @@ def test_publish_plan_promotes_dev_sha_to_release_tag() -> None:
     accepted_shas = {
         tool: images.accepted_publication_development_sha(tool)
         for tool in (
+            "isaac-lab",
             "ltx2",
             "wan2-2",
             "cosmos3-serving",
@@ -394,7 +408,7 @@ def test_publish_plan_promotes_dev_sha_to_release_tag() -> None:
             "sonic-mujoco",
         )
     }
-    assert len(set(accepted_shas.values())) == 5
+    assert len(set(accepted_shas.values())) == 6
     for item in plan:
         source_image = item.source_ref.rsplit("/", 1)[-1]
         target_image = item.target_ref.rsplit("/", 1)[-1]
@@ -832,11 +846,11 @@ def test_accepted_release_plan_partitions_published_and_pending_tools() -> None:
         target_registry="ghcr.io/nebius/nebius-physical-ai"
     )
 
-    assert len(plan) == 30
+    assert len(plan) == 31
     assert set(manifest["releases"]) | set(manifest["publication_pending"]) == set(
         publicly_publishable_tools()
     )
-    assert set(manifest["publication_pending"]) == {"leisaac"}
+    assert not manifest["publication_pending"]
     for item in plan:
         recorded = manifest["releases"][item.tool]["published_digest"]
         assert item.source_ref.endswith(f"@{recorded}")
