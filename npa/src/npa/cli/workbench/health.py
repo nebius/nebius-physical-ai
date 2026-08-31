@@ -220,11 +220,12 @@ def access_command(
 ) -> None:
     """Check HF + NGC access to every gated model the workbench capabilities need.
 
-    Given a Hugging Face token and an NGC API key, this reports whether the token
-    already has access to each gated model and prints the exact 'Agree and access
-    repository' URL for anything still gated. Hugging Face gated licenses must be
-    accepted interactively on the model page — there is no API to accept them for
-    you — so this command automates the check and the guidance, not the click.
+    Given a Hugging Face token and an NGC API key, this reports whether the
+    credential can fetch an exact gated payload and prints the official approval
+    URL for anything still blocked. Ready proves technical fetch entitlement only;
+    it is not proof of legal acceptance. Any required assent remains a human action
+    on the provider page, so this command automates the check and guidance, not the
+    click.
 
     Pass ``--save-env-credentials`` to persist supported environment credentials to
     ~/.npa/credentials.yaml. Exits non-zero on any FAIL unless ``--warn-only``.
