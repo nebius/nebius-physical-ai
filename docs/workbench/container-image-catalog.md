@@ -53,10 +53,10 @@ The main-branch publishing plan was compared with GHCR without credentials. Its
   `sha256:82069eb74a18a88f77ad3149b6c5ed220c4eed33b1d550c26d361947805e8280`,
   rebuilt from main and full-layer scanned before publication.
 
-An independent anonymous verification then resolved all 26 exact plan tags.
-LTX-2.5 remains excluded because its required GPU validation is not complete;
-`cosmos3-serving` and `sonic-mujoco` remain excluded by the redistribution
-guard.
+An independent anonymous verification then resolved all 26 exact plan tags. At
+that date LTX-2.5 was excluded pending GPU validation, and `cosmos3-serving` and
+`sonic-mujoco` were excluded by the redistribution guard. All three have since
+been published and carry rows below; the plan is 31 tags as of 2026-08-29.
 
 ## 2026-08-22 Content Agents publication
 
@@ -120,6 +120,56 @@ these candidates to GHCR requires the separately authorized publication workflow
 and a successful unauthenticated manifest check; private availability and
 redistribution eligibility are not evidence of publication.
 
+## GPU coverage of the published set
+
+Publication is not GPU support. Nebius offers six x86_64 GPU platforms — L40S
+(`sm_89`), H100 and H200 (both `sm_90`), RTX PRO 6000 Blackwell (`sm_120`), B200
+(`sm_100`), and B300 (`sm_103`) — plus aarch64 `gpu-gb300`. Per-image verdicts and
+the run-level evidence behind them are in
+[Image ↔ Nebius GPU compatibility matrix](image-gpu-compatibility-matrix.md);
+this chart is generated from that table and the publishing plan:
+
+![Published GHCR images against every Nebius GPU platform](../assets/image-gpu-coverage.svg)
+
+All 31 planned tags resolved anonymously on 2026-08-29, and they split four ways:
+
+- **Fifteen GPU images have no blocked platform**: `npa-alpamayo2-super`,
+  `npa-cosmos3`, `npa-cosmos3-ray-serve`, `npa-cosmos3-reason`,
+  `npa-detection-training`, `npa-envgen`, `npa-genesis`, `npa-lancedb`,
+  `npa-lerobot`, `npa-lerobot-policy`, `npa-lerobot-vlm-rl`, `npa-loop-eval`,
+  `npa-reference-policy`, `npa-sonic-mujoco`, and `npa-wan2-2`. Their cells
+  still range from a real capability run to toolchain-level support, and the
+  `npa-wan2-2` Blackwell cells carry historical evidence from an earlier
+  candidate rather than the current closure.
+- **Eight are blocked on at least one platform**, for four different reasons.
+  Rendering needs RT cores, which only L40S and RTX PRO 6000 have, so
+  `npa-content-agents` and `npa-leisaac` are blocked on all four non-RT parts.
+  The NVIDIA Isaac vendor stack blocks `npa-groot`, `npa-isaac-lab`, and
+  `npa-sonic` on B200 and B300. `npa-cosmos` is refused on L40S, RTX PRO 6000,
+  and B300 by the Predict2 v1.0.9 NATTEN compute-capability allowlist, and
+  `npa-cosmos2-transfer` on B300 by CUDA 12.8 NVRTC declining to JIT `sm_103`.
+  `npa-cosmos3-serving` is blocked on L40S by an 8-GPU memory floor rather than
+  by architecture. These are not one problem: an RT-core block is physical, an
+  allowlist is a software gate, and a memory floor is a sizing rule.
+- **One is built with no GPU result anywhere**: `npa-ltx2` is published and
+  byte-scanned, but no cell has evidence behind it yet.
+- **Seven are CPU-only and GPU-agnostic**: `npa-cosmos-curate`,
+  `npa-cosmos-evaluator`, `npa-fiftyone`, `npa-foxglove-embed`, `npa-lichtblick`,
+  `npa-rerun-viewer`, and `npa-retargeting`. Only node-pool scheduling matters.
+
+Building that chart is what caught two stale cells, now corrected in the matrix
+with their evidence: `npa-sonic-mujoco` was still marked blocked on B200 and
+B300 although its published digest has a real Unitree G1 MuJoCo rollout on B200,
+and `npa-cosmos3-serving`'s B200 cell understated a real 8-GPU serving run as
+mere toolchain support. Both images were published in the public-only migration
+without the matrix being reconciled.
+
+Two gaps sit outside that split. No published image runs on `gpu-gb300`: every
+tag above resolved to a single `linux/amd64` manifest, and that platform is
+aarch64. And no published image has a recorded L40S capability run at all —
+every L40S cell is toolchain-level support, on the one architecture besides
+RTX PRO 6000 that can render.
+
 ## Intentionally not published as separate images
 
 - **`npa-sim2real-control`** is an internal workflow artifact, not a public-mirror
@@ -127,14 +177,14 @@ redistribution eligibility are not evidence of publication.
   `CONTAINER_IMAGE_NAMES` and is therefore outside `publicly_publishable_tools()`;
   anonymous resolution of `npa-sim2real-control:0.1.2` was denied during the
   2026-08-14 audit. Eligibility is not evidence of publication.
-- **`npa-cosmos3-serving`** is `restricted` and build-your-own only. Its pinned
-  vLLM-Omni base embeds a runtime under NVIDIA's Deep Learning Container License;
-  the thin wrapper and anonymous GHCR distribution do not establish that
-  license's derived-distribution conditions. Operators build it into their own
-  registry; see [Cosmos3-Super serving](cosmos3-super-serving.md).
-- **`npa-sonic-mujoco`** is a SONIC variant, not a separate public-publish tool.
-  It ships through the `sonic` tool and SONIC image manifest rather than getting
-  an independent row in the public publishing plan.
+
+`npa-cosmos3-serving` and `npa-sonic-mujoco` were listed here until the
+public-only migration. Both are now selected by `publicly_publishable_tools()`,
+both have rows above, and both resolved anonymously in the 2026-08-29 check:
+the serving image as the zero-payload `0.2.0-oss` build that no longer carries
+the vLLM-Omni runtime, and the MuJoCo image as the runtime-fetch `0.2.0-runtime`
+build. See [Cosmos3-Super serving](cosmos3-super-serving.md) for the serving
+operator guide.
 
 ## Verification scope
 
@@ -151,7 +201,9 @@ Maintainers should use `skills/atomic/audit-container-docs/SKILL.md` to repeat
 the repository-inventory and anonymous-registry audit after container changes.
 
 This catalog does not imply that every image supports every GPU. Use the
-[B300 validation matrix](../b300-validation-matrix.md) when choosing a
-hardware-specific variant, and use the
+[image ↔ Nebius GPU compatibility matrix](image-gpu-compatibility-matrix.md) when
+choosing a hardware-specific variant, the
+[B300 validation matrix](../b300-validation-matrix.md) for the earlier B300-only
+run record, and the
 [container packaging contract](container-packaging.md) for security and
 redistribution requirements.

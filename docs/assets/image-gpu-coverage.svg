@@ -1,0 +1,678 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1072" height="1208" viewBox="0 0 1072 1208" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
+<rect width="1072" height="1208" fill="#ffffff"/>
+<text x="16" y="30" font-size="17" font-weight="600" fill="#1f2328">Published GHCR images on Nebius GPU platforms</text>
+<text x="16" y="52" font-size="12.5" fill="#59636e">31 images in the public publishing plan. Generated from docs/workbench/image-gpu-compatibility-matrix.md.</text>
+<text x="345" y="70" font-size="12.5" font-weight="600" fill="#1f2328" text-anchor="middle">L40S</text>
+<text x="345" y="85" font-size="11" fill="#59636e" text-anchor="middle">sm_89</text>
+<text x="503" y="70" font-size="12.5" font-weight="600" fill="#1f2328" text-anchor="middle">H100 / H200</text>
+<text x="503" y="85" font-size="11" fill="#59636e" text-anchor="middle">sm_90</text>
+<text x="661" y="70" font-size="12.5" font-weight="600" fill="#1f2328" text-anchor="middle">RTX PRO 6000</text>
+<text x="661" y="85" font-size="11" fill="#59636e" text-anchor="middle">sm_120</text>
+<text x="819" y="70" font-size="12.5" font-weight="600" fill="#1f2328" text-anchor="middle">B200</text>
+<text x="819" y="85" font-size="11" fill="#59636e" text-anchor="middle">sm_100</text>
+<text x="977" y="70" font-size="12.5" font-weight="600" fill="#1f2328" text-anchor="middle">B300</text>
+<text x="977" y="85" font-size="11" fill="#59636e" text-anchor="middle">sm_103</text>
+<text x="16" y="115" font-size="12.5" font-weight="600" fill="#1f2328">No blocked platform &#183; 15</text>
+<line x1="16" y1="122" x2="1056" y2="122" stroke="#d1d9e0" stroke-width="1"/>
+<text x="16" y="143" font-size="12" fill="#1f2328" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">npa-alpamayo2-super</text>
+<g><title>npa-alpamayo2-super on L40S sm_89: supported</title>
+<rect x="266" y="126" width="154" height="26" rx="3" fill="#c3e6cd"/>
+<text x="343" y="143" font-size="11.5" fill="#11301d" text-anchor="middle">supported</text>
+</g>
+<g><title>npa-alpamayo2-super on H100 / H200 sm_90: supported</title>
+<rect x="424" y="126" width="154" height="26" rx="3" fill="#c3e6cd"/>
+<text x="501" y="143" font-size="11.5" fill="#11301d" text-anchor="middle">supported</text>
+</g>
+<g><title>npa-alpamayo2-super on RTX PRO 6000 sm_120: verified</title>
+<rect x="582" y="126" width="154" height="26" rx="3" fill="#1a7f37"/>
+<text x="659" y="143" font-size="11.5" fill="#ffffff" text-anchor="middle">verified</text>
+</g>
+<g><title>npa-alpamayo2-super on B200 sm_100: verified</title>
+<rect x="740" y="126" width="154" height="26" rx="3" fill="#1a7f37"/>
+<text x="817" y="143" font-size="11.5" fill="#ffffff" text-anchor="middle">verified</text>
+</g>
+<g><title>npa-alpamayo2-super on B300 sm_103: supported (same-major `sm_100` coverage; not measured)</title>
+<rect x="898" y="126" width="154" height="26" rx="3" fill="#c3e6cd"/>
+<text x="975" y="143" font-size="11.5" fill="#11301d" text-anchor="middle">supported</text>
+</g>
+<text x="16" y="171" font-size="12" fill="#1f2328" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">npa-cosmos3</text>
+<g><title>npa-cosmos3 on L40S sm_89: supported</title>
+<rect x="266" y="154" width="154" height="26" rx="3" fill="#c3e6cd"/>
+<text x="343" y="171" font-size="11.5" fill="#11301d" text-anchor="middle">supported</text>
+</g>
+<g><title>npa-cosmos3 on H100 / H200 sm_90: supported</title>
+<rect x="424" y="154" width="154" height="26" rx="3" fill="#c3e6cd"/>
+<text x="501" y="171" font-size="11.5" fill="#11301d" text-anchor="middle">supported</text>
+</g>
+<g><title>npa-cosmos3 on RTX PRO 6000 sm_120: verified</title>
+<rect x="582" y="154" width="154" height="26" rx="3" fill="#1a7f37"/>
+<text x="659" y="171" font-size="11.5" fill="#ffffff" text-anchor="middle">verified</text>
+</g>
+<g><title>npa-cosmos3 on B200 sm_100: supported</title>
+<rect x="740" y="154" width="154" height="26" rx="3" fill="#c3e6cd"/>
+<text x="817" y="171" font-size="11.5" fill="#11301d" text-anchor="middle">supported</text>
+</g>
+<g><title>npa-cosmos3 on B300 sm_103: supported</title>
+<rect x="898" y="154" width="154" height="26" rx="3" fill="#c3e6cd"/>
+<text x="975" y="171" font-size="11.5" fill="#11301d" text-anchor="middle">supported</text>
+</g>
+<text x="16" y="199" font-size="12" fill="#1f2328" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">npa-cosmos3-ray-serve</text>
+<g><title>npa-cosmos3-ray-serve on L40S sm_89: supported</title>
+<rect x="266" y="182" width="154" height="26" rx="3" fill="#c3e6cd"/>
+<text x="343" y="199" font-size="11.5" fill="#11301d" text-anchor="middle">supported</text>
+</g>
+<g><title>npa-cosmos3-ray-serve on H100 / H200 sm_90: supported</title>
+<rect x="424" y="182" width="154" height="26" rx="3" fill="#c3e6cd"/>
+<text x="501" y="199" font-size="11.5" fill="#11301d" text-anchor="middle">supported</text>
+</g>
+<g><title>npa-cosmos3-ray-serve on RTX PRO 6000 sm_120: verified</title>
+<rect x="582" y="182" width="154" height="26" rx="3" fill="#1a7f37"/>
+<text x="659" y="199" font-size="11.5" fill="#ffffff" text-anchor="middle">verified</text>
+</g>
+<g><title>npa-cosmos3-ray-serve on B200 sm_100: verified</title>
+<rect x="740" y="182" width="154" height="26" rx="3" fill="#1a7f37"/>
+<text x="817" y="199" font-size="11.5" fill="#ffffff" text-anchor="middle">verified</text>
+</g>
+<g><title>npa-cosmos3-ray-serve on B300 sm_103: supported (same-major `sm_100` coverage; not measured)</title>
+<rect x="898" y="182" width="154" height="26" rx="3" fill="#c3e6cd"/>
+<text x="975" y="199" font-size="11.5" fill="#11301d" text-anchor="middle">supported</text>
+</g>
+<text x="16" y="227" font-size="12" fill="#1f2328" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">npa-cosmos3-reason</text>
+<g><title>npa-cosmos3-reason on L40S sm_89: supported</title>
+<rect x="266" y="210" width="154" height="26" rx="3" fill="#c3e6cd"/>
+<text x="343" y="227" font-size="11.5" fill="#11301d" text-anchor="middle">supported</text>
+</g>
+<g><title>npa-cosmos3-reason on H100 / H200 sm_90: verified</title>
+<rect x="424" y="210" width="154" height="26" rx="3" fill="#1a7f37"/>
+<text x="501" y="227" font-size="11.5" fill="#ffffff" text-anchor="middle">verified</text>
+</g>
+<g><title>npa-cosmos3-reason on RTX PRO 6000 sm_120: verified</title>
+<rect x="582" y="210" width="154" height="26" rx="3" fill="#1a7f37"/>
+<text x="659" y="227" font-size="11.5" fill="#ffffff" text-anchor="middle">verified</text>
+</g>
+<g><title>npa-cosmos3-reason on B200 sm_100: verified</title>
+<rect x="740" y="210" width="154" height="26" rx="3" fill="#1a7f37"/>
+<text x="817" y="227" font-size="11.5" fill="#ffffff" text-anchor="middle">verified</text>
+</g>
+<g><title>npa-cosmos3-reason on B300 sm_103: verified</title>
+<rect x="898" y="210" width="154" height="26" rx="3" fill="#1a7f37"/>
+<text x="975" y="227" font-size="11.5" fill="#ffffff" text-anchor="middle">verified</text>
+</g>
+<text x="16" y="255" font-size="12" fill="#1f2328" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">npa-detection-training</text>
+<g><title>npa-detection-training on L40S sm_89: supported</title>
+<rect x="266" y="238" width="154" height="26" rx="3" fill="#c3e6cd"/>
+<text x="343" y="255" font-size="11.5" fill="#11301d" text-anchor="middle">supported</text>
+</g>
+<g><title>npa-detection-training on H100 / H200 sm_90: verified</title>
+<rect x="424" y="238" width="154" height="26" rx="3" fill="#1a7f37"/>
+<text x="501" y="255" font-size="11.5" fill="#ffffff" text-anchor="middle">verified</text>
+</g>
+<g><title>npa-detection-training on RTX PRO 6000 sm_120: verified</title>
+<rect x="582" y="238" width="154" height="26" rx="3" fill="#1a7f37"/>
+<text x="659" y="255" font-size="11.5" fill="#ffffff" text-anchor="middle">verified</text>
+</g>
+<g><title>npa-detection-training on B200 sm_100: verified</title>
+<rect x="740" y="238" width="154" height="26" rx="3" fill="#1a7f37"/>
+<text x="817" y="255" font-size="11.5" fill="#ffffff" text-anchor="middle">verified</text>
+</g>
+<g><title>npa-detection-training on B300 sm_103: verified</title>
+<rect x="898" y="238" width="154" height="26" rx="3" fill="#1a7f37"/>
+<text x="975" y="255" font-size="11.5" fill="#ffffff" text-anchor="middle">verified</text>
+</g>
+<text x="16" y="283" font-size="12" fill="#1f2328" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">npa-envgen</text>
+<g><title>npa-envgen on L40S sm_89: supported</title>
+<rect x="266" y="266" width="154" height="26" rx="3" fill="#c3e6cd"/>
+<text x="343" y="283" font-size="11.5" fill="#11301d" text-anchor="middle">supported</text>
+</g>
+<g><title>npa-envgen on H100 / H200 sm_90: verified</title>
+<rect x="424" y="266" width="154" height="26" rx="3" fill="#1a7f37"/>
+<text x="501" y="283" font-size="11.5" fill="#ffffff" text-anchor="middle">verified</text>
+</g>
+<g><title>npa-envgen on RTX PRO 6000 sm_120: verified</title>
+<rect x="582" y="266" width="154" height="26" rx="3" fill="#1a7f37"/>
+<text x="659" y="283" font-size="11.5" fill="#ffffff" text-anchor="middle">verified</text>
+</g>
+<g><title>npa-envgen on B200 sm_100: verified</title>
+<rect x="740" y="266" width="154" height="26" rx="3" fill="#1a7f37"/>
+<text x="817" y="283" font-size="11.5" fill="#ffffff" text-anchor="middle">verified</text>
+</g>
+<g><title>npa-envgen on B300 sm_103: verified</title>
+<rect x="898" y="266" width="154" height="26" rx="3" fill="#1a7f37"/>
+<text x="975" y="283" font-size="11.5" fill="#ffffff" text-anchor="middle">verified</text>
+</g>
+<text x="16" y="311" font-size="12" fill="#1f2328" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">npa-genesis</text>
+<g><title>npa-genesis on L40S sm_89: supported</title>
+<rect x="266" y="294" width="154" height="26" rx="3" fill="#c3e6cd"/>
+<text x="343" y="311" font-size="11.5" fill="#11301d" text-anchor="middle">supported</text>
+</g>
+<g><title>npa-genesis on H100 / H200 sm_90: verified</title>
+<rect x="424" y="294" width="154" height="26" rx="3" fill="#1a7f37"/>
+<text x="501" y="311" font-size="11.5" fill="#ffffff" text-anchor="middle">verified</text>
+</g>
+<g><title>npa-genesis on RTX PRO 6000 sm_120: verified</title>
+<rect x="582" y="294" width="154" height="26" rx="3" fill="#1a7f37"/>
+<text x="659" y="311" font-size="11.5" fill="#ffffff" text-anchor="middle">verified</text>
+</g>
+<g><title>npa-genesis on B200 sm_100: verified</title>
+<rect x="740" y="294" width="154" height="26" rx="3" fill="#1a7f37"/>
+<text x="817" y="311" font-size="11.5" fill="#ffffff" text-anchor="middle">verified</text>
+</g>
+<g><title>npa-genesis on B300 sm_103: verified</title>
+<rect x="898" y="294" width="154" height="26" rx="3" fill="#1a7f37"/>
+<text x="975" y="311" font-size="11.5" fill="#ffffff" text-anchor="middle">verified</text>
+</g>
+<text x="16" y="339" font-size="12" fill="#1f2328" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">npa-lancedb</text>
+<g><title>npa-lancedb on L40S sm_89: supported</title>
+<rect x="266" y="322" width="154" height="26" rx="3" fill="#c3e6cd"/>
+<text x="343" y="339" font-size="11.5" fill="#11301d" text-anchor="middle">supported</text>
+</g>
+<g><title>npa-lancedb on H100 / H200 sm_90: verified</title>
+<rect x="424" y="322" width="154" height="26" rx="3" fill="#1a7f37"/>
+<text x="501" y="339" font-size="11.5" fill="#ffffff" text-anchor="middle">verified</text>
+</g>
+<g><title>npa-lancedb on RTX PRO 6000 sm_120: verified</title>
+<rect x="582" y="322" width="154" height="26" rx="3" fill="#1a7f37"/>
+<text x="659" y="339" font-size="11.5" fill="#ffffff" text-anchor="middle">verified</text>
+</g>
+<g><title>npa-lancedb on B200 sm_100: verified</title>
+<rect x="740" y="322" width="154" height="26" rx="3" fill="#1a7f37"/>
+<text x="817" y="339" font-size="11.5" fill="#ffffff" text-anchor="middle">verified</text>
+</g>
+<g><title>npa-lancedb on B300 sm_103: verified</title>
+<rect x="898" y="322" width="154" height="26" rx="3" fill="#1a7f37"/>
+<text x="975" y="339" font-size="11.5" fill="#ffffff" text-anchor="middle">verified</text>
+</g>
+<text x="16" y="367" font-size="12" fill="#1f2328" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">npa-lerobot</text>
+<g><title>npa-lerobot on L40S sm_89: supported</title>
+<rect x="266" y="350" width="154" height="26" rx="3" fill="#c3e6cd"/>
+<text x="343" y="367" font-size="11.5" fill="#11301d" text-anchor="middle">supported</text>
+</g>
+<g><title>npa-lerobot on H100 / H200 sm_90: verified</title>
+<rect x="424" y="350" width="154" height="26" rx="3" fill="#1a7f37"/>
+<text x="501" y="367" font-size="11.5" fill="#ffffff" text-anchor="middle">verified</text>
+</g>
+<g><title>npa-lerobot on RTX PRO 6000 sm_120: verified</title>
+<rect x="582" y="350" width="154" height="26" rx="3" fill="#1a7f37"/>
+<text x="659" y="367" font-size="11.5" fill="#ffffff" text-anchor="middle">verified</text>
+</g>
+<g><title>npa-lerobot on B200 sm_100: verified</title>
+<rect x="740" y="350" width="154" height="26" rx="3" fill="#1a7f37"/>
+<text x="817" y="367" font-size="11.5" fill="#ffffff" text-anchor="middle">verified</text>
+</g>
+<g><title>npa-lerobot on B300 sm_103: verified</title>
+<rect x="898" y="350" width="154" height="26" rx="3" fill="#1a7f37"/>
+<text x="975" y="367" font-size="11.5" fill="#ffffff" text-anchor="middle">verified</text>
+</g>
+<text x="16" y="395" font-size="12" fill="#1f2328" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">npa-lerobot-policy</text>
+<g><title>npa-lerobot-policy on L40S sm_89: supported</title>
+<rect x="266" y="378" width="154" height="26" rx="3" fill="#c3e6cd"/>
+<text x="343" y="395" font-size="11.5" fill="#11301d" text-anchor="middle">supported</text>
+</g>
+<g><title>npa-lerobot-policy on H100 / H200 sm_90: supported</title>
+<rect x="424" y="378" width="154" height="26" rx="3" fill="#c3e6cd"/>
+<text x="501" y="395" font-size="11.5" fill="#11301d" text-anchor="middle">supported</text>
+</g>
+<g><title>npa-lerobot-policy on RTX PRO 6000 sm_120: supported</title>
+<rect x="582" y="378" width="154" height="26" rx="3" fill="#c3e6cd"/>
+<text x="659" y="395" font-size="11.5" fill="#11301d" text-anchor="middle">supported</text>
+</g>
+<g><title>npa-lerobot-policy on B200 sm_100: supported</title>
+<rect x="740" y="378" width="154" height="26" rx="3" fill="#c3e6cd"/>
+<text x="817" y="395" font-size="11.5" fill="#11301d" text-anchor="middle">supported</text>
+</g>
+<g><title>npa-lerobot-policy on B300 sm_103: supported</title>
+<rect x="898" y="378" width="154" height="26" rx="3" fill="#c3e6cd"/>
+<text x="975" y="395" font-size="11.5" fill="#11301d" text-anchor="middle">supported</text>
+</g>
+<text x="16" y="423" font-size="12" fill="#1f2328" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">npa-lerobot-vlm-rl</text>
+<g><title>npa-lerobot-vlm-rl on L40S sm_89: supported</title>
+<rect x="266" y="406" width="154" height="26" rx="3" fill="#c3e6cd"/>
+<text x="343" y="423" font-size="11.5" fill="#11301d" text-anchor="middle">supported</text>
+</g>
+<g><title>npa-lerobot-vlm-rl on H100 / H200 sm_90: verified</title>
+<rect x="424" y="406" width="154" height="26" rx="3" fill="#1a7f37"/>
+<text x="501" y="423" font-size="11.5" fill="#ffffff" text-anchor="middle">verified</text>
+</g>
+<g><title>npa-lerobot-vlm-rl on RTX PRO 6000 sm_120: verified</title>
+<rect x="582" y="406" width="154" height="26" rx="3" fill="#1a7f37"/>
+<text x="659" y="423" font-size="11.5" fill="#ffffff" text-anchor="middle">verified</text>
+</g>
+<g><title>npa-lerobot-vlm-rl on B200 sm_100: verified</title>
+<rect x="740" y="406" width="154" height="26" rx="3" fill="#1a7f37"/>
+<text x="817" y="423" font-size="11.5" fill="#ffffff" text-anchor="middle">verified</text>
+</g>
+<g><title>npa-lerobot-vlm-rl on B300 sm_103: verified</title>
+<rect x="898" y="406" width="154" height="26" rx="3" fill="#1a7f37"/>
+<text x="975" y="423" font-size="11.5" fill="#ffffff" text-anchor="middle">verified</text>
+</g>
+<text x="16" y="451" font-size="12" fill="#1f2328" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">npa-loop-eval</text>
+<g><title>npa-loop-eval on L40S sm_89: supported</title>
+<rect x="266" y="434" width="154" height="26" rx="3" fill="#c3e6cd"/>
+<text x="343" y="451" font-size="11.5" fill="#11301d" text-anchor="middle">supported</text>
+</g>
+<g><title>npa-loop-eval on H100 / H200 sm_90: verified</title>
+<rect x="424" y="434" width="154" height="26" rx="3" fill="#1a7f37"/>
+<text x="501" y="451" font-size="11.5" fill="#ffffff" text-anchor="middle">verified</text>
+</g>
+<g><title>npa-loop-eval on RTX PRO 6000 sm_120: verified</title>
+<rect x="582" y="434" width="154" height="26" rx="3" fill="#1a7f37"/>
+<text x="659" y="451" font-size="11.5" fill="#ffffff" text-anchor="middle">verified</text>
+</g>
+<g><title>npa-loop-eval on B200 sm_100: verified</title>
+<rect x="740" y="434" width="154" height="26" rx="3" fill="#1a7f37"/>
+<text x="817" y="451" font-size="11.5" fill="#ffffff" text-anchor="middle">verified</text>
+</g>
+<g><title>npa-loop-eval on B300 sm_103: verified</title>
+<rect x="898" y="434" width="154" height="26" rx="3" fill="#1a7f37"/>
+<text x="975" y="451" font-size="11.5" fill="#ffffff" text-anchor="middle">verified</text>
+</g>
+<text x="16" y="479" font-size="12" fill="#1f2328" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">npa-reference-policy</text>
+<g><title>npa-reference-policy on L40S sm_89: supported</title>
+<rect x="266" y="462" width="154" height="26" rx="3" fill="#c3e6cd"/>
+<text x="343" y="479" font-size="11.5" fill="#11301d" text-anchor="middle">supported</text>
+</g>
+<g><title>npa-reference-policy on H100 / H200 sm_90: verified</title>
+<rect x="424" y="462" width="154" height="26" rx="3" fill="#1a7f37"/>
+<text x="501" y="479" font-size="11.5" fill="#ffffff" text-anchor="middle">verified</text>
+</g>
+<g><title>npa-reference-policy on RTX PRO 6000 sm_120: verified</title>
+<rect x="582" y="462" width="154" height="26" rx="3" fill="#1a7f37"/>
+<text x="659" y="479" font-size="11.5" fill="#ffffff" text-anchor="middle">verified</text>
+</g>
+<g><title>npa-reference-policy on B200 sm_100: verified</title>
+<rect x="740" y="462" width="154" height="26" rx="3" fill="#1a7f37"/>
+<text x="817" y="479" font-size="11.5" fill="#ffffff" text-anchor="middle">verified</text>
+</g>
+<g><title>npa-reference-policy on B300 sm_103: verified</title>
+<rect x="898" y="462" width="154" height="26" rx="3" fill="#1a7f37"/>
+<text x="975" y="479" font-size="11.5" fill="#ffffff" text-anchor="middle">verified</text>
+</g>
+<text x="16" y="507" font-size="12" fill="#1f2328" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">npa-sonic-mujoco</text>
+<g><title>npa-sonic-mujoco on L40S sm_89: supported</title>
+<rect x="266" y="490" width="154" height="26" rx="3" fill="#c3e6cd"/>
+<text x="343" y="507" font-size="11.5" fill="#11301d" text-anchor="middle">supported</text>
+</g>
+<g><title>npa-sonic-mujoco on H100 / H200 sm_90: supported (headless)</title>
+<rect x="424" y="490" width="154" height="26" rx="3" fill="#c3e6cd"/>
+<text x="501" y="507" font-size="11.5" fill="#11301d" text-anchor="middle">supported</text>
+</g>
+<g><title>npa-sonic-mujoco on RTX PRO 6000 sm_120: supported</title>
+<rect x="582" y="490" width="154" height="26" rx="3" fill="#c3e6cd"/>
+<text x="659" y="507" font-size="11.5" fill="#11301d" text-anchor="middle">supported</text>
+</g>
+<g><title>npa-sonic-mujoco on B200 sm_100: verified</title>
+<rect x="740" y="490" width="154" height="26" rx="3" fill="#1a7f37"/>
+<text x="817" y="507" font-size="11.5" fill="#ffffff" text-anchor="middle">verified</text>
+</g>
+<g><title>npa-sonic-mujoco on B300 sm_103: supported (same-major `sm_100` coverage; not measured)</title>
+<rect x="898" y="490" width="154" height="26" rx="3" fill="#c3e6cd"/>
+<text x="975" y="507" font-size="11.5" fill="#11301d" text-anchor="middle">supported</text>
+</g>
+<text x="16" y="535" font-size="12" fill="#1f2328" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">npa-wan2-2</text>
+<g><title>npa-wan2-2 on L40S sm_89: supported</title>
+<rect x="266" y="518" width="154" height="26" rx="3" fill="#c3e6cd"/>
+<text x="343" y="535" font-size="11.5" fill="#11301d" text-anchor="middle">supported</text>
+</g>
+<g><title>npa-wan2-2 on H100 / H200 sm_90: supported</title>
+<rect x="424" y="518" width="154" height="26" rx="3" fill="#c3e6cd"/>
+<text x="501" y="535" font-size="11.5" fill="#11301d" text-anchor="middle">supported</text>
+</g>
+<g><title>npa-wan2-2 on RTX PRO 6000 sm_120: historical evidence</title>
+<rect x="582" y="518" width="154" height="26" rx="3" fill="#57a773"/>
+<text x="659" y="535" font-size="11.5" fill="#ffffff" text-anchor="middle">historical</text>
+</g>
+<g><title>npa-wan2-2 on B200 sm_100: historical evidence</title>
+<rect x="740" y="518" width="154" height="26" rx="3" fill="#57a773"/>
+<text x="817" y="535" font-size="11.5" fill="#ffffff" text-anchor="middle">historical</text>
+</g>
+<g><title>npa-wan2-2 on B300 sm_103: supported</title>
+<rect x="898" y="518" width="154" height="26" rx="3" fill="#c3e6cd"/>
+<text x="975" y="535" font-size="11.5" fill="#11301d" text-anchor="middle">supported</text>
+</g>
+<text x="16" y="573" font-size="12.5" font-weight="600" fill="#1f2328">Blocked on at least one platform &#183; 8</text>
+<line x1="16" y1="580" x2="1056" y2="580" stroke="#d1d9e0" stroke-width="1"/>
+<text x="16" y="601" font-size="12" fill="#1f2328" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">npa-content-agents</text>
+<g><title>npa-content-agents on L40S sm_89: supported (RT cores)</title>
+<rect x="266" y="584" width="154" height="26" rx="3" fill="#c3e6cd"/>
+<text x="343" y="601" font-size="11.5" fill="#11301d" text-anchor="middle">supported</text>
+</g>
+<g><title>npa-content-agents on H100 / H200 sm_90: blocked (no RT cores)</title>
+<rect x="424" y="584" width="154" height="26" rx="3" fill="#cf222e"/>
+<text x="501" y="601" font-size="11.5" fill="#ffffff" text-anchor="middle">blocked</text>
+</g>
+<g><title>npa-content-agents on RTX PRO 6000 sm_120: verified</title>
+<rect x="582" y="584" width="154" height="26" rx="3" fill="#1a7f37"/>
+<text x="659" y="601" font-size="11.5" fill="#ffffff" text-anchor="middle">verified</text>
+</g>
+<g><title>npa-content-agents on B200 sm_100: blocked (no RT cores)</title>
+<rect x="740" y="584" width="154" height="26" rx="3" fill="#cf222e"/>
+<text x="817" y="601" font-size="11.5" fill="#ffffff" text-anchor="middle">blocked</text>
+</g>
+<g><title>npa-content-agents on B300 sm_103: blocked (no RT cores)</title>
+<rect x="898" y="584" width="154" height="26" rx="3" fill="#cf222e"/>
+<text x="975" y="601" font-size="11.5" fill="#ffffff" text-anchor="middle">blocked</text>
+</g>
+<text x="16" y="629" font-size="12" fill="#1f2328" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">npa-cosmos</text>
+<g><title>npa-cosmos on L40S sm_89: blocked (Predict2 allowlist)</title>
+<rect x="266" y="612" width="154" height="26" rx="3" fill="#cf222e"/>
+<text x="343" y="629" font-size="11.5" fill="#ffffff" text-anchor="middle">blocked</text>
+</g>
+<g><title>npa-cosmos on H100 / H200 sm_90: verified</title>
+<rect x="424" y="612" width="154" height="26" rx="3" fill="#1a7f37"/>
+<text x="501" y="629" font-size="11.5" fill="#ffffff" text-anchor="middle">verified</text>
+</g>
+<g><title>npa-cosmos on RTX PRO 6000 sm_120: blocked (Predict2 allowlist)</title>
+<rect x="582" y="612" width="154" height="26" rx="3" fill="#cf222e"/>
+<text x="659" y="629" font-size="11.5" fill="#ffffff" text-anchor="middle">blocked</text>
+</g>
+<g><title>npa-cosmos on B200 sm_100: verified</title>
+<rect x="740" y="612" width="154" height="26" rx="3" fill="#1a7f37"/>
+<text x="817" y="629" font-size="11.5" fill="#ffffff" text-anchor="middle">verified</text>
+</g>
+<g><title>npa-cosmos on B300 sm_103: blocked (Predict2 allowlist)</title>
+<rect x="898" y="612" width="154" height="26" rx="3" fill="#cf222e"/>
+<text x="975" y="629" font-size="11.5" fill="#ffffff" text-anchor="middle">blocked</text>
+</g>
+<text x="16" y="657" font-size="12" fill="#1f2328" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">npa-cosmos2-transfer</text>
+<g><title>npa-cosmos2-transfer on L40S sm_89: supported</title>
+<rect x="266" y="640" width="154" height="26" rx="3" fill="#c3e6cd"/>
+<text x="343" y="657" font-size="11.5" fill="#11301d" text-anchor="middle">supported</text>
+</g>
+<g><title>npa-cosmos2-transfer on H100 / H200 sm_90: supported</title>
+<rect x="424" y="640" width="154" height="26" rx="3" fill="#c3e6cd"/>
+<text x="501" y="657" font-size="11.5" fill="#11301d" text-anchor="middle">supported</text>
+</g>
+<g><title>npa-cosmos2-transfer on RTX PRO 6000 sm_120: supported</title>
+<rect x="582" y="640" width="154" height="26" rx="3" fill="#c3e6cd"/>
+<text x="659" y="657" font-size="11.5" fill="#11301d" text-anchor="middle">supported</text>
+</g>
+<g><title>npa-cosmos2-transfer on B200 sm_100: verified</title>
+<rect x="740" y="640" width="154" height="26" rx="3" fill="#1a7f37"/>
+<text x="817" y="657" font-size="11.5" fill="#ffffff" text-anchor="middle">verified</text>
+</g>
+<g><title>npa-cosmos2-transfer on B300 sm_103: blocked (cu128 NVRTC cannot JIT `sm_103`)</title>
+<rect x="898" y="640" width="154" height="26" rx="3" fill="#cf222e"/>
+<text x="975" y="657" font-size="11.5" fill="#ffffff" text-anchor="middle">blocked</text>
+</g>
+<text x="16" y="685" font-size="12" fill="#1f2328" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">npa-cosmos3-serving</text>
+<g><title>npa-cosmos3-serving on L40S sm_89: blocked (8-GPU memory floor)</title>
+<rect x="266" y="668" width="154" height="26" rx="3" fill="#cf222e"/>
+<text x="343" y="685" font-size="11.5" fill="#ffffff" text-anchor="middle">blocked</text>
+</g>
+<g><title>npa-cosmos3-serving on H100 / H200 sm_90: verified (8xH200)</title>
+<rect x="424" y="668" width="154" height="26" rx="3" fill="#1a7f37"/>
+<text x="501" y="685" font-size="11.5" fill="#ffffff" text-anchor="middle">verified</text>
+</g>
+<g><title>npa-cosmos3-serving on RTX PRO 6000 sm_120: supported (8 GPUs)</title>
+<rect x="582" y="668" width="154" height="26" rx="3" fill="#c3e6cd"/>
+<text x="659" y="685" font-size="11.5" fill="#11301d" text-anchor="middle">supported</text>
+</g>
+<g><title>npa-cosmos3-serving on B200 sm_100: verified (8xB200)</title>
+<rect x="740" y="668" width="154" height="26" rx="3" fill="#1a7f37"/>
+<text x="817" y="685" font-size="11.5" fill="#ffffff" text-anchor="middle">verified</text>
+</g>
+<g><title>npa-cosmos3-serving on B300 sm_103: supported (8 GPUs)</title>
+<rect x="898" y="668" width="154" height="26" rx="3" fill="#c3e6cd"/>
+<text x="975" y="685" font-size="11.5" fill="#11301d" text-anchor="middle">supported</text>
+</g>
+<text x="16" y="713" font-size="12" fill="#1f2328" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">npa-groot</text>
+<g><title>npa-groot on L40S sm_89: supported</title>
+<rect x="266" y="696" width="154" height="26" rx="3" fill="#c3e6cd"/>
+<text x="343" y="713" font-size="11.5" fill="#11301d" text-anchor="middle">supported</text>
+</g>
+<g><title>npa-groot on H100 / H200 sm_90: supported</title>
+<rect x="424" y="696" width="154" height="26" rx="3" fill="#c3e6cd"/>
+<text x="501" y="713" font-size="11.5" fill="#11301d" text-anchor="middle">supported</text>
+</g>
+<g><title>npa-groot on RTX PRO 6000 sm_120: supported</title>
+<rect x="582" y="696" width="154" height="26" rx="3" fill="#c3e6cd"/>
+<text x="659" y="713" font-size="11.5" fill="#11301d" text-anchor="middle">supported</text>
+</g>
+<g><title>npa-groot on B200 sm_100: blocked</title>
+<rect x="740" y="696" width="154" height="26" rx="3" fill="#cf222e"/>
+<text x="817" y="713" font-size="11.5" fill="#ffffff" text-anchor="middle">blocked</text>
+</g>
+<g><title>npa-groot on B300 sm_103: blocked</title>
+<rect x="898" y="696" width="154" height="26" rx="3" fill="#cf222e"/>
+<text x="975" y="713" font-size="11.5" fill="#ffffff" text-anchor="middle">blocked</text>
+</g>
+<text x="16" y="741" font-size="12" fill="#1f2328" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">npa-isaac-lab</text>
+<g><title>npa-isaac-lab on L40S sm_89: supported</title>
+<rect x="266" y="724" width="154" height="26" rx="3" fill="#c3e6cd"/>
+<text x="343" y="741" font-size="11.5" fill="#11301d" text-anchor="middle">supported</text>
+</g>
+<g><title>npa-isaac-lab on H100 / H200 sm_90: supported (headless)</title>
+<rect x="424" y="724" width="154" height="26" rx="3" fill="#c3e6cd"/>
+<text x="501" y="741" font-size="11.5" fill="#11301d" text-anchor="middle">supported</text>
+</g>
+<g><title>npa-isaac-lab on RTX PRO 6000 sm_120: supported</title>
+<rect x="582" y="724" width="154" height="26" rx="3" fill="#c3e6cd"/>
+<text x="659" y="741" font-size="11.5" fill="#11301d" text-anchor="middle">supported</text>
+</g>
+<g><title>npa-isaac-lab on B200 sm_100: blocked</title>
+<rect x="740" y="724" width="154" height="26" rx="3" fill="#cf222e"/>
+<text x="817" y="741" font-size="11.5" fill="#ffffff" text-anchor="middle">blocked</text>
+</g>
+<g><title>npa-isaac-lab on B300 sm_103: blocked</title>
+<rect x="898" y="724" width="154" height="26" rx="3" fill="#cf222e"/>
+<text x="975" y="741" font-size="11.5" fill="#ffffff" text-anchor="middle">blocked</text>
+</g>
+<text x="16" y="769" font-size="12" fill="#1f2328" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">npa-leisaac</text>
+<g><title>npa-leisaac on L40S sm_89: not routed or validated by the current launcher</title>
+<rect x="266" y="752" width="154" height="26" rx="3" fill="#e5903d"/>
+<text x="343" y="769" font-size="11.5" fill="#2d1600" text-anchor="middle">not routed</text>
+</g>
+<g><title>npa-leisaac on H100 / H200 sm_90: blocked (no RT cores)</title>
+<rect x="424" y="752" width="154" height="26" rx="3" fill="#cf222e"/>
+<text x="501" y="769" font-size="11.5" fill="#ffffff" text-anchor="middle">blocked</text>
+</g>
+<g><title>npa-leisaac on RTX PRO 6000 sm_120: supported (current hard-selected target)</title>
+<rect x="582" y="752" width="154" height="26" rx="3" fill="#c3e6cd"/>
+<text x="659" y="769" font-size="11.5" fill="#11301d" text-anchor="middle">supported</text>
+</g>
+<g><title>npa-leisaac on B200 sm_100: blocked (no RT cores)</title>
+<rect x="740" y="752" width="154" height="26" rx="3" fill="#cf222e"/>
+<text x="817" y="769" font-size="11.5" fill="#ffffff" text-anchor="middle">blocked</text>
+</g>
+<g><title>npa-leisaac on B300 sm_103: blocked (no RT cores)</title>
+<rect x="898" y="752" width="154" height="26" rx="3" fill="#cf222e"/>
+<text x="975" y="769" font-size="11.5" fill="#ffffff" text-anchor="middle">blocked</text>
+</g>
+<text x="16" y="797" font-size="12" fill="#1f2328" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">npa-sonic</text>
+<g><title>npa-sonic on L40S sm_89: supported</title>
+<rect x="266" y="780" width="154" height="26" rx="3" fill="#c3e6cd"/>
+<text x="343" y="797" font-size="11.5" fill="#11301d" text-anchor="middle">supported</text>
+</g>
+<g><title>npa-sonic on H100 / H200 sm_90: supported (headless)</title>
+<rect x="424" y="780" width="154" height="26" rx="3" fill="#c3e6cd"/>
+<text x="501" y="797" font-size="11.5" fill="#11301d" text-anchor="middle">supported</text>
+</g>
+<g><title>npa-sonic on RTX PRO 6000 sm_120: supported</title>
+<rect x="582" y="780" width="154" height="26" rx="3" fill="#c3e6cd"/>
+<text x="659" y="797" font-size="11.5" fill="#11301d" text-anchor="middle">supported</text>
+</g>
+<g><title>npa-sonic on B200 sm_100: blocked</title>
+<rect x="740" y="780" width="154" height="26" rx="3" fill="#cf222e"/>
+<text x="817" y="797" font-size="11.5" fill="#ffffff" text-anchor="middle">blocked</text>
+</g>
+<g><title>npa-sonic on B300 sm_103: blocked</title>
+<rect x="898" y="780" width="154" height="26" rx="3" fill="#cf222e"/>
+<text x="975" y="797" font-size="11.5" fill="#ffffff" text-anchor="middle">blocked</text>
+</g>
+<text x="16" y="835" font-size="12.5" font-weight="600" fill="#1f2328">Built, no GPU result anywhere &#183; 1</text>
+<line x1="16" y1="842" x2="1056" y2="842" stroke="#d1d9e0" stroke-width="1"/>
+<text x="16" y="863" font-size="12" fill="#1f2328" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">npa-ltx2</text>
+<g><title>npa-ltx2 on L40S sm_89: built, no GPU result</title>
+<rect x="266" y="846" width="154" height="26" rx="3" fill="#d4a72c"/>
+<text x="343" y="863" font-size="11.5" fill="#2d2200" text-anchor="middle">no GPU run</text>
+</g>
+<g><title>npa-ltx2 on H100 / H200 sm_90: built, no GPU result</title>
+<rect x="424" y="846" width="154" height="26" rx="3" fill="#d4a72c"/>
+<text x="501" y="863" font-size="11.5" fill="#2d2200" text-anchor="middle">no GPU run</text>
+</g>
+<g><title>npa-ltx2 on RTX PRO 6000 sm_120: built, no GPU result</title>
+<rect x="582" y="846" width="154" height="26" rx="3" fill="#d4a72c"/>
+<text x="659" y="863" font-size="11.5" fill="#2d2200" text-anchor="middle">no GPU run</text>
+</g>
+<g><title>npa-ltx2 on B200 sm_100: built, no GPU result</title>
+<rect x="740" y="846" width="154" height="26" rx="3" fill="#d4a72c"/>
+<text x="817" y="863" font-size="11.5" fill="#2d2200" text-anchor="middle">no GPU run</text>
+</g>
+<g><title>npa-ltx2 on B300 sm_103: built, no GPU result</title>
+<rect x="898" y="846" width="154" height="26" rx="3" fill="#d4a72c"/>
+<text x="975" y="863" font-size="11.5" fill="#2d2200" text-anchor="middle">no GPU run</text>
+</g>
+<text x="16" y="901" font-size="12.5" font-weight="600" fill="#1f2328">CPU-only, GPU-agnostic &#183; 7</text>
+<line x1="16" y1="908" x2="1056" y2="908" stroke="#d1d9e0" stroke-width="1"/>
+<text x="16" y="929" font-size="12" fill="#1f2328" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">npa-cosmos-curate</text>
+<g><title>npa-cosmos-curate on L40S sm_89: CPU</title>
+<rect x="266" y="912" width="154" height="26" rx="3" fill="#d8dee4"/>
+<text x="343" y="929" font-size="11.5" fill="#3b444d" text-anchor="middle">CPU-only</text>
+</g>
+<g><title>npa-cosmos-curate on H100 / H200 sm_90: CPU</title>
+<rect x="424" y="912" width="154" height="26" rx="3" fill="#d8dee4"/>
+<text x="501" y="929" font-size="11.5" fill="#3b444d" text-anchor="middle">CPU-only</text>
+</g>
+<g><title>npa-cosmos-curate on RTX PRO 6000 sm_120: CPU</title>
+<rect x="582" y="912" width="154" height="26" rx="3" fill="#d8dee4"/>
+<text x="659" y="929" font-size="11.5" fill="#3b444d" text-anchor="middle">CPU-only</text>
+</g>
+<g><title>npa-cosmos-curate on B200 sm_100: CPU</title>
+<rect x="740" y="912" width="154" height="26" rx="3" fill="#d8dee4"/>
+<text x="817" y="929" font-size="11.5" fill="#3b444d" text-anchor="middle">CPU-only</text>
+</g>
+<g><title>npa-cosmos-curate on B300 sm_103: CPU</title>
+<rect x="898" y="912" width="154" height="26" rx="3" fill="#d8dee4"/>
+<text x="975" y="929" font-size="11.5" fill="#3b444d" text-anchor="middle">CPU-only</text>
+</g>
+<text x="16" y="957" font-size="12" fill="#1f2328" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">npa-cosmos-evaluator</text>
+<g><title>npa-cosmos-evaluator on L40S sm_89: CPU</title>
+<rect x="266" y="940" width="154" height="26" rx="3" fill="#d8dee4"/>
+<text x="343" y="957" font-size="11.5" fill="#3b444d" text-anchor="middle">CPU-only</text>
+</g>
+<g><title>npa-cosmos-evaluator on H100 / H200 sm_90: CPU</title>
+<rect x="424" y="940" width="154" height="26" rx="3" fill="#d8dee4"/>
+<text x="501" y="957" font-size="11.5" fill="#3b444d" text-anchor="middle">CPU-only</text>
+</g>
+<g><title>npa-cosmos-evaluator on RTX PRO 6000 sm_120: CPU</title>
+<rect x="582" y="940" width="154" height="26" rx="3" fill="#d8dee4"/>
+<text x="659" y="957" font-size="11.5" fill="#3b444d" text-anchor="middle">CPU-only</text>
+</g>
+<g><title>npa-cosmos-evaluator on B200 sm_100: CPU</title>
+<rect x="740" y="940" width="154" height="26" rx="3" fill="#d8dee4"/>
+<text x="817" y="957" font-size="11.5" fill="#3b444d" text-anchor="middle">CPU-only</text>
+</g>
+<g><title>npa-cosmos-evaluator on B300 sm_103: CPU</title>
+<rect x="898" y="940" width="154" height="26" rx="3" fill="#d8dee4"/>
+<text x="975" y="957" font-size="11.5" fill="#3b444d" text-anchor="middle">CPU-only</text>
+</g>
+<text x="16" y="985" font-size="12" fill="#1f2328" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">npa-fiftyone</text>
+<g><title>npa-fiftyone on L40S sm_89: CPU</title>
+<rect x="266" y="968" width="154" height="26" rx="3" fill="#d8dee4"/>
+<text x="343" y="985" font-size="11.5" fill="#3b444d" text-anchor="middle">CPU-only</text>
+</g>
+<g><title>npa-fiftyone on H100 / H200 sm_90: CPU</title>
+<rect x="424" y="968" width="154" height="26" rx="3" fill="#d8dee4"/>
+<text x="501" y="985" font-size="11.5" fill="#3b444d" text-anchor="middle">CPU-only</text>
+</g>
+<g><title>npa-fiftyone on RTX PRO 6000 sm_120: CPU</title>
+<rect x="582" y="968" width="154" height="26" rx="3" fill="#d8dee4"/>
+<text x="659" y="985" font-size="11.5" fill="#3b444d" text-anchor="middle">CPU-only</text>
+</g>
+<g><title>npa-fiftyone on B200 sm_100: CPU</title>
+<rect x="740" y="968" width="154" height="26" rx="3" fill="#d8dee4"/>
+<text x="817" y="985" font-size="11.5" fill="#3b444d" text-anchor="middle">CPU-only</text>
+</g>
+<g><title>npa-fiftyone on B300 sm_103: CPU</title>
+<rect x="898" y="968" width="154" height="26" rx="3" fill="#d8dee4"/>
+<text x="975" y="985" font-size="11.5" fill="#3b444d" text-anchor="middle">CPU-only</text>
+</g>
+<text x="16" y="1013" font-size="12" fill="#1f2328" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">npa-foxglove-embed</text>
+<g><title>npa-foxglove-embed on L40S sm_89: CPU</title>
+<rect x="266" y="996" width="154" height="26" rx="3" fill="#d8dee4"/>
+<text x="343" y="1013" font-size="11.5" fill="#3b444d" text-anchor="middle">CPU-only</text>
+</g>
+<g><title>npa-foxglove-embed on H100 / H200 sm_90: CPU</title>
+<rect x="424" y="996" width="154" height="26" rx="3" fill="#d8dee4"/>
+<text x="501" y="1013" font-size="11.5" fill="#3b444d" text-anchor="middle">CPU-only</text>
+</g>
+<g><title>npa-foxglove-embed on RTX PRO 6000 sm_120: CPU</title>
+<rect x="582" y="996" width="154" height="26" rx="3" fill="#d8dee4"/>
+<text x="659" y="1013" font-size="11.5" fill="#3b444d" text-anchor="middle">CPU-only</text>
+</g>
+<g><title>npa-foxglove-embed on B200 sm_100: CPU</title>
+<rect x="740" y="996" width="154" height="26" rx="3" fill="#d8dee4"/>
+<text x="817" y="1013" font-size="11.5" fill="#3b444d" text-anchor="middle">CPU-only</text>
+</g>
+<g><title>npa-foxglove-embed on B300 sm_103: CPU</title>
+<rect x="898" y="996" width="154" height="26" rx="3" fill="#d8dee4"/>
+<text x="975" y="1013" font-size="11.5" fill="#3b444d" text-anchor="middle">CPU-only</text>
+</g>
+<text x="16" y="1041" font-size="12" fill="#1f2328" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">npa-lichtblick</text>
+<g><title>npa-lichtblick on L40S sm_89: CPU</title>
+<rect x="266" y="1024" width="154" height="26" rx="3" fill="#d8dee4"/>
+<text x="343" y="1041" font-size="11.5" fill="#3b444d" text-anchor="middle">CPU-only</text>
+</g>
+<g><title>npa-lichtblick on H100 / H200 sm_90: CPU</title>
+<rect x="424" y="1024" width="154" height="26" rx="3" fill="#d8dee4"/>
+<text x="501" y="1041" font-size="11.5" fill="#3b444d" text-anchor="middle">CPU-only</text>
+</g>
+<g><title>npa-lichtblick on RTX PRO 6000 sm_120: CPU</title>
+<rect x="582" y="1024" width="154" height="26" rx="3" fill="#d8dee4"/>
+<text x="659" y="1041" font-size="11.5" fill="#3b444d" text-anchor="middle">CPU-only</text>
+</g>
+<g><title>npa-lichtblick on B200 sm_100: CPU</title>
+<rect x="740" y="1024" width="154" height="26" rx="3" fill="#d8dee4"/>
+<text x="817" y="1041" font-size="11.5" fill="#3b444d" text-anchor="middle">CPU-only</text>
+</g>
+<g><title>npa-lichtblick on B300 sm_103: CPU</title>
+<rect x="898" y="1024" width="154" height="26" rx="3" fill="#d8dee4"/>
+<text x="975" y="1041" font-size="11.5" fill="#3b444d" text-anchor="middle">CPU-only</text>
+</g>
+<text x="16" y="1069" font-size="12" fill="#1f2328" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">npa-rerun-viewer</text>
+<g><title>npa-rerun-viewer on L40S sm_89: CPU</title>
+<rect x="266" y="1052" width="154" height="26" rx="3" fill="#d8dee4"/>
+<text x="343" y="1069" font-size="11.5" fill="#3b444d" text-anchor="middle">CPU-only</text>
+</g>
+<g><title>npa-rerun-viewer on H100 / H200 sm_90: CPU</title>
+<rect x="424" y="1052" width="154" height="26" rx="3" fill="#d8dee4"/>
+<text x="501" y="1069" font-size="11.5" fill="#3b444d" text-anchor="middle">CPU-only</text>
+</g>
+<g><title>npa-rerun-viewer on RTX PRO 6000 sm_120: CPU</title>
+<rect x="582" y="1052" width="154" height="26" rx="3" fill="#d8dee4"/>
+<text x="659" y="1069" font-size="11.5" fill="#3b444d" text-anchor="middle">CPU-only</text>
+</g>
+<g><title>npa-rerun-viewer on B200 sm_100: CPU</title>
+<rect x="740" y="1052" width="154" height="26" rx="3" fill="#d8dee4"/>
+<text x="817" y="1069" font-size="11.5" fill="#3b444d" text-anchor="middle">CPU-only</text>
+</g>
+<g><title>npa-rerun-viewer on B300 sm_103: CPU</title>
+<rect x="898" y="1052" width="154" height="26" rx="3" fill="#d8dee4"/>
+<text x="975" y="1069" font-size="11.5" fill="#3b444d" text-anchor="middle">CPU-only</text>
+</g>
+<text x="16" y="1097" font-size="12" fill="#1f2328" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">npa-retargeting</text>
+<g><title>npa-retargeting on L40S sm_89: CPU</title>
+<rect x="266" y="1080" width="154" height="26" rx="3" fill="#d8dee4"/>
+<text x="343" y="1097" font-size="11.5" fill="#3b444d" text-anchor="middle">CPU-only</text>
+</g>
+<g><title>npa-retargeting on H100 / H200 sm_90: CPU</title>
+<rect x="424" y="1080" width="154" height="26" rx="3" fill="#d8dee4"/>
+<text x="501" y="1097" font-size="11.5" fill="#3b444d" text-anchor="middle">CPU-only</text>
+</g>
+<g><title>npa-retargeting on RTX PRO 6000 sm_120: CPU</title>
+<rect x="582" y="1080" width="154" height="26" rx="3" fill="#d8dee4"/>
+<text x="659" y="1097" font-size="11.5" fill="#3b444d" text-anchor="middle">CPU-only</text>
+</g>
+<g><title>npa-retargeting on B200 sm_100: CPU</title>
+<rect x="740" y="1080" width="154" height="26" rx="3" fill="#d8dee4"/>
+<text x="817" y="1097" font-size="11.5" fill="#3b444d" text-anchor="middle">CPU-only</text>
+</g>
+<g><title>npa-retargeting on B300 sm_103: CPU</title>
+<rect x="898" y="1080" width="154" height="26" rx="3" fill="#d8dee4"/>
+<text x="975" y="1097" font-size="11.5" fill="#3b444d" text-anchor="middle">CPU-only</text>
+</g>
+<text x="16" y="1122" font-size="11.5" fill="#59636e">verified = a real capability run on that part &#183; supported = the toolchain can execute there, no run recorded &#183; historical = a run on an earlier candidate</text>
+<text x="16" y="1139" font-size="11.5" fill="#59636e">blocked = an upstream or physical limit &#183; not routed = the launcher never sends work there &#183; no GPU run = built, nothing measured. Hover a cell for the reason.</text>
+<text x="16" y="1156" font-size="11.5" fill="#59636e">Rendering needs RT cores, which only L40S and RTX PRO 6000 have. Every image is linux/amd64, so aarch64 gpu-gb300 is uncovered.</text>
+<text x="16" y="1177" font-size="10.5" fill="#818b98">Rendered 2026-08-29 by npa/scripts/render_gpu_coverage_chart.py</text>
+</svg>

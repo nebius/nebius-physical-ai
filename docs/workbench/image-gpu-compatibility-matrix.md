@@ -24,7 +24,9 @@ Machine-readable source of record: [`npa/docker/workbench/blackwell-dc-images.js
 
 H100 and H200 are both `sm_90`, so they share a column below.
 
-Also offered: `gpu-gb300` (Grace-Blackwell Ultra). Its GPU is the same `sm_103`, but the host is aarch64, and the x86_64 workbench images do not run there.
+Also offered: `gpu-gb300` (Grace-Blackwell Ultra). Its GPU is the same `sm_103`, but the host is aarch64, and the x86_64 workbench images do not run there. All 31 tags in the [public container catalog](container-image-catalog.md) resolved to a single `linux/amd64` manifest on 2026-08-29, so that platform is uncovered across the published set rather than per image.
+
+One column below carries no run at all: every L40S cell is toolchain-level **supported**, on the one architecture besides RTX PRO 6000 that can render. The recorded capability runs are on H100, H200, RTX PRO 6000, B200, and B300.
 
 Two compatibility rules govern every cell:
 
@@ -43,7 +45,7 @@ Two compatibility rules govern every cell:
 | `npa-lancedb` | `…-0.30.3-…-20260803T031514Z` | 2.12.1+cu130 | `sm_75 sm_80 sm_86 sm_90 sm_100 sm_120` | yes |
 | `npa-detection-training` | `bdd100k-golden-eval-smoke-20260614T210000Z` | 2.12.1+cu130 | `sm_75 sm_80 sm_86 sm_90 sm_100 sm_120` | yes |
 | `npa-cosmos3` | historical `1.2.2-cu130-r2` measurement (index `sha256:c65712832f6a…`); current default is `1.2.2-cu130-r6` | 2.10.0+cu130 | `sm_75 sm_80 sm_86 sm_90 sm_100 sm_120` + `compute_120` PTX | yes |
-| `npa-cosmos3-ray-serve` | `dev-56d8c4f3f05db7aa3b03323441a3e0d7b97ac8da` (index `sha256:6e42f553a0d1…`) | 2.10.0+cu130 | `sm_75 sm_80 sm_86 sm_90 sm_100 sm_120` + `compute_120` PTX | yes |
+| `npa-cosmos3-ray-serve` | `dev-56d8c4f3f05db7aa3b03323441a3e0d7b97ac8da` (`linux/amd64` manifest `sha256:6e42f553a0d1…`); the published `ray1-cu130` tag resolves to that same digest | 2.10.0+cu130 | `sm_75 sm_80 sm_86 sm_90 sm_100 sm_120` + `compute_120` PTX | yes |
 | `npa-cosmos3-reason` | `…-3.0.1-…-20260803T034152Z` | 2.9.0+cu130 | `sm_75 sm_80 sm_86 sm_90 sm_100 sm_120` + `compute_120` PTX | yes |
 | `npa-genesis` | `…-0.4.6-…-20260803T034152Z` | 2.9.0+cu130 | `sm_75 sm_80 sm_86 sm_90 sm_100 sm_120` + `compute_120` PTX | yes |
 | `npa-envgen` / `npa-reference-policy` / `npa-lerobot-vlm-rl` / `npa-loop-eval` | `…-20260803T034152Z` | inherited 2.9.0+cu130 | `sm_75 sm_80 sm_86 sm_90 sm_100 sm_120` + `compute_120` PTX | yes |
@@ -64,7 +66,7 @@ The old `npa-cosmos:1.0.9` cu126 image stopped at Hopper. Its additive cu128/tor
 | `npa-lancedb` | supported | **verified** [26] | **verified** [27] | **verified** [24] | **verified** [25] |
 | `npa-detection-training` | supported | **verified** [29] | **verified** [30] | **verified** [28] | **verified** [31] |
 | `npa-cosmos3` | supported | supported | **verified** [59] | supported | supported |
-| `npa-cosmos3-serving` (build-your-own) | blocked (8-GPU memory floor) | **verified** (8xH200) | supported (8 GPUs) | supported (8 GPUs) | supported (8 GPUs) |
+| `npa-cosmos3-serving` | blocked (8-GPU memory floor) | **verified** (8xH200) | supported (8 GPUs) | **verified** (8xB200) [67] | supported (8 GPUs) |
 | `npa-cosmos3-ray-serve` | supported | supported | **verified** [66] | **verified** [65] | supported (same-major `sm_100` coverage; not measured) |
 | `npa-content-agents` | supported (RT cores) | blocked (no RT cores) | **verified** [64] | blocked (no RT cores) | blocked (no RT cores) |
 | `npa-wan2-2` | supported | supported | **historical evidence** [60] | **historical evidence** [61] | supported |
@@ -81,7 +83,7 @@ The old `npa-cosmos:1.0.9` cu126 image stopped at Hopper. Its additive cu128/tor
 | `npa-isaac-lab` | supported | supported (headless) | supported | blocked | blocked |
 | `npa-leisaac` | not routed or validated by the current launcher | blocked (no RT cores) | supported (current hard-selected target) | blocked (no RT cores) | blocked (no RT cores) |
 | `npa-sonic` | supported | supported (headless) | supported | blocked | blocked |
-| `npa-sonic-mujoco` | supported | supported (headless) | supported | blocked | blocked |
+| `npa-sonic-mujoco` | supported | supported (headless) | supported | **verified** [68] | supported (same-major `sm_100` coverage; not measured) |
 | `npa-groot` | supported | supported | supported | blocked | blocked |
 | `npa-cosmos-curate` | CPU | CPU | CPU | CPU | CPU |
 | `npa-cosmos-evaluator` | CPU | CPU | CPU | CPU | CPU |
@@ -180,8 +182,10 @@ Managed-Kubernetes nodes were placed successfully for both B200 in us-central1 a
 | 62 | 2026-08-18 | `npa-alpamayo2-super:0.1.0-cu128` (index `sha256:2164450f8baf…`) | NVIDIA B200 (`sm_100`) | exact pinned Alpamayo source loaded the real 34B OpenMDW checkpoint and gated PhysicalAI-AV sample at runtime, predicted a projected ego trajectory, and uploaded result JSON, trajectory JSON, and a calibrated-camera PNG | PASS; shape `[1, 1, 1, 64, 3]`, ADE 1.503835, FDE 4.357265; one wave with no recovery |
 | 63 | 2026-08-18 | same exact Alpamayo image | RTX PRO 6000 (`sm_120`) | independent runtime fetch and the same real upstream surround-view trajectory workflow, with GPU telemetry throughout inference | PASS; shape `[1, 1, 1, 64, 3]`, ADE 1.501321, FDE 4.351557; peak 71,447 MiB and 100% utilization; one wave with no recovery |
 | 64 | 2026-08-22 | `npa-content-agents:0.5.2-npa2` (index `sha256:c64aaf6201bd…`) | NVIDIA RTX PRO 6000 Blackwell Server Edition (`sm_120`) | exact digest ran acquire, real upstream Material Agent, Physics Agent, OVRTX rendering, upstream Validation Agent, and rigid-object packaging with one durable runtime cache | PASS; 6 material + 6 physics + 1 validation renders, 37 artifacts / 1,808,557 bytes, validation pass, non-null rigid physics, and independently reopenable USD/USDZ |
-| 65 | 2026-08-26 | `npa-cosmos3-ray-serve:dev-56d8c4f3f05db7aa3b03323441a3e0d7b97ac8da` (index `sha256:6e42f553a0d1…`) | NVIDIA B200 (`sm_100`) | exact public digest loaded Cosmos3-Nano with guardrails, accepted one two-sample request through upstream `OmniModelDeployment` / `@ray.serve.batch`, returned structured outputs, downloaded and hash-checked generated media, and persisted request/response/provenance/media to S3 | PASS; capability `(10, 0)`, zero restarts, two structured outputs, two decoded images, five durable objects; artifact SHA-256 prefixes `3a91a993e19e…`, `8838f93a8831…` |
+| 65 | 2026-08-26 | `npa-cosmos3-ray-serve:dev-56d8c4f3f05db7aa3b03323441a3e0d7b97ac8da` (`linux/amd64` manifest `sha256:6e42f553a0d1…`) | NVIDIA B200 (`sm_100`) | exact public digest loaded Cosmos3-Nano with guardrails, accepted one two-sample request through upstream `OmniModelDeployment` / `@ray.serve.batch`, returned structured outputs, downloaded and hash-checked generated media, and persisted request/response/provenance/media to S3 | PASS; capability `(10, 0)`, zero restarts, two structured outputs, two decoded images, five durable objects; artifact SHA-256 prefixes `3a91a993e19e…`, `8838f93a8831…` |
 | 66 | 2026-08-26 | same exact Cosmos3 Ray Serve digest | NVIDIA RTX PRO 6000 (`sm_120`) | independent guarded two-sample native Ray Serve batch with the same integrity and durable-provenance gates | PASS; capability `(12, 0)`, zero restarts, two structured outputs, two decoded images, five durable objects; artifact SHA-256 prefixes `357ca45a4121…`, `4345aac2743c…` |
+| 67 | 2026-08-23 | `npa-cosmos3-serving:0.2.0-oss` | 8x NVIDIA B200 (`sm_100`) | guarded 8-GPU service boot and readiness on the zero-payload public digest, then a real `/v1/videos` generation with full H.264 decode | PASS; recorded with the image's publication in [#316](https://github.com/nebius/nebius-physical-ai/pull/316) rather than as a dated standalone run |
+| 68 | 2026-08-23 | `npa-sonic-mujoco:0.2.0-runtime` (`sha256:2388d9e97269…`) | NVIDIA B200 (`sm_100`) | real Unitree G1 SONIC MuJoCo rollout on the exact published digest; EGL headless physics with no Omniverse and no RT-core rendering | PASS; 64 finite simulation steps, fall rate 0, metrics artifact verified; recorded in [#316](https://github.com/nebius/nebius-physical-ai/pull/316) |
 
 ## Measured failures and negative controls
 
