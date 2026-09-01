@@ -60,7 +60,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install npa
-        run: cd npa && pip install -e ".[dev,adapter]"
+        run: cd npa && pip install -e ".[dev,adapter,encord]"
 
       - name: Verify checked-out CLI flags
         run: |

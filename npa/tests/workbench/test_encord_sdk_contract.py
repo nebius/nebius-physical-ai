@@ -2,11 +2,16 @@ from __future__ import annotations
 
 import inspect
 
+import pytest
 from packaging.version import Version
+
+encord = pytest.importorskip(
+    "encord",
+    reason="requires the 'encord' optional extra (pip install -e 'npa[encord]')",
+)
 
 
 def test_installed_encord_0_1_202_surface() -> None:
-    import encord
     from encord.dataset import Dataset
     from encord.orm.dataset import StorageLocation
     from encord.orm.storage import (
