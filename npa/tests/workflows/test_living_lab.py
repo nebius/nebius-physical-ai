@@ -281,12 +281,48 @@ def test_join_concurrency_requires_overlap(local_storage) -> None:
         # Non-overlapping windows: zone i runs in [i*100, i*100+10], so there
         # is no common instant across all sixteen.
         _write_zone(local_storage, zone["zone_name"], started_epoch=100 * i, ended_epoch=100 * i + 10)
-    report = living_lab.join_living_lab_zones(
-        zones_uri="s3://bucket/living-lab/zones/",
-        report_uri="s3://bucket/living-lab/reports/",
-        panorama_uri="s3://bucket/living-lab/reports/panorama.png",
-    )
-    assert report["concurrency"]["sixteen_way"] is False
+    # Insufficient overlap is a hard, fail-closed condition: the report alone is
+    # never success.
+    with pytest.raises(RuntimeError, match="all-zone concurrency proof failed"):
+        living_lab.join_living_lab_zones(
+            zones_uri="s3://bucket/living-lab/zones/",
+            report_uri="s3://bucket/living-lab/reports/",
+            panorama_uri="s3://bucket/living-lab/reports/panorama.png",
+        )
+
+
+def test_join_fails_closed_on_duplicate_gpu_uuids(local_storage) -> None:
+    # All 16 zones claim the SAME non-empty GPU UUID: every per-zone manifest is
+    # otherwise valid, but the device-count proof must detect that only one
+    # distinct device participated and fail closed. Device count is never
+    # inferred from model names.
+    for zone in living_lab.living_lab_zones():
+        _write_zone(local_storage, zone["zone_name"], gpu_uuid="GPU-DUPLICATE")
+    with pytest.raises(RuntimeError, match="distinct GPU UUID proof failed"):
+        living_lab.join_living_lab_zones(
+            zones_uri="s3://bucket/living-lab/zones/",
+            report_uri="s3://bucket/living-lab/reports/",
+            panorama_uri="s3://bucket/living-lab/reports/panorama.png",
+        )
+
+
+def test_join_fails_closed_when_timestamps_missing(local_storage) -> None:
+    # Zone manifests with no started/ended timestamps cannot participate in the
+    # all-zone temporal-overlap proof; the join must fail closed rather than
+    # report a fabricated overlap.
+    for i, zone in enumerate(living_lab.living_lab_zones()):
+        _write_zone(
+            local_storage,
+            zone["zone_name"],
+            started_epoch=None,
+            ended_epoch=None,
+        )
+    with pytest.raises(RuntimeError, match="all-zone concurrency proof failed"):
+        living_lab.join_living_lab_zones(
+            zones_uri="s3://bucket/living-lab/zones/",
+            report_uri="s3://bucket/living-lab/reports/",
+            panorama_uri="s3://bucket/living-lab/reports/panorama.png",
+        )
 
 
 def test_spec_has_16_gpu_shards_and_a_join() -> None:
@@ -359,7 +395,11 @@ def test_every_shard_is_real_nurec_work_on_rtx_gpu() -> None:
         assert "--scene" in shell
         assert "--variant" in shell
         assert "PROVENANCE MISMATCH" in shell
-        assert 'actual[k] != requested[k]' in shell
+        # The gate validates against independently observed unpacked content
+        # (observed_scene/observed_variant), not the echoed request args.
+        assert "observed_scene" in shell
+        assert "observed_variant" in shell
+        assert "observed content" in shell
 
         # Manifest writer is a child python process: the shell vars it reads
         # must be exported.
@@ -433,7 +473,11 @@ fetch_prov() {
       *) shift ;;
     esac
   done
-  echo '{"status":"ok","dataset_id":"'"$dataset_id"'","scene":"'"$scene"'","variant":"'"$variant"'","ncore_json":"/tmp/n.json","poses_component_group":"npa_rig","reference_camera":"cam1"}'
+  # Simulate a *correct* fetch: the observed unpacked scene_dir content matches
+  # the requested scene/variant (observed_variant derives the real dir layout).
+  observed_variant="standard"
+  case "$variant" in auto) observed_variant="auto" ;; esac
+  echo '{"status":"ok","dataset_id":"'"$dataset_id"'","scene":"'"$scene"'","variant":"'"$variant"'","observed_scene":"'"$scene"'","observed_variant":"'"$observed_variant"'","scene_dir":"'"$scene"'","ncore_json":"/tmp/n.json","poses_component_group":"npa_rig","reference_camera":"cam1"}'
 }
 case "$*" in
   *"nurec check"*) echo '{"status":"ok","has_rt_cores":true}' ;;
@@ -526,3 +570,132 @@ esac
     assert payload["metrics_path"].endswith("metrics.yaml")
     assert payload["gpu"]["gpu_uuid"].startswith("GPU-")
     assert payload["gpu"]["node_name"] == "unknown"  # NODE_NAME unset outside k8s
+
+
+def test_provenance_gate_catches_wrong_content_echoing_requested_labels(
+    tmp_path: Path,
+) -> None:
+    """The real embedded shard provenance gate fails closed on wrong content.
+
+    Simulates a fetch that *echoes* the requested dataset/scene/variant in its
+    top-level fields (a mere copy of the request arguments) while the
+    independently observed unpacked content disagrees. The gate must reject it.
+    """
+    import os
+    import subprocess
+    import sys
+
+    shell = living_lab.build_living_lab_workflow_spec()["states"][
+        "zone-toro-standard-b"
+    ]["run"]["shell"]
+    zone_cfg = {
+        "config.zone_name": "toro-standard-b",
+        "config.dataset_id": "nvidia/PhysicalAI-NuRec-PPISP",
+        "config.scene": "toro",
+        "config.variant": "standard",
+        "config.run_prefix_uri": "s3://bucket/prefix/",
+        "config.nurec_image": "nvcr.io/nvidia/nre/nre-ga:26.04",
+        "config.rig_translation_offset": "0,0,0",
+        "config.rig_rotation_offset": "120,0,0",
+    }
+    for tok, val in zone_cfg.items():
+        shell = shell.replace("{{" + tok + "}}", val)
+
+    # Extract the provenance gate heredoc body (between the <<'PY' and PY lines).
+    marker = "<<'PY'"
+    start = shell.index(marker) + len(marker)
+    end = shell.index("\nPY", start)
+    gate_src = shell[start:end]
+    assert "observed_scene" in gate_src
+
+    gate = tmp_path / "gate.py"
+    gate.write_text(gate_src, encoding="utf-8")
+
+    fetch_json = tmp_path / "fetch.json"
+    fetch_json.write_text(
+        json.dumps(
+            {
+                "status": "ok",
+                # Echoed request args (the echo a faulty fetch would produce) ...
+                "dataset_id": "nvidia/PhysicalAI-NuRec-PPISP",
+                "scene": "toro",
+                "variant": "standard",
+                # ... but independently observed content is wrong.
+                "observed_scene": "struktur28",
+                "observed_variant": "standard",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    env = dict(os.environ)
+    env["ZONE"] = "toro-standard-b"
+    env["NUREC_FETCH_JSON"] = str(fetch_json)
+    env["DATASET_ID"] = "nvidia/PhysicalAI-NuRec-PPISP"
+    proc = subprocess.run(
+        [sys.executable, str(gate), "toro", "standard"],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert proc.returncode != 0, "gate must fail closed on wrong content"
+    assert "PROVENANCE MISMATCH" in proc.stderr
+
+
+def test_provenance_gate_passes_when_observed_matches(tmp_path: Path) -> None:
+    """The same embedded gate accepts a fetch whose observed content matches."""
+    import os
+    import subprocess
+    import sys
+
+    shell = living_lab.build_living_lab_workflow_spec()["states"][
+        "zone-toro-standard-b"
+    ]["run"]["shell"]
+    zone_cfg = {
+        "config.zone_name": "toro-standard-b",
+        "config.dataset_id": "nvidia/PhysicalAI-NuRec-PPISP",
+        "config.scene": "toro",
+        "config.variant": "standard",
+        "config.run_prefix_uri": "s3://bucket/prefix/",
+        "config.nurec_image": "nvcr.io/nvidia/nre/nre-ga:26.04",
+        "config.rig_translation_offset": "0,0,0",
+        "config.rig_rotation_offset": "120,0,0",
+    }
+    for tok, val in zone_cfg.items():
+        shell = shell.replace("{{" + tok + "}}", val)
+
+    marker = "<<'PY'"
+    start = shell.index(marker) + len(marker)
+    end = shell.index("\nPY", start)
+    gate = tmp_path / "gate.py"
+    gate.write_text(shell[start:end], encoding="utf-8")
+
+    fetch_json = tmp_path / "fetch.json"
+    fetch_json.write_text(
+        json.dumps(
+            {
+                "status": "ok",
+                "dataset_id": "nvidia/PhysicalAI-NuRec-PPISP",
+                "scene": "toro",
+                "variant": "standard",
+                "observed_scene": "toro",
+                "observed_variant": "standard",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    env = dict(os.environ)
+    env["ZONE"] = "toro-standard-b"
+    env["NUREC_FETCH_JSON"] = str(fetch_json)
+    env["DATASET_ID"] = "nvidia/PhysicalAI-NuRec-PPISP"
+    proc = subprocess.run(
+        [sys.executable, str(gate), "toro", "standard"],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "provenance-ok" in proc.stdout

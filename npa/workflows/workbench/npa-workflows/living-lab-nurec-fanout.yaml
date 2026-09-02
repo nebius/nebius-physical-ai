@@ -132,18 +132,28 @@ states:
         \necho \"=== zone $ZONE: fetch real NCore V4 shards + derived rig pose edge ===\"\nnpa workbench\
         \ nurec fetch --dataset \"${DATASET_ID}\" --scene \"${SCENE}\" --variant \"${VARIANT}\" --output-uri\
         \ \"${NC}\" --output json >/tmp/nurec-fetch.json\n\n# ---- fail-closed provenance gate -------------------------------------------\n\
-        # The fetch result records the *actual* dataset/scene/variant that were pulled\n# (defaulting\
-        \ to struktur28/auto when flags were absent). A shard must never\n# reconstruct a capture it did\
-        \ not ask for: assert exact equality here and fail\n# the shard (and therefore the join) on any\
-        \ mismatch.\npython3 - \"$DATASET_ID\" \"$SCENE\" \"$VARIANT\" <<'PY'\nimport json, os, sys\n\
-        requested = {\"dataset_id\": sys.argv[1], \"scene\": sys.argv[2], \"variant\": sys.argv[3]}\n\
-        with open(\"/tmp/nurec-fetch.json\") as fh:\n    fetched = json.load(fh)\nactual = {k: str(fetched.get(k)\
-        \ or \"\") for k in (\"dataset_id\", \"scene\", \"variant\")}\nmismatch = {k: (actual[k], requested[k])\
-        \ for k in requested if actual[k] != requested[k]}\nif mismatch:\n    print(\"PROVENANCE MISMATCH\
-        \ for zone\", os.environ[\"ZONE\"], \":\",\n          json.dumps({\"actual\": actual, \"requested\"\
-        : requested}), file=sys.stderr)\n    sys.exit(1)\nprint(\"provenance-ok\", json.dumps(actual))\n\
-        PY\ntest \"$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['status']\
-        \ or '')\")\" = \"ok\"\n\nNCORE_JSON=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['ncore_json'])\"\
+        # Provenance is validated against the *independently observed* unpacked content,\n# not merely\
+        \ the echoed request arguments: the fetch result carries\n# observed_scene/observed_variant derived\
+        \ from the scene directory that actually\n# landed in the extracted archive. A shard must never\
+        \ reconstruct a capture it\n# did not ask for; if the observed content disagrees with the requested\
+        \ scene or\n# variant, or the fetch did not record observed content at all, fail the shard\n#\
+        \ (and therefore the join).\npython3 - \"$SCENE\" \"$VARIANT\" <<'PY'\nimport json, os, sys\n\
+        requested = {\"scene\": sys.argv[1], \"variant\": sys.argv[2]}\nwith open(os.environ.get(\"NUREC_FETCH_JSON\"\
+        , \"/tmp/nurec-fetch.json\")) as fh:\n    fetched = json.load(fh)\n# Observed content is authoritative.\
+        \ When a fetch does not record it (older\n# output), fall back only for diagnostics -- the gate\
+        \ then fails closed because\n# observed content is missing.\nobserved_scene = str(fetched.get(\"\
+        observed_scene\") or \"\")\nobserved_variant = str(fetched.get(\"observed_variant\") or \"\")\n\
+        if not observed_scene and not observed_variant:\n    print(\"PROVENANCE MISMATCH for zone\", os.environ[\"\
+        ZONE\"], \":\",\n          \"fetch result carries no observed unpacked content\", file=sys.stderr)\n\
+        \    sys.exit(1)\nmismatch = {\n    k: (v, requested[k])\n    for k, v in ((\"scene\", observed_scene),\
+        \ (\"variant\", observed_variant))\n    if v != requested[k]\n}\nif mismatch:\n    print(\"PROVENANCE\
+        \ MISMATCH for zone\", os.environ[\"ZONE\"], \":\",\n          json.dumps({\"observed\": mismatch,\
+        \ \"requested\": requested}), file=sys.stderr)\n    sys.exit(1)\nif str(fetched.get(\"dataset_id\"\
+        ) or \"\") != os.environ.get(\"DATASET_ID\", \"\"):\n    print(\"PROVENANCE MISMATCH for zone\"\
+        , os.environ[\"ZONE\"], \": dataset_id\",\n          file=sys.stderr)\n    sys.exit(1)\nprint(\"\
+        provenance-ok\", json.dumps({\"scene\": observed_scene, \"variant\": observed_variant}))\nPY\n\
+        test \"$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['status'] or\
+        \ '')\")\" = \"ok\"\n\nNCORE_JSON=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['ncore_json'])\"\
         )\nPOSES_GROUP=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['poses_component_group'])\"\
         )\nCAMERA=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['reference_camera'])\"\
         )\ntest -n \"${NCORE_JSON}\" && test -n \"${POSES_GROUP}\" && test -n \"${CAMERA}\"\nexport NCORE_JSON\
@@ -239,18 +249,28 @@ states:
         \necho \"=== zone $ZONE: fetch real NCore V4 shards + derived rig pose edge ===\"\nnpa workbench\
         \ nurec fetch --dataset \"${DATASET_ID}\" --scene \"${SCENE}\" --variant \"${VARIANT}\" --output-uri\
         \ \"${NC}\" --output json >/tmp/nurec-fetch.json\n\n# ---- fail-closed provenance gate -------------------------------------------\n\
-        # The fetch result records the *actual* dataset/scene/variant that were pulled\n# (defaulting\
-        \ to struktur28/auto when flags were absent). A shard must never\n# reconstruct a capture it did\
-        \ not ask for: assert exact equality here and fail\n# the shard (and therefore the join) on any\
-        \ mismatch.\npython3 - \"$DATASET_ID\" \"$SCENE\" \"$VARIANT\" <<'PY'\nimport json, os, sys\n\
-        requested = {\"dataset_id\": sys.argv[1], \"scene\": sys.argv[2], \"variant\": sys.argv[3]}\n\
-        with open(\"/tmp/nurec-fetch.json\") as fh:\n    fetched = json.load(fh)\nactual = {k: str(fetched.get(k)\
-        \ or \"\") for k in (\"dataset_id\", \"scene\", \"variant\")}\nmismatch = {k: (actual[k], requested[k])\
-        \ for k in requested if actual[k] != requested[k]}\nif mismatch:\n    print(\"PROVENANCE MISMATCH\
-        \ for zone\", os.environ[\"ZONE\"], \":\",\n          json.dumps({\"actual\": actual, \"requested\"\
-        : requested}), file=sys.stderr)\n    sys.exit(1)\nprint(\"provenance-ok\", json.dumps(actual))\n\
-        PY\ntest \"$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['status']\
-        \ or '')\")\" = \"ok\"\n\nNCORE_JSON=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['ncore_json'])\"\
+        # Provenance is validated against the *independently observed* unpacked content,\n# not merely\
+        \ the echoed request arguments: the fetch result carries\n# observed_scene/observed_variant derived\
+        \ from the scene directory that actually\n# landed in the extracted archive. A shard must never\
+        \ reconstruct a capture it\n# did not ask for; if the observed content disagrees with the requested\
+        \ scene or\n# variant, or the fetch did not record observed content at all, fail the shard\n#\
+        \ (and therefore the join).\npython3 - \"$SCENE\" \"$VARIANT\" <<'PY'\nimport json, os, sys\n\
+        requested = {\"scene\": sys.argv[1], \"variant\": sys.argv[2]}\nwith open(os.environ.get(\"NUREC_FETCH_JSON\"\
+        , \"/tmp/nurec-fetch.json\")) as fh:\n    fetched = json.load(fh)\n# Observed content is authoritative.\
+        \ When a fetch does not record it (older\n# output), fall back only for diagnostics -- the gate\
+        \ then fails closed because\n# observed content is missing.\nobserved_scene = str(fetched.get(\"\
+        observed_scene\") or \"\")\nobserved_variant = str(fetched.get(\"observed_variant\") or \"\")\n\
+        if not observed_scene and not observed_variant:\n    print(\"PROVENANCE MISMATCH for zone\", os.environ[\"\
+        ZONE\"], \":\",\n          \"fetch result carries no observed unpacked content\", file=sys.stderr)\n\
+        \    sys.exit(1)\nmismatch = {\n    k: (v, requested[k])\n    for k, v in ((\"scene\", observed_scene),\
+        \ (\"variant\", observed_variant))\n    if v != requested[k]\n}\nif mismatch:\n    print(\"PROVENANCE\
+        \ MISMATCH for zone\", os.environ[\"ZONE\"], \":\",\n          json.dumps({\"observed\": mismatch,\
+        \ \"requested\": requested}), file=sys.stderr)\n    sys.exit(1)\nif str(fetched.get(\"dataset_id\"\
+        ) or \"\") != os.environ.get(\"DATASET_ID\", \"\"):\n    print(\"PROVENANCE MISMATCH for zone\"\
+        , os.environ[\"ZONE\"], \": dataset_id\",\n          file=sys.stderr)\n    sys.exit(1)\nprint(\"\
+        provenance-ok\", json.dumps({\"scene\": observed_scene, \"variant\": observed_variant}))\nPY\n\
+        test \"$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['status'] or\
+        \ '')\")\" = \"ok\"\n\nNCORE_JSON=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['ncore_json'])\"\
         )\nPOSES_GROUP=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['poses_component_group'])\"\
         )\nCAMERA=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['reference_camera'])\"\
         )\ntest -n \"${NCORE_JSON}\" && test -n \"${POSES_GROUP}\" && test -n \"${CAMERA}\"\nexport NCORE_JSON\
@@ -346,18 +366,28 @@ states:
         \necho \"=== zone $ZONE: fetch real NCore V4 shards + derived rig pose edge ===\"\nnpa workbench\
         \ nurec fetch --dataset \"${DATASET_ID}\" --scene \"${SCENE}\" --variant \"${VARIANT}\" --output-uri\
         \ \"${NC}\" --output json >/tmp/nurec-fetch.json\n\n# ---- fail-closed provenance gate -------------------------------------------\n\
-        # The fetch result records the *actual* dataset/scene/variant that were pulled\n# (defaulting\
-        \ to struktur28/auto when flags were absent). A shard must never\n# reconstruct a capture it did\
-        \ not ask for: assert exact equality here and fail\n# the shard (and therefore the join) on any\
-        \ mismatch.\npython3 - \"$DATASET_ID\" \"$SCENE\" \"$VARIANT\" <<'PY'\nimport json, os, sys\n\
-        requested = {\"dataset_id\": sys.argv[1], \"scene\": sys.argv[2], \"variant\": sys.argv[3]}\n\
-        with open(\"/tmp/nurec-fetch.json\") as fh:\n    fetched = json.load(fh)\nactual = {k: str(fetched.get(k)\
-        \ or \"\") for k in (\"dataset_id\", \"scene\", \"variant\")}\nmismatch = {k: (actual[k], requested[k])\
-        \ for k in requested if actual[k] != requested[k]}\nif mismatch:\n    print(\"PROVENANCE MISMATCH\
-        \ for zone\", os.environ[\"ZONE\"], \":\",\n          json.dumps({\"actual\": actual, \"requested\"\
-        : requested}), file=sys.stderr)\n    sys.exit(1)\nprint(\"provenance-ok\", json.dumps(actual))\n\
-        PY\ntest \"$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['status']\
-        \ or '')\")\" = \"ok\"\n\nNCORE_JSON=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['ncore_json'])\"\
+        # Provenance is validated against the *independently observed* unpacked content,\n# not merely\
+        \ the echoed request arguments: the fetch result carries\n# observed_scene/observed_variant derived\
+        \ from the scene directory that actually\n# landed in the extracted archive. A shard must never\
+        \ reconstruct a capture it\n# did not ask for; if the observed content disagrees with the requested\
+        \ scene or\n# variant, or the fetch did not record observed content at all, fail the shard\n#\
+        \ (and therefore the join).\npython3 - \"$SCENE\" \"$VARIANT\" <<'PY'\nimport json, os, sys\n\
+        requested = {\"scene\": sys.argv[1], \"variant\": sys.argv[2]}\nwith open(os.environ.get(\"NUREC_FETCH_JSON\"\
+        , \"/tmp/nurec-fetch.json\")) as fh:\n    fetched = json.load(fh)\n# Observed content is authoritative.\
+        \ When a fetch does not record it (older\n# output), fall back only for diagnostics -- the gate\
+        \ then fails closed because\n# observed content is missing.\nobserved_scene = str(fetched.get(\"\
+        observed_scene\") or \"\")\nobserved_variant = str(fetched.get(\"observed_variant\") or \"\")\n\
+        if not observed_scene and not observed_variant:\n    print(\"PROVENANCE MISMATCH for zone\", os.environ[\"\
+        ZONE\"], \":\",\n          \"fetch result carries no observed unpacked content\", file=sys.stderr)\n\
+        \    sys.exit(1)\nmismatch = {\n    k: (v, requested[k])\n    for k, v in ((\"scene\", observed_scene),\
+        \ (\"variant\", observed_variant))\n    if v != requested[k]\n}\nif mismatch:\n    print(\"PROVENANCE\
+        \ MISMATCH for zone\", os.environ[\"ZONE\"], \":\",\n          json.dumps({\"observed\": mismatch,\
+        \ \"requested\": requested}), file=sys.stderr)\n    sys.exit(1)\nif str(fetched.get(\"dataset_id\"\
+        ) or \"\") != os.environ.get(\"DATASET_ID\", \"\"):\n    print(\"PROVENANCE MISMATCH for zone\"\
+        , os.environ[\"ZONE\"], \": dataset_id\",\n          file=sys.stderr)\n    sys.exit(1)\nprint(\"\
+        provenance-ok\", json.dumps({\"scene\": observed_scene, \"variant\": observed_variant}))\nPY\n\
+        test \"$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['status'] or\
+        \ '')\")\" = \"ok\"\n\nNCORE_JSON=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['ncore_json'])\"\
         )\nPOSES_GROUP=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['poses_component_group'])\"\
         )\nCAMERA=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['reference_camera'])\"\
         )\ntest -n \"${NCORE_JSON}\" && test -n \"${POSES_GROUP}\" && test -n \"${CAMERA}\"\nexport NCORE_JSON\
@@ -453,18 +483,28 @@ states:
         \necho \"=== zone $ZONE: fetch real NCore V4 shards + derived rig pose edge ===\"\nnpa workbench\
         \ nurec fetch --dataset \"${DATASET_ID}\" --scene \"${SCENE}\" --variant \"${VARIANT}\" --output-uri\
         \ \"${NC}\" --output json >/tmp/nurec-fetch.json\n\n# ---- fail-closed provenance gate -------------------------------------------\n\
-        # The fetch result records the *actual* dataset/scene/variant that were pulled\n# (defaulting\
-        \ to struktur28/auto when flags were absent). A shard must never\n# reconstruct a capture it did\
-        \ not ask for: assert exact equality here and fail\n# the shard (and therefore the join) on any\
-        \ mismatch.\npython3 - \"$DATASET_ID\" \"$SCENE\" \"$VARIANT\" <<'PY'\nimport json, os, sys\n\
-        requested = {\"dataset_id\": sys.argv[1], \"scene\": sys.argv[2], \"variant\": sys.argv[3]}\n\
-        with open(\"/tmp/nurec-fetch.json\") as fh:\n    fetched = json.load(fh)\nactual = {k: str(fetched.get(k)\
-        \ or \"\") for k in (\"dataset_id\", \"scene\", \"variant\")}\nmismatch = {k: (actual[k], requested[k])\
-        \ for k in requested if actual[k] != requested[k]}\nif mismatch:\n    print(\"PROVENANCE MISMATCH\
-        \ for zone\", os.environ[\"ZONE\"], \":\",\n          json.dumps({\"actual\": actual, \"requested\"\
-        : requested}), file=sys.stderr)\n    sys.exit(1)\nprint(\"provenance-ok\", json.dumps(actual))\n\
-        PY\ntest \"$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['status']\
-        \ or '')\")\" = \"ok\"\n\nNCORE_JSON=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['ncore_json'])\"\
+        # Provenance is validated against the *independently observed* unpacked content,\n# not merely\
+        \ the echoed request arguments: the fetch result carries\n# observed_scene/observed_variant derived\
+        \ from the scene directory that actually\n# landed in the extracted archive. A shard must never\
+        \ reconstruct a capture it\n# did not ask for; if the observed content disagrees with the requested\
+        \ scene or\n# variant, or the fetch did not record observed content at all, fail the shard\n#\
+        \ (and therefore the join).\npython3 - \"$SCENE\" \"$VARIANT\" <<'PY'\nimport json, os, sys\n\
+        requested = {\"scene\": sys.argv[1], \"variant\": sys.argv[2]}\nwith open(os.environ.get(\"NUREC_FETCH_JSON\"\
+        , \"/tmp/nurec-fetch.json\")) as fh:\n    fetched = json.load(fh)\n# Observed content is authoritative.\
+        \ When a fetch does not record it (older\n# output), fall back only for diagnostics -- the gate\
+        \ then fails closed because\n# observed content is missing.\nobserved_scene = str(fetched.get(\"\
+        observed_scene\") or \"\")\nobserved_variant = str(fetched.get(\"observed_variant\") or \"\")\n\
+        if not observed_scene and not observed_variant:\n    print(\"PROVENANCE MISMATCH for zone\", os.environ[\"\
+        ZONE\"], \":\",\n          \"fetch result carries no observed unpacked content\", file=sys.stderr)\n\
+        \    sys.exit(1)\nmismatch = {\n    k: (v, requested[k])\n    for k, v in ((\"scene\", observed_scene),\
+        \ (\"variant\", observed_variant))\n    if v != requested[k]\n}\nif mismatch:\n    print(\"PROVENANCE\
+        \ MISMATCH for zone\", os.environ[\"ZONE\"], \":\",\n          json.dumps({\"observed\": mismatch,\
+        \ \"requested\": requested}), file=sys.stderr)\n    sys.exit(1)\nif str(fetched.get(\"dataset_id\"\
+        ) or \"\") != os.environ.get(\"DATASET_ID\", \"\"):\n    print(\"PROVENANCE MISMATCH for zone\"\
+        , os.environ[\"ZONE\"], \": dataset_id\",\n          file=sys.stderr)\n    sys.exit(1)\nprint(\"\
+        provenance-ok\", json.dumps({\"scene\": observed_scene, \"variant\": observed_variant}))\nPY\n\
+        test \"$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['status'] or\
+        \ '')\")\" = \"ok\"\n\nNCORE_JSON=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['ncore_json'])\"\
         )\nPOSES_GROUP=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['poses_component_group'])\"\
         )\nCAMERA=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['reference_camera'])\"\
         )\ntest -n \"${NCORE_JSON}\" && test -n \"${POSES_GROUP}\" && test -n \"${CAMERA}\"\nexport NCORE_JSON\
@@ -560,18 +600,28 @@ states:
         \necho \"=== zone $ZONE: fetch real NCore V4 shards + derived rig pose edge ===\"\nnpa workbench\
         \ nurec fetch --dataset \"${DATASET_ID}\" --scene \"${SCENE}\" --variant \"${VARIANT}\" --output-uri\
         \ \"${NC}\" --output json >/tmp/nurec-fetch.json\n\n# ---- fail-closed provenance gate -------------------------------------------\n\
-        # The fetch result records the *actual* dataset/scene/variant that were pulled\n# (defaulting\
-        \ to struktur28/auto when flags were absent). A shard must never\n# reconstruct a capture it did\
-        \ not ask for: assert exact equality here and fail\n# the shard (and therefore the join) on any\
-        \ mismatch.\npython3 - \"$DATASET_ID\" \"$SCENE\" \"$VARIANT\" <<'PY'\nimport json, os, sys\n\
-        requested = {\"dataset_id\": sys.argv[1], \"scene\": sys.argv[2], \"variant\": sys.argv[3]}\n\
-        with open(\"/tmp/nurec-fetch.json\") as fh:\n    fetched = json.load(fh)\nactual = {k: str(fetched.get(k)\
-        \ or \"\") for k in (\"dataset_id\", \"scene\", \"variant\")}\nmismatch = {k: (actual[k], requested[k])\
-        \ for k in requested if actual[k] != requested[k]}\nif mismatch:\n    print(\"PROVENANCE MISMATCH\
-        \ for zone\", os.environ[\"ZONE\"], \":\",\n          json.dumps({\"actual\": actual, \"requested\"\
-        : requested}), file=sys.stderr)\n    sys.exit(1)\nprint(\"provenance-ok\", json.dumps(actual))\n\
-        PY\ntest \"$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['status']\
-        \ or '')\")\" = \"ok\"\n\nNCORE_JSON=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['ncore_json'])\"\
+        # Provenance is validated against the *independently observed* unpacked content,\n# not merely\
+        \ the echoed request arguments: the fetch result carries\n# observed_scene/observed_variant derived\
+        \ from the scene directory that actually\n# landed in the extracted archive. A shard must never\
+        \ reconstruct a capture it\n# did not ask for; if the observed content disagrees with the requested\
+        \ scene or\n# variant, or the fetch did not record observed content at all, fail the shard\n#\
+        \ (and therefore the join).\npython3 - \"$SCENE\" \"$VARIANT\" <<'PY'\nimport json, os, sys\n\
+        requested = {\"scene\": sys.argv[1], \"variant\": sys.argv[2]}\nwith open(os.environ.get(\"NUREC_FETCH_JSON\"\
+        , \"/tmp/nurec-fetch.json\")) as fh:\n    fetched = json.load(fh)\n# Observed content is authoritative.\
+        \ When a fetch does not record it (older\n# output), fall back only for diagnostics -- the gate\
+        \ then fails closed because\n# observed content is missing.\nobserved_scene = str(fetched.get(\"\
+        observed_scene\") or \"\")\nobserved_variant = str(fetched.get(\"observed_variant\") or \"\")\n\
+        if not observed_scene and not observed_variant:\n    print(\"PROVENANCE MISMATCH for zone\", os.environ[\"\
+        ZONE\"], \":\",\n          \"fetch result carries no observed unpacked content\", file=sys.stderr)\n\
+        \    sys.exit(1)\nmismatch = {\n    k: (v, requested[k])\n    for k, v in ((\"scene\", observed_scene),\
+        \ (\"variant\", observed_variant))\n    if v != requested[k]\n}\nif mismatch:\n    print(\"PROVENANCE\
+        \ MISMATCH for zone\", os.environ[\"ZONE\"], \":\",\n          json.dumps({\"observed\": mismatch,\
+        \ \"requested\": requested}), file=sys.stderr)\n    sys.exit(1)\nif str(fetched.get(\"dataset_id\"\
+        ) or \"\") != os.environ.get(\"DATASET_ID\", \"\"):\n    print(\"PROVENANCE MISMATCH for zone\"\
+        , os.environ[\"ZONE\"], \": dataset_id\",\n          file=sys.stderr)\n    sys.exit(1)\nprint(\"\
+        provenance-ok\", json.dumps({\"scene\": observed_scene, \"variant\": observed_variant}))\nPY\n\
+        test \"$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['status'] or\
+        \ '')\")\" = \"ok\"\n\nNCORE_JSON=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['ncore_json'])\"\
         )\nPOSES_GROUP=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['poses_component_group'])\"\
         )\nCAMERA=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['reference_camera'])\"\
         )\ntest -n \"${NCORE_JSON}\" && test -n \"${POSES_GROUP}\" && test -n \"${CAMERA}\"\nexport NCORE_JSON\
@@ -667,18 +717,28 @@ states:
         \necho \"=== zone $ZONE: fetch real NCore V4 shards + derived rig pose edge ===\"\nnpa workbench\
         \ nurec fetch --dataset \"${DATASET_ID}\" --scene \"${SCENE}\" --variant \"${VARIANT}\" --output-uri\
         \ \"${NC}\" --output json >/tmp/nurec-fetch.json\n\n# ---- fail-closed provenance gate -------------------------------------------\n\
-        # The fetch result records the *actual* dataset/scene/variant that were pulled\n# (defaulting\
-        \ to struktur28/auto when flags were absent). A shard must never\n# reconstruct a capture it did\
-        \ not ask for: assert exact equality here and fail\n# the shard (and therefore the join) on any\
-        \ mismatch.\npython3 - \"$DATASET_ID\" \"$SCENE\" \"$VARIANT\" <<'PY'\nimport json, os, sys\n\
-        requested = {\"dataset_id\": sys.argv[1], \"scene\": sys.argv[2], \"variant\": sys.argv[3]}\n\
-        with open(\"/tmp/nurec-fetch.json\") as fh:\n    fetched = json.load(fh)\nactual = {k: str(fetched.get(k)\
-        \ or \"\") for k in (\"dataset_id\", \"scene\", \"variant\")}\nmismatch = {k: (actual[k], requested[k])\
-        \ for k in requested if actual[k] != requested[k]}\nif mismatch:\n    print(\"PROVENANCE MISMATCH\
-        \ for zone\", os.environ[\"ZONE\"], \":\",\n          json.dumps({\"actual\": actual, \"requested\"\
-        : requested}), file=sys.stderr)\n    sys.exit(1)\nprint(\"provenance-ok\", json.dumps(actual))\n\
-        PY\ntest \"$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['status']\
-        \ or '')\")\" = \"ok\"\n\nNCORE_JSON=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['ncore_json'])\"\
+        # Provenance is validated against the *independently observed* unpacked content,\n# not merely\
+        \ the echoed request arguments: the fetch result carries\n# observed_scene/observed_variant derived\
+        \ from the scene directory that actually\n# landed in the extracted archive. A shard must never\
+        \ reconstruct a capture it\n# did not ask for; if the observed content disagrees with the requested\
+        \ scene or\n# variant, or the fetch did not record observed content at all, fail the shard\n#\
+        \ (and therefore the join).\npython3 - \"$SCENE\" \"$VARIANT\" <<'PY'\nimport json, os, sys\n\
+        requested = {\"scene\": sys.argv[1], \"variant\": sys.argv[2]}\nwith open(os.environ.get(\"NUREC_FETCH_JSON\"\
+        , \"/tmp/nurec-fetch.json\")) as fh:\n    fetched = json.load(fh)\n# Observed content is authoritative.\
+        \ When a fetch does not record it (older\n# output), fall back only for diagnostics -- the gate\
+        \ then fails closed because\n# observed content is missing.\nobserved_scene = str(fetched.get(\"\
+        observed_scene\") or \"\")\nobserved_variant = str(fetched.get(\"observed_variant\") or \"\")\n\
+        if not observed_scene and not observed_variant:\n    print(\"PROVENANCE MISMATCH for zone\", os.environ[\"\
+        ZONE\"], \":\",\n          \"fetch result carries no observed unpacked content\", file=sys.stderr)\n\
+        \    sys.exit(1)\nmismatch = {\n    k: (v, requested[k])\n    for k, v in ((\"scene\", observed_scene),\
+        \ (\"variant\", observed_variant))\n    if v != requested[k]\n}\nif mismatch:\n    print(\"PROVENANCE\
+        \ MISMATCH for zone\", os.environ[\"ZONE\"], \":\",\n          json.dumps({\"observed\": mismatch,\
+        \ \"requested\": requested}), file=sys.stderr)\n    sys.exit(1)\nif str(fetched.get(\"dataset_id\"\
+        ) or \"\") != os.environ.get(\"DATASET_ID\", \"\"):\n    print(\"PROVENANCE MISMATCH for zone\"\
+        , os.environ[\"ZONE\"], \": dataset_id\",\n          file=sys.stderr)\n    sys.exit(1)\nprint(\"\
+        provenance-ok\", json.dumps({\"scene\": observed_scene, \"variant\": observed_variant}))\nPY\n\
+        test \"$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['status'] or\
+        \ '')\")\" = \"ok\"\n\nNCORE_JSON=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['ncore_json'])\"\
         )\nPOSES_GROUP=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['poses_component_group'])\"\
         )\nCAMERA=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['reference_camera'])\"\
         )\ntest -n \"${NCORE_JSON}\" && test -n \"${POSES_GROUP}\" && test -n \"${CAMERA}\"\nexport NCORE_JSON\
@@ -774,18 +834,28 @@ states:
         \necho \"=== zone $ZONE: fetch real NCore V4 shards + derived rig pose edge ===\"\nnpa workbench\
         \ nurec fetch --dataset \"${DATASET_ID}\" --scene \"${SCENE}\" --variant \"${VARIANT}\" --output-uri\
         \ \"${NC}\" --output json >/tmp/nurec-fetch.json\n\n# ---- fail-closed provenance gate -------------------------------------------\n\
-        # The fetch result records the *actual* dataset/scene/variant that were pulled\n# (defaulting\
-        \ to struktur28/auto when flags were absent). A shard must never\n# reconstruct a capture it did\
-        \ not ask for: assert exact equality here and fail\n# the shard (and therefore the join) on any\
-        \ mismatch.\npython3 - \"$DATASET_ID\" \"$SCENE\" \"$VARIANT\" <<'PY'\nimport json, os, sys\n\
-        requested = {\"dataset_id\": sys.argv[1], \"scene\": sys.argv[2], \"variant\": sys.argv[3]}\n\
-        with open(\"/tmp/nurec-fetch.json\") as fh:\n    fetched = json.load(fh)\nactual = {k: str(fetched.get(k)\
-        \ or \"\") for k in (\"dataset_id\", \"scene\", \"variant\")}\nmismatch = {k: (actual[k], requested[k])\
-        \ for k in requested if actual[k] != requested[k]}\nif mismatch:\n    print(\"PROVENANCE MISMATCH\
-        \ for zone\", os.environ[\"ZONE\"], \":\",\n          json.dumps({\"actual\": actual, \"requested\"\
-        : requested}), file=sys.stderr)\n    sys.exit(1)\nprint(\"provenance-ok\", json.dumps(actual))\n\
-        PY\ntest \"$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['status']\
-        \ or '')\")\" = \"ok\"\n\nNCORE_JSON=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['ncore_json'])\"\
+        # Provenance is validated against the *independently observed* unpacked content,\n# not merely\
+        \ the echoed request arguments: the fetch result carries\n# observed_scene/observed_variant derived\
+        \ from the scene directory that actually\n# landed in the extracted archive. A shard must never\
+        \ reconstruct a capture it\n# did not ask for; if the observed content disagrees with the requested\
+        \ scene or\n# variant, or the fetch did not record observed content at all, fail the shard\n#\
+        \ (and therefore the join).\npython3 - \"$SCENE\" \"$VARIANT\" <<'PY'\nimport json, os, sys\n\
+        requested = {\"scene\": sys.argv[1], \"variant\": sys.argv[2]}\nwith open(os.environ.get(\"NUREC_FETCH_JSON\"\
+        , \"/tmp/nurec-fetch.json\")) as fh:\n    fetched = json.load(fh)\n# Observed content is authoritative.\
+        \ When a fetch does not record it (older\n# output), fall back only for diagnostics -- the gate\
+        \ then fails closed because\n# observed content is missing.\nobserved_scene = str(fetched.get(\"\
+        observed_scene\") or \"\")\nobserved_variant = str(fetched.get(\"observed_variant\") or \"\")\n\
+        if not observed_scene and not observed_variant:\n    print(\"PROVENANCE MISMATCH for zone\", os.environ[\"\
+        ZONE\"], \":\",\n          \"fetch result carries no observed unpacked content\", file=sys.stderr)\n\
+        \    sys.exit(1)\nmismatch = {\n    k: (v, requested[k])\n    for k, v in ((\"scene\", observed_scene),\
+        \ (\"variant\", observed_variant))\n    if v != requested[k]\n}\nif mismatch:\n    print(\"PROVENANCE\
+        \ MISMATCH for zone\", os.environ[\"ZONE\"], \":\",\n          json.dumps({\"observed\": mismatch,\
+        \ \"requested\": requested}), file=sys.stderr)\n    sys.exit(1)\nif str(fetched.get(\"dataset_id\"\
+        ) or \"\") != os.environ.get(\"DATASET_ID\", \"\"):\n    print(\"PROVENANCE MISMATCH for zone\"\
+        , os.environ[\"ZONE\"], \": dataset_id\",\n          file=sys.stderr)\n    sys.exit(1)\nprint(\"\
+        provenance-ok\", json.dumps({\"scene\": observed_scene, \"variant\": observed_variant}))\nPY\n\
+        test \"$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['status'] or\
+        \ '')\")\" = \"ok\"\n\nNCORE_JSON=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['ncore_json'])\"\
         )\nPOSES_GROUP=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['poses_component_group'])\"\
         )\nCAMERA=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['reference_camera'])\"\
         )\ntest -n \"${NCORE_JSON}\" && test -n \"${POSES_GROUP}\" && test -n \"${CAMERA}\"\nexport NCORE_JSON\
@@ -881,18 +951,28 @@ states:
         \necho \"=== zone $ZONE: fetch real NCore V4 shards + derived rig pose edge ===\"\nnpa workbench\
         \ nurec fetch --dataset \"${DATASET_ID}\" --scene \"${SCENE}\" --variant \"${VARIANT}\" --output-uri\
         \ \"${NC}\" --output json >/tmp/nurec-fetch.json\n\n# ---- fail-closed provenance gate -------------------------------------------\n\
-        # The fetch result records the *actual* dataset/scene/variant that were pulled\n# (defaulting\
-        \ to struktur28/auto when flags were absent). A shard must never\n# reconstruct a capture it did\
-        \ not ask for: assert exact equality here and fail\n# the shard (and therefore the join) on any\
-        \ mismatch.\npython3 - \"$DATASET_ID\" \"$SCENE\" \"$VARIANT\" <<'PY'\nimport json, os, sys\n\
-        requested = {\"dataset_id\": sys.argv[1], \"scene\": sys.argv[2], \"variant\": sys.argv[3]}\n\
-        with open(\"/tmp/nurec-fetch.json\") as fh:\n    fetched = json.load(fh)\nactual = {k: str(fetched.get(k)\
-        \ or \"\") for k in (\"dataset_id\", \"scene\", \"variant\")}\nmismatch = {k: (actual[k], requested[k])\
-        \ for k in requested if actual[k] != requested[k]}\nif mismatch:\n    print(\"PROVENANCE MISMATCH\
-        \ for zone\", os.environ[\"ZONE\"], \":\",\n          json.dumps({\"actual\": actual, \"requested\"\
-        : requested}), file=sys.stderr)\n    sys.exit(1)\nprint(\"provenance-ok\", json.dumps(actual))\n\
-        PY\ntest \"$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['status']\
-        \ or '')\")\" = \"ok\"\n\nNCORE_JSON=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['ncore_json'])\"\
+        # Provenance is validated against the *independently observed* unpacked content,\n# not merely\
+        \ the echoed request arguments: the fetch result carries\n# observed_scene/observed_variant derived\
+        \ from the scene directory that actually\n# landed in the extracted archive. A shard must never\
+        \ reconstruct a capture it\n# did not ask for; if the observed content disagrees with the requested\
+        \ scene or\n# variant, or the fetch did not record observed content at all, fail the shard\n#\
+        \ (and therefore the join).\npython3 - \"$SCENE\" \"$VARIANT\" <<'PY'\nimport json, os, sys\n\
+        requested = {\"scene\": sys.argv[1], \"variant\": sys.argv[2]}\nwith open(os.environ.get(\"NUREC_FETCH_JSON\"\
+        , \"/tmp/nurec-fetch.json\")) as fh:\n    fetched = json.load(fh)\n# Observed content is authoritative.\
+        \ When a fetch does not record it (older\n# output), fall back only for diagnostics -- the gate\
+        \ then fails closed because\n# observed content is missing.\nobserved_scene = str(fetched.get(\"\
+        observed_scene\") or \"\")\nobserved_variant = str(fetched.get(\"observed_variant\") or \"\")\n\
+        if not observed_scene and not observed_variant:\n    print(\"PROVENANCE MISMATCH for zone\", os.environ[\"\
+        ZONE\"], \":\",\n          \"fetch result carries no observed unpacked content\", file=sys.stderr)\n\
+        \    sys.exit(1)\nmismatch = {\n    k: (v, requested[k])\n    for k, v in ((\"scene\", observed_scene),\
+        \ (\"variant\", observed_variant))\n    if v != requested[k]\n}\nif mismatch:\n    print(\"PROVENANCE\
+        \ MISMATCH for zone\", os.environ[\"ZONE\"], \":\",\n          json.dumps({\"observed\": mismatch,\
+        \ \"requested\": requested}), file=sys.stderr)\n    sys.exit(1)\nif str(fetched.get(\"dataset_id\"\
+        ) or \"\") != os.environ.get(\"DATASET_ID\", \"\"):\n    print(\"PROVENANCE MISMATCH for zone\"\
+        , os.environ[\"ZONE\"], \": dataset_id\",\n          file=sys.stderr)\n    sys.exit(1)\nprint(\"\
+        provenance-ok\", json.dumps({\"scene\": observed_scene, \"variant\": observed_variant}))\nPY\n\
+        test \"$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['status'] or\
+        \ '')\")\" = \"ok\"\n\nNCORE_JSON=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['ncore_json'])\"\
         )\nPOSES_GROUP=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['poses_component_group'])\"\
         )\nCAMERA=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['reference_camera'])\"\
         )\ntest -n \"${NCORE_JSON}\" && test -n \"${POSES_GROUP}\" && test -n \"${CAMERA}\"\nexport NCORE_JSON\
@@ -988,18 +1068,28 @@ states:
         \necho \"=== zone $ZONE: fetch real NCore V4 shards + derived rig pose edge ===\"\nnpa workbench\
         \ nurec fetch --dataset \"${DATASET_ID}\" --scene \"${SCENE}\" --variant \"${VARIANT}\" --output-uri\
         \ \"${NC}\" --output json >/tmp/nurec-fetch.json\n\n# ---- fail-closed provenance gate -------------------------------------------\n\
-        # The fetch result records the *actual* dataset/scene/variant that were pulled\n# (defaulting\
-        \ to struktur28/auto when flags were absent). A shard must never\n# reconstruct a capture it did\
-        \ not ask for: assert exact equality here and fail\n# the shard (and therefore the join) on any\
-        \ mismatch.\npython3 - \"$DATASET_ID\" \"$SCENE\" \"$VARIANT\" <<'PY'\nimport json, os, sys\n\
-        requested = {\"dataset_id\": sys.argv[1], \"scene\": sys.argv[2], \"variant\": sys.argv[3]}\n\
-        with open(\"/tmp/nurec-fetch.json\") as fh:\n    fetched = json.load(fh)\nactual = {k: str(fetched.get(k)\
-        \ or \"\") for k in (\"dataset_id\", \"scene\", \"variant\")}\nmismatch = {k: (actual[k], requested[k])\
-        \ for k in requested if actual[k] != requested[k]}\nif mismatch:\n    print(\"PROVENANCE MISMATCH\
-        \ for zone\", os.environ[\"ZONE\"], \":\",\n          json.dumps({\"actual\": actual, \"requested\"\
-        : requested}), file=sys.stderr)\n    sys.exit(1)\nprint(\"provenance-ok\", json.dumps(actual))\n\
-        PY\ntest \"$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['status']\
-        \ or '')\")\" = \"ok\"\n\nNCORE_JSON=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['ncore_json'])\"\
+        # Provenance is validated against the *independently observed* unpacked content,\n# not merely\
+        \ the echoed request arguments: the fetch result carries\n# observed_scene/observed_variant derived\
+        \ from the scene directory that actually\n# landed in the extracted archive. A shard must never\
+        \ reconstruct a capture it\n# did not ask for; if the observed content disagrees with the requested\
+        \ scene or\n# variant, or the fetch did not record observed content at all, fail the shard\n#\
+        \ (and therefore the join).\npython3 - \"$SCENE\" \"$VARIANT\" <<'PY'\nimport json, os, sys\n\
+        requested = {\"scene\": sys.argv[1], \"variant\": sys.argv[2]}\nwith open(os.environ.get(\"NUREC_FETCH_JSON\"\
+        , \"/tmp/nurec-fetch.json\")) as fh:\n    fetched = json.load(fh)\n# Observed content is authoritative.\
+        \ When a fetch does not record it (older\n# output), fall back only for diagnostics -- the gate\
+        \ then fails closed because\n# observed content is missing.\nobserved_scene = str(fetched.get(\"\
+        observed_scene\") or \"\")\nobserved_variant = str(fetched.get(\"observed_variant\") or \"\")\n\
+        if not observed_scene and not observed_variant:\n    print(\"PROVENANCE MISMATCH for zone\", os.environ[\"\
+        ZONE\"], \":\",\n          \"fetch result carries no observed unpacked content\", file=sys.stderr)\n\
+        \    sys.exit(1)\nmismatch = {\n    k: (v, requested[k])\n    for k, v in ((\"scene\", observed_scene),\
+        \ (\"variant\", observed_variant))\n    if v != requested[k]\n}\nif mismatch:\n    print(\"PROVENANCE\
+        \ MISMATCH for zone\", os.environ[\"ZONE\"], \":\",\n          json.dumps({\"observed\": mismatch,\
+        \ \"requested\": requested}), file=sys.stderr)\n    sys.exit(1)\nif str(fetched.get(\"dataset_id\"\
+        ) or \"\") != os.environ.get(\"DATASET_ID\", \"\"):\n    print(\"PROVENANCE MISMATCH for zone\"\
+        , os.environ[\"ZONE\"], \": dataset_id\",\n          file=sys.stderr)\n    sys.exit(1)\nprint(\"\
+        provenance-ok\", json.dumps({\"scene\": observed_scene, \"variant\": observed_variant}))\nPY\n\
+        test \"$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['status'] or\
+        \ '')\")\" = \"ok\"\n\nNCORE_JSON=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['ncore_json'])\"\
         )\nPOSES_GROUP=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['poses_component_group'])\"\
         )\nCAMERA=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['reference_camera'])\"\
         )\ntest -n \"${NCORE_JSON}\" && test -n \"${POSES_GROUP}\" && test -n \"${CAMERA}\"\nexport NCORE_JSON\
@@ -1095,18 +1185,28 @@ states:
         \necho \"=== zone $ZONE: fetch real NCore V4 shards + derived rig pose edge ===\"\nnpa workbench\
         \ nurec fetch --dataset \"${DATASET_ID}\" --scene \"${SCENE}\" --variant \"${VARIANT}\" --output-uri\
         \ \"${NC}\" --output json >/tmp/nurec-fetch.json\n\n# ---- fail-closed provenance gate -------------------------------------------\n\
-        # The fetch result records the *actual* dataset/scene/variant that were pulled\n# (defaulting\
-        \ to struktur28/auto when flags were absent). A shard must never\n# reconstruct a capture it did\
-        \ not ask for: assert exact equality here and fail\n# the shard (and therefore the join) on any\
-        \ mismatch.\npython3 - \"$DATASET_ID\" \"$SCENE\" \"$VARIANT\" <<'PY'\nimport json, os, sys\n\
-        requested = {\"dataset_id\": sys.argv[1], \"scene\": sys.argv[2], \"variant\": sys.argv[3]}\n\
-        with open(\"/tmp/nurec-fetch.json\") as fh:\n    fetched = json.load(fh)\nactual = {k: str(fetched.get(k)\
-        \ or \"\") for k in (\"dataset_id\", \"scene\", \"variant\")}\nmismatch = {k: (actual[k], requested[k])\
-        \ for k in requested if actual[k] != requested[k]}\nif mismatch:\n    print(\"PROVENANCE MISMATCH\
-        \ for zone\", os.environ[\"ZONE\"], \":\",\n          json.dumps({\"actual\": actual, \"requested\"\
-        : requested}), file=sys.stderr)\n    sys.exit(1)\nprint(\"provenance-ok\", json.dumps(actual))\n\
-        PY\ntest \"$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['status']\
-        \ or '')\")\" = \"ok\"\n\nNCORE_JSON=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['ncore_json'])\"\
+        # Provenance is validated against the *independently observed* unpacked content,\n# not merely\
+        \ the echoed request arguments: the fetch result carries\n# observed_scene/observed_variant derived\
+        \ from the scene directory that actually\n# landed in the extracted archive. A shard must never\
+        \ reconstruct a capture it\n# did not ask for; if the observed content disagrees with the requested\
+        \ scene or\n# variant, or the fetch did not record observed content at all, fail the shard\n#\
+        \ (and therefore the join).\npython3 - \"$SCENE\" \"$VARIANT\" <<'PY'\nimport json, os, sys\n\
+        requested = {\"scene\": sys.argv[1], \"variant\": sys.argv[2]}\nwith open(os.environ.get(\"NUREC_FETCH_JSON\"\
+        , \"/tmp/nurec-fetch.json\")) as fh:\n    fetched = json.load(fh)\n# Observed content is authoritative.\
+        \ When a fetch does not record it (older\n# output), fall back only for diagnostics -- the gate\
+        \ then fails closed because\n# observed content is missing.\nobserved_scene = str(fetched.get(\"\
+        observed_scene\") or \"\")\nobserved_variant = str(fetched.get(\"observed_variant\") or \"\")\n\
+        if not observed_scene and not observed_variant:\n    print(\"PROVENANCE MISMATCH for zone\", os.environ[\"\
+        ZONE\"], \":\",\n          \"fetch result carries no observed unpacked content\", file=sys.stderr)\n\
+        \    sys.exit(1)\nmismatch = {\n    k: (v, requested[k])\n    for k, v in ((\"scene\", observed_scene),\
+        \ (\"variant\", observed_variant))\n    if v != requested[k]\n}\nif mismatch:\n    print(\"PROVENANCE\
+        \ MISMATCH for zone\", os.environ[\"ZONE\"], \":\",\n          json.dumps({\"observed\": mismatch,\
+        \ \"requested\": requested}), file=sys.stderr)\n    sys.exit(1)\nif str(fetched.get(\"dataset_id\"\
+        ) or \"\") != os.environ.get(\"DATASET_ID\", \"\"):\n    print(\"PROVENANCE MISMATCH for zone\"\
+        , os.environ[\"ZONE\"], \": dataset_id\",\n          file=sys.stderr)\n    sys.exit(1)\nprint(\"\
+        provenance-ok\", json.dumps({\"scene\": observed_scene, \"variant\": observed_variant}))\nPY\n\
+        test \"$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['status'] or\
+        \ '')\")\" = \"ok\"\n\nNCORE_JSON=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['ncore_json'])\"\
         )\nPOSES_GROUP=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['poses_component_group'])\"\
         )\nCAMERA=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['reference_camera'])\"\
         )\ntest -n \"${NCORE_JSON}\" && test -n \"${POSES_GROUP}\" && test -n \"${CAMERA}\"\nexport NCORE_JSON\
@@ -1202,18 +1302,28 @@ states:
         \necho \"=== zone $ZONE: fetch real NCore V4 shards + derived rig pose edge ===\"\nnpa workbench\
         \ nurec fetch --dataset \"${DATASET_ID}\" --scene \"${SCENE}\" --variant \"${VARIANT}\" --output-uri\
         \ \"${NC}\" --output json >/tmp/nurec-fetch.json\n\n# ---- fail-closed provenance gate -------------------------------------------\n\
-        # The fetch result records the *actual* dataset/scene/variant that were pulled\n# (defaulting\
-        \ to struktur28/auto when flags were absent). A shard must never\n# reconstruct a capture it did\
-        \ not ask for: assert exact equality here and fail\n# the shard (and therefore the join) on any\
-        \ mismatch.\npython3 - \"$DATASET_ID\" \"$SCENE\" \"$VARIANT\" <<'PY'\nimport json, os, sys\n\
-        requested = {\"dataset_id\": sys.argv[1], \"scene\": sys.argv[2], \"variant\": sys.argv[3]}\n\
-        with open(\"/tmp/nurec-fetch.json\") as fh:\n    fetched = json.load(fh)\nactual = {k: str(fetched.get(k)\
-        \ or \"\") for k in (\"dataset_id\", \"scene\", \"variant\")}\nmismatch = {k: (actual[k], requested[k])\
-        \ for k in requested if actual[k] != requested[k]}\nif mismatch:\n    print(\"PROVENANCE MISMATCH\
-        \ for zone\", os.environ[\"ZONE\"], \":\",\n          json.dumps({\"actual\": actual, \"requested\"\
-        : requested}), file=sys.stderr)\n    sys.exit(1)\nprint(\"provenance-ok\", json.dumps(actual))\n\
-        PY\ntest \"$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['status']\
-        \ or '')\")\" = \"ok\"\n\nNCORE_JSON=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['ncore_json'])\"\
+        # Provenance is validated against the *independently observed* unpacked content,\n# not merely\
+        \ the echoed request arguments: the fetch result carries\n# observed_scene/observed_variant derived\
+        \ from the scene directory that actually\n# landed in the extracted archive. A shard must never\
+        \ reconstruct a capture it\n# did not ask for; if the observed content disagrees with the requested\
+        \ scene or\n# variant, or the fetch did not record observed content at all, fail the shard\n#\
+        \ (and therefore the join).\npython3 - \"$SCENE\" \"$VARIANT\" <<'PY'\nimport json, os, sys\n\
+        requested = {\"scene\": sys.argv[1], \"variant\": sys.argv[2]}\nwith open(os.environ.get(\"NUREC_FETCH_JSON\"\
+        , \"/tmp/nurec-fetch.json\")) as fh:\n    fetched = json.load(fh)\n# Observed content is authoritative.\
+        \ When a fetch does not record it (older\n# output), fall back only for diagnostics -- the gate\
+        \ then fails closed because\n# observed content is missing.\nobserved_scene = str(fetched.get(\"\
+        observed_scene\") or \"\")\nobserved_variant = str(fetched.get(\"observed_variant\") or \"\")\n\
+        if not observed_scene and not observed_variant:\n    print(\"PROVENANCE MISMATCH for zone\", os.environ[\"\
+        ZONE\"], \":\",\n          \"fetch result carries no observed unpacked content\", file=sys.stderr)\n\
+        \    sys.exit(1)\nmismatch = {\n    k: (v, requested[k])\n    for k, v in ((\"scene\", observed_scene),\
+        \ (\"variant\", observed_variant))\n    if v != requested[k]\n}\nif mismatch:\n    print(\"PROVENANCE\
+        \ MISMATCH for zone\", os.environ[\"ZONE\"], \":\",\n          json.dumps({\"observed\": mismatch,\
+        \ \"requested\": requested}), file=sys.stderr)\n    sys.exit(1)\nif str(fetched.get(\"dataset_id\"\
+        ) or \"\") != os.environ.get(\"DATASET_ID\", \"\"):\n    print(\"PROVENANCE MISMATCH for zone\"\
+        , os.environ[\"ZONE\"], \": dataset_id\",\n          file=sys.stderr)\n    sys.exit(1)\nprint(\"\
+        provenance-ok\", json.dumps({\"scene\": observed_scene, \"variant\": observed_variant}))\nPY\n\
+        test \"$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['status'] or\
+        \ '')\")\" = \"ok\"\n\nNCORE_JSON=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['ncore_json'])\"\
         )\nPOSES_GROUP=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['poses_component_group'])\"\
         )\nCAMERA=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['reference_camera'])\"\
         )\ntest -n \"${NCORE_JSON}\" && test -n \"${POSES_GROUP}\" && test -n \"${CAMERA}\"\nexport NCORE_JSON\
@@ -1309,18 +1419,28 @@ states:
         \necho \"=== zone $ZONE: fetch real NCore V4 shards + derived rig pose edge ===\"\nnpa workbench\
         \ nurec fetch --dataset \"${DATASET_ID}\" --scene \"${SCENE}\" --variant \"${VARIANT}\" --output-uri\
         \ \"${NC}\" --output json >/tmp/nurec-fetch.json\n\n# ---- fail-closed provenance gate -------------------------------------------\n\
-        # The fetch result records the *actual* dataset/scene/variant that were pulled\n# (defaulting\
-        \ to struktur28/auto when flags were absent). A shard must never\n# reconstruct a capture it did\
-        \ not ask for: assert exact equality here and fail\n# the shard (and therefore the join) on any\
-        \ mismatch.\npython3 - \"$DATASET_ID\" \"$SCENE\" \"$VARIANT\" <<'PY'\nimport json, os, sys\n\
-        requested = {\"dataset_id\": sys.argv[1], \"scene\": sys.argv[2], \"variant\": sys.argv[3]}\n\
-        with open(\"/tmp/nurec-fetch.json\") as fh:\n    fetched = json.load(fh)\nactual = {k: str(fetched.get(k)\
-        \ or \"\") for k in (\"dataset_id\", \"scene\", \"variant\")}\nmismatch = {k: (actual[k], requested[k])\
-        \ for k in requested if actual[k] != requested[k]}\nif mismatch:\n    print(\"PROVENANCE MISMATCH\
-        \ for zone\", os.environ[\"ZONE\"], \":\",\n          json.dumps({\"actual\": actual, \"requested\"\
-        : requested}), file=sys.stderr)\n    sys.exit(1)\nprint(\"provenance-ok\", json.dumps(actual))\n\
-        PY\ntest \"$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['status']\
-        \ or '')\")\" = \"ok\"\n\nNCORE_JSON=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['ncore_json'])\"\
+        # Provenance is validated against the *independently observed* unpacked content,\n# not merely\
+        \ the echoed request arguments: the fetch result carries\n# observed_scene/observed_variant derived\
+        \ from the scene directory that actually\n# landed in the extracted archive. A shard must never\
+        \ reconstruct a capture it\n# did not ask for; if the observed content disagrees with the requested\
+        \ scene or\n# variant, or the fetch did not record observed content at all, fail the shard\n#\
+        \ (and therefore the join).\npython3 - \"$SCENE\" \"$VARIANT\" <<'PY'\nimport json, os, sys\n\
+        requested = {\"scene\": sys.argv[1], \"variant\": sys.argv[2]}\nwith open(os.environ.get(\"NUREC_FETCH_JSON\"\
+        , \"/tmp/nurec-fetch.json\")) as fh:\n    fetched = json.load(fh)\n# Observed content is authoritative.\
+        \ When a fetch does not record it (older\n# output), fall back only for diagnostics -- the gate\
+        \ then fails closed because\n# observed content is missing.\nobserved_scene = str(fetched.get(\"\
+        observed_scene\") or \"\")\nobserved_variant = str(fetched.get(\"observed_variant\") or \"\")\n\
+        if not observed_scene and not observed_variant:\n    print(\"PROVENANCE MISMATCH for zone\", os.environ[\"\
+        ZONE\"], \":\",\n          \"fetch result carries no observed unpacked content\", file=sys.stderr)\n\
+        \    sys.exit(1)\nmismatch = {\n    k: (v, requested[k])\n    for k, v in ((\"scene\", observed_scene),\
+        \ (\"variant\", observed_variant))\n    if v != requested[k]\n}\nif mismatch:\n    print(\"PROVENANCE\
+        \ MISMATCH for zone\", os.environ[\"ZONE\"], \":\",\n          json.dumps({\"observed\": mismatch,\
+        \ \"requested\": requested}), file=sys.stderr)\n    sys.exit(1)\nif str(fetched.get(\"dataset_id\"\
+        ) or \"\") != os.environ.get(\"DATASET_ID\", \"\"):\n    print(\"PROVENANCE MISMATCH for zone\"\
+        , os.environ[\"ZONE\"], \": dataset_id\",\n          file=sys.stderr)\n    sys.exit(1)\nprint(\"\
+        provenance-ok\", json.dumps({\"scene\": observed_scene, \"variant\": observed_variant}))\nPY\n\
+        test \"$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['status'] or\
+        \ '')\")\" = \"ok\"\n\nNCORE_JSON=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['ncore_json'])\"\
         )\nPOSES_GROUP=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['poses_component_group'])\"\
         )\nCAMERA=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['reference_camera'])\"\
         )\ntest -n \"${NCORE_JSON}\" && test -n \"${POSES_GROUP}\" && test -n \"${CAMERA}\"\nexport NCORE_JSON\
@@ -1416,18 +1536,28 @@ states:
         \necho \"=== zone $ZONE: fetch real NCore V4 shards + derived rig pose edge ===\"\nnpa workbench\
         \ nurec fetch --dataset \"${DATASET_ID}\" --scene \"${SCENE}\" --variant \"${VARIANT}\" --output-uri\
         \ \"${NC}\" --output json >/tmp/nurec-fetch.json\n\n# ---- fail-closed provenance gate -------------------------------------------\n\
-        # The fetch result records the *actual* dataset/scene/variant that were pulled\n# (defaulting\
-        \ to struktur28/auto when flags were absent). A shard must never\n# reconstruct a capture it did\
-        \ not ask for: assert exact equality here and fail\n# the shard (and therefore the join) on any\
-        \ mismatch.\npython3 - \"$DATASET_ID\" \"$SCENE\" \"$VARIANT\" <<'PY'\nimport json, os, sys\n\
-        requested = {\"dataset_id\": sys.argv[1], \"scene\": sys.argv[2], \"variant\": sys.argv[3]}\n\
-        with open(\"/tmp/nurec-fetch.json\") as fh:\n    fetched = json.load(fh)\nactual = {k: str(fetched.get(k)\
-        \ or \"\") for k in (\"dataset_id\", \"scene\", \"variant\")}\nmismatch = {k: (actual[k], requested[k])\
-        \ for k in requested if actual[k] != requested[k]}\nif mismatch:\n    print(\"PROVENANCE MISMATCH\
-        \ for zone\", os.environ[\"ZONE\"], \":\",\n          json.dumps({\"actual\": actual, \"requested\"\
-        : requested}), file=sys.stderr)\n    sys.exit(1)\nprint(\"provenance-ok\", json.dumps(actual))\n\
-        PY\ntest \"$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['status']\
-        \ or '')\")\" = \"ok\"\n\nNCORE_JSON=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['ncore_json'])\"\
+        # Provenance is validated against the *independently observed* unpacked content,\n# not merely\
+        \ the echoed request arguments: the fetch result carries\n# observed_scene/observed_variant derived\
+        \ from the scene directory that actually\n# landed in the extracted archive. A shard must never\
+        \ reconstruct a capture it\n# did not ask for; if the observed content disagrees with the requested\
+        \ scene or\n# variant, or the fetch did not record observed content at all, fail the shard\n#\
+        \ (and therefore the join).\npython3 - \"$SCENE\" \"$VARIANT\" <<'PY'\nimport json, os, sys\n\
+        requested = {\"scene\": sys.argv[1], \"variant\": sys.argv[2]}\nwith open(os.environ.get(\"NUREC_FETCH_JSON\"\
+        , \"/tmp/nurec-fetch.json\")) as fh:\n    fetched = json.load(fh)\n# Observed content is authoritative.\
+        \ When a fetch does not record it (older\n# output), fall back only for diagnostics -- the gate\
+        \ then fails closed because\n# observed content is missing.\nobserved_scene = str(fetched.get(\"\
+        observed_scene\") or \"\")\nobserved_variant = str(fetched.get(\"observed_variant\") or \"\")\n\
+        if not observed_scene and not observed_variant:\n    print(\"PROVENANCE MISMATCH for zone\", os.environ[\"\
+        ZONE\"], \":\",\n          \"fetch result carries no observed unpacked content\", file=sys.stderr)\n\
+        \    sys.exit(1)\nmismatch = {\n    k: (v, requested[k])\n    for k, v in ((\"scene\", observed_scene),\
+        \ (\"variant\", observed_variant))\n    if v != requested[k]\n}\nif mismatch:\n    print(\"PROVENANCE\
+        \ MISMATCH for zone\", os.environ[\"ZONE\"], \":\",\n          json.dumps({\"observed\": mismatch,\
+        \ \"requested\": requested}), file=sys.stderr)\n    sys.exit(1)\nif str(fetched.get(\"dataset_id\"\
+        ) or \"\") != os.environ.get(\"DATASET_ID\", \"\"):\n    print(\"PROVENANCE MISMATCH for zone\"\
+        , os.environ[\"ZONE\"], \": dataset_id\",\n          file=sys.stderr)\n    sys.exit(1)\nprint(\"\
+        provenance-ok\", json.dumps({\"scene\": observed_scene, \"variant\": observed_variant}))\nPY\n\
+        test \"$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['status'] or\
+        \ '')\")\" = \"ok\"\n\nNCORE_JSON=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['ncore_json'])\"\
         )\nPOSES_GROUP=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['poses_component_group'])\"\
         )\nCAMERA=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['reference_camera'])\"\
         )\ntest -n \"${NCORE_JSON}\" && test -n \"${POSES_GROUP}\" && test -n \"${CAMERA}\"\nexport NCORE_JSON\
@@ -1523,18 +1653,28 @@ states:
         \necho \"=== zone $ZONE: fetch real NCore V4 shards + derived rig pose edge ===\"\nnpa workbench\
         \ nurec fetch --dataset \"${DATASET_ID}\" --scene \"${SCENE}\" --variant \"${VARIANT}\" --output-uri\
         \ \"${NC}\" --output json >/tmp/nurec-fetch.json\n\n# ---- fail-closed provenance gate -------------------------------------------\n\
-        # The fetch result records the *actual* dataset/scene/variant that were pulled\n# (defaulting\
-        \ to struktur28/auto when flags were absent). A shard must never\n# reconstruct a capture it did\
-        \ not ask for: assert exact equality here and fail\n# the shard (and therefore the join) on any\
-        \ mismatch.\npython3 - \"$DATASET_ID\" \"$SCENE\" \"$VARIANT\" <<'PY'\nimport json, os, sys\n\
-        requested = {\"dataset_id\": sys.argv[1], \"scene\": sys.argv[2], \"variant\": sys.argv[3]}\n\
-        with open(\"/tmp/nurec-fetch.json\") as fh:\n    fetched = json.load(fh)\nactual = {k: str(fetched.get(k)\
-        \ or \"\") for k in (\"dataset_id\", \"scene\", \"variant\")}\nmismatch = {k: (actual[k], requested[k])\
-        \ for k in requested if actual[k] != requested[k]}\nif mismatch:\n    print(\"PROVENANCE MISMATCH\
-        \ for zone\", os.environ[\"ZONE\"], \":\",\n          json.dumps({\"actual\": actual, \"requested\"\
-        : requested}), file=sys.stderr)\n    sys.exit(1)\nprint(\"provenance-ok\", json.dumps(actual))\n\
-        PY\ntest \"$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['status']\
-        \ or '')\")\" = \"ok\"\n\nNCORE_JSON=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['ncore_json'])\"\
+        # Provenance is validated against the *independently observed* unpacked content,\n# not merely\
+        \ the echoed request arguments: the fetch result carries\n# observed_scene/observed_variant derived\
+        \ from the scene directory that actually\n# landed in the extracted archive. A shard must never\
+        \ reconstruct a capture it\n# did not ask for; if the observed content disagrees with the requested\
+        \ scene or\n# variant, or the fetch did not record observed content at all, fail the shard\n#\
+        \ (and therefore the join).\npython3 - \"$SCENE\" \"$VARIANT\" <<'PY'\nimport json, os, sys\n\
+        requested = {\"scene\": sys.argv[1], \"variant\": sys.argv[2]}\nwith open(os.environ.get(\"NUREC_FETCH_JSON\"\
+        , \"/tmp/nurec-fetch.json\")) as fh:\n    fetched = json.load(fh)\n# Observed content is authoritative.\
+        \ When a fetch does not record it (older\n# output), fall back only for diagnostics -- the gate\
+        \ then fails closed because\n# observed content is missing.\nobserved_scene = str(fetched.get(\"\
+        observed_scene\") or \"\")\nobserved_variant = str(fetched.get(\"observed_variant\") or \"\")\n\
+        if not observed_scene and not observed_variant:\n    print(\"PROVENANCE MISMATCH for zone\", os.environ[\"\
+        ZONE\"], \":\",\n          \"fetch result carries no observed unpacked content\", file=sys.stderr)\n\
+        \    sys.exit(1)\nmismatch = {\n    k: (v, requested[k])\n    for k, v in ((\"scene\", observed_scene),\
+        \ (\"variant\", observed_variant))\n    if v != requested[k]\n}\nif mismatch:\n    print(\"PROVENANCE\
+        \ MISMATCH for zone\", os.environ[\"ZONE\"], \":\",\n          json.dumps({\"observed\": mismatch,\
+        \ \"requested\": requested}), file=sys.stderr)\n    sys.exit(1)\nif str(fetched.get(\"dataset_id\"\
+        ) or \"\") != os.environ.get(\"DATASET_ID\", \"\"):\n    print(\"PROVENANCE MISMATCH for zone\"\
+        , os.environ[\"ZONE\"], \": dataset_id\",\n          file=sys.stderr)\n    sys.exit(1)\nprint(\"\
+        provenance-ok\", json.dumps({\"scene\": observed_scene, \"variant\": observed_variant}))\nPY\n\
+        test \"$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['status'] or\
+        \ '')\")\" = \"ok\"\n\nNCORE_JSON=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['ncore_json'])\"\
         )\nPOSES_GROUP=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['poses_component_group'])\"\
         )\nCAMERA=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['reference_camera'])\"\
         )\ntest -n \"${NCORE_JSON}\" && test -n \"${POSES_GROUP}\" && test -n \"${CAMERA}\"\nexport NCORE_JSON\
@@ -1630,18 +1770,28 @@ states:
         \necho \"=== zone $ZONE: fetch real NCore V4 shards + derived rig pose edge ===\"\nnpa workbench\
         \ nurec fetch --dataset \"${DATASET_ID}\" --scene \"${SCENE}\" --variant \"${VARIANT}\" --output-uri\
         \ \"${NC}\" --output json >/tmp/nurec-fetch.json\n\n# ---- fail-closed provenance gate -------------------------------------------\n\
-        # The fetch result records the *actual* dataset/scene/variant that were pulled\n# (defaulting\
-        \ to struktur28/auto when flags were absent). A shard must never\n# reconstruct a capture it did\
-        \ not ask for: assert exact equality here and fail\n# the shard (and therefore the join) on any\
-        \ mismatch.\npython3 - \"$DATASET_ID\" \"$SCENE\" \"$VARIANT\" <<'PY'\nimport json, os, sys\n\
-        requested = {\"dataset_id\": sys.argv[1], \"scene\": sys.argv[2], \"variant\": sys.argv[3]}\n\
-        with open(\"/tmp/nurec-fetch.json\") as fh:\n    fetched = json.load(fh)\nactual = {k: str(fetched.get(k)\
-        \ or \"\") for k in (\"dataset_id\", \"scene\", \"variant\")}\nmismatch = {k: (actual[k], requested[k])\
-        \ for k in requested if actual[k] != requested[k]}\nif mismatch:\n    print(\"PROVENANCE MISMATCH\
-        \ for zone\", os.environ[\"ZONE\"], \":\",\n          json.dumps({\"actual\": actual, \"requested\"\
-        : requested}), file=sys.stderr)\n    sys.exit(1)\nprint(\"provenance-ok\", json.dumps(actual))\n\
-        PY\ntest \"$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['status']\
-        \ or '')\")\" = \"ok\"\n\nNCORE_JSON=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['ncore_json'])\"\
+        # Provenance is validated against the *independently observed* unpacked content,\n# not merely\
+        \ the echoed request arguments: the fetch result carries\n# observed_scene/observed_variant derived\
+        \ from the scene directory that actually\n# landed in the extracted archive. A shard must never\
+        \ reconstruct a capture it\n# did not ask for; if the observed content disagrees with the requested\
+        \ scene or\n# variant, or the fetch did not record observed content at all, fail the shard\n#\
+        \ (and therefore the join).\npython3 - \"$SCENE\" \"$VARIANT\" <<'PY'\nimport json, os, sys\n\
+        requested = {\"scene\": sys.argv[1], \"variant\": sys.argv[2]}\nwith open(os.environ.get(\"NUREC_FETCH_JSON\"\
+        , \"/tmp/nurec-fetch.json\")) as fh:\n    fetched = json.load(fh)\n# Observed content is authoritative.\
+        \ When a fetch does not record it (older\n# output), fall back only for diagnostics -- the gate\
+        \ then fails closed because\n# observed content is missing.\nobserved_scene = str(fetched.get(\"\
+        observed_scene\") or \"\")\nobserved_variant = str(fetched.get(\"observed_variant\") or \"\")\n\
+        if not observed_scene and not observed_variant:\n    print(\"PROVENANCE MISMATCH for zone\", os.environ[\"\
+        ZONE\"], \":\",\n          \"fetch result carries no observed unpacked content\", file=sys.stderr)\n\
+        \    sys.exit(1)\nmismatch = {\n    k: (v, requested[k])\n    for k, v in ((\"scene\", observed_scene),\
+        \ (\"variant\", observed_variant))\n    if v != requested[k]\n}\nif mismatch:\n    print(\"PROVENANCE\
+        \ MISMATCH for zone\", os.environ[\"ZONE\"], \":\",\n          json.dumps({\"observed\": mismatch,\
+        \ \"requested\": requested}), file=sys.stderr)\n    sys.exit(1)\nif str(fetched.get(\"dataset_id\"\
+        ) or \"\") != os.environ.get(\"DATASET_ID\", \"\"):\n    print(\"PROVENANCE MISMATCH for zone\"\
+        , os.environ[\"ZONE\"], \": dataset_id\",\n          file=sys.stderr)\n    sys.exit(1)\nprint(\"\
+        provenance-ok\", json.dumps({\"scene\": observed_scene, \"variant\": observed_variant}))\nPY\n\
+        test \"$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['status'] or\
+        \ '')\")\" = \"ok\"\n\nNCORE_JSON=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['ncore_json'])\"\
         )\nPOSES_GROUP=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['poses_component_group'])\"\
         )\nCAMERA=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['reference_camera'])\"\
         )\ntest -n \"${NCORE_JSON}\" && test -n \"${POSES_GROUP}\" && test -n \"${CAMERA}\"\nexport NCORE_JSON\
@@ -1737,18 +1887,28 @@ states:
         \necho \"=== zone $ZONE: fetch real NCore V4 shards + derived rig pose edge ===\"\nnpa workbench\
         \ nurec fetch --dataset \"${DATASET_ID}\" --scene \"${SCENE}\" --variant \"${VARIANT}\" --output-uri\
         \ \"${NC}\" --output json >/tmp/nurec-fetch.json\n\n# ---- fail-closed provenance gate -------------------------------------------\n\
-        # The fetch result records the *actual* dataset/scene/variant that were pulled\n# (defaulting\
-        \ to struktur28/auto when flags were absent). A shard must never\n# reconstruct a capture it did\
-        \ not ask for: assert exact equality here and fail\n# the shard (and therefore the join) on any\
-        \ mismatch.\npython3 - \"$DATASET_ID\" \"$SCENE\" \"$VARIANT\" <<'PY'\nimport json, os, sys\n\
-        requested = {\"dataset_id\": sys.argv[1], \"scene\": sys.argv[2], \"variant\": sys.argv[3]}\n\
-        with open(\"/tmp/nurec-fetch.json\") as fh:\n    fetched = json.load(fh)\nactual = {k: str(fetched.get(k)\
-        \ or \"\") for k in (\"dataset_id\", \"scene\", \"variant\")}\nmismatch = {k: (actual[k], requested[k])\
-        \ for k in requested if actual[k] != requested[k]}\nif mismatch:\n    print(\"PROVENANCE MISMATCH\
-        \ for zone\", os.environ[\"ZONE\"], \":\",\n          json.dumps({\"actual\": actual, \"requested\"\
-        : requested}), file=sys.stderr)\n    sys.exit(1)\nprint(\"provenance-ok\", json.dumps(actual))\n\
-        PY\ntest \"$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['status']\
-        \ or '')\")\" = \"ok\"\n\nNCORE_JSON=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['ncore_json'])\"\
+        # Provenance is validated against the *independently observed* unpacked content,\n# not merely\
+        \ the echoed request arguments: the fetch result carries\n# observed_scene/observed_variant derived\
+        \ from the scene directory that actually\n# landed in the extracted archive. A shard must never\
+        \ reconstruct a capture it\n# did not ask for; if the observed content disagrees with the requested\
+        \ scene or\n# variant, or the fetch did not record observed content at all, fail the shard\n#\
+        \ (and therefore the join).\npython3 - \"$SCENE\" \"$VARIANT\" <<'PY'\nimport json, os, sys\n\
+        requested = {\"scene\": sys.argv[1], \"variant\": sys.argv[2]}\nwith open(os.environ.get(\"NUREC_FETCH_JSON\"\
+        , \"/tmp/nurec-fetch.json\")) as fh:\n    fetched = json.load(fh)\n# Observed content is authoritative.\
+        \ When a fetch does not record it (older\n# output), fall back only for diagnostics -- the gate\
+        \ then fails closed because\n# observed content is missing.\nobserved_scene = str(fetched.get(\"\
+        observed_scene\") or \"\")\nobserved_variant = str(fetched.get(\"observed_variant\") or \"\")\n\
+        if not observed_scene and not observed_variant:\n    print(\"PROVENANCE MISMATCH for zone\", os.environ[\"\
+        ZONE\"], \":\",\n          \"fetch result carries no observed unpacked content\", file=sys.stderr)\n\
+        \    sys.exit(1)\nmismatch = {\n    k: (v, requested[k])\n    for k, v in ((\"scene\", observed_scene),\
+        \ (\"variant\", observed_variant))\n    if v != requested[k]\n}\nif mismatch:\n    print(\"PROVENANCE\
+        \ MISMATCH for zone\", os.environ[\"ZONE\"], \":\",\n          json.dumps({\"observed\": mismatch,\
+        \ \"requested\": requested}), file=sys.stderr)\n    sys.exit(1)\nif str(fetched.get(\"dataset_id\"\
+        ) or \"\") != os.environ.get(\"DATASET_ID\", \"\"):\n    print(\"PROVENANCE MISMATCH for zone\"\
+        , os.environ[\"ZONE\"], \": dataset_id\",\n          file=sys.stderr)\n    sys.exit(1)\nprint(\"\
+        provenance-ok\", json.dumps({\"scene\": observed_scene, \"variant\": observed_variant}))\nPY\n\
+        test \"$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['status'] or\
+        \ '')\")\" = \"ok\"\n\nNCORE_JSON=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['ncore_json'])\"\
         )\nPOSES_GROUP=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['poses_component_group'])\"\
         )\nCAMERA=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['reference_camera'])\"\
         )\ntest -n \"${NCORE_JSON}\" && test -n \"${POSES_GROUP}\" && test -n \"${CAMERA}\"\nexport NCORE_JSON\
@@ -1807,8 +1967,9 @@ states:
       schema: npa.living_lab.zone_manifest.v1
   join:
     description: 'Barrier: read all 16 zone manifests, require every zone present with a real GPU identity
-      and a real USDZ, aggregate objective metrics and GPU participation, and publish the composite digital-twin
-      report plus a contact-sheet panorama.'
+      and a real USDZ, aggregate objective metrics and GPU participation, publish the composite digital-twin
+      report plus a contact-sheet panorama, and fail closed unless the proof demonstrates exactly 16 distinct
+      non-empty GPU UUIDs with material all-zone temporal overlap.'
     needs:
     - living-lab-zones
     resources: cpu

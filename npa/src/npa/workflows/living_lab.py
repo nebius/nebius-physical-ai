@@ -107,11 +107,6 @@ def _storage():
     return StorageClient.from_environment()
 
 
-def _split(uri: str) -> tuple[str, str]:
-    parsed = urlparse(uri)
-    return parsed.netloc, parsed.path.lstrip("/")
-
-
 def zone_names(shards: str | Sequence[str] = "") -> list[str]:
     """Explicit zone list, or discover the 16 canonical zone names."""
     if isinstance(shards, str):
@@ -214,10 +209,12 @@ def join_living_lab_zones(
     real NRE pipeline ran on its own RTX PRO 6000), requires equality with the
     16 canonical zones, and fails unless every zone records a real USDZ, a real
     GPU UUID + node, fail-closed input provenance, and real (non-missing) NRE
-    validation metrics. Aggregates objective metrics, distinct GPU UUID/node
-    participation, and a sixteen-way concurrency (execution-window overlap)
-    proof, then publishes a composite digital-twin report plus a contact-sheet
-    panorama.
+    validation metrics. Success additionally requires the device-count proof
+    to hold exactly: one distinct, non-empty GPU UUID per required zone (never
+    inferred from model names) and a material all-zone temporal overlap. It
+    aggregates objective metrics, distinct GPU UUID/node participation, and the
+    sixteen-way concurrency proof, then publishes a composite digital-twin report
+    plus a contact-sheet panorama.
     """
     base = zones_uri.rstrip("/") + "/"
     expected = zone_names(shards)
@@ -349,6 +346,11 @@ def join_living_lab_zones(
         and overlap_start < overlap_end
     )
 
+    # Device-count proof is never inferred from model names: it is derived from
+    # the distinct, non-empty GPU UUIDs the shards actually recorded.
+    distinct_uuids = {u for u in gpu_uuids if u}
+    device_proof_ok = len(distinct_uuids) == len(expected)
+
     report = {
         "schema": DIGITAL_TWIN_SCHEMA,
         "run_id": run_id,
@@ -356,10 +358,12 @@ def join_living_lab_zones(
         "zone_count": len(expected),
         "joined_zones": len(expected) - len(missing),
         "missing_zones": missing,
+        # Informational model-name participation; never used for the device-proof gate.
         "gpu_participation": sorted(gpu_names),
-        "distinct_gpu_count": len(gpu_names),
-        "distinct_gpu_uuid_count": len(gpu_uuids),
-        "gpu_uuids": sorted(gpu_uuids),
+        # Device participation (UUID-based, not model-name based).
+        "distinct_gpu_count": len(distinct_uuids),
+        "distinct_gpu_uuid_count": len(distinct_uuids),
+        "gpu_uuids": sorted(distinct_uuids),
         "distinct_node_count": len(nodes),
         "nodes": sorted(nodes),
         "concurrency": {
@@ -385,11 +389,29 @@ def join_living_lab_zones(
         (json.dumps(report, indent=2, sort_keys=True) + "\n").encode(), target
     )
     print(json.dumps(report))
+
+    # Fail closed: a report is never success by itself. The join must also prove
+    # one distinct, non-empty GPU UUID per required zone and a material all-zone
+    # temporal overlap. Error text is diagnostic (counts / reasons only) and never
+    # exposes live resource identifiers.
+    reasons: list[str] = []
     if missing:
-        raise RuntimeError(
-            f"living-lab join incomplete: {len(missing)} of {len(expected)} "
-            f"zones missing/invalid: {missing}"
+        reasons.append(
+            f"{len(missing)} of {len(expected)} zones missing/invalid: {missing}"
         )
+    if not device_proof_ok:
+        reasons.append(
+            f"distinct GPU UUID proof failed: expected {len(expected)} distinct "
+            f"non-empty GPU UUIDs, observed {len(distinct_uuids)}"
+        )
+    if not concurrent:
+        reasons.append(
+            f"all-zone concurrency proof failed: material temporal overlap across "
+            f"all {len(expected)} zones not demonstrated (overlapping windows: "
+            f"{len(windows)})"
+        )
+    if reasons:
+        raise RuntimeError("living-lab join incomplete: " + "; ".join(reasons))
     return report
 
 
@@ -509,22 +531,41 @@ echo "=== zone $ZONE: fetch real NCore V4 shards + derived rig pose edge ==="
 npa workbench nurec fetch --dataset "${DATASET_ID}" --scene "${SCENE}" --variant "${VARIANT}" --output-uri "${NC}" --output json >/tmp/nurec-fetch.json
 
 # ---- fail-closed provenance gate -------------------------------------------
-# The fetch result records the *actual* dataset/scene/variant that were pulled
-# (defaulting to struktur28/auto when flags were absent). A shard must never
-# reconstruct a capture it did not ask for: assert exact equality here and fail
-# the shard (and therefore the join) on any mismatch.
-python3 - "$DATASET_ID" "$SCENE" "$VARIANT" <<'PY'
+# Provenance is validated against the *independently observed* unpacked content,
+# not merely the echoed request arguments: the fetch result carries
+# observed_scene/observed_variant derived from the scene directory that actually
+# landed in the extracted archive. A shard must never reconstruct a capture it
+# did not ask for; if the observed content disagrees with the requested scene or
+# variant, or the fetch did not record observed content at all, fail the shard
+# (and therefore the join).
+python3 - "$SCENE" "$VARIANT" <<'PY'
 import json, os, sys
-requested = {"dataset_id": sys.argv[1], "scene": sys.argv[2], "variant": sys.argv[3]}
-with open("/tmp/nurec-fetch.json") as fh:
+requested = {"scene": sys.argv[1], "variant": sys.argv[2]}
+with open(os.environ.get("NUREC_FETCH_JSON", "/tmp/nurec-fetch.json")) as fh:
     fetched = json.load(fh)
-actual = {k: str(fetched.get(k) or "") for k in ("dataset_id", "scene", "variant")}
-mismatch = {k: (actual[k], requested[k]) for k in requested if actual[k] != requested[k]}
+# Observed content is authoritative. When a fetch does not record it (older
+# output), fall back only for diagnostics -- the gate then fails closed because
+# observed content is missing.
+observed_scene = str(fetched.get("observed_scene") or "")
+observed_variant = str(fetched.get("observed_variant") or "")
+if not observed_scene and not observed_variant:
+    print("PROVENANCE MISMATCH for zone", os.environ["ZONE"], ":",
+          "fetch result carries no observed unpacked content", file=sys.stderr)
+    sys.exit(1)
+mismatch = {
+    k: (v, requested[k])
+    for k, v in (("scene", observed_scene), ("variant", observed_variant))
+    if v != requested[k]
+}
 if mismatch:
     print("PROVENANCE MISMATCH for zone", os.environ["ZONE"], ":",
-          json.dumps({"actual": actual, "requested": requested}), file=sys.stderr)
+          json.dumps({"observed": mismatch, "requested": requested}), file=sys.stderr)
     sys.exit(1)
-print("provenance-ok", json.dumps(actual))
+if str(fetched.get("dataset_id") or "") != os.environ.get("DATASET_ID", ""):
+    print("PROVENANCE MISMATCH for zone", os.environ["ZONE"], ": dataset_id",
+          file=sys.stderr)
+    sys.exit(1)
+print("provenance-ok", json.dumps({"scene": observed_scene, "variant": observed_variant}))
 PY
 test "$(python3 -c "import json;print(json.load(open('/tmp/nurec-fetch.json'))['status'] or '')")" = "ok"
 
@@ -689,8 +730,10 @@ def build_living_lab_workflow_spec() -> dict[str, Any]:
             "description": (
                 "Barrier: read all 16 zone manifests, require every zone present "
                 "with a real GPU identity and a real USDZ, aggregate objective "
-                "metrics and GPU participation, and publish the composite "
-                "digital-twin report plus a contact-sheet panorama."
+                "metrics and GPU participation, publish the composite digital-twin "
+                "report plus a contact-sheet panorama, and fail closed unless the "
+                "proof demonstrates exactly 16 distinct non-empty GPU UUIDs with "
+                "material all-zone temporal overlap."
             ),
             "needs": ["living-lab-zones"],
             "resources": "cpu",

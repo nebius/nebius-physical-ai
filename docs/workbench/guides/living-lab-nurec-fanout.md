@@ -122,8 +122,12 @@ zones/<zone>/zone_manifest.json         per-zone objective evidence
 ```
 
 The join requires **16/16** zone manifests, each with a real GPU identity and a
-real USDZ; a missing or invalid zone **fails the workflow** rather than producing
-a partial twin.
+real USDZ, and it **fails the workflow closed** unless the proof demonstrates
+exactly **16 distinct, non-empty GPU UUIDs** (never inferred from model names)
+with **material all-zone temporal overlap**. A missing, invalid, or
+duplicate-device zone — or a zone whose observed unpacked capture disagrees with
+its requested scene/variant — fails rather than producing a partial or
+unproven twin.
 
 ## Limitations
 
