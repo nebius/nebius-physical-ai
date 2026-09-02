@@ -258,8 +258,8 @@ accepted public image releases, OCI config inspection for the four published
 workflow roles, official Kueue chart-tag resolution, a live capability-scoped
 Hugging Face access check, official Hugging Face revision/file checks, sanitized
 read-only Kubernetes discovery, repository tests, and publication guardrails.
-The final non-E2E repository suite completed with 12,565 passed, 36 skipped,
-12 deselected, and one expected XPASS; all 2328 guardrail tests and the 114-test
+The final non-E2E repository suite completed with 12,585 passed, 36 skipped,
+12 deselected, and one expected XPASS; all 2330 guardrail tests and the 114-test
 smoke target also passed. The first suite invocation exposed a broken
 user-level `rerun` launcher; the two affected GR00T tests and then the complete
 suite passed with the mandated repository virtualenv first on `PATH`.
