@@ -354,8 +354,9 @@ def _capture_frames(
                         _write_render_png(output_dir / name, frame)
                         frames_written.append(name)
                         print(f"ISAAC_CAPTURE_FRAME {name} step={step}", flush=True)
-        env.close()
-
+        # Isaac Lab teardown can terminate the Kit process on some releases, just
+        # like ``simulation_app.close()`` below.  Validate and publish before
+        # crossing either teardown boundary so exit 0 cannot strand the frames.
         summary: dict[str, object] = {
             "status": "success" if frames_written else "failed",
             "task": task,
@@ -371,6 +372,7 @@ def _capture_frames(
             raise SystemExit("No frames captured — check task cameras and GPU rendering.")
         if publish is not None:
             publish(summary)
+        env.close()
 
     return summary
 

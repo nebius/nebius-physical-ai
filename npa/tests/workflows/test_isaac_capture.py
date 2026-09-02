@@ -44,9 +44,9 @@ def test_simulation_app_closes_after_success() -> None:
 def test_publish_runs_before_the_simulator_closes(monkeypatch, tmp_path: Path) -> None:
     """Live job 278: six frames, exit 0, nothing uploaded.
 
-    `simulation_app.close()` tears the process down rather than returning, so the upload that
-    used to live in `main()` after `_capture_frames()` never happened — and the next stage
-    failed with "No scene images found". The publish callback must fire first.
+    Isaac environment or app teardown can terminate the process rather than returning, so the
+    upload that used to run after teardown never happened — and the next stage failed with
+    "No scene images found". The publish callback must fire first.
     """
 
     order: list[str] = []
