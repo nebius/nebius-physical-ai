@@ -537,6 +537,103 @@ def _telemetry_config() -> SimpleNamespace:
     )
 
 
+def test_wandb_telemetry_log_is_reinstalled_after_init_replaces_it() -> None:
+    calls: list[tuple[str, object]] = []
+
+    def pre_init_log(value):
+        calls.append(("pre", value))
+
+    def initialized_log(value):
+        calls.append(("initialized", value))
+
+    def telemetry_log(value):
+        active_log[0](value)
+        calls.append(("telemetry", value))
+
+    wandb = SimpleNamespace(log=pre_init_log)
+
+    def init_wandb():
+        wandb.log = initialized_log
+        return "initialized"
+
+    upstream = SimpleNamespace(wandb=wandb, init_wandb=init_wandb)
+    active_log: list[object] = [pre_init_log]
+    original, wrapped = full_droid._wrap_wandb_initializer(
+        upstream,
+        telemetry_log=telemetry_log,
+        active_log=active_log,
+    )
+
+    assert original is init_wandb
+    upstream.wandb.log = telemetry_log
+    assert wrapped() == "initialized"
+    assert upstream.wandb.log is telemetry_log
+    upstream.wandb.log("step-0")
+    assert calls == [("initialized", "step-0"), ("telemetry", "step-0")]
+
+
+def test_wandb_telemetry_init_does_not_make_wrapper_recursive() -> None:
+    calls: list[object] = []
+
+    def base_log(value):
+        calls.append(value)
+
+    def telemetry_log(value):
+        active_log[0](value)
+
+    wandb = SimpleNamespace(log=base_log)
+    upstream = SimpleNamespace(wandb=wandb, init_wandb=lambda: None)
+    active_log: list[object] = [base_log]
+    upstream.wandb.log = telemetry_log
+    _, wrapped = full_droid._wrap_wandb_initializer(
+        upstream,
+        telemetry_log=telemetry_log,
+        active_log=active_log,
+    )
+
+    wrapped()
+    assert active_log[0] is base_log
+    upstream.wandb.log("step-0")
+    assert calls == ["step-0"]
+
+
+def test_checkpoint_only_resume_records_only_new_factual_metrics(tmp_path: Path) -> None:
+    path = tmp_path / "telemetry.jsonl"
+    config = _telemetry_config()
+    interrupted = full_droid._TrainingTelemetryJournal(
+        path, run_id="checkpoint-only-resume", config=config
+    )
+    interrupted.record_checkpoint(step=1, event="save_requested")
+    interrupted.record_checkpoint(step=1, event="materialized")
+    interrupted.close()
+
+    resumed = full_droid._TrainingTelemetryJournal(
+        path, run_id="checkpoint-only-resume", config=config
+    )
+    for step in range(2):
+        resumed.record_metrics(
+            step=step,
+            values={"loss": 1.0, "grad_norm": 0.2, "param_norm": 10.0},
+            learning_rate=1e-5,
+        )
+    resumed.record_checkpoint(step=1, event="materialized")
+    resumed.close()
+
+    records = full_droid._load_telemetry_records(
+        path, run_id="checkpoint-only-resume"
+    )
+    assert [
+        record["optimizer_step"]
+        for record in records
+        if record["record_type"] == "metrics"
+    ] == [0, 1]
+    assert sum(
+        record["record_type"] == "checkpoint"
+        and record["event"] == "materialized"
+        for record in records
+    ) == 1
+
+
 def test_telemetry_journal_is_durable_deduplicated_and_run_scoped(
     tmp_path: Path,
 ) -> None:
@@ -1124,6 +1221,40 @@ def test_checkpoint_completion_marker_is_atomic_and_run_scoped(
         checkpoint_root, step=10_000, run_id="different-run"
     )
     assert not list(step_path.glob("*.tmp"))
+
+
+def test_milestone_reconcile_requires_factual_metric_coverage(tmp_path: Path) -> None:
+    run_id = "coverage-reconcile"
+    config = SimpleNamespace(
+        num_train_steps=full_droid.QUALIFICATION_STEPS,
+        batch_size=256,
+        log_interval=1,
+        save_interval=full_droid.QUALIFICATION_STEPS,
+    )
+    journal = full_droid._TrainingTelemetryJournal(
+        tmp_path / "npa-training-telemetry.jsonl", run_id=run_id, config=config
+    )
+    final_step = full_droid.QUALIFICATION_STEPS - 1
+    journal.record_checkpoint(step=final_step, event="save_requested")
+    journal.record_checkpoint(step=final_step, event="materialized")
+    journal.close()
+    publisher = full_droid._TrainingMilestonePublisher(
+        journal_path=journal.path,
+        run_id=run_id,
+        kind="qualification",
+        config=config,
+        prepared={},
+        runtime_image="ghcr.io/example/image@sha256:" + "0" * 64,
+        hardware={},
+        topology=[],
+        rrd_root_uri="s3://example.invalid/private/run",
+    )
+    called: list[int] = []
+    publisher.publish_for_optimizer_step = called.append
+
+    publisher.reconcile_available()
+
+    assert called == []
 
 
 def test_rank_zero_prepares_fresh_shared_checkpoint_root(tmp_path: Path) -> None:

@@ -1268,6 +1268,27 @@ def _non_destructive_checkpoint_config(config: object) -> object:
     return dataclasses.replace(config, resume=True, overwrite=False)
 
 
+def _wrap_wandb_initializer(
+    upstream_train: object,
+    *,
+    telemetry_log: object,
+    active_log: list[object],
+) -> tuple[object, object]:
+    """Keep telemetry installed when wandb.init replaces its pre-init log."""
+
+    original_init_wandb = upstream_train.init_wandb
+
+    def telemetry_init_wandb(*positional, **keywords):
+        result = original_init_wandb(*positional, **keywords)
+        initialized_log = upstream_train.wandb.log
+        if initialized_log is not telemetry_log:
+            active_log[0] = initialized_log
+        upstream_train.wandb.log = telemetry_log
+        return result
+
+    return original_init_wandb, telemetry_init_wandb
+
+
 def _run_training(
     config: object,
     repo_root: Path,
@@ -1285,6 +1306,7 @@ def _run_training(
     upstream_train = _load_upstream_train_module(repo_root)
     journal: _TrainingTelemetryJournal | None = None
     original_log = None
+    original_init_wandb = None
     original_save = None
     original_initialize = upstream_train._checkpoints.initialize_checkpoint_dir
     if rank == 0:
@@ -1319,8 +1341,10 @@ def _run_training(
                 "pinned upstream checkpoint callback signature drifted"
             )
 
+        active_log = [original_log]
+
         def telemetry_log(data, *positional, **keywords):
-            result = original_log(data, *positional, **keywords)
+            result = active_log[0](data, *positional, **keywords)
             step = keywords.get("step")
             if step is None and positional:
                 step = positional[0]
@@ -1352,7 +1376,13 @@ def _run_training(
                 milestone_publisher.publish_for_optimizer_step(int(step))
             return result
 
+        original_init_wandb, telemetry_init_wandb = _wrap_wandb_initializer(
+            upstream_train,
+            telemetry_log=telemetry_log,
+            active_log=active_log,
+        )
         upstream_train.wandb.log = telemetry_log
+        upstream_train.init_wandb = telemetry_init_wandb
         upstream_train._checkpoints.save_state = telemetry_save
 
     def telemetry_initialize(*positional, **keywords):
@@ -1383,6 +1413,8 @@ def _run_training(
     finally:
         if original_log is not None:
             upstream_train.wandb.log = original_log
+        if original_init_wandb is not None:
+            upstream_train.init_wandb = original_init_wandb
         if original_save is not None:
             upstream_train._checkpoints.save_state = original_save
         upstream_train._checkpoints.initialize_checkpoint_dir = original_initialize
@@ -2482,10 +2514,14 @@ class _TrainingMilestonePublisher:
             if record.get("record_type") == "checkpoint"
         }
         for _, actual in self.milestones.items():
+            expected_metric_steps = set(
+                range(0, actual + 1, int(self.config.log_interval))
+            )
             available = (
-                actual in metric_steps
+                expected_metric_steps <= metric_steps
                 if self.is_log_only(actual)
-                else {
+                else expected_metric_steps <= metric_steps
+                and {
                     (actual, "save_requested"),
                     (actual, "materialized"),
                 }
