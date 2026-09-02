@@ -546,6 +546,45 @@ def test_local_api_daemon_probe_ignores_other_user_id(tmp_path) -> None:
     assert result.process_count == 0
 
 
+def test_local_api_daemon_probe_rejects_stale_kubeconfig(tmp_path) -> None:
+    proc_root = tmp_path / "proc"
+    bin_dir = tmp_path / "venv" / "bin"
+    bin_dir.mkdir(parents=True)
+    sky = bin_dir / "sky"
+    python = bin_dir / "python"
+    sky.touch()
+    python.touch()
+    durable = tmp_path / "durable"
+    durable.mkdir()
+    expected = tmp_path / "selected-kubeconfig"
+    _fake_proc_process(
+        proc_root,
+        pid=100,
+        ppid=1,
+        uid=1234,
+        cmdline=(str(python), "-m", "sky.server.server"),
+        cwd=durable,
+        environment={
+            "HOME": str(tmp_path / "isolated-home"),
+            "SKYPILOT_USER_ID": "shared-user",
+            "KUBECONFIG": str(tmp_path / "stale-kubeconfig"),
+        },
+    )
+
+    result = workflow_module._probe_local_api_daemon_cwd(
+        str(sky),
+        proc_root=proc_root,
+        uid=1234,
+        expected_home=str(tmp_path / "isolated-home"),
+        expected_user_id="shared-user",
+        expected_kubeconfig=str(expected),
+    )
+
+    assert result.healthy is False
+    assert result.outcome == "stale_runtime_environment"
+    assert "different Kubernetes configuration" in result.error
+
+
 def test_api_daemon_repair_lock_serializes_same_runtime(tmp_path) -> None:
     first_entered = threading.Event()
     release_first = threading.Event()

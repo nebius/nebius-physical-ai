@@ -226,6 +226,7 @@ def _probe_local_api_daemon_cwd(
     uid: int | None = None,
     expected_home: str = "",
     expected_user_id: str = "",
+    expected_kubeconfig: str = "",
 ) -> ApiDaemonCwdProbe:
     """Inspect the actual local API daemon and descendants through procfs.
 
@@ -352,6 +353,17 @@ def _probe_local_api_daemon_cwd(
         if expected_user_id and daemon_user_id != expected_user_id:
             continue
         runtime_roots.add(pid)
+        daemon_kubeconfig = environment.get("KUBECONFIG", "").strip()
+        if expected_kubeconfig and daemon_kubeconfig != expected_kubeconfig:
+            return ApiDaemonCwdProbe(
+                False,
+                "stale_runtime_environment",
+                process_count=len(runtime_roots),
+                error=(
+                    "local SkyPilot API server inherited a different Kubernetes "
+                    "configuration than this submission"
+                ),
+            )
         inherited_config = environment.get("SKYPILOT_GLOBAL_CONFIG", "").strip()
         if inherited_config and not Path(inherited_config).is_file():
             return ApiDaemonCwdProbe(
@@ -421,6 +433,7 @@ def _ensure_local_api_daemon_cwd(
             sky_executable,
             expected_home=str(env.get("HOME") or ""),
             expected_user_id=str(env.get("SKYPILOT_USER_ID") or ""),
+            expected_kubeconfig=str(env.get("KUBECONFIG") or ""),
         )
     )
     before = inspect()
