@@ -984,6 +984,57 @@ def test_rrd_worker_python_fails_closed_when_configured_path_is_missing(
         full_droid._rrd_worker_python()
 
 
+def test_rrd_worker_python_discovers_default_worker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    worker = tmp_path / "python"
+    worker.write_text("#!/bin/sh\n", encoding="utf-8")
+    worker.chmod(0o700)
+    monkeypatch.delenv("NPA_OPENPI_RERUN_PYTHON", raising=False)
+    monkeypatch.setattr(full_droid, "DEFAULT_RERUN_WORKER_PYTHON", worker)
+
+    assert full_droid._rrd_worker_python() == worker
+
+
+def test_rrd_worker_python_allows_direct_fallback_without_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("NPA_OPENPI_RERUN_PYTHON", raising=False)
+    monkeypatch.setattr(
+        full_droid, "DEFAULT_RERUN_WORKER_PYTHON", tmp_path / "missing"
+    )
+
+    assert full_droid._rrd_worker_python() is None
+
+
+def test_rrd_worker_python_avoids_current_interpreter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NPA_OPENPI_RERUN_PYTHON", sys.executable)
+
+    assert full_droid._rrd_worker_python() is None
+
+
+def test_expanded_time_panel_supports_legacy_constructor() -> None:
+    calls: list[object] = []
+
+    class FakePanelState:
+        Expanded = object()
+
+    class FakeBlueprint:
+        PanelState = FakePanelState
+
+        @staticmethod
+        def TimePanel(*, state: object) -> dict[str, object]:
+            calls.append(state)
+            return {"state": state}
+
+    panel = full_droid._expanded_time_panel(FakeBlueprint)
+
+    assert panel == {"state": FakePanelState.Expanded}
+    assert calls == [FakePanelState.Expanded]
+
+
 def test_dataset_verification_retry_keeps_preparation_journal_immutable(
     tmp_path: Path,
 ) -> None:

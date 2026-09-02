@@ -70,6 +70,7 @@ CHECKPOINT_COMPLETION_SCHEMA = (
     "npa.workbench.openpi.pi05-full-droid-checkpoint-completion.v1"
 )
 RERUN_APPLICATION_ID = "npa_openpi_pi05_full_droid"
+DEFAULT_RERUN_WORKER_PYTHON = Path("/opt/rerun-venv/bin/python")
 RERUN_TIMELINE = "optimizer_step"
 PREPARATION_TIMELINE = "normalization_batch"
 RERUN_SCHEMA = "application/vnd.rerun.rrd"
@@ -1637,7 +1638,7 @@ def _build_preparation_rrd_direct(
             rrb.TimeSeriesView(origin="throughput", name="Preparation throughput"),
             rrb.TextDocumentView(origin="provenance", name="Run provenance"),
         ),
-        rrb.TimePanel(state=rrb.PanelState.Expanded, timeline=PREPARATION_TIMELINE),
+        _expanded_time_panel(rrb),
         auto_layout=False,
     )
     recording = rr.RecordingStream(RERUN_APPLICATION_ID, recording_id=run_id)
@@ -1745,6 +1746,17 @@ def _set_rerun_time(
         rr.set_time(timeline, sequence=sequence, recording=recording)
 
 
+def _expanded_time_panel(rrb: object) -> object:
+    """Build a panel accepted by both the vendor and isolated Rerun SDKs.
+
+    Older Rerun SDKs do not accept ``timeline`` in the ``TimePanel``
+    constructor.  The recording timeline is factual data set on every log
+    operation, so selecting it in the blueprint is optional presentation state.
+    """
+
+    return rrb.TimePanel(state=rrb.PanelState.Expanded)
+
+
 def _build_training_rrd_direct(
     journal_path: Path,
     output_path: Path,
@@ -1825,7 +1837,7 @@ def _build_training_rrd_direct(
             rrb.TimeSeriesView(origin="checkpoint", name="Checkpoint events"),
             rrb.TextDocumentView(origin="provenance", name="Run provenance"),
         ),
-        rrb.TimePanel(state=rrb.PanelState.Expanded, timeline=RERUN_TIMELINE),
+        _expanded_time_panel(rrb),
         auto_layout=False,
     )
     recording = rr.RecordingStream(RERUN_APPLICATION_ID, recording_id=run_id)
@@ -1971,13 +1983,14 @@ def _build_training_rrd_direct(
 
 def _rrd_worker_python() -> Path | None:
     value = os.environ.get("NPA_OPENPI_RERUN_PYTHON", "").strip()
-    if not value:
-        return None
-    path = Path(value)
+    explicitly_configured = bool(value)
+    path = Path(value) if explicitly_configured else DEFAULT_RERUN_WORKER_PYTHON
     if not path.is_file() or not os.access(path, os.X_OK):
-        raise OpenPIPipelineError(
-            "the isolated Rerun worker interpreter is unavailable"
-        )
+        if explicitly_configured:
+            raise OpenPIPipelineError(
+                "the isolated Rerun worker interpreter is unavailable"
+            )
+        return None
     if path.resolve() == Path(sys.executable).resolve():
         return None
     return path
