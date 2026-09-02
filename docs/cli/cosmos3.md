@@ -10,7 +10,7 @@ Cosmos3 omni-model generation and reasoning workflow contracts.
 Options
 --help  Show this message and exit.
 Commands
-super-benchmark  Run the fixed Cosmos3-Super sweep on one 8xB200 or 8xH200 node.
+super-benchmark  Run a fixed Cosmos3-Super suite on one 8xB200 or 8xH200 node.
 ray-batch  Submit a durable SDG batch through Cosmos Framework's native Ray Serve path.
 ray-health  Check authenticated model readiness, not merely process liveness.
 ray-serve  Launch the persistent native Ray Serve model inside its GPU image.
@@ -32,7 +32,7 @@ text-to-image  Generate an image from a prompt with the Cosmos3 framework, and p
 
 | Command | Description |
 | --- | --- |
-| `super-benchmark` | Run the fixed Cosmos3-Super sweep on one 8xB200 or 8xH200 node. |
+| `super-benchmark` | Run a fixed Cosmos3-Super suite on one 8xB200 or 8xH200 node. |
 | `ray-batch` | Submit a durable SDG batch through Cosmos Framework's native Ray Serve path. |
 | `ray-health` | Check authenticated model readiness, not merely process liveness. |
 | `ray-serve` | Launch the persistent native Ray Serve model inside its GPU image. |
