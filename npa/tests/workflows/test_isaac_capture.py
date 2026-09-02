@@ -14,6 +14,33 @@ import pytest
 from npa.workflows import isaac_capture
 
 
+def test_simulation_app_close_cannot_swallow_capture_failure() -> None:
+    closed: list[bool] = []
+
+    class FakeApp:
+        def close(self) -> None:
+            closed.append(True)
+
+    with pytest.raises(RuntimeError, match="render failed"):
+        with isaac_capture._simulation_app_lifecycle(FakeApp()):
+            raise RuntimeError("render failed")
+
+    assert closed == []
+
+
+def test_simulation_app_closes_after_success() -> None:
+    closed: list[bool] = []
+
+    class FakeApp:
+        def close(self) -> None:
+            closed.append(True)
+
+    with isaac_capture._simulation_app_lifecycle(FakeApp()):
+        pass
+
+    assert closed == [True]
+
+
 def test_publish_runs_before_the_simulator_closes(monkeypatch, tmp_path: Path) -> None:
     """Live job 278: six frames, exit 0, nothing uploaded.
 
