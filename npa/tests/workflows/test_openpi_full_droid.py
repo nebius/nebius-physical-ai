@@ -1126,6 +1126,88 @@ def test_checkpoint_completion_marker_is_atomic_and_run_scoped(
     assert not list(step_path.glob("*.tmp"))
 
 
+def test_rank_zero_prepares_fresh_shared_checkpoint_root(tmp_path: Path) -> None:
+    root = tmp_path / "checkpoint"
+    root.mkdir()
+    (root / "attempt-scoped-telemetry.jsonl").write_text(
+        "incomplete\n", encoding="utf-8"
+    )
+    barriers: list[str] = []
+
+    class Multihost:
+        @staticmethod
+        def sync_global_devices(name: str) -> None:
+            barriers.append(name)
+
+    assert (
+        full_droid._prepare_distributed_checkpoint_root(
+            root, rank=0, multihost_utils=Multihost
+        )
+        is False
+    )
+    assert root.is_dir()
+    assert not any(root.iterdir())
+    assert barriers == ["npa-openpi-checkpoint-root-ready"]
+
+
+def test_nonzero_rank_never_cleans_shared_checkpoint_root(tmp_path: Path) -> None:
+    root = tmp_path / "checkpoint"
+    root.mkdir()
+    stale = root / "attempt-scoped-telemetry.jsonl"
+    stale.write_text("incomplete\n", encoding="utf-8")
+    barriers: list[str] = []
+
+    class Multihost:
+        @staticmethod
+        def sync_global_devices(name: str) -> None:
+            barriers.append(name)
+
+    assert (
+        full_droid._prepare_distributed_checkpoint_root(
+            root, rank=3, multihost_utils=Multihost
+        )
+        is False
+    )
+    assert stale.is_file()
+    assert barriers == ["npa-openpi-checkpoint-root-ready"]
+
+
+def test_distributed_checkpoint_resume_preserves_numeric_state(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "checkpoint"
+    step = root / "999"
+    step.mkdir(parents=True)
+    state = step / "orbax-metadata"
+    state.write_text("complete", encoding="utf-8")
+
+    class Multihost:
+        @staticmethod
+        def sync_global_devices(name: str) -> None:
+            assert name == "npa-openpi-checkpoint-root-ready"
+
+    assert (
+        full_droid._prepare_distributed_checkpoint_root(
+            root, rank=0, multihost_utils=Multihost
+        )
+        is True
+    )
+    assert state.read_text(encoding="utf-8") == "complete"
+
+
+def test_distributed_checkpoint_config_never_overwrites() -> None:
+    @dataclasses.dataclass(frozen=True)
+    class Config:
+        resume: bool = False
+        overwrite: bool = True
+
+    config = Config()
+    configured = full_droid._non_destructive_checkpoint_config(config)
+
+    assert configured.resume is True
+    assert configured.overwrite is False
+
+
 def test_telemetry_prefix_is_immutable_milestone_source(tmp_path: Path) -> None:
     run_id = "prefix-unit"
     path = tmp_path / "telemetry.jsonl"

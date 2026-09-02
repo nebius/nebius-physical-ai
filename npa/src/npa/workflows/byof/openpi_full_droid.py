@@ -1226,19 +1226,52 @@ def _checkpoint_completion_is_valid(
     }
 
 
+def _prepare_distributed_checkpoint_root(
+    checkpoint_root: Path, *, rank: int, multihost_utils: object
+) -> bool:
+    """Prepare one shared checkpoint root without concurrent deletion.
+
+    Upstream applies ``overwrite`` independently on every process.  On RWX
+    storage that makes all eight ranks recursively delete the same directory.
+    A fresh attempt instead has rank zero remove any attempt-scoped leftovers,
+    then every rank crosses the same barrier before Orbax opens the root.
+    """
+
+    resuming = checkpoint_root.is_dir() and any(
+        path.is_dir() and path.name.isdigit() for path in checkpoint_root.iterdir()
+    )
+    if rank == 0 and not resuming:
+        if checkpoint_root.exists():
+            shutil.rmtree(checkpoint_root)
+        checkpoint_root.mkdir(parents=True, exist_ok=True)
+    multihost_utils.sync_global_devices("npa-openpi-checkpoint-root-ready")
+    if not checkpoint_root.is_dir():
+        raise OpenPIPipelineError(
+            "shared checkpoint root is absent after distributed preparation"
+        )
+    return resuming
+
+
+def _non_destructive_checkpoint_config(config: object) -> object:
+    """Let Orbax decide resume state without allowing any rank to delete."""
+
+    return dataclasses.replace(config, resume=True, overwrite=False)
+
+
 def _run_training(
     config: object,
     repo_root: Path,
     *,
     rank: int,
     run_id: str,
+    multihost_utils: object,
     milestone_publisher: _TrainingMilestonePublisher | None = None,
 ) -> tuple[Path, bool, Path | None]:
     checkpoint_root = _checkpoint_root(config)
-    resuming = checkpoint_root.is_dir() and any(
-        path.is_dir() and path.name.isdigit() for path in checkpoint_root.iterdir()
+    resuming = _prepare_distributed_checkpoint_root(
+        checkpoint_root, rank=rank, multihost_utils=multihost_utils
     )
-    configured = dataclasses.replace(config, resume=resuming, overwrite=not resuming)
+    configured = _non_destructive_checkpoint_config(config)
     upstream_train = _load_upstream_train_module(repo_root)
     journal: _TrainingTelemetryJournal | None = None
     original_log = None
@@ -2837,6 +2870,7 @@ def _fine_tune(args: argparse.Namespace) -> int:
         repo_root,
         rank=rank,
         run_id=args.run_id,
+        multihost_utils=multihost_utils,
         milestone_publisher=milestone_publisher,
     )
     multihost_utils.sync_global_devices("npa-openpi-training-finished")
