@@ -247,6 +247,13 @@ def _probe_local_api_daemon_cwd(
     # would put them in different parent directories and miss the real daemon.
     sky_bin_dir = Path(sky_executable).expanduser().absolute().parent
     records: dict[int, tuple[int, tuple[str, ...], Path]] = {}
+    if sys.platform == "darwin" and proc_root == Path("/proc"):
+        # macOS has no procfs, so the deleted-cwd poisoning this probe detects
+        # cannot be inspected here. Treat the daemon as healthy rather than
+        # failing closed on every macOS operator host; the Linux-specific
+        # cwd_deleted recovery below remains unchanged, as do hermetic
+        # non-/proc test fixtures on every platform.
+        return ApiDaemonCwdProbe(True, "procfs_unavailable_darwin")
     try:
         candidates = tuple(proc_root.iterdir())
     except OSError as exc:

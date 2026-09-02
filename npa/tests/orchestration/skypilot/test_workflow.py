@@ -320,6 +320,34 @@ def test_local_api_daemon_probe_accepts_durable_process_tree(tmp_path) -> None:
     assert result.process_count == 2
 
 
+def test_local_api_daemon_probe_is_healthy_without_procfs_on_darwin(
+    tmp_path, monkeypatch
+) -> None:
+    # macOS has no /proc, so the deleted-cwd poisoning this probe detects is
+    # un-inspectable there; submit must not fail closed on every macOS host.
+    bin_dir = tmp_path / "venv" / "bin"
+    bin_dir.mkdir(parents=True)
+    sky = bin_dir / "sky"
+    sky.touch()
+    monkeypatch.setattr(workflow_module.sys, "platform", "darwin")
+
+    result = workflow_module._probe_local_api_daemon_cwd(
+        str(sky), proc_root=Path("/proc"), uid=1234
+    )
+
+    assert result.healthy is True
+    assert result.outcome == "procfs_unavailable_darwin"
+
+    # A hermetic non-/proc fixture keeps the conservative legacy behavior even
+    # on darwin: absence there is still reported as procfs_unavailable.
+    missing = tmp_path / "missing-proc"
+    hermetic = workflow_module._probe_local_api_daemon_cwd(
+        str(sky), proc_root=missing, uid=1234
+    )
+    assert hermetic.healthy is False
+    assert hermetic.outcome == "procfs_unavailable"
+
+
 def test_local_api_daemon_probe_ignores_other_mount_namespaces(tmp_path) -> None:
     proc_root = tmp_path / "proc"
     bin_dir = tmp_path / "venv" / "bin"
