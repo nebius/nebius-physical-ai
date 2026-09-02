@@ -1015,6 +1015,17 @@ def test_rrd_worker_python_avoids_current_interpreter(
     assert full_droid._rrd_worker_python() is None
 
 
+def test_rrd_worker_python_keeps_distinct_virtualenv_symlink(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    worker = tmp_path / "python"
+    worker.symlink_to(sys.executable)
+    monkeypatch.setenv("NPA_OPENPI_RERUN_PYTHON", str(worker))
+
+    assert worker.resolve() == Path(sys.executable).resolve()
+    assert full_droid._rrd_worker_python() == worker
+
+
 def test_expanded_time_panel_supports_legacy_constructor() -> None:
     calls: list[object] = []
 

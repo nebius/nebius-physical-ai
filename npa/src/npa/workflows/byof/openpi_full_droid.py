@@ -1991,7 +1991,11 @@ def _rrd_worker_python() -> Path | None:
                 "the isolated Rerun worker interpreter is unavailable"
             )
         return None
-    if path.resolve() == Path(sys.executable).resolve():
+    # Distinct virtual environments commonly symlink their Python executable
+    # to the same base interpreter.  Resolving those symlinks would collapse
+    # the vendor and isolated Rerun environments and incorrectly force the
+    # direct path even though their site-packages differ.
+    if path.absolute() == Path(sys.executable).absolute():
         return None
     return path
 
