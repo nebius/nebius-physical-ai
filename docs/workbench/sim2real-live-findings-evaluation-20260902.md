@@ -11,7 +11,7 @@ The referenced `sim2real-repo-fixes.md` was not present in the clone or found in
 the repository's GitHub code search. The available originating context was the
 operator-supplied summary and [PR #367](https://github.com/nebius/nebius-physical-ai/pull/367),
 which merged after the original evaluation. PR #367's code changes
-were inspected separately from current `main`; its “Not included” section
+were inspected separately from the original evaluation baseline; its “Not included” section
 independently reports the publication, `source_sha`, Kueue, and graphics gaps.
 
 ## Dispositions
