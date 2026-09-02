@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import dataclasses
 import fcntl
+import functools
 import hashlib
 import importlib.metadata
 import inspect
@@ -12,6 +14,7 @@ import json
 import math
 import os
 import re
+import resource
 import shutil
 import socket
 import subprocess
@@ -53,6 +56,8 @@ EXPECTED_LOCAL_DEVICES = 1
 EXPECTED_DEVICES = EXPECTED_PROCESSES * EXPECTED_LOCAL_DEVICES
 EXPECTED_FSDP_DEVICES = EXPECTED_DEVICES
 NORM_MAX_FRAMES = 10_000_000
+PINNED_UPSTREAM_NORM_SHUFFLE_BUFFER_SIZE = 250_000
+NORM_SHUFFLE_BUFFER_SIZE = 50_000
 COORDINATOR_PORT = 29601
 TELEMETRY_SCHEMA = "npa.workbench.openpi.pi05-full-droid-telemetry.v1"
 PREPARATION_TELEMETRY_SCHEMA = (
@@ -690,11 +695,92 @@ class _FactualNormalizationBatchTracker:
             )
 
 
+def _peak_rss_bytes() -> int:
+    """Return Linux ru_maxrss in bytes for preparation resource telemetry."""
+
+    return int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss) * 1024
+
+
+def _peak_memory_observation() -> dict[str, int]:
+    """Capture both process RSS and container/process-tree cgroup memory."""
+
+    process_rss = _peak_rss_bytes()
+    cgroup_values: list[int] = []
+    for path in (
+        Path("/sys/fs/cgroup/memory.peak"),
+        Path("/sys/fs/cgroup/memory.current"),
+        Path("/sys/fs/cgroup/memory/memory.max_usage_in_bytes"),
+    ):
+        try:
+            value = path.read_text(encoding="utf-8").strip()
+        except (FileNotFoundError, OSError):
+            continue
+        if value.isdecimal():
+            cgroup_values.append(int(value))
+    cgroup_peak = max(cgroup_values, default=0)
+    return {
+        "peak_rss_bytes": process_rss,
+        "cgroup_peak_memory_bytes": cgroup_peak,
+        "peak_memory_bytes": max(process_rss, cgroup_peak),
+    }
+
+
+@contextlib.contextmanager
+def _normalization_dataset_memory_override(data_loader_module: object):
+    """Bound only normalization's decoded-frame shuffle buffer.
+
+    The full training and qualification data paths retain the pinned upstream
+    default.  Fail closed if the pinned constructor or its caller contract
+    changes, and always restore the module before returning to either path.
+    """
+
+    original = getattr(data_loader_module, "DroidRldsDataset", None)
+    if original is None:
+        raise OpenPIPipelineError(
+            "pinned normalization dataset constructor is unavailable"
+        )
+    parameter = inspect.signature(original).parameters.get("shuffle_buffer_size")
+    if (
+        parameter is None
+        or parameter.default != PINNED_UPSTREAM_NORM_SHUFFLE_BUFFER_SIZE
+    ):
+        raise OpenPIPipelineError(
+            "pinned normalization shuffle-buffer contract changed"
+        )
+
+    @functools.wraps(original)
+    def bounded_dataset(*args, **kwargs):
+        requested = kwargs.get(
+            "shuffle_buffer_size", PINNED_UPSTREAM_NORM_SHUFFLE_BUFFER_SIZE
+        )
+        if requested != PINNED_UPSTREAM_NORM_SHUFFLE_BUFFER_SIZE:
+            raise OpenPIPipelineError(
+                "pinned normalization caller shuffle-buffer contract changed"
+            )
+        kwargs["shuffle_buffer_size"] = NORM_SHUFFLE_BUFFER_SIZE
+        return original(*args, **kwargs)
+
+    setattr(data_loader_module, "DroidRldsDataset", bounded_dataset)
+    try:
+        yield
+    finally:
+        changed = (
+            getattr(data_loader_module, "DroidRldsDataset", None)
+            is not bounded_dataset
+        )
+        setattr(data_loader_module, "DroidRldsDataset", original)
+        if changed:
+            raise OpenPIPipelineError(
+                "normalization dataset override was unexpectedly mutated"
+            )
+
+
 def _compute_norm_stats(
     config: object, repo_root: Path, *, run_id: str, journal_path: Path
 ) -> dict[str, object]:
     from openpi.shared import normalize
     from openpi.training import config as openpi_config
+    from openpi.training import data_loader as openpi_data_loader
 
     data_config = config.data.create(config.assets_dirs, config.model)
     stats_path = config.assets_dirs / data_config.repo_id / "norm_stats.json"
@@ -750,6 +836,7 @@ def _compute_norm_stats(
             processed_batches = batch
             if processed_batches % 1_000 == 0:
                 elapsed = time.perf_counter() - started
+                memory = _peak_memory_observation()
                 _append_jsonl(
                     journal_path,
                     {
@@ -764,6 +851,9 @@ def _compute_norm_stats(
                         "frames_per_second": (
                             processed_batches * int(config.batch_size) / elapsed
                         ),
+                        "normalization_shuffle_buffer_size": NORM_SHUFFLE_BUFFER_SIZE,
+                        "normalization_resume_mode": "full_restart",
+                        **memory,
                     },
                 )
 
@@ -775,8 +865,25 @@ def _compute_norm_stats(
                 config if name == CONFIG_NAME else original(name)
             )
             exec(compile(module_path.read_bytes(), str(module_path), "exec"), namespace)  # noqa: S102
+            if namespace.get("_data_loader") is not openpi_data_loader:
+                raise OpenPIPipelineError(
+                    "pinned normalization script data-loader alias changed"
+                )
             create_rlds_dataloader = namespace["create_rlds_dataloader"]
             original_create_rlds_dataloader = create_rlds_dataloader
+            create_rlds_dataset = getattr(
+                openpi_data_loader, "create_rlds_dataset", None
+            )
+            if (
+                not callable(create_rlds_dataset)
+                or getattr(create_rlds_dataset, "__globals__", {}).get(
+                    "DroidRldsDataset"
+                )
+                is not openpi_data_loader.DroidRldsDataset
+            ):
+                raise OpenPIPipelineError(
+                    "pinned normalization dataset call target changed"
+                )
 
             def tracking_create_rlds_dataloader(*args, **kwargs):
                 nonlocal target_loader_calls
@@ -792,13 +899,15 @@ def _compute_norm_stats(
                 return tracker.wrap(loader), num_batches
 
             namespace["create_rlds_dataloader"] = tracking_create_rlds_dataloader
-            namespace["main"](CONFIG_NAME, max_frames=NORM_MAX_FRAMES)  # type: ignore[operator]
+            with _normalization_dataset_memory_override(openpi_data_loader):
+                namespace["main"](CONFIG_NAME, max_frames=NORM_MAX_FRAMES)  # type: ignore[operator]
             if target_loader_calls != 1:
                 raise OpenPIPipelineError(
                     "pinned normalization loader contract changed"
                 )
             tracker.assert_complete()
             elapsed = time.perf_counter() - started
+            memory = _peak_memory_observation()
             _append_jsonl(
                 journal_path,
                 {
@@ -812,9 +921,13 @@ def _compute_norm_stats(
                     "frames_per_second": (
                         processed_batches * int(config.batch_size) / elapsed
                     ),
+                    "normalization_shuffle_buffer_size": NORM_SHUFFLE_BUFFER_SIZE,
+                    "normalization_resume_mode": "full_restart",
+                    **memory,
                 },
             )
         except Exception as exc:
+            memory = _peak_memory_observation()
             _append_jsonl(
                 journal_path,
                 {
@@ -825,6 +938,9 @@ def _compute_norm_stats(
                     "normalization_batch": processed_batches,
                     "frames_processed": processed_batches * int(config.batch_size),
                     "failure_type": type(exc).__name__,
+                    "normalization_shuffle_buffer_size": NORM_SHUFFLE_BUFFER_SIZE,
+                    "normalization_resume_mode": "full_restart",
+                    **memory,
                 },
             )
             raise
@@ -862,6 +978,13 @@ def _compute_norm_stats(
         "normalization_attempt": final.get("normalization_attempt", 0),
         "elapsed_seconds": final["elapsed_seconds"],
         "frames_per_second": final["frames_per_second"],
+        "normalization_shuffle_buffer_size": final[
+            "normalization_shuffle_buffer_size"
+        ],
+        "peak_rss_bytes": final["peak_rss_bytes"],
+        "cgroup_peak_memory_bytes": final["cgroup_peak_memory_bytes"],
+        "peak_memory_bytes": final["peak_memory_bytes"],
+        "resume_mode": final["normalization_resume_mode"],
         "sha256": hashlib.sha256(stats_path.read_bytes()).hexdigest(),
     }
 
@@ -1381,6 +1504,9 @@ PREPARATION_RRD_ENTITIES = (
     "normalization/frames_per_second",
     "normalization/progress_ratio",
     "normalization/statistics_materialized",
+    "normalization/shuffle_buffer_size",
+    "resources/normalization_peak_rss_bytes",
+    "resources/normalization_peak_memory_bytes",
     "timing/normalization_elapsed_seconds",
     "throughput/checksum_verification_bytes_per_second",
     "provenance/source_telemetry_sha256",
@@ -1524,6 +1650,9 @@ def _build_preparation_rrd_direct(
             f"- upstream source ref: `{SOURCE_REF}`\n"
             f"- dataset listing sha256: `{dataset['listing_sha256']}`\n"
             f"- normalization sha256: `{normalization['sha256']}`\n"
+            "- normalization-only shuffle buffer: "
+            f"`{normalization['normalization_shuffle_buffer_size']}` frames\n"
+            "- interrupted normalization policy: full restart from batch zero\n"
             f"- runtime image digest: `{_runtime_image_digest(runtime_image)}`\n"
             f"- source telemetry sha256: `{journal_sha256}`\n"
             "- inputs remain private; this recording contains aggregate facts only."
@@ -1575,6 +1704,21 @@ def _build_preparation_rrd_direct(
         rr.log(
             "timing/normalization_elapsed_seconds",
             rr.Scalars(float(record["elapsed_seconds"])),
+            recording=recording,
+        )
+        rr.log(
+            "normalization/shuffle_buffer_size",
+            rr.Scalars(float(record["normalization_shuffle_buffer_size"])),
+            recording=recording,
+        )
+        rr.log(
+            "resources/normalization_peak_rss_bytes",
+            rr.Scalars(float(record["peak_rss_bytes"])),
+            recording=recording,
+        )
+        rr.log(
+            "resources/normalization_peak_memory_bytes",
+            rr.Scalars(float(record["peak_memory_bytes"])),
             recording=recording,
         )
         if record.get("record_type") == "normalization_complete":

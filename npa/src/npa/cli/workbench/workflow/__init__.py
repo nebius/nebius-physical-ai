@@ -6015,6 +6015,7 @@ def cancel_cmd(
         from npa.orchestration.npa_workflow.cancellation import (
             assess_run_cancellation,
             is_terminal_workflow_state,
+            reverify_active_cancellation,
         )
         from npa.orchestration.npa_workflow.run_resolution import resolve_run
         from npa.orchestration.skypilot.workflow_state import WorkflowStateError
@@ -6049,6 +6050,7 @@ def cancel_cmd(
                 source=f"receipt:{receipt}",
             )
         else:
+            resolved_exact_job_id = str(job_id or identity.get("sky_job_id") or "")
             resolution = resolve_run(
                 resolved_identity_run,
                 project=str(identity.get("project_alias") or project),
@@ -6057,7 +6059,9 @@ def cancel_cmd(
                 s3_bucket=s3_bucket,
                 s3_endpoint=s3_endpoint,
                 sky_bin=sky_bin,
-                exact_job_id=str(identity.get("sky_job_id") or job_id),
+                # An explicit exact ID is a live operator observation and must
+                # outrank a stale receipt after controller database recovery.
+                exact_job_id=resolved_exact_job_id,
                 allow_local_not_submitted=True,
             )
         resolved_run_id = resolution.run_id
@@ -6122,6 +6126,7 @@ def cancel_cmd(
             assessment = assess_run_cancellation(
                 resolution,
                 sky_bin=sky_bin,
+                exact_job_id=str(job_id or identity.get("sky_job_id") or ""),
             )
             jobs_payload = [item.to_dict() for item in assessment.jobs]
             job_ids = [item.job_id for item in assessment.jobs]
@@ -6165,36 +6170,57 @@ def cancel_cmd(
                     cleanup_launched_workflows,
                 )
 
-                cleanup = cleanup_launched_workflows(
-                    [
-                        (item.job_id, item.job_name or resolved_run_id)
-                        for item in assessment.active_jobs
-                    ],
-                    resolved_run_id,
-                    cluster=cluster,
-                    sky_bin=sky_bin or None,
+                reverify_errors = reverify_active_cancellation(
+                    assessment, sky_bin=sky_bin
                 )
-                errors = [*assessment.errors, *cleanup.errors]
-                result = {
-                    "run_id": resolved_run_id,
-                    "outcome": "cancelled" if not errors else "partial_cancellation",
-                    "detected_state": assessment.detected_state,
-                    "status": assessment.detected_state,
-                    "sky_job_id": active_ids[0] if len(active_ids) == 1 else "",
-                    "sky_job_ids": job_ids,
-                    "cancelled_job_ids": active_ids,
-                    "cloud_calls": True,
-                    "jobs": jobs_payload,
-                    "resources_removed": cleanup.resources_removed,
-                    "commands": cleanup.commands,
-                    "errors": errors,
-                    "message": (
-                        f"Cancellation converged for {len(active_ids)} active managed job(s)."
+                if reverify_errors:
+                    result = {
+                        "run_id": resolved_run_id,
+                        "outcome": "verification_failed",
+                        "detected_state": "VERIFICATION_UNAVAILABLE",
+                        "sky_job_id": "",
+                        "sky_job_ids": job_ids,
+                        "cloud_calls": False,
+                        "jobs": jobs_payload,
+                        "errors": reverify_errors,
+                        "message": (
+                            "Cancellation was not attempted because exact active-job "
+                            "identity changed during the pre-cancel check."
+                        ),
+                    }
+                else:
+                    cleanup = cleanup_launched_workflows(
+                        [
+                            (item.job_id, item.job_name or resolved_run_id)
+                            for item in assessment.active_jobs
+                        ],
+                        resolved_run_id,
+                        cluster=cluster,
+                        sky_bin=sky_bin or None,
+                    )
+                    errors = [*assessment.errors, *cleanup.errors]
+                    result = {
+                        "run_id": resolved_run_id,
+                        "outcome": "cancelled"
                         if not errors
-                        else "Cancellation was only partial; retry after resolving the "
-                        "reported exact job/provider failures."
-                    ),
-                }
+                        else "partial_cancellation",
+                        "detected_state": assessment.detected_state,
+                        "status": assessment.detected_state,
+                        "sky_job_id": active_ids[0] if len(active_ids) == 1 else "",
+                        "sky_job_ids": job_ids,
+                        "cancelled_job_ids": active_ids,
+                        "cloud_calls": True,
+                        "jobs": jobs_payload,
+                        "resources_removed": cleanup.resources_removed,
+                        "commands": cleanup.commands,
+                        "errors": errors,
+                        "message": (
+                            f"Cancellation converged for {len(active_ids)} active managed job(s)."
+                            if not errors
+                            else "Cancellation was only partial; retry after resolving the "
+                            "reported exact job/provider failures."
+                        ),
+                    }
     except (WorkflowStateError, OSError, RuntimeError, ValueError) as exc:
         result = {
             "run_id": resolved_run_id or str(run_id),

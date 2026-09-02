@@ -25,7 +25,9 @@ config:
   # with zero and the same run id/PVC resumes toward the original target.
   pause_after_updates: "0"
   prepare_cpus: "16"
-  prepare_memory: 64Gi
+  # Normalization is CPU-only but retains a bounded decoded-frame shuffle
+  # buffer; reserve headroom so Kubernetes does not evict factual preparation.
+  prepare_memory: 128Gi
   prepare_disk_size: "100"
   prepare_num_nodes: "1"
 

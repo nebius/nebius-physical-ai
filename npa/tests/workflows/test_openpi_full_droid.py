@@ -37,6 +37,8 @@ def test_full_droid_recipe_matches_pinned_upstream_contract() -> None:
     assert full_droid.EXPECTED_DEVICES == full_droid.EXPECTED_FSDP_DEVICES == 8
     assert full_droid.EXPECTED_BATCH_SIZE % full_droid.EXPECTED_DEVICES == 0
     assert full_droid.NORM_MAX_FRAMES == 10_000_000
+    assert full_droid.PINNED_UPSTREAM_NORM_SHUFFLE_BUFFER_SIZE == 250_000
+    assert full_droid.NORM_SHUFFLE_BUFFER_SIZE == 50_000
     assert full_droid.FILTER_DICTIONARY_URI.endswith(
         "/droid_sample_ranges_v1_0_1.json"
     )
@@ -482,6 +484,50 @@ def test_normalization_batch_tracker_fails_closed_on_partial_or_reuse() -> None:
         list(tracker.wrap(["unexpected-retry"]))
 
 
+def test_normalization_memory_override_is_scoped_and_restored() -> None:
+    observed: list[int] = []
+
+    class FakeDroidRldsDataset:
+        def __init__(self, *, shuffle_buffer_size: int = 250_000) -> None:
+            observed.append(shuffle_buffer_size)
+
+    module = SimpleNamespace(DroidRldsDataset=FakeDroidRldsDataset)
+    with full_droid._normalization_dataset_memory_override(module):
+        module.DroidRldsDataset(shuffle_buffer_size=250_000)
+        assert module.DroidRldsDataset is not FakeDroidRldsDataset
+
+    assert observed == [50_000]
+    assert module.DroidRldsDataset is FakeDroidRldsDataset
+    module.DroidRldsDataset()
+    assert observed == [50_000, 250_000]
+
+
+def test_normalization_memory_override_restores_after_error() -> None:
+    class FakeDroidRldsDataset:
+        def __init__(self, *, shuffle_buffer_size: int = 250_000) -> None:
+            del shuffle_buffer_size
+
+    module = SimpleNamespace(DroidRldsDataset=FakeDroidRldsDataset)
+    with pytest.raises(RuntimeError, match="normalization failed"):
+        with full_droid._normalization_dataset_memory_override(module):
+            raise RuntimeError("normalization failed")
+    assert module.DroidRldsDataset is FakeDroidRldsDataset
+
+
+def test_normalization_memory_override_fails_on_contract_drift() -> None:
+    class DriftedDroidRldsDataset:
+        def __init__(self, *, shuffle_buffer_size: int = 42) -> None:
+            del shuffle_buffer_size
+
+    module = SimpleNamespace(DroidRldsDataset=DriftedDroidRldsDataset)
+    with pytest.raises(
+        full_droid.OpenPIPipelineError, match="shuffle-buffer contract changed"
+    ):
+        with full_droid._normalization_dataset_memory_override(module):
+            pass
+    assert module.DroidRldsDataset is DriftedDroidRldsDataset
+
+
 def _telemetry_config() -> SimpleNamespace:
     return SimpleNamespace(
         num_train_steps=2,
@@ -815,6 +861,11 @@ def test_preparation_rrd_contains_factual_progress_and_lineage(
                 "frames_processed": batch * 256,
                 "elapsed_seconds": float(batch),
                 "frames_per_second": 256.0,
+                "normalization_shuffle_buffer_size": 50_000,
+                "peak_rss_bytes": 4_294_967_296,
+                "cgroup_peak_memory_bytes": 4_831_838_208,
+                "peak_memory_bytes": 4_831_838_208,
+                "normalization_resume_mode": "full_restart",
             },
         )
     result = {
@@ -830,6 +881,11 @@ def test_preparation_rrd_contains_factual_progress_and_lineage(
         "normalization": {
             "sha256": "b" * 64,
             "frames_processed": 2_000 * 256,
+            "normalization_shuffle_buffer_size": 50_000,
+            "peak_rss_bytes": 4_294_967_296,
+            "cgroup_peak_memory_bytes": 4_831_838_208,
+            "peak_memory_bytes": 4_831_838_208,
+            "resume_mode": "full_restart",
         },
     }
     output = tmp_path / "preparation.rrd"
@@ -878,6 +934,11 @@ def test_preparation_rrd_uses_isolated_worker_contract(
             "frames_processed": 256,
             "elapsed_seconds": 1.0,
             "frames_per_second": 256.0,
+            "normalization_shuffle_buffer_size": 50_000,
+            "peak_rss_bytes": 4_294_967_296,
+            "cgroup_peak_memory_bytes": 4_831_838_208,
+            "peak_memory_bytes": 4_831_838_208,
+            "normalization_resume_mode": "full_restart",
         },
     )
     output = tmp_path / "worker.rrd"
@@ -896,7 +957,15 @@ def test_preparation_rrd_uses_isolated_worker_contract(
                 "local_total_size_bytes": 23,
                 "listing_sha256": "a" * 64,
             },
-            "normalization": {"sha256": "b" * 64, "frames_processed": 256},
+            "normalization": {
+                "sha256": "b" * 64,
+                "frames_processed": 256,
+                "normalization_shuffle_buffer_size": 50_000,
+                "peak_rss_bytes": 4_294_967_296,
+                "cgroup_peak_memory_bytes": 4_831_838_208,
+                "peak_memory_bytes": 4_831_838_208,
+                "resume_mode": "full_restart",
+            },
         },
         runtime_image="ghcr.io/example/openpi@sha256:" + "c" * 64,
     )

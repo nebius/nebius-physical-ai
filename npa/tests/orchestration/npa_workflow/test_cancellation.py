@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from npa.orchestration.npa_workflow.cancellation import assess_run_cancellation
+from npa.orchestration.npa_workflow.cancellation import (
+    assess_run_cancellation,
+    reverify_active_cancellation,
+)
 from npa.orchestration.npa_workflow.run_resolution import RunResolution
 from npa.orchestration.skypilot import cleanup as cleanup_module
 from npa.orchestration.skypilot.cleanup import CleanupResult
@@ -146,6 +149,131 @@ def test_active_stage_outweighs_a_stale_terminal_root_state() -> None:
 
     assert assessment.detected_state == "ACTIVE"
     assert [job.job_id for job in assessment.active_jobs] == ["251"]
+
+
+def test_exact_live_job_outweighs_reused_terminal_numeric_id() -> None:
+    resolution = RunResolution(
+        run_id="paidf-runtime",
+        project="prod",
+        found=True,
+        source="exact_managed_job_id",
+        manifest={
+            "schema_version": "npa.workflow.run.v1",
+            "run_id": "paidf-runtime",
+            "status": "failed",
+        },
+        runtime_state={
+            "status": "failed",
+            "waves": [
+                {
+                    "key": "prepare-old-attempt",
+                    "job_id": "1",
+                    "job_name": "paidf-runtime-prepare",
+                    "status": "failed",
+                }
+            ],
+        },
+        job_id="1",
+        job_name="paidf-runtime-prepare",
+        managed_job=ManagedJobEvidence("found", job_id="1", status="RUNNING"),
+    )
+
+    looked_up: list[str] = []
+
+    def lookup(_job_name: str, *, job_id: str, **_kwargs) -> ManagedJobEvidence:
+        looked_up.append(job_id)
+        return ManagedJobEvidence("found", job_id=job_id, status="RUNNING")
+
+    assessment = assess_run_cancellation(
+        resolution, lookup=lookup, exact_job_id="1"
+    )
+
+    assert assessment.detected_state == "ACTIVE"
+    assert [job.job_id for job in assessment.active_jobs] == ["1"]
+    assert assessment.terminal_jobs == []
+    assert looked_up == ["1"]
+
+
+def test_explicit_exact_job_id_unavailable_fails_closed() -> None:
+    resolution = _resolution(
+        {
+            "status": "failed",
+            "waves": [{"key": "old", "job_id": "1", "status": "failed"}],
+        }
+    )
+
+    assessment = assess_run_cancellation(
+        resolution,
+        exact_job_id="1",
+        lookup=lambda *args, **kwargs: ManagedJobEvidence(
+            "unavailable", job_id="1", error="provider unavailable"
+        ),
+    )
+
+    assert assessment.detected_state == "VERIFICATION_UNAVAILABLE"
+    assert assessment.active_jobs == []
+    assert assessment.errors
+
+
+def test_active_job_is_reverified_immediately_before_cancellation() -> None:
+    assessment = assess_run_cancellation(
+        _resolution(
+            {
+                "status": "running",
+                "waves": [
+                    {
+                        "key": "prepare",
+                        "job_id": "7",
+                        "job_name": "paidf-runtime-prepare",
+                        "status": "running",
+                    }
+                ],
+            }
+        ),
+        lookup=lambda *args, **kwargs: ManagedJobEvidence(
+            "found", job_id="7", status="RUNNING"
+        ),
+    )
+    calls: list[str] = []
+
+    def completed(_job_name: str, *, job_id: str, **_kwargs):
+        calls.append(job_id)
+        return ManagedJobEvidence("found", job_id=job_id, status="SUCCEEDED")
+
+    errors = reverify_active_cancellation(assessment, lookup=completed)
+
+    assert calls == ["7"]
+    assert errors == [
+        "exact job 7 is no longer active before cancellation: SUCCEEDED"
+    ]
+
+
+def test_active_job_reverification_accepts_only_same_exact_live_job() -> None:
+    assessment = assess_run_cancellation(
+        _resolution(
+            {
+                "status": "running",
+                "waves": [
+                    {
+                        "key": "prepare",
+                        "job_id": "7",
+                        "job_name": "paidf-runtime-prepare",
+                        "status": "running",
+                    }
+                ],
+            }
+        ),
+        lookup=lambda *args, **kwargs: ManagedJobEvidence(
+            "found", job_id="7", status="RUNNING"
+        ),
+    )
+
+    assert reverify_active_cancellation(
+        assessment,
+        lookup=lambda *args, **kwargs: ManagedJobEvidence(
+            "found", job_id="7", status="RECOVERING"
+        ),
+    ) == []
 
 
 def test_runtime_wave_identity_ignores_a_bogus_discovered_root_job_eight() -> None:
