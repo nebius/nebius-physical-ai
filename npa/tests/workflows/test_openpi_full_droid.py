@@ -1026,6 +1026,35 @@ def test_rrd_worker_python_keeps_distinct_virtualenv_symlink(
     assert full_droid._rrd_worker_python() == worker
 
 
+def test_rerun_executable_prefers_isolated_worker_cli(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    worker = tmp_path / "python"
+    worker.write_text("#!/bin/sh\n", encoding="utf-8")
+    worker.chmod(0o700)
+    cli = tmp_path / "rerun"
+    cli.write_text("#!/bin/sh\n", encoding="utf-8")
+    cli.chmod(0o700)
+    monkeypatch.setenv("NPA_OPENPI_RERUN_PYTHON", str(worker))
+
+    assert full_droid._rerun_executable() == str(cli)
+
+
+def test_rerun_executable_fails_closed_without_worker_cli(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    worker = tmp_path / "python"
+    worker.write_text("#!/bin/sh\n", encoding="utf-8")
+    worker.chmod(0o700)
+    monkeypatch.setenv("NPA_OPENPI_RERUN_PYTHON", str(worker))
+
+    with pytest.raises(
+        full_droid.OpenPIPipelineError,
+        match="isolated Rerun worker CLI is unavailable",
+    ):
+        full_droid._rerun_executable()
+
+
 def test_expanded_time_panel_supports_legacy_constructor() -> None:
     calls: list[object] = []
 

@@ -1359,8 +1359,16 @@ def _set_rerun_step(rr: object, recording: object, step: int) -> None:
 
 
 def _rerun_executable() -> str:
+    worker_python = _rrd_worker_python()
+    if worker_python is not None:
+        worker_cli = worker_python.with_name("rerun")
+        if worker_cli.is_file() and os.access(worker_cli, os.X_OK):
+            return str(worker_cli)
+        raise OpenPIPipelineError(
+            "the isolated Rerun worker CLI is unavailable for RRD verification"
+        )
     sibling = Path(sys.executable).with_name("rerun")
-    if sibling.is_file():
+    if sibling.is_file() and os.access(sibling, os.X_OK):
         return str(sibling)
     value = shutil.which("rerun")
     if value:
