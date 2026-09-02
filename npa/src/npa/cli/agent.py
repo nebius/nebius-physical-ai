@@ -3901,6 +3901,7 @@ def _provision_agent_infra(
             gpu_platform=str(requested.get("gpu_platform") or ""),
             gpu_preset=str(requested.get("gpu_preset") or ""),
             gpu_driver_mode=str(requested.get("gpu_driver_mode") or ""),
+            gpu_workload_profile=str(requested.get("gpu_workload_profile") or ""),
             managed_driver_preset=str(requested.get("managed_driver_preset") or ""),
             gpu_health_stabilization_seconds=int(requested.get("gpu_health_stabilization_seconds", 120)),
             gpu_health_timeout_minutes=int(requested.get("gpu_health_timeout_minutes", 60)),
@@ -8321,7 +8322,7 @@ def provision_infra(payload: dict | None = None):
         key: body[key]
         for key in (
             "gpu_nodes", "cpu_nodes", "gpu_platform", "gpu_preset",
-            "gpu_driver_mode", "managed_driver_preset",
+            "gpu_driver_mode", "gpu_workload_profile", "managed_driver_preset",
             "gpu_health_stabilization_seconds", "gpu_health_timeout_minutes",
             "gpu_cuda_smoke",
             "gpu_cuda_smoke_image", "mig", "mig_strategy", "mig_config",

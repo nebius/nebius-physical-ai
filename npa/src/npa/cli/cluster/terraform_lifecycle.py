@@ -38,6 +38,7 @@ from npa.cluster.gpu_health import (
     probe_gpu_health,
     validate_gpu_health,
 )
+from npa.cluster.gpu_workload_profile import resolve_gpu_workload_profile
 from npa.cluster_backends import get_backend
 from npa.cluster_backends.mk8s import (
     MK8sApplyRequest,
@@ -344,6 +345,15 @@ def up_cmd(
         "--gpu-driver-mode",
         help="GPU driver strategy: auto, managed-image, or operator. Empty keeps tfvars/default auto.",
     ),
+    gpu_workload_profile: str = typer.Option(
+        "",
+        "--gpu-workload-profile",
+        help=(
+            "Explicit GPU workload contract. 'rtx-rendering' selects RTX PRO 6000, "
+            "the supported single-GPU preset, GPU Operator drivers, and mandatory "
+            "GLX/EGL/Vulkan readiness validation."
+        ),
+    ),
     managed_driver_preset: str = typer.Option(
         "",
         "--managed-driver-preset",
@@ -431,6 +441,20 @@ def up_cmd(
         gpu_platform = topology.gpu_platform
         gpu_preset = topology.gpu_preset
         preemptible = topology.gpu_preemptible
+    try:
+        workload = resolve_gpu_workload_profile(
+            profile=gpu_workload_profile,
+            gpu_nodes=gpu_nodes,
+            gpu_platform=gpu_platform,
+            gpu_preset=gpu_preset,
+            gpu_driver_mode=gpu_driver_mode,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--gpu-workload-profile") from exc
+    gpu_nodes = workload.gpu_nodes
+    gpu_platform = workload.gpu_platform
+    gpu_preset = workload.gpu_preset
+    gpu_driver_mode = workload.gpu_driver_mode
     explicit_context = _apply_context_cluster_name(
         tfvars,
         context_name,
@@ -585,6 +609,7 @@ def up_cmd(
             gpu_health_timeout_minutes=validation_timeout,
             gpu_cuda_smoke=gpu_cuda_smoke,
             gpu_cuda_smoke_image=gpu_cuda_smoke_image,
+            gpu_workload_profile=workload.profile,
             mig=(
                 MigSpec(enabled=True, strategy=mig_strategy, config=mig_config)
                 if mig_enabled
@@ -1023,6 +1048,7 @@ def up_cmd(
                 gpu_health_stabilization_seconds=gpu_health_stabilization_seconds,
                 gpu_cuda_smoke=gpu_cuda_smoke,
                 gpu_cuda_smoke_image=gpu_cuda_smoke_image,
+                gpu_graphics_smoke=workload.graphics_smoke,
                 env=env,
             )
             typer.echo(
@@ -3731,6 +3757,7 @@ def _validate_cluster(
     gpu_health_stabilization_seconds: int = DEFAULT_STABILIZATION_SECONDS,
     gpu_cuda_smoke: bool = True,
     gpu_cuda_smoke_image: str = DEFAULT_CUDA_SMOKE_IMAGE,
+    gpu_graphics_smoke: bool = False,
     env: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     resolved_env = dict(env or os.environ)
@@ -3774,6 +3801,7 @@ def _validate_cluster(
                     timeout_seconds=timeout_minutes * 60,
                     cuda_smoke=gpu_cuda_smoke,
                     cuda_smoke_image=gpu_cuda_smoke_image,
+                    graphics_smoke=gpu_graphics_smoke,
                 ),
                 evidence_path=kubeconfig_path.parent / "gpu-health.json",
                 on_status=lambda message: typer.echo(message),
@@ -3787,6 +3815,7 @@ def _validate_cluster(
             "total_gpus": final["total_gpus"],
             "driver_mode": driver.effective_mode,
             "cuda_smokes": gpu_report["cuda_smokes"],
+            "graphics_smokes": gpu_report["graphics_smokes"],
         }
     else:
         result = {}

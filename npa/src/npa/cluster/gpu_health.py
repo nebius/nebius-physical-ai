@@ -19,6 +19,10 @@ DEFAULT_POLL_SECONDS = 10
 DEFAULT_CUDA_SMOKE_IMAGE = (
     "nvcr.io/nvidia/k8s/cuda-sample:vectoradd-cuda12.5.0-ubuntu22.04"
 )
+DEFAULT_GRAPHICS_SMOKE_IMAGE = (
+    "ghcr.io/nebius/npa-sonic@sha256:"
+    "c9ba0996b28f54b013e36da689638b386a7ef9c0c8c4413fc4b3c72ff1a808bb"
+)
 _FABRIC_SUCCESS = frozenset({"complete", "completed", "success", "successful"})
 
 CaptureFn = Callable[..., Any]
@@ -47,6 +51,8 @@ class GpuHealthConfig:
     timeout_seconds: int = 3600
     cuda_smoke: bool = True
     cuda_smoke_image: str = DEFAULT_CUDA_SMOKE_IMAGE
+    graphics_smoke: bool = False
+    graphics_smoke_image: str = DEFAULT_GRAPHICS_SMOKE_IMAGE
 
     @property
     def expected_gpus(self) -> int:
@@ -71,6 +77,12 @@ class GpuHealthConfig:
             raise ValueError("GPU health timeout must be positive")
         if self.cuda_smoke and not self.cuda_smoke_image.strip():
             raise ValueError("CUDA smoke image cannot be empty when smoke is enabled")
+        if self.graphics_smoke and self.driver_mode != "operator":
+            raise ValueError("graphics smoke requires the GPU Operator driver path")
+        if self.graphics_smoke and not self.graphics_smoke_image.strip():
+            raise ValueError(
+                "graphics smoke image cannot be empty when graphics smoke is enabled"
+            )
 
 
 def _run_json(
@@ -225,7 +237,9 @@ def _is_device_plugin_pod(pod: dict[str, Any]) -> bool:
         labels.get("app.kubernetes.io/name"),
         *(container.get("name") for container in containers),
     ]
-    return any("nvidia-device-plugin" in str(value or "").lower() for value in candidates)
+    return any(
+        "nvidia-device-plugin" in str(value or "").lower() for value in candidates
+    )
 
 
 def probe_gpu_health(
@@ -277,7 +291,11 @@ def probe_gpu_health(
             "nodes have no observable boot ID: " + ", ".join(missing_boot_ids)
         )
 
-    namespace = "nvidia-device-plugin" if config.driver_mode == "managed-image" else "gpu-operator"
+    namespace = (
+        "nvidia-device-plugin"
+        if config.driver_mode == "managed-image"
+        else "gpu-operator"
+    )
     pods_payload = _run_json(
         capture,
         kubectl_bin,
@@ -493,6 +511,149 @@ def _cuda_smoke_on_node(
         )
 
 
+def _graphics_smoke_on_node(
+    capture: CaptureFn,
+    *,
+    kubectl_bin: str,
+    kubeconfig_path: Path,
+    node_name: str,
+    image: str,
+    timeout_seconds: int,
+    sleep_fn: Callable[[float], None],
+    monotonic_fn: Callable[[], float],
+) -> dict[str, Any]:
+    """Prove operator-mounted GLX/EGL and enumerate a Vulkan NVIDIA device."""
+
+    digest = hashlib.sha256(node_name.encode()).hexdigest()[:10]
+    pod_name = f"npa-graphics-health-{digest}"
+    command = r"""
+set -euo pipefail
+python3 - <<'PY'
+import ctypes
+ctypes.CDLL("libGLX_nvidia.so.0")
+print("NPA_GLX_LOADED")
+ctypes.CDLL("libEGL_nvidia.so.0")
+print("NPA_EGL_LOADED")
+PY
+vulkaninfo --summary
+""".strip()
+    manifest = {
+        "apiVersion": "v1",
+        "kind": "Pod",
+        "metadata": {
+            "name": pod_name,
+            "namespace": "default",
+            "labels": {"app.kubernetes.io/managed-by": "npa-gpu-health"},
+        },
+        "spec": {
+            "restartPolicy": "Never",
+            "nodeName": node_name,
+            "runtimeClassName": "nvidia",
+            "tolerations": [
+                {
+                    "key": "nvidia.com/gpu",
+                    "operator": "Exists",
+                    "effect": "NoSchedule",
+                }
+            ],
+            "containers": [
+                {
+                    "name": "graphics-readiness",
+                    "image": image,
+                    "command": ["/bin/bash", "-c"],
+                    "args": [command],
+                    "env": [
+                        {"name": "NVIDIA_VISIBLE_DEVICES", "value": "all"},
+                        {"name": "NVIDIA_DRIVER_CAPABILITIES", "value": "all"},
+                    ],
+                    "resources": {"limits": {"nvidia.com/gpu": 1}},
+                    "securityContext": {
+                        "allowPrivilegeEscalation": False,
+                        "capabilities": {"drop": ["ALL"]},
+                    },
+                }
+            ],
+        },
+    }
+    env = os.environ.copy()
+    env["KUBECONFIG"] = str(kubeconfig_path)
+    create = capture(
+        [kubectl_bin, "apply", "-f", "-"],
+        env=env,
+        input_text=json.dumps(manifest),
+        check=False,
+    )
+    if getattr(create, "returncode", 0) != 0:
+        detail = str(getattr(create, "stderr", "") or getattr(create, "stdout", ""))
+        raise GpuHealthError(
+            f"graphics readiness pod could not be created on GPU node: "
+            f"{detail.strip()[-1000:]}"
+        )
+    deadline = monotonic_fn() + timeout_seconds
+    phase = ""
+    try:
+        while monotonic_fn() <= deadline:
+            pod = _run_json(
+                capture,
+                kubectl_bin,
+                kubeconfig_path,
+                ["get", "pod", pod_name, "-n", "default", "-o", "json"],
+            )
+            phase = str((pod.get("status") or {}).get("phase") or "")
+            if phase in {"Succeeded", "Failed"}:
+                break
+            sleep_fn(min(2.0, max(0.0, deadline - monotonic_fn())))
+        logs = capture(
+            [kubectl_bin, "logs", pod_name, "-n", "default"],
+            env=env,
+            check=False,
+        )
+        output = str(getattr(logs, "stdout", "") or "")
+        required = {
+            "GLX": "NPA_GLX_LOADED" in output,
+            "EGL": "NPA_EGL_LOADED" in output,
+            "Vulkan instance": "Vulkan Instance Version" in output,
+            "Vulkan physical device": bool(re.search(r"(?m)^GPU[0-9]+:", output)),
+            "NVIDIA Vulkan device": "NVIDIA" in output,
+        }
+        missing = [name for name, present in required.items() if not present]
+        if phase != "Succeeded" or getattr(logs, "returncode", 0) != 0 or missing:
+            detail = (
+                ", ".join(missing) if missing else f"pod phase {phase or 'timeout'}"
+            )
+            raise GpuHealthError(
+                "graphics readiness failed on GPU node: "
+                + detail
+                + (f"; logs: {output[-1000:]}" if output else "")
+            )
+        return {
+            "node": node_name,
+            "pod": pod_name,
+            "phase": phase,
+            "glx": "loaded",
+            "egl": "loaded",
+            "vulkan_instance": "created",
+            "vulkan_physical_devices": len(re.findall(r"(?m)^GPU[0-9]+:", output)),
+            "nvidia_device": "enumerated",
+            "image": image,
+        }
+    finally:
+        capture(
+            [
+                kubectl_bin,
+                "delete",
+                "pod",
+                pod_name,
+                "-n",
+                "default",
+                "--ignore-not-found=true",
+                "--wait=false",
+            ],
+            env=env,
+            check=False,
+        )
+
+
 def validate_gpu_health(
     capture: CaptureFn,
     *,
@@ -573,6 +734,7 @@ def validate_gpu_health(
         "observations": observations,
         "final_snapshot": final_snapshot,
         "cuda_smokes": [],
+        "graphics_smokes": [],
     }
     if fatal_error or last_errors or stable_since is None or not stabilized:
         message = fatal_error or (
@@ -597,6 +759,21 @@ def validate_gpu_health(
                         image=config.cuda_smoke_image,
                         timeout_seconds=remaining,
                         nvswitch=config.nvswitch,
+                        sleep_fn=sleep_fn,
+                        monotonic_fn=monotonic_fn,
+                    )
+                )
+        if config.graphics_smoke:
+            for node_name in final_snapshot.get("gpu_nodes") or []:
+                remaining = max(1, int(deadline - monotonic_fn()))
+                report["graphics_smokes"].append(
+                    _graphics_smoke_on_node(
+                        capture,
+                        kubectl_bin=kubectl_bin,
+                        kubeconfig_path=kubeconfig_path,
+                        node_name=node_name,
+                        image=config.graphics_smoke_image,
+                        timeout_seconds=remaining,
                         sleep_fn=sleep_fn,
                         monotonic_fn=monotonic_fn,
                     )

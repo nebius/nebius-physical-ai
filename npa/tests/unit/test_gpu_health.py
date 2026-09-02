@@ -83,10 +83,15 @@ class _Kubectl:
         snapshots: list[list[dict[str, Any]]],
         *,
         smoke_logs: str = "Test PASSED\n",
+        graphics_logs: str = (
+            "NPA_GLX_LOADED\nNPA_EGL_LOADED\nVulkan Instance Version: 1.3.0\n"
+            "GPU0:\n    deviceName = NVIDIA RTX PRO 6000 Blackwell\n"
+        ),
     ) -> None:
         self.snapshots = snapshots
         self.snapshot_index = 0
         self.smoke_logs = smoke_logs
+        self.graphics_logs = graphics_logs
         self.component_namespaces: list[str] = []
         self.created_nodes: list[str] = []
         self.deleted_pods: list[str] = []
@@ -127,7 +132,11 @@ class _Kubectl:
                 }
             )
         if command[0] == "logs":
-            return self._result(self.smoke_logs)
+            return self._result(
+                self.graphics_logs
+                if command[1].startswith("npa-graphics-health-")
+                else self.smoke_logs
+            )
         if command[:2] == ["delete", "pod"]:
             self.deleted_pods.append(command[2])
             return self._result("deleted\n")
@@ -209,9 +218,7 @@ def test_probe_accepts_current_managed_plugin_in_kube_system(tmp_path: Path) -> 
                                     "name": "nvidia-device-plugin-daemonset-pod"
                                 },
                                 "spec": {
-                                    "containers": [
-                                        {"name": "nvidia-device-plugin-ctr"}
-                                    ]
+                                    "containers": [{"name": "nvidia-device-plugin-ctr"}]
                                 },
                                 "status": {
                                     "phase": "Running",
@@ -346,3 +353,71 @@ def test_cuda_smoke_fails_without_kernel_or_completed_fabric_evidence(
             monotonic_fn=clock.monotonic,
         )
     assert json.loads((tmp_path / "gpu-health.json").read_text())["status"] == "failed"
+
+
+def test_graphics_smoke_loads_glx_egl_and_enumerates_vulkan_device(
+    tmp_path: Path,
+) -> None:
+    clock = _Clock()
+    nodes = [
+        _node(
+            "gpu-0",
+            platform="gpu-rtx6000",
+            gpus=1,
+            boot_id="boot-a",
+        )
+    ]
+    kubectl = _Kubectl([nodes])
+    report = validate_gpu_health(
+        kubectl,
+        kubectl_bin="kubectl",
+        kubeconfig_path=tmp_path / "kubeconfig",
+        config=_config(
+            expected_nodes=1,
+            expected_gpu_nodes=1,
+            gpu_preset="1gpu-24vcpu-218gb",
+            gpu_platform="gpu-rtx6000",
+            driver_mode="operator",
+            nvswitch=False,
+            cuda_smoke=False,
+            graphics_smoke=True,
+        ),
+        sleep_fn=clock.sleep,
+        monotonic_fn=clock.monotonic,
+    )
+
+    assert report["status"] == "healthy"
+    assert report["graphics_smokes"][0]["glx"] == "loaded"
+    assert report["graphics_smokes"][0]["egl"] == "loaded"
+    assert report["graphics_smokes"][0]["vulkan_physical_devices"] == 1
+
+
+def test_graphics_smoke_fails_closed_without_vulkan_device(tmp_path: Path) -> None:
+    clock = _Clock()
+    nodes = [
+        _node(
+            "gpu-0",
+            platform="gpu-rtx6000",
+            gpus=1,
+            boot_id="boot-a",
+        )
+    ]
+    kubectl = _Kubectl([nodes], graphics_logs="NPA_GLX_LOADED\nNPA_EGL_LOADED\n")
+    with pytest.raises(GpuHealthError, match="Vulkan instance"):
+        validate_gpu_health(
+            kubectl,
+            kubectl_bin="kubectl",
+            kubeconfig_path=tmp_path / "kubeconfig",
+            config=_config(
+                expected_nodes=1,
+                expected_gpu_nodes=1,
+                gpu_preset="1gpu-24vcpu-218gb",
+                gpu_platform="gpu-rtx6000",
+                driver_mode="operator",
+                nvswitch=False,
+                cuda_smoke=False,
+                graphics_smoke=True,
+            ),
+            sleep_fn=clock.sleep,
+            monotonic_fn=clock.monotonic,
+        )
