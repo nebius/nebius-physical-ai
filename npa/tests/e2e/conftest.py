@@ -19,6 +19,7 @@ E2E_BUCKET_MAX_AGE_SECONDS = 60 * 60
 E2E_BUCKET_MAX_CONCURRENT = 3
 E2E_BUCKET_MAX_CREATIONS = int(os.environ.get("NPA_E2E_BUCKET_BUDGET", "8") or "8")
 E2E_BUCKET_COUNTER = Path("/tmp/npa-e2e-run-bucket-counter.txt")
+_HERMITIC_UNIT_BUCKET = "test-bucket-00000000"
 
 # Live ops VMs commonly export AWS_* / S3_* while tool e2e suites gate on NPA_E2E_S3_*.
 _S3_ENV_FALLBACKS: tuple[tuple[str, tuple[str, ...]], ...] = (
@@ -40,6 +41,11 @@ def pytest_configure(config: pytest.Config) -> None:
             continue
         for source in sources:
             value = os.environ.get(source, "").strip()
+            if target == "NPA_E2E_S3_BUCKET" and value == _HERMITIC_UNIT_BUCKET:
+                # The root test conftest installs this sentinel before nested
+                # conftests load. It is not live storage and must not override
+                # the writable project bucket selected below.
+                continue
             if value:
                 os.environ[target] = value
                 break

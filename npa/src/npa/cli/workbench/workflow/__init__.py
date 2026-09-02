@@ -2946,7 +2946,11 @@ def _preflight_image_bootstrap_contracts(
         parse_image_reference,
         resolve_registry_credentials,
     )
-    from npa.deploy.images import requires_skypilot_bootstrap_runtime_probe
+    from npa.deploy.images import (
+        SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS,
+        requires_skypilot_bootstrap_runtime_probe,
+        tool_for_image_name,
+    )
 
     check_by_image = {str(getattr(item, "image", "")): item for item in pull_checks}
     if observation_timeout_seconds < 0:
@@ -2957,7 +2961,17 @@ def _preflight_image_bootstrap_contracts(
         str(item).strip() for item in images if str(item).strip()
     ):
         try:
-            host = parse_image_reference(image).registry
+            reference = parse_image_reference(image)
+            image_tool = tool_for_image_name(reference.repository.rsplit("/", 1)[-1])
+            if (
+                image_tool
+                and image_tool not in SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS
+            ):
+                # The packaging contract deliberately scopes this attestation to
+                # a subset of NPA images. Anonymous manifest pullability is the
+                # complete preflight for registered images outside that subset.
+                continue
+            host = reference.registry
             username, password = resolve_registry_credentials(
                 host, image=image, mint=True
             )

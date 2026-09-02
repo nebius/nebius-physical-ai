@@ -811,6 +811,28 @@ def test_first_party_image_without_attestation_fails_instead_of_probing(
     assert excinfo.type.__name__ == "Exit"
 
 
+def test_registered_uncontracted_image_stops_after_pull_preflight(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    image = "ghcr.io/nebius/nebius-physical-ai/npa-retargeting:0.1.1"
+
+    def metadata_forbidden(*_args, **_kwargs):
+        raise AssertionError("uncontracted image reached bootstrap metadata lookup")
+
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.registry_preflight.fetch_image_config_metadata",
+        metadata_forbidden,
+    )
+
+    result = workflow_cli._preflight_image_bootstrap_contracts(
+        images=[image],
+        pull_checks=[ImagePullCheck(image=image, status="ok", http_status=200)],
+        context="exact-context",
+    )
+
+    assert result == []
+
+
 def test_image_bootstrap_observing_progress_preserves_exact_json(capsys) -> None:
     digest = "sha256:" + "9" * 64
 

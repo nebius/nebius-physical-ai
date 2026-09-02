@@ -104,7 +104,8 @@ npa workbench workflow plan-spec "$SPEC" --run-id "$RUN_ID" \
   --var bucket="$BUCKET" \
   --var n_augmentations=1 --json
 
-# Proves every repository-owned manifest through anonymous GHCR pulls.
+# Supported image namespace: ghcr.io/nebius/nebius-physical-ai (selected
+# automatically). Prove every repository-owned manifest through anonymous pulls.
 npa workbench workflow preflight-images "$SPEC" \
   --project "$PROJECT"
 
