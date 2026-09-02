@@ -1,14 +1,16 @@
-# Sim2Real live-findings evaluation (2026-09-02)
+# Sim2Real live findings: evaluation and RTX remediation (2026-09-02)
 
-This document evaluates five findings reported after the Living Lab run against
-`origin/main` at `e5ddb7d25ef2af5485bb43409579657497220a77`. It is an evaluation,
-not an implementation plan: no product, image, infrastructure, or runbook fix is
-included.
+This document began as an evaluation of five findings reported after the Living
+Lab run against `origin/main` at `e5ddb7d25ef2af5485bb43409579657497220a77`.
+The follow-up on the same branch now implements the repository and provisioning
+fix for finding 5. Findings 1–4 remain audit results rather than changes made by
+this pull request. The sections below keep the original finding, the implemented
+driver contract, and the sanitized live-validation outcome distinct.
 
 The referenced `sim2real-repo-fixes.md` was not present in the clone or found in
 the repository's GitHub code search. The available originating context was the
 operator-supplied summary and [PR #367](https://github.com/nebius/nebius-physical-ai/pull/367),
-which remains open and unmerged as of this evaluation. PR #367's code changes
+which merged after the original evaluation. PR #367's code changes
 were inspected separately from current `main`; its “Not included” section
 independently reports the publication, `source_sha`, Kueue, and graphics gaps.
 
@@ -20,7 +22,7 @@ independently reports the publication, `source_sha`, Kueue, and graphics gaps.
 | 2 | **Partially valid** | Add `source_sha` to rendered-plan and submit examples. Plain `plan-spec --waves` does not require it; `submit --plan-only` and execution do. |
 | 3 | **Valid repository/operator gap; fresh-cluster generalization bounded** | The runbook needs an explicit, pinned Kueue installation prerequisite or an equivalent provisioned contract. |
 | 4 | **Valid** | The access catalog omits a runtime-fetched, gated Predict2.5 tokenizer. The related loss of vendor diagnostics is also valid. |
-| 5 | **Partially valid and environment-specific** | Sim2Real and LeIsaac have an unverified graphics-userspace dependency. Content Agents already carries an explicit operator-mode/fail-closed contract. The same Vulkan claim is not established for NuRec. |
+| 5 | **Partially valid; actionable cluster gap fixed here** | NPA now has an explicit RTX rendering profile that selects RTX PRO 6000 plus the supported GPU Operator mounted-driver path and fails closed on GLX, EGL, and Vulkan device readiness. Existing defaults and the NVSwitch operator rejection remain unchanged. |
 
 ## 1. Exact-source and bootstrap-attested images
 
@@ -65,8 +67,8 @@ is no published five-image default set to reconcile, and the four available
 public roles cannot satisfy one exact-source execution. The reported publishing
 decision—build and publish all five roles from one release SHA, including the
 controller, then document those exact digests—is consistent with the enforced
-contract. PR #367 only adds the controller Dockerfile's bootstrap label; it does
-not publish the coherent set and is not on current `main`.
+contract. PR #367 added the controller Dockerfile's bootstrap label; it did not
+publish the coherent set.
 
 ## 2. Missing `source_sha` in the operator guide
 
@@ -156,6 +158,8 @@ access, download, CUDA, and inference failures.
 
 ## 5. Graphics/Vulkan userspace
 
+### Original finding
+
 **Disposition: partially valid; the historical host assertion was not
 independently verifiable.** NVIDIA's
 [container-toolkit contract](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/docker-specialized.html#driver-capabilities)
@@ -168,7 +172,7 @@ Repository and workload boundaries differ:
 
 | Surface | Current repository contract | Disposition of asserted impact |
 |---|---|---|
-| Sim2Real | The Isaac image requests `NVIDIA_DRIVER_CAPABILITIES=all`, but `sim2real.yaml` neither selects a GPU driver mode nor declares `runtimeClassName: nvidia`, nor does its preflight probe GL/Vulkan availability. | **Valid portability risk.** RTX rendering can fail on a compute-only node despite GPU allocation. Whether SkyPilot or the cluster injects a runtime class is external state, not a YAML guarantee. |
+| Sim2Real | The Isaac image requests `NVIDIA_DRIVER_CAPABILITIES=all`, but `sim2real.yaml` does not itself provision a cluster or select its driver mode. | **Valid portability risk, now addressed by an explicit provisioning profile.** Operators must create or verify the target with `gpu_workload_profile: rtx-rendering`; workflow image settings alone cannot establish node-side graphics readiness. |
 | LeIsaac | Its generated pod explicitly sets `runtimeClassName: nvidia` and `NVIDIA_DRIVER_CAPABILITIES=all`, while comments assume the runtime supplies matching graphics/Vulkan libraries. | **Valid portability risk.** The request is present, but no node-side graphics availability probe makes the assumption true. |
 | Content Agents | Current docs require `--gpu-driver-mode operator`; the image declares `compute,utility,graphics,display`; rendered RTX stages fail early unless `libGLX_nvidia.so.0` is loadable. | **Stale/already addressed for current main.** The general node distinction is real, but this workflow already documents and enforces its chosen remedy. |
 | NuRec/NRE | The workflow requires RT cores and R580+ on Blackwell and runs NVIDIA's NRE container. No checked repository contract identified Vulkan/GLX as a prerequisite. | **Not substantiated as the same defect.** RT-core routing alone does not prove a Vulkan dependency; validate the exact NRE container/runtime separately before changing its driver policy. |
@@ -184,10 +188,67 @@ portable contract for all four surfaces.
 The historical run prefix could not be retrieved from the credentials/project
 scope available to this evaluation, and no matching live Kubernetes objects
 remained. Consequently, the specific statement that those Living Lab nodes had
-compute-only userspace is supported by PR #367's report but not independently
+compute-only userspace is supported by PR #367's report but was not independently
 verified here. Running a graphics probe on a different cluster would not prove
 the historical node state, so no substitute GPU smoke was presented as that
 evidence.
+
+### Repository fix
+
+The new public `rtx-rendering` GPU workload profile is available from
+`npa provision-if-absent --gpu-workload-profile rtx-rendering`, the provisioning
+SDK/config surface, fleet specs, and the agent provisioning bridge. It selects
+one `gpu-rtx6000` / `1gpu-24vcpu-218gb` worker by default and requires
+`gpu_driver_mode=operator`. Explicit conflicting platform, preset, zero-worker,
+or managed-driver selections fail before mutation. Omitting the profile keeps
+all existing defaults, and operator mode remains rejected for NVSwitch
+topologies.
+
+The profile also makes graphics readiness part of normal cluster validation.
+After the existing stable-node, driver-component, allocatable-GPU, and per-node
+CUDA vectorAdd gates pass, NPA schedules an immutable-digest probe on every
+requested GPU worker with `runtimeClassName: nvidia`, one GPU, and
+`NVIDIA_DRIVER_CAPABILITIES=all`. The probe dynamically loads
+`libGLX_nvidia.so.0` and `libEGL_nvidia.so.0`, creates a Vulkan instance through
+`vulkaninfo`, and requires enumeration of an NVIDIA physical device. Missing
+libraries, a nonfunctional Vulkan loader, a non-NVIDIA device, or an
+unschedulable probe is fatal; there is no profile-specific warn-only or skip
+path.
+
+### Live validation outcome
+
+Health, configuration, credential, and gated-access preflight passed before
+mutation. NPA then provisioned one control plane, one CPU worker, and one RTX
+PRO 6000 Blackwell worker with GPU Operator mounted drivers. The unmodified
+strict gates all passed: requested nodes remained Ready for the 120-second
+stability window, the GPU worker reported capacity, operator components were
+healthy, CUDA vectorAdd passed on the requested GPU worker, the default storage
+class existed, SkyPilot resolved the cluster accelerator and completed its real
+GPU smoke, and the smoke resources were cleaned up. Provisioning completed with
+17 recorded actions and zero warnings.
+
+The profile's graphics gate passed independently in 144.36 seconds. On the GPU
+worker it loaded one GLX and one EGL NVIDIA userspace library, created a Vulkan
+instance, and enumerated an NVIDIA physical device. The live path exposed and
+fixed three integration defects before that result: an incorrect public probe
+image path, unsafe graphics-library teardown in the probe process, and failure
+to pass SkyPilot's resolved accelerator label into the final smoke.
+
+A minimal asset-free Isaac Sim scene then exercised RayTracedLighting over
+Vulkan on the same worker. It generated a cube, ground plane, light, and camera,
+captured three distinct 512×512 RGB PNGs through Kit's awaited viewport-capture
+contract, and wrote those frames plus a summary to object storage. Read-after-
+write verification decoded all three images, measured a minimum channel span of
+249 and minimum maximum-channel standard deviation of 62.116, and verified four
+objects totaling 743,313 bytes. The aggregate artifact digest is
+`f239f2cdb5f0c50d5e1f50266a3e041b4f0783669ad0f063114bb610d75abc15`.
+
+The stock Franka capture was also attempted, but its vendor USD dependency was
+not available from the runtime environment. That attempt was not counted as a
+render success; the procedural scene removed the external-asset dependency
+while preserving the RTX/Vulkan rendering requirement. The validated cluster
+is retained, with transient validation Jobs, ConfigMaps, and credential Secret
+removed, and is ready for future RTX workloads.
 
 ## Evidence and limitations
 
@@ -197,15 +258,15 @@ accepted public image releases, OCI config inspection for the four published
 workflow roles, official Kueue chart-tag resolution, a live capability-scoped
 Hugging Face access check, official Hugging Face revision/file checks, sanitized
 read-only Kubernetes discovery, repository tests, and publication guardrails.
-The final non-E2E repository suite completed with 12,558 passed, 36 skipped,
-12 deselected, and one expected XPASS; all 2327 guardrail tests and the 114-test
+The final non-E2E repository suite completed with 12,565 passed, 36 skipped,
+12 deselected, and one expected XPASS; all 2328 guardrail tests and the 114-test
 smoke target also passed. The first suite invocation exposed a broken
 user-level `rerun` launcher; the two affected GR00T tests and then the complete
 suite passed with the mandated repository virtualenv first on `PATH`.
 
-No full Sim2Real GPU run was launched: claims 1–4 fail before a workload could
-validly start on current public defaults, and claim 5 concerns the unavailable
-historical host. PR #367 supplies a reported real 14-stage run, but because its
-durable artifacts were not accessible in the available project scope, this
-evaluation treats that run as secondary evidence rather than independently
-verified proof.
+No full 14-stage Sim2Real run was launched: findings 1–4 still prevent that
+workflow from being a valid public-default proof. The focused live validation
+for finding 5 instead provisions the exact supported cluster contract and runs
+the smallest representative Isaac/RTX render that can prove the driver-facing
+interface. PR #367's historical run remains secondary evidence because its
+durable artifacts were not accessible in the available project scope.
