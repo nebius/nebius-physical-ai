@@ -706,7 +706,7 @@ def provision_if_absent(
                 if operation is not None:
                     operation.heartbeat(details={"gpu_readiness": message})
 
-            wait_for_kubernetes_accelerators(
+            resolutions = wait_for_kubernetes_accelerators(
                 [requested_accelerator] if requested_accelerator else [],
                 context=context,
                 kubeconfig=kubeconfig_path,
@@ -717,11 +717,14 @@ def provision_if_absent(
                 on_status=report_gpu_status,
             )
             if sky_smoke:
+                smoke_accelerator = requested_accelerator
+                if requested_accelerator and requested_accelerator in resolutions:
+                    smoke_accelerator = resolutions[requested_accelerator].resolved
                 _run_skypilot_smoke(
                     Path(kubeconfig_path),
                     context,
                     cluster_name,
-                    requested_accelerator,
+                    smoke_accelerator,
                     sky_bin=sky_bin,
                     credentials_checked=True,
                 )
