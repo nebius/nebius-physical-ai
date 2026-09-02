@@ -530,10 +530,17 @@ def _graphics_smoke_on_node(
 set -euo pipefail
 python3 - <<'PY'
 import ctypes
+import os
 ctypes.CDLL("libGLX_nvidia.so.0")
-print("NPA_GLX_LOADED")
+print("NPA_GLX_LOADED", flush=True)
+os._exit(0)
+PY
+python3 - <<'PY'
+import ctypes
+import os
 ctypes.CDLL("libEGL_nvidia.so.0")
-print("NPA_EGL_LOADED")
+print("NPA_EGL_LOADED", flush=True)
+os._exit(0)
 PY
 vulkaninfo --summary
 """.strip()

@@ -102,6 +102,7 @@ class _Kubectl:
         self.component_namespaces: list[str] = []
         self.created_nodes: list[str] = []
         self.deleted_pods: list[str] = []
+        self.applied_manifests: list[dict[str, Any]] = []
 
     @staticmethod
     def _result(payload: object = "", returncode: int = 0):
@@ -120,6 +121,7 @@ class _Kubectl:
             return self._result(_component_pods())
         if command == ["apply", "-f", "-"]:
             manifest = json.loads(kwargs["input_text"])
+            self.applied_manifests.append(manifest)
             self.created_nodes.append(manifest["spec"]["nodeName"])
             return self._result("pod created\n")
         if command[:2] == ["get", "pod"]:
@@ -397,6 +399,10 @@ def test_graphics_smoke_loads_glx_egl_and_enumerates_vulkan_device(
     assert report["graphics_smokes"][0]["glx"] == "loaded"
     assert report["graphics_smokes"][0]["egl"] == "loaded"
     assert report["graphics_smokes"][0]["vulkan_physical_devices"] == 1
+    command = kubectl.applied_manifests[0]["spec"]["containers"][0]["args"][0]
+    assert command.count("os._exit(0)") == 2
+    assert command.index("NPA_GLX_LOADED") < command.index("NPA_EGL_LOADED")
+    assert command.index("NPA_EGL_LOADED") < command.index("vulkaninfo --summary")
 
 
 def test_graphics_smoke_fails_closed_without_vulkan_device(tmp_path: Path) -> None:
