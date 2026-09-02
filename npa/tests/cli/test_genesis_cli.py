@@ -222,7 +222,6 @@ def _mock_genesis_serverless_env(mocker):
             aws_secret_access_key="SECRET",
         ),
     )
-    mocker.patch("npa.cli.genesis.resolve_container_registry", return_value="registry.example")
     mocker.patch("npa.cli.genesis.container_image_for_tool", return_value="registry.example/npa-genesis:smoke")
     return mocker.patch("npa.cli.genesis.resolve_subnet", return_value="vpcsubnet-auto")
 

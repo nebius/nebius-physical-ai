@@ -2111,7 +2111,7 @@ def _inject_operator_registry_docker_secrets(
         resolve_registry_credentials,
     )
 
-    username, password = resolve_registry_credentials(server)
+    username, password = resolve_registry_credentials(server, image=image_id)
     if not username:
         return
     if materialize:

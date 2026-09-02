@@ -1149,24 +1149,17 @@ def test_a_missing_workbench_image_carries_its_build_command(
     assert "docker login" in check.remedy
 
 
-def test_submit_preserves_an_existing_project_registry_override(
+def test_submit_ignores_an_existing_project_registry_override(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Legacy saved registry overrides remain effective without new configure writes.
-
-    Without this, preflight checked one registry while the run pulled from
-    another, and the build command it printed named the wrong destination.
-    """
+    """A stale saved private registry must not repoint public workload images."""
 
     monkeypatch.setattr(
         "npa.clients.config.resolve_container_registry",
         lambda project=None: "registry-us.example/u00proj",
     )
 
-    assert (
-        workflow_cli._resolve_submit_registry("", "test-rtx")
-        == "registry-us.example/u00proj"
-    )
+    assert workflow_cli._resolve_submit_registry("", "test-rtx") == ""
 
 
 def test_an_explicit_registry_still_wins(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1180,7 +1173,7 @@ def test_an_explicit_registry_still_wins(monkeypatch: pytest.MonkeyPatch) -> Non
     )
 
 
-def test_npa_registry_env_wins_over_project_config(
+def test_submit_ignores_npa_registry_env_for_public_workload_defaults(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("NPA_REGISTRY", "ghcr.io/nebius/nebius-physical-ai")
@@ -1189,10 +1182,7 @@ def test_npa_registry_env_wins_over_project_config(
         lambda project=None: "registry-us.example/u00proj",
     )
 
-    assert (
-        workflow_cli._resolve_submit_registry("", "test-rtx")
-        == "ghcr.io/nebius/nebius-physical-ai"
-    )
+    assert workflow_cli._resolve_submit_registry("", "test-rtx") == ""
 
 
 def test_an_unreadable_config_falls_back_to_the_render_default(

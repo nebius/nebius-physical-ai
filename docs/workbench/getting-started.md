@@ -116,7 +116,6 @@ Export the non-secret resource identifiers used by commands and examples:
 export NEBIUS_PROJECT_ID=<your-project-id>
 export NEBIUS_TENANT_ID=<your-tenant-id>
 export NPA_S3_BUCKET=<your-bucket>
-export NPA_REGISTRY=ghcr.io/nebius/nebius-physical-ai
 export AWS_ENDPOINT_URL=https://storage.eu-north1.nebius.cloud
 export NPA_STORAGE_ENDPOINT=storage.eu-north1.nebius.cloud
 ```
@@ -145,8 +144,9 @@ Gate: the command lists the bucket or exits successfully with an empty listing.
 ## Verify the Image Channel
 
 The default execution channel is the anonymously pullable public release
-namespace `ghcr.io/nebius/nebius-physical-ai`. `NPA_REGISTRY` may override it
-with a full operator registry prefix.
+namespace `ghcr.io/nebius/nebius-physical-ai`. Ambient `NPA_REGISTRY` and saved
+registry values do not repoint repository-owned defaults. Use a complete image
+reference or workflow `--registry` to select custom bytes deliberately.
 
 Pre-release validation uses immutable `dev-<full-git-sha>` tags in the same
 public packages. Operator-controlled private registries may require exact-host

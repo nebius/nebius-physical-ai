@@ -79,6 +79,23 @@ def test_non_sonic_workbench_images_resolve_from_supported_tools() -> None:
     )
 
 
+def test_repository_image_defaults_ignore_ambient_private_registry(monkeypatch) -> None:
+    monkeypatch.setenv("NPA_REGISTRY", "registry.example/private-builds")
+
+    assert container_image_for_tool("retargeting") == (
+        "ghcr.io/nebius/nebius-physical-ai/npa-retargeting:0.1.1"
+    )
+    assert default_workbench_image().startswith(
+        "ghcr.io/nebius/nebius-physical-ai/npa-genesis:"
+    )
+
+
+def test_explicit_custom_registry_remains_available() -> None:
+    assert container_image_for_tool(
+        "retargeting", registry="registry.example/custom"
+    ) == "registry.example/custom/npa-retargeting:0.1.1"
+
+
 def test_packaged_supported_tool_versions_match_pyproject() -> None:
     try:
         import tomllib

@@ -290,7 +290,6 @@ def _mock_train_env(mocker):
             aws_secret_access_key="SECRET",
         ),
     )
-    mocker.patch("npa.cli.cosmos.resolve_container_registry", return_value="registry.example")
     mocker.patch("npa.cli.cosmos.container_image_for_tool", return_value="registry.example/npa-cosmos:smoke")
     mocker.patch("npa.cli.cosmos._serverless_hf_env", return_value={"HF_TOKEN": "PLACEHOLDER_HF_TOKEN"})
     return mocker.patch("npa.cli.cosmos.resolve_subnet", return_value="vpcsubnet-auto")

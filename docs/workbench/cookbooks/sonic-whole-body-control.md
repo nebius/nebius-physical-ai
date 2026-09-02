@@ -38,8 +38,8 @@ RTX PRO 6000 Blackwell Kubernetes. Legacy L40S and MuJoCo variants are quarantin
 Verify the pushed image before launch with:
 
 ```bash
-export NPA_REGISTRY=ghcr.io/nebius/nebius-physical-ai
-docker manifest inspect "${NPA_REGISTRY}/npa-sonic:<active-runtime-fetch-tag>"
+docker manifest inspect \
+  "ghcr.io/nebius/nebius-physical-ai/npa-sonic:<active-runtime-fetch-tag>"
 ```
 
 The default embodiment is Unitree G1. The serverless command also needs an

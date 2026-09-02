@@ -266,9 +266,10 @@ npa configure
 
 Workbench images resolve from the anonymous
 `ghcr.io/nebius/nebius-physical-ai` mirror by default, so configure does not ask
-for or save a container registry. Existing `container_registry` entries remain
-supported as custom overrides; for new private or locally modified images, set
-`NPA_REGISTRY` or pass the command's explicit image/registry option.
+for or save a container registry. Existing `container_registry` entries and
+`NPA_REGISTRY` remain available to build/BYOF compatibility paths but do not
+repoint repository-owned runtime defaults. Pass a complete image or a workflow's
+explicit `--registry` when intentionally running private or modified bytes.
 
 Storage is committed after its declared write/read capability probe succeeds.
 Delete is best-effort probe cleanup and is reported independently. The declared

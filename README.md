@@ -360,18 +360,20 @@ Every Workbench tool ships as a container image. The publicly redistributable
 subset is mirrored to GHCR, so the easiest path is to **pull instead of build**:
 
 ```bash
-export NPA_REGISTRY=ghcr.io/nebius/nebius-physical-ai
-docker pull "${NPA_REGISTRY}/npa-retargeting:0.1.1"
+docker pull ghcr.io/nebius/nebius-physical-ai/npa-retargeting:0.1.1
 ```
 
 The GHCR mirror is the runtime default; no registry setup is required in
-`npa configure`. Use your own Nebius registry only when you need private or
-locally modified images, and select it with `NPA_REGISTRY` or an explicit image:
+`npa configure`. Ambient `NPA_REGISTRY` and legacy saved registry values do not
+repoint repository-owned runtime defaults. Use your own registry only when you
+build private or locally modified images, then select those bytes with an
+explicit `--image` or workflow `--registry`:
 
 ```bash
 docker login registry.example
 export NPA_REGISTRY=registry.example/customer
 npa/docker/workbench/lerobot/build.sh --registry "$NPA_REGISTRY" --push
+# Runtime example: npa workbench workflow submit <spec> --registry "$NPA_REGISTRY"
 ```
 
 | Reference | What it tells you |

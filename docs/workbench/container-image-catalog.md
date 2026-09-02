@@ -13,11 +13,13 @@ a registry in NPA:
 docker pull ghcr.io/nebius/nebius-physical-ai/npa-retargeting:0.1.1
 ```
 
-`NPA_REGISTRY` remains available for private or locally modified images, and
-existing saved `container_registry` overrides remain compatible.
+`NPA_REGISTRY` remains a build/BYOF destination for private or locally modified
+images. It and existing saved `container_registry` values do not repoint these
+repository-owned runtime defaults; select custom bytes with a complete image
+reference or an explicit workflow `--registry`.
 
 The accepted-release manifest was verified against the public GHCR tag and OCI
-manifest APIs on 2026-08-29. All 31 recorded release digests resolved
+manifest APIs on 2026-09-02. All 31 recorded release digests resolved
 anonymously. **Built** is the UTC build date of the newest listed variant;
 reproducible images that
 intentionally zero their OCI `created` field use the timestamp in the immutable
@@ -28,6 +30,22 @@ tags can be moved, so resolve and retain the manifest digest as well when strict
 reproducibility is required.
 
 Rows are ordered by **Built** date, then by friendly name.
+
+## 2026-09-02 private-registry isolation audit
+
+All 31 accepted release tags and recorded digests resolved through anonymous
+GHCR manifest requests. The repository-wide reference audit found that ambient
+`NPA_REGISTRY` and legacy saved registry values could nevertheless redirect
+repository-owned workload defaults to operator registries, where missing pull
+permission surfaced as HTTP 403 and Kubernetes `ImagePullBackOff`. Runtime
+defaults are now isolated from those build/BYOF settings; explicit image and
+workflow `--registry` selections remain available for intentional custom bytes.
+
+Third-party authoritative references were classified separately. NVIDIA NRE
+remains on its anonymously pullable NGC `nre-ga` channel, the CUDA vector-add
+health image remains on its anonymously pullable upstream NGC channel, and
+Docker Hub base/runtime images remain upstream. None is an NPA image suitable
+for blind relocation to GHCR.
 
 ## 2026-08-29 main publication audit
 

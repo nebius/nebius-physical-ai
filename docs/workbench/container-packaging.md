@@ -343,11 +343,11 @@ bootstrap attestation, and licensing gates,
 the publisher compares each source and target manifest digest. An exact match prints
 ``Already current; skipping copy`` and performs no registry write; only a missing or changed
 target runs ``crane copy``. This makes it safe to re-run the full guarded plan when one new
-image lands without republishing every existing image. Consumers then pull by
-pointing the resolver at the public release channel:
+image lands without republishing every existing image. Repository-owned runtime
+defaults select the public release channel directly:
 
 ```bash
-export NPA_REGISTRY=ghcr.io/nebius/nebius-physical-ai   # OSS images, any tenant
+docker pull ghcr.io/nebius/nebius-physical-ai/npa-retargeting:0.1.1
 ```
 
 Both development and release tags must pass the unauthenticated check:
@@ -388,7 +388,9 @@ direct service-to-service file coupling.
 
 ## Build and tag
 
-1. Resolve registry with `npa.clients.config.resolve_container_registry`.
+1. Select the immutable public GHCR development namespace for an official build;
+   use `npa.clients.config.resolve_container_registry` only for an explicit
+   operator build/BYOF destination.
 2. Build from the checked-in Dockerfile (`skills/atomic/build-and-push-image`).
 3. Tag from `npa/pyproject.toml` `[tool.npa.supported-tools]` and
    `npa/docker/workbench/tags.yaml` (`cuda12` vs `cuda13-b300`).

@@ -125,8 +125,9 @@ or provider/auth verification failure is partial cleanup and exits 2.
 ## Three-Tier Contract
 
 - CLI: `npa configure` writes project/storage config and credentials; public
-  workbench images default to GHCR, while `NPA_REGISTRY` and existing saved
-  overrides select custom/private images. `npa
+  workbench images default to GHCR and ignore `NPA_REGISTRY` plus existing saved
+  registry values. Those values remain build/BYOF destinations; explicit image
+  or workflow `--registry` arguments select custom runtime bytes. `npa
   provision-if-absent` ensures missing S3/Kubernetes resources or reports the
   dry-run plan.
 - SDK: `npa.provisioning.provision_if_absent` and project settings via

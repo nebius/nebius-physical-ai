@@ -220,7 +220,8 @@ def test_full_loop_writes_stage_artifacts_and_candidate(tmp_path: Path) -> None:
     assert augment["status"] in {"executed_reference", "executed", "contract_ready"}
     assert (
         augment.get("image")
-        == "npa-cosmos2-transfer:2.5.1-sam2-multigpu-20260817-r2"
+        == "ghcr.io/nebius/nebius-physical-ai/npa-cosmos2-transfer:"
+        "2.5.1-skypilot-ready-20260801T053000Z"
     )
     assert (
         trigger["trigger_dataset_uri"] == "s3://bucket/sim2real-triggers/lerobot-pusht/"
@@ -1263,38 +1264,55 @@ def test_sdk_exposes_sim2real_run(tmp_path: Path, monkeypatch) -> None:
 
 def test_default_augment_image_uses_cosmos2_transfer_contract(monkeypatch) -> None:
     monkeypatch.delenv("NPA_REGISTRY", raising=False)
+    monkeypatch.delenv("NPA_SIM2REAL_REGISTRY", raising=False)
     monkeypatch.delenv("AUGMENT_IMAGE", raising=False)
 
     assert (
         default_augment_image()
-        == "npa-cosmos2-transfer:2.5.1-sam2-multigpu-20260817-r2"
+        == "ghcr.io/nebius/nebius-physical-ai/npa-cosmos2-transfer:"
+        "2.5.1-skypilot-ready-20260801T053000Z"
     )
 
     config = build_config_from_env(run_id="sim2real-images")
 
     assert (
         config.augment_image
-        == "npa-cosmos2-transfer:2.5.1-sam2-multigpu-20260817-r2"
+        == "ghcr.io/nebius/nebius-physical-ai/npa-cosmos2-transfer:"
+        "2.5.1-skypilot-ready-20260801T053000Z"
     )
     assert config.vlm_image == (
-        "npa-cosmos3-reason:cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
+        "ghcr.io/nebius/nebius-physical-ai/npa-cosmos3-reason:"
+        "cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
     )
     assert "cosmos3" not in config.augment_image
 
 
-def test_default_augment_image_uses_first_party_cosmos2_registry(monkeypatch) -> None:
+def test_default_images_ignore_generic_build_registry(monkeypatch) -> None:
     monkeypatch.setenv("NPA_REGISTRY", "registry.example/workbench")
+    monkeypatch.delenv("NPA_SIM2REAL_REGISTRY", raising=False)
     monkeypatch.delenv("AUGMENT_IMAGE", raising=False)
 
     config = build_config_from_env(run_id="sim2real-images")
 
     assert (
         config.augment_image
-        == "registry.example/workbench/npa-cosmos2-transfer:2.5.1-sam2-multigpu-20260817-r2"
+        == "ghcr.io/nebius/nebius-physical-ai/npa-cosmos2-transfer:"
+        "2.5.1-skypilot-ready-20260801T053000Z"
     )
     assert (
         config.vlm_image
-        == "registry.example/workbench/npa-cosmos3-reason:cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
+        == "ghcr.io/nebius/nebius-physical-ai/npa-cosmos3-reason:"
+        "cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
+    )
+
+
+def test_sim2real_custom_registry_requires_dedicated_override(monkeypatch) -> None:
+    monkeypatch.setenv("NPA_SIM2REAL_REGISTRY", "registry.example/workbench")
+
+    config = build_config_from_env(run_id="sim2real-custom-images")
+
+    assert config.augment_image.startswith(
+        "registry.example/workbench/npa-cosmos2-transfer:"
     )
 
 

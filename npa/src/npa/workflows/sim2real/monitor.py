@@ -204,7 +204,7 @@ def load_operator_config() -> OperatorConfig:
     the tenant or cluster implicitly.
     """
 
-    from npa.deploy.images import registry_from_env
+    from npa.deploy.images import DEFAULT_CONTAINER_REGISTRY
 
     explicit = os.environ.get("NPA_SIM2REAL_OPERATOR_CONFIG", "").strip()
     if explicit:
@@ -222,15 +222,12 @@ def load_operator_config() -> OperatorConfig:
     storage = cfg.get("storage") or {}
     bucket = str(storage.get("bucket", "")).replace("s3://", "").split("/", 1)[0]
     endpoint = str(storage.get("endpoint_url") or DEFAULT_S3_ENDPOINT)
-    # ``container_registry`` / NPA_REGISTRY is the repository-wide canonical
-    # image source. ``storage.registry`` is a legacy operator-pack field and can
-    # legitimately point at a retired region; only use it as a compatibility
-    # fallback after the canonical settings.
+    # The legacy operator pack is a repository-owned workload and therefore
+    # defaults to anonymous GHCR. A custom runtime namespace must be selected
+    # through its dedicated variable; generic build or saved registry settings
+    # must not silently repoint it.
     registry = str(
-        registry_from_env()
-        or cfg.get("container_registry")
-        or storage.get("registry")
-        or cfg.get("registry", "")
+        os.environ.get("NPA_SIM2REAL_REGISTRY") or DEFAULT_CONTAINER_REGISTRY
     ).rstrip("/")
     k8s_context = str(storage.get("k8s_context") or "")
     if not k8s_context:

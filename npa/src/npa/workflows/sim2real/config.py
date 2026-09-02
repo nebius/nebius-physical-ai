@@ -6,7 +6,6 @@ import os
 from pathlib import Path
 from typing import Any
 
-from npa.deploy.images import registry_from_env
 from npa.workflows.sim2real.constants import (
     DEFAULT_ACTION_ENV_LIMIT,
     DEFAULT_ENV_COUNT,
@@ -63,7 +62,11 @@ def build_config_from_env(**overrides: Any) -> Sim2RealLoopConfig:
         or os.environ.get("S3_BUCKET")
         or ""
     )
-    registry = registry_from_env()
+    registry = str(
+        overrides.get("registry")
+        or os.environ.get("NPA_SIM2REAL_REGISTRY")
+        or ""
+    ).strip()
     if "s3_prefix" in overrides and overrides.get("s3_prefix") is not None:
         s3_prefix = str(overrides["s3_prefix"])
     elif "NPA_SIM2REAL_PREFIX" in os.environ:
