@@ -53,8 +53,10 @@ USER ubuntu
 # Replace only NPA's thin control/client layer. The model implementation and
 # dependency lock remain the exact pinned upstream bytes in the parent. The
 # parent generation image intentionally omits upstream's `serve` extra, so sync
-# that extra from the already-pinned upstream uv.lock. `--inexact` retains the
-# parent's two explicitly pinned generate-only dependencies.
+# that extra from the already-pinned upstream uv.lock.  After syncing the frozen
+# environment (preserving all other pins), upgrade only Ray to the
+# CVE-2025-62593-fixed version.  Do NOT use --frozen for the serve extra alone
+# — that would silently keep the vulnerable pin.
 COPY --chown=ubuntu:ubuntu pyproject.toml /opt/npa/pyproject.toml
 COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa
 COPY --chown=ubuntu:ubuntu workflows /opt/npa/workflows
@@ -65,6 +67,7 @@ COPY --chown=ubuntu:ubuntu --chmod=755 docker/workbench/cosmos3-ray-serve/smoke_
 RUN cd /opt/cosmos3/cosmos-framework \
     && UV_CACHE_DIR=/tmp/uv-cache uv sync --frozen --inexact \
        --extra guardrail --extra serve --group cu130 \
+    && .venv/bin/pip install --no-cache-dir "ray[default,serve]==${COSMOS3_RAY_VERSION}" \
     && test "$(.venv/bin/python -c 'import ray; print(ray.__version__)')" = "${COSMOS3_RAY_VERSION}" \
     && rm -rf /tmp/uv-cache \
     && uv pip install --python /opt/npa/.venv/bin/python --no-deps -e /opt/npa \
