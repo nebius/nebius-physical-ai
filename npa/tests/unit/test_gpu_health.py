@@ -10,11 +10,18 @@ from typing import Any
 import pytest
 
 from npa.cluster.gpu_health import (
+    DEFAULT_GRAPHICS_SMOKE_IMAGE,
     GpuHealthConfig,
     GpuHealthError,
     probe_gpu_health,
     validate_gpu_health,
 )
+
+
+def test_graphics_smoke_uses_the_anonymously_pullable_public_catalog_path() -> None:
+    assert DEFAULT_GRAPHICS_SMOKE_IMAGE.startswith(
+        "ghcr.io/nebius/nebius-physical-ai/npa-sonic@sha256:"
+    )
 
 
 def _node(

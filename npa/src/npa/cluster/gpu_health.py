@@ -20,7 +20,7 @@ DEFAULT_CUDA_SMOKE_IMAGE = (
     "nvcr.io/nvidia/k8s/cuda-sample:vectoradd-cuda12.5.0-ubuntu22.04"
 )
 DEFAULT_GRAPHICS_SMOKE_IMAGE = (
-    "ghcr.io/nebius/npa-sonic@sha256:"
+    "ghcr.io/nebius/nebius-physical-ai/npa-sonic@sha256:"
     "c9ba0996b28f54b013e36da689638b386a7ef9c0c8c4413fc4b3c72ff1a808bb"
 )
 _FABRIC_SUCCESS = frozenset({"complete", "completed", "success", "successful"})
