@@ -1237,13 +1237,23 @@ def _prepare_distributed_checkpoint_root(
     then every rank crosses the same barrier before Orbax opens the root.
     """
 
-    resuming = checkpoint_root.is_dir() and any(
+    import numpy as np
+
+    rank_zero_resuming = rank == 0 and checkpoint_root.is_dir() and any(
         path.is_dir() and path.name.isdigit() for path in checkpoint_root.iterdir()
     )
+    decision = multihost_utils.broadcast_one_to_all(
+        np.asarray([int(rank_zero_resuming)], dtype=np.int32), is_source=rank == 0
+    )
+    resuming = bool(int(np.asarray(decision).reshape(-1)[0]))
     if rank == 0 and not resuming:
         if checkpoint_root.exists():
             shutil.rmtree(checkpoint_root)
         checkpoint_root.mkdir(parents=True, exist_ok=True)
+    multihost_utils.sync_global_devices("npa-openpi-checkpoint-root-cleaned")
+    # RWX metadata visibility can lag the first barrier on a peer. mkdir with
+    # exist_ok is safe on every rank and never removes rank-zero's state.
+    checkpoint_root.mkdir(parents=True, exist_ok=True)
     multihost_utils.sync_global_devices("npa-openpi-checkpoint-root-ready")
     if not checkpoint_root.is_dir():
         raise OpenPIPipelineError(

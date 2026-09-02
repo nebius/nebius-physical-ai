@@ -1136,6 +1136,11 @@ def test_rank_zero_prepares_fresh_shared_checkpoint_root(tmp_path: Path) -> None
 
     class Multihost:
         @staticmethod
+        def broadcast_one_to_all(value: object, *, is_source: bool) -> object:
+            assert is_source is True
+            return value
+
+        @staticmethod
         def sync_global_devices(name: str) -> None:
             barriers.append(name)
 
@@ -1147,7 +1152,10 @@ def test_rank_zero_prepares_fresh_shared_checkpoint_root(tmp_path: Path) -> None
     )
     assert root.is_dir()
     assert not any(root.iterdir())
-    assert barriers == ["npa-openpi-checkpoint-root-ready"]
+    assert barriers == [
+        "npa-openpi-checkpoint-root-cleaned",
+        "npa-openpi-checkpoint-root-ready",
+    ]
 
 
 def test_nonzero_rank_never_cleans_shared_checkpoint_root(tmp_path: Path) -> None:
@@ -1159,6 +1167,11 @@ def test_nonzero_rank_never_cleans_shared_checkpoint_root(tmp_path: Path) -> Non
 
     class Multihost:
         @staticmethod
+        def broadcast_one_to_all(value: object, *, is_source: bool) -> object:
+            assert is_source is False
+            return value
+
+        @staticmethod
         def sync_global_devices(name: str) -> None:
             barriers.append(name)
 
@@ -1169,7 +1182,39 @@ def test_nonzero_rank_never_cleans_shared_checkpoint_root(tmp_path: Path) -> Non
         is False
     )
     assert stale.is_file()
-    assert barriers == ["npa-openpi-checkpoint-root-ready"]
+    assert barriers == [
+        "npa-openpi-checkpoint-root-cleaned",
+        "npa-openpi-checkpoint-root-ready",
+    ]
+
+
+def test_nonzero_rank_idempotently_materializes_visible_root(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "checkpoint"
+    barriers: list[str] = []
+
+    class Multihost:
+        @staticmethod
+        def broadcast_one_to_all(value: object, *, is_source: bool) -> object:
+            assert is_source is False
+            return value
+
+        @staticmethod
+        def sync_global_devices(name: str) -> None:
+            barriers.append(name)
+
+    assert (
+        full_droid._prepare_distributed_checkpoint_root(
+            root, rank=5, multihost_utils=Multihost
+        )
+        is False
+    )
+    assert root.is_dir()
+    assert barriers == [
+        "npa-openpi-checkpoint-root-cleaned",
+        "npa-openpi-checkpoint-root-ready",
+    ]
 
 
 def test_distributed_checkpoint_resume_preserves_numeric_state(
@@ -1180,11 +1225,17 @@ def test_distributed_checkpoint_resume_preserves_numeric_state(
     step.mkdir(parents=True)
     state = step / "orbax-metadata"
     state.write_text("complete", encoding="utf-8")
+    barriers: list[str] = []
 
     class Multihost:
         @staticmethod
+        def broadcast_one_to_all(value: object, *, is_source: bool) -> object:
+            assert is_source is True
+            return value
+
+        @staticmethod
         def sync_global_devices(name: str) -> None:
-            assert name == "npa-openpi-checkpoint-root-ready"
+            barriers.append(name)
 
     assert (
         full_droid._prepare_distributed_checkpoint_root(
@@ -1193,6 +1244,10 @@ def test_distributed_checkpoint_resume_preserves_numeric_state(
         is True
     )
     assert state.read_text(encoding="utf-8") == "complete"
+    assert barriers == [
+        "npa-openpi-checkpoint-root-cleaned",
+        "npa-openpi-checkpoint-root-ready",
+    ]
 
 
 def test_distributed_checkpoint_config_never_overwrites() -> None:
