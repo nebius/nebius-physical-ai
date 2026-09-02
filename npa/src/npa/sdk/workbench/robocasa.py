@@ -67,9 +67,15 @@ def run(
                 timeout=timeout,
             )
         )
-    from npa.workbench.robocasa.capabilities import run_capability
+    from npa.workbench.robocasa.capabilities import run_capability_with_output
 
-    run_capability(request)
+    # Local execution persists and uploads output exactly like a service run:
+    # a temporary output directory is created, the capability writes its
+    # artifacts there, and any produced output is uploaded to ``output_uri``.
+    # This keeps local runs truthful (artifacts are produced or uploaded) and
+    # makes capabilities that require an output directory (policy evaluation)
+    # work in local mode.
+    run_capability_with_output(request)
     return RoboCasaRunResponse(
         run_id="local",
         status="completed",

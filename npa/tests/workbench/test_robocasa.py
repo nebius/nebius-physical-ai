@@ -5,6 +5,7 @@ from __future__ import annotations
 import sys
 import types
 import json
+from pathlib import Path
 
 import numpy as np
 
@@ -366,3 +367,92 @@ def test_kitchen_trajectory_export_missing_image_key(monkeypatch: pytest.MonkeyP
             num_envs=1,
             output_dir=tmp_path,
         )
+
+
+# --------------------------------------------------------------------------- SDK local run output persistence
+#
+# The SDK local `run()` must persist and upload output exactly like a service
+# run. Regression coverage for the review finding that local non-service
+# capability execution dropped output because `run_capability()` received no
+# output directory (and `kitchen_policy_eval` failed outright).
+
+
+def test_sdk_local_run_uploads_produced_output(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """Local SDK run() persists produced artifacts and uploads them to S3."""
+    _install_fake_env(monkeypatch)
+
+    uploaded: list[tuple[str, str, str]] = []
+
+    class FakeS3:
+        def upload_file(self, local_path, bucket, key):
+            uploaded.append((str(local_path), bucket, key))
+
+    monkeypatch.setattr("boto3.client", lambda *a, **k: FakeS3())
+
+    # imageio/ffmpeg is not installed in the unit-test venv, so _write_video
+    # returns None and writes nothing. Stub it to write a real artifact so the
+    # test proves the produced output is uploaded.
+    def fake_write_video(frames, path):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"fake-video-bytes")
+        return path
+
+    monkeypatch.setattr(
+        "npa.workbench.robocasa.capabilities._write_video", fake_write_video
+    )
+
+    from npa.sdk.workbench.robocasa import run
+
+    response = run(
+        capability="kitchen_random_rollout",
+        output_uri="s3://bucket/out",
+        iterations=2,
+        seed=1,
+    )
+    assert response.status == "completed"
+    assert response.run_id == "local"
+    assert response.output_uri == "s3://bucket/out"
+    # The rollout produced a video artifact that was uploaded to S3.
+    assert uploaded, "expected at least one uploaded artifact"
+    assert all(bucket == "bucket" for _, bucket, _ in uploaded)
+    assert all(key.startswith("out/") for _, _, key in uploaded)
+
+
+def test_sdk_local_run_passes_output_dir_to_capability(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Local SDK run() always supplies an output directory to the capability.
+
+    Regression for the review finding that the SDK local path called
+    ``run_capability()`` with no output directory, which made capabilities that
+    require one (``kitchen_policy_eval``) fail and silently dropped produced
+    artifacts for the others.
+    """
+    _install_fake_env(monkeypatch)
+
+    captured: dict[str, object] = {}
+
+    def fake_run_capability(request, *, output_dir=None):
+        captured["output_dir"] = output_dir
+        return {"ok": True}
+
+    monkeypatch.setattr(
+        "npa.workbench.robocasa.capabilities.run_capability", fake_run_capability
+    )
+    monkeypatch.setattr(
+        "npa.workbench.robocasa.capabilities.upload_output", lambda *a, **k: None
+    )
+
+    from npa.sdk.workbench.robocasa import run
+
+    response = run(
+        capability="kitchen_random_rollout",
+        output_uri="s3://bucket/out",
+        iterations=1,
+        num_envs=1,
+    )
+    assert response.status == "completed"
+    assert captured["output_dir"] is not None
+    assert Path(captured["output_dir"]).is_dir()

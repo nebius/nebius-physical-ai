@@ -868,6 +868,70 @@ def run_capability(
     raise RoboCasaError(f"unsupported robocasa capability: {request.capability}")
 
 
+def run_capability_with_output(
+    request: RoboCasaRunRequest,
+    *,
+    output_dir: Path | None = None,
+) -> dict[str, Any]:
+    """Run a capability and persist/upload its output truthfully.
+
+    Creates a temporary output directory when none is provided, runs the
+    capability, and uploads any produced artifacts to ``request.output_uri``
+    when set. Returns the capability result dict.
+
+    This is the single entrypoint used by both the FastAPI service and the SDK
+    local path so that local execution persists and uploads output exactly like
+    a service run, instead of silently dropping artifacts.
+    """
+    if output_dir is None:
+        output_dir = Path(tempfile.mkdtemp(prefix="robocasa_"))
+    result = run_capability(request, output_dir=output_dir)
+    if request.output_uri:
+        upload_output(output_dir, request.output_uri, result)
+    return result
+
+
+def upload_output(local_dir: Path, output_uri: str, result: dict[str, Any]) -> None:
+    """Upload a capability's local output tree to S3 when the run produced one.
+
+    Capabilities that write artifacts (rollouts, trajectory exports, policy
+    evaluation) publish their output directory to ``output_uri`` so downstream
+    workflow stages can read it from S3. Capabilities that only return a result
+    dict (task registration, asset availability) have nothing to upload.
+    """
+    if not output_uri:
+        return
+    root = Path(local_dir)
+    if not root.exists() or not any(root.iterdir()):
+        return
+    import boto3
+
+    endpoint = os.environ.get("AWS_ENDPOINT_URL") or os.environ.get("NEBIUS_S3_ENDPOINT", "")
+    s3 = boto3.client(
+        "s3",
+        endpoint_url=endpoint or None,
+        aws_access_key_id=os.environ.get("AWS_ACCESS_KEY_ID") or None,
+        aws_secret_access_key=os.environ.get("AWS_SECRET_ACCESS_KEY") or None,
+    )
+    bucket, prefix = parse_s3_uri(output_uri)
+    for file_path in sorted(root.rglob("*")):
+        if file_path.is_file():
+            rel = file_path.relative_to(root)
+            s3.upload_file(str(file_path), bucket, f"{prefix}/{rel}")
+    result["output_uri"] = output_uri
+
+
+def parse_s3_uri(uri: str) -> tuple[str, str]:
+    """Parse an s3:// URI into (bucket, prefix)."""
+    if not uri.startswith("s3://"):
+        raise ValueError(f"not an s3:// URI: {uri}")
+    rest = uri[len("s3://"):]
+    bucket, _, prefix = rest.partition("/")
+    return bucket, prefix.rstrip("/")
+
+
+
+
 __all__ = [
     "SUPPORTED_CAPABILITIES",
     "RoboCasaError",
@@ -879,6 +943,9 @@ __all__ = [
     "kitchen_trajectory_export",
     "kitchen_policy_eval",
     "make_run_id",
+    "parse_s3_uri",
     "run_capability",
+    "run_capability_with_output",
     "system_info",
+    "upload_output",
 ]

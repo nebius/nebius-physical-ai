@@ -15,7 +15,7 @@ from npa.workbench.robocasa.capabilities import (
     RoboCasaError,
     compute_manifest_sha256,
     make_run_id,
-    run_capability,
+    run_capability_with_output,
     system_info,
 )
 from npa.workbench.robocasa.schemas import (
@@ -128,52 +128,12 @@ def _run_capability(body: RoboCasaRunRequest, run_id: str) -> None:
             body.output_uri,
         )
         with tempfile.TemporaryDirectory(prefix="robocasa_") as tmp:
-            result = run_capability(body, output_dir=Path(tmp))
-            _upload_output(tmp, body.output_uri, result)
+            result = run_capability_with_output(body, output_dir=Path(tmp))
         update("completed", result, None)
     except RoboCasaError as exc:
         update("failed", None, str(exc))
     except Exception as exc:  # pragma: no cover - defensive service boundary.
         update("failed", None, str(exc))
-
-
-def _upload_output(local_dir: str, output_uri: str, result: dict[str, Any]) -> None:
-    """Upload a capability's local output tree to S3 when the run produced one.
-
-    Capabilities that write artifacts (rollouts, trajectory exports) publish
-    their output directory to ``output_uri`` so downstream workflow stages can
-    read it from S3. Capabilities that only return a result dict (task
-    registration, asset availability) have nothing to upload.
-    """
-    if not output_uri:
-        return
-    root = Path(local_dir)
-    if not root.exists() or not any(root.iterdir()):
-        return
-    import boto3
-
-    endpoint = os.environ.get("AWS_ENDPOINT_URL") or os.environ.get("NEBIUS_S3_ENDPOINT", "")
-    s3 = boto3.client(
-        "s3",
-        endpoint_url=endpoint or None,
-        aws_access_key_id=os.environ.get("AWS_ACCESS_KEY_ID") or None,
-        aws_secret_access_key=os.environ.get("AWS_SECRET_ACCESS_KEY") or None,
-    )
-    bucket, prefix = _parse_s3_uri(output_uri)
-    for file_path in sorted(root.rglob("*")):
-        if file_path.is_file():
-            rel = file_path.relative_to(root)
-            s3.upload_file(str(file_path), bucket, f"{prefix}/{rel}")
-    result["output_uri"] = output_uri
-
-
-def _parse_s3_uri(uri: str) -> tuple[str, str]:
-    """Parse an s3:// URI into (bucket, prefix)."""
-    if not uri.startswith("s3://"):
-        raise ValueError(f"not an s3:// URI: {uri}")
-    rest = uri[len("s3://"):]
-    bucket, _, prefix = rest.partition("/")
-    return bucket, prefix.rstrip("/")
 
 
 app = create_app()
