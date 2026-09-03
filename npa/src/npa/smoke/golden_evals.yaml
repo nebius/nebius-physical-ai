@@ -712,6 +712,37 @@ containers:
       timeout_seconds: 300
       status: ready
 
+
+  robocasa:
+    image: npa-robocasa
+    dockerfile: npa/docker/workbench/robocasa/Dockerfile
+    physical_ai:
+      useful: true
+      role: >-
+        RoboCasa kitchen-task simulation: Gymnasium task registration, kitchen
+        asset availability, headless EGL environment reset, and random rollouts
+        with video artifacts.
+    safety:
+      runs_as: ubuntu
+      base_image: nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04
+      network: FastAPI service on :8791 (/health, /system-info, /run, /status); kitchen assets download at run time
+      external_fetch: [pypi, github, huggingface, s3]
+      notes: >-
+        Bakes Apache-2.0 RoboCasa (v1.0) and robosuite (pinned commit) plus the
+        exact MuJoCo 3.3.1 / Gymnasium 0.29.1 / CUDA 12.4 closure from the
+        live-accepted BYOF evidence. Kitchen assets are NOT baked and download at
+        run time. No model weights, credentials, or accepted terms are baked.
+        The golden eval exercises health + system-info; real task registration,
+        EGL reset, and rollout are exercised by the capability run path.
+    golden_eval:
+      kind: server-smoke
+      module: npa.smoke.test_robocasa_functional
+      command: python /app/smoke_functional.py
+      serverless_gpu: h100
+      gpu: optional
+      timeout_seconds: 300
+      status: ready
+
   wan2-2:
     image: npa-wan2-2
     dockerfile: npa/docker/workbench/wan2-2/Dockerfile

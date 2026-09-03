@@ -140,6 +140,15 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
         "/health",
         "/system-info",
     ],
+    "robocasa": [
+        "FastAPI server start",
+        "/health",
+        "/system-info",
+        "Gymnasium robocasa/PickPlaceCounterToCabinet task registration",
+        "kitchen asset availability check",
+        "headless EGL environment reset",
+        "random rollout with video artifact",
+    ],
     "wan2-2": [
         "pinned Wan source import with OSS CPU dependency base",
         "machine-readable runtime health/version contract",

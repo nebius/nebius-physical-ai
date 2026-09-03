@@ -117,6 +117,12 @@ accidental dead entries fail the guardrail. The retired monolithic
 | `workbench.lancedb.create_failure_views` | three materialized views | `config.rider_view`, … | failure-mode views | no |
 | `workbench.detection_training.train_*` | `npa workbench detection-training train --service` | view + output URIs | checkpoints | no |
 | `workbench.detection_training.eval_*` | `npa workbench detection-training eval --service` | checkpoint + view | metrics JSON | no |
+| `workbench.robocasa.task_registration` | `npa workbench robocasa run --capability kitchen_task_registration --service` | `config.env_id`, `config.output_uri` | task registration JSON | no |
+| `workbench.robocasa.asset_availability` | `npa workbench robocasa run --capability kitchen_asset_availability --service` | `config.env_id`, `config.output_uri` | asset availability JSON | no |
+| `workbench.robocasa.egl_env_reset` | `npa workbench robocasa run --capability kitchen_egl_env_reset --service` | `config.env_id`, `config.output_uri` | EGL reset JSON | no |
+| `workbench.robocasa.random_rollout` | `npa workbench robocasa run --capability kitchen_random_rollout --service` | `config.env_id`, canonical `--output-path` from `config.output_uri`, `config.iterations` | rollout JSON + generated MP4 + execution provenance (no RRD/MCAP) | no |
+| `workbench.robocasa.trajectory_export` | `npa workbench robocasa run --capability kitchen_trajectory_export --service` | `config.env_id`, canonical `--output-path` from `config.output_uri`, `config.iterations`, `config.num_envs` | per-episode trajectory arrays + metadata/metrics + generated MP4 + execution provenance (no RRD/MCAP) | no |
+| `workbench.robocasa.policy_eval` | `npa workbench robocasa run --capability kitchen_policy_eval --service` | exact checkpoint URI plus explicit train/held-out env-id sets (no unused singular `--env-id`) | disjoint-task evaluation metrics, checkpoint/split hashes, generated MP4s, and execution provenance (no RRD/MCAP) | no |
 | `workbench.fiftyone.launch_app` | FiftyOne review hook | `config.lance_uri` | review session | yes |
 | `workbench.fiftyone.curate_augmented` | `npa workbench fiftyone curate-augmented` | `config.augment_uri`, `config.curator_report_uri` | `config.curation_report_uri` (real FiftyOne Brain keep/drop report) | no |
 | `workbench.fiftyone.review_augmented` | `npa workbench fiftyone review-augmented` | canonical run + quality disposition | portable real FiftyOneDataset for every accepted/rejected terminal candidate, with non-promoting rejected fields | no |

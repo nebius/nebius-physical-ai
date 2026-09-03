@@ -141,6 +141,10 @@ SPEC_GAP_REASONS: dict[str, dict[str, str]] = {
         "image": "infra",
         "prompt": "knob",
     },
+    "robocasa/run": {
+        "download_assets": "boolean",
+        "seed": "knob",
+    },
 }
 
 VALID_GAP_CATEGORIES = frozenset({"boolean", "infra", "knob"})
@@ -384,6 +388,29 @@ CONTRACTS: tuple[CapabilityContract, ...] = (
             _p("eval_view", "eval_view", "--eval-view"),
             _p("output_uri", "output_uri", "--output-uri"),
             _p("lance_uri", "lance_uri", "--lance-uri"),
+        ),
+    ),
+    CapabilityContract(
+        name="robocasa/run",
+        cli_module="npa.cli.workbench.robocasa.run",
+        cli_callback="run_cmd",
+        sdk_module="npa.sdk.workbench.robocasa",
+        sdk_attr="run",
+        spec_path=SPECS / "robocasa-smoke.yaml",
+        tool_ref="workbench.robocasa.random_rollout",
+        spec_gap=(
+            "download_assets",
+            "seed",
+        ),
+        params=(
+            _p("capability", "capability", "--capability"),
+            _p("env_id", "env_id", "--env-id"),
+            _p("output_path", "output_path", "--output-path"),
+            _p("iterations", "iterations", "--iterations"),
+            _p("num_envs", "num_envs", "--num-envs"),
+            _p("timeout_seconds", "timeout_seconds", "--timeout-seconds"),
+            _p("download_assets", "download_assets", "--download-assets"),
+            _p("seed", "seed", "--seed"),
         ),
     ),
     # --- the watcher: a DRIVER, so its third tier is the spec it submits --------

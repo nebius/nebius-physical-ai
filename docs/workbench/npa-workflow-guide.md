@@ -250,7 +250,8 @@ not checkpoint-resumable.
 
 ### Live submit E2E
 
-On an operator VM with Nebius credentials and `NPA_REGISTRY`:
+On an operator VM with Nebius credentials (supported workload images resolve
+from public GHCR automatically):
 
 ```bash
 # Cheap first: Token Factory CPU twins

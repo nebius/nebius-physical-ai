@@ -47,9 +47,10 @@ All first-class images live under `npa/docker/workbench/`:
 | `npa-cosmos` | `cosmos/Dockerfile` | job shell; server built but not default CMD |
 | `npa-groot` | `groot/Dockerfile` | job shell; `EXPOSE 8080` |
 | `npa-fiftyone` | `fiftyone/Dockerfile` | command-passthrough job entrypoint; `EXPOSE 5151` |
-| `npa-lancedb` | `lancedb/Dockerfile` | uvicorn `:8686` |
+| `npa-lancedb` | `lancedb/Dockerfile` | uvicorn `:8686`; non-root SkyPilot workflow host |
 | `npa-sonic` | `sonic/Dockerfile` | `/entrypoint.sh` modes |
 | `npa-detection-training` | `detection-training/Dockerfile` | uvicorn `:8790` |
+| `npa-robocasa` | `robocasa/Dockerfile` | uvicorn `:8791`; non-root service with no sudo grant |
 | `npa-retargeting` | `retargeting/Dockerfile` | job shell |
 | `npa-foxglove-embed` | `foxglove-embed/Dockerfile` | static host `:8099` (Foxglove embed SDK + MCAP data) |
 | Sim2Real stack | `sim2real-*/`, `cosmos3-reason/`, `lerobot-vlm-rl/` | workflow modules |
@@ -343,11 +344,11 @@ bootstrap attestation, and licensing gates,
 the publisher compares each source and target manifest digest. An exact match prints
 ``Already current; skipping copy`` and performs no registry write; only a missing or changed
 target runs ``crane copy``. This makes it safe to re-run the full guarded plan when one new
-image lands without republishing every existing image. Consumers then pull by
-pointing the resolver at the public release channel:
+image lands without republishing every existing image. Repository-owned runtime
+defaults select the public release channel directly:
 
 ```bash
-export NPA_REGISTRY=ghcr.io/nebius/nebius-physical-ai   # OSS images, any tenant
+docker pull ghcr.io/nebius/nebius-physical-ai/npa-retargeting:0.1.1
 ```
 
 Both development and release tags must pass the unauthenticated check:
@@ -388,7 +389,9 @@ direct service-to-service file coupling.
 
 ## Build and tag
 
-1. Resolve registry with `npa.clients.config.resolve_container_registry`.
+1. Select the immutable public GHCR development namespace for an official build;
+   use `npa.clients.config.resolve_container_registry` only for an explicit
+   operator build/BYOF destination.
 2. Build from the checked-in Dockerfile (`skills/atomic/build-and-push-image`).
 3. Tag from `npa/pyproject.toml` `[tool.npa.supported-tools]` and
    `npa/docker/workbench/tags.yaml` (`cuda12` vs `cuda13-b300`).

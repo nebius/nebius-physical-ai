@@ -379,7 +379,9 @@
       ],
       "published_tag": "cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
       "published_digest": "sha256:8e0ea40c064a15409233efdd036a369b36e1c04e713bcf81440d9d4372cae376",
-      "published_registries": ["public-release"]
+      "published_registries": [
+        "public-release"
+      ]
     },
     {
       "name": "npa-reference-policy",
@@ -400,7 +402,9 @@
       ],
       "published_tag": "cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
       "published_digest": "sha256:58eb0d714f9d57fbae7fc8dfc56caf7f98f84699146c820dce18f2aaa2313cb6",
-      "published_registries": ["public-release"]
+      "published_registries": [
+        "public-release"
+      ]
     },
     {
       "name": "npa-loop-eval",
@@ -421,7 +425,9 @@
       ],
       "published_tag": "cuda13-b300-0.1.3-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
       "published_digest": "sha256:9cb111c56d9c1db8357b04f43e46790f6853213ff1a78fd0b2dae5ad337eb75a",
-      "published_registries": ["public-release"]
+      "published_registries": [
+        "public-release"
+      ]
     },
     {
       "name": "npa-lerobot-vlm-rl",
@@ -442,7 +448,9 @@
       ],
       "published_tag": "cuda13-b300-0.1.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
       "published_digest": "sha256:7bd5b21d487f3ab6614197b8a8af81fe3ed001247b4501740615540cb55998e5",
-      "published_registries": ["public-release"]
+      "published_registries": [
+        "public-release"
+      ]
     },
     {
       "name": "npa-isaac-lab",
@@ -486,7 +494,9 @@
       ],
       "published_tag": "cuda13-b300-0.1.2-k8s-runtime-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
       "published_digest": "sha256:c9ba0996b28f54b013e36da689638b386a7ef9c0c8c4413fc4b3c72ff1a808bb",
-      "published_registries": ["public-release"]
+      "published_registries": [
+        "public-release"
+      ]
     },
     {
       "name": "npa-sonic-mujoco",
@@ -500,7 +510,10 @@
       "published_tag": "0.2.0-runtime",
       "published_digest": "sha256:2388d9e97269afaa414966e83a27f676a3f44d4271e9828c57bc13fbdce80f57",
       "publication_model": "exact-digest-promoted",
-      "published_registries": ["public-development", "public-release"]
+      "published_registries": [
+        "public-development",
+        "public-release"
+      ]
     },
     {
       "name": "npa-groot",
@@ -584,7 +597,10 @@
       "published_tag": "0.2.0-oss",
       "published_digest": "sha256:3342bbe44bd1c00ebf05ab4c9d7286058a94bb5ce90b49b164b23604d3acf180",
       "publication_model": "exact-digest-promoted",
-      "published_registries": ["public-development", "public-release"]
+      "published_registries": [
+        "public-development",
+        "public-release"
+      ]
     },
     {
       "name": "npa-cosmos3-ray-serve",
@@ -598,13 +614,24 @@
       "smoke": "guarded two-sample Cosmos3-Nano request through native @ray.serve.batch with structured outputs",
       "notes": "The exact public development digest passed payload, vulnerability, secret, license, SBOM, provenance, and anonymous-pull gates, then independent guarded two-sample native Ray Serve generation on B200 sm_100 and RTX PRO 6000 sm_120. Each target produced two structured outputs and two decoded images with durable S3 request, response, media, hashes, and provenance; no result was inferred across CUDA majors.",
       "measured_torch": "2.10.0+cu130",
-      "measured_arch_list": ["sm_75", "sm_80", "sm_86", "sm_90", "sm_100", "sm_120", "compute_120"],
+      "measured_arch_list": [
+        "sm_75",
+        "sm_80",
+        "sm_86",
+        "sm_90",
+        "sm_100",
+        "sm_120",
+        "compute_120"
+      ],
       "validated_tag": "dev-56d8c4f3f05db7aa3b03323441a3e0d7b97ac8da",
       "validated_digest": "sha256:6e42f553a0d14712dc1ed7fa42c72b0f083f4ae3f89b30eaf0e93cfdf64e820d",
       "published_tag": "ray1-cu130",
       "published_digest": "sha256:6e42f553a0d14712dc1ed7fa42c72b0f083f4ae3f89b30eaf0e93cfdf64e820d",
       "publication_model": "exact-digest-promoted",
-      "published_registries": ["public-development", "public-release"]
+      "published_registries": [
+        "public-development",
+        "public-release"
+      ]
     },
     {
       "name": "npa-content-agents",
@@ -636,6 +663,19 @@
       "validation": "not-required",
       "smoke": "grade a real clip set with the wired checks",
       "notes": "No torch or CUDA in the image (python:3.12-slim plus OpenCV/NumPy); the golden eval declares gpu: none. Only confirm node-pool scheduling."
+    },
+    {
+      "name": "npa-robocasa",
+      "dockerfile": "robocasa/Dockerfile",
+      "build_script": "robocasa/build.sh",
+      "verdict": "blocked",
+      "validation": "pending-build",
+      "torch": "none baked (CUDA 12.4 base; robosuite/MuJoCo CPU/EGL)",
+      "source_compiled_extensions": [],
+      "smoke": "Gymnasium task registration, kitchen asset availability, headless EGL reset, random rollout with video",
+      "notes": "Built on the CUDA 12.4 base from the live-accepted BYOF evidence. cu124 wheels stop at sm_90, so the image cannot run on datacenter Blackwell (sm_100/sm_103) without a CUDA 13 rebuild; RTX PRO 6000 (sm_120) also requires a cu130 rebuild. RoboCasa/robosuite are Apache-2.0 and kitchen assets are runtime downloads. Validation candidate: not yet built or GPU-validated.",
+      "blocked_reason": "CUDA 12.4 base wheels stop at sm_90; datacenter Blackwell (sm_100/sm_103) and RTX PRO 6000 (sm_120) need a CUDA 13 rebuild",
+      "upstream_tracking": "robosuite/MuJoCo CUDA 13 wheel availability and a cu130 rebuild of the npa-robocasa image"
     }
   ],
   "validation_evidence": {

@@ -366,6 +366,23 @@ def test_public_registry_never_receives_foreign_nebius_credentials(
     assert registry.token_auth_headers == {}
 
 
+def test_official_public_image_ignores_matching_stale_ghcr_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NPA_REGISTRY", "ghcr.io/operator/private")
+    monkeypatch.setenv("NPA_REGISTRY_USERNAME", "stale-user")
+    monkeypatch.setenv("NPA_REGISTRY_PASSWORD", "stale-token")
+    registry = AnonymousRegistry()
+    public_image = (
+        "ghcr.io/nebius/nebius-physical-ai/npa-cosmos-curate:0.1.2"
+    )
+
+    checks = check_image_pulls_with_credentials([public_image], fetcher=registry)
+
+    assert checks[0].ok
+    assert registry.token_auth_headers == {}
+
+
 def test_matching_private_registry_uses_configured_credentials(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

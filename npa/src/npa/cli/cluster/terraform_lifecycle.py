@@ -2905,6 +2905,9 @@ def _preflight_whole_path_capacity(
             _tfvar_value(tfvars, env, "gpu_nodes_preset", "1gpu-24vcpu-218gb") or ""
         ),
         preemptible=_tfvar_bool(tfvars, env, "gpu_nodes_preemptible", False),
+        capacity_block_group=str(
+            _tfvar_value(tfvars, env, "capacity_block_group", "") or ""
+        ),
         cpu_disk_gib=int(_tfvar_value(tfvars, env, "cpu_disk_size", 128) or 128),
         gpu_disk_gib=int(_tfvar_value(tfvars, env, "gpu_disk_size", 1023) or 1023),
         public_node_ips=False,
@@ -2936,6 +2939,7 @@ def _preflight_whole_path_capacity(
         gpu_platform=requested.gpu_platform,
         gpu_preset=requested.gpu_preset,
         preemptible=requested.gpu_preemptible,
+        capacity_block_group=requested.capacity_block_group,
         cpu_disk_gib=requested.cpu_disk_gib,
         gpu_disk_gib=requested.gpu_disk_gib,
         public_node_ips=requested.public_node_ips,
@@ -2975,14 +2979,6 @@ def _preflight_gpu_capacity(
     gpu_nodes = int(_tfvar_value(tfvars, env, "gpu_nodes_count", 0) or 0)
     if gpu_nodes <= 0:
         return
-    # MIG's STRICT capacity-block-backed pool consumes the named reservation,
-    # not ordinary on-demand GPU quota. Reservation ownership/region/platform
-    # and remaining capacity are validated by the shared mk8s preflight above.
-    if (
-        _tfvar_bool(tfvars, env, "mig_enabled", False)
-        and str(_tfvar_value(tfvars, env, "capacity_block_group", "") or "").strip()
-    ):
-        return
     platform = str(
         _tfvar_value(tfvars, env, "gpu_nodes_platform", "gpu-rtx6000") or ""
     ).strip()
@@ -2998,6 +2994,31 @@ def _preflight_gpu_capacity(
     preemptible = _tfvar_bool(tfvars, env, "gpu_nodes_preemptible", False)
     required = gpu_nodes * _gpus_per_node(preset)
     capture = lambda args: _run_capture(args, env=env, check=False)  # noqa: E731 - passed through
+    capacity_block_group = str(
+        _tfvar_value(tfvars, env, "capacity_block_group", "") or ""
+    ).strip()
+    # A STRICT capacity-block-backed pool consumes the named reservation, not
+    # the ordinary on-demand GPU quota. For MIG the shared mk8s preflight used
+    # to be the only validator; the whole-path preflight now proves the block
+    # itself (owner tenant, region, platform, active state, remaining GPUs) for
+    # MIG and non-MIG STRICT pools alike before apply, so we do not also charge
+    # the ordinary GPU-family allowance. AUTO/omitted capacity stays covered by
+    # the on-demand GPU quota check below and may never fall back to it.
+    if capacity_block_group:
+        from npa.cli.cluster.capacity import capacity_block_group_error
+
+        message = capacity_block_group_error(
+            capture,
+            nebius_bin=nebius_bin,
+            block_group_id=capacity_block_group,
+            tenant_id=tenant_id,
+            region=region,
+            platform=platform,
+            required_gpus=required,
+        )
+        if message:
+            raise typer.BadParameter(message)
+        return
     message = gpu_capacity_error(
         capture,
         nebius_bin=nebius_bin,

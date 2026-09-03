@@ -8,11 +8,13 @@ them there keep working.
 from __future__ import annotations
 
 import json
-from pathlib import Path
+import os
 import re
 import shlex
 import uuid
+from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from npa.clients.config import CONFIG_PATH, _load_yaml_file
 from npa.clients.project_credential_store import merge_project_credentials_document
@@ -266,6 +268,21 @@ def _write_agent_nebius_env(
     del iam_token
     if not (project_id.strip() and access_key.strip() and secret_key.strip()):
         return
+    dataset_tenant = os.environ.get("NPA_AGENT_DATASET_TENANT_ID", "").strip()
+    dataset_uri = os.environ.get("NPA_AGENT_DATASET_URI", "").strip()
+    if bool(dataset_tenant) != bool(dataset_uri):
+        raise ValueError("agent dataset tenant and URI must be configured together")
+    if dataset_tenant:
+        parsed_dataset = urlparse(dataset_uri)
+        if dataset_tenant != tenant_id.strip():
+            raise ValueError("agent dataset tenant does not match the deployment tenant")
+        if (
+            parsed_dataset.scheme != "s3"
+            or parsed_dataset.netloc != bucket.strip()
+            or parsed_dataset.query
+            or parsed_dataset.fragment
+        ):
+            raise ValueError("agent dataset URI must use the deployment's unsigned S3 bucket")
     env_lines = [
         f"NPA_AGENT_PROJECT_ALIAS={project_alias.strip()}",
         f"NPA_AGENT_NAME={agent_name.strip()}",
@@ -282,8 +299,15 @@ def _write_agent_nebius_env(
         f"AWS_ACCESS_KEY_ID={access_key.strip()}",
         f"AWS_SECRET_ACCESS_KEY={secret_key.strip()}",
         f"AWS_REGION={region.strip() or 'eu-north1'}",
-        "",
     ]
+    if dataset_tenant:
+        env_lines.extend(
+            [
+                f"NPA_AGENT_DATASET_TENANT_ID={dataset_tenant}",
+                f"NPA_AGENT_DATASET_URI={dataset_uri}",
+            ]
+        )
+    env_lines.append("")
     _stage_private_text(
         ssh,
         content="\n".join(env_lines),

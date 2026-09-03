@@ -42,7 +42,9 @@ from npa.workbench.nurec.nurec import (
     redact,
     reconstruct_scene,
     render_novel_views,
+    derive_scene_variant_from_dir,
     resolve_nre_run_dir,
+    validate_fetch_provenance,
 )
 
 runner = CliRunner()
@@ -382,6 +384,31 @@ def test_parse_metrics_yaml_flattens_the_test_metrics(tmp_path: Path) -> None:
     assert metrics["test/psnr"] == pytest.approx(28.5)
     assert metrics["test/ssim"] == pytest.approx(0.91)
     assert metrics["test/lpips"] == pytest.approx(0.12)
+
+
+def test_parse_metrics_yaml_flattens_the_aggregated_shape(tmp_path: Path) -> None:
+    """NRE 26.04 wraps validation numbers under ``aggregated_metrics`` with a
+    ``value`` leaf; those must surface as the bare test/psnr|ssim|lpips keys that
+    downstream gates (and the skill docs) read."""
+    path = tmp_path / "metrics.yaml"
+    path.write_text(
+        "aggregated_metrics:\n"
+        "  test/psnr:\n"
+        "    aggregation_method: mean\n"
+        "    value: 22.66\n"
+        "  test/ssim:\n"
+        "    aggregation_method: mean\n"
+        "    value: 0.6447\n"
+        "  test/lpips:\n"
+        "    aggregation_method: mean\n"
+        "    value: 0.3956\n"
+    )
+
+    metrics = parse_metrics_yaml(path)
+
+    assert metrics["test/psnr"] == pytest.approx(22.66)
+    assert metrics["test/ssim"] == pytest.approx(0.6447)
+    assert metrics["test/lpips"] == pytest.approx(0.3956)
 
 
 def test_parse_metrics_yaml_is_quiet_about_a_missing_file(tmp_path: Path) -> None:
@@ -1458,3 +1485,89 @@ def test_publish_merges_into_a_local_directory_without_deleting_it(tmp_path: Pat
     assert precious.is_file(), "pre-existing content was destroyed"
     assert precious.read_text() == "do not delete me"
     assert (destination / "new.txt").read_text() == "new"
+
+
+# ------------------------------------------------------------------------------
+# provenance gate (finding: never trust echoed request args)
+# ------------------------------------------------------------------------------
+
+
+def test_derive_scene_variant_from_dir_parses_variant_suffix() -> None:
+    assert derive_scene_variant_from_dir("toro_auto") == ("toro", "auto")
+    assert derive_scene_variant_from_dir("toro") == ("toro", "standard")
+    assert derive_scene_variant_from_dir("struktur28_auto") == ("struktur28", "auto")
+
+
+def test_provenance_gate_passes_when_observed_matches_requested() -> None:
+    fetched = {
+        "dataset_id": "nvidia/PhysicalAI-NuRec-PPISP",
+        "scene": "toro",
+        "variant": "standard",
+        "observed_scene": "toro",
+        "observed_variant": "standard",
+    }
+    ok, errors = validate_fetch_provenance(
+        fetched,
+        requested_scene="toro",
+        requested_variant="standard",
+        requested_dataset_id="nvidia/PhysicalAI-NuRec-PPISP",
+    )
+    assert ok and not errors
+
+
+def test_provenance_gate_fails_when_fetch_echoes_labels_but_content_disagrees() -> None:
+    # A buggy/malicious fetch returns the *requested* scene/variant in the
+    # top-level (echoed request args) but independently observed content that
+    # disagrees. The gate must catch it rather than trust the echo.
+    fetched = {
+        "dataset_id": "nvidia/PhysicalAI-NuRec-PPISP",
+        "scene": "toro",
+        "variant": "standard",
+        # Observed unpacked content is actually struktur28/standard.
+        "observed_scene": "struktur28",
+        "observed_variant": "standard",
+    }
+    ok, errors = validate_fetch_provenance(
+        fetched,
+        requested_scene="toro",
+        requested_variant="standard",
+        requested_dataset_id="nvidia/PhysicalAI-NuRec-PPISP",
+    )
+    assert not ok
+    assert any("scene observed" in e for e in errors)
+
+
+def test_provenance_gate_fails_on_missing_observed_content() -> None:
+    # Older fetch output that only echoes request args carries no observed
+    # content; the gate must fail closed rather than assume correctness.
+    fetched = {
+        "dataset_id": "nvidia/PhysicalAI-NuRec-PPISP",
+        "scene": "toro",
+        "variant": "standard",
+    }
+    ok, errors = validate_fetch_provenance(
+        fetched,
+        requested_scene="toro",
+        requested_variant="standard",
+        requested_dataset_id="nvidia/PhysicalAI-NuRec-PPISP",
+    )
+    assert not ok
+    assert any("no observed unpacked content" in e for e in errors)
+
+
+def test_provenance_gate_fails_on_dataset_id_mismatch() -> None:
+    fetched = {
+        "dataset_id": "wrong/dataset",
+        "scene": "toro",
+        "variant": "standard",
+        "observed_scene": "toro",
+        "observed_variant": "standard",
+    }
+    ok, errors = validate_fetch_provenance(
+        fetched,
+        requested_scene="toro",
+        requested_variant="standard",
+        requested_dataset_id="nvidia/PhysicalAI-NuRec-PPISP",
+    )
+    assert not ok
+    assert any("dataset_id mismatch" in e for e in errors)

@@ -420,8 +420,9 @@ chmod 600 ~/.npa/credentials.yaml
 `npa configure` also writes ~/.npa/config.yaml with your Nebius project id,
 tenant id, and region so commands no longer need those values exported in the
 shell or read from the Nebius CLI. Workbench images use the anonymous GHCR
-mirror by default; set NPA_REGISTRY or pass an explicit image when you need a
-private or locally modified image. Deploy commands extend the same file with
+mirror by default and ignore ambient/saved private-registry settings. Use a
+complete image or an explicit workflow --registry when you need private or
+locally modified bytes. Deploy commands extend the same file with
 workbench endpoints and Terraform state.
 
 Treat ~/.npa/config.yaml as sensitive too: deploys persist the Terraform remote
