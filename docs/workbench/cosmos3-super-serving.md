@@ -387,7 +387,37 @@ H200 services set `PYTORCH_ALLOC_CONF=expandable_segments:True` to keep the
 lower-memory TP-1 cell viable at the fixed 720p shape. The B200 recipe does not
 set this allocator override, preserving its existing execution behavior.
 
-### Live B200 reproduction (2026-09-02)
+### Complete live B200 reproduction (2026-09-03)
+
+The complete `b200-full` suite ran on one dedicated on-demand 8x B200 node; no
+preemptible fallback was needed. It used the immutable runtime and model pins
+above, the exact public prompt hashes, 24 measured attempts per cell, and the
+fixed 720p/189-frame controls. An independent audit downloaded, hash-checked,
+fully decoded, and probed all 240 durable MP4 objects (1,799,674,704 bytes), then
+recomputed every aggregate from the attempt records.
+
+| Cell | Mean latency | Shared window | Valid video-s/node-hour | Public rate | Delta | Valid |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `T1_1x8` | 69.678 s | 1672.290 s | 406.9 | 413.6 | -1.62% | 24/24 |
+| `T2_2x4` | 121.459 s | 1470.311 s | 462.8 | 466.3 | -0.75% | 24/24 |
+| `T3_4x2` | 212.415 s | 1285.803 s | 529.2 | 529.0 | +0.04% | 24/24 |
+| `T4_8x1` | 379.122 s | 1160.280 s | 586.4 | 589.4 | -0.51% | 24/24 |
+| `T1C2` | 127.025 s | 1556.413 s | 437.2 | 427.0 | +2.39% | 24/24 |
+| `T2C2` | 223.640 s | 1411.843 s | 481.9 | 476.1 | +1.22% | 24/24 |
+| `T3C2` | 381.986 s | 1262.175 s | 539.1 | 535.5 | +0.67% | 24/24 |
+| `T4C2` | 626.267 s | 1148.285 s | 592.5 | 591.8 | +0.12% | 24/24 |
+| `T1R` | 69.735 s | 1673.666 s | 406.5 | 413.1 | -1.60% | 24/24 |
+| `T1C2R` | 126.873 s | 1554.537 s | 437.7 | 426.4 | +2.65% | 24/24 |
+
+All 240 attempts returned technically valid videos and zero attempts received
+failure credit. Shared-window throughput tracks the public record within 2.65%
+in every cell. Concurrency-two mean latencies are 20.87% to 25.94% higher than
+the public observations even though their shared-window rates are close; this
+is retained as an observed scheduling-shape difference, not averaged away.
+Repeat variation is small: `T1R` changes throughput by -0.10% from `T1_1x8`,
+and `T1C2R` changes it by +0.11% from `T1C2`.
+
+### Earlier live B200 primary sweep (2026-09-02)
 
 An operator-private wrapper at digest
 `sha256:df755667ee290717f843b4f565be487787ea5297a85d262317c274f894085a68`
