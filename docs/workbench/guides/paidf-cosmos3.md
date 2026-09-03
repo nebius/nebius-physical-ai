@@ -131,6 +131,17 @@ to fit on one node, `variant_count=2` with `variant_parallelism=2` remains
 unit-tested rather than live-proven concurrently. No on-demand capacity was used;
 a sequential two-variant run must not be described as concurrent evidence.
 
+The B200 validation also ran against the pinned RoboPro physical capture. Its
+initial and refined Cosmos passes produced 27,090,575-byte and 25,931,172-byte
+raw videos with upstream guardrails enabled and weights fetched at runtime. At a
+validation-only `0.40` threshold, the real evaluator scored them `0.154068` and
+`0.256552`; the second pass cleared hallucination and appearance checks but not
+temporal consistency or the required 4/4 attributes. The workflow therefore
+failed closed after the bounded refinement, retaining 98 artifacts and a
+316,545-byte Rerun quality-evidence recording. This is rejection-path evidence,
+not an accepted-quality claim, and it does not change the shipped `0.75`
+threshold.
+
 ## Optional Cosmos 3 versus Transfer 2.5 comparison
 
 This workflow makes no superiority claim. A reproducible comparison uses one
