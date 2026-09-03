@@ -27,7 +27,7 @@ BUILD_BASE_SHA = (
 RUNTIME_BASE_SHA = (
     "sha256:9175fa92f96de35a8cfb9493f0dfcf9435c7a597e9d95ad41d2cae382a95e3f9"
 )
-EXACT_TAG = "2.5.1-sam2-multigpu-20260817-r2"
+EXACT_TAG = "2.5.1-sim2real-coherent-20260903"
 
 
 def _dockerfile() -> str:
@@ -79,9 +79,9 @@ def test_lfs_media_models_and_build_credentials_are_excluded() -> None:
     assert not re.search(r"(?im)^\s*(COPY|ADD)\s+.*assets", text)
 
     overrides = (IMAGE_DIR / "security-overrides.txt").read_text(encoding="utf-8")
-    assert "nltk-3.10.0-py3-none-any.whl" in overrides
+    assert "nltk-3.10.3-py3-none-any.whl" in overrides
     assert (
-        "sha256=54ff84d4916d3ef127e8953bee0023f6a6b320b75d634a19e06ef056d3d244bf"
+        "sha256=ff9598a8e20518ee0d557745890cc4435b9578489e2dcbc69c4f81fa060caf7c"
         in overrides
     )
     assert "defusedxml-0.7.1-py2.py3-none-any.whl" in overrides
@@ -113,7 +113,7 @@ def test_lfs_media_models_and_build_credentials_are_excluded() -> None:
     )
     # The direct-URL security overrides carry URL-fragment hashes; the separate
     # NPA CLI wheel overlay below deliberately uses pip-style --require-hashes.
-    assert 'version("nltk") == "3.10.0"' in text
+    assert 'version("nltk") == "3.10.3"' in text
     assert 'version("defusedxml") == "0.7.1"' in text
     assert 'version("pip") == "26.2"' in text
     assert 'version("msgpack") == "1.2.1"' in text
