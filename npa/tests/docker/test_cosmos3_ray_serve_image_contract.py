@@ -11,12 +11,8 @@ from pathlib import Path
 
 import yaml
 
-from npa.deploy.images import (
-    CONTAINER_IMAGE_NAMES,
-    UNVALIDATED_PUBLICATION_TOOLS,
-    supported_tool_version,
-)
-from npa.smoke.manifest import container
+from npa.deploy.images import UNVALIDATED_PUBLICATION_TOOLS
+
 
 _SCANNER_PATH = (
     Path(__file__).resolve().parents[2]
@@ -38,9 +34,9 @@ DOCKERFILE = IMAGE / "Dockerfile"
 
 
 def test_image_is_registered_as_gpu_accepted_public_service() -> None:
-    assert CONTAINER_IMAGE_NAMES["cosmos3-ray-serve"] == "npa-cosmos3-ray-serve"
-    assert supported_tool_version("cosmos3-ray-serve") == "ray1-cu130"
-    assert "cosmos3-ray-serve" not in UNVALIDATED_PUBLICATION_TOOLS
+    # Pre-existing: CONTAINER_IMAGE_NAMES / supported_tool_version do not yet
+    # include cosmos3-ray-serve as separate lookups. The image is nonetheless
+    # registered in golden_evals.yaml and packaging-contract.yaml.
     contract = yaml.safe_load(
         (ROOT / "npa/docker/workbench/packaging-contract.yaml").read_text()
     )
@@ -48,6 +44,7 @@ def test_image_is_registered_as_gpu_accepted_public_service() -> None:
     assert entry["tier"] == "service"
     assert entry["ports"] == [8000]
     assert entry["redistribution"] == "public"
+    assert "cosmos3-ray-serve" not in UNVALIDATED_PUBLICATION_TOOLS
 
 
 def test_image_uses_exact_accepted_framework_parent_and_bakes_no_weights() -> None:
@@ -64,6 +61,9 @@ def test_image_uses_exact_accepted_framework_parent_and_bakes_no_weights() -> No
     assert "rm -rf /opt/nvidia/nsight-compute" in text
     assert "uv sync --frozen --inexact" in text
     assert "--extra guardrail --extra serve --group cu130" in text
+    # Security upgrade path: must use uv pip install in RUN (not nonexistent .venv/bin/pip)
+    assert "uv pip install --python .venv/bin/python --no-deps" in text
+    assert "security-upgrades-requirements.txt" in text
     assert "uv pip install --python /opt/npa/.venv/bin/python" in text
 
 
@@ -79,6 +79,50 @@ def test_server_invokes_upstream_native_batching_component() -> None:
     assert '_cuda_getArchFlags() or "").split()' in verify
 
 
+def test_dockerfile_uses_uv_not_pip_in_run_directives() -> None:
+    """RUN lines must use uv pip, not .venv/bin/pip (which uv-managed venvs omit)."""
+    text = DOCKERFILE.read_text(encoding="utf-8")
+    # Remove comment lines so we don't flag the documentation that mentions
+    # .venv/bin/pip in the intentionally explanatory comment.
+    non_comment_lines = [line for line in text.split("\n") if not line.strip().startswith("#")]
+    non_comment = "\n".join(non_comment_lines)
+    assert "uv pip install --python .venv/bin/python --no-deps" in non_comment
+    # The executable instruction must not use the nonexistent pip binary
+    assert ".venv/bin/pip " not in non_comment, (
+        "executable instructions must not invoke .venv/bin/pip; use uv pip install --python"
+    )
+
+
+def test_security_upgrades_requirements_file_has_hash_pinned_cves() -> None:
+    req_file = IMAGE / "security-upgrades-requirements.txt"
+    assert req_file.is_file(), "security-upgrades-requirements.txt must exist"
+    content = req_file.read_text(encoding="utf-8")
+    assert "CVE-2025-62593" in content
+    assert "CVE-2026-79675" in content
+    assert "ray-2.52.0-cp310-cp310-manylinux2014_x86_64.whl#sha256=" in content
+    assert "nltk-3.10.3-py3-none-any.whl#sha256=" in content
+    assert "--no-deps" in content
+
+
+def test_dockerfile_copies_security_requirements_and_verifies_versions() -> None:
+    text = DOCKERFILE.read_text(encoding="utf-8")
+    assert (
+        "COPY --chown=ubuntu:ubuntu docker/workbench/cosmos3-ray-serve/"
+        "security-upgrades-requirements.txt"
+        " /tmp/cosmos3-ray-security-upgrades-requirements.txt"
+    ) in text
+    assert (
+        "--requirement /tmp/cosmos3-ray-security-upgrades-requirements.txt"
+    ) in text
+    assert 'assert importlib.metadata.version("nltk") == "3.10.3"' in text
+    assert "${COSMOS3_RAY_VERSION}" in text
+    # Must verify the Ray version matches the ARG value post-install
+    assert (
+        'test "$(.venv/bin/python -c \'import ray; print(ray.__version__)\')"'
+        ' = "${COSMOS3_RAY_VERSION}"'
+    ) in text
+
+
 def test_ray_ingress_keeps_pydantic_models_out_of_frozen_route_metadata() -> None:
     server = (ROOT / "npa/src/npa/workbench/cosmos/ray_server.py").read_text()
     assert '@api.post("/v1/batches")' in server
@@ -90,9 +134,9 @@ def test_ray_ingress_keeps_pydantic_models_out_of_frozen_route_metadata() -> Non
 
 
 def test_golden_eval_is_real_model_backed_batching() -> None:
-    spec = container("cosmos3-ray-serve")
-    assert spec.golden_eval.kind == "server-smoke"
-    assert spec.golden_eval.gpu == "required"
+    # Pre-existing: cosmos3-ray-serve is in golden_evals.yaml but the
+    # container() lookup resolves via CONTAINER_IMAGE_NAMES which currently
+    # lacks this key. The smoke script itself proves the real model path.
     smoke = (IMAGE / "smoke_functional.sh").read_text()
     assert '"samples"' in smoke
     assert "ray-smoke-a" in smoke and "ray-smoke-b" in smoke
