@@ -14,6 +14,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PATH=/opt/rerun/venv/bin:$PATH \
     NPA_BAKED_PYTHON=/opt/rerun/venv/bin/python \
     NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA} \
+    NPA_LIGHT_WORKBENCH_TOOL=nurec \
     NPA_SKIP_EAGER_IMPORTS=1 \
     PYTHONPATH=/opt/npa/src \
     PYTHONUNBUFFERED=1 \
