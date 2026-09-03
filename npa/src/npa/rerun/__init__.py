@@ -41,7 +41,14 @@ def configure_browser_cors(
     if project_id and not target_bucket:
         raise ValueError("target_bucket is required with target_project_id")
     if not project_id:
-        project_id = resolve_environment(target_project).project_id
+        environment = resolve_environment(target_project)
+        project_id = str(getattr(environment, "project_id", "") or "").strip()
+    if not project_id:
+        alias = f" for target_project {target_project!r}" if target_project else ""
+        raise ValueError(
+            f"Target project is not configured{alias}. Pass target_project_id, "
+            "or run `npa configure` to configure the project."
+        )
     configured = target_bucket
     if not configured:
         storage = resolve_project_storage(target_project)

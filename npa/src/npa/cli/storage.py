@@ -173,8 +173,8 @@ def configure_bucket_cors_cmd(
         "--apply",
         help="Apply the planned CORS update using Nebius bucket-admin credentials.",
     ),
-    output_json: bool = typer.Option(
-        False, "--json", help="Emit one machine-readable result."
+    output_format: str = typer.Option(
+        "text", "--output", help="Output format: text or json."
     ),
 ) -> None:
     """Check or configure the app.rerun.io browser CORS contract.
@@ -190,6 +190,8 @@ def configure_bucket_cors_cmd(
     from npa.clients.nebius import RERUN_BROWSER_CORS_RULE_ID, RERUN_BROWSER_ORIGIN
     from npa.rerun import configure_browser_cors
 
+    if output_format not in {"text", "json"}:
+        raise typer.BadParameter("--output must be text or json")
     try:
         plan = configure_browser_cors(
             target_bucket=name.strip(),
@@ -214,8 +216,8 @@ def configure_bucket_cors_cmd(
         "allowed_origin": RERUN_BROWSER_ORIGIN,
         "preserved_rule_count": plan.preserved_rule_count,
     }
-    if output_json:
-        typer.echo(json.dumps(payload, sort_keys=True))
+    if output_format == "json":
+        typer.echo(json.dumps(payload, indent=2, sort_keys=True))
         return
     if status == "update_required":
         command = "npa storage bucket cors --apply"

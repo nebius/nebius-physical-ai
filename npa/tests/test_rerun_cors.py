@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from email.message import Message
+import json
 from urllib.error import HTTPError
 
 import pytest
@@ -244,12 +245,21 @@ def test_storage_cors_cli_apply_has_stable_json(mocker) -> None:
 
     result = runner.invoke(
         app,
-        ["storage", "bucket", "cors", "--apply", "--json"],
+        ["storage", "bucket", "cors", "--apply", "--output", "json"],
     )
 
     assert result.exit_code == 0, result.output
-    assert result.output.count("{") == 1
-    assert '"status": "updated"' in result.output
+    assert json.loads(result.stdout) == {
+        "allowed_origin": RERUN_BROWSER_ORIGIN,
+        "apply": True,
+        "cors_rule_id": RERUN_BROWSER_CORS_RULE_ID,
+        "preserved_rule_count": 0,
+        "status": "updated",
+    }
+    assert result.stdout == (
+        json.dumps(json.loads(result.stdout), indent=2, sort_keys=True) + "\n"
+    )
+    assert "command diagnostics were separated from JSON stdout" not in result.stderr
 
 
 def test_sdk_routes_configured_project_to_control_plane(mocker) -> None:
@@ -257,11 +267,18 @@ def test_sdk_routes_configured_project_to_control_plane(mocker) -> None:
 
     mocker.patch(
         "npa.rerun.resolve_environment",
-        return_value=EnvironmentConfig("project-synthetic", "tenant-synthetic", "us-central1"),
+        return_value=EnvironmentConfig(
+            project_id="project-synthetic",
+            tenant_id="tenant-synthetic",
+            region="us-central1",
+        ),
     )
     mocker.patch(
         "npa.rerun.resolve_project_storage",
-        return_value=StorageConfig("s3://bucket-synthetic/prefix", "https://storage.example"),
+        return_value=StorageConfig(
+            checkpoint_bucket="s3://bucket-synthetic/prefix",
+            endpoint_url="https://storage.example",
+        ),
     )
     operation = mocker.patch(
         "npa.rerun.apply_bucket_rerun_cors",
@@ -273,11 +290,39 @@ def test_sdk_routes_configured_project_to_control_plane(mocker) -> None:
     operation.assert_called_once_with("project-synthetic", "bucket-synthetic")
 
 
+@pytest.mark.parametrize("target_project", [None, "typoed-alias"])
+def test_sdk_missing_project_configuration_is_actionable(
+    mocker, target_project: str | None
+) -> None:
+    from npa import rerun
+
+    mocker.patch("npa.rerun.resolve_environment", return_value=None)
+    storage = mocker.patch("npa.rerun.resolve_project_storage")
+    operation = mocker.patch("npa.rerun.plan_bucket_rerun_cors")
+
+    with pytest.raises(ValueError, match="Target project is not configured") as raised:
+        rerun.configure_browser_cors(target_project=target_project)
+
+    message = str(raised.value)
+    assert "target_project_id" in message
+    assert "npa configure" in message
+    if target_project:
+        assert repr(target_project) in message
+    storage.assert_not_called()
+    operation.assert_not_called()
+
+
 def test_sdk_explicit_project_id_and_bucket_do_not_resolve_scoped_storage(mocker) -> None:
     from npa import rerun
 
-    storage = mocker.patch("npa.rerun.resolve_project_storage")
-    environment = mocker.patch("npa.rerun.resolve_environment")
+    storage = mocker.patch(
+        "npa.rerun.resolve_project_storage",
+        side_effect=AssertionError("explicit target must bypass storage resolution"),
+    )
+    environment = mocker.patch(
+        "npa.rerun.resolve_environment",
+        side_effect=AssertionError("explicit target must bypass environment resolution"),
+    )
     operation = mocker.patch(
         "npa.rerun.plan_bucket_rerun_cors",
         return_value=BucketCorsPlan("id", "7", (), (), False),
