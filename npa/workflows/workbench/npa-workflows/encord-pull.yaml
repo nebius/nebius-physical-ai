@@ -1,0 +1,43 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+# Materialize curated Encord data back to S3.
+#
+# Pulls a curated Collection (the Encord Curate output), a whole Dataset, or an
+# Annotate Project's labels. Media registered in place from this bucket comes
+# back as zero-egress server-side copies; labels export as Encord JSON. The
+# lineage manifest is written before any failure exit.
+
+metadata:
+  name: encord-pull
+  description: >
+    Pull a curated Encord Collection, Dataset, or Project back to S3 as media +
+    per-item JSON + a lineage manifest. Runs after human curation in the Encord
+    app, as the counterpart of encord-push.
+
+config:
+  bucket: example-bucket
+  prefix: "encord/{{run.id}}"
+
+  # collection | dataset | project, plus its uuid/hash or unique title.
+  encord_source: "collection"
+  encord_source_id: "00000000-0000-0000-0000-000000000000"
+  encord_pull_uri: "s3://{{config.bucket}}/{{config.prefix}}/pull/"
+
+resources:
+  cpu:
+    cloud: kubernetes
+    cpus: 4
+    memory: 16Gi
+
+initial: pull
+
+states:
+  pull:
+    description: Materialize curated Encord items + labels + lineage manifest to S3.
+    toolRef: workbench.encord.pull
+    resources: cpu
+    outputs:
+      - uri: "{{config.encord_pull_uri}}manifest.json"
+        schema: npa.encord.pull_manifest.v1
+    terminal: true

@@ -1,0 +1,51 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+# Register S3 media in place into Encord for human curation.
+#
+# Bytes never leave the bucket: the stage builds public objectUrls against the
+# configured endpoint and registers them through an Encord cloud integration
+# (created once in the Encord app; see skills/tools/encord/SKILL.md). Curation
+# then happens in the Encord app — run encord-pull.yaml as a separate workflow
+# once the curated Collection (or Dataset/Project) is ready.
+
+metadata:
+  name: encord-push
+  description: >
+    Register an S3 media prefix in place into an Encord storage folder and
+    dataset through an S3-compatible cloud integration, writing a durable push
+    receipt. Curation is human-in-the-loop in the Encord app; pull runs as a
+    separate workflow.
+
+config:
+  bucket: example-bucket
+  prefix: "encord/{{run.id}}"
+
+  encord_media_uri: "s3://{{config.bucket}}/raw-media/"
+  # Title (or uuid) of the S3-compatible integration created in the Encord app.
+  encord_integration: "nebius-s3"
+  encord_folder: "npa-{{run.id}}"
+  encord_dataset: "npa-{{run.id}}"
+  encord_media_filter: "videos-images"
+  # register: bytes stay in the bucket. upload: bytes copied into Encord storage.
+  encord_transfer: "register"
+  encord_poll_timeout_seconds: "1800"
+  encord_receipt_uri: "s3://{{config.bucket}}/{{config.prefix}}/push/"
+
+resources:
+  cpu:
+    cloud: kubernetes
+    cpus: 2
+    memory: 8Gi
+
+initial: push
+
+states:
+  push:
+    description: Register media in Encord in place (bytes stay in the bucket).
+    toolRef: workbench.encord.push
+    resources: cpu
+    outputs:
+      - uri: "{{config.encord_receipt_uri}}push_receipt.json"
+        schema: npa.encord.push_receipt.v1
+    terminal: true

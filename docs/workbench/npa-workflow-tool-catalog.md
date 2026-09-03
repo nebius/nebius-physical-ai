@@ -104,6 +104,9 @@ accidental dead entries fail the guardrail. The retired monolithic
 | `workbench.dataset.validate` | `npa workbench dataset validate` | `config.manifest_uri` | `npa.dataset.validation_report.v1` | no |
 | `workbench.dataset.curate` | `npa workbench dataset curate` | `config.manifest_uri`, `config.event_of_interest` | curated dataset version manifest | no |
 | `workbench.dataset.query` | `npa workbench dataset query` | `config.curated_manifest_uri` | matching records (LanceDB-backed) | no |
+| `workbench.encord.push` | `npa workbench encord push` | `config.encord_media_uri`, `config.encord_integration`, `config.encord_folder` | push receipt (`npa.encord.push_receipt.v1`); media registered in place in Encord | no |
+| `workbench.encord.curate` | `npa workbench encord curate` | `config.encord_folder`, `config.encord_curate_filters`, `config.encord_collection` | headlessly curated Encord Collection + curate receipt (`npa.encord.curate_receipt.v1`) | no |
+| `workbench.encord.pull` | `npa workbench encord pull` | `config.encord_source`, `config.encord_source_id` | curated media + item JSON + lineage manifest (`npa.encord.pull_manifest.v1`) | no |
 | `workbench.dataset.write_quality_decision` | dataset quality-gate decision writer | `config.quality_gate`, `config.decision_uri` | accept/reject decision JSON | no |
 | `workbench.dataset.report_rejection` | dataset rejection report writer | `config.validation_uri`, `config.decision_uri` | rejection report | no |
 | `workbench.foxglove.convert` | `npa workbench foxglove convert-run` | `config.run_artifacts_path`, `config.mcap_output_path`, `config.mcap_fps` | MCAP recording (Foxglove well-known schemas) for the embedded viewer | no |
