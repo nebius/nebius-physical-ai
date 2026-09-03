@@ -48,6 +48,6 @@ window for archived callers and artifacts. They are lazy, are not called by the
 canonical workflow, and cannot materialize or submit its retired controller.
 
 The submit path fails before launch when storage, secret propagation, gated
-model access, the dedicated CPU capacity, Kueue/PriorityClass, Isaac cache PVC,
+model access, the dedicated CPU capacity, Isaac cache PVC,
 immutable images, or real image pulls are not ready. The linked runbook gives
 copy-paste setup, expected results, and remediation without duplicating it here.

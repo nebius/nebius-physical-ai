@@ -107,44 +107,12 @@ controller alone, but not for the canonical Sim2Real CPU states.
 If the preflight reports no fitting CPU node, remove `NoSchedule`/`NoExecute`
 taints that the tasks do not tolerate or add/resize this pool.
 
-## 4. Create Kueue admission objects and warm Isaac once
+## 4. Warm Isaac once
 
-The canonical defaults name the `sim2real-gpu` LocalQueue and
-`sim2real-production` PriorityClass. Create the queue objects with quotas that
-cover the cluster's actual concurrent GPU, CPU, and memory requests; the helper
-generates the exact repository-owned schemas:
-
-```bash
-helm install kueue oci://registry.k8s.io/kueue/charts/kueue --version 0.17.3 --namespace kueue-system --create-namespace --wait
-
-export NPA_GPU_PRODUCT='<exact nvidia.com/gpu.product label from kubectl get nodes>'
-export NPA_GPU_QUOTA='<concurrent GPU count>'
-export NPA_CPU_QUOTA='<aggregate CPU quota, for example 64>'
-export NPA_MEMORY_QUOTA='<aggregate memory quota, for example 512Gi>'
-
-npa/.venv/bin/python - <<'PY' | kubectl apply -f -
-import os
-import yaml
-from npa.workflows.sim2real.job_scheduling import kueue_queue_manifests
-
-docs = kueue_queue_manifests(
-    namespace="default",
-    gpu_product=os.environ["NPA_GPU_PRODUCT"],
-    gpu_quota=int(os.environ["NPA_GPU_QUOTA"]),
-    cpu_quota=os.environ["NPA_CPU_QUOTA"],
-    memory_quota=os.environ["NPA_MEMORY_QUOTA"],
-)
-print(yaml.safe_dump_all(docs, sort_keys=False))
-PY
-
-kubectl get localqueue.kueue.x-k8s.io sim2real-gpu -n default
-kubectl get priorityclass sim2real-production
-```
-
-The Helm chart version is `0.17.3`, matching the code pin; it has no leading
-`v`. Expected: both `get` commands return their named object. A queue with
-insufficient CPU or memory quota can leave a GPU Job suspended even when a GPU
-is free.
+The canonical workflow relies on SkyPilot and the Kubernetes scheduler directly;
+it does not require Kueue, a LocalQueue, or a custom PriorityClass. Bound
+parallelism with `gpu_concurrency` so a wave never requests more GPUs than the
+cluster can schedule.
 
 Choose the digest-pinned Isaac image now, then warm a shared RWX cache. The
 template is the authoritative PVC/security/bootstrap contract:
@@ -342,9 +310,8 @@ npa/.venv/bin/npa workbench workflow submit "${SPEC}" \
 
 Before any launch, submit now fails with one consolidated prerequisite report if
 the required secret propagation, three gated model probes, CPU node, cache PVC,
-Kueue queue, PriorityClass, S3 write probe, immutable images, or image pulls are
-not ready. `--skip-preflight` is an expert escape hatch and is not part of this
-runbook.
+S3 write probe, immutable images, or image pulls are not ready. `--skip-preflight`
+is an expert escape hatch and is not part of this runbook.
 
 For a reduced plumbing proof, add `--var outer_iterations=1 --var
 inner_iterations=1` and deliberately chosen smaller scenario/PPO values. Do not

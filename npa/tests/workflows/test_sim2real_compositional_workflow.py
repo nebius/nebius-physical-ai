@@ -871,10 +871,10 @@ def test_exact_source_and_per_state_immutable_images_reach_rendered_tasks() -> N
     assert gpu_tasks
     for task in gpu_tasks:
         pod_config = task["config"]["kubernetes"]["pod_config"]
-        assert pod_config["metadata"]["labels"] == {
-            "kueue.x-k8s.io/queue-name": "sim2real-gpu"
-        }
-        assert pod_config["spec"]["priorityClassName"] == "sim2real-production"
+        assert "kueue.x-k8s.io/queue-name" not in pod_config.get(
+            "metadata", {}
+        ).get("labels", {})
+        assert "priorityClassName" not in pod_config["spec"]
 
     transfer_pod = spec.resources["transfer-gpu"]["kubernetes"]["pod_config"][
         "spec"
