@@ -12,6 +12,7 @@ import asyncio
 import functools
 import hashlib
 import json
+import logging
 import os
 import re
 import stat
@@ -24,6 +25,7 @@ from typing import Any, Callable
 from urllib.parse import urlparse, urlunparse
 
 SCHEMA_VERSION = "npa.agent.trajectory.v1"
+LOGGER = logging.getLogger(__name__)
 _OUTBOX_LOCK = threading.RLock()
 _SECRET_KEY_RE = re.compile(
     r"(?i)(api[_-]?key|secret[_-]?key|password|authorization|credential|"
@@ -133,7 +135,7 @@ def verify_destination(config: DatasetConfig, *, storage: Any | None = None) -> 
         try:
             s3.delete_object(Bucket=config.bucket, Key=probe_key)
         except Exception:
-            pass
+            LOGGER.debug("agent dataset probe cleanup failed")
 
 
 def _redact_string(value: str) -> str:
@@ -279,7 +281,7 @@ def _put_and_verify(config: DatasetConfig, payload: dict[str, Any], s3: Any) -> 
         s3.put_object(Bucket=config.bucket, Key=key, Body=body)
     except Exception:
         # A concurrent identical writer may have won the conditional put.
-        pass
+        LOGGER.debug("conditional trajectory write did not create a new object")
     fetched = s3.get_object(Bucket=config.bucket, Key=key)["Body"].read()
     if fetched != body:
         raise AgentRunDataError("trajectory read-after-write mismatch")
@@ -553,7 +555,7 @@ def goal_episode_boundary(
                     active_bucket=active_bucket(),
                 )
             except Exception:
-                pass
+                LOGGER.debug("pending trajectory flush failed at episode start")
             response: dict[str, Any] | None = None
             error: BaseException | None = None
             try:
@@ -580,7 +582,7 @@ def goal_episode_boundary(
                         active_bucket=active_bucket(),
                     )
                 except Exception:
-                    pass
+                    LOGGER.debug("terminal trajectory emission failed")
 
         return wrapped
 
