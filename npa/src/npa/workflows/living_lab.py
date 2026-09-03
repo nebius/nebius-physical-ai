@@ -1,4 +1,4 @@
-"""Living-lab 16-zone neural-reconstruction digital twin (fan-out + join).
+"""Living-lab parameterized neural-reconstruction digital twin (fan-out + join).
 
 Pure, framework-free logic for the ``living-lab-nurec-fanout.yaml`` workflow: a
 multi-zone research-space digital twin built from real NVIDIA NuRec / NRE
@@ -7,25 +7,32 @@ composite twin with a contact-sheet panorama.
 
 Zone model
 ----------
-The operator's reserved capacity is sixteen RTX PRO 6000 GPUs. The living lab is
-decomposed into 16 deterministic zones: the 8 real PPISP NCore sequences
-(4 scenes x 2 variants) x 2 view sectors (novel-view azimuth offsets). Each zone
-is a fully independent reconstruction shard that runs the complete real NRE
-pipeline (``npa workbench nurec check|fetch|reconstruct|render|visualize``) on
-its own RTX PRO 6000, then publishes ``zone_manifest.json`` with objective GPU
-participation evidence (GPU name, timing, val PSNR/SSIM, USDZ presence).
+Topology size is derived from explicit capture and sector inputs, not a magic
+fixed count. The shipped blueprint defaults to the operator's reserved
+16-device capacity: 16 deterministic zones = the 8 real PPISP NCore sequences
+(4 scenes x 2 variants) x 2 view sectors (novel-view azimuth offsets). The same
+generator also supports a 24-zone topology (8 capture pairs x 3 distinct
+sectors). Each zone is a fully independent reconstruction shard that runs the
+complete real NRE pipeline (``npa workbench nurec
+check|fetch|reconstruct|render|visualize``) on its own RTX PRO 6000, then
+publishes ``zone_manifest.json`` with objective GPU participation evidence (GPU
+name, timing, val PSNR/SSIM, USDZ presence).
 
-The A/B view-sector pair over the same sequence is a deliberate determinism
-check: the reconstruction itself is deterministic, while the two sectors render
-distinct novel-view sweeps (different azimuth offsets) so each shard contributes
-a distinct zone to the twin.
+Each view sector over the same sequence carries a genuinely distinct rig offset:
+the reconstruction itself is deterministic, while the sectors render distinct
+novel-view sweeps (different azimuth offsets) so each shard contributes a
+distinct zone to the twin.
 
 Objectivity contract
 --------------------
-The join (`join_living_lab_zones`) fails loudly unless all 16 zone manifests are
-present and each records a real GPU identity and a real USDZ. It never invents
-success from a submitted job: it reads the per-zone published evidence from S3,
-so the composite report is only as good as the real per-shard artifacts.
+The join (`join_living_lab_zones`) fails loudly unless every expected zone
+manifest is present and each records a real GPU identity and a real USDZ. It
+never invents success from a submitted job: it reads the per-zone published
+evidence from S3, so the composite report is only as good as the real per-shard
+artifacts. The expected device count is derived from the generated zone list and
+cross-checked against the fan-out's explicit parallel member count (the workflow
+``parallelCount`` contract), so an operator cannot weaken the proof by
+understating the device count.
 """
 
 from __future__ import annotations
@@ -38,7 +45,6 @@ from urllib.parse import urlparse
 
 ZONE_MANIFEST_FILENAME = "zone_manifest.json"
 DIGITAL_TWIN_SCHEMA = "npa.living_lab.digital_twin.v1"
-ZONE_COUNT = 16
 PANORAMA_FILENAME = "panorama.png"
 PANORAMA_JSON_FILENAME = "panorama.json"
 
@@ -55,28 +61,59 @@ SCENES = (
     ("valiant", "standard"),
 )
 
-#: Novel-view azimuth offsets (degrees) for the two view sectors of each sequence.
-#: Zone A sweeps the reconstruction from a front vector; zone B from a rotated
-#: vector, so the two shards of a sequence render distinct zone artifacts.
+#: Novel-view rig offsets (rig-rotation-offset yaw,-roll,-pitch deg; then
+#: rig-translation-offset tx,ty,tz m) for each supported view sector. Each
+#: sector carries a genuinely distinct requested rig offset, so two shards of the
+#: same capture always render distinct novel-view sweeps. The shipped default
+#: uses sectors ``a`` and ``b`` (16 zones); sector ``c`` exists so the same
+#: generator can also emit a 24-zone topology (8 capture pairs x 3 sectors).
 VIEW_SECTORS = {
-    # view_sector: (rig-rotation-offset yaw,-roll,-pitch deg, rig-translation-offset tx,ty,tz m)
     "a": ("0,0,0", "0,0.25,0"),
     "b": ("120,0,0", "0,0,0.45"),
+    "c": ("240,0,0", "0,0,-0.45"),
 }
+
+#: Default capture set: the 8 real NCore V4 pairs drive the shipped topology.
+DEFAULT_CAPTURES: tuple[tuple[str, str], ...] = SCENES
+#: Default view-sector set: two sectors -> the shipped 8 x 2 = 16-zone topology.
+DEFAULT_SECTORS: tuple[str, ...] = ("a", "b")
+#: Default topology's expected device count (8 captures x 2 sectors = 16 zones).
+DEFAULT_DEVICE_COUNT = 16
 
 #: Per-zone NNRE run id is deterministic from the zone name so re-runs are
 #: reproducible and the join can re-derive URIs without a registry.
 
 
-def living_lab_zones() -> list[dict[str, Any]]:
-    """The 16 deterministic zone definitions for the living-lab digital twin."""
+def living_lab_zones(
+    *,
+    captures: Sequence[tuple[str, str]] = DEFAULT_CAPTURES,
+    sectors: Sequence[str] = DEFAULT_SECTORS,
+) -> list[dict[str, Any]]:
+    """Deterministic zone definitions for the living-lab digital twin.
+
+    Topology size is derived from the explicit ``captures`` x ``sectors`` inputs:
+    the default 8 capture pairs x 2 sectors yields 16 zones, while 8 capture
+    pairs x 3 sectors yields 24 zones with three genuinely distinct sector rig
+    offsets per capture. Rejects an empty or unrepresentable topology.
+    """
+    if not captures or not sectors:
+        raise ValueError(
+            "living-lab topology requires at least one capture pair and one view sector"
+        )
+    captures_list = list(captures)
     zones: list[dict[str, Any]] = []
-    for scene, variant in SCENES:
-        for sector in ("a", "b"):
-            rot, trans = VIEW_SECTORS[sector]
+    for scene, variant in captures_list:
+        for sector in sectors:
+            try:
+                rot, trans = VIEW_SECTORS[sector]
+            except KeyError as exc:  # noqa: BLE001
+                raise ValueError(
+                    f"unknown living-lab view sector {sector!r}; "
+                    f"supported sectors: {sorted(VIEW_SECTORS)}"
+                ) from exc
             zones.append(
                 {
-                    "sequence_index": SCENES.index((scene, variant)),
+                    "sequence_index": captures_list.index((scene, variant)),
                     "scene": scene,
                     "variant": variant,
                     "view_sector": sector,
@@ -107,14 +144,25 @@ def _storage():
     return StorageClient.from_environment()
 
 
-def zone_names(shards: str | Sequence[str] = "") -> list[str]:
-    """Explicit zone list, or discover the 16 canonical zone names."""
+def zone_names(
+    shards: str | Sequence[str] = "",
+    *,
+    topologies: Sequence[str] | None = None,
+) -> list[str]:
+    """Explicit zone list, or discover canonical zone names for a topology.
+
+    ``topologies`` is a list of zone names (already-expanded topology) to use as
+    a default when ``shards`` is empty; it lets callers pin the expected zone set
+    without re-running the generator on a differently-sized topology.
+    """
     if isinstance(shards, str):
         names = [p.strip() for p in shards.split(",") if p.strip()]
     else:
-        names = [str(s).strip() for s in (shards or ())]
+        names = [str(v).strip() for v in (shards or ())]
     if names:
         return names
+    if topologies:
+        return [str(v).strip() for v in topologies if str(v).strip()]
     return [z["zone_name"] for z in living_lab_zones()]
 
 
@@ -203,24 +251,36 @@ def join_living_lab_zones(
     shards: str | Sequence[str] = "",
     run_id: str = "",
 ) -> dict[str, Any]:
-    """Barrier join: read all 16 zone manifests, assert completeness, aggregate.
+    """Barrier join: read every expected zone manifest, assert completeness.
 
     Reads each zone's ``zone_manifest.json`` (published by the shard after the
-    real NRE pipeline ran on its own RTX PRO 6000), requires equality with the
-    16 canonical zones, and fails unless every zone records a real USDZ, a real
-    GPU UUID + node, fail-closed input provenance, and real (non-missing) NRE
-    validation metrics. Success additionally requires the device-count proof
-    to hold exactly: one distinct, non-empty GPU UUID per required zone (never
-    inferred from model names) and a material all-zone temporal overlap. It
-    aggregates objective metrics, distinct GPU UUID/node participation, and the
-    sixteen-way concurrency proof, then publishes a composite digital-twin report
+    real NRE pipeline ran on its own RTX PRO 6000). The expected zone set is the
+    explicit topology passed via ``shards`` (the workflow's comma-joined zone
+    list), so the join is topology-agnostic: it works identically for the
+    shipped 16-zone (8 x 2) default and a 24-zone (8 x 3) topology. It fails
+    unless every expected zone records a real USDZ, a real GPU UUID + node,
+    fail-closed input provenance, and real (non-missing) NRE validation metrics.
+    Success additionally requires the device-count proof to hold exactly: one
+    distinct, non-empty GPU UUID per required device (never inferred from model
+    names) and a material all-required-device temporal overlap. It aggregates
+    objective metrics, distinct GPU UUID/node participation, and the
+    all-required-overlap proof, then publishes a composite digital-twin report
     plus a contact-sheet panorama.
     """
     base = zones_uri.rstrip("/") + "/"
     expected = zone_names(shards)
-    # Deterministic scene/variant map for the 16 canonical zones so the join can
-    # fail-closed when a zone fetched a capture it did not ask for.
-    expected_prov = {z["zone_name"]: (z["scene"], z["variant"]) for z in living_lab_zones()}
+    if not expected:
+        raise ValueError(
+            "living-lab join requires a non-empty expected zone set; refusing to "
+            "succeed with zero expected devices"
+        )
+    # Derive the expected scene/variant for each zone from its own name
+    # (``{scene}-{variant}-{sector}``) so the provenance gate stays accurate for
+    # any topology size instead of hard-coding the default 16-zone map.
+    expected_prov: dict[str, tuple[str, str]] = {}
+    for zone in expected:
+        parts = zone.split("-")
+        expected_prov[zone] = (parts[0], parts[1]) if len(parts) >= 2 else ("", "")
 
     entries: list[dict[str, Any]] = []
     missing: list[str] = []
@@ -246,9 +306,7 @@ def join_living_lab_zones(
             payload = _download_json(uri)
         except Exception as exc:  # noqa: BLE001 - surfaced below as a hard failure
             missing.append(zone)
-            entries.append(
-                {"zone": zone, "status": "missing", "error": str(exc)[:240]}
-            )
+            entries.append({"zone": zone, "status": "missing", "error": str(exc)[:240]})
             continue
         status = payload.get("status")
         usdz = bool(payload.get("usdz_path"))
@@ -335,8 +393,10 @@ def join_living_lab_zones(
     def _avg(values: list[float]) -> float | None:
         return round(sum(values) / len(values), 4) if values else None
 
-    # Sixteen-way concurrency: the per-shard execution windows must materially
-    # overlap at a common instant (max start < min end).
+    # All-required-overlap proof: every expected device's execution window must
+    # materially overlap at a common instant (max start < min end). Fail closed
+    # when any expected zone is missing its timestamps (windows shorter than the
+    # expected set).
     overlap_start = max((w[0] for w in windows), default=None)
     overlap_end = min((w[1] for w in windows), default=None)
     concurrent = (
@@ -347,9 +407,11 @@ def join_living_lab_zones(
     )
 
     # Device-count proof is never inferred from model names: it is derived from
-    # the distinct, non-empty GPU UUIDs the shards actually recorded.
+    # the distinct, non-empty GPU UUIDs the shards actually recorded, and must
+    # equal the required device count exactly.
+    required_device_count = len(expected)
     distinct_uuids = {u for u in gpu_uuids if u}
-    device_proof_ok = len(distinct_uuids) == len(expected)
+    device_proof_ok = len(distinct_uuids) == required_device_count
 
     report = {
         "schema": DIGITAL_TWIN_SCHEMA,
@@ -367,7 +429,8 @@ def join_living_lab_zones(
         "distinct_node_count": len(nodes),
         "nodes": sorted(nodes),
         "concurrency": {
-            "sixteen_way": concurrent,
+            "required_device_count": required_device_count,
+            "all_required_overlap": concurrent,
             "overlapping_zones": len(windows),
             "overlap_start_epoch": overlap_start,
             "overlap_end_epoch": overlap_end,
@@ -391,9 +454,9 @@ def join_living_lab_zones(
     print(json.dumps(report))
 
     # Fail closed: a report is never success by itself. The join must also prove
-    # one distinct, non-empty GPU UUID per required zone and a material all-zone
-    # temporal overlap. Error text is diagnostic (counts / reasons only) and never
-    # exposes live resource identifiers.
+    # exactly one distinct, non-empty GPU UUID per required device and a material
+    # all-required-device temporal overlap. Error text is diagnostic (counts /
+    # reasons only) and never exposes live resource identifiers.
     reasons: list[str] = []
     if missing:
         reasons.append(
@@ -401,14 +464,14 @@ def join_living_lab_zones(
         )
     if not device_proof_ok:
         reasons.append(
-            f"distinct GPU UUID proof failed: expected {len(expected)} distinct "
-            f"non-empty GPU UUIDs, observed {len(distinct_uuids)}"
+            f"distinct GPU UUID proof failed: expected {required_device_count} "
+            f"distinct non-empty GPU UUIDs, observed {len(distinct_uuids)}"
         )
     if not concurrent:
         reasons.append(
-            f"all-zone concurrency proof failed: material temporal overlap across "
-            f"all {len(expected)} zones not demonstrated (overlapping windows: "
-            f"{len(windows)})"
+            f"all-required-overlap proof failed: material temporal overlap across "
+            f"all {required_device_count} expected devices not demonstrated "
+            f"(overlapping windows: {len(windows)})"
         )
     if reasons:
         raise RuntimeError("living-lab join incomplete: " + "; ".join(reasons))
@@ -416,22 +479,26 @@ def join_living_lab_zones(
 
 
 __all__ = [
+    "DEFAULT_CAPTURES",
+    "DEFAULT_DEVICE_COUNT",
+    "DEFAULT_SECTORS",
     "DIGITAL_TWIN_SCHEMA",
     "PANORAMA_FILENAME",
     "SCENES",
-    "ZONE_COUNT",
     "ZONE_MANIFEST_FILENAME",
     "VIEW_SECTORS",
+    "build_living_lab_workflow_spec",
     "build_panorama",
     "join_living_lab_zones",
     "living_lab_zones",
+    "living_lab_workflow_yaml",
     "zone_uris",
     "zone_names",
 ]
 
 
 # ---------------------------------------------------------------------------
-# Workflow spec builder (generates the 16-shard fan-out YAML).
+# Workflow spec builder (generates the parameterized fan-out YAML).
 # ---------------------------------------------------------------------------
 
 _GPU_RESOURCE = {
@@ -449,8 +516,14 @@ _GPU_RESOURCE = {
                     {
                         "name": "npa-sudo-shim",
                         "image": "{{config.nurec_image}}",
-                        "command": ["/bin/sh", "-c", "printf '#!/bin/sh\\nexec \"$@\"\\n' > /shim/sudo\nchmod 0755 /shim/sudo\n"],
-                        "volumeMounts": [{"name": "npa-sudo-shim", "mountPath": "/shim"}],
+                        "command": [
+                            "/bin/sh",
+                            "-c",
+                            "printf '#!/bin/sh\\nexec \"$@\"\\n' > /shim/sudo\nchmod 0755 /shim/sudo\n",
+                        ],
+                        "volumeMounts": [
+                            {"name": "npa-sudo-shim", "mountPath": "/shim"}
+                        ],
                     }
                 ],
                 "containers": [
@@ -472,7 +545,10 @@ _GPU_RESOURCE = {
                 ],
                 "volumes": [
                     {"name": "npa-sudo-shim", "emptyDir": {}},
-                    {"name": "dshm", "emptyDir": {"medium": "Memory", "sizeLimit": "64Gi"}},
+                    {
+                        "name": "dshm",
+                        "emptyDir": {"medium": "Memory", "sizeLimit": "64Gi"},
+                    },
                 ],
             }
         },
@@ -674,15 +750,30 @@ PY
 """
 
 
-def build_living_lab_workflow_spec() -> dict[str, Any]:
+def build_living_lab_workflow_spec(
+    *,
+    captures: Sequence[tuple[str, str]] = DEFAULT_CAPTURES,
+    sectors: Sequence[str] = DEFAULT_SECTORS,
+) -> dict[str, Any]:
     """Return the ``living-lab-nurec-fanout`` npa.workflow spec as a dict.
 
-    16 parallel RTX PRO 6000 zone shards (full real NRE pipeline each) then a
-    CPU barrier join that asserts all 16 zone manifests and builds the composite
-    digital-twin report + contact-sheet panorama.
+    Fan-out size is derived from the explicit ``captures`` x ``sectors`` inputs
+    rather than a magic fixed count. The default 8 capture pairs x 2 sectors
+    yields the shipped 16-zone topology; the same generator with 3 sectors
+    yields a 24-zone topology. The expected device count is derived from the
+    generated zone list, exposed in ``config.expected_device_count``, and
+    cross-checked against the explicit parallel member list via the workflow
+    ``parallelCount`` contract so an operator cannot understate the required
+    devices without validate failing.
     """
-    zones = living_lab_zones()
+    zones = living_lab_zones(captures=captures, sectors=sectors)
     zone_names_list = [z["zone_name"] for z in zones]
+    expected_device_count = len(zone_names_list)
+    if expected_device_count < 1:
+        raise ValueError("living-lab topology must contain at least one zone")
+
+    capture_count = len(captures)
+    sector_count = len(sectors)
 
     shard_states: dict[str, Any] = {}
     parallel_members: list[str] = []
@@ -713,33 +804,38 @@ def build_living_lab_workflow_spec() -> dict[str, Any]:
             ],
         }
 
+    zone_description = (
+        f"{expected_device_count} living-lab zone reconstructions as one SkyPilot "
+        f"JobGroup (one RTX PRO 6000 each). Each member is a fully "
+        f"independent, real NRE reconstruction of its zone, so all "
+        f"{expected_device_count} reserved RTX PRO 6000 GPUs are materially busy "
+        f"at once."
+    )
+
     states: dict[str, Any] = {
         "living-lab-zones": {
-            "description": (
-                "Fan out the 16 living-lab zone reconstructions as one SkyPilot "
-                "JobGroup (one RTX PRO 6000 each). Each member is a fully "
-                "independent, real NRE reconstruction of its zone, so all sixteen "
-                "reserved RTX PRO 6000 GPUs are materially busy at once."
-            ),
+            "description": zone_description,
             "parallel": parallel_members,
+            "parallelCount": "{{config.expected_device_count}}",
             "maxConcurrency": "{{config.max_concurrency}}",
             "next": "join",
         },
         **shard_states,
         "join": {
             "description": (
-                "Barrier: read all 16 zone manifests, require every zone present "
-                "with a real GPU identity and a real USDZ, aggregate objective "
-                "metrics and GPU participation, publish the composite digital-twin "
-                "report plus a contact-sheet panorama, and fail closed unless the "
-                "proof demonstrates exactly 16 distinct non-empty GPU UUIDs with "
-                "material all-zone temporal overlap."
+                "Barrier: read every expected zone manifest, require every zone "
+                "present with a real GPU identity and a real USDZ, aggregate "
+                "objective metrics and GPU participation, publish the composite "
+                "digital-twin report plus a contact-sheet panorama, and fail "
+                "closed unless the proof demonstrates exactly the required number "
+                "of distinct non-empty GPU UUIDs with material all-required-device "
+                "temporal overlap."
             ),
             "needs": ["living-lab-zones"],
             "resources": "cpu",
             "run": {
                 "shell": (
-                    "python3 -c \"from npa.workflows.living_lab import "
+                    'python3 -c "from npa.workflows.living_lab import '
                     "join_living_lab_zones; join_living_lab_zones("
                     "zones_uri='{{config.zones_uri}}', "
                     "report_uri='{{config.report_uri}}', "
@@ -748,8 +844,14 @@ def build_living_lab_workflow_spec() -> dict[str, Any]:
                 )
             },
             "outputs": [
-                {"uri": "{{config.report_uri}}", "schema": "npa.living_lab.digital_twin.v1"},
-                {"uri": "{{config.panorama_uri}}", "schema": "npa.living_lab.panorama.v1"},
+                {
+                    "uri": "{{config.report_uri}}",
+                    "schema": "npa.living_lab.digital_twin.v1",
+                },
+                {
+                    "uri": "{{config.panorama_uri}}",
+                    "schema": "npa.living_lab.panorama.v1",
+                },
             ],
             "terminal": True,
         },
@@ -760,14 +862,26 @@ def build_living_lab_workflow_spec() -> dict[str, Any]:
         "kind": "Workflow",
         "metadata": {
             "name": "living-lab-nurec-fanout",
-            "description": "Sixteen-zone living-lab digital twin from real NVIDIA NuRec / NRE neural reconstructions: 16 independent RTX PRO 6000 shards (8 real NCore sequences x 2 view sectors) each run the full nurec pipeline, then a barrier join composes a composite digital-twin report and contact-sheet panorama with objective per-zone GPU participation evidence.",
+            "description": (
+                f"{expected_device_count}-zone living-lab digital twin from real "
+                f"NVIDIA NuRec / NRE neural reconstructions: {expected_device_count} "
+                f"independent RTX PRO 6000 shards ({capture_count} real NCore "
+                f"capture pairs x {sector_count} view sectors) each run the full "
+                f"nurec pipeline, then a barrier join composes a composite "
+                f"digital-twin report and contact-sheet panorama with objective "
+                f"per-zone GPU participation evidence. Topology size is derived "
+                f"from the capture/sector inputs."
+            ),
         },
         "config": {
             "bucket": "example-bucket",
             "prefix": "living-lab/{{run.id}}",
             "nurec_image": "nvcr.io/nvidia/nre/nre-ga:26.04",
             "dataset_id": "nvidia/PhysicalAI-NuRec-PPISP",
-            "max_concurrency": "16",
+            "capture_count": str(capture_count),
+            "sector_count": str(sector_count),
+            "expected_device_count": str(expected_device_count),
+            "max_concurrency": str(expected_device_count),
             "zones": ",".join(zone_names_list),
             "run_prefix_uri": "s3://{{config.bucket}}/{{config.prefix}}/",
             "zones_uri": "s3://{{config.bucket}}/{{config.prefix}}/zones/",

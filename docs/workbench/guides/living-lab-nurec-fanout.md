@@ -1,41 +1,67 @@
-# Living-lab digital twin: sixteen-way neural reconstruction
+# Living-lab digital twin: parameterized neural reconstruction (16-GPU default)
 
 A "living lab" is a research space observed by many cameras. This workflow turns
-real multi-view captures of such a space into a **sixteen-zone digital twin**:
-sixteen independent NVIDIA NuRec / NRE neural reconstructions, one per RTX PRO
-6000 GPU, joined into one composite twin with a contact-sheet panorama and
-objective per-zone GPU participation evidence.
+real multi-view captures of such a space into a **multi-zone digital twin**:
+independent NVIDIA NuRec / NRE neural reconstructions, one per RTX PRO 6000
+GPU, joined into one composite twin with a contact-sheet panorama and objective
+per-zone GPU participation evidence.
+
+The **shipped default is a 16-zone (16-GPU) twin** — eight real PPISP NCore
+captures x two view sectors. The same generator also emits a **24-zone
+topology** (eight capture pairs x three distinct view sectors) so the design
+scales to 24 RTX PRO 6000 GPUs without changing the join or the proof contract.
 
 It is a distinct workflow family from Sim2Real and the Physical AI Data Factory:
-it is the shipped **neural-reconstruction** capability, fanned out 16 ways.
+it is the shipped **neural-reconstruction** capability, fanned out N ways.
 
-## Topology: sixteen GPUs, explicitly
+## Topology: derived from capture x sector inputs, 16 by default
 
-The operator's reserved capacity is **16 × RTX PRO 6000 Blackwell** (two
-eight-GPU workers). The living lab is decomposed into **16 deterministic zones**:
+Topology size is **derived from explicit capture and sector inputs**, not a
+magic fixed count. The shipped default is the operator's reserved
+**16 x RTX PRO 6000 Blackwell** capacity:
 
 | | |
 | --- | --- |
 | Scenes | The 8 real, ungated (`CC-BY-4.0`) NCore V4 sequences in `nvidia/PhysicalAI-NuRec-PPISP` (4 scenes x 2 variants) |
 | View sectors | 2 per sequence (`a` / `b`), distinguished by a distinct novel-view rig offset |
-| Zones | 16 = 8 sequences x 2 sectors |
+| Zones | 16 = 8 sequences x 2 sectors (8 public captures x 2 view sectors) |
 
 Each zone is one **fully independent reconstruction shard** that runs the *entire*
 real NRE pipeline (`check -> fetch -> reconstruct -> render -> visualize`) on its
 own RTX PRO 6000, then publishes `zone_manifest.json` with objective evidence (GPU
-name, timing, USDZ presence, val metrics). The 16 shards are one SkyPilot JobGroup
-bounded by `max_concurrency`, so all sixteen reserved GPUs are materially busy at
-once.
+name, timing, USDZ presence, val metrics). The N shards are one SkyPilot JobGroup
+bounded by `max_concurrency`, so all N reserved GPUs are materially busy at once.
 
-> The A/B view-sector pair over the same sequence is a deliberate **determinism
-> check**: the reconstruction itself is deterministic, while the two sectors
-> render distinct novel-view sweeps. Every shard still runs the full real
-> pipeline on its own GPU and contributes a distinct zone twin.
+> Each view sector over the same sequence carries a **genuinely distinct rig
+> offset**: the reconstruction itself is deterministic, while the sectors render
+> distinct novel-view sweeps. A 24-zone topology is **eight public captures with
+> three view sectors (a/b/c)** — not 24 independent physical captures. Every
+> shard still runs the full real pipeline on its own GPU and contributes a
+> distinct zone twin.
 
-The `join` state is a **barrier**: it only runs after every shard reached a
-terminal state, and it **fails loudly unless all 16 zone manifests are present**
-with a real GPU identity and a real USDZ. It never invents success from a
-submitted job — it reads the per-zone published evidence from S3.
+### Scaling to 24 zones (8 x 3)
+
+`npa.workflows.living_lab.build_living_lab_workflow_spec(sectors=("a", "b", "c"))`
+emits a 24-zone topology: 24 unique zone names, three distinct sector rig
+offsets per capture, `expected_device_count: 24`, and a 24-member
+`parallel:` JobGroup whose `parallelCount: "{{config.expected_device_count}}"` is
+`24`. The join and proof contract are unchanged — they are size-neutral.
+
+## Expected device count is explicit and validated
+
+The generator derives the expected device count from the generated zone list
+(`len(zones)`) and exposes it as `config.expected_device_count`. The fan-out
+group wires it to the workflow **`parallelCount`** contract, so
+`validate-spec` fails before plan/render/submit if an operator overrides it to
+anything other than the actual member count. An operator therefore **cannot
+weaken the proof by setting a smaller number than the actual zones**: under- or
+over-stating `expected_device_count` (e.g. `8` or `32` against a 16-member
+group) is rejected. `max_concurrency` remains a scheduling *cap* (it may be
+less than the member count); it never lowers the required-device proof.
+
+The `join` reads the comma-joined zone list (`config.zones`) that the generator
+wrote, derives the required device count from it, and fails closed unless every
+expected zone participates.
 
 ## Ingredients
 
@@ -43,8 +69,8 @@ submitted job — it reads the per-zone published evidence from S3.
 | --- | --- |
 | **Input** | `nvidia/PhysicalAI-NuRec-PPISP` (8 real NCore V4 sequences), CC-BY-4.0 |
 | **Engine** | `nvcr.io/nvidia/nre/nre-ga:26.04` from NGC (pulled, never rebuilt) |
-| **GPU** | 16 x RTX PRO 6000 Blackwell (RTXPRO-6000-BLACKWELL-SERVER-EDITION:1). **Must have RT cores**; never route at H100/H200/B200 |
-| **Time** | ~45 min for the fan-out on 16 GPUs in parallel (each shard is one full reconstruction) |
+| **GPU** | N x RTX PRO 6000 Blackwell (RTXPRO-6000-BLACKWELL-SERVER-EDITION:1). **Must have RT cores**; never route at H100/H200/B200. Default N=16 |
+| **Time** | ~45 min for the 16-zone fan-out on 16 GPUs in parallel (each shard is one full reconstruction) |
 | **Credentials** | `NGC_API_KEY` and S3 keys; `HF_TOKEN` only for gated/private dataset overrides |
 
 ## The spec
@@ -52,17 +78,18 @@ submitted job — it reads the per-zone published evidence from S3.
 **`npa/workflows/workbench/npa-workflows/living-lab-nurec-fanout.yaml`**
 
 ```
-living-lab-zones (parallel: 16 GPU shards, each full nurec pipeline)
-      │  maxConcurrency: 16
+living-lab-zones (parallel: N GPU shards, each full nurec pipeline)
+      │  parallelCount: {{config.expected_device_count}} (validated)
+      │  maxConcurrency: N
       ▼
 join (CPU barrier) ──▶ digital_twin.json + panorama.png
 ```
 
 | Stage | What it does |
 | --- | --- |
-| `living-lab-zones` | Fans out 16 independent NRE reconstructions, one RTX PRO 6000 each |
+| `living-lab-zones` | Fans out N independent NRE reconstructions, one RTX PRO 6000 each; `parallelCount` guards the member count |
 | `zone-<scene>-<variant>-<sector>` | Full real pipeline for its zone: `check`, `fetch`, `reconstruct`, `render`, `visualize`, `finalize`, then publishes `zone_manifest.json` |
-| `join` | Barrier: asserts 16/16 zones present with real GPU + USDZ, aggregates metrics, builds `reports/digital_twin.json` and `reports/panorama.png` |
+| `join` | Barrier: asserts N/N zones present with real GPU + USDZ, aggregates metrics, builds `reports/digital_twin.json` and `reports/panorama.png` |
 
 Each zone shard runs **inside the NGC NRE container** (`resources.gpu.image`).
 The NRE image ships no `npa`, so the runtime stages it from `$NPA_SRC_S3_URI`;
@@ -76,8 +103,8 @@ reconstruct → render handoff is same-pod: `reconstruct` takes `--ncore-json`
 as the reference does.
 
 The spec is generated by `npa.workflows.living_lab.build_living_lab_workflow_spec()`
-(the committed YAML is the generator's output; `test_committed_yaml_matches_generator`
-guards against drift).
+(the committed YAML is the generator's default output;
+`test_committed_yaml_matches_generator` guards against drift).
 
 ## Fast path (no GPU)
 
@@ -106,13 +133,15 @@ npa workbench workflow submit \
 ```
 
 Watch it, then open the run in the NPA agent (it auto-selects the panorama / rrd).
+The 16-GPU default remains the validated example; the existing 16-GPU live
+evidence still applies to that default.
 
 ## Artifacts & validation
 
 ```
-reports/digital_twin.json   composite twin: 16/16 zones, per-zone GPU evidence,
-                            aggregate mean PSNR/SSIM
-reports/panorama.png        contact-sheet of 16 zone previews (human-viewable)
+reports/digital_twin.json   composite twin: N/N zones, per-zone GPU evidence,
+                            aggregate mean PSNR/SSIM, size-neutral proof fields
+reports/panorama.png        contact-sheet of N zone previews (human-viewable)
 zones/<zone>/reconstruction/last.usdz   each zone's renderable USDZ
 zones/<zone>/novel_views/*.png          each zone's novel-view renders
 zones/<zone>/input/*.png                each zone's real capture frames (GT evidence)
@@ -121,19 +150,28 @@ zones/<zone>/reports/final.json         each zone's real finalize report
 zones/<zone>/zone_manifest.json         per-zone objective evidence
 ```
 
-The join requires **16/16** zone manifests, each with a real GPU identity and a
+The join requires **N/N** zone manifests, each with a real GPU identity and a
 real USDZ, and it **fails the workflow closed** unless the proof demonstrates
-exactly **16 distinct, non-empty GPU UUIDs** (never inferred from model names)
-with **material all-zone temporal overlap**. A missing, invalid, or
-duplicate-device zone — or a zone whose observed unpacked capture disagrees with
-its requested scene/variant — fails rather than producing a partial or
-unproven twin.
+exactly **N distinct, non-empty GPU UUIDs** (never inferred from model names)
+with **material all-required-device temporal overlap**. The report records
+`concurrency.required_device_count` and `concurrency.all_required_overlap`
+instead of a fixed-name field, so the schema is size-neutral across the default
+16-zone and any other (e.g. 24-zone) topology. A missing, invalid,
+duplicate-device zone — or a zone whose observed unpacked capture disagrees
+with its requested scene/variant — fails rather than producing a partial or
+unproven twin. Non-positive counts, count/topology mismatches, duplicate
+devices, missing timestamps, and insufficient overlap are all rejected with
+sanitized diagnostic errors (counts / reasons only).
 
 ## Limitations
 
 - Reconstruction is per-zone on one GPU (`--world-size 1`); multi-GPU NRE
   training needs aux-data enabled and is out of scope here (see the
   neural-reconstruction skill).
-- Requires 16 RTX PRO 6000 GPUs and `NGC_API_KEY` (the `-ga` NRE image channel).
+- Requires N RTX PRO 6000 GPUs (16 by default) and `NGC_API_KEY` (the `-ga` NRE
+  image channel).
 - Input is limited to the 8 real ungated PPISP sequences; adding a novel capture
   requires the upstream `ncore` authoring path.
+- Parameterization changes topology size (zone count, expected device count,
+  parallel member count) only; it does not change the per-shard NRE pipeline or
+  the proof semantics.

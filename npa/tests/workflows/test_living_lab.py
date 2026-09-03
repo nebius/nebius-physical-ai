@@ -1,7 +1,9 @@
-"""Unit coverage for the living-lab 16-zone neural-reconstruction digital twin.
+"""Unit coverage for the living-lab parameterized neural-reconstruction twin.
 
-No S3, GPU, NGC, or HF needed: the join and zone model are pure logic, and the
-fan-out spec is asserted for real-component / GPU-routing invariants.
+The topology is derived from capture x sector inputs (default 16 = 8 x 2, also
+24 = 8 x 3), and the fan-out proof is size-neutral. No S3, GPU, NGC, or HF
+needed: the join and zone model are pure logic, and the fan-out spec is
+asserted for real-component / GPU-routing invariants.
 """
 
 from __future__ import annotations
@@ -90,23 +92,24 @@ def _write_zone(
     include_all_metrics: bool = True,
 ) -> None:
     path = (
-        root
-        / "bucket/living-lab/zones"
-        / zone_name
-        / living_lab.ZONE_MANIFEST_FILENAME
+        root / "bucket/living-lab/zones" / zone_name / living_lab.ZONE_MANIFEST_FILENAME
     )
     path.parent.mkdir(parents=True, exist_ok=True)
     scene, variant = _zone_identity(zone_name)
     default_metrics = {"test/psnr": 31.19, "test/ssim": 0.833, "test/lpips": 0.267}
     payload_metrics = metrics if metrics is not None else default_metrics
     if not include_all_metrics:
-        payload_metrics = {k: v for k, v in payload_metrics.items() if k != "test/lpips"}
+        payload_metrics = {
+            k: v for k, v in payload_metrics.items() if k != "test/lpips"
+        }
     mt = metrics_path.format(zone=zone_name)
     payload = {
         "schema": "npa.living_lab.zone_manifest.v1",
         "zone_name": zone_name,
         "status": "ok",
-        "provenance": provenance if provenance is not None else {"scene": scene, "variant": variant},
+        "provenance": provenance
+        if provenance is not None
+        else {"scene": scene, "variant": variant},
         "gpu_uuid": gpu_uuid if gpu_uuid is not None else f"GPU-{zone_name}",
         "gpu_name": gpu,
         "node_name": node_name if node_name is not None else f"node-{zone_name}",
@@ -136,9 +139,7 @@ def test_living_lab_zones_are_exactly_16_and_deterministic() -> None:
     # every real scene x variant appears twice (view sectors a and b)
     from collections import Counter
 
-    seq_counts = Counter(
-        f"{z['scene']}-{z['variant']}" for z in zones
-    )
+    seq_counts = Counter(f"{z['scene']}-{z['variant']}" for z in zones)
     assert all(count == 2 for count in seq_counts.values())
     assert len(seq_counts) == 8
     # deterministic ordering
@@ -185,16 +186,15 @@ def test_join_merges_all_16_zones(local_storage) -> None:
     # Sixteen distinct GPU UUIDs / nodes, all materially overlapping.
     assert report["distinct_gpu_uuid_count"] == 16
     assert report["distinct_node_count"] == 16
-    assert report["concurrency"]["sixteen_way"] is True
+    assert report["concurrency"]["required_device_count"] == 16
+    assert report["concurrency"]["all_required_overlap"] is True
     assert report["aggregate_metrics"]["test/ssim_mean"] == 0.833
     assert report["aggregate_metrics"]["test/lpips_mean"] == 0.267
     assert report["aggregate_metrics"]["test/psnr_mean"] == 31.19
     assert report["panorama"]["cells"] == 16
     assert report["panorama"]["panorama_uri"].endswith("panorama.png")
     written = json.loads(
-        (
-            local_storage / "bucket/living-lab/reports/digital_twin.json"
-        ).read_text()
+        (local_storage / "bucket/living-lab/reports/digital_twin.json").read_text()
     )
     assert len(written["zones"]) == 16
     for zone in written["zones"]:
@@ -230,7 +230,11 @@ def test_join_requires_real_gpu_uuid(local_storage) -> None:
 
 def test_join_fails_when_validation_metrics_missing(local_storage) -> None:
     for i, zone in enumerate(living_lab.living_lab_zones()):
-        _write_zone(local_storage, zone["zone_name"], metrics={"test/psnr": None, "test/ssim": None, "test/lpips": None})
+        _write_zone(
+            local_storage,
+            zone["zone_name"],
+            metrics={"test/psnr": None, "test/ssim": None, "test/lpips": None},
+        )
     with pytest.raises(RuntimeError, match="16 of 16 zones missing"):
         living_lab.join_living_lab_zones(
             zones_uri="s3://bucket/living-lab/zones/",
@@ -280,10 +284,15 @@ def test_join_concurrency_requires_overlap(local_storage) -> None:
     for i, zone in enumerate(zones):
         # Non-overlapping windows: zone i runs in [i*100, i*100+10], so there
         # is no common instant across all sixteen.
-        _write_zone(local_storage, zone["zone_name"], started_epoch=100 * i, ended_epoch=100 * i + 10)
+        _write_zone(
+            local_storage,
+            zone["zone_name"],
+            started_epoch=100 * i,
+            ended_epoch=100 * i + 10,
+        )
     # Insufficient overlap is a hard, fail-closed condition: the report alone is
     # never success.
-    with pytest.raises(RuntimeError, match="all-zone concurrency proof failed"):
+    with pytest.raises(RuntimeError, match="all-required-overlap proof failed"):
         living_lab.join_living_lab_zones(
             zones_uri="s3://bucket/living-lab/zones/",
             report_uri="s3://bucket/living-lab/reports/",
@@ -317,7 +326,7 @@ def test_join_fails_closed_when_timestamps_missing(local_storage) -> None:
             started_epoch=None,
             ended_epoch=None,
         )
-    with pytest.raises(RuntimeError, match="all-zone concurrency proof failed"):
+    with pytest.raises(RuntimeError, match="all-required-overlap proof failed"):
         living_lab.join_living_lab_zones(
             zones_uri="s3://bucket/living-lab/zones/",
             report_uri="s3://bucket/living-lab/reports/",
@@ -332,11 +341,150 @@ def test_spec_has_16_gpu_shards_and_a_join() -> None:
     assert len(shard_names) == 16
     group = states["living-lab-zones"]
     assert list(group["parallel"]) == shard_names
+    # The expected device count is derived from the topology and cross-checked
+    # against the parallel member list via parallelCount (fail-closed).
+    assert spec["config"]["expected_device_count"] == "16"
+    assert group["parallelCount"] == "{{config.expected_device_count}}"
+    assert len(group["parallel"]) == 16
     assert group["maxConcurrency"] == "{{config.max_concurrency}}"
     assert group["next"] == "join"
     join = states["join"]
     assert join["needs"] == ["living-lab-zones"]
     assert join["terminal"] is True
+
+
+def test_spec_scales_to_24_zone_topology() -> None:
+    """The same generator emits a 24-zone (8 x 3) topology with a third sector."""
+    spec = living_lab.build_living_lab_workflow_spec(sectors=("a", "b", "c"))
+    states = spec["states"]
+    shard_names = [n for n in states if n.startswith("zone-")]
+    assert len(shard_names) == 24
+    group = states["living-lab-zones"]
+    assert list(group["parallel"]) == shard_names
+    assert spec["config"]["expected_device_count"] == "24"
+    assert spec["config"]["sector_count"] == "3"
+    assert spec["config"]["capture_count"] == "8"
+    assert group["parallelCount"] == "{{config.expected_device_count}}"
+    assert len(group["parallel"]) == 24
+    assert states["join"]["needs"] == ["living-lab-zones"]
+    assert states["join"]["terminal"] is True
+
+
+def test_living_lab_zones_parameterized_sizes() -> None:
+    """8, 16, and 24 expected devices derive from capture x sector inputs."""
+    # 8 captures x 1 sector = 8 zones / devices
+    z8 = living_lab.living_lab_zones(sectors=("a",))
+    assert len(z8) == 8
+    # default 8 captures x 2 sectors = 16 zones / devices
+    z16 = living_lab.living_lab_zones()
+    assert len(z16) == 16
+    # 8 captures x 3 sectors = 24 zones / devices
+    z24 = living_lab.living_lab_zones(sectors=("a", "b", "c"))
+    assert len(z24) == 24
+    assert len({z["zone_name"] for z in z24}) == 24
+    # every capture appears exactly sector_count times
+    from collections import Counter
+
+    per_seq = Counter(f"{z['scene']}-{z['variant']}" for z in z24)
+    assert len(per_seq) == 8
+    assert all(c == 3 for c in per_seq.values())
+
+
+def test_24_zone_has_three_distinct_sector_offsets_per_capture() -> None:
+    """For the 24-zone test, each capture has three genuinely distinct offsets.
+
+    8 capture pairs x 3 distinct view sectors = 24 unique zone names; the three
+    sectors are view sectors (a/b/c) of the same eight public captures, NOT 24
+    independent physical captures.
+    """
+    z24 = living_lab.living_lab_zones(sectors=("a", "b", "c"))
+    for scene, variant in living_lab.SCENES:
+        zones = [z for z in z24 if z["scene"] == scene and z["variant"] == variant]
+        assert len(zones) == 3
+        offsets = {
+            (z["view_sector"], z["rig_rotation_offset"], z["rig_translation_offset"])
+            for z in zones
+        }
+        assert len(offsets) == 3, (scene, variant, offsets)
+        sectors = sorted(z["view_sector"] for z in zones)
+        assert sectors == ["a", "b", "c"]
+
+
+def test_living_lab_zones_rejects_empty_topology() -> None:
+    with pytest.raises(ValueError, match="at least one capture pair"):
+        living_lab.living_lab_zones(captures=(), sectors=("a",))
+    with pytest.raises(ValueError, match="at least one capture pair"):
+        living_lab.living_lab_zones(captures=living_lab.SCENES, sectors=())
+    with pytest.raises(ValueError, match="unknown living-lab view sector"):
+        living_lab.living_lab_zones(sectors=("x",))
+
+
+def test_join_merges_24_zone_topology(local_storage) -> None:
+    """A 24-zone join derives expected devices from the zone list, not 16."""
+    z24 = living_lab.living_lab_zones(sectors=("a", "b", "c"))
+    for zone in z24:
+        _write_zone(local_storage, zone["zone_name"])
+
+    report = living_lab.join_living_lab_zones(
+        zones_uri="s3://bucket/living-lab/zones/",
+        report_uri="s3://bucket/living-lab/reports/",
+        panorama_uri="s3://bucket/living-lab/reports/panorama.png",
+        shards=[z["zone_name"] for z in z24],
+        run_id="run-24",
+    )
+    assert report["zone_count"] == 24
+    assert report["joined_zones"] == 24
+    assert report["missing_zones"] == []
+    assert report["distinct_gpu_uuid_count"] == 24
+    assert report["concurrency"]["required_device_count"] == 24
+    assert report["concurrency"]["all_required_overlap"] is True
+
+
+def test_join_rejects_non_positive_expected_count(local_storage, monkeypatch) -> None:
+    """A topology that resolves to zero expected zones must fail closed."""
+    monkeypatch.setattr(living_lab, "zone_names", lambda *a, **k: [])
+    with pytest.raises(ValueError, match="non-empty expected zone set"):
+        living_lab.join_living_lab_zones(
+            zones_uri="s3://bucket/living-lab/zones/",
+            report_uri="s3://bucket/living-lab/reports/",
+            panorama_uri="s3://bucket/living-lab/reports/panorama.png",
+            shards="",
+        )
+
+
+def test_spec_rejects_non_positive_device_count() -> None:
+    """The generator refuses a topology with fewer than one expected device."""
+    with pytest.raises(ValueError, match="at least one capture pair"):
+        living_lab.build_living_lab_workflow_spec(sectors=())
+
+
+def test_parallelcount_contract_rejects_understated_devices(tmp_path) -> None:
+    """Operators cannot weaken the proof by understating required devices.
+
+    The generator derives ``expected_device_count`` from the zone list and wires
+    it to ``parallelCount``; overriding it below the actual member count must
+    fail ``load_spec`` before plan/render/submit.
+    """
+    from npa.orchestration.npa_workflow.spec import load_spec
+
+    spec_yaml = tmp_path / "spec.yaml"
+    spec_yaml.write_text(living_lab.living_lab_workflow_yaml(), encoding="utf-8")
+    # round-trips as valid with the correct count first
+    load_spec(str(spec_yaml))
+
+    data = yaml.safe_load(spec_yaml.read_text(encoding="utf-8"))
+    data["config"]["expected_device_count"] = "8"
+    understated = tmp_path / "understated.yaml"
+    understated.write_text(yaml.safe_dump(data), encoding="utf-8")
+    with pytest.raises(Exception, match="parallelCount resolves to 8"):
+        load_spec(str(understated))
+
+    # Overstating is equally a mismatch and must fail too.
+    data["config"]["expected_device_count"] = "32"
+    overstated = tmp_path / "overstated.yaml"
+    overstated.write_text(yaml.safe_dump(data), encoding="utf-8")
+    with pytest.raises(Exception, match="parallelCount resolves to 32"):
+        load_spec(str(overstated))
 
 
 def test_every_shard_is_real_nurec_work_on_rtx_gpu() -> None:

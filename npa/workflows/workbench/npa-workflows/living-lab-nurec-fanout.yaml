@@ -2,15 +2,19 @@ apiVersion: npa.workflow/v0.0.1
 kind: Workflow
 metadata:
   name: living-lab-nurec-fanout
-  description: 'Sixteen-zone living-lab digital twin from real NVIDIA NuRec / NRE neural reconstructions:
-    16 independent RTX PRO 6000 shards (8 real NCore sequences x 2 view sectors) each run the full nurec
+  description: '16-zone living-lab digital twin from real NVIDIA NuRec / NRE neural reconstructions: 16
+    independent RTX PRO 6000 shards (8 real NCore capture pairs x 2 view sectors) each run the full nurec
     pipeline, then a barrier join composes a composite digital-twin report and contact-sheet panorama
-    with objective per-zone GPU participation evidence.'
+    with objective per-zone GPU participation evidence. Topology size is derived from the capture/sector
+    inputs.'
 config:
   bucket: example-bucket
   prefix: living-lab/{{run.id}}
   nurec_image: nvcr.io/nvidia/nre/nre-ga:26.04
   dataset_id: nvidia/PhysicalAI-NuRec-PPISP
+  capture_count: '8'
+  sector_count: '2'
+  expected_device_count: '16'
   max_concurrency: '16'
   zones: huerstholz-auto-a,huerstholz-auto-b,huerstholz-standard-a,huerstholz-standard-b,struktur28-auto-a,struktur28-auto-b,struktur28-standard-a,struktur28-standard-b,toro-auto-a,toro-auto-b,toro-standard-a,toro-standard-b,valiant-auto-a,valiant-auto-b,valiant-standard-a,valiant-standard-b
   run_prefix_uri: s3://{{config.bucket}}/{{config.prefix}}/
@@ -71,9 +75,9 @@ resources:
 initial: living-lab-zones
 states:
   living-lab-zones:
-    description: Fan out the 16 living-lab zone reconstructions as one SkyPilot JobGroup (one RTX PRO
-      6000 each). Each member is a fully independent, real NRE reconstruction of its zone, so all sixteen
-      reserved RTX PRO 6000 GPUs are materially busy at once.
+    description: 16 living-lab zone reconstructions as one SkyPilot JobGroup (one RTX PRO 6000 each).
+      Each member is a fully independent, real NRE reconstruction of its zone, so all 16 reserved RTX
+      PRO 6000 GPUs are materially busy at once.
     parallel:
     - zone-huerstholz-auto-a
     - zone-huerstholz-auto-b
@@ -91,6 +95,7 @@ states:
     - zone-valiant-auto-b
     - zone-valiant-standard-a
     - zone-valiant-standard-b
+    parallelCount: '{{config.expected_device_count}}'
     maxConcurrency: '{{config.max_concurrency}}'
     next: join
   zone-huerstholz-auto-a:
@@ -1966,10 +1971,11 @@ states:
     - uri: '{{config.zones_uri}}{{config.zone_name}}/zone_manifest.json'
       schema: npa.living_lab.zone_manifest.v1
   join:
-    description: 'Barrier: read all 16 zone manifests, require every zone present with a real GPU identity
-      and a real USDZ, aggregate objective metrics and GPU participation, publish the composite digital-twin
-      report plus a contact-sheet panorama, and fail closed unless the proof demonstrates exactly 16 distinct
-      non-empty GPU UUIDs with material all-zone temporal overlap.'
+    description: 'Barrier: read every expected zone manifest, require every zone present with a real GPU
+      identity and a real USDZ, aggregate objective metrics and GPU participation, publish the composite
+      digital-twin report plus a contact-sheet panorama, and fail closed unless the proof demonstrates
+      exactly the required number of distinct non-empty GPU UUIDs with material all-required-device temporal
+      overlap.'
     needs:
     - living-lab-zones
     resources: cpu
