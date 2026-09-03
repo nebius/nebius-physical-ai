@@ -14,8 +14,10 @@ from npa.cluster.gpu_driver import (
 )
 from npa.cluster.gpu_health import (
     DEFAULT_CUDA_SMOKE_IMAGE,
+    DEFAULT_GRAPHICS_SMOKE_IMAGE,
     DEFAULT_STABILIZATION_SECONDS,
 )
+from npa.cluster.gpu_workload_profile import resolve_gpu_workload_profile
 from npa.cluster_backends.mig import (
     MIG_KUBERNETES_VERSION,
     RTX_PRO_6000_BOOT_DISK_GIB,
@@ -101,6 +103,36 @@ class MK8sDesired:
     gpu_cuda_smoke_image: str = DEFAULT_CUDA_SMOKE_IMAGE
     mig: MigSpec | None = None
     allow_control_plane_only: bool = False
+    gpu_workload_profile: str = ""
+    gpu_graphics_smoke: bool = False
+    gpu_graphics_smoke_image: str = DEFAULT_GRAPHICS_SMOKE_IMAGE
+
+    def __post_init__(self) -> None:
+        gpu = self.gpu_nodes
+        selection = resolve_gpu_workload_profile(
+            profile=self.gpu_workload_profile,
+            gpu_nodes=gpu.count if gpu else -1,
+            gpu_platform=gpu.platform if gpu else "",
+            gpu_preset=gpu.preset if gpu else "",
+            gpu_driver_mode=self.gpu_driver_mode,
+        )
+        if not selection.profile:
+            return
+        object.__setattr__(
+            self,
+            "gpu_nodes",
+            MK8sNodePool(
+                count=selection.gpu_nodes,
+                platform=selection.gpu_platform,
+                preset=selection.gpu_preset,
+                disk_size_gib=gpu.disk_size_gib if gpu else 0,
+                capacity_block_group=gpu.capacity_block_group if gpu else "",
+                preemptible=gpu.preemptible if gpu else False,
+            ),
+        )
+        object.__setattr__(self, "gpu_workload_profile", selection.profile)
+        object.__setattr__(self, "gpu_driver_mode", selection.gpu_driver_mode)
+        object.__setattr__(self, "gpu_graphics_smoke", selection.graphics_smoke)
 
     @classmethod
     def from_surface(cls, cluster: Any) -> "MK8sDesired":
@@ -237,6 +269,10 @@ class MK8sDesired:
             raise ValueError("mk8s GPU health timeout must be positive")
         if self.gpu_cuda_smoke and not self.gpu_cuda_smoke_image.strip():
             raise ValueError("mk8s CUDA smoke image cannot be empty when enabled")
+        if self.gpu_workload_profile and not self.gpu_graphics_smoke:
+            raise ValueError("mk8s RTX rendering profile requires graphics readiness")
+        if self.gpu_graphics_smoke and not self.gpu_graphics_smoke_image.strip():
+            raise ValueError("mk8s graphics smoke image cannot be empty when enabled")
 
     def backend_name(self) -> str:
         return "mk8s"
