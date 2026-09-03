@@ -12,6 +12,7 @@ from npa.workflows.sim2real.monitor import (
     OperatorConfig,
     _stage_states,
     get_sim2real_workflow_status,
+    load_operator_config,
     normalize_staged_run_id,
     orchestrator_job_name,
 )
@@ -50,6 +51,140 @@ def _mock_s3_client(
     client._s3.list_objects_v2.side_effect = list_objects_v2
     client._s3.get_object.side_effect = get_object
     return client
+
+
+def _write_operator_config(path: Path, **overrides: object) -> None:
+    payload: dict[str, object] = {
+        "storage": {
+            "bucket": "s3://operator-bucket/run-prefix",
+            "endpoint_url": "https://storage.example",
+            "k8s_context": "operator-context",
+        }
+    }
+    payload.update(overrides)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    ("registry_config", "expected"),
+    [
+        (
+            {"container_registry": "registry.example/container"},
+            "registry.example/container",
+        ),
+        (
+            {"storage": {"registry": "registry.example/storage"}},
+            "registry.example/storage",
+        ),
+        ({"registry": "registry.example/top-level"}, "registry.example/top-level"),
+    ],
+)
+def test_explicit_operator_pack_preserves_legacy_registry_fields(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    registry_config: dict[str, object],
+    expected: str,
+) -> None:
+    config_path = tmp_path / "operator-pack.yaml"
+    storage_registry = registry_config.get("storage", {})
+    non_storage_config = {
+        key: value for key, value in registry_config.items() if key != "storage"
+    }
+    storage = {
+        "bucket": "s3://operator-bucket/run-prefix",
+        "endpoint_url": "https://storage.example",
+        "k8s_context": "operator-context",
+        **storage_registry,
+    }
+    _write_operator_config(config_path, storage=storage, **non_storage_config)
+    monkeypatch.setenv("NPA_SIM2REAL_OPERATOR_CONFIG", str(config_path))
+    monkeypatch.setenv("NPA_REGISTRY", "registry.invalid/ambient")
+    monkeypatch.delenv("NPA_SIM2REAL_REGISTRY", raising=False)
+
+    operator = load_operator_config()
+
+    assert operator.registry == expected
+
+
+def test_explicit_operator_registry_precedence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = tmp_path / "operator-pack.yaml"
+    _write_operator_config(
+        config_path,
+        container_registry="registry.example/container/",
+        registry="registry.example/top-level",
+        storage={
+            "bucket": "operator-bucket",
+            "k8s_context": "operator-context",
+            "registry": "registry.example/storage",
+        },
+    )
+    monkeypatch.setenv("NPA_SIM2REAL_OPERATOR_CONFIG", str(config_path))
+    monkeypatch.setenv("NPA_SIM2REAL_REGISTRY", "registry.example/environment/")
+
+    assert load_operator_config().registry == "registry.example/environment"
+
+    monkeypatch.delenv("NPA_SIM2REAL_REGISTRY")
+    assert load_operator_config().registry == "registry.example/container"
+
+
+def test_implicit_operator_config_cannot_redirect_public_registry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa.deploy.images import DEFAULT_CONTAINER_REGISTRY
+
+    config_path = tmp_path / ".npa" / "config.yaml"
+    _write_operator_config(
+        config_path,
+        container_registry="registry.invalid/container",
+        registry="registry.invalid/top-level",
+        storage={
+            "bucket": "operator-bucket",
+            "k8s_context": "operator-context",
+            "registry": "registry.invalid/storage",
+        },
+    )
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("NPA_SIM2REAL_OPERATOR_CONFIG", raising=False)
+    monkeypatch.delenv("NPA_SIM2REAL_REGISTRY", raising=False)
+    monkeypatch.setenv("NPA_REGISTRY", "registry.invalid/environment")
+
+    assert load_operator_config().registry == DEFAULT_CONTAINER_REGISTRY
+
+
+def test_missing_explicit_operator_config_does_not_fall_back_to_home(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_operator_config(tmp_path / ".npa" / "config.yaml")
+    missing_path = tmp_path / "missing-operator-pack.yaml"
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("NPA_SIM2REAL_OPERATOR_CONFIG", str(missing_path))
+
+    with pytest.raises(ValueError, match=r"missing operator config .*missing-operator-pack"):
+        load_operator_config()
+
+
+def test_unreadable_explicit_operator_config_does_not_fall_back_to_home(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_operator_config(tmp_path / ".npa" / "config.yaml")
+    config_path = tmp_path / "operator-pack.yaml"
+    _write_operator_config(config_path)
+    config_path.chmod(0)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("NPA_SIM2REAL_OPERATOR_CONFIG", str(config_path))
+
+    try:
+        with pytest.raises(ValueError, match="unable to read operator config"):
+            load_operator_config()
+    finally:
+        config_path.chmod(0o600)
 
 
 def test_stage_states_prefers_workflow_state_over_missing_s3_markers(

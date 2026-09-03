@@ -1207,12 +1207,18 @@ def test_submit_ignores_npa_registry_env_for_public_workload_defaults(
     assert workflow_cli._resolve_submit_registry("", "test-rtx") == ""
 
 
-def test_an_unreadable_config_falls_back_to_the_render_default(
+def test_submit_without_explicit_registry_defers_to_render_default_without_config(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def explode(project=None):  # noqa: ANN001 - test stub
-        raise RuntimeError("no config")
+    config_lookups: list[str | None] = []
 
-    monkeypatch.setattr("npa.clients.config.resolve_container_registry", explode)
+    def record_config_lookup(project=None):  # noqa: ANN001 - test stub
+        config_lookups.append(project)
+        return "registry.invalid/project"
+
+    monkeypatch.setattr(
+        "npa.clients.config.resolve_container_registry", record_config_lookup
+    )
 
     assert workflow_cli._resolve_submit_registry("", "p") == ""
+    assert config_lookups == []

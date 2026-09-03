@@ -218,16 +218,28 @@ def load_operator_config() -> OperatorConfig:
         raise ValueError(f"missing operator config {location} — run: npa configure")
     if not path.is_file():
         raise ValueError(f"operator config is not a regular file: {path}")
-    cfg = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    try:
+        config_text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ValueError(f"unable to read operator config: {path}") from exc
+    cfg = yaml.safe_load(config_text) or {}
     storage = cfg.get("storage") or {}
     bucket = str(storage.get("bucket", "")).replace("s3://", "").split("/", 1)[0]
     endpoint = str(storage.get("endpoint_url") or DEFAULT_S3_ENDPOINT)
-    # The legacy operator pack is a repository-owned workload and therefore
-    # defaults to anonymous GHCR. A custom runtime namespace must be selected
-    # through its dedicated variable; generic build or saved registry settings
-    # must not silently repoint it.
+    # An explicitly selected operator pack is run-local intent, so preserve its
+    # historical registry fields. The implicit ~/.npa config is ambient/global
+    # state and must not repoint repository-owned workload defaults.
+    legacy_operator_registry = ""
+    if explicit:
+        legacy_operator_registry = str(
+            cfg.get("container_registry")
+            or storage.get("registry")
+            or cfg.get("registry", "")
+        ).strip()
     registry = str(
-        os.environ.get("NPA_SIM2REAL_REGISTRY") or DEFAULT_CONTAINER_REGISTRY
+        os.environ.get("NPA_SIM2REAL_REGISTRY")
+        or legacy_operator_registry
+        or DEFAULT_CONTAINER_REGISTRY
     ).rstrip("/")
     k8s_context = str(storage.get("k8s_context") or "")
     if not k8s_context:
