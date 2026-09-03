@@ -514,6 +514,8 @@ try:
         from omni.isaac.lab_rl.rsl_rl import RslRlVecEnvWrapper  # older layout
     from rsl_rl.runners import OnPolicyRunner
     env_cfg = parse_env_cfg(TASK, device="cuda:0", num_envs=N)
+    from npa.workflows.sim2real.isaac_assets_compat import remap_moved_franka_usd
+    print("EVAL_ROBOT_USD_EFFECTIVE", remap_moved_franka_usd(env_cfg), flush=True)
     # CUSTOM asset: override the manipuland USD so eval scores the policy on the
     # same custom object it trained on (physically simulated, not the stock cube).
     OBJECT_USD = os.environ.get("EVAL_OBJECT_USD", "").strip()
@@ -582,6 +584,8 @@ try:
             print("cfg loader", loader, "failed:", repr(e), flush=True)
     if agent_cfg is None:
         raise RuntimeError("could not load rsl_rl_cfg_entry_point for task")
+    from npa.workflows.sim2real.isaac_assets_compat import migrate_rsl_rl_agent_cfg
+    agent_cfg = migrate_rsl_rl_agent_cfg(agent_cfg)
     acfg = agent_cfg.to_dict() if hasattr(agent_cfg, "to_dict") else dict(agent_cfg)
     print("AGENT_CFG_KEYS", sorted(acfg.keys()), flush=True)
     # The ACTUAL env count is the single source of truth for per-env sizing.

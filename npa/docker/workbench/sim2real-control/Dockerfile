@@ -7,7 +7,8 @@ ARG DEBIAN_SNAPSHOT=20260801T000000Z
 
 LABEL npa.tool="sim2real-control" \
       npa.version="${SIM2REAL_CONTROL_VERSION}" \
-      org.opencontainers.image.revision="${NPA_SOURCE_SHA}"
+      org.opencontainers.image.revision="${NPA_SOURCE_SHA}" \
+      org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"
 
 ENV NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA} \
     NPA_SKIP_EAGER_IMPORTS=1 \

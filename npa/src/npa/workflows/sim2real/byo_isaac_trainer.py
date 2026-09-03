@@ -359,6 +359,8 @@ _PPO_METRIC_RE = re.compile(r"^\s*([^:]+):\s*(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)\
 _PPO_FIELDS = {
     "Mean action noise std": "action_noise_std",
     "Mean value_function loss": "value_loss",
+    # rsl-rl >= 5.0 renamed the console field and dropped the timesteps line.
+    "Mean value loss": "value_loss",
     "Mean surrogate loss": "surrogate_loss",
     "Mean entropy loss": "entropy",
     "Mean reward": "episode_return",
@@ -424,7 +426,9 @@ def parse_ppo_training_log(text: str) -> dict[str, Any]:
 
     if not iterations:
         raise ValueError("RSL-RL log contains no Learning iteration records")
-    required = {"episode_return", "value_loss", "surrogate_loss", "total_timesteps"}
+    # rsl-rl >= 5.0 no longer prints "Total timesteps" in the iteration table;
+    # treat it as optional evidence rather than a completeness requirement.
+    required = {"episode_return", "value_loss", "surrogate_loss"}
     complete = [item for item in iterations if required.issubset(item)]
     if not complete:
         raise ValueError("RSL-RL log contains no complete PPO telemetry iteration")
