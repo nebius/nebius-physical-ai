@@ -2028,6 +2028,141 @@ def ensure_access_key(
 
 DEFAULT_BUCKET_BASENAME = "npa-bucket"
 DEFAULT_BUCKET_STORAGE_CLASS = "standard"
+RERUN_BROWSER_CORS_RULE_ID = "npa-rerun-app"
+RERUN_BROWSER_ORIGIN = "https://app.rerun.io"
+
+
+@dataclass(frozen=True)
+class BucketCorsPlan:
+    """A lossless plan for reconciling the Rerun browser CORS rule."""
+
+    bucket_id: str
+    resource_version: str
+    current_rules: tuple[dict[str, Any], ...]
+    desired_rules: tuple[dict[str, Any], ...]
+    changed: bool
+
+    @property
+    def preserved_rule_count(self) -> int:
+        return sum(
+            1
+            for rule in self.current_rules
+            if str(rule.get("id") or "") != RERUN_BROWSER_CORS_RULE_ID
+        )
+
+
+def rerun_browser_cors_rule() -> dict[str, Any]:
+    """Return the least-privilege CORS rule needed by the Rerun web viewer."""
+
+    return {
+        "id": RERUN_BROWSER_CORS_RULE_ID,
+        "allowed_origins": [RERUN_BROWSER_ORIGIN],
+        "allowed_methods": ["GET"],
+        "allowed_headers": ["Range"],
+        "expose_headers": ["Accept-Ranges", "Content-Length", "Content-Range"],
+        "max_age_seconds": 3600,
+    }
+
+
+def _bucket_cors_rules(item: dict[str, Any]) -> list[dict[str, Any]]:
+    spec = item.get("spec")
+    if not isinstance(spec, dict):
+        raise NebiusError("exact bucket lookup returned no resource spec")
+    cors = spec.get("cors")
+    if cors in (None, {}):
+        return []
+    if not isinstance(cors, dict):
+        raise NebiusError("exact bucket lookup returned schema-invalid CORS data")
+    rules = cors.get("rules", [])
+    if not isinstance(rules, list) or not all(isinstance(rule, dict) for rule in rules):
+        raise NebiusError("exact bucket lookup returned schema-invalid CORS rules")
+    return [dict(rule) for rule in rules]
+
+
+def _rule_values(rule: Mapping[str, Any], field: str) -> set[str]:
+    values = rule.get(field, [])
+    if not isinstance(values, list):
+        return set()
+    return {str(value).strip().lower() for value in values if str(value).strip()}
+
+
+def bucket_cors_supports_rerun(rule: Mapping[str, Any]) -> bool:
+    """Return whether one provider rule satisfies the browser fetch contract."""
+
+    origins = _rule_values(rule, "allowed_origins")
+    methods = _rule_values(rule, "allowed_methods")
+    headers = _rule_values(rule, "allowed_headers")
+    exposed = _rule_values(rule, "expose_headers")
+    required_exposed = {"accept-ranges", "content-length", "content-range"}
+    return bool(
+        (RERUN_BROWSER_ORIGIN.lower() in origins or "*" in origins)
+        and "get" in methods
+        and ("range" in headers or "*" in headers)
+        and (required_exposed <= exposed or "*" in exposed)
+    )
+
+
+def plan_bucket_rerun_cors(project_id: str, bucket_name: str) -> BucketCorsPlan:
+    """Read and merge a Rerun rule without discarding unrelated bucket CORS."""
+
+    item = get_bucket_by_name(project_id, bucket_name)
+    if item is None:
+        raise NebiusError("the configured object-storage bucket does not exist")
+    metadata = item.get("metadata")
+    if not isinstance(metadata, dict):
+        raise NebiusError("exact bucket lookup returned no resource metadata")
+    bucket_id = str(metadata.get("id") or "").strip()
+    if not bucket_id:
+        raise NebiusError("exact bucket lookup returned no resource ID")
+    resource_version = str(metadata.get("resource_version") or "").strip()
+    current = _bucket_cors_rules(item)
+    if any(bucket_cors_supports_rerun(rule) for rule in current):
+        desired = list(current)
+    else:
+        desired = [
+            rule
+            for rule in current
+            if str(rule.get("id") or "") != RERUN_BROWSER_CORS_RULE_ID
+        ]
+        desired.append(rerun_browser_cors_rule())
+    return BucketCorsPlan(
+        bucket_id=bucket_id,
+        resource_version=resource_version,
+        current_rules=tuple(current),
+        desired_rules=tuple(desired),
+        changed=current != desired,
+    )
+
+
+def apply_bucket_rerun_cors(project_id: str, bucket_name: str) -> BucketCorsPlan:
+    """Reconcile the browser rule through bucket-admin control-plane credentials."""
+
+    plan = plan_bucket_rerun_cors(project_id, bucket_name)
+    if not plan.changed:
+        return plan
+    args = [
+        "storage",
+        "bucket",
+        "update",
+        "--id",
+        plan.bucket_id,
+        "--cors-rules",
+        json.dumps(list(plan.desired_rules), separators=(",", ":"), sort_keys=True),
+    ]
+    if plan.resource_version:
+        args.extend(["--resource-version", plan.resource_version])
+    _run_json(args)
+
+    verified = plan_bucket_rerun_cors(project_id, bucket_name)
+    if verified.changed:
+        raise NebiusError("bucket CORS update completed but read-back verification failed")
+    return BucketCorsPlan(
+        bucket_id=verified.bucket_id,
+        resource_version=verified.resource_version,
+        current_rules=plan.current_rules,
+        desired_rules=verified.desired_rules,
+        changed=True,
+    )
 
 
 def normalize_bucket_storage_class(value: str) -> str:

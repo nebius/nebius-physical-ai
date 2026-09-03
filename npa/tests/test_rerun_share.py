@@ -24,6 +24,11 @@ from npa.clients.config import StorageConfig
 runner = CliRunner()
 
 
+@pytest.fixture(autouse=True)
+def _browser_cors_succeeds(mocker):
+    return mocker.patch("npa.cli.rerun._verify_browser_cors")
+
+
 class RerunShareFakeS3:
     def __init__(self) -> None:
         self.objects: dict[tuple[str, str], dict] = {}
@@ -108,7 +113,9 @@ def _rrd(tmp_path: Path, body: bytes = b"recording") -> tuple[Path, str]:
     return path, hashlib.sha256(body).hexdigest()
 
 
-def test_share_default_ttl_generates_seven_day_url(tmp_path: Path, mocker) -> None:
+def test_share_default_ttl_generates_seven_day_url(
+    tmp_path: Path, mocker, _browser_cors_succeeds
+) -> None:
     mocker.patch("npa.cli.rerun.resolve_project_storage", return_value=_storage())
     path, sha = _rrd(tmp_path)
     s3 = RerunShareFakeS3()
@@ -124,6 +131,9 @@ def test_share_default_ttl_generates_seven_day_url(tmp_path: Path, mocker) -> No
     assert result.rrd_s3_uri == f"s3://target/rerun-shares/default/{sha}.rrd"
     assert result.ttl_expires_at == "2026-05-18T22:30:00Z"
     assert s3.presign_calls[-1]["ExpiresIn"] == MAX_TTL_HOURS * 3600
+    _browser_cors_succeeds.assert_called_once_with(
+        result.presigned_url, bucket="target", project=None
+    )
 
 
 def test_share_label_is_stored_in_metadata(tmp_path: Path, mocker) -> None:
@@ -252,6 +262,25 @@ def test_share_ttl_over_limit_fails_before_s3_calls() -> None:
             s3_client=NoCallS3(),
             host_s3_client=NoCallS3(),
         )
+
+
+def test_share_failed_browser_preflight_stops_before_upload(
+    tmp_path: Path, mocker, _browser_cors_succeeds
+) -> None:
+    mocker.patch("npa.cli.rerun.resolve_project_storage", return_value=_storage())
+    path, _ = _rrd(tmp_path)
+    s3 = RerunShareFakeS3()
+    _browser_cors_succeeds.side_effect = RerunHostError("CORS unavailable")
+
+    with pytest.raises(RerunHostError, match="CORS unavailable"):
+        share_recording(
+            str(path),
+            target_bucket="target",
+            s3_client=s3,
+            host_s3_client=RerunShareFakeS3(),
+        )
+
+    assert s3.put_calls == []
 
 
 def test_list_shares_json_cli_outputs_programmatic_schema(mocker) -> None:
