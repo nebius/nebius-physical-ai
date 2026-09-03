@@ -167,6 +167,9 @@ def test_cpu_controller_is_small_pinned_and_resolver_closed() -> None:
         "sudo",
         "netcat-openbsd",
         "NOPASSWD",
+        "rm -f /etc/ssh/ssh_host_*",
+        "PasswordAuthentication no",
+        "PermitRootLogin no",
     ):
         assert prerequisite in dockerfile
 

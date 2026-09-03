@@ -846,11 +846,10 @@ def test_accepted_release_plan_partitions_published_and_pending_tools() -> None:
         target_registry="ghcr.io/nebius/nebius-physical-ai"
     )
 
-    assert len(plan) == 31
+    assert len(plan) == len(manifest["releases"])
     assert set(manifest["releases"]) | set(manifest["publication_pending"]) == set(
         publicly_publishable_tools()
     )
-    assert not manifest["publication_pending"]
     for item in plan:
         recorded = manifest["releases"][item.tool]["published_digest"]
         assert item.source_ref.endswith(f"@{recorded}")

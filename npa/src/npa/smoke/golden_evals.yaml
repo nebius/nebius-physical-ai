@@ -811,8 +811,9 @@ containers:
         task-pod-scoped exception for the pinned SkyPilot 0.12.2 Kubernetes
         bootstrap; the image starts no service and may not receive public ingress.
     golden_eval:
-      kind: workflow-smoke
-      command: python -m npa.workflows.sim2real.workflow_stage --help
+      kind: container-smoke
+      module: npa.smoke.test_sim2real_control_functional
+      command: python -m npa.smoke.test_sim2real_control_functional
       gpu: none
       timeout_seconds: 60
       status: ready
@@ -904,10 +905,11 @@ containers:
         and an interactive-server fallback; no models, datasets, credentials,
         persistent storage, or runtime caches are baked.
     golden_eval:
-      kind: build-import
-      command: 'python -c "import rerun; assert rerun.__version__"'
+      kind: container-smoke
+      module: npa.smoke.test_rerun_viewer_functional
+      command: python -m npa.smoke.test_rerun_viewer_functional
       gpu: none
-      timeout_seconds: 60
+      timeout_seconds: 120
       status: ready
 
   foxglove-embed:
