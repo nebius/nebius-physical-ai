@@ -145,7 +145,12 @@ PUBLICATION_QUARANTINE_TOOLS: frozenset[str] = (
 PUBLIC_RELEASE_TAG_OVERRIDES: dict[str, str] = {
     "cosmos2-transfer": "2.5.1-skypilot-ready-20260801T053000Z",
     "fiftyone": "1.15.0.post1",
-    "rerun-viewer": "0.31.4",
+    # 0.31.4 (plain) predates the bootstrap contract and cannot host a SkyPilot
+    # task: the container exits immediately, the provisioner's exec finds no
+    # ray-node container, and the stage retries forever. The 20260903 build is
+    # attested (org.nebius.npa.skypilot-bootstrap-contract=skypilot-0.12.2-v1)
+    # and anonymously pullable from GHCR.
+    "rerun-viewer": "0.31.4-sim2real-coherent-20260903",
 }
 
 # Release promotion for the rebuilt surfaces is bound to the exact manifests
