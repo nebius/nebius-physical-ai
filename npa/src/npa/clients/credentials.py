@@ -21,6 +21,15 @@ CREDENTIALS_PATH = NPA_CONFIG_DIR / "credentials.yaml"
 NGC_ENV_KEYS = ("NGC_API_KEY", "NGC_ORG", "NGC_TEAM")
 TOKEN_FACTORY_ENV_KEY = "NEBIUS_TOKEN_FACTORY_KEY"
 FOXGLOVE_API_TOKEN_KEY = "FOXGLOVE_API_TOKEN"
+# Encord SaaS auth (npa workbench encord): exactly one env transport, the
+# base64 form (a raw multi-line PEM in env/YAML is truncation-prone and was an
+# observed live failure; laptops use ENCORD_SSH_KEY_FILE instead). Deliberately
+# NOT in shared_credential_env — a single-tool SaaS secret stays backend-only
+# (Foxglove precedent).
+ENCORD_ENV_KEYS = ("ENCORD_SSH_KEY_B64",)
+# All names load_credentials hydrates into tokens (the FILE variant is a local
+# path, deliberately excluded from --save-env-credentials persistence above).
+ENCORD_TOKEN_KEYS = (*ENCORD_ENV_KEYS, "ENCORD_SSH_KEY_FILE")
 KNOWN_TOKEN_KEYS = (
     "HF_TOKEN",
     TOKEN_FACTORY_ENV_KEY,
@@ -29,6 +38,7 @@ KNOWN_TOKEN_KEYS = (
 SUPPORTED_ENV_CREDENTIALS = (
     "NEBIUS_TOKEN_FACTORY_KEY",
     FOXGLOVE_API_TOKEN_KEY,
+    *ENCORD_ENV_KEYS,
     "HF_TOKEN",
     "NGC_API_KEY",
     "NGC_ORG",
@@ -359,7 +369,8 @@ def load_credentials(
         file_ssh = _read_file_ssh(credentials_path)
         file_storage = _read_file_storage(credentials_path)
 
-    keys = set(KNOWN_TOKEN_KEYS) | set(file_tokens)
+    # Encord auth is resolved through tokens (env wins over file), like HF/TF/NGC.
+    keys = set(KNOWN_TOKEN_KEYS) | set(ENCORD_TOKEN_KEYS) | set(file_tokens)
     tokens: dict[str, str] = {}
     for key in sorted(keys):
         env_value = env.get(key)
@@ -542,7 +553,7 @@ def persist_supported_env_credentials(
     payload: dict[str, Any] = {}
     tokens = {
         name: str(env[name])
-        for name in ("HF_TOKEN", TOKEN_FACTORY_ENV_KEY, FOXGLOVE_API_TOKEN_KEY)
+        for name in ("HF_TOKEN", TOKEN_FACTORY_ENV_KEY, FOXGLOVE_API_TOKEN_KEY, *ENCORD_ENV_KEYS)
         if str(env.get(name) or "")
     }
     if tokens:

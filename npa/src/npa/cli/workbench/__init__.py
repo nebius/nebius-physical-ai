@@ -57,6 +57,7 @@ def _full_app() -> typer.Typer:
     from npa.cli.workbench.cosmos_evaluator import app as cosmos_evaluator_app
     from npa.cli.workbench.data import app as data_app
     from npa.cli.workbench.dataset import app as dataset_app
+    from npa.cli.workbench.encord import app as encord_app
     from npa.cli.workbench.detection_training import app as detection_training_app
     from npa.cli.workbench.foxglove import app as foxglove_app
     from npa.cli.workbench.golden_eval import app as golden_eval_app
@@ -114,6 +115,7 @@ def _full_app() -> typer.Typer:
     full.add_typer(detection_training_app, name="detection-training")
     full.add_typer(scenario_gen_app, name="scenario-gen")
     full.add_typer(dataset_app, name="dataset")
+    full.add_typer(encord_app, name="encord")
     full.add_typer(insights_app, name="insights")
     full.add_typer(vlm_eval_app, name="vlm-eval")
     full.add_typer(token_factory_app, name="token-factory")

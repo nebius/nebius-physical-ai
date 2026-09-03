@@ -8,6 +8,7 @@ __all__ = [
     "data",
     "dataset",
     "detection_training",
+    "encord",
     "fiftyone",
     "genesis",
     "groot",

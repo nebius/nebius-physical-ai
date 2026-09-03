@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from types import SimpleNamespace
 
 import pytest
 
 from npa.workflows.credential_preflight import (
     CREDENTIAL_CHECKS,
     CredentialProbes,
+    check_encord,
     check_hf,
     check_ngc,
     check_s3,
@@ -20,6 +22,7 @@ from npa.workflows.sim2real_health import FAIL, PASS, WARN
 @dataclass
 class _Creds:
     hf_token: str = ""
+    tokens: dict[str, str] | None = None
     ngc_api_key: str = ""
     token_factory_api_key: str = ""
     s3_access_key_id: str = ""
@@ -207,3 +210,45 @@ def test_has_failure_true_when_any_fail() -> None:
         checks=["s3"],
     )
     assert has_failure(results) is True
+
+
+def test_encord_warns_when_missing() -> None:
+    result = check_encord(_Creds(), CredentialProbes())
+    assert result.status == WARN
+    assert "ENCORD_SSH_KEY" in result.summary
+
+
+def test_encord_present_unverified_from_credentials_tokens() -> None:
+    creds = _Creds(tokens={"ENCORD_SSH_KEY_FILE": "/keys/encord.pem"})
+    result = check_encord(creds, CredentialProbes())
+    assert result.status == PASS
+    assert "not verified" in result.summary
+
+
+def test_encord_pass_when_verifier_ok() -> None:
+    probes = CredentialProbes(encord_verifier=lambda: "storage folders listable")
+    result = check_encord(_Creds(tokens={"ENCORD_SSH_KEY_B64": "abc"}), probes)
+    assert result.status == PASS
+    assert "storage folders listable" in result.summary
+
+
+def test_encord_missing_sdk_is_a_warning_not_a_bad_credential() -> None:
+    from npa.workbench.encord.schemas import EncordSdkMissingError
+
+    def verifier() -> str:
+        raise EncordSdkMissingError("The encord SDK is not installed.")
+
+    credentials = SimpleNamespace(tokens={"ENCORD_SSH_KEY_FILE": "/keys/encord.pem"})
+    result = check_encord(credentials, CredentialProbes(encord_verifier=verifier))
+    assert result.status == WARN
+    assert "not installed" in result.summary
+    assert "npa[encord]" in (result.remedy or "")
+
+
+def test_encord_fail_when_verifier_raises() -> None:
+    probes = CredentialProbes(
+        encord_verifier=lambda: (_ for _ in ()).throw(RuntimeError("401 unauthorized"))
+    )
+    result = check_encord(_Creds(tokens={"ENCORD_SSH_KEY_B64": "abc"}), probes)
+    assert result.status == FAIL
+    assert result.details == ("401 unauthorized",)
