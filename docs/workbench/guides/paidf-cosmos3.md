@@ -5,6 +5,14 @@ Physical AI Data Factory composition. It does not replace or change
 `physical-ai-data-factory.yaml`, whose augmentation engine remains Cosmos
 Transfer 2.5.
 
+This variant uses the same explicit upstream boundary as the Transfer workflow:
+[NVIDIA/physical-ai-data-factory](https://github.com/NVIDIA/physical-ai-data-factory)
+is the PAIDF ecosystem entry point, while
+[NVIDIA/paidf-orchestration](https://github.com/NVIDIA/paidf-orchestration) is a
+separate Airflow scaler for its published IAA/EVG DAGs. Neither OSMO nor Airflow
+runs here. The first workflow state writes their pinned attribution and the real
+NPA/SkyPilot component mapping to `reports/upstream.json`.
+
 The pipeline is:
 
 1. select one generic MP4 or one camera from one LeRobot v2/v3 episode;
@@ -77,6 +85,11 @@ When motion preservation is enabled, it also records source/Cosmos weights and
 SHA-256 digests for both the raw model output and published composite.
 The run manifest records non-empty video bytes, variant count, actual GPU
 parallelism, and the same conditioning contract.
+
+The run also writes `reports/upstream.json` with schema
+`npa.paidf.upstream.v1`, and successful finalization carries that public-source
+contract into `reports/final.json` without embedding credentials, infrastructure
+identifiers, or model weights.
 
 `generate-variants` publishes this distributed stage contract to S3 only. Its
 `output_uri` must use `s3://`; local paths are rejected before generation so the

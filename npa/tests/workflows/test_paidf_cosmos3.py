@@ -438,12 +438,17 @@ def test_finalize_requires_every_real_component(tmp_path: Path) -> None:
     (root / "curation" / "report.json").write_text(
         json.dumps({"curation_engine": "fiftyone-brain"}), encoding="utf-8"
     )
+    upstream = {"schema": "npa.paidf.upstream.v1", "sources": ["official"]}
+    (root / "reports" / "upstream.json").write_text(
+        json.dumps(upstream), encoding="utf-8"
+    )
     (root / "reports" / "sim2real.rrd").write_bytes(b"RRF2-real")
 
     result = c3.finalize(str(root), str(root / "reports" / "final.json"))
     assert result["status"] == "completed"
     assert result["evaluator_score"] == 0.88
     assert result["has_rrd"] is True
+    assert result["upstream"] == upstream
 
     (root / "curation" / "report.json").write_text(
         json.dumps({"curation_engine": "report-only"}), encoding="utf-8"

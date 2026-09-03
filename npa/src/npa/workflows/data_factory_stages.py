@@ -2567,6 +2567,12 @@ def finalize(run_root_uri: str, report_uri: str) -> dict[str, Any]:
     if transfer_manifest:
         report["augmentation_engine"] = str(transfer_manifest.get("mode") or "")
         report["input_conditioned"] = transfer_manifest.get("input_conditioned") is True
+    try:
+        upstream = _download_json(run_root_uri.rstrip("/") + "/reports/upstream.json")
+    except Exception:  # noqa: BLE001 - compatibility with runs started before this artifact
+        upstream = {}
+    if isinstance(upstream, dict) and upstream.get("schema") == "npa.paidf.upstream.v1":
+        report["upstream"] = upstream
     report["written_uri"] = _upload_json(report, report_uri)
     print(
         json.dumps(

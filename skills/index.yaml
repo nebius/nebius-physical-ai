@@ -25,6 +25,9 @@ licenses:
     applies_to:
       - physical-ai-data-factory
       - neural-reconstruction
+  - path: skills/NOTICE-NVIDIA-PAIDF
+    applies_to:
+      - physical-ai-data-factory
   - path: skills/NOTICE-PAIDF-STARTER-MEDIA
     applies_to:
       - physical-ai-data-factory

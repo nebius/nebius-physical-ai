@@ -117,11 +117,11 @@ making architecture, review, or domain judgments.
  toolRefs); generalizes across sim2real, AV, RL, and Cosmos pipelines.
 - `skills/workflows/physical-ai-data-factory/SKILL.md`: author, run, submit, or
  view the NVIDIA Physical AI Data Factory blueprint on Nebius + SkyPilot (no
- OSMO): annotate → Cosmos Transfer augment → Cosmos Evaluator gate → re-label →
- Cosmos Curator + FiftyOne curate → Rerun visualize. The evaluator and curator
- are the real Apache-2.0 NVIDIA projects, wrapped as
- `npa workbench cosmos-evaluator` and `npa workbench cosmos-curate`; see
- `skills/NOTICE-NVIDIA-COSMOS-OSS` for which upstream code runs where.
+ OSMO/Airflow): annotate → Cosmos Transfer augment → Cosmos Evaluator gate →
+ re-label → Cosmos Curator + FiftyOne curate → Rerun visualize. The official
+ ecosystem and scaled-orchestration relationship is recorded in
+ `skills/NOTICE-NVIDIA-PAIDF`; executable evaluator/curator boundaries are in
+ `skills/NOTICE-NVIDIA-COSMOS-OSS`.
 - `skills/workflows/neural-reconstruction/SKILL.md`: NuRec/NRE neural
  reconstruction on Nebius — NCore V4 capture (including deriving the
  `rig → world` pose edge NRE requires) → 3DGUT Gaussian training → renderable

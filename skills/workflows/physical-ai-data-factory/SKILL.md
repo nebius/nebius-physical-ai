@@ -7,12 +7,22 @@ description: Use when authoring, running, submitting, or viewing the NVIDIA Phys
 
 ## Source And Attribution
 
-NPA-native re-implementation of the NVIDIA Physical AI Data Factory / Video Data
-Augmentation workflow. Design adapted from NVIDIA agent skills
-(https://github.com/NVIDIA/skills), primarily `physical-ai-video-data-augmentation`.
-Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. Upstream licenses:
-Apache-2.0 and CC-BY-4.0. See `skills/NOTICE-NVIDIA-SKILLS`. NPA orchestrates on
-SkyPilot (not OSMO) and composes existing workbench tools.
+NPA-native re-implementation of NVIDIA's Physical AI Data Factory / Video Data
+Augmentation workflow. The current official ecosystem entry point is
+https://github.com/NVIDIA/physical-ai-data-factory: it publishes the VDA agent
+skill for OSMO and links the PAIDF component repositories. The separate
+https://github.com/NVIDIA/paidf-orchestration repository is an Apache-2.0
+Airflow-on-Kubernetes scaler whose current DAGs are Image Attribute Augmentation
+and Event Video Generation; it is a design reference, not the VDA implementation
+and not an NPA runtime dependency. Exact reviewed revisions and license boundaries
+are recorded in `skills/NOTICE-NVIDIA-PAIDF`.
+
+Earlier design analysis was adapted from https://github.com/NVIDIA/skills,
+primarily `physical-ai-video-data-augmentation`. Copyright (c) 2025-2026 NVIDIA
+CORPORATION & AFFILIATES. Upstream licenses: Apache-2.0 and CC-BY-4.0. See
+`skills/NOTICE-NVIDIA-SKILLS`. NPA orchestrates on SkyPilot (not OSMO or Airflow)
+and composes existing workbench tools. Every new run writes the immutable
+`reports/upstream.json` source/execution-boundary artifact before data processing.
 
 Three NVIDIA components in the pipeline are the real open-source projects, not
 NPA look-alikes: **Cosmos Transfer 2.5** augments, **Cosmos Evaluator**
@@ -42,6 +52,7 @@ skill's Cosmos Transfer 2.5 blueprint.
 
 | NVIDIA stage | NPA state | Tool (all REAL — no stubs) | Runtime |
 | --- | --- | --- | --- |
+| Source boundary | `record-upstream` | `paidf_upstream.write_upstream_contract` | CPU |
 | Config Generation | `generate-configs` | `data_factory_stages.generate_configs` (run.shell) | CPU |
 | Understand & Annotate | `annotate-original` | `workbench.token_factory.caption` | Token Factory (zero-GPU) |
 | Augment & Multiply | `augment` | `workbench.cosmos2.transfer_execute` (real Cosmos Transfer 2.5 `--execute`; uploads video+frames to S3) | GPU |

@@ -1074,6 +1074,10 @@ def finalize(
     disposition = _read_json(root + "grade/quality_disposition.json", storage=client)
     curator = _read_json(root + "curation/cosmos_curator.json", storage=client)
     fiftyone = _read_json(root + "curation/report.json", storage=client)
+    try:
+        upstream = _read_json(root + "reports/upstream.json", storage=client)
+    except Exception:  # compatibility with runs started before this artifact existed
+        upstream = None
     if not isinstance(disposition, dict):
         raise PaidfCosmos3Error("quality disposition is not a JSON object")
     if not isinstance(curator, dict):
@@ -1173,6 +1177,8 @@ def finalize(
         "has_rrd": True,
         "artifact_count": len(keys),
     }
+    if isinstance(upstream, dict) and upstream.get("schema") == "npa.paidf.upstream.v1":
+        payload["upstream"] = upstream
     payload["written_uri"] = _write_json(payload, report_uri, storage=client)
     print(
         json.dumps(

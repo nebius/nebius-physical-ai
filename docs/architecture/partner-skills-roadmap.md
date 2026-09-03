@@ -40,7 +40,16 @@ Until a partner capability has that footing, it stays here as a blueprint.
 
 ## Attribution
 
-Adapted analysis from NVIDIA agent skills at https://github.com/NVIDIA/skills.
+The current PAIDF ecosystem source is
+https://github.com/NVIDIA/physical-ai-data-factory. Its OSMO agent skills are
+distinct from https://github.com/NVIDIA/paidf-orchestration, the Apache-2.0
+Airflow-on-Kubernetes scaler for the currently published IAA and EVG DAGs. NPA
+uses neither alternate orchestrator; exact reviewed revisions and boundaries are
+in `skills/NOTICE-NVIDIA-PAIDF` and every PAIDF run's
+`reports/upstream.json`.
+
+Earlier analysis was adapted from NVIDIA agent skills at
+https://github.com/NVIDIA/skills.
 Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. Upstream licenses are
 Apache-2.0, except defect-image-generation and video-data-augmentation which are
 CC-BY-4.0 AND Apache-2.0. Trademarks (NVIDIA, Omniverse, NuRec, NRE, Isaac Sim,

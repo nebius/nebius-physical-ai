@@ -66,6 +66,10 @@ is promoted to the top of the workflow tree for prominence:
 It is still an `npa.workflow/v0.0.1` spec and is discovered alongside the specs
 below (see `npa/src/npa/orchestration/npa_workflow/blueprints.py`). Deploy guide:
 `docs/workbench/guides/physical-ai-data-factory-deploy.md`.
+Both this workflow and `paidf-cosmos3.yaml` emit `reports/upstream.json`, which
+pins the official NVIDIA ecosystem and Airflow-scaler references while making
+clear that NPA executes the real component graph through SkyPilot, not OSMO or
+Airflow.
 
 ## Spec catalog
 

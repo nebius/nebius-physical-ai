@@ -1934,6 +1934,8 @@ def test_finalize_aggregates_stage_artifacts(tmp_path: Path, monkeypatch) -> Non
     ]
     monkeypatch.setattr(dfs, "_list_keys", lambda uri: keys)
     monkeypatch.setattr(dfs, "_upload_json", lambda payload, uri: uri)
+    upstream = {"schema": "npa.paidf.upstream.v1", "sources": ["official"]}
+    monkeypatch.setattr(dfs, "_download_json", lambda _uri: upstream)
     report = dfs.finalize(
         "s3://b/physical-ai-data-factory/run1/",
         "s3://b/physical-ai-data-factory/run1/reports/final.json",
@@ -1942,6 +1944,7 @@ def test_finalize_aggregates_stage_artifacts(tmp_path: Path, monkeypatch) -> Non
     assert report["has_rrd"] is True
     assert report["stages"]["input"] == 1
     assert report["multiply_mode"] == "single-variant"
+    assert report["upstream"] == upstream
 
 
 def test_curation_and_final_reports_carry_input_provenance(

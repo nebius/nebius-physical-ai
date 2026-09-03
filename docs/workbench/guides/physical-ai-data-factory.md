@@ -8,6 +8,17 @@ Nebius + SkyPilot. It is delivered as a single npa.workflow spec
 through one S3 run prefix so input, intermediate, and output artifacts are all
 viewable in the NPA agent artifact browser.
 
+Two official repositories have intentionally different roles. NVIDIA's
+[Physical AI Data Factory](https://github.com/NVIDIA/physical-ai-data-factory)
+repository is the ecosystem and agent-skill entry point; its Video Data
+Augmentation workflow runs on OSMO upstream. NVIDIA's
+[PAIDF Orchestration](https://github.com/NVIDIA/paidf-orchestration) repository
+is an Apache Airflow-on-Kubernetes scaler and currently carries Image Attribute
+Augmentation and Event Video Generation DAGs. NPA does not embed either
+orchestrator and does not describe those Airflow DAGs as this VDA workflow.
+Every NPA run records the reviewed revisions, licenses, and this execution
+boundary in `reports/upstream.json`; see `skills/NOTICE-NVIDIA-PAIDF`.
+
 > **Want the from-zero runbook?** See
 > [physical-ai-data-factory-deploy.md](physical-ai-data-factory-deploy.md) for a
 > copy-paste deploy guide: install `npa`, set credentials/config, deploy the NPA
@@ -20,6 +31,7 @@ NVIDIA blueprint (OSMO) → NPA stage (toolRef / run):
 
 | NVIDIA stage | NPA state | Tool | Runtime |
 | --- | --- | --- | --- |
+| Source boundary | `record-upstream` | `paidf_upstream.write_upstream_contract` | CPU |
 | Stage 1 Config Generation | `generate-configs` | `run.shell` (sample appearance-only variables) | CPU |
 | Stage 2a Understand & Annotate | `annotate-original` | `workbench.token_factory.caption` | Token Factory (zero-GPU) |
 | Stage 2b Augment & Multiply | `augment` | `workbench.cosmos2.transfer_execute` | GPU (Cosmos Transfer 2.5; optional upstream Meta SAM2 masks) |

@@ -4,6 +4,10 @@ kind: Workflow
 # Reference blueprint: the NVIDIA Physical AI Data Factory, implemented natively
 # on Nebius + SkyPilot with NO OSMO orchestrator and NO new workbench tool -- it
 # is pure composition of existing NPA workbench tools.
+# Official ecosystem source: https://github.com/NVIDIA/physical-ai-data-factory
+# Scaled Airflow reference: https://github.com/NVIDIA/paidf-orchestration
+# The latter currently publishes IAA/EVG DAGs; NPA does not run or vendor its
+# Airflow controller. reports/upstream.json records this boundary on every run.
 #
 # NVIDIA blueprint (OSMO-orchestrated) -> NPA mapping:
 #
@@ -263,6 +267,7 @@ config:
   run_root_uri: "s3://{{config.bucket}}/{{config.prefix}}/"
   rrd_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/sim2real.rrd"
   finalize_report_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/final.json"
+  upstream_contract_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/upstream.json"
   input_provenance_uri: "s3://{{config.bucket}}/{{config.prefix}}/input/provenance.json"
   input_source_kind: ""
   input_source_format: "video"
@@ -331,15 +336,35 @@ resources:
     cpus: 4
     memory: 16Gi
 
-initial: generate-configs
+initial: record-upstream
 
 states:
+  record-upstream:
+    description: >
+      Record the pinned official PAIDF ecosystem and scaled-orchestration sources,
+      their licenses, and the explicit OSMO/Airflow versus NPA/SkyPilot boundary.
+    resources: cpu
+    run:
+      argv:
+        - python3
+        - -c
+        - >-
+          import sys; from npa.workflows.paidf_upstream import write_upstream_contract;
+          write_upstream_contract(*sys.argv[1:])
+        - cosmos-transfer2.5
+        - "{{config.upstream_contract_uri}}"
+    outputs:
+      - uri: "{{config.upstream_contract_uri}}"
+        schema: npa.paidf.upstream.v1
+    next: generate-configs
+
   generate-configs:
     description: >
       Stage 1 - Config Generation. Sample appearance-only augmentation variable
       combinations (lighting / background / color_grade / surface_finish) and write a
       per-run config manifest that drives the augment stage.
     resources: cpu
+    needs: [record-upstream]
     run:
       argv:
         - python3

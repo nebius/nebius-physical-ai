@@ -1,0 +1,39 @@
+NVIDIA Physical AI Data Factory upstream references
+
+Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+
+NPA's Physical AI Data Factory workflows are NPA-native adaptations informed by
+two official NVIDIA repositories with distinct roles:
+
+  https://github.com/NVIDIA/physical-ai-data-factory
+  revision 0c37222a7cd1b2a1fc36086a7a03d7978d891506
+  documentation and skills: CC-BY-4.0; source code: Apache-2.0
+
+This is NVIDIA's PAIDF ecosystem entry point. At the recorded revision it
+publishes agent skills for Defect Image Generation and Video Data Augmentation,
+run upstream through NVIDIA OSMO, and links to the reusable PAIDF component
+repositories.
+
+  https://github.com/NVIDIA/paidf-orchestration
+  revision f7ecd8c5d7aeec28b2d476b9e71b53a48ba8c0f9
+  source code: Apache-2.0
+
+This is NVIDIA's separate Airflow-on-Kubernetes scaled orchestrator. At the
+recorded revision it publishes Image Attribute Augmentation and Event Video
+Generation DAGs. It is not the implementation repository for the upstream VDA
+skill and it is not embedded or executed by NPA.
+
+NPA keeps `npa.workflow/v0.0.1` as the authoring surface and SkyPilot as its sole
+execution engine. It does not vendor OSMO, Airflow, either repository, PAIDF NGC
+service images, model weights, or input datasets. The shipped
+`physical-ai-data-factory.yaml` and `paidf-cosmos3.yaml` workflows call real
+registered NPA components and use S3-compatible object storage for handoffs.
+Each run writes `reports/upstream.json` (`npa.paidf.upstream.v1`) so this
+adaptation boundary and the exact public revisions travel with its artifacts.
+
+Gated weights remain runtime fetches under the operator's own upstream identity.
+Access credentials prove fetch authorization, not permission to redistribute
+weights. See `skills/NOTICE-NVIDIA-COSMOS-OSS` and
+`skills/NOTICE-NVIDIA-COSMOS3` for the executable component boundaries.
+
+NVIDIA, Cosmos, Omniverse, and OSMO are trademarks of NVIDIA.
