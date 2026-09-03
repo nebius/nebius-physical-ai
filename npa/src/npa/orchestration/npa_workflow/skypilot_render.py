@@ -71,6 +71,10 @@ OPENPI_TERMS_ENV = "NPA_OPENPI_ACCEPT_GEMMA_TERMS"
 SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
     "workbench.openpi": (OPENPI_TERMS_ENV,),
     "workbench.token_factory": ("NEBIUS_TOKEN_FACTORY_KEY",),
+    # Encord SaaS auth. The base64 form is the only pod transport: it is
+    # multi-line-safe through --secret-env (a raw PEM paste is a documented
+    # live failure mode and is no longer accepted).
+    "workbench.encord": ("ENCORD_SSH_KEY_B64",),
     "workbench.vlm_eval": (),
     # Attribute verification generates and answers its questions on Token Factory.
     "workbench.cosmos_evaluator": ("NEBIUS_TOKEN_FACTORY_KEY",),
@@ -104,6 +108,7 @@ SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
 # already installs vLLM for self-hosted vlm_eval); it is what lets the npa.workflow
 # SONIC specs run without a vendor image at all.
 TOOL_REF_PIP_EXTRAS: dict[str, str] = {
+    "workbench.encord": "encord",
     "workbench.sonic": "sonic",
     "workflow.groot.emit_learning_rrd": "viz",
     "workflow.groot.publish_learning": "viz",
@@ -1632,6 +1637,15 @@ def render_setup_for_tool(
             'if [[ -z "$NEBIUS_TOKEN_FACTORY_KEY" ]]; then\n'
             "  echo 'NEBIUS_TOKEN_FACTORY_KEY is required. Pass it with --secret-env "
             "NEBIUS_TOKEN_FACTORY_KEY' >&2\n"
+            "  exit 1\n"
+            "fi\n"
+        )
+    if tool_ref.startswith("workbench.encord"):
+        # Avoid ${VAR:-} bash forms so SkyPilot placeholder lint stays clean.
+        parts.append(
+            'if [[ -z "$ENCORD_SSH_KEY_B64" ]]; then\n'
+            "  echo 'An Encord credential is required. Pass it with --secret-env "
+            "ENCORD_SSH_KEY_B64 (base64 of the PEM)' >&2\n"
             "  exit 1\n"
             "fi\n"
         )

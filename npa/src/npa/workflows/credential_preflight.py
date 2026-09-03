@@ -25,7 +25,7 @@ from npa.workflows.sim2real_health import (
 )
 
 # Canonical order a customer should reason about credentials in.
-CREDENTIAL_CHECKS: tuple[str, ...] = ("hf", "ngc", "s3", "token_factory")
+CREDENTIAL_CHECKS: tuple[str, ...] = ("hf", "ngc", "s3", "token_factory", "encord")
 
 
 @dataclass
@@ -42,6 +42,7 @@ class CredentialProbes:
     ngc_validator: Callable[[str], str] | None = None
     s3_client_factory: Callable[[], Any] | None = None
     token_factory_verifier: Callable[[], list[str]] | None = None
+    encord_verifier: Callable[[], str] | None = None
 
 
 def _looks_like_auth_failure(text: str) -> bool:
@@ -259,11 +260,76 @@ def check_token_factory(credentials: Any, probes: CredentialProbes) -> CheckResu
     )
 
 
+def check_encord(credentials: Any, probes: CredentialProbes) -> CheckResult:
+    """Check an Encord credential is present and (optionally) authenticates.
+
+    ``load_credentials`` already merges the process environment over the
+    ``tokens:`` section for these names, so reading ``credentials.tokens`` sees
+    exactly what workflow submit will resolve.
+    """
+
+    from npa.clients.credentials import ENCORD_TOKEN_KEYS
+
+    tokens = getattr(credentials, "tokens", {}) or {}
+    present = [name for name in ENCORD_TOKEN_KEYS if str(tokens.get(name) or "").strip()]
+    if not present:
+        return CheckResult(
+            name="encord",
+            status=WARN,
+            summary="No Encord credential (ENCORD_SSH_KEY_B64 / ENCORD_SSH_KEY_FILE) is set.",
+            remedy=(
+                "Required only for `npa workbench encord` push/curate/pull. "
+                "Generate a key pair in the Encord app (public keys), then set "
+                "tokens: ENCORD_SSH_KEY_B64 (base64 of the PEM) or "
+                "ENCORD_SSH_KEY_FILE (path to the key file) in "
+                "~/.npa/credentials.yaml."
+            ),
+        )
+    if probes.encord_verifier is None:
+        return CheckResult(
+            name="encord",
+            status=PASS,
+            summary=f"{present[0]} is set (not verified against Encord).",
+        )
+    from npa.workbench.encord.schemas import EncordSdkMissingError
+
+    try:
+        summary = probes.encord_verifier()
+    except EncordSdkMissingError as exc:
+        # The credential may be fine; only the optional extra is absent.
+        return CheckResult(
+            name="encord",
+            status=WARN,
+            summary=f"{present[0]} is set but the encord SDK is not installed.",
+            remedy=(
+                "Install it with `pip install 'npa[encord]'` before using "
+                "`npa workbench encord`; other tools are unaffected."
+            ),
+            details=(str(exc),),
+        )
+    except Exception as exc:  # noqa: BLE001 - surface any auth/connectivity error
+        return CheckResult(
+            name="encord",
+            status=FAIL,
+            summary="Encord credential did not authenticate.",
+            remedy=(
+                "Confirm the key pair is registered in the Encord app and "
+                "ENCORD_DOMAIN matches your region (US domains differ)."
+            ),
+            details=(str(exc),),
+        )
+    return CheckResult(
+        name="encord",
+        status=PASS,
+        summary=f"Encord authenticated ({summary}).",
+    )
+
 _CHECK_FUNCS: dict[str, Callable[[Any, CredentialProbes], CheckResult]] = {
     "hf": check_hf,
     "ngc": check_ngc,
     "s3": check_s3,
     "token_factory": check_token_factory,
+    "encord": check_encord,
 }
 
 
@@ -289,6 +355,7 @@ def run_credential_preflight(
 __all__ = [
     "CREDENTIAL_CHECKS",
     "CredentialProbes",
+    "check_encord",
     "check_hf",
     "check_ngc",
     "check_s3",

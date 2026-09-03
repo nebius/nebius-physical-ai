@@ -84,6 +84,22 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     ),
     # --- CPU / zero-GPU (Token Factory hosted) ---
     SubmitLiveCase(
+        "encord-push.yaml",
+        "cpu",
+        secret_envs=(
+            "ENCORD_SSH_KEY_B64",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+        ),
+        rotation_skip=True,
+        skip_reason=(
+            "Production push half of a human-in-the-loop pair: the follow-up "
+            "curation happens in the Encord app, so no standalone submit can "
+            "verify anything past the push receipt."
+        ),
+        notes="Manual/plan runs only; needs an Encord cloud integration titled by config.encord_integration.",
+    ),
+    SubmitLiveCase(
         "token-factory-caption.yaml",
         "cpu",
         secret_envs=(
