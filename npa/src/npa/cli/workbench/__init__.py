@@ -50,6 +50,7 @@ def _full_app() -> typer.Typer:
     from npa.cli.isaac_lab import app as isaac_lab_app
     from npa.cli.nurec import app as nurec_app
     from npa.cli.workbench.alpamayo2_super import app as alpamayo2_super_app
+    from npa.cli.workbench.antioch import app as antioch_app
     from npa.cli.workbench.byof import app as byof_app
     from npa.cli.workbench.cosmos2 import app as cosmos2_app
     from npa.cli.workbench.cosmos3 import app as cosmos3_app
@@ -90,6 +91,7 @@ def _full_app() -> typer.Typer:
             export_to_environment=True,
         )
 
+    full.add_typer(antioch_app, name="antioch")
     full.add_typer(lerobot_app, name="lerobot")
     full.add_typer(cosmos_app, name="cosmos")
     full.add_typer(cosmos2_app, name="cosmos2")

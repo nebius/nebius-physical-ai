@@ -125,6 +125,21 @@ def test_openpi_product_policy_keeps_its_scoped_runtime_gate() -> None:
     assert "NPA_OPENPI_ACCEPT_GEMMA_TERMS" in workflow.read_text(encoding="utf-8")
 
 
+def test_antioch_product_policy_is_explicit_scoped_and_runtime_only() -> None:
+    text = SKILL.read_text(encoding="utf-8")
+    normalized = " ".join(text.split())
+    for phrase in (
+        "## Antioch Runtime Reference",
+        "https://antioch.com/terms",
+        "NPA_ANTIOCH_ACCEPT_TERMS=YES",
+        "exact run-scoped",
+        "dedicated deployment Secret",
+        "never bake it into the image",
+        "contains no `antioch-sim` distribution",
+    ):
+        assert phrase in normalized
+
+
 def test_every_gated_hf_catalog_asset_has_a_pinned_payload_byte_probe() -> None:
     gated_hf = [
         asset for asset in WORKBENCH_ASSETS if asset.provider == HF and asset.gated

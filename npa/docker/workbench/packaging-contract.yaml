@@ -147,6 +147,16 @@ redistribution:
 
 # Relative to npa/docker/workbench/
 images:
+  antioch:
+    dockerfile: antioch/Dockerfile
+    tier: service
+    ports: [8789]
+    redistribution: public
+    notes: >-
+      CPU-only control-plane wrapper. The proprietary antioch-sim CLI and all
+      operator credentials and scoped terms acceptance are runtime-only in
+      mounted volumes; none is baked. The image includes only redistributable
+      NPA cluster-native tunnel/relay bootstrap and Franka scenario source.
   lerobot:
     dockerfile: lerobot/Dockerfile
     tier: service

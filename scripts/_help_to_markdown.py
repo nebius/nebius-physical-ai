@@ -200,12 +200,11 @@ def _extract_commands(lines: list[str]) -> list[tuple[str, str]]:
         continuation = line.startswith(TABLE_CONTINUATION_INDENT)
         command_start = (
             not continuation
-            and len(parts) == 2
             and re.fullmatch(r"[a-z][a-z0-9-]*", parts[0]) is not None
         )
         if command_start:
             flush()
-            current = (parts[0], parts[1])
+            current = (parts[0], parts[1] if len(parts) > 1 else "")
         elif current is not None:
             current = (current[0], " ".join(filter(None, (current[1], stripped))))
     flush()

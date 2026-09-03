@@ -5,6 +5,7 @@ on:
     paths:
       - "npa/docker/workbench/**"
       - "npa/scripts/scan_image_omniverse_payload.py"
+      - "npa/scripts/scan_image_antioch_payload.py"
       - "**/Dockerfile*"
       - ".trivyignore"
       - "trivy.yaml"
@@ -81,6 +82,7 @@ jobs:
         run: |
           python -m pytest \
             npa/tests/docker/test_image_payload_scan.py \
+            npa/tests/docker/test_antioch_image_payload_scan.py \
             npa/tests/docker/test_packaging_contract.py \
             npa/tests/docker/test_isaac_bootstrap.py \
             -q

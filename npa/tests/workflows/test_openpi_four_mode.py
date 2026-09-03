@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import tomllib
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -13,6 +14,7 @@ from npa.orchestration.npa_workflow.skypilot_render import secret_env_hints_for_
 from npa.orchestration.npa_workflow.submit import load_spec_for_submit
 from npa.workflows.byof import openpi_pipeline as pipeline
 from npa.workflows.byof import openpi_service as service
+from npa.workflows.byof import openpi_live
 from npa.workflows.byof import openpi_service_rbac as service_rbac
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -25,6 +27,18 @@ SPEC = (
     / "openpi-pi05-four-mode.yaml"
 )
 DIGEST_IMAGE = "registry.example.invalid/openpi@sha256:" + "a" * 64
+
+
+def test_live_deployer_is_installed_publicly_and_reuses_tls_material() -> None:
+    pyproject = tomllib.loads((ROOT / "npa/pyproject.toml").read_text(encoding="utf-8"))
+    assert pyproject["project"]["scripts"]["npa-openpi-live-deploy"] == (
+        "npa.workflows.byof.openpi_live:main"
+    )
+    source = Path(openpi_live.__file__).read_text(encoding="utf-8")
+    assert 'encoded_tls["ca.crt"]' in source
+    assert "if existing_auth is None:" in source
+    assert "hmac.compare_digest" in openpi_live.gateway_program()
+    assert 'state["total_connections"]' in openpi_live.gateway_program()
 
 
 def test_terms_gate_exits_before_openpi_import_or_checkpoint_fetch(
@@ -305,6 +319,209 @@ def test_service_is_clusterip_digest_pinned_probed_and_cross_pod() -> None:
     assert service.service_resource_names("openpi-four-mode-contract") == {
         key: manifest["metadata"]["name"] for key, manifest in manifests.items()
     }
+
+
+def test_live_service_is_persistent_authenticated_and_cache_backed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for name in (
+        "NPA_MODEL_CACHE_PVC",
+        "NPA_MODEL_CACHE_HOST_PATH",
+        "NPA_MODEL_CACHE_DIR",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    manifests = openpi_live.build_live_manifests(
+        run_id="live-contract",
+        namespace="openpi-live",
+        runtime_image=DIGEST_IMAGE,
+        checkpoint_uri=pipeline.DEFAULT_CHECKPOINT_URI,
+        config_name=pipeline.DEFAULT_CONFIG_NAME,
+        expected_gpu_type="B200",
+        expected_compute_capability="10.0",
+        cache_pvc="runtime-weight-cache",
+        auth_secret="run-auth",
+        tls_secret="run-tls",
+        kubelet_source_cidrs=("192.0.2.20/32", "2001:db8::20/128"),
+        source_ranges=("192.0.2.10/32",),
+    )
+
+    assert set(manifests) == {
+        "terms_secret",
+        "deployment",
+        "service",
+        "network_policy",
+    }
+    deployment = manifests["deployment"]
+    assert deployment["spec"]["strategy"] == {"type": "Recreate"}
+    assert deployment["spec"]["replicas"] == 1
+    assert (
+        deployment["spec"]["template"]["metadata"]["labels"][
+            "app.kubernetes.io/managed-by"
+        ]
+        == openpi_live.LIVE_MANAGED_BY
+    )
+    pod = deployment["spec"]["template"]["spec"]
+    assert {
+        "name": "openpi-cache",
+        "persistentVolumeClaim": {"claimName": "runtime-weight-cache"},
+    } in pod["volumes"]
+    assert pod["securityContext"]["fsGroup"] == 1000
+    assert pod["initContainers"][0]["securityContext"]["runAsUser"] == 0
+    assert pod["initContainers"][0]["volumeMounts"] == [
+        {"name": "openpi-cache", "mountPath": "/cache"}
+    ]
+    containers = {item["name"]: item for item in pod["containers"]}
+    assert set(containers) == {"openpi-policy", "authenticated-gateway"}
+    assert all(
+        item["securityContext"]["runAsNonRoot"] is True for item in containers.values()
+    )
+    assert all(
+        item["securityContext"]["runAsUser"] == 1000
+        and item["securityContext"]["runAsGroup"] == 1000
+        for item in containers.values()
+    )
+    gateway = containers["authenticated-gateway"]
+    assert gateway["readinessProbe"]["httpGet"]["port"] == 8002
+    assert gateway["livenessProbe"]["httpGet"]["port"] == 8002
+    assert gateway["command"][:2] == ["/opt/venv/bin/python", "-c"]
+    compile(gateway["command"][2], "openpi-authenticated-gateway", "exec")
+    assert '("0.0.0.0", 8002)' in gateway["command"][2]
+    assert "Authorization" in gateway["command"][2]
+    assert "MAX_MESSAGE" in gateway["command"][2]
+    assert "REQUEST_TIMEOUT" in gateway["command"][2]
+
+    exposed = manifests["service"]["spec"]
+    assert exposed["type"] == "LoadBalancer"
+    assert exposed["externalTrafficPolicy"] == "Cluster"
+    assert exposed["ports"] == [
+        {"name": "wss", "protocol": "TCP", "port": 443, "targetPort": 8443}
+    ]
+    assert exposed["loadBalancerSourceRanges"] == ["192.0.2.10/32"]
+    ingress = manifests["network_policy"]["spec"]["ingress"]
+    assert ingress[0] == {"ports": [{"protocol": "TCP", "port": 8443}]}
+    assert ingress[1]["from"] == [
+        {"ipBlock": {"cidr": "192.0.2.20/32"}},
+        {"ipBlock": {"cidr": "2001:db8::20/128"}},
+    ]
+    probe_ports = {
+        int(container[probe]["httpGet"]["port"])
+        for container in pod["containers"]
+        for probe in ("readinessProbe", "livenessProbe")
+    }
+    assert probe_ports == {8000, 8002}
+    assert {entry["port"] for entry in ingress[1]["ports"]} == probe_ports
+    assert all(entry["protocol"] == "TCP" for entry in ingress[1]["ports"])
+    assert manifests["network_policy"]["metadata"]["annotations"] == {
+        "npa.nebius.ai/kubelet-probe-source-contract": "cilium-node-ip-ipblock",
+        "npa.nebius.ai/kubelet-probe-host-network-tradeoff": "documented",
+    }
+    assert all("from" not in rule for rule in ingress[:1])
+    assert all(
+        rule.get("from")
+        for rule in ingress
+        if any(port["port"] in probe_ports for port in rule["ports"])
+        and rule is not ingress[0]
+    )
+    rendered = openpi_live.public_contract(manifests)
+    assert "api-key" in rendered  # mounted key name, never the key value
+    assert '"stringData"' not in rendered
+    assert '"name":"run-auth","namespace"' not in rendered
+    assert '"name":"run-tls","namespace"' not in rendered
+
+
+def test_live_kubelet_sources_are_exact_internal_node_addresses() -> None:
+    nodes = [
+        SimpleNamespace(
+            status=SimpleNamespace(
+                addresses=[
+                    SimpleNamespace(type="Hostname", address="worker-a"),
+                    SimpleNamespace(type="InternalIP", address="192.0.2.30"),
+                    SimpleNamespace(type="InternalIP", address="2001:db8::30"),
+                ]
+            )
+        )
+    ]
+    assert openpi_live._kubelet_source_cidrs(nodes) == (
+        "192.0.2.30/32",
+        "2001:db8::30/128",
+    )
+    with pytest.raises(openpi_live.OpenPIServiceError, match="empty"):
+        openpi_live._kubelet_source_cidrs([])
+
+
+def test_live_cache_uses_single_writer_block_storage_contract() -> None:
+    pvc = openpi_live._cache_pvc_manifest(
+        name="runtime-weight-cache",
+        namespace="openpi-live",
+        size="64Gi",
+        storage_class="compute-csi-default-sc",
+        labels={"app.kubernetes.io/managed-by": openpi_live.LIVE_MANAGED_BY},
+    )
+
+    assert pvc["spec"]["accessModes"] == ["ReadWriteOnce"]
+    assert pvc["spec"]["storageClassName"] == "compute-csi-default-sc"
+    assert pvc["spec"]["resources"]["requests"]["storage"] == "64Gi"
+
+
+def test_live_client_bundle_is_private_and_certificate_matches_endpoint(
+    tmp_path: Path,
+) -> None:
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import padding
+
+    ca, certificate, private_key = openpi_live._certificate("192.0.2.22")
+    assert b"BEGIN CERTIFICATE" in ca
+    assert b"BEGIN CERTIFICATE" in certificate
+    assert serialization.load_pem_private_key(private_key, password=None) is not None
+    issuer = x509.load_pem_x509_certificate(ca)
+    leaf = x509.load_pem_x509_certificate(certificate)
+    issuer.public_key().verify(
+        leaf.signature,
+        leaf.tbs_certificate_bytes,
+        padding.PKCS1v15(),
+        leaf.signature_hash_algorithm,
+    )
+    assert leaf.fingerprint(hashes.SHA256())
+    bundle = tmp_path / "client"
+    openpi_live._write_client_bundle(
+        bundle,
+        endpoint="192.0.2.22",
+        ca=ca,
+        token="x" * 48,
+    )
+    assert bundle.stat().st_mode & 0o777 == 0o700
+    assert all(path.stat().st_mode & 0o777 == 0o600 for path in bundle.iterdir())
+    endpoint = json.loads((bundle / "endpoint.json").read_text(encoding="utf-8"))
+    assert endpoint == {"scheme": "wss", "host": "192.0.2.22", "port": 443}
+    assert (bundle / "api-key").read_text(encoding="utf-8").strip() == "x" * 48
+
+
+def test_live_tls_rollout_digest_changes_with_rotated_material() -> None:
+    first = openpi_live._certificate("192.0.2.22")
+    second = openpi_live._certificate("192.0.2.22")
+
+    assert openpi_live._tls_rollout_digest(*first) == openpi_live._tls_rollout_digest(
+        *first
+    )
+    assert openpi_live._tls_rollout_digest(*first) != openpi_live._tls_rollout_digest(
+        *second
+    )
+
+
+def test_live_apply_refuses_foreign_preexisting_object() -> None:
+    foreign = SimpleNamespace(metadata=SimpleNamespace(labels={}))
+
+    with pytest.raises(service.OpenPIServiceError, match="unowned"):
+        openpi_live._apply_owned(
+            read=lambda **_kwargs: foreign,
+            create=lambda **_kwargs: None,
+            patch=lambda **_kwargs: None,
+            name="live",
+            namespace="default",
+            body={},
+            run_id="live-contract",
+        )
 
 
 def test_service_server_hardware_log_is_machine_readable() -> None:
@@ -1200,7 +1417,11 @@ def test_policy_checkpoint_lands_on_the_durable_cache_when_configured(
 def test_policy_checkpoint_keeps_its_ephemeral_volume_without_a_cache(
     monkeypatch,
 ) -> None:
-    for name in ("NPA_MODEL_CACHE_PVC", "NPA_MODEL_CACHE_HOST_PATH", "NPA_MODEL_CACHE_DIR"):
+    for name in (
+        "NPA_MODEL_CACHE_PVC",
+        "NPA_MODEL_CACHE_HOST_PATH",
+        "NPA_MODEL_CACHE_DIR",
+    ):
         monkeypatch.delenv(name, raising=False)
 
     pod = _service_manifests()["deployment"]["spec"]["template"]["spec"]

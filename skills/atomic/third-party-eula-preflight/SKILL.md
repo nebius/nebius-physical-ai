@@ -73,6 +73,22 @@ dataset. A separate invalid-value workload must exit before importing the model
 or starting checkpoint access, and must run before any accepted checkpoint
 fetch. Acceptance covers only the two named Gemma policies.
 
+## Antioch Runtime Reference
+
+The proprietary `antioch-sim==0.3.63` CLI and use of the Antioch Service are
+governed by the [Antioch Terms of Service](https://antioch.com/terms), version
+dated 2026-02-28, or the operator's controlling MSA/order form. The product
+policy is explicit opt-in: require the exact run-scoped
+`NPA_ANTIOCH_ACCEPT_TERMS=YES` value before fetching or using the CLI. Reject
+absent, empty, differently cased, or alternative values before network access.
+Pass the value through the dedicated deployment Secret only; never bake it into
+the image or persist it in the runtime cache, project, dataset, credentials
+store, workflow YAML, or live-test source. Durable operation state may record
+only the public agreement name, URL, version, exact component/service scope, and
+an accepted boolean. This attestation does not grant redistribution rights: the
+public adapter remains eligible only because the built image contains no
+`antioch-sim` distribution or populated runtime cache.
+
 ## Isaac Reference
 
 Isaac runtime-fetch workloads require all of these official terms:

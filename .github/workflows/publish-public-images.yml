@@ -310,6 +310,11 @@ jobs:
           npa/.venv/bin/python npa/scripts/scan_image_omniverse_payload.py \
             --tarball "$RUNNER_TEMP/${TOOL}.tar" \
             --json "$RUNNER_TEMP/${TOOL}-payload.json"
+          if [ "$TOOL" = antioch ]; then
+            npa/.venv/bin/python npa/scripts/scan_image_antioch_payload.py \
+              --tarball "$RUNNER_TEMP/${TOOL}.tar" \
+              --json "$RUNNER_TEMP/${TOOL}-antioch-payload.json"
+          fi
           if [ "$TOOL" = ltx2 ]; then
             npa/.venv/bin/python npa/scripts/scan_image_ltx_payload.py \
               --docker-save "$RUNNER_TEMP/${TOOL}.tar" \
@@ -470,6 +475,13 @@ jobs:
             payload_attempt=$((payload_attempt + 1))
             sleep 5
           done
+          if [ "$TOOL" = antioch ]; then
+            docker pull "$exact"
+            docker save --output "$RUNNER_TEMP/${TOOL}-pushed.tar" "$exact"
+            npa/.venv/bin/python npa/scripts/scan_image_antioch_payload.py \
+              --tarball "$RUNNER_TEMP/${TOOL}-pushed.tar" \
+              --json "$RUNNER_TEMP/${TOOL}-pushed-antioch-payload.json"
+          fi
           if [ "$TOOL" = ltx2 ]; then
             npa/.venv/bin/python npa/scripts/scan_image_ltx_payload.py \
               --docker-save "$RUNNER_TEMP/${TOOL}-pushed.tar" \

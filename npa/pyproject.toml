@@ -60,6 +60,9 @@ dependencies = [
     "rerun-sdk==0.31.4",
     # Formerly the `server` extra: FastAPI policy/eval + agent backend server.
     "fastapi~=0.136.1",
+    # Antioch's supported declared-port bridge uses bounded, authenticated WSS
+    # on both legs. Keep the operator transport matched to the sim dependency.
+    "websockets==15.0.1",
 ]
 
 [project.optional-dependencies]
@@ -152,8 +155,10 @@ dev = [
 
 [project.scripts]
 npa = "npa.cli.entry:main"
+npa-openpi-live-deploy = "npa.workflows.byof.openpi_live:main"
 
 [tool.npa.supported-tools]
+antioch = "0.1.0-cli0.3.63"
 # Default LeRobot image release. Selectable package versions and their image tags
 # live in npa/src/npa/deploy/lerobot_version_manifest.json (0.5.1 + 0.6.0).
 lerobot = "cuda13-b300-0.5.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"

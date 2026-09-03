@@ -1,0 +1,30 @@
+# Replace this local-only placeholder with the operator's assigned Antioch
+# project ID before dispatch. Never commit a live project or machine ID.
+id: "replace-at-runtime"
+name: "npa-openpi-live"
+scenario_paths: ["src/scenario_v2.py"]
+
+services:
+  sim:
+    build:
+      context: "."
+      dockerfile: "Dockerfile"
+    ports:
+      # Antioch publishes this only on the adapter pod's localhost while services
+      # are up. The persistent sim service terminates authenticated TLS here;
+      # the same-pod bounded relay carries the other verified WSS leg to the
+      # B200 gateway.
+      - name: policy-relay
+        target: 8444
+        published: 18444
+    watch:
+      - action: rebuild
+        path: Dockerfile
+      - action: rebuild
+        path: src/relay_bridge.py
+
+suites:
+  mk8s_native:
+    description: "Cluster-native Franka camera-to-policy live demonstration"
+    select:
+      - tags: ["mk8s-native"]

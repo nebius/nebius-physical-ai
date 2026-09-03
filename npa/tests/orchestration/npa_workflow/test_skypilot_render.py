@@ -54,7 +54,10 @@ def test_is_npa_workflow_spec_false_for_skypilot() -> None:
 @pytest.mark.parametrize(
     ("name", "expected_image"),
     [
-        ("byof-openpi.yaml", "docker:nvidia/cuda:12.8.1-cudnn-devel-ubuntu24.04"),
+        (
+            "byof-openpi.yaml",
+            "docker:nvidia/cuda:12.8.1-cudnn-devel-ubuntu24.04@sha256:24c8e3581ea6330038b0d374920721983312627f8adbfcf390bdb4b399d280ed",
+        ),
         ("byof-wan2.2.yaml", "docker:registry.example/npa-wan2-2:"),
     ],
 )

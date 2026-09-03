@@ -19,6 +19,7 @@ accidental dead entries fail the guardrail. The retired monolithic
 | toolRef | CLI / module | Typical inputs | Typical outputs | Stub? |
 | --- | --- | --- | --- | --- |
 | `workbench.alpamayo2_super.infer` | `npa workbench alpamayo2-super infer` | pinned model/dataset revisions and PhysicalAI-AV sample index | trajectory JSON, calibrated PNG, immutable provenance under `config.output_uri` | no (real upstream VLM + diffusion expert inference on GPU) |
+| `workbench.antioch.run` | `npa workbench antioch run` | immutable Antioch project at `config.antioch_project_uri`, deployed adapter endpoint, explicit `config.antioch_state_id` (set a distinct value in each state's `params` when reusing the toolRef), `config.antioch_robot_type`, and `config.antioch_task` | verified artifacts, manifest, completion marker, and correctly labelled strict offline LeRobotDataset under `config.antioch_run_uri` | no |
 | `infra.fleet.deploy` | `npa fleet deploy` | `config.fleet_spec` | fleet deploy JSON | no |
 | `infra.soperator.deploy` | `npa soperator deploy` | `config.soperator_spec` | cluster deploy JSON | no |
 | `workbench.nurec.check` | `npa workbench nurec check` | `config.nurec_image`, `config.dataset_id` | access-check JSON (NGC pullability, HF rights, RT-core GPU) | no |

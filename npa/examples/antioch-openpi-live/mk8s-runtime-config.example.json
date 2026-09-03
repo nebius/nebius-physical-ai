@@ -1,0 +1,25 @@
+{
+  "schema_name": "npa.antioch.mk8s-live-config.v1",
+  "workflow_run": "replace-with-run-identity",
+  "state_id": "antioch-mk8s-live",
+  "kubeconfig": "/path/to/owner-readable-kubeconfig",
+  "context": "replace-with-exact-context",
+  "namespace": "workbench",
+  "adapter_image": "registry.example/npa-antioch@sha256:replace-with-reviewed-digest",
+  "policy_selector": {
+    "app.kubernetes.io/name": "replace-with-owned-policy-label"
+  },
+  "policy_gateway_port": 8443,
+  "policy_probe_ports": [8001, 8002],
+  "policy_network_policy_name": "replace-with-owned-policy-network-policy",
+  "policy_auth_secret_name": "replace-with-owned-policy-auth-secret",
+  "policy_tls_secret_name": "replace-with-owned-policy-tls-secret",
+  "policy_cache_pvc_name": "replace-with-bound-policy-cache-pvc",
+  "public_rollback_service_name": "",
+  "image_pull_secret": "",
+  "antioch_config_dir": "/path/to/mode-0700-antioch-config",
+  "antioch_project_id_file": "/path/to/mode-0600-project-id",
+  "adapter_replicas": 1,
+  "scenario_timeout_seconds": 14400,
+  "kubelet_source_cidrs": ["192.0.2.10/32"]
+}

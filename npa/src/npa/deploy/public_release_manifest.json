@@ -34,5 +34,7 @@
     "alpamayo2-super": {"tag": "0.1.0-cu128", "published_digest": "sha256:2164450f8baf57d8798f64063ea27bf11611f5b695c467de0c2e319e3134ebd5"},
     "content-agents": {"tag": "0.5.2-npa2", "published_digest": "sha256:c64aaf6201bdaa013f9d16e8497290cf166907932f036297d7abaa430cbad7db"}
   },
-  "publication_pending": {}
+  "publication_pending": {
+    "antioch": "The adapter image is redistribution-eligible but has not yet been published and verified for anonymous pull."
+  }
 }

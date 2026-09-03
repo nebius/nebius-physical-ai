@@ -32,6 +32,7 @@ CONTENT_AGENTS_IMAGE_MANIFEST_RESOURCE = "content_agents_image_manifest.json"
 PUBLIC_RELEASE_MANIFEST_RESOURCE = "public_release_manifest.json"
 
 CONTAINER_IMAGE_NAMES = {
+    "antioch": "npa-antioch",
     "lerobot": "npa-lerobot",
     "lerobot-policy": "npa-lerobot-policy",
     "genesis": "npa-genesis",
@@ -116,8 +117,10 @@ RESTRICTED_DERIVED_IMAGES: frozenset[str] = frozenset()
 OMNIVERSE_RESTRICTED_TOOLS = RESTRICTED_PUBLICATION_TOOLS
 OMNIVERSE_RESTRICTED_DERIVED_IMAGES = RESTRICTED_DERIVED_IMAGES
 
-# Tools that are licence-eligible for public redistribution but have no accepted
-# built/GPU-validated artifact yet.
+# Tools that are licence-eligible for public redistribution but have not earned
+# every publication claim yet. Antioch is CPU-only and has a built-image payload
+# scan and local capability
+# smoke, but has not been published or anonymously pulled from the public mirror.
 #
 # This is a different question from `RESTRICTED_PUBLICATION_TOOLS`, and conflating
 # them would be wrong in both directions: these are not restricted (the licensing
@@ -129,7 +132,7 @@ OMNIVERSE_RESTRICTED_DERIVED_IMAGES = RESTRICTED_DERIVED_IMAGES
 # Remove a tool from this set in the same change that records its accepted image
 # digest and its payload-scan/GPU evidence — not before.
 UNVALIDATED_PUBLICATION_TOOLS: frozenset[str] = frozenset()
-VALIDATION_CANDIDATE_TOOLS: frozenset[str] = frozenset()
+VALIDATION_CANDIDATE_TOOLS: frozenset[str] = frozenset({"antioch"})
 # Compatibility view used by publication callers and public imports. Derive it
 # from the two canonical validation-state inventories; never maintain it
 # independently.
@@ -184,6 +187,7 @@ PUBLIC_REGISTRY_HOSTS = frozenset(
 )
 
 SUPPORTED_TOOL_VERSIONS = {
+    "antioch": "0.1.0-cli0.3.63",
     # Default LeRobot image release. Selectable package versions and their
     # image tags live in lerobot_version_manifest.json.
     "lerobot": "cuda13-b300-0.5.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
@@ -327,7 +331,12 @@ def public_release_manifest() -> dict[str, Any]:
     pending = payload.get("publication_pending")
     if not isinstance(releases, dict) or not isinstance(pending, dict):
         raise RuntimeError("Public release manifest inventories must be objects")
-    if set(releases) | set(pending) != set(publicly_publishable_tools()):
+    redistribution_eligible = {
+        tool
+        for tool in CONTAINER_IMAGE_NAMES
+        if is_publicly_redistributable(tool)
+    }
+    if set(releases) | set(pending) != redistribution_eligible:
         raise RuntimeError(
             "Public release manifest must partition every publishable tool into "
             "published or publication-pending"

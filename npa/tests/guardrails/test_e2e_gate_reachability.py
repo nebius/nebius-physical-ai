@@ -23,6 +23,12 @@ MANUAL_GATES = {
     "NPA_BYOF_OD_VERIFY_RUN": "Open Dreamer verification requires an explicitly selected run",
     "NPA_BYOF_OPEN_DREAMER_LIVE_GPU": "Open Dreamer GPU mutation remains an operator acceptance test",
     "NPA_BYOF_OPENPI_LIVE_B200": "OpenPI B200 validation requires live GPU and registry access",
+    "NPA_ANTIOCH_ACCEPT_TERMS": (
+        "Antioch live validation requires the operator's own runtime terms acceptance"
+    ),
+    "NPA_OPENPI_ACCEPT_GEMMA_TERMS": (
+        "OpenPI live validation requires the operator's own Gemma terms acceptance"
+    ),
     "NPA_BYOF_WAN22_LIVE_GPU": "Wan single-GPU BYOF mutation requires an explicitly selected validation run",
     "NPA_BYOF_WAN22_MULTIGPU_LIVE_GPU": "Wan multi-GPU BYOF mutation requires an explicitly selected validation run",
     "NPA_BYOF_LIVE_UBUNTU": "BYOF Ubuntu mutation is a dedicated onboarding acceptance",
