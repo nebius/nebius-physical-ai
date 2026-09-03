@@ -14,6 +14,8 @@ from npa.agent_run_data.emitter import (
     AgentRunDataError,
     CollectionStatus,
     emit_trajectory,
+    flush_outbox,
+    goal_episode_boundary,
     resolve_dataset_config,
 )
 
@@ -21,5 +23,7 @@ __all__ = [
     "AgentRunDataError",
     "CollectionStatus",
     "emit_trajectory",
+    "flush_outbox",
+    "goal_episode_boundary",
     "resolve_dataset_config",
 ]

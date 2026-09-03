@@ -21,6 +21,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from npa.agent_backend.shipping import SHIPPED_BACKEND_MODULES
 from npa.cli.agent_embed import embedded_python_source
 from npa.cli.agent_viewer_runtime import _sha256_file
 
@@ -187,6 +188,8 @@ def test_rendered_backend_compiles(monkeypatch) -> None:
     assert '@app.get("/deployment")' in body
     assert '"deployment": dict(DEPLOYMENT)' in body
     assert "register_gpu_allocation_routes(" in body
+    assert "@goal_episode_boundary(" in body
+    assert "For every goal-level episode, load and follow `$agent-run-data-collection`" in body
     assert "POST /api/agent/gpu-allocation/attempt" in body
     assert "POST /api/agent/gpu-allocation/consent" in body
 
@@ -1209,29 +1212,7 @@ def _import_rendered_backend(monkeypatch, tmp_path, *, module_name: str):
     package = tmp_path / "agent_backend"
     package.mkdir()
     (package / "__init__.py").write_text("", encoding="utf-8")
-    for name in (
-        "memory",
-        "actions",
-        "semantic_router",
-        "sim2real_loop",
-        "retrieval",
-        "trace",
-        "foxglove",
-        "canonical_mcap",
-        "foxglove_cloud",
-        "foxglove_routes",
-        "gpu_allocation_fallback",
-        "gpu_allocation_routes",
-        "access_approval",
-        "artifact_routes",
-        "leisaac_registry",
-        "leisaac",
-        "leisaac_episodes",
-        "leisaac_bundles",
-        "leisaac_transport",
-        "leisaac_datachannel",
-        "leisaac_routes",
-    ):
+    for name in SHIPPED_BACKEND_MODULES:
         (package / f"{name}.py").write_text(
             _extract(f"/opt/npa-agent/agent_backend/{name}.py"), encoding="utf-8"
         )
@@ -1370,6 +1351,7 @@ def test_workflow_dry_run_plans_provision_even_with_existing_infra(
         ("sim2real_loop", "def drive_sim2real_loop"),
         ("retrieval", "def build_lance_store"),
         ("trace", "def analyze_traces"),
+        ("trajectory", "def goal_episode_boundary"),
         ("gpu_allocation_fallback", "def record_attempt"),
         ("gpu_allocation_routes", "def register_gpu_allocation_routes"),
         ("access_approval", "def classify_followup"),
@@ -1427,29 +1409,7 @@ def test_rendered_backend_imports_and_registers_foxglove_routes(monkeypatch, tmp
     package = tmp_path / "agent_backend"
     package.mkdir()
     (package / "__init__.py").write_text("", encoding="utf-8")
-    for name in (
-        "memory",
-        "actions",
-        "semantic_router",
-        "sim2real_loop",
-        "retrieval",
-        "trace",
-        "foxglove",
-        "canonical_mcap",
-        "foxglove_cloud",
-        "foxglove_routes",
-        "gpu_allocation_fallback",
-        "gpu_allocation_routes",
-        "access_approval",
-        "artifact_routes",
-        "leisaac_registry",
-        "leisaac",
-        "leisaac_episodes",
-        "leisaac_bundles",
-        "leisaac_transport",
-        "leisaac_datachannel",
-        "leisaac_routes",
-    ):
+    for name in SHIPPED_BACKEND_MODULES:
         (package / f"{name}.py").write_text(
             _extract(f"/opt/npa-agent/agent_backend/{name}.py"), encoding="utf-8"
         )
@@ -3102,25 +3062,7 @@ def test_rendered_backend_loads_real_skill_excerpts(monkeypatch, tmp_path):
     package = tmp_path / "agent_backend"
     package.mkdir()
     (package / "__init__.py").write_text("", encoding="utf-8")
-    for name in (
-        "memory",
-        "actions",
-        "semantic_router",
-        "sim2real_loop",
-        "retrieval",
-        "trace",
-        "foxglove",
-        "canonical_mcap",
-        "foxglove_cloud",
-        "foxglove_routes",
-        "gpu_allocation_fallback",
-        "gpu_allocation_routes",
-        "access_approval",
-        "artifact_routes",
-        "leisaac_registry",
-        "leisaac",
-        "leisaac_routes",
-    ):
+    for name in SHIPPED_BACKEND_MODULES:
         (package / f"{name}.py").write_text(
             _extract(f"/opt/npa-agent/agent_backend/{name}.py"), encoding="utf-8"
         )

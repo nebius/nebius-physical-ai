@@ -1228,6 +1228,7 @@ from agent_backend.foxglove_cloud import (
 from agent_backend.foxglove_routes import FoxgloveDeps, register_foxglove_routes
 from agent_backend.leisaac import load_manifest_artifact
 from agent_backend.leisaac_routes import LeIsaacDeps, register_leisaac_routes
+from agent_backend.trajectory import goal_episode_boundary
 
 
 def _leisaac_websocket_connect(*args, **kwargs):
@@ -3004,6 +3005,11 @@ def _agent_system_prompt() -> str:
         "You are the NPA workbench assistant on a Nebius Physical AI agent VM.",
         "Help operators configure NPA: provision infrastructure, Cosmos3, S3 storage,",
         "workflows, sim assets, and Sim2Real runs. Be concise and actionable.",
+        "For every goal-level episode, load and follow `$agent-run-data-collection` at "
+        "`skills/atomic/agent-run-data-collection/SKILL.md`; record the episode from goal "
+        "acceptance through success, failure, refusal, cancellation, or handoff as one "
+        "sanitized trajectory containing all nested events, linked to its parent session "
+        "and stored using `NPA_AGENT_DATASET_TENANT_ID` and `NPA_AGENT_DATASET_URI`.",
         "",
         "Agent HTTP APIs on this VM (same-origin relative paths; nginx proxies /api/):",
         "- GET /api/access — tenant identity, project-by-project effective access, and searchable resources",
@@ -4685,6 +4691,15 @@ def _semantic_route(user_text: str) -> dict:
         return {{"intent": None, "mode": "none", "confidence": 0.0, "tokens": 0, "source": "none"}}
 
 @app.post("/chat")
+@goal_episode_boundary(
+    active_tenant_id=lambda: str(
+        DEPLOYMENT.get("tenant_id") or os.environ.get("NEBIUS_TENANT_ID", "")
+    ),
+    active_bucket=lambda: str(
+        os.environ.get("NPA_AGENT_S3_BUCKET")
+        or os.environ.get("NEBIUS_S3_BUCKET", "")
+    ),
+)
 def chat(payload: dict):
     raw_messages = payload.get("messages", [])
     if not isinstance(raw_messages, list) or not raw_messages:
