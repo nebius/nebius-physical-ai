@@ -223,8 +223,12 @@ checkpoint directory, an immutable content-hashed S3 checkpoint manifest, and
 a read-after-write preparation RRD, qualification RRD, and every required full
 training milestone RRD that pass `rerun rrd verify`, decoded
 identity/timeline/entity inspection, journal-coverage comparison, and manifest
-hash validation. The telemetry journals, exact RRD URIs, and companion manifests
-are declared run outputs so artifact discovery can find them.
+hash validation. The telemetry journals and the pause-compatible preparation,
+qualification, 500-update, and 1,000-update RRD/manifests are declared run
+outputs so artifact discovery can find them. Later complete-recipe milestones
+remain immutable artifacts indexed by the final report's `rerun_milestones`
+list; they are not static required outputs because a deliberate 1,000-update
+pause must not be failed or retried for correctly absent future milestones.
 Offline training does not by itself claim physical-robot task success.
 
 For an explicit 1,000-update pause, the terminal status is `paused`, not

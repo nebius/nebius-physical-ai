@@ -152,24 +152,4 @@ states:
         schema: application/vnd.rerun.rrd
       - uri: "{{config.rrd_root_uri}}/progress-step-001000.manifest.json"
         schema: npa.workbench.openpi.pi05-full-droid-rerun-milestone.v1
-      - uri: "{{config.rrd_root_uri}}/progress-step-010000.rrd"
-        schema: application/vnd.rerun.rrd
-      - uri: "{{config.rrd_root_uri}}/progress-step-010000.manifest.json"
-        schema: npa.workbench.openpi.pi05-full-droid-rerun-milestone.v1
-      - uri: "{{config.rrd_root_uri}}/progress-step-025000.rrd"
-        schema: application/vnd.rerun.rrd
-      - uri: "{{config.rrd_root_uri}}/progress-step-025000.manifest.json"
-        schema: npa.workbench.openpi.pi05-full-droid-rerun-milestone.v1
-      - uri: "{{config.rrd_root_uri}}/progress-step-050000.rrd"
-        schema: application/vnd.rerun.rrd
-      - uri: "{{config.rrd_root_uri}}/progress-step-050000.manifest.json"
-        schema: npa.workbench.openpi.pi05-full-droid-rerun-milestone.v1
-      - uri: "{{config.rrd_root_uri}}/progress-step-075000.rrd"
-        schema: application/vnd.rerun.rrd
-      - uri: "{{config.rrd_root_uri}}/progress-step-075000.manifest.json"
-        schema: npa.workbench.openpi.pi05-full-droid-rerun-milestone.v1
-      - uri: "{{config.rrd_root_uri}}/progress-step-100000.rrd"
-        schema: application/vnd.rerun.rrd
-      - uri: "{{config.rrd_root_uri}}/progress-step-100000.manifest.json"
-        schema: npa.workbench.openpi.pi05-full-droid-rerun-milestone.v1
     terminal: true

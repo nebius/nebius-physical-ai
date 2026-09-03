@@ -143,7 +143,12 @@ def test_full_droid_spec_is_exactly_eight_one_gpu_nodes() -> None:
     assert state["toolRef"] == "workbench.openpi.full_droid_finetune"
     assert state["terminal"] is True
     outputs = {item["uri"]: item["schema"] for item in state["outputs"]}
-    for milestone in full_droid.FULL_PROGRESS_MILESTONES:
+    # Static workflow outputs must be valid for the operator-pause path as well as
+    # the complete recipe. Later full-run milestones remain discoverable through
+    # the final report's rerun_milestones list, but requiring them here would make
+    # a successful 1,000-update pause look failed and trigger a duplicate retry.
+    declared_milestones = {500, 1_000}
+    for milestone in declared_milestones:
         slug = f"progress-step-{milestone:06d}"
         assert outputs[f"{{{{config.rrd_root_uri}}}}/{slug}.rrd"] == (
             "application/vnd.rerun.rrd"
@@ -151,6 +156,10 @@ def test_full_droid_spec_is_exactly_eight_one_gpu_nodes() -> None:
         assert outputs[f"{{{{config.rrd_root_uri}}}}/{slug}.manifest.json"] == (
             full_droid.MILESTONE_MANIFEST_SCHEMA
         )
+    for milestone in set(full_droid.FULL_PROGRESS_MILESTONES) - declared_milestones:
+        slug = f"progress-step-{milestone:06d}"
+        assert f"{{{{config.rrd_root_uri}}}}/{slug}.rrd" not in outputs
+        assert f"{{{{config.rrd_root_uri}}}}/{slug}.manifest.json" not in outputs
     assert outputs["{{config.telemetry_uri}}"] == full_droid.TELEMETRY_SCHEMA
     prepare_outputs = {item["uri"]: item["schema"] for item in prepare["outputs"]}
     assert prepare_outputs["{{config.prepare_rrd_uri}}"] == full_droid.RERUN_SCHEMA
