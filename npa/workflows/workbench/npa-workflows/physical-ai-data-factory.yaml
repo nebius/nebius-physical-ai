@@ -37,9 +37,10 @@ kind: Workflow
 #
 # Runtime placement (see docs/workbench/guides/physical-ai-data-factory.md):
 #   Token Factory (zero-GPU, hosted): captioning, and the Cosmos Evaluator
-#     attribute-verification check's LLM + VLM calls. Verified models:
-#     Qwen/Qwen2.5-VL-72B-Instruct (VLM), nvidia/Cosmos3-Super-Reasoner
-#     (Cosmos-family critic), meta-llama/Llama-3.3-70B-Instruct (LLM).
+#     attribute-verification check's LLM + VLM calls. Current defaults:
+#     nvidia/Cosmos3-Super-Reasoner (multimodal VLM / Cosmos-family critic),
+#     meta-llama/Llama-3.3-70B-Instruct (LLM). Availability is key-scoped;
+#     preflight the live model catalog before submission.
 #   GPU (Nebius Managed K8s): Cosmos Transfer 2.5 augmentation only.
 #   CPU: config sampling, the evaluator's hallucination check, Cosmos Curator
 #     curation, FiftyOne review, finalize.
@@ -209,8 +210,8 @@ config:
   curator_motion_filter: score-only
   fiftyone_dedup_threshold: "0.10"
 
-  # --- Models (verified available on Nebius Token Factory) ---
-  caption_model: "Qwen/Qwen2.5-VL-72B-Instruct"
+  # --- Models (availability is key-scoped; preflight immediately before use) ---
+  caption_model: "nvidia/Cosmos3-Super-Reasoner"
   vlm_backend: api
   max_images: "8"
   max_tokens: "512"

@@ -81,11 +81,15 @@ Three NVIDIA components in that table are the real open-source projects:
 See `skills/NOTICE-NVIDIA-COSMOS-OSS` for exactly which upstream code runs and
 where NPA substitutes its own endpoint.
 
-**Model roles** (verified available on Nebius Token Factory):
+**Model roles** (verify against the current key-scoped Token Factory catalog):
 
-- VLM captioning + the evaluator's attribute answering: `Qwen/Qwen2.5-VL-72B-Instruct`
-- Cosmos-family reasoning critic: `nvidia/Cosmos3-Super-Reasoner`
+- VLM captioning, evaluator attribute answering, and Cosmos-family reasoning:
+  `nvidia/Cosmos3-Super-Reasoner`
 - Prompt / MCQ LLM: `meta-llama/Llama-3.3-70B-Instruct`
+
+Model availability can change independently of the workflow. Run
+`npa workbench token-factory models` immediately before execution and override
+`caption_model` if the configured multimodal model is not reachable.
 
 > **Config → augment MULTIPLY.** The `augment` stage receives the Config-Gen
 > manifest via `--configs-uri` and runs **one Cosmos Transfer 2.5 inference per
@@ -235,6 +239,20 @@ or quality-disposition checks; it should not be made a shared default.
 - **GPU (Nebius Managed K8s):** Cosmos Transfer 2.5 augmentation only.
 - **CPU:** config sampling, hallucination, temporal-consistency, and protected-
   appearance checks, Cosmos Curator curation, FiftyOne review, visualize, finalize.
+
+### Live validation scope
+
+The complete workflow was validated on reserved RTX PRO 6000 capacity with the
+pinned RoboPro physical capture: eight real segmentation-conditioned Cosmos
+Transfer 2.5 variants ran across four GPU nodes with upstream content guardrails
+enabled. One candidate passed all four attribute checks plus hallucination and a
+disjoint decoded-frame holdout at `0.907986` against the default `0.75`
+threshold. The accepted branch then completed real Cosmos Curator and FiftyOne
+Brain curation, finalized 320 artifacts, and wrote a 46,332,150-byte Rerun
+recording. The workflow completed successfully after durable resume replayed the
+already committed stages; no on-demand capacity or synthetic fallback was used.
+Concrete project, cluster, and object-store identifiers remain private runtime
+evidence.
 
 The quality gate is fail closed. PAIDF first ranks every generated candidate,
 then copies only candidates with explicit independently passing 4/4 attribute,
