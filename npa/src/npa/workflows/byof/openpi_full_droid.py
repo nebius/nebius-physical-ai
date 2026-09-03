@@ -2425,6 +2425,14 @@ def _telemetry_prefix_payload(
     return b"\n".join(lines) + b"\n"
 
 
+def _completed_optimizer_updates(optimizer_step: int) -> int:
+    """Map the upstream zero-based step to the human-facing update count."""
+
+    if optimizer_step < 0:
+        raise OpenPIPipelineError("optimizer step cannot be negative")
+    return optimizer_step + 1
+
+
 class _TrainingMilestonePublisher:
     def __init__(
         self,
@@ -2618,7 +2626,9 @@ class _TrainingMilestonePublisher:
                 source_telemetry_sha256=source_sha256,
                 source_coverage={
                     "through_optimizer_step": optimizer_step,
-                    "completed_optimizer_updates": semantic,
+                    "completed_optimizer_updates": _completed_optimizer_updates(
+                        optimizer_step
+                    ),
                     "metric_record_count": len(metric_steps),
                     "first_metric_step": min(metric_steps),
                     "last_metric_step": max(metric_steps),

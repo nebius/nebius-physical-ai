@@ -1424,6 +1424,13 @@ def test_telemetry_prefix_is_immutable_milestone_source(tmp_path: Path) -> None:
     )
 
 
+def test_completed_optimizer_updates_maps_zero_based_source_steps() -> None:
+    assert full_droid._completed_optimizer_updates(499) == 500
+    assert full_droid._completed_optimizer_updates(999) == 1_000
+    with pytest.raises(full_droid.OpenPIPipelineError, match="cannot be negative"):
+        full_droid._completed_optimizer_updates(-1)
+
+
 def test_milestone_manifest_hashes_rrd_and_journal() -> None:
     payload = full_droid._manifest_payload(
         run_id="manifest-unit",
@@ -1486,6 +1493,72 @@ def test_full_run_500_update_milestone_maps_to_source_step_499(
     assert publisher.milestones[500] == 499
     assert publisher.is_log_only(499) is True
     assert publisher.requires_checkpoint(499) is False
+
+
+def test_pause_run_reconciles_500_update_log_only_prefix(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    journal = tmp_path / "telemetry.jsonl"
+    journal.write_text("present\n", encoding="utf-8")
+    monkeypatch.setattr(
+        full_droid,
+        "_load_telemetry_records",
+        lambda _path, *, run_id: [
+            {"record_type": "metrics", "optimizer_step": step}
+            for step in range(500)
+        ],
+    )
+    publisher = full_droid._TrainingMilestonePublisher(
+        journal_path=journal,
+        run_id="pause-reconcile",
+        kind="full",
+        config=SimpleNamespace(log_interval=1),
+        prepared={},
+        runtime_image="ghcr.io/example/openpi@sha256:" + "a" * 64,
+        hardware={},
+        topology=[],
+        rrd_root_uri="s3://example.invalid/private/rrd",
+        pause_after_updates=1_000,
+    )
+    published: list[int] = []
+    publisher.publish_for_optimizer_step = published.append
+
+    publisher.reconcile_available()
+
+    assert published == [499]
+
+
+def test_full_resume_preserves_500_log_only_and_paused_1000_checkpoint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pause_manifest = {
+        "schema": full_droid.MILESTONE_MANIFEST_SCHEMA,
+        "run_id": "resume-mapping",
+        "milestone": "progress-step-001000",
+        "source_coverage": {
+            "through_optimizer_step": 999,
+            "checkpoint_materialized": True,
+        },
+    }
+    monkeypatch.setattr(full_droid, "_uri_exists", lambda _uri: True)
+    monkeypatch.setattr(full_droid, "_read_json_uri", lambda _uri: pause_manifest)
+    publisher = full_droid._TrainingMilestonePublisher(
+        journal_path=tmp_path / "telemetry.jsonl",
+        run_id="resume-mapping",
+        kind="full",
+        config=SimpleNamespace(),
+        prepared={},
+        runtime_image="ghcr.io/example/openpi@sha256:" + "a" * 64,
+        hardware={},
+        topology=[],
+        rrd_root_uri="s3://example.invalid/private/rrd",
+    )
+
+    assert publisher.milestones[500] == 499
+    assert publisher.is_log_only(499) is True
+    assert publisher.milestones[1_000] == 999
+    assert publisher.is_log_only(999) is False
+    assert publisher.requires_checkpoint(999) is True
 
 
 def test_train_parser_exposes_only_the_explicit_pause_boundary() -> None:
