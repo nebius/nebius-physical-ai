@@ -382,7 +382,7 @@ def check_registry(config: Sim2RealLoopConfig, *, probes: DoctorProbes) -> Check
             status=WARN,
             summary="Some images are not fully qualified for a pull check.",
             remedy=(
-                "Set NPA_REGISTRY or pass fully-qualified "
+                "Set NPA_SIM2REAL_REGISTRY or pass fully-qualified "
                 "<registry>/<image>:<tag> values so the agent-sa pull path can be verified."
             ),
             details=tuple(sorted(set(not_actionable))),

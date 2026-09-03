@@ -292,10 +292,11 @@ pipeline. Key safety notes are condensed below.
 - **Content safety** — `cosmos` ships a content-safety guardrail.
   `COSMOS_DISABLE_SAFETY` must remain `"0"` in production; the functional smoke
   keeps safety enabled by default.
-- **External fetches** — `isaac-lab` and `sonic` pull from `nvcr.io` (NGC auth
-  required); `groot`/`sonic` clone pinned Git refs; several images fetch from
-  Hugging Face. Base images are digest-pinned and tracked by the weekly Trivy
-  CVE scan.
+- **External fetches** — `isaac-lab` and `sonic` fetch hash-pinned Isaac wheels
+  from `pypi.nvidia.com` at runtime after EULA validation; they do not pull an
+  `nvcr.io` Isaac base. `groot`/`sonic` clone pinned Git refs, and several images
+  fetch from Hugging Face. Base images are digest-pinned and tracked by the
+  weekly Trivy CVE scan.
 - **B300 / CUDA13 family** — `base-cuda13-b300`, `cosmos3-reason`, LeRobot,
   LanceDB, Genesis, and the Sim2Real children have physical B300 capability
   evidence recorded in `blackwell-dc-images.json`. Keep per-image blockers

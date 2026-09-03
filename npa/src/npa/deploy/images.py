@@ -13,9 +13,10 @@ from typing import Any
 # Official NPA images use one public GHCR namespace. Immutable
 # ``dev-<full-git-sha>`` tags and supported release tags share each image package;
 # guarded promotion applies the release tag only to an already validated dev digest.
-# ``NPA_REGISTRY`` remains the generic operator execution override. Restricted and
-# build-your-own images must use an operator-controlled registry and are refused from
-# official GHCR.
+# ``NPA_REGISTRY`` remains the generic operator build/BYOF registry. Repository-owned
+# runtime defaults never consult it: a stale ambient or saved private registry must not
+# redirect supported public releases away from GHCR. Callers that intentionally select
+# custom bytes pass ``registry=`` (or a complete image reference) explicitly.
 PUBLIC_CONTAINER_REGISTRY_ENV = "NPA_PUBLIC_REGISTRY"
 DEFAULT_PUBLIC_CONTAINER_REGISTRY = "ghcr.io/nebius/nebius-physical-ai"
 
@@ -476,8 +477,14 @@ def container_image_for_tool(
     gpu_target: str | None = None,
     image_variant: str | None = None,
 ) -> str:
-    """Return the fully qualified image ref for a Workbench tool."""
-    resolved_registry = registry or execution_container_registry()
+    """Return a Workbench image, defaulting repository releases to public GHCR.
+
+    ``registry`` is an explicit custom-image choice. The default deliberately does not
+    inherit ``NPA_REGISTRY``: that variable is also used by BYOF/build automation and
+    legacy operator configuration, and allowing it to repoint supported runtime images
+    made otherwise-public workloads depend on private registry credentials.
+    """
+    resolved_registry = registry or DEFAULT_CONTAINER_REGISTRY
     if tool == "sonic":
         entry = sonic_image_entry(gpu_target=gpu_target, image_variant=image_variant)
         image_name = str(entry["name"])
@@ -567,7 +574,11 @@ def registry_from_env() -> str:
 
 
 def execution_container_registry() -> str:
-    """Resolve an operator override, otherwise the public GHCR release channel."""
+    """Resolve an operator build/BYOF registry, otherwise public GHCR.
+
+    Repository-owned runtime image defaults use :func:`container_image_for_tool`,
+    which intentionally does not call this compatibility helper.
+    """
     return registry_from_env() or DEFAULT_CONTAINER_REGISTRY
 
 
@@ -681,6 +692,19 @@ def is_official_container_registry(registry: str) -> bool:
         DEFAULT_PUBLIC_CONTAINER_REGISTRY.lower(),
         public_container_registry().rstrip("/").lower(),
     }
+
+
+def is_official_public_image(image: str) -> bool:
+    """Whether ``image`` belongs to an official anonymous NPA GHCR namespace."""
+
+    candidate = str(image or "").strip().removeprefix("docker:").lower()
+    return any(
+        candidate.startswith(f"{registry}/")
+        for registry in {
+            DEFAULT_PUBLIC_CONTAINER_REGISTRY.lower(),
+            public_container_registry().rstrip("/").lower(),
+        }
+    )
 
 
 def is_publicly_redistributable(tool: str) -> bool:

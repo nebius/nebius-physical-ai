@@ -593,8 +593,8 @@ def test_selector_matches_packaging_contract_classification() -> None:
 
 # --- Resolution guard: a restricted tool must never resolve from a public registry ----
 #
-# The docs tell external consumers to point NPA_REGISTRY at the public release channel. Asking
-# for a restricted tool in that state used to silently produce a public image reference
+# Explicitly selecting the public release namespace for a restricted tool must
+# never silently produce a public image reference
 # for something we must never publish. Private registries are unaffected —
 # build-your-own is the licensed path, whichever registry that is.
 

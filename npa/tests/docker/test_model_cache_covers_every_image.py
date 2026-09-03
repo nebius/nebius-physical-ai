@@ -122,6 +122,8 @@ EXCUSED_EMPTY_DIRS = {
     "isaac-cache": "Isaac wheel closure; warm-isaac-cache.yaml is its shared volume",
     "tmp": "scratch space",
     "shm": "/dev/shm, sized for the renderer",
+    "npa-sudo-shim": "standard init-container sudo shim (tiny script), never a weights cache",
+    "dshm": "/dev/shm sized for the NRE renderer/reconstruction (medium Memory)",
 }
 
 SRC_ROOT = Path(__file__).resolve().parents[2] / "src" / "npa"

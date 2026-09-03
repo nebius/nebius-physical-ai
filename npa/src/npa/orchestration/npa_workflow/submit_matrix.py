@@ -551,6 +551,31 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         ),
     ),
     SubmitLiveCase(
+        "living-lab-nurec-fanout.yaml",
+        "gpu",
+        secret_envs=(
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "HF_TOKEN",
+            "NGC_API_KEY",
+        ),
+        runtime=True,
+        expected_parallel_tasks=16,
+        rotation_skip=True,
+        skip_reason=(
+            "16-way parallel fan-out needs the operator's dedicated 16 x RTX PRO "
+            "6000 reserved fleet (two eight-GPU workers), which is not part of the "
+            "bounded daily GPU rotation; exercised as its own live 16-GPU run."
+        ),
+        notes=(
+            "Living-lab digital twin: sixteen independent NuRec/NRE reconstructions "
+            "(8 real PPISP sequences x 2 view sectors), one RTX PRO 6000 each, "
+            "then a CPU barrier join that requires 16/16 real zone manifests + "
+            "USDZ + GPU identity and publishes digital_twin.json + panorama.png. "
+            "Needs NGC_API_KEY and the dedicated 16-GPU RTX capacity."
+        ),
+    ),
+    SubmitLiveCase(
         "content-agents-rigid-object.yaml",
         "gpu",
         secret_envs=(

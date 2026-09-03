@@ -28,8 +28,10 @@ refusal conditions; this skill records NPA-specific build and GPU details.
    then record the accepted release digest for anonymous read-only health checks.
 
 Use `NPA_PUBLIC_REGISTRY` only to select the configured official namespace.
-`NPA_REGISTRY` remains the generic execution override. Do not introduce a second
-official source registry or a separate pre-release package naming convention.
+`NPA_REGISTRY` remains the generic build/BYOF destination. Repository-owned
+runtime defaults ignore it; custom runtime bytes require an explicit image or
+workflow `--registry`. Do not introduce a second official source registry or a
+separate pre-release package naming convention.
 
 ## Packaging And Runtime Fetch
 

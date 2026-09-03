@@ -2822,24 +2822,15 @@ def _emit_compact_submit_plan(plan, *, infrastructure: Mapping[str, object]) -> 
 def _resolve_submit_registry(registry: str, project: str) -> str:
     """Return the registry a submit should pull from.
 
-    An explicit --registry wins, followed by NPA_REGISTRY and a legacy saved
-    project override. With none of those, image resolution uses the anonymous
-    GHCR default. Keeping saved overrides in this chain preserves existing custom
-    registry configurations without requiring registry setup for new projects.
+    Only ``--registry`` repoints repository-owned tool images. With no explicit
+    override, the renderer selects accepted public GHCR releases. ``NPA_REGISTRY``
+    and legacy saved registry values remain available to BYOF/build paths, but must
+    not silently turn a public workload into a private-registry pull.
     """
 
+    del project
     explicit = str(registry or "").strip()
-    if explicit:
-        return explicit
-    configured_env = str(os.environ.get("NPA_REGISTRY") or "").strip()
-    if configured_env:
-        return configured_env
-    try:
-        from npa.clients.config import resolve_container_registry
-
-        return str(resolve_container_registry(project or None) or "").strip()
-    except Exception:  # noqa: BLE001 - fall back to the render's own default
-        return ""
+    return explicit
 
 
 def _preflight_submit_images(
@@ -2955,7 +2946,11 @@ def _preflight_image_bootstrap_contracts(
         parse_image_reference,
         resolve_registry_credentials,
     )
-    from npa.deploy.images import requires_skypilot_bootstrap_runtime_probe
+    from npa.deploy.images import (
+        SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS,
+        requires_skypilot_bootstrap_runtime_probe,
+        tool_for_image_name,
+    )
 
     check_by_image = {str(getattr(item, "image", "")): item for item in pull_checks}
     if observation_timeout_seconds < 0:
@@ -2966,8 +2961,20 @@ def _preflight_image_bootstrap_contracts(
         str(item).strip() for item in images if str(item).strip()
     ):
         try:
-            host = parse_image_reference(image).registry
-            username, password = resolve_registry_credentials(host, mint=True)
+            reference = parse_image_reference(image)
+            image_tool = tool_for_image_name(reference.repository.rsplit("/", 1)[-1])
+            if (
+                image_tool
+                and image_tool not in SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS
+            ):
+                # The packaging contract deliberately scopes this attestation to
+                # a subset of NPA images. Anonymous manifest pullability is the
+                # complete preflight for registered images outside that subset.
+                continue
+            host = reference.registry
+            username, password = resolve_registry_credentials(
+                host, image=image, mint=True
+            )
             digest, labels = fetch_image_config_metadata(
                 image, username=username, password=password
             )
