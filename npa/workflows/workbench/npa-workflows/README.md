@@ -102,6 +102,8 @@ below (see `npa/src/npa/orchestration/npa_workflow/blueprints.py`). Deploy guide
 | `byof-maniskill.yaml` | OSS registry: ManiSkill pinned image + PickCube smoke |
 | `byof-mujoco-playground.yaml` | OSS registry: MuJoCo Playground pinned image + Cartpole smoke |
 | `byof-robocasa.yaml` | OSS registry: RoboCasa pinned image + headless kitchen-task smoke |
+| `robocasa-smoke.yaml` | Native RoboCasa workbench: task registration, asset availability, headless EGL reset, and a real random rollout with video through the npa-robocasa service |
+| `robocasa-data-policy.yaml` | Native multi-task PandaOmron trajectories → LeRobotDataset v3 → real ACT training → exact-checkpoint evaluation on disjoint RoboCasa tasks → insights |
 | `byof-openpi.yaml` | OSS registry: OpenPI pi0.5 Polaris direct + WebSocket-served Franka joint-position inference on `B200:1`; runtime-only checkpoint and scoped Gemma gate ([guide](../../../../docs/workbench/openpi-pi05-polaris.md)) |
 | `openpi-pi05-four-mode.yaml` | Connected OpenPI runtime graph: live negative gate, direct inference, private cross-pod ClusterIP serving, real pi0.5 LoRA optimizer/checkpoint smoke, and disjoint held-out evaluation; consumes the immutable digest built by `byof-openpi.yaml` ([guide](../../../../docs/workbench/openpi-pi05-polaris.md)) |
 | `openpi-pi05-full-droid-finetune.yaml` | Complete upstream pi0.5 full-DROID recipe: checksum-synced RLDS 1.0.1 and preparation RRD, ten-million-frame normalization, fixed 100-update distributed qualification RRD, global batch 256, 100,000 updates on eight one-RTX-PRO-6000 nodes, durable resume, immutable checkpoint lineage, and verified progress RRD snapshots at 1k/10k/25k/50k/75k/100k ([guide](../../../../docs/workbench/openpi-pi05-polaris.md)) |

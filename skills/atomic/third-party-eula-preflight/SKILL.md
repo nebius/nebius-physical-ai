@@ -30,7 +30,8 @@ documents a default.
 4. For runtime-fetched Hugging Face weights, do not add an NPA EULA/terms
    boolean, confirmation flag, empty placeholder, or model-check bypass. The
    operator's token and its actual upstream permissions are the only local gate
-   for a gated repository. Probe every required repository before provisioning;
+   for a gated repository. Probe every required repository before provisioning,
+   using exact-revision payload bytes and never repository metadata;
    public repositories may pass anonymously. A token authenticates a fetch and
    does not change the artifact's redistribution classification.
 5. For non-interactive Isaac execution, forward the default only to Isaac-backed

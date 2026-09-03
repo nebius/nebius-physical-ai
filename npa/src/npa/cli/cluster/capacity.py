@@ -175,6 +175,112 @@ def capacity_advice_items(
     return [item for item in items if isinstance(item, dict)] if isinstance(items, list) else []
 
 
+def capacity_block_group_payload(
+    capture: CaptureFn, *, nebius_bin: str, block_group_id: str
+) -> dict[str, Any] | None:
+    """Read one capacity block group by ID, or None when it cannot be read.
+
+    Read-only inventory used to prove a STRICT reservation is active, in the
+    right tenant/region, for the right platform, and has enough free GPUs --
+    the reservation-side gate that replaces the ordinary GPU-family quota for a
+    bound pool.
+    """
+
+    result = capture(
+        [
+            nebius_bin,
+            "capacity",
+            "capacity-block-group",
+            "get",
+            "--id",
+            block_group_id,
+            "--format",
+            "json",
+        ]
+    )
+    raw = getattr(result, "stdout", "") or ""
+    if getattr(result, "returncode", 1) != 0 or not raw.strip():
+        return None
+    try:
+        payload = json.loads(raw)
+        return payload if isinstance(payload, dict) else None
+    except Exception:  # noqa: BLE001 - unreadable reservation must fail closed
+        return None
+
+
+def capacity_block_group_error(
+    capture: CaptureFn,
+    *,
+    nebius_bin: str,
+    block_group_id: str,
+    tenant_id: str,
+    region: str,
+    platform: str,
+    required_gpus: int,
+) -> str | None:
+    """Return an actionable error when the STRICT reservation cannot cover the
+    request, else None.
+
+    The ordinary GPU-family quota does not govern a bound pool: reservation
+    GPUs come from the named block. This check therefore validates the block
+    itself instead -- owner tenant, region, platform, active state, and remaining
+    capacity. Fail-closed: an unreadable block blocks (None is only returned for
+    a genuinely sufficient, correct reservation).
+    """
+
+    payload = capacity_block_group_payload(
+        capture, nebius_bin=nebius_bin, block_group_id=block_group_id
+    )
+    if payload is None:
+        return (
+            f"Could not read capacity block group {block_group_id}; refusing to "
+            "apply a STRICT reservation-backed node group without capacity evidence. "
+            "Check `nebius capacity capacity-block-group get --id "
+            "<capacity-block-group-id>` (owner/region/platform/state) and that the "
+            "block is active and in this tenant."
+        )
+    metadata = payload.get("metadata") or {}
+    status = payload.get("status") or {}
+    parent_id = str(metadata.get("parent_id") or "")
+    if parent_id and parent_id != tenant_id:
+        return (
+            f"Capacity block group {block_group_id} belongs to a different tenant "
+            f"than {tenant_id}; refusing to apply."
+        )
+    block_region = str(status.get("region") or "")
+    if block_region and block_region != region:
+        return (
+            f"Capacity block group {block_group_id} is in region {block_region!r}, "
+            f"not {region!r}; refusing to apply."
+        )
+    affinity = (status.get("resource_affinity") or {}).get("compute_v1") or {}
+    block_platform = str(affinity.get("platform") or "")
+    if block_platform and block_platform != platform:
+        return (
+            f"Capacity block group {block_group_id} is scoped to platform "
+            f"{block_platform!r}, not {platform!r}; refusing to apply."
+        )
+    state = str(status.get("state") or "")
+    if state and state != "STATE_ACTIVE":
+        return (
+            f"Capacity block group {block_group_id} is not active "
+            f"(state {state!r}); refusing to apply."
+        )
+    limit = _int_or_none(status.get("current_limit"))
+    usage = _int_or_none(status.get("usage"))
+    if limit is not None:
+        used = 0 if usage is None else usage
+        available = max(0, limit - used)
+        if available < required_gpus:
+            return (
+                f"Capacity block group {block_group_id} has {available} of "
+                f"{limit} GPU(s) free, but this cluster requests {required_gpus}; "
+                "refusing to apply a STRICT reservation-backed node group it cannot "
+                "satisfy."
+            )
+    return None
+
+
 def capacity_advice_reachable(
     capture: CaptureFn, *, nebius_bin: str, tenant_id: str
 ) -> bool:

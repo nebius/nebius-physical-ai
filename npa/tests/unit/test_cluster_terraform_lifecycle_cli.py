@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import typer
 from typer.testing import CliRunner
 
 from npa.cli.cluster import app
@@ -375,6 +376,23 @@ def test_up_runs_terraform_writes_kubeconfig_and_validates(
                                 }
                             }
                         ]
+                    }
+                )
+            )
+        if args[:4] == ["nebius", "capacity", "capacity-block-group", "get"]:
+            # STRICT reservation validation: active, right tenant/region/platform,
+            # with enough free GPUs for the 2x8gpu request (16).
+            return _completed(
+                json.dumps(
+                    {
+                        "metadata": {"id": "capacityblockgroup-test", "parent_id": "tenant-a"},
+                        "status": {
+                            "region": "region-a",
+                            "state": "STATE_ACTIVE",
+                            "current_limit": "48",
+                            "usage": "12",
+                            "resource_affinity": {"compute_v1": {"platform": "gpu-rtx6000"}},
+                        },
                     }
                 )
             )
@@ -2949,3 +2967,158 @@ def test_fresh_shared_up_does_not_create_network_when_capacity_preflight_fails(
 
     assert result.exit_code != 0
     assert "quota blocked" in result.output
+
+
+# -----------------------------------------------------------------------------
+# STRICT reservation preflight: MIG + non-MIG reservations use the reservation
+# (never the ordinary on-demand GPU quota); plain on-demand still uses quota.
+# All mocked at the call site -- no live infrastructure.
+# -----------------------------------------------------------------------------
+
+
+def _cp(stdout: str = "", returncode: int = 0) -> subprocess.CompletedProcess[str]:
+    return subprocess.CompletedProcess(
+        args=[], returncode=returncode, stdout=stdout, stderr=""
+    )
+
+
+def _block_payload(tenant: str = "tenant-a") -> str:
+    return json.dumps(
+        {
+            "metadata": {"id": "cg-1", "parent_id": tenant},
+            "status": {
+                "region": "region-a",
+                "state": "STATE_ACTIVE",
+                "current_limit": "48",
+                "usage": "12",
+                "resource_affinity": {"compute_v1": {"platform": "gpu-rtx6000"}},
+            },
+        }
+    )
+
+
+def _quota_payload(limit: str = "100", usage: str = "0") -> str:
+    return json.dumps(
+        {
+            "spec": {"limit": limit},
+            "status": {"usage": usage},
+        }
+    )
+
+
+def _strict_preflight_tfvars(*, mig: bool, block: bool, gpu_nodes: int = 2) -> dict:
+    tfvars = {
+        "gpu_nodes_count": gpu_nodes,
+        "gpu_nodes_platform": "gpu-rtx6000",
+        "gpu_nodes_preset": "8gpu-96vcpu-872gb",
+        "gpu_nodes_preemptible": False,
+        "tenant_id": "tenant-a",
+        "region": "region-a",
+        "mig_enabled": mig,
+        "capacity_block_group": "cg-1" if block else "",
+    }
+    return tfvars
+
+
+def test_preflight_non_mig_strict_reservation_skips_quota_and_validates_block(
+    monkeypatch,
+) -> None:
+    """A non-MIG STRICT pool draws on the reservation, not ordinary on-demand quota."""
+    seen = []
+
+    def fake_run_capture(args, **kwargs):
+        seen.append(args)
+        if args[0] == "nebius" and "capacity-block-group" in args:
+            return _cp(_block_payload())
+        raise AssertionError(f"ordinary quota must not be consulted for STRICT: {args}")
+
+    monkeypatch.setattr(tf_mod, "_run_capture", fake_run_capture)
+    tfvars = _strict_preflight_tfvars(mig=False, block=True)
+    tf_mod._preflight_gpu_capacity("nebius", tfvars, {})
+    assert any("capacity-block-group" in a for a in seen)
+    assert not any("quota-allowance" in a for a in seen)
+
+
+def test_preflight_non_mig_strict_reservation_insufficient_fails(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        tf_mod,
+        "_run_capture",
+        lambda args, **kwargs: _cp(
+            _block_payload().replace('"current_limit": "48"', '"current_limit": "8"')
+        ),
+    )
+    with pytest.raises(typer.BadParameter, match="cannot satisfy"):
+        tf_mod._preflight_gpu_capacity(
+            "nebius", _strict_preflight_tfvars(mig=False, block=True), {}
+        )
+
+
+def test_preflight_mig_strict_reservation_valid(monkeypatch) -> None:
+    """MIG STRICT still validates the reservation and skips ordinary quota."""
+    seen = []
+
+    def fake_run_capture(args, **kwargs):
+        seen.append(args)
+        if args[0] == "nebius" and "capacity-block-group" in args:
+            return _cp(_block_payload())
+        raise AssertionError(f"ordinary quota must not be consulted for MIG STRICT: {args}")
+
+    monkeypatch.setattr(tf_mod, "_run_capture", fake_run_capture)
+    tf_mod._preflight_gpu_capacity(
+        "nebius", _strict_preflight_tfvars(mig=True, block=True), {}
+    )
+    assert any("capacity-block-group" in a for a in seen)
+    assert not any("quota-allowance" in a for a in seen)
+
+
+def test_preflight_ordinary_on_demand_uses_quota_when_insufficient(monkeypatch) -> None:
+    """Plain on-demand (no reservation) still gates on the ordinary GPU quota."""
+    quota = json.dumps({"spec": {"limit": "4"}, "status": {"usage": "0"}})
+    advice = json.dumps(
+        {
+            "items": [
+                {
+                    "spec": {
+                        "region": "region-a",
+                        "compute_instance": {
+                            "platform": "gpu-rtx6000",
+                            "preset": {"name": "8gpu-96vcpu-872gb", "resources": {"gpu_count": 8}},
+                        },
+                    },
+                    "status": {"on_demand": {"availability_level": "AVAILABILITY_LEVEL_AVAILABLE", "limit": "100"}},
+                }
+            ]
+        }
+    )
+
+    def fake_run_capture(args, **kwargs):
+        if args[:4] == ["nebius", "quotas", "quota-allowance", "get-by-name"]:
+            return _cp(quota)
+        if args[:4] == ["nebius", "capacity", "resource-advice", "list"]:
+            return _cp(advice)
+        raise AssertionError(args)
+
+    monkeypatch.setattr(tf_mod, "_run_capture", fake_run_capture)
+    # 2 nodes x 8gpu preset = 16 required, but quota allows only 4.
+    with pytest.raises(typer.BadParameter, match="GPU quota is insufficient"):
+        tf_mod._preflight_gpu_capacity(
+            "nebius", _strict_preflight_tfvars(mig=False, block=False), {}
+        )
+
+
+def test_preflight_ordinary_on_demand_sufficient_passes(monkeypatch) -> None:
+    seen = []
+
+    def fake_run_capture(args, **kwargs):
+        seen.append(args)
+        if args[2] == "get-by-name":
+            return _cp(_quota_payload(limit="100", usage="0"))
+        return _cp("[]")
+
+    monkeypatch.setattr(tf_mod, "_run_capture", fake_run_capture)
+    tf_mod._preflight_gpu_capacity(
+        "nebius", _strict_preflight_tfvars(mig=False, block=False), {}
+    )
+    assert any("quota-allowance" in a for a in seen)

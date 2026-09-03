@@ -25,7 +25,6 @@ def _mock_fiftyone_serverless_env(mocker):
             aws_secret_access_key="SECRET",
         ),
     )
-    mocker.patch("npa.cli.fiftyone.resolve_container_registry", return_value="registry.example")
     mocker.patch("npa.cli.fiftyone.container_image_for_tool", return_value="registry.example/npa-fiftyone:smoke")
     return mocker.patch("npa.cli.fiftyone.resolve_subnet", return_value="vpcsubnet-auto")
 

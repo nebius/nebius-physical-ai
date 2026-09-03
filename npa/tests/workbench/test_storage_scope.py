@@ -95,6 +95,22 @@ def test_s3_scope_enforces_bucket_and_prefix(operation: str) -> None:
             scope.authorize(candidate, operation=operation)
 
 
+@pytest.mark.parametrize("operation", ["read", "write"])
+def test_s3_scope_accepts_one_trailing_prefix_delimiter(operation: str) -> None:
+    scope = StorageScope.from_config(s3_roots=["s3://allowed-bucket/team/run/"])
+
+    target = scope.authorize("s3://allowed-bucket/team/run/", operation=operation)
+
+    assert (target.bucket, target.key) == ("allowed-bucket", "team/run")
+    for candidate in (
+        "s3://allowed-bucket/team/run//",
+        "s3://allowed-bucket/team//run/",
+        "s3://allowed-bucket/team/run/../secret.json",
+    ):
+        with pytest.raises(StorageAuthorizationError):
+            scope.authorize(candidate, operation=operation)
+
+
 @pytest.mark.parametrize(
     "module_name",
     ["npa.workbench.dataset.storage", "npa.workbench.insights.storage"],

@@ -369,6 +369,8 @@ try:
         from omni.isaac.lab_rl.rsl_rl import RslRlVecEnvWrapper
     from rsl_rl.runners import OnPolicyRunner
     env_cfg = parse_env_cfg(TASK, device=SIM_DEVICE, num_envs=N)
+    from npa.workflows.sim2real.isaac_assets_compat import remap_moved_franka_usd
+    print("ROLLOUT_ROBOT_USD_EFFECTIVE", remap_moved_franka_usd(env_cfg), flush=True)
     if SIM_DEVICE == "cpu":
         if N != 1:
             raise RuntimeError("CPU physics camera fallback requires ROLLOUT_COUNT=1")
@@ -440,6 +442,8 @@ try:
             print("cfg loader", loader, "failed:", repr(e), flush=True)
     if agent_cfg is None:
         raise RuntimeError("could not load rsl_rl_cfg_entry_point for task")
+    from npa.workflows.sim2real.isaac_assets_compat import migrate_rsl_rl_agent_cfg
+    agent_cfg = migrate_rsl_rl_agent_cfg(agent_cfg)
     acfg = agent_cfg.to_dict() if hasattr(agent_cfg, "to_dict") else dict(agent_cfg)
     runner = OnPolicyRunner(env, acfg, log_dir=None, device=SIM_DEVICE)
     trained = False

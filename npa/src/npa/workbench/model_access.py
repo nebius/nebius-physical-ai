@@ -25,7 +25,33 @@ from npa.workflows.sim2real_health import FAIL, PASS, WARN, CheckResult, has_fai
 HF = "huggingface"
 NGC = "ngc"
 TOKEN_FACTORY = "token_factory"
-HF_GATING_LAST_VERIFIED = "2026-08-25"
+HF_GATING_LAST_VERIFIED = "2026-08-31"
+
+_HF_PAYLOAD_SUFFIXES = (
+    ".arrow",
+    ".bin",
+    ".ckpt",
+    ".jsonl",
+    ".mp4",
+    ".parquet",
+    ".pt",
+    ".pth",
+    ".safetensors",
+    ".tar",
+    ".tar.gz",
+    ".zip",
+)
+_HF_METADATA_FILENAMES = {
+    ".gitattributes",
+    "config.json",
+    "license",
+    "license.md",
+    "model_card.md",
+    "readme",
+    "readme.md",
+    "tokenizer.json",
+    "tokenizer_config.json",
+}
 
 
 @dataclass(frozen=True)
@@ -38,6 +64,25 @@ class GatedAsset:
     gated: bool
     note: str = ""
     repo_type: str = "model"
+    revision: str = ""
+    official_url: str = ""
+    terms_revision: str = ""
+    probe_path: str = ""
+
+
+def usable_hf_payload_probe(asset: GatedAsset) -> bool:
+    """Return whether a gated HF asset names a pinned, non-metadata payload."""
+
+    if asset.provider != HF or not asset.gated:
+        return True
+    revision = asset.revision.strip()
+    path = asset.probe_path.strip().strip("/")
+    if not revision or not path or ".." in path.split("/"):
+        return False
+    basename = path.rsplit("/", 1)[-1].casefold()
+    if basename in _HF_METADATA_FILENAMES or basename.startswith(("readme", "license")):
+        return False
+    return basename.endswith(_HF_PAYLOAD_SUFFIXES)
 
 
 # This tuple is the single source of truth for the models the access check
@@ -46,7 +91,7 @@ class GatedAsset:
 # `gated_hf_repos()` / `check_workbench_access()` all derive from it, so no other
 # file needs to change.
 # Gating metadata was reverified against Hugging Face's authoritative model and
-# dataset APIs on 2026-08-14; capability-default drift tests below keep membership
+# dataset APIs on 2026-08-31; capability-default drift tests below keep membership
 # current, while the online preflight remains the final access authority.
 #
 # The entries mirror the tool default-model constants in:
@@ -60,7 +105,13 @@ class GatedAsset:
 # updated. `gated=True` marks repos that require accepting the license on Hugging
 # Face before the token can download them.
 WORKBENCH_ASSETS: tuple[GatedAsset, ...] = (
-    GatedAsset("nvidia/Alpamayo2-Super", HF, ("alpamayo2-super",), False),
+    GatedAsset(
+        "nvidia/Alpamayo2-Super",
+        HF,
+        ("alpamayo2-super",),
+        False,
+        revision="00554695e729a6ff0b6281fd2c81b18d06e33dbe",
+    ),
     GatedAsset(
         "nvidia/PhysicalAI-Autonomous-Vehicles",
         HF,
@@ -71,12 +122,82 @@ WORKBENCH_ASSETS: tuple[GatedAsset, ...] = (
             "interactively; dataset bytes are non-transferable and runtime-only."
         ),
         repo_type="dataset",
+        revision="b719eea7f0a63619ef51ec7f54178af0937ef050",
+        probe_path=(
+            "calibration/camera_intrinsics.offline/"
+            "camera_intrinsics.offline.chunk_0000.parquet"
+        ),
+        official_url="https://huggingface.co/datasets/nvidia/PhysicalAI-Autonomous-Vehicles",
+        terms_revision="nvidia-av-dataset-license-current",
     ),
-    GatedAsset("nvidia/GR00T-N1.7-3B", HF, ("groot",), False),
+    GatedAsset(
+        "nvidia/GR00T-N1.7-3B",
+        HF,
+        ("groot",),
+        False,
+        revision="2fc962b973bccdd5d8ce4f67cc63b264d6886495",
+    ),
     GatedAsset("nvidia/GEAR-SONIC", HF, ("sonic",), False),
-    GatedAsset("nvidia/Cosmos-Transfer2.5-2B", HF, ("paidf", "sim2real"), True),
-    GatedAsset("nvidia/Cosmos-Reason2-2B", HF, ("groot",), True),
-    GatedAsset("nvidia/Cosmos-Reason2-8B", HF, ("cosmos",), True),
+    GatedAsset(
+        "nvidia/Cosmos-Transfer2.5-2B",
+        HF,
+        ("cosmos2", "paidf", "sim2real"),
+        True,
+        revision="b67b64abda3801a9aceddbff2bdb86126c06db74",
+        probe_path="auto/multiview/4ecc66e9-df19-4aed-9802-0d11e057287a_ema_bf16.pt",
+        official_url="https://huggingface.co/nvidia/Cosmos-Transfer2.5-2B",
+        terms_revision="huggingface-gated-repository-current",
+    ),
+    GatedAsset(
+        "nvidia/Cosmos-Transfer2.5-2B",
+        HF,
+        ("cosmos2", "paidf", "sim2real"),
+        True,
+        revision="eb5325b77d358944da58a690157dd2b8071bbf85",
+        probe_path="auto/multiview/4ecc66e9-df19-4aed-9802-0d11e057287a_ema_bf16.pt",
+        official_url="https://huggingface.co/nvidia/Cosmos-Transfer2.5-2B",
+        terms_revision="huggingface-gated-repository-current",
+    ),
+    GatedAsset(
+        "nvidia/Cosmos-Transfer2.5-2B",
+        HF,
+        ("cosmos2", "paidf", "sim2real"),
+        True,
+        revision="dea7737ca29dd8d9086413c6dc5724b8250a0bb4",
+        probe_path="auto/multiview/4ecc66e9-df19-4aed-9802-0d11e057287a_ema_bf16.pt",
+        official_url="https://huggingface.co/nvidia/Cosmos-Transfer2.5-2B",
+        terms_revision="huggingface-gated-repository-current",
+    ),
+    GatedAsset(
+        "nvidia/Cosmos-Transfer2.5-2B",
+        HF,
+        ("cosmos2", "paidf", "sim2real"),
+        True,
+        revision="23057a4167b89de89a4a397fdbf3887994d115eb",
+        probe_path="auto/multiview/4ecc66e9-df19-4aed-9802-0d11e057287a_ema_bf16.pt",
+        official_url="https://huggingface.co/nvidia/Cosmos-Transfer2.5-2B",
+        terms_revision="huggingface-gated-repository-current",
+    ),
+    GatedAsset(
+        "nvidia/Cosmos-Reason2-2B",
+        HF,
+        ("groot",),
+        True,
+        revision="9ce19a195e423419c349abfc86fd07178b230561",
+        probe_path="model.safetensors",
+        official_url="https://huggingface.co/nvidia/Cosmos-Reason2-2B",
+        terms_revision="huggingface-gated-repository-current",
+    ),
+    GatedAsset(
+        "nvidia/Cosmos-Reason2-8B",
+        HF,
+        ("cosmos",),
+        True,
+        revision="a9fae2cf89dc64db96b12860417f0eb403013bb9",
+        probe_path="model-00001-of-00004.safetensors",
+        official_url="https://huggingface.co/nvidia/Cosmos-Reason2-8B",
+        terms_revision="huggingface-gated-repository-current",
+    ),
     GatedAsset(
         "nvidia/Cosmos3-Super-Reasoner",
         TOKEN_FACTORY,
@@ -89,9 +210,36 @@ WORKBENCH_ASSETS: tuple[GatedAsset, ...] = (
     ),
     GatedAsset("nvidia/Cosmos-Reason1-7B", HF, ("cosmos",), False),
     GatedAsset("nvidia/Cosmos3-Nano", HF, ("cosmos3",), False),
-    GatedAsset("nvidia/Cosmos-Guardrail1", HF, ("cosmos3",), True),
-    GatedAsset("nvidia/Cosmos-1.0-Guardrail", HF, ("cosmos3-serving",), True),
-    GatedAsset("nvidia/Cosmos-1.0-Diffusion-7B-Text2World", HF, ("cosmos",), True),
+    GatedAsset(
+        "nvidia/Cosmos-Guardrail1",
+        HF,
+        ("cosmos3",),
+        True,
+        revision="d6d4bfa899a71454a700907664f3e88f503950cf",
+        probe_path="video_content_safety_filter/safety_filter.pt",
+        official_url="https://huggingface.co/nvidia/Cosmos-Guardrail1",
+        terms_revision="huggingface-gated-repository-current",
+    ),
+    GatedAsset(
+        "nvidia/Cosmos-1.0-Guardrail",
+        HF,
+        ("cosmos3-serving",),
+        True,
+        revision="cf03c0395fac8c4de386c0bdab12cc4fc8d66362",
+        probe_path="video_content_safety_filter/safety_filter.pt",
+        official_url="https://huggingface.co/nvidia/Cosmos-1.0-Guardrail",
+        terms_revision="huggingface-gated-repository-current",
+    ),
+    GatedAsset(
+        "nvidia/Cosmos-1.0-Diffusion-7B-Text2World",
+        HF,
+        ("cosmos",),
+        True,
+        revision="749ad047f60de0ab405ed078fd050ab2d35856f7",
+        probe_path="model.pt",
+        official_url="https://huggingface.co/nvidia/Cosmos-1.0-Diffusion-7B-Text2World",
+        terms_revision="huggingface-gated-repository-current",
+    ),
     GatedAsset(
         "nvidia/PhysicalAI-NuRec-PPISP",
         HF,
@@ -105,17 +253,46 @@ WORKBENCH_ASSETS: tuple[GatedAsset, ...] = (
         ("token_factory",),
         True,
         note="Only needed to self-host; Token Factory serves it hosted (no HF gating).",
+        official_url="https://huggingface.co/meta-llama/Llama-3.3-70B-Instruct",
+        terms_revision="llama-3.3-community-license-current",
+        revision="6f6073b423013f6a7d4d9f39144961bfbfbc386b",
+        probe_path="model-00001-of-00030.safetensors",
     ),
     GatedAsset("Qwen/Qwen2-VL-7B-Instruct", HF, ("vlm_eval",), False),
     GatedAsset(
         "Qwen/Qwen2.5-VL-72B-Instruct", HF, ("vlm_eval", "token_factory"), False
     ),
     GatedAsset("lerobot/pusht", HF, ("lerobot", "sim2real"), False),
+    GatedAsset(
+        "nvcr.io/nvidia/nre/nre-ga:26.04",
+        NGC,
+        ("nurec",),
+        True,
+        note=(
+            "A free individual NGC account and personal API key are supported; "
+            "no enterprise organization administrator or service key is required."
+        ),
+        repo_type="container",
+        revision="26.04",
+        official_url=(
+            "https://catalog.ngc.nvidia.com/orgs/nvidia/nre/containers/nre-ga"
+        ),
+        terms_revision="nvidia-nurec-ngc-governing-terms-current",
+    ),
 )
 
 # Capabilities whose NVIDIA containers/models are pulled from NGC and therefore
 # need a valid NGC API key in addition to Hugging Face access.
-NGC_CAPABILITIES: tuple[str, ...] = ("nurec",)
+NGC_CAPABILITIES: tuple[str, ...] = tuple(
+    sorted(
+        {
+            capability
+            for asset in WORKBENCH_ASSETS
+            if asset.provider == NGC
+            for capability in asset.capabilities
+        }
+    )
+)
 
 
 def hf_model_url(repo: str) -> str:
@@ -174,6 +351,14 @@ def _cap_suffix(asset: GatedAsset) -> str:
     return f" [{', '.join(asset.capabilities)}]"
 
 
+def _hf_access_page(asset: GatedAsset) -> str:
+    official = asset.official_url or hf_model_url(asset.repo)
+    canonical = hf_model_url(asset.repo)
+    if official == canonical:
+        return official
+    return f"{official} (canonical repository URL: {canonical})"
+
+
 def _redact_secret(text: Any, secret: str) -> str:
     """Keep validator diagnostics useful without ever returning a credential."""
 
@@ -184,7 +369,7 @@ def _redact_secret(text: Any, secret: str) -> str:
 def check_hf_asset(
     asset: GatedAsset,
     token: str,
-    hf_validator: Callable[[str, str, str], Any] | None,
+    hf_validator: Callable[..., Any] | None,
 ) -> CheckResult:
     """Check whether *token* can access one gated Hugging Face repo."""
 
@@ -197,7 +382,7 @@ def check_hf_asset(
                 status=WARN,
                 summary=f"No HF token; cannot verify gated access to {asset.repo}.{caps}",
                 remedy=(
-                    f"Accept the license at {hf_model_url(asset.repo)} while signed in, "
+                    f"Accept the license at {_hf_access_page(asset)} while signed in, "
                     "then export HF_TOKEN and run `npa configure --no-interactive "
                     "--save-env-credentials`."
                 ),
@@ -218,8 +403,24 @@ def check_hf_asset(
             status=PASS,
             summary=f"HF token present; {asset.repo} access not verified (offline).{caps}",
         )
+    if not usable_hf_payload_probe(asset):
+        return CheckResult(
+            name=name,
+            status=FAIL,
+            summary=(
+                f"Gated HF asset {asset.repo} has no exact payload probe; access "
+                f"cannot be verified.{caps}"
+            ),
+            remedy="Add a pinned revision and non-metadata probe_path to GatedAsset.",
+        )
     try:
-        result = hf_validator(token, asset.repo, asset.repo_type)
+        result = hf_validator(
+            token,
+            asset.repo,
+            asset.repo_type,
+            asset.revision,
+            asset.probe_path,
+        )
     except Exception as exc:  # noqa: BLE001 - a probe exception is transient
         return CheckResult(
             name=name,
@@ -249,7 +450,7 @@ def check_hf_asset(
                 status=FAIL,
                 summary=f"HF token cannot access gated repo {asset.repo}.{caps}",
                 remedy=(
-                    f"Open {hf_model_url(asset.repo)} while signed in and click "
+                    f"Open {_hf_access_page(asset)} while signed in and click "
                     "'Agree and access repository', then re-run this check."
                 ),
                 details=(error,),
@@ -298,25 +499,19 @@ def check_ngc_key(
             status=WARN,
             summary="NGC_API_KEY is not set (needed for the NuRec NRE image pull).",
             remedy=(
-                "Create one at https://org.ngc.nvidia.com/setup/api-key and run "
+                "Sign in with an ordinary individual NGC account at "
+                "https://ngc.nvidia.com/signin, create a personal API key, and run "
                 "`npa configure --no-interactive --save-env-credentials` with "
                 "NGC_API_KEY set in the environment."
             ),
-        )
-    if not key.lower().startswith(("nvapi-", "nvapi_")):
-        return CheckResult(
-            name="ngc",
-            status=WARN,
-            summary="NGC_API_KEY is set but does not look like an NGC key.",
-            remedy="NGC keys start with 'nvapi-'. Re-check the value.",
         )
     if ngc_validator is None:
         return CheckResult(
             name="ngc",
             status=WARN,
             summary=(
-                "NGC_API_KEY is present and well-formed; repository entitlement "
-                "was not probed in offline mode."
+                "NGC_API_KEY is present; validity and repository entitlement were "
+                "not probed in offline mode."
             ),
         )
     try:
@@ -370,7 +565,7 @@ def check_workbench_access(
     *,
     hf_token: str,
     ngc_key: str,
-    hf_validator: Callable[[str, str, str], Any] | None = None,
+    hf_validator: Callable[..., Any] | None = None,
     ngc_validator: Callable[[str], str] | None = None,
     capabilities: Iterable[str] | None = None,
     gated_only: bool = False,
@@ -481,4 +676,5 @@ __all__ = [
     "gated_hf_repos",
     "has_failure",
     "hf_model_url",
+    "usable_hf_payload_probe",
 ]

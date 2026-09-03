@@ -154,12 +154,12 @@ def test_s3_pass_and_fail_with_injected_client() -> None:
     assert "NoSuchBucket" in " ".join(bad.details)
 
 
-def test_registry_warns_on_unqualified_images() -> None:
-    # Default reference images are bare npa-* names, not registry-qualified.
+def test_registry_passes_for_public_default_images() -> None:
+    # Repository-owned defaults are fully qualified anonymous GHCR references.
     result = check_registry(
         _config(), probes=DoctorProbes(image_inspector=lambda i: True)
     )
-    assert result.status == health.WARN
+    assert result.status == health.PASS
 
 
 def test_registry_inspects_qualified_images() -> None:

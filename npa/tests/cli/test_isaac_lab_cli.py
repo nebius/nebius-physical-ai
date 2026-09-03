@@ -122,7 +122,6 @@ def test_isaac_lab_deploy_defaults_to_reproducible_container(tmp_path: Path, moc
     update_status = mocker.patch("npa.cli.isaac_lab.update_workbench_app_status")
     mocker.patch("npa.cli.isaac_lab.write_manifest")
     mocker.patch("npa.cli.isaac_lab.list_projects", return_value={})
-    mocker.patch("npa.cli.isaac_lab.resolve_container_registry", return_value="registry.example")
     mocker.patch(
         "npa.cli.isaac_lab.container_image_for_tool",
         return_value="registry.example/npa-isaac-lab:3.0.0b2.post1",
@@ -662,7 +661,6 @@ def _mock_isaac_serverless_env(mocker):
             aws_secret_access_key="SECRET",
         ),
     )
-    mocker.patch("npa.cli.isaac_lab.resolve_container_registry", return_value="registry.example")
     mocker.patch("npa.cli.isaac_lab.container_image_for_tool", return_value="registry.example/npa-isaac-lab:smoke")
     return mocker.patch("npa.cli.isaac_lab.resolve_subnet", return_value="vpcsubnet-auto")
 

@@ -53,6 +53,7 @@ def test_adapter_convert_dispatches_to_adapter(
         fps=30,
         robot_type="testbot",
         task="test task",
+        task_from_metadata=False,
     )
 
 

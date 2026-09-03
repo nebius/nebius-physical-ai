@@ -37,7 +37,7 @@ def _public_asset():
 
 
 def test_catalog_matches_current_nvidia_hf_gating() -> None:
-    assert HF_GATING_LAST_VERIFIED == "2026-08-25"
+    assert HF_GATING_LAST_VERIFIED == "2026-08-31"
     repos = {a.repo for a in WORKBENCH_ASSETS}
     assert "nvidia/GR00T-N1.7-3B" in repos
     assert "nvidia/Alpamayo2-Super" in repos
@@ -75,8 +75,13 @@ def test_assets_for_filters_by_capability() -> None:
 
 
 def test_paidf_access_is_scoped_to_the_gated_transfer_model() -> None:
+    from npa.workbench.cosmos.control_contract import COSMOS_TRANSFER_CHECKPOINTS
+
     assets = assets_for(["paidf"])
-    assert [asset.repo for asset in assets] == ["nvidia/Cosmos-Transfer2.5-2B"]
+    assert {asset.repo for asset in assets} == {"nvidia/Cosmos-Transfer2.5-2B"}
+    assert {asset.revision for asset in assets} == {
+        checkpoint.revision for checkpoint in COSMOS_TRANSFER_CHECKPOINTS.values()
+    }
     assert all(asset.gated for asset in assets)
 
 
@@ -94,7 +99,7 @@ def test_hf_present_unverified_offline() -> None:
 
 def test_hf_pass_when_validator_ok() -> None:
     result = check_hf_asset(
-        _gated_asset(), "hf_x", hf_validator=lambda t, r, k: _HFResult(ok=True)
+        _gated_asset(), "hf_x", hf_validator=lambda *args: _HFResult(ok=True)
     )
     assert result.status == PASS
     assert "access ok" in result.summary.lower()
@@ -105,7 +110,7 @@ def test_hf_gated_fail_points_at_acceptance_url() -> None:
     result = check_hf_asset(
         asset,
         "hf_x",
-        hf_validator=lambda t, r, k: _HFResult(
+        hf_validator=lambda *args: _HFResult(
             ok=False, status_code=403, error="no access"
         ),
     )
@@ -118,7 +123,7 @@ def test_hf_public_401_is_token_problem_not_gating() -> None:
     result = check_hf_asset(
         _public_asset(),
         "hf_bad",
-        hf_validator=lambda t, r, k: _HFResult(ok=False, status_code=401, error="bad"),
+        hf_validator=lambda *args: _HFResult(ok=False, status_code=401, error="bad"),
     )
     assert result.status == FAIL
     assert "settings/tokens" in result.remedy
@@ -128,7 +133,7 @@ def test_hf_transient_error_warns() -> None:
     result = check_hf_asset(
         _gated_asset(),
         "hf_x",
-        hf_validator=lambda t, r, k: _HFResult(
+        hf_validator=lambda *args: _HFResult(
             ok=False, status_code=None, error="timeout"
         ),
     )
@@ -140,8 +145,8 @@ def test_hf_validator_diagnostic_redacts_token() -> None:
     result = check_hf_asset(
         _gated_asset(),
         token,
-        hf_validator=lambda t, r, k: _HFResult(
-            ok=False, status_code=403, error=f"upstream echoed {t}"
+        hf_validator=lambda token, *_args: _HFResult(
+            ok=False, status_code=403, error=f"upstream echoed {token}"
         ),
     )
 
@@ -152,8 +157,8 @@ def test_hf_validator_diagnostic_redacts_token() -> None:
 def test_hf_validator_exception_is_sanitized() -> None:
     token = "hf_synthetic_exception_secret"
 
-    def _raise(t, r, k):
-        raise RuntimeError(f"upstream echoed {t}")
+    def _raise(token, *_args):
+        raise RuntimeError(f"upstream echoed {token}")
 
     result = check_hf_asset(_gated_asset(), token, hf_validator=_raise)
 
@@ -172,20 +177,24 @@ def test_ngc_skipped_when_not_needed() -> None:
     assert "not required" in result.summary
 
 
-def test_ngc_pass_with_valid_prefix() -> None:
+@pytest.mark.parametrize("credential", ["nvapi-abc", "registry-credential"])
+def test_ngc_online_accepts_provider_validated_credential_shapes(
+    credential: str,
+) -> None:
+    observed: list[str] = []
+
     def validator(key: str) -> str:
+        observed.append(key)
         return "reachable"
 
-    assert (
-        check_ngc_key("nvapi-abc", needed=True, ngc_validator=validator).status == PASS
-    )
-    assert (
-        check_ngc_key("nvapi_abc", needed=True, ngc_validator=validator).status == PASS
-    )
+    result = check_ngc_key(credential, needed=True, ngc_validator=validator)
+    assert result.status == PASS
+    assert observed == [credential]
+    assert credential not in " ".join((result.summary, result.remedy, *result.details))
 
 
-def test_ngc_well_formed_key_is_unverified_offline() -> None:
-    result = check_ngc_key("nvapi-abc", needed=True)
+def test_ngc_nonempty_credential_is_unverified_offline() -> None:
+    result = check_ngc_key("registry-credential", needed=True)
 
     assert result.status == WARN
     assert "not probed in offline mode" in result.summary
@@ -254,8 +263,10 @@ def test_ngc_validator_exception_is_sanitized() -> None:
     assert result.details == ("probe failed (RuntimeError)",)
 
 
-def test_ngc_warns_on_bad_prefix() -> None:
-    assert check_ngc_key("bogus", needed=True).status == WARN
+def test_ngc_offline_does_not_infer_validity_from_format() -> None:
+    result = check_ngc_key("bogus", needed=True)
+    assert result.status == WARN
+    assert "not probed" in result.summary
 
 
 def test_check_workbench_access_ngc_first_then_hf() -> None:
@@ -283,7 +294,7 @@ def test_check_workbench_access_flags_failure_on_gated_denial() -> None:
     results = check_workbench_access(
         hf_token="hf_x",
         ngc_key="nvapi-x",
-        hf_validator=lambda t, r, k: _HFResult(
+        hf_validator=lambda *args: _HFResult(
             ok=False, status_code=403, error="denied"
         ),
         capabilities=["groot"],
@@ -326,7 +337,7 @@ def test_access_note_all_ok_is_one_positive_line() -> None:
     results = check_workbench_access(
         hf_token="hf_x",
         ngc_key="nvapi-x",
-        hf_validator=lambda t, r, k: _HFResult(ok=True),
+        hf_validator=lambda *args: _HFResult(ok=True),
         ngc_validator=lambda key: "reachable",
         gated_only=True,
     )
@@ -339,7 +350,8 @@ def test_access_note_all_ok_is_one_positive_line() -> None:
 def test_access_note_lists_hf_failures_on_one_line() -> None:
     denied = {"nvidia/Cosmos-Reason2-2B"}
 
-    def _validator(token, repo, repo_type):
+    def _validator(token, repo, repo_type, revision, probe_path):
+        del token, repo_type, revision, probe_path
         return _HFResult(
             ok=repo not in denied, status_code=403 if repo in denied else 200
         )
@@ -358,7 +370,7 @@ def test_access_note_ngc_missing_names_capabilities() -> None:
     results = check_workbench_access(
         hf_token="hf_x",
         ngc_key="",
-        hf_validator=lambda t, r, k: _HFResult(ok=True),
+        hf_validator=lambda *args: _HFResult(ok=True),
         gated_only=True,
     )
     note = access_note(results)
@@ -372,7 +384,7 @@ def test_access_note_distinguishes_ngc_credential_rejection() -> None:
     results = check_workbench_access(
         hf_token="hf_synthetic",
         ngc_key="nvapi-synthetic",
-        hf_validator=lambda t, r, k: _HFResult(ok=True),
+        hf_validator=lambda *args: _HFResult(ok=True),
         ngc_validator=lambda key: "auth-401",
         gated_only=True,
     )

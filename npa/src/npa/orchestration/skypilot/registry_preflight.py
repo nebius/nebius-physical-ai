@@ -523,7 +523,7 @@ def _registry_host(value: str) -> str:
 
 
 def resolve_registry_credentials(
-    registry: str = "", *, mint: bool = True
+    registry: str = "", *, image: str = "", mint: bool = True
 ) -> tuple[str, str]:
     """Return explicit credentials scoped to the selected registry host.
 
@@ -532,6 +532,15 @@ def resolve_registry_credentials(
     server username/password through the documented environment.
     """
     del mint
+
+    if image:
+        from npa.deploy.images import is_official_public_image
+
+        # A stale credential can turn a valid anonymous GHCR pull into HTTP 403.
+        # Official releases are deliberately public, so never attach operator or
+        # legacy private-registry credentials to these exact package namespaces.
+        if is_official_public_image(image):
+            return "", ""
 
     import os
 
@@ -612,7 +621,9 @@ def check_image_pulls_with_credentials(
         )
         try:
             host = parse_image_reference(image).registry
-            username, password = resolve_registry_credentials(host, mint=mint)
+            username, password = resolve_registry_credentials(
+                host, image=image, mint=mint
+            )
         except (RegistryPreflightError, RuntimeError) as exc:
             operator_check = ImagePullCheck(
                 image=image,

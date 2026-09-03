@@ -30,7 +30,6 @@ from npa.clients.config import (
     default_project_name,
     default_workbench_name,
     resolve_config,
-    resolve_container_registry,
     resolve_credentials,
     resolve_environment,
     resolve_project_storage,
@@ -985,11 +984,7 @@ def _train_serverless(
     except LeRobotVersionError as exc:
         _fail(str(exc))
         return
-    resolved_image = image or container_image_for_tool(
-        "lerobot",
-        registry=resolve_container_registry(proj_alias),
-        tag=image_tag,
-    )
+    resolved_image = image or container_image_for_tool("lerobot", tag=image_tag)
     if existing is not None:
         info = existing
         if not submit_only and existing.status not in {"succeeded", "failed", "cancelled"}:
@@ -1175,7 +1170,7 @@ def _profile_train_serverless(
     out = output_path.rstrip("/") + "/"
     client = ServerlessClient()
     platform = _lerobot_gpu_platform(gpu_type)
-    resolved_image = image or container_image_for_tool("lerobot", registry=resolve_container_registry(proj_alias))
+    resolved_image = image or container_image_for_tool("lerobot")
 
     try:
         existing = client.get_job(name, resolved_project_id)
@@ -2072,10 +2067,8 @@ def deploy(
     if not proj_alias:
         proj_alias = env_region or ("byovm" if byovm else "default")
 
-    container_registry = resolve_container_registry(proj_alias)
     container_image = container_image_for_tool(
         "lerobot",
-        registry=container_registry,
         tag=resolved_lerobot_version,
     )
     cloud_init_workbench_type = (

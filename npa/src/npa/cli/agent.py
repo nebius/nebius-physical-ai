@@ -197,7 +197,7 @@ DEFAULT_LLM_MODELS = (
     DEFAULT_LLM_MODEL,
     "Qwen/Qwen2.5-VL-72B-Instruct",
 )
-AGENT_UI_VERSION = "2026081903"
+AGENT_UI_VERSION = "2026082901"
 ARTIFACT_DISCOVERY_CONTRACT = "s3-source-qualified-v1"
 DEFAULT_HTTPS_PORT = 443
 AGENT_SOURCE_ROOT = "/opt/npa-agent/npa-src"
@@ -1228,6 +1228,7 @@ from agent_backend.foxglove_cloud import (
 from agent_backend.foxglove_routes import FoxgloveDeps, register_foxglove_routes
 from agent_backend.leisaac import load_manifest_artifact
 from agent_backend.leisaac_routes import LeIsaacDeps, register_leisaac_routes
+from agent_backend.trajectory import goal_episode_boundary
 
 
 def _leisaac_websocket_connect(*args, **kwargs):
@@ -3004,6 +3005,11 @@ def _agent_system_prompt() -> str:
         "You are the NPA workbench assistant on a Nebius Physical AI agent VM.",
         "Help operators configure NPA: provision infrastructure, Cosmos3, S3 storage,",
         "workflows, sim assets, and Sim2Real runs. Be concise and actionable.",
+        "For every goal-level episode, load and follow `$agent-run-data-collection` at "
+        "`skills/atomic/agent-run-data-collection/SKILL.md`; record the episode from goal "
+        "acceptance through success, failure, refusal, cancellation, or handoff as one "
+        "sanitized trajectory containing all nested events, linked to its parent session "
+        "and stored using `NPA_AGENT_DATASET_TENANT_ID` and `NPA_AGENT_DATASET_URI`.",
         "",
         "Agent HTTP APIs on this VM (same-origin relative paths; nginx proxies /api/):",
         "- GET /api/access — tenant identity, project-by-project effective access, and searchable resources",
@@ -3052,8 +3058,9 @@ def _agent_system_prompt() -> str:
             "",
             "Before Sim2Real submit, confirm scene/robot/camera selection.",
             "Always use real registry-qualified images: supported defaults resolve from",
-            "public GHCR, while `NPA_REGISTRY` or a legacy `container_registry` value selects",
-            "custom/private images. Never keep registry placeholders in runnable workflows.",
+            "public GHCR and ignore ambient or legacy private-registry configuration.",
+            "Select custom/private bytes with an explicit image or workflow `--registry`;",
+            "never keep registry placeholders in runnable workflows.",
             "For BYOF solution onboarding, use `npa workbench byof run`",
             "(or `npa/scripts/run_byof_repo.py`) to containerize an OSS repo,",
             "push to an explicitly selected customer registry, then launch a real Isaac-Lab run",
@@ -3209,6 +3216,7 @@ from agent_backend.memory import RunMemory, JsonFileStore
 from agent_backend import retrieval as _retrieval
 from agent_backend import trace as _agent_tracing
 from agent_backend import gpu_allocation_fallback as _gpu_fallback
+from agent_backend import access_approval as _access_approval
 
 {_AGENT_WORKFLOW_EMBED}
 
@@ -3900,6 +3908,7 @@ def _provision_agent_infra(
             gpu_platform=str(requested.get("gpu_platform") or ""),
             gpu_preset=str(requested.get("gpu_preset") or ""),
             gpu_driver_mode=str(requested.get("gpu_driver_mode") or ""),
+            gpu_workload_profile=str(requested.get("gpu_workload_profile") or ""),
             managed_driver_preset=str(requested.get("managed_driver_preset") or ""),
             gpu_health_stabilization_seconds=int(requested.get("gpu_health_stabilization_seconds", 120)),
             gpu_health_timeout_minutes=int(requested.get("gpu_health_timeout_minutes", 60)),
@@ -4684,6 +4693,15 @@ def _semantic_route(user_text: str) -> dict:
         return {{"intent": None, "mode": "none", "confidence": 0.0, "tokens": 0, "source": "none"}}
 
 @app.post("/chat")
+@goal_episode_boundary(
+    active_tenant_id=lambda: str(
+        DEPLOYMENT.get("tenant_id") or os.environ.get("NEBIUS_TENANT_ID", "")
+    ),
+    active_bucket=lambda: str(
+        os.environ.get("NPA_AGENT_S3_BUCKET")
+        or os.environ.get("NEBIUS_S3_BUCKET", "")
+    ),
+)
 def chat(payload: dict):
     raw_messages = payload.get("messages", [])
     if not isinstance(raw_messages, list) or not raw_messages:
@@ -4726,6 +4744,67 @@ def chat(payload: dict):
     # Preserve merged session history across the LLM path (do not rebuild from a
     # short client payload and wipe prior turns after the model returns).
     merged_history = list(history)
+    pending_access = state.get("access_approval")
+    if not isinstance(pending_access, dict):
+        pending_access = {{}}
+    # Describe-this/multimodal turns must reach the visual path even when their
+    # scene metadata happens to contain words such as model, dataset, catalog,
+    # or approval.  Match the other grounded shortcuts: never classify a visual
+    # turn as a deterministic access-approval conversation.
+    access_action = "" if visual_turn else _access_approval.classify_followup(
+        last_content, has_pending_plan=bool(pending_access)
+    )
+    if access_action:
+        open_urls = []
+        if access_action in {{"plan", "recheck"}}:
+            access_plan = _access_approval.build_plan(
+                capabilities=None,
+                resume_command="npa configure --prepare-catalog-access",
+                state_path=Path("/opt/npa-agent/access-approvals.json"),
+                force=access_action == "recheck",
+            )
+            state["access_approval"] = access_plan
+            reply = _access_approval.format_plan_reply(access_plan)
+        elif access_action == "open":
+            access_plan = pending_access
+            open_urls = [
+                str(url)
+                for url in (access_plan.get("official_urls") or [])
+                if str(url).startswith("https://")
+            ]
+            reply = _access_approval.format_open_reply(access_plan)
+            state["access_approval"] = {{**access_plan, "pages_opened": True}}
+        else:
+            access_plan = pending_access
+            reply = _access_approval.format_later_reply(access_plan)
+            state["access_approval"] = access_plan
+        history = [*merged_history, {{"role": "assistant", "content": reply}}][-80:]
+        session.update(
+            {{
+                "id": session_id,
+                "title": str(session.get("title") or _chat_session_title(history)),
+                "chat_history": history,
+            }}
+        )
+        session = _save_chat_session(state, session, active=True)
+        _save_state(state)
+        response = {{
+            "ok": True,
+            "model": "grounded",
+            "reply": reply,
+            "reasoning": None,
+            "grounded": True,
+            "tier": "grounded-access-approval",
+            "apis_used": ["access-approvals"],
+            "skills_used": ["access-approval"],
+            "approval_plan": access_plan,
+            "open_urls": open_urls,
+            "safe_handoff": access_action in {{"open", "later"}},
+            "resume_ready": str(access_plan.get("status") or "") == "ready",
+            "session_id": session["id"],
+            "session": public_chat_session_payload(session),
+        }}
+        return response
     # Grounded "where did this come from / what was the original input" answer.
     # Resolved from the active run's real artifacts. For a metadata/text turn we
     # return it directly (deterministic, 0 tokens); for a framed vision turn we
@@ -8259,7 +8338,7 @@ def provision_infra(payload: dict | None = None):
         key: body[key]
         for key in (
             "gpu_nodes", "cpu_nodes", "gpu_platform", "gpu_preset",
-            "gpu_driver_mode", "managed_driver_preset",
+            "gpu_driver_mode", "gpu_workload_profile", "managed_driver_preset",
             "gpu_health_stabilization_seconds", "gpu_health_timeout_minutes",
             "gpu_cuda_smoke",
             "gpu_cuda_smoke_image", "mig", "mig_strategy", "mig_config",

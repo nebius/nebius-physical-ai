@@ -13,11 +13,9 @@ import typer
 from rich.console import Console
 
 from npa.clients.config import (
-    ConfigError,
     default_project_name,
     default_workbench_name,
     list_projects,
-    resolve_container_registry,
     resolve_environment,
     resolve_project_storage,
 )
@@ -252,21 +250,8 @@ def sonic_image(
 ) -> str:
     if image:
         return image
-    try:
-        registry = resolve_container_registry(project)
-    except ConfigError:
-        registry = ""
-    return (
-        container_image_for_tool(
-            "sonic",
-            registry=registry or None,
-            gpu_target=gpu_target or None,
-            image_variant=image_variant or None,
-        )
-        if registry
-        else container_image_for_tool(
-            "sonic",
-            gpu_target=gpu_target or None,
-            image_variant=image_variant or None,
-        )
+    return container_image_for_tool(
+        "sonic",
+        gpu_target=gpu_target or None,
+        image_variant=image_variant or None,
     )

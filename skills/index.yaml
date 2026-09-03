@@ -29,6 +29,17 @@ licenses:
     applies_to:
       - physical-ai-data-factory
 skills:
+  - name: access-approval
+    category: atomic
+    when_to_use: "Prepare, verify, or resume human-bound Hugging Face and NVIDIA NGC access approvals for exact catalog or workflow dependencies, including consent-gated opening of official approval pages."
+    path: skills/atomic/access-approval/SKILL.md
+    smoke:
+      - type: file_exists
+        path: npa/src/npa/agent_backend/access_approval.py
+      - type: file_exists
+        path: npa/src/npa/workbench/access_approval.py
+      - type: file_exists
+        path: npa/tests/agent_eval/test_access_approval.py
   - name: agent-development
     category: atomic
     when_to_use: "Build, enhance, or test the NPA chat agent backend: grounded-first routing, cost-aware Token Factory model selection, the embedded-backend mechanism, and cheap-token test tiers."
@@ -400,6 +411,20 @@ skills:
       - type: npa_workflow_yaml
         paths:
           - npa/workflows/workbench/npa-workflows/bdd100k-pipeline.yaml
+  - name: robocasa
+    category: tools
+    when_to_use: "Run RoboCasa kitchen-task simulation as a first-class NPA workbench tool: Gymnasium task registration, kitchen asset availability, headless EGL environment reset, and random rollouts with video artifacts through the npa-robocasa service."
+    path: skills/tools/robocasa/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "robocasa", "run", "--help"]
+        contains: "capability"
+      - type: cli_help
+        args: ["workbench", "robocasa", "deploy", "--help"]
+        contains: "gpu-type"
+      - type: npa_workflow_yaml
+        paths:
+          - npa/workflows/workbench/npa-workflows/robocasa-smoke.yaml
   - name: foxglove
     category: tools
     when_to_use: "Embed, operate, or debug the Foxglove viewer in the NPA agent: the @foxglove/embed TypeScript SDK, MCAP recordings, the npa-foxglove-embed container, and /api/foxglove/* endpoints."

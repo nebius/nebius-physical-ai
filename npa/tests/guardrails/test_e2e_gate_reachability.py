@@ -44,6 +44,9 @@ MANUAL_GATES = {
     "NPA_E2E_MK8S_GPU_HEALTH": "fresh reserved mk8s GPU validation requires explicit operator authorization",
     "NPA_E2E_MK8S_FRESH_CLUSTER": "prevents accidentally targeting an existing or production-adjacent cluster",
     "NPA_E2E_MK8S_RESERVED_CAPACITY": "prevents silent fallback from reviewed reserved GPU capacity",
+    "NPA_E2E_MK8S_RTX_RENDERING": (
+        "targets an operator-selected retained RTX cluster and creates live graphics validation pods"
+    ),
     "NPA_TEST_GROOT_NGC_E2E": "gated NGC model access remains a product-specific manual test",
     "NPA_E2E_CLEAR_WORKBENCH_IMAGES": "optional negative-path knob, not a suite gate",
     "NPA_SRC_S3_URI": "runtime source-staging prerequisite, not an authorization gate",
