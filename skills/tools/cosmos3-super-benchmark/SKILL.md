@@ -1,6 +1,6 @@
 ---
 name: cosmos3-super-benchmark
-description: Reproduce, operate, validate, or troubleshoot the fixed Cosmos3-Super primary four-cell benchmark on B200/H200 or complete ten-cell B200 record through the immutable public vLLM-Omni image.
+description: Reproduce, operate, validate, or troubleshoot the fixed Cosmos3-Super eight-GPU benchmark or isolated single-H200 TP-1 validation through the immutable public vLLM-Omni image.
 ---
 
 # Cosmos3-Super B200/H200 Benchmark
@@ -13,6 +13,13 @@ this workload runs the public vLLM-Omni synchronous video endpoint. The default
 `primary` suite measures four independent-service arrangements on one complete
 B200 or H200 node. The `b200-full` suite reproduces the public machine-readable
 ten-cell B200 record and its 240 measured attempts.
+
+The separate `h200-single-gpu` suite is a functional/performance validation of
+one TP-1 service on one H200. It fixes one warmup and 24 sequential measured
+requests with the same model, image, prompt, seed, workload, timeout, and MP4
+gates. Report its rates per GPU-hour and service-hour. Never label it eight-GPU
+node throughput or compare it as the paper's `8x1` cell, which uses eight
+independent one-GPU services on a complete node.
 
 ## Fixed contract
 
@@ -30,6 +37,8 @@ ten-cell B200 record and its 240 measured attempts.
 - `b200-full` adds a concurrency-two cell for every topology and delayed repeats
   of the 1x8 concurrency-one and concurrency-two cells. Request concurrency is
   per service and is independent of replica count.
+- `h200-single-gpu` fixes topology `1x1`, H200, 24 measured attempts, one request
+  in flight, and reports an explicit non-paper validation scope.
 
 Do not turn the reference frontier in the documentation into expected output or
 a pass threshold. A new report is live evidence only when its per-attempt

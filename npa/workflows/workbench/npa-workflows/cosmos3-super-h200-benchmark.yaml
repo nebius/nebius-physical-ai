@@ -11,7 +11,7 @@ metadata:
 
 config:
   bucket: example-bucket
-  runtime_image: "registry.example.invalid/operator/npa-cosmos3-super-benchmark@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  runtime_image: "registry.example.invalid/operator/cosmos3-super-benchmark-wrapper@sha256:0000000000000000000000000000000000000000000000000000000000000000"
   image_pull_secret: npa-cosmos3-super-registry
   prefix: "runs/{{run.id}}/cosmos3-super-h200-benchmark"
   output_uri: "s3://{{config.bucket}}/{{config.prefix}}/"

@@ -36,7 +36,8 @@ ATTEMPT_SCHEMA_VERSION = "npa.cosmos3-super.b200-attempt.v1"
 SUPPORTED_GPU_FAMILIES = ("B200", "H200")
 PRIMARY_SUITE = "primary"
 B200_FULL_SUITE = "b200-full"
-SUITE_CHOICES = (PRIMARY_SUITE, B200_FULL_SUITE)
+H200_SINGLE_GPU_SUITE = "h200-single-gpu"
+SUITE_CHOICES = (PRIMARY_SUITE, B200_FULL_SUITE, H200_SINGLE_GPU_SUITE)
 UPSTREAM_METHOD_REVISION = "532bffd4c2b2ec08909a92d5bc0b3bab4e911b2b"
 UPSTREAM_B200_RECORD_SHA256 = (
     "18cf5ae1d118e07f3f2111b56a3e02c76eb9282d847a78005c6ca060f8106221"
@@ -57,6 +58,7 @@ SEEDS = (17, 23, 41)
 VIDEO_SECONDS = 189 / 24
 SYNC_TIMEOUT_SECONDS = 5400
 TOPOLOGY_ORDER = ("1x8", "2x4", "4x2", "8x1")
+SINGLE_GPU_TOPOLOGY_ORDER = ("1x1",)
 WORKLOAD = {
     "precision": "bf16",
     "size": "1280x720",
@@ -93,6 +95,7 @@ class BenchmarkCell:
 
 
 TOPOLOGIES: dict[str, Topology] = {
+    "1x1": Topology("1x1", 1, 1, ("--tensor-parallel-size", "1")),
     "1x8": Topology(
         "1x8",
         1,
@@ -125,6 +128,7 @@ B200_FULL_CELLS = (
     BenchmarkCell("T1R", "1x8", 1, "T1_1x8"),
     BenchmarkCell("T1C2R", "1x8", 2, "T1C2"),
 )
+H200_SINGLE_GPU_CELLS = (BenchmarkCell("H200_TP1_1GPU", "1x1"),)
 
 
 def _utc_now() -> str:
@@ -159,7 +163,8 @@ def parse_topologies(value: str | Sequence[str]) -> tuple[str, ...]:
     unknown = [item for item in selected if item not in TOPOLOGIES]
     if unknown:
         raise Cosmos3SuperBenchmarkError(
-            f"unknown topology {unknown[0]!r}; choose from {', '.join(TOPOLOGY_ORDER)}"
+            f"unknown topology {unknown[0]!r}; choose from "
+            f"{', '.join((*TOPOLOGY_ORDER, *SINGLE_GPU_TOPOLOGY_ORDER))}"
         )
     if len(set(selected)) != len(selected):
         raise Cosmos3SuperBenchmarkError("topologies must not contain duplicates")
@@ -196,6 +201,20 @@ def benchmark_cells(
                 "the b200-full suite fixes exactly 24 measured attempts per cell"
             )
         return B200_FULL_CELLS
+    if selected_suite == H200_SINGLE_GPU_SUITE:
+        if family != "H200":
+            raise Cosmos3SuperBenchmarkError(
+                "the h200-single-gpu suite requires the H200 GPU family"
+            )
+        if selected_topologies != SINGLE_GPU_TOPOLOGY_ORDER:
+            raise Cosmos3SuperBenchmarkError(
+                "the h200-single-gpu suite fixes topologies to 1x1"
+            )
+        if attempts != 24:
+            raise Cosmos3SuperBenchmarkError(
+                "the h200-single-gpu suite fixes exactly 24 measured attempts"
+            )
+        return H200_SINGLE_GPU_CELLS
     return tuple(BenchmarkCell(name, name) for name in selected_topologies)
 
 
@@ -209,7 +228,11 @@ def _normalize_gpu_family(value: str) -> str:
     return family
 
 
-def _schema_version(gpu_family: str, *, attempt: bool = False) -> str:
+def _schema_version(
+    gpu_family: str, *, attempt: bool = False, suite: str = PRIMARY_SUITE
+) -> str:
+    if suite == H200_SINGLE_GPU_SUITE and not attempt:
+        return "npa.cosmos3-super.h200-single-gpu-validation.v1"
     suffix = "attempt" if attempt else "benchmark"
     return f"npa.cosmos3-super.{gpu_family.lower()}-{suffix}.v1"
 
@@ -257,11 +280,18 @@ def benchmark_plan(
         for cell in cells
     ]
     return {
-        "schema_version": _schema_version(family),
+        "schema_version": _schema_version(family, suite=parse_suite(suite)),
         "status": "planned",
         "model": {"id": MODEL_ID, "revision": MODEL_REVISION},
         "runtime_image": IMAGE,
-        "gpu": {"family": family, "node_gpu_count": 8},
+        "gpu": {
+            "family": family,
+            "node_gpu_count": max(
+                TOPOLOGIES[cell.topology].services
+                * TOPOLOGIES[cell.topology].gpus_per_service
+                for cell in cells
+            ),
+        },
         "suite": parse_suite(suite),
         "upstream": {
             "method_revision": UPSTREAM_METHOD_REVISION,
@@ -288,6 +318,22 @@ def benchmark_plan(
         "seeds": list(SEEDS),
         "sync_timeout_seconds": SYNC_TIMEOUT_SECONDS,
         "output_path": output_path,
+        "validation_scope": (
+            {
+                "kind": "single-gpu-functional-performance",
+                "paper_reproduction": False,
+                "paper_cell": None,
+                "claim": (
+                    "one H200, one TP-1 service, sequential requests; not the "
+                    "paper's eight-replica 8x1 node cell"
+                ),
+            }
+            if parse_suite(suite) == H200_SINGLE_GPU_SUITE
+            else {
+                "kind": "eight-gpu-node-benchmark",
+                "paper_reproduction": True,
+            }
+        ),
     }
 
 
@@ -316,13 +362,14 @@ def _gpu_name() -> str:
     return next(iter(names)) if result.returncode == 0 and len(names) == 1 else ""
 
 
-def _require_gpu_family(gpu_family: str) -> dict[str, Any]:
+def _require_gpu_family(gpu_family: str, *, expected_count: int = 8) -> dict[str, Any]:
     family = _normalize_gpu_family(gpu_family)
     count = _visible_gpu_count()
     name = _gpu_name()
-    if count != 8:
+    if count != expected_count:
         raise Cosmos3SuperBenchmarkError(
-            f"the benchmark requires exactly 8 visible GPUs; found {count}"
+            f"the selected suite requires exactly {expected_count} visible GPUs; "
+            f"found {count}"
         )
     if family not in name.upper():
         raise Cosmos3SuperBenchmarkError(
@@ -711,6 +758,21 @@ def derive_cell(records: Sequence[Mapping[str, Any]], window_seconds: float) -> 
     }
 
 
+def _add_resource_normalized_metrics(
+    derived: dict[str, Any], *, gpu_count: int, service_count: int
+) -> None:
+    """Add explicit resource-hour rates without changing node-rate semantics."""
+
+    credited = float(derived["credited_valid_video_seconds"])
+    window = float(derived["window_seconds"])
+    derived["valid_video_seconds_per_gpu_hour"] = round(
+        credited * 3600 / (window * gpu_count), 1
+    )
+    derived["valid_video_seconds_per_service_hour"] = round(
+        credited * 3600 / (window * service_count), 1
+    )
+
+
 def derive_suite_comparisons(cells: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
     """Derive the public record's primary, concurrency, and repeat comparisons."""
 
@@ -1047,7 +1109,7 @@ def run_benchmark(
             "reviewing the vLLM-Omni container's NVIDIA runtime terms"
         )
     family = _normalize_gpu_family(gpu_family)
-    gpu = _require_gpu_family(family)
+    gpu = _require_gpu_family(family, expected_count=int(plan["gpu"]["node_gpu_count"]))
     prompt, negative, prompt_hashes = _load_anchor_prompts()
     selected_cells = benchmark_cells(
         suite=suite,
@@ -1128,6 +1190,11 @@ def run_benchmark(
                     cell_name=cell.name,
                 )
             derived = derive_cell(records, float(window["seconds"]))
+            _add_resource_normalized_metrics(
+                derived,
+                gpu_count=topology.services * topology.gpus_per_service,
+                service_count=topology.services,
+            )
             _write_json(cell_dir / "attempts.json", records)
             _write_json(cell_dir / "window.json", window)
             _write_json(cell_dir / "derived.json", derived)
@@ -1193,7 +1260,12 @@ def run_benchmark(
             },
             "comparisons": derive_suite_comparisons(cells),
             "completed_at": _utc_now(),
-            "measurement_claim": "technical validity only; semantic quality was not measured",
+            "measurement_claim": (
+                "single-GPU H200 TP-1 functional/performance validation; technical "
+                "validity only; not eight-GPU node throughput or the paper's 8x1 cell"
+                if parse_suite(suite) == H200_SINGLE_GPU_SUITE
+                else "technical validity only; semantic quality was not measured"
+            ),
             "artifact_uri": artifact_uri,
         }
         _write_json(root / "benchmark.json", report)
@@ -1225,6 +1297,8 @@ __all__ = [
     "ATTEMPT_SCHEMA_VERSION",
     "B200_FULL_CELLS",
     "B200_FULL_SUITE",
+    "H200_SINGLE_GPU_CELLS",
+    "H200_SINGLE_GPU_SUITE",
     "BenchmarkCell",
     "Cosmos3SuperBenchmarkError",
     "IMAGE",
@@ -1235,6 +1309,7 @@ __all__ = [
     "SUPPORTED_GPU_FAMILIES",
     "TOPOLOGIES",
     "TOPOLOGY_ORDER",
+    "SINGLE_GPU_TOPOLOGY_ORDER",
     "WORKLOAD",
     "benchmark_cells",
     "benchmark_plan",

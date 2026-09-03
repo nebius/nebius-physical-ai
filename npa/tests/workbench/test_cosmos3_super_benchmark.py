@@ -56,6 +56,65 @@ def test_h200_plan_changes_only_hardware_identity() -> None:
         assert h200[key] == b200[key]
 
 
+def test_h200_single_gpu_plan_is_tp1_and_explicitly_not_a_paper_cell() -> None:
+    plan = benchmark.benchmark_plan(
+        output_path="s3://example-bucket/h200-single/",
+        topologies="1x1",
+        attempts=24,
+        gpu_family="H200",
+        suite="h200-single-gpu",
+    )
+    assert plan["schema_version"] == (
+        "npa.cosmos3-super.h200-single-gpu-validation.v1"
+    )
+    assert plan["gpu"] == {"family": "H200", "node_gpu_count": 1}
+    assert plan["validation_scope"] == {
+        "kind": "single-gpu-functional-performance",
+        "paper_reproduction": False,
+        "paper_cell": None,
+        "claim": (
+            "one H200, one TP-1 service, sequential requests; not the paper's "
+            "eight-replica 8x1 node cell"
+        ),
+    }
+    assert plan["cells"] == [
+        {
+            "name": "H200_TP1_1GPU",
+            "topology": "1x1",
+            "services": 1,
+            "gpus_per_service": 1,
+            "server_parallelism": ["--tensor-parallel-size", "1"],
+            "request_concurrency_per_service": 1,
+            "warmups_per_service": 1,
+            "measured_attempts": 24,
+            "repeat_of": None,
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"gpu_family": "B200"}, "requires the H200"),
+        ({"topologies": "8x1"}, "fixes topologies to 1x1"),
+        ({"attempts": 23}, "exactly 24"),
+    ],
+)
+def test_h200_single_gpu_suite_rejects_scope_drift(
+    kwargs: dict, message: str
+) -> None:
+    options = {
+        "output_path": "/tmp/results",
+        "topologies": "1x1",
+        "attempts": 24,
+        "gpu_family": "H200",
+        "suite": "h200-single-gpu",
+    }
+    options.update(kwargs)
+    with pytest.raises(benchmark.Cosmos3SuperBenchmarkError, match=message):
+        benchmark.benchmark_plan(**options)
+
+
 def test_full_suite_matches_machine_readable_public_record() -> None:
     plan = benchmark.benchmark_plan(
         output_path="s3://example-bucket/full/",
@@ -156,6 +215,8 @@ def test_service_commands_fill_node_with_expected_parallelism() -> None:
     for name, size in (("2x4", "4"), ("4x2", "2"), ("8x1", "1")):
         command = benchmark.service_command(benchmark.TOPOLOGIES[name], port=8100)
         assert command[command.index("--tensor-parallel-size") + 1] == size
+    single = benchmark.service_command(benchmark.TOPOLOGIES["1x1"], port=8100)
+    assert single[single.index("--tensor-parallel-size") + 1] == "1"
 
 
 def test_failed_attempt_keeps_window_time_and_gets_zero_credit() -> None:
@@ -176,6 +237,15 @@ def test_failed_attempt_keeps_window_time_and_gets_zero_credit() -> None:
     assert derived["credited_valid_video_seconds"] == 7.875
     assert derived["valid_video_seconds_per_node_hour"] == 2362.5
     assert derived["window_seconds"] == 12.0
+
+
+def test_resource_normalized_metrics_are_explicit() -> None:
+    derived = benchmark.derive_cell([_valid_record("ok")], 90.0)
+    benchmark._add_resource_normalized_metrics(
+        derived, gpu_count=1, service_count=1
+    )
+    assert derived["valid_video_seconds_per_gpu_hour"] == 315.0
+    assert derived["valid_video_seconds_per_service_hour"] == 315.0
 
 
 def test_dispatch_runs_one_request_at_a_time_per_service(tmp_path: Path) -> None:

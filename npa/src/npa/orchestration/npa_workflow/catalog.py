@@ -2589,9 +2589,9 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
         name="workbench.cosmos3.super_benchmark",
         access_capabilities=("cosmos3-serving",),
         description=(
-            "Run the real fixed Cosmos3-Super primary or complete ten-cell sweep on one "
-            "eight-GPU B200 or H200 node, validate every MP4, and publish "
-            "per-attempt records."
+            "Run the real fixed Cosmos3-Super eight-GPU benchmark or the isolated "
+            "one-H200 TP-1 validation, validate every MP4, and publish per-attempt "
+            "records."
         ),
         argv_template=[
             "npa",

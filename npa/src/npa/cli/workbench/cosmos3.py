@@ -60,14 +60,15 @@ def super_benchmark_cmd(
         SUPER_BENCHMARK_PRIMARY_SUITE,
         "--suite",
         help=(
-            "Benchmark suite: primary (four concurrency-one cells) or b200-full "
-            "(the exact ten-cell, 240-attempt public record)."
+            "Benchmark suite: primary (four concurrency-one cells), b200-full "
+            "(the exact ten-cell, 240-attempt public record), or h200-single-gpu "
+            "(one TP-1 service and 24 sequential requests; not a paper cell)."
         ),
     ),
     gpu_family: str = typer.Option(
         "B200",
         "--gpu-family",
-        help="Required homogeneous eight-GPU family: B200 or H200.",
+        help="Required homogeneous GPU family: B200 or H200.",
     ),
     base_port: int = typer.Option(8100, "--base-port", min=1024, max=65527),
     run_id: str = typer.Option("", "--run-id"),
@@ -75,7 +76,7 @@ def super_benchmark_cmd(
         False, "--dry-run", help="Print the immutable benchmark plan without touching a GPU."
     ),
 ) -> None:
-    """Run a fixed Cosmos3-Super suite on one 8xB200 or 8xH200 node."""
+    """Run a fixed Cosmos3-Super node benchmark or H200 single-GPU validation."""
 
     try:
         payload = run_super_benchmark(

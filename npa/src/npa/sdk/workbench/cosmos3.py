@@ -135,7 +135,7 @@ def super_benchmark(
     run_id: str = "",
     dry_run: bool = False,
 ) -> dict[str, Any]:
-    """Run the immutable Cosmos3-Super sweep on one eight-GPU B200 or H200 node."""
+    """Run the immutable Cosmos3-Super node or H200 single-GPU suite."""
 
     return run_benchmark(
         output_path=output_path,

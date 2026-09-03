@@ -24,6 +24,13 @@ registry and pass its immutable digest as `runtime_image`; the wrapper inherits
 the exact upstream digest and adds only the reviewed worker-bootstrap packages.
 It is intentionally excluded from the public image catalog.
 
+For a one-H200 runtime/plumbing proof, use
+[`cosmos3-super-h200-single-gpu.yaml`](../../npa/workflows/workbench/npa-workflows/cosmos3-super-h200-single-gpu.yaml).
+It keeps the same immutable model, image, prompt, workload, timeout, and strict
+MP4 gates, but runs one TP-1 service with one warmup and 24 sequential measured
+requests. Its output reports video-seconds per GPU-hour and per service-hour; it
+is not an eight-GPU node-throughput result or the paper's `8x1` cell.
+
 | Piece | Path |
 | --- | --- |
 | Image | `npa/docker/workbench/cosmos3-serving/Dockerfile` (`npa-cosmos3-serving`) |
