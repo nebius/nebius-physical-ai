@@ -82,8 +82,18 @@ def test_guardrail_nltk_cache_links_are_safely_materialized(
     monkeypatch.setenv("HF_TOKEN", "unit-test-placeholder")
 
     assert tx.prepare_guardrail_nltk_data(hf_home=str(tmp_path)) == 1
-    assert link.is_file() and not link.is_symlink()
+    assert link.is_file() and link.is_symlink()
     assert link.read_bytes() == b"pinned tokenizer data"
+    safe = (
+        tmp_path
+        / tx.GUARDRAIL_NLTK_MATERIALIZED_DIR
+        / tx.GUARDRAIL_REVISION
+        / "tokenizers"
+        / "punkt_tab"
+        / "collocations.tab"
+    )
+    assert safe.is_file() and not safe.is_symlink()
+    assert safe.read_bytes() == b"pinned tokenizer data"
     assert calls == [
         {
             "repo_id": tx.GUARDRAIL_REPO,

@@ -54,6 +54,7 @@ CONTROL_PROMPT_MODALITIES = ("seg",)
 DISABLE_CONTENT_GUARDRAILS_ENV = "NPA_COSMOS_DISABLE_CONTENT_GUARDRAILS"
 GUARDRAIL_REPO = "nvidia/Cosmos-Guardrail1"
 GUARDRAIL_REVISION = "d6d4bfa899a71454a700907664f3e88f503950cf"
+GUARDRAIL_NLTK_MATERIALIZED_DIR = "npa-guardrail-nltk-data"
 # Live job 339 reported SUCCEEDED while the spec promised ``manifest.json`` and
 # the then-reference-only tool wrote ``index.json`` with a different schema.
 # Keep these two artifact contracts named and distinct: the real publisher now
@@ -591,10 +592,12 @@ def prepare_guardrail_nltk_data(*, hf_home: str | None = None) -> int:
 
     Hugging Face snapshots represent files as symlinks into their local blob
     store. NLTK 3.10.3 deliberately refuses to follow those links when opening
-    tokenizer data. Download only the pinned guardrail subtree, prove every link
-    resolves to a regular file inside the same cache, and atomically replace it
-    with a regular copy before NLTK is imported. This preserves the path-security
-    fix without disabling Cosmos guardrails or trusting an unpinned snapshot.
+    tokenizer data. Download only the pinned guardrail subtree, prove every file
+    resolves inside the same cache, and copy it into a revision-scoped regular-file
+    tree outside the snapshot. Upstream may refresh its snapshot after this step;
+    the separate ``NLTK_DATA`` tree therefore remains safe and stable. This
+    preserves the path-security fix without disabling Cosmos guardrails or
+    trusting an unpinned snapshot.
     """
 
     from huggingface_hub import snapshot_download
@@ -618,31 +621,52 @@ def prepare_guardrail_nltk_data(*, hf_home: str | None = None) -> int:
     ):
         raise RuntimeError("pinned Cosmos guardrail tokenizer data is unavailable")
 
+    destination = home / GUARDRAIL_NLTK_MATERIALIZED_DIR / GUARDRAIL_REVISION
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    staging = Path(
+        tempfile.mkdtemp(prefix=f".{GUARDRAIL_REVISION}.", dir=destination.parent)
+    )
     materialized = 0
-    for link in sorted(nltk_data.rglob("*")):
-        if not link.is_symlink():
-            continue
-        target = link.resolve(strict=True)
-        if not target.is_file() or not target.is_relative_to(hub):
-            raise RuntimeError(f"unsafe Cosmos guardrail cache link: {link}")
-        fd, temporary = tempfile.mkstemp(prefix=f".{link.name}.", dir=link.parent)
-        try:
-            with os.fdopen(fd, "wb") as output, target.open("rb") as source:
-                shutil.copyfileobj(source, output)
-            os.chmod(temporary, 0o444)
-            os.replace(temporary, link)
-        except BaseException:
+    try:
+        for entry in sorted(nltk_data.rglob("*")):
+            relative = entry.relative_to(nltk_data)
+            output = staging / relative
+            if entry.is_dir():
+                output.mkdir(parents=True, exist_ok=True)
+                continue
+            target = entry.resolve(strict=True)
+            if not target.is_file() or not target.is_relative_to(hub):
+                raise RuntimeError(f"unsafe Cosmos guardrail cache file: {entry}")
+            output.parent.mkdir(parents=True, exist_ok=True)
+            with target.open("rb") as source, output.open("wb") as copied:
+                shutil.copyfileobj(source, copied)
+            os.chmod(output, 0o444)
+            materialized += 1
+        if destination.exists():
+            shutil.rmtree(staging)
+        else:
             try:
-                os.close(fd)
+                os.replace(staging, destination)
             except OSError:
-                pass
-            try:
-                os.unlink(temporary)
-            except OSError:
-                pass
-            raise
-        materialized += 1
+                if not destination.is_dir():
+                    raise
+                shutil.rmtree(staging)
+    except BaseException:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
+    if not destination.is_dir() or materialized == 0:
+        raise RuntimeError("Cosmos guardrail tokenizer materialization is empty")
     return materialized
+
+
+def _guardrail_nltk_data_path(hf_home: str) -> Path:
+    """Return the regular-file NLTK tree created for the pinned guardrail."""
+
+    return (
+        Path(hf_home)
+        / GUARDRAIL_NLTK_MATERIALIZED_DIR
+        / GUARDRAIL_REVISION
+    )
 
 
 def _spec_with_prompt(repo: Path, spec: str, prompt: str, *, tag: str = "") -> str:
@@ -752,6 +776,10 @@ def run_cosmos_transfer(
     env["HF_HOME"] = hf_home or os.environ.get("HF_HOME", "/opt/cosmos-data/hf_cache")
     env.setdefault("TOKENIZERS_PARALLELISM", "false")
     prepare_guardrail_nltk_data(hf_home=env["HF_HOME"])
+    safe_nltk_data = str(_guardrail_nltk_data_path(env["HF_HOME"]))
+    env["NLTK_DATA"] = os.pathsep.join(
+        part for part in (safe_nltk_data, env.get("NLTK_DATA", "")) if part
+    )
     if cuda_visible_devices is not None and str(cuda_visible_devices).strip() != "":
         env["CUDA_VISIBLE_DEVICES"] = str(cuda_visible_devices).strip()
     # Only the specs WE synthesized this call are ephemeral; never delete a
