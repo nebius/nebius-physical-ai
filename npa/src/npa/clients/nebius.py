@@ -896,9 +896,9 @@ def delete_network(network_id: str, *, profile: str | None = None) -> None:
 
 
 def list_quota_allowances(
-    tenant_id: str, *, profile: str | None = None
+    parent_id: str, *, profile: str | None = None
 ) -> dict[str, Any]:
-    """Return one provider quota snapshot for *tenant_id*.
+    """Return one provider quota snapshot for a tenant or project container.
 
     Unlike the historical per-quota best-effort helpers, this API preserves
     provider/RBAC/malformed failures.  Mutation preflights must fail closed, and
@@ -911,12 +911,12 @@ def list_quota_allowances(
     deploy the operator is fully entitled to make.
     """
 
-    tenant = str(tenant_id or "").strip()
-    if not tenant:
-        raise NebiusError("tenant_id is required to list quota allowances")
+    parent = str(parent_id or "").strip()
+    if not parent:
+        raise NebiusError("parent_id is required to list quota allowances")
     profile_args, _resolved = _iam_profile_args(profile)
     payload = _run_json(
-        [*profile_args, "quotas", "quota-allowance", "list", "--parent-id", tenant, "--all"]
+        [*profile_args, "quotas", "quota-allowance", "list", "--parent-id", parent, "--all"]
     )
     if not isinstance(payload.get("items"), list):
         raise NebiusError("quota allowance response is malformed: items is not a list")
@@ -1065,6 +1065,7 @@ def _is_permission_denied(message: str) -> bool:
     return (
         "permissiondenied" in lowered
         or "permission denied" in lowered
+        or "unauthorizedsingle" in lowered
         or "no permission" in lowered
         # Nebius object storage reports authorization failures as AccessDenied.
         or "accessdenied" in lowered

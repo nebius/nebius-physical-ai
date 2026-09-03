@@ -52,6 +52,17 @@ npa agent fresh-setup --project <alias> \
 `fresh-setup` provisions the VM with Terraform. `npa agent bootstrap` refreshes
 only the UI/backend/nginx layer on an existing VM, without touching infra.
 
+The `whole_path_capacity` check first reads the tenant quota aggregate. A
+project-scoped administrator may be forbidden from that tenant-wide read even
+though they can manage the deployment project. In that specific case, preflight
+checks the project's quota allowances instead and reports `WARN`, not `FAIL`.
+Finite project limits still block with exact required/used/limit/shortfall
+diagnostics. Other quota-read, identity, configuration, and capacity failures
+remain fail-closed. Because project allowances cannot prove remaining capacity
+in the unreadable tenant aggregate, the provider may still reject the apply; the
+warning says to have a tenant administrator inspect the named quota if that
+happens.
+
 ## What setup is doing while you wait
 
 Setup prints **four bounded phases** around Terraform, SSH installation, and a
