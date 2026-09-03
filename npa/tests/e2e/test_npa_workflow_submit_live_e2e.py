@@ -575,10 +575,16 @@ def _assert_paidf_live_artifacts(
     """Prove real PAIDF waves, decision, component reports, and Rerun output."""
 
     from npa.clients.project_credentials import s3_client_for_project
+    from npa.workflows.paidf_upstream import (
+        PAIDF_ORCHESTRATION_REVISION,
+        PHYSICAL_AI_DATA_FACTORY_REVISION,
+        SCHEMA as PAIDF_UPSTREAM_SCHEMA,
+    )
 
     states = [str(state) for wave in waves for state in wave.get("states", [])]
     if spec == "paidf-cosmos3.yaml":
         required_states = {
+            "record-upstream",
             "prepare-input",
             "generate-configs",
             "annotate-original",
@@ -595,6 +601,7 @@ def _assert_paidf_live_artifacts(
         prefix = f"paidf-cosmos3/{run_id}/"
     else:
         required_states = {
+            "record-upstream",
             "generate-configs",
             "annotate-original",
             "augment",
@@ -613,6 +620,7 @@ def _assert_paidf_live_artifacts(
 
     client = s3_client_for_project(e2e_project, allow_host_creds=True)
     required = (
+        "reports/upstream.json",
         "configs/manifest.json",
         "cosmos_augmented/manifest.json",
         "grade/cosmos_evaluator.json",
@@ -632,6 +640,22 @@ def _assert_paidf_live_artifacts(
         payload = json.loads(body)
         assert isinstance(payload, dict), relative
         return payload
+
+    upstream = read_json("reports/upstream.json")
+    assert upstream.get("schema") == PAIDF_UPSTREAM_SCHEMA
+    sources = {
+        str(source.get("repository")): source
+        for source in upstream.get("sources", [])
+        if isinstance(source, dict)
+    }
+    assert sources["https://github.com/NVIDIA/physical-ai-data-factory"].get(
+        "revision"
+    ) == PHYSICAL_AI_DATA_FACTORY_REVISION
+    assert sources["https://github.com/NVIDIA/paidf-orchestration"].get(
+        "revision"
+    ) == PAIDF_ORCHESTRATION_REVISION
+    assert all(source.get("executed_by_npa") is False for source in sources.values())
+    assert upstream.get("npa_integration", {}).get("orchestrator") == "SkyPilot"
 
     augment = read_json("cosmos_augmented/manifest.json")
     assert int(augment.get("variant_count") or 0) >= 1
@@ -670,6 +694,7 @@ def _assert_paidf_live_artifacts(
     curation = read_json("curation/report.json")
     assert curation.get("curation_engine") == "fiftyone-brain"
     final = read_json("reports/final.json")
+    assert final.get("upstream") == upstream
     if spec == "paidf-cosmos3.yaml":
         assert final.get("schema") == "npa.paidf.cosmos3.final.v1"
         assert final.get("engine") == "nvidia-cosmos/cosmos-framework"
