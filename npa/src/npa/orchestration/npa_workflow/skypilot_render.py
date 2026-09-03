@@ -69,6 +69,7 @@ TOOL_REF_IMAGE_TOOL: dict[str, str] = {
 OPENPI_TERMS_ENV = "NPA_OPENPI_ACCEPT_GEMMA_TERMS"
 
 SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
+    "workbench.encord": ("ENCORD_SSH_KEY_B64",),
     "workbench.openpi": (OPENPI_TERMS_ENV,),
     "workbench.token_factory": ("NEBIUS_TOKEN_FACTORY_KEY",),
     "workbench.vlm_eval": (),
@@ -104,6 +105,7 @@ SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
 # already installs vLLM for self-hosted vlm_eval); it is what lets the npa.workflow
 # SONIC specs run without a vendor image at all.
 TOOL_REF_PIP_EXTRAS: dict[str, str] = {
+    "workbench.encord": "encord",
     "workbench.sonic": "sonic",
     "workflow.groot.emit_learning_rrd": "viz",
     "workflow.groot.publish_learning": "viz",
@@ -1632,6 +1634,13 @@ def render_setup_for_tool(
             'if [[ -z "$NEBIUS_TOKEN_FACTORY_KEY" ]]; then\n'
             "  echo 'NEBIUS_TOKEN_FACTORY_KEY is required. Pass it with --secret-env "
             "NEBIUS_TOKEN_FACTORY_KEY' >&2\n"
+            "  exit 1\n"
+            "fi\n"
+        )
+    if tool_ref.startswith("workbench.encord"):
+        parts.append(
+            'if [[ -z "$ENCORD_SSH_KEY" && -z "$ENCORD_SSH_KEY_B64" ]]; then\n'
+            "  echo 'ENCORD_SSH_KEY or ENCORD_SSH_KEY_B64 is required for Encord stages' >&2\n"
             "  exit 1\n"
             "fi\n"
         )

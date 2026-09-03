@@ -8,6 +8,7 @@ workflows, and operational runbooks.
 | Path | Purpose |
 | --- | --- |
 | [getting-started.md](getting-started.md) | Fresh-clone onboarding path for install, credentials, and first Workbench runs |
+| [encord.md](encord.md) | Stateless Encord SaaS push, pull, exact identity, and roundtrip verification contracts |
 | [container-image-catalog.md](container-image-catalog.md) | Verified public GHCR image names, exact published tags, build dates, and capabilities |
 | [container-packaging.md](container-packaging.md) | Container packaging tiers, security baseline, and feature exposure contract |
 | [isaac-lab-3.md](isaac-lab-3.md) | Isaac Lab 3 beta pin, payload-clean runtime bootstrap, hardened RL sweep, and generation 2 comparison method |

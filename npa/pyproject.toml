@@ -63,6 +63,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+encord = ["encord>=0.1.202,<0.2"]
 # SkyPilot is installed in an isolated venv outside NPA's package environment; see docs/orchestration/skypilot-setup.md.
 orchestration = []
 # Back-compat aliases. The `data`, `foxglove`, `lancedb`, `viz`, `server`, and

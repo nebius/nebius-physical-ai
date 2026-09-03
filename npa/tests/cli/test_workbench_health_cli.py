@@ -133,6 +133,12 @@ def test_health_help_lists_preflight_not_deprecated_sim2real() -> None:
     assert "sim2real" not in listed_commands
 
 
+def test_health_help_describes_encord_preflight() -> None:
+    result = runner.invoke(app, ["workbench", "health", "--help"])
+    assert result.exit_code == 0
+    assert "Token Factory, and Encord credentials" in result.output
+
+
 class _EmptyCreds:
     hf_token = ""
     ngc_api_key = ""
@@ -141,6 +147,7 @@ class _EmptyCreds:
     s3_secret_access_key = ""
     s3_endpoint = ""
     s3_bucket = ""
+    tokens = {}
 
 
 class _AccessCreds(_EmptyCreds):
@@ -156,7 +163,7 @@ def test_preflight_offline_all_warn_exit_zero(monkeypatch) -> None:
     )
     result = runner.invoke(app, ["workbench", "health", "preflight", "--offline"])
     assert result.exit_code == 0
-    for name in ("hf", "ngc", "s3", "token_factory"):
+    for name in ("hf", "ngc", "s3", "token_factory", "encord"):
         assert name in result.output
     assert "0 fail" in result.output
 
@@ -178,6 +185,7 @@ def test_preflight_json_offline(monkeypatch) -> None:
         "ngc",
         "s3",
         "token_factory",
+        "encord",
     }
 
 

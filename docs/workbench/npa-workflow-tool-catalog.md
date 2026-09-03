@@ -19,6 +19,9 @@ accidental dead entries fail the guardrail. The retired monolithic
 | toolRef | CLI / module | Typical inputs | Typical outputs | Stub? |
 | --- | --- | --- | --- | --- |
 | `workbench.alpamayo2_super.infer` | `npa workbench alpamayo2-super infer` | pinned model/dataset revisions and PhysicalAI-AV sample index | trajectory JSON, calibrated PNG, immutable provenance under `config.output_uri` | no (real upstream VLM + diffusion expert inference on GPU) |
+| `workbench.encord.push` | `npa workbench encord push` | S3 media prefix, Encord integration and folder, optional dataset and identity sidecar | durable `push_receipt.json` with exact identity and reconciled outcomes | no |
+| `workbench.encord.pull` | `npa workbench encord pull` | Encord collection, dataset, or project | materialized S3 media and durable `manifest.json` | no |
+| `workbench.encord.verify_roundtrip` | `npa workbench encord verify-roundtrip` | final push receipt and pull manifest | `roundtrip_report.json` with identity and integrity verdict | no |
 | `infra.fleet.deploy` | `npa fleet deploy` | `config.fleet_spec` | fleet deploy JSON | no |
 | `infra.soperator.deploy` | `npa soperator deploy` | `config.soperator_spec` | cluster deploy JSON | no |
 | `workbench.nurec.check` | `npa workbench nurec check` | `config.nurec_image`, `config.dataset_id` | access-check JSON (NGC pullability, HF rights, RT-core GPU) | no |

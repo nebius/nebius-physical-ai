@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -37,6 +38,28 @@ def _load_live_argv():
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
+
+
+def test_live_credential_markers_include_saved_encord_values(monkeypatch) -> None:
+    import npa.clients.credentials as credential_module
+
+    helpers = _load_live_helpers()
+    monkeypatch.setattr(
+        credential_module,
+        "load_credentials",
+        lambda: SimpleNamespace(
+            s3_access_key_id="",
+            s3_secret_access_key="",
+            tokens={
+                "ENCORD_SSH_KEY": "saved-encord-private-key",
+                "ENCORD_SSH_KEY_B64": "saved-encord-base64-key",
+            },
+        ),
+    )
+
+    markers = helpers.live_credential_markers()
+    assert "saved-encord-private-key" in markers
+    assert "saved-encord-base64-key" in markers
 
 
 def test_force_accelerators_on_cpu_profiles() -> None:

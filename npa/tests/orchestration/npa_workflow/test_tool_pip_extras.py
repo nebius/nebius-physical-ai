@@ -35,6 +35,7 @@ SPECS = REPO_ROOT / "npa" / "workflows" / "workbench" / "npa-workflows"
         ("workbench.sonic.export", "sonic"),
         ("workbench.sonic.train", "sonic"),
         ("workbench.sonic", "sonic"),
+        ("workbench.encord.push", "encord"),
         ("workbench.token_factory.caption", ""),
         ("workbench.mjlab.evaluate", ""),
         ("", ""),
@@ -83,6 +84,16 @@ def test_setup_for_a_sonic_tool_ref_includes_the_extra() -> None:
     assert "[sonic]" in setup
     # The base install still comes first; the extra layers on top of it.
     assert setup.index("npa_pip_install") < setup.index("[sonic]")
+
+
+def test_setup_for_an_encord_tool_ref_installs_extra_and_checks_credentials() -> None:
+    setup = render_setup_for_tool(
+        "workbench.encord.push", config={}, options=SkypilotRenderOptions()
+    )
+
+    assert "[encord]" in setup
+    assert "ENCORD_SSH_KEY" in setup
+    assert "ENCORD_SSH_KEY_B64" in setup
 
 
 def test_setup_for_an_unrelated_tool_ref_has_no_extra() -> None:

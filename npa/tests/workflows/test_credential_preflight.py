@@ -8,6 +8,7 @@ from npa.workflows.credential_preflight import (
     CREDENTIAL_CHECKS,
     CredentialProbes,
     check_hf,
+    check_encord,
     check_ngc,
     check_s3,
     check_token_factory,
@@ -26,6 +27,7 @@ class _Creds:
     s3_secret_access_key: str = ""
     s3_endpoint: str = ""
     s3_bucket: str = ""
+    tokens: dict[str, str] | None = None
 
 
 @dataclass
@@ -178,6 +180,17 @@ def test_token_factory_fail_when_verifier_raises() -> None:
     probes = CredentialProbes(token_factory_verifier=_boom)
     result = check_token_factory(_Creds(token_factory_api_key="v1.bad"), probes)
     assert result.status == FAIL
+
+
+def test_encord_presence_and_live_probe() -> None:
+    missing = check_encord(_Creds(tokens={}), CredentialProbes())
+    assert missing.status == WARN
+    present = check_encord(
+        _Creds(tokens={"ENCORD_SSH_KEY_B64": "encoded-key"}),
+        CredentialProbes(encord_verifier=lambda: "storage folders listable"),
+    )
+    assert present.status == PASS
+    assert "authenticated" in present.summary
 
 
 def test_run_credential_preflight_default_order() -> None:

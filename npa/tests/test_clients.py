@@ -607,6 +607,24 @@ def test_workbench_credential_resolution_is_agent_independent(mocker, tmp_path) 
     assert nebius.get_iam_token() == "cli-profile-token"
 
 
+def test_encord_credentials_resolve_environment_over_file(tmp_path: Path) -> None:
+    from npa.clients.credentials import load_credentials
+
+    path = tmp_path / "credentials.yaml"
+    path.write_text(
+        "tokens:\n  ENCORD_SSH_KEY_B64: saved-value\n"
+        "  ENCORD_SSH_KEY_FILE: /private/local/key.pem\n",
+        encoding="utf-8",
+    )
+    credentials = load_credentials(
+        path=path,
+        environ={"ENCORD_SSH_KEY_B64": "environment-value"},
+    )
+
+    assert credentials.tokens["ENCORD_SSH_KEY_B64"] == "environment-value"
+    assert credentials.tokens["ENCORD_SSH_KEY_FILE"] == "/private/local/key.pem"
+
+
 def test_nebius_iam_token_from_env(mocker) -> None:
     mocker.patch("npa.clients.nebius._run", return_value="")
     mocker.patch("npa.clients.nebius._env_iam_token", return_value="env-token")

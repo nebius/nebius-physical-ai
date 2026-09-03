@@ -616,6 +616,8 @@ def test_new_workbench_tools_require_contract_or_explicit_seam() -> None:
         "cosmos-evaluator",
         "data",
         "dataset",
+        # CLI, SDK, and workflow call one shared implementation; Encord remains remote SaaS.
+        "encord",
         "fiftyone",
         # Foxglove embed assets + MCAP convert/inspect: CLI + SDK tool, no
         # SkyPilot task surface (the viewer runs in the browser / static image).

@@ -221,6 +221,18 @@ def seed_live_workflow_inputs(
     marker = f"npa-workflow-e2e/{run_id}/{spec_name.replace('.yaml', '')}"
     client = s3_client_for_project(e2e_project, allow_host_creds=True)
 
+    if spec_name == "encord-roundtrip-smoke.yaml":
+        client.put_object(
+            Bucket=bucket,
+            Key=f"{marker}/fixture/source.png",
+            Body=base64.b64decode(
+                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+                validate=True,
+            ),
+            ContentType="image/png",
+        )
+        return
+
     if spec_name == "paidf-cosmos3.yaml":
         body = base64.b64decode(_CONDITIONED_COSMOS_MP4_B64, validate=True)
         if len(body) < 12 or body[4:8] != b"ftyp":
@@ -1064,10 +1076,14 @@ def live_credential_markers() -> list[str]:
     try:
         from npa.clients.credentials import load_credentials
 
-        storage = load_credentials().get("storage") or {}
-        for key in ("aws_access_key_id", "aws_secret_access_key"):
-            value = storage.get(key)
+        credentials = load_credentials()
+        for key in ("s3_access_key_id", "s3_secret_access_key"):
+            value = getattr(credentials, key, "")
             if isinstance(value, str) and len(value) >= 8:
+                markers.append(value)
+        for key in ("ENCORD_SSH_KEY", "ENCORD_SSH_KEY_B64"):
+            value = credentials.tokens.get(key, "")
+            if len(value) >= 8:
                 markers.append(value)
     except Exception:
         pass
@@ -1076,6 +1092,8 @@ def live_credential_markers() -> list[str]:
         "AWS_SECRET_ACCESS_KEY",
         "HF_TOKEN",
         "NEBIUS_TOKEN_FACTORY_KEY",
+        "ENCORD_SSH_KEY",
+        "ENCORD_SSH_KEY_B64",
     ):
         value = os.environ.get(env_key, "")
         if value and len(value) >= 8:

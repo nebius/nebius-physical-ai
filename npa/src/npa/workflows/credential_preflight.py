@@ -25,7 +25,7 @@ from npa.workflows.sim2real_health import (
 )
 
 # Canonical order a customer should reason about credentials in.
-CREDENTIAL_CHECKS: tuple[str, ...] = ("hf", "ngc", "s3", "token_factory")
+CREDENTIAL_CHECKS: tuple[str, ...] = ("hf", "ngc", "s3", "token_factory", "encord")
 
 
 @dataclass
@@ -42,6 +42,7 @@ class CredentialProbes:
     ngc_validator: Callable[[str], str] | None = None
     s3_client_factory: Callable[[], Any] | None = None
     token_factory_verifier: Callable[[], list[str]] | None = None
+    encord_verifier: Callable[[], str] | None = None
 
 
 def _looks_like_auth_failure(text: str) -> bool:
@@ -259,11 +260,50 @@ def check_token_factory(credentials: Any, probes: CredentialProbes) -> CheckResu
     )
 
 
+def check_encord(credentials: Any, probes: CredentialProbes) -> CheckResult:
+    """Check Encord credential presence and optionally perform a read-only probe."""
+
+    from npa.clients.credentials import ENCORD_TOKEN_KEYS
+
+    tokens = getattr(credentials, "tokens", {}) or {}
+    present = [name for name in ENCORD_TOKEN_KEYS if str(tokens.get(name) or "").strip()]
+    if not present:
+        return CheckResult(
+            name="encord",
+            status=WARN,
+            summary="No Encord SSH credential is set.",
+            remedy=(
+                "Set ENCORD_SSH_KEY, ENCORD_SSH_KEY_B64, or a local "
+                "ENCORD_SSH_KEY_FILE before using the Encord workbench client."
+            ),
+        )
+    if probes.encord_verifier is None:
+        return CheckResult(
+            name="encord",
+            status=PASS,
+            summary=f"{present[0]} is set (not verified against Encord).",
+        )
+    try:
+        summary = probes.encord_verifier()
+    except Exception as exc:  # noqa: BLE001
+        return CheckResult(
+            name="encord",
+            status=FAIL,
+            summary="Encord credential did not authenticate.",
+            remedy="Confirm the registered public key and ENCORD_DOMAIN.",
+            details=(str(exc),),
+        )
+    return CheckResult(
+        name="encord", status=PASS, summary=f"Encord authenticated ({summary})."
+    )
+
+
 _CHECK_FUNCS: dict[str, Callable[[Any, CredentialProbes], CheckResult]] = {
     "hf": check_hf,
     "ngc": check_ngc,
     "s3": check_s3,
     "token_factory": check_token_factory,
+    "encord": check_encord,
 }
 
 
@@ -289,6 +329,7 @@ def run_credential_preflight(
 __all__ = [
     "CREDENTIAL_CHECKS",
     "CredentialProbes",
+    "check_encord",
     "check_hf",
     "check_ngc",
     "check_s3",

@@ -1,0 +1,68 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+metadata:
+  name: encord-roundtrip-smoke
+  description: Push, pull, and verify an exact Encord media roundtrip.
+
+config:
+  bucket: example-bucket
+  prefix: "encord-smoke/{{run.id}}"
+  encord_media_uri: "s3://{{config.bucket}}/{{config.prefix}}/fixture/"
+  encord_integration: "<encord-cloud-integration>"
+  encord_folder: "npa-encord-{{run.id}}"
+  encord_dataset: "npa-encord-{{run.id}}"
+  encord_media_filter: "videos-images"
+  encord_transfer: "register"
+  encord_poll_timeout_seconds: "1800"
+  encord_identity_sidecar_uri: ""
+  encord_receipt_uri: "s3://{{config.bucket}}/{{config.prefix}}/push/push_receipt.json"
+  encord_source: "dataset"
+  encord_source_id: "npa-encord-{{run.id}}"
+  encord_label_export: "none"
+  encord_pull_uri: "s3://{{config.bucket}}/{{config.prefix}}/pull"
+  encord_manifest_uri: "s3://{{config.bucket}}/{{config.prefix}}/pull/manifest.json"
+  encord_roundtrip_report_uri: "s3://{{config.bucket}}/{{config.prefix}}/verify/roundtrip_report.json"
+
+resources:
+  cpu:
+    cloud: kubernetes
+    cpus: 2
+    memory: 8Gi
+
+initial: push
+
+states:
+  push:
+    description: Register the run-scoped S3 fixture with exact identity metadata.
+    toolRef: workbench.encord.push
+    resources: cpu
+    outputs:
+      - uri: "{{config.encord_receipt_uri}}"
+        schema: npa.encord.push_receipt.v1
+    next: pull
+
+  pull:
+    description: Materialize the dataset created by push.
+    needs: [push]
+    toolRef: workbench.encord.pull
+    resources: cpu
+    outputs:
+      - uri: "{{config.encord_manifest_uri}}"
+        schema: npa.encord.pull_manifest.v1
+    next: verify
+
+  verify:
+    description: Verify exact identity, destination existence, size, and checksum.
+    needs: [pull]
+    toolRef: workbench.encord.verify_roundtrip
+    resources: cpu
+    inputs:
+      - uri: "{{config.encord_receipt_uri}}"
+        schema: npa.encord.push_receipt.v1
+      - uri: "{{config.encord_manifest_uri}}"
+        schema: npa.encord.pull_manifest.v1
+    outputs:
+      - uri: "{{config.encord_roundtrip_report_uri}}"
+        schema: npa.encord.roundtrip_report.v1
+    terminal: true

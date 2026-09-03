@@ -84,6 +84,48 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     ),
     # --- CPU / zero-GPU (Token Factory hosted) ---
     SubmitLiveCase(
+        "encord-push.yaml",
+        "cpu",
+        secret_envs=(
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "ENCORD_SSH_KEY_B64",
+        ),
+        rotation_skip=True,
+        skip_reason=(
+            "Requires an operator-selected Encord integration, folder, and source "
+            "prefix; keep it available for an explicitly configured live run."
+        ),
+    ),
+    SubmitLiveCase(
+        "encord-pull.yaml",
+        "cpu",
+        secret_envs=(
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "ENCORD_SSH_KEY_B64",
+        ),
+        rotation_skip=True,
+        skip_reason=(
+            "Requires an operator-selected existing Encord source; the shared "
+            "rotation must not guess or mutate third-party state."
+        ),
+    ),
+    SubmitLiveCase(
+        "encord-roundtrip-smoke.yaml",
+        "cpu",
+        secret_envs=(
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "ENCORD_SSH_KEY_B64",
+        ),
+        rotation_skip=True,
+        skip_reason=(
+            "Creates run-scoped Encord folder and dataset state whose exact cleanup "
+            "contract is not yet automated; run only with explicit live approval."
+        ),
+    ),
+    SubmitLiveCase(
         "token-factory-caption.yaml",
         "cpu",
         secret_envs=(

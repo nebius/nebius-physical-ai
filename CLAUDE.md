@@ -61,6 +61,8 @@ making architecture, review, or domain judgments.
 - `skills/tools/dataset/SKILL.md`: dataset-of-record — ingest, validate, curate,
  and query production sensor data as a versioned, lineage-tracked dataset
  (FiftyOne curation + LanceDB query index).
+- `skills/tools/encord/SKILL.md`: stateless Encord SaaS register, pull, and exact
+ roundtrip verification with S3-backed lineage artifacts.
 - `skills/tools/foxglove/SKILL.md`: Foxglove embedded viewer — the
  `@foxglove/embed` TypeScript SDK in the agent UI, MCAP recordings
  (convert/inspect/publish), and the `npa-foxglove-embed` container.

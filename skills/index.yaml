@@ -442,6 +442,25 @@ skills:
         path: npa/src/npa/cli/assets/foxglove/npa-foxglove-host.js
       - type: file_exists
         path: npa/src/npa/cli/agent_foxglove.py
+  - name: encord
+    category: tools
+    when_to_use: "Register S3 media with Encord SaaS, pull curated media with exact lineage, or verify a fail-closed roundtrip."
+    path: skills/tools/encord/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "encord", "push", "--help"]
+        contains: "identity-sidecar"
+      - type: cli_help
+        args: ["workbench", "encord", "pull", "--help"]
+        contains: "label-export"
+      - type: cli_help
+        args: ["workbench", "encord", "verify-roundtrip", "--help"]
+        contains: "receipt-uri"
+      - type: npa_workflow_yaml
+        paths:
+          - npa/workflows/workbench/npa-workflows/encord-push.yaml
+          - npa/workflows/workbench/npa-workflows/encord-pull.yaml
+          - npa/workflows/workbench/npa-workflows/encord-roundtrip-smoke.yaml
   - name: insights
     category: tools
     when_to_use: "Turn the reports/manifests other workbench tools emit into a queryable lineage graph + common metrics store; query/compare metrics, trace artifact lineage, or build a run dashboard."

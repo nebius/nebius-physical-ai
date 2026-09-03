@@ -104,6 +104,16 @@ def _token_factory_verifier() -> list[str]:
     return TokenFactoryClient(config=config).list_models()
 
 
+def _encord_verifier() -> str:
+    """Authenticate and make the cheapest read-only Encord call."""
+
+    from npa.workbench.encord.client import _default_user_client
+
+    client = _default_user_client()
+    next(iter(client.list_storage_folders(page_size=1)), None)
+    return "storage folders listable"
+
+
 def _ngc_auth_verifier(api_key: str) -> str:
     """Authenticate through NGC token exchange without implying all entitlements."""
 
@@ -125,14 +135,14 @@ def preflight_command(
     offline: bool = typer.Option(
         False,
         "--offline",
-        help="Skip live network probes (HF/NGC/S3/Token Factory); only check presence.",
+        help="Skip live network probes (HF/NGC/S3/Token Factory/Encord); only check presence.",
     ),
     warn_only: bool = typer.Option(
         False, "--warn-only", help="Exit 0 even when a check fails."
     ),
     output_json: bool = typer.Option(False, "--json", help="Print the report as JSON."),
 ) -> None:
-    """Validate HF, NGC, S3, and Token Factory credentials before a deploy or GPU job.
+    """Validate HF, NGC, S3, Token Factory, and Encord credentials before use.
 
     A single PASS/WARN/FAIL/SKIP report over the credentials nearly every
     workbench tool needs, so cold-start credential gaps surface here instead of
@@ -163,6 +173,7 @@ def preflight_command(
                 aws_secret_access_key=credentials.s3_secret_access_key,
             ),
             token_factory_verifier=_token_factory_verifier,
+            encord_verifier=_encord_verifier,
         )
 
     results = run_credential_preflight(credentials, probes=probes, checks=selected)

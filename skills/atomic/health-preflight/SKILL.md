@@ -21,22 +21,23 @@ Use `--warn-only` only when you deliberately want the report without the gate
 ## What each command answers
 
 `preflight` answers *"do I hold the credentials nearly every workbench tool
-needs?"* — one PASS/WARN/FAIL/SKIP row per check over Hugging Face, NGC, S3, and
-Token Factory:
+needs?"* with one PASS/WARN/FAIL/SKIP row per check over Hugging Face, NGC, S3,
+Token Factory, and Encord:
 
 ```bash
 npa workbench health preflight --checks all
-npa workbench health preflight --checks s3,token_factory
+npa workbench health preflight --checks s3,encord
 npa workbench health preflight --offline    # presence only, no network probes
 ```
 
-Valid `--checks` values are `all`, `hf`, `ngc`, `s3`, `token_factory`; the
-default is `hf,ngc,s3,token_factory`.
+Valid `--checks` values are `all`, `hf`, `ngc`, `s3`, `token_factory`, `encord`;
+the default is `hf,ngc,s3,token_factory,encord`.
 
 Online `hf` authenticates against Hugging Face `whoami-v2`; public repository
 metadata is not sufficient. Online `ngc` performs a registry token exchange;
-that proves the key, not entitlement to every NGC artifact. `access` performs
-the capability-specific repository/artifact probe.
+that proves the key, not entitlement to every NGC artifact. Online `encord`
+authenticates and performs the cheapest read-only storage-folder listing.
+`access` performs the capability-specific repository/artifact probe.
 
 `access` answers the different and more specific question *"is my token actually
 entitled to fetch bytes from the gated assets this capability pulls?"* It probes
@@ -55,7 +56,7 @@ Capabilities: `all`, `cosmos`, `cosmos3`, `cosmos3-serving`, `groot`, `lerobot`,
 
 For anything still gated, `access` prints the exact "Agree and access
 repository" URL. **Hugging Face gated licenses must be accepted interactively on
-the model page** — there is no API that accepts them for you, so no amount of
+the model page.** There is no API that accepts them for you, so no amount of
 retrying or re-tokenizing will clear a gate. Open the printed URL, accept, then
 re-run. `scripts/accept-model-access.sh` collects the URLs for a batch.
 
@@ -64,10 +65,10 @@ re-run. `scripts/accept-model-access.sh` collects the URLs for a batch.
 The recurring cold-start failure this prevents is a mid-run stop after you have
 already paid for a cluster. Run the checks in this order:
 
-1. `npa configure --show` — confirm the project stanza, bucket, and endpoint you
+1. `npa configure --show`: confirm the project stanza, bucket, and endpoint you
    think you are using are the ones on disk.
-2. `npa workbench health preflight` — credentials exist and authenticate.
-3. `npa workbench health access --capability <the one you will run>` — gated
+2. `npa workbench health preflight`: credentials exist and authenticate.
+3. `npa workbench health access --capability <the one you will run>`: gated
    model entitlements for that capability only; `all` is slower and reports
    failures you do not care about today.
 4. Only then `npa provision-if-absent`, `npa cluster up`, or
@@ -128,20 +129,21 @@ with `npa workbench workflow gpus --cluster <name>`.
 
 ## Gotchas
 
-- **`--offline` proves presence, not validity.** It skips the live HF/NGC/S3/Token
-  Factory probes. An expired-but-present token passes offline and fails the
-  moment a stage pulls. Use offline only where there is genuinely no egress.
+- **`--offline` proves presence, not validity.** It skips the live
+  HF/NGC/S3/Token Factory/Encord probes. An expired-but-present token passes
+  offline and fails the moment a stage pulls. Use offline only where there is
+  genuinely no egress.
 - **A SKIP is not a PASS.** Checks skip when the corresponding capability is not
   configured. If you are about to run a Cosmos stage and the NGC row says SKIP,
   you have not verified anything about NGC.
 - **`preflight` does not check Kubernetes or SkyPilot.** Cluster readiness is
   `npa skypilot verify --cluster <exact-context>` and `npa cluster status`;
-  registry pullability is `workflow preflight-images`. Three separate gates,
-  three separate commands.
+  registry pullability is `workflow preflight-images`, so run each command to
+  verify its separate dependency.
 - **Stale `NEBIUS_IAM_TOKEN` defeats provider calls even when health is green.**
-  The Nebius provider prefers an ambient (often expired) token over the fresh CLI
-  token. `unset NEBIUS_IAM_TOKEN NPA_NEBIUS_IAM_TOKEN` before provisioning or
-  submitting.
+  The Nebius provider prefers an ambient, often expired token over the fresh CLI
+  token, so `unset NEBIUS_IAM_TOKEN NPA_NEBIUS_IAM_TOKEN` before provisioning
+  or submitting.
 
 ## Verify
 
