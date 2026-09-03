@@ -130,6 +130,40 @@ def _full_app() -> typer.Typer:
     return full
 
 
+def _default_light_app() -> typer.Typer:
+    """Cosmos2 plus the nurec visualize/finalize surface for viewer images.
+
+    The npa-rerun-viewer image bakes the light flag, but the workflow stages it
+    exists for (``workbench.nurec.visualize`` / ``workbench.nurec.finalize``)
+    live under ``npa workbench nurec`` — without this registration those stages
+    fail with "No such command 'nurec'" even though the image's setup installed
+    the nurec runtime deps. The nurec CLI chain imports only stdlib + typer, so
+    it is safe on the dependency-minimal surface.
+    """
+
+    from npa.cli.nurec import app as nurec_app
+    from npa.cli.workbench.cosmos2 import app as cosmos2_only_app
+
+    light = typer.Typer(
+        name="workbench",
+        help="Physical AI workbench tools.",
+        no_args_is_help=True,
+    )
+
+    @light.callback()
+    def main() -> None:
+        """Physical AI workbench tools."""
+
+        load_credentials(
+            warn=lambda msg: typer.echo(msg, err=True),
+            export_to_environment=True,
+        )
+
+    light.add_typer(cosmos2_only_app, name="cosmos2")
+    light.add_typer(nurec_app, name="nurec")
+    return light
+
+
 if _LIGHT_IMPORT:
     # Capability images need only this one command and deliberately omit the
     # unrelated platform SDK dependency tree. Preserve the historical Cosmos2
@@ -137,6 +171,6 @@ if _LIGHT_IMPORT:
     if _LIGHT_TOOL == "groot":
         app = _groot_light_app()
     else:
-        from npa.cli.workbench.cosmos2 import app
+        app = _default_light_app()
 else:
     app = _full_app()
