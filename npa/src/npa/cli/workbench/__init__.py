@@ -130,8 +130,8 @@ def _full_app() -> typer.Typer:
     return full
 
 
-def _default_light_app() -> typer.Typer:
-    """Cosmos2 plus the nurec visualize/finalize surface for viewer images.
+def _rerun_viewer_light_app() -> typer.Typer:
+    """Build the dependency-minimal nurec surface for the Rerun viewer image.
 
     The npa-rerun-viewer image bakes the light flag, but the workflow stages it
     exists for (``workbench.nurec.visualize`` / ``workbench.nurec.finalize``)
@@ -142,7 +142,6 @@ def _default_light_app() -> typer.Typer:
     """
 
     from npa.cli.nurec import app as nurec_app
-    from npa.cli.workbench.cosmos2 import app as cosmos2_only_app
 
     light = typer.Typer(
         name="workbench",
@@ -159,7 +158,6 @@ def _default_light_app() -> typer.Typer:
             export_to_environment=True,
         )
 
-    light.add_typer(cosmos2_only_app, name="cosmos2")
     light.add_typer(nurec_app, name="nurec")
     return light
 
@@ -170,7 +168,9 @@ if _LIGHT_IMPORT:
     # surface unless an image explicitly declares another narrow capability.
     if _LIGHT_TOOL == "groot":
         app = _groot_light_app()
+    elif _LIGHT_TOOL == "rerun-viewer":
+        app = _rerun_viewer_light_app()
     else:
-        app = _default_light_app()
+        from npa.cli.workbench.cosmos2 import app
 else:
     app = _full_app()

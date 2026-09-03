@@ -15,6 +15,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     NPA_BAKED_PYTHON=/opt/rerun/venv/bin/python \
     NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA} \
     NPA_SKIP_EAGER_IMPORTS=1 \
+    NPA_LIGHT_WORKBENCH_TOOL=rerun-viewer \
     PYTHONPATH=/opt/npa/src \
     PYTHONUNBUFFERED=1 \
     RERUN_SDK_VERSION=${RERUN_SDK_VERSION}
