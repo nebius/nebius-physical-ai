@@ -7,6 +7,7 @@ from typing import Any
 
 import typer
 
+from npa.cli.path_contract import PathContractError, validate_read_path, validate_write_path
 from npa.workbench.robocasa.schemas import (
     DEFAULT_ENV_ID,
     DEFAULT_ITERATIONS,
@@ -25,7 +26,12 @@ RUN_FAILED = "failed"
 def run_cmd(
     capability: str = typer.Option(..., "--capability", help="RoboCasa capability to run."),
     env_id: str = typer.Option(DEFAULT_ENV_ID, "--env-id", help="RoboCasa Gymnasium env id."),
-    output_uri: str = typer.Option(..., "--output-uri", help="S3 output URI for artifacts."),
+    output_path: str = typer.Option(
+        ...,
+        "--output-path",
+        "--output-uri",
+        help="S3 output path for artifacts (--output-uri is a compatibility alias).",
+    ),
     iterations: int = typer.Option(DEFAULT_ITERATIONS, "--iterations", help="Number of rollout iterations."),
     num_envs: int = typer.Option(DEFAULT_NUM_ENVS, "--num-envs", help="Number of parallel envs."),
     timeout_seconds: int = typer.Option(DEFAULT_TIMEOUT_SECONDS, "--timeout-seconds", help="Run timeout in seconds."),
@@ -42,10 +48,26 @@ def run_cmd(
     output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
 ) -> None:
     """Run a RoboCasa capability (task registration, asset check, EGL reset, or random rollout)."""
+    try:
+        output_path = validate_write_path(
+            output_path,
+            tool="RoboCasa run",
+            option="--output-path",
+            required=True,
+        )
+        if capability == "kitchen_policy_eval":
+            checkpoint_uri = validate_read_path(
+                checkpoint_uri,
+                tool="RoboCasa run",
+                option="--checkpoint-uri",
+                allow_hf=False,
+            )
+    except PathContractError as exc:
+        fail(str(exc))
     request = RoboCasaRunRequest(
         env_id=env_id,
         capability=capability,
-        output_uri=output_uri,
+        output_uri=output_path,
         iterations=iterations,
         num_envs=num_envs,
         timeout_seconds=timeout_seconds,
@@ -67,7 +89,11 @@ def run_cmd(
     else:
         from npa.sdk.workbench.robocasa import run
 
-        result = run(**request.model_dump(mode="json")).model_dump(mode="json")
+        local_payload = request.model_dump(mode="json")
+        local_payload.pop("output_uri")
+        result = run(
+            output_path=output_path, **local_payload
+        ).model_dump(mode="json")
     if wait:
         run_id = str(result.get("run_id") or "")
         result = _wait_for_run(

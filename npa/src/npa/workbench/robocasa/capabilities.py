@@ -884,11 +884,73 @@ def run_capability_with_output(
     a service run, instead of silently dropping artifacts.
     """
     if output_dir is None:
-        output_dir = Path(tempfile.mkdtemp(prefix="robocasa_"))
+        with tempfile.TemporaryDirectory(prefix="robocasa_") as tmp:
+            return run_capability_with_output(request, output_dir=Path(tmp))
     result = run_capability(request, output_dir=output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    provenance = _execution_provenance(request, output_dir, result)
+    result["execution_provenance"] = provenance
+    (output_dir / "result.json").write_text(
+        json.dumps(result, indent=2, sort_keys=True), encoding="utf-8"
+    )
+    (output_dir / "provenance.json").write_text(
+        json.dumps(provenance, indent=2, sort_keys=True), encoding="utf-8"
+    )
     if request.output_uri:
         upload_output(output_dir, request.output_uri, result)
     return result
+
+
+def _execution_provenance(
+    request: RoboCasaRunRequest,
+    output_dir: Path,
+    result: dict[str, Any],
+) -> dict[str, Any]:
+    """Describe how run artifacts were produced, without overstating validation."""
+    rollout_capabilities = {
+        "kitchen_random_rollout",
+        "kitchen_trajectory_export",
+        "kitchen_policy_eval",
+    }
+    mp4_files = sorted(output_dir.rglob("*.mp4"))
+    env_ids = result.get("env_ids")
+    if not isinstance(env_ids, list):
+        heldout = result.get("split_proof", {}).get("heldout_env_ids", [])
+        env_ids = heldout if isinstance(heldout, list) and heldout else [request.env_id]
+    return {
+        "schema": "npa.robocasa.execution_provenance.v1",
+        "generator": "robocasa",
+        "simulator": "mujoco",
+        "capability": request.capability,
+        "environment_ids": [str(item) for item in env_ids],
+        "execution_path": (
+            "gymnasium.make(robocasa/*)->RoboCasa->MuJoCo->step/render"
+            if request.capability in rollout_capabilities
+            else "RoboCasa runtime capability probe"
+        ),
+        "capture_source": (
+            "runtime_environment_observation_or_render"
+            if request.capability in rollout_capabilities
+            else "none"
+        ),
+        "stock_or_copied_fixture": False,
+        "runtime_result_sha256": hashlib.sha256(
+            json.dumps(result, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest(),
+        "recording_formats": {
+            "mp4": bool(mp4_files),
+            "rrd": False,
+            "mcap": False,
+        },
+        "mp4_artifacts": [
+            {
+                "path": path.relative_to(output_dir).as_posix(),
+                "sha256": _sha256_file(path),
+            }
+            for path in mp4_files
+        ],
+        "validation_scope": "runtime artifact provenance; no GPU validation claim",
+    }
 
 
 def upload_output(local_dir: Path, output_uri: str, result: dict[str, Any]) -> None:

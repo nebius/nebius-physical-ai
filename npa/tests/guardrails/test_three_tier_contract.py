@@ -405,7 +405,7 @@ CONTRACTS: tuple[CapabilityContract, ...] = (
         params=(
             _p("capability", "capability", "--capability"),
             _p("env_id", "env_id", "--env-id"),
-            _p("output_uri", "output_uri", "--output-uri"),
+            _p("output_path", "output_path", "--output-path"),
             _p("iterations", "iterations", "--iterations"),
             _p("num_envs", "num_envs", "--num-envs"),
             _p("timeout_seconds", "timeout_seconds", "--timeout-seconds"),

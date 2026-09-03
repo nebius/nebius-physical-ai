@@ -26,3 +26,13 @@ def test_robocasa_keeps_known_good_gymnasium_and_policy_only_lerobot() -> None:
     assert '"einops>=0.8.0,<0.9.0"' in text
     assert "${ROBOCASA_REPO_URL} /opt/robocasa/source" in text
     assert "-e /opt/robocasa/source" in text
+
+
+def test_robocasa_runtime_is_non_root_without_passwordless_sudo() -> None:
+    text = DOCKERFILE.read_text(encoding="utf-8")
+
+    user_lines = [line.strip() for line in text.splitlines() if line.startswith("USER ")]
+    assert user_lines[-1] == "USER ubuntu"
+    assert "NOPASSWD" not in text
+    assert "openssh-server" not in text
+    assert "rsync sudo" not in text

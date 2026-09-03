@@ -177,11 +177,6 @@ images:
     dockerfile: robocasa/Dockerfile
     tier: service
     ports: [8791]
-    passwordless_root_exemption: >-
-      SkyPilot's Kubernetes bootstrap invokes package and SSH setup through
-      passwordless sudo as the non-root ubuntu user. The service image does not
-      start sshd by default, stores no credentials, and retains its non-root
-      runtime entrypoint outside explicitly orchestrated workflow task pods.
     redistribution: public
     notes: >-
       Bakes immutable Apache-2.0 RoboCasa source (pinned v1.0) and robosuite
@@ -190,7 +185,8 @@ images:
       fixtures, objects) are NOT baked and download at run time under the
       operator's own network access. No model weights, credentials, or accepted
       terms are baked. Built-image byte/layer scanning is mandatory before
-      publication.
+      publication. Workflow toolRefs are service clients and therefore run in
+      the standard task image; this service image grants no passwordless sudo.
   wan2-2:
     dockerfile: wan2-2/Dockerfile
     tier: job

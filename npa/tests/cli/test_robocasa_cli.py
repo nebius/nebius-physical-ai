@@ -32,6 +32,7 @@ def test_run_help() -> None:
     result = runner.invoke(robocasa_app, ["run", "--help"])
     assert result.exit_code == 0
     assert "--capability" in result.stdout
+    assert "--output-path" in result.stdout
     assert "--output-uri" in result.stdout
 
 
@@ -146,6 +147,44 @@ def test_run_invalid_capability_local() -> None:
         ["run", "--capability", "bogus", "--output-uri", "s3://bucket/out"],
     )
     assert result.exit_code != 0
+
+
+@pytest.mark.parametrize("value", ["/tmp/output", "file:///tmp/output", "https://example.invalid/out"])
+def test_run_rejects_non_s3_output_at_cli_boundary(value: str) -> None:
+    result = runner.invoke(
+        robocasa_app,
+        ["run", "--capability", "kitchen_random_rollout", "--output-path", value],
+    )
+    assert result.exit_code == 1
+    assert "expects an S3 URI" in result.stderr
+
+
+def test_run_accepts_legacy_output_uri_alias_before_dispatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed: dict[str, str] = {}
+
+    class Response:
+        def model_dump(self, *, mode: str) -> dict[str, str]:
+            return {"run_id": "local", "status": "completed"}
+
+    def fake_run(**kwargs):
+        observed.update(kwargs)
+        return Response()
+
+    monkeypatch.setattr("npa.sdk.workbench.robocasa.run", fake_run)
+    result = runner.invoke(
+        robocasa_app,
+        [
+            "run",
+            "--capability",
+            "kitchen_task_registration",
+            "--output-uri",
+            "s3://example/output",
+        ],
+    )
+    assert result.exit_code == 0
+    assert observed["output_path"] == "s3://example/output"
 
 
 def test_system_info_local() -> None:

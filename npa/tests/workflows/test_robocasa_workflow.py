@@ -50,7 +50,7 @@ def test_robocasa_toolrefs_render() -> None:
         assert argv, tool_ref
         assert argv[:4] == ["npa", "workbench", "robocasa", "run"]
         assert "--capability" in argv
-        assert "--output-uri" in argv
+        assert "--output-path" in argv
         assert "--service" in argv
         assert "--endpoint" in argv
 
@@ -120,6 +120,7 @@ def test_data_policy_uses_panda_omron_and_disjoint_robocasa_eval() -> None:
     assert "--checkpoint-uri" in argv
     assert "--train-env-ids" in argv
     assert "--heldout-env-ids" in argv
+    assert "--env-id" not in argv
 
 
 def test_data_policy_routes_raw_cpu_stages_to_native_images() -> None:

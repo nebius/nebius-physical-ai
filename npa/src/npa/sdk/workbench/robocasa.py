@@ -7,6 +7,7 @@ from typing import Any
 
 import httpx
 
+from npa.cli.path_contract import PathContractError, validate_read_path, validate_write_path
 from npa.workbench.robocasa.schemas import (
     DEFAULT_ENV_ID,
     DEFAULT_ITERATIONS,
@@ -32,7 +33,8 @@ class RoboCasaValidationError(ValueError):
 def run(
     *,
     capability: str,
-    output_uri: str,
+    output_path: str = "",
+    output_uri: str | None = None,
     env_id: str = DEFAULT_ENV_ID,
     iterations: int = DEFAULT_ITERATIONS,
     num_envs: int = DEFAULT_NUM_ENVS,
@@ -44,17 +46,47 @@ def run(
     endpoint: str = "",
     token_env: str = DEFAULT_TOKEN_ENV,
     timeout: float = 30.0,
+    checkpoint_uri: str = "",
+    train_env_ids: str = "",
+    heldout_env_ids: str = "",
 ) -> RoboCasaRunResponse:
-    """Run a RoboCasa capability."""
+    """Run a RoboCasa capability.
+
+    ``output_uri`` remains as a compatibility alias for callers predating the
+    canonical cross-tool ``output_path`` spelling.
+    """
+    if output_path and output_uri and output_path != output_uri:
+        raise RoboCasaValidationError(
+            "output_path and compatibility output_uri must identify the same S3 path"
+        )
+    try:
+        resolved_output = validate_write_path(
+            output_path or output_uri or "",
+            tool="RoboCasa SDK run",
+            option="output_path",
+            required=True,
+        )
+        if capability == "kitchen_policy_eval":
+            checkpoint_uri = validate_read_path(
+                checkpoint_uri,
+                tool="RoboCasa SDK run",
+                option="checkpoint_uri",
+                allow_hf=False,
+            )
+    except PathContractError as exc:
+        raise RoboCasaValidationError(str(exc)) from exc
     request = RoboCasaRunRequest(
         env_id=env_id,
         capability=capability,
-        output_uri=output_uri,
+        output_uri=resolved_output,
         iterations=iterations,
         num_envs=num_envs,
         timeout_seconds=timeout_seconds,
         download_assets=download_assets,
         seed=seed,
+        checkpoint_uri=checkpoint_uri,
+        train_env_ids=train_env_ids,
+        heldout_env_ids=heldout_env_ids,
     )
     if _resolve_mode(mode=mode, service=service):
         return RoboCasaRunResponse.model_validate(

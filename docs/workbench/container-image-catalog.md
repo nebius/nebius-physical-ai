@@ -128,6 +128,8 @@ redistribution eligibility are not evidence of publication.
   have not yet been recorded, so it is quarantined from `publicly_publishable_tools()`
   via `VALIDATION_CANDIDATE_TOOLS`. It will gain a public row only when its accepted
   digest and GPU evidence are recorded.
+  It is a non-root service image with no passwordless-sudo grant; workflow
+  toolRefs call the deployed service from the standard task image.
 
 - **`npa-sim2real-control`** is an internal workflow artifact, not a public-mirror
   tool. Its packaging contract permits redistribution, but it has no entry in

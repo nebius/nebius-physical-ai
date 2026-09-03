@@ -48,17 +48,12 @@ RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         python3 python3-dev python3-pip python3-venv build-essential git \
         software-properties-common ca-certificates curl \
-        fuse netcat-openbsd openssh-client openssh-server pciutils procps \
-        rsync sudo wget \
+        fuse netcat-openbsd pciutils procps wget \
         libegl1 libgl1 libglvnd0 libegl1-mesa-dev \
     && add-apt-repository -y ppa:deadsnakes/ppa \
     && apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         python3.12 python3.12-dev python3.12-venv \
-    && printf 'ubuntu ALL=(ALL) NOPASSWD:ALL\n' \
-         > /etc/sudoers.d/99-npa-runtime-user \
-    && chmod 0440 /etc/sudoers.d/99-npa-runtime-user \
-    && visudo -cf /etc/sudoers.d/99-npa-runtime-user \
     && rm -rf /var/lib/apt/lists/* \
     && python3.12 -m venv /opt/robocasa/venv
 

@@ -33,10 +33,10 @@ deployed Kubernetes endpoint:
 
 ```bash
 npa workbench robocasa run --capability kitchen_random_rollout \
-  --output-uri s3://<bucket>/robocasa/<id>/ \
+  --output-path s3://<bucket>/robocasa/<id>/ \
   --iterations 1 --num-envs 1
 npa workbench robocasa run --capability kitchen_random_rollout \
-  --output-uri s3://<bucket>/robocasa/<id>/ --service --endpoint <url>
+  --output-path s3://<bucket>/robocasa/<id>/ --service --endpoint <url>
 ```
 
 Deploy the service when you want a persistent endpoint several runs share:
@@ -61,13 +61,14 @@ npa workbench robocasa deploy --project <alias> --destroy
 npa workbench robocasa run \
   --capability kitchen_random_rollout \
   --env-id robocasa/PickPlaceCounterToCabinet \
-  --output-uri s3://<bucket>/robocasa/runs/<id>/ \
+  --output-path s3://<bucket>/robocasa/runs/<id>/ \
   --iterations 1 --num-envs 1 \
   --wait --poll-seconds 30 --timeout-seconds 3600 \
   --output json
 ```
 
-`--capability` and `--output-uri` are required. `--wait` polls `/status` until
+`--capability` and `--output-path` are required. The legacy `--output-uri`
+spelling remains as an alias. `--wait` polls `/status` until
 the run completes **and fails if it does not** — without it, the command returns
 as soon as the run is accepted.
 
@@ -84,11 +85,16 @@ CUDA availability, and the registered env count.
 
 ## In workflows
 
-toolRefs are per-capability:
+There are six per-capability toolRefs:
 `workbench.robocasa.task_registration`, `.asset_availability`,
-`.egl_env_reset`, `.random_rollout`. They appear together in
-`npa/workflows/workbench/npa-workflows/robocasa-smoke.yaml`, which runs task
-registration → asset availability → EGL reset → random rollout in sequence.
+`.egl_env_reset`, `.random_rollout`, `.trajectory_export`, and `.policy_eval`.
+The first four appear together in `robocasa-smoke.yaml`; the latter two drive
+the data-policy workflow's real rollout export and held-out evaluation.
+
+Every run uploads `result.json` and `provenance.json`. Rollout provenance names
+the RoboCasa → MuJoCo execution path and hashes each generated MP4, with
+machine-readable `rrd: false` and `mcap: false` fields; this tool does not emit
+RRD or MCAP recordings.
 
 ## Gotchas
 

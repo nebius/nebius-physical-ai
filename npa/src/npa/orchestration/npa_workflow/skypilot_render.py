@@ -56,7 +56,6 @@ TOOL_REF_IMAGE_TOOL: dict[str, str] = {
     "workbench.sonic": "sonic",
     "workbench.mjlab": "sonic",
     "workbench.retargeting": "retargeting",
-    "workbench.robocasa": "robocasa",
     "workbench.sim2real": "lerobot-vlm-rl",
     "workbench.sim2real_envgen": "envgen",
     # BYOF selects its actual workload image from config.base_image inside the

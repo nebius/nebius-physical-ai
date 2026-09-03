@@ -6,6 +6,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from npa.cli.path_contract import validate_write_path
+
 DEFAULT_PORT = 8791
 DEFAULT_TOKEN_ENV = "ROBOCASA_TOKEN"
 DEFAULT_ENV_ID = "robocasa/PickPlaceCounterToCabinet"
@@ -55,6 +57,16 @@ class RoboCasaRunRequest(BaseModel):
         if value not in supported:
             raise ValueError(f"unsupported robocasa capability: {value}")
         return value
+
+    @field_validator("output_uri")
+    @classmethod
+    def _validate_output_path(cls, value: str) -> str:
+        return validate_write_path(
+            value,
+            tool="RoboCasa run",
+            option="--output-path",
+            required=True,
+        )
 
 
 class RoboCasaRunResponse(BaseModel):
