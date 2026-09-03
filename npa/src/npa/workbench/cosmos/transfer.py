@@ -52,6 +52,8 @@ CONTROL_PROMPT_MODALITIES = ("seg",)
 # Each modality is a separate ControlNet checkpoint, so a seg/depth run downloads
 # weights an edge run never touches. Named here for the operator-facing error.
 DISABLE_CONTENT_GUARDRAILS_ENV = "NPA_COSMOS_DISABLE_CONTENT_GUARDRAILS"
+GUARDRAIL_REPO = "nvidia/Cosmos-Guardrail1"
+GUARDRAIL_REVISION = "d6d4bfa899a71454a700907664f3e88f503950cf"
 # Live job 339 reported SUCCEEDED while the spec promised ``manifest.json`` and
 # the then-reference-only tool wrote ``index.json`` with a different schema.
 # Keep these two artifact contracts named and distinct: the real publisher now
@@ -584,6 +586,65 @@ def _require_runtime_hf_token() -> None:
         )
 
 
+def prepare_guardrail_nltk_data(*, hf_home: str | None = None) -> int:
+    """Download and safely materialize the pinned guardrail tokenizer data.
+
+    Hugging Face snapshots represent files as symlinks into their local blob
+    store. NLTK 3.10.3 deliberately refuses to follow those links when opening
+    tokenizer data. Download only the pinned guardrail subtree, prove every link
+    resolves to a regular file inside the same cache, and atomically replace it
+    with a regular copy before NLTK is imported. This preserves the path-security
+    fix without disabling Cosmos guardrails or trusting an unpinned snapshot.
+    """
+
+    from huggingface_hub import snapshot_download
+
+    home = Path(hf_home or os.environ.get("HF_HOME", "/opt/cosmos-data/hf_cache"))
+    hub = (home / "hub").resolve()
+    snapshot = Path(
+        snapshot_download(
+            repo_id=GUARDRAIL_REPO,
+            revision=GUARDRAIL_REVISION,
+            allow_patterns=["blocklist/nltk_data/**"],
+            cache_dir=hub,
+            token=os.environ.get("HF_TOKEN"),
+        )
+    ).resolve()
+    nltk_data = (snapshot / "blocklist" / "nltk_data").resolve()
+    if (
+        not nltk_data.is_dir()
+        or not snapshot.is_relative_to(hub)
+        or not nltk_data.is_relative_to(snapshot)
+    ):
+        raise RuntimeError("pinned Cosmos guardrail tokenizer data is unavailable")
+
+    materialized = 0
+    for link in sorted(nltk_data.rglob("*")):
+        if not link.is_symlink():
+            continue
+        target = link.resolve(strict=True)
+        if not target.is_file() or not target.is_relative_to(hub):
+            raise RuntimeError(f"unsafe Cosmos guardrail cache link: {link}")
+        fd, temporary = tempfile.mkstemp(prefix=f".{link.name}.", dir=link.parent)
+        try:
+            with os.fdopen(fd, "wb") as output, target.open("rb") as source:
+                shutil.copyfileobj(source, output)
+            os.chmod(temporary, 0o444)
+            os.replace(temporary, link)
+        except BaseException:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+            try:
+                os.unlink(temporary)
+            except OSError:
+                pass
+            raise
+        materialized += 1
+    return materialized
+
+
 def _spec_with_prompt(repo: Path, spec: str, prompt: str, *, tag: str = "") -> str:
     """Write a copy of ``spec`` with its text prompt overridden; return its path.
 
@@ -690,6 +751,7 @@ def run_cosmos_transfer(
     env = dict(os.environ)
     env["HF_HOME"] = hf_home or os.environ.get("HF_HOME", "/opt/cosmos-data/hf_cache")
     env.setdefault("TOKENIZERS_PARALLELISM", "false")
+    prepare_guardrail_nltk_data(hf_home=env["HF_HOME"])
     if cuda_visible_devices is not None and str(cuda_visible_devices).strip() != "":
         env["CUDA_VISIBLE_DEVICES"] = str(cuda_visible_devices).strip()
     # Only the specs WE synthesized this call are ephemeral; never delete a

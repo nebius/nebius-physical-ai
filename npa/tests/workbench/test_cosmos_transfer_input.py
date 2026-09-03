@@ -12,6 +12,7 @@ import json
 import shutil
 import subprocess
 import sys
+import types
 from pathlib import Path
 
 import numpy as np
@@ -40,6 +41,7 @@ def _fake_env(monkeypatch, repo: Path):
     monkeypatch.setattr(tx, "cosmos_transfer_repo", lambda: repo)
     monkeypatch.setattr(tx, "ensure_env", lambda r: Path("/usr/bin/python3"))
     monkeypatch.setenv("HF_TOKEN", "unit-test-placeholder")
+    monkeypatch.setattr(tx, "prepare_guardrail_nltk_data", lambda **_kwargs: 0)
 
     def fake_run(cmd, *args, **kwargs):
         cwd = Path(kwargs["cwd"])
@@ -50,6 +52,47 @@ def _fake_env(monkeypatch, repo: Path):
         return None
 
     monkeypatch.setattr(tx.subprocess, "run", fake_run)
+
+
+def test_guardrail_nltk_cache_links_are_safely_materialized(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    hub = tmp_path / "hub"
+    package = hub / "models--nvidia--Cosmos-Guardrail1"
+    snapshot = package / "snapshots" / tx.GUARDRAIL_REVISION
+    tokenizer = snapshot / "blocklist" / "nltk_data" / "tokenizers" / "punkt_tab"
+    blob = package / "blobs" / "tokenizer-data"
+    tokenizer.mkdir(parents=True)
+    blob.parent.mkdir(parents=True)
+    blob.write_bytes(b"pinned tokenizer data")
+    link = tokenizer / "collocations.tab"
+    link.symlink_to(blob)
+
+    calls: list[dict[str, object]] = []
+
+    def fake_snapshot_download(**kwargs):
+        calls.append(kwargs)
+        return str(snapshot)
+
+    monkeypatch.setitem(
+        sys.modules,
+        "huggingface_hub",
+        types.SimpleNamespace(snapshot_download=fake_snapshot_download),
+    )
+    monkeypatch.setenv("HF_TOKEN", "unit-test-placeholder")
+
+    assert tx.prepare_guardrail_nltk_data(hf_home=str(tmp_path)) == 1
+    assert link.is_file() and not link.is_symlink()
+    assert link.read_bytes() == b"pinned tokenizer data"
+    assert calls == [
+        {
+            "repo_id": tx.GUARDRAIL_REPO,
+            "revision": tx.GUARDRAIL_REVISION,
+            "allow_patterns": ["blocklist/nltk_data/**"],
+            "cache_dir": hub,
+            "token": "unit-test-placeholder",
+        }
+    ]
 
 
 def test_spec_for_input_video_builds_edge_control(tmp_path: Path) -> None:
@@ -500,6 +543,7 @@ def test_run_cosmos_transfer_accepts_small_guardrailed_video(
     (repo / "examples").mkdir(parents=True)
     monkeypatch.setattr(tx, "cosmos_transfer_repo", lambda: repo)
     monkeypatch.setattr(tx, "ensure_env", lambda _repo: Path("/usr/bin/python3"))
+    monkeypatch.setattr(tx, "prepare_guardrail_nltk_data", lambda **_kwargs: 0)
     monkeypatch.setenv("HF_TOKEN", "unit-test-placeholder")
 
     def fake_run(cmd, *_args, **kwargs):
@@ -523,6 +567,7 @@ def test_run_cosmos_transfer_content_guardrail_opt_out_is_explicit(
     (repo / "examples").mkdir(parents=True)
     monkeypatch.setattr(tx, "cosmos_transfer_repo", lambda: repo)
     monkeypatch.setattr(tx, "ensure_env", lambda _repo: Path("/usr/bin/python3"))
+    monkeypatch.setattr(tx, "prepare_guardrail_nltk_data", lambda **_kwargs: 0)
     monkeypatch.setenv("HF_TOKEN", "unit-test-placeholder")
     seen: list[list[str]] = []
 

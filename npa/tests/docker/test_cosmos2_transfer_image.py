@@ -243,6 +243,18 @@ def test_final_runtime_is_non_root_relocated_and_cache_writable_by_design() -> N
     assert "/opt/cosmos/cosmos-transfer2.5/.venv/bin/npa" in text
     assert "workbench cosmos2 transfer --help" in text
     assert "rm -rf /opt/cosmos/model-cache/xdg/uv" in text
+
+
+def test_functional_smoke_materializes_pinned_guardrail_tokenizer_cache() -> None:
+    text = _dockerfile()
+    smoke = (IMAGE_DIR / "smoke_functional.sh").read_text(encoding="utf-8")
+    assert "prepare_guardrail_nltk_data" in smoke
+    runner = (ROOT / "npa/src/npa/workbench/cosmos/transfer.py").read_text(
+        encoding="utf-8"
+    )
+    assert 'GUARDRAIL_REPO = "nvidia/Cosmos-Guardrail1"' in runner
+    assert re.search(r'GUARDRAIL_REVISION = "[0-9a-f]{40}"', runner)
+    assert "target.is_relative_to(hub)" in runner
     assert "chown -R ubuntu:ubuntu /opt/cosmos/model-cache" in text
     assert "/opt/cosmos/model-cache/xdg/uv/.npa-write-probe" in text
     assert 'python3 -c "import cosmos_transfer2"' in text
