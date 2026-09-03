@@ -538,8 +538,12 @@ def prepare_input(
 def _complete_evaluator_report(report: Any) -> dict[str, Any]:
     if not isinstance(report, dict):
         raise PaidfCosmos3Error("prior evaluator report is not a JSON object")
-    if report.get("status") != "completed" or not isinstance(
-        report.get("passed"), bool
+    status = report.get("status")
+    passed = report.get("passed")
+    if (
+        status not in {"completed", "degraded"}
+        or not isinstance(passed, bool)
+        or (status == "degraded" and passed)
     ):
         raise PaidfCosmos3Error(
             "prior evaluator report is incomplete or has no boolean decision"

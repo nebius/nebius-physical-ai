@@ -355,6 +355,63 @@ def test_retry_fails_closed_on_incomplete_evaluator_report(tmp_path: Path) -> No
 
 
 @requires_ffmpeg
+def test_retry_accepts_degraded_evaluator_as_fail_closed_decision(
+    tmp_path: Path,
+) -> None:
+    paths = _generation_inputs(tmp_path)
+    storage = _MemoryStorage()
+    paths["attempt"].write_text(
+        json.dumps({"schema": c3.ATTEMPT_SCHEMA, "attempt": 0}), encoding="utf-8"
+    )
+    (paths["scores"] / "cosmos_evaluator.json").write_text(
+        json.dumps(
+            {"status": "degraded", "passed": False, "score": 0.4}
+        ),
+        encoding="utf-8",
+    )
+
+    calls: list[dict] = []
+
+    def fake_generator(**kwargs):
+        calls.append(kwargs)
+        artifact = Path(kwargs["output_path"]) / kwargs["name"] / "vision.mp4"
+        artifact.parent.mkdir(parents=True)
+        shutil.copy2(paths["source"], artifact)
+        return {"output_path": str(artifact), "output_bytes": artifact.stat().st_size}
+
+    result = c3.generate_variants(
+        str(paths["source"]),
+        str(paths["provenance"]),
+        str(paths["captions"]),
+        str(paths["configs"]),
+        "s3://example-bucket/out/",
+        str(paths["scores"]),
+        str(paths["attempt"]),
+        "video2video",
+        "Cosmos3-Nano",
+        "prompt",
+        "",
+        1,
+        5,
+        10,
+        1,
+        1,
+        100,
+        -0.5,
+        2,
+        "latency",
+        True,
+        "run",
+        storage=storage,
+        environ={"CUDA_VISIBLE_DEVICES": "0"},
+        generator=fake_generator,
+    )
+
+    assert result["attempt"] == 1
+    assert calls[0]["seed"] == 101
+
+
+@requires_ffmpeg
 def test_existing_unreadable_attempt_fails_closed(tmp_path: Path) -> None:
     paths = _generation_inputs(tmp_path)
     paths["attempt"].write_text("not-json", encoding="utf-8")
