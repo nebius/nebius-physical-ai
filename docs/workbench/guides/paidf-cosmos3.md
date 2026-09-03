@@ -58,6 +58,12 @@ provenance remain independently auditable. The composition requires
 `video2video`: selecting a text-to-video or image-to-video mode fails before GPU
 inference rather than producing a misleading source-conditioned claim.
 
+`caption_model` defaults to `nvidia/Cosmos3-Super-Reasoner` for the original
+and accepted-variant captions and for Cosmos Evaluator's visual questions.
+Token Factory availability is key-scoped and can change, so run
+`npa workbench token-factory models` before execution and override
+`caption_model` with another reachable vision model when needed.
+
 Guardrails are enabled and enforced for this composition. The image contains the
 pinned OpenMDW-1.1 framework source but no weights. The operator supplies
 `HF_TOKEN` at runtime after accepting the checkpoint, Wan VAE, and

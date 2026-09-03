@@ -69,7 +69,10 @@ config:
   appearance_blur_ksize: "7"
   appearance_max_dimension: "256"
   appearance_regions_json: ""
-  caption_model: "Qwen/Qwen2.5-VL-72B-Instruct"
+  # Physical-AI-aware vision model used for both captioning and evaluator
+  # questions. Availability is key-scoped; verify the current catalog and
+  # override this value when the operator's key exposes a different VLM.
+  caption_model: "nvidia/Cosmos3-Super-Reasoner"
   vlm_backend: api
   max_images: "8"
   max_tokens: "512"
