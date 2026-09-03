@@ -180,9 +180,12 @@ partial file:
   and normalization complete, with dataset coverage and normalization progress;
 - a separate fixed 100-update qualification emits
   `qualification-step-000100.rrd` from its own journal and checkpoint;
-- full training normally emits an early, explicitly checkpoint-free
-  `progress-step-001000.rrd`, then checkpoint-aligned snapshots at 10,000,
-  25,000, 50,000, 75,000, and 100,000 completed updates.
+- full training emits an early, explicitly checkpoint-free
+  `progress-step-000500.rrd` from the stable journal prefix through source step
+  499, followed by `progress-step-001000.rrd` and checkpoint-aligned snapshots
+  at 10,000, 25,000, 50,000, 75,000, and 100,000 completed updates. During an
+  explicit 1,000-update operator pause, the 1,000-update recording is instead
+  checkpoint-required and covers source steps 0 through 999.
 
 The upstream loop numbers its final update `optimizer_step=99999`, so the
 `progress-step-100000` manifest explicitly records factual coverage through

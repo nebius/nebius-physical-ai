@@ -144,6 +144,10 @@ states:
         schema: npa.workbench.openpi.pi05-full-droid-finetune.v1
       - uri: "{{config.telemetry_uri}}"
         schema: npa.workbench.openpi.pi05-full-droid-telemetry.v1
+      - uri: "{{config.rrd_root_uri}}/progress-step-000500.rrd"
+        schema: application/vnd.rerun.rrd
+      - uri: "{{config.rrd_root_uri}}/progress-step-000500.manifest.json"
+        schema: npa.workbench.openpi.pi05-full-droid-rerun-milestone.v1
       - uri: "{{config.rrd_root_uri}}/progress-step-001000.rrd"
         schema: application/vnd.rerun.rrd
       - uri: "{{config.rrd_root_uri}}/progress-step-001000.manifest.json"

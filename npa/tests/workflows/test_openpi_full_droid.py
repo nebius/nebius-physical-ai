@@ -1460,9 +1460,32 @@ def test_operator_pause_milestone_is_checkpointed_at_optimizer_step_999(
         pause_after_updates=1_000,
     )
 
-    assert publisher.milestones == {1_000: 999}
+    assert publisher.milestones == {500: 499, 1_000: 999}
+    assert publisher.is_log_only(499) is True
+    assert publisher.requires_checkpoint(499) is False
     assert publisher.is_log_only(999) is False
     assert publisher.requires_checkpoint(999) is True
+
+
+def test_full_run_500_update_milestone_maps_to_source_step_499(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(full_droid, "_uri_exists", lambda _uri: False)
+    publisher = full_droid._TrainingMilestonePublisher(
+        journal_path=tmp_path / "telemetry.jsonl",
+        run_id="full-mapping",
+        kind="full",
+        config=SimpleNamespace(),
+        prepared={},
+        runtime_image="ghcr.io/example/openpi@sha256:" + "a" * 64,
+        hardware={},
+        topology=[],
+        rrd_root_uri="s3://example.invalid/private/rrd",
+    )
+
+    assert publisher.milestones[500] == 499
+    assert publisher.is_log_only(499) is True
+    assert publisher.requires_checkpoint(499) is False
 
 
 def test_train_parser_exposes_only_the_explicit_pause_boundary() -> None:

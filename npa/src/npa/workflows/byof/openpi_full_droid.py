@@ -76,7 +76,16 @@ PREPARATION_TIMELINE = "normalization_batch"
 RERUN_SCHEMA = "application/vnd.rerun.rrd"
 QUALIFICATION_STEPS = 100
 OPERATOR_PAUSE_UPDATES = 1_000
-FULL_PROGRESS_MILESTONES = (1_000, 10_000, 25_000, 50_000, 75_000, 100_000)
+EARLY_PROGRESS_UPDATES = 500
+FULL_PROGRESS_MILESTONES = (
+    EARLY_PROGRESS_UPDATES,
+    1_000,
+    10_000,
+    25_000,
+    50_000,
+    75_000,
+    100_000,
+)
 REQUIRED_RRD_ENTITIES = (
     "metrics/loss",
     "metrics/learning_rate",
@@ -2446,14 +2455,18 @@ class _TrainingMilestonePublisher:
         self.published: dict[int, dict[str, object]] = {}
         if kind == "qualification":
             self.milestones = {QUALIFICATION_STEPS: QUALIFICATION_STEPS - 1}
+            self.log_only_steps: set[int] = set()
             self.pause_checkpoint_milestone = False
         elif pause_after_updates:
             self.milestones = {
+                EARLY_PROGRESS_UPDATES: EARLY_PROGRESS_UPDATES - 1,
                 pause_after_updates: pause_after_updates - 1,
             }
+            self.log_only_steps = {EARLY_PROGRESS_UPDATES - 1}
             self.pause_checkpoint_milestone = True
         else:
             self.milestones = {
+                EARLY_PROGRESS_UPDATES: EARLY_PROGRESS_UPDATES - 1,
                 1_000: 1_000,
                 10_000: 10_000,
                 25_000: 25_000,
@@ -2461,6 +2474,7 @@ class _TrainingMilestonePublisher:
                 75_000: 75_000,
                 100_000: 99_999,
             }
+            self.log_only_steps = {EARLY_PROGRESS_UPDATES - 1, 1_000}
             self.pause_checkpoint_milestone = False
             existing_pause_manifest = (
                 f"{self.rrd_root_uri}/progress-step-001000.manifest.json"
@@ -2480,6 +2494,7 @@ class _TrainingMilestonePublisher:
                         "existing pause milestone has incompatible provenance"
                     )
                 self.milestones[1_000] = 999
+                self.log_only_steps.discard(1_000)
                 self.pause_checkpoint_milestone = True
 
     def _slug(self, milestone: int) -> str:
@@ -2487,11 +2502,7 @@ class _TrainingMilestonePublisher:
         return f"{prefix}-step-{milestone:06d}"
 
     def is_log_only(self, optimizer_step: int) -> bool:
-        return (
-            self.kind == "full"
-            and optimizer_step == self.milestones.get(1_000)
-            and not self.pause_checkpoint_milestone
-        )
+        return self.kind == "full" and optimizer_step in self.log_only_steps
 
     def requires_checkpoint(self, optimizer_step: int) -> bool:
         return any(
@@ -2607,6 +2618,7 @@ class _TrainingMilestonePublisher:
                 source_telemetry_sha256=source_sha256,
                 source_coverage={
                     "through_optimizer_step": optimizer_step,
+                    "completed_optimizer_updates": semantic,
                     "metric_record_count": len(metric_steps),
                     "first_metric_step": min(metric_steps),
                     "last_metric_step": max(metric_steps),
