@@ -270,3 +270,38 @@ for finding 5 instead provisions the exact supported cluster contract and runs
 the smallest representative Isaac/RTX render that can prove the driver-facing
 interface. PR #367's historical run remains secondary evidence because its
 durable artifacts were not accessible in the available project scope.
+
+## 2026-09-03 coherent public-image follow-up
+
+The publication and exact-source blockers described above are now resolved by
+one five-image release built from
+`45e1128113abd4c03fe95f17bbcab5da333134b9`. The controller is now in the
+canonical public inventory after built-layer and history scans confirmed its
+`redistribution: public` contract. Cosmos and Isaac proprietary/model material
+is still excluded from public layers and fetched only at runtime with the
+operator's authorization.
+
+| Workflow role | Additive supported tag | Published digest |
+|---|---|---|
+| controller | `npa-sim2real-control:0.1.2-sim2real-coherent-20260903` | `sha256:d1b0b38f3c4eb6d1ba0ce75c0be40b1d80ae32b0cf0b5b0e343502945c5600f5` |
+| Transfer | `npa-cosmos2-transfer:2.5.1-sim2real-coherent-20260903` | `sha256:9330a6c10dccee9050f748b6e98d2ba79de9f889695c137ed97b28a7e9ddf658` |
+| EnvGen | `npa-envgen:0.1.2-sim2real-coherent-20260903` | `sha256:46e67a8f2e30d83aa8b1c3f75853ebcf428c13693fce90f99bbc95906849b8b3` |
+| Isaac | `npa-isaac-lab:3.0.0b2.post1-sim2real-coherent-20260903` | `sha256:645c4405169afa28668a970cca9d0c9f3000cda6f74c7ec3c16d5962b152f804` |
+| viewer | `npa-rerun-viewer:0.31.4-sim2real-coherent-20260903` | `sha256:9517575558596e1b132a11fc623d3532014f3761d36d6b07a9b7f2342424b66b` |
+
+For every digest, independent empty-config reads resolved the development ref
+twice and the release tag once, then confirmed the exact common
+`NPA_IMAGE_SOURCE_SHA`, `skypilot-0.12.2-v1` bootstrap label, and non-root OCI
+user. Real digest-pinned capability checks passed: the controller expanded both
+canonical decision branches; Transfer ran four guarded diffusion steps and
+validated a 93-frame MP4; EnvGen produced 16 rows and advanced Genesis physics
+on CUDA; Isaac produced and decoded three distinct RayTracedLighting/Vulkan
+frames on RTX PRO 6000; and Rerun converted, reopened, served, and read a real
+robotics trace.
+
+This follow-up does not retroactively change the 2026-09-02 observations. The
+configured workflow cluster still lacks Kueue, so no complete 14-stage run was
+claimed and no unrelated scheduler installation was performed. The release
+establishes a coherent public image boundary and a working documented
+source-SHA/render path; model access, workflow data, queue admission, and policy
+efficacy remain runtime/operator concerns.

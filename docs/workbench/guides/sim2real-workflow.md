@@ -147,7 +147,7 @@ Choose the digest-pinned Isaac image now, then warm a shared RWX cache. The
 template is the authoritative PVC/security/bootstrap contract:
 
 ```bash
-export NPA_ISAAC_IMAGE='<registry>/npa-isaac-lab@sha256:<64-hex>'
+export NPA_ISAAC_IMAGE='ghcr.io/nebius/nebius-physical-ai/npa-isaac-lab@sha256:645c4405169afa28668a970cca9d0c9f3000cda6f74c7ec3c16d5962b152f804'
 sed "s|image: ghcr.io/nebius/nebius-physical-ai/npa-isaac-lab@sha256:<64-hex-digest>|image: ${NPA_ISAAC_IMAGE}|" \
   npa/docker/workbench/common/warm-isaac-cache.yaml | kubectl apply -f -
 kubectl wait --for=condition=complete job/npa-warm-isaac-cache --timeout=-1s
@@ -185,17 +185,19 @@ Put the six references in shell variables, then reproduce the actual manifest
 pulls with the same config used by submit:
 
 ```bash
-export CONTROLLER_IMAGE='<registry>/npa-sim2real-control@sha256:<64-hex>'
-export TRANSFER_IMAGE='<registry>/npa-cosmos2-transfer@sha256:<64-hex>'
-export ENVGEN_IMAGE='<registry>/npa-envgen@sha256:<64-hex>'
+export CONTROLLER_IMAGE='ghcr.io/nebius/nebius-physical-ai/npa-sim2real-control@sha256:d1b0b38f3c4eb6d1ba0ce75c0be40b1d80ae32b0cf0b5b0e343502945c5600f5'
+export TRANSFER_IMAGE='ghcr.io/nebius/nebius-physical-ai/npa-cosmos2-transfer@sha256:9330a6c10dccee9050f748b6e98d2ba79de9f889695c137ed97b28a7e9ddf658'
+export ENVGEN_IMAGE='ghcr.io/nebius/nebius-physical-ai/npa-envgen@sha256:46e67a8f2e30d83aa8b1c3f75853ebcf428c13693fce90f99bbc95906849b8b3'
 export ISAAC_IMAGE="${NPA_ISAAC_IMAGE}"
-export VIEWER_IMAGE='<registry>/npa-rerun-viewer@sha256:<64-hex>'
+export VIEWER_IMAGE='ghcr.io/nebius/nebius-physical-ai/npa-rerun-viewer@sha256:9517575558596e1b132a11fc623d3532014f3761d36d6b07a9b7f2342424b66b'
 export SPEC=npa/workflows/workbench/npa-workflows/sim2real.yaml
+export SOURCE_SHA=45e1128113abd4c03fe95f17bbcab5da333134b9
 
 npa/.venv/bin/npa workbench workflow preflight-images "${SPEC}" \
   --project "${NPA_PROJECT}" \
   --infra "k8s/${NPA_CLUSTER}" \
   --assume-decision promote_checkpoint \
+  --var source_sha="${SOURCE_SHA}" \
   --var controller_image="${CONTROLLER_IMAGE}" \
   --var transfer_image="${TRANSFER_IMAGE}" \
   --var envgen_image="${ENVGEN_IMAGE}" \
@@ -247,13 +249,14 @@ npa/.venv/bin/npa workbench workflow validate-spec "${SPEC}" \
   --preset public-franka-lift --json
 npa/.venv/bin/npa workbench workflow plan-spec "${SPEC}" \
   --preset public-franka-lift --run-id "${RUN_ID}" \
-  --var bucket="${NPA_BUCKET}" --waves \
+  --var bucket="${NPA_BUCKET}" --var source_sha="${SOURCE_SHA}" --waves \
   --assume-decision promote_checkpoint
 
 npa/.venv/bin/npa workbench workflow submit "${SPEC}" \
   --preset public-franka-lift --project "${NPA_PROJECT}" \
   --infra "k8s/${NPA_CLUSTER}" --runtime --run-id "${RUN_ID}" \
   --var bucket="${NPA_BUCKET}" \
+  --var source_sha="${SOURCE_SHA}" \
   --var controller_image="${CONTROLLER_IMAGE}" \
   --var transfer_image="${TRANSFER_IMAGE}" \
   --var envgen_image="${ENVGEN_IMAGE}" \
@@ -294,6 +297,7 @@ npa/.venv/bin/npa workbench workflow validate-spec "${SPEC}" --json
 npa/.venv/bin/npa workbench workflow plan-spec "${SPEC}" \
   --run-id "${RUN_ID}" --waves --assume-decision promote_checkpoint \
   --var bucket="${NPA_BUCKET}" \
+  --var source_sha="${SOURCE_SHA}" \
   --var controller_image="${CONTROLLER_IMAGE}" \
   --var transfer_image="${TRANSFER_IMAGE}" \
   --var envgen_image="${ENVGEN_IMAGE}" \
@@ -304,7 +308,24 @@ npa/.venv/bin/npa workbench workflow plan-spec "${SPEC}" \
 
 Expected: validation reports valid, and the wave plan shows the 14-stage graph
 with the Stage 4 parallel wave and direct Stage 7 → hosted Stage 8 → Stage 9
-sequence. Then submit through the durable runtime:
+sequence. Render the exact SkyPilot submission plan with the same source and
+image contract before launch:
+
+```bash
+npa/.venv/bin/npa workbench workflow submit "${SPEC}" \
+  --project "${NPA_PROJECT}" --infra "k8s/${NPA_CLUSTER}" \
+  --plan-only --run-id "${RUN_ID}" \
+  --var bucket="${NPA_BUCKET}" \
+  --var source_sha="${SOURCE_SHA}" \
+  --var controller_image="${CONTROLLER_IMAGE}" \
+  --var transfer_image="${TRANSFER_IMAGE}" \
+  --var envgen_image="${ENVGEN_IMAGE}" \
+  --var isaac_image="${ISAAC_IMAGE}" \
+  --var viewer_image="${VIEWER_IMAGE}" \
+  --var isaac_cache_pvc=npa-isaac-cache
+```
+
+Then submit through the durable runtime:
 
 ```bash
 npa/.venv/bin/npa workbench workflow submit "${SPEC}" \
@@ -313,6 +334,7 @@ npa/.venv/bin/npa workbench workflow submit "${SPEC}" \
   --runtime --resume --max-wait-seconds 0 \
   --run-id "${RUN_ID}" \
   --var bucket="${NPA_BUCKET}" \
+  --var source_sha="${SOURCE_SHA}" \
   --var trigger_uri="s3://${NPA_BUCKET}/sim2real-triggers/${RUN_ID}/" \
   --var seed_manifest_uri="s3://${NPA_BUCKET}/sim2real-triggers/${RUN_ID}/dataset-manifest.json" \
   --var controller_image="${CONTROLLER_IMAGE}" \
@@ -347,7 +369,8 @@ npa/.venv/bin/npa workbench workflow status "${RUN_ID}" --project "${NPA_PROJECT
 npa/.venv/bin/npa workbench workflow submit "${SPEC}" \
   --project "${NPA_PROJECT}" --infra "k8s/${NPA_CLUSTER}" \
   --runtime --resume-run "${RUN_ID}" --max-wait-seconds 0 \
-  <the same --var and --secret-env arguments>
+  --var source_sha="${SOURCE_SHA}" \
+  <the same remaining --var and --secret-env arguments>
 ```
 
 Completion must include `reports/sim2real-report.json`, non-empty

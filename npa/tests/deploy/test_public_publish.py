@@ -401,6 +401,10 @@ def test_publish_plan_promotes_dev_sha_to_release_tag() -> None:
         tool: images.accepted_publication_development_sha(tool)
         for tool in (
             "isaac-lab",
+            "sim2real-control",
+            "cosmos2-transfer",
+            "envgen",
+            "rerun-viewer",
             "ltx2",
             "wan2-2",
             "cosmos3-serving",
@@ -408,6 +412,8 @@ def test_publish_plan_promotes_dev_sha_to_release_tag() -> None:
             "sonic-mujoco",
         )
     }
+    # The five Sim2Real roles deliberately share one coherent source; the five
+    # older accepted publication sources remain distinct from it and each other.
     assert len(set(accepted_shas.values())) == 6
     for item in plan:
         source_image = item.source_ref.rsplit("/", 1)[-1]

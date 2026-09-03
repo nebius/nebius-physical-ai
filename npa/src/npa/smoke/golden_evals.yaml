@@ -793,7 +793,6 @@ containers:
 
   sim2real-control:
     image: npa-sim2real-control
-    internal: true
     default_tag: 0.1.2
     dockerfile: npa/docker/workbench/sim2real-control/Dockerfile
     physical_ai:
