@@ -707,6 +707,8 @@ class NurecFetchResult:
     ncore_json: str
     shard_count: int
     bytes_downloaded: int
+    observed_scene: str = ""
+    observed_variant: str = ""
     camera_ids: tuple[str, ...] = ()
     lidar_ids: tuple[str, ...] = ()
     colmap_dir: str = ""
@@ -726,6 +728,8 @@ class NurecFetchResult:
             "ncore_json": self.ncore_json,
             "shard_count": self.shard_count,
             "bytes_downloaded": self.bytes_downloaded,
+            "observed_scene": self.observed_scene,
+            "observed_variant": self.observed_variant,
             "camera_ids": list(self.camera_ids),
             "lidar_ids": list(self.lidar_ids),
             "colmap_dir": self.colmap_dir,
@@ -1249,6 +1253,41 @@ def fetch_nurec_dataset(
             ),
         )
 
+    # Independent observed provenance: derive the scene/variant from the actual
+    # unpacked archive directory, then fail closed if it disagrees with the
+    # requested values. This is not an echo of the request arguments — it is
+    # grounded in the extracted content itself, so a fetch that pulled the wrong
+    # capture (or a caller that passed the wrong flags) is rejected at fetch time.
+    observed_scene, observed_variant = derive_scene_variant_from_dir(scene_dir)
+    fetched = {
+        "dataset_id": config.dataset_id,
+        "scene": config.scene,
+        "variant": config.variant,
+        "observed_scene": observed_scene,
+        "observed_variant": observed_variant,
+    }
+    ok, errors = validate_fetch_provenance(
+        fetched,
+        requested_scene=config.scene,
+        requested_variant=config.variant,
+        requested_dataset_id=config.dataset_id,
+    )
+    if not ok:
+        return NurecFetchResult(
+            ok=False,
+            dataset_id=config.dataset_id,
+            scene=config.scene,
+            variant=config.variant,
+            scene_dir=str(scene_dir),
+            ncore_json="",
+            shard_count=0,
+            bytes_downloaded=bytes_downloaded,
+            observed_scene=observed_scene,
+            observed_variant=observed_variant,
+            colmap_dir=colmap_dir,
+            errors=("provenance mismatch: " + "; ".join(errors),),
+        )
+
     ncore_json = find_ncore_json(scene_dir)
     if ncore_json is None:
         return NurecFetchResult(
@@ -1310,6 +1349,8 @@ def fetch_nurec_dataset(
         ncore_json=str(resolved_json),
         shard_count=len(shards),
         bytes_downloaded=bytes_downloaded,
+        observed_scene=observed_scene,
+        observed_variant=observed_variant,
         camera_ids=cameras,
         lidar_ids=lidars,
         colmap_dir=colmap_dir,
@@ -1360,6 +1401,72 @@ def find_scene_dir(root: Path, scene_dir_name: str) -> Path | None:
         if candidate.is_dir():
             return candidate
     return None
+
+
+def derive_scene_variant_from_dir(scene_dir: str | Path) -> tuple[str, str]:
+    """Infer ``(scene, variant)`` from the *unpacked* NCore scene directory.
+
+    This is independent observed content from the actual extracted archive, not
+    an echo of the request arguments. The PPISP archives name the directory
+    ``<scene>`` for the standard/full variant and ``<scene>_<variant>``
+    (e.g. ``toro_auto``) otherwise. Returns ``(scene, "standard")`` when the
+    directory carries no variant suffix.
+    """
+    name = Path(scene_dir).name
+    if "_" in name:
+        scene, variant = name.rsplit("_", 1)
+        return scene.strip(), variant.strip()
+    return name, "standard"
+
+
+def _variant_layout_key(variant: str) -> str:
+    """Normalize a variant label that maps to the unsuffixed scene directory.
+
+    ``scene_dir_name`` returns the bare scene name for ``""``/``standard``/
+    ``default``/``full`` and ``<scene>_<variant>`` otherwise, so all of the
+    bare-layout labels compare equal when validating observed content.
+    """
+    v = (str(variant) or "").strip().lower()
+    if v in {"", "standard", "default", "full"}:
+        return "standard"
+    return v
+
+
+def validate_fetch_provenance(
+    fetched: Mapping[str, Any],
+    *,
+    requested_scene: str,
+    requested_variant: str,
+    requested_dataset_id: str = "",
+) -> tuple[bool, list[str]]:
+    """Fail-closed provenance check against *independently observed* content.
+
+    A fetch result must never be trusted just because it echoes the requested
+    dataset/scene/variant: those top-level fields are copied from the request
+    arguments. The authoritative evidence is the observed unpacked content
+    (``observed_scene`` / ``observed_variant``), which the fetch derives from the
+    scene directory that actually landed in the extracted archive. Missing
+    observed content, an observed-vs-requested mismatch, or a dataset_id mismatch
+    all fail closed.
+
+    Returns ``(ok, errors)``; ``errors`` is empty when ``ok`` is True.
+    """
+    errors: list[str] = []
+    observed_scene = str(fetched.get("observed_scene") or "")
+    observed_variant = str(fetched.get("observed_variant") or "")
+    if not observed_scene and not observed_variant:
+        return False, ["fetch result carries no observed unpacked content"]
+    if str(observed_scene).strip() != str(requested_scene).strip():
+        errors.append(
+            f"scene observed={observed_scene!r} != requested={requested_scene!r}"
+        )
+    if _variant_layout_key(observed_variant) != _variant_layout_key(requested_variant):
+        errors.append(
+            f"variant observed={observed_variant!r} != requested={requested_variant!r}"
+        )
+    if requested_dataset_id and str(fetched.get("dataset_id") or "") != requested_dataset_id:
+        errors.append("dataset_id mismatch")
+    return (not errors), errors
 
 
 def find_ncore_json(scene_dir: Path) -> Path | None:
@@ -1651,6 +1758,12 @@ def parse_metrics_yaml(path: Path | str) -> dict[str, float]:
     ``{"test/psnr": ...}`` -- but the extraction is not limited to ``test/*``; any
     numeric leaf is recorded.
 
+    NRE 26.04 ships validation numbers under an ``aggregated_metrics`` section
+    where each entry is ``test/psnr: {aggregation_method: mean, value: 22.66}``.
+    Those are additionally exposed under the bare metric name (``test/psnr``), so
+    callers always read ``test/psnr`` / ``test/ssim`` / ``test/lpips`` regardless
+    of whether a release writes the flat form or the aggregated wrapper.
+
     Parsed with PyYAML when available and a flat ``key: value`` scan otherwise, so
     the helper stays usable in a dependency-light container. Metrics are EVIDENCE,
     never the deliverable: a metrics file that is missing, unreadable, or corrupt
@@ -1672,6 +1785,19 @@ def parse_metrics_yaml(path: Path | str) -> dict[str, float]:
             for key, value in _flatten(payload):
                 if isinstance(value, (int, float)) and not isinstance(value, bool):
                     metrics[key] = float(value)
+            # NRE 26.04 writes its validation numbers under an
+            # ``aggregated_metrics`` section, each entry a dict like
+            # ``test/psnr: {aggregation_method: mean, value: 22.66}``. Expose the
+            # numeric ``value`` under the bare metric name so callers can read
+            # ``test/psnr`` / ``test/ssim`` / ``test/lpips`` exactly as the skill
+            # documents, rather than the nested ``aggregated_metrics/.../value``.
+            aggregated = payload.get("aggregated_metrics")
+            if isinstance(aggregated, dict):
+                for name, entry in aggregated.items():
+                    if isinstance(entry, dict):
+                        value = entry.get("value")
+                        if isinstance(value, (int, float)) and not isinstance(value, bool):
+                            metrics[str(name)] = float(value)
             return metrics
     except ImportError:
         _logger.debug("PyYAML unavailable; falling back to a flat metrics scan")

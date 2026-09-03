@@ -28,6 +28,7 @@ SPECS = REPO_ROOT / "npa" / "workflows" / "workbench" / "npa-workflows"
         "tokenfactory-cosmos-gate.yaml",
         "av-night-scene-hardening.yaml",
         "cosmos-synth-fanout-curation.yaml",
+        "robocasa-data-policy.yaml",
     ],
 )
 def test_example_specs_validate(name: str) -> None:

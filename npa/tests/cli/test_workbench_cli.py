@@ -497,10 +497,6 @@ def test_lerobot_list_checkpoints_config_error_exits(mocker) -> None:
 def test_lerobot_deploy_dry_run_avoids_infra(mocker) -> None:
     mocker.patch("npa.clients.config.resolve_environment", return_value=None)
     mocker.patch("npa.clients.config.list_projects", return_value={})
-    mocker.patch(
-        "npa.cli.workbench.lerobot.resolve_container_registry",
-        return_value=DEFAULT_CONTAINER_REGISTRY,
-    )
 
     result = runner.invoke(
         app,
@@ -552,10 +548,6 @@ def test_lerobot_deploy_runtime_vm_preserves_existing_behavior(tmp_path: Path, m
     deploy_container = mocker.patch("npa.deploy.configurator.deploy_lerobot_container")
     mocker.patch("npa.deploy.configurator.health_check", return_value=True)
     mocker.patch("npa.deploy.configurator.write_manifest")
-    mocker.patch(
-        "npa.cli.workbench.lerobot.resolve_container_registry",
-        return_value=DEFAULT_CONTAINER_REGISTRY,
-    )
 
     result = runner.invoke(
         app,
@@ -619,10 +611,6 @@ def test_lerobot_deploy_accepts_lerobot_version_060(tmp_path: Path, mocker) -> N
     mocker.patch("npa.deploy.configurator.deploy_lerobot_container")
     mocker.patch("npa.deploy.configurator.health_check", return_value=True)
     mocker.patch("npa.deploy.configurator.write_manifest")
-    mocker.patch(
-        "npa.cli.workbench.lerobot.resolve_container_registry",
-        return_value=DEFAULT_CONTAINER_REGISTRY,
-    )
 
     result = runner.invoke(
         app,
@@ -680,10 +668,6 @@ def test_lerobot_deploy_runtime_container_uses_default_registry(tmp_path: Path, 
     deploy_server = mocker.patch("npa.deploy.configurator.deploy_server")
     mocker.patch("npa.deploy.configurator.health_check", return_value=True)
     mocker.patch("npa.deploy.configurator.write_manifest")
-    mocker.patch(
-        "npa.cli.workbench.lerobot.resolve_container_registry",
-        return_value=DEFAULT_CONTAINER_REGISTRY,
-    )
 
     result = runner.invoke(
         app,
@@ -768,7 +752,7 @@ def test_lerobot_deploy_disk_size_overrides_vm_default(tmp_path: Path, mocker) -
     assert apply.call_args.kwargs["tf_vars"]["boot_disk_size_gb"] == "384"
 
 
-def test_lerobot_deploy_runtime_container_respects_registry_override(
+def test_lerobot_deploy_runtime_container_ignores_saved_registry_override(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     mocker,
@@ -839,7 +823,11 @@ def test_lerobot_deploy_runtime_container_respects_registry_override(
     assert result.exit_code == 0
     assert apply.call_args.kwargs["tf_vars"]["boot_disk_size_gb"] == "384"
     remote_commands = "\n".join(call.args[0] for call in ssh.run_or_raise.call_args_list)
-    assert "docker pull registry.example/private/npa-lerobot:0.5.1" in remote_commands
+    assert (
+        "docker pull ghcr.io/nebius/nebius-physical-ai/npa-lerobot:0.5.1"
+        in remote_commands
+    )
+    assert "registry.example/private" not in remote_commands
 
 
 def test_lerobot_deploy_rejects_invalid_tf_var() -> None:

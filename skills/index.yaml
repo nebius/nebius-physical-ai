@@ -411,6 +411,20 @@ skills:
       - type: npa_workflow_yaml
         paths:
           - npa/workflows/workbench/npa-workflows/bdd100k-pipeline.yaml
+  - name: robocasa
+    category: tools
+    when_to_use: "Run RoboCasa kitchen-task simulation as a first-class NPA workbench tool: Gymnasium task registration, kitchen asset availability, headless EGL environment reset, and random rollouts with video artifacts through the npa-robocasa service."
+    path: skills/tools/robocasa/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "robocasa", "run", "--help"]
+        contains: "capability"
+      - type: cli_help
+        args: ["workbench", "robocasa", "deploy", "--help"]
+        contains: "gpu-type"
+      - type: npa_workflow_yaml
+        paths:
+          - npa/workflows/workbench/npa-workflows/robocasa-smoke.yaml
   - name: foxglove
     category: tools
     when_to_use: "Embed, operate, or debug the Foxglove viewer in the NPA agent: the @foxglove/embed TypeScript SDK, MCAP recordings, the npa-foxglove-embed container, and /api/foxglove/* endpoints."

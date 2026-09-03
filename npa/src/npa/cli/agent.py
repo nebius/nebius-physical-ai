@@ -1228,6 +1228,7 @@ from agent_backend.foxglove_cloud import (
 from agent_backend.foxglove_routes import FoxgloveDeps, register_foxglove_routes
 from agent_backend.leisaac import load_manifest_artifact
 from agent_backend.leisaac_routes import LeIsaacDeps, register_leisaac_routes
+from agent_backend.trajectory import goal_episode_boundary
 
 
 def _leisaac_websocket_connect(*args, **kwargs):
@@ -3004,6 +3005,11 @@ def _agent_system_prompt() -> str:
         "You are the NPA workbench assistant on a Nebius Physical AI agent VM.",
         "Help operators configure NPA: provision infrastructure, Cosmos3, S3 storage,",
         "workflows, sim assets, and Sim2Real runs. Be concise and actionable.",
+        "For every goal-level episode, load and follow `$agent-run-data-collection` at "
+        "`skills/atomic/agent-run-data-collection/SKILL.md`; record the episode from goal "
+        "acceptance through success, failure, refusal, cancellation, or handoff as one "
+        "sanitized trajectory containing all nested events, linked to its parent session "
+        "and stored using `NPA_AGENT_DATASET_TENANT_ID` and `NPA_AGENT_DATASET_URI`.",
         "",
         "Agent HTTP APIs on this VM (same-origin relative paths; nginx proxies /api/):",
         "- GET /api/access — tenant identity, project-by-project effective access, and searchable resources",
@@ -3052,8 +3058,9 @@ def _agent_system_prompt() -> str:
             "",
             "Before Sim2Real submit, confirm scene/robot/camera selection.",
             "Always use real registry-qualified images: supported defaults resolve from",
-            "public GHCR, while `NPA_REGISTRY` or a legacy `container_registry` value selects",
-            "custom/private images. Never keep registry placeholders in runnable workflows.",
+            "public GHCR and ignore ambient or legacy private-registry configuration.",
+            "Select custom/private bytes with an explicit image or workflow `--registry`;",
+            "never keep registry placeholders in runnable workflows.",
             "For BYOF solution onboarding, use `npa workbench byof run`",
             "(or `npa/scripts/run_byof_repo.py`) to containerize an OSS repo,",
             "push to an explicitly selected customer registry, then launch a real Isaac-Lab run",
@@ -3901,6 +3908,7 @@ def _provision_agent_infra(
             gpu_platform=str(requested.get("gpu_platform") or ""),
             gpu_preset=str(requested.get("gpu_preset") or ""),
             gpu_driver_mode=str(requested.get("gpu_driver_mode") or ""),
+            gpu_workload_profile=str(requested.get("gpu_workload_profile") or ""),
             managed_driver_preset=str(requested.get("managed_driver_preset") or ""),
             gpu_health_stabilization_seconds=int(requested.get("gpu_health_stabilization_seconds", 120)),
             gpu_health_timeout_minutes=int(requested.get("gpu_health_timeout_minutes", 60)),
@@ -4685,6 +4693,15 @@ def _semantic_route(user_text: str) -> dict:
         return {{"intent": None, "mode": "none", "confidence": 0.0, "tokens": 0, "source": "none"}}
 
 @app.post("/chat")
+@goal_episode_boundary(
+    active_tenant_id=lambda: str(
+        DEPLOYMENT.get("tenant_id") or os.environ.get("NEBIUS_TENANT_ID", "")
+    ),
+    active_bucket=lambda: str(
+        os.environ.get("NPA_AGENT_S3_BUCKET")
+        or os.environ.get("NEBIUS_S3_BUCKET", "")
+    ),
+)
 def chat(payload: dict):
     raw_messages = payload.get("messages", [])
     if not isinstance(raw_messages, list) or not raw_messages:
@@ -8321,7 +8338,7 @@ def provision_infra(payload: dict | None = None):
         key: body[key]
         for key in (
             "gpu_nodes", "cpu_nodes", "gpu_platform", "gpu_preset",
-            "gpu_driver_mode", "managed_driver_preset",
+            "gpu_driver_mode", "gpu_workload_profile", "managed_driver_preset",
             "gpu_health_stabilization_seconds", "gpu_health_timeout_minutes",
             "gpu_cuda_smoke",
             "gpu_cuda_smoke_image", "mig", "mig_strategy", "mig_config",

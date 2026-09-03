@@ -226,6 +226,7 @@ def _probe_local_api_daemon_cwd(
     uid: int | None = None,
     expected_home: str = "",
     expected_user_id: str = "",
+    expected_kubeconfig: str = "",
 ) -> ApiDaemonCwdProbe:
     """Inspect the actual local API daemon and descendants through procfs.
 
@@ -347,11 +348,38 @@ def _probe_local_api_daemon_cwd(
         if expected_home and Path(daemon_home).expanduser().absolute() != Path(
             expected_home
         ).expanduser().absolute():
-            continue
+            return ApiDaemonCwdProbe(
+                False,
+                "stale_runtime_environment",
+                process_count=len(runtime_roots) + 1,
+                error=(
+                    "local SkyPilot API server inherited a different HOME than "
+                    "this submission"
+                ),
+            )
         daemon_user_id = environment.get("SKYPILOT_USER_ID", "").strip()
         if expected_user_id and daemon_user_id != expected_user_id:
-            continue
+            return ApiDaemonCwdProbe(
+                False,
+                "stale_runtime_environment",
+                process_count=len(runtime_roots) + 1,
+                error=(
+                    "local SkyPilot API server inherited a different user identity "
+                    "than this submission"
+                ),
+            )
         runtime_roots.add(pid)
+        daemon_kubeconfig = environment.get("KUBECONFIG", "").strip()
+        if expected_kubeconfig and daemon_kubeconfig != expected_kubeconfig:
+            return ApiDaemonCwdProbe(
+                False,
+                "stale_runtime_environment",
+                process_count=len(runtime_roots),
+                error=(
+                    "local SkyPilot API server inherited a different Kubernetes "
+                    "configuration than this submission"
+                ),
+            )
         inherited_config = environment.get("SKYPILOT_GLOBAL_CONFIG", "").strip()
         if inherited_config and not Path(inherited_config).is_file():
             return ApiDaemonCwdProbe(
@@ -421,6 +449,7 @@ def _ensure_local_api_daemon_cwd(
             sky_executable,
             expected_home=str(env.get("HOME") or ""),
             expected_user_id=str(env.get("SKYPILOT_USER_ID") or ""),
+            expected_kubeconfig=str(env.get("KUBECONFIG") or ""),
         )
     )
     before = inspect()
@@ -521,7 +550,17 @@ def _ensure_local_api_daemon_cwd_locked(
 ) -> ApiDaemonCwdProbe:
     """Run the daemon health/repair transaction under its runtime identity lock."""
 
-    with _api_daemon_repair_lock(runtime_dir):
+    # SkyPilot 0.12 exposes one local API server on a fixed loopback port per
+    # executable, even when callers isolate HOME/SKY_RUNTIME_DIR.  Serialize
+    # repairs at that real process-global boundary; a per-run lock can race two
+    # submissions into stopping and starting the same daemon concurrently.
+    daemon_lock_root = (
+        Path.home()
+        / ".npa"
+        / "skypilot-api-daemon-locks"
+        / hashlib.sha256(str(Path(sky_executable).absolute()).encode()).hexdigest()[:16]
+    )
+    with _api_daemon_repair_lock(daemon_lock_root):
         return _ensure_local_api_daemon_cwd(
             sky_executable,
             env=env,

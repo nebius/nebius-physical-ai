@@ -275,15 +275,17 @@ pipeline. Key safety notes are condensed below.
   record this exemption whenever a public image carries `NOPASSWD:ALL`.
 - **Runtime user** — npa-built images (`groot`, `lerobot*`, `genesis`, `cosmos`,
   `cosmos3`, `cosmos3-reason`, `fiftyone`, `envgen`, `reference-policy`,
-  `loop-eval`, and the runtime-fetch `isaac-lab`) run as the unprivileged
+  `loop-eval`, `robocasa`, and the runtime-fetch `isaac-lab`) run as the unprivileged
   `ubuntu` user. Both the canonical standard-workflow Isaac states and retained
   standalone BYO Job builders preserve uid/gid 1000; neither may override
-  `runAsUser: 0`. `sonic`, `lancedb`, and `detection-training` retain root from
-  their upstream bases. `foxglove-embed` runs as `nobody` on a digest-pinned
+  `runAsUser: 0`. The LanceDB image also runs as `ubuntu`; its narrow
+  passwordless-sudo exemption exists only for SkyPilot's in-pod bootstrap and
+  does not enable sshd by default. `sonic` and `detection-training` retain root
+  from their upstream bases. `foxglove-embed` runs as `nobody` on a digest-pinned
   caddy base. The remaining root images are candidates for a separate non-root
   hardening pass.
 - **Network exposure** — services that open ports (`lerobot` :8080, `cosmos`
-  :8080, `lancedb` :8686, `detection-training` :8790, `fiftyone` :5151,
+  :8080, `lancedb` :8686, `detection-training` :8790, `robocasa` :8791, `fiftyone` :5151,
   `foxglove-embed` :8099) must be
   deployed in the `workbench` namespace behind controlled access, never bound to
   public ingress without auth. `lancedb` and `detection-training` ship a token
@@ -292,10 +294,11 @@ pipeline. Key safety notes are condensed below.
 - **Content safety** — `cosmos` ships a content-safety guardrail.
   `COSMOS_DISABLE_SAFETY` must remain `"0"` in production; the functional smoke
   keeps safety enabled by default.
-- **External fetches** — `isaac-lab` and `sonic` pull from `nvcr.io` (NGC auth
-  required); `groot`/`sonic` clone pinned Git refs; several images fetch from
-  Hugging Face. Base images are digest-pinned and tracked by the weekly Trivy
-  CVE scan.
+- **External fetches** — `isaac-lab` and `sonic` fetch hash-pinned Isaac wheels
+  from `pypi.nvidia.com` at runtime after EULA validation; they do not pull an
+  `nvcr.io` Isaac base. `groot`/`sonic` clone pinned Git refs, and several images
+  fetch from Hugging Face. Base images are digest-pinned and tracked by the
+  weekly Trivy CVE scan.
 - **B300 / CUDA13 family** — `base-cuda13-b300`, `cosmos3-reason`, LeRobot,
   LanceDB, Genesis, and the Sim2Real children have physical B300 capability
   evidence recorded in `blackwell-dc-images.json`. Keep per-image blockers

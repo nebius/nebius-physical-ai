@@ -581,6 +581,31 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         ),
     ),
     SubmitLiveCase(
+        "living-lab-nurec-fanout.yaml",
+        "gpu",
+        secret_envs=(
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "HF_TOKEN",
+            "NGC_API_KEY",
+        ),
+        runtime=True,
+        expected_parallel_tasks=16,
+        rotation_skip=True,
+        skip_reason=(
+            "16-way parallel fan-out needs the operator's dedicated 16 x RTX PRO "
+            "6000 reserved fleet (two eight-GPU workers), which is not part of the "
+            "bounded daily GPU rotation; exercised as its own live 16-GPU run."
+        ),
+        notes=(
+            "Living-lab digital twin: sixteen independent NuRec/NRE reconstructions "
+            "(8 real PPISP sequences x 2 view sectors), one RTX PRO 6000 each, "
+            "then a CPU barrier join that requires 16/16 real zone manifests + "
+            "USDZ + GPU identity and publishes digital_twin.json + panorama.png. "
+            "Needs NGC_API_KEY and the dedicated 16-GPU RTX capacity."
+        ),
+    ),
+    SubmitLiveCase(
         "content-agents-rigid-object.yaml",
         "gpu",
         secret_envs=(
@@ -855,6 +880,19 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         plan_only=True,
         plan_only_justification="delegated BYOF execution is covered by its dedicated live onboarding tier",
         notes="BYOF onboarding flow; covered by test_byof_onboarding_live_e2e.py.",
+    ),
+    SubmitLiveCase(
+        "robocasa-smoke.yaml",
+        "gpu",
+        plan_only=True,
+        plan_only_justification="npa-robocasa is a validation candidate; its image is not yet built or GPU-validated, so the native RoboCasa smoke cannot submit until the accepted digest and GPU evidence are recorded",
+        notes="Native RoboCasa workbench smoke: task registration, asset availability, EGL reset, random rollout.",
+    ),
+    SubmitLiveCase(
+        "robocasa-data-policy.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        notes="Production PandaOmron RoboCasa data->policy pipeline: multi-task trajectory export, LeRobotDataset materialization, real ACT training, disjoint RoboCasa exact-checkpoint evaluation, insights lineage.",
     ),
     SubmitLiveCase(
         "byof-openpi.yaml",
