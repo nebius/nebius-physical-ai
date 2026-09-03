@@ -276,6 +276,30 @@ def test_active_job_reverification_accepts_only_same_exact_live_job() -> None:
     ) == []
 
 
+def test_active_job_reverification_falls_back_to_resolution_run_id() -> None:
+    resolution = _resolution(
+        {
+            "status": "running",
+            "waves": [{"key": "prepare", "job_id": "9", "status": "running"}],
+        }
+    )
+    assessment = assess_run_cancellation(
+        resolution,
+        lookup=lambda *args, **kwargs: ManagedJobEvidence(
+            "found", job_id="9", status="RUNNING"
+        ),
+    )
+    looked_up: list[tuple[str, str]] = []
+
+    def active(job_name: str, *, job_id: str, **_kwargs) -> ManagedJobEvidence:
+        looked_up.append((job_name, job_id))
+        return ManagedJobEvidence("found", job_id=job_id, status="RUNNING")
+
+    assert assessment.active_jobs[0].job_name == ""
+    assert reverify_active_cancellation(assessment, lookup=active) == []
+    assert looked_up == [(resolution.run_id, "9")]
+
+
 def test_runtime_wave_identity_ignores_a_bogus_discovered_root_job_eight() -> None:
     resolution = _resolution(
         {

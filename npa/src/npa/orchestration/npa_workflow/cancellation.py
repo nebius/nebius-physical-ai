@@ -82,6 +82,7 @@ class CancellationAssessment:
     """Cancellation decision made before any mutating SkyPilot call."""
 
     detected_state: str
+    run_id: str = ""
     jobs: list[WorkflowJobRecord] = field(default_factory=list)
     active_jobs: list[WorkflowJobRecord] = field(default_factory=list)
     terminal_jobs: list[WorkflowJobRecord] = field(default_factory=list)
@@ -382,6 +383,7 @@ def assess_run_cancellation(
     )
     return CancellationAssessment(
         detected_state=detected_state,
+        run_id=resolution.run_id,
         jobs=sorted(records.values(), key=lambda item: _job_sort_key(item.job_id)),
         active_jobs=sorted(active, key=lambda item: _job_sort_key(item.job_id)),
         terminal_jobs=sorted(terminal, key=lambda item: _job_sort_key(item.job_id)),
@@ -402,7 +404,7 @@ def reverify_active_cancellation(
     errors: list[str] = []
     for record in assessment.active_jobs:
         evidence = lookup_fn(
-            record.job_name,
+            record.job_name or assessment.run_id,
             job_id=record.job_id,
             sky_bin=sky_bin or None,
         )
