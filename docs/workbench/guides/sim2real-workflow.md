@@ -115,6 +115,8 @@ cover the cluster's actual concurrent GPU, CPU, and memory requests; the helper
 generates the exact repository-owned schemas:
 
 ```bash
+helm install kueue oci://registry.k8s.io/kueue/charts/kueue --version 0.17.3 --namespace kueue-system --create-namespace --wait
+
 export NPA_GPU_PRODUCT='<exact nvidia.com/gpu.product label from kubectl get nodes>'
 export NPA_GPU_QUOTA='<concurrent GPU count>'
 export NPA_CPU_QUOTA='<aggregate CPU quota, for example 64>'
@@ -139,9 +141,10 @@ kubectl get localqueue.kueue.x-k8s.io sim2real-gpu -n default
 kubectl get priorityclass sim2real-production
 ```
 
-Expected: both `get` commands return their named object. Missing Kueue CRDs mean
-Kueue must be installed first; a queue with insufficient CPU or memory quota can
-leave a GPU Job suspended even when a GPU is free.
+The Helm chart version is `0.17.3`, matching the code pin; it has no leading
+`v`. Expected: both `get` commands return their named object. A queue with
+insufficient CPU or memory quota can leave a GPU Job suspended even when a GPU
+is free.
 
 Choose the digest-pinned Isaac image now, then warm a shared RWX cache. The
 template is the authoritative PVC/security/bootstrap contract:
@@ -190,18 +193,25 @@ export TRANSFER_IMAGE='<registry>/npa-cosmos2-transfer@sha256:<64-hex>'
 export ENVGEN_IMAGE='<registry>/npa-envgen@sha256:<64-hex>'
 export ISAAC_IMAGE="${NPA_ISAAC_IMAGE}"
 export VIEWER_IMAGE='<registry>/npa-rerun-viewer@sha256:<64-hex>'
+export SOURCE_SHA='<40-hex-source-sha>'
 export SPEC=npa/workflows/workbench/npa-workflows/sim2real.yaml
 
 npa/.venv/bin/npa workbench workflow preflight-images "${SPEC}" \
   --project "${NPA_PROJECT}" \
   --infra "k8s/${NPA_CLUSTER}" \
   --assume-decision promote_checkpoint \
+  --var source_sha="${SOURCE_SHA}" \
   --var controller_image="${CONTROLLER_IMAGE}" \
   --var transfer_image="${TRANSFER_IMAGE}" \
   --var envgen_image="${ENVGEN_IMAGE}" \
   --var isaac_image="${ISAAC_IMAGE}" \
   --var viewer_image="${VIEWER_IMAGE}"
 ```
+
+`SOURCE_SHA` must be exactly 40 hexadecimal characters and must match the baked
+`NPA_IMAGE_SOURCE_SHA` in every selected Sim2Real image. Supply the SHA attested
+by the coherent image set you selected; do not assume the current repository
+checkout matches those image bytes.
 
 Expected: every image is pullable and bootstrap-compatible. `not_found` means
 build/push the printed image; `forbidden` means fix the exact-host registry
@@ -247,13 +257,14 @@ npa/.venv/bin/npa workbench workflow validate-spec "${SPEC}" \
   --preset public-franka-lift --json
 npa/.venv/bin/npa workbench workflow plan-spec "${SPEC}" \
   --preset public-franka-lift --run-id "${RUN_ID}" \
-  --var bucket="${NPA_BUCKET}" --waves \
+  --var bucket="${NPA_BUCKET}" --var source_sha="${SOURCE_SHA}" --waves \
   --assume-decision promote_checkpoint
 
 npa/.venv/bin/npa workbench workflow submit "${SPEC}" \
   --preset public-franka-lift --project "${NPA_PROJECT}" \
   --infra "k8s/${NPA_CLUSTER}" --runtime --run-id "${RUN_ID}" \
   --var bucket="${NPA_BUCKET}" \
+  --var source_sha="${SOURCE_SHA}" \
   --var controller_image="${CONTROLLER_IMAGE}" \
   --var transfer_image="${TRANSFER_IMAGE}" \
   --var envgen_image="${ENVGEN_IMAGE}" \
@@ -294,6 +305,7 @@ npa/.venv/bin/npa workbench workflow validate-spec "${SPEC}" --json
 npa/.venv/bin/npa workbench workflow plan-spec "${SPEC}" \
   --run-id "${RUN_ID}" --waves --assume-decision promote_checkpoint \
   --var bucket="${NPA_BUCKET}" \
+  --var source_sha="${SOURCE_SHA}" \
   --var controller_image="${CONTROLLER_IMAGE}" \
   --var transfer_image="${TRANSFER_IMAGE}" \
   --var envgen_image="${ENVGEN_IMAGE}" \
@@ -313,6 +325,7 @@ npa/.venv/bin/npa workbench workflow submit "${SPEC}" \
   --runtime --resume --max-wait-seconds 0 \
   --run-id "${RUN_ID}" \
   --var bucket="${NPA_BUCKET}" \
+  --var source_sha="${SOURCE_SHA}" \
   --var trigger_uri="s3://${NPA_BUCKET}/sim2real-triggers/${RUN_ID}/" \
   --var seed_manifest_uri="s3://${NPA_BUCKET}/sim2real-triggers/${RUN_ID}/dataset-manifest.json" \
   --var controller_image="${CONTROLLER_IMAGE}" \
@@ -347,7 +360,20 @@ npa/.venv/bin/npa workbench workflow status "${RUN_ID}" --project "${NPA_PROJECT
 npa/.venv/bin/npa workbench workflow submit "${SPEC}" \
   --project "${NPA_PROJECT}" --infra "k8s/${NPA_CLUSTER}" \
   --runtime --resume-run "${RUN_ID}" --max-wait-seconds 0 \
-  <the same --var and --secret-env arguments>
+  --var bucket="${NPA_BUCKET}" \
+  --var source_sha="${SOURCE_SHA}" \
+  --var trigger_uri="s3://${NPA_BUCKET}/sim2real-triggers/${RUN_ID}/" \
+  --var seed_manifest_uri="s3://${NPA_BUCKET}/sim2real-triggers/${RUN_ID}/dataset-manifest.json" \
+  --var controller_image="${CONTROLLER_IMAGE}" \
+  --var transfer_image="${TRANSFER_IMAGE}" \
+  --var envgen_image="${ENVGEN_IMAGE}" \
+  --var isaac_image="${ISAAC_IMAGE}" \
+  --var viewer_image="${VIEWER_IMAGE}" \
+  --var isaac_cache_pvc=npa-isaac-cache \
+  --secret-env AWS_ACCESS_KEY_ID \
+  --secret-env AWS_SECRET_ACCESS_KEY \
+  --secret-env HF_TOKEN \
+  --secret-env NEBIUS_TOKEN_FACTORY_KEY
 ```
 
 Completion must include `reports/sim2real-report.json`, non-empty
