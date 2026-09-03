@@ -96,6 +96,21 @@ def test_full_suite_matches_machine_readable_public_record() -> None:
     )
 
 
+def test_public_prompt_asset_normalizes_only_terminal_newline() -> None:
+    value = '{"negative": true}'
+    digest = benchmark._sha256_text(value)
+    assert (
+        benchmark._public_prompt_asset(
+            value + "\n", expected_sha256=digest, name="negative prompt asset"
+        )
+        == value
+    )
+    with pytest.raises(benchmark.Cosmos3SuperBenchmarkError, match="SHA-256"):
+        benchmark._public_prompt_asset(
+            value + " ", expected_sha256=digest, name="negative prompt asset"
+        )
+
+
 @pytest.mark.parametrize(
     ("kwargs", "message"),
     [

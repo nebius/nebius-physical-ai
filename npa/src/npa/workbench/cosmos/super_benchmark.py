@@ -49,6 +49,10 @@ IMAGE = (
 )
 PROMPT_ASSET = "assets/example_t2v_prompt.json"
 NEGATIVE_PROMPT_ASSET = "assets/negative_prompt.json"
+PUBLIC_PROMPT_SHA256 = "61c9c4b46b6787d967cc509a2bf323766e70bf5ecf40e09a739362beac135677"
+PUBLIC_NEGATIVE_PROMPT_SHA256 = (
+    "007a1bdfe1ec3edf3b9a71789ca1999a47ad565560f269a3d78bf9a8dfef9cfd"
+)
 SEEDS = (17, 23, 41)
 VIDEO_SECONDS = 189 / 24
 SYNC_TIMEOUT_SECONDS = 5400
@@ -133,6 +137,18 @@ def _sha256(data: bytes) -> str:
 
 def _sha256_text(value: str) -> str:
     return _sha256(value.encode("utf-8"))
+
+
+def _public_prompt_asset(value: str, *, expected_sha256: str, name: str) -> str:
+    """Return the exact public-record bytes, tolerating only terminal newlines."""
+    if _sha256_text(value) == expected_sha256:
+        return value
+    normalized = value.rstrip("\r\n")
+    if _sha256_text(normalized) == expected_sha256:
+        return normalized
+    raise Cosmos3SuperBenchmarkError(
+        f"pinned {name} does not match the public benchmark SHA-256"
+    )
 
 
 def parse_topologies(value: str | Sequence[str]) -> tuple[str, ...]:
@@ -332,8 +348,16 @@ def _load_anchor_prompts() -> tuple[str, str, dict[str, str]]:
             allow_patterns=[PROMPT_ASSET, NEGATIVE_PROMPT_ASSET],
         )
     )
-    prompt = (root / PROMPT_ASSET).read_text(encoding="utf-8")
-    negative = (root / NEGATIVE_PROMPT_ASSET).read_text(encoding="utf-8")
+    prompt = _public_prompt_asset(
+        (root / PROMPT_ASSET).read_text(encoding="utf-8"),
+        expected_sha256=PUBLIC_PROMPT_SHA256,
+        name="prompt asset",
+    )
+    negative = _public_prompt_asset(
+        (root / NEGATIVE_PROMPT_ASSET).read_text(encoding="utf-8"),
+        expected_sha256=PUBLIC_NEGATIVE_PROMPT_SHA256,
+        name="negative prompt asset",
+    )
     if not prompt.strip() or not negative.strip():
         raise Cosmos3SuperBenchmarkError("pinned model prompt assets must be non-empty")
     return prompt, negative, {
