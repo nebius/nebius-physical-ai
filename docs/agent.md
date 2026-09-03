@@ -52,6 +52,59 @@ npa agent fresh-setup --project <alias> \
 `fresh-setup` provisions the VM with Terraform. `npa agent bootstrap` refreshes
 only the UI/backend/nginx layer on an existing VM, without touching infra.
 
+## Sign in to the UI
+
+The machine that runs `npa agent setup`, `deploy`, or `fresh-setup` stores the
+UI's HTTP Basic Auth credentials in this owner-only file:
+
+```text
+~/.npa/agents/<project-alias>/<agent-name>/auth.env
+```
+
+`<project-alias>` and `<agent-name>` are the values passed to `--project` and
+`--name` (`agent` is the default name). The file is created with mode `0600` and
+contains `AGENT_USER` and `AGENT_PASSWORD`. It is on the **operator machine**,
+not the agent VM.
+
+Load it in the shell that will operate the agent, then ask `status` for the
+verified customer URL:
+
+```bash
+PROJECT_ALIAS=<alias>
+AGENT_NAME=agent
+AUTH_FILE="$HOME/.npa/agents/$PROJECT_ALIAS/$AGENT_NAME/auth.env"
+
+test -r "$AUTH_FILE" || { echo "Agent UI credential file not found" >&2; exit 1; }
+source "$AUTH_FILE"
+npa agent status --project "$PROJECT_ALIAS" --name "$AGENT_NAME"
+```
+
+Open the reported `public_url` and sign in with `AGENT_USER` and
+`AGENT_PASSWORD`. To copy them into a browser without putting either value in
+shell history, print them only when you are ready to use them:
+
+```bash
+printf 'Username: %s\n' "$AGENT_USER"
+printf 'Password: %s\n' "$AGENT_PASSWORD"
+```
+
+The password output is sensitive: keep it out of logs, chat, screenshots, and
+credential-bearing URLs. Do not loosen the file permissions or commit the file.
+Deploy output reports the credential file path but redacts the password, and
+`npa agent status` uses the file for its health probes without returning either
+credential.
+
+HTTPS uses a self-signed certificate. If a browser does not show the sign-in
+flow, open `<public_url>/healthz` once to accept the certificate, then open
+`<public_url>/login-help.html`. This is also the required order on phones.
+
+`npa agent bootstrap`, including `--refresh-credentials`, reuses the existing UI
+login. Replacing the deployment creates a new password, and `npa agent destroy`
+removes the local agent directory, including `auth.env`. If the file for a
+healthy deployment is lost, neither `status` nor the browser can reveal the
+password; restore an owner-only backup or replace the agent to generate a new
+login.
+
 ## What setup is doing while you wait
 
 Setup prints **four bounded phases** around Terraform, SSH installation, and a
