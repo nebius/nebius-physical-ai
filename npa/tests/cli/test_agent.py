@@ -2449,9 +2449,7 @@ def test_direct_run_load_does_not_wait_for_complete_large_inventory() -> None:
     )[0]
 
     assert "deferInventoryCompletion: true" in load_run
-    assert (
-        "activeArtifactInventoryComplete && activeArtifactInventory.some" in load_run
-    )
+    assert "activeArtifactInventoryComplete && activeArtifactInventory.some" in load_run
     assert "activeArtifactInventoryComplete && !hasRecording" in load_run
 
 
@@ -3570,12 +3568,15 @@ def test_bootstrap_emitted_ui_script_is_valid_javascript(monkeypatch) -> None:
     assert "RERUN_CAPABILITY_NAME_RE" in setup_script
     assert "RERUN_RECORDING_HTTP_PATH" not in setup_script
     assert 'sim_viz["served_recording_sha256"] = _sha256_file(' in setup_script
-    assert 'sim_viz["served_recording_size_bytes"] = RECORDING_PATH.stat().st_size' in setup_script
+    assert (
+        'sim_viz["served_recording_size_bytes"] = RECORDING_PATH.stat().st_size'
+        in setup_script
+    )
     assert 'sim_viz.pop("served_recording_sha256", None)' in setup_script
     assert 'sim_viz.pop("served_recording_size_bytes", None)' in setup_script
     assert 'stream.read(4) == b"RRF2"' in setup_script
     assert "recording_size == bound_size" in setup_script
-    assert 'and _served_recording_is_run_specific()' in setup_script
+    assert "and _served_recording_is_run_specific()" in setup_script
     html_match = re.search(
         r"cat <<'HTML' \| sudo tee /opt/npa-agent/ui\.html >/dev/null\n(?P<html>.*?)\nHTML",
         setup_script,
@@ -5417,9 +5418,7 @@ def test_agent_preflight_capacity_follows_requested_agent_name(
     monkeypatch.setattr(
         agent_module, "_agent_storage_result", lambda *_a, **_k: _passing_check()
     )
-    monkeypatch.setattr(
-        agent_module, "_resolve_project_alias", lambda _project: "demo"
-    )
+    monkeypatch.setattr(agent_module, "_resolve_project_alias", lambda _project: "demo")
     monkeypatch.setattr(
         agent_module,
         "resolve_environment",
@@ -5430,9 +5429,7 @@ def test_agent_preflight_capacity_follows_requested_agent_name(
     monkeypatch.setattr(
         agent_module,
         "_agent_record",
-        lambda _project, name: (
-            {"public_ip": "203.0.113.50"} if name == "agent" else {}
-        ),
+        lambda _project, name: {"public_ip": "203.0.113.50"} if name == "agent" else {},
     )
 
     seen: list[bool] = []
@@ -6039,6 +6036,63 @@ def test_agent_project_option_defaults_are_consistent() -> None:
         option = inspect.signature(command).parameters["project"].default
         default = getattr(option, "default", option)
         assert default == "", f"{command.__name__} pins --project to {default!r}"
+
+
+def test_artifact_source_file_round_trip_survives_service_environment_reload(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.cli import agent_access_runtime as runtime
+
+    source = {
+        "project_id": "project-exact",
+        "bucket": "bucket-exact",
+        "resolved_prefix": "preserved/runs",
+    }
+    source_file = tmp_path / "artifact-sources.json"
+    source_file.write_text(json.dumps([source]), encoding="utf-8")
+    source_file.chmod(0o600)
+    staged: dict[str, str] = {}
+
+    class FakeSSH:
+        def upload_private_text(self, content, remote_path):
+            staged.update(content=content, remote_path=remote_path)
+
+        def run_or_raise(self, _command, *, label):
+            assert label == "stage private /opt/npa-agent/s3.env"
+
+        def run(self, _command):
+            return None
+
+    loaded = agent_module._load_agent_artifact_sources_file(str(source_file))
+    agent_module._write_agent_s3_env(
+        FakeSSH(),
+        bucket="primary-bucket",
+        endpoint="https://objects.example",
+        access_key="synthetic-access",
+        secret_key="synthetic-secret",
+        region="test-region",
+        artifact_sources=loaded,
+    )
+
+    env_line = next(
+        line
+        for line in staged["content"].splitlines()
+        if line.startswith("NPA_AGENT_ARTIFACT_SOURCES_B64=")
+    )
+    assert "project-exact" not in env_line
+    assert "bucket-exact" not in env_line
+    monkeypatch.setenv("NPA_AGENT_ARTIFACT_SOURCES_B64", env_line.split("=", 1)[1])
+    assert runtime._configured_agent_artifact_sources() == (source,)
+    assert str(staged["remote_path"]).startswith("/tmp/.npa-private-")
+
+
+def test_artifact_source_file_rejects_non_private_permissions(tmp_path) -> None:
+    source_file = tmp_path / "artifact-sources.json"
+    source_file.write_text("[]", encoding="utf-8")
+    source_file.chmod(0o644)
+
+    with pytest.raises(ValueError, match="must not be readable"):
+        agent_module._load_agent_artifact_sources_file(str(source_file))
 
 
 def test_resolve_project_alias_prefers_the_only_configured_project(monkeypatch) -> None:

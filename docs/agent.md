@@ -52,6 +52,29 @@ npa agent fresh-setup --project <alias> \
 `fresh-setup` provisions the VM with Terraform. `npa agent bootstrap` refreshes
 only the UI/backend/nginx layer on an existing VM, without touching infra.
 
+When the agent's read-only identity can access a known artifact bucket but
+cannot enumerate every project or bucket in the tenant, configure that exact
+source as an owner default. Create a mode-`0600` JSON file outside the checkout:
+
+```json
+[
+  {
+    "project_id": "<artifact-project-id>",
+    "bucket": "<artifact-bucket>",
+    "resolved_prefix": "<directory-above-run-id>"
+  }
+]
+```
+
+Then refresh the existing agent with
+`npa agent bootstrap --project <alias> --name <agent-name>
+--artifact-source-file <owner-only-json>`. Bootstrap persists the tuple in the
+owner-only NPA configuration and stages it in the service environment, so an
+ordinary exact run-id search continues to use the source after a restart. The
+tuple grants no access: the backend still verifies live S3 list/read capability,
+and exact searches do not fall through to broader tenant discovery. Later
+bootstraps reuse the persisted source without requiring the file again.
+
 The `whole_path_capacity` check first reads the tenant quota aggregate. A
 project-scoped administrator may be forbidden from that tenant-wide read even
 though they can manage the deployment project. In that specific case, preflight

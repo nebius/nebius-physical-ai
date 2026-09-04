@@ -41,6 +41,7 @@ from npa.cli.agent_assets import (  # noqa: F401 - re-exported for tests/callers
     _lichtblick_default_layout_json,
 )
 from npa.cli.agent_env_files import (  # noqa: F401 - re-exported for tests/callers
+    _load_agent_artifact_sources_file,
     _stage_private_text,
     _write_agent_nebius_env,
     _write_agent_operator_profile,
@@ -116,6 +117,7 @@ from npa.cli.agent_access import (
     ACCESS_SCHEMA,
     ACCESS_STATES,
     consistent_agent_service_account_id,
+    normalize_configured_artifact_sources,
 )
 from npa.cli.agent_contracts import (  # noqa: F401 - public compatibility exports
     AGENT_CHAT_QUEUE_CONTRACT,
@@ -963,6 +965,7 @@ def _bootstrap_agent_stack(
     s3_access_key: str = "",
     s3_secret_key: str = "",
     s3_region: str = "eu-north1",
+    artifact_sources: tuple[dict[str, str], ...] | list[dict[str, str]] = (),
     nebius_project_id: str = "",
     nebius_tenant_id: str = "",
     public_https: bool = True,
@@ -6750,6 +6753,35 @@ def artifacts_runs(
                 ),
                 "source_errors": [dict(item) for item in page.source_errors],
             }}
+        # An exact run query may use an owner-configured source tuple even when
+        # tenant-wide project or bucket inventory is unavailable. This is the
+        # normal browser search path, not a hidden source-scoped request: the
+        # server chooses only among its durable defaults and verifies current
+        # S3 list access before returning the source-qualified run reference.
+        if not prefix and len(query) >= 20:
+            try:
+                exact_run = validate_run_id(query)
+            except Exception:
+                exact_run = ""
+            if exact_run and _configured_agent_artifact_sources():
+                configured_runs, configured_errors, configured_complete = (
+                    _find_configured_exact_run_sources(s3, exact_run)
+                )
+                # An owner default is an exact-search boundary, not merely a
+                # fast path. Empty or unavailable configured sources must not
+                # fall through to broader tenant discovery for the same id.
+                configured_page = RunListPage(
+                    runs=configured_runs,
+                    truncated=not configured_complete,
+                    total_runs=len(configured_runs),
+                    limit=discovery_limit,
+                    discovery_complete=configured_complete,
+                    source_errors=configured_errors,
+                )
+                return _page_response(
+                    configured_page,
+                    effective_prefix=settings.get("prefix", ""),
+                )
         if prefix:
             effective_prefix = _artifact_discovery_prefix(settings, prefix)
             # Cached (TTL + stale-while-revalidate): the run list is polled on every
@@ -9150,6 +9182,7 @@ sudo systemctl enable --now npa-lichtblick 2>/dev/null || echo "npa-lichtblick s
         access_key=s3_access_key,
         secret_key=s3_secret_key,
         region=s3_region,
+        artifact_sources=artifact_sources,
     )
     _write_agent_operator_profile(
         ssh,
@@ -10596,6 +10629,14 @@ def bootstrap_cmd(
         "--refresh-credentials",
         help="Re-provision the long-lived npa-agent service account and restage VM credentials.",
     ),
+    artifact_source_file: str = typer.Option(
+        "",
+        "--artifact-source-file",
+        help=(
+            "Owner-only JSON file containing exact read-only artifact source "
+            "project/bucket/prefix tuples; persisted for future bootstraps."
+        ),
+    ),
     foxglove_embed_src: str = agent_foxglove_config.embed_src_option(),
     foxglove_viewer_backend: str = agent_foxglove_config.viewer_backend_option(),
     foxglove_org_slug: str = agent_foxglove_config.org_slug_option(),
@@ -10611,6 +10652,16 @@ def bootstrap_cmd(
     record = _agent_record(project, name)
     if not record:
         _fail(f"Agent config not found for {project}/{name}")
+    try:
+        artifact_sources = (
+            _load_agent_artifact_sources_file(artifact_source_file)
+            if str(artifact_source_file or "").strip()
+            else normalize_configured_artifact_sources(
+                record.get("artifact_sources") or ()
+            )
+        )
+    except ValueError as exc:
+        _fail(str(exc))
     foxglove_settings = _resolve_foxglove_settings_or_fail(
         embed_src=foxglove_embed_src,
         viewer_backend=foxglove_viewer_backend,
@@ -10794,6 +10845,7 @@ def bootstrap_cmd(
             "s3_access_key": s3_access_key,
             "s3_secret_key": s3_secret_key,
             "s3_region": region,
+            "artifact_sources": artifact_sources,
             "nebius_project_id": project_id,
             "nebius_tenant_id": tenant_id,
             "service_account_id": service_account_id,
@@ -10872,6 +10924,10 @@ def bootstrap_cmd(
     updated["ssh_key_path"] = ssh_key_path
     updated["foxglove"] = foxglove_settings
     updated["setup_state"] = "healthy"
+    if artifact_sources:
+        updated["artifact_sources"] = list(artifact_sources)
+    else:
+        updated.pop("artifact_sources", None)
     updated["setup_evidence"] = {
         key: reconciliation.get(key)
         for key in (

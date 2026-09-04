@@ -7,6 +7,7 @@ them there keep working.
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import re
@@ -19,6 +20,7 @@ from urllib.parse import urlparse
 from npa.clients.config import CONFIG_PATH, _load_yaml_file
 from npa.clients.project_credential_store import merge_project_credentials_document
 from npa.clients.ssh import SSHClient
+from npa.cli.agent_access import normalize_configured_artifact_sources
 
 
 _REMOTE_KUBERNETES_KEYS = (
@@ -97,6 +99,7 @@ def _write_agent_s3_env(
     access_key: str,
     secret_key: str,
     region: str,
+    artifact_sources: tuple[dict[str, str], ...] | list[dict[str, str]] = (),
 ) -> None:
     """Stage S3 discovery credentials on the VM (read-only operator scope preferred)."""
     if not (bucket.strip() and access_key.strip() and secret_key.strip()):
@@ -108,13 +111,35 @@ def _write_agent_s3_env(
         f"AWS_ACCESS_KEY_ID={access_key.strip()}",
         f"AWS_SECRET_ACCESS_KEY={secret_key.strip()}",
         f"AWS_REGION={region.strip() or 'eu-north1'}",
-        "",
     ]
+    normalized_sources = normalize_configured_artifact_sources(artifact_sources)
+    if normalized_sources:
+        encoded_sources = base64.urlsafe_b64encode(
+            json.dumps(
+                list(normalized_sources), separators=(",", ":"), sort_keys=True
+            ).encode("utf-8")
+        ).decode("ascii")
+        env_lines.append(f"NPA_AGENT_ARTIFACT_SOURCES_B64={encoded_sources}")
+    env_lines.append("")
     _stage_private_text(
         ssh,
         content="\n".join(env_lines),
         target="/opt/npa-agent/s3.env",
     )
+
+
+def _load_agent_artifact_sources_file(path: str) -> tuple[dict[str, str], ...]:
+    """Load an owner-only JSON array used by ``npa agent bootstrap``."""
+    source = Path(str(path or "")).expanduser()
+    if not source.is_file():
+        raise ValueError("artifact source file does not exist")
+    if source.stat().st_mode & 0o077:
+        raise ValueError("artifact source file must not be readable by group or others")
+    try:
+        payload = json.loads(source.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise ValueError("artifact source file is not valid JSON") from exc
+    return normalize_configured_artifact_sources(payload)
 
 
 def _write_agent_operator_profile(
@@ -275,14 +300,18 @@ def _write_agent_nebius_env(
     if dataset_tenant:
         parsed_dataset = urlparse(dataset_uri)
         if dataset_tenant != tenant_id.strip():
-            raise ValueError("agent dataset tenant does not match the deployment tenant")
+            raise ValueError(
+                "agent dataset tenant does not match the deployment tenant"
+            )
         if (
             parsed_dataset.scheme != "s3"
             or parsed_dataset.netloc != bucket.strip()
             or parsed_dataset.query
             or parsed_dataset.fragment
         ):
-            raise ValueError("agent dataset URI must use the deployment's unsigned S3 bucket")
+            raise ValueError(
+                "agent dataset URI must use the deployment's unsigned S3 bucket"
+            )
     env_lines = [
         f"NPA_AGENT_PROJECT_ALIAS={project_alias.strip()}",
         f"NPA_AGENT_NAME={agent_name.strip()}",
