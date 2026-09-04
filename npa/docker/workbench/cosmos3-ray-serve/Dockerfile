@@ -39,8 +39,7 @@ ENV NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA} \
 # it. Do not depend on a specific repository version that can age out; the
 # package is not needed at runtime and is safely removable.
 USER root
-RUN apt-get update \
-    && if dpkg-query -W -f'${Status}' linux-libc-dev 2>/dev/null \
+RUN if dpkg-query -W -f'${Status}' linux-libc-dev 2>/dev/null \
           | grep -q '^install ok installed$'; then \
          dpkg --purge --force-depends linux-libc-dev; \
        fi \
