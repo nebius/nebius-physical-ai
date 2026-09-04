@@ -697,18 +697,33 @@ def test_load_spec_from_yaml(tmp_path) -> None:
 # --------------------------------------------------------------------------- #
 # lifecycle helpers (mocked, no infra)
 # --------------------------------------------------------------------------- #
-def test_resolve_project_id_existing_by_id() -> None:
+def test_resolve_project_id_existing_by_id(monkeypatch) -> None:
     from npa.fleet import lifecycle
 
+    calls = []
+
+    def get_project(binary, project_id, env, profile):
+        calls.append((binary, project_id, env, profile))
+        return {
+            "metadata": {
+                "id": "project-abc", "parent_id": "tenant-x", "name": "private-name"
+            },
+            "status": {"container_state": "ACTIVE", "region": "us-central1"},
+        }
+
+    monkeypatch.setattr(lifecycle, "_get_project", get_project)
     project = ProjectSpec(
+        name="local-role",
         project_id="project-abc",
         clusters=[ClusterSpec(name="c", cpu_nodes=NodePoolSpec(count=1))],
     )
     pid, created = lifecycle.resolve_project_id(
-        "nebius", "tenant-x", project, prefix="fleet1-test-", create=True, env={}
+        "nebius", "tenant-x", project, prefix="fleet1-test-", create=False,
+        env={}, region="us-central1", profile="selected-profile",
     )
     assert pid == "project-abc"
     assert created is False
+    assert calls == [("nebius", "project-abc", {}, "selected-profile")]
 
 
 def test_resolve_project_id_creates_when_absent(monkeypatch, tmp_path: Path) -> None:
@@ -745,6 +760,36 @@ def test_resolve_project_id_creates_when_absent(monkeypatch, tmp_path: Path) -> 
     assert resource["labels"] == {"tenant_id": "tenant-x", "region": "us-central1"}
 
 
+@pytest.mark.parametrize(
+    "section,field,value,reason",
+    [
+        ("metadata", "id", "project-other", "provider id"),
+        ("metadata", "parent_id", "tenant-other", "another tenant"),
+        ("status", "region", "eu-north1", "region"),
+        ("status", "container_state", "DELETING", "active"),
+        ("status", "container_state", None, "active"),
+        ("status", "suspension_state", "SUSPENDED", "suspended"),
+        ("metadata", "deleted_at", "2026-01-01T00:00:00Z", "deleted"),
+    ],
+)
+def test_explicit_project_id_rejects_unusable_provider_identity(
+    monkeypatch, section, field, value, reason
+) -> None:
+    from npa.fleet import lifecycle
+
+    payload = {
+        "metadata": {"id": "project-exact", "parent_id": "tenant-x"},
+        "status": {"container_state": "ACTIVE", "region": "us-central1"},
+    }
+    payload[section][field] = value
+    monkeypatch.setattr(lifecycle, "_get_project", lambda *a, **k: payload)
+    with pytest.raises(ValueError, match=reason):
+        lifecycle.resolve_project_id(
+            "nebius", "tenant-x", ProjectSpec(project_id="project-exact"),
+            prefix="", create=False, env={}, region="us-central1",
+        )
+
+
 def test_resolve_project_id_reuses_existing_by_name(monkeypatch) -> None:
     from npa.fleet import lifecycle
 
@@ -765,6 +810,7 @@ def test_resolve_project_id_reuses_existing_by_name(monkeypatch) -> None:
                 "parentId": "tenant-x",
             },
             "spec": {"region": "us-central1"},
+            "status": {"container_state": "ACTIVE"},
         },
     )
     project = ProjectSpec(
@@ -802,7 +848,7 @@ def test_resolve_project_id_rejects_same_name_in_wrong_region(monkeypatch) -> No
                 "id": "project-found",
                 "parent_id": "tenant-x",
             },
-            "status": {"region": "eu-north1"},
+            "status": {"region": "eu-north1", "container_state": "ACTIVE"},
         },
     )
     project = ProjectSpec(
@@ -4454,6 +4500,19 @@ def _project_quota_accounting_boundary(monkeypatch, tmp_path, projects):
         return projects
 
     monkeypatch.setattr(L, "_list_projects", list_projects)
+
+    def get_project(_binary, project_id, _env, _profile):
+        name = next(
+            (item["metadata"]["name"] for item in projects
+             if item["metadata"]["id"] == project_id),
+            "private-name",
+        )
+        return {
+            "metadata": {"id": project_id, "parent_id": "t", "name": name},
+            "status": {"container_state": "ACTIVE", "region": "us-central1"},
+        }
+
+    monkeypatch.setattr(L, "_get_project", get_project)
     monkeypatch.setattr(
         L,
         "_preflight_quotas",
@@ -4546,7 +4605,7 @@ def test_preflight_project_accounting_explicit_id_and_mixed_projects(
     L.deploy_fleet(mixed, work_root=tmp_path / "mixed")
     assert list_calls == ["list"]
     assert preflight_calls == [{"eu-north1": 1}]
-    assert resolve_calls == ["new", "project-explicit"]
+    assert resolve_calls == ["new"]
     assert sorted(deployed) == ["existing", "new", "project-explicit"]
 
 
@@ -4563,6 +4622,61 @@ def test_preflight_project_lookup_failure_cannot_undercount(
     assert preflight_calls == []
     assert resolve_calls == []
     assert deployed == []
+
+
+@pytest.mark.parametrize("explicit", [False, True])
+def test_project_preflight_verifies_every_existing_target_before_any_mutation(
+    monkeypatch, tmp_path, explicit
+) -> None:
+    spec = _rtx_cluster_spec()
+    spec.projects.append(ProjectSpec(name="b", clusters=spec.projects[0].clusters))
+    if explicit:
+        for project in spec.projects:
+            project.project_id = f"project-{project.name}"
+    inventory = [
+        {"metadata": {"id": f"project-{p.name}", "name": p.name}}
+        for p in spec.projects
+    ]
+    L, _lists, quota_calls, resolved, deployed = _project_quota_accounting_boundary(
+        monkeypatch, tmp_path, inventory
+    )
+    verified = []
+
+    def get_project(_binary, project_id, _env, _profile):
+        verified.append(project_id)
+        return {
+            "metadata": {"id": project_id, "parent_id": "t", "name": project_id[-1]},
+            "status": {
+                "container_state": "ACTIVE" if project_id == "project-a" else "DELETING",
+                "region": "us-central1",
+            },
+        }
+
+    monkeypatch.setattr(L, "_get_project", get_project)
+    mutations = []
+    monkeypatch.setattr(L, "_ensure_project_object_storage", lambda **k: mutations.append("storage"))
+    monkeypatch.setattr(L, "ensure_subnet", lambda *a, **k: mutations.append("subnet"))
+    with pytest.raises(ValueError, match="not authoritatively active"):
+        L.deploy_fleet(spec, work_root=tmp_path, create_projects=False)
+    assert verified == ["project-a", "project-b"]
+    assert quota_calls == resolved == deployed == mutations == []
+
+
+def test_no_create_projects_missing_later_target_blocks_all_mutation(
+    monkeypatch, tmp_path
+) -> None:
+    spec = _rtx_cluster_spec()
+    spec.projects.append(ProjectSpec(name="missing", clusters=spec.projects[0].clusters))
+    L, _lists, quotas, resolved, deployed = _project_quota_accounting_boundary(
+        monkeypatch, tmp_path,
+        [{"metadata": {"id": "project-existing", "name": "a"}}],
+    )
+    mutations = []
+    monkeypatch.setattr(L, "_ensure_project_object_storage", lambda **k: mutations.append("storage"))
+    monkeypatch.setattr(L, "ensure_subnet", lambda *a, **k: mutations.append("subnet"))
+    with pytest.raises(ValueError, match="creation is disabled"):
+        L.deploy_fleet(spec, work_root=tmp_path, create_projects=False)
+    assert quotas == resolved == deployed == mutations == []
 
 
 def test_plan_resolves_tenant_from_named_profile(monkeypatch) -> None:

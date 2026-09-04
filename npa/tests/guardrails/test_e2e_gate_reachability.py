@@ -16,6 +16,9 @@ RUNNER_FILES = (
 # These specialized suites intentionally remain operator-invoked. The reason is
 # machine-reviewed here instead of letting an environment gate silently rot.
 MANUAL_GATES = {
+    "NPA_FLEET_PROJECT_VERIFY_SPEC": (
+        "read-only Fleet identity checks require an owner-private exact project spec"
+    ),
     "NPA_BURST_E2E_IMAGE": "operator supplies the exact immutable burst validation image",
     "NPA_E2E_BURST": "full burst GPU coverage is an explicitly selected live suite",
     "NPA_BYOF_LIVE_CONTAINER": "BYOF executes third-party source only after operator review",

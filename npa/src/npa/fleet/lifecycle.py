@@ -499,7 +499,11 @@ def _verify_existing_project(
     name: str,
     region: str,
 ) -> None:
-    """Fail closed unless a same-name resume has the exact requested identity."""
+    """Require an active project with the exact requested provider identity.
+
+    An explicit immutable ID does not require a matching display name: Fleet
+    names can be local roles unrelated to the provider's private project name.
+    """
 
     metadata = payload.get("metadata", {}) or {}
     spec = payload.get("spec", {}) or {}
@@ -510,7 +514,7 @@ def _verify_existing_project(
     mismatches: list[str] = []
     if str(metadata.get("id") or "") != project_id:
         mismatches.append("provider id does not match the listed project")
-    if str(metadata.get("name") or "") != name:
+    if name and str(metadata.get("name") or "") != name:
         mismatches.append("display name changed after project listing")
     parent_id = _provider_field(metadata, "parent_id", "parentId")
     if str(parent_id if parent_id is not _PROVIDER_FIELD_MISSING else "") != tenant_id:
@@ -520,6 +524,16 @@ def _verify_existing_project(
             f"project region {actual_region or '<unavailable>'!r} does not match "
             f"requested region {region!r}"
         )
+    state = status.get("container_state") or status.get("project_state")
+    if state != "ACTIVE":
+        mismatches.append("project is not authoritatively active")
+    if status.get("suspension_state", "NONE") != "NONE":
+        mismatches.append("project is suspended")
+    if any(
+        metadata.get(key)
+        for key in ("deleted_at", "deletedAt", "deletion_timestamp", "deletionTimestamp")
+    ):
+        mismatches.append("project is being deleted")
     if mismatches:
         raise ValueError(
             f"existing project {name!r} failed immutable identity verification: "
@@ -739,6 +753,14 @@ def resolve_project_id(
     """Return ``(project_id, created)`` for a project spec, creating if allowed."""
 
     if project.project_id:
+        verified = _get_project(nebius_bin, project.project_id, env, profile)
+        _verify_existing_project(
+            verified,
+            project_id=project.project_id,
+            tenant_id=tenant_id,
+            name="",
+            region=region,
+        )
         return project.project_id, False
     name = project.display_name(prefix)
     if not name:
@@ -1677,14 +1699,24 @@ def _deploy_mk8s_fleet(
             else []
         )
         for project, region in scoped_projects:
-            if project.project_id:
-                continue
             name = project.display_name(prefix)
-            found = _find_project_id(existing_projects, name)
+            found = project.project_id or _find_project_id(existing_projects, name)
             if found:
+                _verify_existing_project(
+                    _get_project(nebius_bin, found, cli_env, nebius_profile),
+                    project_id=found,
+                    tenant_id=tenant_id,
+                    name="" if project.project_id else name,
+                    region=region,
+                )
                 preflight_project_ids[project.key()] = found
                 _log(on_status, f"project {name!r} exists ({found})")
             else:
+                if not create_projects:
+                    raise ValueError(
+                        f"project {name!r} not found under tenant and project "
+                        "creation is disabled"
+                    )
                 new_projects_by_region[region] = (
                     new_projects_by_region.get(region, 0) + 1
                 )

@@ -214,6 +214,25 @@ depends on it.
    existing immutable project ID when a name already exists. An unreadable
    project inventory fails closed rather than assuming the project exists.
 
+   Both explicit `project_id` targets and projects resolved by name require a
+   provider read verifying exact ID, tenant, region, active state, and absence of
+   suspension or deletion. An explicit ID may use a local Fleet role whose name
+   differs from the provider project name. With `--no-create-projects`, a missing
+   target aborts the entire preflight before any project's storage or workers
+   are created; never substitute a stale or deleting project from local state.
+
+   Run the read-only live identity regression against an owner-private spec with
+   explicit tenant, region, profile, and project IDs:
+
+   ```bash
+   NPA_INTEGRATION_E2E=1 NPA_FLEET_PROJECT_VERIFY_SPEC=<private-spec-path> \
+     npa/.venv/bin/python -m pytest \
+     npa/tests/e2e/test_fleet_project_identity_live_e2e.py -q
+   ```
+
+   This checks valid identity and rejects mismatched tenant/region selections.
+   It creates no resources and does not replace GPU or workload validation.
+
    The allowance read is paged to completion and selects records whose
    `metadata.parent_id` is the requested tenant. A project/unset allowance can
    never shadow a finite tenant allowance; duplicate finite evidence must agree
