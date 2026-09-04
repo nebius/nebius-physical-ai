@@ -745,6 +745,7 @@ def test_run_cosmos_transfer_names_gated_access_denial_without_leaking_prompt(
     monkeypatch.setattr(tx, "ensure_env", lambda _repo: Path("/usr/bin/python3"))
     monkeypatch.setenv("HF_TOKEN", "unit-test-placeholder")
     secret_prompt = "a secret prompt that must never reach the raised message"
+    monkeypatch.setattr(tx, "prepare_guardrail_nltk_data", lambda **_kwargs: 0)
 
     def fake_run(cmd, *_args, **kwargs):
         assert secret_prompt not in " ".join(cmd)
