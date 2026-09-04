@@ -68,6 +68,7 @@ def _full_app() -> typer.Typer:
     from npa.cli.workbench.lichtblick import app as lichtblick_app
     from npa.cli.workbench.ltx2 import app as ltx2_app
     from npa.cli.workbench.mjlab import app as mjlab_app
+    from npa.cli.workbench.robocasa import app as robocasa_app
     from npa.cli.workbench.scenario_gen import app as scenario_gen_app
     from npa.cli.workbench.sim2real import app as sim2real_app
     from npa.cli.workbench.sim2real_envgen import app as sim2real_envgen_app
@@ -105,6 +106,7 @@ def _full_app() -> typer.Typer:
     full.add_typer(nurec_app, name="nurec")
     full.add_typer(sonic_app, name="sonic")
     full.add_typer(mjlab_app, name="mjlab")
+    full.add_typer(robocasa_app, name="robocasa")
     full.add_typer(lichtblick_app, name="lichtblick")
     full.add_typer(ltx2_app, name="ltx2")
     full.add_typer(alpamayo2_super_app, name="alpamayo2-super")
@@ -128,12 +130,46 @@ def _full_app() -> typer.Typer:
     return full
 
 
+def _rerun_viewer_light_app() -> typer.Typer:
+    """Build the dependency-minimal nurec surface for the Rerun viewer image.
+
+    The npa-rerun-viewer image bakes the light flag, but the workflow stages it
+    exists for (``workbench.nurec.visualize`` / ``workbench.nurec.finalize``)
+    live under ``npa workbench nurec`` — without this registration those stages
+    fail with "No such command 'nurec'" even though the image's setup installed
+    the nurec runtime deps. The nurec CLI chain imports only stdlib + typer, so
+    it is safe on the dependency-minimal surface.
+    """
+
+    from npa.cli.nurec import app as nurec_app
+
+    light = typer.Typer(
+        name="workbench",
+        help="Physical AI workbench tools.",
+        no_args_is_help=True,
+    )
+
+    @light.callback()
+    def main() -> None:
+        """Physical AI workbench tools."""
+
+        load_credentials(
+            warn=lambda msg: typer.echo(msg, err=True),
+            export_to_environment=True,
+        )
+
+    light.add_typer(nurec_app, name="nurec")
+    return light
+
+
 if _LIGHT_IMPORT:
     # Capability images need only this one command and deliberately omit the
     # unrelated platform SDK dependency tree. Preserve the historical Cosmos2
     # surface unless an image explicitly declares another narrow capability.
     if _LIGHT_TOOL == "groot":
         app = _groot_light_app()
+    elif _LIGHT_TOOL == "rerun-viewer":
+        app = _rerun_viewer_light_app()
     else:
         from npa.cli.workbench.cosmos2 import app
 else:

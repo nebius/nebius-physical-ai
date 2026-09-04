@@ -45,7 +45,6 @@ from npa.clients.config import (
     list_projects,
     remove_workbench_config,
     resolve_config,
-    resolve_container_registry,
     resolve_credentials,
     resolve_environment,
     resolve_project_storage,
@@ -1578,9 +1577,7 @@ def _deploy_serverless_endpoint(
         _validate_gpu_selection(platform, preset)
 
     endpoint_name = _serverless_endpoint_name(proj_alias, wb_name)
-    image_ref = image or container_image_for_tool(
-        "cosmos", registry=resolve_container_registry(proj_alias)
-    )
+    image_ref = image or container_image_for_tool("cosmos")
     serverless_env = {
         "COSMOS_MODEL_ID": model,
         "COSMOS_SERVER_PORT": str(container_port),
@@ -2696,10 +2693,7 @@ def deploy_cmd(
                         service_env,
                         owner=ssh_user,
                     )
-                    image_ref = container_image_for_tool(
-                        "cosmos",
-                        registry=resolve_container_registry(proj_alias),
-                    )
+                    image_ref = container_image_for_tool("cosmos")
                     ssh.run(
                         "sudo systemctl stop npa-cosmos-server >/dev/null 2>&1 || true"
                     )
@@ -3213,7 +3207,7 @@ def train_cmd(
         info = client.create_job(
             project_id=resolved_project_id,
             name=name,
-            image=image or container_image_for_tool("cosmos", registry=resolve_container_registry(proj_alias)),
+            image=image or container_image_for_tool("cosmos"),
             command=_cosmos_train_smoke_command(smoke_seconds),
             gpu_type=resolved_gpu_type,
             gpu_count=resolved_gpu_count,

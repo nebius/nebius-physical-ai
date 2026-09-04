@@ -51,3 +51,22 @@ assert "--runtime" in result.output
     )
 
     assert result.returncode == 0, result.stderr
+
+
+def test_rerun_viewer_light_workbench_exposes_only_nurec_parent() -> None:
+    result = _run_light_import(
+        """
+import sys
+from typer.testing import CliRunner
+from npa.cli.workbench import app
+assert "npa.cli.nurec" in sys.modules
+assert "npa.cli.workbench.cosmos2" not in sys.modules
+assert "npa.cli.groot" not in sys.modules
+result = CliRunner().invoke(app, ["nurec", "visualize", "--help"])
+assert result.exit_code == 0, result.output
+assert "--input-uri" in result.output
+""",
+        tool="rerun-viewer",
+    )
+
+    assert result.returncode == 0, result.stderr

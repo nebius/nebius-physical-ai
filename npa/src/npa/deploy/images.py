@@ -13,9 +13,10 @@ from typing import Any
 # Official NPA images use one public GHCR namespace. Immutable
 # ``dev-<full-git-sha>`` tags and supported release tags share each image package;
 # guarded promotion applies the release tag only to an already validated dev digest.
-# ``NPA_REGISTRY`` remains the generic operator execution override. Restricted and
-# build-your-own images must use an operator-controlled registry and are refused from
-# official GHCR.
+# ``NPA_REGISTRY`` remains the generic operator build/BYOF registry. Repository-owned
+# runtime defaults never consult it: a stale ambient or saved private registry must not
+# redirect supported public releases away from GHCR. Callers that intentionally select
+# custom bytes pass ``registry=`` (or a complete image reference) explicitly.
 PUBLIC_CONTAINER_REGISTRY_ENV = "NPA_PUBLIC_REGISTRY"
 DEFAULT_PUBLIC_CONTAINER_REGISTRY = "ghcr.io/nebius/nebius-physical-ai"
 
@@ -43,6 +44,7 @@ CONTAINER_IMAGE_NAMES = {
     "cosmos3": "npa-cosmos3",
     "cosmos3-ray-serve": "npa-cosmos3-ray-serve",
     "cosmos3-serving": "npa-cosmos3-serving",
+    "cosmos3-super-benchmark": "npa-cosmos3-super-benchmark",
     "cosmos3-reason": "npa-cosmos3-reason",
     "cosmos-curate": "npa-cosmos-curate",
     "cosmos-evaluator": "npa-cosmos-evaluator",
@@ -51,6 +53,7 @@ CONTAINER_IMAGE_NAMES = {
     "sonic": "npa-sonic",
     "sonic-mujoco": "npa-sonic-mujoco",
     "retargeting": "npa-retargeting",
+    "robocasa": "npa-robocasa",
     "envgen": "npa-envgen",
     "reference-policy": "npa-reference-policy",
     "lerobot-vlm-rl": "npa-lerobot-vlm-rl",
@@ -76,6 +79,7 @@ SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS: frozenset[str] = frozenset(
         "cosmos2-transfer",
         "cosmos3",
         "cosmos3-reason",
+        "cosmos3-super-benchmark",
         "cosmos-curate",
         "cosmos-evaluator",
         "content-agents",
@@ -109,10 +113,12 @@ def requires_skypilot_bootstrap_runtime_probe(image: str) -> bool:
 
 
 # General public-registry refusal inventories. They intentionally describe the
-# redistribution decision, not a particular vendor payload. Both are empty now:
-# Cosmos3 serving is a zero-payload runtime bootstrap on a public Python base,
-# and sonic-mujoco is rebuilt independently without its quarantined parent.
-RESTRICTED_PUBLICATION_TOOLS: frozenset[str] = frozenset()
+# redistribution decision, not a particular vendor payload. The Cosmos3-Super
+# benchmark wrapper inherits the exact upstream vLLM-Omni runtime and therefore
+# remains build-your-own in an operator-controlled registry.
+RESTRICTED_PUBLICATION_TOOLS: frozenset[str] = frozenset(
+    {"cosmos3-super-benchmark"}
+)
 RESTRICTED_DERIVED_IMAGES: frozenset[str] = frozenset()
 
 # Compatibility exports for installed callers. New code uses the general names.
@@ -132,7 +138,7 @@ OMNIVERSE_RESTRICTED_DERIVED_IMAGES = RESTRICTED_DERIVED_IMAGES
 # Remove a tool from this set in the same change that records its accepted image
 # digest and its payload-scan/GPU evidence — not before.
 UNVALIDATED_PUBLICATION_TOOLS: frozenset[str] = frozenset()
-VALIDATION_CANDIDATE_TOOLS: frozenset[str] = frozenset()
+VALIDATION_CANDIDATE_TOOLS: frozenset[str] = frozenset({"robocasa"})
 # Compatibility view used by publication callers and public imports. Derive it
 # from the two canonical validation-state inventories; never maintain it
 # independently.
@@ -145,6 +151,12 @@ PUBLICATION_QUARANTINE_TOOLS: frozenset[str] = (
 # an explicit custom registry resolves the newer supported-tool pin.
 PUBLIC_RELEASE_TAG_OVERRIDES: dict[str, str] = {
     "fiftyone": "1.15.0.post1",
+    # 0.31.4 (plain) predates the bootstrap contract and cannot host a SkyPilot
+    # task: the container exits immediately, the provisioner's exec finds no
+    # ray-node container, and the stage retries forever. The 20260903 build is
+    # attested (org.nebius.npa.skypilot-bootstrap-contract=skypilot-0.12.2-v1)
+    # and anonymously pullable from GHCR.
+    "rerun-viewer": "0.31.4-sim2real-coherent-20260903",
 }
 
 # Release promotion for the rebuilt surfaces is bound to the exact manifests
@@ -201,6 +213,7 @@ SUPPORTED_TOOL_VERSIONS = {
     "cosmos3": "1.2.2-cu130-r6",
     "cosmos3-ray-serve": "ray1-cu130",
     "cosmos3-serving": "0.2.0-oss",
+    "cosmos3-super-benchmark": "0.1.0",
     "cosmos3-reason": "cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
     "cosmos-curate": "0.1.2-skypilot-v1-20260813T164700Z",
     "cosmos-evaluator": "0.1.2-skypilot-v1-20260813T164700Z-r2",
@@ -210,6 +223,7 @@ SUPPORTED_TOOL_VERSIONS = {
     "sonic-mujoco": "0.2.0-runtime",
     "retargeting": "0.1.1",
     "envgen": "0.1.2-sim2real-coherent-20260903",
+    "robocasa": "0.1.0",
     "reference-policy": "cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
     "lerobot-vlm-rl": "cuda13-b300-0.1.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
     "loop-eval": "cuda13-b300-0.1.3-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
@@ -478,8 +492,14 @@ def container_image_for_tool(
     gpu_target: str | None = None,
     image_variant: str | None = None,
 ) -> str:
-    """Return the fully qualified image ref for a Workbench tool."""
-    resolved_registry = registry or execution_container_registry()
+    """Return a Workbench image, defaulting repository releases to public GHCR.
+
+    ``registry`` is an explicit custom-image choice. The default deliberately does not
+    inherit ``NPA_REGISTRY``: that variable is also used by BYOF/build automation and
+    legacy operator configuration, and allowing it to repoint supported runtime images
+    made otherwise-public workloads depend on private registry credentials.
+    """
+    resolved_registry = registry or DEFAULT_CONTAINER_REGISTRY
     if tool == "sonic":
         entry = sonic_image_entry(gpu_target=gpu_target, image_variant=image_variant)
         image_name = str(entry["name"])
@@ -569,7 +589,11 @@ def registry_from_env() -> str:
 
 
 def execution_container_registry() -> str:
-    """Resolve an operator override, otherwise the public GHCR release channel."""
+    """Resolve an operator build/BYOF registry, otherwise public GHCR.
+
+    Repository-owned runtime image defaults use :func:`container_image_for_tool`,
+    which intentionally does not call this compatibility helper.
+    """
     return registry_from_env() or DEFAULT_CONTAINER_REGISTRY
 
 
@@ -683,6 +707,19 @@ def is_official_container_registry(registry: str) -> bool:
         DEFAULT_PUBLIC_CONTAINER_REGISTRY.lower(),
         public_container_registry().rstrip("/").lower(),
     }
+
+
+def is_official_public_image(image: str) -> bool:
+    """Whether ``image`` belongs to an official anonymous NPA GHCR namespace."""
+
+    candidate = str(image or "").strip().removeprefix("docker:").lower()
+    return any(
+        candidate.startswith(f"{registry}/")
+        for registry in {
+            DEFAULT_PUBLIC_CONTAINER_REGISTRY.lower(),
+            public_container_registry().rstrip("/").lower(),
+        }
+    )
 
 
 def is_publicly_redistributable(tool: str) -> bool:

@@ -49,7 +49,6 @@ from npa.clients.config import (
     default_workbench_name,
     list_projects,
     remove_workbench_config,
-    resolve_container_registry,
     resolve_credentials,
     resolve_environment,
     resolve_project_storage,
@@ -466,7 +465,7 @@ def _fiftyone_serverless_submit_job(
         info = client.create_job(
             project_id=resolved_project_id,
             name=name_for_job,
-            image=image or container_image_for_tool("fiftyone", registry=resolve_container_registry(proj_alias)),
+            image=image or container_image_for_tool("fiftyone"),
             command=remote_command,
             gpu_type=platform,
             gpu_count=resolved_gpu_count,
@@ -1031,7 +1030,7 @@ def _fiftyone_serverless_load_dataset(
         info = client.create_job(
             project_id=resolved_project_id,
             name=name_for_job,
-            image=image or container_image_for_tool("fiftyone", registry=resolve_container_registry(proj_alias)),
+            image=image or container_image_for_tool("fiftyone"),
             command=_fiftyone_serverless_load_dataset_command(name, dataset_source, dataset_format),
             gpu_type=platform,
             gpu_count=resolved_gpu_count,
@@ -2815,10 +2814,7 @@ def deploy_cmd(
     if _is_serverless_runtime(runtime):
         _fail("FiftyOne deploy does not use --runtime serverless; use `npa workbench fiftyone load-dataset --runtime serverless`.")
     if public_ip or runtime == WorkbenchRuntime.kubernetes:
-        image_ref = image.strip() or container_image_for_tool(
-            "fiftyone",
-            registry=resolve_container_registry(_project_alias or None),
-        )
+        image_ref = image.strip() or container_image_for_tool("fiftyone")
         _deploy_kubernetes_fiftyone(
             cluster_name=cluster_name,
             kubeconfig=kubeconfig,
@@ -3376,10 +3372,7 @@ def deploy_cmd(
                         _build_app_py(),
                         owner=ssh_user,
                     )
-                    image_ref = image.strip() or container_image_for_tool(
-                        "fiftyone",
-                        registry=resolve_container_registry(proj_alias),
-                    )
+                    image_ref = image.strip() or container_image_for_tool("fiftyone")
                     ssh.run("sudo systemctl stop npa-fiftyone-app >/dev/null 2>&1 || true")
                     deploy_workbench_container(
                         ssh,

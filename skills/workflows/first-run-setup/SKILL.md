@@ -68,8 +68,9 @@ credential-import summaries is informative and never blocks the local save;
 gate.
 
 Do not hardcode project IDs, tenant IDs, private registry IDs, or bucket names
-anywhere in the repo. The project values belong only in `~/.npa/`; private
-registry selection belongs in `NPA_REGISTRY` or an explicit image option.
+anywhere in the repo. The project values belong only in `~/.npa/`; `NPA_REGISTRY`
+is a private build/BYOF destination, while runtime selection requires a complete
+image reference or an explicit workflow `--registry`.
 
 ## Step 3 — Prove credentials before spending anything
 

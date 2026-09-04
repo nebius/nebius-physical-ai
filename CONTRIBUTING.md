@@ -212,10 +212,10 @@ needs a new family, update `npa/docker/workbench/tags.yaml`,
 `npa/docker/workbench/check_tag_consistency.py`, and `docs/security/image-reproducibility.md`
 in a separate design change.
 
-NPA-owned releases resolve from the public GHCR namespace. `NPA_REGISTRY`
-remains a full-prefix operator override and resolves images through
-`npa/src/npa/deploy/images.py` and `npa/src/npa/clients/config.py`. The registry
-shape is:
+NPA-owned releases resolve from the public GHCR namespace and do not inherit
+ambient `NPA_REGISTRY` or legacy saved registry values. `NPA_REGISTRY` remains a
+build/BYOF destination; runtime custom bytes require an explicit complete image
+reference or workflow `--registry`. The official registry shape is:
 
 ```text
 ghcr.io/nebius/nebius-physical-ai/npa-tool:${TAG}
@@ -765,10 +765,11 @@ registration in `npa/src/npa/cli/workbench/sonic/cli.py` does not include it.
 
 New tools should include `system-info`.
 ### Public development and release tags share one namespace
-`NPA_PUBLIC_REGISTRY` selects the official public GHCR namespace, and
-`NPA_REGISTRY` is the operator execution override. Development tags are
+`NPA_PUBLIC_REGISTRY` selects the official public GHCR publication namespace,
+and `NPA_REGISTRY` is an operator build/BYOF destination. Development tags are
 immutable `dev-<full-git-sha>` values on the normal image packages. Restricted
-images use only an operator-controlled registry and never enter official GHCR.
+images use only an operator-controlled registry and never enter official GHCR;
+an explicit image or workflow `--registry` selects custom runtime bytes.
 ### Detection training is a service, not one of the 8 named tools
 `npa/src/npa/workbench/detection_training/` exists and is a strong service
 reference. It is not in the 8-tool architecture list in

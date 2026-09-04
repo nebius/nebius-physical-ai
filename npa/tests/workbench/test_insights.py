@@ -633,6 +633,59 @@ def test_eval_metadata_is_typed_as_counter_or_duration_not_score(tmp_path: Path)
     assert "random_seed" not in by_name
 
 
+def test_robocasa_policy_eval_records_checkpoint_lineage(tmp_path: Path) -> None:
+    run = tmp_path / "run"
+    run.mkdir()
+    checkpoint_uri = "s3://artifacts/run/checkpoint/"
+    report = run / "eval.json"
+    report.write_text(
+        json.dumps(
+            {
+                "schema": "npa.robocasa.policy_eval.v1",
+                "checkpoint_uri": checkpoint_uri,
+                "checkpoint_loadable": True,
+                "num_episodes": 6,
+                "mean_reward": 0.0,
+                "success_rate": 0.0,
+                "split_proof": {
+                    "task_sets_disjoint": True,
+                    "episode_sets_disjoint_by_task": True,
+                },
+            }
+        )
+    )
+    store = str(tmp_path / "store")
+
+    response = ingest_run(
+        IngestRunRequest(
+            input_uri=str(run),
+            output_uri=store,
+            workflow="robocasa-data-policy",
+            workflow_run="robocasa-run",
+        )
+    )
+
+    assert [artifact.schema_id for artifact in response.ingested] == [
+        "npa.robocasa.policy_eval.v1"
+    ]
+    records = read_records(store)
+    by_name = {row["metric_name"]: row for row in records}
+    assert by_name["success_rate"]["value"] == 0.0
+    assert by_name["mean_reward"]["value"] == 0.0
+    assert by_name["num_episodes"]["value"] == 6.0
+    assert by_name["success_rate"]["lineage"]["checkpoint_uri"] == checkpoint_uri
+    assert read_edges(store) == [
+        {
+            "from_uri": checkpoint_uri,
+            "from_version": "",
+            "relation": "evaluated_on",
+            "run_id": "robocasa-run",
+            "to_uri": str(report),
+            "to_version": "",
+        }
+    ]
+
+
 def test_cost_basis_survives_ingest_query_compare_dashboard_sdk_service_cli(
     tmp_path: Path,
 ) -> None:

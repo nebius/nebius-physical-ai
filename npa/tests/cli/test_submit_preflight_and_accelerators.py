@@ -811,6 +811,28 @@ def test_first_party_image_without_attestation_fails_instead_of_probing(
     assert excinfo.type.__name__ == "Exit"
 
 
+def test_registered_uncontracted_image_stops_after_pull_preflight(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    image = "ghcr.io/nebius/nebius-physical-ai/npa-retargeting:0.1.1"
+
+    def metadata_forbidden(*_args, **_kwargs):
+        raise AssertionError("uncontracted image reached bootstrap metadata lookup")
+
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.registry_preflight.fetch_image_config_metadata",
+        metadata_forbidden,
+    )
+
+    result = workflow_cli._preflight_image_bootstrap_contracts(
+        images=[image],
+        pull_checks=[ImagePullCheck(image=image, status="ok", http_status=200)],
+        context="exact-context",
+    )
+
+    assert result == []
+
+
 def test_image_bootstrap_observing_progress_preserves_exact_json(capsys) -> None:
     digest = "sha256:" + "9" * 64
 
@@ -1149,24 +1171,17 @@ def test_a_missing_workbench_image_carries_its_build_command(
     assert "docker login" in check.remedy
 
 
-def test_submit_preserves_an_existing_project_registry_override(
+def test_submit_ignores_an_existing_project_registry_override(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Legacy saved registry overrides remain effective without new configure writes.
-
-    Without this, preflight checked one registry while the run pulled from
-    another, and the build command it printed named the wrong destination.
-    """
+    """A stale saved private registry must not repoint public workload images."""
 
     monkeypatch.setattr(
         "npa.clients.config.resolve_container_registry",
         lambda project=None: "registry-us.example/u00proj",
     )
 
-    assert (
-        workflow_cli._resolve_submit_registry("", "test-rtx")
-        == "registry-us.example/u00proj"
-    )
+    assert workflow_cli._resolve_submit_registry("", "test-rtx") == ""
 
 
 def test_an_explicit_registry_still_wins(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1180,7 +1195,7 @@ def test_an_explicit_registry_still_wins(monkeypatch: pytest.MonkeyPatch) -> Non
     )
 
 
-def test_npa_registry_env_wins_over_project_config(
+def test_submit_ignores_npa_registry_env_for_public_workload_defaults(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("NPA_REGISTRY", "ghcr.io/nebius/nebius-physical-ai")
@@ -1189,18 +1204,21 @@ def test_npa_registry_env_wins_over_project_config(
         lambda project=None: "registry-us.example/u00proj",
     )
 
-    assert (
-        workflow_cli._resolve_submit_registry("", "test-rtx")
-        == "ghcr.io/nebius/nebius-physical-ai"
-    )
+    assert workflow_cli._resolve_submit_registry("", "test-rtx") == ""
 
 
-def test_an_unreadable_config_falls_back_to_the_render_default(
+def test_submit_without_explicit_registry_defers_to_render_default_without_config(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def explode(project=None):  # noqa: ANN001 - test stub
-        raise RuntimeError("no config")
+    config_lookups: list[str | None] = []
 
-    monkeypatch.setattr("npa.clients.config.resolve_container_registry", explode)
+    def record_config_lookup(project=None):  # noqa: ANN001 - test stub
+        config_lookups.append(project)
+        return "registry.invalid/project"
+
+    monkeypatch.setattr(
+        "npa.clients.config.resolve_container_registry", record_config_lookup
+    )
 
     assert workflow_cli._resolve_submit_registry("", "p") == ""
+    assert config_lookups == []

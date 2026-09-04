@@ -142,6 +142,19 @@ def test_container_creating_is_progress_not_a_blocker() -> None:
     assert report.blocked is False
 
 
+def test_pod_initializing_is_progress_not_an_init_container_failure() -> None:
+    # A main container waiting with reason PodInitializing means init containers
+    # completed and the main container is starting -- normal progress, not the
+    # fatal INIT_CONTAINER_FAILED a substring match used to manufacture.
+    runner = _runner(
+        _pods(_waiting_pod("sky-abc-worker-0", "PodInitializing"))
+    )
+
+    report = inspect_job_blockers(cluster_name="sky-abc", runner=runner)
+
+    assert report.blocked is False
+
+
 def test_an_unreachable_cluster_is_an_error_not_a_clean_bill_of_health() -> None:
     runner = _runner("", returncode=1, stderr="Unable to connect to the server")
 
@@ -387,6 +400,12 @@ def test_a_pod_level_reason_still_wins_over_the_node_check() -> None:
         ("ImagePullBackOff", "401 unauthorized", "container", "IMAGE_PULL_AUTH"),
         ("ErrImagePull", "manifest unknown: not found", "container", "IMAGE_NOT_FOUND"),
         ("CrashLoopBackOff", "init setup failed", "init", "INIT_CONTAINER_FAILED"),
+        (
+            "PodInitializing",
+            "",
+            "container",
+            "PENDING_UNKNOWN",
+        ),
         ("CrashLoopBackOff", "worker exited", "container", "CONTAINER_CRASH"),
         ("BackOff", "controller retry backoff", "event", "CONTROLLER_BACKOFF"),
         ("FailedMount", "persistentvolumeclaim is pending", "event", "STORAGE_PENDING"),

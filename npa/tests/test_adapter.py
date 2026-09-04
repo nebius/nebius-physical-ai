@@ -307,6 +307,38 @@ class TestConvert:
         assert table.column("task_index").to_pylist() == [0]
         assert table.column("task").to_pylist() == [task_str]
 
+    def test_tasks_from_robocasa_metadata_are_preserved(
+        self, demo_dir: Path, output_dir: Path
+    ) -> None:
+        episode_records = [
+            {
+                "episode_index": index,
+                "task": "PickPlaceCounterToCabinet" if index % 2 == 0 else "PickPlaceCounterToSink",
+            }
+            for index in range(N_EPISODES)
+        ]
+        (demo_dir / "metadata.json").write_text(
+            json.dumps({"episodes": episode_records}), encoding="utf-8"
+        )
+        convert(
+            demo_dir,
+            output_dir,
+            fps=FPS,
+            robot_type="panda_omron",
+            task_from_metadata=True,
+        )
+
+        info = json.loads((output_dir / "meta" / "info.json").read_text())
+        assert info["robot_type"] == "panda_omron"
+        assert info["total_tasks"] == 2
+        tasks = pq.read_table(output_dir / "meta" / "tasks.parquet")
+        assert tasks.column("task").to_pylist() == [
+            "PickPlaceCounterToCabinet",
+            "PickPlaceCounterToSink",
+        ]
+        data = pq.read_table(output_dir / "data" / "chunk-000" / "file-000.parquet")
+        assert set(data.column("task_index").to_pylist()) == {0, 1}
+
     def test_stats_json(self, demo_dir: Path, output_dir: Path) -> None:
         convert(demo_dir, output_dir, fps=FPS)
         stats = json.loads((output_dir / "meta" / "stats.json").read_text())

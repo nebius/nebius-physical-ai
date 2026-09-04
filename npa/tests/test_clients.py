@@ -2055,6 +2055,22 @@ def test_nebius_quota_reads_omit_profile_flag_when_unset(mocker, monkeypatch) ->
     assert run_json.call_args_list[-1].args[0][0] == "quotas"
 
 
+def test_nebius_quota_allowances_accept_project_parent(mocker) -> None:
+    run_json = mocker.patch(
+        "npa.clients.nebius._run_json", return_value={"items": []}
+    )
+
+    nebius.list_quota_allowances("project-test")
+
+    assert run_json.call_args.args[0][-3:] == ["--parent-id", "project-test", "--all"]
+
+
+def test_nebius_unauthorized_single_is_permission_denied() -> None:
+    assert nebius.is_permission_denied(
+        "rpc error: code = Unknown desc = UnauthorizedSingle"
+    )
+
+
 def _compute_instance_quota_items() -> dict:
     return {
         "items": [

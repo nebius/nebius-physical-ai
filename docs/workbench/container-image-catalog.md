@@ -13,8 +13,10 @@ a registry in NPA:
 docker pull ghcr.io/nebius/nebius-physical-ai/npa-retargeting:0.1.1
 ```
 
-`NPA_REGISTRY` remains available for private or locally modified images, and
-existing saved `container_registry` overrides remain compatible.
+`NPA_REGISTRY` remains a build/BYOF destination for private or locally modified
+images. It and existing saved `container_registry` values do not repoint these
+repository-owned runtime defaults; select custom bytes with a complete image
+reference or an explicit workflow `--registry`.
 
 The accepted-release manifest was verified against the public GHCR tag and OCI
 manifest APIs on 2026-09-03. All 32 recorded release digests resolved
@@ -57,6 +59,22 @@ conversion/reopen/serve/read of a robotics trace. Cosmos weights, Guardrail
 weights, and the Isaac/Kit runtime remained operator-authorized runtime fetches;
 the public layers contain none of those bytes. This is a coherent image and
 capability release, not a claim that the complete 14-stage workflow ran.
+
+## 2026-09-02 private-registry isolation audit
+
+All 31 accepted release tags and recorded digests resolved through anonymous
+GHCR manifest requests. The repository-wide reference audit found that ambient
+`NPA_REGISTRY` and legacy saved registry values could nevertheless redirect
+repository-owned workload defaults to operator registries, where missing pull
+permission surfaced as HTTP 403 and Kubernetes `ImagePullBackOff`. Runtime
+defaults are now isolated from those build/BYOF settings; explicit image and
+workflow `--registry` selections remain available for intentional custom bytes.
+
+Third-party authoritative references were classified separately. NVIDIA NRE
+remains on its anonymously pullable NGC `nre-ga` channel, the CUDA vector-add
+health image remains on its anonymously pullable upstream NGC channel, and
+Docker Hub base/runtime images remain upstream. None is an NPA image suitable
+for blind relocation to GHCR.
 
 ## 2026-08-29 main publication audit
 
@@ -109,7 +127,7 @@ published, and anonymously pullable status for this exact digest only.
 | Alpamayo 2 Super 34B | `npa-alpamayo2-super` | `0.1.0-cu128` | 2026-08-18 | Real surround-view VLA trajectory inference through NVIDIA's Apache-2.0 source. OpenMDW-1.1 weights and the separately gated/non-transferable PhysicalAI-AV sample data are fetched only at runtime under the operator's Hugging Face identity. The payload-clean image and real workflow were validated independently on B200 and RTX PRO 6000. See the [operator guide](alpamayo2-super.md). |
 | NVIDIA Content Agents 0.5.2 | `npa-content-agents` | `0.5.2-npa2` | 2026-08-22 | Public rigid-object material/physics/validation adapter containing Apache-2.0 source and zero OVRTX payload. Exact OVRTX 0.3.0.312915 is fetched directly from NVIDIA into the operator runtime cache. The exact public digest passed byte/layer scanning, anonymous resolution, and a real RTX PRO 6000 workflow. See [Content Agents](content-agents.md). |
 | SONIC Retargeting 0.1.1 | `npa-retargeting` | `0.1.1` | 2026-06-16 | CPU-only motion retargeting and motion-library conversion feeding SONIC locomotion training. A slim `python:3.11` image for the inexpensive preprocessing stage before GPU work. |
-| Rerun 0.31.4 | `npa-rerun-viewer` | `0.31.4-sim2real-coherent-20260903` | 2026-09-03 | Non-root Rerun viewer/server for `.rrd` robotics traces and the exact-source Sim2Real Stage 14 runtime. It bakes no models, datasets, credentials, or runtime caches. The coherent release converted an actual three-sample robot joint trace, reopened its RRD entity through the CLI, and served/read the artifact over HTTP. |
+| Rerun 0.31.4 | `npa-rerun-viewer` | `0.31.4-sim2real-coherent-20260903` | 2026-09-03 | Published non-root `ubuntu` SkyPilot worker and Rerun viewer/server on ports 9876/9090 for `.rrd` robotics traces. It includes the attested bootstrap contract and exact-source Sim2Real Stage 14 runtime, and bakes no models, datasets, credentials, or runtime caches. The coherent release converted an actual three-sample robot joint trace, reopened its RRD entity through the CLI, and served/read the artifact over HTTP. |
 | Sim2Real Controller 0.1.2 | `npa-sim2real-control` | `0.1.2-sim2real-coherent-20260903` | 2026-09-03 | Non-root CPU controller containing the canonical 14-stage orchestration capability. The coherent release expanded and validated both the checkpoint-promotion and loop-back decision branches; it contains no model weights, datasets, credentials, or runtime caches. |
 | LeRobot Policy Server 0.1.1 | `npa-lerobot-policy` | `0.1.1` | 2026-07-10 | Serves a trained LeRobot policy over HTTP for closed-loop inference (default `lerobot/diffusion_pusht`). This is the BYO-policy contract endpoint called by other workflow stages. |
 | BDD100K Detection Training | `npa-detection-training` | `bdd100k-golden-eval-smoke-20260614T210000Z` | 2026-07-22 | Object-detector train/eval service on port 8790 with torchvision detectors and COCO metrics. It provides the re-label and measurement stage in the data-factory loop. |
@@ -121,7 +139,7 @@ published, and anonymously pullable status for this exact digest only.
 | Cosmos Transfer 2.5 | `npa-cosmos2-transfer` | `2.5.1-sim2real-coherent-20260903` | 2026-09-03 | Cosmos Transfer 2.5 Sim2Real video augmentation, built from source at an immutable commit with hash-locked dependencies. Gated weights and the pinned guardrail tokenizer data are fetched at runtime with `HF_TOKEN`; the NLTK-safe cache materialization keeps guardrails enabled, and baked-byte scans remain a release gate. |
 | Foxglove Embed SDK 0.58.0 | `npa-foxglove-embed` | `0.58.0` | 2026-08-03 | Static host for the pinned `@foxglove/embed` browser SDK (MIT) and shared NPA glue module used by the agent UI, on port 8099. Serves operator-mounted MCAP/bag recordings with CORS and byte ranges; the Foxglove app is not redistributed. |
 | Genesis 0.4.6 | `npa-genesis` | `0.4.6`, `cuda13-b300-0.4.6-sm80-sm90-sm100-sm103-sm120-20260803T034152Z` | 2026-08-03 | Genesis physics simulator for interactive simulation and development. It is the base image for the Sim2Real family: environment generation, evaluation, policies, and VLM-RL. |
-| LanceDB 0.30.3 + CLIP | `npa-lancedb` | `0.30.3`, `cuda13-b300-0.30.3-sm80-sm90-sm100-sm103-sm120-20260803T031514Z` | 2026-08-03 | CLIP embedding and LanceDB vector service on port 8686: the query index behind dataset-of-record search. It uses a thin FastAPI layer on the shared CUDA/PyTorch base. |
+| LanceDB 0.30.3 + CLIP | `npa-lancedb` | `0.30.3`, `cuda13-b300-0.30.3-sm80-sm90-sm100-sm103-sm120-20260803T031514Z` | 2026-08-03 | CLIP embedding and LanceDB vector service on port 8686: the query index behind dataset-of-record search. Exact-source builds use a thin FastAPI layer on the shared CUDA/PyTorch base and include the snapshot-pinned non-root SkyPilot Kubernetes bootstrap needed by native insights workflow stages. |
 | LeRobot 0.5.1 | `npa-lerobot` | `0.5.1`, `cuda13-b300-0.5.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z` | 2026-08-03 | Hugging Face LeRobot training/evaluation service on port 8080 for manipulation policies. Includes CUDA and MuJoCo/EGL headless rendering; checkpoints and job state live on mounted volumes. |
 | LTX-2.5 2.5 | `npa-ltx2` | `2.5-rtfetch-20260817` | 2026-08-17 | Lightricks LTX-2.5 text-to-video, shipped with zero Lightricks bytes: source and gated weights are operator-entitled runtime fetches. The accepted digest passed the exact-layer payload scan, entitlement refusal, and real GPU text-to-video plus decoded-MP4 validation. |
 | LeRobot VLM-RL 0.1.1 | `npa-lerobot-vlm-rl` | `0.1.1`, `cuda13-b300-0.1.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z` | 2026-08-03 | RL loop in which a VLM supplies reward or shaping signals for LeRobot policies. It is built on the Genesis image so simulation and policy execution share one container. |
@@ -141,6 +159,18 @@ published, and anonymously pullable status for this exact digest only.
 
 ## Intentionally not published as separate images
 
+- **`npa-cosmos3-super-benchmark`** is a restricted, operator-private wrapper
+  around the exact digest-pinned upstream vLLM-Omni benchmark runtime. It adds
+  only the SkyPilot worker bootstrap closure and must be built into the
+  operator's own registry; it is deliberately excluded from the public catalog.
+- **`npa-robocasa`** is a validation candidate, not yet in the public publishing
+  plan. It is licence-eligible for public redistribution (Apache-2.0 RoboCasa and
+  robosuite), but its built-image payload scan and real GPU capability validation
+  have not yet been recorded, so it is quarantined from `publicly_publishable_tools()`
+  via `VALIDATION_CANDIDATE_TOOLS`. It will gain a public row only when its accepted
+  digest and GPU evidence are recorded.
+  It is a non-root service image with no passwordless-sudo grant; workflow
+  toolRefs call the deployed service from the standard task image.
 - **`npa-cosmos3-serving`** is `restricted` and build-your-own only. Its pinned
   vLLM-Omni base embeds a runtime under NVIDIA's Deep Learning Container License;
   the thin wrapper and anonymous GHCR distribution do not establish that

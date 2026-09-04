@@ -10,6 +10,7 @@ Cosmos3 omni-model generation and reasoning workflow contracts.
 Options
 --help  Show this message and exit.
 Commands
+super-benchmark  Run a fixed Cosmos3-Super node benchmark or H200 single-GPU validation.
 ray-batch  Submit a durable SDG batch through Cosmos Framework's native Ray Serve path.
 ray-health  Check authenticated model readiness, not merely process liveness.
 ray-serve  Launch the persistent native Ray Serve model inside its GPU image.
@@ -31,6 +32,7 @@ text-to-image  Generate an image from a prompt with the Cosmos3 framework, and p
 
 | Command | Description |
 | --- | --- |
+| `super-benchmark` | Run a fixed Cosmos3-Super node benchmark or H200 single-GPU validation. |
 | `ray-batch` | Submit a durable SDG batch through Cosmos Framework's native Ray Serve path. |
 | `ray-health` | Check authenticated model readiness, not merely process liveness. |
 | `ray-serve` | Launch the persistent native Ray Serve model inside its GPU image. |
@@ -45,7 +47,7 @@ text-to-image  Generate an image from a prompt with the Cosmos3 framework, and p
 
 ```bash
 npa workbench cosmos3 --help
-npa workbench cosmos3 ray-batch --help
+npa workbench cosmos3 super-benchmark --help
 ```
 
 Regenerate this page with `bash scripts/build_docs.sh` after changing `cosmos3`.
