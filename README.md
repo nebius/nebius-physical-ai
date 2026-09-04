@@ -16,8 +16,9 @@ observability, and cluster orchestration.**
 
 **[Quickstart](docs/quickstart.md)** ·
 **[Guides](docs/workbench/guides/README.md)** ·
-**[Workbench docs](docs/workbench/)** ·
+**[Workbench docs](docs/workbench/README.md)** ·
 **[CLI reference](docs/cli/README.md)** ·
+**[Python & API](docs/workbench/cli-sdk-yaml-walkthrough.md)** ·
 **[Cookbooks](docs/workbench/cookbooks/README.md)** ·
 **[Contributing](CONTRIBUTING.md)**
 
@@ -445,6 +446,7 @@ solutions are additive and never rename or nest it. See
 | Physical AI Data Factory | [deploy runbook](docs/workbench/guides/physical-ai-data-factory-deploy.md) · [concepts](docs/workbench/guides/physical-ai-data-factory.md) |
 | Cookbooks | [cookbooks/README.md](docs/workbench/cookbooks/README.md) — incl. [BDD100K + LanceDB](docs/workbench/cookbooks/bdd100k-pipeline.md) and [Isaac-Lab BYOF](docs/workbench/cookbooks/byof-isaac-lab/) |
 | Workflow authoring | [npa-workflow-guide.md](docs/workbench/npa-workflow-guide.md) · [tool catalog](docs/workbench/npa-workflow-tool-catalog.md) |
+| Python & HTTP access | [CLI / SDK walkthrough](docs/workbench/cli-sdk-yaml-walkthrough.md) · [SDK errors](docs/sdk/errors.md) — check each tool's supported surfaces |
 | What `submit` does | [run-lifecycle.md](docs/run-lifecycle.md) |
 | Self-hosted agent | [agent.md](docs/agent.md) · [operator skill](skills/tools/npa-agent/SKILL.md) · [fresh-operate](skills/workflows/agent-fresh-operate/SKILL.md) |
 | Teardown & cost | [teardown.md](docs/teardown.md) |
@@ -452,7 +454,8 @@ solutions are additive and never rename or nest it. See
 | Preemptible GPU VMs | [preemptible-vms.md](docs/workbench/preemptible-vms.md) |
 | Troubleshooting | [known-footguns.md](docs/workbench/troubleshooting/known-footguns.md) · [FIXME.md](FIXME.md) · [FTUE audit](FTUE-AUDIT.md) |
 | CLI reference | [cli/README.md](docs/cli/README.md) |
-| Everything else | [docs/](docs/) |
+| Extend Workbench | [Contributing](CONTRIBUTING.md) · [OSS onboarding ladder](docs/architecture/oss-onboarding-ladder.md) |
+| Documentation index | [docs/README.md](docs/README.md) |
 
 ---
 

@@ -18,8 +18,10 @@ This is the classic "hello robot" of manipulation, done at GPU scale.
   76,000+ real Franka Panda manipulation trajectories. We use it as the
   real-world counterpart to our synthetic demos (a 2 GB `droid_100` sample
   exists for testing).
-- **You need:** a GPU with RT/CUDA support — **L40S or better**. Genesis trains
-  headless on Nebius. Finish [getting-started](../getting-started.md) first.
+- **You need:** a compatible CUDA GPU for headless PPO training; a full run on
+  **one H200** is verified. H200 has no RT cores: visual rendering has separate
+  requirements and the container limitations below still apply. Finish
+  [getting-started](../getting-started.md) first.
 
 ## The shape of the workflow
 
@@ -81,22 +83,47 @@ npa workbench genesis eval-teacher --checkpoint ./checkpoints/teacher/model.pt
 
 - **Full training runs locally or on a workbench VM.** `train-teacher` (and
   `generate-demos` / `eval-teacher`) run on your GPU box, or on a Workbench VM
-  when you pass `-p <project> -n <workbench>` (forwarded over SSH). This is where
-  real Franka PPO training happens.
-- **Validate serverless first.** `train-teacher --runtime serverless --project-id
-  <your-project-id> --gpu-type l40s --output-path s3://<bucket>/...` submits a
-  Nebius AI Job, but the serverless Genesis path is a **smoke** (it checks the
-  Genesis import and writes a placeholder checkpoint, verified end to end). Use
-  it to prove credentials, image pull, and S3 output before committing GPU time;
-  inspect what it wrote with
-  `npa workbench data list --input-path s3://<bucket>/.../`. (Serverless needs
-  `--project-id`, or a project configured in `~/.npa/config.yaml`.)
+  when you pass `-p <project> -n <workbench>` (forwarded over SSH).
+- **Serverless runs real PPO training.** `train-teacher --runtime serverless`
+  submits the same training implementation as a Nebius AI Job and uploads its
+  checkpoint and summaries to `--output-path`. It needs `--project-id`, or a
+  project configured in `~/.npa/config.yaml`.
 - **Scale up:** the defaults are `--n-envs 4096 --max-iterations 500`. More envs
-  and iterations give a stronger teacher.
+  and iterations extend training; evaluate the resulting checkpoint to measure
+  policy quality.
 - **Tune rewards** without editing code via repeatable overrides, e.g.
   `--env-override approach_scale=2.0 --env-override domain_randomize=true`.
 - **Train a student policy** on the recorded demos with
   [LeRobot](reachy2-lerobot-policy.md) — the demos are already in LeRobot format.
+
+A serverless H200 training example:
+
+```bash
+npa workbench genesis train-teacher \
+  --runtime serverless --project-id <your-project-id> \
+  --gpu-type h200 --gpu-count 1 \
+  --job-name <your-training-job-name> \
+  --n-envs 1024 --max-iterations 500 --action-space cartesian \
+  --output-path s3://<your-bucket>/<new-training-prefix>/
+```
+
+Inspect `model.pt`, `arch_config.json`, `train_teacher_summary.json`, and
+`npa_genesis_checkpoint_manifest.json` under the selected output prefix. Keep
+`model.pt` and `arch_config.json` together when downloading the checkpoint for
+evaluation or demonstration generation. A verified run completed 500 PPO
+iterations across 1,024 environments (12,288,000 transitions) and produced the
+real checkpoint. A separate evaluation of that checkpoint on 1,024 environments
+with held-out seed 7777 produced **zero successful episodes**. The components
+completed; this checkpoint does not solve pick-and-place. Evaluate quality before
+using a checkpoint to generate successful demonstrations.
+
+**Cold-start recovery:** the current CLI create call can time out after 300
+seconds while the provider job continues pulling its image. `IMAGE_PULLING` is
+then mapped to `unknown`, and the supervisor can exit 1 even though the exact job
+continues. Preserve its identity and inspect that same provider job and output
+prefix before retrying; do not submit another training job solely because the
+CLI exited. See the [audit's runtime recovery findings](../../architecture/npa-workbench-usability-audit.md)
+for the observed limitation and required fix.
 
 ## Use the real Franka data too
 
