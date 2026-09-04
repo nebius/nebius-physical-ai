@@ -39,7 +39,12 @@ STAGE_REPORT_SCHEMA = "npa.content_agents.stage_report.v1"
 RIGID_ASSET_SCHEMA = "npa.content_agents.isaac_rigid_asset.v1"
 PROVENANCE_SCHEMA = "npa.content_agents.provenance.v1"
 SCENE_SPEC_SCHEMA = "npa.sim2real.manip_scene_spec.v1"
-DEFAULT_MODEL = "Qwen/Qwen2.5-VL-72B-Instruct"
+# Mirrors npa.clients.token_factory.{DEFAULT_VISION_MODEL, VISION_MODEL_ENV,
+# DEFAULT_BASE_URL}. The content-agents image ships only this module and
+# clients/storage.py (no httpx), so it cannot import the client;
+# tests/test_model_default_drift.py keeps the literals in step.
+DEFAULT_MODEL = "MiniMaxAI/MiniMax-M3"
+VISION_MODEL_ENV = "NPA_VLM_API_MODEL"
 DEFAULT_BASE_URL = "https://api.tokenfactory.nebius.com/v1/"
 SUPPORTED_USD_SUFFIXES = frozenset({".usd", ".usda", ".usdc", ".usdz"})
 FRICTION_MIN = 0.1
@@ -68,6 +73,15 @@ PHYSICS_USER_PROMPT = (
 
 class ContentAgentsError(RuntimeError):
     """Raised when a stage cannot prove its artifact contract."""
+
+
+def _resolve_vision_model(model: str) -> str:
+    """Same rule as ``npa.clients.token_factory.resolve_vision_model``."""
+
+    chosen = (model or "").strip()
+    if chosen and chosen != DEFAULT_MODEL:
+        return chosen
+    return os.environ.get(VISION_MODEL_ENV, "").strip() or DEFAULT_MODEL
 
 
 def _bootstrap_ovrtx_runtime() -> dict[str, Any]:
@@ -1224,13 +1238,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.command == "acquire":
         result = acquire_stage(source_uri=args.source_uri, run_uri=args.run_uri)
-    elif args.command == "materials":
-        result = materials_stage(
-            run_uri=args.run_uri, model=args.model, base_url=args.base_url
-        )
-    elif args.command == "physics":
-        result = physics_stage(
-            run_uri=args.run_uri, model=args.model, base_url=args.base_url
+    elif args.command in ("materials", "physics"):
+        stage = materials_stage if args.command == "materials" else physics_stage
+        result = stage(
+            run_uri=args.run_uri,
+            model=_resolve_vision_model(args.model),
+            base_url=args.base_url,
         )
     elif args.command == "validate":
         result = validate_stage(run_uri=args.run_uri)

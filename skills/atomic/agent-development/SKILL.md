@@ -104,7 +104,7 @@ explicit model override, and returns `tier` + `usage` + `input_budget_ok`.
 2. **Cheap model** — if it needs generation, let routing pick the cheap tier;
    only add reasoning/vision signals to `classify_tier` when the turn truly
    needs them.
-3. **Escalate deliberately** — reserve `nvidia/Cosmos3-Super-Reasoner` for
+3. **Escalate deliberately** — reserve the reasoning tier (`MiniMaxAI/MiniMax-M3`) for
    analytical/physical-AI/vision turns; it is overkill for routine chat.
 4. **Visual feedback** — UI **Describe this** captures the active viewer frame
    and posts multimodal `/api/chat` with `visual_context`. Helpers live in

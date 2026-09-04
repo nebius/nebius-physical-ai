@@ -2734,20 +2734,20 @@ def test_resolve_deploy_llm_credentials_reads_credentials(monkeypatch) -> None:
 
     key, model = _resolve_deploy_llm_credentials()
     assert key == "tf-test-key"
-    assert model == "nvidia/Cosmos3-Super-Reasoner"
+    assert model == "MiniMaxAI/MiniMax-M3"
 
 
 def test_normalize_llm_models_supports_repeated_and_csv_values() -> None:
     models = _normalize_llm_models(
         [
             "nvidia/Cosmos3-Super-Reasoner,meta-llama/Llama-3.3-70B-Instruct",
-            "Qwen/Qwen2.5-VL-72B-Instruct",
+            "MiniMaxAI/MiniMax-M3",
             "meta-llama/Llama-3.3-70B-Instruct",
         ]
     )
     assert models[0] == "nvidia/Cosmos3-Super-Reasoner"
     assert "meta-llama/Llama-3.3-70B-Instruct" in models
-    assert "Qwen/Qwen2.5-VL-72B-Instruct" in models
+    assert "MiniMaxAI/MiniMax-M3" in models
 
 
 def test_agent_status_json(monkeypatch) -> None:
@@ -4041,7 +4041,7 @@ def test_deploy_seeds_cost_ordered_ladder_without_explicit_models(
         "Qwen/Qwen3-32B",
         "meta-llama/Llama-3.3-70B-Instruct",
         "nvidia/Cosmos3-Super-Reasoner",
-        "Qwen/Qwen2.5-VL-72B-Instruct",
+        "MiniMaxAI/MiniMax-M3",
     ):
         assert expected in configured, f"{expected} missing from {configured}"
 

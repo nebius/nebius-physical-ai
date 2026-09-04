@@ -32,8 +32,12 @@ from typing import Any, Iterable, Sequence
 # ``flavor_variants`` / ``build_model_ladder``.
 CHEAP_MODEL = "Qwen/Qwen3-32B"
 STANDARD_MODEL = "meta-llama/Llama-3.3-70B-Instruct"
-REASONING_MODEL = "nvidia/Cosmos3-Super-Reasoner"
-VISION_MODEL = "Qwen/Qwen2.5-VL-72B-Instruct"
+# Mirror npa.clients.token_factory.DEFAULT_REASONER_MODEL / DEFAULT_VISION_MODEL;
+# this module is embedded verbatim into the agent VM, so it cannot import them
+# (tests/test_model_default_drift.py). Kept as separate literals: the two tiers
+# happen to share a model today and may not tomorrow.
+REASONING_MODEL = "MiniMaxAI/MiniMax-M3"
+VISION_MODEL = "MiniMaxAI/MiniMax-M3"
 
 TIER_CHEAP = "cheap"
 TIER_STANDARD = "standard"

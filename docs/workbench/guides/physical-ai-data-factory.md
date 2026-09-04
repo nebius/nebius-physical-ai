@@ -71,8 +71,8 @@ where NPA substitutes its own endpoint.
 
 **Model roles** (verified available on Nebius Token Factory):
 
-- VLM captioning + the evaluator's attribute answering: `Qwen/Qwen2.5-VL-72B-Instruct`
-- Cosmos-family reasoning critic: `nvidia/Cosmos3-Super-Reasoner`
+- VLM captioning, the evaluator's attribute answering, and the reasoning
+  critic: `MiniMaxAI/MiniMax-M3`
 - Prompt / MCQ LLM: `meta-llama/Llama-3.3-70B-Instruct`
 
 > **Config → augment MULTIPLY.** The `augment` stage receives the Config-Gen

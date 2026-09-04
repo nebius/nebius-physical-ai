@@ -202,3 +202,4 @@ def test_usage_summary_handles_missing_or_malformed() -> None:
     assert r.usage_summary(None) == {}
     assert r.usage_summary({"usage": "nope"}) == {}
     assert r.usage_summary({"usage": {"prompt_tokens": True}}) == {}
+

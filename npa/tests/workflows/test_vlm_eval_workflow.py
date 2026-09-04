@@ -124,3 +124,21 @@ def test_the_three_retired_templates_are_gone() -> None:
 
     for name in ("vlm-eval.yaml", "vlm-eval-benchmark.yaml", "sim-to-real-loop.yaml"):
         assert not (skypilot / name).exists(), f"{name} came back"
+
+
+def test_loop_judge_model_is_an_optional_knob() -> None:
+    """`config.vlm_model` forwards `--model`; unset, the flag is omitted so the
+    backend default (or NPA_VLM_API_MODEL) applies and existing specs render
+    unchanged. Only `loop` carries it: self-hosted `run` specs already use
+    `vlm_model` for the vLLM they serve, and the three-tier contract pins that argv."""
+
+    spec_name = "vlm-eval-loop.yaml"
+    spec, step = _only_step(spec_name)
+    assert not spec.config.get("vlm_model")
+    assert "--model" not in step.argv
+
+    with_model = load_spec(SPECS / spec_name)
+    with_model.config["vlm_model"] = "MiniMaxAI/MiniMax-M3"
+    plan = build_plan(with_model, run_id="vlm-eval-workflow-test")
+    (pinned,) = [s for s in plan.steps if s.argv]
+    assert _flag(pinned.argv, "--model") == "MiniMaxAI/MiniMax-M3"

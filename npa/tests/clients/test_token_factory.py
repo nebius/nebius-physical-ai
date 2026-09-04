@@ -390,3 +390,37 @@ def test_chat_completion_text_raises_on_reasoning_only_response() -> None:
     with pytest.raises(TokenFactoryError) as exc:
         client.chat_completion_text(model="m", messages=[{"role": "user", "content": "x"}])
     assert "reasoning-only" in str(exc.value)
+
+
+def test_resolve_vision_model_precedence() -> None:
+    """Explicit non-default model wins; the default (or empty) defers to the
+    NPA_VLM_API_MODEL override; otherwise the shared vision default applies."""
+    from npa.clients.token_factory import (
+        DEFAULT_VISION_MODEL,
+        VISION_MODEL_ENV,
+        resolve_vision_model,
+    )
+
+    assert VISION_MODEL_ENV == "NPA_VLM_API_MODEL"
+    assert resolve_vision_model(environ={}) == DEFAULT_VISION_MODEL
+    assert resolve_vision_model(DEFAULT_VISION_MODEL, environ={}) == DEFAULT_VISION_MODEL
+    override = {VISION_MODEL_ENV: " openbmb/MiniCPM-V-4_5 "}
+    assert resolve_vision_model(environ=override) == "openbmb/MiniCPM-V-4_5"
+    assert resolve_vision_model(DEFAULT_VISION_MODEL, environ=override) == "openbmb/MiniCPM-V-4_5"
+    assert resolve_vision_model("some/explicit", environ=override) == "some/explicit"
+
+
+def test_resolve_reasoner_model_has_its_own_override() -> None:
+    from npa.clients.token_factory import (
+        DEFAULT_REASONER_MODEL,
+        REASONER_MODEL_ENV,
+        VISION_MODEL_ENV,
+        resolve_reasoner_model,
+    )
+
+    assert REASONER_MODEL_ENV == "NPA_REASONER_API_MODEL"
+    assert resolve_reasoner_model(environ={}) == DEFAULT_REASONER_MODEL
+    vision_only = {VISION_MODEL_ENV: "other/model"}
+    assert resolve_reasoner_model(environ=vision_only) == DEFAULT_REASONER_MODEL
+    assert resolve_reasoner_model(environ={REASONER_MODEL_ENV: "some/reasoner"}) == "some/reasoner"
+

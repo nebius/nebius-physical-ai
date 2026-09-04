@@ -26,6 +26,8 @@ import numpy as np
 from PIL import Image
 from urllib.parse import urlparse
 
+from npa.clients.token_factory import resolve_vision_model
+
 if TYPE_CHECKING:
     from npa.clients.storage import StorageClient
 
@@ -414,13 +416,12 @@ def evaluate_vlm(
         # the client asks for that one instead of the 7B default (a mismatch is a
         # 404 from the server). See `_vllm_serve_preamble` in the workflow render.
         effective_model = os.environ.get(SELF_HOSTED_MODEL_ENV, "").strip() or effective_model
-    if backend == "api" and effective_model == DEFAULT_MODEL:
-        # DEFAULT_MODEL is the self-hosted (vLLM) default. The hosted Token
-        # Factory API does not serve it (requests 404); use the vision model
-        # Token Factory actually serves unless the caller overrode --model.
-        from npa.clients.token_factory import DEFAULT_VISION_MODEL
-
-        effective_model = DEFAULT_VISION_MODEL
+    if backend == "api":
+        # DEFAULT_MODEL is the self-hosted (vLLM) default, which the hosted API
+        # does not serve; map it to "unchosen" so the shared resolver applies.
+        effective_model = resolve_vision_model(
+            "" if effective_model == DEFAULT_MODEL else effective_model
+        )
     effective_rubric = _load_rubric(rubric=rubric, rubric_path=rubric_path)
     if score is not None:
         _validate_score_override(score)
@@ -661,6 +662,7 @@ def evaluate_rollout_set(
 
     started_at = time.monotonic()
     rollouts: list[VlmLoopRollout] = []
+    judged_model = model
     for rollout_uri in discover_rollouts(input_path):
         rollout_id = _rollout_id_for(rollout_uri)
         result = evaluate_vlm(
@@ -681,6 +683,7 @@ def evaluate_rollout_set(
         written = write_result(
             asdict(result), result_uri=result.result_uri, storage_client=storage_client
         )
+        judged_model = result.model or judged_model
         rollouts.append(
             VlmLoopRollout(
                 rollout_id=rollout_id,
@@ -695,7 +698,7 @@ def evaluate_rollout_set(
 
     report = aggregate_loop_report(
         rollouts,
-        model=model,
+        model=judged_model,  # the model that answered, not the CLI value
         frame_selection=_normalize_frame_selection(frame_selection),
         success_threshold=success_threshold,
         output_dir=output_path,

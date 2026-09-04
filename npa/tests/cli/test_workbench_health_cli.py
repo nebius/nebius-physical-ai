@@ -554,3 +554,47 @@ def test_access_save_env_credentials_json_stays_valid_and_redacted(monkeypatch) 
     payload = json.loads(result.output)
     assert payload["credential_persistence"]["persisted"] == ["HF_TOKEN"]
     assert secret not in result.output
+
+
+class _TokenFactoryCreds(_EmptyCreds):
+    token_factory_api_key = "v1.present"
+
+
+def _preflight_token_factory(monkeypatch, served: list[str], *args: str):
+    from npa.cli.workbench import health as health_module
+
+    monkeypatch.setattr(health_module, "load_credentials", lambda *a, **k: _TokenFactoryCreds())
+    monkeypatch.setattr(health_module, "_token_factory_verifier", lambda: served)
+    return runner.invoke(
+        app, ["workbench", "health", "preflight", "--checks", "token_factory", *args]
+    )
+
+
+def test_preflight_token_factory_fails_closed_when_default_model_is_not_served(
+    monkeypatch,
+) -> None:
+    result = _preflight_token_factory(
+        monkeypatch, ["meta-llama/Llama-3.3-70B-Instruct", "openai/gpt-oss-120b"], "--json"
+    )
+    assert result.exit_code == 1, result.output
+    row = next(c for c in json.loads(result.output)["checks"] if c["name"] == "token_factory")
+    assert row["status"] == "FAIL"
+    assert "MiniMaxAI/MiniMax-M3" in row["summary"]
+    assert "NPA_VLM_API_MODEL" in row["remedy"] and "NPA_REASONER_API_MODEL" in row["remedy"]
+    assert "--secret-env" in row["remedy"]
+
+
+def test_preflight_token_factory_gate_follows_model_overrides(monkeypatch) -> None:
+    monkeypatch.setenv("NPA_VLM_API_MODEL", "openbmb/MiniCPM-V-4_5")
+    default_only = _preflight_token_factory(monkeypatch, ["MiniMaxAI/MiniMax-M3"])
+    assert default_only.exit_code == 1, "vision override not served must fail"
+    vision_only = _preflight_token_factory(monkeypatch, ["openbmb/MiniCPM-V-4_5"])
+    assert vision_only.exit_code == 1, "reasoner default is gated too"
+    assert "MiniMaxAI/MiniMax-M3" in vision_only.output
+    both = _preflight_token_factory(monkeypatch, ["openbmb/MiniCPM-V-4_5", "MiniMaxAI/MiniMax-M3"])
+    assert both.exit_code == 0, both.output
+    assert "serves openbmb/MiniCPM-V-4_5, MiniMaxAI/MiniMax-M3" in both.output
+    monkeypatch.setenv("NPA_REASONER_API_MODEL", "openbmb/MiniCPM-V-4_5")
+    repointed = _preflight_token_factory(monkeypatch, ["openbmb/MiniCPM-V-4_5"])
+    assert repointed.exit_code == 0, repointed.output
+    assert "serves openbmb/MiniCPM-V-4_5)" in repointed.output

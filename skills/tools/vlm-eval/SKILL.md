@@ -32,7 +32,17 @@ rubric, or model against a labeled set before you trust any of them in a gate.
 
 ## Backends
 
-`--backend` is `self-hosted` (default), `api`, or `stub`.
+`--backend` is `self-hosted` (default), `api`, or `stub`. With `api`, leaving
+`--model` at the vLLM default resolves to the Token Factory vision default
+(`MiniMaxAI/MiniMax-M3`), or to `NPA_VLM_API_MODEL` when that is set in the
+stage's environment (`workflow submit --secret-env NPA_VLM_API_MODEL`) — the
+knob for repointing a running workflow when a model leaves Token Factory's
+public serverless endpoint (as `Qwen/Qwen2.5-VL-72B-Instruct` did on
+2026-09-04) without changing its argv. An explicit `--model` other than the
+hosted default wins. Specs can pin the judge explicitly with the optional
+`config.vlm_model` on `workbench.vlm_eval.loop`; unset, `--model` is omitted.
+`npa workbench health preflight --checks token_factory` fails when the resolved
+model is not in `/v1/models`.
 
 - `self-hosted` — an OpenAI-compatible server you run, addressed with
   `--endpoint-url`. This is the GPU-bearing path.

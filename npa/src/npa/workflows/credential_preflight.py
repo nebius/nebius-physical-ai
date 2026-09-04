@@ -42,6 +42,10 @@ class CredentialProbes:
     ngc_validator: Callable[[str], str] | None = None
     s3_client_factory: Callable[[], Any] | None = None
     token_factory_verifier: Callable[[], list[str]] | None = None
+    #: Model ids the live Token Factory check requires in ``/v1/models`` (auth
+    #: alone is not readiness), and the remedy to print when one is missing.
+    token_factory_required_models: tuple[str, ...] = ()
+    token_factory_model_remedy: str = ""
 
 
 def _looks_like_auth_failure(text: str) -> bool:
@@ -252,10 +256,27 @@ def check_token_factory(credentials: Any, probes: CredentialProbes) -> CheckResu
             remedy="Confirm the key at https://tokenfactory.nebius.com/ -> API keys.",
             details=(str(exc),),
         )
+    required = tuple(dict.fromkeys(m for m in probes.token_factory_required_models if m))
+    missing = [model for model in required if model not in models]
+    if missing:
+        return CheckResult(
+            name="token_factory",
+            status=FAIL,
+            summary=(
+                "Token Factory authenticated but does not serve required "
+                f"model(s): {', '.join(missing)}."
+            ),
+            remedy=probes.token_factory_model_remedy or (
+                "Pick a served model from `npa workbench token-factory models` and "
+                "repoint the stage that requires it, then re-run this preflight."
+            ),
+            details=(f"{len(models)} models served; required: {', '.join(required)}",),
+        )
+    served = f"; serves {', '.join(required)}" if required else ""
     return CheckResult(
         name="token_factory",
         status=PASS,
-        summary=f"Token Factory authenticated ({len(models)} models available).",
+        summary=f"Token Factory authenticated ({len(models)} models available{served}).",
     )
 
 

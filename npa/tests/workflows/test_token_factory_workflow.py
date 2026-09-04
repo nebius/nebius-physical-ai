@@ -135,15 +135,19 @@ def test_template_only_flags_are_still_absent_from_the_spec_surface(spec_name: s
     )
 
 
-def test_cosmos_reason_spec_reaches_the_hosted_reasoner_by_cli_default() -> None:
-    """`--model` is not in this toolRef's argv, so the CLI default must be the reasoner."""
+def test_reason_spec_pins_the_model_only_when_config_sets_it() -> None:
+    """Unset `reason_model` omits `--model` (CLI default, or NPA_REASONER_API_MODEL);
+    a spec that sets it forwards the pin."""
 
-    from npa.clients.token_factory import DEFAULT_REASONER_MODEL
-
-    _, step = _only_step("token-factory-cosmos-reason.yaml")
-
+    spec, step = _only_step("token-factory-cosmos-reason.yaml")
+    assert not spec.config.get("reason_model")
     assert "--model" not in step.argv
-    assert DEFAULT_REASONER_MODEL == "nvidia/Cosmos3-Super-Reasoner"
+
+    with_model = load_spec(SPECS / "token-factory-cosmos-reason.yaml")
+    with_model.config["reason_model"] = "some/reasoner"
+    plan = build_plan(with_model, run_id="reason-knob-test")
+    (reason_step,) = [s for s in plan.steps if s.argv]
+    assert reason_step.argv[reason_step.argv.index("--model") + 1] == "some/reasoner"
 
 
 def test_vlm_eval_token_factory_spec_uses_the_hosted_api_backend() -> None:

@@ -23,9 +23,9 @@ def _read_gpu(key: str):
     if key.endswith("cosmos_augmented/manifest.json"):
         return {"mode": "cosmos_transfer2.5_gpu"}
     if key.endswith("captions.json"):
-        return {"model": "Qwen/Qwen2.5-VL-72B-Instruct"}
+        return {"model": "MiniMaxAI/MiniMax-M3"}
     if key.endswith("vlm_eval_stub.json"):
-        return {"model": "Qwen/Qwen2.5-VL-72B-Instruct", "backend": "api"}
+        return {"model": "MiniMaxAI/MiniMax-M3", "backend": "api"}
     return {}
 
 
@@ -40,7 +40,7 @@ def test_provenance_lists_components_per_stage() -> None:
     assert aug.get("engine") == "cosmos_transfer_2.5_gpu"
     # VLM stages attribute to Token Factory + the real model.
     assert stages["Annotate originals"]["component"] == "Token Factory VLM"
-    assert stages["Pseudo-label augmented"]["model"] == "Qwen/Qwen2.5-VL-72B-Instruct"
+    assert stages["Pseudo-label augmented"]["model"] == "MiniMaxAI/MiniMax-M3"
     assert "Token Factory" in stages["Attribute verify + quality gate"]["runtime"]
     # Summary names where the data comes from + the components.
     assert "Cosmos Transfer 2.5" in prov["summary"]
@@ -228,7 +228,7 @@ def _read_no_original(key: str):
         return {"mode": "cosmos_transfer2.5_gpu"}
     if key.endswith("labeled_augmented/captions.json"):
         return {
-            "model": "Qwen/Qwen2.5-VL-72B-Instruct",
+            "model": "MiniMaxAI/MiniMax-M3",
             "input_path": f"s3://bucket/{PFX}/cosmos_augmented/aug-{RUN}/",
         }
     if key.endswith("configs/manifest.json"):

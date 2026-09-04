@@ -139,7 +139,7 @@ def test_build_fiftyone_dataset_groups_variants_and_summarizes() -> None:
         },
         f"{base}/grade/vlm_eval_stub.json": {
             "score": 0.0,
-            "model": "Qwen/Qwen2.5-VL-72B-Instruct",
+            "model": "MiniMaxAI/MiniMax-M3",
         },
         f"{base}/grade/decision.json": {"decision": "loop_back"},
         f"{base}/curation/report.json": {

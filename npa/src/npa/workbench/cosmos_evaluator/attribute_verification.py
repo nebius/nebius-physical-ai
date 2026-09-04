@@ -148,7 +148,7 @@ def verify_attributes(
     :class:`~npa.clients.token_factory.TokenFactoryClient`; tests pass a double.
     """
 
-    from npa.clients.token_factory import DEFAULT_TEXT_MODEL, DEFAULT_VISION_MODEL
+    from npa.clients.token_factory import DEFAULT_TEXT_MODEL, resolve_vision_model
 
     if not selected_variables:
         raise CosmosEvaluatorError("attribute verification needs at least one selected variable")
@@ -157,7 +157,7 @@ def verify_attributes(
 
     active = client if client is not None else _default_client()
     llm_model = question_model or DEFAULT_TEXT_MODEL
-    vision_model = vlm_model or DEFAULT_VISION_MODEL
+    vision_model = resolve_vision_model(vlm_model)
     options_table = {key: list(values) for key, values in (variable_options or {}).items()}
 
     if sample_policy not in ATTRIBUTE_SAMPLE_POLICIES:

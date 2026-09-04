@@ -2,7 +2,7 @@
 
 `npa agent` deploys a **browser workbench VM** into one of your Nebius projects:
 an HTTPS UI behind basic-auth login, grounded chat over Nebius Token Factory
-(default `nvidia/Cosmos3-Super-Reasoner`), Sim Assets and Cameras panels, an
+(default `MiniMaxAI/MiniMax-M3`), Sim Assets and Cameras panels, an
 embedded [Rerun](https://www.rerun.io) viewer for `.rrd` recordings, and
 draft/validate/plan/submit endpoints for `npa.workflow/v0.0.1` specs.
 

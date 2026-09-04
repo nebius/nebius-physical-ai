@@ -42,8 +42,10 @@ from npa.clients.token_factory import (
     DEFAULT_BATCH_TIMEOUT_S,
     DEFAULT_COMPLETION_WINDOW,
     DEFAULT_REASONER_MODEL,
+    resolve_reasoner_model,
     DEFAULT_TEXT_MODEL,
     DEFAULT_VISION_MODEL,
+    resolve_vision_model,
     TokenFactoryClient,
     TokenFactoryError,
     split_reasoning,
@@ -238,7 +240,7 @@ def caption_images(
     _require(output_path, "output_path")
     if max_images <= 0:
         raise TokenFactoryToolError("--max-images must be positive")
-    effective_model = model or DEFAULT_VISION_MODEL
+    effective_model = resolve_vision_model(model)
     effective_instruction = (instruction or DEFAULT_CAPTION_INSTRUCTION).strip()
     active = client or _default_client()
 
@@ -919,7 +921,7 @@ def reason_scene(
     """Reason over scene images with a hosted physical-AI reasoner.
 
     Sends the scene images plus the task to the reasoning model (default
-    ``nvidia/Cosmos3-Super-Reasoner``) in a single request and returns the
+    :data:`DEFAULT_REASONER_MODEL`) in a single request and returns the
     model's scene understanding and plan of action. Built for the "walk the
     robot to a scene, ask what to do" physical-common-sense loop.
     """
@@ -928,7 +930,7 @@ def reason_scene(
     _require(output_path, "output_path")
     if max_images <= 0:
         raise TokenFactoryToolError("--max-images must be positive")
-    effective_model = model or DEFAULT_REASONER_MODEL
+    effective_model = resolve_reasoner_model(model)
     effective_task = (task or DEFAULT_REASON_TASK).strip()
     effective_system = (system_prompt or DEFAULT_REASON_SYSTEM_PROMPT).strip()
     active = client or _default_client()

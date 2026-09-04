@@ -33,6 +33,20 @@ npa workbench health preflight --offline    # presence only, no network probes
 Valid `--checks` values are `all`, `hf`, `ngc`, `s3`, `token_factory`; the
 default is `hf,ngc,s3,token_factory`.
 
+Online `token_factory` lists `/v1/models` and **fails closed when a configured
+hosted model is not served** — authentication alone is not readiness. The
+workbench only calls Token Factory's **public serverless endpoint**, and models
+do leave it (`Qwen/Qwen2.5-VL-72B-Instruct` and `nvidia/Cosmos3-Super-Reasoner`
+on 2026-09-04), after which every caption/judge/reason stage 404s mid-run. The
+gated models are the vision default (`NPA_VLM_API_MODEL`, else
+`MiniMaxAI/MiniMax-M3`) and the reasoner default (`NPA_REASONER_API_MODEL`, else
+the same). On FAIL, pick a served model from `npa workbench token-factory
+models` and export the matching variable. Pods do not inherit your shell, so for
+workflow stages also pass `--secret-env <NAME>` to `npa workbench workflow
+submit` (or set the spec's `caption_model` / `vlm_model` / `reason_model`).
+Repointing via env leaves a running workflow's argv and plan fingerprint
+unchanged.
+
 Online `hf` authenticates against Hugging Face `whoami-v2`; public repository
 metadata is not sufficient. Online `ngc` performs a registry token exchange;
 that proves the key, not entitlement to every NGC artifact. `access` performs

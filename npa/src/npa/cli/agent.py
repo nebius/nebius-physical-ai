@@ -143,6 +143,7 @@ from npa.cli.agent_contracts import (  # noqa: F401 - public compatibility expor
     rendered_agent_ui_html,
 )
 from npa.cli.agent_embed import embedded_python_source
+from npa.clients.token_factory import DEFAULT_REASONER_MODEL, DEFAULT_VISION_MODEL
 from npa.cli.agent_site import (
     DEFAULT_LICHTBLICK_PORT,
     nginx_agent_site_body as _nginx_agent_site_body,
@@ -188,14 +189,19 @@ DEFAULT_AGENT_NAME = "agent"
 DEFAULT_AGENT_IMAGE_FAMILY = "ubuntu24.04-driverless"
 DEFAULT_AGENT_USER = "npa"
 DEFAULT_LLM_PROVIDER = "token_factory"
-DEFAULT_LLM_MODEL = "nvidia/Cosmos3-Super-Reasoner"
+DEFAULT_LLM_MODEL = DEFAULT_REASONER_MODEL
 # Cost-ordered ladder; per-turn routing reorders it, while no-routing paths and
-# the model picker retain the cheap workhorse as their default.
-DEFAULT_LLM_MODELS = (
-    "Qwen/Qwen3-32B",
-    "meta-llama/Llama-3.3-70B-Instruct",
-    DEFAULT_LLM_MODEL,
-    "Qwen/Qwen2.5-VL-72B-Instruct",
+# the model picker retain the cheap workhorse as their default. Reasoner and
+# vision defaults are listed separately (deduplicated) so they may diverge.
+DEFAULT_LLM_MODELS = tuple(
+    dict.fromkeys(
+        (
+            "Qwen/Qwen3-32B",
+            "meta-llama/Llama-3.3-70B-Instruct",
+            DEFAULT_LLM_MODEL,
+            DEFAULT_VISION_MODEL,
+        )
+    )
 )
 AGENT_UI_VERSION = "2026082901"
 ARTIFACT_DISCOVERY_CONTRACT = "s3-source-qualified-v1"

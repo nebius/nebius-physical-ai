@@ -463,7 +463,7 @@ def test_batch_generate_hints_when_the_model_is_not_text_to_text(tmp_path: Path)
         batch_generate(
             input_path=str(_prompts(tmp_path)),
             output_path=str(tmp_path / "out"),
-            model="Qwen/Qwen2.5-VL-72B-Instruct",
+            model="MiniMaxAI/MiniMax-M3",
             client=client,
         )
 

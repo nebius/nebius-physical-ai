@@ -32,7 +32,7 @@ config:
   # with an s3:// URI for a customer-owned self-contained USD/USDZ.
   source_uri: "generated://rigid-cube"
   runtime_image: "tool://content-agents"
-  vlm_model: "Qwen/Qwen2.5-VL-72B-Instruct"
+  vlm_model: "MiniMaxAI/MiniMax-M3"
   vlm_base_url: "https://api.tokenfactory.nebius.com/v1/"
 
 resources:

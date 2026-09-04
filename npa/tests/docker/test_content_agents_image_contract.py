@@ -154,3 +154,26 @@ def test_build_inspection_proves_ovrtx_is_absent() -> None:
     assert "npa.workflows.content_agents inspect-image" in dockerfile
     assert "npa.workflows.content_agents inspect-runtime" not in dockerfile
     assert "test ! -e /opt/content-agents/.ovrtx_venv" in dockerfile
+
+
+def test_copied_npa_modules_import_only_copied_npa_modules() -> None:
+    """The image copies a hand-picked set of npa files (no pip install of npa), so
+    every `npa.*` import reachable from them must also be copied or the stage
+    dies at import in the pod."""
+    import ast
+
+    copied = set(re.findall(r"npa/[\w/]+\.py", DOCKERFILE.read_text(encoding="utf-8")))
+    assert copied, "Dockerfile no longer lists per-file npa COPY targets"
+    for relpath in sorted(copied):
+        tree = ast.parse((ROOT / "npa" / "src" / relpath).read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                modules = [node.module] if node.module else []
+            elif isinstance(node, ast.Import):
+                modules = [alias.name for alias in node.names]
+            else:
+                continue
+            for module in modules:
+                if module.startswith("npa."):
+                    path = module.replace(".", "/") + ".py"
+                    assert path in copied, f"{relpath} imports {module} but the image lacks {path}"

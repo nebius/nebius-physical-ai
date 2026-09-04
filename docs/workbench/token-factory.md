@@ -49,7 +49,7 @@ Registering and minting a key takes about two minutes:
 > it's handy when filtering models by project in the console.
 
 Optional 10-second self-test from your own terminal (proves the key works and
-shows the served catalog, including whether `nvidia/Cosmos3-Super-Reasoner` is
+shows the served catalog, including whether `MiniMaxAI/MiniMax-M3` is
 enabled for you):
 
 ```bash
@@ -112,7 +112,7 @@ Caption a folder of images (local or S3):
 npa workbench token-factory caption \
   --input-path ./frames \
   --output-path /tmp/captions \
-  --model Qwen/Qwen2.5-VL-72B-Instruct \
+  --model MiniMaxAI/MiniMax-M3 \
   --output json
 ```
 
@@ -192,15 +192,16 @@ state: they are deleted once results are collected, unless `--keep-datasets` is
 passed. A `--no-wait` run deliberately leaves its request dataset in place,
 because the operation reads it after the submitting process exits.
 
-Reason over a scene with NVIDIA Cosmos3-Super-Reasoner — point it at scene
-images and ask what a robot should do (scene understanding + plan of action):
+Reason over a scene with the hosted reasoner (default `MiniMaxAI/MiniMax-M3`;
+`nvidia/Cosmos3-Super-Reasoner` also works where your key serves it) — point it
+at scene images and ask what a robot should do (scene understanding + plan):
 
 ```bash
 npa workbench token-factory reason \
   --input-path ./scene \
   --output-path /tmp/scene-reasoning \
   --task "What is in this scene and how should a robot pick up the red box?" \
-  --model nvidia/Cosmos3-Super-Reasoner \
+  --model MiniMaxAI/MiniMax-M3 \
   --output json
 ```
 
@@ -243,7 +244,7 @@ NEBIUS_TOKEN_FACTORY_KEY=nebius_xxx npa/.venv/bin/python -m pytest \
 ```
 
 They cover: `list_models` authenticates, a text chat completion returns text,
-and `nvidia/Cosmos3-Super-Reasoner` produces a scene plan (that last one skips if
+and `MiniMaxAI/MiniMax-M3` produces a scene plan (that last one skips if
 the model is not available for your key). For a quick manual check use
 `npa workbench token-factory verify`.
 
@@ -267,6 +268,20 @@ if you are pointed at a non-default deployment.
 
 ## Troubleshooting
 
+- **`404 The model ... does not exist` from a caption, `vlm-eval --backend api`,
+  or `reason` stage** — the model is no longer served on Token Factory's
+  **public serverless endpoint**, the only tier the workbench calls
+  (`Qwen/Qwen2.5-VL-72B-Instruct` and `nvidia/Cosmos3-Super-Reasoner` left it on
+  2026-09-04 under the August-31 public-endpoint deprecation; they remain
+  dedicated-endpoint only, which the workbench does not support). Run
+  `npa workbench health preflight --checks token_factory`; it fails closed when a
+  configured default is not in `/v1/models`. Pick one from
+  `npa workbench token-factory models` and export `NPA_VLM_API_MODEL=<model>`
+  (caption, vlm-eval, evaluator) or `NPA_REASONER_API_MODEL=<model>` (reason), or
+  pass `--model`; for workflow stages add `--secret-env <NAME>` to
+  `npa workbench workflow submit`, since pods do not inherit your shell. Both
+  default to `MiniMaxAI/MiniMax-M3` (MiniMax community license; vendor terms
+  apply to captions and judgements you feed into downstream training).
 - **`NEBIUS_TOKEN_FACTORY_KEY is not set`** — provide the key via step 2; confirm with
   `npa workbench token-factory status`.
 - **`Token Factory request failed (401)`** — the key is invalid or revoked;

@@ -60,7 +60,7 @@ def test_describe_user_prompt_is_kind_specific() -> None:
 def test_describe_prompt_includes_pipeline_provenance() -> None:
     prov = (
         "Augment — Cosmos Transfer 2.5 (nvidia/Cosmos-Transfer2.5-2B) [GPU (Nebius K8s)]; "
-        "Pseudo-label augmented — Token Factory VLM (Qwen/Qwen2.5-VL-72B-Instruct) [hosted GPU (Token Factory)]"
+        "Pseudo-label augmented — Token Factory VLM (MiniMaxAI/MiniMax-M3) [hosted GPU (Token Factory)]"
     )
     prompt = vf.describe_user_prompt(
         "rerun",

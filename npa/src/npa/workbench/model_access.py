@@ -260,7 +260,15 @@ WORKBENCH_ASSETS: tuple[GatedAsset, ...] = (
     ),
     GatedAsset("Qwen/Qwen2-VL-7B-Instruct", HF, ("vlm_eval",), False),
     GatedAsset(
-        "Qwen/Qwen2.5-VL-72B-Instruct", HF, ("vlm_eval", "token_factory"), False
+        "MiniMaxAI/MiniMax-M3",
+        TOKEN_FACTORY,
+        ("vlm_eval", "token_factory"),
+        False,
+        note=(
+            "Hosted vision/reasoning default (MiniMax community license; vendor "
+            "terms apply to outputs); verify availability through Token Factory, "
+            "not Hugging Face."
+        ),
     ),
     GatedAsset("lerobot/pusht", HF, ("lerobot", "sim2real"), False),
     GatedAsset(

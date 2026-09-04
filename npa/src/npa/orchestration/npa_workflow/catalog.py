@@ -516,11 +516,16 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.vlm_max_frames}}",
             "--success-threshold",
             "{{config.vlm_success_threshold}}",
+            # Optional judge pin; unset falls through to the backend default.
+            "--model",
+            "{{config.vlm_model}}",
         ],
+        omit_flags_when_empty=("--model",),
+        config_defaults={"vlm_model": ""},
     ),
     "workbench.token_factory.reason": ToolEntry(
         name="workbench.token_factory.reason",
-        description="Run Cosmos reasoner over scene inputs.",
+        description="Run the hosted reasoner over scene inputs.",
         argv_template=[
             "npa",
             "workbench",
@@ -530,7 +535,12 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.scene_uri}}",
             "--output-path",
             "{{config.plan_uri}}",
+            # Optional reasoner pin; unset falls through to the CLI default.
+            "--model",
+            "{{config.reason_model}}",
         ],
+        omit_flags_when_empty=("--model",),
+        config_defaults={"reason_model": ""},
     ),
     "workbench.cosmos2.transfer": ToolEntry(
         name="workbench.cosmos2.transfer",
