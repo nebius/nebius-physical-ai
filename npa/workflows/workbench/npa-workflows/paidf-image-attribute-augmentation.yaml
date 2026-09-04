@@ -1,0 +1,169 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+# Direct translation of NVIDIA/paidf-orchestration's
+# image_attribute_augmentation_dag at
+# f7ecd8c5d7aeec28b2d476b9e71b53a48ba8c0f9. Airflow validation/input
+# preparation/config mapping/service lifecycle/augmentation/output validation
+# and dataset assembly become native NPA states. The image-edit service and its
+# consuming paidf-augmentation batch share one SkyPilot state so the service is
+# alive for the complete batch. The adapter preserves the upstream three-retry
+# component policy without introducing a workflow duration limit.
+
+metadata:
+  name: paidf-image-attribute-augmentation
+  description: >-
+    Direct PAIDF IAA translation: prepare person images, sample attribute edits,
+    run Qwen Image Edit through NVIDIA's paidf-augmentation protocol with real
+    attribute verification, validate outputs, and assemble a lineage-linked dataset.
+
+config:
+  bucket: example-bucket
+  prefix: "paidf-image-attribute-augmentation/{{run.id}}"
+  paidf_workflow: iaa
+  input_uri: "s3://{{config.bucket}}/paidf-authorized-input/iaa/"
+  prepared_uri: "s3://{{config.bucket}}/{{config.prefix}}/prepared/"
+  prepared_manifest_uri: "s3://{{config.bucket}}/{{config.prefix}}/prepared/manifest.json"
+  run_root_uri: "s3://{{config.bucket}}/{{config.prefix}}/"
+  config_manifest_uri: "s3://{{config.bucket}}/{{config.prefix}}/configs/manifest.json"
+  augmentation_result_uri: "s3://{{config.bucket}}/{{config.prefix}}/cosmos/result.json"
+  augmentation_validation_uri: "s3://{{config.bucket}}/{{config.prefix}}/cosmos/validation.json"
+  postprocess_root_uri: "s3://{{config.bucket}}/{{config.prefix}}/postprocessing/"
+  validation_uri: "s3://{{config.bucket}}/{{config.prefix}}/postprocessing/result.json"
+  final_dataset_uri: "s3://{{config.bucket}}/{{config.prefix}}/augmented_dataset/dataset.json"
+  auto_label_root_uri: "s3://{{config.bucket}}/{{config.prefix}}/auto_labeling/"
+  auto_label_result_uri: "s3://{{config.bucket}}/{{config.prefix}}/auto_labeling/person-attribute-search.json"
+  labels_uri: "{{config.auto_label_result_uri}}"
+  upstream_contract_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/upstream.json"
+  num_augmentations: "1"
+  seed: "42"
+  vlm_url: "https://api.tokenfactory.nebius.com/v1"
+  vlm_model: "openbmb/MiniCPM-V-4_5"
+  llm_url: "https://api.tokenfactory.nebius.com/v1"
+  llm_model: "Qwen/Qwen3-30B-A3B-Instruct-2507"
+  generation_url: "http://127.0.0.1:8000/v1"
+  generation_model: "Qwen/Qwen-Image-Edit-2511"
+  service_kind: image-edit
+  service_port: "8000"
+  service_parallel_size: "1"
+
+resources:
+  cpu:
+    cloud: kubernetes
+    cpus: 4
+    memory: 16Gi
+  image-edit:
+    cloud: kubernetes
+    accelerators: RTXPRO-6000-BLACKWELL-SERVER-EDITION:1
+    cpus: 16
+    memory: 96Gi
+    disk_size: 300
+    image: "vllm/vllm-omni@sha256:5d8c7e742c98858f257d82307e378391f0e7d77065e141c733cc4778042128ab"
+    kubernetes:
+      provision_timeout: 3600
+      pod_config:
+        spec:
+          containers:
+            - name: ray-node
+              env:
+                - name: HF_HOME
+                  value: /tmp/paidf-models
+              volumeMounts:
+                - name: dshm
+                  mountPath: /dev/shm
+          volumes:
+            - name: dshm
+              emptyDir:
+                medium: Memory
+                sizeLimit: 32Gi
+  attribute-search:
+    cloud: kubernetes
+    cpus: 8
+    memory: 32Gi
+    image: "nvcr.io/nvidia/paidf-event-and-person-attribute-search-service@sha256:0f581ff6d92efd391281e5787a8b1fda76556443ade47c1f5d59d4c345a01f6a"
+    kubernetes:
+      provision_timeout: 1800
+      pod_config:
+        spec:
+          imagePullSecrets:
+            - name: ngc-nvcr-imagepullsecret
+
+initial: record-upstream
+
+states:
+  record-upstream:
+    resources: cpu
+    run:
+      argv: [python3, -c, "import sys; from npa.workflows.paidf_upstream import write_upstream_contract; write_upstream_contract(*sys.argv[1:])", image-attribute-augmentation, "{{config.upstream_contract_uri}}"]
+    outputs:
+      - uri: "{{config.upstream_contract_uri}}"
+        schema: npa.paidf.upstream.v1
+    next: prepare-input
+  prepare-input:
+    needs: [record-upstream]
+    toolRef: workflow.paidf.prepare_images
+    resources: cpu
+    outputs:
+      - uri: "{{config.prepared_manifest_uri}}"
+        schema: npa.paidf.native.prepared-input.v1
+    next: generate-configs
+  generate-configs:
+    needs: [prepare-input]
+    toolRef: workflow.paidf.build_configs
+    resources: cpu
+    outputs:
+      - uri: "{{config.config_manifest_uri}}"
+        schema: npa.paidf.native.iaa-configs.v1
+    next: image-edit-service-and-augmentation
+  image-edit-service-and-augmentation:
+    description: >-
+      Start the real Qwen Image Edit vLLM-Omni service, wait for health, invoke
+      paidf-augmentation at its pinned revision for every mapped config, and
+      terminate the service only after the batch boundary completes.
+    needs: [generate-configs]
+    toolRef: workflow.paidf.run_local_augmentation
+    resources: image-edit
+    outputs:
+      - uri: "{{config.augmentation_result_uri}}"
+        schema: npa.paidf.native.iaa-augmentation.v1
+    next: validate-outputs
+  validate-outputs:
+    needs: [image-edit-service-and-augmentation]
+    toolRef: workflow.paidf.validate_augmentation
+    resources: cpu
+    outputs:
+      - uri: "{{config.augmentation_validation_uri}}"
+        schema: npa.paidf.native.iaa-validation.v1
+    next: cosmos-post-processing
+  cosmos-post-processing:
+    description: >-
+      Invoke paidf-augmentation's published pane splitter and visual-attribute
+      dataset writer over each accepted image edit.
+    needs: [validate-outputs]
+    toolRef: workflow.paidf.postprocess_iaa
+    resources: cpu
+    outputs:
+      - uri: "{{config.validation_uri}}"
+        schema: npa.paidf.native.iaa-postprocess.v1
+    next: event-and-person-attribute-search
+  event-and-person-attribute-search:
+    description: >-
+      Run the genuine paidf-auto-labeling Person Attribute Search service over
+      each verified edit, using the augmentation metadata as its attribute JSON.
+    needs: [cosmos-post-processing]
+    toolRef: workflow.paidf.run_auto_label
+    resources: attribute-search
+    params:
+      auto_label_stage: person-attribute-search
+    outputs:
+      - uri: "{{config.auto_label_result_uri}}"
+        schema: npa.paidf.native.iaa-auto-label-person-attribute-search.v1
+    next: generate-augmented-dataset
+  generate-augmented-dataset:
+    needs: [event-and-person-attribute-search]
+    toolRef: workflow.paidf.finalize_dataset
+    resources: cpu
+    outputs:
+      - uri: "{{config.final_dataset_uri}}"
+        schema: npa.paidf.native.iaa-dataset.v1
+    terminal: true

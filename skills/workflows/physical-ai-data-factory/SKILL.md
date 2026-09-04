@@ -24,6 +24,20 @@ CORPORATION & AFFILIATES. Upstream licenses: Apache-2.0 and CC-BY-4.0. See
 and composes existing workbench tools. Every new run writes the immutable
 `reports/upstream.json` source/execution-boundary artifact before data processing.
 
+## Workflow Inventory
+
+| YAML | Official source | Classification | Execution |
+| --- | --- | --- | --- |
+| `physical-ai-data-factory.yaml` | physical-ai-data-factory VDA | direct translation | SkyPilot + Transfer 2.5/Token Factory/Curator/FiftyOne |
+| `paidf-defect-image-generation.yaml` | physical-ai-data-factory DIG Day-1 manual-ROI | direct scoped translation | SkyPilot + digest-pinned AnomalyGen |
+| `paidf-image-attribute-augmentation.yaml` | paidf-orchestration IAA DAG | direct translation | SkyPilot + vLLM-Omni Qwen Edit + PAIDF protocols |
+| `paidf-event-video-generation.yaml` | paidf-orchestration EVG DAG | direct translation | SkyPilot + Cosmos3 Super + PAIDF protocols |
+| `paidf-cosmos3.yaml` | no corresponding Airflow IAA/EVG DAG | NPA-specific VDA alternative | SkyPilot + NPA Cosmos3/Curator/FiftyOne |
+
+The exact source/component revisions and licenses live in
+`skills/NOTICE-NVIDIA-PAIDF` and every run's `reports/upstream.json`. Do not call
+`paidf-cosmos3.yaml` an IAA or EVG translation.
+
 Three NVIDIA components in the pipeline are the real open-source projects, not
 NPA look-alikes: **Cosmos Transfer 2.5** augments, **Cosmos Evaluator**
 (https://github.com/nvidia-cosmos/cosmos-evaluator, Apache-2.0) grades, and

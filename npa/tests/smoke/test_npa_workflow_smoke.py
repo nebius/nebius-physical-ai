@@ -27,6 +27,9 @@ def _spec(name: str) -> Path:
         "av-night-scene-hardening.yaml",
         "cosmos-synth-fanout-curation.yaml",
         "physical-ai-data-factory.yaml",
+        "paidf-defect-image-generation.yaml",
+        "paidf-image-attribute-augmentation.yaml",
+        "paidf-event-video-generation.yaml",
     ],
 )
 def test_cli_validate_spec(name: str) -> None:

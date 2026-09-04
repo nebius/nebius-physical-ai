@@ -1,0 +1,95 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+# Direct NPA translation of NVIDIA/physical-ai-data-factory's Defect Image
+# Generation Day-1 manual-ROI flow at revision
+# e4c663cbbdcf159ad952751274c883c81d3ab4be. This is the published
+# checkpoint-passthrough branch: prepared clean images + ROI masks +
+# defect_spec.jsonl -> AnomalyGen inference -> native labels. It intentionally
+# does not claim the separate USD/Omniverse Day-0 or real-alignment branches.
+# NPA replaces OSMO task groups with the standard SkyPilot runtime; no upstream
+# controller is vendored.
+
+metadata:
+  name: paidf-defect-image-generation
+  description: >-
+    Direct PAIDF DIG Day-1 manual-ROI translation. Validate operator-authorized
+    prepared data and runtime-fetched checkpoints, run NVIDIA AnomalyGen 1.1.0,
+    and publish generated defect images, native labels, and pinned provenance.
+
+config:
+  bucket: example-bucket
+  prefix: "paidf-defect-image-generation/{{run.id}}"
+  dataset_uri: "s3://{{config.bucket}}/paidf-authorized-input/dig/datasets/pcb/raw/"
+  pretrained_uri: "s3://{{config.bucket}}/paidf-authorized-input/dig/models/pretrained/"
+  checkpoint_uri: "s3://{{config.bucket}}/paidf-authorized-input/dig/models/pcb/"
+  num_sdg: "30"
+  checkpoint_step: "14000"
+  model_size: "2b"
+  generated_uri: "s3://{{config.bucket}}/{{config.prefix}}/anomaly/"
+  dig_result_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/dig-result.json"
+  upstream_contract_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/upstream.json"
+
+resources:
+  cpu:
+    cloud: kubernetes
+    cpus: 2
+    memory: 8Gi
+  anomalygen:
+    cloud: kubernetes
+    accelerators: B200:1
+    cpus: 16
+    memory: 96Gi
+    disk_size: 300
+    image: "nvcr.io/nvidia/paidf-anomalygen@sha256:e62a87d1dc58b6de8b8a352dc8ec2a2e3e400288d66b2b8b19b92d97e7a0bc09"
+    kubernetes:
+      provision_timeout: 2400
+      pod_config:
+        spec:
+          imagePullSecrets:
+            - name: ngc-nvcr-imagepullsecret
+          containers:
+            - name: ray-node
+              volumeMounts:
+                - name: dshm
+                  mountPath: /dev/shm
+          volumes:
+            - name: dshm
+              emptyDir:
+                medium: Memory
+                sizeLimit: 32Gi
+
+initial: record-upstream
+
+states:
+  record-upstream:
+    description: Record the exact direct-translation source and NPA/SkyPilot boundary.
+    resources: cpu
+    run:
+      argv:
+        - python3
+        - -c
+        - >-
+          import sys; from npa.workflows.paidf_upstream import write_upstream_contract;
+          write_upstream_contract(*sys.argv[1:])
+        - defect-image-generation-day1-manual-roi
+        - "{{config.upstream_contract_uri}}"
+    outputs:
+      - uri: "{{config.upstream_contract_uri}}"
+        schema: npa.paidf.upstream.v1
+    next: anomaly-infer
+
+  anomaly-infer:
+    description: >-
+      Execute the real upstream prep_testcase -> validate_jsonl -> run_sdg ->
+      verify_output chain in the immutable AnomalyGen image. Missing datasets,
+      masks, checkpoint bytes, labels, or model access fail closed.
+    needs: [record-upstream]
+    toolRef: workflow.paidf.dig_infer
+    resources: anomalygen
+    outputs:
+      - uri: "{{config.generated_uri}}"
+        schema: nvidia.paidf.anomalygen.labeled-output.v1
+      - uri: "{{config.dig_result_uri}}"
+        schema: npa.paidf.native.dig-result.v1
+    terminal: true

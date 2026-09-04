@@ -17,23 +17,99 @@ from typing import Any
 
 
 SCHEMA = "npa.paidf.upstream.v1"
-PHYSICAL_AI_DATA_FACTORY_REVISION = "0c37222a7cd1b2a1fc36086a7a03d7978d891506"
+PHYSICAL_AI_DATA_FACTORY_REVISION = "e4c663cbbdcf159ad952751274c883c81d3ab4be"
 PAIDF_ORCHESTRATION_REVISION = "f7ecd8c5d7aeec28b2d476b9e71b53a48ba8c0f9"
+PAIDF_AUGMENTATION_REVISION = "bc5719362492a1e3b40bd7d33b43c46dd89efad5"
+PAIDF_AUTO_LABELING_REVISION = "36dc1114dea00d9986df97325a664520993964de"
+PAIDF_ANOMALYGEN_REVISION = "dbaf7d7d9003f048230f9026da5969e9e5931785"
+PAIDF_SIMULATION_REVISION = "498751aceeea3dc3bac0d5fb043bf3553aec46a6"
+PAIDF_CURATION_REVISION = "02079bbd272900c837ebdbd0bf44384dfdf1f25e"
 
 _VARIANTS: dict[str, dict[str, Any]] = {
     "cosmos-transfer2.5": {
+        "translation": "direct",
+        "upstream_workflow": "Video Data Augmentation",
         "augmentation": "NVIDIA Cosmos Transfer 2.5",
         "execution": "workbench.cosmos2.transfer_execute",
         "evaluation": "NVIDIA Cosmos Evaluator plus NPA quality policy",
         "curation": "NVIDIA Cosmos Curator plus FiftyOne Brain",
     },
     "cosmos3-video2video": {
+        "translation": "npa-specific-variant",
+        "upstream_workflow": "Video Data Augmentation alternative",
         "augmentation": "NVIDIA Cosmos Framework 3 video2video",
-        "execution": "workbench.cosmos3.generate_video_variants",
+        "execution": "workbench.cosmos3.generate_variants",
         "evaluation": "NVIDIA Cosmos Evaluator plus NPA quality policy",
         "curation": "NVIDIA Cosmos Curator plus FiftyOne Brain",
     },
+    "defect-image-generation-day1-manual-roi": {
+        "translation": "direct",
+        "upstream_workflow": "Defect Image Generation Day 1 manual-ROI",
+        "preparation": "canonical clean-image, ROI-mask, and defect-spec validation",
+        "generation": "NVIDIA PAIDF AnomalyGen 1.1.0 inference and native labeling",
+        "execution": "workflow.paidf.dig_infer",
+        "outputs": "generated images, masks, COCO labels, and provenance",
+    },
+    "image-attribute-augmentation": {
+        "translation": "direct",
+        "upstream_workflow": "image_attribute_augmentation_dag",
+        "preparation": "input validation and deterministic attribute sampling",
+        "generation": "NVIDIA PAIDF Augmentation 1.1.0 image-edit protocol",
+        "labeling": "NVIDIA PAIDF event/person attribute search protocol",
+        "execution": "workflow.paidf.run_local_augmentation",
+        "outputs": "augmented image dataset, attributes, skips, and provenance",
+    },
+    "event-video-generation": {
+        "translation": "direct",
+        "upstream_workflow": "event_video_generation_dag",
+        "preparation": "input validation and deterministic anomaly/environment sampling",
+        "generation": "NVIDIA PAIDF Augmentation 1.1.0 Cosmos3 image2video protocol",
+        "labeling": (
+            "NVIDIA PAIDF detection/tracking, captioning, visual-QA, and "
+            "event/person attribute-search protocols"
+        ),
+        "execution": "workflow.paidf.run_local_augmentation",
+        "outputs": "anomaly video dataset, annotations, sidecars, and provenance",
+    },
 }
+
+_COMPONENT_SOURCES = [
+    {
+        "repository": "https://github.com/NVIDIA/paidf-augmentation",
+        "revision": PAIDF_AUGMENTATION_REVISION,
+        "role": "published-augmentation-protocol",
+        "licenses": ["Apache-2.0"],
+        "executed_by_npa": True,
+    },
+    {
+        "repository": "https://github.com/NVIDIA/paidf-auto-labeling",
+        "revision": PAIDF_AUTO_LABELING_REVISION,
+        "role": "published-auto-labeling-protocols",
+        "licenses": ["Apache-2.0"],
+        "executed_by_npa": True,
+    },
+    {
+        "repository": "https://github.com/NVIDIA/paidf-anomalygen",
+        "revision": PAIDF_ANOMALYGEN_REVISION,
+        "role": "defect-generation-implementation",
+        "licenses": ["Apache-2.0"],
+        "executed_by_npa": True,
+    },
+    {
+        "repository": "https://github.com/NVIDIA/paidf-simulation",
+        "revision": PAIDF_SIMULATION_REVISION,
+        "role": "dig-usd-simulation-ecosystem-module-not-executed-by-manual-roi-translation",
+        "licenses": ["Apache-2.0"],
+        "executed_by_npa": False,
+    },
+    {
+        "repository": "https://github.com/NVIDIA/paidf-curation-and-retrieval",
+        "revision": PAIDF_CURATION_REVISION,
+        "role": "published-curation-and-retrieval-protocol",
+        "licenses": ["Apache-2.0"],
+        "executed_by_npa": False,
+    },
+]
 
 
 def upstream_contract(workflow_variant: str) -> dict[str, Any]:
@@ -65,6 +141,7 @@ def upstream_contract(workflow_variant: str) -> dict[str, Any]:
                 "upstream_orchestrator": "Apache Airflow on Kubernetes",
                 "executed_by_npa": False,
             },
+            *_COMPONENT_SOURCES,
         ],
         "npa_integration": {
             "api_version": "npa.workflow/v0.0.1",
@@ -116,6 +193,11 @@ def write_upstream_contract(workflow_variant: str, output_uri: str) -> dict[str,
 
 __all__ = [
     "PAIDF_ORCHESTRATION_REVISION",
+    "PAIDF_ANOMALYGEN_REVISION",
+    "PAIDF_AUGMENTATION_REVISION",
+    "PAIDF_AUTO_LABELING_REVISION",
+    "PAIDF_CURATION_REVISION",
+    "PAIDF_SIMULATION_REVISION",
     "PHYSICAL_AI_DATA_FACTORY_REVISION",
     "SCHEMA",
     "upstream_contract",

@@ -66,7 +66,7 @@ is promoted to the top of the workflow tree for prominence:
 It is still an `npa.workflow/v0.0.1` spec and is discovered alongside the specs
 below (see `npa/src/npa/orchestration/npa_workflow/blueprints.py`). Deploy guide:
 `docs/workbench/guides/physical-ai-data-factory-deploy.md`.
-Both this workflow and `paidf-cosmos3.yaml` emit `reports/upstream.json`, which
+All PAIDF YAMLs emit `reports/upstream.json`, which
 pins the official NVIDIA ecosystem and Airflow-scaler references while making
 clear that NPA executes the real component graph through SkyPilot, not OSMO or
 Airflow.
@@ -101,6 +101,9 @@ Airflow.
 | `cosmos3-reason.yaml` | Cosmos3 reason |
 | `cosmos3-checkpoint-eval.yaml` | B200-only guarded Cosmos3 still-image checkpoint evaluation |
 | `paidf-cosmos3.yaml` | Independent dynamic PAIDF: generic LeRobot/video input → real Cosmos 3 video2video variants → evaluator gate/refinement → real Curator + FiftyOne Brain + Rerun |
+| `paidf-defect-image-generation.yaml` | Direct DIG Day-1 manual-ROI translation → real AnomalyGen inference and native labels; B200; runtime-only operator-authorized data/weights |
+| `paidf-image-attribute-augmentation.yaml` | Direct IAA DAG translation → Qwen Image Edit service → real paidf-augmentation verification → real Person Attribute Search → dataset |
+| `paidf-event-video-generation.yaml` | Direct EVG DAG translation → Cosmos3 Super image2video → real detection/captioning/two Visual-QA passes/PAS → anomaly dataset |
 | `content-agents-rigid-object.yaml` | Restricted operator-built NVIDIA Content Agents: source USD → real Material/Physics Agents + OVRTX → upstream validation → rigid Isaac object USDZ/adapter ([guide](../../../../docs/workbench/content-agents.md)) |
 | `byof.yaml` | BYOF via `run_byof_repo.py` |
 | `byof-maniskill.yaml` | OSS registry: ManiSkill pinned image + PickCube smoke |

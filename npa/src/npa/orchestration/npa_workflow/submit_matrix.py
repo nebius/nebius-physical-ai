@@ -796,6 +796,52 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
             "Cosmos Evaluator, Cosmos Curator, FiftyOne Brain, and Rerun evidence."
         ),
     ),
+    SubmitLiveCase(
+        "paidf-defect-image-generation.yaml",
+        "gpu",
+        secret_envs=(
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "HF_TOKEN",
+            "NGC_API_KEY",
+        ),
+        notes=(
+            "Direct DIG Day-1 manual-ROI acceptance in the immutable NVIDIA "
+            "AnomalyGen image; requires operator-authorized upstream sample data."
+        ),
+    ),
+    SubmitLiveCase(
+        "paidf-image-attribute-augmentation.yaml",
+        "multi",
+        secret_envs=(
+            "NEBIUS_TOKEN_FACTORY_KEY",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "HF_TOKEN",
+            "NGC_API_KEY",
+        ),
+        requires_token_factory=True,
+        notes=(
+            "Direct IAA DAG acceptance with Qwen Image Edit, the real PAIDF "
+            "augmentation verifier, and the real Person Attribute Search service."
+        ),
+    ),
+    SubmitLiveCase(
+        "paidf-event-video-generation.yaml",
+        "multi",
+        secret_envs=(
+            "NEBIUS_TOKEN_FACTORY_KEY",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "HF_TOKEN",
+            "NGC_API_KEY",
+        ),
+        requires_token_factory=True,
+        notes=(
+            "Direct EVG DAG acceptance with Cosmos3 Super and the published "
+            "detection, captioning, dual Visual-QA, and PAS service chain."
+        ),
+    ),
     # --- Plan-only: stubs or separately covered BYOF onboarding flows ---
     SubmitLiveCase(
         "sim2real.yaml",

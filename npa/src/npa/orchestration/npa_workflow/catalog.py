@@ -126,7 +126,149 @@ _CONTENT_AGENTS_PIPELINE = [
     "npa.workflows.content_agents",
 ]
 
+_PAIDF_NATIVE_PIPELINE = ["python3", "-m", "npa.workflows.paidf_native"]
+
 TOOL_CATALOG: dict[str, ToolEntry] = {
+    "workflow.paidf.prepare_images": ToolEntry(
+        name="workflow.paidf.prepare_images",
+        description="Validate and stage canonical real-image inputs for native PAIDF workflows.",
+        argv_template=[
+            *_PAIDF_NATIVE_PIPELINE,
+            "prepare-images",
+            "--input-uri", "{{config.input_uri}}",
+            "--output-uri", "{{config.prepared_uri}}",
+            "--manifest-uri", "{{config.prepared_manifest_uri}}",
+            "--run-id", "{{run.id}}",
+        ],
+    ),
+    "workflow.paidf.build_configs": ToolEntry(
+        name="workflow.paidf.build_configs",
+        description=(
+            "Deterministically render NVIDIA paidf-augmentation protocol configs "
+            "for IAA or EVG without executing Airflow."
+        ),
+        argv_template=[
+            *_PAIDF_NATIVE_PIPELINE,
+            "build-configs",
+            "--workflow", "{{config.paidf_workflow}}",
+            "--prepared-manifest-uri", "{{config.prepared_manifest_uri}}",
+            "--output-uri", "{{config.run_root_uri}}",
+            "--config-manifest-uri", "{{config.config_manifest_uri}}",
+            "--num-augmentations", "{{config.num_augmentations}}",
+            "--seed", "{{config.seed}}",
+            "--vlm-url", "{{config.vlm_url}}",
+            "--vlm-model", "{{config.vlm_model}}",
+            "--llm-url", "{{config.llm_url}}",
+            "--llm-model", "{{config.llm_model}}",
+            "--generation-url", "{{config.generation_url}}",
+            "--generation-model", "{{config.generation_model}}",
+            "--run-id", "{{run.id}}",
+        ],
+    ),
+    "workflow.paidf.run_local_augmentation": ToolEntry(
+        name="workflow.paidf.run_local_augmentation",
+        access_capabilities=("paidf",),
+        description=(
+            "Start the published vLLM-Omni image-edit or Cosmos3 image2video "
+            "service and keep it alive while the real paidf-augmentation batch runs."
+        ),
+        argv_template=[
+            *_PAIDF_NATIVE_PIPELINE,
+            "run-local-augmentation",
+            "--config-manifest-uri", "{{config.config_manifest_uri}}",
+            "--result-uri", "{{config.augmentation_result_uri}}",
+            "--generation-model", "{{config.generation_model}}",
+            "--service-kind", "{{config.service_kind}}",
+            "--port", "{{config.service_port}}",
+            "--parallel-size", "{{config.service_parallel_size}}",
+            "--run-id", "{{run.id}}",
+        ],
+    ),
+    "workflow.paidf.validate_augmentation": ToolEntry(
+        name="workflow.paidf.validate_augmentation",
+        description="Decode and validate PAIDF media, captions, and metadata before dataset assembly.",
+        argv_template=[
+            *_PAIDF_NATIVE_PIPELINE,
+            "validate-augmentation",
+            "--config-manifest-uri", "{{config.config_manifest_uri}}",
+            "--validation-uri", "{{config.augmentation_validation_uri}}",
+            "--run-id", "{{run.id}}",
+        ],
+    ),
+    "workflow.paidf.postprocess_iaa": ToolEntry(
+        name="workflow.paidf.postprocess_iaa",
+        description=(
+            "Run paidf-augmentation's genuine IAA pane splitter, visual-attribute "
+            "extractor, and augmented-dataset writer."
+        ),
+        argv_template=[
+            *_PAIDF_NATIVE_PIPELINE,
+            "postprocess-iaa",
+            "--validation-uri", "{{config.augmentation_validation_uri}}",
+            "--prepared-manifest-uri", "{{config.prepared_manifest_uri}}",
+            "--output-root-uri", "{{config.postprocess_root_uri}}",
+            "--result-uri", "{{config.validation_uri}}",
+            "--vlm-url", "{{config.vlm_url}}",
+            "--vlm-model", "{{config.vlm_model}}",
+            "--run-id", "{{run.id}}",
+        ],
+    ),
+    "workflow.paidf.run_auto_label": ToolEntry(
+        name="workflow.paidf.run_auto_label",
+        description=(
+            "Invoke one genuine NVIDIA paidf-auto-labeling service over every "
+            "validated IAA/EVG output using the published DataEntry protocol."
+        ),
+        argv_template=[
+            *_PAIDF_NATIVE_PIPELINE,
+            "run-auto-label",
+            "--workflow", "{{config.paidf_workflow}}",
+            "--stage", "{{config.auto_label_stage}}",
+            "--validation-uri", "{{config.validation_uri}}",
+            "--auto-label-root-uri", "{{config.auto_label_root_uri}}",
+            "--result-uri", "{{config.auto_label_result_uri}}",
+            "--vlm-url", "{{config.vlm_url}}",
+            "--vlm-model", "{{config.vlm_model}}",
+            "--llm-url", "{{config.llm_url}}",
+            "--llm-model", "{{config.llm_model}}",
+            "--run-id", "{{run.id}}",
+        ],
+    ),
+    "workflow.paidf.finalize_dataset": ToolEntry(
+        name="workflow.paidf.finalize_dataset",
+        description="Assemble a lineage-linked IAA or EVG dataset from validated real outputs.",
+        argv_template=[
+            *_PAIDF_NATIVE_PIPELINE,
+            "finalize-dataset",
+            "--workflow", "{{config.paidf_workflow}}",
+            "--validation-uri", "{{config.validation_uri}}",
+            "--upstream-uri", "{{config.upstream_contract_uri}}",
+            "--labels-uri", "{{config.labels_uri}}",
+            "--output-uri", "{{config.final_dataset_uri}}",
+            "--run-id", "{{run.id}}",
+        ],
+    ),
+    "workflow.paidf.dig_infer": ToolEntry(
+        name="workflow.paidf.dig_infer",
+        access_capabilities=("paidf",),
+        description=(
+            "Run genuine NVIDIA PAIDF AnomalyGen Day-1 manual-ROI inference "
+            "and require generated media plus native labels."
+        ),
+        argv_template=[
+            *_PAIDF_NATIVE_PIPELINE,
+            "dig-infer",
+            "--dataset-uri", "{{config.dataset_uri}}",
+            "--pretrained-uri", "{{config.pretrained_uri}}",
+            "--checkpoint-uri", "{{config.checkpoint_uri}}",
+            "--output-uri", "{{config.generated_uri}}",
+            "--result-uri", "{{config.dig_result_uri}}",
+            "--num-sdg", "{{config.num_sdg}}",
+            "--checkpoint-step", "{{config.checkpoint_step}}",
+            "--model-size", "{{config.model_size}}",
+            "--run-id", "{{run.id}}",
+        ],
+    ),
     "workbench.alpamayo2_super.infer": ToolEntry(
         name="workbench.alpamayo2_super.infer",
         description=(

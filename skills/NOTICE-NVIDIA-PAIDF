@@ -6,7 +6,7 @@ NPA's Physical AI Data Factory workflows are NPA-native adaptations informed by
 two official NVIDIA repositories with distinct roles:
 
   https://github.com/NVIDIA/physical-ai-data-factory
-  revision 0c37222a7cd1b2a1fc36086a7a03d7978d891506
+  revision e4c663cbbdcf159ad952751274c883c81d3ab4be
   documentation and skills: CC-BY-4.0; source code: Apache-2.0
 
 This is NVIDIA's PAIDF ecosystem entry point. At the recorded revision it
@@ -25,9 +25,37 @@ skill and it is not embedded or executed by NPA.
 
 NPA keeps `npa.workflow/v0.0.1` as the authoring surface and SkyPilot as its sole
 execution engine. It does not vendor OSMO, Airflow, either repository, PAIDF NGC
-service images, model weights, or input datasets. The shipped
-`physical-ai-data-factory.yaml` and `paidf-cosmos3.yaml` workflows call real
-registered NPA components and use S3-compatible object storage for handoffs.
+service images, model weights, or input datasets. The shipped workflow set is:
+
+  physical-ai-data-factory.yaml              direct VDA translation
+  paidf-defect-image-generation.yaml         direct DIG Day-1 manual-ROI translation
+  paidf-image-attribute-augmentation.yaml    direct Airflow IAA translation
+  paidf-event-video-generation.yaml          direct Airflow EVG translation
+  paidf-cosmos3.yaml                         NPA-specific Cosmos3 VDA alternative
+
+Executable component sources are independently pinned:
+
+  https://github.com/NVIDIA/paidf-augmentation
+  revision bc5719362492a1e3b40bd7d33b43c46dd89efad5 (Apache-2.0)
+
+  https://github.com/NVIDIA/paidf-auto-labeling
+  revision 36dc1114dea00d9986df97325a664520993964de (Apache-2.0)
+
+  https://github.com/NVIDIA/paidf-anomalygen
+  revision dbaf7d7d9003f048230f9026da5969e9e5931785 (Apache-2.0)
+
+  https://github.com/NVIDIA/paidf-simulation
+  revision 498751aceeea3dc3bac0d5fb043bf3553aec46a6 (Apache-2.0; ecosystem
+  attribution only for the scoped manual-ROI DIG translation)
+
+  https://github.com/NVIDIA/paidf-curation-and-retrieval
+  revision 02079bbd272900c837ebdbd0bf44384dfdf1f25e (Apache-2.0)
+
+Vendor runtime images are referenced by immutable registry digest and are not
+rebuilt, copied, or claimed as NPA-published images. NPA runtime-fetches exact
+Apache-2.0 protocol source where the selected vendor service image does not
+carry its client, and verifies the fetched commit before execution. All
+registered components use S3-compatible object storage for handoffs.
 Each run writes `reports/upstream.json` (`npa.paidf.upstream.v1`) so this
 adaptation boundary and the exact public revisions travel with its artifacts.
 
