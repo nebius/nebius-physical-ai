@@ -16,8 +16,8 @@ with an actionable migration to this canonical spec.
 
 ## Preflight
 
-1. Validate tenant/project/region, bucket, registry, Kubernetes context, Kueue
-   admission, Ready RT-core nodes, and the read-only Isaac cache PVC.
+1. Validate tenant/project/region, bucket, registry, Kubernetes context, Ready
+   RT-core nodes, bounded GPU concurrency, and the read-only Isaac cache PVC.
 2. Require registry-qualified immutable digests for controller, Transfer,
    EnvGen, Reason, Isaac, and viewer images. Confirm each image attests the exact
    source SHA; never use source overlays or best-effort bootstrap.

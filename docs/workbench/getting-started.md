@@ -219,8 +219,8 @@ projects are configured.
 
 ## First Sim-To-Real Run
 
-The production loop has gated models, Isaac runtime terms/cache, private images,
-Kueue objects, and a dedicated CPU scheduling requirement. Follow the
+The production loop has gated models, Isaac runtime terms/cache, immutable images,
+bounded GPU concurrency, and a dedicated CPU scheduling requirement. Follow the
 [compositional Sim2Real operator runbook](guides/sim2real-workflow.md) in order;
 it is the authoritative copy-paste path from access checks through durable
 submit and resume. Do not adapt the older environment-variable examples: the

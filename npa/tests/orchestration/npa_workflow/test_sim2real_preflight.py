@@ -22,8 +22,6 @@ def _config(**overrides):
         "viewer_image": digest,
         "isaac_cache_pvc": "npa-isaac-cache",
         "cosmos3_model": "nvidia/Cosmos3-Super-Reasoner",
-        "gpu_queue": "sim2real-gpu",
-        "gpu_priority_class": "sim2real-production",
     }
     config.update(overrides)
     return config
@@ -146,7 +144,7 @@ def test_cpu_node_parser_requires_the_real_schedulable_profile():
     )
 
 
-def test_kubernetes_preflight_parses_nodes_pvc_queue_and_priority_class():
+def test_kubernetes_preflight_parses_nodes_and_pvc():
     calls = []
 
     def run(args):
@@ -170,8 +168,6 @@ def test_kubernetes_preflight_parses_nodes_pvc_queue_and_priority_class():
     assert [call[:2] for call in calls] == [
         ["get", "nodes"],
         ["get", "pvc"],
-        ["get", "localqueue.kueue.x-k8s.io"],
-        ["get", "priorityclass.scheduling.k8s.io"],
     ]
 
 
@@ -185,5 +181,3 @@ def test_kubernetes_preflight_reports_every_missing_cluster_object_together():
     rendered = "\n".join(item for item, _ in issues)
     assert "no Ready" in rendered
     assert "Isaac cache PVC" in rendered
-    assert "LocalQueue" in rendered
-    assert "PriorityClass" in rendered
