@@ -190,6 +190,73 @@ def test_eval_empty_pointcloud_is_skipped_before_color_reduction(
     assert not list(tmp_path.rglob("*.npz"))
 
 
+def test_eval_mismatched_pointcloud_rows_fail_closed(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A malformed point/color pair is reported instead of silently accepted."""
+
+    tree = ast.parse(ev.ISAAC_EVAL_SCRIPT)
+    capture_node = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "capture_pointcloud"
+    )
+    module = ast.Module(body=[capture_node], type_ignores=[])
+    ast.fix_missing_locations(module)
+
+    class FakeTensor:
+        def __init__(self, value: object) -> None:
+            self.value = np.asarray(value)
+
+        def __getitem__(self, index: object) -> "FakeTensor":
+            return FakeTensor(self.value[index])
+
+        def detach(self) -> "FakeTensor":
+            return self
+
+        def cpu(self) -> "FakeTensor":
+            return self
+
+        def numpy(self) -> np.ndarray:
+            return self.value
+
+    data = types.SimpleNamespace(
+        intrinsic_matrices=FakeTensor(np.eye(3)[None, ...]),
+        output={
+            "distance_to_image_plane": FakeTensor(np.ones((1, 1))),
+            "rgb": FakeTensor(np.ones((1, 1, 3))),
+        },
+        pos_w=FakeTensor(np.zeros((1, 3))),
+        quat_w_ros=FakeTensor(np.array([[1.0, 0.0, 0.0, 0.0]])),
+    )
+    namespace = {
+        "CAMERA_VIEWS": [{"name": "overhead"}],
+        "_camera_key": lambda name: name,
+        "env": types.SimpleNamespace(
+            unwrapped=types.SimpleNamespace(
+                scene={"overhead": types.SimpleNamespace(data=data)}
+            )
+        ),
+        "_create_pc": lambda **kwargs: (
+            FakeTensor(np.ones((1, 3))),
+            FakeTensor(np.empty((0, 3))),
+        ),
+        "_pc_count": {"overhead": 0},
+        "_env_id": lambda index: f"env-{index}",
+        "np": np,
+        "os": __import__("os"),
+        "rend_root": str(tmp_path),
+    }
+    exec(compile(module, "<isaac-eval-capture>", "exec"), namespace)
+
+    namespace["capture_pointcloud"]()
+
+    output = capsys.readouterr().out
+    assert "pc_capture_err overhead" in output
+    assert "point-cloud/color row mismatch" in output
+    assert not list(tmp_path.rglob("*.npz"))
+
+
 def test_eval_manifest_uses_sha_pinned_s3_scenario_transport():
     digest = "a" * 64
     uri = f"s3://b/run/scenario-input/{digest}.jsonl"

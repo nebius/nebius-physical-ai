@@ -725,13 +725,13 @@ try:
                 # color range: NumPy's max() is undefined for an empty array.  This
                 # keeps the other synchronized views usable without reporting a
                 # misleading capture exception.
-                if xyz.shape[0] == 0 or col.shape[0] == 0:
-                    continue
                 if xyz.shape[0] != col.shape[0]:
                     raise ValueError(
                         f"point-cloud/color row mismatch for {name}: "
                         f"{xyz.shape[0]} != {col.shape[0]}"
                     )
+                if xyz.shape[0] == 0:
+                    continue
                 if col.dtype != np.uint8:
                     col = (np.clip(col, 0.0, 1.0) * 255).astype(np.uint8) if col.max() <= 1.0 else col.astype(np.uint8)
                 good = np.isfinite(xyz).all(axis=1)
