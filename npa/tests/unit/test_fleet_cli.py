@@ -25,6 +25,7 @@ from npa.fleet.spec import (
     FleetSpec,
     FleetSpecError,
     NodePoolSpec,
+    ObjectStorageSpec,
     ProjectSpec,
     load_spec,
 )
@@ -219,6 +220,144 @@ def test_filestore_mount_contract_parses_and_validates() -> None:
     cluster.filestore_mount_tag = "bad tag"
     with pytest.raises(FleetSpecError, match="without whitespace or commas"):
         cluster.validate()
+
+
+def test_project_object_storage_is_separate_and_exact() -> None:
+    data = _base_mapping()
+    data["projects"] = [
+        {
+            "name": "a",
+            "object_storage": {
+                "storage_class": "enhanced",
+                "size_gibibytes": 6 * 1024,
+            },
+        }
+    ]
+
+    spec = spec_from_mapping(data)
+    project = spec.projects[0]
+    assert project.object_storage is not None
+    assert project.object_storage.enabled is True
+    assert project.object_storage.normalized_storage_class() == "enhanced_throughput"
+    assert project.object_storage.size_gibibytes == 6144
+    assert project.clusters[0].filestore_disk_size_gibibytes == 1024
+
+    from npa.fleet.lifecycle import plan_fleet
+
+    storage_plan = plan_fleet(spec)["projects"][0]["object_storage"]
+    assert storage_plan == {
+        "enabled": True,
+        "storage_class": "enhanced",
+        "size_gibibytes": 6144,
+        "bucket_name_source": "generated",
+        "retained_on_destroy": True,
+    }
+    assert "bucket_name" not in storage_plan
+
+
+@pytest.mark.parametrize(
+    ("storage", "message"),
+    [
+        (ObjectStorageSpec(enabled=True, size_gibibytes=0), "must be positive"),
+        (
+            ObjectStorageSpec(
+                enabled=True, storage_class="archive", size_gibibytes=1024
+            ),
+            "standard, enhanced, or intelligent",
+        ),
+        (
+            ObjectStorageSpec(enabled=False, size_gibibytes=1024),
+            "must be enabled",
+        ),
+    ],
+)
+def test_project_object_storage_rejects_invalid_contract(
+    storage: ObjectStorageSpec, message: str
+) -> None:
+    with pytest.raises(FleetSpecError, match=message):
+        storage.validate()
+
+
+def test_object_storage_provider_readback_requires_exact_shape() -> None:
+    from npa.fleet.lifecycle import _verify_object_storage_shape
+
+    storage = ObjectStorageSpec(
+        enabled=True, storage_class="enhanced", size_gibibytes=3 * 1024
+    )
+    item = {
+        "spec": {
+            "default_storage_class": "enhanced_throughput",
+            "max_size_bytes": str(3 * 1024**4),
+        }
+    }
+    _verify_object_storage_shape(item, storage)
+
+    item["spec"]["max_size_bytes"] = str(3 * 1024**4 - 1)
+    with pytest.raises(RuntimeError, match="exact capacity"):
+        _verify_object_storage_shape(item, storage)
+
+
+def test_project_object_storage_reconciles_and_persists_private_state(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from types import SimpleNamespace
+
+    from npa.clients import nebius as nebius_client
+    from npa.clients import storage_setup
+    from npa.fleet.lifecycle import _ensure_project_object_storage
+
+    storage = ObjectStorageSpec(
+        enabled=True, storage_class="enhanced", size_gibibytes=2 * 1024
+    )
+    project = ProjectSpec(
+        name="a",
+        clusters=[ClusterSpec(name="c", cpu_nodes=NodePoolSpec(count=1))],
+        object_storage=storage,
+    )
+    spec = FleetSpec(name="f", project_prefix="f-", projects=[project])
+    provider_item = {
+        "spec": {
+            "default_storage_class": "enhanced_throughput",
+            "max_size_bytes": str(2 * 1024**4),
+        }
+    }
+    lookups = iter([None, provider_item])
+    monkeypatch.setattr(
+        nebius_client,
+        "get_bucket_by_name",
+        lambda _project_id, _bucket_name: next(lookups),
+    )
+    calls: list[dict] = []
+
+    def fake_provision_storage(**kwargs):
+        calls.append(kwargs)
+        return {}, SimpleNamespace(ok=True)
+
+    monkeypatch.setattr(storage_setup, "provision_storage", fake_provision_storage)
+
+    result = _ensure_project_object_storage(
+        spec=spec,
+        project=project,
+        project_id="project-test",
+        tenant_id="tenant-test",
+        region="test-region",
+        profile="test-profile",
+        fleet_root=tmp_path,
+        prefix="f-",
+        on_status=None,
+    )
+
+    assert result["status"] == "ready"
+    assert result["writable"] is True
+    assert calls[0]["bucket_storage_class"] == "enhanced_throughput"
+    assert calls[0]["bucket_max_size_bytes"] == 2 * 1024**4
+    assert calls[0]["project_alias"] == "f-a"
+    state = json.loads(
+        (tmp_path / "a" / ".npa-fleet-object-storage.json").read_text()
+    )
+    assert state["project_id"] == "project-test"
+    assert state["storage_class"] == "enhanced_throughput"
+    assert state["size_gibibytes"] == 2048
 
 
 def test_cluster_needs_at_least_one_node() -> None:

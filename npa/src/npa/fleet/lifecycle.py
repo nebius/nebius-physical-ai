@@ -17,7 +17,9 @@ verification/reconciliation, and exact-identity destroy for one target.
 from __future__ import annotations
 
 import concurrent.futures
+from contextlib import contextmanager
 from dataclasses import replace
+import hashlib
 import json
 import logging
 import os
@@ -74,7 +76,7 @@ from npa.soperator.lifecycle import (
     SoperatorStateCaptureError,
 )
 from npa.cluster_backends.quotas import preflight_region, shortfall_message
-from npa.fleet.spec import ClusterSpec, FleetSpec, ProjectSpec
+from npa.fleet.spec import ClusterSpec, FleetSpec, ObjectStorageSpec, ProjectSpec
 from npa.cluster_backends.mk8s_render import (
     validate_recipe_mig_compatibility,
 )
@@ -201,8 +203,10 @@ _FILESYSTEM_VERIFIER = (
 )
 _ENV_SIDECAR = ".npa-fleet-env.json"
 _PROJECT_NETWORK_STATE = ".npa-fleet-network.json"
+_PROJECT_OBJECT_STORAGE_STATE = ".npa-fleet-object-storage.json"
 _FLEET_STATE = "fleet-state.json"
 _MIN_TERRAFORM_VERSION = (1, 12, 0)
+_STORAGE_PROFILE_LOCK = threading.RLock()
 
 
 def _project_in_scope(
@@ -938,6 +942,156 @@ def _default_work_root() -> Path:
     return (Path.home() / ".npa" / "fleet").expanduser()
 
 
+def _object_storage_plan(storage: ObjectStorageSpec | None) -> dict[str, Any]:
+    if storage is None or not storage.enabled:
+        return {"enabled": False}
+    return {
+        "enabled": True,
+        "storage_class": storage.display_storage_class(),
+        "size_gibibytes": storage.size_gibibytes,
+        "bucket_name_source": "explicit" if storage.bucket_name else "generated",
+        "retained_on_destroy": True,
+    }
+
+
+def _fleet_bucket_name(*, fleet_name: str, tenant_id: str, project_id: str) -> str:
+    """Derive a private, stable, globally unique bucket name for one project."""
+
+    digest = hashlib.sha256(
+        f"{tenant_id}\0{project_id}\0{fleet_name}".encode()
+    ).hexdigest()[:32]
+    return f"npa-fleet-{digest}"
+
+
+@contextmanager
+def _storage_profile_scope(profile: str):
+    """Pin legacy storage bootstrap subprocesses to the Fleet profile safely."""
+
+    with _STORAGE_PROFILE_LOCK:
+        previous = {
+            key: os.environ.get(key)
+            for key in ("NEBIUS_PROFILE", "NPA_NEBIUS_PROFILE")
+        }
+        try:
+            if profile:
+                os.environ["NEBIUS_PROFILE"] = profile
+                os.environ["NPA_NEBIUS_PROFILE"] = profile
+            yield
+        finally:
+            for key, value in previous.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+
+
+def _verify_object_storage_shape(
+    item: dict[str, Any] | None, storage: ObjectStorageSpec
+) -> None:
+    """Require exact provider read-back for class and binary capacity cap."""
+
+    if not isinstance(item, dict):
+        raise RuntimeError("object-storage bucket was not found after reconciliation")
+    provider_spec = item.get("spec")
+    if not isinstance(provider_spec, dict):
+        raise RuntimeError("object-storage bucket returned no provider spec")
+    from npa.clients.nebius import normalize_bucket_storage_class
+
+    actual_class = normalize_bucket_storage_class(
+        str(provider_spec.get("default_storage_class", ""))
+    )
+    expected_class = storage.normalized_storage_class()
+    try:
+        actual_bytes = int(provider_spec.get("max_size_bytes", 0) or 0)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("object-storage bucket returned an invalid capacity cap") from exc
+    expected_bytes = storage.size_gibibytes * 1024**3
+    if actual_class != expected_class or actual_bytes != expected_bytes:
+        raise RuntimeError(
+            "existing object-storage bucket does not match the requested "
+            "storage class and exact capacity cap"
+        )
+
+
+def _ensure_project_object_storage(
+    *,
+    spec: FleetSpec,
+    project: ProjectSpec,
+    project_id: str,
+    tenant_id: str,
+    region: str,
+    profile: str,
+    fleet_root: Path,
+    prefix: str,
+    on_status: Callable[[str], None] | None,
+) -> dict[str, Any]:
+    storage = project.object_storage
+    if storage is None or not storage.enabled:
+        return {"enabled": False}
+
+    from npa.clients import nebius as nebius_client
+    from npa.clients.storage_setup import provision_storage
+
+    state_path = fleet_root / project.key() / _PROJECT_OBJECT_STORAGE_STATE
+    saved = _load_json_file(state_path)
+    saved_project = str(saved.get("project_id") or "")
+    if saved_project and saved_project != project_id:
+        raise RuntimeError(
+            "object-storage state belongs to a different provider project"
+        )
+    generated_name = _fleet_bucket_name(
+        fleet_name=spec.name, tenant_id=tenant_id, project_id=project_id
+    )
+    bucket_name = storage.bucket_name or str(saved.get("bucket_name") or generated_name)
+    _log(
+        on_status,
+        f"project {project.key()}: reconciling {storage.display_storage_class()} "
+        f"object storage ({storage.size_gibibytes} GiB cap)",
+    )
+    with _storage_profile_scope(profile):
+        existing = nebius_client.get_bucket_by_name(project_id, bucket_name)
+        if existing is not None:
+            _verify_object_storage_shape(existing, storage)
+        _credentials, probe = provision_storage(
+            project_id=project_id,
+            tenant_id=tenant_id,
+            region=region,
+            bucket_name=bucket_name,
+            project_alias=project.display_name(prefix),
+            bucket_max_size_bytes=storage.size_gibibytes * 1024**3,
+            bucket_storage_class=storage.normalized_storage_class(),
+            allow_existing_bucket=True,
+            on_status=(
+                (lambda message: _log(on_status, f"object storage: {message}"))
+                if on_status
+                else None
+            ),
+        )
+        verified = nebius_client.get_bucket_by_name(project_id, bucket_name)
+        _verify_object_storage_shape(verified, storage)
+    if not probe.ok:
+        raise RuntimeError("object-storage write/read/delete probe did not pass")
+    _write_json_file(
+        state_path,
+        {
+            "project_id": project_id,
+            "bucket_name": bucket_name,
+            "storage_class": storage.normalized_storage_class(),
+            "size_gibibytes": storage.size_gibibytes,
+            "status": "ready",
+            "retained_on_destroy": True,
+        },
+    )
+    return {
+        "enabled": True,
+        "status": "ready",
+        "storage_class": storage.display_storage_class(),
+        "size_gibibytes": storage.size_gibibytes,
+        "writable": True,
+        "retained_on_destroy": True,
+    }
+
+
 def plan_fleet(
     spec: FleetSpec,
     *,
@@ -1014,6 +1168,7 @@ def plan_fleet(
                 "project_id": project.project_id or None,
                 "display_name": project.display_name(prefix) or None,
                 "will_create": not project.project_id,
+                "object_storage": _object_storage_plan(project.object_storage),
                 "clusters": clusters,
             }
         )
@@ -1574,6 +1729,17 @@ def _deploy_mk8s_fleet(
                     profile=nebius_profile,
                     on_status=on_status,
                 )
+            object_storage = _ensure_project_object_storage(
+                spec=spec,
+                project=project,
+                project_id=project_id,
+                tenant_id=tenant_id,
+                region=region,
+                profile=nebius_profile,
+                fleet_root=fleet_root,
+                prefix=prefix,
+                on_status=on_status,
+            )
             shared_subnet_id = ""
             if any(not cluster.subnet_id for cluster in scoped_clusters):
                 shared_subnet_id, _created_network_id = ensure_subnet(
@@ -1604,6 +1770,7 @@ def _deploy_mk8s_fleet(
                     "created": created,
                     "region": region,
                     "subnet_id": cluster.subnet_id or shared_subnet_id,
+                    "object_storage": object_storage,
                 }
             )
 
@@ -1637,7 +1804,7 @@ def _deploy_mk8s_fleet(
             _deploy_one_cluster is not _LEGACY_DEPLOY_COMPAT
             or _legacy_helpers_patched()
         ):
-            return _deploy_one_cluster(
+            result = _deploy_one_cluster(
                 spec=spec,
                 project=t["project"],
                 cluster=t["cluster"],
@@ -1657,7 +1824,9 @@ def _deploy_mk8s_fleet(
                 log_path=log_path,
                 repair_stopped_placeholder=repair_stopped_placeholder,
             )
-        return get_backend("mk8s").apply(
+            result["object_storage"] = t["object_storage"]
+            return result
+        result = get_backend("mk8s").apply(
             t["cluster"],
             MK8sApplyRequest(
                 scope=MK8sExecutionScope(
@@ -1689,6 +1858,8 @@ def _deploy_mk8s_fleet(
                 repair_stopped_placeholder=repair_stopped_placeholder,
             ),
         )
+        result["object_storage"] = t["object_storage"]
+        return result
 
     # Phase 2: apply -- sequentially (live stdout) or in a bounded thread pool.
     if parallel:

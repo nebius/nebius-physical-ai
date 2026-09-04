@@ -131,6 +131,60 @@ class NodePoolSpec:
 
 
 @dataclass
+class ObjectStorageSpec:
+    """Project-scoped object storage provisioned independently of cluster disks."""
+
+    enabled: bool = False
+    storage_class: str = "standard"
+    size_gibibytes: int = 0
+    # Optional exact runtime name. Leave empty in public specs so Fleet derives
+    # a stable globally unique name from private provider identities.
+    bucket_name: str = field(default="", repr=False)
+
+    def normalized_storage_class(self) -> str:
+        normalized = self.storage_class.strip().lower().replace("-", "_")
+        aliases = {
+            "standard": "standard",
+            "enhanced": "enhanced_throughput",
+            "enhanced_throughput": "enhanced_throughput",
+            "intelligent": "intelligent",
+        }
+        return aliases.get(normalized, normalized)
+
+    def display_storage_class(self) -> str:
+        normalized = self.normalized_storage_class()
+        return "enhanced" if normalized == "enhanced_throughput" else normalized
+
+    def validate(self) -> None:
+        if not self.enabled:
+            if self.size_gibibytes or self.bucket_name:
+                raise FleetSpecError(
+                    "object_storage must be enabled when size_gibibytes or "
+                    "bucket_name is set"
+                )
+            return
+        if self.normalized_storage_class() not in {
+            "standard",
+            "enhanced_throughput",
+            "intelligent",
+        }:
+            raise FleetSpecError(
+                "object_storage.storage_class must be standard, enhanced, or intelligent"
+            )
+        if self.size_gibibytes <= 0:
+            raise FleetSpecError(
+                "object_storage.size_gibibytes must be positive when enabled"
+            )
+        if self.bucket_name and (
+            len(self.bucket_name) > 63
+            or self.bucket_name != _slug(self.bucket_name)
+        ):
+            raise FleetSpecError(
+                "object_storage.bucket_name must be a lowercase DNS-style bucket name"
+            )
+
+
+@dataclass
 class ClusterSpec:
     """One managed Kubernetes cluster (a single k8s-training deployment)."""
 
@@ -454,6 +508,9 @@ class ProjectSpec:
     project_id: str = ""  # existing project id (used verbatim when set)
     region: str = ""  # per-project region override
     clusters: list[ClusterSpec] = field(default_factory=list)
+    # Object storage is a project resource, not a filesystem attachment or a
+    # Kubernetes backend option. Declared last for positional SDK compatibility.
+    object_storage: ObjectStorageSpec | None = None
 
     def key(self) -> str:
         """Stable local key for install/state dirs (never used as a cloud name)."""
@@ -478,6 +535,8 @@ class ProjectSpec:
             raise FleetSpecError(
                 f"project {self.name or self.project_id!r}: no clusters resolved"
             )
+        if self.object_storage is not None:
+            self.object_storage.validate()
         seen: set[str] = set()
         for cluster in self.clusters:
             cluster.validate()
@@ -621,6 +680,26 @@ def _cluster_from(
         mig=mig,
         backend="mk8s",
         backend_explicit=backend_explicit,
+    )
+
+
+def _object_storage_from(data: Any) -> ObjectStorageSpec | None:
+    if data is None:
+        return None
+    if not isinstance(data, dict):
+        raise FleetSpecError("project.object_storage must be a mapping")
+    unknown = sorted(
+        set(data) - {"enabled", "storage_class", "size_gibibytes", "bucket_name"}
+    )
+    if unknown:
+        raise FleetSpecError(
+            "project.object_storage has unsupported field(s): " + ", ".join(unknown)
+        )
+    return ObjectStorageSpec(
+        enabled=bool(data.get("enabled", True)),
+        storage_class=str(data.get("storage_class", "standard") or "standard"),
+        size_gibibytes=int(data.get("size_gibibytes", 0) or 0),
+        bucket_name=str(data.get("bucket_name", "") or "").strip(),
     )
 
 
@@ -883,6 +962,7 @@ def spec_from_mapping(data: dict[str, Any]) -> FleetSpec:
                 project_id=str(entry.get("project_id", "") or ""),
                 region=str(entry.get("region", "") or ""),
                 clusters=clusters,
+                object_storage=_object_storage_from(entry.get("object_storage")),
             )
         )
 

@@ -57,6 +57,14 @@ fleets are just project entries with no overrides. Projects may declare custom
 freely **mixed**. Projects reference an existing `project_id` or a `name` that is
 created on demand as `project_prefix` + `name`.
 
+Project-scoped `object_storage` is independent of a cluster's shared
+filesystem. `storage_class: enhanced` maps to Nebius Enhanced Throughput,
+`size_gibibytes` becomes the bucket's exact binary capacity cap, and deploy
+requires provider read-back plus a write/read/delete probe. Leave `bucket_name`
+empty in public specs so Fleet derives a stable private name at runtime. Fleet
+retains buckets and durable artifacts on cluster destroy; explicit
+`npa storage bucket delete` remains the destructive cleanup boundary.
+
 ```yaml
 apiVersion: npa.fleet/v0.0.1
 name: fleet1-test
@@ -89,6 +97,10 @@ defaults:
   filesystem_csi_chart_repository: ""
 projects:
   - name: a                  # -> project fleet1-test-a (identical profile)
+    object_storage:          # separate from enable_filestore
+      enabled: true
+      storage_class: enhanced
+      size_gibibytes: 1024
   - name: b                  # -> project fleet1-test-b (identical profile)
   # - name: c                # custom: overrides + a second cluster
   #   clusters:
