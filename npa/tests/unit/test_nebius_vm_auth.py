@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import subprocess
 from io import StringIO
 from urllib.parse import quote
 
@@ -11,7 +10,6 @@ from npa.clients.nebius_vm_auth import (
     parse_auth_transcript,
     redact_auth_output,
     ssh_localhost_forward,
-    verify_profile,
 )
 from npa.clients import nebius_vm_auth
 
@@ -98,45 +96,6 @@ def test_redaction_removes_tokens_and_urls() -> None:
     assert "abcdefghijklmnopqrstuvwxyz" not in redacted
     assert "https://" not in redacted
     assert "[REDACTED]" in redacted
-
-
-def test_profile_readiness_scrubs_ambient_tokens_and_discards_output() -> None:
-    calls: list[tuple[list[str], dict]] = []
-
-    def runner(command, **kwargs):
-        calls.append((command, kwargs))
-        return subprocess.CompletedProcess(command, 0, stdout="must-not-surface")
-
-    result = verify_profile(
-        "operator",
-        env={
-            "PATH": "/bin",
-            "NEBIUS_IAM_TOKEN": "stale",
-            "NEBIUS_IAM_TOKEN_FILE": "/tmp/stale",
-        },
-        runner=runner,
-    )
-    assert result.identity_verified is True
-    assert result.iam_token_minted is True
-    assert [call[0][-2:] for call in calls] == [
-        ["iam", "whoami"],
-        ["iam", "get-access-token"],
-    ]
-    assert all(call[1]["stdout"] is subprocess.DEVNULL for call in calls)
-    assert all("NEBIUS_IAM_TOKEN" not in call[1]["env"] for call in calls)
-    assert all("NEBIUS_IAM_TOKEN_FILE" not in call[1]["env"] for call in calls)
-
-
-def test_profile_readiness_reports_failed_identity_without_token_text() -> None:
-    returncodes = iter([1, 0])
-
-    def runner(command, **kwargs):
-        return subprocess.CompletedProcess(command, next(returncodes))
-
-    result = verify_profile("operator", runner=runner)
-    assert result.identity_verified is False
-    assert result.iam_token_minted is True
-    assert not hasattr(result, "token")
 
 
 def test_already_authenticated_profile_never_starts_browser_flow(monkeypatch) -> None:

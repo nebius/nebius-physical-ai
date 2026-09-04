@@ -76,11 +76,14 @@ image reference or an explicit workflow `--registry`.
 
 ```bash
 npa workbench health preflight --json
+npa workbench health preflight --checks nebius --json
 npa workbench health access --capability <the-one-you-will-run> --json
 ```
 
-**Gate:** both exit zero. `preflight` covers Hugging Face, NGC, S3, and Token
-Factory presence and authentication; `access` proves your token is actually
+**Gate:** all three exit zero. The default `preflight` covers Hugging Face, NGC,
+S3, and Token Factory presence and authentication. The explicit `nebius` check
+proves the selected Nebius CLI profile can resolve identity and mint an IAM
+token before provisioning. `access` proves your token is actually
 entitled to the gated models a given capability pulls. Gated Hugging Face
 licenses can only be accepted interactively on the model page — `access` prints
 the exact URL, and nothing else will clear the gate. Full detail in
@@ -208,7 +211,8 @@ audit.
   status` wants `--run-id`, and `token-factory status` takes neither — so check
   `--help` rather than assuming a common shape.
 - **`--offline` on health checks proves presence, not validity.** An expired token
-  passes offline and fails on first pull.
+  can pass a presence check and fail on first pull. The `nebius` check returns
+  SKIP offline because profile configuration is not authentication proof.
 
 ## Verify
 

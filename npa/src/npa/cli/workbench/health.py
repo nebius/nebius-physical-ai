@@ -19,10 +19,12 @@ import typer
 from npa.clients.credentials import load_credentials
 from npa.clients.huggingface import validate_hf_access, validate_hf_identity
 from npa.clients.kube import run_kubectl
+from npa.clients.nebius_auth import ProfileVerification, nebius_profile, verify_profile
 from npa.clients.storage import StorageClient
 from npa.guardrails.skypilot import inspect_image_exists
 from npa.workflows.credential_preflight import (
-    CREDENTIAL_CHECKS,
+    DEFAULT_CREDENTIAL_CHECKS,
+    SUPPORTED_CREDENTIAL_CHECKS,
     CredentialProbes,
     run_credential_preflight,
 )
@@ -112,27 +114,36 @@ def _ngc_auth_verifier(api_key: str) -> str:
     return check_ngc_image_access(api_key)
 
 
+def _nebius_profile_verifier() -> ProfileVerification:
+    """Verify the selected Nebius CLI profile without surfacing provider output."""
+
+    return verify_profile(nebius_profile())
+
+
 @app.command("preflight")
 def preflight_command(
     checks: str = typer.Option(
-        ",".join(CREDENTIAL_CHECKS),
+        ",".join(DEFAULT_CREDENTIAL_CHECKS),
         "--checks",
         help=(
             "Comma-separated checks to run, or 'all'. "
-            f"Choices: all, {', '.join(CREDENTIAL_CHECKS)}."
+            f"Choices: all, {', '.join(SUPPORTED_CREDENTIAL_CHECKS)}."
         ),
     ),
     offline: bool = typer.Option(
         False,
         "--offline",
-        help="Skip live network probes (HF/NGC/S3/Token Factory); only check presence.",
+        help=(
+            "Skip live provider probes; credential checks use presence only and "
+            "Nebius CLI authentication is skipped."
+        ),
     ),
     warn_only: bool = typer.Option(
         False, "--warn-only", help="Exit 0 even when a check fails."
     ),
     output_json: bool = typer.Option(False, "--json", help="Print the report as JSON."),
 ) -> None:
-    """Validate HF, NGC, S3, and Token Factory credentials before a deploy or GPU job.
+    """Validate service credentials and optional Nebius CLI authentication.
 
     A single PASS/WARN/FAIL/SKIP report over the credentials nearly every
     workbench tool needs, so cold-start credential gaps surface here instead of
@@ -141,11 +152,12 @@ def preflight_command(
 
     selected = [item.strip() for item in checks.split(",") if item.strip()]
     if "all" in selected:
-        selected = list(CREDENTIAL_CHECKS)
-    unknown = [item for item in selected if item not in CREDENTIAL_CHECKS]
+        selected = list(SUPPORTED_CREDENTIAL_CHECKS)
+    unknown = [item for item in selected if item not in SUPPORTED_CREDENTIAL_CHECKS]
     if unknown:
         raise typer.BadParameter(
-            f"unknown check(s): {', '.join(unknown)}. Choices: {', '.join(CREDENTIAL_CHECKS)}."
+            "unknown check(s): "
+            f"{', '.join(unknown)}. Choices: {', '.join(SUPPORTED_CREDENTIAL_CHECKS)}."
         )
 
     credentials = load_credentials()
@@ -163,6 +175,7 @@ def preflight_command(
                 aws_secret_access_key=credentials.s3_secret_access_key,
             ),
             token_factory_verifier=_token_factory_verifier,
+            nebius_profile_verifier=_nebius_profile_verifier,
         )
 
     results = run_credential_preflight(credentials, probes=probes, checks=selected)

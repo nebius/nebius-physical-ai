@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 
+import pytest
 from typer.testing import CliRunner
 
 from npa.cli.main import app
@@ -179,6 +180,188 @@ def test_preflight_json_offline(monkeypatch) -> None:
         "s3",
         "token_factory",
     }
+
+
+def test_preflight_offline_all_includes_nebius_as_skip(monkeypatch) -> None:
+    from npa.cli.workbench import health as health_module
+
+    monkeypatch.setattr(
+        health_module, "load_credentials", lambda *a, **k: _EmptyCreds()
+    )
+    monkeypatch.setattr(
+        health_module,
+        "_nebius_profile_verifier",
+        lambda: (_ for _ in ()).throw(AssertionError("offline must not invoke CLI")),
+    )
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "health",
+            "preflight",
+            "--offline",
+            "--checks",
+            "all",
+            "--json",
+        ],
+    )
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    nebius = next(check for check in payload["checks"] if check["name"] == "nebius")
+    assert nebius["status"] == "SKIP"
+    assert "not verified" in nebius["summary"]
+
+
+def test_preflight_live_nebius_uses_secret_free_profile_verifier(monkeypatch) -> None:
+    from npa.cli.workbench import health as health_module
+    from npa.clients.nebius_auth import ProfileVerification
+
+    monkeypatch.setattr(health_module, "load_credentials", lambda: _EmptyCreds())
+    monkeypatch.setattr(
+        health_module,
+        "_nebius_profile_verifier",
+        lambda: ProfileVerification("operator", True, True),
+    )
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "health",
+            "preflight",
+            "--checks",
+            "nebius",
+            "--json",
+        ],
+    )
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["ok"] is True
+    assert payload["checks"] == [
+        {
+            "details": [],
+            "name": "nebius",
+            "remedy": "",
+            "status": "PASS",
+            "summary": "Configured Nebius CLI profile is authenticated.",
+        }
+    ]
+    assert "operator" not in result.output
+
+
+def test_preflight_live_nebius_failure_exits_nonzero_without_provider_output(
+    monkeypatch,
+) -> None:
+    from npa.cli.workbench import health as health_module
+    from npa.clients.nebius_auth import ProfileVerification
+
+    monkeypatch.setattr(health_module, "load_credentials", lambda: _EmptyCreds())
+    monkeypatch.setattr(
+        health_module,
+        "_nebius_profile_verifier",
+        lambda: ProfileVerification("synthetic-secret-profile", True, False),
+    )
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "health",
+            "preflight",
+            "--checks",
+            "nebius",
+            "--json",
+        ],
+    )
+    assert result.exit_code == 1
+    payload = json.loads(result.output)
+    assert payload["ok"] is False
+    assert payload["checks"][0]["status"] == "FAIL"
+    assert "could not mint" in payload["checks"][0]["summary"]
+    assert "synthetic-secret-profile" not in result.output
+
+
+def test_preflight_live_all_runs_nebius_and_preserves_service_checks(
+    monkeypatch,
+) -> None:
+    from npa.cli.workbench import health as health_module
+    from npa.clients.nebius_auth import ProfileVerification
+
+    calls: list[str] = []
+    monkeypatch.setattr(health_module, "load_credentials", lambda: _EmptyCreds())
+    monkeypatch.setattr(
+        health_module,
+        "_nebius_profile_verifier",
+        lambda: calls.append("nebius") or ProfileVerification("", True, True),
+    )
+    result = runner.invoke(
+        app,
+        ["workbench", "health", "preflight", "--checks", "all", "--json"],
+    )
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert [check["name"] for check in payload["checks"]] == [
+        "hf",
+        "ngc",
+        "s3",
+        "token_factory",
+        "nebius",
+    ]
+    assert calls == ["nebius"]
+
+
+def test_preflight_live_token_factory_only_does_not_run_nebius(monkeypatch) -> None:
+    from npa.cli.workbench import health as health_module
+
+    monkeypatch.setattr(health_module, "load_credentials", lambda: _EmptyCreds())
+    monkeypatch.setattr(
+        health_module,
+        "_nebius_profile_verifier",
+        lambda: (_ for _ in ()).throw(AssertionError("Nebius check was not selected")),
+    )
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "health",
+            "preflight",
+            "--checks",
+            "token_factory",
+            "--json",
+        ],
+    )
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert [check["name"] for check in payload["checks"]] == ["token_factory"]
+
+
+@pytest.mark.parametrize(
+    ("failure_reason", "expected_summary"),
+    [
+        ("cli_unavailable", "Nebius CLI is not available."),
+        ("timeout", "Nebius CLI authentication check timed out."),
+    ],
+)
+def test_preflight_live_nebius_renders_execution_failure_without_profile_name(
+    monkeypatch, failure_reason: str, expected_summary: str
+) -> None:
+    from npa.cli.workbench import health as health_module
+    from npa.clients.nebius_auth import ProfileVerification
+
+    monkeypatch.setattr(health_module, "load_credentials", lambda: _EmptyCreds())
+    monkeypatch.setattr(
+        health_module,
+        "_nebius_profile_verifier",
+        lambda: ProfileVerification(
+            "synthetic-secret-profile", False, False, failure_reason
+        ),
+    )
+    result = runner.invoke(
+        app,
+        ["workbench", "health", "preflight", "--checks", "nebius", "--json"],
+    )
+    assert result.exit_code == 1
+    payload = json.loads(result.output)
+    assert payload["checks"][0]["summary"] == expected_summary
+    assert "synthetic-secret-profile" not in result.output
 
 
 def test_preflight_selected_check(monkeypatch) -> None:
