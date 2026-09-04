@@ -575,7 +575,7 @@ _DEFAULT_TOOL_IMAGE_TAGS: dict[str, tuple[str, str]] = {
     ),
     "isaac-lab": (
         "npa-isaac-lab",
-        "3.0.0b2.post1-sim2real-coherent-20260903",
+        "3.0.0b2.post1-sim2real-coherent-20260904",
     ),
 }
 

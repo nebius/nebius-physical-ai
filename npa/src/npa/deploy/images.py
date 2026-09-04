@@ -156,7 +156,7 @@ PUBLIC_RELEASE_TAG_OVERRIDES: dict[str, str] = {
     # ray-node container, and the stage retries forever. The 20260903 build is
     # attested (org.nebius.npa.skypilot-bootstrap-contract=skypilot-0.12.2-v1)
     # and anonymously pullable from GHCR.
-    "rerun-viewer": "0.31.4-sim2real-coherent-20260903",
+    "rerun-viewer": "0.31.4-sim2real-coherent-20260904",
 }
 
 # Release promotion for the rebuilt surfaces is bound to the exact manifests
@@ -200,13 +200,13 @@ SUPPORTED_TOOL_VERSIONS = {
     # Default LeRobot image release. Selectable package versions and their
     # image tags live in lerobot_version_manifest.json.
     "lerobot": "cuda13-b300-0.5.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
-    "sim2real-control": "0.1.2-sim2real-coherent-20260903",
+    "sim2real-control": "0.1.2-sim2real-coherent-20260904",
     "lerobot-policy": "0.1.1",
     "genesis": "cuda13-b300-0.4.6-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
-    "isaac-lab": "3.0.0b2.post1-sim2real-coherent-20260903",
+    "isaac-lab": "3.0.0b2.post1-sim2real-coherent-20260904",
     "leisaac": "0.4.0-20260817T231825Z",
     "cosmos": "cu128-torch27-sm100-1.0.9-20260803T002017Z",
-    "cosmos2-transfer": "2.5.1-sim2real-coherent-20260903",
+    "cosmos2-transfer": "2.5.1-sim2real-coherent-20260904",
     # Additive r2 release of cosmos-framework 1.2.2 (pinned commit 5e67049c) +
     # torch cu130. The immutable predecessor remains rollback provenance.
     # No weights baked; gated Cosmos3 checkpoints download at runtime.
@@ -222,12 +222,12 @@ SUPPORTED_TOOL_VERSIONS = {
     "sonic": "cuda13-b300-0.1.2-k8s-runtime-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
     "sonic-mujoco": "0.2.0-runtime",
     "retargeting": "0.1.1",
-    "envgen": "0.1.2-sim2real-coherent-20260903",
+    "envgen": "0.1.2-sim2real-coherent-20260904",
     "robocasa": "0.1.0",
     "reference-policy": "cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
     "lerobot-vlm-rl": "cuda13-b300-0.1.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
     "loop-eval": "cuda13-b300-0.1.3-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
-    "rerun-viewer": "0.31.4-sim2real-coherent-20260903",
+    "rerun-viewer": "0.31.4-sim2real-coherent-20260904",
     # Tracks the pinned @foxglove/embed SDK release (npa.workbench.foxglove).
     "foxglove-embed": "0.58.0",
     # Lichtblick (MPL-2.0): OSS, Foxglove-compatible static web viewer bundle.

@@ -28,7 +28,7 @@ ENDPOINT_URL = "https://storage.eu-north1.nebius.cloud"
 WORKBENCH_NAME = "l40s-isaac-lab"
 ISAAC_LAB_IMAGE = (
     "ghcr.io/nebius/nebius-physical-ai/"
-    "npa-isaac-lab:3.0.0b2.post1-sim2real-coherent-20260903"
+    "npa-isaac-lab:3.0.0b2.post1-sim2real-coherent-20260904"
 )
 GPU_TYPE = "gpu-l40s-d"
 GPU_PRESET = "1gpu-16vcpu-96gb"
@@ -53,7 +53,7 @@ def test_isaac_lab_e2e_config_shape() -> None:
     )
 
     assert ISAAC_LAB_IMAGE.endswith(
-        "/npa-isaac-lab:3.0.0b2.post1-sim2real-coherent-20260903"
+        "/npa-isaac-lab:3.0.0b2.post1-sim2real-coherent-20260904"
     )
     assert command[:7] == ["workbench", "isaac-lab", "-p", PROJECT_ALIAS, "-n", WORKBENCH_NAME, "train"]
     assert "--subnet-id" not in command

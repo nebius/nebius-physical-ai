@@ -162,7 +162,7 @@ export ENVGEN_IMAGE='ghcr.io/nebius/nebius-physical-ai/npa-envgen@sha256:33d49af
 export ISAAC_IMAGE="${NPA_ISAAC_IMAGE}"
 export VIEWER_IMAGE='ghcr.io/nebius/nebius-physical-ai/npa-rerun-viewer@sha256:8fc0a76f3df441fd6662e3eb5d893c9996ea66e6c61fcc815de79576f12b8160'
 export SPEC=npa/workflows/workbench/npa-workflows/sim2real.yaml
-export SOURCE_SHA=d099b1f93cb38de8d26b04b3bb0bb9a054841c6a
+export SOURCE_SHA=c164fd3480f8a9ea8f9df9ccb9509502fd527996
 
 npa/.venv/bin/npa workbench workflow preflight-images "${SPEC}" \
   --project "${NPA_PROJECT}" \

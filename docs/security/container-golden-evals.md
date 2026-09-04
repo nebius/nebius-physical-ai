@@ -106,10 +106,10 @@ flowchart TB
 | `lerobot-policy` | `0.1.1` | container-smoke | short train; short eval on checkpoint | optional | gpu-gated |
 | `lerobot-vlm-rl` | `0.1.1` | container-smoke | CUDA; VLM signal parse + RL step | required | gpu-gated |
 | `genesis` | `0.4.6` | container-smoke | import; Franka scene; step; body state | required | gpu-gated |
-| `isaac-lab` | `3.0.0b2.post1-sim2real-coherent-20260903` | container-smoke | version; runtime; vectorized environment steps and replay; separately validated RTX/Vulkan render | required | gpu-gated |
+| `isaac-lab` | `3.0.0b2.post1-sim2real-coherent-20260904` | container-smoke | version; runtime; vectorized environment steps and replay; separately validated RTX/Vulkan render | required | gpu-gated |
 | `content-agents` | `0.5.2-npa2` | container-smoke | exact OVRTX runtime fetch; real rigid-physics authoring; upstream validation + render | required | gpu-gated |
 | `cosmos` | `cu128-torch27-sm100-1.0.9-20260803T002017Z` | container-smoke | version; model load; single inference (safety on) | required | gpu-gated |
-| `cosmos2-transfer` | `2.5.1-sim2real-coherent-20260903` | container-smoke | procedural input; four real diffusion steps; decoded, numerically validated output MP4; guardrails enabled | required | gpu-gated |
+| `cosmos2-transfer` | `2.5.1-sim2real-coherent-20260904` | container-smoke | procedural input; four real diffusion steps; decoded, numerically validated output MP4; guardrails enabled | required | gpu-gated |
 | `cosmos3` | `1.2.2-cu130-r6` | container-smoke | real Cosmos 3 text2image generation; decodable image; guardrails on | required | gpu-gated |
 | `cosmos3-reason` | `cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z` | container-smoke | CUDA; real Reason VLM pass | optional | gpu-gated |
 | `sonic` | `0.1.2` | entrypoint-smoke | `/entrypoint.sh smoke`; GPU proofs; JSON artifact | required | gpu-gated |
@@ -117,11 +117,11 @@ flowchart TB
 | `fiftyone` | `1.15.0.post1` | container-smoke | import+version; CLI; app config (env smoke) | none | ready |
 | `lancedb` | `0.30.3` | server-smoke | server start; create table; vector query; list | optional | ready |
 | `detection-training` | `bdd100k-golden-eval-smoke-*` | server-smoke | server start; `/health`; `/system-info` | optional | ready |
-| `sim2real-control` | `0.1.2-sim2real-coherent-20260903` | container-smoke | load canonical graph; expand promote and loop-back plans across all 14 stages; exact-source guard | none | ready |
-| `envgen` | `0.1.2-sim2real-coherent-20260903` | container-smoke | raw envgen JSONL; Genesis CUDA physics step | optional | gpu-gated |
+| `sim2real-control` | `0.1.2-sim2real-coherent-20260904` | container-smoke | load canonical graph; expand promote and loop-back plans across all 14 stages; exact-source guard | none | ready |
+| `envgen` | `0.1.2-sim2real-coherent-20260904` | container-smoke | raw envgen JSONL; Genesis CUDA physics step | optional | gpu-gated |
 | `reference-policy` | `0.1.2` | container-smoke | policy contract (envgen functional delegate) | optional | gpu-gated |
 | `loop-eval` | `cuda13-b300-0.1.3-sm80-sm90-sm100-sm103-sm120-20260803T034152Z` | container-smoke | CUDA; FrankaPickPlace rollout step | optional | gpu-gated |
-| `rerun-viewer` | `0.31.4-sim2real-coherent-20260903` | container-smoke | robotics trace → RRD; CLI verify/read; HTTP viewer serve/read | none | ready |
+| `rerun-viewer` | `0.31.4-sim2real-coherent-20260904` | container-smoke | robotics trace → RRD; CLI verify/read; HTTP viewer serve/read | none | ready |
 | `foxglove-embed` | `0.58.0` | server-smoke | health + pinned SDK version; real `@foxglove/embed` (FoxgloveViewer + embed handshake); NPA glue module; host page; `/data` 206 byte range; Range CORS preflight | none | ready |
 
 Machine-readable probes: ``npa/src/npa/smoke/capabilities.py`` (enforced by
@@ -159,11 +159,11 @@ re-verified by building the images from source and running the eval:
 | `genesis` | fix verified | `_versions` unit test | py3.10 import fix; full GPU run still pending |
 | `isaac-lab` | command fixed | static + manifest | standalone-script command; GPU run pending |
 
-### Coherent Sim2Real release (2026-09-03)
+### Coherent Sim2Real release (2026-09-04)
 
 The controller, Cosmos Transfer, EnvGen, Isaac Lab, and Rerun viewer were built
 from the one reviewed source SHA
-`45e1128113abd4c03fe95f17bbcab5da333134b9`. Each exact development digest
+`c164fd3480f8a9ea8f9df9ccb9509502fd527996`. Each exact development digest
 passed the mandatory build, SBOM, provenance, vulnerability, secret, license,
 payload/history, and anonymous-pull gates before it was functionally validated
 and promoted byte-for-byte to its additive supported tag.
@@ -175,8 +175,12 @@ physics step; three distinct nondegenerate 512×512 Isaac RayTracedLighting
 frames over Vulkan on RTX PRO 6000; and Rerun conversion, independent reopen,
 serve, and read of an actual robotics trace. Empty-config checks resolved all
 five development digests twice and all five release tags once with identical
-digests. This validates the image set and its individual capabilities; it does
-not represent a completed 14-stage workflow run.
+digests. The controller digest additionally passed a real Kubernetes
+rootless-bootstrap pod start with UID 1000, runtime-generated SSH host keys,
+ready `sshd`, `rsync`, and worker-argument forwarding. This validates the image
+set and its individual capabilities; the complete 14-stage run remains open
+because the required hosted Cosmos3 model returned an upstream stopped-model
+response before any workflow task launched.
 
 ### Bugs the golden evals surfaced (now fixed)
 

@@ -27,7 +27,7 @@ BUILD_BASE_SHA = (
 RUNTIME_BASE_SHA = (
     "sha256:9175fa92f96de35a8cfb9493f0dfcf9435c7a597e9d95ad41d2cae382a95e3f9"
 )
-EXACT_TAG = "2.5.1-sim2real-coherent-20260903"
+EXACT_TAG = "2.5.1-sim2real-coherent-20260904"
 
 
 def _dockerfile() -> str:
