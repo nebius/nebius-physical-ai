@@ -88,8 +88,9 @@ no reusable host private key is embedded in the image.
 - Mount `/opt/cosmos/model-cache` for gated weights. Do not promote that cache into
   a derived image or published artifact.
 - Keep NLTK's path-security enforcement enabled. `NLTK_DATA` authorizes only the
-  dedicated `/opt/cosmos/model-cache` volume because the gated Guardrail model
-  resolves its NLTK tables through Hugging Face blob links inside that volume.
+  revision-scoped regular-file copy materialized inside
+  `/opt/cosmos/model-cache`; NLTK never traverses Hugging Face snapshot or blob
+  links directly.
 - Preserve package copyright files and make corresponding source available as
   required by GPL/LGPL and other reciprocal licenses identified by the SBOM.
 - Re-run the complete classification and built-byte audit whenever the source,

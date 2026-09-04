@@ -55,6 +55,8 @@ DISABLE_CONTENT_GUARDRAILS_ENV = "NPA_COSMOS_DISABLE_CONTENT_GUARDRAILS"
 GUARDRAIL_REPO = "nvidia/Cosmos-Guardrail1"
 GUARDRAIL_REVISION = "d6d4bfa899a71454a700907664f3e88f503950cf"
 GUARDRAIL_NLTK_MATERIALIZED_DIR = "npa-guardrail-nltk-data"
+GUARDRAIL_NLTK_READY_MARKER = ".npa-materialization.json"
+GUARDRAIL_NLTK_MANIFEST_SCHEMA = "npa.cosmos.guardrail_nltk.v1"
 # Live job 339 reported SUCCEEDED while the spec promised ``manifest.json`` and
 # the then-reference-only tool wrote ``index.json`` with a different schema.
 # Keep these two artifact contracts named and distinct: the real publisher now
@@ -587,6 +589,152 @@ def _require_runtime_hf_token() -> None:
         )
 
 
+class GuardrailNLTKDataError(RuntimeError):
+    """Typed failure to prepare the pinned Cosmos guardrail NLTK payload."""
+
+    def __init__(self, category: str, message: str) -> None:
+        self.category = category
+        super().__init__(message)
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _guardrail_nltk_inventory(root: Path) -> dict[str, dict[str, Any]]:
+    """Return a content inventory, rejecting links and non-regular payloads."""
+
+    files: dict[str, dict[str, Any]] = {}
+    for entry in sorted(root.rglob("*")):
+        relative = entry.relative_to(root)
+        if relative.as_posix() == GUARDRAIL_NLTK_READY_MARKER:
+            continue
+        if entry.is_symlink():
+            raise GuardrailNLTKDataError(
+                "content_invalid",
+                f"Cosmos guardrail NLTK materialization contains a link: {relative}; "
+                "remove the revision-scoped cache and retry the pinned fetch",
+            )
+        if entry.is_dir():
+            continue
+        if not entry.is_file():
+            raise GuardrailNLTKDataError(
+                "content_invalid",
+                f"Cosmos guardrail NLTK materialization contains a non-regular file: "
+                f"{relative}; remove the revision-scoped cache and retry",
+            )
+        files[relative.as_posix()] = {
+            "sha256": _sha256_file(entry),
+            "size": entry.stat().st_size,
+        }
+    if not files:
+        raise GuardrailNLTKDataError(
+            "content_invalid",
+            "Pinned Cosmos guardrail NLTK materialization is empty; verify the exact "
+            "upstream revision and subtree before retrying",
+        )
+    return files
+
+
+def _guardrail_nltk_tree_sha256(files: dict[str, dict[str, Any]]) -> str:
+    encoded = json.dumps(files, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _write_guardrail_nltk_ready_marker(root: Path) -> None:
+    files = _guardrail_nltk_inventory(root)
+    payload = {
+        "schema": GUARDRAIL_NLTK_MANIFEST_SCHEMA,
+        "repo_id": GUARDRAIL_REPO,
+        "revision": GUARDRAIL_REVISION,
+        "file_count": len(files),
+        "files": files,
+        "tree_sha256": _guardrail_nltk_tree_sha256(files),
+    }
+    marker = root / GUARDRAIL_NLTK_READY_MARKER
+    marker.write_text(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+    )
+    os.chmod(marker, 0o444)
+
+
+def _verify_guardrail_nltk_materialization(destination: Path) -> int:
+    """Verify exact revision identity and every copied byte before cache reuse."""
+
+    marker = destination / GUARDRAIL_NLTK_READY_MARKER
+    if destination.is_symlink() or not destination.is_dir() or marker.is_symlink():
+        raise GuardrailNLTKDataError(
+            "cache_invalid",
+            "Cosmos guardrail NLTK cache is not a verified regular-file directory; "
+            "remove only its revision-scoped path and retry",
+        )
+    try:
+        payload = json.loads(marker.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise GuardrailNLTKDataError(
+            "cache_invalid",
+            "Cosmos guardrail NLTK cache has no readable completion manifest; "
+            "remove only its revision-scoped path and retry",
+        ) from exc
+    expected_identity = (
+        payload.get("schema") == GUARDRAIL_NLTK_MANIFEST_SCHEMA
+        and payload.get("repo_id") == GUARDRAIL_REPO
+        and payload.get("revision") == GUARDRAIL_REVISION
+    )
+    if not expected_identity or not isinstance(payload.get("files"), dict):
+        raise GuardrailNLTKDataError(
+            "cache_invalid",
+            "Cosmos guardrail NLTK cache identity does not match the exact pinned "
+            "repository revision; do not reuse it",
+        )
+    files = _guardrail_nltk_inventory(destination)
+    if (
+        payload["files"] != files
+        or payload.get("file_count") != len(files)
+        or payload.get("tree_sha256") != _guardrail_nltk_tree_sha256(files)
+    ):
+        raise GuardrailNLTKDataError(
+            "cache_invalid",
+            "Cosmos guardrail NLTK cache content does not match its verified manifest; "
+            "remove only its revision-scoped path and retry the pinned fetch",
+        )
+    return len(files)
+
+
+def _guardrail_nltk_download_error(exc: Exception) -> GuardrailNLTKDataError:
+    name = type(exc).__name__.lower()
+    response = getattr(exc, "response", None)
+    status = getattr(response, "status_code", None)
+    if status == 429 or "ratelimit" in name or "rate_limit" in name:
+        return GuardrailNLTKDataError(
+            "rate_limited",
+            "Hugging Face rate-limited the pinned Cosmos guardrail NLTK fetch; "
+            "reuse a verified cache or retry later",
+        )
+    if "revisionnotfound" in name or "revision_not_found" in name:
+        return GuardrailNLTKDataError(
+            "revision_unavailable",
+            f"Pinned Cosmos guardrail revision {GUARDRAIL_REVISION} is unavailable; "
+            "do not substitute another revision without a reviewed source update",
+        )
+    if status in {401, 403} or "gatedrepo" in name or "repositorynotfound" in name:
+        return GuardrailNLTKDataError(
+            "access_denied",
+            "Hugging Face denied the pinned Cosmos guardrail NLTK payload fetch; "
+            "verify the operator token has exact upstream repository access",
+        )
+    return GuardrailNLTKDataError(
+        "network_unavailable",
+        "Unable to fetch the pinned Cosmos guardrail NLTK payload from Hugging Face; "
+        "restore network access or prewarm a verified revision-scoped cache",
+    )
+
+
 def prepare_guardrail_nltk_data(*, hf_home: str | None = None) -> int:
     """Download and safely materialize the pinned guardrail tokenizer data.
 
@@ -600,28 +748,44 @@ def prepare_guardrail_nltk_data(*, hf_home: str | None = None) -> int:
     trusting an unpinned snapshot.
     """
 
-    from huggingface_hub import snapshot_download
-
     home = Path(hf_home or os.environ.get("HF_HOME", "/opt/cosmos-data/hf_cache"))
+    destination = home / GUARDRAIL_NLTK_MATERIALIZED_DIR / GUARDRAIL_REVISION
+    if destination.exists() or destination.is_symlink():
+        return _verify_guardrail_nltk_materialization(destination)
+
+    try:
+        from huggingface_hub import snapshot_download
+    except ImportError as exc:
+        raise GuardrailNLTKDataError(
+            "runtime_invalid",
+            "The audited Cosmos Transfer runtime is missing huggingface_hub; "
+            "rebuild the pinned image before fetching guardrail data",
+        ) from exc
+
     hub = (home / "hub").resolve()
-    snapshot = Path(
-        snapshot_download(
+    try:
+        downloaded = snapshot_download(
             repo_id=GUARDRAIL_REPO,
             revision=GUARDRAIL_REVISION,
             allow_patterns=["blocklist/nltk_data/**"],
             cache_dir=hub,
             token=os.environ.get("HF_TOKEN"),
         )
-    ).resolve()
+    except Exception as exc:
+        raise _guardrail_nltk_download_error(exc) from exc
+    snapshot = Path(downloaded).resolve()
     nltk_data = (snapshot / "blocklist" / "nltk_data").resolve()
     if (
         not nltk_data.is_dir()
         or not snapshot.is_relative_to(hub)
         or not nltk_data.is_relative_to(snapshot)
     ):
-        raise RuntimeError("pinned Cosmos guardrail tokenizer data is unavailable")
+        raise GuardrailNLTKDataError(
+            "content_invalid",
+            "Pinned Cosmos guardrail NLTK subtree is missing or outside the exact "
+            "Hugging Face cache snapshot",
+        )
 
-    destination = home / GUARDRAIL_NLTK_MATERIALIZED_DIR / GUARDRAIL_REVISION
     destination.parent.mkdir(parents=True, exist_ok=True)
     staging = Path(
         tempfile.mkdtemp(prefix=f".{GUARDRAIL_REVISION}.", dir=destination.parent)
@@ -632,6 +796,11 @@ def prepare_guardrail_nltk_data(*, hf_home: str | None = None) -> int:
             relative = entry.relative_to(nltk_data)
             output = staging / relative
             if entry.is_dir():
+                if entry.is_symlink():
+                    raise GuardrailNLTKDataError(
+                        "content_invalid",
+                        f"Unsafe Cosmos guardrail cache directory link: {relative}",
+                    )
                 output.mkdir(parents=True, exist_ok=True)
                 continue
             target = entry.resolve(strict=True)
@@ -642,21 +811,34 @@ def prepare_guardrail_nltk_data(*, hf_home: str | None = None) -> int:
                 shutil.copyfileobj(source, copied)
             os.chmod(output, 0o444)
             materialized += 1
-        if destination.exists():
+        if materialized == 0:
+            raise GuardrailNLTKDataError(
+                "content_invalid", "Pinned Cosmos guardrail NLTK subtree is empty"
+            )
+        _write_guardrail_nltk_ready_marker(staging)
+        try:
+            os.replace(staging, destination)
+        except OSError:
+            if not destination.exists():
+                raise
+            winner_count = _verify_guardrail_nltk_materialization(destination)
             shutil.rmtree(staging)
-        else:
-            try:
-                os.replace(staging, destination)
-            except OSError:
-                if not destination.is_dir():
-                    raise
-                shutil.rmtree(staging)
+            return winner_count
+    except GuardrailNLTKDataError:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
+    except Exception as exc:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise GuardrailNLTKDataError(
+            "materialization_failed",
+            "Could not atomically materialize the pinned Cosmos guardrail NLTK "
+            "payload; no partial cache was published, so retry after checking the "
+            "revision-scoped cache filesystem",
+        ) from exc
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)
         raise
-    if not destination.is_dir() or materialized == 0:
-        raise RuntimeError("Cosmos guardrail tokenizer materialization is empty")
-    return materialized
+    return _verify_guardrail_nltk_materialization(destination)
 
 
 def _guardrail_nltk_data_path(hf_home: str) -> Path:
