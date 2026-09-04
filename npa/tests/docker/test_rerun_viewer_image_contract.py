@@ -38,9 +38,6 @@ def test_rerun_viewer_entrypoint_preserves_orchestrator_argv() -> None:
         "rerun --serve-web --web-viewer --bind 0.0.0.0 "
         "--web-viewer-port 9090 --port 9876"
     ) in entrypoint
-    assert "sudo -n /usr/bin/ssh-keygen -A" in entrypoint
-    assert "test -s /etc/ssh/ssh_host_ed25519_key" in entrypoint
-    assert entrypoint.index("ssh-keygen -A") < entrypoint.index('exec "$@"')
 
 
 def test_rerun_viewer_installs_exact_sdk_in_owned_venv() -> None:

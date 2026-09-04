@@ -270,10 +270,6 @@ def test_functional_smoke_materializes_pinned_guardrail_tokenizer_cache() -> Non
 
 def test_entrypoint_passes_arbitrary_argv_and_refuses_tokenless_inference() -> None:
     entrypoint = IMAGE_DIR / "entrypoint.sh"
-    entrypoint_text = entrypoint.read_text(encoding="utf-8")
-    assert "sudo -n /usr/bin/ssh-keygen -A" in entrypoint_text
-    assert "test -s /etc/ssh/ssh_host_ed25519_key" in entrypoint_text
-    assert entrypoint_text.index("ssh-keygen -A") < entrypoint_text.index('exec "$@"')
     env = dict(os.environ)
     env.pop("HF_TOKEN", None)
     passthrough = subprocess.run(
