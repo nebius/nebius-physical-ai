@@ -84,6 +84,101 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     ),
     # --- CPU / zero-GPU (Token Factory hosted) ---
     SubmitLiveCase(
+        "encord-cosmos3-augment.yaml",
+        "gpu",
+        secret_envs=(
+            "ENCORD_SSH_KEY_B64",
+            "HF_TOKEN",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+        ),
+        image_tool="cosmos3",
+        runtime=True,
+        notes=(
+            "Self-seeding by default: the seed stage pushes the packaged pinned "
+            "starter clip (CC-BY-4.0) into a run-scoped npa-demo-src-* dataset, "
+            "then pull -> Cosmos3 video2video -> push-augmented. Pass "
+            "--var encord_source_id=<curated id> to run on real curated data "
+            "(the seed stage then no-ops)."
+        ),
+    ),
+    SubmitLiveCase(
+        "encord-cosmos3-groot-finetune.yaml",
+        "multi",
+        secret_envs=(
+            "ENCORD_SSH_KEY_B64",
+            "HF_TOKEN",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+        ),
+        image_tool="cosmos3",
+        image_overrides=(("workbench.groot.finetune", "groot"),),
+        runtime=True,
+        rotation_skip=True,
+        skip_reason=(
+            "Needs operator inputs no standalone submit can stage: a LeRobot v3 "
+            "dataset at config.lerobot_dataset_uri and (register mode, the tool "
+            "default) a cloud integration title that can read it. It also spans "
+            "two GPU images (Cosmos3 video2video, then GR00T fine-tune) and a "
+            "multi-hour fine-tune, so it stays a manual run; its Encord hops are "
+            "covered daily by encord-roundtrip-smoke.yaml and the Cosmos hop by "
+            "encord-cosmos3-augment.yaml."
+        ),
+        notes=(
+            "push -> headless curate -> pull-curated -> Cosmos3 augment loop -> "
+            "push-augmented -> materialize LeRobot episodes -> GR00T fine-tune. "
+            "Submit with --runtime, --var bucket=..., --var encord_integration=..., "
+            "and --var lerobot_dataset_uri=s3://.../ pointing at a LeRobot v3 tree."
+        ),
+    ),
+    SubmitLiveCase(
+        "encord-roundtrip-smoke.yaml",
+        "cpu",
+        secret_envs=(
+            "ENCORD_SSH_KEY_B64",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+        ),
+        notes=(
+            "Live Encord e2e: register fixture media into a fresh npa-e2e-* "
+            "folder+dataset through the operator's cloud integration, then pull "
+            "it straight back. Needs seeded encord-fixtures/media/ objects and "
+            "an integration titled by config.encord_integration."
+        ),
+    ),
+    SubmitLiveCase(
+        "encord-push.yaml",
+        "cpu",
+        secret_envs=(
+            "ENCORD_SSH_KEY_B64",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+        ),
+        rotation_skip=True,
+        skip_reason=(
+            "Production push half of a human-in-the-loop pair: the follow-up "
+            "curation happens in the Encord app, so the roundtrip smoke is the "
+            "rotation's executable twin."
+        ),
+        notes="Manual/plan runs only; encord-roundtrip-smoke.yaml is the daily twin.",
+    ),
+    SubmitLiveCase(
+        "encord-pull.yaml",
+        "cpu",
+        secret_envs=(
+            "ENCORD_SSH_KEY_B64",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+        ),
+        rotation_skip=True,
+        skip_reason=(
+            "Needs a human-curated Collection/Dataset id from the Encord app; "
+            "no standalone submit can supply one. Covered live by "
+            "encord-roundtrip-smoke.yaml's dataset-source pull."
+        ),
+        notes="Manual/plan runs only; encord-roundtrip-smoke.yaml is the daily twin.",
+    ),
+    SubmitLiveCase(
         "token-factory-caption.yaml",
         "cpu",
         secret_envs=(

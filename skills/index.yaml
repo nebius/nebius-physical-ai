@@ -383,6 +383,26 @@ skills:
       - type: cli_help
         args: ["workbench", "cosmos", "train", "--help"]
         contains: "serverless"
+  - name: encord
+    category: tools
+    when_to_use: "Push Nebius object-store media into the Encord curation SaaS (register-in-place via an S3-compatible integration), curate headlessly with quality-metric filter presets, pull curated Collections/Datasets/Project labels back to S3, verify the roundtrip by exact identity and checksum, or run the encord-push/encord-pull/encord-roundtrip-smoke workflows."
+    path: skills/tools/encord/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "encord", "push", "--help"]
+        contains: "input-path"
+      - type: cli_help
+        args: ["workbench", "encord", "system-info", "--help"]
+        contains: "SDK"
+      - type: cli_help
+        args: ["workbench", "encord", "pull", "--help"]
+        contains: "source"
+      - type: npa_workflow_yaml
+        paths:
+          - npa/workflows/workbench/npa-workflows/encord-push.yaml
+          - npa/workflows/workbench/npa-workflows/encord-pull.yaml
+          - npa/workflows/workbench/npa-workflows/encord-roundtrip-smoke.yaml
+          - npa/workflows/workbench/npa-workflows/encord-cosmos3-augment.yaml
   - name: dataset
     category: tools
     when_to_use: "Ingest, validate, curate, or query production sensor data as a versioned dataset-of-record (filter by event, location, quality), or wire the dataset-ingest-curate workflow."

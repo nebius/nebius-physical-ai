@@ -637,6 +637,10 @@ def test_new_workbench_tools_require_contract_or_explicit_seam() -> None:
         "cosmos-evaluator",
         "data",
         "dataset",
+        # Encord curation SaaS push/pull: CLI + SDK over one implementation; the
+        # UI tier is Encord's own app, so there is no FastAPI service to keep
+        # coherent with a YAML env block.
+        "encord",
         "fiftyone",
         # Foxglove embed assets + MCAP convert/inspect: CLI + SDK tool, no
         # SkyPilot task surface (the viewer runs in the browser / static image).

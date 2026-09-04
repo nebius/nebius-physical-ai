@@ -1435,6 +1435,152 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.lance_uri}}",
         ],
     ),
+    "workbench.encord.push": ToolEntry(
+        name="workbench.encord.push",
+        description=(
+            "Register S3 media in place into an Encord storage folder (and "
+            "optionally link a dataset) for human curation; bytes stay in the bucket."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "encord",
+            "push",
+            "--input-path",
+            "{{config.encord_media_uri}}",
+            "--integration",
+            "{{config.encord_integration}}",
+            "--folder",
+            "{{config.encord_folder}}",
+            "--dataset",
+            "{{config.encord_dataset}}",
+            "--media",
+            "{{config.encord_media_filter}}",
+            "--transfer",
+            "{{config.encord_transfer}}",
+            "--poll-timeout-seconds",
+            "{{config.encord_poll_timeout_seconds}}",
+            "--output-path",
+            "{{config.encord_receipt_uri}}",
+            "--workflow-run",
+            "{{run.id}}",
+            "--output",
+            "json",
+        ],
+        omit_flags_when_empty=("--dataset",),
+        config_defaults={
+            "encord_dataset": "",
+            "encord_media_filter": "videos-images",
+            "encord_transfer": "register",
+            "encord_poll_timeout_seconds": "1800",
+        },
+    ),
+    "workbench.encord.curate": ToolEntry(
+        name="workbench.encord.curate",
+        description=(
+            "Headless curation: evaluate workbench-declared Encord quality "
+            "filters (metric:min:max, comma-separated) server-side into a "
+            "Collection — no human in the Encord app."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "encord",
+            "curate",
+            "--folder",
+            "{{config.encord_folder}}",
+            "--filter",
+            "{{config.encord_curate_filters}}",
+            "--collection",
+            "{{config.encord_collection}}",
+            "--poll-seconds",
+            "{{config.encord_curate_poll_seconds}}",
+            "--output-path",
+            "{{config.encord_curate_receipt_uri}}",
+            "--workflow-run",
+            "{{run.id}}",
+            "--output",
+            "json",
+        ],
+        config_defaults={"encord_curate_poll_seconds": "300"},
+    ),
+    "workbench.encord.verify": ToolEntry(
+        name="workbench.encord.verify",
+        description=(
+            "Verify an Encord push receipt against a pull manifest by exact "
+            "identity: every item present, sizes equal, checksums matching "
+            "wherever digests exist on both sides."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "encord",
+            "verify",
+            "--receipt-uri",
+            "{{config.encord_receipt_uri}}push_receipt.json",
+            "--manifest-uri",
+            "{{config.encord_pull_uri}}manifest.json",
+            "--output-path",
+            "{{config.encord_verify_uri}}",
+            "--workflow-run",
+            "{{run.id}}",
+            "--output",
+            "json",
+        ],
+    ),
+    "workbench.encord.seed_demo": ToolEntry(
+        name="workbench.encord.seed_demo",
+        description=(
+            "Seed the encord-cosmos3-augment demo source: push the packaged "
+            "pinned starter clip into a run-scoped Encord dataset, or no-op "
+            "when the operator supplied a curated source id."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "encord",
+            "seed-demo",
+            "--media-uri",
+            "{{config.seed_media_uri}}",
+            "--dataset",
+            "npa-demo-src-{{run.id}}",
+            "--active-source-id",
+            "{{config.encord_source_id}}",
+            "--transfer",
+            "{{config.encord_transfer}}",
+            "--integration",
+            "{{config.encord_integration}}",
+            "--output",
+            "json",
+        ],
+        omit_flags_when_empty=("--integration",),
+        # Same default as push: bytes stay in the bucket unless a spec or
+        # operator explicitly asks for upload.
+        config_defaults={"encord_integration": "", "encord_transfer": "register"},
+    ),
+    "workbench.encord.pull": ToolEntry(
+        name="workbench.encord.pull",
+        description=(
+            "Pull a curated Encord Collection, Dataset, or Project's labels back "
+            "to S3 as media + item JSON + a lineage manifest."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "encord",
+            "pull",
+            "--source",
+            "{{config.encord_source}}",
+            "--source-id",
+            "{{config.encord_source_id}}",
+            "--output-path",
+            "{{config.encord_pull_uri}}",
+            "--workflow-run",
+            "{{run.id}}",
+            "--output",
+            "json",
+        ],
+    ),
     "workbench.dataset.write_quality_decision": ToolEntry(
         name="workbench.dataset.write_quality_decision",
         description="Write accept/reject decision from a validation quality gate.",

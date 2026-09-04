@@ -100,10 +100,14 @@ def json_stdout_contract(function: F) -> F:
     def wrapped(*args: Any, **kwargs: Any) -> Any:
         bound = signature.bind_partial(*args, **kwargs)
         bound.apply_defaults()
+        # Typer hands enum-typed options over as enum members; a ``(str, Enum)``
+        # member stringifies to ``OutputFormat.json``, so read its value.
+        output_format = bound.arguments.get("output_format")
+        output_format = getattr(output_format, "value", output_format)
         enabled = bool(
             bound.arguments.get("output_json")
             or bound.arguments.get("json_output")
-            or str(bound.arguments.get("output_format") or "").lower() == "json"
+            or str(output_format or "").lower() == "json"
         )
         if not enabled:
             return function(*args, **kwargs)

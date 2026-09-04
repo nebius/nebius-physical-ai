@@ -1,0 +1,129 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+# End-to-end visual augmentation for an action-labelled LeRobot dataset.  The
+# materialize-training-data state is deliberately fail-closed: it retains the
+# original episodes and only adds synthetic episodes after preserving their
+# paired actions, state, timestamps, and selected camera identity.
+metadata:
+  name: encord-cosmos3-groot-finetune
+  description: >-
+    Register a LeRobot camera stream in Encord, pull a curated video, produce
+    Cosmos 3 variants, register them in Encord, materialize original plus
+    augmented LeRobot episodes, then fine-tune GR00T.
+
+config:
+  bucket: example-bucket
+  prefix: "encord-groot/{{run.id}}"
+  lerobot_dataset_uri: "s3://{{config.bucket}}/lerobot/source/"
+  lerobot_camera: "observation.images.front"
+  lerobot_episode_index: "0"
+  encord_media_uri: "{{config.lerobot_dataset_uri}}videos/"
+  # pull-curated consumes the Collection the curate stage populates headlessly.
+  encord_source: collection
+  encord_source_id: "{{config.encord_collection}}"
+  # This workflow handles your own LeRobot camera streams, so it keeps the
+  # tool's register default: bytes stay in your bucket and Encord references
+  # them through the cloud integration named here (required for register;
+  # pass --var encord_integration=<title>). Only an explicit
+  # --var encord_transfer=upload copies bytes into Encord-hosted storage.
+  encord_transfer: register
+  encord_integration: ""
+  encord_folder: "npa-groot-original-{{run.id}}"
+  encord_dataset: "npa-groot-original-{{run.id}}"
+  encord_receipt_uri: "s3://{{config.bucket}}/{{config.prefix}}/encord-original/"
+  # Headless quality gate between push and pull. The default width filter is an
+  # intrinsic metric, so it evaluates on any folder out of the box; override
+  # encord_curate_filters (e.g. "brightness:0.2:0.8,sharpness:0.3:1") once
+  # quality metrics are computed for the folder in the Encord app.
+  encord_collection: "npa-groot-curated-{{run.id}}"
+  encord_curate_filters: "width:32:16384"
+  encord_curate_receipt_uri: "s3://{{config.bucket}}/{{config.prefix}}/curate/"
+  encord_pull_uri: "s3://{{config.bucket}}/{{config.prefix}}/pull/"
+  encord_item_index: "0"
+  cosmos3_mode: video2video
+  cosmos3_checkpoint: Cosmos3-Nano
+  cosmos3_input_path: "s3://{{config.bucket}}/{{config.prefix}}/input/source.mp4"
+  augmentation_count: "2"
+  cosmos3_guidance: "5.0"
+  cosmos3_steps: "24"
+  prompt: "Preserve the robot motion and camera geometry while creating a physically plausible visual variant."
+  encord_augmented_media_uri: "s3://{{config.bucket}}/{{config.prefix}}/generated/"
+  encord_augmented_folder: "npa-groot-augmented-{{run.id}}"
+  encord_augmented_dataset: "npa-groot-augmented-{{run.id}}"
+  encord_augmented_receipt_uri: "s3://{{config.bucket}}/{{config.prefix}}/encord-augmented/"
+  groot_data_uri: "s3://{{config.bucket}}/{{config.prefix}}/training-data/"
+  groot_materialization_uri: "{{config.groot_data_uri}}materialization.json"
+  candidate_checkpoint_uri: "s3://{{config.bucket}}/{{config.prefix}}/checkpoints/"
+  base_model: nvidia/GR00T-N1.7-3B
+  robot_embodiment: NEW_EMBODIMENT
+  gpu_count: "1"
+  nccl_transport: auto
+  global_batch_size: "1"
+  per_device_batch_size: "1"
+  gradient_accumulation_steps: "1"
+  dataloader_num_workers: "0"
+  logging_steps: "1"
+  max_steps: "100"
+  save_steps: "100"
+  save_total_limit: "1"
+
+resources:
+  cpu: {cloud: kubernetes, cpus: 8, memory: 32Gi}
+  gpu: {cloud: kubernetes, accelerators: H100:1, cpus: 16, memory: 80Gi}
+
+initial: push-original
+states:
+  push-original:
+    toolRef: workbench.encord.push
+    resources: cpu
+    outputs: [{uri: "s3://{{config.bucket}}/{{config.prefix}}/encord-original/push_receipt.json", schema: npa.encord.push_receipt.v1}]
+    next: curate
+  curate:
+    toolRef: workbench.encord.curate
+    resources: cpu
+    inputs: [{uri: "s3://{{config.bucket}}/{{config.prefix}}/encord-original/push_receipt.json", schema: npa.encord.push_receipt.v1}]
+    outputs: [{uri: "{{config.encord_curate_receipt_uri}}curate_receipt.json", schema: npa.encord.curate_receipt.v1}]
+    next: pull-curated
+  pull-curated:
+    toolRef: workbench.encord.pull
+    resources: cpu
+    inputs: [{uri: "{{config.encord_curate_receipt_uri}}curate_receipt.json", schema: npa.encord.curate_receipt.v1}]
+    outputs: [{uri: "{{config.encord_pull_uri}}manifest.json", schema: npa.encord.pull_manifest.v1}]
+    next: stage-input
+  stage-input:
+    resources: cpu
+    run:
+      argv: [python3, -m, npa.workflows.encord_loop, "{{config.encord_pull_uri}}manifest.json", "{{config.cosmos3_input_path}}", "{{config.encord_item_index}}"]
+    next: augmentations
+  augmentations:
+    loop: {max: "{{config.augmentation_count}}"}
+    sequence: [augment]
+    next: push-augmented
+  augment:
+    toolRef: workbench.cosmos3.generate
+    resources: gpu
+    params:
+      cosmos3_seed: "{{loop.augmentations}}"
+      output_uri: "s3://{{config.bucket}}/{{config.prefix}}/generated/variant-{{loop.augmentations}}/"
+  push-augmented:
+    toolRef: workbench.encord.push
+    resources: cpu
+    params:
+      encord_media_uri: "{{config.encord_augmented_media_uri}}"
+      encord_folder: "{{config.encord_augmented_folder}}"
+      encord_dataset: "{{config.encord_augmented_dataset}}"
+      encord_receipt_uri: "{{config.encord_augmented_receipt_uri}}"
+    next: materialize-training-data
+  materialize-training-data:
+    resources: cpu
+    run:
+      argv: [python3, -m, npa.workflows.encord_groot_loop, materialize, "{{config.lerobot_dataset_uri}}", "{{config.encord_augmented_media_uri}}", "{{config.groot_data_uri}}", "{{config.lerobot_camera}}", "{{config.lerobot_episode_index}}", "{{config.groot_materialization_uri}}"]
+    outputs: [{uri: "{{config.groot_materialization_uri}}", schema: npa.encord_groot.materialization.v1}]
+    next: finetune
+  finetune:
+    toolRef: workbench.groot.finetune
+    resources: gpu
+    params: {data_uri: "{{config.groot_data_uri}}"}
+    outputs: [{uri: "{{config.candidate_checkpoint_uri}}npa_groot_finetune_manifest.json", schema: npa.groot.finetune.v1}]
+    terminal: true

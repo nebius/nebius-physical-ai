@@ -1,0 +1,136 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+# End-to-end Encord push+curate+pull proof in ONE run, no human in the loop.
+#
+# push registers a fixture prefix into a fresh folder + dataset titled
+# npa-e2e-{{run.id}}; curate then populates a run-scoped Collection headlessly
+# through an Encord filter preset (an intrinsic width filter, so it evaluates
+# on any folder without app-side quality-metric computation); pull materializes
+# the dataset by title, and pull-curated materializes the curated Collection.
+# A green run proves registration, polling, dataset linking, server-side
+# preset evaluation, item enumeration, the same-bucket copy fast path, and the
+# manifest writes against live Encord.
+#
+# Encord-side artifacts are namespaced npa-e2e-* for easy cleanup:
+# list_storage_folders(search="npa-e2e-") and list_collections (curate deletes
+# its run-scoped preset itself once the selection lands).
+
+metadata:
+  name: encord-roundtrip-smoke
+  description: >
+    CPU-only live e2e smoke: register fixture media into a fresh npa-e2e-*
+    Encord folder + dataset, curate a run-scoped Collection headlessly through
+    a filter preset, then pull both the dataset and the Collection straight
+    back to S3 — all three encord toolRefs proven in one submit.
+
+config:
+  bucket: example-bucket
+  prefix: "encord-smoke/{{run.id}}"
+
+  encord_media_uri: "s3://{{config.bucket}}/encord-fixtures/media/"
+  encord_integration: "nebius-s3"
+  encord_folder: "npa-e2e-{{run.id}}"
+  encord_dataset: "npa-e2e-{{run.id}}"
+  # register (default): bytes stay in the bucket; run with
+  # --var encord_transfer=upload for the byte-copy variant.
+  encord_transfer: "register"
+  encord_receipt_uri: "s3://{{config.bucket}}/{{config.prefix}}/push/"
+
+  # Headless curation with intrinsic metric filters (they evaluate on any
+  # folder; computed metrics like brightness additionally require one-time
+  # quality-metric computation in the app). The fixture set deliberately
+  # includes a 64x64 thumbnail these filters EXCLUDE, so a green run proves
+  # actual filtering: the curated Collection holds fewer items than the
+  # dataset (3 of 4 with the shipped fixtures).
+  encord_collection: "npa-e2e-{{run.id}}"
+  encord_curate_filters: "width:640:4096,aspect-ratio:1.0:2.5"
+  encord_curate_receipt_uri: "s3://{{config.bucket}}/{{config.prefix}}/curate/"
+
+  # pull resolves the dataset push just created by its unique title.
+  encord_source: "dataset"
+  encord_source_id: "npa-e2e-{{run.id}}"
+  encord_pull_uri: "s3://{{config.bucket}}/{{config.prefix}}/pull/"
+  encord_curated_pull_uri: "s3://{{config.bucket}}/{{config.prefix}}/pull-curated/"
+  encord_verify_uri: "s3://{{config.bucket}}/{{config.prefix}}/verify/"
+
+resources:
+  cpu:
+    cloud: kubernetes
+    cpus: 2
+    memory: 8Gi
+
+initial: push
+
+states:
+  push:
+    description: Register fixture media into a fresh npa-e2e-* folder + dataset.
+    toolRef: workbench.encord.push
+    resources: cpu
+    outputs:
+      - uri: "{{config.encord_receipt_uri}}push_receipt.json"
+        schema: npa.encord.push_receipt.v1
+    next: curate
+
+  curate:
+    description: >
+      Headlessly populate a run-scoped Collection via a server-side Encord
+      filter preset (no human in the app).
+    needs: [push]
+    toolRef: workbench.encord.curate
+    resources: cpu
+    inputs:
+      - uri: "{{config.encord_receipt_uri}}push_receipt.json"
+        schema: npa.encord.push_receipt.v1
+    outputs:
+      - uri: "{{config.encord_curate_receipt_uri}}curate_receipt.json"
+        schema: npa.encord.curate_receipt.v1
+    next: pull
+
+  pull:
+    description: Pull the freshly linked dataset straight back to S3.
+    needs: [curate]
+    toolRef: workbench.encord.pull
+    resources: cpu
+    inputs:
+      - uri: "{{config.encord_receipt_uri}}push_receipt.json"
+        schema: npa.encord.push_receipt.v1
+    outputs:
+      - uri: "{{config.encord_pull_uri}}manifest.json"
+        schema: npa.encord.pull_manifest.v1
+    next: pull-curated
+
+  pull-curated:
+    description: Pull the headlessly curated Collection back to S3.
+    needs: [curate]
+    toolRef: workbench.encord.pull
+    resources: cpu
+    params:
+      encord_source: "collection"
+      encord_source_id: "{{config.encord_collection}}"
+      encord_pull_uri: "{{config.encord_curated_pull_uri}}"
+    inputs:
+      - uri: "{{config.encord_curate_receipt_uri}}curate_receipt.json"
+        schema: npa.encord.curate_receipt.v1
+    outputs:
+      - uri: "{{config.encord_curated_pull_uri}}manifest.json"
+        schema: npa.encord.pull_manifest.v1
+    next: verify
+
+  verify:
+    description: >
+      Terminal roundtrip verifier: every pushed item must come back from the
+      dataset pull with matching size and checksum (exact identity, no name
+      matching). This is the machine-checkable checksum evidence.
+    needs: [pull]
+    toolRef: workbench.encord.verify
+    resources: cpu
+    inputs:
+      - uri: "{{config.encord_receipt_uri}}push_receipt.json"
+        schema: npa.encord.push_receipt.v1
+      - uri: "{{config.encord_pull_uri}}manifest.json"
+        schema: npa.encord.pull_manifest.v1
+    outputs:
+      - uri: "{{config.encord_verify_uri}}roundtrip_report.json"
+        schema: npa.encord.roundtrip_report.v1
+    terminal: true
