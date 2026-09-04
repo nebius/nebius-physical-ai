@@ -1036,12 +1036,16 @@ skills:
           - npa/workflows/workbench/npa-workflows/sonic-locomotion-finetuning.yaml
   - name: physical-ai-data-factory
     category: workflows
-    when_to_use: "Author, run, submit, or view the NVIDIA Physical AI Data Factory blueprint on Nebius + SkyPilot (no OSMO): annotate -> Cosmos Transfer augment -> Cosmos Evaluator gate -> re-label -> Cosmos Curator + FiftyOne curate -> Rerun visualize."
+    when_to_use: "Author, run, submit, or view the native NVIDIA Physical AI Data Factory VDA, DIG, IAA, and EVG translations or the NPA-specific Cosmos3 VDA alternative on Nebius + SkyPilot."
     path: skills/workflows/physical-ai-data-factory/SKILL.md
     smoke:
       - type: npa_workflow_yaml
         paths:
           - npa/workflows/workbench/npa-workflows/physical-ai-data-factory.yaml
+          - npa/workflows/workbench/npa-workflows/paidf-defect-image-generation.yaml
+          - npa/workflows/workbench/npa-workflows/paidf-image-attribute-augmentation.yaml
+          - npa/workflows/workbench/npa-workflows/paidf-event-video-generation.yaml
+          - npa/workflows/workbench/npa-workflows/paidf-cosmos3.yaml
       - type: cli_help
         args: ["workbench", "cosmos-evaluator", "evaluate", "--help"]
         contains: "--configs-uri"
