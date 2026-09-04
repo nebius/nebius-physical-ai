@@ -2346,6 +2346,7 @@ def test_bootstrap_embeds_artifact_browser_and_endpoints() -> None:
         in source
     )
     assert "EnvironmentFile=-/opt/npa-agent/s3.env" in source
+    assert "EnvironmentFile=-/opt/npa-agent/artifact-sources.env" in source
     embedded = agent_module._embedded_agent_artifacts_source()
     assert "list_runs" in embedded
     assert "list_artifacts" in embedded
@@ -6058,19 +6059,14 @@ def test_artifact_source_file_round_trip_survives_service_environment_reload(
             staged.update(content=content, remote_path=remote_path)
 
         def run_or_raise(self, _command, *, label):
-            assert label == "stage private /opt/npa-agent/s3.env"
+            assert label == "stage private /opt/npa-agent/artifact-sources.env"
 
         def run(self, _command):
             return None
 
     loaded = agent_module._load_agent_artifact_sources_file(str(source_file))
-    agent_module._write_agent_s3_env(
+    agent_module._write_agent_artifact_sources_env(
         FakeSSH(),
-        bucket="primary-bucket",
-        endpoint="https://objects.example",
-        access_key="synthetic-access",
-        secret_key="synthetic-secret",
-        region="test-region",
         artifact_sources=loaded,
     )
 

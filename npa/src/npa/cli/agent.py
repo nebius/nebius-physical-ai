@@ -43,6 +43,7 @@ from npa.cli.agent_assets import (  # noqa: F401 - re-exported for tests/callers
 from npa.cli.agent_env_files import (  # noqa: F401 - re-exported for tests/callers
     _load_agent_artifact_sources_file,
     _stage_private_text,
+    _write_agent_artifact_sources_env,
     _write_agent_nebius_env,
     _write_agent_operator_profile,
     _write_agent_s3_env,
@@ -9045,6 +9046,7 @@ Type=simple
 EnvironmentFile=-/opt/npa-agent/llm.env
 EnvironmentFile=-/opt/npa-agent/nebius.env
 EnvironmentFile=-/opt/npa-agent/s3.env
+EnvironmentFile=-/opt/npa-agent/artifact-sources.env
 EnvironmentFile=-/opt/npa-agent/public.env
 EnvironmentFile=-/opt/npa-agent/foxglove.env
 ExecStart=/opt/npa-agent/venv/bin/uvicorn backend:app --host 127.0.0.1 --port {backend_port} --log-level warning --no-access-log --ws websockets --ws-max-size 4194304 --ws-max-queue 4 --ws-ping-interval 10 --ws-ping-timeout 10 --ws-per-message-deflate false
@@ -9182,8 +9184,8 @@ sudo systemctl enable --now npa-lichtblick 2>/dev/null || echo "npa-lichtblick s
         access_key=s3_access_key,
         secret_key=s3_secret_key,
         region=s3_region,
-        artifact_sources=artifact_sources,
     )
+    _write_agent_artifact_sources_env(ssh, artifact_sources=artifact_sources)
     _write_agent_operator_profile(
         ssh,
         ssh_user=ssh_user,
@@ -9215,6 +9217,7 @@ sudo systemctl enable --now npa-lichtblick 2>/dev/null || echo "npa-lichtblick s
     )
     if (
         tf_api_key.strip()
+        or bool(artifact_sources)
         or (s3_bucket.strip() and s3_access_key.strip() and s3_secret_key.strip())
         or (
             (nebius_project_id or project_id).strip()
@@ -9249,6 +9252,7 @@ def _record_remote_setup_ready(
     credential_paths = (
         "/opt/npa-agent/llm.env",
         "/opt/npa-agent/s3.env",
+        "/opt/npa-agent/artifact-sources.env",
         "/opt/npa-agent/nebius.env",
     )
     service_paths = (
@@ -9281,7 +9285,12 @@ def _record_remote_setup_ready(
         "endpoint": endpoint,
         "service_fingerprint": service_fingerprint,
         "credential_fingerprint": credential_fingerprint,
-        "credential_fingerprint_files": ["llm.env", "s3.env", "nebius.env"],
+        "credential_fingerprint_files": [
+            "llm.env",
+            "s3.env",
+            "artifact-sources.env",
+            "nebius.env",
+        ],
     }
     _stage_private_text(
         ssh,

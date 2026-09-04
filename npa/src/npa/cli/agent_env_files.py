@@ -99,7 +99,6 @@ def _write_agent_s3_env(
     access_key: str,
     secret_key: str,
     region: str,
-    artifact_sources: tuple[dict[str, str], ...] | list[dict[str, str]] = (),
 ) -> None:
     """Stage S3 discovery credentials on the VM (read-only operator scope preferred)."""
     if not (bucket.strip() and access_key.strip() and secret_key.strip()):
@@ -112,7 +111,22 @@ def _write_agent_s3_env(
         f"AWS_SECRET_ACCESS_KEY={secret_key.strip()}",
         f"AWS_REGION={region.strip() or 'eu-north1'}",
     ]
+    env_lines.append("")
+    _stage_private_text(
+        ssh,
+        content="\n".join(env_lines),
+        target="/opt/npa-agent/s3.env",
+    )
+
+
+def _write_agent_artifact_sources_env(
+    ssh: SSHClient,
+    *,
+    artifact_sources: tuple[dict[str, str], ...] | list[dict[str, str]] = (),
+) -> None:
+    """Stage durable read selectors independently of S3 credentials."""
     normalized_sources = normalize_configured_artifact_sources(artifact_sources)
+    env_lines: list[str] = []
     if normalized_sources:
         encoded_sources = base64.urlsafe_b64encode(
             json.dumps(
@@ -124,7 +138,7 @@ def _write_agent_s3_env(
     _stage_private_text(
         ssh,
         content="\n".join(env_lines),
-        target="/opt/npa-agent/s3.env",
+        target="/opt/npa-agent/artifact-sources.env",
     )
 
 
