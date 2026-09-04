@@ -56,7 +56,7 @@ resources:
     accelerators: B200:2
     cpus: 8
     memory: 64Gi
-    image: "vllm/vllm-omni@sha256:970dee6658ea223f615b2438ce41e47f1d5322225482546e6e6bc5d8134f757c"
+    image: "docker.io/vllm/vllm-omni@sha256:970dee6658ea223f615b2438ce41e47f1d5322225482546e6e6bc5d8134f757c"
     kubernetes:
       pod_config:
         spec:
@@ -129,7 +129,17 @@ states:
   record-upstream:
     resources: cpu
     run:
-      argv: [python3, -c, "import sys; from npa.workflows.paidf_upstream import write_upstream_contract; write_upstream_contract(*sys.argv[1:])", event-video-generation, "{{config.upstream_contract_uri}}"]
+      argv:
+        - python3
+        - -c
+        - >-
+          import sys; from npa.workflows.paidf_upstream import write_upstream_contract;
+          write_upstream_contract(sys.argv[1], sys.argv[2],
+          generation_model=sys.argv[3], generation_revision=sys.argv[4])
+        - event-video-generation
+        - "{{config.upstream_contract_uri}}"
+        - "{{config.generation_model}}"
+        - "{{config.generation_revision}}"
     outputs:
       - uri: "{{config.upstream_contract_uri}}"
         schema: npa.paidf.upstream.v1

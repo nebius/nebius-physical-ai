@@ -59,7 +59,7 @@ resources:
     accelerators: B200:1
     cpus: 4
     memory: 32Gi
-    image: "vllm/vllm-omni@sha256:5d8c7e742c98858f257d82307e378391f0e7d77065e141c733cc4778042128ab"
+    image: "docker.io/vllm/vllm-omni@sha256:5d8c7e742c98858f257d82307e378391f0e7d77065e141c733cc4778042128ab"
     kubernetes:
       pod_config:
         spec:
@@ -93,7 +93,17 @@ states:
   record-upstream:
     resources: cpu
     run:
-      argv: [python3, -c, "import sys; from npa.workflows.paidf_upstream import write_upstream_contract; write_upstream_contract(*sys.argv[1:])", image-attribute-augmentation, "{{config.upstream_contract_uri}}"]
+      argv:
+        - python3
+        - -c
+        - >-
+          import sys; from npa.workflows.paidf_upstream import write_upstream_contract;
+          write_upstream_contract(sys.argv[1], sys.argv[2],
+          generation_model=sys.argv[3], generation_revision=sys.argv[4])
+        - image-attribute-augmentation
+        - "{{config.upstream_contract_uri}}"
+        - "{{config.generation_model}}"
+        - "{{config.generation_revision}}"
     outputs:
       - uri: "{{config.upstream_contract_uri}}"
         schema: npa.paidf.upstream.v1

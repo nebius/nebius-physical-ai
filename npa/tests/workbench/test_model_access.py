@@ -345,7 +345,7 @@ def test_access_note_all_ok_is_one_positive_line() -> None:
         hf_token="hf_x",
         ngc_key="nvapi-x",
         hf_validator=lambda *args: _HFResult(ok=True),
-        ngc_validator=lambda key: "reachable",
+        ngc_validator=lambda key, *, image: "reachable",
         gated_only=True,
     )
     note = access_note(results)
@@ -392,7 +392,7 @@ def test_access_note_distinguishes_ngc_credential_rejection() -> None:
         hf_token="hf_synthetic",
         ngc_key="nvapi-synthetic",
         hf_validator=lambda *args: _HFResult(ok=True),
-        ngc_validator=lambda key: "auth-401",
+        ngc_validator=lambda key, *, image: "auth-401",
         gated_only=True,
     )
 

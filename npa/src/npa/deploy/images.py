@@ -107,10 +107,10 @@ def requires_skypilot_bootstrap_runtime_probe(image: str) -> bool:
 
 
 # General public-registry refusal inventories. They intentionally describe the
-# redistribution decision, not a particular vendor payload. Both are empty now:
+# redistribution decision, not a particular vendor payload.
 # Cosmos3 serving is a zero-payload runtime bootstrap on a public Python base,
 # and sonic-mujoco is rebuilt independently without its quarantined parent.
-RESTRICTED_PUBLICATION_TOOLS: frozenset[str] = frozenset()
+RESTRICTED_PUBLICATION_TOOLS: frozenset[str] = frozenset({"paidf-anomalygen-sky"})
 RESTRICTED_DERIVED_IMAGES: frozenset[str] = frozenset()
 
 # Compatibility exports for installed callers. New code uses the general names.

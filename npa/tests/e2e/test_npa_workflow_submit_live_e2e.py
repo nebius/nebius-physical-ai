@@ -754,7 +754,11 @@ def _assert_paidf_native_live_artifacts(
 ) -> None:
     """Validate direct PAIDF translations through their final media contracts."""
 
+    import hashlib
     from io import BytesIO
+    from urllib.parse import urlparse
+
+    from PIL import Image
 
     from npa.clients.project_credentials import s3_client_for_project
     from npa.workflows.paidf_upstream import (
@@ -778,6 +782,7 @@ def _assert_paidf_native_live_artifacts(
             "cosmos-post-processing",
             "event-and-person-attribute-search",
             "generate-augmented-dataset",
+            "validate-final-outputs",
         },
         "paidf-event-video-generation.yaml": {
             "record-upstream",
@@ -791,6 +796,7 @@ def _assert_paidf_native_live_artifacts(
             "person-attribute-visual-qa",
             "person-attribute-search",
             "generate-anomaly-dataset",
+            "validate-final-outputs",
         },
     }
     states = {str(state) for wave in waves for state in wave.get("states", [])}
@@ -804,6 +810,12 @@ def _assert_paidf_native_live_artifacts(
         payload = json.loads(body)
         assert isinstance(payload, dict), relative
         return payload
+
+    def read_artifact(uri: str) -> bytes:
+        parsed = urlparse(uri)
+        assert parsed.scheme == "s3" and parsed.netloc == bucket
+        assert parsed.path.lstrip("/").startswith(prefix)
+        return client.get_object(Bucket=bucket, Key=parsed.path.lstrip("/"))["Body"].read()
 
     upstream = read_json("reports/upstream.json")
     sources = {
@@ -824,14 +836,23 @@ def _assert_paidf_native_live_artifacts(
         assert len(str(finetune.get("selected_checkpoint_sha256") or "")) == 64
         assert int(result.get("image_count") or 0) > 0
         assert int(result.get("label_file_count") or 0) > 0
-        assert all(
-            len(str(item.get("sha256") or "")) == 64 for item in result["images"]
-        )
-        labels = client.head_object(
-            Bucket=bucket,
-            Key=prefix + "anomaly/pseudo_labels/coco_annotations.json",
-        )
-        assert int(labels.get("ContentLength") or 0) > 0
+        image_names = set()
+        for item in result["images"]:
+            media = read_artifact(
+                f"s3://{bucket}/{prefix}anomaly/reconstructed_image/{item['name']}"
+            )
+            assert hashlib.sha256(media).hexdigest() == item["sha256"]
+            assert len(media) == int(item["size_bytes"])
+            with Image.open(BytesIO(media)) as decoded:
+                decoded.load()
+                assert decoded.width > 0 and decoded.height > 0
+            image_names.add(item["name"])
+        labels = read_json("anomaly/pseudo_labels/coco_annotations.json")
+        assert labels.get("images") and labels.get("annotations")
+        label_ids = {item["id"] for item in labels["images"]}
+        assert all(Path(item["file_name"]).name in image_names for item in labels["images"])
+        assert all(item["image_id"] in label_ids for item in labels["annotations"])
+        assert all(item.get("segmentation") for item in labels["annotations"])
         return
 
     assert (
@@ -849,21 +870,34 @@ def _assert_paidf_native_live_artifacts(
     )
     validation = read_json(validation_relative)
     final = read_json(final_relative)
+    terminal = read_json("reports/terminal-validation.json")
+    assert terminal["status"] == "passed"
+    assert terminal["entry_count"] == final["entry_count"]
+    encoded = json.dumps(final, sort_keys=True, separators=(",", ":")).encode()
+    assert terminal["dataset_manifest_sha256"] == hashlib.sha256(encoded).hexdigest()
     assert int(validation.get("accepted_count") or 0) > 0
     assert int(final.get("entry_count") or 0) > 0
     for entry in final["entries"]:
         assert entry.get("labels")
         assert len(str(entry.get("sha256") or "")) == 64
-        parsed = entry["media"].removeprefix(f"s3://{bucket}/")
-        media = client.get_object(Bucket=bucket, Key=parsed)["Body"].read()
+        media = read_artifact(entry["media"])
         assert len(media) == int(entry["size_bytes"])
+        assert hashlib.sha256(media).hexdigest() == entry["sha256"]
+        assert read_artifact(entry["caption"]).strip()
+        assert isinstance(json.loads(read_artifact(entry["metadata"])), dict)
         if workflow == "iaa":
-            from PIL import Image
-
             with Image.open(BytesIO(media)) as image:
-                image.verify()
+                image.load()
+                assert image.width > 0 and image.height > 0
         else:
-            assert b"ftyp" in media[:64]
+            import av
+
+            with av.open(BytesIO(media)) as container:
+                frame_count = 0
+                for frame in container.decode(video=0):
+                    assert frame.width > 0 and frame.height > 0
+                    frame_count += 1
+                assert frame_count > 1
 
     label_reports = ["auto_labeling/person-attribute-search.json"]
     if workflow == "evg":

@@ -67,6 +67,7 @@ The old `npa-cosmos:1.0.9` cu126 image stopped at Hopper. Its additive cu128/tor
 | `npa-cosmos3-serving` (build-your-own) | blocked (8-GPU memory floor) | **verified** (8xH200) | supported (8 GPUs) | supported (8 GPUs) | supported (8 GPUs) |
 | `npa-cosmos3-ray-serve` | supported | supported | **verified** [66] | **verified** [65] | supported (same-major `sm_100` coverage; not measured) |
 | `npa-content-agents` | supported (RT cores) | blocked (no RT cores) | **verified** [64] | blocked (no RT cores) | blocked (no RT cores) |
+| `npa-paidf-anomalygen-sky` | pending build | pending build | pending build | pending build | pending build |
 | `npa-wan2-2` | supported | supported | **historical evidence** [60] | **historical evidence** [61] | supported |
 | `npa-ltx2` | built, no GPU result | built, no GPU result | built, no GPU result | built, no GPU result | built, no GPU result |
 | `npa-alpamayo2-super` | supported | supported | **verified** [63] | **verified** [62] | supported (same-major `sm_100` coverage; not measured) |
@@ -225,3 +226,8 @@ npa/scripts/validate_blackwell_image.sh "$NPA_REGISTRY/npa-base:<tag>" --target 
 # (substitute NPA_IMAGE / NPA_GPU_INSTANCE / NPA_TARGET_* and apply)
 kubectl apply -f npa/scripts/blackwell-gpu-validation-job.yaml
 ```
+
+
+The restricted `npa-paidf-anomalygen-sky` workflow runtime has no completed built
+artifact or observed GPU result yet. Full AnomalyGen fine-tuning, inference,
+media decoding, and label/mask validation are required before claiming support.

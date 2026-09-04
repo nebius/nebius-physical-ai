@@ -69,9 +69,9 @@ _VARIANTS: dict[str, dict[str, Any]] = {
         "generation": "NVIDIA PAIDF Augmentation 1.1.0 image-edit protocol",
         "models": {"Qwen/Qwen-Image-Edit-2511": QWEN_IMAGE_EDIT_REVISION},
         "labeling": "NVIDIA PAIDF event/person attribute search protocol",
-        "execution": "workflow.paidf.run_local_augmentation",
-        "runtime_images": [
-            "vllm/vllm-omni@sha256:5d8c7e742c98858f257d82307e378391f0e7d77065e141c733cc4778042128ab",
+        "execution": "workflow.paidf.run_iaa_augmentation",
+        "reference_runtime_images": [
+            "docker.io/vllm/vllm-omni@sha256:5d8c7e742c98858f257d82307e378391f0e7d77065e141c733cc4778042128ab",
             "nvcr.io/nvidia/paidf-event-and-person-attribute-search-service@sha256:0f581ff6d92efd391281e5787a8b1fda76556443ade47c1f5d59d4c345a01f6a",
         ],
         "outputs": "augmented image dataset, attributes, skips, and provenance",
@@ -88,9 +88,9 @@ _VARIANTS: dict[str, dict[str, Any]] = {
             "NVIDIA PAIDF detection/tracking, captioning, visual-QA, and "
             "event/person attribute-search protocols"
         ),
-        "execution": "workflow.paidf.run_local_augmentation",
-        "runtime_images": [
-            "vllm/vllm-omni@sha256:970dee6658ea223f615b2438ce41e47f1d5322225482546e6e6bc5d8134f757c",
+        "execution": "workflow.paidf.run_evg_augmentation",
+        "reference_runtime_images": [
+            "docker.io/vllm/vllm-omni@sha256:970dee6658ea223f615b2438ce41e47f1d5322225482546e6e6bc5d8134f757c",
             "nvcr.io/nvidia/paidf-detection-and-tracking-rfdetr-service@sha256:6b35e63b95cab7cd772906bcb08be978de7526427f0d1925ab84439dd4a9561e",
             "nvcr.io/nvidia/paidf-captioning-service@sha256:17e1e3f53cc66342183f7d0b6eed76907993bb325a13db90c46d9a8cf664d804",
             "nvcr.io/nvidia/paidf-visual-qa-service@sha256:e681c8dee849c7ac9fc5b182f51e9efd0da460972b08850d40f00aa9d5e3c97c",
@@ -195,11 +195,30 @@ def upstream_contract(workflow_variant: str) -> dict[str, Any]:
 
 
 def write_upstream_contract(
-    workflow_variant: str, output_uri: str, runtime_image: str = ""
+    workflow_variant: str,
+    output_uri: str,
+    runtime_image: str = "",
+    *,
+    generation_model: str = "",
+    generation_revision: str = "",
 ) -> dict[str, Any]:
     """Write one truthful PAIDF upstream contract to a local path or S3 URI."""
 
     payload = upstream_contract(workflow_variant)
+    if generation_model or generation_revision:
+        if not generation_model.strip() or not re.fullmatch(
+            r"[0-9a-f]{40}", generation_revision
+        ):
+            raise ValueError("generation model requires an exact immutable revision")
+        components = payload["npa_integration"]["components"]
+        components["reference_models"] = components.get("models", {})
+        components["models"] = {generation_model: generation_revision}
+    if "reference_runtime_images" in payload["npa_integration"]["components"]:
+        payload["npa_integration"]["runtime_image_evidence"] = (
+            "reference_runtime_images are reviewed upstream image defaults; "
+            "executed stage reports record the actual renderer-selected runtime_image, "
+            "including operator overrides"
+        )
     if runtime_image:
         if not re.fullmatch(r".+@sha256:[0-9a-f]{64}", runtime_image):
             raise ValueError("runtime_image must be immutable by sha256 digest")

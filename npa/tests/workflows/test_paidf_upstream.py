@@ -63,7 +63,7 @@ def test_new_direct_translation_contracts(variant: str, workflow: str) -> None:
     components = payload["npa_integration"]["components"]
     assert components["translation"] == "direct"
     assert components["upstream_workflow"] == workflow
-    pinned_images = components.get("runtime_images") or components.get(
+    pinned_images = components.get("reference_runtime_images") or components.get(
         "source_reference_images"
     )
     assert pinned_images
@@ -143,6 +143,60 @@ def test_write_upstream_contract_records_resolved_private_runtime_image(
     assert result["npa_integration"]["resolved_runtime_image"] == image
 
 
+@pytest.mark.parametrize(
+    "variant", ["image-attribute-augmentation", "event-video-generation"]
+)
+def test_write_upstream_contract_records_selected_model_without_changing_reference(
+    variant: str, tmp_path: Path
+) -> None:
+    original = upstream_contract(variant)["npa_integration"]["components"]
+    result = write_upstream_contract(
+        variant,
+        str(tmp_path / "upstream.json"),
+        generation_model="synthetic/model",
+        generation_revision="a" * 40,
+    )
+    components = result["npa_integration"]["components"]
+    assert components["models"] == {"synthetic/model": "a" * 40}
+    assert components["reference_models"] == original["models"]
+    assert upstream_contract(variant)["npa_integration"]["components"] == original
+    assert "runtime_images" not in components
+    assert (
+        "renderer-selected runtime_image"
+        in result["npa_integration"]["runtime_image_evidence"]
+    )
+
+
+def test_selected_model_revision_must_be_immutable(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="exact immutable revision"):
+        write_upstream_contract(
+            "event-video-generation",
+            str(tmp_path / "upstream.json"),
+            generation_model="synthetic/model",
+            generation_revision="main",
+        )
+    assert not (tmp_path / "upstream.json").exists()
+
+
+@pytest.mark.parametrize(
+    ("variant", "tool_ref"),
+    [
+        ("image-attribute-augmentation", "workflow.paidf.run_iaa_augmentation"),
+        ("event-video-generation", "workflow.paidf.run_evg_augmentation"),
+    ],
+)
+def test_native_provenance_names_registered_execution_tool(
+    variant: str, tool_ref: str
+) -> None:
+    from npa.orchestration.npa_workflow.catalog import validate_tool_ref
+
+    assert (
+        upstream_contract(variant)["npa_integration"]["components"]["execution"]
+        == tool_ref
+    )
+    assert validate_tool_ref(tool_ref).name == tool_ref
+
+
 def test_unknown_variant_fails_closed() -> None:
     with pytest.raises(ValueError, match="unsupported PAIDF workflow variant"):
         upstream_contract("airflow")
@@ -188,6 +242,13 @@ def test_shipped_workflows_record_upstream_before_processing(
     ]
     if filename == "paidf-defect-image-generation.yaml":
         expected_tail.append("{{config.anomalygen_image}}")
+    elif filename in {
+        "paidf-image-attribute-augmentation.yaml",
+        "paidf-event-video-generation.yaml",
+    }:
+        expected_tail.extend(
+            ["{{config.generation_model}}", "{{config.generation_revision}}"]
+        )
     assert state["run"]["argv"][-len(expected_tail) :] == expected_tail
     assert state["outputs"] == [
         {

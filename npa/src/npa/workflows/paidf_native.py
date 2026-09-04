@@ -14,6 +14,7 @@ import hashlib
 import json
 import os
 import random
+import re
 import shutil
 import subprocess
 import tempfile
@@ -36,6 +37,16 @@ from npa.workflows.paidf_upstream import (
 
 SCHEMA_PREFIX = "npa.paidf.native"
 IMAGE_SUFFIXES = {".bmp", ".gif", ".jpg", ".jpeg", ".png", ".tif", ".tiff", ".webp"}
+IAA_LABEL_ARTIFACTS = (
+    "sidecars/person_attribute_search/bundle_attributes.json",
+    "sidecars/person_attribute_search/bundle_queries.json",
+)
+DIG_RUNTIME_CACHE_PROBES = {
+    "nvidia/Cosmos-Guardrail1": "blocklist",
+    "Qwen/Qwen3Guard-Gen-0.6B": "model.safetensors",
+    "Qwen/Qwen3-VL-8B-Instruct": "tokenizer.json",
+    "nvidia/Cosmos3-Edge": "processor_config.json",
+}
 
 
 class PaidfNativeError(RuntimeError):
@@ -156,6 +167,10 @@ def _publish(path: Path, uri: str) -> str:
 
 
 def _write_json(payload: dict[str, Any], uri: str) -> dict[str, Any]:
+    if str(payload.get("schema", "")).startswith(f"{SCHEMA_PREFIX}."):
+        runtime_image = os.environ.get("NPA_TASK_IMAGE", "").strip()
+        if runtime_image:
+            payload["runtime_image"] = runtime_image
     with tempfile.TemporaryDirectory(prefix="npa-paidf-json-") as tmp:
         local = Path(tmp) / "payload.json"
         local.write_text(
@@ -186,7 +201,9 @@ def _uri_prefix_has_objects(uri: str) -> bool:
 
     if not _is_s3(uri):
         path = Path(uri)
-        return path.is_file() or (path.is_dir() and any(item.is_file() for item in path.rglob("*")))
+        return path.is_file() or (
+            path.is_dir() and any(item.is_file() for item in path.rglob("*"))
+        )
     parsed = urlparse(uri)
     prefix = parsed.path.lstrip("/").rstrip("/") + "/"
     response = StorageClient.from_environment().s3.list_objects_v2(
@@ -499,6 +516,9 @@ def run_augmentation(
     configs = manifest.get("configs")
     if not isinstance(configs, list) or not configs:
         raise PaidfNativeError("augmentation config manifest is empty")
+    workflow = manifest.get("workflow")
+    if workflow not in {"iaa", "evg"}:
+        raise PaidfNativeError("augmentation config manifest has no supported workflow")
     _configure_multistorage(
         config_manifest_uri,
         result_uri,
@@ -539,22 +559,47 @@ def run_augmentation(
                 ["uv", "sync", "--project", str(source), "--frozen"], check=True
             )
         completed: list[dict[str, Any]] = []
+        failed: list[dict[str, Any]] = []
         for index, item in enumerate(configs):
             local = root / f"config-{index:04d}.yaml"
             _materialize(str(item["config_uri"]), local)
-            _run_component([*command_prefix, "--config", str(local)])
+            try:
+                _run_component([*command_prefix, "--config", str(local)])
+            except subprocess.CalledProcessError as exc:
+                # IAA's mapped join retains successful siblings after exhausted
+                # component retries. EVG requires every expected augmentation.
+                if workflow == "evg":
+                    raise
+                failed.append(
+                    {
+                        "config_uri": item["config_uri"],
+                        "input_key": item["input_key"],
+                        "augmentation_index": item["augmentation_index"],
+                        "exit_code": exc.returncode,
+                        "reason": "component_retries_exhausted",
+                    }
+                )
+                continue
             completed.append(
                 {"config_uri": item["config_uri"], "media_uri": item["media_uri"]}
             )
     payload = {
-        "schema": f"{SCHEMA_PREFIX}.{manifest['workflow']}-augmentation.v1",
+        "schema": f"{SCHEMA_PREFIX}.{workflow}-augmentation.v1",
         "run_id": run_id,
         "count": len(completed),
+        "attempted_count": len(configs),
+        "failed_count": len(failed),
+        "failed": failed,
         "component": "NVIDIA paidf-augmentation 1.1.0",
         "upstream_revision": PAIDF_AUGMENTATION_REVISION,
         "outputs": completed,
     }
-    return _write_json(payload, result_uri)
+    _write_json(payload, result_uri)
+    if not completed:
+        raise PaidfNativeError(
+            "every mapped PAIDF augmentation exhausted component retries"
+        )
+    return payload
 
 
 def run_local_augmentation(
@@ -638,6 +683,9 @@ def validate_augmentation(
     """Require decodable media plus non-empty caption and metadata for each output."""
 
     manifest = _read_json(config_manifest_uri)
+    workflow = manifest.get("workflow")
+    if workflow not in {"iaa", "evg"}:
+        raise PaidfNativeError("augmentation config manifest has no supported workflow")
     accepted: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
     with tempfile.TemporaryDirectory(prefix="npa-paidf-validate-") as tmp:
@@ -661,6 +709,10 @@ def validate_augmentation(
                 parsed_metadata = json.loads(metadata.read_text(encoding="utf-8"))
                 if not isinstance(parsed_metadata, dict):
                     raise PaidfNativeError("metadata is not an object")
+                for evaluator in ("attribute_verification", "hallucination_check"):
+                    verdict = parsed_metadata.get(evaluator)
+                    if isinstance(verdict, dict) and verdict.get("passed") is False:
+                        raise PaidfNativeError(f"{evaluator} failed")
                 if media.suffix.lower() in IMAGE_SUFFIXES:
                     from PIL import Image
 
@@ -700,6 +752,10 @@ def validate_augmentation(
                 )
     if not accepted:
         raise PaidfNativeError("every mapped PAIDF augmentation failed validation")
+    if workflow == "evg" and skipped:
+        raise PaidfNativeError(
+            f"EVG requires every expected augmentation; {len(skipped)} failed validation"
+        )
     payload = {
         "schema": f"{SCHEMA_PREFIX}.{manifest['workflow']}-validation.v1",
         "run_id": run_id,
@@ -806,12 +862,40 @@ def postprocess_iaa(
                     raise PaidfNativeError(
                         "upstream IAA post-processing entry has no images"
                     )
+                if not all(
+                    isinstance(entry.get(field), dict)
+                    for field in (
+                        "attributes",
+                        "selected_attributes",
+                        "queries",
+                        "attribute_verification",
+                    )
+                ):
+                    raise PaidfNativeError(
+                        "upstream IAA post-processing entry lacks attribute labels"
+                    )
                 media_uri = f"{dataset_dir.rstrip('/')}/{images[0].split('/', 1)[-1]}"
+                # The pane splitter re-encodes the generated image. Its bytes,
+                # rather than the pre-split image's digest, identify this handoff.
+                split_image = root / f"split-{len(outputs)}.jpg"
+                _materialize(media_uri, split_image)
+                from PIL import Image
+
+                with Image.open(split_image) as image:
+                    image.verify()
                 outputs.append(
                     {
                         **item,
                         "key": str(entry["person_key"]),
                         "media_uri": media_uri,
+                        "sha256": _sha256(split_image),
+                        "size_bytes": split_image.stat().st_size,
+                        "generation_media_uri": item["media_uri"],
+                        "generation_sha256": item["sha256"],
+                        "attributes": entry["attributes"],
+                        "selected_attributes": entry["selected_attributes"],
+                        "queries": entry["queries"],
+                        "attribute_verification": entry["attribute_verification"],
                         "postprocess_dataset_uri": dataset_json_uri,
                     }
                 )
@@ -820,6 +904,7 @@ def postprocess_iaa(
         "run_id": run_id,
         "accepted_count": len(outputs),
         "accepted": outputs,
+        "skipped": validation.get("skipped", []),
         "component": "NVIDIA paidf-augmentation create_attribute_augmented_dataset.py",
         "upstream_revision": PAIDF_AUGMENTATION_REVISION,
     }
@@ -830,6 +915,52 @@ def _asset_to_uri(source: Path, destination_uri: str) -> str:
     if not source.is_file() or not source.stat().st_size:
         raise PaidfNativeError(f"required upstream protocol asset is missing: {source}")
     return _publish(source, destination_uri)
+
+
+def _validate_iaa_labels(data_path: str) -> None:
+    """Validate the pinned PAS image-bundle protocol, excluding input assets.
+
+    Upstream's export/bundle.py publishes matching nonempty ``people`` maps in
+    the attribute and query documents. A staged config or prompt cannot satisfy
+    this output boundary.
+    """
+
+    documents = []
+    for relative in IAA_LABEL_ARTIFACTS:
+        uri = f"{data_path.rstrip('/')}/{relative}"
+        if not _uri_is_file(uri):
+            raise PaidfNativeError("IAA attribute search omitted a required bundle")
+        document = _read_json(uri)
+        people = document.get("people")
+        if (
+            not isinstance(people, dict)
+            or not people
+            or document.get("n_people") != len(people)
+            or not all(isinstance(person, dict) for person in people.values())
+        ):
+            raise PaidfNativeError(
+                "IAA attribute search produced an invalid people bundle"
+            )
+        documents.append(document)
+    attributes, queries = documents
+    if attributes.get("chunk_id") != queries.get("chunk_id") or set(
+        attributes["people"]
+    ) != set(queries["people"]):
+        raise PaidfNativeError("IAA attribute and query bundle identities disagree")
+    for key, person in attributes["people"].items():
+        if not isinstance(person.get("attributes"), dict):
+            raise PaidfNativeError("IAA bundle is missing person attributes")
+        query_values = queries["people"][key].get("queries")
+        if not isinstance(query_values, dict):
+            raise PaidfNativeError("IAA bundle is missing tiered queries")
+        for tier in ("easy", "medium", "hard"):
+            values = query_values.get(tier)
+            if (
+                not isinstance(values, list)
+                or not values
+                or not all(isinstance(value, str) and value.strip() for value in values)
+            ):
+                raise PaidfNativeError("IAA bundle has empty or invalid tiered queries")
 
 
 def run_auto_label(
@@ -1028,9 +1159,44 @@ def run_auto_label(
                     if workflow == "iaa"
                     else evg_assets / "person_attribute_search_config.yaml"
                 )
-                config_uri = _asset_to_uri(
-                    config_asset, f"{data_path}/sidecars/assets/{config_asset.name}"
-                )
+                if workflow == "iaa":
+                    attribute_uri = str(item.get("postprocess_dataset_uri") or "")
+                    if not attribute_uri or not _uri_is_file(attribute_uri):
+                        raise PaidfNativeError(
+                            "IAA attribute search requires the postprocessed attribute dataset"
+                        )
+                    assets_uri = f"{data_path}/sidecars/person_attribute_search/assets"
+                    prompt_asset = (
+                        iaa_assets
+                        / "image_attribute_augmentation_synonymous_query_prompt.json"
+                    )
+                    prompt_uri = _asset_to_uri(
+                        prompt_asset, f"{assets_uri}/{prompt_asset.name}"
+                    )
+                    remote_config = yaml.safe_load(
+                        config_asset.read_text(encoding="utf-8")
+                    )
+                    if not isinstance(remote_config, dict):
+                        raise PaidfNativeError(
+                            "IAA attribute-search config is not an object"
+                        )
+                    remote_config.update(
+                        attribute_json=attribute_uri,
+                        query_prompt_file=prompt_uri,
+                        llm_endpoint_url=llm_url,
+                        llm_model=llm_model,
+                    )
+                    local_config = root / f"{key}-attribute-search.yaml"
+                    local_config.write_text(
+                        yaml.safe_dump(remote_config, sort_keys=False), encoding="utf-8"
+                    )
+                    config_uri = _asset_to_uri(
+                        local_config, f"{assets_uri}/{config_asset.name}"
+                    )
+                else:
+                    config_uri = _asset_to_uri(
+                        config_asset, f"{data_path}/sidecars/assets/{config_asset.name}"
+                    )
                 args.extend(
                     [
                         "--config-file",
@@ -1044,7 +1210,7 @@ def run_auto_label(
                     ]
                 )
                 if workflow == "iaa":
-                    args.extend(["--attribute-json", item["metadata_uri"]])
+                    args.extend(["--attribute-json", attribute_uri])
             _run_component(args)
             required: tuple[str, ...]
             if stage == "detection":
@@ -1058,7 +1224,9 @@ def run_auto_label(
                     "sidecars/visual_qa_per_track/items.json",
                     "sidecars/visual_qa_per_track/windows.normalized.json",
                 )
-            elif workflow == "evg" and _uri_is_file(
+            elif workflow == "iaa":
+                required = IAA_LABEL_ARTIFACTS
+            elif _uri_is_file(
                 f"{data_path}/sidecars/detection_and_tracking/tracks.json"
             ):
                 required = (
@@ -1079,10 +1247,8 @@ def run_auto_label(
                 raise PaidfNativeError(
                     f"{stage} omitted {len(missing)} required published sidecar(s)"
                 )
-            if workflow == "iaa" and not _uri_prefix_has_objects(data_path):
-                raise PaidfNativeError(
-                    "IAA attribute search produced no dataset objects"
-                )
+            if workflow == "iaa":
+                _validate_iaa_labels(data_path)
             completed.append(
                 {
                     "key": key,
@@ -1112,7 +1278,7 @@ def finalize_dataset(
     output_uri: str,
     run_id: str,
 ) -> dict[str, Any]:
-    """Publish the final IAA/EVG dataset index only after media validation."""
+    """Assemble the upstream DAFT scene layout and publish its NPA lineage index."""
 
     validation = _read_json(validation_uri)
     upstream = _read_json(upstream_uri)
@@ -1125,6 +1291,7 @@ def finalize_dataset(
         raise PaidfNativeError("labeling result has no output records")
     label_by_key = {str(item.get("key")): item for item in label_outputs}
     entries = []
+    assembled_file_count = 0
     validated_artifact_count = 0
     trackless_count = 0
     for item in accepted:
@@ -1172,20 +1339,104 @@ def finalize_dataset(
                     f"published sidecar(s) for {key}"
                 )
             validated_artifact_count += len(required)
-        elif not _uri_prefix_has_objects(data_path):
-            raise PaidfNativeError(f"IAA terminal dataset is empty for {key}")
         else:
-            validated_artifact_count += 1
+            _validate_iaa_labels(data_path)
+            validated_artifact_count += len(IAA_LABEL_ARTIFACTS)
+        scene_path = f"{output_uri.rsplit('/', 1)[0]}/{key}"
+        with tempfile.TemporaryDirectory(prefix="npa-paidf-scene-") as tmp:
+            scene = _materialize(data_path, Path(tmp) / "scene")
+            if not scene.is_dir() or not any(
+                path.is_file() for path in scene.rglob("*")
+            ):
+                raise PaidfNativeError(
+                    "the auto-labeling scene contains no files to assemble"
+                )
+            cosmos = scene / "sidecars/cosmos"
+            raw = scene / "raw"
+            raw.mkdir(parents=True, exist_ok=True)
+            cosmos.mkdir(parents=True, exist_ok=True)
+            if workflow == "evg":
+                local_media = _materialize(item["media_uri"], raw / "video.mp4")
+            else:
+                # The producer may emit multiple views; the scene owns all of
+                # them, matching upstream copy_cosmos_augmented_images.
+                _materialize(item["media_uri"].rsplit("/", 1)[0], raw)
+                local_media = raw / Path(urlparse(item["media_uri"]).path).name
+                _materialize(
+                    item["postprocess_dataset_uri"],
+                    scene / "sidecars/augmented_data.json",
+                )
+            if (
+                not local_media.is_file()
+                or local_media.stat().st_size != item["size_bytes"]
+                or _sha256(local_media) != item["sha256"]
+            ):
+                raise PaidfNativeError(
+                    "assembled media does not match its validated digest"
+                )
+            config_uri = str(item.get("config_uri") or "")
+            if not config_uri:
+                raise PaidfNativeError(
+                    "dataset assembly requires the executed generation config"
+                )
+            _materialize(config_uri, cosmos / "config.yaml")
+            _materialize(item["caption_uri"], cosmos / "caption.txt")
+            _materialize(item["metadata_uri"], cosmos / "metadata.json")
+            scene_artifacts = sorted(
+                str(path.relative_to(scene))
+                for path in scene.rglob("*")
+                if path.is_file()
+            )
+            assembled_file_count += len(scene_artifacts)
+            _publish(scene, scene_path)
+            media_relative = str(local_media.relative_to(scene))
+        paths = {
+            "config": f"{scene_path}/sidecars/cosmos/config.yaml",
+            "video": f"{scene_path}/{media_relative}",
+            "caption": f"{scene_path}/sidecars/cosmos/caption.txt",
+            "metadata": f"{scene_path}/sidecars/cosmos/metadata.json",
+            "raw": f"{scene_path}/raw",
+            "contextual": f"{scene_path}/contextual",
+            "sidecars": f"{scene_path}/sidecars",
+        }
         entry = {
             "key": key,
-            "media": item["media_uri"],
-            "caption": item["caption_uri"],
-            "metadata": item["metadata_uri"],
+            "scene_id": key,
+            "input_key": item["input_key"],
+            "augmentation_index": item["augmentation_index"],
+            "scene_path": scene_path,
+            "auto_labeling_source_path": data_path,
+            "paths": paths,
+            "media": paths["video"],
+            "caption": paths["caption"],
+            "metadata": paths["metadata"],
             "variables": item["variables"],
             "sha256": item["sha256"],
             "size_bytes": item["size_bytes"],
-            "labels": data_path,
+            "labels": scene_path,
+            "scene_artifacts": scene_artifacts,
         }
+        if workflow == "iaa":
+            config_relative = "sidecars/person_attribute_search/assets/event_and_person_attribute_search_config.yaml"
+            if config_relative not in scene_artifacts:
+                raise PaidfNativeError(
+                    "IAA assembled scene lacks the executed attribute-search config"
+                )
+            entry.update(
+                person_key=key,
+                person_id=item["input_key"],
+                source_person_key=item["input_key"],
+                augmentation_id=f"aug_{item['augmentation_index']}",
+                selected_attributes=item["selected_attributes"],
+                queries=item["queries"],
+                attribute_verification=item["attribute_verification"],
+            )
+            paths["config"] = f"{scene_path}/{config_relative}"
+            paths["task"] = f"{scene_path}/task"
+            entry["postprocess_dataset"] = f"{scene_path}/sidecars/augmented_data.json"
+            entry["postprocess_source"] = item["postprocess_dataset_uri"]
+            entry["generation_media"] = item["generation_media_uri"]
+            entry["generation_sha256"] = item["generation_sha256"]
         entries.append(entry)
     payload = {
         "schema": f"{SCHEMA_PREFIX}.{workflow}-dataset.v1",
@@ -1193,9 +1444,20 @@ def finalize_dataset(
         "workflow": workflow,
         "status": "completed",
         "entry_count": len(entries),
+        "assembled_file_count": assembled_file_count,
         "validated_artifact_count": validated_artifact_count,
         "trackless_scene_count": trackless_count,
         "entries": entries,
+        "metadata": {
+            "description": "Image Attribute Augmentation dataset"
+            if workflow == "iaa"
+            else "Event Video Generation anomaly dataset",
+            "total_scenes": len(entries),
+            "total_ids": len(entries),
+            "original_ids": len({entry["input_key"] for entry in entries}),
+            "original_inputs": len({entry["input_key"] for entry in entries}),
+            "skipped_augmentations": validation.get("skipped", []),
+        },
         "upstream": upstream,
         "lineage": {
             "validation_uri": validation_uri,
@@ -1203,6 +1465,10 @@ def finalize_dataset(
             "upstream_uri": upstream_uri,
         },
     }
+    if workflow == "iaa":
+        upstream_dataset_uri = f"{output_uri.rsplit('/', 1)[0]}/augmented_data.json"
+        payload["upstream_dataset_uri"] = upstream_dataset_uri
+        _write_json(payload, upstream_dataset_uri)
     return _write_json(payload, output_uri)
 
 
@@ -1227,6 +1493,14 @@ def validate_dataset(dataset_uri: str, report_uri: str, run_id: str) -> dict[str
         labels = str(entry.get("labels") or "")
         if not labels or not _uri_prefix_has_objects(labels):
             missing.append(f"{entry.get('key', '<unknown>')}:labels")
+        elif dataset.get("workflow") == "iaa":
+            _validate_iaa_labels(labels)
+            postprocess = str(entry.get("postprocess_dataset") or "")
+            if not postprocess or not _uri_is_file(postprocess):
+                missing.append(f"{entry.get('key', '<unknown>')}:postprocess_dataset")
+        for relative in entry.get("scene_artifacts", []):
+            if not _uri_is_file(f"{entry['scene_path']}/{relative}"):
+                missing.append(f"{entry.get('key', '<unknown>')}:scene_artifact")
     if missing:
         raise PaidfNativeError(
             f"terminal dataset validation found {len(missing)} missing artifact(s)"
@@ -1239,10 +1513,83 @@ def validate_dataset(dataset_uri: str, report_uri: str, run_id: str) -> dict[str
         "dataset_uri": dataset_uri,
         "dataset_manifest_sha256": hashlib.sha256(encoded).hexdigest(),
         "entry_count": len(entries),
+        "assembled_file_count": dataset.get("assembled_file_count", 0),
         "validated_artifact_count": dataset.get("validated_artifact_count", 0),
         "trackless_scene_count": dataset.get("trackless_scene_count", 0),
     }
     return _write_json(payload, report_uri)
+
+
+def _dig_model_revisions() -> dict[str, str]:
+    """Use the same exact revisions that the required access preflight checked."""
+
+    from npa.workbench.model_access import HF, assets_for
+
+    revisions = {
+        asset.repo: asset.revision
+        for asset in assets_for(["paidf-dig"])
+        if asset.provider == HF
+    }
+    if not revisions or any(
+        not re.fullmatch(r"[0-9a-f]{40}", revision) for revision in revisions.values()
+    ):
+        raise PaidfNativeError(
+            "DIG dependencies require exact access-preflight revisions"
+        )
+    return revisions
+
+
+def _dig_cache_manifest(
+    pretrained: Path, *, initialize: bool = False
+) -> dict[str, Any]:
+    """Bind upstream's unpinned runtime loads to the approved cached snapshots."""
+
+    revisions = _dig_model_revisions()
+    snapshots = []
+    for repository, probe in DIG_RUNTIME_CACHE_PROBES.items():
+        revision = revisions[repository]
+        cache = pretrained / "hf" / f"models--{repository.replace('/', '--')}"
+        snapshot = cache / "snapshots" / revision
+        if not (snapshot / probe).exists():
+            raise PaidfNativeError(
+                f"DIG pinned runtime cache is incomplete for {repository}"
+            )
+        reference = cache / "refs/main"
+        if initialize:
+            reference.parent.mkdir(parents=True, exist_ok=True)
+            reference.write_text(revision, encoding="utf-8")
+        if (
+            not reference.is_file()
+            or reference.read_text(encoding="utf-8").strip() != revision
+        ):
+            raise PaidfNativeError(
+                f"DIG runtime cache revision disagrees with preflight for {repository}"
+            )
+        snapshots.append({"repository": repository, "revision": revision})
+    manifest = {"schema": f"{SCHEMA_PREFIX}.dig-runtime-cache.v1", "models": snapshots}
+    recorded = pretrained / "runtime-hf-snapshots.json"
+    if initialize:
+        recorded.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    elif (
+        not recorded.is_file()
+        or json.loads(recorded.read_text(encoding="utf-8")) != manifest
+    ):
+        raise PaidfNativeError(
+            "DIG runtime cache provenance does not match approved revisions"
+        )
+    return manifest
+
+
+def _dig_offline_environment(pretrained: Path) -> dict[str, str]:
+    _dig_cache_manifest(pretrained)
+    return {
+        **os.environ,
+        "CKPT_DIR": str(pretrained),
+        "HF_HUB_CACHE": str(pretrained / "hf"),
+        "HUGGINGFACE_HUB_CACHE": str(pretrained / "hf"),
+        "HF_HUB_OFFLINE": "1",
+        "TRANSFORMERS_OFFLINE": "1",
+    }
 
 
 def run_dig_train(
@@ -1276,7 +1623,7 @@ def run_dig_train(
         recipe = skill / f"assets/cookbooks/{usecase}/ag_config.yaml"
         train_output = root / "finetune"
         env = {
-            **os.environ,
+            **_dig_offline_environment(pretrained),
             "PRETRAINED_SRC": str(pretrained),
             "DATASET_DIR": str(dataset),
             "RECIPE_TEMPLATE": str(recipe),
@@ -1322,7 +1669,91 @@ def prepare_dig_pretrained(
     with tempfile.TemporaryDirectory(prefix="npa-paidf-dig-pretrained-") as tmp:
         output = Path(tmp) / "pretrained"
         converted_manifest = workspace / "assets/checkpoint_manifest_converted.sha256"
-        env = {**os.environ, "CKPT_DIR": str(output)}
+        revisions = _dig_model_revisions()
+        env = {
+            **os.environ,
+            "CKPT_DIR": str(output),
+            "HF_HUB_OFFLINE": "0",
+            "TRANSFORMERS_OFFLINE": "0",
+            "HF_HUB_CACHE": str(output / "hf"),
+            "HF_CLI_VERSION": "1.26.0",
+        }
+        for repository in DIG_RUNTIME_CACHE_PROBES:
+            command = [
+                "uvx",
+                "hf==1.26.0",
+                "download",
+                repository,
+                "--revision",
+                revisions[repository],
+                "--cache-dir",
+                str(output / "hf"),
+            ]
+            if repository == "Qwen/Qwen3-VL-8B-Instruct":
+                command.extend(["--include", "*.json", "*.txt"])
+            elif repository == "nvidia/Cosmos3-Edge":
+                command.extend(
+                    ["--exclude", "transformer/*", "vae/*", "vision_encoder/*"]
+                )
+            _run_component(command, env=env)
+        _dig_cache_manifest(output, initialize=True)
+        shutil.rmtree(
+            output / "hf/models--nvidia--Cosmos3-Edge/trees", ignore_errors=True
+        )
+        # The pinned upstream converter's named models resolve revision=main.
+        # Fetch approved revisions first and give that real converter local
+        # snapshots; the original downloader then sees completed DCP outputs.
+        for model in ("Cosmos3-Nano", "Cosmos3-Edge"):
+            repository = f"nvidia/{model}"
+            source = (
+                output / repository
+                if model == "Cosmos3-Nano"
+                else Path(tmp) / "edge-source"
+            )
+            _run_component(
+                [
+                    "uvx",
+                    "hf==1.26.0",
+                    "download",
+                    repository,
+                    "--revision",
+                    revisions[repository],
+                    "--local-dir",
+                    str(source),
+                ],
+                env=env,
+            )
+            _run_component(
+                [
+                    "python",
+                    "-m",
+                    "cosmos_framework.scripts.convert_model_to_dcp",
+                    "-o",
+                    str(output / model),
+                    "--checkpoint-path",
+                    str(source),
+                ],
+                cwd=workspace,
+                env=_dig_offline_environment(output),
+            )
+        for prefix, repository in {
+            "DINOV2": "facebook/dinov2-large",
+            "CRADIO": "nvidia/C-RADIOv3-B",
+            "WAN_VAE": "Wan-AI/Wan2.2-TI2V-5B",
+            "SAM2": "facebook/sam2.1-hiera-large",
+            "COSMOS_VLM": "nvidia/Cosmos3-Nano",
+            "GUARDRAIL": "nvidia/Cosmos-Guardrail1",
+            "QWEN_GUARD": "Qwen/Qwen3Guard-Gen-0.6B",
+            "QWEN_VLM": "Qwen/Qwen3-VL-8B-Instruct",
+            "EDGE_VLM": "nvidia/Cosmos3-Edge",
+        }.items():
+            env[f"{prefix}_REPO"] = repository
+            env[f"{prefix}_REV"] = revisions[repository]
+        env.update(
+            CRADIO_FILE="model.safetensors",
+            WAN_VAE_FILE="Wan2.2_VAE.pth",
+            SAM2_FILE="sam2.1_hiera_large.pt",
+        )
         _run_component(["bash", str(script)], cwd=workspace, env=env)
         required = [
             output / "Cosmos3-Nano",
@@ -1335,6 +1766,7 @@ def prepare_dig_pretrained(
         ):
             raise PaidfNativeError("AnomalyGen base-checkpoint setup is incomplete")
         shutil.copy2(converted_manifest, output / converted_manifest.name)
+        _dig_cache_manifest(output, initialize=True)
         files = [item for item in output.rglob("*") if item.is_file()]
         _publish(output, output_uri)
         payload = {
@@ -1389,7 +1821,7 @@ def run_dig_inference(
         )
         generated = root / "generated"
         env = {
-            **os.environ,
+            **_dig_offline_environment(pretrained),
             "PRETRAINED_SRC": str(pretrained),
             "DATASET_DIR": str(defect_specs[0].parent),
             "DEFECT_SPEC": str(defect_specs[0]),

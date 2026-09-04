@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 
+import pytest
 from typer.testing import CliRunner
 
 from npa.cli.main import app
@@ -397,8 +398,8 @@ def test_access_pass_when_validator_ok(monkeypatch) -> None:
         lambda token, repo, repo_type, revision, probe_path: _HFOK(ok=True),
     )
     monkeypatch.setattr(
-        "npa.workbench.nurec.nurec.check_ngc_image_access",
-        lambda key: "reachable",
+        "npa.workbench.model_access.check_ngc_artifact_access",
+        lambda key, *, image: "reachable",
     )
     result = runner.invoke(
         app,
@@ -422,8 +423,8 @@ def test_access_fails_on_ngc_auth_rejection(monkeypatch) -> None:
         lambda token, repo, repo_type, revision, probe_path: _HFOK(ok=True),
     )
     monkeypatch.setattr(
-        "npa.workbench.nurec.nurec.check_ngc_image_access",
-        lambda key: "auth-401",
+        "npa.workbench.model_access.check_ngc_artifact_access",
+        lambda key, *, image: "auth-401",
     )
 
     result = runner.invoke(
@@ -450,8 +451,8 @@ def test_access_warns_on_transient_ngc_failure_without_rejecting_key(
         lambda token, repo, repo_type, revision, probe_path: _HFOK(ok=True),
     )
     monkeypatch.setattr(
-        "npa.workbench.nurec.nurec.check_ngc_image_access",
-        lambda key: "unreachable",
+        "npa.workbench.model_access.check_ngc_artifact_access",
+        lambda key, *, image: "unreachable",
     )
 
     result = runner.invoke(
@@ -554,3 +555,120 @@ def test_access_save_env_credentials_json_stays_valid_and_redacted(monkeypatch) 
     payload = json.loads(result.output)
     assert payload["credential_persistence"]["persisted"] == ["HF_TOKEN"]
     assert secret not in result.output
+
+
+@pytest.mark.parametrize("prepare", [False, True])
+@pytest.mark.parametrize("manifest_status", [200, 403, 404])
+def test_paidf_access_probes_each_exact_ngc_manifest(
+    monkeypatch, tmp_path, prepare: bool, manifest_status: int
+) -> None:
+    from npa.cli.workbench import health as health_module
+    from npa.orchestration.skypilot import registry_preflight
+    from npa.workbench.model_access import NGC, assets_for
+
+    capabilities = [
+        "paidf-dig",
+        "paidf-iaa",
+        "paidf-evg",
+        "paidf-label-detection",
+        "paidf-label-captioning",
+        "paidf-label-visual-qa",
+        "paidf-label-attribute-search",
+    ]
+    expected = {
+        registry_preflight.parse_image_reference(asset.repo).manifest_url
+        for asset in assets_for(capabilities)
+        if asset.provider == NGC
+    }
+    assert len(expected) == 4
+    assert all("/manifests/sha256:" in url for url in expected)
+    denied_url = sorted(expected)[-1]
+    observed: list[str] = []
+
+    def fetch(url, headers, timeout):
+        observed.append(url)
+        if url.startswith("https://nvcr.io/proxy_auth?"):
+            assert headers.get("Authorization", "").startswith("Basic ")
+            return 200, {}, b'{"token":"synthetic-bearer"}'
+        assert url in expected, (
+            "The selected capability must not probe an unrelated repository."
+        )
+        if "Authorization" not in headers:
+            return (
+                401,
+                {
+                    "www-authenticate": 'Bearer realm="https://nvcr.io/proxy_auth",service="nvcr.io"'
+                },
+                b"",
+            )
+        assert headers["Authorization"] == "Bearer synthetic-bearer"
+        return (manifest_status if url == denied_url else 200), {}, b"{}"
+
+    monkeypatch.setattr(health_module, "load_credentials", lambda: _AccessCreds())
+    monkeypatch.setattr(
+        health_module, "validate_hf_access", lambda *args: _HFOK(ok=True)
+    )
+    monkeypatch.setattr(registry_preflight, "_fetch", fetch)
+    monkeypatch.setattr(
+        "npa.workbench.nurec.nurec.check_ngc_image_access",
+        lambda *args, **kwargs: pytest.fail(
+            "Legacy NRE tag-list probe must not authorize PAIDF."
+        ),
+    )
+    monkeypatch.setenv(
+        "NPA_ACCESS_APPROVAL_STATE_PATH", str(tmp_path / "approval.json")
+    )
+    argv = [
+        "workbench",
+        "health",
+        "access",
+        "--capability",
+        ",".join(capabilities),
+        "--json",
+    ]
+    if prepare:
+        argv.extend(["--prepare", "--recheck"])
+    result = runner.invoke(app, argv)
+    denied = manifest_status != 200
+    assert result.exit_code == int(denied), result.output
+    payload = json.loads(result.output)
+    if prepare:
+        assert (payload["status"] == "ready") is (not denied)
+    else:
+        ngc = next(check for check in payload["checks"] if check["name"] == "ngc")
+        assert ngc["status"] == ("FAIL" if denied else "PASS")
+        assert len(ngc["details"]) == 4
+    assert {url for url in observed if "/manifests/" in url} == expected
+    assert all(observed.count(url) == 2 for url in expected)
+    assert not any("/tags/list" in url or "/nre/" in url for url in observed)
+    assert _AccessCreds.ngc_api_key not in result.output
+    assert "synthetic-bearer" not in result.output
+
+
+def test_paidf_access_without_ngc_dependency_does_not_probe_registry(
+    monkeypatch,
+) -> None:
+    from npa.cli.workbench import health as health_module
+
+    monkeypatch.setattr(health_module, "load_credentials", lambda: _AccessCreds())
+    monkeypatch.setattr(
+        health_module, "validate_hf_access", lambda *args: _HFOK(ok=True)
+    )
+    monkeypatch.setattr(
+        "npa.workbench.model_access.check_ngc_artifact_access",
+        lambda *args, **kwargs: pytest.fail("No selected NGC asset requires a probe."),
+    )
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "health",
+            "access",
+            "--capability",
+            "paidf-dig,paidf-iaa,paidf-evg",
+            "--json",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    ngc = json.loads(result.output)["checks"][0]
+    assert "NGC not required" in ngc["summary"]

@@ -63,7 +63,8 @@ resources:
   anomalygen-setup:
     cloud: kubernetes
     cpus: 4
-    memory: 32Gi
+    # CPU checkpoint conversion holds source and converted model tensors together.
+    memory: 128Gi
     image: "{{config.anomalygen_image}}"
 
 initial: record-upstream

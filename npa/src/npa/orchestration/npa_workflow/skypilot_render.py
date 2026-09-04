@@ -70,12 +70,12 @@ OPENPI_TERMS_ENV = "NPA_OPENPI_ACCEPT_GEMMA_TERMS"
 
 SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
     "workflow.paidf": (),
-    "workflow.paidf.run_local_augmentation": (
-        "HF_TOKEN",
-        "NEBIUS_TOKEN_FACTORY_KEY",
-    ),
+    "workflow.paidf.run_iaa_augmentation": ("HF_TOKEN", "NEBIUS_TOKEN_FACTORY_KEY"),
+    "workflow.paidf.run_evg_augmentation": ("HF_TOKEN", "NEBIUS_TOKEN_FACTORY_KEY"),
     "workflow.paidf.postprocess_iaa": ("NEBIUS_TOKEN_FACTORY_KEY",),
-    "workflow.paidf.run_auto_label": ("NEBIUS_TOKEN_FACTORY_KEY",),
+    "workflow.paidf.run_captioning": ("NEBIUS_TOKEN_FACTORY_KEY",),
+    "workflow.paidf.run_visual_qa": ("NEBIUS_TOKEN_FACTORY_KEY",),
+    "workflow.paidf.run_attribute_search": ("NEBIUS_TOKEN_FACTORY_KEY",),
     "workflow.paidf.dig_prepare_pretrained": ("HF_TOKEN",),
     "workbench.openpi": (OPENPI_TERMS_ENV,),
     "workbench.token_factory": ("NEBIUS_TOKEN_FACTORY_KEY",),

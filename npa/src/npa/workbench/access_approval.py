@@ -151,6 +151,9 @@ def _cache_key(item: GatedAsset, fingerprint: str) -> str:
             item.terms_revision,
             item.probe_path,
             fingerprint,
+            # Older NGC evidence only proved tag-list entitlement. It cannot
+            # authorize an exact manifest after the probe protocol changes.
+            "ngc-exact-manifest-v1" if item.provider == NGC else "hf-payload-v1",
         )
     )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
@@ -222,14 +225,13 @@ def _ngc_evidence(
     if validator is None:
         return AccessStatus.UNAVAILABLE, "probe_unavailable"
     try:
-        try:
-            outcome = str(validator(key, image=item.repo) or "unreachable")
-        except TypeError:
-            outcome = str(validator(key) or "unreachable")
+        outcome = str(validator(key, image=item.repo) or "unreachable")
     except Exception:  # noqa: BLE001 - provider diagnostics may echo secrets
         return AccessStatus.UNAVAILABLE, "provider_unavailable"
     if outcome == "reachable":
         return AccessStatus.READY, "exact_artifact_access_verified"
+    if outcome == "manifest-404":
+        return AccessStatus.UNAVAILABLE, "artifact_not_found"
     if outcome in {"entitlement-required", "tags-401", "tags-403"}:
         return AccessStatus.DENIED, "artifact_entitlement_denied"
     if outcome in {"auth-no-token", "auth-401", "auth-403"}:

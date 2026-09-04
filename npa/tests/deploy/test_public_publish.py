@@ -288,8 +288,8 @@ def test_rebuilt_cosmos3_serving_and_sonic_mujoco_are_gpu_accepted() -> None:
     visible in the Dockerfile. The scan that clears it:
     npa-sonic:0.1.2-rtfetch-rc5, 125,655 entries, 16 allowlisted paths, VERDICT clean.
     """
-    assert RESTRICTED_PUBLICATION_TOOLS == frozenset()
-    assert RESTRICTED_DERIVED_IMAGES == frozenset()
+    assert not {"cosmos3-serving", "sonic-mujoco"} & RESTRICTED_PUBLICATION_TOOLS
+    assert not {"cosmos3-serving", "sonic-mujoco"} & RESTRICTED_DERIVED_IMAGES
     for tool in ("isaac-lab", "sonic", "groot", "cosmos3-serving", "sonic-mujoco"):
         assert is_publicly_redistributable(tool), tool
     assert UNVALIDATED_PUBLICATION_TOOLS == frozenset()
@@ -547,10 +547,12 @@ def test_contract_marks_active_isaac_images_public_and_runtime_fetch() -> None:
 
 
 def test_the_restriction_mechanism_still_exists() -> None:
-    """The general refusal API remains even with no current restricted image."""
+    """The general refusal API covers the restricted DIG compatibility runtime."""
     assert hasattr(images, "OMNIVERSE_RESTRICTED_TOOLS")
     assert hasattr(images, "OMNIVERSE_RESTRICTED_DERIVED_IMAGES")
-    assert restricted_image_names() == []
+    assert restricted_image_names() == ["paidf-anomalygen-sky"]
+    assert not is_publicly_redistributable("paidf-anomalygen-sky")
+    assert "paidf-anomalygen-sky" not in publicly_publishable_tools()
     for symbol in (
         "is_publicly_redistributable",
         "restricted_image_names",

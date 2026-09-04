@@ -165,26 +165,6 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "--run-id", "{{run.id}}",
         ],
     ),
-    "workflow.paidf.run_local_augmentation": ToolEntry(
-        name="workflow.paidf.run_local_augmentation",
-        access_capabilities=("paidf-iaa", "paidf-evg"),
-        description=(
-            "Generic PAIDF local generation-service adapter. Shipped workflows use "
-            "the workflow-specific toolRefs below so access closure stays exact."
-        ),
-        argv_template=[
-            *_PAIDF_NATIVE_PIPELINE,
-            "run-local-augmentation",
-            "--config-manifest-uri", "{{config.config_manifest_uri}}",
-            "--result-uri", "{{config.augmentation_result_uri}}",
-            "--generation-model", "{{config.generation_model}}",
-            "--generation-revision", "{{config.generation_revision}}",
-            "--service-kind", "{{config.service_kind}}",
-            "--port", "{{config.service_port}}",
-            "--parallel-size", "{{config.service_parallel_size}}",
-            "--run-id", "{{run.id}}",
-        ],
-    ),
     "workflow.paidf.run_iaa_augmentation": ToolEntry(
         name="workflow.paidf.run_iaa_augmentation",
         access_capabilities=("paidf-iaa",),
@@ -251,33 +231,6 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "--result-uri", "{{config.validation_uri}}",
             "--vlm-url", "{{config.vlm_url}}",
             "--vlm-model", "{{config.vlm_model}}",
-            "--run-id", "{{run.id}}",
-        ],
-    ),
-    "workflow.paidf.run_auto_label": ToolEntry(
-        name="workflow.paidf.run_auto_label",
-        access_capabilities=(
-            "paidf-label-detection",
-            "paidf-label-captioning",
-            "paidf-label-visual-qa",
-            "paidf-label-attribute-search",
-        ),
-        description=(
-            "Invoke one genuine NVIDIA paidf-auto-labeling service over every "
-            "validated IAA/EVG output using the published DataEntry protocol."
-        ),
-        argv_template=[
-            *_PAIDF_NATIVE_PIPELINE,
-            "run-auto-label",
-            "--workflow", "{{config.paidf_workflow}}",
-            "--stage", "{{config.auto_label_stage}}",
-            "--validation-uri", "{{config.validation_uri}}",
-            "--auto-label-root-uri", "{{config.auto_label_root_uri}}",
-            "--result-uri", "{{config.auto_label_result_uri}}",
-            "--vlm-url", "{{config.vlm_url}}",
-            "--vlm-model", "{{config.vlm_model}}",
-            "--llm-url", "{{config.llm_url}}",
-            "--llm-model", "{{config.llm_model}}",
             "--run-id", "{{run.id}}",
         ],
     ),

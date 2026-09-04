@@ -142,8 +142,8 @@ grants redistribution rights.
 | --- | --- | --- |
 | DIG vendor reference (not executed) | `nvcr.io/nvidia/paidf-anomalygen@sha256:e62a87d1dc58b6de8b8a352dc8ec2a2e3e400288d66b2b8b19b92d97e7a0bc09` | Vendor-owned NGC image; pull verified, but not SkyPilot-compatible |
 | DIG setup, fine-tune, generation, and native labels | `<operator-registry>/npa-paidf-anomalygen-sky@sha256:<digest>` built from `paidf-anomalygen-sky/Dockerfile` | Restricted source build on public CUDA bases; never NPA public GHCR |
-| IAA Qwen Image Edit service | `vllm/vllm-omni@sha256:5d8c7e742c98858f257d82307e378391f0e7d77065e141c733cc4778042128ab` | Vendor/community image reused from its source registry; not mirrored by NPA |
-| EVG Cosmos3 Super Image2Video service | `vllm/vllm-omni@sha256:970dee6658ea223f615b2438ce41e47f1d5322225482546e6e6bc5d8134f757c` | Vendor/community image reused from its source registry; not mirrored by NPA |
+| IAA Qwen Image Edit service | `docker.io/vllm/vllm-omni@sha256:5d8c7e742c98858f257d82307e378391f0e7d77065e141c733cc4778042128ab` | Vendor/community image reused from its source registry; not mirrored by NPA |
+| EVG Cosmos3 Super Image2Video service | `docker.io/vllm/vllm-omni@sha256:970dee6658ea223f615b2438ce41e47f1d5322225482546e6e6bc5d8134f757c` | Vendor/community image reused from its source registry; not mirrored by NPA |
 | IAA/EVG person attribute search | `nvcr.io/nvidia/paidf-event-and-person-attribute-search-service@sha256:0f581ff6d92efd391281e5787a8b1fda76556443ade47c1f5d59d4c345a01f6a` | Vendor-owned NGC image; restricted pull, not NPA-published |
 | EVG detection and tracking | `nvcr.io/nvidia/paidf-detection-and-tracking-rfdetr-service@sha256:6b35e63b95cab7cd772906bcb08be978de7526427f0d1925ab84439dd4a9561e` | Vendor-owned NGC image; restricted pull, not NPA-published |
 | EVG captioning | `nvcr.io/nvidia/paidf-captioning-service@sha256:17e1e3f53cc66342183f7d0b6eed76907993bb325a13db90c46d9a8cf664d804` | Vendor-owned NGC image; restricted pull, not NPA-published |

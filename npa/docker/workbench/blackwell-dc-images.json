@@ -636,6 +636,14 @@
       "validation": "not-required",
       "smoke": "grade a real clip set with the wired checks",
       "notes": "No torch or CUDA in the image (python:3.12-slim plus OpenCV/NumPy); the golden eval declares gpu: none. Only confirm node-pool scheduling."
+    },
+    {
+      "name": "npa-paidf-anomalygen-sky",
+      "dockerfile": "paidf-anomalygen-sky/Dockerfile",
+      "verdict": "unknown",
+      "validation": "pending-build",
+      "smoke": "Execute paidf-defect-image-generation.yaml through base checkpoint fetch, genuine AnomalyGen fine-tuning and inference; decode generated media and validate native labels/masks and checkpoint lineage.",
+      "notes": "Restricted operator-built image; exact upstream source and CUDA bases are pinned. No completed built artifact, observed wheel architecture set, or B200/B300 functional result is yet recorded. Do not infer compatibility from compilation flags."
     }
   ],
   "validation_evidence": {

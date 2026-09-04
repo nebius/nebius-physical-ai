@@ -17,7 +17,8 @@ import time.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from functools import partial
 from typing import Any, Callable, Iterable
 
 from npa.workflows.sim2real_health import FAIL, PASS, WARN, CheckResult, has_failure
@@ -605,11 +606,42 @@ def check_hf_asset(
     )
 
 
+def check_ngc_artifact_access(api_key: str, *, image: str) -> str:
+    """Probe the selected NGC manifest using the worker's registry pull protocol."""
+
+    from npa.orchestration.skypilot.registry_preflight import (
+        check_image_pull,
+        parse_image_reference,
+    )
+
+    try:
+        reference = parse_image_reference(image)
+        if reference.registry != "nvcr.io":
+            return "unresolved"
+        result = check_image_pull(image, username="$oauthtoken", password=api_key)
+    except Exception:  # noqa: BLE001 - provider errors must not expose credentials
+        return "unreachable"
+    if result.ok:
+        return "reachable"
+    if result.http_status == 402 or result.status == "forbidden":
+        return "entitlement-required"
+    if result.status in {"unauthorized", "no_credentials"}:
+        return (
+            f"auth-{result.http_status}"
+            if result.http_status in {401, 403}
+            else "auth-no-token"
+        )
+    if result.status == "not_found":
+        return "manifest-404"
+    return "unreachable"
+
+
 def check_ngc_key(
     ngc_key: str,
     *,
     needed: bool,
-    ngc_validator: Callable[[str], str] | None = None,
+    ngc_validator: Callable[..., str] | None = None,
+    images: Iterable[str] | None = None,
 ) -> CheckResult:
     """Check NGC credentials and, online, actual repository pull entitlement."""
 
@@ -624,7 +656,7 @@ def check_ngc_key(
         return CheckResult(
             name="ngc",
             status=WARN,
-            summary="NGC_API_KEY is not set (needed for the NuRec NRE image pull).",
+            summary="NGC_API_KEY is not set (needed for the selected NGC artifact pulls).",
             remedy=(
                 "Sign in with an ordinary individual NGC account at "
                 "https://ngc.nvidia.com/signin, create a personal API key, and run "
@@ -641,6 +673,37 @@ def check_ngc_key(
                 "not probed in offline mode."
             ),
         )
+    if images is not None:
+        image_results = [
+            (
+                image,
+                check_ngc_key(
+                    key,
+                    needed=True,
+                    ngc_validator=partial(ngc_validator, image=image),
+                ),
+            )
+            for image in images
+        ]
+        if not image_results:
+            return check_ngc_key(key, needed=False)
+        # Preserve the aggregate ``ngc`` row consumed by configure and callers,
+        # while recording every exact artifact and retaining the worst outcome.
+        primary = max(
+            image_results, key=lambda row: {PASS: 0, WARN: 1, FAIL: 2}[row[1].status]
+        )[1]
+        return replace(
+            primary,
+            summary=(
+                f"NGC_API_KEY can pull all {len(image_results)} selected NGC artifact(s)."
+                if primary.status == PASS
+                else primary.summary
+            ),
+            details=tuple(
+                f"{image}: {result.status}: {result.summary}"
+                for image, result in image_results
+            ),
+        )
     try:
         outcome = _redact_secret(ngc_validator(key) or "unreachable", key)
     except Exception as exc:  # noqa: BLE001 - a probe exception is transient
@@ -655,7 +718,7 @@ def check_ngc_key(
         return CheckResult(
             name="ngc",
             status=PASS,
-            summary="NGC_API_KEY can pull the selected NuRec NRE repository.",
+            summary="NGC_API_KEY can pull the selected NGC artifact.",
         )
     credential_rejected = outcome in {
         "auth-no-token",
@@ -667,11 +730,13 @@ def check_ngc_key(
         "tags-401",
         "tags-403",
     }
-    rejected = credential_rejected or entitlement_rejected
+    rejected = credential_rejected or entitlement_rejected or outcome == "manifest-404"
     if credential_rejected:
         summary = f"NGC credential rejected during repository auth: {outcome}."
     elif entitlement_rejected:
         summary = f"NGC repository entitlement denied: {outcome}."
+    elif outcome == "manifest-404":
+        summary = "The selected NGC image manifest does not exist: manifest-404."
     else:
         summary = f"NGC repository pull preflight failed: {outcome}."
     return CheckResult(
@@ -679,7 +744,10 @@ def check_ngc_key(
         status=FAIL if rejected else WARN,
         summary=summary,
         remedy=(
-            "Regenerate NGC_API_KEY with NGC Catalog access if needed, verify the "
+            "Verify the selected NGC repository and immutable image digest, "
+            "then re-run `npa workbench health access`."
+            if outcome == "manifest-404"
+            else "Regenerate NGC_API_KEY with NGC Catalog access if needed, verify the "
             "repository entitlement, then re-run `npa workbench health access`."
             if rejected
             else "Retry when the NGC registry is reachable; credential presence "
@@ -693,7 +761,7 @@ def check_workbench_access(
     hf_token: str,
     ngc_key: str,
     hf_validator: Callable[..., Any] | None = None,
-    ngc_validator: Callable[[str], str] | None = None,
+    ngc_validator: Callable[..., str] | None = None,
     capabilities: Iterable[str] | None = None,
     gated_only: bool = False,
 ) -> list[CheckResult]:
@@ -712,6 +780,9 @@ def check_workbench_access(
             ngc_key,
             needed=_ngc_needed(selected),
             ngc_validator=ngc_validator,
+            images=tuple(
+                asset.repo for asset in assets_for(selected) if asset.provider == NGC
+            ),
         )
     ]
     for asset in assets_for(selected):
@@ -791,6 +862,7 @@ __all__ = [
     "all_capabilities",
     "assets_for",
     "check_hf_asset",
+    "check_ngc_artifact_access",
     "check_ngc_key",
     "check_workbench_access",
     "gated_hf_assets",
