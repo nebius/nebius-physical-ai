@@ -57,8 +57,12 @@ npa cluster up --gpu-workload-profile rtx-rendering
 npa provision-if-absent --gpu-workload-profile rtx-rendering
 ```
 
-`rtx-rendering` selects `gpu-rtx6000` / `1gpu-24vcpu-218gb`, defaults to one
-GPU node, and selects the supported NVIDIA GPU Operator mounted-driver path.
+`rtx-rendering` selects `gpu-rtx6000`, defaults to one
+`1gpu-24vcpu-218gb` GPU node, and also accepts the platform's
+`8gpu-192vcpu-1744gb` RTX PCIe preset when it is explicitly requested. Both
+shapes select the supported NVIDIA GPU Operator mounted-driver path. The
+8-GPU RTX preset is not an SXM/NVL fabric topology, so GPU-cluster/InfiniBand
+settings remain disabled.
 It also makes graphics readiness mandatory. After the ordinary stability and
 per-node CUDA vectorAdd gates, NPA runs an immutable, payload-clean RTX image
 with `runtimeClassName: nvidia` and `NVIDIA_DRIVER_CAPABILITIES=all` on every

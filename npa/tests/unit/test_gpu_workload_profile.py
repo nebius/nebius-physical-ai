@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from npa.cluster.gpu_workload_profile import (
+    RTX_RENDERING_8GPU_PRESET,
     RTX_RENDERING_PLATFORM,
     RTX_RENDERING_PRESET,
     resolve_gpu_workload_profile,
@@ -48,6 +49,40 @@ def test_rtx_rendering_profile_rejects_conflicting_platform() -> None:
                 count=1,
                 platform="gpu-h200-sxm",
                 preset="8gpu-128vcpu-1600gb",
+            ),
+        )
+
+
+def test_rtx_rendering_profile_accepts_eight_gpu_rtx_nodes() -> None:
+    cluster = ClusterSpec(
+        name="render",
+        gpu_workload_profile="rtx-rendering",
+        gpu_nodes=NodePoolSpec(
+            count=3,
+            platform=RTX_RENDERING_PLATFORM,
+            preset=RTX_RENDERING_8GPU_PRESET,
+        ),
+    )
+
+    cluster.validate()
+    plan = desired_state(cluster)
+
+    assert plan["gpu_nodes"] == 3
+    assert plan["gpu_preset"] == RTX_RENDERING_8GPU_PRESET
+    assert plan["gpu_driver_mode"] == "operator"
+    assert plan["gpu_graphics_smoke"] is True
+    assert plan["enable_gpu_cluster"] is False
+
+
+def test_rtx_rendering_profile_rejects_non_rtx_preset() -> None:
+    with pytest.raises(ValueError, match="requires an RTX PRO 6000 preset"):
+        ClusterSpec(
+            name="render",
+            gpu_workload_profile="rtx-rendering",
+            gpu_nodes=NodePoolSpec(
+                count=1,
+                platform=RTX_RENDERING_PLATFORM,
+                preset="8gpu-96vcpu-872gb",
             ),
         )
 

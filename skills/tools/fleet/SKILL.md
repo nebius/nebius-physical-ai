@@ -34,9 +34,12 @@ and zero whole-GPU capacity/allocatable. See
 
 RTX rendering without MIG uses the separate explicit cluster setting
 `gpu_workload_profile: rtx-rendering`. It selects RTX PRO 6000, the supported
-single-GPU preset, GPU Operator mounted drivers, and mandatory per-node
-GLX/EGL/Vulkan readiness. It does not alter the empty/default managed-image
-contract and cannot be generalized to NVSwitch targets.
+single-GPU preset by default or accepts the explicit
+`8gpu-192vcpu-1744gb` RTX PCIe preset, uses GPU Operator mounted drivers, and
+requires per-node GLX/EGL/Vulkan readiness. The 8-GPU RTX shape remains
+non-fabric and does not opt into the NVSwitch unsafe-operator path. The profile
+does not alter the empty/default managed-image contract and cannot be
+generalized to NVSwitch targets.
 
 ## Spec (npa.fleet/v0.0.1)
 

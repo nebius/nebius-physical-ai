@@ -8,6 +8,10 @@ from dataclasses import dataclass
 RTX_RENDERING_PROFILE = "rtx-rendering"
 RTX_RENDERING_PLATFORM = "gpu-rtx6000"
 RTX_RENDERING_PRESET = "1gpu-24vcpu-218gb"
+RTX_RENDERING_8GPU_PRESET = "8gpu-192vcpu-1744gb"
+RTX_RENDERING_PRESETS = frozenset(
+    {RTX_RENDERING_PRESET, RTX_RENDERING_8GPU_PRESET}
+)
 SUPPORTED_GPU_WORKLOAD_PROFILES = frozenset({"", RTX_RENDERING_PROFILE})
 
 
@@ -62,10 +66,10 @@ def resolve_gpu_workload_profile(
             "GPU workload profile 'rtx-rendering' requires platform "
             f"{RTX_RENDERING_PLATFORM!r}, got {gpu_platform!r}"
         )
-    if gpu_preset and gpu_preset != RTX_RENDERING_PRESET:
+    if gpu_preset and gpu_preset not in RTX_RENDERING_PRESETS:
         raise GpuWorkloadProfileError(
-            "GPU workload profile 'rtx-rendering' requires preset "
-            f"{RTX_RENDERING_PRESET!r}, got {gpu_preset!r}"
+            "GPU workload profile 'rtx-rendering' requires an RTX PRO 6000 preset "
+            f"({', '.join(sorted(RTX_RENDERING_PRESETS))}), got {gpu_preset!r}"
         )
     if gpu_driver_mode and gpu_driver_mode not in {"auto", "operator"}:
         raise GpuWorkloadProfileError(
@@ -75,7 +79,7 @@ def resolve_gpu_workload_profile(
         profile=RTX_RENDERING_PROFILE,
         gpu_nodes=1 if gpu_nodes < 0 else gpu_nodes,
         gpu_platform=RTX_RENDERING_PLATFORM,
-        gpu_preset=RTX_RENDERING_PRESET,
+        gpu_preset=gpu_preset or RTX_RENDERING_PRESET,
         gpu_driver_mode="operator",
         graphics_smoke=True,
     )
