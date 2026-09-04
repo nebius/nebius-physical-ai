@@ -59,8 +59,12 @@ making architecture, review, or domain judgments.
  adversary that maximizes failures of a policy-under-test, scenario ranking, and
  the adversarial-scenario-hardening workflow.
 - `skills/tools/dataset/SKILL.md`: dataset-of-record — ingest, validate, curate,
- and query production sensor data as a versioned, lineage-tracked dataset
- (FiftyOne curation + LanceDB query index).
+  and query production sensor data as a versioned, lineage-tracked dataset
+  (FiftyOne curation + LanceDB query index).
+- `skills/tools/encord/SKILL.md`: Encord curation SaaS — register-in-place or
+  byte-upload push of S3 media, headless quality-filter curation (or in-app
+  human curation), curated Collection/Dataset/label pull back to S3 with a
+  lineage manifest, and a fail-closed roundtrip verifier.
 - `skills/tools/foxglove/SKILL.md`: Foxglove embedded viewer — the
  `@foxglove/embed` TypeScript SDK in the agent UI, MCAP recordings
  (convert/inspect/publish), and the `npa-foxglove-embed` container.

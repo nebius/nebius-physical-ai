@@ -188,7 +188,11 @@ document_group_recursive() {
   for child in $children; do
     prefetch_paths+=("${command_path[*]} $child")
   done
-  prefetch_help "${prefetch_paths[@]}"
+  # Guard the expansion: bash 3.2 (macOS default) treats an empty array as an
+  # unbound variable under `set -u`.
+  if [ "${#prefetch_paths[@]}" -gt 0 ]; then
+    prefetch_help "${prefetch_paths[@]}"
+  fi
   prefetch_paths=()
   for child in $children; do
     if is_group "${command_path[@]}" "$child"; then

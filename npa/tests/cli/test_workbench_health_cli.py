@@ -178,6 +178,7 @@ def test_preflight_json_offline(monkeypatch) -> None:
         "ngc",
         "s3",
         "token_factory",
+        "encord",
     }
 
 
@@ -554,3 +555,38 @@ def test_access_save_env_credentials_json_stays_valid_and_redacted(monkeypatch) 
     payload = json.loads(result.output)
     assert payload["credential_persistence"]["persisted"] == ["HF_TOKEN"]
     assert secret not in result.output
+
+
+def test_preflight_encord_check_offline(monkeypatch) -> None:
+    from npa.cli.workbench import health as health_module
+
+    for name in ("ENCORD_SSH_KEY", "ENCORD_SSH_KEY_B64", "ENCORD_SSH_KEY_FILE"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(health_module, "load_credentials", lambda *a, **k: _EmptyCreds())
+    result = runner.invoke(
+        app, ["workbench", "health", "preflight", "--checks", "encord", "--offline"]
+    )
+    assert result.exit_code == 0
+    assert "WARN" in result.output
+    assert "ENCORD_SSH_KEY" in result.output
+
+
+def test_preflight_encord_present_offline_is_unverified_pass(monkeypatch) -> None:
+    from npa.cli.workbench import health as health_module
+
+    class _EncordCreds(_EmptyCreds):
+        tokens = {"ENCORD_SSH_KEY_B64": "abc"}
+
+    monkeypatch.setattr(health_module, "load_credentials", lambda *a, **k: _EncordCreds())
+    result = runner.invoke(
+        app, ["workbench", "health", "preflight", "--checks", "encord", "--offline"]
+    )
+    assert result.exit_code == 0
+    assert "PASS" in result.output
+    assert "not verified" in result.output
+
+
+def test_preflight_help_lists_encord_choice() -> None:
+    result = runner.invoke(app, ["workbench", "health", "preflight", "--help"])
+    assert result.exit_code == 0
+    assert "encord" in result.output

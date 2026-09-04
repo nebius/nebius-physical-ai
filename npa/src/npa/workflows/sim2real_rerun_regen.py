@@ -143,9 +143,9 @@ def _list_common_prefixes(client: StorageClient, prefix_uri: str) -> list[str]:
 
 
 def _parse_s3(uri: str) -> tuple[str, str]:
-    from npa.clients.storage import _parse_bucket_uri
+    from npa.clients.storage import parse_bucket_uri
 
-    return _parse_bucket_uri(uri)
+    return parse_bucket_uri(uri)
 
 
 def _download_if_exists(client: StorageClient, uri: str, local_path: Path) -> bool:

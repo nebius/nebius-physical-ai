@@ -84,6 +84,55 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     ),
     # --- CPU / zero-GPU (Token Factory hosted) ---
     SubmitLiveCase(
+        "encord-roundtrip-smoke.yaml",
+        "cpu",
+        secret_envs=(
+            "ENCORD_SSH_KEY_B64",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+        ),
+        notes=(
+            "Live Encord e2e: register fixture media into a fresh npa-e2e-* "
+            "folder+dataset through the operator's cloud integration, curate a "
+            "run-scoped Collection headlessly, pull both straight back, and verify "
+            "the roundtrip by exact identity and checksum. "
+            "Needs seeded encord-fixtures/media/ objects and an integration "
+            "titled by config.encord_integration."
+        ),
+    ),
+    SubmitLiveCase(
+        "encord-push.yaml",
+        "cpu",
+        secret_envs=(
+            "ENCORD_SSH_KEY_B64",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+        ),
+        rotation_skip=True,
+        skip_reason=(
+            "Production push half of a human-in-the-loop pair: the follow-up "
+            "curation happens in the Encord app, so the roundtrip smoke is the "
+            "rotation's executable twin."
+        ),
+        notes="Manual/plan runs only; encord-roundtrip-smoke.yaml is the daily twin.",
+    ),
+    SubmitLiveCase(
+        "encord-pull.yaml",
+        "cpu",
+        secret_envs=(
+            "ENCORD_SSH_KEY_B64",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+        ),
+        rotation_skip=True,
+        skip_reason=(
+            "Needs a human-curated Collection/Dataset id from the Encord app; "
+            "no standalone submit can supply one. Covered live by "
+            "encord-roundtrip-smoke.yaml's dataset-source pull."
+        ),
+        notes="Manual/plan runs only; encord-roundtrip-smoke.yaml is the daily twin.",
+    ),
+    SubmitLiveCase(
         "token-factory-caption.yaml",
         "cpu",
         secret_envs=(
