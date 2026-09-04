@@ -736,6 +736,39 @@ def test_run_cosmos_transfer_accepts_small_guardrailed_video(
     assert result["video_path"].endswith("small.mp4")
 
 
+def test_run_cosmos_transfer_names_gated_access_denial_without_leaking_prompt(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo = tmp_path / "repo"
+    (repo / "examples").mkdir(parents=True)
+    monkeypatch.setattr(tx, "cosmos_transfer_repo", lambda: repo)
+    monkeypatch.setattr(tx, "ensure_env", lambda _repo: Path("/usr/bin/python3"))
+    monkeypatch.setenv("HF_TOKEN", "unit-test-placeholder")
+    secret_prompt = "a secret prompt that must never reach the raised message"
+
+    def fake_run(cmd, *_args, **kwargs):
+        assert secret_prompt not in " ".join(cmd)
+        kwargs["stdout"].write(
+            (
+                f"generating for prompt: {secret_prompt}\n"
+                "Error: Access denied. This repository requires approval.\n"
+            ).encode("utf-8")
+        )
+        raise subprocess.CalledProcessError(1, cmd)
+
+    monkeypatch.setattr(tx.subprocess, "run", fake_run)
+
+    with pytest.raises(RuntimeError) as raised:
+        tx.run_cosmos_transfer(
+            run_id="denied", spec="assets/custom.json", prompt=secret_prompt
+        )
+
+    message = str(raised.value)
+    assert "gated Hugging Face repository access denied" in message
+    assert "exit 1" in message
+    assert secret_prompt not in message
+
+
 def test_run_cosmos_transfer_content_guardrail_opt_out_is_explicit(
     tmp_path: Path, monkeypatch
 ) -> None:

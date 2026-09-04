@@ -879,6 +879,46 @@ def _spec_with_prompt(repo: Path, spec: str, prompt: str, *, tag: str = "") -> s
         return spec
 
 
+# Known, path/prompt-free vendor failure signatures worth naming exactly.
+# Order matters: the first matching pattern wins.
+_VENDOR_FAILURE_SIGNATURES: tuple[tuple[re.Pattern[str], str], ...] = (
+    (
+        re.compile(r"Access denied\.\s*This repository requires approval", re.I),
+        "gated Hugging Face repository access denied",
+    ),
+    (
+        re.compile(r"401 Client Error|Repository Not Found|GatedRepoError", re.I),
+        "Hugging Face authentication/authorization failed",
+    ),
+    (
+        re.compile(r"CUDA out of memory|OutOfMemoryError", re.I),
+        "CUDA out of memory",
+    ),
+    (
+        re.compile(r"No space left on device", re.I),
+        "no space left on device",
+    ),
+    (
+        re.compile(r"CUDA error|CUDA driver version|no CUDA-capable device", re.I),
+        "CUDA/GPU error",
+    ),
+)
+
+
+def _classify_vendor_failure(vendor_tail: str) -> str:
+    """Name a known upstream failure signature without echoing prompt/path text.
+
+    ``vendor_tail`` may contain the effective prompt and local input path, which
+    must not be surfaced. Only a short, fixed, human-authored description is
+    returned; the caller never gets the raw vendor text back.
+    """
+
+    for pattern, description in _VENDOR_FAILURE_SIGNATURES:
+        if pattern.search(vendor_tail):
+            return description
+    return "unrecognized vendor failure; inspect GPU/model access and retry"
+
+
 def run_cosmos_transfer(
     *,
     run_id: str = "",
@@ -992,19 +1032,31 @@ def run_cosmos_transfer(
         # Upstream progress output includes the effective prompt and local input
         # path. Keep it in an unnamed, process-local file that is destroyed at
         # completion; the retained task log reports only aggregate NPA evidence.
+        # On failure, classify a few known, path/prompt-free vendor signatures
+        # (gated-model denial, CUDA OOM, disk-full) so the raised message names
+        # the real cause instead of forcing a live re-run to find it.
         with tempfile.TemporaryFile() as vendor_log:
-            subprocess.run(
-                argv,
-                cwd=repo,
-                env=env,
-                check=True,
-                stdout=vendor_log,
-                stderr=subprocess.STDOUT,
-            )
-    except (OSError, subprocess.CalledProcessError):
+            try:
+                subprocess.run(
+                    argv,
+                    cwd=repo,
+                    env=env,
+                    check=True,
+                    stdout=vendor_log,
+                    stderr=subprocess.STDOUT,
+                )
+            except subprocess.CalledProcessError as exc:
+                vendor_log.seek(0)
+                tail = vendor_log.read().decode("utf-8", errors="replace")
+                raise RuntimeError(
+                    "Cosmos Transfer inference failed "
+                    f"(exit {exc.returncode}): "
+                    f"{_classify_vendor_failure(tail)}"
+                ) from None
+    except OSError as exc:
         raise RuntimeError(
             "Cosmos Transfer inference failed; inspect GPU/model access and retry"
-        ) from None
+        ) from exc
     finally:
         if temp_spec is not None:
             try:
