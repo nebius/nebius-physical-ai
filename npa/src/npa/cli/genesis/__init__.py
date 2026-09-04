@@ -27,7 +27,6 @@ from rich.console import Console
 from npa.clients.config import (
     default_project_name,
     default_workbench_name,
-    resolve_container_registry,
     resolve_environment,
     resolve_project_storage,
 )
@@ -368,9 +367,7 @@ def _genesis_serverless_train_teacher(
     merged_env.update(extra_env)
     env, extra_env = split_serverless_env(merged_env)
     client = ServerlessClient()
-    selected_image = image or container_image_for_tool(
-        "genesis", registry=resolve_container_registry(proj_alias)
-    )
+    selected_image = image or container_image_for_tool("genesis")
     if not submit_only:
         try:
             selected_image = _pin_serverless_image(selected_image)
@@ -2382,7 +2379,7 @@ def deploy_cmd(
         step_label = "[container]"
         console.print(f"  {step_label} Starting Genesis container...")
         if not dry_run:
-            from npa.clients.config import SSHConfig, resolve_container_registry, resolve_credentials, update_workbench_app_status
+            from npa.clients.config import SSHConfig, resolve_credentials, update_workbench_app_status
             from npa.clients.ssh import SSHClient, SSHError
             from npa.deploy.configurator import (
                 deploy_workbench_container,
@@ -2425,10 +2422,7 @@ def deploy_cmd(
                     service_env,
                     owner=ssh_user,
                 )
-                image_ref = container_image_for_tool(
-                    "genesis",
-                    registry=resolve_container_registry(proj_alias),
-                )
+                image_ref = container_image_for_tool("genesis")
                 deploy_workbench_container(
                     ssh,
                     image_ref=image_ref,

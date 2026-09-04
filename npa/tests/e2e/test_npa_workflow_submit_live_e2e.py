@@ -13,7 +13,7 @@ Optional filters:
   NPA_E2E_NPA_WORKFLOW_SUBMIT_POLL_SECONDS=30
   NPA_E2E_NPA_WORKFLOW_SUBMIT_CANCEL_ON_TIMEOUT=1
   NPA_E2E_SKYPILOT_CONFIG_PATH=/tmp/run/skypilot-config.yaml
-  NPA_REGISTRY / --registry via NPA_E2E_REGISTRY
+  --registry via NPA_E2E_REGISTRY (optional; public GHCR is the default)
   NEBIUS_TOKEN_FACTORY_KEY for cpu-tier Token Factory twins
 
 This exercises the full path: validate → plan → render → sky jobs launch →
@@ -114,14 +114,11 @@ def forbidden_markers() -> list[str]:
 
 @pytest.fixture(scope="module")
 def e2e_registry() -> str:
-    registry = (
-        os.environ.get("NPA_E2E_REGISTRY")
-        or os.environ.get("NPA_REGISTRY")
-        or ""
+    from npa.deploy.images import DEFAULT_PUBLIC_CONTAINER_REGISTRY
+
+    return (
+        os.environ.get("NPA_E2E_REGISTRY") or DEFAULT_PUBLIC_CONTAINER_REGISTRY
     ).strip()
-    if not registry:
-        pytest.skip("Set NPA_E2E_REGISTRY or NPA_REGISTRY for live npa.workflow submit")
-    return registry
 
 
 def _max_wait() -> int:

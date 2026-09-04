@@ -94,6 +94,14 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
         "no model checkpoint files are baked into image-owned trees",
         "separate live evidence: real Cosmos3-Super video generation on 8xH200",
     ],
+    "cosmos3-super-benchmark": [
+        "exact model snapshot loads in the digest-pinned vLLM-Omni runtime",
+        "real single-GPU BF16 text-to-video request uses the fixed benchmark workload",
+        "non-empty MP4 fully decodes at 1280x720, 189 frames, and 24 fps",
+        "sampled-frame blank and frozen/basic-motion checks pass",
+        "output size, SHA-256, stream metadata, model revision, and seed are recorded",
+        "separate live evidence covers all four topologies and 96 requests on 8xB200",
+    ],
     "cosmos3-reason": [
         "real Cosmos-Reason VLM inference on synthetic frames (run_cosmos_reason_vlm)",
         "structured rollout judgment returned (score + success verdict)",
@@ -139,6 +147,15 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
         "FastAPI server start",
         "/health",
         "/system-info",
+    ],
+    "robocasa": [
+        "FastAPI server start",
+        "/health",
+        "/system-info",
+        "Gymnasium robocasa/PickPlaceCounterToCabinet task registration",
+        "kitchen asset availability check",
+        "headless EGL environment reset",
+        "random rollout with video artifact",
     ],
     "wan2-2": [
         "pinned Wan source import with OSS CPU dependency base",

@@ -753,3 +753,22 @@ def test_keyword_skill_rules_lead_with_the_npa_workflow_skill() -> None:
     # Unrelated or too-generic turns must not pull the skill in.
     for text in ("write me a workflow yaml", "what is cosmos3", "run cosmos2 transfer"):
         assert skill_names_for_keywords(text) == [], text
+
+
+def test_keyword_skill_rules_select_access_approval_without_catching_unrelated_access() -> None:
+    from npa.cli.agent_chat import skill_names_for_keywords
+
+    for text in (
+        "prepare full catalog access",
+        "check HF model approval",
+        "approve the NGC artifact",
+        "audit Hugging Face dataset access",
+    ):
+        assert skill_names_for_keywords(text) == ["access-approval"], text
+
+    for text in (
+        "show cluster access",
+        "prepare a public dataset",
+        "open the dashboard",
+    ):
+        assert skill_names_for_keywords(text) == [], text

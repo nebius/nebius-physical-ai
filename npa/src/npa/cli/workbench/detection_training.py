@@ -13,7 +13,6 @@ from typing import Any
 import httpx
 import typer
 
-from npa.clients.config import resolve_container_registry
 from npa.clients.credentials import load_credentials
 from npa.deploy.images import DEFAULT_CONTAINER_REGISTRY, container_image_for_tool
 from npa.workbench.detection_training.artifacts import (
@@ -128,10 +127,7 @@ def deploy_cmd(
             + ", ".join(sorted(GPU_NODE_SELECTORS))
             + " unless --node-selector-value is provided"
         )
-    resolved_image = image.strip() or container_image_for_tool(
-        "detection-training",
-        registry=resolve_container_registry(project or None),
-    )
+    resolved_image = image.strip() or container_image_for_tool("detection-training")
     manifest = _kubernetes_manifest(
         image=resolved_image,
         name=name,

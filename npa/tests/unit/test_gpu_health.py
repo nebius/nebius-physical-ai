@@ -10,11 +10,18 @@ from typing import Any
 import pytest
 
 from npa.cluster.gpu_health import (
+    DEFAULT_GRAPHICS_SMOKE_IMAGE,
     GpuHealthConfig,
     GpuHealthError,
     probe_gpu_health,
     validate_gpu_health,
 )
+
+
+def test_graphics_smoke_uses_the_anonymously_pullable_public_catalog_path() -> None:
+    assert DEFAULT_GRAPHICS_SMOKE_IMAGE.startswith(
+        "ghcr.io/nebius/nebius-physical-ai/npa-sonic@sha256:"
+    )
 
 
 def _node(
@@ -83,13 +90,19 @@ class _Kubectl:
         snapshots: list[list[dict[str, Any]]],
         *,
         smoke_logs: str = "Test PASSED\n",
+        graphics_logs: str = (
+            "NPA_GLX_LOADED\nNPA_EGL_LOADED\nVulkan Instance Version: 1.3.0\n"
+            "GPU0:\n    deviceName = NVIDIA RTX PRO 6000 Blackwell\n"
+        ),
     ) -> None:
         self.snapshots = snapshots
         self.snapshot_index = 0
         self.smoke_logs = smoke_logs
+        self.graphics_logs = graphics_logs
         self.component_namespaces: list[str] = []
         self.created_nodes: list[str] = []
         self.deleted_pods: list[str] = []
+        self.applied_manifests: list[dict[str, Any]] = []
 
     @staticmethod
     def _result(payload: object = "", returncode: int = 0):
@@ -108,6 +121,7 @@ class _Kubectl:
             return self._result(_component_pods())
         if command == ["apply", "-f", "-"]:
             manifest = json.loads(kwargs["input_text"])
+            self.applied_manifests.append(manifest)
             self.created_nodes.append(manifest["spec"]["nodeName"])
             return self._result("pod created\n")
         if command[:2] == ["get", "pod"]:
@@ -127,7 +141,11 @@ class _Kubectl:
                 }
             )
         if command[0] == "logs":
-            return self._result(self.smoke_logs)
+            return self._result(
+                self.graphics_logs
+                if command[1].startswith("npa-graphics-health-")
+                else self.smoke_logs
+            )
         if command[:2] == ["delete", "pod"]:
             self.deleted_pods.append(command[2])
             return self._result("deleted\n")
@@ -209,9 +227,7 @@ def test_probe_accepts_current_managed_plugin_in_kube_system(tmp_path: Path) -> 
                                     "name": "nvidia-device-plugin-daemonset-pod"
                                 },
                                 "spec": {
-                                    "containers": [
-                                        {"name": "nvidia-device-plugin-ctr"}
-                                    ]
+                                    "containers": [{"name": "nvidia-device-plugin-ctr"}]
                                 },
                                 "status": {
                                     "phase": "Running",
@@ -346,3 +362,75 @@ def test_cuda_smoke_fails_without_kernel_or_completed_fabric_evidence(
             monotonic_fn=clock.monotonic,
         )
     assert json.loads((tmp_path / "gpu-health.json").read_text())["status"] == "failed"
+
+
+def test_graphics_smoke_loads_glx_egl_and_enumerates_vulkan_device(
+    tmp_path: Path,
+) -> None:
+    clock = _Clock()
+    nodes = [
+        _node(
+            "gpu-0",
+            platform="gpu-rtx6000",
+            gpus=1,
+            boot_id="boot-a",
+        )
+    ]
+    kubectl = _Kubectl([nodes])
+    report = validate_gpu_health(
+        kubectl,
+        kubectl_bin="kubectl",
+        kubeconfig_path=tmp_path / "kubeconfig",
+        config=_config(
+            expected_nodes=1,
+            expected_gpu_nodes=1,
+            gpu_preset="1gpu-24vcpu-218gb",
+            gpu_platform="gpu-rtx6000",
+            driver_mode="operator",
+            nvswitch=False,
+            cuda_smoke=False,
+            graphics_smoke=True,
+        ),
+        sleep_fn=clock.sleep,
+        monotonic_fn=clock.monotonic,
+    )
+
+    assert report["status"] == "healthy"
+    assert report["graphics_smokes"][0]["glx"] == "loaded"
+    assert report["graphics_smokes"][0]["egl"] == "loaded"
+    assert report["graphics_smokes"][0]["vulkan_physical_devices"] == 1
+    command = kubectl.applied_manifests[0]["spec"]["containers"][0]["args"][0]
+    assert command.count("os._exit(0)") == 2
+    assert command.index("NPA_GLX_LOADED") < command.index("NPA_EGL_LOADED")
+    assert command.index("NPA_EGL_LOADED") < command.index("vulkaninfo --summary")
+
+
+def test_graphics_smoke_fails_closed_without_vulkan_device(tmp_path: Path) -> None:
+    clock = _Clock()
+    nodes = [
+        _node(
+            "gpu-0",
+            platform="gpu-rtx6000",
+            gpus=1,
+            boot_id="boot-a",
+        )
+    ]
+    kubectl = _Kubectl([nodes], graphics_logs="NPA_GLX_LOADED\nNPA_EGL_LOADED\n")
+    with pytest.raises(GpuHealthError, match="Vulkan instance"):
+        validate_gpu_health(
+            kubectl,
+            kubectl_bin="kubectl",
+            kubeconfig_path=tmp_path / "kubeconfig",
+            config=_config(
+                expected_nodes=1,
+                expected_gpu_nodes=1,
+                gpu_preset="1gpu-24vcpu-218gb",
+                gpu_platform="gpu-rtx6000",
+                driver_mode="operator",
+                nvswitch=False,
+                cuda_smoke=False,
+                graphics_smoke=True,
+            ),
+            sleep_fn=clock.sleep,
+            monotonic_fn=clock.monotonic,
+        )

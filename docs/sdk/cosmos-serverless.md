@@ -13,7 +13,7 @@ job environment assembled by the `npa.serverless_common` helpers. (The
 job submission lives in the client below.)
 
 The script reads non-secret coordinates from the environment
-(`NEBIUS_PROJECT_ID`, `NPA_REGISTRY`, `NPA_S3_BUCKET`, `AWS_ENDPOINT_URL`) and
+(`NEBIUS_PROJECT_ID`, `NPA_S3_BUCKET`, `AWS_ENDPOINT_URL`) and
 the credentials your shell already has (`AWS_ACCESS_KEY_ID`,
 `AWS_SECRET_ACCESS_KEY`, `HF_TOKEN`). Nothing is hardcoded to an account.
 
@@ -28,11 +28,13 @@ from npa.cli.cosmos import _cosmos_train_smoke_command  # same hardened smoke th
 from npa.serverless_common import build_serverless_job_env, split_serverless_env
 
 project_id = os.environ["NEBIUS_PROJECT_ID"]
-registry = os.environ.get("NPA_REGISTRY", "ghcr.io/nebius/nebius-physical-ai").rstrip("/")
 bucket = os.environ["NPA_S3_BUCKET"].rstrip("/")
 run_id = "cosmos-sdk-" + time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
 output_path = f"{bucket}/cosmos-verify/{run_id}/"
-image = f"{registry}/npa-cosmos:cu128-torch27-sm100-1.0.9-20260803T002017Z"
+image = os.environ.get(
+    "NPA_COSMOS_IMAGE",
+    "ghcr.io/nebius/nebius-physical-ai/npa-cosmos:cu128-torch27-sm100-1.0.9-20260803T002017Z",
+)
 
 # Multi-subnet projects require an explicit READY subnet.
 subnets = json.loads(

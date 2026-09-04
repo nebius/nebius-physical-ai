@@ -50,7 +50,6 @@ from npa.clients.config import (
     list_projects,
     remove_workbench_config,
     resolve_config,
-    resolve_container_registry,
     resolve_credentials,
     resolve_environment,
     resolve_project_storage,
@@ -905,11 +904,7 @@ def _groot_serverless_infer(
             project_id=resolved_project_id,
             name=name,
             image=image
-            or container_image_for_tool(
-                "groot",
-                registry=resolve_container_registry(proj_alias),
-                tag=GROOT_RUNTIME_VERSION,
-            ),
+            or container_image_for_tool("groot", tag=GROOT_RUNTIME_VERSION),
             command=_groot_serverless_infer_command(
                 input_path=input_path,
                 dataset_path=dataset_path,
@@ -2958,9 +2953,7 @@ def deploy_cmd(
                         owner=ssh_user,
                     )
                     image_ref = container_image_for_tool(
-                        "groot",
-                        registry=resolve_container_registry(proj_alias),
-                        tag=GROOT_RUNTIME_VERSION,
+                        "groot", tag=GROOT_RUNTIME_VERSION
                     )
                     from npa.deploy.configurator import deploy_workbench_container
 

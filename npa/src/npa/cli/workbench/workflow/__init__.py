@@ -11,6 +11,7 @@ import os
 import re
 import tempfile
 import time
+import sys
 from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -126,6 +127,130 @@ def _fail(msg: str, code: int = 1) -> None:
     error.append(str(msg))
     console.print(error, soft_wrap=True)
     raise typer.Exit(code)
+
+
+def _workflow_access_requirements(spec) -> tuple:  # noqa: ANN001
+    from npa.workbench.access_approval import requirements_for_tool_refs
+
+    return requirements_for_tool_refs(
+        state.tool_ref for state in spec.states.values() if state.tool_ref
+    )
+
+
+def _workflow_access_requirement_payload(spec) -> dict[str, object]:  # noqa: ANN001
+    requirements = _workflow_access_requirements(spec)
+    return {
+        "hf": sum(item.provider == "huggingface" for item in requirements),
+        "ngc": sum(item.provider == "ngc" for item in requirements),
+        "artifacts": [
+            {
+                "provider": item.provider,
+                "artifact": item.repo,
+                "artifact_type": item.repo_type,
+                "revision": item.revision,
+                "official_url": item.official_url,
+            }
+            for item in requirements
+        ],
+    }
+
+
+def _current_workflow_resume_command(fallback: list[str]) -> str:
+    """Return real process argv, with a deterministic CliRunner fallback."""
+
+    from npa.workbench.access_approval import safe_resume_command
+
+    process = list(sys.argv)
+    executable = Path(process[0]).name if process else ""
+    if executable == "npa" or ("-m" in process and "npa" in process):
+        return safe_resume_command(process)
+    return safe_resume_command(fallback)
+
+
+def _enforce_workflow_access(
+    spec,
+    *,
+    json_output: bool,
+    resume_command: str,  # noqa: ANN001
+    excluded_repos: frozenset[str] = frozenset(),
+    hf_token: str | None = None,
+    ngc_key: str | None = None,
+) -> dict[str, object]:
+    """Fail before execution/provisioning when exact HF/NGC access is not Ready."""
+
+    requirements = tuple(
+        item
+        for item in _workflow_access_requirements(spec)
+        if item.repo not in excluded_repos
+    )
+    if not requirements:
+        return {"status": "ready", "counts": {"hf": 0, "ngc": 0}}
+    from npa.clients.credentials import load_credentials
+    from npa.clients.huggingface import validate_hf_access
+    from npa.workbench.access_approval import (
+        DEFAULT_STATE_PATH,
+        approval_plan,
+        blocked,
+        probe_requirements,
+    )
+    from npa.workbench.nurec.nurec import check_ngc_image_access
+
+    credentials = load_credentials() if hf_token is None or ngc_key is None else None
+    resolved_hf = (
+        str(getattr(credentials, "hf_token", "") or "")
+        if hf_token is None
+        else hf_token
+    )
+    resolved_ngc = (
+        str(getattr(credentials, "ngc_api_key", "") or "")
+        if ngc_key is None
+        else ngc_key
+    )
+    state_path = Path(
+        os.environ.get("NPA_ACCESS_APPROVAL_STATE_PATH", str(DEFAULT_STATE_PATH))
+    )
+    evidence = probe_requirements(
+        requirements,
+        hf_token=resolved_hf,
+        ngc_key=resolved_ngc,
+        hf_validator=validate_hf_access,
+        ngc_validator=check_ngc_image_access,
+        state_path=state_path,
+    )
+    plan = approval_plan(evidence, resume_command=resume_command)
+    if not blocked(plan):
+        return plan
+    if json_output:
+        typer.echo(json.dumps(plan, indent=2, sort_keys=True))
+        raise typer.Exit(code=1)
+    counts = plan["counts"]
+    typer.echo(
+        "This workflow needs approval for "
+        f"{counts['hf']} Hugging Face resource(s) and "
+        f"{counts['ngc']} NVIDIA NGC artifact(s).",
+        err=True,
+    )
+    if sys.stdin.isatty() and typer.confirm(
+        "Open only the missing official approval pages now?", default=False
+    ):
+        import webbrowser
+
+        for url in plan["official_urls"]:
+            webbrowser.open_new_tab(str(url))
+    for provider, rows in plan["providers"].items():
+        typer.echo(f"{provider}:", err=True)
+        for row in rows:
+            typer.echo(
+                f"  - {row['artifact']} ({row['status']}): {row['official_url']}",
+                err=True,
+            )
+    typer.echo(
+        "NPA did not accept any terms or start provisioning. Complete any "
+        "user-bound approval, then resume exactly with:",
+        err=True,
+    )
+    typer.echo(f"  {plan['resume_command']}", err=True)
+    raise typer.Exit(code=1)
 
 
 def _emit_image_bootstrap_observing_progress(
@@ -342,6 +467,15 @@ def submit_cmd(
             "typed transport failure before job-ID assignment) and every wave-unique "
             "durable output are proven absent. Shared outputs already attributed to "
             "completed waves do not prove the later attempt ran. Disabled by default."
+        ),
+    ),
+    adopt_absent_in_flight_outputs: bool = typer.Option(
+        False,
+        "--adopt-absent-in-flight-outputs/--no-adopt-absent-in-flight-outputs",
+        help=(
+            "With --runtime and explicit resume: recover a controller-lost exact "
+            "attempt without resubmission only when its durable ledger reached "
+            "RUNNING and every declared output validates. Disabled by default."
         ),
     ),
     poll_seconds: int = typer.Option(
@@ -773,6 +907,11 @@ def submit_cmd(
     if retry_absent_in_flight and not (resume_run or (resume and run_id)):
         _fail("--retry-absent-in-flight requires an explicit --resume-run ID")
         return
+    if adopt_absent_in_flight_outputs and not (resume_run or (resume and run_id)):
+        _fail(
+            "--adopt-absent-in-flight-outputs requires an explicit --resume-run ID"
+        )
+        return
     workflow_identity = ""
     if is_npa_spec:
         assert merged_npa_spec is not None
@@ -860,8 +999,16 @@ def submit_cmd(
 
     checkpoint_access_error = ""
     checkpoint_modalities: set[str] = set()
+    workflow_access_secret_names: set[str] = set()
     try:
         required_secret_env = list(secret_env)
+        if merged_npa_spec is not None and not plan_only:
+            selected_access = _workflow_access_requirements(merged_npa_spec)
+            if any(item.provider == "huggingface" for item in selected_access):
+                workflow_access_secret_names.add("HF_TOKEN")
+            if any(item.provider == "ngc" for item in selected_access):
+                workflow_access_secret_names.add("NGC_API_KEY")
+            required_secret_env.extend(sorted(workflow_access_secret_names))
         checkpoint_tool_refs = {
             "workbench.cosmos2.transfer_execute",
             "workbench.cosmos2.transfer_conditioned_execute",
@@ -909,6 +1056,11 @@ def submit_cmd(
             "HF_TOKEN is required to verify the exact gated Cosmos Transfer "
             "checkpoint before provisioning or GPU work"
         )
+    for provider_secret in workflow_access_secret_names:
+        if provider_secret in missing_secrets:
+            # The typed approval plan reports missing provider credentials as
+            # Pending with official links and a safe resume command.
+            missing_secrets.remove(provider_secret)
     if missing_secrets and not plan_only:
         _fail(
             "Required secret values are not present in the process environment "
@@ -1230,6 +1382,26 @@ def submit_cmd(
                 _fail_missing_prerequisites(yaml_path, placement_missing)
                 return
             paidf_placement_prechecked = True
+
+        if not plan_only:
+            # Cosmos Transfer already has the stronger state-local pinned-file
+            # fence immediately below. Avoid replacing that exact probe with a
+            # broader repository-level check; all other catalog requirements
+            # use the provider-neutral adapter here.
+            _enforce_workflow_access(
+                merged_npa_spec,
+                json_output=output_format == OutputFormat.json,
+                resume_command=_current_workflow_resume_command(
+                    ["npa", "workbench", "workflow", "submit", str(yaml_path)]
+                ),
+                excluded_repos=(
+                    frozenset({"nvidia/Cosmos-Transfer2.5-2B"})
+                    if checkpoint_access_required
+                    else frozenset()
+                ),
+                hf_token=str(submit_credentials.secret_values.get("HF_TOKEN") or ""),
+                ngc_key=str(submit_credentials.secret_values.get("NGC_API_KEY") or ""),
+            )
 
         if checkpoint_access_required and not plan_only:
             from npa.workbench.cosmos.checkpoint_access import (
@@ -1668,6 +1840,7 @@ def submit_cmd(
                 max_concurrency=max_concurrency,
                 resume=resume,
                 retry_absent_in_flight=retry_absent_in_flight,
+                adopt_absent_in_flight_outputs=adopt_absent_in_flight_outputs,
                 preflight_evidence={
                     "exact_image_pull": (
                         "pass" if preflight_images else "unknown"
@@ -2245,6 +2418,7 @@ def _run_npa_workflow_runtime(
     max_concurrency: int,
     resume: bool,
     retry_absent_in_flight: bool,
+    adopt_absent_in_flight_outputs: bool,
     preflight_evidence: Mapping[str, str],
     pre_submit_hook: Callable[[Path], None] | None,
     output_format: "OutputFormat",
@@ -2318,6 +2492,7 @@ def _run_npa_workflow_runtime(
         config_path=config_path,
         resume=resume,
         retry_absent_in_flight=retry_absent_in_flight,
+        adopt_absent_in_flight_outputs=adopt_absent_in_flight_outputs,
         project=project or "default",
         sky_bin=sky_bin,
         credential_resolver=lambda: _resolve_runtime_secret_values(
@@ -2664,24 +2839,15 @@ def _emit_compact_submit_plan(plan, *, infrastructure: Mapping[str, object]) -> 
 def _resolve_submit_registry(registry: str, project: str) -> str:
     """Return the registry a submit should pull from.
 
-    An explicit --registry wins, followed by NPA_REGISTRY and a legacy saved
-    project override. With none of those, image resolution uses the anonymous
-    GHCR default. Keeping saved overrides in this chain preserves existing custom
-    registry configurations without requiring registry setup for new projects.
+    Only ``--registry`` repoints repository-owned tool images. With no explicit
+    override, the renderer selects accepted public GHCR releases. ``NPA_REGISTRY``
+    and legacy saved registry values remain available to BYOF/build paths, but must
+    not silently turn a public workload into a private-registry pull.
     """
 
+    del project
     explicit = str(registry or "").strip()
-    if explicit:
-        return explicit
-    configured_env = str(os.environ.get("NPA_REGISTRY") or "").strip()
-    if configured_env:
-        return configured_env
-    try:
-        from npa.clients.config import resolve_container_registry
-
-        return str(resolve_container_registry(project or None) or "").strip()
-    except Exception:  # noqa: BLE001 - fall back to the render's own default
-        return ""
+    return explicit
 
 
 def _preflight_submit_images(
@@ -2797,7 +2963,11 @@ def _preflight_image_bootstrap_contracts(
         parse_image_reference,
         resolve_registry_credentials,
     )
-    from npa.deploy.images import requires_skypilot_bootstrap_runtime_probe
+    from npa.deploy.images import (
+        SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS,
+        requires_skypilot_bootstrap_runtime_probe,
+        tool_for_image_name,
+    )
 
     check_by_image = {str(getattr(item, "image", "")): item for item in pull_checks}
     if observation_timeout_seconds < 0:
@@ -2808,8 +2978,20 @@ def _preflight_image_bootstrap_contracts(
         str(item).strip() for item in images if str(item).strip()
     ):
         try:
-            host = parse_image_reference(image).registry
-            username, password = resolve_registry_credentials(host, mint=True)
+            reference = parse_image_reference(image)
+            image_tool = tool_for_image_name(reference.repository.rsplit("/", 1)[-1])
+            if (
+                image_tool
+                and image_tool not in SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS
+            ):
+                # The packaging contract deliberately scopes this attestation to
+                # a subset of NPA images. Anonymous manifest pullability is the
+                # complete preflight for registered images outside that subset.
+                continue
+            host = reference.registry
+            username, password = resolve_registry_credentials(
+                host, image=image, mint=True
+            )
             digest, labels = fetch_image_config_metadata(
                 image, username=username, password=password
             )
@@ -6598,6 +6780,7 @@ def validate_spec_cmd(
         "task_id": str(spec.config.get("task_id") or ""),
         "trigger_uri": str(spec.config.get("trigger_uri") or ""),
         "seed_manifest_uri": str(spec.config.get("seed_manifest_uri") or ""),
+        "access_requirements": _workflow_access_requirement_payload(spec),
     }
     if json_output:
         typer.echo(json.dumps(payload, indent=2, sort_keys=True))
@@ -6670,7 +6853,9 @@ def plan_spec_cmd(
 
         wave_plan = wave_plan_from_plan(spec, plan, run_id=resolved_run_id)
         if json_output:
-            typer.echo(json.dumps(wave_plan.to_dict(), indent=2, sort_keys=True))
+            payload = wave_plan.to_dict()
+            payload["access_requirements"] = _workflow_access_requirement_payload(spec)
+            typer.echo(json.dumps(payload, indent=2, sort_keys=True))
             return
         typer.echo(f"workflow: {wave_plan.workflow}")
         typer.echo(f"waves: {len(wave_plan.waves)}")
@@ -6688,6 +6873,7 @@ def plan_spec_cmd(
 
     if json_output:
         payload = plan.to_dict()
+        payload["access_requirements"] = _workflow_access_requirement_payload(spec)
         # The human warning is suppressed under --json to keep the document clean,
         # which made a placeholder plan look valid. Say it in the document instead.
         if _is_placeholder_bucket(str(spec.config.get("bucket", "") or "")):
@@ -6695,6 +6881,13 @@ def plan_spec_cmd(
         typer.echo(json.dumps(payload, indent=2, sort_keys=True))
         return
     typer.echo(f"workflow: {plan.workflow}")
+    access = _workflow_access_requirement_payload(spec)
+    if access["hf"] or access["ngc"]:
+        typer.echo(
+            "access_requirements: "
+            f"hf={access['hf']} ngc={access['ngc']} "
+            "(exact artifact access is probed before execution)"
+        )
     if plan.assume_decision:
         typer.echo(f"assume_decision: {plan.assume_decision}")
     for index, step in enumerate(plan.steps, start=1):
@@ -6776,6 +6969,37 @@ def run_spec_cmd(
     resolved_assume = assume_decision or str(
         spec.config.get("plan_assume_decision") or ""
     )
+    if execute:
+        _enforce_workflow_access(
+            spec,
+            json_output=json_output,
+            resume_command=_current_workflow_resume_command(
+                [
+                    "npa",
+                    "workbench",
+                    "workflow",
+                    "run-spec",
+                    str(yaml_path),
+                    *(["--run-id", run_id] if run_id else []),
+                    "--execute",
+                    *(
+                        ["--assume-decision", assume_decision]
+                        if assume_decision
+                        else []
+                    ),
+                    *(
+                        item
+                        for pair in (("--var", item) for item in var)
+                        for item in pair
+                    ),
+                    *(["--preset", preset] if preset else []),
+                    *(["--persist-state"] if persist_state else []),
+                    *(["--require-inputs"] if require_inputs else []),
+                    *(["--scheduler-plan"] if scheduler_plan else []),
+                    *(["--json"] if json_output else []),
+                ]
+            ),
+        )
     try:
         report = run_workflow(
             spec,

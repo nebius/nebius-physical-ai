@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -466,6 +467,38 @@ def test_fresh_cluster_uses_the_same_readiness_then_smoke_boundary(
     assert seen[2][1]["sky_bin"] == "/opt/npa/sky"
     assert seen[3][1]["sky_bin"] == "/opt/npa/sky"
     assert seen[3][1]["credentials_checked"] is True
+
+
+def test_skypilot_smoke_uses_the_accelerator_name_resolved_by_readiness(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_runtime(tmp_path, monkeypatch)
+    kubeconfig = tmp_path / "kubeconfig"
+    kubeconfig.write_text("apiVersion: v1\n", encoding="utf-8")
+    requested = "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"
+    resolved = "NVIDIA-RTX-PRO-6000-BLACKWELL-SERVER-EDITION:1"
+    seen: list[str] = []
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.k8s_gpu_catalog.wait_for_kubernetes_accelerators",
+        lambda *_args, **_kwargs: {
+            requested: SimpleNamespace(resolved=resolved),
+        },
+    )
+    monkeypatch.setattr(
+        "npa.cli.cluster.terraform_lifecycle._run_skypilot_smoke",
+        lambda *_args, **_kwargs: seen.append(_args[3]),
+    )
+
+    result = provisioning.provision_if_absent(
+        project="proj",
+        cluster_name="npa-cluster",
+        kubeconfig=kubeconfig,
+        sky_smoke=True,
+        accelerator=requested,
+    )
+
+    assert result.status == "ok"
+    assert seen == [resolved]
 
 
 def test_cached_smoke_without_accelerator_keeps_auto_detection(

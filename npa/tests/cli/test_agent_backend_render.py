@@ -21,6 +21,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from npa.agent_backend.shipping import SHIPPED_BACKEND_MODULES
 from npa.cli.agent_embed import embedded_python_source
 from npa.cli.agent_viewer_runtime import _sha256_file
 
@@ -187,6 +188,8 @@ def test_rendered_backend_compiles(monkeypatch) -> None:
     assert '@app.get("/deployment")' in body
     assert '"deployment": dict(DEPLOYMENT)' in body
     assert "register_gpu_allocation_routes(" in body
+    assert "@goal_episode_boundary(" in body
+    assert "For every goal-level episode, load and follow `$agent-run-data-collection`" in body
     assert "POST /api/agent/gpu-allocation/attempt" in body
     assert "POST /api/agent/gpu-allocation/consent" in body
 
@@ -1209,28 +1212,7 @@ def _import_rendered_backend(monkeypatch, tmp_path, *, module_name: str):
     package = tmp_path / "agent_backend"
     package.mkdir()
     (package / "__init__.py").write_text("", encoding="utf-8")
-    for name in (
-        "memory",
-        "actions",
-        "semantic_router",
-        "sim2real_loop",
-        "retrieval",
-        "trace",
-        "foxglove",
-        "canonical_mcap",
-        "foxglove_cloud",
-        "foxglove_routes",
-        "gpu_allocation_fallback",
-        "gpu_allocation_routes",
-        "artifact_routes",
-        "leisaac_registry",
-        "leisaac",
-        "leisaac_episodes",
-        "leisaac_bundles",
-        "leisaac_transport",
-        "leisaac_datachannel",
-        "leisaac_routes",
-    ):
+    for name in SHIPPED_BACKEND_MODULES:
         (package / f"{name}.py").write_text(
             _extract(f"/opt/npa-agent/agent_backend/{name}.py"), encoding="utf-8"
         )
@@ -1369,8 +1351,10 @@ def test_workflow_dry_run_plans_provision_even_with_existing_infra(
         ("sim2real_loop", "def drive_sim2real_loop"),
         ("retrieval", "def build_lance_store"),
         ("trace", "def analyze_traces"),
+        ("trajectory", "def goal_episode_boundary"),
         ("gpu_allocation_fallback", "def record_attempt"),
         ("gpu_allocation_routes", "def register_gpu_allocation_routes"),
+        ("access_approval", "def classify_followup"),
         ("artifact_routes", "def register_artifact_routes"),
         ("canonical_mcap", "def prepare_canonical_mcap"),
         ("foxglove_cloud", "class FoxgloveCloudClient"),
@@ -1425,28 +1409,7 @@ def test_rendered_backend_imports_and_registers_foxglove_routes(monkeypatch, tmp
     package = tmp_path / "agent_backend"
     package.mkdir()
     (package / "__init__.py").write_text("", encoding="utf-8")
-    for name in (
-        "memory",
-        "actions",
-        "semantic_router",
-        "sim2real_loop",
-        "retrieval",
-        "trace",
-        "foxglove",
-        "canonical_mcap",
-        "foxglove_cloud",
-        "foxglove_routes",
-        "gpu_allocation_fallback",
-        "gpu_allocation_routes",
-        "artifact_routes",
-        "leisaac_registry",
-        "leisaac",
-        "leisaac_episodes",
-        "leisaac_bundles",
-        "leisaac_transport",
-        "leisaac_datachannel",
-        "leisaac_routes",
-    ):
+    for name in SHIPPED_BACKEND_MODULES:
         (package / f"{name}.py").write_text(
             _extract(f"/opt/npa-agent/agent_backend/{name}.py"), encoding="utf-8"
         )
@@ -3099,24 +3062,7 @@ def test_rendered_backend_loads_real_skill_excerpts(monkeypatch, tmp_path):
     package = tmp_path / "agent_backend"
     package.mkdir()
     (package / "__init__.py").write_text("", encoding="utf-8")
-    for name in (
-        "memory",
-        "actions",
-        "semantic_router",
-        "sim2real_loop",
-        "retrieval",
-        "trace",
-        "foxglove",
-        "canonical_mcap",
-        "foxglove_cloud",
-        "foxglove_routes",
-        "gpu_allocation_fallback",
-        "gpu_allocation_routes",
-        "artifact_routes",
-        "leisaac_registry",
-        "leisaac",
-        "leisaac_routes",
-    ):
+    for name in SHIPPED_BACKEND_MODULES:
         (package / f"{name}.py").write_text(
             _extract(f"/opt/npa-agent/agent_backend/{name}.py"), encoding="utf-8"
         )
@@ -3152,8 +3098,180 @@ def test_rendered_backend_loads_real_skill_excerpts(monkeypatch, tmp_path):
         )
         assert names[0] == "cosmos3-npa-workflow", names
         assert "npa.workflow" in context
+
+        access_excerpt = module._skill_excerpt("access-approval")
+        assert access_excerpt, "access-approval excerpt is empty"
+        access_names, access_context = module._resolve_skill_context(
+            user_text="prepare full catalog access", intent=None
+        )
+        assert access_names[0] == "access-approval", access_names
+        assert "human-bound" in access_context
     finally:
         sys.modules.pop("npa_rendered_skill_backend", None)
+
+
+def test_rendered_grounded_access_approval_reports_skill_without_model_call(
+    monkeypatch, tmp_path
+) -> None:
+    module_name = "npa_rendered_access_approval_skill_backend"
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+    state: dict[str, object] = {}
+    plan = {
+        "status": "blocked",
+        "counts": {"hf": 1, "ngc": 1},
+        "official_urls": [
+            "https://huggingface.co/vendor/repo",
+            "https://catalog.ngc.nvidia.com/orgs/vendor/models/repo",
+        ],
+        "resume_command": "npa configure --prepare-catalog-access",
+    }
+    monkeypatch.setattr(module, "_load_state", lambda: state)
+    monkeypatch.setattr(module, "_save_state", lambda _state: None)
+    monkeypatch.setattr(module._access_approval, "build_plan", lambda **_kwargs: plan)
+    monkeypatch.setattr(
+        module,
+        "_provider_chat",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("approval interaction must remain zero-token grounded")
+        ),
+    )
+    try:
+        response = module.chat(
+            {
+                "messages": [
+                    {"role": "user", "content": "prepare full catalog access"}
+                ]
+            }
+        )
+        assert response["grounded"] is True
+        assert response["tier"] == "grounded-access-approval"
+        assert response["skills_used"] == ["access-approval"]
+        assert response["open_urls"] == []
+
+        opened = module.chat(
+            {"messages": [{"role": "user", "content": "yes"}]}
+        )
+        assert opened["grounded"] is True
+        assert opened["skills_used"] == ["access-approval"]
+        assert opened["open_urls"] == plan["official_urls"]
+
+        declined = module.chat(
+            {"messages": [{"role": "user", "content": "later"}]}
+        )
+        assert declined["grounded"] is True
+        assert declined["open_urls"] == []
+        assert "npa configure --prepare-catalog-access" in declined["reply"]
+    finally:
+        sys.modules.pop(module_name, None)
+
+
+def test_rendered_visual_turn_with_approval_words_stays_on_vision_path(
+    monkeypatch, tmp_path
+) -> None:
+    module_name = "npa_rendered_visual_approval_words_backend"
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+    state: dict[str, object] = {
+        "access_approval": {
+            "status": "blocked",
+            "official_urls": ["https://huggingface.co/vendor/repo"],
+        }
+    }
+    captured: dict[str, object] = {}
+
+    def visual_chat(*, messages, requested_model="", tier="standard", interactive=True):
+        captured.update(
+            messages=messages,
+            requested_model=requested_model,
+            tier=tier,
+            interactive=interactive,
+        )
+        return (
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": (
+                                "**What I see**: A model evaluation chart.\n\n"
+                                "**Likely meaning**: Dataset quality varies by split.\n\n"
+                                "**Operator feedback**: Inspect the lowest bar.\n\n"
+                                "**Next actions**: Compare it with the gated-catalog baseline."
+                            )
+                        }
+                    }
+                ],
+                "usage": {"prompt_tokens": 12, "completion_tokens": 18},
+            },
+            "mock-provider",
+            "mock-vision-model",
+        )
+
+    monkeypatch.setattr(module, "_load_state", lambda: state)
+    monkeypatch.setattr(module, "_save_state", lambda _state: None)
+    monkeypatch.setattr(
+        module._access_approval,
+        "classify_followup",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("visual turns must not enter access-approval classification")
+        ),
+    )
+    monkeypatch.setattr(
+        module._access_approval,
+        "build_plan",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("visual turns must not build an approval plan")
+        ),
+    )
+    monkeypatch.setattr(module, "_chat_with_resilience", visual_chat)
+    monkeypatch.setattr(
+        module,
+        "_append_chat_turn",
+        lambda session_id, *_args, **_kwargs: module._normalize_chat_session(
+            session_id,
+            {"id": session_id, "title": "Visual review", "chat_history": []},
+        ),
+    )
+    try:
+        response = module.chat(
+            {
+                "visual_context": {
+                    "kind": "image",
+                    "run_id": "evaluation-run",
+                    "artifact_key": "reports/model-dataset-catalog.png",
+                    "capture": "frame",
+                },
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": (
+                                    "[npa-visual-feedback] Describe this model dataset "
+                                    "catalog approval status image."
+                                ),
+                            },
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": "data:image/jpeg;base64,c3ludGhldGlj"
+                                },
+                            },
+                        ],
+                    }
+                ],
+            }
+        )
+
+        assert captured["tier"] == module.TIER_VISION
+        assert response["tier"] == module.TIER_VISION
+        assert response["model"] == "mock-vision-model"
+        assert response["visual_kind"] == "image"
+        assert response["skills_used"][0] == "agent-visual-feedback"
+        assert response.get("approval_plan") is None
+        assert response.get("open_urls") is None
+        assert "What I see" in response["reply"]
+    finally:
+        sys.modules.pop(module_name, None)
 
 
 def test_rendered_backend_has_no_mangled_regex_escapes(monkeypatch) -> None:

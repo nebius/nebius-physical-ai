@@ -52,6 +52,23 @@ The policy is topology-independent — expected capacity is derived from the
 requested node count and GPU preset, not from a GPU SKU or an assumption of
 eight devices per node.
 
+## RTX rendering profile
+
+For Isaac/RTX rendering on RTX PRO 6000 Kubernetes, use the explicit profile:
+
+```bash
+npa cluster up --gpu-workload-profile rtx-rendering
+```
+
+The profile selects `gpu-rtx6000` / `1gpu-24vcpu-218gb`, the supported GPU
+Operator mounted-driver path, and a mandatory graphics readiness gate. The
+gate runs after stabilization and CUDA vectorAdd on every GPU node. Its pinned,
+payload-clean RTX image must dynamically load operator-mounted GLX and EGL,
+create a Vulkan instance, and enumerate an NVIDIA physical device. Do not
+replace it with library filename or environment-variable inspection. The empty
+profile preserves the managed-image default for every other workload, and the
+NVSwitch operator rejection remains in force.
+
 ## Provision with the health gates on
 
 ```bash
@@ -74,6 +91,8 @@ Defaults are deliberately strict, and every one of them is on for a reason:
   fabric, capacity, and components to stay healthy for that window. It exists
   because GPU nodes routinely look healthy for a few seconds during labelling.
 - `--sky-smoke` (default) runs a SkyPilot Kubernetes GPU task and cleans it up.
+- `--gpu-workload-profile rtx-rendering` additionally requires the per-node
+  GLX/EGL/Vulkan renderer-facing gate; it has no skip/warn-only mode.
 
 Do not reach for `--skip-validate` / `--skip-gpu-cuda-smoke` to make a deploy
 "succeed" faster. Skipping them moves the failure to your first real job, where

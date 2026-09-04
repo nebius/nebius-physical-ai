@@ -48,3 +48,19 @@ def test_pytest_configure_maps_aws_env_onto_npa_e2e_s3(monkeypatch) -> None:
     assert e2e_conftest.os.environ["NPA_E2E_S3_SECRET_ACCESS_KEY"] == "SECRET"
     assert e2e_conftest.os.environ["NPA_E2E_S3_ENDPOINT"] == "https://storage.example"
     assert e2e_conftest.os.environ["NPA_E2E_S3_BUCKET"] == "bucket-from-aws"
+
+
+def test_pytest_configure_ignores_hermetic_unit_bucket_for_live_e2e(
+    monkeypatch,
+) -> None:
+    monkeypatch.delenv("NPA_E2E_S3_BUCKET", raising=False)
+    monkeypatch.delenv("S3_BUCKET", raising=False)
+    monkeypatch.delenv("NPA_E2E_WORKFLOW_S3_BUCKET", raising=False)
+    monkeypatch.setenv("NPA_S3_BUCKET", "test-bucket-00000000")
+
+    class _Config:
+        pass
+
+    e2e_conftest.pytest_configure(_Config())
+
+    assert "NPA_E2E_S3_BUCKET" not in e2e_conftest.os.environ

@@ -107,41 +107,12 @@ controller alone, but not for the canonical Sim2Real CPU states.
 If the preflight reports no fitting CPU node, remove `NoSchedule`/`NoExecute`
 taints that the tasks do not tolerate or add/resize this pool.
 
-## 4. Create Kueue admission objects and warm Isaac once
+## 4. Warm Isaac once
 
-The canonical defaults name the `sim2real-gpu` LocalQueue and
-`sim2real-production` PriorityClass. Create the queue objects with quotas that
-cover the cluster's actual concurrent GPU, CPU, and memory requests; the helper
-generates the exact repository-owned schemas:
-
-```bash
-export NPA_GPU_PRODUCT='<exact nvidia.com/gpu.product label from kubectl get nodes>'
-export NPA_GPU_QUOTA='<concurrent GPU count>'
-export NPA_CPU_QUOTA='<aggregate CPU quota, for example 64>'
-export NPA_MEMORY_QUOTA='<aggregate memory quota, for example 512Gi>'
-
-npa/.venv/bin/python - <<'PY' | kubectl apply -f -
-import os
-import yaml
-from npa.workflows.sim2real.job_scheduling import kueue_queue_manifests
-
-docs = kueue_queue_manifests(
-    namespace="default",
-    gpu_product=os.environ["NPA_GPU_PRODUCT"],
-    gpu_quota=int(os.environ["NPA_GPU_QUOTA"]),
-    cpu_quota=os.environ["NPA_CPU_QUOTA"],
-    memory_quota=os.environ["NPA_MEMORY_QUOTA"],
-)
-print(yaml.safe_dump_all(docs, sort_keys=False))
-PY
-
-kubectl get localqueue.kueue.x-k8s.io sim2real-gpu -n default
-kubectl get priorityclass sim2real-production
-```
-
-Expected: both `get` commands return their named object. Missing Kueue CRDs mean
-Kueue must be installed first; a queue with insufficient CPU or memory quota can
-leave a GPU Job suspended even when a GPU is free.
+The canonical workflow relies on SkyPilot and the Kubernetes scheduler directly;
+it does not require Kueue, a LocalQueue, or a custom PriorityClass. Bound
+parallelism with `gpu_concurrency` so a wave never requests more GPUs than the
+cluster can schedule.
 
 Choose the digest-pinned Isaac image now, then warm a shared RWX cache. The
 template is the authoritative PVC/security/bootstrap contract:
@@ -190,18 +161,25 @@ export TRANSFER_IMAGE='<registry>/npa-cosmos2-transfer@sha256:<64-hex>'
 export ENVGEN_IMAGE='<registry>/npa-envgen@sha256:<64-hex>'
 export ISAAC_IMAGE="${NPA_ISAAC_IMAGE}"
 export VIEWER_IMAGE='<registry>/npa-rerun-viewer@sha256:<64-hex>'
+export SOURCE_SHA='<40-hex-source-sha>'
 export SPEC=npa/workflows/workbench/npa-workflows/sim2real.yaml
 
 npa/.venv/bin/npa workbench workflow preflight-images "${SPEC}" \
   --project "${NPA_PROJECT}" \
   --infra "k8s/${NPA_CLUSTER}" \
   --assume-decision promote_checkpoint \
+  --var source_sha="${SOURCE_SHA}" \
   --var controller_image="${CONTROLLER_IMAGE}" \
   --var transfer_image="${TRANSFER_IMAGE}" \
   --var envgen_image="${ENVGEN_IMAGE}" \
   --var isaac_image="${ISAAC_IMAGE}" \
   --var viewer_image="${VIEWER_IMAGE}"
 ```
+
+`SOURCE_SHA` must be exactly 40 hexadecimal characters and must match the baked
+`NPA_IMAGE_SOURCE_SHA` in every selected Sim2Real image. Supply the SHA attested
+by the coherent image set you selected; do not assume the current repository
+checkout matches those image bytes.
 
 Expected: every image is pullable and bootstrap-compatible. `not_found` means
 build/push the printed image; `forbidden` means fix the exact-host registry
@@ -247,13 +225,14 @@ npa/.venv/bin/npa workbench workflow validate-spec "${SPEC}" \
   --preset public-franka-lift --json
 npa/.venv/bin/npa workbench workflow plan-spec "${SPEC}" \
   --preset public-franka-lift --run-id "${RUN_ID}" \
-  --var bucket="${NPA_BUCKET}" --waves \
+  --var bucket="${NPA_BUCKET}" --var source_sha="${SOURCE_SHA}" --waves \
   --assume-decision promote_checkpoint
 
 npa/.venv/bin/npa workbench workflow submit "${SPEC}" \
   --preset public-franka-lift --project "${NPA_PROJECT}" \
   --infra "k8s/${NPA_CLUSTER}" --runtime --run-id "${RUN_ID}" \
   --var bucket="${NPA_BUCKET}" \
+  --var source_sha="${SOURCE_SHA}" \
   --var controller_image="${CONTROLLER_IMAGE}" \
   --var transfer_image="${TRANSFER_IMAGE}" \
   --var envgen_image="${ENVGEN_IMAGE}" \
@@ -294,6 +273,7 @@ npa/.venv/bin/npa workbench workflow validate-spec "${SPEC}" --json
 npa/.venv/bin/npa workbench workflow plan-spec "${SPEC}" \
   --run-id "${RUN_ID}" --waves --assume-decision promote_checkpoint \
   --var bucket="${NPA_BUCKET}" \
+  --var source_sha="${SOURCE_SHA}" \
   --var controller_image="${CONTROLLER_IMAGE}" \
   --var transfer_image="${TRANSFER_IMAGE}" \
   --var envgen_image="${ENVGEN_IMAGE}" \
@@ -313,6 +293,7 @@ npa/.venv/bin/npa workbench workflow submit "${SPEC}" \
   --runtime --resume --max-wait-seconds 0 \
   --run-id "${RUN_ID}" \
   --var bucket="${NPA_BUCKET}" \
+  --var source_sha="${SOURCE_SHA}" \
   --var trigger_uri="s3://${NPA_BUCKET}/sim2real-triggers/${RUN_ID}/" \
   --var seed_manifest_uri="s3://${NPA_BUCKET}/sim2real-triggers/${RUN_ID}/dataset-manifest.json" \
   --var controller_image="${CONTROLLER_IMAGE}" \
@@ -329,9 +310,8 @@ npa/.venv/bin/npa workbench workflow submit "${SPEC}" \
 
 Before any launch, submit now fails with one consolidated prerequisite report if
 the required secret propagation, three gated model probes, CPU node, cache PVC,
-Kueue queue, PriorityClass, S3 write probe, immutable images, or image pulls are
-not ready. `--skip-preflight` is an expert escape hatch and is not part of this
-runbook.
+S3 write probe, immutable images, or image pulls are not ready. `--skip-preflight`
+is an expert escape hatch and is not part of this runbook.
 
 For a reduced plumbing proof, add `--var outer_iterations=1 --var
 inner_iterations=1` and deliberately chosen smaller scenario/PPO values. Do not
@@ -347,7 +327,20 @@ npa/.venv/bin/npa workbench workflow status "${RUN_ID}" --project "${NPA_PROJECT
 npa/.venv/bin/npa workbench workflow submit "${SPEC}" \
   --project "${NPA_PROJECT}" --infra "k8s/${NPA_CLUSTER}" \
   --runtime --resume-run "${RUN_ID}" --max-wait-seconds 0 \
-  <the same --var and --secret-env arguments>
+  --var bucket="${NPA_BUCKET}" \
+  --var source_sha="${SOURCE_SHA}" \
+  --var trigger_uri="s3://${NPA_BUCKET}/sim2real-triggers/${RUN_ID}/" \
+  --var seed_manifest_uri="s3://${NPA_BUCKET}/sim2real-triggers/${RUN_ID}/dataset-manifest.json" \
+  --var controller_image="${CONTROLLER_IMAGE}" \
+  --var transfer_image="${TRANSFER_IMAGE}" \
+  --var envgen_image="${ENVGEN_IMAGE}" \
+  --var isaac_image="${ISAAC_IMAGE}" \
+  --var viewer_image="${VIEWER_IMAGE}" \
+  --var isaac_cache_pvc=npa-isaac-cache \
+  --secret-env AWS_ACCESS_KEY_ID \
+  --secret-env AWS_SECRET_ACCESS_KEY \
+  --secret-env HF_TOKEN \
+  --secret-env NEBIUS_TOKEN_FACTORY_KEY
 ```
 
 Completion must include `reports/sim2real-report.json`, non-empty

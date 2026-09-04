@@ -27,7 +27,6 @@ operator:
 export NEBIUS_PROJECT_ID=<your-project-id>
 export NEBIUS_TENANT_ID=<your-tenant-id>
 export NPA_S3_BUCKET=<your-bucket>
-export NPA_REGISTRY=ghcr.io/nebius/nebius-physical-ai
 export AWS_ENDPOINT_URL=https://storage.eu-north1.nebius.cloud
 export NPA_STORAGE_ENDPOINT=storage.eu-north1.nebius.cloud
 ```
@@ -49,7 +48,8 @@ Verify local access before launching a GPU job:
 ```bash
 nebius iam get-access-token >/dev/null
 aws s3 ls "s3://${NPA_S3_BUCKET}/" --endpoint-url "${AWS_ENDPOINT_URL}"
-docker manifest inspect "${NPA_REGISTRY}/npa-genesis:0.4.6" >/dev/null
+docker manifest inspect \
+  "ghcr.io/nebius/nebius-physical-ai/npa-genesis:0.4.6" >/dev/null
 ```
 
 ## Kubernetes Access

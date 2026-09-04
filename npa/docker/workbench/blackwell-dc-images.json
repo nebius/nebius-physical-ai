@@ -662,6 +662,23 @@
       ]
     },
     {
+      "name": "npa-cosmos3-super-benchmark",
+      "dockerfile": "cosmos3-super-benchmark/Dockerfile",
+      "build_script": "cosmos3-super-benchmark/build.sh",
+      "redistribution": "restricted",
+      "verdict": "ready",
+      "validation": "validated",
+      "torch": "inherited from exact vllm/vllm-omni:cosmos3 upstream digest",
+      "source_compiled_extensions": [],
+      "smoke": "full four-cell B200 serving benchmark with strict MP4 validity",
+      "notes": "Operator-private wrapper around the pinned upstream benchmark runtime; adds only the SkyPilot worker bootstrap surface and is excluded from public publication. The exact private digest completed the full four-cell B200 sweep with 96/96 technically valid MP4s and reproduced the expected higher-throughput/higher-latency ordering as service count increased.",
+      "validated_digest": "sha256:df755667ee290717f843b4f565be487787ea5297a85d262317c274f894085a68",
+      "validated_registry_scope": "operator",
+      "measured_arch_list": [
+        "sm_100"
+      ]
+    },
+    {
       "name": "npa-cosmos3-ray-serve",
       "dockerfile": "cosmos3-ray-serve/Dockerfile",
       "build_script": "cosmos3-ray-serve/build.sh",
@@ -722,6 +739,19 @@
       "validation": "not-required",
       "smoke": "grade a real clip set with the wired checks",
       "notes": "No torch or CUDA in the image (python:3.12-slim plus OpenCV/NumPy); the golden eval declares gpu: none. Only confirm node-pool scheduling."
+    },
+    {
+      "name": "npa-robocasa",
+      "dockerfile": "robocasa/Dockerfile",
+      "build_script": "robocasa/build.sh",
+      "verdict": "blocked",
+      "validation": "pending-build",
+      "torch": "none baked (CUDA 12.4 base; robosuite/MuJoCo CPU/EGL)",
+      "source_compiled_extensions": [],
+      "smoke": "Gymnasium task registration, kitchen asset availability, headless EGL reset, random rollout with video",
+      "notes": "Built on the CUDA 12.4 base from the live-accepted BYOF evidence. cu124 wheels stop at sm_90, so the image cannot run on datacenter Blackwell (sm_100/sm_103) without a CUDA 13 rebuild; RTX PRO 6000 (sm_120) also requires a cu130 rebuild. RoboCasa/robosuite are Apache-2.0 and kitchen assets are runtime downloads. Validation candidate: not yet built or GPU-validated.",
+      "blocked_reason": "CUDA 12.4 base wheels stop at sm_90; datacenter Blackwell (sm_100/sm_103) and RTX PRO 6000 (sm_120) need a CUDA 13 rebuild",
+      "upstream_tracking": "robosuite/MuJoCo CUDA 13 wheel availability and a cu130 rebuild of the npa-robocasa image"
     }
   ],
   "validation_evidence": {

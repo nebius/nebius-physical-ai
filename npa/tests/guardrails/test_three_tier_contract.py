@@ -61,6 +61,9 @@ def _p(
 #               the ones worth closing, tool by tool, with a live run each.
 #
 SPEC_GAP_REASONS: dict[str, dict[str, str]] = {
+    "cosmos3/super-benchmark": {
+        "dry_run": "boolean",
+    },
     "cosmos3/ray-batch": {
         "dry_run": "boolean",
     },
@@ -140,6 +143,10 @@ SPEC_GAP_REASONS: dict[str, dict[str, str]] = {
     "cosmos3/reason": {
         "image": "infra",
         "prompt": "knob",
+    },
+    "robocasa/run": {
+        "download_assets": "boolean",
+        "seed": "knob",
     },
 }
 
@@ -356,6 +363,24 @@ CONTRACTS: tuple[CapabilityContract, ...] = (
         ),
     ),
     CapabilityContract(
+        name="cosmos3/super-benchmark",
+        cli_module="npa.cli.workbench.cosmos3",
+        cli_callback="super_benchmark_cmd",
+        sdk_module="npa.sdk.workbench.cosmos3",
+        sdk_attr="super_benchmark",
+        spec_path=SPECS / "cosmos3-super-b200-benchmark.yaml",
+        tool_ref="workbench.cosmos3.super_benchmark",
+        spec_gap=("dry_run",),
+        params=(
+            _p("output_path", "output_path", "--output-path"),
+            _p("topologies", "topologies", "--topologies"),
+            _p("attempts", "attempts", "--attempts"),
+            _p("base_port", "base_port", "--base-port"),
+            _p("run_id", "run_id", "--run-id"),
+            _p("dry_run", "dry_run", "--dry-run"),
+        ),
+    ),
+    CapabilityContract(
         name="detection-training/train",
         cli_module="npa.cli.workbench.detection_training",
         cli_callback="train_cmd",
@@ -384,6 +409,29 @@ CONTRACTS: tuple[CapabilityContract, ...] = (
             _p("eval_view", "eval_view", "--eval-view"),
             _p("output_uri", "output_uri", "--output-uri"),
             _p("lance_uri", "lance_uri", "--lance-uri"),
+        ),
+    ),
+    CapabilityContract(
+        name="robocasa/run",
+        cli_module="npa.cli.workbench.robocasa.run",
+        cli_callback="run_cmd",
+        sdk_module="npa.sdk.workbench.robocasa",
+        sdk_attr="run",
+        spec_path=SPECS / "robocasa-smoke.yaml",
+        tool_ref="workbench.robocasa.random_rollout",
+        spec_gap=(
+            "download_assets",
+            "seed",
+        ),
+        params=(
+            _p("capability", "capability", "--capability"),
+            _p("env_id", "env_id", "--env-id"),
+            _p("output_path", "output_path", "--output-path"),
+            _p("iterations", "iterations", "--iterations"),
+            _p("num_envs", "num_envs", "--num-envs"),
+            _p("timeout_seconds", "timeout_seconds", "--timeout-seconds"),
+            _p("download_assets", "download_assets", "--download-assets"),
+            _p("seed", "seed", "--seed"),
         ),
     ),
     # --- the watcher: a DRIVER, so its third tier is the spec it submits --------

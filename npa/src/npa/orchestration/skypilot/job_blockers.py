@@ -348,7 +348,10 @@ def classify_pending_reason(
         if "configmap" in combined:
             return "MISSING_CONFIGMAP"
         return "CREATE_CONTAINER_CONFIG_ERROR"
-    if source == "init" or "init" in combined:
+    # A waiting reason of "PodInitializing" on a main container is normal
+    # progress while init containers run, not an init-container failure; only a
+    # genuine init-container status (source == "init") is an init failure.
+    if source == "init":
         return "INIT_CONTAINER_FAILED"
     if "crashloopbackoff" in normalized or "containercannotrun" in normalized:
         return "CONTAINER_CRASH"
@@ -490,8 +493,8 @@ def _container_blocker(
                 continue
             waiting = _as_dict(_as_dict(container.get("state")).get("waiting"))
             reason = str(waiting.get("reason") or "")
-            # ContainerCreating is normal progress, not a blocker.
-            if reason and reason != "ContainerCreating":
+            # ContainerCreating/PodInitializing are normal progress, not blockers.
+            if reason and reason not in ("ContainerCreating", "PodInitializing"):
                 message = sanitize_reason(waiting.get("message") or "")
                 return PodBlocker(
                     pod=name,

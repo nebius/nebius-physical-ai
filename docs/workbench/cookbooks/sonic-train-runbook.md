@@ -38,10 +38,10 @@ npa workbench sonic -p eu-north1 -n w7sonic train \
   --poll-interval 15
 ```
 
-When validating an unpromoted build, pass the pushed image explicitly:
+When validating an unpromoted operator build, pass the pushed image explicitly:
 
 ```bash
---image "${NPA_REGISTRY}/npa-sonic:cuda13-b300-0.1.2-k8s-runtime-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
+--image "<your-registry>/<namespace>/npa-sonic:cuda13-b300-0.1.2-k8s-runtime-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
 ```
 
 ## Standalone SkyPilot YAML
@@ -80,7 +80,6 @@ S3 values before SkyPilot submission:
 npa workbench workflow submit \
   npa/workflows/workbench/npa-workflows/sonic-train.yaml \
   --run-id sonic-train-smoke \
-  --registry "${NPA_REGISTRY}" \
   --gpu-target l40s \
   --s3-endpoint https://storage.eu-north1.nebius.cloud \
   --s3-bucket <bucket> \
@@ -124,7 +123,6 @@ from npa.sdk.workbench import sonic
 sonic.submit_workflow(
     Path("npa/workflows/workbench/npa-workflows/sonic-train.yaml"),
     run_id="sonic-train-smoke",
-    registry="<your-registry>/<namespace>",
     gpu_target="l40s",
     s3_endpoint="https://storage.eu-north1.nebius.cloud",
     s3_bucket="<bucket>",
@@ -137,9 +135,8 @@ Use the exact supported host-mounted image from the manifest for RTX PRO 6000
 Blackwell on Kubernetes with the NVIDIA GPU Operator:
 
 ```bash
-export NPA_REGISTRY=ghcr.io/nebius/nebius-physical-ai
 docker manifest inspect \
-  "${NPA_REGISTRY}/npa-sonic:cuda13-b300-0.1.2-k8s-runtime-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
+  "ghcr.io/nebius/nebius-physical-ai/npa-sonic:cuda13-b300-0.1.2-k8s-runtime-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
 ```
 
 The L40S baked variant is quarantined and must not be rebuilt or pushed as an

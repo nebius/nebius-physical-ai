@@ -79,14 +79,10 @@ python -m pip install -e npa
 # S3 keys, Token Factory key, and optional HF/NGC tokens under ~/.npa/.
 npa configure
 eval "$(npa configure --show --env)"   # emits non-secret NPA_* assignments only
-# Optional for a legacy config with a saved private-registry override: force the
-# public default explicitly.
-export NPA_REGISTRY=ghcr.io/nebius/nebius-physical-ai
 
 SPEC=npa/workflows/workbench/npa-workflows/physical-ai-data-factory.yaml
 PROJECT="$NPA_PROJECT_ALIAS"
 BUCKET="$NPA_BUCKET"
-REGISTRY="$NPA_REGISTRY"
 RUN_ID="$(npa workbench workflow prepare-run "$SPEC" --project "$PROJECT")"
 
 npa workbench health preflight
@@ -100,8 +96,6 @@ npa skypilot bootstrap
 # Reload the kube context written by provision-if-absent, discover its actual
 # accelerator spelling, and validate/plan with the real bucket.
 eval "$(npa configure --show --env)"
-export NPA_REGISTRY=ghcr.io/nebius/nebius-physical-ai
-REGISTRY="$NPA_REGISTRY"
 KUBE_CONTEXT="$NPA_KUBE_CONTEXT"
 npa workbench workflow gpus --context "$KUBE_CONTEXT" --spec "$SPEC"
 npa workbench workflow validate-spec "$SPEC" --json
@@ -110,15 +104,15 @@ npa workbench workflow plan-spec "$SPEC" --run-id "$RUN_ID" \
   --var bucket="$BUCKET" \
   --var n_augmentations=1 --json
 
-# Proves manifest pulls. GHCR is anonymous; for a private Nebius registry,
-# submit also refreshes the Kubernetes imagePullSecret before launch.
+# Supported image namespace: ghcr.io/nebius/nebius-physical-ai (selected
+# automatically). Prove every repository-owned manifest through anonymous pulls.
 npa workbench workflow preflight-images "$SPEC" \
-  --project "$PROJECT" --registry "$REGISTRY"
+  --project "$PROJECT"
 
 # Source staging is automatic and content-addressed. Each secret name resolves
 # from the environment or project store; a missing gate fails before GPU launch.
 npa workbench workflow submit "$SPEC" \
-  --project "$PROJECT" --registry "$REGISTRY" \
+  --project "$PROJECT" \
   --run-id "$RUN_ID" --runtime --auto-load \
   --var bucket="$BUCKET" \
   --var n_augmentations=1 \
@@ -165,10 +159,9 @@ Only non-secret IDs are arguments. Keep all credential material in the active
 Nebius profile and `~/.npa/credentials.yaml`, never shell history.
 
 The configured S3 endpoint is selected automatically; `--s3-endpoint` is only an
-explicit override. Workbench images default to the anonymous GHCR mirror.
-`NPA_REGISTRY` remains a custom-image override in `preflight-images` and submit:
-an explicit `--registry` wins, then `NPA_REGISTRY`, then a saved project
-override, then GHCR.
+explicit override. Workbench images default to the anonymous GHCR mirror and do
+not inherit `NPA_REGISTRY` or a saved registry value. Pass `--registry` explicitly
+to `preflight-images` and submit only when selecting custom runtime bytes.
 The quick start requests one real augmentation variant for a decisive first run;
 omit `--var n_augmentations=1` to use the spec's default two-variant multiply, or
 raise it together with the requested GPU count for a larger batch.
@@ -327,10 +320,6 @@ npa configure
 # npa configure --no-interactive --save-env-credentials ...known project flags...
 eval "$(npa configure --show --env)"
 PROJECT="$NPA_PROJECT_ALIAS"
-# Optional for a legacy config with a saved private-registry override: force the
-# public default explicitly.
-export NPA_REGISTRY=ghcr.io/nebius/nebius-physical-ai
-REGISTRY="$NPA_REGISTRY"
 npa workbench health preflight
 
 # Reserve the exact run identity, then complete deterministic validation,
@@ -341,7 +330,7 @@ npa workbench workflow validate-spec "$SPEC" --json
 npa workbench workflow plan-spec "$SPEC" --run-id "$RUN_ID" \
   --assume-decision promote_checkpoint --var bucket="$BUCKET" \
   --var n_augmentations=1 --json
-npa workbench workflow preflight-images "$SPEC" --registry "$REGISTRY"
+npa workbench workflow preflight-images "$SPEC"
 npa provision-if-absent --project "$PROJECT" --cluster-name "$CONTEXT" \
   --cpu-nodes 1 --cpu-platform cpu-d3 --cpu-preset 8vcpu-32gb \
   --gpu-nodes 1 --gpu-platform gpu-rtx6000 \
@@ -351,8 +340,6 @@ npa destroy --project "$PROJECT" --all --json
 
 npa provision-if-absent --project "$PROJECT" --skip-k8s
 eval "$(npa configure --show --env)"
-export NPA_REGISTRY=ghcr.io/nebius/nebius-physical-ai
-REGISTRY="$NPA_REGISTRY"
 npa skypilot bootstrap
 npa provision-if-absent --project "$PROJECT" --cluster-name "$CONTEXT" \
   --cpu-nodes 1 --cpu-platform cpu-d3 --cpu-preset 8vcpu-32gb \
@@ -541,8 +528,9 @@ replace `--on-demand` with `--preemptible`; Nebius may reclaim a preemptible GPU
 node mid-stage, so rely on PAIDF's durable S3 manifests and resume the run.
 
 The default GHCR images must be reachable anonymously. For a private or modified
-image, point `NPA_REGISTRY` at its registry, e.g.
-`cr.<region>.nebius.cloud/<registry-id>`, and configure pull credentials.
+image, pass its complete reference with the tool's `--image` option or pass its
+namespace explicitly as workflow `--registry`, then configure exact-host pull
+credentials.
 
 ---
 
@@ -644,9 +632,8 @@ used when you select it explicitly. Pick one path and preflight the same registr
 submit will use:
 
 ```bash
-REGISTRY=ghcr.io/nebius/nebius-physical-ai    # or your explicit NPA_REGISTRY
 npa workbench workflow preflight-images npa/workflows/workbench/npa-workflows/physical-ai-data-factory.yaml \
-  --project "$PROJECT" --registry "$REGISTRY"
+  --project "$PROJECT"
 ```
 
 That reports each image as `ok` / `not_found` / `forbidden` and prints the exact
@@ -666,7 +653,7 @@ or incompatible (tags below track
 `npa/src/npa/deploy/images.py`, which is what submit pulls):
 
 ```bash
-REGISTRY="$NPA_REGISTRY"
+REGISTRY="<your-registry>/<namespace>"
 printf '%s' "$(nebius iam get-access-token)" \
   | docker login "${REGISTRY%%/*}" -u iam --password-stdin
 

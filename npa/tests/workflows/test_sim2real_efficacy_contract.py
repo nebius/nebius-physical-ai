@@ -928,3 +928,24 @@ Total timesteps: 24576
     assert telemetry["final_iteration"]["stable_placement_departure_reward"] == -0.5
     with pytest.raises(ValueError, match="no Learning iteration"):
         parse_ppo_training_log("no telemetry")
+
+
+def test_parse_ppo_telemetry_accepts_rsl_rl_5_console_format() -> None:
+    # rsl-rl >= 5.0 renamed "Mean value_function loss" to "Mean value loss" and
+    # no longer prints a "Total timesteps" line in the iteration table.
+    log = """
+Learning iteration 199/199
+Mean value loss: 1.4190
+Mean surrogate loss: -0.0027
+Mean entropy loss: 11.9853
+Mean reward: 19.96
+Mean episode length: 248.12
+Episode_Reward/lifting_object: 0.4100
+Metrics/object_pose/position_error: 0.3215
+"""
+    telemetry = parse_ppo_training_log(log)
+    assert telemetry["configured_iterations"] == 199
+    assert telemetry["final_iteration"]["value_loss"] == 1.419
+    assert telemetry["final_iteration"]["surrogate_loss"] == -0.0027
+    assert telemetry["final_iteration"]["episode_return"] == 19.96
+    assert "total_timesteps" not in telemetry["final_iteration"]

@@ -9,6 +9,8 @@ from __future__ import annotations
 import json as json_module
 import os
 import shutil
+import sys
+import webbrowser
 from pathlib import Path
 from typing import Optional
 
@@ -194,14 +196,36 @@ def access_command(
         False, "--warn-only", help="Exit 0 even when an access check fails."
     ),
     output_json: bool = typer.Option(False, "--json", help="Print the report as JSON."),
+    prepare: bool = typer.Option(
+        False,
+        "--prepare",
+        help=(
+            "Prepare exact HF/NGC catalog approvals, persist non-secret evidence, "
+            "and return official pages plus a safe resume command."
+        ),
+    ),
+    open_pages: bool = typer.Option(
+        False,
+        "--open-pages",
+        help=(
+            "Affirmatively open missing official approval pages in the local browser. "
+            "NPA never clicks or submits acceptance controls."
+        ),
+    ),
+    recheck: bool = typer.Option(
+        False,
+        "--recheck",
+        help="Ignore unchanged Ready evidence and re-probe every exact artifact.",
+    ),
 ) -> None:
     """Check HF + NGC access to every gated model the workbench capabilities need.
 
-    Given a Hugging Face token and an NGC API key, this reports whether the token
-    already has access to each gated model and prints the exact 'Agree and access
-    repository' URL for anything still gated. Hugging Face gated licenses must be
-    accepted interactively on the model page — there is no API to accept them for
-    you — so this command automates the check and the guidance, not the click.
+    Given a Hugging Face token and an NGC API key, this reports whether the
+    credential can fetch an exact gated payload and prints the official approval
+    URL for anything still blocked. Ready proves technical fetch entitlement only;
+    it is not proof of legal acceptance. Any required assent remains a human action
+    on the provider page, so this command automates the check and guidance, not the
+    click.
 
     Pass ``--save-env-credentials`` to persist supported environment credentials to
     ~/.npa/credentials.yaml. Exits non-zero on any FAIL unless ``--warn-only``.
@@ -250,6 +274,79 @@ def access_command(
 
         ngc_validator = check_ngc_image_access
 
+    if prepare:
+        from npa.workbench.access_approval import (
+            DEFAULT_STATE_PATH,
+            approval_plan,
+            blocked,
+            exact_requirements,
+            probe_requirements,
+        )
+
+        state_path = Path(
+            os.environ.get("NPA_ACCESS_APPROVAL_STATE_PATH", str(DEFAULT_STATE_PATH))
+        )
+        requirements = exact_requirements(selected)
+        evidence = probe_requirements(
+            requirements,
+            hf_token=resolved_hf,
+            ngc_key=resolved_ngc,
+            hf_validator=None if offline else validate_hf_access,
+            ngc_validator=ngc_validator,
+            state_path=state_path,
+            force=recheck,
+        )
+        selected_label = "all" if selected is None else ",".join(selected)
+        resume = (
+            "npa workbench health access --capability "
+            f"{selected_label} --prepare --recheck"
+        )
+        if offline:
+            resume += " --offline"
+        plan = approval_plan(evidence, resume_command=resume)
+        if open_pages and output_json:
+            raise typer.BadParameter("--open-pages cannot be combined with --json")
+        if (
+            not open_pages
+            and not output_json
+            and blocked(plan)
+            and sys.stdin.isatty()
+        ):
+            counts = plan["counts"]
+            open_pages = typer.confirm(
+                "This catalog needs approval for "
+                f"{counts['hf']} HF resource(s) and {counts['ngc']} NGC artifact(s). "
+                "Open the official pages now?",
+                default=False,
+            )
+        if open_pages:
+            for url in plan["official_urls"]:
+                webbrowser.open_new_tab(str(url))
+        if output_json:
+            typer.echo(json_module.dumps(plan, indent=2, sort_keys=True))
+        else:
+            counts = plan["counts"]
+            typer.echo(
+                "Catalog approval plan: "
+                f"{counts['hf']} Hugging Face resource(s), "
+                f"{counts['ngc']} NVIDIA NGC artifact(s) need attention."
+            )
+            for provider, rows in plan["providers"].items():
+                typer.echo(f"{provider}:")
+                for row in rows:
+                    typer.echo(
+                        f"  - {row['artifact']}@{row['revision'] or 'provider-current'}: "
+                        f"{row['status']} ({row['official_url']})"
+                    )
+            if blocked(plan):
+                typer.echo(
+                    "NPA did not accept any terms. Complete any approval while signed "
+                    "in as yourself, then resume with:"
+                )
+                typer.echo(f"  {plan['resume_command']}")
+        if blocked(plan) and not warn_only:
+            raise typer.Exit(code=1)
+        return
     results = check_workbench_access(
         hf_token=resolved_hf,
         ngc_key=resolved_ngc,

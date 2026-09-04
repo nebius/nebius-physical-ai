@@ -91,6 +91,7 @@ IMPORT_SURFACE: tuple[tuple[str, str | None, tuple[str, ...]], ...] = (
         (
             "npa/src/npa/genesis/eval_student.py",
             "npa/src/npa/server/app.py",
+            "npa/src/npa/workbench/robocasa/capabilities.py",
             "research/lerobot-deploy/training/profile_train.py",
         ),
     ),
@@ -128,6 +129,7 @@ IMPORT_SURFACE: tuple[tuple[str, str | None, tuple[str, ...]], ...] = (
         (
             "npa/src/npa/genesis/eval_student.py",
             "npa/src/npa/server/app.py",
+            "npa/src/npa/workbench/robocasa/capabilities.py",
             "research/lerobot-deploy/training/profile_train.py",
         ),
     ),
@@ -139,7 +141,10 @@ IMPORT_SURFACE: tuple[tuple[str, str | None, tuple[str, ...]], ...] = (
     (
         "lerobot.policies.act.modeling_act",
         "ACTPolicy",
-        ("npa/src/npa/genesis/eval_student.py",),
+        (
+            "npa/src/npa/genesis/eval_student.py",
+            "npa/src/npa/workbench/robocasa/capabilities.py",
+        ),
     ),
     (
         "lerobot.policies.act.configuration_act",
