@@ -48,6 +48,7 @@ if __name__ == "npa.cli.agent_access_runtime":
         s3_uri_in_configured_buckets,
     )
     from npa.workflows.artifacts import (
+        RunListPage,
         decode_run_ref,
         find_run_sources_across_buckets,
         list_artifacts,
@@ -364,6 +365,27 @@ def _find_configured_exact_run_sources(s3, run_id: str):
         for item in matches
     }
     return list(unique.values()), tuple(source_errors), complete
+
+
+def _configured_exact_run_page(s3, query: str, *, discovery_limit: int):
+    """Return the fail-closed durable-default page for an exact UI query."""
+    if len(str(query or "").strip()) < 20:
+        return None
+    try:
+        exact_run = validate_run_id(query)
+    except Exception:
+        return None
+    if not _configured_agent_artifact_sources():
+        return None
+    runs, errors, complete = _find_configured_exact_run_sources(s3, exact_run)
+    return RunListPage(
+        runs=runs,
+        truncated=not complete,
+        total_runs=len(runs),
+        limit=discovery_limit,
+        discovery_complete=complete,
+        source_errors=errors,
+    )
 
 
 def _finish_agent_access_refresh(report: "AgentAccessReport | None") -> None:

@@ -6095,8 +6095,10 @@ def test_artifact_source_file_rejects_non_private_permissions(tmp_path) -> None:
 def test_cross_project_artifact_source_uses_exact_private_credential_record(
     monkeypatch,
 ) -> None:
+    from npa.cli import agent_artifact_sources
+
     monkeypatch.setattr(
-        agent_module,
+        agent_artifact_sources,
         "project_credential_record",
         lambda project_id, **_kwargs: {
             "project_id": project_id,
@@ -6140,8 +6142,10 @@ def test_cross_project_artifact_source_uses_exact_private_credential_record(
 def test_cross_project_artifact_source_rejects_mismatched_private_bucket(
     monkeypatch,
 ) -> None:
+    from npa.cli import agent_artifact_sources
+
     monkeypatch.setattr(
-        agent_module,
+        agent_artifact_sources,
         "project_credential_record",
         lambda _project_id, **_kwargs: {
             "storage": {
