@@ -3906,6 +3906,10 @@ def test_bootstrap_embeds_provider_resilience_fallback() -> None:
     assert "_provider_chat" in source
     assert "NPA_AGENT_LLM_PROVIDER" in source
     assert "NPA_AGENT_LLM_PROVIDERS" in source
+    assert "NPA_AGENT_LLM_TIMEOUT_SECONDS" in source
+    assert "NPA_AGENT_LLM_MAX_CONCURRENCY" in source
+    assert "timeout=LLM_TIMEOUT_SECONDS" in source
+    assert "with _LLM_REQUEST_SLOTS" in source
     assert "default_provider" in source
 
 
@@ -6090,6 +6094,104 @@ def test_artifact_source_file_rejects_non_private_permissions(tmp_path) -> None:
 
     with pytest.raises(ValueError, match="must not be readable"):
         agent_module._load_agent_artifact_sources_file(str(source_file))
+
+
+def test_custom_llm_config_stages_secret_only_through_private_upload(tmp_path) -> None:
+    from npa.cli import agent_llm_config
+
+    key_file = tmp_path / "provider.key"
+    key_file.write_text("synthetic-provider-secret", encoding="utf-8")
+    key_file.chmod(0o600)
+    config_file = tmp_path / "llm.json"
+    config_file.write_text(
+        json.dumps(
+            {
+                "provider": "custom-provider",
+                "base_url": "https://models.example/v1",
+                "api_key_file": str(key_file),
+                "model": "example/model",
+                "models": ["example/model"],
+                "timeout_seconds": 180,
+                "max_concurrency": 8,
+            }
+        ),
+        encoding="utf-8",
+    )
+    config_file.chmod(0o600)
+    config = agent_module._load_agent_llm_config_file(str(config_file))
+    staged: dict[str, str] = {}
+
+    class FakeSSH:
+        def upload_private_text(self, content, remote_path):
+            staged.update(content=content, remote_path=remote_path)
+
+        def run_or_raise(self, command, *, label):
+            staged.update(command=command, label=label)
+
+        def run(self, _command):
+            return None
+
+    agent_llm_config.write_agent_llm_env(
+        FakeSSH(),
+        api_key=config["api_key"],
+        provider=config["provider"],
+        providers=(config["provider"],),
+        model=config["model"],
+        models=config["models"],
+        base_url=config["base_url"],
+        timeout_seconds=config["timeout_seconds"],
+        max_concurrency=config["max_concurrency"],
+    )
+
+    assert "synthetic-provider-secret" in staged["content"]
+    assert "synthetic-provider-secret" not in staged["command"]
+    assert "NPA_AGENT_CUSTOM_PROVIDER_API_KEY=" in staged["content"]
+    assert (
+        "NPA_AGENT_CUSTOM_PROVIDER_BASE_URL=https://models.example/v1"
+        in staged["content"]
+    )
+    assert "NPA_AGENT_LLM_TIMEOUT_SECONDS=180" in staged["content"]
+    assert "NPA_AGENT_LLM_MAX_CONCURRENCY=8" in staged["content"]
+    assert staged["label"] == "stage private /opt/npa-agent/llm.env"
+    runtime = agent_llm_config.resolve_agent_llm_runtime(
+        {},
+        llm_config_file=str(config_file),
+        requested_model="",
+        requested_models=[],
+        defaults=("token_factory", "", "default/model", ("default/model",)),
+        normalize_models=agent_module._normalize_llm_models,
+    )
+    persisted = runtime["persisted"]
+    assert "api_key" not in persisted
+    assert persisted["config_file"] == str(config_file)
+    bootstrap_kwargs = agent_llm_config.bootstrap_agent_llm_kwargs(runtime)
+    assert bootstrap_kwargs["llm_api_key"] == "synthetic-provider-secret"
+    assert "tf_api_key" not in bootstrap_kwargs
+
+
+def test_custom_llm_config_rejects_weak_files_and_short_timeout(tmp_path) -> None:
+    key_file = tmp_path / "provider.key"
+    key_file.write_text("synthetic-provider-secret", encoding="utf-8")
+    key_file.chmod(0o600)
+    config_file = tmp_path / "llm.json"
+    payload = {
+        "provider": "custom",
+        "base_url": "https://models.example/v1",
+        "api_key_file": str(key_file),
+        "model": "example/model",
+        "timeout_seconds": 120,
+        "max_concurrency": 8,
+    }
+    config_file.write_text(json.dumps(payload), encoding="utf-8")
+    config_file.chmod(0o600)
+    with pytest.raises(ValueError, match="at least 180"):
+        agent_module._load_agent_llm_config_file(str(config_file))
+
+    payload["timeout_seconds"] = 180
+    config_file.write_text(json.dumps(payload), encoding="utf-8")
+    config_file.chmod(0o644)
+    with pytest.raises(ValueError, match="must not be readable"):
+        agent_module._load_agent_llm_config_file(str(config_file))
 
 
 def test_cross_project_artifact_source_uses_exact_private_credential_record(

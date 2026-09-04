@@ -49,12 +49,14 @@ from npa.cli.agent_artifact_sources import (
 )
 from npa.cli.agent_env_files import (  # noqa: F401 - re-exported for tests/callers
     _load_agent_artifact_sources_file,
+    _load_agent_llm_config_file,
     _stage_private_text,
     _write_agent_artifact_sources_env,
     _write_agent_nebius_env,
     _write_agent_operator_profile,
     _write_agent_s3_env,
 )
+from npa.cli import agent_llm_config
 from npa.cli.agent_destroy import destroy_cmd as _destroy_cmd_impl
 from npa.cli.agent_auth import auth_profile_cmd
 from npa.cli.agent_inventory import agent_list_cmd
@@ -715,39 +717,6 @@ def _resolve_agent_storage_credentials(
     )
 
 
-def _write_agent_llm_env(
-    ssh: SSHClient,
-    *,
-    tf_api_key: str,
-    llm_provider: str,
-    llm_model: str,
-    llm_providers: list[str] | tuple[str, ...] = (DEFAULT_LLM_PROVIDER,),
-    llm_models: list[str] | tuple[str, ...] = DEFAULT_LLM_MODELS,
-) -> None:
-    """Stage Token Factory credentials on the VM (chmod 600, not baked into image)."""
-    if not tf_api_key.strip():
-        return
-    models_csv = ",".join(_normalize_llm_models(list(llm_models)))
-    providers_csv = ",".join(
-        _normalize_llm_models(
-            [str(item) for item in llm_providers if str(item).strip()]
-        )
-        or [DEFAULT_LLM_PROVIDER]
-    )
-    env_content = (
-        f"NEBIUS_TOKEN_FACTORY_KEY={tf_api_key.strip()}\n"
-        f"NPA_AGENT_LLM_PROVIDER={llm_provider.strip() or DEFAULT_LLM_PROVIDER}\n"
-        f"NPA_AGENT_LLM_PROVIDERS={providers_csv}\n"
-        f"NPA_AGENT_LLM_MODEL={llm_model}\n"
-        f"NPA_AGENT_LLM_MODELS={models_csv}\n"
-    )
-    env_b64 = base64.b64encode(env_content.encode("utf-8")).decode("ascii")
-    ssh.run_or_raise(
-        f"echo {shlex.quote(env_b64)} | base64 -d | sudo tee /opt/npa-agent/llm.env >/dev/null "
-        "&& sudo chmod 600 /opt/npa-agent/llm.env"
-    )
-
-
 def _store_project_environment(
     *, project: str, project_id: str, tenant_id: str, region: str
 ) -> None:
@@ -905,8 +874,13 @@ def _bootstrap_agent_stack(
     agent_port: int,
     backend_port: int,
     rerun_port: int,
+    llm_provider: str = DEFAULT_LLM_PROVIDER,
     llm_model: str = DEFAULT_LLM_MODEL,
     llm_models: list[str] | tuple[str, ...] = DEFAULT_LLM_MODELS,
+    llm_base_url: str = "",
+    llm_timeout_seconds: float = 120.0,
+    llm_max_concurrency: int = 8,
+    llm_api_key: str = "",
     tf_api_key: str = "",
     nebius_ai_key: str = "",
     service_account_id: str = "",
@@ -2844,6 +2818,15 @@ LLM_PROVIDERS_ENV = os.environ.get("NPA_AGENT_LLM_PROVIDERS", "")
 LLM_MODEL = os.environ.get("NPA_AGENT_LLM_MODEL", "{DEFAULT_LLM_MODEL}")
 LLM_MODELS_ENV = os.environ.get("NPA_AGENT_LLM_MODELS", "")
 DEFAULT_LLM_MODELS = {default_llm_models_json}
+try:
+    LLM_TIMEOUT_SECONDS = max(1.0, float(os.environ.get("NPA_AGENT_LLM_TIMEOUT_SECONDS", "120")))
+except (TypeError, ValueError):
+    LLM_TIMEOUT_SECONDS = 120.0
+try:
+    LLM_MAX_CONCURRENCY = min(8, max(1, int(os.environ.get("NPA_AGENT_LLM_MAX_CONCURRENCY", "8"))))
+except (TypeError, ValueError):
+    LLM_MAX_CONCURRENCY = 8
+_LLM_REQUEST_SLOTS = threading.BoundedSemaphore(LLM_MAX_CONCURRENCY)
 NPA_PROJECT_ALIAS = os.environ.get("NPA_AGENT_PROJECT_ALIAS", "").strip() or "default"
 NPA_SOURCE_ROOT = Path("{AGENT_SOURCE_ROOT}")
 NPA_CLI = Path("/opt/npa-agent/venv/bin/npa")
@@ -2903,10 +2886,10 @@ def _provider_api_key(provider: str) -> str:
     return ""
 
 def _fetch_token_factory_models() -> list[str]:
-    api_key = _provider_api_key("token_factory")
+    api_key = _provider_api_key(LLM_PROVIDER)
     if not api_key:
         return []
-    base_url = _provider_base_url("token_factory")
+    base_url = _provider_base_url(LLM_PROVIDER)
     if not base_url:
         return []
     url = f"{{base_url}}/models"
@@ -2917,7 +2900,7 @@ def _fetch_token_factory_models() -> list[str]:
                 "Authorization": f"Bearer {{api_key}}",
                 "Content-Type": "application/json",
             }},
-            timeout=20.0,
+            timeout=LLM_TIMEOUT_SECONDS,
         )
         response.raise_for_status()
         payload = response.json()
@@ -3061,15 +3044,16 @@ def _provider_chat(*, provider: str, messages: list, model: str, extra: dict | N
             payload[_extra_key] = _extra_value
     for attempt in range(3):
         try:
-            response = httpx.post(
-                url,
-                headers={{
-                    "Authorization": f"Bearer {{api_key}}",
-                    "Content-Type": "application/json",
-                }},
-                json=payload,
-                timeout=120.0,
-            )
+            with _LLM_REQUEST_SLOTS:
+                response = httpx.post(
+                    url,
+                    headers={{
+                        "Authorization": f"Bearer {{api_key}}",
+                        "Content-Type": "application/json",
+                    }},
+                    json=payload,
+                    timeout=LLM_TIMEOUT_SECONDS,
+                )
             response.raise_for_status()
             data = response.json()
             break
@@ -9098,13 +9082,16 @@ sudo systemctl enable --now npa-lichtblick 2>/dev/null || echo "npa-lichtblick s
         )
     finally:
         ssh.run(f"rm -f {shlex.quote(remote_setup_script)}")
-    _write_agent_llm_env(
+    agent_llm_config.write_agent_llm_env(
         ssh,
-        tf_api_key=tf_api_key,
-        llm_provider=DEFAULT_LLM_PROVIDER,
-        llm_providers=(DEFAULT_LLM_PROVIDER,),
-        llm_model=llm_model,
-        llm_models=llm_models,
+        api_key=llm_api_key or tf_api_key,
+        provider=llm_provider,
+        providers=(llm_provider,),
+        model=llm_model,
+        models=llm_models,
+        base_url=llm_base_url,
+        timeout_seconds=llm_timeout_seconds,
+        max_concurrency=llm_max_concurrency,
     )
     _write_agent_s3_env(
         ssh,
@@ -9146,7 +9133,8 @@ sudo systemctl enable --now npa-lichtblick 2>/dev/null || echo "npa-lichtblick s
         secret_key=s3_secret_key,
     )
     if (
-        tf_api_key.strip()
+        llm_api_key.strip()
+        or tf_api_key.strip()
         or bool(artifact_sources)
         or (s3_bucket.strip() and s3_access_key.strip() and s3_secret_key.strip())
         or (
@@ -9482,6 +9470,11 @@ def _transactional_agent_command(command: str):
                     bound.arguments.get("artifact_source_file"),
                 ),
                 (
+                    "llm_config_file",
+                    "--llm-config-file",
+                    bound.arguments.get("llm_config_file"),
+                ),
+                (
                     "foxglove_embed_src",
                     "--foxglove-embed-src",
                     bound.arguments.get("foxglove_embed_src"),
@@ -9660,6 +9653,7 @@ def deploy_cmd(
         "--llm-models",
         help="Additional Token Factory model IDs (repeat flag or comma-separate values).",
     ),
+    llm_config_file: str = agent_llm_config.llm_config_file_option(),
     foxglove_embed_src: str = agent_foxglove_config.embed_src_option(),
     foxglove_viewer_backend: str = agent_foxglove_config.viewer_backend_option(),
     foxglove_org_slug: str = agent_foxglove_config.org_slug_option(),
@@ -9692,6 +9686,7 @@ def deploy_cmd(
     # (OptionInfo) can never crash `for item in tf_var` / `list(llm_models)`.
     tf_var = _coerce_cli_list(tf_var)
     llm_models = _coerce_cli_list(llm_models)
+    llm_config_file = llm_config_file if isinstance(llm_config_file, str) else ""
     foxglove_settings = _resolve_foxglove_settings_or_fail(
         embed_src=foxglove_embed_src,
         viewer_backend=foxglove_viewer_backend,
@@ -9775,6 +9770,22 @@ def deploy_cmd(
     # Resolve the deploy LLM creds once and thread them through to the VM
     # bootstrap below.
     tf_api_key, default_llm_model = _resolve_deploy_llm_credentials()
+    try:
+        llm_runtime = agent_llm_config.resolve_agent_llm_runtime(
+            {},
+            llm_config_file=llm_config_file,
+            requested_model=str(llm_model or ""),
+            requested_models=llm_models,
+            defaults=(
+                DEFAULT_LLM_PROVIDER,
+                tf_api_key,
+                default_llm_model,
+                DEFAULT_LLM_MODELS,
+            ),
+            normalize_models=_normalize_llm_models,
+        )
+    except ValueError as exc:
+        _fail(str(exc))
     prereq_results = _agent_hard_prereq_results(ssh_public_key_path)
     prereq_results.append(_agent_storage_result(project, env_region, name))
     tf_key_result = _agent_token_factory_result(tf_api_key)
@@ -9784,7 +9795,10 @@ def deploy_cmd(
     # The deploy waits for the new VM's tcp/22 from this machine, so say up front
     # when this host cannot open outbound SSH at all — otherwise that shows up as a
     # five-minute wait and a rollback of a perfectly healthy VM.
-    for warn_result in (tf_key_result, _agent_ssh_egress_result()):
+    warn_results = [_agent_ssh_egress_result()]
+    if llm_runtime["provider"] == DEFAULT_LLM_PROVIDER:
+        warn_results.insert(0, tf_key_result)
+    for warn_result in warn_results:
         if warn_result.status == "WARN":
             typer.echo(f"  Warning: {warn_result.summary}", err=True)
             typer.echo(f"           {warn_result.remedy}", err=True)
@@ -10054,14 +10068,9 @@ def deploy_cmd(
             password=auth_password,
         )
     # tf_api_key / default_llm_model were resolved once up front (before Terraform).
-    configured_llm_model = str(llm_model or "").strip() or default_llm_model
-    # With no explicit --llm-models, seed the cost-ordered default ladder so
-    # per-turn routing can reach every tier (cheap/standard/reasoning/vision)
-    # out of the box. An explicit --llm-models acts as a governance allowlist.
-    extra_llm_models = list(llm_models) if llm_models else list(DEFAULT_LLM_MODELS)
-    configured_llm_models = _normalize_llm_models(
-        [configured_llm_model, *extra_llm_models]
-    )
+    configured_llm_provider = str(llm_runtime["provider"])
+    configured_llm_model = str(llm_runtime["model"])
+    configured_llm_models = [str(item) for item in llm_runtime["models"]]
     # A missing Token Factory key is already surfaced up front (before Terraform)
     # by the deploy prerequisite check above.
     rollback_record = {
@@ -10090,6 +10099,7 @@ def deploy_cmd(
         "setup_state": "remote_bootstrap_pending",
         "service_account_id": str(creds.get("service_account_id", "")),
         "foxglove": foxglove_settings,
+        "llm": llm_runtime["persisted"],
     }
     _store_agent_record(project, name, partial_record)
     if operation is not None:
@@ -10132,9 +10142,8 @@ def deploy_cmd(
             "agent_port": agent_port,
             "backend_port": backend_port,
             "rerun_port": rerun_port,
-            "llm_model": configured_llm_model,
-            "llm_models": configured_llm_models,
             "tf_api_key": tf_api_key,
+            **agent_llm_config.bootstrap_agent_llm_kwargs(llm_runtime),
             "s3_bucket": str(merged_vars.get("s3_bucket", "")),
             "s3_prefix": str(merged_vars.get("s3_prefix", "")),
             "s3_endpoint": str(merged_vars.get("s3_endpoint", "")),
@@ -10251,7 +10260,7 @@ def deploy_cmd(
         cameras_api_url=urls["cameras_api_url"],
         auth_user=DEFAULT_AGENT_USER,
         auth_secret_path=str(auth_path),
-        llm_provider=DEFAULT_LLM_PROVIDER,
+        llm_provider=configured_llm_provider,
         llm_model=configured_llm_model,
         llm_models=tuple(configured_llm_models),
         public_url=urls["public_url"],
@@ -10261,6 +10270,7 @@ def deploy_cmd(
         service_account_id=str(creds.get("service_account_id", "")),
     )
     final_record = record.to_dict()
+    final_record["llm"] = llm_runtime["persisted"]
     final_record["foxglove"] = foxglove_settings
     final_record["setup_state"] = "healthy"
     final_record["setup_evidence"] = {
@@ -10303,7 +10313,7 @@ def deploy_cmd(
     typer.echo(f"sim_viz_url: {urls['sim_viz_url']}")
     typer.echo(f"sim_assets_url: {urls['sim_assets_url']}")
     typer.echo(f"cameras_api_url: {urls['cameras_api_url']}")
-    typer.echo(f"llm: {DEFAULT_LLM_PROVIDER}:{configured_llm_model}")
+    typer.echo(f"llm: {configured_llm_provider}:{configured_llm_model}")
     typer.echo(f"llm_models: {', '.join(configured_llm_models)}")
     typer.echo(f"auth_user: {DEFAULT_AGENT_USER}")
     typer.echo(f"auth_secret_path: {auth_path}")
@@ -10358,6 +10368,7 @@ def fresh_setup_cmd(
         "--llm-models",
         help="Additional Token Factory model IDs (repeat flag or comma-separate values).",
     ),
+    llm_config_file: str = agent_llm_config.llm_config_file_option(),
     no_public_https: bool = typer.Option(
         False,
         "--no-public-https",
@@ -10414,6 +10425,7 @@ def fresh_setup_cmd(
         rerun_port=rerun_port,
         llm_model=llm_model,
         llm_models=llm_models,
+        llm_config_file=llm_config_file,
         no_public_https=no_public_https,
     )
 
@@ -10531,6 +10543,7 @@ def setup_cmd(
         region=region,
         ssh_public_key_path=ssh_public_key_path,
         tf_var=tf_var,
+        llm_config_file="",
         replace=replace,
     )
 
@@ -10581,6 +10594,7 @@ def bootstrap_cmd(
             "project/bucket/prefix tuples; persisted for future bootstraps."
         ),
     ),
+    llm_config_file: str = agent_llm_config.llm_config_file_option(),
     foxglove_embed_src: str = agent_foxglove_config.embed_src_option(),
     foxglove_viewer_backend: str = agent_foxglove_config.viewer_backend_option(),
     foxglove_org_slug: str = agent_foxglove_config.org_slug_option(),
@@ -10627,29 +10641,25 @@ def bootstrap_cmd(
     except ValueError as exc:
         _fail(str(exc))
     tf_api_key, default_llm_model = _resolve_deploy_llm_credentials()
-    requested_llm_model = str(llm_model or "").strip()
-    resolved_llm_model = requested_llm_model or default_llm_model
-    # No explicit --llm-models => seed the cost-ordered default ladder (all
-    # tiers). Existing record models are still merged below, so re-bootstrap
-    # keeps any previously configured set.
-    extra_llm_models = list(llm_models) if llm_models else list(DEFAULT_LLM_MODELS)
-    resolved_llm_models = _normalize_llm_models([resolved_llm_model, *extra_llm_models])
-    llm_block = record.get("llm", {}) if isinstance(record.get("llm"), dict) else {}
-    if isinstance(llm_block.get("models"), list):
-        resolved_llm_models = _normalize_llm_models(
-            [*resolved_llm_models, *[str(item) for item in llm_block.get("models", [])]]
+    try:
+        llm_runtime = agent_llm_config.resolve_agent_llm_runtime(
+            record,
+            llm_config_file=llm_config_file,
+            requested_model=str(llm_model or ""),
+            requested_models=_coerce_cli_list(llm_models),
+            defaults=(
+                DEFAULT_LLM_PROVIDER,
+                tf_api_key,
+                default_llm_model,
+                DEFAULT_LLM_MODELS,
+            ),
+            normalize_models=_normalize_llm_models,
         )
-    if (
-        not requested_llm_model
-        and isinstance(llm_block.get("model"), str)
-        and llm_block["model"].strip()
-    ):
-        resolved_llm_model = llm_block["model"].strip()
-    if resolved_llm_model not in resolved_llm_models:
-        resolved_llm_models.insert(0, resolved_llm_model)
-    if not tf_api_key:
+    except ValueError as exc:
+        _fail(str(exc))
+    if not llm_runtime["api_key"]:
         typer.echo(
-            "Warning: Token Factory API key not found; chat endpoint will return 503.",
+            "Warning: LLM API key not found; chat endpoint will return 503.",
             err=True,
         )
     project_id = str(record.get("project_id", "")).strip()
@@ -10795,9 +10805,8 @@ def bootstrap_cmd(
             "agent_port": agent_port,
             "backend_port": backend_port,
             "rerun_port": rerun_port,
-            "llm_model": resolved_llm_model,
-            "llm_models": resolved_llm_models,
             "tf_api_key": tf_api_key,
+            **agent_llm_config.bootstrap_agent_llm_kwargs(llm_runtime),
             "s3_bucket": s3_bucket,
             "s3_prefix": s3_prefix,
             "s3_endpoint": s3_endpoint,
@@ -10873,15 +10882,9 @@ def bootstrap_cmd(
     updated.update(urls)
     updated["public_ip"] = public_ip
     updated["public_https"] = public_https
-    llm_payload = dict(
-        updated.get("llm", {}) if isinstance(updated.get("llm"), dict) else {}
-    )
-    llm_payload["provider"] = DEFAULT_LLM_PROVIDER
-    llm_payload["model"] = resolved_llm_model
-    llm_payload["models"] = list(resolved_llm_models)
-    updated["llm"] = llm_payload
     updated["ssh_key_path"] = ssh_key_path
     updated["foxglove"] = foxglove_settings
+    updated["llm"] = llm_runtime["persisted"]
     updated["setup_state"] = "healthy"
     if artifact_sources:
         updated["artifact_sources"] = list(artifact_sources)

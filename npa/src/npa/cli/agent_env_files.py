@@ -30,6 +30,10 @@ _REMOTE_KUBERNETES_KEYS = (
     "gpu_accelerator",
 )
 
+_LLM_PROVIDER_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,62}\Z")
+_CUSTOM_LLM_MIN_TIMEOUT_SECONDS = 180.0
+_CUSTOM_LLM_MAX_CONCURRENCY = 8
+
 
 def _remote_kubernetes_config(project_alias: str) -> tuple[dict[str, str], str]:
     """Return the non-secret exact backend fields safe to stage on an agent VM.
@@ -88,6 +92,101 @@ def _stage_private_text(
         ssh.run_or_raise(command, label=f"stage private {target}")
     finally:
         ssh.run(f"rm -f {shlex.quote(remote_source)} {shlex.quote(remote_target)}")
+
+
+def _load_agent_llm_config_file(path: str) -> dict[str, Any]:
+    """Load one owner-only OpenAI-compatible provider configuration.
+
+    The API key itself remains in a separate owner-only file so neither the
+    command line nor the durable agent record contains secret material.
+    """
+
+    source = Path(str(path or "")).expanduser()
+    if not source.is_file():
+        raise ValueError("LLM config file does not exist")
+    if source.stat().st_mode & 0o077:
+        raise ValueError("LLM config file must not be readable by group or others")
+    try:
+        payload = json.loads(source.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise ValueError("LLM config file is not valid JSON") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("LLM config file must contain a JSON object")
+    allowed = {
+        "provider",
+        "base_url",
+        "api_key_file",
+        "model",
+        "models",
+        "timeout_seconds",
+        "max_concurrency",
+    }
+    unknown = sorted(set(payload) - allowed)
+    if unknown:
+        raise ValueError("LLM config file contains unsupported fields")
+    provider = str(payload.get("provider") or "").strip().lower().replace("-", "_")
+    if not _LLM_PROVIDER_RE.fullmatch(provider):
+        raise ValueError("LLM provider name is invalid")
+    base_url = str(payload.get("base_url") or "").strip().rstrip("/")
+    parsed = urlparse(base_url)
+    if (
+        parsed.scheme != "https"
+        or not parsed.hostname
+        or parsed.username
+        or parsed.password
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ValueError(
+            "LLM base URL must be credential-free HTTPS without query or fragment"
+        )
+    model = str(payload.get("model") or "").strip()
+    if not model or any(char in model for char in "\r\n"):
+        raise ValueError("LLM model is invalid")
+    raw_models = payload.get("models") or [model]
+    if not isinstance(raw_models, list):
+        raise ValueError("LLM models must be a JSON array")
+    models: list[str] = []
+    for item in [model, *raw_models]:
+        value = str(item or "").strip()
+        if not value or any(char in value for char in "\r\n"):
+            raise ValueError("LLM models contain an invalid entry")
+        if value not in models:
+            models.append(value)
+    key_path = Path(str(payload.get("api_key_file") or "")).expanduser()
+    if not key_path.is_file():
+        raise ValueError("LLM API key file does not exist")
+    if key_path.stat().st_mode & 0o077:
+        raise ValueError("LLM API key file must not be readable by group or others")
+    try:
+        api_key = key_path.read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        raise ValueError("LLM API key file is unreadable") from exc
+    if not api_key or "\n" in api_key or "\r" in api_key:
+        raise ValueError("LLM API key file must contain exactly one non-empty value")
+    try:
+        timeout_seconds = float(payload.get("timeout_seconds", 180))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("LLM timeout_seconds must be numeric") from exc
+    if timeout_seconds < _CUSTOM_LLM_MIN_TIMEOUT_SECONDS:
+        raise ValueError("custom LLM timeout_seconds must be at least 180")
+    try:
+        max_concurrency = int(payload.get("max_concurrency", 8))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("LLM max_concurrency must be an integer") from exc
+    if not 1 <= max_concurrency <= _CUSTOM_LLM_MAX_CONCURRENCY:
+        raise ValueError("LLM max_concurrency must be between 1 and 8")
+    return {
+        "provider": provider,
+        "base_url": base_url,
+        "api_key_file": str(key_path),
+        "api_key": api_key,
+        "model": model,
+        "models": models,
+        "timeout_seconds": timeout_seconds,
+        "max_concurrency": max_concurrency,
+        "config_file": str(source),
+    }
 
 
 def _write_agent_s3_env(
