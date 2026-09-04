@@ -32,6 +32,8 @@ from npa.workflows.paidf_upstream import (
     PAIDF_AUTO_LABELING_REVISION,
     PAIDF_ORCHESTRATION_REVISION,
     PHYSICAL_AI_DATA_FACTORY_REVISION,
+    validate_direct_generation_model,
+    validate_token_factory_endpoint,
 )
 
 
@@ -47,10 +49,53 @@ DIG_RUNTIME_CACHE_PROBES = {
     "Qwen/Qwen3-VL-8B-Instruct": "tokenizer.json",
     "nvidia/Cosmos3-Edge": "processor_config.json",
 }
+_SERVICE_WORKFLOWS = {"image-edit": "iaa", "image2video": "evg"}
 
 
 class PaidfNativeError(RuntimeError):
     """A PAIDF protocol or artifact contract failed closed."""
+
+
+def _require_token_factory_endpoint(endpoint: str, role: str) -> None:
+    """Bind the injected Token Factory credential to its approved HTTPS origin."""
+
+    try:
+        validate_token_factory_endpoint(endpoint, role)
+    except ValueError as exc:
+        raise PaidfNativeError(str(exc)) from exc
+
+
+def _require_direct_generation_model(
+    workflow: str, generation_model: str, generation_revision: str | None = None
+) -> None:
+    """Keep direct IAA/EVG translations on their reviewed model artifacts."""
+
+    try:
+        validate_direct_generation_model(
+            workflow, generation_model, generation_revision
+        )
+    except ValueError as exc:
+        raise PaidfNativeError(str(exc)) from exc
+
+
+def _validate_configured_token_factory_endpoints(config: Any) -> None:
+    """Reject a rendered PAIDF config that could route injected keys elsewhere."""
+
+    if not isinstance(config, dict):
+        raise PaidfNativeError("rendered PAIDF config is not an object")
+    endpoints = config.get("endpoints")
+    if endpoints is None:
+        return
+    if not isinstance(endpoints, list):
+        raise PaidfNativeError("rendered PAIDF endpoints must be a list")
+    for endpoint in endpoints:
+        if not isinstance(endpoint, dict):
+            raise PaidfNativeError("rendered PAIDF endpoint is not an object")
+        key_environment = endpoint.get("api_key_env")
+        if key_environment in {"VLM_API_KEY", "LLM_API_KEY"}:
+            _require_token_factory_endpoint(
+                str(endpoint.get("url") or ""), str(endpoint.get("role") or "model")
+            )
 
 
 def _run_component(
@@ -168,6 +213,8 @@ def _publish(path: Path, uri: str) -> str:
 
 def _write_json(payload: dict[str, Any], uri: str) -> dict[str, Any]:
     if str(payload.get("schema", "")).startswith(f"{SCHEMA_PREFIX}."):
+        if not isinstance(payload.get("run_id"), str) or not payload["run_id"].strip():
+            raise PaidfNativeError("native artifacts require the workflow run identity")
         runtime_image = os.environ.get("NPA_TASK_IMAGE", "").strip()
         if runtime_image:
             payload["runtime_image"] = runtime_image
@@ -344,6 +391,52 @@ def _read_json(uri: str) -> dict[str, Any]:
     return value
 
 
+def _require_artifact_identity(
+    payload: dict[str, Any], schema: str, run_id: str, workflow: str | None = None
+) -> None:
+    if (
+        not run_id.strip()
+        or payload.get("schema") != schema
+        or payload.get("run_id") != run_id
+    ):
+        raise PaidfNativeError(
+            "artifact schema or run identity does not match the consuming stage"
+        )
+    if workflow is not None and payload.get("workflow") != workflow:
+        raise PaidfNativeError("artifact workflow does not match the consuming stage")
+
+
+def _read_run_artifact(
+    uri: str, kind: str, run_id: str, workflow: str | None = None
+) -> dict[str, Any]:
+    payload = _read_json(uri)
+    _require_artifact_identity(payload, f"{SCHEMA_PREFIX}.{kind}.v1", run_id, workflow)
+    return payload
+
+
+def _read_config_manifest(uri: str, run_id: str) -> dict[str, Any]:
+    manifest = _read_json(uri)
+    workflow = manifest.get("workflow")
+    if workflow not in {"iaa", "evg"}:
+        raise PaidfNativeError("augmentation config manifest has no supported workflow")
+    _require_artifact_identity(
+        manifest, f"{SCHEMA_PREFIX}.{workflow}-configs.v1", run_id, workflow
+    )
+    return manifest
+
+
+def _require_upstream_identity(
+    payload: dict[str, Any], workflow: str, run_id: str
+) -> None:
+    _require_artifact_identity(payload, "npa.paidf.upstream.v1", run_id)
+    expected_variant = {
+        "iaa": "image-attribute-augmentation",
+        "evg": "event-video-generation",
+    }[workflow]
+    if payload.get("workflow_variant") != expected_variant:
+        raise PaidfNativeError("upstream provenance belongs to another workflow")
+
+
 def build_augmentation_configs(
     workflow: str,
     prepared_manifest_uri: str,
@@ -363,6 +456,9 @@ def build_augmentation_configs(
 
     if workflow not in {"iaa", "evg"}:
         raise PaidfNativeError("workflow must be iaa or evg")
+    _require_token_factory_endpoint(vlm_url, "VLM")
+    _require_token_factory_endpoint(llm_url, "LLM")
+    _require_direct_generation_model(workflow, generation_model)
     if not all(
         value.strip()
         for value in (vlm_url, vlm_model, llm_url, llm_model, generation_url)
@@ -370,7 +466,7 @@ def build_augmentation_configs(
         raise PaidfNativeError(
             "VLM, LLM, and generation endpoints/models must be explicit"
         )
-    prepared = _read_json(prepared_manifest_uri)
+    prepared = _read_run_artifact(prepared_manifest_uri, "prepared-input", run_id)
     images = prepared.get("images")
     if not isinstance(images, list) or not images:
         raise PaidfNativeError("prepared input manifest contains no images")
@@ -512,7 +608,7 @@ def run_augmentation(
 ) -> dict[str, Any]:
     """Invoke the real paidf-augmentation CLI once for every rendered config."""
 
-    manifest = _read_json(config_manifest_uri)
+    manifest = _read_config_manifest(config_manifest_uri, run_id)
     configs = manifest.get("configs")
     if not isinstance(configs, list) or not configs:
         raise PaidfNativeError("augmentation config manifest is empty")
@@ -563,6 +659,9 @@ def run_augmentation(
         for index, item in enumerate(configs):
             local = root / f"config-{index:04d}.yaml"
             _materialize(str(item["config_uri"]), local)
+            _validate_configured_token_factory_endpoints(
+                yaml.safe_load(local.read_text(encoding="utf-8"))
+            )
             try:
                 _run_component([*command_prefix, "--config", str(local)])
             except subprocess.CalledProcessError as exc:
@@ -586,6 +685,7 @@ def run_augmentation(
     payload = {
         "schema": f"{SCHEMA_PREFIX}.{workflow}-augmentation.v1",
         "run_id": run_id,
+        "workflow": workflow,
         "count": len(completed),
         "attempted_count": len(configs),
         "failed_count": len(failed),
@@ -618,6 +718,11 @@ def run_local_augmentation(
     its consuming PAIDF batch intentionally share one state/run boundary.
     """
 
+    workflow = _SERVICE_WORKFLOWS.get(service_kind)
+    if workflow is None:
+        raise PaidfNativeError("service_kind must be image-edit or image2video")
+    _require_direct_generation_model(workflow, generation_model, generation_revision)
+
     if service_kind == "image-edit":
         command = [
             "vllm-omni",
@@ -626,6 +731,8 @@ def run_local_augmentation(
             "--revision",
             generation_revision,
             "--omni",
+            "--host",
+            "127.0.0.1",
             "--port",
             str(port),
         ]
@@ -682,7 +789,7 @@ def validate_augmentation(
 ) -> dict[str, Any]:
     """Require decodable media plus non-empty caption and metadata for each output."""
 
-    manifest = _read_json(config_manifest_uri)
+    manifest = _read_config_manifest(config_manifest_uri, run_id)
     workflow = manifest.get("workflow")
     if workflow not in {"iaa", "evg"}:
         raise PaidfNativeError("augmentation config manifest has no supported workflow")
@@ -709,6 +816,33 @@ def validate_augmentation(
                 parsed_metadata = json.loads(metadata.read_text(encoding="utf-8"))
                 if not isinstance(parsed_metadata, dict):
                     raise PaidfNativeError("metadata is not an object")
+                config_path = root / f"config-{index:04d}.yaml"
+                _materialize(item["config_uri"], config_path)
+                config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+                evaluators = (
+                    config.get("evaluators") if isinstance(config, dict) else None
+                )
+                if not isinstance(evaluators, list):
+                    raise PaidfNativeError("executed config has no evaluator contract")
+                for evaluator in evaluators:
+                    if not isinstance(evaluator, dict):
+                        raise PaidfNativeError("executed evaluator config is malformed")
+                    if "attribute_verification" not in evaluator:
+                        continue
+                    settings = evaluator["attribute_verification"]
+                    if not isinstance(settings, dict):
+                        raise PaidfNativeError(
+                            "attribute-verification config is malformed"
+                        )
+                    if settings.get("enabled", True) is not False:
+                        verdict = parsed_metadata.get("attribute_verification")
+                        if (
+                            not isinstance(verdict, dict)
+                            or verdict.get("passed") is not True
+                        ):
+                            raise PaidfNativeError(
+                                "attribute_verification did not affirmatively pass"
+                            )
                 for evaluator in ("attribute_verification", "hallucination_check"):
                     verdict = parsed_metadata.get(evaluator)
                     if isinstance(verdict, dict) and verdict.get("passed") is False:
@@ -759,6 +893,7 @@ def validate_augmentation(
     payload = {
         "schema": f"{SCHEMA_PREFIX}.{manifest['workflow']}-validation.v1",
         "run_id": run_id,
+        "workflow": workflow,
         "accepted_count": len(accepted),
         "skipped_count": len(skipped),
         "accepted": accepted,
@@ -778,8 +913,9 @@ def postprocess_iaa(
 ) -> dict[str, Any]:
     """Run the upstream IAA pane splitter and dataset-label generator."""
 
-    validation = _read_json(validation_uri)
-    prepared = _read_json(prepared_manifest_uri)
+    validation = _read_run_artifact(validation_uri, "iaa-validation", run_id, "iaa")
+    _require_token_factory_endpoint(vlm_url, "VLM")
+    prepared = _read_run_artifact(prepared_manifest_uri, "prepared-input", run_id)
     prepared_by_key = {
         str(item["input_key"]): item for item in prepared.get("images", [])
     }
@@ -902,6 +1038,7 @@ def postprocess_iaa(
     payload = {
         "schema": f"{SCHEMA_PREFIX}.iaa-postprocess.v1",
         "run_id": run_id,
+        "workflow": "iaa",
         "accepted_count": len(outputs),
         "accepted": outputs,
         "skipped": validation.get("skipped", []),
@@ -977,6 +1114,8 @@ def run_auto_label(
 ) -> dict[str, Any]:
     """Invoke one genuine paidf-auto-labeling service CLI over validated media."""
 
+    _require_token_factory_endpoint(vlm_url, "VLM")
+    _require_token_factory_endpoint(llm_url, "LLM")
     allowed = {
         "iaa": {"person-attribute-search"},
         "evg": {
@@ -989,7 +1128,8 @@ def run_auto_label(
     }
     if workflow not in allowed or stage not in allowed[workflow]:
         raise PaidfNativeError(f"unsupported {workflow!r} auto-label stage {stage!r}")
-    validation = _read_json(validation_uri)
+    validation_kind = "iaa-postprocess" if workflow == "iaa" else "evg-validation"
+    validation = _read_run_artifact(validation_uri, validation_kind, run_id, workflow)
     accepted = validation.get("accepted")
     if not isinstance(accepted, list) or not accepted:
         raise PaidfNativeError("auto-labeling requires validated media")
@@ -1261,6 +1401,7 @@ def run_auto_label(
     payload = {
         "schema": f"{SCHEMA_PREFIX}.{workflow}-auto-label-{stage}.v1",
         "run_id": run_id,
+        "workflow": workflow,
         "stage": stage,
         "component": "NVIDIA paidf-auto-labeling 1.1.0",
         "upstream_revision": PAIDF_AUTO_LABELING_REVISION,
@@ -1280,9 +1421,15 @@ def finalize_dataset(
 ) -> dict[str, Any]:
     """Assemble the upstream DAFT scene layout and publish its NPA lineage index."""
 
-    validation = _read_json(validation_uri)
+    if workflow not in {"iaa", "evg"}:
+        raise PaidfNativeError("dataset assembly requires a supported workflow")
+    validation_kind = "iaa-postprocess" if workflow == "iaa" else "evg-validation"
+    validation = _read_run_artifact(validation_uri, validation_kind, run_id, workflow)
     upstream = _read_json(upstream_uri)
-    labels = _read_json(labels_uri)
+    _require_upstream_identity(upstream, workflow, run_id)
+    labels = _read_run_artifact(
+        labels_uri, f"{workflow}-auto-label-person-attribute-search", run_id, workflow
+    )
     accepted = validation.get("accepted")
     if not isinstance(accepted, list) or not accepted:
         raise PaidfNativeError("cannot finalize a dataset with no accepted media")
@@ -1476,6 +1623,16 @@ def validate_dataset(dataset_uri: str, report_uri: str, run_id: str) -> dict[str
     """Fail closed on the published native dataset and emit a terminal decision."""
 
     dataset = _read_json(dataset_uri)
+    workflow = dataset.get("workflow")
+    if workflow not in {"iaa", "evg"}:
+        raise PaidfNativeError("terminal dataset has no supported workflow")
+    _require_artifact_identity(
+        dataset, f"{SCHEMA_PREFIX}.{workflow}-dataset.v1", run_id, workflow
+    )
+    upstream = dataset.get("upstream")
+    if not isinstance(upstream, dict):
+        raise PaidfNativeError("terminal dataset has no upstream provenance")
+    _require_upstream_identity(upstream, workflow, run_id)
     entries = dataset.get("entries")
     if (
         dataset.get("status") != "completed"
@@ -1509,6 +1666,7 @@ def validate_dataset(dataset_uri: str, report_uri: str, run_id: str) -> dict[str
     payload = {
         "schema": f"{SCHEMA_PREFIX}.{dataset['workflow']}-terminal-validation.v1",
         "run_id": run_id,
+        "workflow": workflow,
         "status": "passed",
         "dataset_uri": dataset_uri,
         "dataset_manifest_sha256": hashlib.sha256(encoded).hexdigest(),
@@ -1540,10 +1698,12 @@ def _dig_model_revisions() -> dict[str, str]:
 
 
 def _dig_cache_manifest(
-    pretrained: Path, *, initialize: bool = False
+    pretrained: Path, run_id: str, *, initialize: bool = False
 ) -> dict[str, Any]:
     """Bind upstream's unpinned runtime loads to the approved cached snapshots."""
 
+    if not run_id.strip():
+        raise PaidfNativeError("DIG runtime cache requires the workflow run identity")
     revisions = _dig_model_revisions()
     snapshots = []
     for repository, probe in DIG_RUNTIME_CACHE_PROBES.items():
@@ -1566,7 +1726,12 @@ def _dig_cache_manifest(
                 f"DIG runtime cache revision disagrees with preflight for {repository}"
             )
         snapshots.append({"repository": repository, "revision": revision})
-    manifest = {"schema": f"{SCHEMA_PREFIX}.dig-runtime-cache.v1", "models": snapshots}
+    manifest = {
+        "schema": f"{SCHEMA_PREFIX}.dig-runtime-cache.v1",
+        "run_id": run_id,
+        "workflow": "dig",
+        "models": snapshots,
+    }
     recorded = pretrained / "runtime-hf-snapshots.json"
     if initialize:
         recorded.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
@@ -1580,8 +1745,10 @@ def _dig_cache_manifest(
     return manifest
 
 
-def _dig_offline_environment(pretrained: Path) -> dict[str, str]:
-    _dig_cache_manifest(pretrained)
+def _dig_offline_environment(pretrained: Path, run_id: str) -> dict[str, str]:
+    if not run_id.strip():
+        raise PaidfNativeError("DIG runtime cache requires the workflow run identity")
+    _dig_cache_manifest(pretrained, run_id)
     return {
         **os.environ,
         "CKPT_DIR": str(pretrained),
@@ -1623,7 +1790,7 @@ def run_dig_train(
         recipe = skill / f"assets/cookbooks/{usecase}/ag_config.yaml"
         train_output = root / "finetune"
         env = {
-            **_dig_offline_environment(pretrained),
+            **_dig_offline_environment(pretrained, run_id),
             "PRETRAINED_SRC": str(pretrained),
             "DATASET_DIR": str(dataset),
             "RECIPE_TEMPLATE": str(recipe),
@@ -1641,10 +1808,10 @@ def run_dig_train(
         )
         if not selected.is_file():
             raise PaidfNativeError("AnomalyGen best-checkpoint pointer is invalid")
-        _publish(train_output, output_uri)
         payload = {
             "schema": f"{SCHEMA_PREFIX}.dig-finetune.v1",
             "run_id": run_id,
+            "workflow": "dig",
             "status": "completed",
             "component": "NVIDIA paidf-anomalygen 1.1.0",
             "upstream_workflow_revision": PHYSICAL_AI_DATA_FACTORY_REVISION,
@@ -1652,6 +1819,8 @@ def run_dig_train(
             "selected_checkpoint_sha256": _sha256(selected),
             "output_uri": output_uri,
         }
+        _write_json(payload, str(train_output / "npa-finetune.json"))
+        _publish(train_output, output_uri)
     return _write_json(payload, result_uri)
 
 
@@ -1696,7 +1865,7 @@ def prepare_dig_pretrained(
                     ["--exclude", "transformer/*", "vae/*", "vision_encoder/*"]
                 )
             _run_component(command, env=env)
-        _dig_cache_manifest(output, initialize=True)
+        _dig_cache_manifest(output, run_id, initialize=True)
         shutil.rmtree(
             output / "hf/models--nvidia--Cosmos3-Edge/trees", ignore_errors=True
         )
@@ -1734,7 +1903,7 @@ def prepare_dig_pretrained(
                     str(source),
                 ],
                 cwd=workspace,
-                env=_dig_offline_environment(output),
+                env=_dig_offline_environment(output, run_id),
             )
         for prefix, repository in {
             "DINOV2": "facebook/dinov2-large",
@@ -1766,12 +1935,13 @@ def prepare_dig_pretrained(
         ):
             raise PaidfNativeError("AnomalyGen base-checkpoint setup is incomplete")
         shutil.copy2(converted_manifest, output / converted_manifest.name)
-        _dig_cache_manifest(output, initialize=True)
+        _dig_cache_manifest(output, run_id, initialize=True)
         files = [item for item in output.rglob("*") if item.is_file()]
         _publish(output, output_uri)
         payload = {
             "schema": f"{SCHEMA_PREFIX}.dig-pretrained.v1",
             "run_id": run_id,
+            "workflow": "dig",
             "status": "completed",
             "component": "NVIDIA paidf-anomalygen 1.1.0 checkpoint setup",
             "file_count": len(files),
@@ -1807,6 +1977,11 @@ def run_dig_inference(
         dataset = _materialize(dataset_uri, root / "dataset")
         pretrained = _materialize(pretrained_uri, root / "pretrained")
         checkpoint = _materialize(checkpoint_uri, root / "checkpoint")
+        checkpoint_record = _read_run_artifact(
+            str(checkpoint / "npa-finetune.json"), "dig-finetune", run_id, "dig"
+        )
+        if checkpoint_record.get("status") != "completed":
+            raise PaidfNativeError("DIG checkpoint handoff is not completed")
         defect_specs = list(dataset.rglob("defect_spec.jsonl"))
         if len(defect_specs) != 1:
             raise PaidfNativeError("DIG requires exactly one defect_spec.jsonl")
@@ -1821,7 +1996,7 @@ def run_dig_inference(
         )
         generated = root / "generated"
         env = {
-            **_dig_offline_environment(pretrained),
+            **_dig_offline_environment(pretrained, run_id),
             "PRETRAINED_SRC": str(pretrained),
             "DATASET_DIR": str(defect_specs[0].parent),
             "DEFECT_SPEC": str(defect_specs[0]),
@@ -1842,6 +2017,7 @@ def run_dig_inference(
         payload = {
             "schema": f"{SCHEMA_PREFIX}.dig-result.v1",
             "run_id": run_id,
+            "workflow": "dig",
             "status": "completed",
             "component": "NVIDIA paidf-anomalygen 1.1.0",
             "upstream_workflow_revision": PHYSICAL_AI_DATA_FACTORY_REVISION,

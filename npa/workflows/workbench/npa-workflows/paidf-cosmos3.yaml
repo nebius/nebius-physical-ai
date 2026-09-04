@@ -132,9 +132,10 @@ states:
         - -c
         - >-
           import sys; from npa.workflows.paidf_upstream import write_upstream_contract;
-          write_upstream_contract(*sys.argv[1:])
+          write_upstream_contract(*sys.argv[1:3], run_id=sys.argv[3])
         - cosmos3-video2video
         - "{{config.upstream_contract_uri}}"
+        - "{{run.id}}"
     outputs:
       - uri: "{{config.upstream_contract_uri}}"
         schema: npa.paidf.upstream.v1

@@ -37,6 +37,12 @@ image layers. IAA pins `Qwen/Qwen-Image-Edit-2511` at
 `6f3ccc0b56e431dc6a0c2b2039706d7d26f22cb9`; EVG pins
 `nvidia/Cosmos3-Super-Image2Video` at
 `4f847566f3d3388fbf0ac07b99dd1a6432db9ecd`.
+The direct IAA and EVG translations reject model/revision overrides outside
+these reviewed pairs. Their VLM/LLM endpoints must use the approved Token
+Factory HTTPS origin before the operator's credential is forwarded. Every
+native artifact handoff verifies its schema and run identity; branch-specific
+handoffs also verify the workflow identity. An enabled attribute evaluator must
+return an explicit passing verdict for an output to enter the final dataset.
 
 ### Native DIG, IAA, and EVG execution contracts
 

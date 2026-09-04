@@ -669,6 +669,7 @@ def _assert_paidf_live_artifacts(
         return payload
 
     upstream = read_json("reports/upstream.json")
+    assert upstream["run_id"] == run_id
     assert upstream.get("schema") == PAIDF_UPSTREAM_SCHEMA
     sources = {
         str(source.get("repository")): source
@@ -818,6 +819,7 @@ def _assert_paidf_native_live_artifacts(
         return client.get_object(Bucket=bucket, Key=parsed.path.lstrip("/"))["Body"].read()
 
     upstream = read_json("reports/upstream.json")
+    assert upstream["run_id"] == run_id
     sources = {
         str(source.get("repository")): source
         for source in upstream.get("sources", [])
@@ -836,7 +838,7 @@ def _assert_paidf_native_live_artifacts(
         assert len(str(finetune.get("selected_checkpoint_sha256") or "")) == 64
         assert int(result.get("image_count") or 0) > 0
         assert int(result.get("label_file_count") or 0) > 0
-        image_names = set()
+        image_sizes = {}
         for item in result["images"]:
             media = read_artifact(
                 f"s3://{bucket}/{prefix}anomaly/reconstructed_image/{item['name']}"
@@ -846,13 +848,38 @@ def _assert_paidf_native_live_artifacts(
             with Image.open(BytesIO(media)) as decoded:
                 decoded.load()
                 assert decoded.width > 0 and decoded.height > 0
-            image_names.add(item["name"])
+                image_sizes[item["name"]] = decoded.size
         labels = read_json("anomaly/pseudo_labels/coco_annotations.json")
         assert labels.get("images") and labels.get("annotations")
         label_ids = {item["id"] for item in labels["images"]}
-        assert all(Path(item["file_name"]).name in image_names for item in labels["images"])
+        categories = {item["id"] for item in labels["categories"]}
+        assert len(label_ids) == len(labels["images"]) == len(image_sizes)
+        mask_areas = {}
+        for item in labels["images"]:
+            name = Path(item["file_name"]).name
+            assert image_sizes[name] == (item["width"], item["height"])
+            # The pinned upstream pseudo-label stage emits masks and actual
+            # instance overlays alongside COCO. Decode those bytes too.
+            for kind in ("masks", "visualization"):
+                media = read_artifact(
+                    f"s3://{bucket}/{prefix}anomaly/pseudo_labels/{kind}/{name}"
+                )
+                with Image.open(BytesIO(media)) as decoded:
+                    decoded.load()
+                    assert decoded.size == image_sizes[name]
+                    if kind == "masks":
+                        histogram = decoded.convert("L").histogram()
+                        assert sum(histogram[1:]) > 0
+                        mask_areas[item["id"]] = sum(histogram[1:])
         assert all(item["image_id"] in label_ids for item in labels["annotations"])
-        assert all(item.get("segmentation") for item in labels["annotations"])
+        for item in labels["annotations"]:
+            assert item["category_id"] in categories
+            assert 0 < item["area"] <= mask_areas[item["image_id"]]
+            x, y, width, height = item["bbox"]
+            assert x >= 0 and y >= 0 and width > 0 and height > 0
+            segmentation = item["segmentation"]
+            assert isinstance(segmentation, dict) and segmentation["counts"]
+            assert len(segmentation["size"]) == 2
         return
 
     assert (

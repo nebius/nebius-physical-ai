@@ -7,6 +7,7 @@ import pytest
 import yaml
 
 from npa.workflows.paidf_upstream import (
+    DIRECT_GENERATION_MODELS,
     PAIDF_ORCHESTRATION_REVISION,
     PHYSICAL_AI_DATA_FACTORY_REVISION,
     SCHEMA,
@@ -122,13 +123,24 @@ def test_write_upstream_contract_local(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     target = tmp_path / "reports" / "upstream.json"
-    result = write_upstream_contract("cosmos-transfer2.5", str(target))
+    result = write_upstream_contract(
+        "cosmos-transfer2.5", str(target), run_id="unit-run"
+    )
 
     written = json.loads(target.read_text(encoding="utf-8"))
     assert written == {
         key: value for key, value in result.items() if key != "written_uri"
     }
+    assert written["run_id"] == "unit-run"
     assert json.loads(capsys.readouterr().out)["status"] == "completed"
+
+
+def test_upstream_writer_requires_a_nonempty_run_identity(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="run id"):
+        write_upstream_contract(
+            "cosmos-transfer2.5", str(tmp_path / "upstream.json"), run_id=""
+        )
+    assert not (tmp_path / "upstream.json").exists()
 
 
 def test_write_upstream_contract_records_resolved_private_runtime_image(
@@ -139,6 +151,7 @@ def test_write_upstream_contract_records_resolved_private_runtime_image(
         "defect-image-generation-day1-manual-roi",
         str(tmp_path / "upstream.json"),
         image,
+        run_id="unit-run",
     )
     assert result["npa_integration"]["resolved_runtime_image"] == image
 
@@ -146,20 +159,19 @@ def test_write_upstream_contract_records_resolved_private_runtime_image(
 @pytest.mark.parametrize(
     "variant", ["image-attribute-augmentation", "event-video-generation"]
 )
-def test_write_upstream_contract_records_selected_model_without_changing_reference(
+def test_write_upstream_contract_accepts_reviewed_direct_generation_model(
     variant: str, tmp_path: Path
 ) -> None:
-    original = upstream_contract(variant)["npa_integration"]["components"]
+    model, revision = DIRECT_GENERATION_MODELS[variant]
     result = write_upstream_contract(
         variant,
         str(tmp_path / "upstream.json"),
-        generation_model="synthetic/model",
-        generation_revision="a" * 40,
+        run_id="unit-run",
+        generation_model=model,
+        generation_revision=revision,
     )
     components = result["npa_integration"]["components"]
-    assert components["models"] == {"synthetic/model": "a" * 40}
-    assert components["reference_models"] == original["models"]
-    assert upstream_contract(variant)["npa_integration"]["components"] == original
+    assert components["models"] == {model: revision}
     assert "runtime_images" not in components
     assert (
         "renderer-selected runtime_image"
@@ -167,13 +179,26 @@ def test_write_upstream_contract_records_selected_model_without_changing_referen
     )
 
 
-def test_selected_model_revision_must_be_immutable(tmp_path: Path) -> None:
-    with pytest.raises(ValueError, match="exact immutable revision"):
+@pytest.mark.parametrize(
+    ("model", "revision"),
+    [
+        ("synthetic/model", "a" * 40),
+        (
+            DIRECT_GENERATION_MODELS["event-video-generation"][0],
+            "a" * 40,
+        ),
+    ],
+)
+def test_direct_translation_rejects_unreviewed_generation_artifact(
+    tmp_path: Path, model: str, revision: str
+) -> None:
+    with pytest.raises(ValueError, match="reviewed generation model and revision"):
         write_upstream_contract(
             "event-video-generation",
             str(tmp_path / "upstream.json"),
-            generation_model="synthetic/model",
-            generation_revision="main",
+            run_id="unit-run",
+            generation_model=model,
+            generation_revision=revision,
         )
     assert not (tmp_path / "upstream.json").exists()
 
@@ -200,6 +225,36 @@ def test_native_provenance_names_registered_execution_tool(
 def test_unknown_variant_fails_closed() -> None:
     with pytest.raises(ValueError, match="unsupported PAIDF workflow variant"):
         upstream_contract("airflow")
+
+
+@pytest.mark.parametrize(
+    ("filename", "overrides", "match"),
+    [
+        (
+            "paidf-image-attribute-augmentation.yaml",
+            {"vlm_url": "https://credentials.invalid/v1"},
+            "approved Token Factory HTTPS origin",
+        ),
+        (
+            "paidf-event-video-generation.yaml",
+            {"generation_revision": "a" * 40},
+            "reviewed generation model and revision",
+        ),
+    ],
+)
+def test_direct_translation_rejects_unsafe_overrides_before_render(
+    filename: str, overrides: dict[str, str], match: str
+) -> None:
+    from npa.orchestration.npa_workflow.errors import NpaWorkflowError
+    from npa.orchestration.npa_workflow.spec import load_spec
+    from npa.orchestration.npa_workflow.submit import merge_config_overrides
+
+    repo_root = Path(__file__).resolve().parents[3]
+    workflow = (
+        repo_root / "npa" / "workflows" / "workbench" / "npa-workflows" / filename
+    )
+    with pytest.raises(NpaWorkflowError, match=match):
+        merge_config_overrides(load_spec(workflow), overrides)
 
 
 @pytest.mark.parametrize(
@@ -249,6 +304,7 @@ def test_shipped_workflows_record_upstream_before_processing(
         expected_tail.extend(
             ["{{config.generation_model}}", "{{config.generation_revision}}"]
         )
+    expected_tail.append("{{run.id}}")
     assert state["run"]["argv"][-len(expected_tail) :] == expected_tail
     assert state["outputs"] == [
         {

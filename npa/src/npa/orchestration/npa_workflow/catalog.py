@@ -148,6 +148,7 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
     ),
     "workflow.paidf.build_configs": ToolEntry(
         name="workflow.paidf.build_configs",
+        semantic_contract="paidf_direct_translation",
         description=(
             "Deterministically render NVIDIA paidf-augmentation protocol configs "
             "for IAA or EVG without executing Airflow."

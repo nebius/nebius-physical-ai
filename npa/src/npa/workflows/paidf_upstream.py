@@ -15,6 +15,7 @@ import re
 import tempfile
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 
 SCHEMA = "npa.paidf.upstream.v1"
@@ -27,6 +28,65 @@ PAIDF_SIMULATION_REVISION = "498751aceeea3dc3bac0d5fb043bf3553aec46a6"
 PAIDF_CURATION_REVISION = "02079bbd272900c837ebdbd0bf44384dfdf1f25e"
 QWEN_IMAGE_EDIT_REVISION = "6f3ccc0b56e431dc6a0c2b2039706d7d26f22cb9"
 COSMOS3_SUPER_IMAGE2VIDEO_REVISION = "4f847566f3d3388fbf0ac07b99dd1a6432db9ecd"
+QWEN_IMAGE_EDIT_MODEL = "Qwen/Qwen-Image-Edit-2511"
+COSMOS3_SUPER_IMAGE2VIDEO_MODEL = "nvidia/Cosmos3-Super-Image2Video"
+
+DIRECT_GENERATION_MODELS = {
+    "image-attribute-augmentation": (
+        QWEN_IMAGE_EDIT_MODEL,
+        QWEN_IMAGE_EDIT_REVISION,
+    ),
+    "event-video-generation": (
+        COSMOS3_SUPER_IMAGE2VIDEO_MODEL,
+        COSMOS3_SUPER_IMAGE2VIDEO_REVISION,
+    ),
+}
+_DIRECT_WORKFLOW_VARIANTS = {
+    "iaa": "image-attribute-augmentation",
+    "evg": "event-video-generation",
+}
+TOKEN_FACTORY_HOST = "api.tokenfactory.nebius.com"
+
+
+def validate_token_factory_endpoint(endpoint: str, role: str) -> None:
+    """Require the approved HTTPS origin before injecting Token Factory keys."""
+
+    try:
+        parsed = urlparse(endpoint.strip())
+        port = parsed.port
+    except ValueError as exc:
+        raise ValueError(
+            f"{role} endpoint must use the approved Token Factory HTTPS origin"
+        ) from exc
+    if (
+        parsed.scheme.casefold() != "https"
+        or parsed.hostname != TOKEN_FACTORY_HOST
+        or port not in {None, 443}
+        or parsed.username is not None
+        or parsed.password is not None
+    ):
+        raise ValueError(
+            f"{role} endpoint must use the approved Token Factory HTTPS origin"
+        )
+
+
+def validate_direct_generation_model(
+    workflow: str, generation_model: str, generation_revision: str | None = None
+) -> None:
+    """Require the reviewed model artifact for a direct IAA/EVG translation."""
+
+    variant = _DIRECT_WORKFLOW_VARIANTS.get(workflow, workflow)
+    expected = DIRECT_GENERATION_MODELS.get(variant)
+    if (
+        expected is None
+        or generation_model != expected[0]
+        or (generation_revision is not None and generation_revision != expected[1])
+    ):
+        raise ValueError(
+            "direct PAIDF translations require their reviewed generation "
+            "model and revision"
+        )
+
 
 _VARIANTS: dict[str, dict[str, Any]] = {
     "cosmos-transfer2.5": {
@@ -67,7 +127,7 @@ _VARIANTS: dict[str, dict[str, Any]] = {
         "upstream_workflow": "image_attribute_augmentation_dag",
         "preparation": "input validation and deterministic attribute sampling",
         "generation": "NVIDIA PAIDF Augmentation 1.1.0 image-edit protocol",
-        "models": {"Qwen/Qwen-Image-Edit-2511": QWEN_IMAGE_EDIT_REVISION},
+        "models": {QWEN_IMAGE_EDIT_MODEL: QWEN_IMAGE_EDIT_REVISION},
         "labeling": "NVIDIA PAIDF event/person attribute search protocol",
         "execution": "workflow.paidf.run_iaa_augmentation",
         "reference_runtime_images": [
@@ -81,9 +141,7 @@ _VARIANTS: dict[str, dict[str, Any]] = {
         "upstream_workflow": "event_video_generation_dag",
         "preparation": "input validation and deterministic anomaly/environment sampling",
         "generation": "NVIDIA PAIDF Augmentation 1.1.0 Cosmos3 image2video protocol",
-        "models": {
-            "nvidia/Cosmos3-Super-Image2Video": COSMOS3_SUPER_IMAGE2VIDEO_REVISION
-        },
+        "models": {COSMOS3_SUPER_IMAGE2VIDEO_MODEL: COSMOS3_SUPER_IMAGE2VIDEO_REVISION},
         "labeling": (
             "NVIDIA PAIDF detection/tracking, captioning, visual-QA, and "
             "event/person attribute-search protocols"
@@ -199,20 +257,20 @@ def write_upstream_contract(
     output_uri: str,
     runtime_image: str = "",
     *,
+    run_id: str,
     generation_model: str = "",
     generation_revision: str = "",
 ) -> dict[str, Any]:
     """Write one truthful PAIDF upstream contract to a local path or S3 URI."""
 
+    if not run_id.strip():
+        raise ValueError("upstream provenance requires the workflow run id")
     payload = upstream_contract(workflow_variant)
+    payload["run_id"] = run_id
     if generation_model or generation_revision:
-        if not generation_model.strip() or not re.fullmatch(
-            r"[0-9a-f]{40}", generation_revision
-        ):
-            raise ValueError("generation model requires an exact immutable revision")
-        components = payload["npa_integration"]["components"]
-        components["reference_models"] = components.get("models", {})
-        components["models"] = {generation_model: generation_revision}
+        validate_direct_generation_model(
+            workflow_variant, generation_model, generation_revision
+        )
     if "reference_runtime_images" in payload["npa_integration"]["components"]:
         payload["npa_integration"]["runtime_image_evidence"] = (
             "reference_runtime_images are reviewed upstream image defaults; "

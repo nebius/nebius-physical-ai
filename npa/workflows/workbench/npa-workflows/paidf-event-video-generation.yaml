@@ -135,11 +135,12 @@ states:
         - >-
           import sys; from npa.workflows.paidf_upstream import write_upstream_contract;
           write_upstream_contract(sys.argv[1], sys.argv[2],
-          generation_model=sys.argv[3], generation_revision=sys.argv[4])
+          generation_model=sys.argv[3], generation_revision=sys.argv[4], run_id=sys.argv[5])
         - event-video-generation
         - "{{config.upstream_contract_uri}}"
         - "{{config.generation_model}}"
         - "{{config.generation_revision}}"
+        - "{{run.id}}"
     outputs:
       - uri: "{{config.upstream_contract_uri}}"
         schema: npa.paidf.upstream.v1
