@@ -86,6 +86,17 @@ def test_default_inventory_is_lazy_and_list_artifacts_resumes_cached_cursor() ->
     assert "if (summary.has_recording === false)" in ui
 
 
+def test_superseded_direct_inventory_does_not_fall_back_and_clear_selection() -> None:
+    ui = _ui()
+    loader = ui.split("async function loadRunData", 1)[1].split(
+        "async function selectCamera", 1
+    )[0]
+
+    assert "if (loaded === false)" in loader
+    assert "artifacts_loaded: false, superseded: true" in loader
+    assert loader.index("if (loaded === false)") < loader.index("const dataPromise = loadSelectedRun")
+
+
 def test_newer_run_selection_supersedes_stale_responses() -> None:
     ui = _ui()
     selector = ui.split("let selectedRunLoadGeneration", 1)[1].split(

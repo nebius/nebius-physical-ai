@@ -276,6 +276,17 @@ describe("NPA agent UI with mocked APIs", () => {
       source_selected: true,
     };
     let inventoryRequests = 0;
+    let workflowFallbackRequests = 0;
+    cy.intercept("GET", `/api/workflows/sim2real/runs/${runId}*`, (req) => {
+      req.reply({
+        delay: 1200,
+        body: { run: { run_id: runId, status: "running", stages: [], logs: [] } },
+      });
+    });
+    cy.intercept("POST", "/api/sim-viz/load-run", (req) => {
+      workflowFallbackRequests += 1;
+      req.reply({ statusCode: 500, body: { detail: "unexpected workflow fallback" } });
+    });
     cy.intercept("GET", `/api/artifacts/run/${runRef}*`, (req) => {
       inventoryRequests += 1;
       const cursor = new URL(req.url).searchParams.get("cursor") || "";
@@ -338,6 +349,7 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#artifactList").should("contain.text", "sim2real.rrd");
     cy.get("#artifactSort").select("largest");
     cy.then(() => expect(inventoryRequests, "filters reuse completed cache").to.eq(2));
+    cy.then(() => expect(workflowFallbackRequests, "superseded inventory does not fall back").to.eq(0));
   });
 
   it("constructs fully scoped media URLs and rejects JSON before rendering video", () => {

@@ -9,6 +9,7 @@
     "cy:live-leisaac": "cypress run --spec cypress/e2e/agent_leisaac_live.cy.js,cypress/e2e/agent_leisaac_latency_live.cy.js,cypress/e2e/agent_leisaac_performance_live.cy.js",
     "cy:live-leisaac-latency": "cypress run --spec cypress/e2e/agent_leisaac_latency_live.cy.js",
     "cy:live-leisaac-performance": "cypress run --spec cypress/e2e/agent_leisaac_performance_live.cy.js",
+    "cy:live-artifact-pagination": "cypress run --spec cypress/e2e/agent_artifact_pagination_live.cy.js",
     "cy:live-rrd": "cypress run --spec cypress/e2e/agent_live_rrd_artifact.cy.js",
     "cy:foxglove": "cypress run --spec cypress/e2e/agent_foxglove.cy.js"
   },

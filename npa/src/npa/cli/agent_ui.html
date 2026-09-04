@@ -15403,6 +15403,14 @@
               }
               return { run_id: runId, artifacts_loaded: true };
             }
+            // A newer inventory action (for example, clicking List artifacts
+            // while best-effort detail enrichment is still pending) returns
+            // false. That is supersession, not an artifact lookup failure, so
+            // never fall through to workflow/local loading and clear the newer
+            // selection.
+            if (loaded === false) {
+              return { run_id: runId, artifacts_loaded: false, superseded: true };
+            }
           } catch (_artifactErr) {
             // Workflow history/local runtime remains a valid fallback when the
             // exact artifact source is unavailable.
