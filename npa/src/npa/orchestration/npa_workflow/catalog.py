@@ -167,10 +167,10 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
     ),
     "workflow.paidf.run_local_augmentation": ToolEntry(
         name="workflow.paidf.run_local_augmentation",
-        access_capabilities=("paidf",),
+        access_capabilities=("paidf-iaa", "paidf-evg"),
         description=(
-            "Start the published vLLM-Omni image-edit or Cosmos3 image2video "
-            "service and keep it alive while the real paidf-augmentation batch runs."
+            "Generic PAIDF local generation-service adapter. Shipped workflows use "
+            "the workflow-specific toolRefs below so access closure stays exact."
         ),
         argv_template=[
             *_PAIDF_NATIVE_PIPELINE,
@@ -180,6 +180,46 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "--generation-model", "{{config.generation_model}}",
             "--generation-revision", "{{config.generation_revision}}",
             "--service-kind", "{{config.service_kind}}",
+            "--port", "{{config.service_port}}",
+            "--parallel-size", "{{config.service_parallel_size}}",
+            "--run-id", "{{run.id}}",
+        ],
+    ),
+    "workflow.paidf.run_iaa_augmentation": ToolEntry(
+        name="workflow.paidf.run_iaa_augmentation",
+        access_capabilities=("paidf-iaa",),
+        description=(
+            "Start pinned Qwen Image Edit in vLLM-Omni and keep it alive while "
+            "the real paidf-augmentation IAA batch runs."
+        ),
+        argv_template=[
+            *_PAIDF_NATIVE_PIPELINE,
+            "run-local-augmentation",
+            "--config-manifest-uri", "{{config.config_manifest_uri}}",
+            "--result-uri", "{{config.augmentation_result_uri}}",
+            "--generation-model", "{{config.generation_model}}",
+            "--generation-revision", "{{config.generation_revision}}",
+            "--service-kind", "image-edit",
+            "--port", "{{config.service_port}}",
+            "--parallel-size", "1",
+            "--run-id", "{{run.id}}",
+        ],
+    ),
+    "workflow.paidf.run_evg_augmentation": ToolEntry(
+        name="workflow.paidf.run_evg_augmentation",
+        access_capabilities=("paidf-evg",),
+        description=(
+            "Start pinned Cosmos3 Super Image2Video in vLLM-Omni and keep it "
+            "alive while the real paidf-augmentation EVG batch runs."
+        ),
+        argv_template=[
+            *_PAIDF_NATIVE_PIPELINE,
+            "run-local-augmentation",
+            "--config-manifest-uri", "{{config.config_manifest_uri}}",
+            "--result-uri", "{{config.augmentation_result_uri}}",
+            "--generation-model", "{{config.generation_model}}",
+            "--generation-revision", "{{config.generation_revision}}",
+            "--service-kind", "image2video",
             "--port", "{{config.service_port}}",
             "--parallel-size", "{{config.service_parallel_size}}",
             "--run-id", "{{run.id}}",
@@ -216,6 +256,12 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
     ),
     "workflow.paidf.run_auto_label": ToolEntry(
         name="workflow.paidf.run_auto_label",
+        access_capabilities=(
+            "paidf-label-detection",
+            "paidf-label-captioning",
+            "paidf-label-visual-qa",
+            "paidf-label-attribute-search",
+        ),
         description=(
             "Invoke one genuine NVIDIA paidf-auto-labeling service over every "
             "validated IAA/EVG output using the published DataEntry protocol."
@@ -235,6 +281,66 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "--run-id", "{{run.id}}",
         ],
     ),
+    "workflow.paidf.run_detection": ToolEntry(
+        name="workflow.paidf.run_detection",
+        access_capabilities=("paidf-label-detection",),
+        description="Invoke the pinned PAIDF detection-and-tracking service protocol.",
+        argv_template=[
+            *_PAIDF_NATIVE_PIPELINE, "run-auto-label",
+            "--workflow", "evg", "--stage", "detection",
+            "--validation-uri", "{{config.validation_uri}}",
+            "--auto-label-root-uri", "{{config.auto_label_root_uri}}",
+            "--result-uri", "{{config.auto_label_result_uri}}",
+            "--vlm-url", "{{config.vlm_url}}", "--vlm-model", "{{config.vlm_model}}",
+            "--llm-url", "{{config.llm_url}}", "--llm-model", "{{config.llm_model}}",
+            "--run-id", "{{run.id}}",
+        ],
+    ),
+    "workflow.paidf.run_captioning": ToolEntry(
+        name="workflow.paidf.run_captioning",
+        access_capabilities=("paidf-label-captioning",),
+        description="Invoke the pinned PAIDF captioning service protocol.",
+        argv_template=[
+            *_PAIDF_NATIVE_PIPELINE, "run-auto-label",
+            "--workflow", "evg", "--stage", "captioning",
+            "--validation-uri", "{{config.validation_uri}}",
+            "--auto-label-root-uri", "{{config.auto_label_root_uri}}",
+            "--result-uri", "{{config.auto_label_result_uri}}",
+            "--vlm-url", "{{config.vlm_url}}", "--vlm-model", "{{config.vlm_model}}",
+            "--llm-url", "{{config.llm_url}}", "--llm-model", "{{config.llm_model}}",
+            "--run-id", "{{run.id}}",
+        ],
+    ),
+    "workflow.paidf.run_visual_qa": ToolEntry(
+        name="workflow.paidf.run_visual_qa",
+        access_capabilities=("paidf-label-visual-qa",),
+        description="Invoke a pinned PAIDF visual-QA service protocol stage.",
+        argv_template=[
+            *_PAIDF_NATIVE_PIPELINE, "run-auto-label",
+            "--workflow", "evg", "--stage", "{{config.auto_label_stage}}",
+            "--validation-uri", "{{config.validation_uri}}",
+            "--auto-label-root-uri", "{{config.auto_label_root_uri}}",
+            "--result-uri", "{{config.auto_label_result_uri}}",
+            "--vlm-url", "{{config.vlm_url}}", "--vlm-model", "{{config.vlm_model}}",
+            "--llm-url", "{{config.llm_url}}", "--llm-model", "{{config.llm_model}}",
+            "--run-id", "{{run.id}}",
+        ],
+    ),
+    "workflow.paidf.run_attribute_search": ToolEntry(
+        name="workflow.paidf.run_attribute_search",
+        access_capabilities=("paidf-label-attribute-search",),
+        description="Invoke the pinned PAIDF event/person attribute-search protocol.",
+        argv_template=[
+            *_PAIDF_NATIVE_PIPELINE, "run-auto-label",
+            "--workflow", "{{config.paidf_workflow}}", "--stage", "person-attribute-search",
+            "--validation-uri", "{{config.validation_uri}}",
+            "--auto-label-root-uri", "{{config.auto_label_root_uri}}",
+            "--result-uri", "{{config.auto_label_result_uri}}",
+            "--vlm-url", "{{config.vlm_url}}", "--vlm-model", "{{config.vlm_model}}",
+            "--llm-url", "{{config.llm_url}}", "--llm-model", "{{config.llm_model}}",
+            "--run-id", "{{run.id}}",
+        ],
+    ),
     "workflow.paidf.finalize_dataset": ToolEntry(
         name="workflow.paidf.finalize_dataset",
         description="Assemble a lineage-linked IAA or EVG dataset from validated real outputs.",
@@ -249,9 +355,23 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "--run-id", "{{run.id}}",
         ],
     ),
+    "workflow.paidf.validate_dataset": ToolEntry(
+        name="workflow.paidf.validate_dataset",
+        description=(
+            "Validate every final media, metadata, and annotation handoff and "
+            "publish a terminal PAIDF decision artifact."
+        ),
+        argv_template=[
+            *_PAIDF_NATIVE_PIPELINE,
+            "validate-dataset",
+            "--dataset-uri", "{{config.final_dataset_uri}}",
+            "--report-uri", "{{config.terminal_validation_uri}}",
+            "--run-id", "{{run.id}}",
+        ],
+    ),
     "workflow.paidf.dig_infer": ToolEntry(
         name="workflow.paidf.dig_infer",
-        access_capabilities=("paidf",),
+        access_capabilities=("paidf-dig",),
         description=(
             "Run genuine NVIDIA PAIDF AnomalyGen Day-1 manual-ROI inference "
             "and require generated media plus native labels."
@@ -271,7 +391,7 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
     ),
     "workflow.paidf.dig_train": ToolEntry(
         name="workflow.paidf.dig_train",
-        access_capabilities=("paidf",),
+        access_capabilities=("paidf-dig",),
         description=(
             "Run the genuine default PAIDF Day-1 manual-ROI AnomalyGen fine-tuning task."
         ),
@@ -288,7 +408,7 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
     ),
     "workflow.paidf.dig_prepare_pretrained": ToolEntry(
         name="workflow.paidf.dig_prepare_pretrained",
-        access_capabilities=("paidf",),
+        access_capabilities=("paidf-dig",),
         description=(
             "Runtime-fetch AnomalyGen's gated base checkpoint set under operator access."
         ),

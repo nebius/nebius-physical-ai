@@ -25,7 +25,7 @@ from npa.workflows.sim2real_health import FAIL, PASS, WARN, CheckResult, has_fai
 HF = "huggingface"
 NGC = "ngc"
 TOKEN_FACTORY = "token_factory"
-HF_GATING_LAST_VERIFIED = "2026-08-31"
+HF_GATING_LAST_VERIFIED = "2026-09-04"
 
 _HF_PAYLOAD_SUFFIXES = (
     ".arrow",
@@ -91,7 +91,7 @@ def usable_hf_payload_probe(asset: GatedAsset) -> bool:
 # `gated_hf_repos()` / `check_workbench_access()` all derive from it, so no other
 # file needs to change.
 # Gating metadata was reverified against Hugging Face's authoritative model and
-# dataset APIs on 2026-08-31; capability-default drift tests below keep membership
+# dataset APIs on 2026-09-04; capability-default drift tests below keep membership
 # current, while the online preflight remains the final access authority.
 #
 # The entries mirror the tool default-model constants in:
@@ -209,11 +209,28 @@ WORKBENCH_ASSETS: tuple[GatedAsset, ...] = (
         ),
     ),
     GatedAsset("nvidia/Cosmos-Reason1-7B", HF, ("cosmos",), False),
-    GatedAsset("nvidia/Cosmos3-Nano", HF, ("cosmos3", "paidf"), False),
+    GatedAsset(
+        "nvidia/Cosmos3-Nano",
+        HF,
+        ("cosmos3", "paidf", "paidf-dig"),
+        False,
+        revision="411f42a8fdfb8c5b2583cb8786e0938f49796eaa",
+        probe_path="transformer/diffusion_pytorch_model-00001-of-00007.safetensors",
+        official_url="https://huggingface.co/nvidia/Cosmos3-Nano",
+    ),
+    GatedAsset(
+        "nvidia/Cosmos3-Edge",
+        HF,
+        ("paidf-dig",),
+        False,
+        revision="a9d944e2c6a1bf9f48b92ad16348e70c5f1836ba",
+        probe_path="processor_config.json",
+        official_url="https://huggingface.co/nvidia/Cosmos3-Edge",
+    ),
     GatedAsset(
         "Qwen/Qwen-Image-Edit-2511",
         HF,
-        ("paidf",),
+        ("paidf", "paidf-iaa"),
         False,
         revision="6f3ccc0b56e431dc6a0c2b2039706d7d26f22cb9",
         official_url="https://huggingface.co/Qwen/Qwen-Image-Edit-2511",
@@ -221,7 +238,7 @@ WORKBENCH_ASSETS: tuple[GatedAsset, ...] = (
     GatedAsset(
         "nvidia/Cosmos3-Super-Image2Video",
         HF,
-        ("paidf",),
+        ("paidf", "paidf-evg"),
         False,
         revision="4f847566f3d3388fbf0ac07b99dd1a6432db9ecd",
         official_url="https://huggingface.co/nvidia/Cosmos3-Super-Image2Video",
@@ -229,12 +246,66 @@ WORKBENCH_ASSETS: tuple[GatedAsset, ...] = (
     GatedAsset(
         "nvidia/Cosmos-Guardrail1",
         HF,
-        ("cosmos3", "paidf"),
+        ("cosmos3", "paidf", "paidf-dig"),
         True,
         revision="d6d4bfa899a71454a700907664f3e88f503950cf",
         probe_path="video_content_safety_filter/safety_filter.pt",
         official_url="https://huggingface.co/nvidia/Cosmos-Guardrail1",
         terms_revision="huggingface-gated-repository-current",
+    ),
+    GatedAsset(
+        "facebook/dinov2-large",
+        HF,
+        ("paidf-dig",),
+        False,
+        revision="47b73eefe95e8d44ec3623f8890bd894b6ea2d6c",
+        probe_path="pytorch_model.bin",
+        official_url="https://huggingface.co/facebook/dinov2-large",
+    ),
+    GatedAsset(
+        "nvidia/C-RADIOv3-B",
+        HF,
+        ("paidf-dig",),
+        False,
+        revision="44653a0482cf460bb4f12595fc3cc3dfecc403d1",
+        probe_path="model.safetensors",
+        official_url="https://huggingface.co/nvidia/C-RADIOv3-B",
+    ),
+    GatedAsset(
+        "Wan-AI/Wan2.2-TI2V-5B",
+        HF,
+        ("paidf-dig",),
+        False,
+        revision="921dbaf3f1674a56f47e83fb80a34bac8a8f203e",
+        probe_path="Wan2.2_VAE.pth",
+        official_url="https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B",
+    ),
+    GatedAsset(
+        "facebook/sam2.1-hiera-large",
+        HF,
+        ("paidf-dig",),
+        False,
+        revision="665f8e2ad61cf5f53d65644ff27c8ee525124610",
+        probe_path="sam2.1_hiera_large.pt",
+        official_url="https://huggingface.co/facebook/sam2.1-hiera-large",
+    ),
+    GatedAsset(
+        "Qwen/Qwen3Guard-Gen-0.6B",
+        HF,
+        ("paidf-dig",),
+        False,
+        revision="fada3b2f655b89601929198343c94cd2f64d93cc",
+        probe_path="model.safetensors",
+        official_url="https://huggingface.co/Qwen/Qwen3Guard-Gen-0.6B",
+    ),
+    GatedAsset(
+        "Qwen/Qwen3-VL-8B-Instruct",
+        HF,
+        ("paidf-dig",),
+        False,
+        revision="0c351dd01ed87e9c1b53cbc748cba10e6187ff3b",
+        probe_path="tokenizer.json",
+        official_url="https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct",
     ),
     GatedAsset(
         "nvidia/Cosmos-1.0-Guardrail",
@@ -294,6 +365,46 @@ WORKBENCH_ASSETS: tuple[GatedAsset, ...] = (
             "https://catalog.ngc.nvidia.com/orgs/nvidia/nre/containers/nre-ga"
         ),
         terms_revision="nvidia-nurec-ngc-governing-terms-current",
+    ),
+    GatedAsset(
+        "nvcr.io/nvidia/paidf-detection-and-tracking-rfdetr-service@sha256:6b35e63b95cab7cd772906bcb08be978de7526427f0d1925ab84439dd4a9561e",
+        NGC,
+        ("paidf-label-detection",),
+        True,
+        repo_type="container",
+        revision="sha256:6b35e63b95cab7cd772906bcb08be978de7526427f0d1925ab84439dd4a9561e",
+        official_url="https://catalog.ngc.nvidia.com/orgs/nvidia/containers/paidf-detection-and-tracking-rfdetr-service",
+        terms_revision="nvidia-ngc-governing-terms-current",
+    ),
+    GatedAsset(
+        "nvcr.io/nvidia/paidf-captioning-service@sha256:17e1e3f53cc66342183f7d0b6eed76907993bb325a13db90c46d9a8cf664d804",
+        NGC,
+        ("paidf-label-captioning",),
+        True,
+        repo_type="container",
+        revision="sha256:17e1e3f53cc66342183f7d0b6eed76907993bb325a13db90c46d9a8cf664d804",
+        official_url="https://catalog.ngc.nvidia.com/orgs/nvidia/containers/paidf-captioning-service",
+        terms_revision="nvidia-ngc-governing-terms-current",
+    ),
+    GatedAsset(
+        "nvcr.io/nvidia/paidf-visual-qa-service@sha256:e681c8dee849c7ac9fc5b182f51e9efd0da460972b08850d40f00aa9d5e3c97c",
+        NGC,
+        ("paidf-label-visual-qa",),
+        True,
+        repo_type="container",
+        revision="sha256:e681c8dee849c7ac9fc5b182f51e9efd0da460972b08850d40f00aa9d5e3c97c",
+        official_url="https://catalog.ngc.nvidia.com/orgs/nvidia/containers/paidf-visual-qa-service",
+        terms_revision="nvidia-ngc-governing-terms-current",
+    ),
+    GatedAsset(
+        "nvcr.io/nvidia/paidf-event-and-person-attribute-search-service@sha256:0f581ff6d92efd391281e5787a8b1fda76556443ade47c1f5d59d4c345a01f6a",
+        NGC,
+        ("paidf-label-attribute-search",),
+        True,
+        repo_type="container",
+        revision="sha256:0f581ff6d92efd391281e5787a8b1fda76556443ade47c1f5d59d4c345a01f6a",
+        official_url="https://catalog.ngc.nvidia.com/orgs/nvidia/containers/paidf-event-and-person-attribute-search-service",
+        terms_revision="nvidia-ngc-governing-terms-current",
     ),
 )
 

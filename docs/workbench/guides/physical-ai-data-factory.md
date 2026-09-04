@@ -38,6 +38,52 @@ image layers. IAA pins `Qwen/Qwen-Image-Edit-2511` at
 `nvidia/Cosmos3-Super-Image2Video` at
 `4f847566f3d3388fbf0ac07b99dd1a6432db9ecd`.
 
+### Native DIG, IAA, and EVG execution contracts
+
+The three new translations are ordinary generic workflow submissions; they do
+not add one-off top-level CLI commands. Before any GPU or image work, validate
+the exact spec and run its workflow-specific access checks:
+
+```bash
+npa workbench workflow validate-spec npa/workflows/workbench/npa-workflows/paidf-defect-image-generation.yaml --json
+npa workbench health access --capability paidf-dig
+npa workbench health access --capability paidf-iaa
+npa workbench health access --capability paidf-evg
+npa workbench health access --capability paidf-label-detection
+npa workbench health access --capability paidf-label-captioning
+npa workbench health access --capability paidf-label-visual-qa
+npa workbench health access --capability paidf-label-attribute-search
+```
+
+`validate-spec` derives only human-gated workflow blockers. DIG therefore names
+the exact Cosmos Guardrail payload; IAA names only the attribute-search NGC
+image; EVG names its four exact NGC service digests. The broader
+`health access` calls also probe public, revision-pinned model payloads used at
+runtime. None of these checks accepts terms for the operator.
+
+DIG is the official Day-1 manual-ROI fresh-finetune path: it validates the clean
+images, ROI masks, and defect specification, runtime-fetches and verifies the
+pinned AnomalyGen checkpoint closure, fine-tunes the selected upstream recipe,
+then runs the upstream generator and native label export. It intentionally does
+not claim Day-0 USD scene preparation or the separate PCBA real-alignment path.
+
+IAA and EVG preserve the upstream service/batch boundary by starting the pinned
+vLLM-Omni generation service inside the same SkyPilot state that consumes it.
+Each real PAIDF component gets the upstream three retries with a 30-second retry
+delay. EVG then preserves the serial detection → captioning → anomaly Visual QA
+→ per-person Visual QA → person-attribute-search chain. Component adapters
+require the published contextual and sidecar files immediately after each
+service exits. Dataset assembly performs the upstream track-aware completeness
+rules, and a separate terminal state re-opens every media, caption, metadata,
+and labeling handoff before writing `reports/terminal-validation.json`.
+
+The optional Airflow-only YAML/HTML performance dashboard is not copied: it
+queries Airflow's task-instance REST metadata, which does not exist in the NPA
+runtime. SkyPilot/NPA retain stage timing and terminal state, while the terminal
+JSON records output counts, manifest digest, validated-artifact count, and
+trackless-scene count. This is an explicit orchestration-reporting substitution,
+not a model or data-path substitution.
+
 > **Want the from-zero runbook?** See
 > [physical-ai-data-factory-deploy.md](physical-ai-data-factory-deploy.md) for a
 > copy-paste deploy guide: install `npa`, set credentials/config, deploy the NPA

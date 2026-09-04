@@ -31,6 +31,7 @@ config:
   postprocess_root_uri: "s3://{{config.bucket}}/{{config.prefix}}/postprocessing/"
   validation_uri: "s3://{{config.bucket}}/{{config.prefix}}/postprocessing/result.json"
   final_dataset_uri: "s3://{{config.bucket}}/{{config.prefix}}/augmented_dataset/dataset.json"
+  terminal_validation_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/terminal-validation.json"
   auto_label_root_uri: "s3://{{config.bucket}}/{{config.prefix}}/auto_labeling/"
   auto_label_result_uri: "s3://{{config.bucket}}/{{config.prefix}}/auto_labeling/person-attribute-search.json"
   labels_uri: "{{config.auto_label_result_uri}}"
@@ -119,7 +120,7 @@ states:
       paidf-augmentation at its pinned revision for every mapped config, and
       terminate the service only after the batch boundary completes.
     needs: [generate-configs]
-    toolRef: workflow.paidf.run_local_augmentation
+    toolRef: workflow.paidf.run_iaa_augmentation
     resources: image-edit
     outputs:
       - uri: "{{config.augmentation_result_uri}}"
@@ -149,7 +150,7 @@ states:
       Run the genuine paidf-auto-labeling Person Attribute Search service over
       each verified edit, using the augmentation metadata as its attribute JSON.
     needs: [cosmos-post-processing]
-    toolRef: workflow.paidf.run_auto_label
+    toolRef: workflow.paidf.run_attribute_search
     resources: attribute-search
     params:
       auto_label_stage: person-attribute-search
@@ -164,4 +165,15 @@ states:
     outputs:
       - uri: "{{config.final_dataset_uri}}"
         schema: npa.paidf.native.iaa-dataset.v1
+    next: validate-final-outputs
+  validate-final-outputs:
+    description: >-
+      Re-open the final manifest and require every media, metadata, and
+      attribute-search handoff before declaring the translated DAG successful.
+    needs: [generate-augmented-dataset]
+    toolRef: workflow.paidf.validate_dataset
+    resources: cpu
+    outputs:
+      - uri: "{{config.terminal_validation_uri}}"
+        schema: npa.paidf.native.iaa-terminal-validation.v1
     terminal: true

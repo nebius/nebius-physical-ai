@@ -83,6 +83,35 @@ def test_toolref_closure_comes_from_catalog_metadata() -> None:
     }
 
 
+def test_paidf_native_toolref_closures_are_workflow_specific() -> None:
+    dig = requirements_for_tool_refs(["workflow.paidf.dig_prepare_pretrained"])
+    iaa = requirements_for_tool_refs(
+        [
+            "workflow.paidf.run_iaa_augmentation",
+            "workflow.paidf.run_attribute_search",
+        ]
+    )
+    evg = requirements_for_tool_refs(
+        [
+            "workflow.paidf.run_evg_augmentation",
+            "workflow.paidf.run_detection",
+            "workflow.paidf.run_captioning",
+            "workflow.paidf.run_visual_qa",
+            "workflow.paidf.run_attribute_search",
+        ]
+    )
+
+    assert {(item.provider, item.repo) for item in dig} == {
+        (HF, "nvidia/Cosmos-Guardrail1")
+    }
+    assert len(iaa) == 1
+    assert iaa[0].provider == NGC
+    assert "paidf-event-and-person-attribute-search-service" in iaa[0].repo
+    assert {item.provider for item in evg} == {NGC}
+    assert len(evg) == 4
+    assert all("Cosmos-Transfer" not in item.repo for item in (*dig, *iaa, *evg))
+
+
 def test_hf_ready_pending_denied_unavailable_and_public_anonymous(tmp_path: Path) -> None:
     gated = GatedAsset(
         "vendor/gated",

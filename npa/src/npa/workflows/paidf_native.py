@@ -47,8 +47,9 @@ def _run_component(
     *,
     cwd: Path | None = None,
     env: dict[str, str] | None = None,
+    retry_delay_seconds: float = 30.0,
 ) -> None:
-    """Match the upstream DAG's three component retries without a time cap."""
+    """Match the upstream DAG's three retries and 30-second retry delay."""
 
     for attempt in range(4):
         try:
@@ -57,6 +58,7 @@ def _run_component(
         except subprocess.CalledProcessError:
             if attempt == 3:
                 raise
+            time.sleep(retry_delay_seconds)
 
 
 def _configure_multistorage(*uris: str) -> None:
@@ -161,6 +163,36 @@ def _write_json(payload: dict[str, Any], uri: str) -> dict[str, Any]:
         )
         _publish(local, uri)
     return payload
+
+
+def _uri_is_file(uri: str) -> bool:
+    """Return whether an exact local/S3 artifact exists without downloading it."""
+
+    if not _is_s3(uri):
+        return Path(uri).is_file()
+    parsed = urlparse(uri)
+    key = parsed.path.lstrip("/")
+    if not key or key.endswith("/"):
+        return False
+    try:
+        StorageClient.from_environment().s3.head_object(Bucket=parsed.netloc, Key=key)
+    except Exception:  # noqa: BLE001 - provider-specific not-found responses
+        return False
+    return True
+
+
+def _uri_prefix_has_objects(uri: str) -> bool:
+    """Return whether a local/S3 directory prefix contains at least one object."""
+
+    if not _is_s3(uri):
+        path = Path(uri)
+        return path.is_file() or (path.is_dir() and any(item.is_file() for item in path.rglob("*")))
+    parsed = urlparse(uri)
+    prefix = parsed.path.lstrip("/").rstrip("/") + "/"
+    response = StorageClient.from_environment().s3.list_objects_v2(
+        Bucket=parsed.netloc, Prefix=prefix, MaxKeys=1
+    )
+    return bool(response.get("Contents"))
 
 
 def _list_s3_images(uri: str) -> list[str]:
@@ -861,7 +893,10 @@ def run_auto_label(
         completed: list[dict[str, Any]] = []
         for item in accepted:
             key = f"{item['input_key']}_aug{item['augmentation_index']}"
-            data_path = f"{auto_label_root_uri.rstrip('/')}/{key}"
+            data_path = (
+                f"{auto_label_root_uri.rstrip('/')}/{item['input_key']}/"
+                f"{item['augmentation_index']}"
+            )
             input_json = json.dumps(
                 [{"media_path": item["media_uri"], "data_path": data_path}],
                 separators=(",", ":"),
@@ -1011,8 +1046,51 @@ def run_auto_label(
                 if workflow == "iaa":
                     args.extend(["--attribute-json", item["metadata_uri"]])
             _run_component(args)
+            required: tuple[str, ...]
+            if stage == "detection":
+                required = ("contextual/objects.json", "contextual/instances.json")
+            elif stage == "captioning":
+                required = ("sidecars/captioning/video_captions.json",)
+            elif stage == "visual-qa-anomaly":
+                required = ("sidecars/visual_qa_anomaly/items.json",)
+            elif stage == "visual-qa-person":
+                required = (
+                    "sidecars/visual_qa_per_track/items.json",
+                    "sidecars/visual_qa_per_track/windows.normalized.json",
+                )
+            elif workflow == "evg" and _uri_is_file(
+                f"{data_path}/sidecars/detection_and_tracking/tracks.json"
+            ):
+                required = (
+                    "sidecars/person_attribute_search/pas.json",
+                    "sidecars/person_attribute_search/chunk_queries.json",
+                    "sidecars/person_attribute_search/pas_anomaly.json",
+                    "contextual/person_attributes.json",
+                    "contextual/pas_queries.json",
+                )
+            else:
+                required = ()
+            missing = [
+                relative
+                for relative in required
+                if not _uri_is_file(f"{data_path}/{relative}")
+            ]
+            if missing:
+                raise PaidfNativeError(
+                    f"{stage} omitted {len(missing)} required published sidecar(s)"
+                )
+            if workflow == "iaa" and not _uri_prefix_has_objects(data_path):
+                raise PaidfNativeError(
+                    "IAA attribute search produced no dataset objects"
+                )
             completed.append(
-                {"key": key, "data_path": data_path, "media_uri": item["media_uri"]}
+                {
+                    "key": key,
+                    "data_path": data_path,
+                    "media_uri": item["media_uri"],
+                    "required_artifacts": list(required),
+                    "trackless": stage == "person-attribute-search" and not required,
+                }
             )
     payload = {
         "schema": f"{SCHEMA_PREFIX}.{workflow}-auto-label-{stage}.v1",
@@ -1042,25 +1120,71 @@ def finalize_dataset(
     accepted = validation.get("accepted")
     if not isinstance(accepted, list) or not accepted:
         raise PaidfNativeError("cannot finalize a dataset with no accepted media")
+    label_outputs = labels.get("outputs")
+    if not isinstance(label_outputs, list):
+        raise PaidfNativeError("labeling result has no output records")
+    label_by_key = {str(item.get("key")): item for item in label_outputs}
     entries = []
+    validated_artifact_count = 0
+    trackless_count = 0
     for item in accepted:
+        key = f"{item['input_key']}_aug{item['augmentation_index']}"
+        label = label_by_key.get(key)
+        if not isinstance(label, dict) or not str(label.get("data_path") or ""):
+            raise PaidfNativeError(f"final dataset has no labeling output for {key}")
+        data_path = str(label["data_path"])
+        if workflow == "evg":
+            required = (
+                "contextual/objects.json",
+                "contextual/instances.json",
+                "sidecars/captioning/video_captions.json",
+                "sidecars/visual_qa_anomaly/items.json",
+                "sidecars/visual_qa_per_track/items.json",
+                "sidecars/visual_qa_per_track/windows.normalized.json",
+            )
+            missing = [
+                relative
+                for relative in required
+                if not _uri_is_file(f"{data_path}/{relative}")
+            ]
+            tracks = _uri_is_file(
+                f"{data_path}/sidecars/detection_and_tracking/tracks.json"
+            )
+            if tracks:
+                track_required = (
+                    "sidecars/person_attribute_search/pas.json",
+                    "sidecars/person_attribute_search/chunk_queries.json",
+                    "sidecars/person_attribute_search/pas_anomaly.json",
+                    "contextual/person_attributes.json",
+                    "contextual/pas_queries.json",
+                )
+                missing.extend(
+                    relative
+                    for relative in track_required
+                    if not _uri_is_file(f"{data_path}/{relative}")
+                )
+                validated_artifact_count += 1 + len(track_required)
+            else:
+                trackless_count += 1
+            if missing:
+                raise PaidfNativeError(
+                    f"EVG terminal validation found {len(missing)} missing "
+                    f"published sidecar(s) for {key}"
+                )
+            validated_artifact_count += len(required)
+        elif not _uri_prefix_has_objects(data_path):
+            raise PaidfNativeError(f"IAA terminal dataset is empty for {key}")
+        else:
+            validated_artifact_count += 1
         entry = {
-            "key": f"{item['input_key']}_aug{item['augmentation_index']}",
+            "key": key,
             "media": item["media_uri"],
             "caption": item["caption_uri"],
             "metadata": item["metadata_uri"],
             "variables": item["variables"],
             "sha256": item["sha256"],
             "size_bytes": item["size_bytes"],
-            "labels": next(
-                (
-                    value["data_path"]
-                    for value in labels.get("outputs", [])
-                    if value.get("key")
-                    == f"{item['input_key']}_aug{item['augmentation_index']}"
-                ),
-                "",
-            ),
+            "labels": data_path,
         }
         entries.append(entry)
     payload = {
@@ -1069,6 +1193,8 @@ def finalize_dataset(
         "workflow": workflow,
         "status": "completed",
         "entry_count": len(entries),
+        "validated_artifact_count": validated_artifact_count,
+        "trackless_scene_count": trackless_count,
         "entries": entries,
         "upstream": upstream,
         "lineage": {
@@ -1078,6 +1204,45 @@ def finalize_dataset(
         },
     }
     return _write_json(payload, output_uri)
+
+
+def validate_dataset(dataset_uri: str, report_uri: str, run_id: str) -> dict[str, Any]:
+    """Fail closed on the published native dataset and emit a terminal decision."""
+
+    dataset = _read_json(dataset_uri)
+    entries = dataset.get("entries")
+    if (
+        dataset.get("status") != "completed"
+        or not isinstance(entries, list)
+        or not entries
+        or dataset.get("entry_count") != len(entries)
+    ):
+        raise PaidfNativeError("terminal dataset manifest is incomplete")
+    missing = []
+    for entry in entries:
+        for field in ("media", "caption", "metadata"):
+            value = str(entry.get(field) or "")
+            if not value or not _uri_is_file(value):
+                missing.append(f"{entry.get('key', '<unknown>')}:{field}")
+        labels = str(entry.get("labels") or "")
+        if not labels or not _uri_prefix_has_objects(labels):
+            missing.append(f"{entry.get('key', '<unknown>')}:labels")
+    if missing:
+        raise PaidfNativeError(
+            f"terminal dataset validation found {len(missing)} missing artifact(s)"
+        )
+    encoded = json.dumps(dataset, sort_keys=True, separators=(",", ":")).encode()
+    payload = {
+        "schema": f"{SCHEMA_PREFIX}.{dataset['workflow']}-terminal-validation.v1",
+        "run_id": run_id,
+        "status": "passed",
+        "dataset_uri": dataset_uri,
+        "dataset_manifest_sha256": hashlib.sha256(encoded).hexdigest(),
+        "entry_count": len(entries),
+        "validated_artifact_count": dataset.get("validated_artifact_count", 0),
+        "trackless_scene_count": dataset.get("trackless_scene_count", 0),
+    }
+    return _write_json(payload, report_uri)
 
 
 def run_dig_train(
@@ -1348,6 +1513,10 @@ def build_parser() -> argparse.ArgumentParser:
     ):
         final.add_argument(f"--{name}", required=True)
 
+    terminal = subparsers.add_parser("validate-dataset")
+    for name in ("dataset-uri", "report-uri", "run-id"):
+        terminal.add_argument(f"--{name}", required=True)
+
     dig = subparsers.add_parser("dig-infer")
     for name in (
         "dataset-uri",
@@ -1403,6 +1572,7 @@ def main(argv: list[str] | None = None) -> None:
         "postprocess-iaa": postprocess_iaa,
         "run-auto-label": run_auto_label,
         "finalize-dataset": finalize_dataset,
+        "validate-dataset": validate_dataset,
         "dig-train": run_dig_train,
         "dig-prepare-pretrained": prepare_dig_pretrained,
         "dig-infer": run_dig_inference,

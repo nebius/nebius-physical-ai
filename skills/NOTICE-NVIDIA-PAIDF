@@ -71,6 +71,18 @@ Runtime model snapshots are also pinned and remain outside published images:
   nvidia/Cosmos3-Super-Image2Video
   revision 4f847566f3d3388fbf0ac07b99dd1a6432db9ecd
 
+The DIG runtime additionally consumes the exact public snapshots pinned by
+NVIDIA/paidf-anomalygen: Cosmos3 Nano and Edge, DINOv2 Large, C-RADIOv3-B,
+Wan2.2 TI2V-5B's VAE, SAM2.1 Hiera Large, Qwen3Guard 0.6B, and the Qwen3-VL 8B
+tokenizer. Cosmos Guardrail1 remains a separately gated runtime fetch. The NPA
+model-access catalog records every public revision/probe and the exact gated
+payload; none is embedded in the restricted compatibility image.
+
+IAA/EVG labeling runs vendor-owned NGC images at the immutable digests listed in
+the workflow provenance. NPA's toolRef access closure probes each exact image
+repository under the operator's NGC credential before submission. That proves
+pull entitlement only and does not grant redistribution rights.
+
 Gated weights remain runtime fetches under the operator's own upstream identity.
 Access credentials prove fetch authorization, not permission to redistribute
 weights. See `skills/NOTICE-NVIDIA-COSMOS-OSS` and

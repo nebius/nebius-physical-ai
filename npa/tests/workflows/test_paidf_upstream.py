@@ -217,7 +217,7 @@ def test_native_iaa_preserves_postprocess_and_attribute_search_boundaries() -> N
         states["cosmos-post-processing"]["next"] == "event-and-person-attribute-search"
     )
     assert states["event-and-person-attribute-search"]["toolRef"] == (
-        "workflow.paidf.run_auto_label"
+        "workflow.paidf.run_attribute_search"
     )
 
 
@@ -238,6 +238,13 @@ def test_native_evg_preserves_published_sequential_labeling_chain() -> None:
         "person-attribute-visual-qa",
         "person-attribute-search",
         "generate-anomaly-dataset",
+        "validate-final-outputs",
     ]
     for current, successor in zip(chain, chain[1:]):
         assert states[current]["next"] == successor
+    assert states["detection-and-tracking"]["toolRef"] == "workflow.paidf.run_detection"
+    assert states["captioning"]["toolRef"] == "workflow.paidf.run_captioning"
+    assert states["anomaly-visual-qa"]["toolRef"] == "workflow.paidf.run_visual_qa"
+    assert states["person-attribute-search"]["toolRef"] == (
+        "workflow.paidf.run_attribute_search"
+    )

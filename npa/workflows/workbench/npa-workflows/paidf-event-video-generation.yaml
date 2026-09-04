@@ -28,6 +28,7 @@ config:
   validation_uri: "s3://{{config.bucket}}/{{config.prefix}}/cosmos/validation.json"
   augmentation_validation_uri: "{{config.validation_uri}}"
   final_dataset_uri: "s3://{{config.bucket}}/{{config.prefix}}/anomaly_dataset/dataset.json"
+  terminal_validation_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/terminal-validation.json"
   auto_label_root_uri: "s3://{{config.bucket}}/{{config.prefix}}/auto_labeling/"
   auto_label_result_uri: "s3://{{config.bucket}}/{{config.prefix}}/auto_labeling/person-attribute-search.json"
   labels_uri: "{{config.auto_label_result_uri}}"
@@ -157,7 +158,7 @@ states:
       placement while retaining the same two-way CFG parallelism, model, and
       OpenAI video protocol.
     needs: [generate-configs]
-    toolRef: workflow.paidf.run_local_augmentation
+    toolRef: workflow.paidf.run_evg_augmentation
     resources: image2video
     outputs:
       - uri: "{{config.augmentation_result_uri}}"
@@ -173,7 +174,7 @@ states:
     next: detection-and-tracking
   detection-and-tracking:
     needs: [validate-cosmos-outputs]
-    toolRef: workflow.paidf.run_auto_label
+    toolRef: workflow.paidf.run_detection
     resources: detection
     params:
       auto_label_stage: detection
@@ -184,7 +185,7 @@ states:
     next: captioning
   captioning:
     needs: [detection-and-tracking]
-    toolRef: workflow.paidf.run_auto_label
+    toolRef: workflow.paidf.run_captioning
     resources: captioning
     params:
       auto_label_stage: captioning
@@ -195,7 +196,7 @@ states:
     next: anomaly-visual-qa
   anomaly-visual-qa:
     needs: [captioning]
-    toolRef: workflow.paidf.run_auto_label
+    toolRef: workflow.paidf.run_visual_qa
     resources: visual-qa
     params:
       auto_label_stage: visual-qa-anomaly
@@ -206,7 +207,7 @@ states:
     next: person-attribute-visual-qa
   person-attribute-visual-qa:
     needs: [anomaly-visual-qa]
-    toolRef: workflow.paidf.run_auto_label
+    toolRef: workflow.paidf.run_visual_qa
     resources: visual-qa
     params:
       auto_label_stage: visual-qa-person
@@ -217,7 +218,7 @@ states:
     next: person-attribute-search
   person-attribute-search:
     needs: [person-attribute-visual-qa]
-    toolRef: workflow.paidf.run_auto_label
+    toolRef: workflow.paidf.run_attribute_search
     resources: attribute-search
     params:
       auto_label_stage: person-attribute-search
@@ -232,4 +233,15 @@ states:
     outputs:
       - uri: "{{config.final_dataset_uri}}"
         schema: npa.paidf.native.evg-dataset.v1
+    next: validate-final-outputs
+  validate-final-outputs:
+    description: >-
+      Re-open the final manifest and require the published EVG contextual and
+      sidecar contract for every scene before declaring workflow success.
+    needs: [generate-anomaly-dataset]
+    toolRef: workflow.paidf.validate_dataset
+    resources: cpu
+    outputs:
+      - uri: "{{config.terminal_validation_uri}}"
+        schema: npa.paidf.native.evg-terminal-validation.v1
     terminal: true

@@ -41,6 +41,24 @@ The IAA and EVG service model snapshots are also immutable workflow config:
 Qwen Image Edit `6f3ccc0b56e431dc6a0c2b2039706d7d26f22cb9` and Cosmos3 Super
 Image2Video `4f847566f3d3388fbf0ac07b99dd1a6432db9ecd`, respectively.
 
+For the three native translations, use the generic workflow validate/plan/submit
+surface. Run `health access` for `paidf-dig`, `paidf-iaa`, `paidf-evg`, and the
+selected `paidf-label-*` capabilities before image preflight or GPU work. The
+toolRefs are deliberately stage-specific so IAA does not inherit EVG's NGC
+images and none of the three inherits the legacy Transfer checkpoint closure.
+Never treat a credential as EULA acceptance.
+
+IAA/EVG generation keeps the vLLM-Omni service and real paidf-augmentation
+consumer in one SkyPilot state. Component subprocesses preserve three retries
+and the upstream 30-second retry delay. Require each published auto-label
+sidecar after its service stage; assemble only accepted media; then run the
+separate `validate-final-outputs` state, which re-opens all terminal handoffs and
+writes `reports/terminal-validation.json`. A trackless EVG scene may omit only
+the track-dependent PAS artifacts. The optional upstream Airflow REST-derived
+HTML timing dashboard has no Airflow-free equivalent; use NPA/SkyPilot stage
+timings plus the terminal JSON counts and manifest digest, and state that
+orchestration-reporting substitution explicitly.
+
 Three NVIDIA components in the pipeline are the real open-source projects, not
 NPA look-alikes: **Cosmos Transfer 2.5** augments, **Cosmos Evaluator**
 (https://github.com/nvidia-cosmos/cosmos-evaluator, Apache-2.0) grades, and

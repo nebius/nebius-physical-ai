@@ -5,6 +5,7 @@ import os
 import subprocess
 from pathlib import Path
 
+import pytest
 import yaml
 from PIL import Image
 
@@ -21,6 +22,7 @@ def test_component_runner_preserves_three_upstream_retries(monkeypatch) -> None:
             raise subprocess.CalledProcessError(1, ["component"])
 
     monkeypatch.setattr(paidf_native.subprocess, "run", fail_then_succeed)
+    monkeypatch.setattr(paidf_native.time, "sleep", lambda _seconds: None)
     paidf_native._run_component(["component"])
     assert attempts == 4
 
@@ -222,3 +224,128 @@ def test_build_configs_mutates_pinned_upstream_protocol_without_replacing_it(
     assert config["evaluators"] == [{"attribute_verification": {"enabled": True}}]
     assert config["augmentation"]["parameters"]["extra_body"]["seed"] == 7
     assert config["data"][0]["output"]["metadata"].endswith("output_metadata.json")
+
+
+def test_evg_finalize_and_terminal_validation_require_published_sidecars(
+    tmp_path: Path,
+) -> None:
+    media = tmp_path / "output.mp4"
+    caption = tmp_path / "caption.txt"
+    metadata = tmp_path / "metadata.json"
+    for path in (media, caption, metadata):
+        path.write_text("real-artifact", encoding="utf-8")
+    data_path = tmp_path / "auto_labeling/input-0000/0"
+    required = (
+        "contextual/objects.json",
+        "contextual/instances.json",
+        "sidecars/captioning/video_captions.json",
+        "sidecars/visual_qa_anomaly/items.json",
+        "sidecars/visual_qa_per_track/items.json",
+        "sidecars/visual_qa_per_track/windows.normalized.json",
+    )
+    for relative in required:
+        target = data_path / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("{}", encoding="utf-8")
+    validation = tmp_path / "validation.json"
+    validation.write_text(
+        json.dumps(
+            {
+                "accepted": [
+                    {
+                        "input_key": "input-0000",
+                        "augmentation_index": 0,
+                        "media_uri": str(media),
+                        "caption_uri": str(caption),
+                        "metadata_uri": str(metadata),
+                        "variables": {"anomaly_type": "person_falling"},
+                        "sha256": "a" * 64,
+                        "size_bytes": media.stat().st_size,
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    upstream = tmp_path / "upstream.json"
+    upstream.write_text(json.dumps({"schema": "npa.paidf.upstream.v1"}), encoding="utf-8")
+    labels = tmp_path / "labels.json"
+    labels.write_text(
+        json.dumps(
+            {
+                "outputs": [
+                    {"key": "input-0000_aug0", "data_path": str(data_path)}
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    dataset = tmp_path / "dataset.json"
+
+    result = paidf_native.finalize_dataset(
+        "evg",
+        str(validation),
+        str(upstream),
+        str(labels),
+        str(dataset),
+        "unit-run",
+    )
+    report = paidf_native.validate_dataset(
+        str(dataset), str(tmp_path / "terminal.json"), "unit-run"
+    )
+
+    assert result["validated_artifact_count"] == len(required)
+    assert result["trackless_scene_count"] == 1
+    assert report["status"] == "passed"
+    assert len(report["dataset_manifest_sha256"]) == 64
+
+
+def test_evg_finalize_fails_closed_when_a_required_sidecar_is_missing(
+    tmp_path: Path,
+) -> None:
+    validation = tmp_path / "validation.json"
+    validation.write_text(
+        json.dumps(
+            {
+                "accepted": [
+                    {
+                        "input_key": "input-0000",
+                        "augmentation_index": 0,
+                        "media_uri": str(tmp_path / "video.mp4"),
+                        "caption_uri": str(tmp_path / "caption.txt"),
+                        "metadata_uri": str(tmp_path / "metadata.json"),
+                        "variables": {},
+                        "sha256": "b" * 64,
+                        "size_bytes": 1,
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    upstream = tmp_path / "upstream.json"
+    upstream.write_text("{}", encoding="utf-8")
+    labels = tmp_path / "labels.json"
+    labels.write_text(
+        json.dumps(
+            {
+                "outputs": [
+                    {
+                        "key": "input-0000_aug0",
+                        "data_path": str(tmp_path / "empty-labels"),
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(paidf_native.PaidfNativeError, match="missing published sidecar"):
+        paidf_native.finalize_dataset(
+            "evg",
+            str(validation),
+            str(upstream),
+            str(labels),
+            str(tmp_path / "dataset.json"),
+            "unit-run",
+        )
