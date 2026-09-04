@@ -87,6 +87,9 @@ agent-trace = [
     "langfuse>=2.0",
     "opentelemetry-sdk>=1.20",
 ]
+# Encord curation SaaS client (Apache-2.0 wheel, CPU-only deps). Lazy-imported
+# by npa.workbench.encord; workflow stages install it via TOOL_REF_PIP_EXTRAS.
+encord = ["encord>=0.1.201,<0.2"]
 leisaac = [
     # BSD-2-Clause wrapper. PyPI wheels bundle a separately licensed static
     # FFmpeg executable; LeIsaac packaging scans and records those bytes.
