@@ -25,6 +25,7 @@ from npa.cli._typer_defaults import resolve_typer_defaults
 from npa.clients.project_credential_store import (
     persist_agent_service_account_id as _persist_project_agent_service_account_id,
     persist_agent_terraform_credentials,
+    project_credential_record,
 )
 from npa.lifecycle_intent import OperationIntent, intent_boundary
 from npa.cli.agent_errors import _agent_deploy_failure_hint
@@ -761,6 +762,78 @@ def _resolve_agent_storage_credentials(
         str(getattr(tf_state, "endpoint", "") or ""),
         str(getattr(tf_state, "access_key", "") or ""),
         str(getattr(tf_state, "secret_key", "") or ""),
+        service_account_id,
+    )
+
+
+def _resolve_configured_artifact_storage_credentials(
+    artifact_sources: tuple[dict[str, str], ...] | list[dict[str, str]],
+    *,
+    deployment_project_id: str,
+    current: tuple[str, str, str, str, str, str],
+) -> tuple[str, str, str, str, str, str]:
+    """Select an exact source project's owner-stored S3 identity.
+
+    A source tuple is not a grant. Cross-project defaults therefore resolve
+    credentials only from that exact project's private credential record.
+    """
+    sources = normalize_configured_artifact_sources(artifact_sources)
+    if not sources:
+        return current
+    source_projects = {item["project_id"] for item in sources}
+    if len(source_projects) != 1:
+        raise AgentStorageCredentialError(
+            "configured artifact sources must use one exact credential project"
+        )
+    source_project = next(iter(source_projects))
+    source_bucket = sources[0]["bucket"]
+    source_prefix = sources[0]["resolved_prefix"]
+    current_bucket, _prefix, endpoint, access_key, secret_key, service_account_id = (
+        current
+    )
+    if source_project == str(deployment_project_id or "").strip():
+        if not (endpoint and access_key and secret_key):
+            raise AgentStorageCredentialError(
+                "deployment project has no owner-stored S3 credentials for the configured artifact source"
+            )
+        return (
+            source_bucket,
+            source_prefix,
+            endpoint,
+            access_key,
+            secret_key,
+            service_account_id,
+        )
+
+    record = project_credential_record(source_project, migrate_legacy=False)
+    storage = record.get("storage") if isinstance(record, dict) else None
+    storage = storage if isinstance(storage, dict) else {}
+    saved_bucket = (
+        str(storage.get("bucket") or storage.get("s3_bucket") or "")
+        .removeprefix("s3://")
+        .strip("/")
+    )
+    saved_endpoint = str(
+        storage.get("endpoint_url") or storage.get("endpoint") or ""
+    ).strip()
+    saved_access_key = str(
+        storage.get("aws_access_key_id") or storage.get("access_key_id") or ""
+    ).strip()
+    saved_secret_key = str(
+        storage.get("aws_secret_access_key") or storage.get("secret_access_key") or ""
+    ).strip()
+    if saved_bucket != source_bucket or not (
+        saved_endpoint and saved_access_key and saved_secret_key
+    ):
+        raise AgentStorageCredentialError(
+            "owner credential store has no exact matching artifact source credentials"
+        )
+    return (
+        source_bucket,
+        source_prefix,
+        saved_endpoint,
+        saved_access_key,
+        saved_secret_key,
         service_account_id,
     )
 
@@ -10732,6 +10805,25 @@ def bootstrap_cmd(
         s3_secret_key,
         service_account_id,
     ) = _resolve_agent_storage_credentials(project, record)
+    (
+        s3_bucket,
+        s3_prefix,
+        s3_endpoint,
+        s3_access_key,
+        s3_secret_key,
+        service_account_id,
+    ) = _resolve_configured_artifact_storage_credentials(
+        artifact_sources,
+        deployment_project_id=project_id,
+        current=(
+            s3_bucket,
+            s3_prefix,
+            s3_endpoint,
+            s3_access_key,
+            s3_secret_key,
+            service_account_id,
+        ),
+    )
     if not service_account_id:
         service_account_id = _resolve_agent_service_account_id(project, record)
     agent_credentials: dict[str, str] | None = None

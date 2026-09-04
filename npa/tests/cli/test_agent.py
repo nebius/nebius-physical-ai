@@ -6091,6 +6091,84 @@ def test_artifact_source_file_rejects_non_private_permissions(tmp_path) -> None:
         agent_module._load_agent_artifact_sources_file(str(source_file))
 
 
+def test_cross_project_artifact_source_uses_exact_private_credential_record(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        agent_module,
+        "project_credential_record",
+        lambda project_id, **_kwargs: {
+            "project_id": project_id,
+            "storage": {
+                "bucket": "bucket-exact",
+                "endpoint_url": "https://objects.example",
+                "aws_access_key_id": "synthetic-access",
+                "aws_secret_access_key": "synthetic-secret",
+            },
+        },
+    )
+    current = (
+        "deployment-bucket",
+        "",
+        "https://deployment.example",
+        "deployment-access",
+        "deployment-secret",
+        "service-account",
+    )
+
+    assert agent_module._resolve_configured_artifact_storage_credentials(
+        [
+            {
+                "project_id": "project-exact",
+                "bucket": "bucket-exact",
+                "resolved_prefix": "preserved/runs",
+            }
+        ],
+        deployment_project_id="project-deployment",
+        current=current,
+    ) == (
+        "bucket-exact",
+        "preserved/runs",
+        "https://objects.example",
+        "synthetic-access",
+        "synthetic-secret",
+        "service-account",
+    )
+
+
+def test_cross_project_artifact_source_rejects_mismatched_private_bucket(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        agent_module,
+        "project_credential_record",
+        lambda _project_id, **_kwargs: {
+            "storage": {
+                "bucket": "other-bucket",
+                "endpoint_url": "https://objects.example",
+                "aws_access_key_id": "synthetic-access",
+                "aws_secret_access_key": "synthetic-secret",
+            }
+        },
+    )
+
+    with pytest.raises(
+        agent_module.AgentStorageCredentialError,
+        match="no exact matching artifact source credentials",
+    ):
+        agent_module._resolve_configured_artifact_storage_credentials(
+            [
+                {
+                    "project_id": "project-exact",
+                    "bucket": "bucket-exact",
+                    "resolved_prefix": "preserved/runs",
+                }
+            ],
+            deployment_project_id="project-deployment",
+            current=("", "", "", "", "", "service-account"),
+        )
+
+
 def test_resolve_project_alias_prefers_the_only_configured_project(monkeypatch) -> None:
     """`default_project_name()` returns "default" for an unset config, naming nothing."""
     from npa.cli import agent as agent_module
