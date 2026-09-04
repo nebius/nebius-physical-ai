@@ -326,6 +326,24 @@ def test_declared_skypilot_images_enforce_the_versioned_build_contract() -> None
         assert (
             'exec "$@"' in entrypoint_text or 'exec "$MODE" "$@"' in entrypoint_text
         ), name
+        if name in {
+            "sim2real-control",
+            "cosmos2-transfer",
+            "envgen",
+            "isaac-lab",
+            "rerun-viewer",
+        }:
+            # Build-time keys are removed from every coherent Sim2Real image.
+            # Its entrypoint must create a unique per-pod identity before
+            # forwarding SkyPilot's keep-alive argv, otherwise service ssh
+            # starts without a usable host key even though the package checks
+            # all pass.
+            assert "NPA_IMAGE_SOURCE_SHA" in entrypoint_text, name
+            assert "sudo -n /usr/bin/ssh-keygen -A" in entrypoint_text, name
+            assert "test -s /etc/ssh/ssh_host_ed25519_key" in entrypoint_text, name
+            assert entrypoint_text.index("ssh-keygen -A") < entrypoint_text.index(
+                'exec "$@"'
+            ), name
 
 
 def test_packaged_skypilot_attestation_inventory_matches_contract() -> None:

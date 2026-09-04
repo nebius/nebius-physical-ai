@@ -14,6 +14,18 @@
 # command runs as given, and a bare `docker run <image>` still lands in a shell.
 set -euo pipefail
 
+# Never bake an SSH host identity into a public image.  Materialize a fresh key
+# pair in the pod writable layer before SkyPilot's forwarded keep-alive command
+# allows its bootstrap to start sshd.
+if [[ -n "${NPA_IMAGE_SOURCE_SHA:-}" ]] \
+  && [[ ! -s /etc/ssh/ssh_host_ed25519_key ]]; then
+  sudo -n /usr/bin/ssh-keygen -A
+fi
+if [[ -n "${NPA_IMAGE_SOURCE_SHA:-}" ]]; then
+  test -s /etc/ssh/ssh_host_ed25519_key
+  test -s /etc/ssh/ssh_host_ed25519_key.pub
+fi
+
 if [ "$#" -eq 0 ]; then
   exec /bin/bash
 fi
