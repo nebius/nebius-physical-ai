@@ -21,9 +21,9 @@ making architecture, review, or domain judgments.
  Nebius GPU path, describe hosted inference by what it does, and stay warm and
  genuinely helpful when someone asks about cost or has no cluster yet.
 - `skills/atomic/health-preflight/SKILL.md`: there is no `npa doctor`. Prove
-  service credentials, Nebius CLI authentication, and gated-model access with
-  `npa workbench health preflight` / `access` before provisioning or spending
-  GPU time.
+  service credentials with `npa workbench health preflight`, request
+  `--checks nebius` before provisioning, and verify gated-model access with
+  `npa workbench health access` before spending GPU time.
 - `skills/atomic/debug-failed-run/SKILL.md`: triage a run that failed, hung, or
  produced no artifacts — status and pod-level reason, stage logs, S3 evidence,
  image pullability, scheduling, and the resume-vs-cancel decision.

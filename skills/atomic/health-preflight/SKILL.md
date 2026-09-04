@@ -1,6 +1,6 @@
 ---
 name: health-preflight
-description: Use before any deploy, image build, provisioning, or GPU submit to prove service credentials, Nebius CLI authentication, and gated-model access with `npa workbench health preflight` and `npa workbench health access`.
+description: Use before any deploy, image build, provisioning, or GPU submit to prove service credentials with `npa workbench health preflight`, request `--checks nebius` before provisioning, and verify gated-model access with `npa workbench health access`.
 ---
 
 # Health preflight (the doctor before you spend)
