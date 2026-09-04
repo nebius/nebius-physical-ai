@@ -16,6 +16,9 @@ RUNNER_FILES = (
 # These specialized suites intentionally remain operator-invoked. The reason is
 # machine-reviewed here instead of letting an environment gate silently rot.
 MANUAL_GATES = {
+    "NPA_FLEET_QUOTA_VERIFY_SPEC": (
+        "read-only Fleet storage quota checks require an owner-private planned spec"
+    ),
     "NPA_FLEET_PROJECT_VERIFY_SPEC": (
         "read-only Fleet identity checks require an owner-private exact project spec"
     ),

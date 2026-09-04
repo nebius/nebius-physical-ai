@@ -66,6 +66,34 @@ empty in public specs so Fleet derives a stable private name at runtime. Fleet
 retains buckets and durable artifacts on cluster destroy; explicit
 `npa storage bucket delete` remains the destructive cleanup boundary.
 
+Before any project, bucket, subnet, or cluster mutation, deploy budgets all new
+bucket declarations against tenant `storage.bucket.count` and the matching
+`storage.bucket.size.<class>` allowance (`enhanced-throughput` for Enhanced).
+The size allowance uses bytes, separately from filesystem quotas. Missing,
+unreadable, or insufficient evidence fails closed. Every selected existing
+bucket must match the exact project, name, region, active/unsuspended state,
+storage class, and cap before reuse. Verified existing buckets are not charged
+again as new quota demand; a new storage declaration is still checked when its
+cluster is unchanged. Read/write success without verified probe deletion cannot
+mark Fleet storage ready.
+
+A bucket cap is a maximum, not reserved storage. Available tenant capacity can
+change after preflight, including when other buckets grow. See the official
+[bucket contract](https://docs.nebius.com/terraform-provider/reference/resources/storage_v1_bucket)
+and [storage quotas](https://docs.nebius.com/object-storage/resources/quotas-limits).
+
+Run the read-only reservation and storage quota regression against a private
+planning spec even before its target projects exist:
+
+```bash
+NPA_INTEGRATION_E2E=1 NPA_FLEET_QUOTA_VERIFY_SPEC=<private-spec-path> \
+  npa/.venv/bin/python -m pytest \
+  npa/tests/e2e/test_fleet_storage_quota_live_e2e.py -q
+```
+
+This proves capacity evidence only; project identity, actual bucket provisioning,
+GPU readiness, and representative workloads remain separate deployment gates.
+
 ```yaml
 apiVersion: npa.fleet/v0.0.1
 name: fleet1-test

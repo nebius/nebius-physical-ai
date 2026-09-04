@@ -1017,22 +1017,116 @@ def _verify_object_storage_shape(
     provider_spec = item.get("spec")
     if not isinstance(provider_spec, dict):
         raise RuntimeError("object-storage bucket returned no provider spec")
-    from npa.clients.nebius import normalize_bucket_storage_class
-
-    actual_class = normalize_bucket_storage_class(
-        str(provider_spec.get("default_storage_class", ""))
-    )
+    # Unknown or omitted provider values are not evidence of STANDARD. The
+    # interactive client's normalizer intentionally defaults them, whereas
+    # Fleet must prove the exact declarative shape before reuse or mutation.
+    actual_class = str(provider_spec.get("default_storage_class", "")).lower()
     expected_class = storage.normalized_storage_class()
-    try:
-        actual_bytes = int(provider_spec.get("max_size_bytes", 0) or 0)
-    except (TypeError, ValueError) as exc:
-        raise RuntimeError("object-storage bucket returned an invalid capacity cap") from exc
+    raw_bytes = provider_spec.get("max_size_bytes")
+    if (
+        isinstance(raw_bytes, bool)
+        or not isinstance(raw_bytes, (int, str))
+        or not str(raw_bytes).isdigit()
+    ):
+        raise RuntimeError("object-storage bucket returned an invalid capacity cap")
+    actual_bytes = int(raw_bytes)
     expected_bytes = storage.size_gibibytes * 1024**3
     if actual_class != expected_class or actual_bytes != expected_bytes:
         raise RuntimeError(
             "existing object-storage bucket does not match the requested "
             "storage class and exact capacity cap"
         )
+
+
+def _object_storage_bucket_name(
+    *,
+    spec: FleetSpec,
+    project: ProjectSpec,
+    project_id: str,
+    tenant_id: str,
+    fleet_root: Path,
+) -> str:
+    storage = project.object_storage
+    assert storage is not None and storage.enabled
+    saved = _load_json_file(fleet_root / project.key() / _PROJECT_OBJECT_STORAGE_STATE)
+    if saved.get("project_id") and saved["project_id"] != project_id:
+        raise RuntimeError(
+            "object-storage state belongs to a different provider project"
+        )
+    return storage.bucket_name or str(
+        saved.get("bucket_name")
+        or _fleet_bucket_name(
+            fleet_name=spec.name, tenant_id=tenant_id, project_id=project_id
+        )
+    )
+
+
+def _verify_object_storage_identity(
+    item: dict[str, Any],
+    *,
+    project_id: str,
+    bucket_name: str,
+    region: str,
+) -> None:
+    metadata = item.get("metadata") or {}
+    status = item.get("status") or {}
+    if (
+        not isinstance(metadata, dict)
+        or not isinstance(status, dict)
+        or not metadata.get("id")
+        or metadata.get("parent_id") != project_id
+        or metadata.get("name") != bucket_name
+        or status.get("region") != region
+        or status.get("state") != "ACTIVE"
+        or status.get("suspension_state") != "NOT_SUSPENDED"
+        or status.get("deleted_at")
+        or status.get("purge_at")
+    ):
+        raise RuntimeError(
+            "object-storage bucket identity or active state is unverified"
+        )
+
+
+def _pending_project_object_storage(
+    *,
+    spec: FleetSpec,
+    projects: list[tuple[ProjectSpec, str]],
+    project_ids: dict[str, str],
+    tenant_id: str,
+    profile: str,
+    fleet_root: Path,
+) -> dict[str, list[ObjectStorageSpec]]:
+    """Read all selected buckets before any Fleet resource can be mutated."""
+
+    from npa.clients import nebius as nebius_client
+
+    pending: dict[str, list[ObjectStorageSpec]] = {}
+    with _storage_profile_scope(profile):
+        for project, region in projects:
+            storage = project.object_storage
+            if storage is None or not storage.enabled:
+                continue
+            project_id = project_ids.get(project.key(), "")
+            if project_id:
+                bucket_name = _object_storage_bucket_name(
+                    spec=spec,
+                    project=project,
+                    project_id=project_id,
+                    tenant_id=tenant_id,
+                    fleet_root=fleet_root,
+                )
+                existing = nebius_client.get_bucket_by_name(project_id, bucket_name)
+                if existing is not None:
+                    _verify_object_storage_shape(existing, storage)
+                    _verify_object_storage_identity(
+                        existing,
+                        project_id=project_id,
+                        bucket_name=bucket_name,
+                        region=region,
+                    )
+                    continue
+            pending.setdefault(region, []).append(storage)
+    return pending
 
 
 def _ensure_project_object_storage(
@@ -1055,16 +1149,13 @@ def _ensure_project_object_storage(
     from npa.clients.storage_setup import provision_storage
 
     state_path = fleet_root / project.key() / _PROJECT_OBJECT_STORAGE_STATE
-    saved = _load_json_file(state_path)
-    saved_project = str(saved.get("project_id") or "")
-    if saved_project and saved_project != project_id:
-        raise RuntimeError(
-            "object-storage state belongs to a different provider project"
-        )
-    generated_name = _fleet_bucket_name(
-        fleet_name=spec.name, tenant_id=tenant_id, project_id=project_id
+    bucket_name = _object_storage_bucket_name(
+        spec=spec,
+        project=project,
+        project_id=project_id,
+        tenant_id=tenant_id,
+        fleet_root=fleet_root,
     )
-    bucket_name = storage.bucket_name or str(saved.get("bucket_name") or generated_name)
     _log(
         on_status,
         f"project {project.key()}: reconciling {storage.display_storage_class()} "
@@ -1074,6 +1165,12 @@ def _ensure_project_object_storage(
         existing = nebius_client.get_bucket_by_name(project_id, bucket_name)
         if existing is not None:
             _verify_object_storage_shape(existing, storage)
+            _verify_object_storage_identity(
+                existing,
+                project_id=project_id,
+                bucket_name=bucket_name,
+                region=region,
+            )
         _credentials, probe = provision_storage(
             project_id=project_id,
             tenant_id=tenant_id,
@@ -1091,7 +1188,14 @@ def _ensure_project_object_storage(
         )
         verified = nebius_client.get_bucket_by_name(project_id, bucket_name)
         _verify_object_storage_shape(verified, storage)
-    if not probe.ok:
+        assert verified is not None
+        _verify_object_storage_identity(
+            verified,
+            project_id=project_id,
+            bucket_name=bucket_name,
+            region=region,
+        )
+    if not probe.ok or not probe.cleanup_succeeded or probe.retained_object:
         raise RuntimeError("object-storage write/read/delete probe did not pass")
     _write_json_file(
         state_path,
@@ -1667,6 +1771,7 @@ def _deploy_mk8s_fleet(
             for cluster in project.clusters:
                 if only_clusters and cluster.name not in only_clusters:
                     continue
+                project_has_scoped_cluster = True
                 if _is_verified_unchanged_target(
                     project=project,
                     cluster=cluster,
@@ -1686,7 +1791,6 @@ def _deploy_mk8s_fleet(
                     )
                     continue
                 scoped.setdefault(region, []).append(cluster)
-                project_has_scoped_cluster = True
             if project_has_scoped_cluster:
                 scoped_projects.append((project, region))
 
@@ -1720,7 +1824,11 @@ def _deploy_mk8s_fleet(
                 new_projects_by_region[region] = (
                     new_projects_by_region.get(region, 0) + 1
                 )
-        if scoped:
+        pending_storage = _pending_project_object_storage(
+            spec=spec, projects=scoped_projects, project_ids=preflight_project_ids,
+            tenant_id=tenant_id, profile=nebius_profile, fleet_root=fleet_root,
+        )
+        if scoped or pending_storage:
             _preflight_quotas(
                 nebius_bin,
                 tenant_id=tenant_id,
@@ -1729,6 +1837,7 @@ def _deploy_mk8s_fleet(
                 env=cli_env,
                 profile=nebius_profile,
                 on_status=on_status,
+                object_storage_by_region=pending_storage,
             )
 
     # Phase 1 (sequential, cheap): resolve/create each in-scope project and build
@@ -1931,11 +2040,14 @@ def _preflight_quotas(
     env: dict[str, str],
     profile: str,
     on_status: Callable[[str], None] | None,
+    object_storage_by_region: dict[str, list[ObjectStorageSpec]] | None = None,
 ) -> None:
     """Raise when reservations or tenant quota cannot cover the scoped clusters."""
 
     shortfalls = []
-    for region, clusters in sorted(by_region.items()):
+    storage_by_region = object_storage_by_region or {}
+    for region in sorted(set(by_region) | set(storage_by_region)):
+        clusters = by_region.get(region, [])
         _log(
             on_status,
             f"capacity/quota preflight: {len(clusters)} cluster(s) in {region}",
@@ -1946,6 +2058,7 @@ def _preflight_quotas(
             region=region,
             clusters=clusters,
             new_projects=new_projects_by_region.get(region, 0),
+            object_storage=storage_by_region.get(region, []),
             env=env,
             profile=profile,
             run_capture=_run_capture,

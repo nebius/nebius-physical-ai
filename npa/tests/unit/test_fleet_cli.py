@@ -297,8 +297,11 @@ def test_object_storage_provider_readback_requires_exact_shape() -> None:
         _verify_object_storage_shape(item, storage)
 
 
+@pytest.mark.parametrize("cleanup_ok", [True, False])
 def test_project_object_storage_reconciles_and_persists_private_state(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    cleanup_ok: bool,
 ) -> None:
     from types import SimpleNamespace
 
@@ -316,11 +319,22 @@ def test_project_object_storage_reconciles_and_persists_private_state(
     )
     spec = FleetSpec(name="f", project_prefix="f-", projects=[project])
     provider_item = {
+        "metadata": {
+            "id": "storagebucket-test",
+            "name": "test-bucket",
+            "parent_id": "project-test",
+        },
+        "status": {
+            "state": "ACTIVE",
+            "suspension_state": "NOT_SUSPENDED",
+            "region": "test-region",
+        },
         "spec": {
             "default_storage_class": "enhanced_throughput",
             "max_size_bytes": str(2 * 1024**4),
-        }
+        },
     }
+    storage.bucket_name = "test-bucket"
     lookups = iter([None, provider_item])
     monkeypatch.setattr(
         nebius_client,
@@ -331,11 +345,15 @@ def test_project_object_storage_reconciles_and_persists_private_state(
 
     def fake_provision_storage(**kwargs):
         calls.append(kwargs)
-        return {}, SimpleNamespace(ok=True)
+        return {}, SimpleNamespace(
+            ok=True,
+            cleanup_succeeded=cleanup_ok,
+            retained_object=not cleanup_ok,
+        )
 
     monkeypatch.setattr(storage_setup, "provision_storage", fake_provision_storage)
 
-    result = _ensure_project_object_storage(
+    kwargs = dict(
         spec=spec,
         project=project,
         project_id="project-test",
@@ -347,17 +365,54 @@ def test_project_object_storage_reconciles_and_persists_private_state(
         on_status=None,
     )
 
+    if not cleanup_ok:
+        with pytest.raises(RuntimeError, match="write/read/delete probe"):
+            _ensure_project_object_storage(**kwargs)
+        assert not (tmp_path / "a" / ".npa-fleet-object-storage.json").exists()
+        return
+
+    result = _ensure_project_object_storage(**kwargs)
+
     assert result["status"] == "ready"
     assert result["writable"] is True
     assert calls[0]["bucket_storage_class"] == "enhanced_throughput"
     assert calls[0]["bucket_max_size_bytes"] == 2 * 1024**4
     assert calls[0]["project_alias"] == "f-a"
-    state = json.loads(
-        (tmp_path / "a" / ".npa-fleet-object-storage.json").read_text()
-    )
+    state = json.loads((tmp_path / "a" / ".npa-fleet-object-storage.json").read_text())
     assert state["project_id"] == "project-test"
     assert state["storage_class"] == "enhanced_throughput"
     assert state["size_gibibytes"] == 2048
+
+
+@pytest.mark.parametrize(
+    "storage_class", [None, "", "unknown", "STORAGE_CLASS_UNSPECIFIED"]
+)
+def test_object_storage_unknown_provider_class_cannot_default_to_standard(
+    storage_class,
+) -> None:
+    from npa.fleet.lifecycle import _verify_object_storage_shape
+
+    with pytest.raises(RuntimeError, match="storage class and exact capacity"):
+        _verify_object_storage_shape(
+            {
+                "spec": {
+                    "default_storage_class": storage_class,
+                    "max_size_bytes": 1024**3,
+                }
+            },
+            ObjectStorageSpec(enabled=True, size_gibibytes=1),
+        )
+
+
+@pytest.mark.parametrize("capacity", [None, True, float(1024**3), -1, "1.5", {}])
+def test_object_storage_malformed_provider_capacity_fails_closed(capacity) -> None:
+    from npa.fleet.lifecycle import _verify_object_storage_shape
+
+    with pytest.raises(RuntimeError, match="invalid capacity cap"):
+        _verify_object_storage_shape(
+            {"spec": {"default_storage_class": "STANDARD", "max_size_bytes": capacity}},
+            ObjectStorageSpec(enabled=True, size_gibibytes=1),
+        )
 
 
 def test_cluster_needs_at_least_one_node() -> None:
@@ -4214,6 +4269,254 @@ def _preflight_boundary(monkeypatch, tmp_path, allowances_json: str, *, rc: int 
         )[1],
     )
     return L, deployed
+
+
+def test_object_storage_quotas_budget_each_class_separately_from_filesystems() -> None:
+    from npa.fleet.quotas import required_quotas
+
+    spec = load_spec(
+        Path(__file__).parents[2] / "examples/fleet/rtxpro-8gpu-five-cluster.yaml"
+    )
+    needed = required_quotas(
+        [c for p, c in spec.cluster_targets()],
+        object_storage=[p.object_storage for p in spec.projects],
+    )
+    assert needed["storage.bucket.count"] == 5
+    assert needed["storage.bucket.size.enhanced-throughput"] == 16 * 1024**4
+    assert needed["compute.filesystem.size.network-ssd"] == 24 * 1024**4
+    assert "storage.bucket.size.standard" not in needed
+    assert required_quotas([], object_storage=[ObjectStorageSpec()]) == {}
+
+
+@pytest.mark.parametrize(
+    ("storage_class", "quota_name"),
+    [
+        ("standard", "standard"),
+        ("enhanced", "enhanced-throughput"),
+        ("intelligent", "intelligent"),
+    ],
+)
+def test_object_storage_preflight_uses_byte_units(storage_class, quota_name) -> None:
+    from npa.fleet.quotas import preflight_region
+
+    def invoke(unit):
+        return preflight_region(
+            nebius_bin="nebius",
+            tenant_id="tenant-test",
+            region="test-region",
+            clusters=[],
+            env={},
+            run_capture=lambda *a, **k: _Cap(
+                json.dumps(
+                    {
+                        "items": [
+                            _allowance("storage.bucket.count", "test-region", 1),
+                            _allowance(
+                                f"storage.bucket.size.{quota_name}",
+                                "test-region",
+                                1024**3,
+                                unit,
+                            ),
+                        ]
+                    }
+                )
+            ),
+            nebius_argv=lambda binary, profile: [binary],
+            object_storage=[
+                ObjectStorageSpec(
+                    enabled=True, storage_class=storage_class, size_gibibytes=1
+                )
+            ],
+        )
+
+    assert invoke("byte") == []
+    with pytest.raises(ValueError, match="unit"):
+        invoke("count")
+
+
+@pytest.mark.parametrize("failure", ["count", "bytes", "missing"])
+def test_storage_quota_shortfall_blocks_every_project_and_cluster_mutation(
+    monkeypatch,
+    tmp_path,
+    failure,
+) -> None:
+    allowances = [
+        _allowance(
+            "storage.bucket.count", "us-central1", 1 if failure == "count" else 2
+        )
+    ]
+    if failure != "missing":
+        allowances.append(
+            _allowance(
+                "storage.bucket.size.enhanced-throughput",
+                "us-central1",
+                2 * 1024**3 - (1 if failure == "bytes" else 0),
+                "byte",
+            )
+        )
+    L, deployed = _preflight_boundary(
+        monkeypatch, tmp_path, json.dumps({"items": allowances})
+    )
+    spec = _rtx_cluster_spec()
+    spec.projects.append(ProjectSpec(name="b", clusters=spec.projects[0].clusters))
+    for p in spec.projects:
+        p.object_storage = ObjectStorageSpec(
+            enabled=True, storage_class="enhanced", size_gibibytes=1
+        )
+    mutations = []
+    monkeypatch.setattr(
+        L, "resolve_project_id", lambda *a, **k: mutations.append("project")
+    )
+    monkeypatch.setattr(L, "ensure_subnet", lambda *a, **k: mutations.append("subnet"))
+    monkeypatch.setattr(
+        L, "_ensure_project_object_storage", lambda **k: mutations.append("storage")
+    )
+
+    with pytest.raises(ValueError, match="storage.bucket"):
+        L.deploy_fleet(spec, work_root=tmp_path)
+    assert mutations == deployed == []
+
+
+def _storage_provider_bucket() -> dict:
+    return {
+        "metadata": {
+            "id": "storagebucket-test",
+            "parent_id": "project-existing",
+            "name": "test-bucket",
+        },
+        "spec": {
+            "default_storage_class": "ENHANCED_THROUGHPUT",
+            "max_size_bytes": str(1024**3),
+        },
+        "status": {
+            "state": "ACTIVE",
+            "region": "us-central1",
+            "suspension_state": "NOT_SUSPENDED",
+        },
+    }
+
+
+@pytest.mark.parametrize("unchanged", [False, True])
+def test_storage_preflight_checks_new_declaration_even_when_cluster_is_unchanged(
+    monkeypatch,
+    tmp_path,
+    unchanged,
+) -> None:
+    from npa.clients import nebius as nebius_client
+
+    spec = _rtx_cluster_spec()
+    spec.projects[0].object_storage = ObjectStorageSpec(
+        enabled=True,
+        storage_class="enhanced",
+        size_gibibytes=1,
+        bucket_name="test-bucket",
+    )
+    L, _lists, _quotas, _resolved, _deployed = _project_quota_accounting_boundary(
+        monkeypatch,
+        tmp_path,
+        [{"metadata": {"id": "project-existing", "name": "a"}}],
+    )
+    monkeypatch.setattr(L, "_is_verified_unchanged_target", lambda **k: unchanged)
+    monkeypatch.setattr(nebius_client, "get_bucket_by_name", lambda *a: None)
+    monkeypatch.setattr(
+        L, "_ensure_project_object_storage", lambda **k: {"enabled": True}
+    )
+    preflights = []
+    monkeypatch.setattr(L, "_preflight_quotas", lambda *a, **k: preflights.append(k))
+
+    L.deploy_fleet(spec, work_root=tmp_path)
+    assert len(preflights) == 1
+    assert preflights[0]["object_storage_by_region"] == {
+        "us-central1": [spec.projects[0].object_storage]
+    }
+    assert bool(preflights[0]["by_region"]) is not unchanged
+
+
+def test_existing_exact_bucket_is_not_counted_twice_on_retry(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.clients import nebius as nebius_client
+    from npa.fleet import lifecycle as L
+
+    spec = _rtx_cluster_spec()
+    project = spec.projects[0]
+    project.object_storage = ObjectStorageSpec(
+        enabled=True,
+        storage_class="enhanced",
+        size_gibibytes=1,
+        bucket_name="test-bucket",
+    )
+
+    def get_bucket(project_id, bucket_name):
+        assert project_id == "project-existing" and bucket_name == "test-bucket"
+        assert os.environ["NEBIUS_PROFILE"] == "storage-profile"
+        return _storage_provider_bucket()
+
+    monkeypatch.setattr(nebius_client, "get_bucket_by_name", get_bucket)
+    monkeypatch.setenv("NEBIUS_PROFILE", "original-profile")
+    assert (
+        L._pending_project_object_storage(
+            spec=spec,
+            projects=[(project, "us-central1")],
+            project_ids={"a": "project-existing"},
+            tenant_id="t",
+            profile="storage-profile",
+            fleet_root=tmp_path,
+        )
+        == {}
+    )
+    assert os.environ["NEBIUS_PROFILE"] == "original-profile"
+
+
+@pytest.mark.parametrize(
+    ("section", "field", "value"),
+    [
+        ("metadata", "parent_id", "project-other"),
+        ("metadata", "name", "different-bucket"),
+        ("metadata", "id", ""),
+        ("status", "region", "wrong-region"),
+        ("status", "state", "SCHEDULED_FOR_DELETION"),
+        ("status", "suspension_state", "SUSPENDED"),
+        ("status", "suspension_state", None),
+        ("status", "deleted_at", "2026-01-01T00:00:00Z"),
+        ("status", "purge_at", "2026-01-01T00:00:00Z"),
+        ("spec", "max_size_bytes", str(1024**3 - 1)),
+    ],
+)
+def test_invalid_later_bucket_blocks_all_fleet_mutation(
+    monkeypatch,
+    tmp_path,
+    section,
+    field,
+    value,
+) -> None:
+    from npa.clients import nebius as nebius_client
+
+    spec = _rtx_cluster_spec()
+    spec.projects.append(ProjectSpec(name="b", clusters=spec.projects[0].clusters))
+    for p in spec.projects:
+        p.object_storage = ObjectStorageSpec(
+            enabled=True,
+            storage_class="enhanced",
+            size_gibibytes=1,
+            bucket_name="test-bucket",
+        )
+    L, _lists, quotas, resolved, deployed = _project_quota_accounting_boundary(
+        monkeypatch,
+        tmp_path,
+        [{"metadata": {"id": "project-existing", "name": "b"}}],
+    )
+    bucket = _storage_provider_bucket()
+    bucket[section][field] = value
+    monkeypatch.setattr(nebius_client, "get_bucket_by_name", lambda *a: bucket)
+    mutations = []
+    monkeypatch.setattr(L, "ensure_subnet", lambda *a, **k: mutations.append("subnet"))
+    monkeypatch.setattr(
+        L, "_ensure_project_object_storage", lambda **k: mutations.append("storage")
+    )
+    with pytest.raises(RuntimeError, match="object-storage bucket"):
+        L.deploy_fleet(spec, work_root=tmp_path)
+    assert quotas == resolved == deployed == mutations == []
 
 
 def _rtx_cluster_spec() -> FleetSpec:
