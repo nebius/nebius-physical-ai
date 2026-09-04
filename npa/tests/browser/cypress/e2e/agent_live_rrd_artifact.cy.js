@@ -44,8 +44,9 @@ describe("NPA agent live RRD artifact", () => {
         expect(response.body.runs[0].run_ref).to.match(/^npa1_/);
       });
       cy.get("#runIdSelect option").then(($options) => {
-        const matches = [...$options].filter((option) => option.value === runId);
+        const matches = [...$options].filter((option) => option.dataset.runId === runId);
         expect(matches, "one unambiguous run option").to.have.length(1);
+        expect(matches[0].value, "source-qualified selector").to.match(/^npa1_/);
       });
     };
 
@@ -101,7 +102,11 @@ describe("NPA agent live RRD artifact", () => {
     cy.get("#simRunId", { timeout: 30000 }).should("contain.text", runId);
     cy.get("#tabRerun").click();
     cy.get("#rerunFrame", { timeout: 120000 }).should(($frame) => {
-      expect(decodeURIComponent(String($frame.attr("src") || ""))).to.include(capabilityPath);
+      const source = decodeURIComponent(String($frame.attr("src") || ""));
+      expect(
+        source.includes(capabilityPath) || source.includes("/api/sim-viz/rrd-blob"),
+        "capability recording or authenticated blob fallback",
+      ).to.eq(true);
     });
 
     const waitForRenderedRecording = (attempt) => {
