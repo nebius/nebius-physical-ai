@@ -686,7 +686,7 @@ results to immutable digests and refuses a missing, stale, or wrong-digest
 bootstrap attestation before spending GPU time:
 
 ```bash
-for ref in npa-cosmos2-transfer:2.5.1-sam2-multigpu-20260817-r2 \
+for ref in npa-cosmos2-transfer:2.5.1-sim2real-coherent-20260904 \
            npa-cosmos-evaluator:0.1.2-skypilot-v1-20260813T164700Z-r2 \
            npa-cosmos-curate:0.1.2-skypilot-v1-20260813T164700Z; do
   docker manifest inspect "$REGISTRY/$ref" >/dev/null && echo "OK   $ref" || echo "MISS $ref"

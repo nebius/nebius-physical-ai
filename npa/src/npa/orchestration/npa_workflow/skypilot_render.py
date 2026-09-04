@@ -81,6 +81,12 @@ SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
     # This entry explicitly disables the parent Cosmos3 hint: the public Nano
     # checkpoint is downloaded anonymously and this toolRef passes --no-guardrails.
     "workbench.cosmos3.text_to_image": (),
+    "workbench.cosmos3.super_benchmark": (
+        "HF_TOKEN",
+        "NPA_COSMOS3_ACCEPT_NVIDIA_SOFTWARE_LICENSE",
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+    ),
     "workbench.cosmos3": ("HF_TOKEN",),
     # Cosmos-Transfer2.5 downloads its guardrail checkpoints from a gated Hugging Face repo
     # before it will generate anything. Live job 286 got all the way into examples/inference.py

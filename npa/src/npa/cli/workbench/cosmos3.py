@@ -24,6 +24,12 @@ from npa.workbench.cosmos.ray_serve import (
     service_health as ray_service_health,
     submit_batch as submit_ray_batch,
 )
+from npa.workbench.cosmos.super_benchmark import (
+    PRIMARY_SUITE as SUPER_BENCHMARK_PRIMARY_SUITE,
+    TOPOLOGY_ORDER as SUPER_BENCHMARK_TOPOLOGIES,
+    Cosmos3SuperBenchmarkError,
+    run_benchmark as run_super_benchmark,
+)
 from npa.workflows.cosmos_split import (
     Cosmos3ReasonConfig,
     build_cosmos3_reason_manifest,
@@ -35,6 +41,58 @@ app = typer.Typer(
     help="Cosmos3 omni-model generation and reasoning workflow contracts.",
     no_args_is_help=True,
 )
+
+
+@app.command("super-benchmark")
+def super_benchmark_cmd(
+    output_path: str = typer.Option(
+        ...,
+        "--output-path",
+        help="Absolute local directory or s3:// prefix for records and validated MP4s.",
+    ),
+    topologies: str = typer.Option(
+        ",".join(SUPER_BENCHMARK_TOPOLOGIES),
+        "--topologies",
+        help="Comma-separated ordered subset of 1x8,2x4,4x2,8x1.",
+    ),
+    attempts: int = typer.Option(24, "--attempts", min=1),
+    suite: str = typer.Option(
+        SUPER_BENCHMARK_PRIMARY_SUITE,
+        "--suite",
+        help=(
+            "Benchmark suite: primary (four concurrency-one cells), b200-full "
+            "(the exact ten-cell, 240-attempt public record), or h200-single-gpu "
+            "(one TP-1 service and 24 sequential requests; not a paper cell)."
+        ),
+    ),
+    gpu_family: str = typer.Option(
+        "B200",
+        "--gpu-family",
+        help="Required homogeneous GPU family: B200 or H200.",
+    ),
+    base_port: int = typer.Option(8100, "--base-port", min=1024, max=65527),
+    run_id: str = typer.Option("", "--run-id"),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Print the immutable benchmark plan without touching a GPU."
+    ),
+) -> None:
+    """Run a fixed Cosmos3-Super node benchmark or H200 single-GPU validation."""
+
+    try:
+        payload = run_super_benchmark(
+            output_path=output_path,
+            topologies=topologies,
+            attempts=attempts,
+            suite=suite,
+            gpu_family=gpu_family,
+            base_port=base_port,
+            run_id=run_id,
+            dry_run=dry_run,
+        )
+    except (Cosmos3SuperBenchmarkError, OSError, ValueError) as exc:
+        typer.echo(f"cosmos3 super-benchmark failed: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    typer.echo(json.dumps(payload, indent=2, sort_keys=True))
 
 
 @app.command("ray-batch")

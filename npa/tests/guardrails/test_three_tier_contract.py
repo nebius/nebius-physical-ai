@@ -61,6 +61,9 @@ def _p(
 #               the ones worth closing, tool by tool, with a live run each.
 #
 SPEC_GAP_REASONS: dict[str, dict[str, str]] = {
+    "cosmos3/super-benchmark": {
+        "dry_run": "boolean",
+    },
     "cosmos3/ray-batch": {
         "dry_run": "boolean",
     },
@@ -355,6 +358,24 @@ CONTRACTS: tuple[CapabilityContract, ...] = (
             _p("endpoint", "endpoint", "--endpoint"),
             _p("token_env", "token_env", "--token-env"),
             _p("timeout", "timeout", "--timeout"),
+            _p("run_id", "run_id", "--run-id"),
+            _p("dry_run", "dry_run", "--dry-run"),
+        ),
+    ),
+    CapabilityContract(
+        name="cosmos3/super-benchmark",
+        cli_module="npa.cli.workbench.cosmos3",
+        cli_callback="super_benchmark_cmd",
+        sdk_module="npa.sdk.workbench.cosmos3",
+        sdk_attr="super_benchmark",
+        spec_path=SPECS / "cosmos3-super-b200-benchmark.yaml",
+        tool_ref="workbench.cosmos3.super_benchmark",
+        spec_gap=("dry_run",),
+        params=(
+            _p("output_path", "output_path", "--output-path"),
+            _p("topologies", "topologies", "--topologies"),
+            _p("attempts", "attempts", "--attempts"),
+            _p("base_port", "base_port", "--base-port"),
             _p("run_id", "run_id", "--run-id"),
             _p("dry_run", "dry_run", "--dry-run"),
         ),

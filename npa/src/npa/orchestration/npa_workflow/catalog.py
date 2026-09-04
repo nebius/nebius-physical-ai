@@ -2687,6 +2687,35 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{run.id}}",
         ],
     ),
+    "workbench.cosmos3.super_benchmark": ToolEntry(
+        name="workbench.cosmos3.super_benchmark",
+        access_capabilities=("cosmos3-serving",),
+        description=(
+            "Run the real fixed Cosmos3-Super eight-GPU benchmark or the isolated "
+            "one-H200 TP-1 validation, validate every MP4, and publish per-attempt "
+            "records."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "cosmos3",
+            "super-benchmark",
+            "--output-path",
+            "{{config.output_uri}}",
+            "--topologies",
+            "{{config.topologies}}",
+            "--attempts",
+            "{{config.attempts}}",
+            "--suite",
+            "{{config.suite}}",
+            "--gpu-family",
+            "{{config.gpu_family}}",
+            "--base-port",
+            "{{config.base_port}}",
+            "--run-id",
+            "{{run.id}}",
+        ],
+    ),
     "workbench.cosmos3.ray_batch": ToolEntry(
         name="workbench.cosmos3.ray_batch",
         access_capabilities=("cosmos3-serving",),

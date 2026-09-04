@@ -221,7 +221,7 @@ def test_full_loop_writes_stage_artifacts_and_candidate(tmp_path: Path) -> None:
     assert (
         augment.get("image")
         == "ghcr.io/nebius/nebius-physical-ai/npa-cosmos2-transfer:"
-        "2.5.1-skypilot-ready-20260801T053000Z"
+        "2.5.1-sim2real-coherent-20260904"
     )
     assert (
         trigger["trigger_dataset_uri"] == "s3://bucket/sim2real-triggers/lerobot-pusht/"
@@ -1270,7 +1270,7 @@ def test_default_augment_image_uses_cosmos2_transfer_contract(monkeypatch) -> No
     assert (
         default_augment_image()
         == "ghcr.io/nebius/nebius-physical-ai/npa-cosmos2-transfer:"
-        "2.5.1-skypilot-ready-20260801T053000Z"
+        "2.5.1-sim2real-coherent-20260904"
     )
 
     config = build_config_from_env(run_id="sim2real-images")
@@ -1278,7 +1278,7 @@ def test_default_augment_image_uses_cosmos2_transfer_contract(monkeypatch) -> No
     assert (
         config.augment_image
         == "ghcr.io/nebius/nebius-physical-ai/npa-cosmos2-transfer:"
-        "2.5.1-skypilot-ready-20260801T053000Z"
+        "2.5.1-sim2real-coherent-20260904"
     )
     assert config.vlm_image == (
         "ghcr.io/nebius/nebius-physical-ai/npa-cosmos3-reason:"
@@ -1297,7 +1297,7 @@ def test_default_images_ignore_generic_build_registry(monkeypatch) -> None:
     assert (
         config.augment_image
         == "ghcr.io/nebius/nebius-physical-ai/npa-cosmos2-transfer:"
-        "2.5.1-skypilot-ready-20260801T053000Z"
+        "2.5.1-sim2real-coherent-20260904"
     )
     assert (
         config.vlm_image

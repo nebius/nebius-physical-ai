@@ -519,7 +519,9 @@ def test_isaac_lab_deploy_runtime_container_starts_image(tmp_path: Path, mocker)
     assert tf_vars["boot_disk_size_gb"] == "250"
     deploy_container.assert_called_once()
     assert deploy_container.call_args.kwargs["container_name"] == "npa-isaac-lab"
-    assert deploy_container.call_args.kwargs["image_ref"].endswith("/npa-isaac-lab:3.0.0b2.post1")
+    assert deploy_container.call_args.kwargs["image_ref"].endswith(
+        "/npa-isaac-lab:3.0.0b2.post1-sim2real-coherent-20260904"
+    )
     wb_cfg = write_config.call_args.args[0]["projects"]["proj"]["workbenches"]["isaac-container"]
     assert wb_cfg["runtime"] == "container"
     assert update_status.call_args_list[0].args == ("proj", "isaac-container", "installing")

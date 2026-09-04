@@ -45,6 +45,12 @@ RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.list \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
       curl netcat-openbsd openssh-client openssh-server procps rsync sudo \
+    && rm -f /etc/ssh/ssh_host_* \
+    && test -z "$(find /etc/ssh -maxdepth 1 -type f -name 'ssh_host_*' -print -quit)" \
+    && printf '%s\n' \
+      'PasswordAuthentication no' \
+      'PermitRootLogin no' \
+      > /etc/ssh/sshd_config.d/99-npa-runtime.conf \
     && rm -rf /var/lib/apt/lists/* \
     && printf 'ubuntu ALL=(ALL) NOPASSWD:ALL\n' \
       > /etc/sudoers.d/99-npa-runtime-user \

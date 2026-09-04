@@ -101,6 +101,14 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
         "no model checkpoint files are baked into image-owned trees",
         "separate live evidence: real Cosmos3-Super video generation on 8xH200",
     ],
+    "cosmos3-super-benchmark": [
+        "exact model snapshot loads in the digest-pinned vLLM-Omni runtime",
+        "real single-GPU BF16 text-to-video request uses the fixed benchmark workload",
+        "non-empty MP4 fully decodes at 1280x720, 189 frames, and 24 fps",
+        "sampled-frame blank and frozen/basic-motion checks pass",
+        "output size, SHA-256, stream metadata, model revision, and seed are recorded",
+        "separate live evidence covers all four topologies and 96 requests on 8xB200",
+    ],
     "cosmos3-reason": [
         "real Cosmos-Reason VLM inference on synthetic frames (run_cosmos_reason_vlm)",
         "structured rollout judgment returned (score + success verdict)",
@@ -169,8 +177,8 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
         "no LTX source, weights, or CUDA distribution present in the image",
     ],
     "sim2real-control": [
-        "canonical compositional stage-adapter module imports",
-        "stage CLI exposes the complete 1-through-14 contract",
+        "canonical 14-stage compositional workflow loads and validates",
+        "real controller expands promote and loop-back execution plans",
         "exact baked source and immutable-image checks run before stage work",
     ],
     "envgen": [
@@ -185,7 +193,9 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
         "FrankaPickPlace rollout step",
     ],
     "rerun-viewer": [
-        "rerun SDK import + __version__",
+        "robotics joint trace conversion to a non-empty RRD recording",
+        "Rerun CLI verify and entity readback",
+        "Rerun web viewer serves the recording over HTTP",
     ],
     "foxglove-embed": [
         "/healthz reports the service and the pinned @foxglove/embed version",

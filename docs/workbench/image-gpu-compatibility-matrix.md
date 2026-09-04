@@ -67,6 +67,7 @@ The old `npa-cosmos:1.0.9` cu126 image stopped at Hopper. Its additive cu128/tor
 | `npa-robocasa` | supported (cu124) | supported (cu124) | blocked (needs cu130) | blocked (needs cu130) | blocked (needs cu130) |
 | `npa-cosmos3` | supported | supported | **verified** [59] | supported | supported |
 | `npa-cosmos3-serving` (build-your-own) | blocked (8-GPU memory floor) | **verified** (8xH200) | supported (8 GPUs) | supported (8 GPUs) | supported (8 GPUs) |
+| `npa-cosmos3-super-benchmark` (operator-private) | blocked (8-GPU benchmark contract) | supported (8 GPUs) | supported (8 GPUs) | pending full benchmark | supported (8 GPUs) |
 | `npa-cosmos3-ray-serve` | supported | supported | **verified** [66] | **verified** [65] | supported (same-major `sm_100` coverage; not measured) |
 | `npa-content-agents` | supported (RT cores) | blocked (no RT cores) | **verified** [64] | blocked (no RT cores) | blocked (no RT cores) |
 | `npa-wan2-2` | supported | supported | **historical evidence** [60] | **historical evidence** [61] | supported |

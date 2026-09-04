@@ -1,0 +1,36 @@
+{
+  "schema_version": "npa.solution-licensing.v1",
+  "capability": "cosmos3-super-h200-benchmark",
+  "source_reference": {
+    "repository": "https://github.com/stewtong/cosmos3-super-serving",
+    "revision": "532bffd4c2b2ec08909a92d5bc0b3bab4e911b2b",
+    "handling": "methodology reference only; upstream code, prompt text, result records, and media are not redistributed"
+  },
+  "runtime": {
+    "upstream_image": "docker.io/vllm/vllm-omni:cosmos3@sha256:6d2630c7d637b699557573f2c3fee8df5d4d0cd718977aa22549ed6a6ef30587",
+    "wrapper_image": "operator-controlled registry only; exact digest supplied through config.runtime_image",
+    "distribution": "restricted; built and pulled only within the owning operator organization",
+    "operator_acceptance_env": "NPA_COSMOS3_ACCEPT_NVIDIA_SOFTWARE_LICENSE",
+    "accepted_value": "YES",
+    "baked_into_npa_image": false
+  },
+  "model": {
+    "repository": "nvidia/Cosmos3-Super",
+    "revision": "e0262be9d8f7586bc24c069a2aed2b665bdff266",
+    "license": "NVIDIA Open Model Development and Use License Agreement 1.1",
+    "weights_baked": false,
+    "delivery": "runtime fetch under the operator's Hugging Face identity"
+  },
+  "inputs": {
+    "prompt_assets": [
+      "assets/example_t2v_prompt.json",
+      "assets/negative_prompt.json"
+    ],
+    "handling": "read from the pinned runtime snapshot; only SHA-256 digests are published"
+  },
+  "outputs": {
+    "model_license_restriction": "none stated by OpenMDW 1.1",
+    "storage": "operator-controlled object storage",
+    "publication": "not included in repository or public image"
+  }
+}

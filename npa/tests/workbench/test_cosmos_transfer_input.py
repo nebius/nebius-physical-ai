@@ -12,6 +12,7 @@ import json
 import shutil
 import subprocess
 import sys
+import types
 from pathlib import Path
 
 import numpy as np
@@ -40,6 +41,7 @@ def _fake_env(monkeypatch, repo: Path):
     monkeypatch.setattr(tx, "cosmos_transfer_repo", lambda: repo)
     monkeypatch.setattr(tx, "ensure_env", lambda r: Path("/usr/bin/python3"))
     monkeypatch.setenv("HF_TOKEN", "unit-test-placeholder")
+    monkeypatch.setattr(tx, "prepare_guardrail_nltk_data", lambda **_kwargs: 0)
 
     def fake_run(cmd, *args, **kwargs):
         cwd = Path(kwargs["cwd"])
@@ -50,6 +52,223 @@ def _fake_env(monkeypatch, repo: Path):
         return None
 
     monkeypatch.setattr(tx.subprocess, "run", fake_run)
+
+
+def test_guardrail_nltk_cache_links_are_safely_materialized(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    hub = tmp_path / "hub"
+    package = hub / "models--nvidia--Cosmos-Guardrail1"
+    snapshot = package / "snapshots" / tx.GUARDRAIL_REVISION
+    tokenizer = snapshot / "blocklist" / "nltk_data" / "tokenizers" / "punkt_tab"
+    blob = package / "blobs" / "tokenizer-data"
+    tokenizer.mkdir(parents=True)
+    blob.parent.mkdir(parents=True)
+    blob.write_bytes(b"pinned tokenizer data")
+    link = tokenizer / "collocations.tab"
+    link.symlink_to(blob)
+
+    calls: list[dict[str, object]] = []
+
+    def fake_snapshot_download(**kwargs):
+        calls.append(kwargs)
+        return str(snapshot)
+
+    monkeypatch.setitem(
+        sys.modules,
+        "huggingface_hub",
+        types.SimpleNamespace(snapshot_download=fake_snapshot_download),
+    )
+    monkeypatch.setenv("HF_TOKEN", "unit-test-placeholder")
+
+    assert tx.prepare_guardrail_nltk_data(hf_home=str(tmp_path)) == 1
+    assert link.is_file() and link.is_symlink()
+    assert link.read_bytes() == b"pinned tokenizer data"
+    safe = (
+        tmp_path
+        / tx.GUARDRAIL_NLTK_MATERIALIZED_DIR
+        / tx.GUARDRAIL_REVISION
+        / "tokenizers"
+        / "punkt_tab"
+        / "collocations.tab"
+    )
+    assert safe.is_file() and not safe.is_symlink()
+    assert safe.read_bytes() == b"pinned tokenizer data"
+    marker = safe.parents[2] / tx.GUARDRAIL_NLTK_READY_MARKER
+    manifest = json.loads(marker.read_text(encoding="utf-8"))
+    assert manifest["repo_id"] == tx.GUARDRAIL_REPO
+    assert manifest["revision"] == tx.GUARDRAIL_REVISION
+    assert manifest["file_count"] == 1
+    assert calls == [
+        {
+            "repo_id": tx.GUARDRAIL_REPO,
+            "revision": tx.GUARDRAIL_REVISION,
+            "allow_patterns": ["blocklist/nltk_data/**"],
+            "cache_dir": hub,
+            "token": "unit-test-placeholder",
+        }
+    ]
+
+    # Verified regular-file materialization is reusable during a transient Hub
+    # outage. NLTK consumes this tree and never needs the snapshot/blob links.
+    def unavailable_snapshot_download(**_kwargs):
+        raise AssertionError("verified cache reuse must not touch Hugging Face")
+
+    monkeypatch.setitem(
+        sys.modules,
+        "huggingface_hub",
+        types.SimpleNamespace(snapshot_download=unavailable_snapshot_download),
+    )
+    assert tx.prepare_guardrail_nltk_data(hf_home=str(tmp_path)) == 1
+
+
+@pytest.mark.parametrize(
+    ("exception", "category", "message"),
+    [
+        (type("RateLimitError", (Exception,), {})(), "rate_limited", "retry later"),
+        (
+            type("RevisionNotFoundError", (Exception,), {})(),
+            "revision_unavailable",
+            "do not substitute another revision",
+        ),
+        (type("OfflineError", (Exception,), {})(), "network_unavailable", "prewarm"),
+    ],
+)
+def test_guardrail_nltk_download_failures_are_typed_and_leave_no_partial_cache(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    exception: Exception,
+    category: str,
+    message: str,
+) -> None:
+    def failed_snapshot_download(**_kwargs):
+        raise exception
+
+    monkeypatch.setitem(
+        sys.modules,
+        "huggingface_hub",
+        types.SimpleNamespace(snapshot_download=failed_snapshot_download),
+    )
+
+    with pytest.raises(tx.GuardrailNLTKDataError, match=message) as caught:
+        tx.prepare_guardrail_nltk_data(hf_home=str(tmp_path))
+
+    assert caught.value.category == category
+    destination = (
+        tmp_path / tx.GUARDRAIL_NLTK_MATERIALIZED_DIR / tx.GUARDRAIL_REVISION
+    )
+    assert not destination.exists()
+    assert not list(destination.parent.glob(f".{tx.GUARDRAIL_REVISION}.*"))
+
+
+def test_guardrail_nltk_rate_limit_http_status_is_actionable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class HubError(Exception):
+        response = types.SimpleNamespace(status_code=429)
+
+    def failed_snapshot_download(**_kwargs):
+        raise HubError("secret-bearing upstream response must not be repeated")
+
+    monkeypatch.setitem(
+        sys.modules,
+        "huggingface_hub",
+        types.SimpleNamespace(snapshot_download=failed_snapshot_download),
+    )
+    with pytest.raises(tx.GuardrailNLTKDataError, match="rate-limited") as caught:
+        tx.prepare_guardrail_nltk_data(hf_home=str(tmp_path))
+    assert caught.value.category == "rate_limited"
+    assert "secret-bearing" not in str(caught.value)
+
+
+def test_guardrail_nltk_copy_failure_is_atomic(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    hub = tmp_path / "hub"
+    snapshot = (
+        hub
+        / "models--nvidia--Cosmos-Guardrail1"
+        / "snapshots"
+        / tx.GUARDRAIL_REVISION
+    )
+    tokenizer = snapshot / "blocklist" / "nltk_data" / "tokenizers" / "punkt_tab"
+    tokenizer.mkdir(parents=True)
+    (tokenizer / "a.tab").write_bytes(b"first")
+    (tokenizer / "b.tab").write_bytes(b"second")
+    monkeypatch.setitem(
+        sys.modules,
+        "huggingface_hub",
+        types.SimpleNamespace(snapshot_download=lambda **_kwargs: str(snapshot)),
+    )
+    real_copy = shutil.copyfileobj
+    copies = 0
+
+    def interrupted_copy(source, destination):  # noqa: ANN001
+        nonlocal copies
+        copies += 1
+        if copies == 2:
+            raise OSError("simulated interrupted copy")
+        return real_copy(source, destination)
+
+    monkeypatch.setattr(tx.shutil, "copyfileobj", interrupted_copy)
+    with pytest.raises(tx.GuardrailNLTKDataError, match="no partial cache") as caught:
+        tx.prepare_guardrail_nltk_data(hf_home=str(tmp_path))
+    assert caught.value.category == "materialization_failed"
+
+    destination = (
+        tmp_path / tx.GUARDRAIL_NLTK_MATERIALIZED_DIR / tx.GUARDRAIL_REVISION
+    )
+    assert not destination.exists()
+    assert not list(destination.parent.glob(f".{tx.GUARDRAIL_REVISION}.*"))
+
+
+def test_guardrail_nltk_corrupt_or_mismatched_cache_fails_closed_before_network(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    hub = tmp_path / "hub"
+    snapshot = (
+        hub
+        / "models--nvidia--Cosmos-Guardrail1"
+        / "snapshots"
+        / tx.GUARDRAIL_REVISION
+    )
+    tokenizer = snapshot / "blocklist" / "nltk_data" / "tokenizers" / "punkt_tab"
+    tokenizer.mkdir(parents=True)
+    (tokenizer / "collocations.tab").write_bytes(b"verified")
+    monkeypatch.setitem(
+        sys.modules,
+        "huggingface_hub",
+        types.SimpleNamespace(snapshot_download=lambda **_kwargs: str(snapshot)),
+    )
+    assert tx.prepare_guardrail_nltk_data(hf_home=str(tmp_path)) == 1
+
+    destination = (
+        tmp_path / tx.GUARDRAIL_NLTK_MATERIALIZED_DIR / tx.GUARDRAIL_REVISION
+    )
+    payload = destination / "tokenizers" / "punkt_tab" / "collocations.tab"
+    payload.chmod(0o644)
+    payload.write_bytes(b"corrupt")
+    monkeypatch.setitem(
+        sys.modules,
+        "huggingface_hub",
+        types.SimpleNamespace(
+            snapshot_download=lambda **_kwargs: pytest.fail(
+                "an invalid cache must fail closed before network access"
+            )
+        ),
+    )
+    with pytest.raises(tx.GuardrailNLTKDataError, match="does not match") as caught:
+        tx.prepare_guardrail_nltk_data(hf_home=str(tmp_path))
+    assert caught.value.category == "cache_invalid"
+
+    marker = destination / tx.GUARDRAIL_NLTK_READY_MARKER
+    manifest = json.loads(marker.read_text(encoding="utf-8"))
+    manifest["revision"] = "renamed-revision"
+    marker.chmod(0o644)
+    marker.write_text(json.dumps(manifest), encoding="utf-8")
+    with pytest.raises(tx.GuardrailNLTKDataError, match="identity") as identity:
+        tx.prepare_guardrail_nltk_data(hf_home=str(tmp_path))
+    assert identity.value.category == "cache_invalid"
 
 
 def test_spec_for_input_video_builds_edge_control(tmp_path: Path) -> None:
@@ -500,6 +719,7 @@ def test_run_cosmos_transfer_accepts_small_guardrailed_video(
     (repo / "examples").mkdir(parents=True)
     monkeypatch.setattr(tx, "cosmos_transfer_repo", lambda: repo)
     monkeypatch.setattr(tx, "ensure_env", lambda _repo: Path("/usr/bin/python3"))
+    monkeypatch.setattr(tx, "prepare_guardrail_nltk_data", lambda **_kwargs: 0)
     monkeypatch.setenv("HF_TOKEN", "unit-test-placeholder")
 
     def fake_run(cmd, *_args, **kwargs):
@@ -523,6 +743,7 @@ def test_run_cosmos_transfer_content_guardrail_opt_out_is_explicit(
     (repo / "examples").mkdir(parents=True)
     monkeypatch.setattr(tx, "cosmos_transfer_repo", lambda: repo)
     monkeypatch.setattr(tx, "ensure_env", lambda _repo: Path("/usr/bin/python3"))
+    monkeypatch.setattr(tx, "prepare_guardrail_nltk_data", lambda **_kwargs: 0)
     monkeypatch.setenv("HF_TOKEN", "unit-test-placeholder")
     seen: list[list[str]] = []
 
@@ -1260,6 +1481,7 @@ def test_run_cosmos_transfer_pins_gpu_and_unique_spec(
         outdir.mkdir(parents=True, exist_ok=True)
         (outdir / "result.mp4").write_bytes(b"y" * 200_001)
         seen_env["CUDA_VISIBLE_DEVICES"] = kwargs["env"].get("CUDA_VISIBLE_DEVICES", "")
+        seen_env["NLTK_DATA"] = kwargs["env"].get("NLTK_DATA", "")
         return None
 
     monkeypatch.setattr(tx.subprocess, "run", fake_run)
@@ -1270,8 +1492,16 @@ def test_run_cosmos_transfer_pins_gpu_and_unique_spec(
         prompt="a red cloth",
         cuda_visible_devices="2",
         variant_tag="run1-v2",
+        hf_home=str(tmp_path / "model-cache"),
     )
     assert seen_env["CUDA_VISIBLE_DEVICES"] == "2"
+    assert seen_env["NLTK_DATA"] == str(
+        tmp_path
+        / "model-cache"
+        / tx.GUARDRAIL_NLTK_MATERIALIZED_DIR
+        / tx.GUARDRAIL_REVISION
+    )
+    assert "/hub/" not in seen_env["NLTK_DATA"]
     # Variant-tagged patched spec keeps concurrent siblings from clobbering.
     assert "run1-v2" in res["spec"]
     assert Path(res["video_path"]).exists()

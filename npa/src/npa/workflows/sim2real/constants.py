@@ -12,19 +12,19 @@ DEFAULT_COSMOS_REASON3_CACHE = "/tmp/hf_home/cosmos-reason2-2b"
 DEFAULT_S3_ENDPOINT = ""
 DEFAULT_BUCKET = ""
 DEFAULT_PREFIX = "sim2real-b"
-DEFAULT_COSMOS2_TRANSFER_TAG = "2.5.1-sam2-multigpu-20260817-r2"
+DEFAULT_COSMOS2_TRANSFER_TAG = "2.5.1-sim2real-coherent-20260904"
 DEFAULT_VLM_IMAGE_TAG = "cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
 # Reference-image pins. Canonical source of truth is pyproject.toml
 # ([tool.npa.supported-tools], mirrored in npa/src/npa/deploy/images.py); keep
 # these no-registry fallbacks in sync so the staged engine (models.py) and the
 # legacy loop (sim2real_loop.py) resolve identical defaults.
-DEFAULT_ENVGEN_TAG = "cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
+DEFAULT_ENVGEN_TAG = "0.1.2-sim2real-coherent-20260904"
 DEFAULT_REFERENCE_POLICY_TAG = (
     "cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
 )
 DEFAULT_TRAINER_TAG = "cuda13-b300-0.1.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
 DEFAULT_EVAL_TAG = "cuda13-b300-0.1.3-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
-DEFAULT_ISAAC_TAG = "3.0.0b2.post1"
+DEFAULT_ISAAC_TAG = "3.0.0b2.post1-sim2real-coherent-20260904"
 # Pluggable held-out sim backend. Genesis remains fully supported; Isaac Lab
 # (Isaac Sim headless) is the default and requires RT-core GPUs (L40S / RTX Pro).
 SIM_BACKEND_GENESIS = "genesis"

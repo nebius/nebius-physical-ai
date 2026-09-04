@@ -617,6 +617,23 @@
       ]
     },
     {
+      "name": "npa-cosmos3-super-benchmark",
+      "dockerfile": "cosmos3-super-benchmark/Dockerfile",
+      "build_script": "cosmos3-super-benchmark/build.sh",
+      "redistribution": "restricted",
+      "verdict": "ready",
+      "validation": "validated",
+      "torch": "inherited from exact vllm/vllm-omni:cosmos3 upstream digest",
+      "source_compiled_extensions": [],
+      "smoke": "full four-cell B200 serving benchmark with strict MP4 validity",
+      "notes": "Operator-private wrapper around the pinned upstream benchmark runtime; adds only the SkyPilot worker bootstrap surface and is excluded from public publication. The exact private digest completed the full four-cell B200 sweep with 96/96 technically valid MP4s and reproduced the expected higher-throughput/higher-latency ordering as service count increased.",
+      "validated_digest": "sha256:df755667ee290717f843b4f565be487787ea5297a85d262317c274f894085a68",
+      "validated_registry_scope": "operator",
+      "measured_arch_list": [
+        "sm_100"
+      ]
+    },
+    {
       "name": "npa-cosmos3-ray-serve",
       "dockerfile": "cosmos3-ray-serve/Dockerfile",
       "build_script": "cosmos3-ray-serve/build.sh",
