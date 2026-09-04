@@ -33,7 +33,8 @@ and zero whole-GPU capacity/allocatable. See
 `docs/fleet-rtx-pro-6000-mig.md` and `npa/examples/fleet/rtxpro-mig.yaml`.
 
 RTX rendering without MIG uses the separate explicit cluster setting
-`gpu_workload_profile: rtx-rendering`. It selects RTX PRO 6000, the supported
+`gpu_workload_profile: rtx-rendering`. It selects RTX PRO 6000 (including an
+explicitly resolved zonal platform such as `gpu-rtx6000-a`), the supported
 single-GPU preset by default or accepts the explicit
 `8gpu-192vcpu-1744gb` RTX PCIe preset, uses GPU Operator mounted drivers, and
 requires per-node GLX/EGL/Vulkan readiness. The 8-GPU RTX shape remains

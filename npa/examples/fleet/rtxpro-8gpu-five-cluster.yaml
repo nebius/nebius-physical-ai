@@ -8,7 +8,9 @@ defaults:
   gpu_workload_profile: rtx-rendering
   gpu_nodes:
     count: 2
-    platform: gpu-rtx6000
+    # uk-south2 exposes the exact zonal RTX platform name below. Other regions
+    # may expose the unsuffixed gpu-rtx6000 catalog name instead.
+    platform: gpu-rtx6000-a
     preset: 8gpu-192vcpu-1744gb
     # Replace only in the owner-private runtime copy. Fleet renders STRICT and
     # never falls back to ordinary on-demand capacity.

@@ -57,7 +57,8 @@ npa cluster up --gpu-workload-profile rtx-rendering
 npa provision-if-absent --gpu-workload-profile rtx-rendering
 ```
 
-`rtx-rendering` selects `gpu-rtx6000`, defaults to one
+`rtx-rendering` selects `gpu-rtx6000`, or preserves an explicitly resolved
+zonal variant such as `gpu-rtx6000-a`, and defaults to one
 `1gpu-24vcpu-218gb` GPU node, and also accepts the platform's
 `8gpu-192vcpu-1744gb` RTX PCIe preset when it is explicitly requested. Both
 shapes select the supported NVIDIA GPU Operator mounted-driver path. The

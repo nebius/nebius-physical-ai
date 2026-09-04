@@ -74,6 +74,38 @@ def test_rtx_rendering_profile_accepts_eight_gpu_rtx_nodes() -> None:
     assert plan["enable_gpu_cluster"] is False
 
 
+def test_rtx_rendering_profile_preserves_exact_zonal_rtx_platform() -> None:
+    cluster = ClusterSpec(
+        name="render",
+        gpu_workload_profile="rtx-rendering",
+        gpu_nodes=NodePoolSpec(
+            count=3,
+            platform="gpu-rtx6000-a",
+            preset=RTX_RENDERING_8GPU_PRESET,
+        ),
+    )
+
+    cluster.validate()
+    plan = desired_state(cluster)
+
+    assert plan["gpu_platform"] == "gpu-rtx6000-a"
+    assert plan["gpu_driver_mode"] == "operator"
+    assert plan["gpu_graphics_smoke"] is True
+
+
+def test_rtx_rendering_profile_rejects_unknown_rtx_platform_suffix() -> None:
+    with pytest.raises(ValueError, match="requires platform"):
+        ClusterSpec(
+            name="render",
+            gpu_workload_profile="rtx-rendering",
+            gpu_nodes=NodePoolSpec(
+                count=1,
+                platform="gpu-rtx6000-preview",
+                preset=RTX_RENDERING_PRESET,
+            ),
+        )
+
+
 def test_rtx_rendering_profile_rejects_non_rtx_preset() -> None:
     with pytest.raises(ValueError, match="requires an RTX PRO 6000 preset"):
         ClusterSpec(

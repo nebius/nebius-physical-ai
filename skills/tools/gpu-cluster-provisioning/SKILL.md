@@ -60,7 +60,8 @@ For Isaac/RTX rendering on RTX PRO 6000 Kubernetes, use the explicit profile:
 npa cluster up --gpu-workload-profile rtx-rendering
 ```
 
-The profile selects `gpu-rtx6000` and defaults to `1gpu-24vcpu-218gb`; an
+The profile selects `gpu-rtx6000` (or preserves an exact zonal variant such as
+`gpu-rtx6000-a`) and defaults to `1gpu-24vcpu-218gb`; an
 explicit `8gpu-192vcpu-1744gb` RTX PCIe preset is also supported. Both use the
 GPU Operator mounted-driver path and a mandatory graphics readiness gate. The
 8-GPU RTX shape is not an SXM/NVL fabric topology, so it does not enable a GPU
