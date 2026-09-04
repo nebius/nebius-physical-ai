@@ -43,6 +43,7 @@ config:
   llm_model: "Qwen/Qwen3-30B-A3B-Instruct-2507"
   generation_url: "http://127.0.0.1:8000/v1"
   generation_model: "Qwen/Qwen-Image-Edit-2511"
+  generation_revision: "6f3ccc0b56e431dc6a0c2b2039706d7d26f22cb9"
   service_kind: image-edit
   service_port: "8000"
   service_parallel_size: "1"
@@ -54,13 +55,11 @@ resources:
     memory: 16Gi
   image-edit:
     cloud: kubernetes
-    accelerators: RTXPRO-6000-BLACKWELL-SERVER-EDITION:1
-    cpus: 16
-    memory: 96Gi
-    disk_size: 300
+    accelerators: B200:1
+    cpus: 4
+    memory: 32Gi
     image: "vllm/vllm-omni@sha256:5d8c7e742c98858f257d82307e378391f0e7d77065e141c733cc4778042128ab"
     kubernetes:
-      provision_timeout: 3600
       pod_config:
         spec:
           containers:
@@ -78,11 +77,10 @@ resources:
                 sizeLimit: 32Gi
   attribute-search:
     cloud: kubernetes
-    cpus: 8
-    memory: 32Gi
+    cpus: 4
+    memory: 16Gi
     image: "nvcr.io/nvidia/paidf-event-and-person-attribute-search-service@sha256:0f581ff6d92efd391281e5787a8b1fda76556443ade47c1f5d59d4c345a01f6a"
     kubernetes:
-      provision_timeout: 1800
       pod_config:
         spec:
           imagePullSecrets:

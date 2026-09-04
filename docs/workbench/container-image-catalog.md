@@ -127,6 +127,33 @@ published, and anonymously pullable status for this exact digest only.
 | Cosmos Evaluator 0.1.2 | `npa-cosmos-evaluator` | `0.1.2-skypilot-v1-20260813T164700Z-r2` | 2026-08-21 | Runs the upstream `HallucinationProcessor` quality gate on generated video using classical computer vision and no weights. The additive r2 image exposes the deterministic ranking/holdout attribute-sample policy consumed by PAIDF. Attribute verification calls an OpenAI-compatible endpoint; the LFS/EULA-gated obstacle checker is deliberately not fetched. |
 | FiftyOne 1.15.0.post1 (Voxel51) | `npa-fiftyone` | `1.15.0.post1` | 2026-08-13 | Dataset curation and visualization UI on port 5151, including uniqueness, similarity, and embedding visualization. Bundles a `mongod` binary so FiftyOne can launch its own metadata database. |
 
+## External PAIDF runtime images
+
+The direct IAA and EVG translations reuse vendor-published images. DIG uses an
+operator-built, restricted image from the pinned Apache-2.0 AnomalyGen source
+because NVIDIA's vendor image fails the required worker bootstrap probe. Every
+workflow image reference is immutable, and submit must
+prove both registry pullability and the SkyPilot worker bootstrap contract for
+the exact digest before launch. NGC images require the operator's authorized NGC
+pull secret. Model and dataset access is a separate runtime preflight and never
+grants redistribution rights.
+
+| Workflow role | Immutable external image | NPA publication status |
+| --- | --- | --- |
+| DIG vendor reference (not executed) | `nvcr.io/nvidia/paidf-anomalygen@sha256:e62a87d1dc58b6de8b8a352dc8ec2a2e3e400288d66b2b8b19b92d97e7a0bc09` | Vendor-owned NGC image; pull verified, but not SkyPilot-compatible |
+| DIG setup, fine-tune, generation, and native labels | `<operator-registry>/npa-paidf-anomalygen-sky@sha256:<digest>` built from `paidf-anomalygen-sky/Dockerfile` | Restricted source build on public CUDA bases; never NPA public GHCR |
+| IAA Qwen Image Edit service | `vllm/vllm-omni@sha256:5d8c7e742c98858f257d82307e378391f0e7d77065e141c733cc4778042128ab` | Vendor/community image reused from its source registry; not mirrored by NPA |
+| EVG Cosmos3 Super Image2Video service | `vllm/vllm-omni@sha256:970dee6658ea223f615b2438ce41e47f1d5322225482546e6e6bc5d8134f757c` | Vendor/community image reused from its source registry; not mirrored by NPA |
+| IAA/EVG person attribute search | `nvcr.io/nvidia/paidf-event-and-person-attribute-search-service@sha256:0f581ff6d92efd391281e5787a8b1fda76556443ade47c1f5d59d4c345a01f6a` | Vendor-owned NGC image; restricted pull, not NPA-published |
+| EVG detection and tracking | `nvcr.io/nvidia/paidf-detection-and-tracking-rfdetr-service@sha256:6b35e63b95cab7cd772906bcb08be978de7526427f0d1925ab84439dd4a9561e` | Vendor-owned NGC image; restricted pull, not NPA-published |
+| EVG captioning | `nvcr.io/nvidia/paidf-captioning-service@sha256:17e1e3f53cc66342183f7d0b6eed76907993bb325a13db90c46d9a8cf664d804` | Vendor-owned NGC image; restricted pull, not NPA-published |
+| EVG Visual QA | `nvcr.io/nvidia/paidf-visual-qa-service@sha256:e681c8dee849c7ac9fc5b182f51e9efd0da460972b08850d40f00aa9d5e3c97c` | Vendor-owned NGC image; restricted pull, not NPA-published |
+
+The licensing and runtime-fetch boundary is recorded in
+`skills/NOTICE-NVIDIA-PAIDF`. The machine-readable packaging contract includes
+only the restricted DIG compatibility source; all other rows remain external
+images for which NPA has no Dockerfile or distributable artifact.
+
 ## Validated source-registry candidates pending public release
 
 The supported worker defaults currently select additive Cosmos Transfer,

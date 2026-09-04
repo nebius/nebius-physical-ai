@@ -74,15 +74,24 @@ def test_assets_for_filters_by_capability() -> None:
     assert assets_for([]) == WORKBENCH_ASSETS
 
 
-def test_paidf_access_is_scoped_to_the_gated_transfer_model() -> None:
+def test_paidf_access_covers_translation_models_and_transfer_checkpoints() -> None:
     from npa.workbench.cosmos.control_contract import COSMOS_TRANSFER_CHECKPOINTS
 
     assets = assets_for(["paidf"])
-    assert {asset.repo for asset in assets} == {"nvidia/Cosmos-Transfer2.5-2B"}
-    assert {asset.revision for asset in assets} == {
+    transfer_assets = [
+        asset for asset in assets if asset.repo == "nvidia/Cosmos-Transfer2.5-2B"
+    ]
+    assert {asset.revision for asset in transfer_assets} == {
         checkpoint.revision for checkpoint in COSMOS_TRANSFER_CHECKPOINTS.values()
     }
-    assert all(asset.gated for asset in assets)
+    by_repo = {asset.repo: asset for asset in assets}
+    assert by_repo["Qwen/Qwen-Image-Edit-2511"].revision == (
+        "6f3ccc0b56e431dc6a0c2b2039706d7d26f22cb9"
+    )
+    assert by_repo["nvidia/Cosmos3-Super-Image2Video"].revision == (
+        "4f847566f3d3388fbf0ac07b99dd1a6432db9ecd"
+    )
+    assert by_repo["nvidia/Cosmos-Guardrail1"].gated
 
 
 def test_hf_gated_warns_without_token() -> None:
@@ -294,9 +303,7 @@ def test_check_workbench_access_flags_failure_on_gated_denial() -> None:
     results = check_workbench_access(
         hf_token="hf_x",
         ngc_key="nvapi-x",
-        hf_validator=lambda *args: _HFResult(
-            ok=False, status_code=403, error="denied"
-        ),
+        hf_validator=lambda *args: _HFResult(ok=False, status_code=403, error="denied"),
         capabilities=["groot"],
     )
     assert has_failure(results) is True

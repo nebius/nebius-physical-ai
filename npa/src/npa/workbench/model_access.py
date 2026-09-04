@@ -209,11 +209,27 @@ WORKBENCH_ASSETS: tuple[GatedAsset, ...] = (
         ),
     ),
     GatedAsset("nvidia/Cosmos-Reason1-7B", HF, ("cosmos",), False),
-    GatedAsset("nvidia/Cosmos3-Nano", HF, ("cosmos3",), False),
+    GatedAsset("nvidia/Cosmos3-Nano", HF, ("cosmos3", "paidf"), False),
+    GatedAsset(
+        "Qwen/Qwen-Image-Edit-2511",
+        HF,
+        ("paidf",),
+        False,
+        revision="6f3ccc0b56e431dc6a0c2b2039706d7d26f22cb9",
+        official_url="https://huggingface.co/Qwen/Qwen-Image-Edit-2511",
+    ),
+    GatedAsset(
+        "nvidia/Cosmos3-Super-Image2Video",
+        HF,
+        ("paidf",),
+        False,
+        revision="4f847566f3d3388fbf0ac07b99dd1a6432db9ecd",
+        official_url="https://huggingface.co/nvidia/Cosmos3-Super-Image2Video",
+    ),
     GatedAsset(
         "nvidia/Cosmos-Guardrail1",
         HF,
-        ("cosmos3",),
+        ("cosmos3", "paidf"),
         True,
         revision="d6d4bfa899a71454a700907664f3e88f503950cf",
         probe_path="video_content_safety_filter/safety_filter.pt",
@@ -616,9 +632,7 @@ def access_note(results: list[CheckResult]) -> str:
     )
     ngc_unverified = bool(ngc is not None and ngc.status == WARN and not ngc_missing)
     ngc_credential_rejected = bool(
-        ngc is not None
-        and ngc.status == FAIL
-        and "credential rejected" in ngc.summary
+        ngc is not None and ngc.status == FAIL and "credential rejected" in ngc.summary
     )
 
     if not hf_no and ngc_ok and not hf_unverified:
@@ -637,17 +651,13 @@ def access_note(results: list[CheckResult]) -> str:
         )
     elif ngc_unverified:
         parts.append(
-            "NGC repository entitlement unverified for: "
-            + ", ".join(NGC_CAPABILITIES)
+            "NGC repository entitlement unverified for: " + ", ".join(NGC_CAPABILITIES)
         )
     elif ngc_credential_rejected:
-        parts.append(
-            "NGC credential rejected for: " + ", ".join(NGC_CAPABILITIES)
-        )
+        parts.append("NGC credential rejected for: " + ", ".join(NGC_CAPABILITIES))
     elif not ngc_ok:
         parts.append(
-            "NGC repository entitlement denied for: "
-            + ", ".join(NGC_CAPABILITIES)
+            "NGC repository entitlement denied for: " + ", ".join(NGC_CAPABILITIES)
         )
     if hf_unverified:
         parts.append(f"{len(hf_unverified)} model(s) unverified")

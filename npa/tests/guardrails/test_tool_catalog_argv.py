@@ -80,6 +80,8 @@ NON_CLI_ARGV = frozenset(
         "workflow.paidf.run_auto_label",
         "workflow.paidf.finalize_dataset",
         "workflow.paidf.dig_infer",
+        "workflow.paidf.dig_train",
+        "workflow.paidf.dig_prepare_pretrained",
     }
 )
 

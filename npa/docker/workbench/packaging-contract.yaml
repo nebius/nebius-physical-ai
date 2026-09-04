@@ -147,6 +147,16 @@ redistribution:
 
 # Relative to npa/docker/workbench/
 images:
+  paidf-anomalygen-sky:
+    dockerfile: paidf-anomalygen-sky/Dockerfile
+    tier: interactive
+    redistribution: restricted
+    notes: >-
+      Operator-built implementation from the exact Apache-2.0 NVIDIA PAIDF
+      AnomalyGen source revision and digest-pinned public CUDA bases. It compiles
+      upstream's wheel recipe and adds SkyPilot bootstrap prerequisites without
+      model weights or data. The resolved dependency closure remains
+      private-registry-only pending a separate redistribution review.
   lerobot:
     dockerfile: lerobot/Dockerfile
     tier: service

@@ -52,12 +52,24 @@ Executable component sources are independently pinned:
   revision 02079bbd272900c837ebdbd0bf44384dfdf1f25e (Apache-2.0)
 
 Vendor runtime images are referenced by immutable registry digest and are not
-rebuilt, copied, or claimed as NPA-published images. NPA runtime-fetches exact
+claimed as NPA-published images. NVIDIA's AnomalyGen image fails SkyPilot
+bootstrap, so the checked-in restricted `paidf-anomalygen-sky` image builds the
+exact Apache-2.0 source revision on digest-pinned public CUDA bases. It belongs
+in an operator-controlled registry and may never be published to NPA's public
+GHCR namespace without a separate redistribution review. NPA runtime-fetches exact
 Apache-2.0 protocol source where the selected vendor service image does not
 carry its client, and verifies the fetched commit before execution. All
 registered components use S3-compatible object storage for handoffs.
 Each run writes `reports/upstream.json` (`npa.paidf.upstream.v1`) so this
 adaptation boundary and the exact public revisions travel with its artifacts.
+
+Runtime model snapshots are also pinned and remain outside published images:
+
+  Qwen/Qwen-Image-Edit-2511
+  revision 6f3ccc0b56e431dc6a0c2b2039706d7d26f22cb9
+
+  nvidia/Cosmos3-Super-Image2Video
+  revision 4f847566f3d3388fbf0ac07b99dd1a6432db9ecd
 
 Gated weights remain runtime fetches under the operator's own upstream identity.
 Access credentials prove fetch authorization, not permission to redistribute

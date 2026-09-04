@@ -799,20 +799,22 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
         "paidf-defect-image-generation.yaml",
         "gpu",
+        runtime=True,
         secret_envs=(
             "AWS_ACCESS_KEY_ID",
             "AWS_SECRET_ACCESS_KEY",
             "HF_TOKEN",
-            "NGC_API_KEY",
         ),
         notes=(
-            "Direct DIG Day-1 manual-ROI acceptance in the immutable NVIDIA "
-            "AnomalyGen image; requires operator-authorized upstream sample data."
+            "Direct DIG Day-1 manual-ROI acceptance in the restricted, "
+            "operator-built AnomalyGen compatibility image; requires "
+            "operator-authorized upstream sample data."
         ),
     ),
     SubmitLiveCase(
         "paidf-image-attribute-augmentation.yaml",
         "multi",
+        runtime=True,
         secret_envs=(
             "NEBIUS_TOKEN_FACTORY_KEY",
             "AWS_ACCESS_KEY_ID",
@@ -829,6 +831,7 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
         "paidf-event-video-generation.yaml",
         "multi",
+        runtime=True,
         secret_envs=(
             "NEBIUS_TOKEN_FACTORY_KEY",
             "AWS_ACCESS_KEY_ID",

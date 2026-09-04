@@ -69,7 +69,14 @@ TOOL_REF_IMAGE_TOOL: dict[str, str] = {
 OPENPI_TERMS_ENV = "NPA_OPENPI_ACCEPT_GEMMA_TERMS"
 
 SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
-    "workflow.paidf": ("HF_TOKEN", "NEBIUS_TOKEN_FACTORY_KEY"),
+    "workflow.paidf": (),
+    "workflow.paidf.run_local_augmentation": (
+        "HF_TOKEN",
+        "NEBIUS_TOKEN_FACTORY_KEY",
+    ),
+    "workflow.paidf.postprocess_iaa": ("NEBIUS_TOKEN_FACTORY_KEY",),
+    "workflow.paidf.run_auto_label": ("NEBIUS_TOKEN_FACTORY_KEY",),
+    "workflow.paidf.dig_prepare_pretrained": ("HF_TOKEN",),
     "workbench.openpi": (OPENPI_TERMS_ENV,),
     "workbench.token_factory": ("NEBIUS_TOKEN_FACTORY_KEY",),
     "workbench.vlm_eval": (),
@@ -194,6 +201,8 @@ PYTHON_MODULE_PROBE = "python:"
 #: so the tool and the vendor library share one environment.
 TOOL_REF_VENDOR_INTERPRETERS: dict[str, tuple[str, ...]] = {
     "workflow.paidf.dig_infer": ("/opt/venv/bin/python",),
+    "workflow.paidf.dig_train": ("/opt/venv/bin/python",),
+    "workflow.paidf.dig_prepare_pretrained": ("/opt/venv/bin/python",),
     "workbench.groot.baseline_eval": ("/opt/groot/Isaac-GR00T/.venv/bin/python",),
     "workbench.groot.posttrain_eval": ("/opt/groot/Isaac-GR00T/.venv/bin/python",),
     "workbench.lerobot": ("/opt/lerobot/venv/bin/python",),

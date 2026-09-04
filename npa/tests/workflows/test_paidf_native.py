@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -22,6 +23,98 @@ def test_component_runner_preserves_three_upstream_retries(monkeypatch) -> None:
     monkeypatch.setattr(paidf_native.subprocess, "run", fail_then_succeed)
     paidf_native._run_component(["component"])
     assert attempts == 4
+
+
+def test_multistorage_config_uses_run_scoped_s3_environment(monkeypatch) -> None:
+    monkeypatch.delenv("MULTISTORAGECLIENT_CONFIGURATION", raising=False)
+    monkeypatch.setenv("AWS_ENDPOINT_URL", "https://objects.example.test")
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "run-access")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "run-secret")
+
+    paidf_native._configure_multistorage(
+        "s3://input-bucket/inputs/image.png",
+        "s3://output-bucket/results/",
+    )
+
+    config = json.loads(os.environ["MULTISTORAGECLIENT_CONFIGURATION"])
+    assert sorted(config["profiles"]) == ["input-bucket", "output-bucket"]
+    assert config["path_mapping"]["s3://input-bucket/"] == "msc://input-bucket/"
+    assert config["profiles"]["output-bucket"]["storage_provider"]["options"] == {
+        "base_path": "output-bucket",
+        "endpoint_url": "https://objects.example.test",
+        "infer_content_type": True,
+        "region_name": "us-east-1",
+    }
+
+
+def test_evg_local_service_preserves_upstream_two_way_hsdp(monkeypatch) -> None:
+    launched: list[str] = []
+
+    class Service:
+        returncode = None
+
+        def poll(self):
+            return None
+
+        def terminate(self):
+            return None
+
+        def wait(self, timeout=None):
+            return 0
+
+    class Response:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+    def popen(argv, **_kwargs):
+        launched.extend(argv)
+        return Service()
+
+    monkeypatch.setattr(paidf_native.subprocess, "Popen", popen)
+    monkeypatch.setattr(
+        paidf_native.urllib.request, "urlopen", lambda *_a, **_k: Response()
+    )
+    monkeypatch.setattr(
+        paidf_native,
+        "run_augmentation",
+        lambda *_args: {"schema": "npa.paidf.native.evg-augmentation.v1"},
+    )
+
+    paidf_native.run_local_augmentation(
+        "configs.json",
+        "result.json",
+        "nvidia/model",
+        "deadbeef",
+        "image2video",
+        8000,
+        2,
+        "run",
+    )
+
+    assert launched == [
+        "vllm",
+        "serve",
+        "nvidia/model",
+        "--revision",
+        "deadbeef",
+        "--omni",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "8000",
+        "--cfg-parallel-size",
+        "2",
+        "--use-hsdp",
+        "--hsdp-shard-size",
+        "2",
+        "--init-timeout",
+        "1800",
+    ]
 
 
 def test_prepare_images_writes_verified_pane_metadata(tmp_path: Path) -> None:
@@ -55,7 +148,10 @@ def test_build_configs_mutates_pinned_upstream_protocol_without_replacing_it(
         json.dumps(
             {
                 "images": [
-                    {"input_key": "input-0000", "prepared_uri": "s3://example/input.png"}
+                    {
+                        "input_key": "input-0000",
+                        "prepared_uri": "s3://example/input.png",
+                    }
                 ]
             }
         ),

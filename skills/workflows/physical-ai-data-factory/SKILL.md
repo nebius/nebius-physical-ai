@@ -29,7 +29,7 @@ and composes existing workbench tools. Every new run writes the immutable
 | YAML | Official source | Classification | Execution |
 | --- | --- | --- | --- |
 | `physical-ai-data-factory.yaml` | physical-ai-data-factory VDA | direct translation | SkyPilot + Transfer 2.5/Token Factory/Curator/FiftyOne |
-| `paidf-defect-image-generation.yaml` | physical-ai-data-factory DIG Day-1 manual-ROI | direct scoped translation | SkyPilot + digest-pinned AnomalyGen |
+| `paidf-defect-image-generation.yaml` | physical-ai-data-factory DIG Day-1 manual-ROI | direct scoped translation | SkyPilot + restricted operator-built AnomalyGen compatibility image |
 | `paidf-image-attribute-augmentation.yaml` | paidf-orchestration IAA DAG | direct translation | SkyPilot + vLLM-Omni Qwen Edit + PAIDF protocols |
 | `paidf-event-video-generation.yaml` | paidf-orchestration EVG DAG | direct translation | SkyPilot + Cosmos3 Super + PAIDF protocols |
 | `paidf-cosmos3.yaml` | no corresponding Airflow IAA/EVG DAG | NPA-specific VDA alternative | SkyPilot + NPA Cosmos3/Curator/FiftyOne |
@@ -37,6 +37,9 @@ and composes existing workbench tools. Every new run writes the immutable
 The exact source/component revisions and licenses live in
 `skills/NOTICE-NVIDIA-PAIDF` and every run's `reports/upstream.json`. Do not call
 `paidf-cosmos3.yaml` an IAA or EVG translation.
+The IAA and EVG service model snapshots are also immutable workflow config:
+Qwen Image Edit `6f3ccc0b56e431dc6a0c2b2039706d7d26f22cb9` and Cosmos3 Super
+Image2Video `4f847566f3d3388fbf0ac07b99dd1a6432db9ecd`, respectively.
 
 Three NVIDIA components in the pipeline are the real open-source projects, not
 NPA look-alikes: **Cosmos Transfer 2.5** augments, **Cosmos Evaluator**

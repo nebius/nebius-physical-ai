@@ -11,6 +11,7 @@ mistaken for an execution of either upstream orchestrator.
 from __future__ import annotations
 
 import json
+import re
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -24,6 +25,8 @@ PAIDF_AUTO_LABELING_REVISION = "36dc1114dea00d9986df97325a664520993964de"
 PAIDF_ANOMALYGEN_REVISION = "dbaf7d7d9003f048230f9026da5969e9e5931785"
 PAIDF_SIMULATION_REVISION = "498751aceeea3dc3bac0d5fb043bf3553aec46a6"
 PAIDF_CURATION_REVISION = "02079bbd272900c837ebdbd0bf44384dfdf1f25e"
+QWEN_IMAGE_EDIT_REVISION = "6f3ccc0b56e431dc6a0c2b2039706d7d26f22cb9"
+COSMOS3_SUPER_IMAGE2VIDEO_REVISION = "4f847566f3d3388fbf0ac07b99dd1a6432db9ecd"
 
 _VARIANTS: dict[str, dict[str, Any]] = {
     "cosmos-transfer2.5": {
@@ -46,8 +49,17 @@ _VARIANTS: dict[str, dict[str, Any]] = {
         "translation": "direct",
         "upstream_workflow": "Defect Image Generation Day 1 manual-ROI",
         "preparation": "canonical clean-image, ROI-mask, and defect-spec validation",
+        "training": "NVIDIA PAIDF AnomalyGen 1.1.0 fresh fine-tuning with pinned use-case recipe",
         "generation": "NVIDIA PAIDF AnomalyGen 1.1.0 inference and native labeling",
-        "execution": "workflow.paidf.dig_infer",
+        "execution": "workflow.paidf.dig_train -> workflow.paidf.dig_infer",
+        "source_reference_images": [
+            "nvcr.io/nvidia/paidf-anomalygen@sha256:e62a87d1dc58b6de8b8a352dc8ec2a2e3e400288d66b2b8b19b92d97e7a0bc09"
+        ],
+        "runtime_image_boundary": (
+            "the vendor image fails SkyPilot bootstrap; paidf-anomalygen-sky is "
+            "built from the pinned Apache-2.0 source on public CUDA bases, and "
+            "the run must supply it by exact private-registry digest"
+        ),
         "outputs": "generated images, masks, COCO labels, and provenance",
     },
     "image-attribute-augmentation": {
@@ -55,8 +67,13 @@ _VARIANTS: dict[str, dict[str, Any]] = {
         "upstream_workflow": "image_attribute_augmentation_dag",
         "preparation": "input validation and deterministic attribute sampling",
         "generation": "NVIDIA PAIDF Augmentation 1.1.0 image-edit protocol",
+        "models": {"Qwen/Qwen-Image-Edit-2511": QWEN_IMAGE_EDIT_REVISION},
         "labeling": "NVIDIA PAIDF event/person attribute search protocol",
         "execution": "workflow.paidf.run_local_augmentation",
+        "runtime_images": [
+            "vllm/vllm-omni@sha256:5d8c7e742c98858f257d82307e378391f0e7d77065e141c733cc4778042128ab",
+            "nvcr.io/nvidia/paidf-event-and-person-attribute-search-service@sha256:0f581ff6d92efd391281e5787a8b1fda76556443ade47c1f5d59d4c345a01f6a",
+        ],
         "outputs": "augmented image dataset, attributes, skips, and provenance",
     },
     "event-video-generation": {
@@ -64,11 +81,21 @@ _VARIANTS: dict[str, dict[str, Any]] = {
         "upstream_workflow": "event_video_generation_dag",
         "preparation": "input validation and deterministic anomaly/environment sampling",
         "generation": "NVIDIA PAIDF Augmentation 1.1.0 Cosmos3 image2video protocol",
+        "models": {
+            "nvidia/Cosmos3-Super-Image2Video": COSMOS3_SUPER_IMAGE2VIDEO_REVISION
+        },
         "labeling": (
             "NVIDIA PAIDF detection/tracking, captioning, visual-QA, and "
             "event/person attribute-search protocols"
         ),
         "execution": "workflow.paidf.run_local_augmentation",
+        "runtime_images": [
+            "vllm/vllm-omni@sha256:970dee6658ea223f615b2438ce41e47f1d5322225482546e6e6bc5d8134f757c",
+            "nvcr.io/nvidia/paidf-detection-and-tracking-rfdetr-service@sha256:6b35e63b95cab7cd772906bcb08be978de7526427f0d1925ab84439dd4a9561e",
+            "nvcr.io/nvidia/paidf-captioning-service@sha256:17e1e3f53cc66342183f7d0b6eed76907993bb325a13db90c46d9a8cf664d804",
+            "nvcr.io/nvidia/paidf-visual-qa-service@sha256:e681c8dee849c7ac9fc5b182f51e9efd0da460972b08850d40f00aa9d5e3c97c",
+            "nvcr.io/nvidia/paidf-event-and-person-attribute-search-service@sha256:0f581ff6d92efd391281e5787a8b1fda76556443ade47c1f5d59d4c345a01f6a",
+        ],
         "outputs": "anomaly video dataset, annotations, sidecars, and provenance",
     },
 }
@@ -79,35 +106,35 @@ _COMPONENT_SOURCES = [
         "revision": PAIDF_AUGMENTATION_REVISION,
         "role": "published-augmentation-protocol",
         "licenses": ["Apache-2.0"],
-        "executed_by_npa": True,
+        "workflow_variants": ["image-attribute-augmentation", "event-video-generation"],
     },
     {
         "repository": "https://github.com/NVIDIA/paidf-auto-labeling",
         "revision": PAIDF_AUTO_LABELING_REVISION,
         "role": "published-auto-labeling-protocols",
         "licenses": ["Apache-2.0"],
-        "executed_by_npa": True,
+        "workflow_variants": ["image-attribute-augmentation", "event-video-generation"],
     },
     {
         "repository": "https://github.com/NVIDIA/paidf-anomalygen",
         "revision": PAIDF_ANOMALYGEN_REVISION,
         "role": "defect-generation-implementation",
         "licenses": ["Apache-2.0"],
-        "executed_by_npa": True,
+        "workflow_variants": ["defect-image-generation-day1-manual-roi"],
     },
     {
         "repository": "https://github.com/NVIDIA/paidf-simulation",
         "revision": PAIDF_SIMULATION_REVISION,
         "role": "dig-usd-simulation-ecosystem-module-not-executed-by-manual-roi-translation",
         "licenses": ["Apache-2.0"],
-        "executed_by_npa": False,
+        "workflow_variants": [],
     },
     {
         "repository": "https://github.com/NVIDIA/paidf-curation-and-retrieval",
         "revision": PAIDF_CURATION_REVISION,
         "role": "published-curation-and-retrieval-protocol",
         "licenses": ["Apache-2.0"],
-        "executed_by_npa": False,
+        "workflow_variants": [],
     },
 ]
 
@@ -121,6 +148,13 @@ def upstream_contract(workflow_variant: str) -> dict[str, Any]:
             "unsupported PAIDF workflow variant; expected one of: "
             + ", ".join(sorted(_VARIANTS))
         )
+    component_sources = []
+    for source in _COMPONENT_SOURCES:
+        record = dict(source)
+        applicable = list(record.pop("workflow_variants"))
+        record["executed_by_npa"] = variant in applicable
+        record["applicable_workflow_variants"] = applicable
+        component_sources.append(record)
     return {
         "schema": SCHEMA,
         "workflow_variant": variant,
@@ -141,7 +175,7 @@ def upstream_contract(workflow_variant: str) -> dict[str, Any]:
                 "upstream_orchestrator": "Apache Airflow on Kubernetes",
                 "executed_by_npa": False,
             },
-            *_COMPONENT_SOURCES,
+            *component_sources,
         ],
         "npa_integration": {
             "api_version": "npa.workflow/v0.0.1",
@@ -160,10 +194,16 @@ def upstream_contract(workflow_variant: str) -> dict[str, Any]:
     }
 
 
-def write_upstream_contract(workflow_variant: str, output_uri: str) -> dict[str, Any]:
+def write_upstream_contract(
+    workflow_variant: str, output_uri: str, runtime_image: str = ""
+) -> dict[str, Any]:
     """Write one truthful PAIDF upstream contract to a local path or S3 URI."""
 
     payload = upstream_contract(workflow_variant)
+    if runtime_image:
+        if not re.fullmatch(r".+@sha256:[0-9a-f]{64}", runtime_image):
+            raise ValueError("runtime_image must be immutable by sha256 digest")
+        payload["npa_integration"]["resolved_runtime_image"] = runtime_image
     encoded = json.dumps(payload, indent=2, sort_keys=True) + "\n"
     if output_uri.startswith("s3://"):
         from npa.clients.storage import StorageClient
@@ -199,6 +239,8 @@ __all__ = [
     "PAIDF_CURATION_REVISION",
     "PAIDF_SIMULATION_REVISION",
     "PHYSICAL_AI_DATA_FACTORY_REVISION",
+    "COSMOS3_SUPER_IMAGE2VIDEO_REVISION",
+    "QWEN_IMAGE_EDIT_REVISION",
     "SCHEMA",
     "upstream_contract",
     "write_upstream_contract",

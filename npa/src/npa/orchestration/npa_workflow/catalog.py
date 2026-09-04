@@ -178,6 +178,7 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "--config-manifest-uri", "{{config.config_manifest_uri}}",
             "--result-uri", "{{config.augmentation_result_uri}}",
             "--generation-model", "{{config.generation_model}}",
+            "--generation-revision", "{{config.generation_revision}}",
             "--service-kind", "{{config.service_kind}}",
             "--port", "{{config.service_port}}",
             "--parallel-size", "{{config.service_parallel_size}}",
@@ -265,7 +266,37 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "--result-uri", "{{config.dig_result_uri}}",
             "--num-sdg", "{{config.num_sdg}}",
             "--checkpoint-step", "{{config.checkpoint_step}}",
-            "--model-size", "{{config.model_size}}",
+            "--run-id", "{{run.id}}",
+        ],
+    ),
+    "workflow.paidf.dig_train": ToolEntry(
+        name="workflow.paidf.dig_train",
+        access_capabilities=("paidf",),
+        description=(
+            "Run the genuine default PAIDF Day-1 manual-ROI AnomalyGen fine-tuning task."
+        ),
+        argv_template=[
+            *_PAIDF_NATIVE_PIPELINE,
+            "dig-train",
+            "--dataset-uri", "{{config.dataset_uri}}",
+            "--pretrained-uri", "{{config.pretrained_uri}}",
+            "--output-uri", "{{config.finetune_uri}}",
+            "--result-uri", "{{config.finetune_result_uri}}",
+            "--usecase", "{{config.usecase}}",
+            "--run-id", "{{run.id}}",
+        ],
+    ),
+    "workflow.paidf.dig_prepare_pretrained": ToolEntry(
+        name="workflow.paidf.dig_prepare_pretrained",
+        access_capabilities=("paidf",),
+        description=(
+            "Runtime-fetch AnomalyGen's gated base checkpoint set under operator access."
+        ),
+        argv_template=[
+            *_PAIDF_NATIVE_PIPELINE,
+            "dig-prepare-pretrained",
+            "--output-uri", "{{config.pretrained_uri}}",
+            "--result-uri", "{{config.pretrained_result_uri}}",
             "--run-id", "{{run.id}}",
         ],
     ),

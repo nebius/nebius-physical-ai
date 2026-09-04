@@ -4,31 +4,37 @@ kind: Workflow
 # Direct NPA translation of NVIDIA/physical-ai-data-factory's Defect Image
 # Generation Day-1 manual-ROI flow at revision
 # e4c663cbbdcf159ad952751274c883c81d3ab4be. This is the published
-# checkpoint-passthrough branch: prepared clean images + ROI masks +
-# defect_spec.jsonl -> AnomalyGen inference -> native labels. It intentionally
+# default fresh-finetune branch: prepared clean images + ROI masks +
+# defect_spec.jsonl -> AnomalyGen fine-tuning -> inference -> native labels. It intentionally
 # does not claim the separate USD/Omniverse Day-0 or real-alignment branches.
 # NPA replaces OSMO task groups with the standard SkyPilot runtime; no upstream
-# controller is vendored.
+# controller is vendored. NVIDIA's vendor image fails SkyPilot's worker-bootstrap
+# probe, so operators build the checked-in restricted image from the exact
+# Apache-2.0 source and override anomalygen_image with its private-registry digest.
 
 metadata:
   name: paidf-defect-image-generation
   description: >-
     Direct PAIDF DIG Day-1 manual-ROI translation. Validate operator-authorized
-    prepared data and runtime-fetched checkpoints, run NVIDIA AnomalyGen 1.1.0,
+    prepared data and runtime-fetched base checkpoints, fine-tune and run NVIDIA AnomalyGen 1.1.0,
     and publish generated defect images, native labels, and pinned provenance.
 
 config:
   bucket: example-bucket
   prefix: "paidf-defect-image-generation/{{run.id}}"
   dataset_uri: "s3://{{config.bucket}}/paidf-authorized-input/dig/datasets/pcb/raw/"
-  pretrained_uri: "s3://{{config.bucket}}/paidf-authorized-input/dig/models/pretrained/"
-  checkpoint_uri: "s3://{{config.bucket}}/paidf-authorized-input/dig/models/pcb/"
+  pretrained_uri: "s3://{{config.bucket}}/{{config.prefix}}/pretrained/"
+  pretrained_result_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/pretrained-result.json"
+  usecase: pcb
+  finetune_uri: "s3://{{config.bucket}}/{{config.prefix}}/finetune/"
+  finetune_result_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/finetune-result.json"
+  checkpoint_uri: "{{config.finetune_uri}}"
   num_sdg: "30"
-  checkpoint_step: "14000"
-  model_size: "2b"
+  checkpoint_step: ""
   generated_uri: "s3://{{config.bucket}}/{{config.prefix}}/anomaly/"
   dig_result_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/dig-result.json"
   upstream_contract_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/upstream.json"
+  anomalygen_image: "registry.example.invalid/npa-paidf-anomalygen-sky@sha256:0000000000000000000000000000000000000000000000000000000000000000"
 
 resources:
   cpu:
@@ -38,16 +44,12 @@ resources:
   anomalygen:
     cloud: kubernetes
     accelerators: B200:1
-    cpus: 16
-    memory: 96Gi
-    disk_size: 300
-    image: "nvcr.io/nvidia/paidf-anomalygen@sha256:e62a87d1dc58b6de8b8a352dc8ec2a2e3e400288d66b2b8b19b92d97e7a0bc09"
+    cpus: 8
+    memory: 64Gi
+    image: "{{config.anomalygen_image}}"
     kubernetes:
-      provision_timeout: 2400
       pod_config:
         spec:
-          imagePullSecrets:
-            - name: ngc-nvcr-imagepullsecret
           containers:
             - name: ray-node
               volumeMounts:
@@ -58,6 +60,11 @@ resources:
               emptyDir:
                 medium: Memory
                 sizeLimit: 32Gi
+  anomalygen-setup:
+    cloud: kubernetes
+    cpus: 4
+    memory: 32Gi
+    image: "{{config.anomalygen_image}}"
 
 initial: record-upstream
 
@@ -74,9 +81,38 @@ states:
           write_upstream_contract(*sys.argv[1:])
         - defect-image-generation-day1-manual-roi
         - "{{config.upstream_contract_uri}}"
+        - "{{config.anomalygen_image}}"
     outputs:
       - uri: "{{config.upstream_contract_uri}}"
         schema: npa.paidf.upstream.v1
+    next: prepare-base-checkpoints
+
+  prepare-base-checkpoints:
+    description: >-
+      Run the genuine AnomalyGen checkpoint downloader in the vendor image under
+      the operator's gated Hugging Face access; no model bytes enter NPA images.
+    needs: [record-upstream]
+    toolRef: workflow.paidf.dig_prepare_pretrained
+    resources: anomalygen-setup
+    outputs:
+      - uri: "{{config.pretrained_uri}}"
+        schema: nvidia.paidf.anomalygen.pretrained.v1
+      - uri: "{{config.pretrained_result_uri}}"
+        schema: npa.paidf.native.dig-pretrained.v1
+    next: finetune
+
+  finetune:
+    description: >-
+      Execute the exact pinned PAIDF Day-1 training wrapper and use-case recipe;
+      require a valid best-checkpoint pointer before generation.
+    needs: [prepare-base-checkpoints]
+    toolRef: workflow.paidf.dig_train
+    resources: anomalygen
+    outputs:
+      - uri: "{{config.finetune_uri}}"
+        schema: nvidia.paidf.anomalygen.finetune.v1
+      - uri: "{{config.finetune_result_uri}}"
+        schema: npa.paidf.native.dig-finetune.v1
     next: anomaly-infer
 
   anomaly-infer:
@@ -84,7 +120,7 @@ states:
       Execute the real upstream prep_testcase -> validate_jsonl -> run_sdg ->
       verify_output chain in the immutable AnomalyGen image. Missing datasets,
       masks, checkpoint bytes, labels, or model access fail closed.
-    needs: [record-upstream]
+    needs: [finetune]
     toolRef: workflow.paidf.dig_infer
     resources: anomalygen
     outputs:

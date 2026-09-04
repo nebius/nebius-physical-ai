@@ -101,7 +101,7 @@ Airflow.
 | `cosmos3-reason.yaml` | Cosmos3 reason |
 | `cosmos3-checkpoint-eval.yaml` | B200-only guarded Cosmos3 still-image checkpoint evaluation |
 | `paidf-cosmos3.yaml` | Independent dynamic PAIDF: generic LeRobot/video input → real Cosmos 3 video2video variants → evaluator gate/refinement → real Curator + FiftyOne Brain + Rerun |
-| `paidf-defect-image-generation.yaml` | Direct DIG Day-1 manual-ROI translation → real AnomalyGen inference and native labels; B200; runtime-only operator-authorized data/weights |
+| `paidf-defect-image-generation.yaml` | Direct DIG Day-1 manual-ROI translation → runtime base-checkpoint setup → real AnomalyGen fine-tune → inference and native labels; B200; operator-authorized data/weights only |
 | `paidf-image-attribute-augmentation.yaml` | Direct IAA DAG translation → Qwen Image Edit service → real paidf-augmentation verification → real Person Attribute Search → dataset |
 | `paidf-event-video-generation.yaml` | Direct EVG DAG translation → Cosmos3 Super image2video → real detection/captioning/two Visual-QA passes/PAS → anomaly dataset |
 | `content-agents-rigid-object.yaml` | Restricted operator-built NVIDIA Content Agents: source USD → real Material/Physics Agents + OVRTX → upstream validation → rigid Isaac object USDZ/adapter ([guide](../../../../docs/workbench/content-agents.md)) |

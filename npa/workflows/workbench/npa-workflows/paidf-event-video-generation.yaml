@@ -40,6 +40,7 @@ config:
   llm_model: "Qwen/Qwen3-30B-A3B-Instruct-2507"
   generation_url: "http://127.0.0.1:8000/v1"
   generation_model: "nvidia/Cosmos3-Super-Image2Video"
+  generation_revision: "4f847566f3d3388fbf0ac07b99dd1a6432db9ecd"
   service_kind: image2video
   service_port: "8000"
   service_parallel_size: "2"
@@ -52,12 +53,10 @@ resources:
   image2video:
     cloud: kubernetes
     accelerators: B200:2
-    cpus: 32
-    memory: 192Gi
-    disk_size: 500
+    cpus: 8
+    memory: 64Gi
     image: "vllm/vllm-omni@sha256:970dee6658ea223f615b2438ce41e47f1d5322225482546e6e6bc5d8134f757c"
     kubernetes:
-      provision_timeout: 3600
       pod_config:
         spec:
           containers:
@@ -67,6 +66,10 @@ resources:
                   value: /tmp/paidf-models
                 - name: NCCL_P2P_DISABLE
                   value: "1"
+                - name: VLLM_OMNI_VIDEO_SYNC_TIMEOUT
+                  value: "1800"
+                - name: VLLM_OMNI_INPUT_WAIT_TIMEOUT_S
+                  value: "1800"
               volumeMounts:
                 - name: dshm
                   mountPath: /dev/shm
@@ -78,12 +81,10 @@ resources:
   detection:
     cloud: kubernetes
     accelerators: B200:1
-    cpus: 16
-    memory: 96Gi
-    disk_size: 200
+    cpus: 4
+    memory: 32Gi
     image: "nvcr.io/nvidia/paidf-detection-and-tracking-rfdetr-service@sha256:6b35e63b95cab7cd772906bcb08be978de7526427f0d1925ab84439dd4a9561e"
     kubernetes:
-      provision_timeout: 2400
       pod_config:
         spec:
           imagePullSecrets:
@@ -91,11 +92,10 @@ resources:
   captioning:
     cloud: kubernetes
     accelerators: B200:1
-    cpus: 8
-    memory: 64Gi
+    cpus: 4
+    memory: 32Gi
     image: "nvcr.io/nvidia/paidf-captioning-service@sha256:17e1e3f53cc66342183f7d0b6eed76907993bb325a13db90c46d9a8cf664d804"
     kubernetes:
-      provision_timeout: 1800
       pod_config:
         spec:
           imagePullSecrets:
@@ -103,22 +103,20 @@ resources:
   visual-qa:
     cloud: kubernetes
     accelerators: B200:1
-    cpus: 8
-    memory: 64Gi
+    cpus: 4
+    memory: 32Gi
     image: "nvcr.io/nvidia/paidf-visual-qa-service@sha256:e681c8dee849c7ac9fc5b182f51e9efd0da460972b08850d40f00aa9d5e3c97c"
     kubernetes:
-      provision_timeout: 1800
       pod_config:
         spec:
           imagePullSecrets:
             - name: ngc-nvcr-imagepullsecret
   attribute-search:
     cloud: kubernetes
-    cpus: 8
-    memory: 32Gi
+    cpus: 4
+    memory: 16Gi
     image: "nvcr.io/nvidia/paidf-event-and-person-attribute-search-service@sha256:0f581ff6d92efd391281e5787a8b1fda76556443ade47c1f5d59d4c345a01f6a"
     kubernetes:
-      provision_timeout: 1800
       pod_config:
         spec:
           imagePullSecrets:
@@ -155,9 +153,9 @@ states:
     description: >-
       Start real Cosmos3 Super Image2Video in the official vLLM-Omni image,
       retain it for the complete real paidf-augmentation batch, and shut it down
-      after batch completion. A single B200 replaces upstream's two-H100 HSDP
-      placement with two reserved B200s while retaining the same two-way CFG
-      parallelism, model, and OpenAI video protocol.
+      after batch completion. Two reserved B200s replace upstream's two-H100
+      placement while retaining the same two-way CFG parallelism, model, and
+      OpenAI video protocol.
     needs: [generate-configs]
     toolRef: workflow.paidf.run_local_augmentation
     resources: image2video

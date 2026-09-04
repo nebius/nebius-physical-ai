@@ -35,23 +35,83 @@ from npa.workflows.paidf_upstream import (
 
 
 SCHEMA_PREFIX = "npa.paidf.native"
-IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp"}
+IMAGE_SUFFIXES = {".bmp", ".gif", ".jpg", ".jpeg", ".png", ".tif", ".tiff", ".webp"}
 
 
 class PaidfNativeError(RuntimeError):
     """A PAIDF protocol or artifact contract failed closed."""
 
 
-def _run_component(argv: list[str], *, cwd: Path | None = None) -> None:
+def _run_component(
+    argv: list[str],
+    *,
+    cwd: Path | None = None,
+    env: dict[str, str] | None = None,
+) -> None:
     """Match the upstream DAG's three component retries without a time cap."""
 
     for attempt in range(4):
         try:
-            subprocess.run(argv, check=True, cwd=cwd)
+            subprocess.run(argv, check=True, cwd=cwd, env=env)
             return
         except subprocess.CalledProcessError:
             if attempt == 3:
                 raise
+
+
+def _configure_multistorage(*uris: str) -> None:
+    """Expose NPA's run-scoped S3 route in the upstream MSC protocol.
+
+    PAIDF's Kubernetes manifests construct this JSON from a Secret. NPA already
+    injects the equivalent run-scoped S3 environment into each SkyPilot task, so
+    the native translation constructs the payload in memory immediately before
+    invoking the vendor CLI. It is never written to an artifact or printed.
+    """
+
+    if os.environ.get("MULTISTORAGECLIENT_CONFIGURATION", "").strip():
+        return
+    buckets = sorted(
+        {
+            parsed.netloc
+            for value in uris
+            if (parsed := urlparse(str(value))).scheme == "s3" and parsed.netloc
+        }
+    )
+    if not buckets:
+        return
+    endpoint = (
+        os.environ.get("AWS_ENDPOINT_URL", "").strip()
+        or os.environ.get("NEBIUS_S3_ENDPOINT", "").strip()
+    )
+    access_key = os.environ.get("AWS_ACCESS_KEY_ID", "").strip()
+    secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY", "").strip()
+    if not (endpoint and access_key and secret_key):
+        raise PaidfNativeError(
+            "PAIDF remote storage requires the run-scoped S3 endpoint and credentials"
+        )
+    region = os.environ.get("AWS_DEFAULT_REGION", "").strip() or "us-east-1"
+    profiles = {}
+    path_mapping = {}
+    for bucket in buckets:
+        profiles[bucket] = {
+            "storage_provider": {
+                "type": "s3",
+                "options": {
+                    "base_path": bucket,
+                    "region_name": region,
+                    "endpoint_url": endpoint,
+                    "infer_content_type": True,
+                },
+            },
+            "credentials_provider": {
+                "type": "S3Credentials",
+                "options": {"access_key": access_key, "secret_key": secret_key},
+            },
+        }
+        path_mapping[f"s3://{bucket}/"] = f"msc://{bucket}/"
+    os.environ["MULTISTORAGECLIENT_CONFIGURATION"] = json.dumps(
+        {"profiles": profiles, "path_mapping": path_mapping}, separators=(",", ":")
+    )
 
 
 def _is_s3(value: str) -> bool:
@@ -96,7 +156,9 @@ def _publish(path: Path, uri: str) -> str:
 def _write_json(payload: dict[str, Any], uri: str) -> dict[str, Any]:
     with tempfile.TemporaryDirectory(prefix="npa-paidf-json-") as tmp:
         local = Path(tmp) / "payload.json"
-        local.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        local.write_text(
+            json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
         _publish(local, uri)
     return payload
 
@@ -124,11 +186,17 @@ def _list_images(uri: str) -> list[str]:
     if path.is_file() and path.suffix.lower() in IMAGE_SUFFIXES:
         return [str(path)]
     if path.is_dir():
-        return sorted(str(item) for item in path.rglob("*") if item.suffix.lower() in IMAGE_SUFFIXES)
+        return sorted(
+            str(item)
+            for item in path.rglob("*")
+            if item.suffix.lower() in IMAGE_SUFFIXES
+        )
     raise PaidfNativeError(f"input URI contains no readable image path: {uri}")
 
 
-def prepare_images(input_uri: str, output_uri: str, manifest_uri: str, run_id: str) -> dict[str, Any]:
+def prepare_images(
+    input_uri: str, output_uri: str, manifest_uri: str, run_id: str
+) -> dict[str, Any]:
     """Validate real image bytes and stage the canonical IAA/EVG input set."""
 
     images = _list_images(input_uri)
@@ -149,9 +217,13 @@ def prepare_images(input_uri: str, output_uri: str, manifest_uri: str, run_id: s
                 with Image.open(local) as image:
                     width, height = image.size
             except Exception as exc:  # noqa: BLE001 - media decoder boundary
-                raise PaidfNativeError(f"invalid input image at index {index}: {exc}") from exc
+                raise PaidfNativeError(
+                    f"invalid input image at index {index}: {exc}"
+                ) from exc
             if width < 64 or height < 64:
-                raise PaidfNativeError(f"input image {index} is too small: {width}x{height}")
+                raise PaidfNativeError(
+                    f"input image {index} is too small: {width}x{height}"
+                )
             target_uri = f"{output_uri.rstrip('/')}/{local.name}"
             _publish(local, target_uri)
             pane_metadata = {
@@ -183,7 +255,16 @@ def prepare_images(input_uri: str, output_uri: str, manifest_uri: str, run_id: s
 
 
 _IAA_DISTRIBUTIONS: dict[str, tuple[str, ...]] = {
-    "top_outer_color": ("beige", "black", "blue", "brown", "green", "grey", "red", "white"),
+    "top_outer_color": (
+        "beige",
+        "black",
+        "blue",
+        "brown",
+        "green",
+        "grey",
+        "red",
+        "white",
+    ),
     "top_outer_type": ("hoodie", "jacket", "sweater", "vest"),
     "bottom_type": ("jeans", "leggings", "shorts", "skirt"),
     "bottom_color": ("beige", "black", "blue", "brown", "grey", "white"),
@@ -233,8 +314,13 @@ def build_augmentation_configs(
 
     if workflow not in {"iaa", "evg"}:
         raise PaidfNativeError("workflow must be iaa or evg")
-    if not all(value.strip() for value in (vlm_url, vlm_model, llm_url, llm_model, generation_url)):
-        raise PaidfNativeError("VLM, LLM, and generation endpoints/models must be explicit")
+    if not all(
+        value.strip()
+        for value in (vlm_url, vlm_model, llm_url, llm_model, generation_url)
+    ):
+        raise PaidfNativeError(
+            "VLM, LLM, and generation endpoints/models must be explicit"
+        )
     prepared = _read_json(prepared_manifest_uri)
     images = prepared.get("images")
     if not isinstance(images, list) or not images:
@@ -269,8 +355,12 @@ def build_augmentation_configs(
         for image in images:
             input_key = str(image["input_key"])
             for augmentation_index in range(num_augmentations):
-                variables = {key: rng.choice(values) for key, values in distributions.items()}
-                base_uri = f"{output_uri.rstrip('/')}/cosmos/{input_key}/{augmentation_index}"
+                variables = {
+                    key: rng.choice(values) for key, values in distributions.items()
+                }
+                base_uri = (
+                    f"{output_uri.rstrip('/')}/cosmos/{input_key}/{augmentation_index}"
+                )
                 suffix = "jpg" if workflow == "iaa" else "mp4"
                 config = copy.deepcopy(template)
                 config["data"][0]["inputs"]["rgb"] = image["prepared_uri"]
@@ -282,13 +372,23 @@ def build_augmentation_configs(
                 role_values = {
                     "vlm": (vlm_url, vlm_model, "VLM_API_KEY"),
                     "llm": (llm_url, llm_model, "LLM_API_KEY"),
-                    "image_edit": (generation_url, generation_model, "GENERATION_API_KEY"),
-                    "image2video": (generation_url, generation_model, "GENERATION_API_KEY"),
+                    "image_edit": (
+                        generation_url,
+                        generation_model,
+                        "GENERATION_API_KEY",
+                    ),
+                    "image2video": (
+                        generation_url,
+                        generation_model,
+                        "GENERATION_API_KEY",
+                    ),
                 }
                 for endpoint in config["endpoints"]:
                     role = endpoint.get("role")
                     if role in role_values:
-                        endpoint["url"], endpoint["model"], endpoint["api_key_env"] = role_values[role]
+                        endpoint["url"], endpoint["model"], endpoint["api_key_env"] = (
+                            role_values[role]
+                        )
                 config["captioning"]["llm"]["variables"] = {
                     name: [value] for name, value in variables.items()
                 }
@@ -298,7 +398,9 @@ def build_augmentation_configs(
                 else:
                     parameters["seed"] = seed + len(configs)
                 local = root / f"{input_key}-{augmentation_index}.yaml"
-                local.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
+                local.write_text(
+                    yaml.safe_dump(config, sort_keys=False), encoding="utf-8"
+                )
                 config_uri = f"{output_uri.rstrip('/')}/configs/{local.name}"
                 _publish(local, config_uri)
                 configs.append(
@@ -326,27 +428,60 @@ def build_augmentation_configs(
 
 def _runtime_fetch(repository: str, revision: str, destination: Path) -> Path:
     subprocess.run(["git", "init", "-q", str(destination)], check=True)
-    subprocess.run(["git", "-C", str(destination), "remote", "add", "origin", repository], check=True)
-    subprocess.run(["git", "-C", str(destination), "fetch", "-q", "--depth", "1", "origin", revision], check=True)
-    subprocess.run(["git", "-C", str(destination), "checkout", "-q", "--detach", "FETCH_HEAD"], check=True)
-    actual = subprocess.check_output(["git", "-C", str(destination), "rev-parse", "HEAD"], text=True).strip()
+    subprocess.run(
+        ["git", "-C", str(destination), "remote", "add", "origin", repository],
+        check=True,
+    )
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(destination),
+            "fetch",
+            "-q",
+            "--depth",
+            "1",
+            "origin",
+            revision,
+        ],
+        check=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(destination), "checkout", "-q", "--detach", "FETCH_HEAD"],
+        check=True,
+    )
+    actual = subprocess.check_output(
+        ["git", "-C", str(destination), "rev-parse", "HEAD"], text=True
+    ).strip()
     if actual != revision:
         raise PaidfNativeError("runtime-fetched upstream revision mismatch")
     return destination
 
 
-def run_augmentation(config_manifest_uri: str, result_uri: str, run_id: str) -> dict[str, Any]:
+def run_augmentation(
+    config_manifest_uri: str, result_uri: str, run_id: str
+) -> dict[str, Any]:
     """Invoke the real paidf-augmentation CLI once for every rendered config."""
 
     manifest = _read_json(config_manifest_uri)
     configs = manifest.get("configs")
     if not isinstance(configs, list) or not configs:
         raise PaidfNativeError("augmentation config manifest is empty")
+    _configure_multistorage(
+        config_manifest_uri,
+        result_uri,
+        *(str(value) for item in configs for value in item.values()),
+    )
     token = os.environ.get("NEBIUS_TOKEN_FACTORY_KEY", "").strip()
     if token:
         os.environ.setdefault("VLM_API_KEY", token)
         os.environ.setdefault("LLM_API_KEY", token)
-    os.environ.setdefault("GENERATION_API_KEY", os.environ.get("IMAGE_EDIT_API_KEY", "") or os.environ.get("COSMOS_API_KEY", "") or "local")
+    os.environ.setdefault(
+        "GENERATION_API_KEY",
+        os.environ.get("IMAGE_EDIT_API_KEY", "")
+        or os.environ.get("COSMOS_API_KEY", "")
+        or "local",
+    )
 
     with tempfile.TemporaryDirectory(prefix="npa-paidf-augmentation-") as tmp:
         root = Path(tmp)
@@ -359,14 +494,26 @@ def run_augmentation(config_manifest_uri: str, result_uri: str, run_id: str) -> 
                 PAIDF_AUGMENTATION_REVISION,
                 root / "source",
             )
-            command_prefix = ["uv", "run", "--project", str(source), "--no-sync", "python", str(source / "modules/cli.py")]
-            subprocess.run(["uv", "sync", "--project", str(source), "--frozen"], check=True)
+            command_prefix = [
+                "uv",
+                "run",
+                "--project",
+                str(source),
+                "--no-sync",
+                "python",
+                str(source / "modules/cli.py"),
+            ]
+            subprocess.run(
+                ["uv", "sync", "--project", str(source), "--frozen"], check=True
+            )
         completed: list[dict[str, Any]] = []
         for index, item in enumerate(configs):
             local = root / f"config-{index:04d}.yaml"
             _materialize(str(item["config_uri"]), local)
             _run_component([*command_prefix, "--config", str(local)])
-            completed.append({"config_uri": item["config_uri"], "media_uri": item["media_uri"]})
+            completed.append(
+                {"config_uri": item["config_uri"], "media_uri": item["media_uri"]}
+            )
     payload = {
         "schema": f"{SCHEMA_PREFIX}.{manifest['workflow']}-augmentation.v1",
         "run_id": run_id,
@@ -382,6 +529,7 @@ def run_local_augmentation(
     config_manifest_uri: str,
     result_uri: str,
     generation_model: str,
+    generation_revision: str,
     service_kind: str,
     port: int,
     parallel_size: int,
@@ -394,7 +542,16 @@ def run_local_augmentation(
     """
 
     if service_kind == "image-edit":
-        command = ["vllm-omni", "serve", generation_model, "--omni", "--port", str(port)]
+        command = [
+            "vllm-omni",
+            "serve",
+            generation_model,
+            "--revision",
+            generation_revision,
+            "--omni",
+            "--port",
+            str(port),
+        ]
     elif service_kind == "image2video":
         if parallel_size < 1:
             raise PaidfNativeError("parallel_size must be positive")
@@ -402,12 +559,17 @@ def run_local_augmentation(
             "vllm",
             "serve",
             generation_model,
+            "--revision",
+            generation_revision,
             "--omni",
             "--host",
             "127.0.0.1",
             "--port",
             str(port),
             "--cfg-parallel-size",
+            str(parallel_size),
+            "--use-hsdp",
+            "--hsdp-shard-size",
             str(parallel_size),
             "--init-timeout",
             "1800",
@@ -419,7 +581,9 @@ def run_local_augmentation(
         health = f"http://127.0.0.1:{port}/health"
         while True:
             if service.poll() is not None:
-                raise PaidfNativeError(f"vLLM-Omni exited before readiness ({service.returncode})")
+                raise PaidfNativeError(
+                    f"vLLM-Omni exited before readiness ({service.returncode})"
+                )
             try:
                 with urllib.request.urlopen(health, timeout=5) as response:  # noqa: S310 - loopback only
                     if 200 <= response.status < 300:
@@ -436,7 +600,9 @@ def run_local_augmentation(
             service.wait()
 
 
-def validate_augmentation(config_manifest_uri: str, validation_uri: str, run_id: str) -> dict[str, Any]:
+def validate_augmentation(
+    config_manifest_uri: str, validation_uri: str, run_id: str
+) -> dict[str, Any]:
     """Require decodable media plus non-empty caption and metadata for each output."""
 
     manifest = _read_json(config_manifest_uri)
@@ -446,13 +612,19 @@ def validate_augmentation(config_manifest_uri: str, validation_uri: str, run_id:
         root = Path(tmp)
         for index, item in enumerate(manifest.get("configs") or []):
             try:
-                media = root / f"media-{index:04d}{Path(urlparse(item['media_uri']).path).suffix}"
+                media = (
+                    root
+                    / f"media-{index:04d}{Path(urlparse(item['media_uri']).path).suffix}"
+                )
                 caption = root / f"caption-{index:04d}.txt"
                 metadata = root / f"metadata-{index:04d}.json"
                 _materialize(item["media_uri"], media)
                 _materialize(item["caption_uri"], caption)
                 _materialize(item["metadata_uri"], metadata)
-                if media.stat().st_size < 1024 or not caption.read_text(encoding="utf-8").strip():
+                if (
+                    media.stat().st_size < 1024
+                    or not caption.read_text(encoding="utf-8").strip()
+                ):
                     raise PaidfNativeError("media or caption is empty")
                 parsed_metadata = json.loads(metadata.read_text(encoding="utf-8"))
                 if not isinstance(parsed_metadata, dict):
@@ -464,15 +636,36 @@ def validate_augmentation(config_manifest_uri: str, validation_uri: str, run_id:
                         image.verify()
                 else:
                     probe = subprocess.run(
-                        ["ffprobe", "-v", "error", "-show_entries", "stream=codec_type", "-of", "json", str(media)],
+                        [
+                            "ffprobe",
+                            "-v",
+                            "error",
+                            "-show_entries",
+                            "stream=codec_type",
+                            "-of",
+                            "json",
+                            str(media),
+                        ],
                         text=True,
                         capture_output=True,
                     )
                     if probe.returncode or "video" not in probe.stdout:
                         raise PaidfNativeError("ffprobe found no video stream")
-                accepted.append({**item, "sha256": _sha256(media), "size_bytes": media.stat().st_size})
+                accepted.append(
+                    {
+                        **item,
+                        "sha256": _sha256(media),
+                        "size_bytes": media.stat().st_size,
+                    }
+                )
             except Exception as exc:  # noqa: BLE001 - one mapped augmentation may exhaust retries
-                skipped.append({"input_key": item.get("input_key"), "augmentation_index": item.get("augmentation_index"), "reason": str(exc)})
+                skipped.append(
+                    {
+                        "input_key": item.get("input_key"),
+                        "augmentation_index": item.get("augmentation_index"),
+                        "reason": str(exc),
+                    }
+                )
     if not accepted:
         raise PaidfNativeError("every mapped PAIDF augmentation failed validation")
     payload = {
@@ -505,9 +698,18 @@ def postprocess_iaa(
     accepted = validation.get("accepted")
     if not isinstance(accepted, list) or not accepted:
         raise PaidfNativeError("IAA post-processing requires validated augmentations")
+    _configure_multistorage(
+        validation_uri,
+        prepared_manifest_uri,
+        output_root_uri,
+        result_uri,
+        *(str(value) for item in accepted for value in item.values()),
+    )
     token = os.environ.get("NEBIUS_TOKEN_FACTORY_KEY", "").strip()
     if not token:
-        raise PaidfNativeError("NEBIUS_TOKEN_FACTORY_KEY is required by IAA visual attribute extraction")
+        raise PaidfNativeError(
+            "NEBIUS_TOKEN_FACTORY_KEY is required by IAA visual attribute extraction"
+        )
     os.environ.setdefault("VLM_API_KEY", token)
 
     outputs: list[dict[str, Any]] = []
@@ -519,12 +721,16 @@ def postprocess_iaa(
             root / "source",
         )
         subprocess.run(["uv", "sync", "--project", str(source), "--frozen"], check=True)
-        script = source / "modules/data_processing/create_attribute_augmented_dataset.py"
+        script = (
+            source / "modules/data_processing/create_attribute_augmented_dataset.py"
+        )
         for item in accepted:
             input_key = str(item["input_key"])
             prepared_item = prepared_by_key.get(input_key)
             if prepared_item is None:
-                raise PaidfNativeError(f"IAA output has no prepared input for {input_key}")
+                raise PaidfNativeError(
+                    f"IAA output has no prepared input for {input_key}"
+                )
             augmentation_dir = item["media_uri"].rsplit("/", 1)[0]
             dataset_dir = (
                 f"{output_root_uri.rstrip('/')}/{input_key}/"
@@ -532,25 +738,42 @@ def postprocess_iaa(
             )
             _run_component(
                 [
-                    "uv", "run", "--project", str(source), "--no-sync", "python", str(script),
-                    "--base-dir", str(prepared_item["pane_metadata_uri"]),
-                    "--augmented-folders", str(augmentation_dir),
-                    "--output-dir", dataset_dir,
-                    "--output-json", "augmented_data.json",
-                    "--vlm-endpoint", vlm_url,
-                    "--vlm-model", vlm_model,
-                    "--vlm-api-key-env", "VLM_API_KEY",
+                    "uv",
+                    "run",
+                    "--project",
+                    str(source),
+                    "--no-sync",
+                    "python",
+                    str(script),
+                    "--base-dir",
+                    str(prepared_item["pane_metadata_uri"]),
+                    "--augmented-folders",
+                    str(augmentation_dir),
+                    "--output-dir",
+                    dataset_dir,
+                    "--output-json",
+                    "augmented_data.json",
+                    "--vlm-endpoint",
+                    vlm_url,
+                    "--vlm-model",
+                    vlm_model,
+                    "--vlm-api-key-env",
+                    "VLM_API_KEY",
                 ]
             )
             dataset_json_uri = f"{dataset_dir}/augmented_data.json"
             dataset_json = _read_json(dataset_json_uri)
             entries = dataset_json.get("entries")
             if not isinstance(entries, list) or not entries:
-                raise PaidfNativeError(f"upstream IAA post-processing produced no entries for {input_key}")
+                raise PaidfNativeError(
+                    f"upstream IAA post-processing produced no entries for {input_key}"
+                )
             for entry in entries:
                 images = entry.get("images")
                 if not isinstance(images, list) or not images:
-                    raise PaidfNativeError("upstream IAA post-processing entry has no images")
+                    raise PaidfNativeError(
+                        "upstream IAA post-processing entry has no images"
+                    )
                 media_uri = f"{dataset_dir.rstrip('/')}/{images[0].split('/', 1)[-1]}"
                 outputs.append(
                     {
@@ -593,7 +816,13 @@ def run_auto_label(
 
     allowed = {
         "iaa": {"person-attribute-search"},
-        "evg": {"detection", "captioning", "visual-qa-anomaly", "visual-qa-person", "person-attribute-search"},
+        "evg": {
+            "detection",
+            "captioning",
+            "visual-qa-anomaly",
+            "visual-qa-person",
+            "person-attribute-search",
+        },
     }
     if workflow not in allowed or stage not in allowed[workflow]:
         raise PaidfNativeError(f"unsupported {workflow!r} auto-label stage {stage!r}")
@@ -601,9 +830,17 @@ def run_auto_label(
     accepted = validation.get("accepted")
     if not isinstance(accepted, list) or not accepted:
         raise PaidfNativeError("auto-labeling requires validated media")
+    _configure_multistorage(
+        validation_uri,
+        auto_label_root_uri,
+        result_uri,
+        *(str(value) for item in accepted for value in item.values()),
+    )
     token = os.environ.get("NEBIUS_TOKEN_FACTORY_KEY", "").strip()
     if not token:
-        raise PaidfNativeError("NEBIUS_TOKEN_FACTORY_KEY is required by the OpenAI-compatible labeling protocol")
+        raise PaidfNativeError(
+            "NEBIUS_TOKEN_FACTORY_KEY is required by the OpenAI-compatible labeling protocol"
+        )
     os.environ.setdefault("NVIDIA_API_KEY", token)
     os.environ.setdefault("VLM_API_KEY", token)
     os.environ.setdefault("LLM_API_KEY", token)
@@ -615,63 +852,139 @@ def run_auto_label(
             PAIDF_ORCHESTRATION_REVISION,
             root / "orchestration",
         )
-        evg_assets = upstream / "airflow/dags/workflows/event_video_generation_dag/configs"
-        iaa_assets = upstream / "airflow/dags/workflows/image_attribute_augmentation_dag/configs"
+        evg_assets = (
+            upstream / "airflow/dags/workflows/event_video_generation_dag/configs"
+        )
+        iaa_assets = (
+            upstream / "airflow/dags/workflows/image_attribute_augmentation_dag/configs"
+        )
         completed: list[dict[str, Any]] = []
         for item in accepted:
             key = f"{item['input_key']}_aug{item['augmentation_index']}"
             data_path = f"{auto_label_root_uri.rstrip('/')}/{key}"
-            input_json = json.dumps([{"media_path": item["media_uri"], "data_path": data_path}], separators=(",", ":"))
+            input_json = json.dumps(
+                [{"media_path": item["media_uri"], "data_path": data_path}],
+                separators=(",", ":"),
+            )
             args = ["main", "--input", input_json]
             if stage == "detection":
                 args.extend(
                     [
-                        "--tracker", "rfdetr-boosttrack", "--classes", "person", "--threshold", "0.5",
-                        "--extract-crops", "--crop-classes", "person", "--crops-per-track", "16",
-                        "--crop-padding", "0.1", "--min-crop-size", "48", "--allow-model-download",
+                        "--tracker",
+                        "rfdetr-boosttrack",
+                        "--classes",
+                        "person",
+                        "--threshold",
+                        "0.5",
+                        "--extract-crops",
+                        "--crop-classes",
+                        "person",
+                        "--crops-per-track",
+                        "16",
+                        "--crop-padding",
+                        "0.1",
+                        "--min-crop-size",
+                        "48",
+                        "--allow-model-download",
                     ]
                 )
             elif stage == "captioning":
                 args.extend(
                     [
-                        "--input-source", "original", "--window-seconds", "4.0", "--window-frames", "0",
-                        "--remainder-threshold", "0", "--sampling-fps", "2.0", "--max-frames", "24",
-                        "--resolution", "768", "--vlm-provider", "openai-compatible",
-                        "--vlm-endpoint-url", vlm_url, "--vlm-model", vlm_model,
+                        "--input-source",
+                        "original",
+                        "--window-seconds",
+                        "4.0",
+                        "--window-frames",
+                        "0",
+                        "--remainder-threshold",
+                        "0",
+                        "--sampling-fps",
+                        "2.0",
+                        "--max-frames",
+                        "24",
+                        "--resolution",
+                        "768",
+                        "--vlm-provider",
+                        "openai-compatible",
+                        "--vlm-endpoint-url",
+                        vlm_url,
+                        "--vlm-model",
+                        vlm_model,
                     ]
                 )
             elif stage in {"visual-qa-anomaly", "visual-qa-person"}:
                 person = stage == "visual-qa-person"
-                asset = evg_assets / ("question_bank.person_attributes.json" if person else "question_bank.anomaly_tags.json")
-                question_uri = _asset_to_uri(asset, f"{data_path}/sidecars/assets/{asset.name}")
-                args.extend(["--generation-mode", "window-direct-vlm", "--question-bank-file", question_uri])
+                asset = evg_assets / (
+                    "question_bank.person_attributes.json"
+                    if person
+                    else "question_bank.anomaly_tags.json"
+                )
+                question_uri = _asset_to_uri(
+                    asset, f"{data_path}/sidecars/assets/{asset.name}"
+                )
+                args.extend(
+                    [
+                        "--generation-mode",
+                        "window-direct-vlm",
+                        "--question-bank-file",
+                        question_uri,
+                    ]
+                )
                 if person:
                     args.extend(
                         [
-                            "--track-crops-sidecar", "detection_and_tracking/tracks.json",
-                            "--max-crops-per-track", "12", "--resolution", "896",
-                            "--raw-windows-sidecar", "visual_qa_per_track/windows.json",
-                            "--output-items-sidecar", "visual_qa_per_track/items.json",
-                            "--output-windows-sidecar", "visual_qa_per_track/windows.normalized.json",
-                            "--state-artifacts-key", "visual_qa_per_track",
+                            "--track-crops-sidecar",
+                            "detection_and_tracking/tracks.json",
+                            "--max-crops-per-track",
+                            "12",
+                            "--resolution",
+                            "896",
+                            "--raw-windows-sidecar",
+                            "visual_qa_per_track/windows.json",
+                            "--output-items-sidecar",
+                            "visual_qa_per_track/items.json",
+                            "--output-windows-sidecar",
+                            "visual_qa_per_track/windows.normalized.json",
+                            "--state-artifacts-key",
+                            "visual_qa_per_track",
                         ]
                     )
                 else:
                     args.extend(
                         [
-                            "--input-source", "original", "--single-window", "--max-frames", "16",
-                            "--sampling-fps", "3.0", "--resolution", "768",
-                            "--raw-windows-sidecar", "visual_qa_anomaly/windows.json",
-                            "--output-items-sidecar", "visual_qa_anomaly/items.json",
-                            "--output-windows-sidecar", "visual_qa_anomaly/windows.normalized.json",
-                            "--state-artifacts-key", "visual_qa_anomaly",
+                            "--input-source",
+                            "original",
+                            "--single-window",
+                            "--max-frames",
+                            "16",
+                            "--sampling-fps",
+                            "3.0",
+                            "--resolution",
+                            "768",
+                            "--raw-windows-sidecar",
+                            "visual_qa_anomaly/windows.json",
+                            "--output-items-sidecar",
+                            "visual_qa_anomaly/items.json",
+                            "--output-windows-sidecar",
+                            "visual_qa_anomaly/windows.normalized.json",
+                            "--state-artifacts-key",
+                            "visual_qa_anomaly",
                         ]
                     )
                 args.extend(
                     [
-                        "--temperature", "0", "--max-tokens", "4096", "--no-flat-qa-tasks",
-                        "--vlm-provider", "openai-compatible", "--vlm-endpoint-url", vlm_url,
-                        "--vlm-model", vlm_model,
+                        "--temperature",
+                        "0",
+                        "--max-tokens",
+                        "4096",
+                        "--no-flat-qa-tasks",
+                        "--vlm-provider",
+                        "openai-compatible",
+                        "--vlm-endpoint-url",
+                        vlm_url,
+                        "--vlm-model",
+                        vlm_model,
                     ]
                 )
             else:
@@ -680,17 +993,27 @@ def run_auto_label(
                     if workflow == "iaa"
                     else evg_assets / "person_attribute_search_config.yaml"
                 )
-                config_uri = _asset_to_uri(config_asset, f"{data_path}/sidecars/assets/{config_asset.name}")
+                config_uri = _asset_to_uri(
+                    config_asset, f"{data_path}/sidecars/assets/{config_asset.name}"
+                )
                 args.extend(
                     [
-                        "--config-file", config_uri, "--llm-provider", "openai-compatible",
-                        "--llm-endpoint-url", llm_url, "--llm-model", llm_model,
+                        "--config-file",
+                        config_uri,
+                        "--llm-provider",
+                        "openai-compatible",
+                        "--llm-endpoint-url",
+                        llm_url,
+                        "--llm-model",
+                        llm_model,
                     ]
                 )
                 if workflow == "iaa":
                     args.extend(["--attribute-json", item["metadata_uri"]])
             _run_component(args)
-            completed.append({"key": key, "data_path": data_path, "media_uri": item["media_uri"]})
+            completed.append(
+                {"key": key, "data_path": data_path, "media_uri": item["media_uri"]}
+            )
     payload = {
         "schema": f"{SCHEMA_PREFIX}.{workflow}-auto-label-{stage}.v1",
         "run_id": run_id,
@@ -730,7 +1053,12 @@ def finalize_dataset(
             "sha256": item["sha256"],
             "size_bytes": item["size_bytes"],
             "labels": next(
-                (value["data_path"] for value in labels.get("outputs", []) if value.get("key") == f"{item['input_key']}_aug{item['augmentation_index']}"),
+                (
+                    value["data_path"]
+                    for value in labels.get("outputs", [])
+                    if value.get("key")
+                    == f"{item['input_key']}_aug{item['augmentation_index']}"
+                ),
                 "",
             ),
         }
@@ -743,9 +1071,118 @@ def finalize_dataset(
         "entry_count": len(entries),
         "entries": entries,
         "upstream": upstream,
-        "lineage": {"validation_uri": validation_uri, "labels_uri": labels_uri, "upstream_uri": upstream_uri},
+        "lineage": {
+            "validation_uri": validation_uri,
+            "labels_uri": labels_uri,
+            "upstream_uri": upstream_uri,
+        },
     }
     return _write_json(payload, output_uri)
+
+
+def run_dig_train(
+    dataset_uri: str,
+    pretrained_uri: str,
+    output_uri: str,
+    result_uri: str,
+    usecase: str,
+    run_id: str,
+) -> dict[str, Any]:
+    """Run the upstream default Day-1 AnomalyGen fine-tuning task."""
+
+    if usecase not in {"pcb", "metal_surface", "glass"}:
+        raise PaidfNativeError("DIG usecase must be pcb, metal_surface, or glass")
+    workspace = Path("/workspace/paidf-anomalygen")
+    if not workspace.is_dir():
+        raise PaidfNativeError(
+            "the selected image is not NVIDIA paidf-anomalygen 1.1.0"
+        )
+    with tempfile.TemporaryDirectory(prefix="npa-paidf-dig-train-") as tmp:
+        root = Path(tmp)
+        dataset = _materialize(dataset_uri, root / "dataset")
+        pretrained = _materialize(pretrained_uri, root / "pretrained")
+        source = _runtime_fetch(
+            "https://github.com/NVIDIA/physical-ai-data-factory.git",
+            PHYSICAL_AI_DATA_FACTORY_REVISION,
+            root / "physical-ai-data-factory",
+        )
+        skill = source / "skills/physical-ai-defect-image-generation-v1-1"
+        script = skill / "scripts/anomalygen_train.sh"
+        recipe = skill / f"assets/cookbooks/{usecase}/ag_config.yaml"
+        train_output = root / "finetune"
+        env = {
+            **os.environ,
+            "PRETRAINED_SRC": str(pretrained),
+            "DATASET_DIR": str(dataset),
+            "RECIPE_TEMPLATE": str(recipe),
+            "TRAIN_OUTPUT": str(train_output),
+            "NUM_GPUS": "1",
+        }
+        _run_component(["bash", str(script)], env=env)
+        best = list(train_output.rglob("best_checkpoint.txt"))
+        if len(best) != 1:
+            raise PaidfNativeError(
+                "AnomalyGen fine-tuning did not produce one best checkpoint"
+            )
+        selected = (
+            best[0].parent / "model" / best[0].read_text(encoding="utf-8").strip()
+        )
+        if not selected.is_file():
+            raise PaidfNativeError("AnomalyGen best-checkpoint pointer is invalid")
+        _publish(train_output, output_uri)
+        payload = {
+            "schema": f"{SCHEMA_PREFIX}.dig-finetune.v1",
+            "run_id": run_id,
+            "status": "completed",
+            "component": "NVIDIA paidf-anomalygen 1.1.0",
+            "upstream_workflow_revision": PHYSICAL_AI_DATA_FACTORY_REVISION,
+            "selected_checkpoint": selected.name,
+            "selected_checkpoint_sha256": _sha256(selected),
+            "output_uri": output_uri,
+        }
+    return _write_json(payload, result_uri)
+
+
+def prepare_dig_pretrained(
+    output_uri: str,
+    result_uri: str,
+    run_id: str,
+) -> dict[str, Any]:
+    """Fetch AnomalyGen's gated base checkpoints at runtime under operator access."""
+
+    workspace = Path("/workspace/paidf-anomalygen")
+    script = workspace / "scripts/download_checkpoints.sh"
+    if not script.is_file():
+        raise PaidfNativeError("the selected image lacks AnomalyGen checkpoint setup")
+    with tempfile.TemporaryDirectory(prefix="npa-paidf-dig-pretrained-") as tmp:
+        output = Path(tmp) / "pretrained"
+        converted_manifest = workspace / "assets/checkpoint_manifest_converted.sha256"
+        env = {**os.environ, "CKPT_DIR": str(output)}
+        _run_component(["bash", str(script)], cwd=workspace, env=env)
+        required = [
+            output / "Cosmos3-Nano",
+            output / "Cosmos3-Edge",
+            output / "wan2pt2/Wan2.2_VAE.pth",
+        ]
+        if (
+            any(not path.exists() for path in required)
+            or not converted_manifest.is_file()
+        ):
+            raise PaidfNativeError("AnomalyGen base-checkpoint setup is incomplete")
+        shutil.copy2(converted_manifest, output / converted_manifest.name)
+        files = [item for item in output.rglob("*") if item.is_file()]
+        _publish(output, output_uri)
+        payload = {
+            "schema": f"{SCHEMA_PREFIX}.dig-pretrained.v1",
+            "run_id": run_id,
+            "status": "completed",
+            "component": "NVIDIA paidf-anomalygen 1.1.0 checkpoint setup",
+            "file_count": len(files),
+            "total_bytes": sum(item.stat().st_size for item in files),
+            "manifest_sha256": _sha256(output / converted_manifest.name),
+            "output_uri": output_uri,
+        }
+    return _write_json(payload, result_uri)
 
 
 def run_dig_inference(
@@ -755,18 +1192,17 @@ def run_dig_inference(
     output_uri: str,
     result_uri: str,
     num_sdg: int,
-    checkpoint_step: int,
-    model_size: str,
+    checkpoint_step: str,
     run_id: str,
 ) -> dict[str, Any]:
     """Run AnomalyGen's published Day-1 manual-ROI inference and native labels."""
 
     workspace = Path("/workspace/paidf-anomalygen")
-    utilities = workspace / "scripts/utilities"
-    required = ["prep_testcase.sh", "validate_jsonl.py", "run_sdg.sh", "verify_output.sh"]
-    if not workspace.is_dir() or any(not (utilities / name).is_file() for name in required):
-        raise PaidfNativeError("the selected image is not NVIDIA paidf-anomalygen 1.1.0")
-    if num_sdg < 1 or checkpoint_step < 1 or model_size not in {"2b", "14b"}:
+    if not workspace.is_dir():
+        raise PaidfNativeError(
+            "the selected image is not NVIDIA paidf-anomalygen 1.1.0"
+        )
+    if num_sdg < 1 or (checkpoint_step and not checkpoint_step.isdigit()):
         raise PaidfNativeError("invalid AnomalyGen inference settings")
 
     with tempfile.TemporaryDirectory(prefix="npa-paidf-dig-") as tmp:
@@ -775,59 +1211,36 @@ def run_dig_inference(
         pretrained = _materialize(pretrained_uri, root / "pretrained")
         checkpoint = _materialize(checkpoint_uri, root / "checkpoint")
         defect_specs = list(dataset.rglob("defect_spec.jsonl"))
-        configs = list(checkpoint.rglob("ag_config.yaml"))
-        weights = list(checkpoint.rglob(f"iter_{checkpoint_step:09d}.pt"))
-        if len(defect_specs) != 1 or len(configs) != 1 or not weights:
-            raise PaidfNativeError("DIG requires one defect_spec.jsonl, one ag_config.yaml, and the requested model checkpoint")
-        ckpt_dest = workspace / "checkpoints"
-        ckpt_dest.mkdir(parents=True, exist_ok=True)
-        for name in ("NVDINOV2", "nvidia", "google-t5", "facebook", "C-RADIOv2_B.pth", "sam2", "Qwen"):
-            matches = list(pretrained.rglob(name))
-            if matches:
-                target = ckpt_dest / name
-                if target.exists() or target.is_symlink():
-                    if target.is_dir() and not target.is_symlink():
-                        shutil.rmtree(target)
-                    else:
-                        target.unlink()
-                target.symlink_to(matches[0])
-        wrapper = root / "checkpoint-wrapper"
-        model_dir = wrapper / "checkpoints/model"
-        model_dir.mkdir(parents=True)
-        shutil.copy2(configs[0], wrapper / "ag_config.yaml")
-        for weight in weights:
-            (model_dir / weight.name).symlink_to(weight)
-        amp = root / "amp"
-        testcase = root / "inference.jsonl"
-        subprocess.run(
-            [
-                "bash", str(utilities / "prep_testcase.sh"), "--name", f"{run_id}_infer",
-                "--num-sdg", str(num_sdg), "--dataset-dir", str(defect_specs[0].parent),
-                "--defect-spec", str(defect_specs[0]), "--amp-output-dir", str(amp),
-                "--output-jsonl", str(testcase),
-            ],
-            check=True,
-            cwd=workspace,
+        if len(defect_specs) != 1:
+            raise PaidfNativeError("DIG requires exactly one defect_spec.jsonl")
+        source = _runtime_fetch(
+            "https://github.com/NVIDIA/physical-ai-data-factory.git",
+            PHYSICAL_AI_DATA_FACTORY_REVISION,
+            root / "physical-ai-data-factory",
         )
-        subprocess.run(["python3", str(utilities / "validate_jsonl.py"), str(wrapper), str(testcase)], check=True, cwd=workspace)
+        script = (
+            source
+            / "skills/physical-ai-defect-image-generation-v1-1/scripts/anomalygen_generate.sh"
+        )
         generated = root / "generated"
-        env = {**os.environ, "IMAGINAIRE_OUTPUT_ROOT": str(generated / "results")}
-        subprocess.run(
-            [
-                "bash", str(utilities / "run_sdg.sh"), "--checkpoint_dir", str(wrapper),
-                "--step", str(checkpoint_step), "--input_jsonl", str(testcase),
-                "--output_dir", str(generated), "--model_size", model_size,
-                "--num_gpus", "1", "--seed", "0",
-            ],
-            check=True,
-            cwd=workspace,
-            env=env,
-        )
-        subprocess.run(["bash", str(utilities / "verify_output.sh"), str(testcase), str(generated)], check=True, cwd=workspace)
+        env = {
+            **os.environ,
+            "PRETRAINED_SRC": str(pretrained),
+            "DATASET_DIR": str(defect_specs[0].parent),
+            "DEFECT_SPEC": str(defect_specs[0]),
+            "FINETUNE_DIR": str(checkpoint),
+            "OUTPUT_DIR": str(generated),
+            "NUM_SDG": str(num_sdg),
+            "NUM_GPUS": "1",
+            "CHECKPOINT_STEP": checkpoint_step,
+        }
+        _run_component(["bash", str(script)], env=env)
         images = sorted((generated / "reconstructed_image").glob("*"))
-        labels = list(generated.rglob("*.json"))
-        if not images or not labels:
-            raise PaidfNativeError("AnomalyGen returned no generated images or label metadata")
+        labels = generated / "pseudo_labels/coco_annotations.json"
+        if not images or not labels.is_file() or not labels.stat().st_size:
+            raise PaidfNativeError(
+                "AnomalyGen returned no generated images or label metadata"
+            )
         _publish(generated, output_uri)
         payload = {
             "schema": f"{SCHEMA_PREFIX}.dig-result.v1",
@@ -836,8 +1249,15 @@ def run_dig_inference(
             "component": "NVIDIA paidf-anomalygen 1.1.0",
             "upstream_workflow_revision": PHYSICAL_AI_DATA_FACTORY_REVISION,
             "image_count": len(images),
-            "label_file_count": len(labels),
-            "images": [{"name": item.name, "sha256": _sha256(item), "size_bytes": item.stat().st_size} for item in images],
+            "label_file_count": 1,
+            "images": [
+                {
+                    "name": item.name,
+                    "sha256": _sha256(item),
+                    "size_bytes": item.stat().st_size,
+                }
+                for item in images
+            ],
             "output_uri": output_uri,
         }
     return _write_json(payload, result_uri)
@@ -853,7 +1273,18 @@ def build_parser() -> argparse.ArgumentParser:
 
     configs = subparsers.add_parser("build-configs")
     configs.add_argument("--workflow", choices=("iaa", "evg"), required=True)
-    for name in ("prepared-manifest-uri", "output-uri", "config-manifest-uri", "vlm-url", "vlm-model", "llm-url", "llm-model", "generation-url", "generation-model", "run-id"):
+    for name in (
+        "prepared-manifest-uri",
+        "output-uri",
+        "config-manifest-uri",
+        "vlm-url",
+        "vlm-model",
+        "llm-url",
+        "llm-model",
+        "generation-url",
+        "generation-model",
+        "run-id",
+    ):
         configs.add_argument(f"--{name}", required=True)
     configs.add_argument("--num-augmentations", type=int, required=True)
     configs.add_argument("--seed", type=int, required=True)
@@ -863,9 +1294,17 @@ def build_parser() -> argparse.ArgumentParser:
         augment.add_argument(f"--{name}", required=True)
 
     local_augment = subparsers.add_parser("run-local-augmentation")
-    for name in ("config-manifest-uri", "result-uri", "generation-model", "run-id"):
+    for name in (
+        "config-manifest-uri",
+        "result-uri",
+        "generation-model",
+        "generation-revision",
+        "run-id",
+    ):
         local_augment.add_argument(f"--{name}", required=True)
-    local_augment.add_argument("--service-kind", choices=("image-edit", "image2video"), required=True)
+    local_augment.add_argument(
+        "--service-kind", choices=("image-edit", "image2video"), required=True
+    )
     local_augment.add_argument("--port", type=int, default=8000)
     local_augment.add_argument("--parallel-size", type=int, default=1)
 
@@ -877,28 +1316,75 @@ def build_parser() -> argparse.ArgumentParser:
     label.add_argument("--workflow", choices=("iaa", "evg"), required=True)
     label.add_argument(
         "--stage",
-        choices=("detection", "captioning", "visual-qa-anomaly", "visual-qa-person", "person-attribute-search"),
+        choices=(
+            "detection",
+            "captioning",
+            "visual-qa-anomaly",
+            "visual-qa-person",
+            "person-attribute-search",
+        ),
         required=True,
     )
-    for name in ("validation-uri", "auto-label-root-uri", "result-uri", "vlm-url", "vlm-model", "llm-url", "llm-model", "run-id"):
+    for name in (
+        "validation-uri",
+        "auto-label-root-uri",
+        "result-uri",
+        "vlm-url",
+        "vlm-model",
+        "llm-url",
+        "llm-model",
+        "run-id",
+    ):
         label.add_argument(f"--{name}", required=True)
 
     final = subparsers.add_parser("finalize-dataset")
     final.add_argument("--workflow", choices=("iaa", "evg"), required=True)
-    for name in ("validation-uri", "upstream-uri", "labels-uri", "output-uri", "run-id"):
+    for name in (
+        "validation-uri",
+        "upstream-uri",
+        "labels-uri",
+        "output-uri",
+        "run-id",
+    ):
         final.add_argument(f"--{name}", required=True)
 
     dig = subparsers.add_parser("dig-infer")
-    for name in ("dataset-uri", "pretrained-uri", "checkpoint-uri", "output-uri", "result-uri", "run-id"):
+    for name in (
+        "dataset-uri",
+        "pretrained-uri",
+        "checkpoint-uri",
+        "output-uri",
+        "result-uri",
+        "run-id",
+    ):
         dig.add_argument(f"--{name}", required=True)
     dig.add_argument("--num-sdg", type=int, required=True)
-    dig.add_argument("--checkpoint-step", type=int, required=True)
-    dig.add_argument("--model-size", choices=("2b", "14b"), required=True)
+    dig.add_argument("--checkpoint-step", required=True)
+
+    train = subparsers.add_parser("dig-train")
+    for name in (
+        "dataset-uri",
+        "pretrained-uri",
+        "output-uri",
+        "result-uri",
+        "usecase",
+        "run-id",
+    ):
+        train.add_argument(f"--{name}", required=True)
+
+    pretrained = subparsers.add_parser("dig-prepare-pretrained")
+    for name in ("output-uri", "result-uri", "run-id"):
+        pretrained.add_argument(f"--{name}", required=True)
 
     postprocess = subparsers.add_parser("postprocess-iaa")
     for name in (
-        "validation-uri", "prepared-manifest-uri", "output-root-uri", "result-uri",
-        "vlm-url", "vlm-model", "run-id",
+        "validation-uri",
+        "prepared-manifest-uri",
+        "output-root-uri",
+        "result-uri",
+        "vlm-url",
+        "vlm-model",
+        "run-id",
     ):
         postprocess.add_argument(f"--{name}", required=True)
     return parser
@@ -917,13 +1403,27 @@ def main(argv: list[str] | None = None) -> None:
         "postprocess-iaa": postprocess_iaa,
         "run-auto-label": run_auto_label,
         "finalize-dataset": finalize_dataset,
+        "dig-train": run_dig_train,
+        "dig-prepare-pretrained": prepare_dig_pretrained,
         "dig-infer": run_dig_inference,
     }
     try:
-        result = functions[command](**{key.replace("-", "_"): value for key, value in values.items()})
-    except (PaidfNativeError, subprocess.CalledProcessError, OSError, ValueError) as exc:
+        result = functions[command](
+            **{key.replace("-", "_"): value for key, value in values.items()}
+        )
+    except (
+        PaidfNativeError,
+        subprocess.CalledProcessError,
+        OSError,
+        ValueError,
+    ) as exc:
         raise SystemExit(f"PAIDF {command} failed: {exc}") from exc
-    print(json.dumps({"status": "completed", "command": command, "schema": result["schema"]}, sort_keys=True))
+    print(
+        json.dumps(
+            {"status": "completed", "command": command, "schema": result["schema"]},
+            sort_keys=True,
+        )
+    )
 
 
 if __name__ == "__main__":
