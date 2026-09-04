@@ -9,6 +9,13 @@ from __future__ import annotations
 
 # Each value is an ordered list of concrete checks the golden eval runs.
 GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
+    "openpi": [
+        "pinned upstream full-DROID config remains batch 256 and 100,000 steps",
+        "eight JAX processes form one global (1, 8) FSDP mesh",
+        "each distinct node exposes exactly one RTX PRO 6000 SM120 GPU",
+        "DROID 1.0.1 byte/object inventory and ten-million-frame normalization pass",
+        "upstream trainer writes final step 99999 and an immutable checkpoint manifest",
+    ],
     "base-cuda13-b300": [
         "torch import + CUDA device available",
         "flash_attn import (Blackwell/CUDA13 stack)",

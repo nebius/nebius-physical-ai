@@ -918,6 +918,23 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         notes="OpenPI Polaris B200 inference; covered by test_byof_openpi_polaris_live_e2e.py.",
     ),
     SubmitLiveCase(
+        "openpi-pi05-full-droid-finetune.yaml",
+        "multi",
+        secret_envs=(
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "NPA_OPENPI_ACCEPT_GEMMA_TERMS",
+        ),
+        plan_only=True,
+        plan_only_justification=(
+            "the upstream 1.8-TB 100,000-step production recipe runs only in its dedicated live qualification"
+        ),
+        notes=(
+            "Exactly eight RTX PRO 6000 GPUs across eight one-GPU nodes, FSDP=8, batch 256, "
+            "DROID RLDS 1.0.1, and 100,000 upstream steps."
+        ),
+    ),
+    SubmitLiveCase(
         "openpi-pi05-four-mode.yaml",
         "multi",
         secret_envs=(

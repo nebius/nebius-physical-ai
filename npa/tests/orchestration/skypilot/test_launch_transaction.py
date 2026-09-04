@@ -510,6 +510,66 @@ def test_async_launch_waits_for_exact_job_observability_without_relaunch() -> No
     assert len(result.reconciliations) == 4
 
 
+def test_async_launch_ignores_stale_terminal_row_until_replacement_is_visible() -> None:
+    clock = FakeClock()
+    observations = iter(
+        [
+            ReconciliationEvidence(ReconciliationState.ABSENT),
+            ReconciliationEvidence(ReconciliationState.FOUND, "7", "CANCELLED"),
+            ReconciliationEvidence(ReconciliationState.FOUND, "8", "RUNNING"),
+        ]
+    )
+
+    result = run_launch_transaction(
+        logical_id="replace-terminal-row",
+        readiness=_stable,
+        launch=lambda: object(),
+        reconcile=lambda: next(observations),
+        classify_launch_error=_transient,
+        recovery_policy=RecoveryPolicy(30, 1, 1, 2, 0),
+        clock=clock,
+        sleeper=clock.sleep,
+        random_source=lambda: 0.5,
+    )
+
+    assert result.state is LaunchState.SUBMITTED
+    assert result.job_id == "8"
+    assert len(result.reconciliations) == 3
+
+
+def test_async_launch_never_adopts_stale_terminal_row_at_deadline() -> None:
+    clock = FakeClock()
+    observations = iter(
+        [
+            ReconciliationEvidence(ReconciliationState.ABSENT),
+            ReconciliationEvidence(ReconciliationState.FOUND, "7", "CANCELLED"),
+            ReconciliationEvidence(ReconciliationState.FOUND, "7", "CANCELLED"),
+            ReconciliationEvidence(ReconciliationState.FOUND, "7", "CANCELLED"),
+        ]
+    )
+
+    with pytest.raises(LaunchTransactionError) as caught:
+        run_launch_transaction(
+            logical_id="terminal-row-never-replaced",
+            readiness=_stable,
+            launch=lambda: object(),
+            reconcile=lambda: next(observations),
+            classify_launch_error=_transient,
+            recovery_policy=RecoveryPolicy(2, 1, 1, 2, 0),
+            clock=clock,
+            sleeper=clock.sleep,
+            random_source=lambda: 0.5,
+        )
+
+    result = caught.value.result
+    assert result.state is LaunchState.INDETERMINATE
+    assert result.state is not LaunchState.SUBMITTED
+    assert result.job_id == ""
+    assert result.existence == "indeterminate"
+    assert result.recovery_decision == "block_after_uncertain_success"
+    assert result.reconciliations[-1]["status"] == "CANCELLED"
+
+
 def test_two_local_callers_produce_at_most_one_launch_and_second_adopts(
     tmp_path: Path,
 ) -> None:

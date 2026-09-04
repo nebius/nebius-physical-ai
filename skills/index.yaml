@@ -1057,6 +1057,14 @@ skills:
           - npa/workflows/workbench/npa-workflows/sonic-export.yaml
           - npa/workflows/workbench/npa-workflows/sonic-export-eval.yaml
           - npa/workflows/workbench/npa-workflows/sonic-locomotion-finetuning.yaml
+  - name: emit-reviewable-rrd
+    category: workflows
+    when_to_use: "Author, review, or operate an NPA workflow whose actual run outputs must become a factual, run-scoped, independently validated Rerun .rrd artifact."
+    path: skills/workflows/emit-reviewable-rrd/SKILL.md
+    smoke:
+      - type: npa_workflow_yaml
+        paths:
+          - npa/workflows/workbench/npa-workflows/openpi-pi05-full-droid-finetune.yaml
   - name: physical-ai-data-factory
     category: workflows
     when_to_use: "Author, run, submit, or view the NVIDIA Physical AI Data Factory blueprint on Nebius + SkyPilot (no OSMO): annotate -> Cosmos Transfer augment -> Cosmos Evaluator gate -> re-label -> Cosmos Curator + FiftyOne curate -> Rerun visualize."

@@ -147,6 +147,18 @@ redistribution:
 
 # Relative to npa/docker/workbench/
 images:
+  openpi:
+    dockerfile: openpi/Dockerfile
+    tier: job
+    passwordless_root_exemption: "SkyPilot Kubernetes bootstrap only; the final runtime user is non-root, no sshd service is enabled by default, and no credentials are baked into the image."
+    redistribution: public
+    notes: >-
+      Bakes pinned Apache-2.0 OpenPI source, its frozen RLDS/JAX dependency
+      environment, and an SM120 probe on the redistributable CUDA base. Gemma
+      and pi0.5 weights, DROID records, terms acceptance, credentials, trained
+      checkpoints, and populated caches are runtime-only. Built-image byte and
+      layer scanning plus an eight-node RTX PRO 6000 qualification are required
+      before release promotion.
   lerobot:
     dockerfile: lerobot/Dockerfile
     tier: service
