@@ -71,6 +71,8 @@ The old `npa-cosmos:1.0.9` cu126 image stopped at Hopper. Its additive cu128/tor
 | `npa-cosmos3-ray-serve` | supported | supported | **verified** [66] | **verified** [65] | supported (same-major `sm_100` coverage; not measured) |
 | `npa-content-agents` | supported (RT cores) | blocked (no RT cores) | **verified** [64] | blocked (no RT cores) | blocked (no RT cores) |
 | `npa-paidf-anomalygen-sky` | pending build | pending build | pending build | pending build | pending build |
+| `npa-paidf-image-edit-sky` | pending build | pending build | pending build | pending build | pending build |
+| `npa-paidf-event-video-sky` | pending build | pending build | pending build | pending build | pending build |
 | `npa-wan2-2` | supported | supported | **historical evidence** [60] | **historical evidence** [61] | supported |
 | `npa-ltx2` | built, no GPU result | built, no GPU result | built, no GPU result | built, no GPU result | built, no GPU result |
 | `npa-openpi` | blocked (RTX-only runtime contract) | blocked (RTX-only runtime contract) | pending exact-digest full-DROID qualification | blocked (`sm_120`-only probe/runtime contract) | blocked (`sm_120`-only probe/runtime contract) |
@@ -235,3 +237,8 @@ kubectl apply -f npa/scripts/blackwell-gpu-validation-job.yaml
 The restricted `npa-paidf-anomalygen-sky` workflow runtime has no completed built
 artifact or observed GPU result yet. Full AnomalyGen fine-tuning, inference,
 media decoding, and label/mask validation are required before claiming support.
+
+The restricted `npa-paidf-image-edit-sky` and `npa-paidf-event-video-sky`
+wrappers are pending build and full IAA/EVG GPU acceptance. The exact upstream
+parents failed real SkyPilot bootstrap probes; supplying worker prerequisites
+is not evidence of model compatibility or end-to-end output quality.

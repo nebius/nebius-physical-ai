@@ -30,13 +30,21 @@ and composes existing workbench tools. Every new run writes the immutable
 | --- | --- | --- | --- |
 | `physical-ai-data-factory.yaml` | physical-ai-data-factory VDA | direct translation | SkyPilot + Transfer 2.5/Token Factory/Curator/FiftyOne |
 | `paidf-defect-image-generation.yaml` | physical-ai-data-factory DIG Day-1 manual-ROI | direct scoped translation | SkyPilot + restricted operator-built AnomalyGen compatibility image |
-| `paidf-image-attribute-augmentation.yaml` | paidf-orchestration IAA DAG | direct translation | SkyPilot + vLLM-Omni Qwen Edit + PAIDF protocols |
-| `paidf-event-video-generation.yaml` | paidf-orchestration EVG DAG | direct translation | SkyPilot + Cosmos3 Super + PAIDF protocols |
+| `paidf-image-attribute-augmentation.yaml` | paidf-orchestration IAA DAG | direct translation | SkyPilot + operator-built Qwen Edit wrapper + PAIDF protocols |
+| `paidf-event-video-generation.yaml` | paidf-orchestration EVG DAG | direct translation | SkyPilot + operator-built Cosmos3 Super wrapper + PAIDF protocols |
 | `paidf-cosmos3.yaml` | no corresponding Airflow IAA/EVG DAG | NPA-specific VDA alternative | SkyPilot + NPA Cosmos3/Curator/FiftyOne |
 
 The exact source/component revisions and licenses live in
 `skills/NOTICE-NVIDIA-PAIDF` and every run's `reports/upstream.json`. Do not call
 `paidf-cosmos3.yaml` an IAA or EVG translation.
+For native acceptance, supply exact scanned private digests through DIG's
+`anomalygen_image` and IAA/EVG's `generation_image` config values. Their shipped
+placeholders deliberately cannot run. The live matrix uses
+`NPA_E2E_PAIDF_ANOMALYGEN_IMAGE`, `NPA_E2E_PAIDF_IAA_IMAGE`, and
+`NPA_E2E_PAIDF_EVG_IMAGE`. The upstream generation images fail SkyPilot bootstrap;
+use the corresponding checked-in compatibility recipe and prove its built
+bytes, pullability, and full workload before claiming support.
+
 The IAA and EVG service model snapshots are also immutable workflow config:
 Qwen Image Edit `6f3ccc0b56e431dc6a0c2b2039706d7d26f22cb9` and Cosmos3 Super
 Image2Video `4f847566f3d3388fbf0ac07b99dd1a6432db9ecd`, respectively.

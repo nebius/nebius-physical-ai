@@ -562,7 +562,12 @@ def test_the_restriction_mechanism_still_exists() -> None:
     """The general refusal API covers the restricted DIG compatibility runtime."""
     assert hasattr(images, "OMNIVERSE_RESTRICTED_TOOLS")
     assert hasattr(images, "OMNIVERSE_RESTRICTED_DERIVED_IMAGES")
-    assert restricted_image_names() == ["cosmos3-super-benchmark", "paidf-anomalygen-sky"]
+    assert restricted_image_names() == [
+        "cosmos3-super-benchmark",
+        "paidf-anomalygen-sky",
+        "paidf-event-video-sky",
+        "paidf-image-edit-sky",
+    ]
     assert not is_publicly_redistributable("paidf-anomalygen-sky")
     assert "paidf-anomalygen-sky" not in publicly_publishable_tools()
     for symbol in (

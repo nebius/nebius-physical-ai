@@ -63,6 +63,14 @@ registered components use S3-compatible object storage for handoffs.
 Each run writes `reports/upstream.json` (`npa.paidf.upstream.v1`) so this
 adaptation boundary and the exact public revisions travel with its artifacts.
 
+IAA and EVG generation also require restricted operator-built wrappers:
+paidf-image-edit-sky and paidf-event-video-sky retain the exact upstream
+vLLM-Omni parent digests listed in the container catalog and add only SkyPilot
+worker prerequisites and an argument-forwarding entrypoint. Actual upstream
+bootstrap probes failed before generation. These source recipes do not claim
+built-byte security clearance or publication; the complete inherited dependency
+closure must be reviewed before any change to private-only redistribution.
+
 Runtime model snapshots are also pinned and remain outside published images:
 
   Qwen/Qwen-Image-Edit-2511

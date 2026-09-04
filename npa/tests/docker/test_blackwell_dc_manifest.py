@@ -260,6 +260,8 @@ def test_names_match_the_real_container_image_names(entries: list[dict]) -> None
         # Restricted workflow-only compatibility runtime; selected explicitly
         # by the DIG resource profile, with no standalone deploy service.
         "npa-paidf-anomalygen-sky",
+        "npa-paidf-image-edit-sky",
+        "npa-paidf-event-video-sky",
     }
     unknown = [
         entry["name"]

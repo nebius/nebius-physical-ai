@@ -147,6 +147,34 @@ redistribution:
 
 # Relative to npa/docker/workbench/
 images:
+  paidf-image-edit-sky:
+    dockerfile: paidf-image-edit-sky/Dockerfile
+    tier: interactive
+    redistribution: restricted
+    passwordless_root_exemption: >-
+      SkyPilot worker bootstrap only. The final runtime user is non-root;
+      password/root SSH login is disabled and host keys are generated only at
+      runtime. No credentials or default SSH service are baked into the image.
+    notes: >-
+      Operator-built compatibility layer over an exact upstream vLLM-Omni
+      image digest. Adds sshd, rsync, sudo, and argument forwarding while
+      preserving the upstream model runtime. No weights or operator inputs are
+      added. Private-registry-only pending complete dependency redistribution
+      review, built-byte security scanning, and real GPU acceptance.
+  paidf-event-video-sky:
+    dockerfile: paidf-event-video-sky/Dockerfile
+    tier: interactive
+    redistribution: restricted
+    passwordless_root_exemption: >-
+      SkyPilot worker bootstrap only. The final runtime user is non-root;
+      password/root SSH login is disabled and host keys are generated only at
+      runtime. No credentials or default SSH service are baked into the image.
+    notes: >-
+      Operator-built compatibility layer over an exact upstream vLLM-Omni
+      image digest. Adds sshd, rsync, sudo, and argument forwarding while
+      preserving the upstream model runtime. No weights or operator inputs are
+      added. Private-registry-only pending complete dependency redistribution
+      review, built-byte security scanning, and real GPU acceptance.
   paidf-anomalygen-sky:
     dockerfile: paidf-anomalygen-sky/Dockerfile
     tier: interactive

@@ -722,6 +722,11 @@ def run_local_augmentation(
     if workflow is None:
         raise PaidfNativeError("service_kind must be image-edit or image2video")
     _require_direct_generation_model(workflow, generation_model, generation_revision)
+    manifest = _read_config_manifest(config_manifest_uri, run_id)
+    if manifest["workflow"] != workflow:
+        raise PaidfNativeError(
+            "augmentation manifest workflow does not match the generation service"
+        )
 
     if service_kind == "image-edit":
         command = [

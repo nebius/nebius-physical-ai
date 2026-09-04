@@ -1007,6 +1007,21 @@ def materialize_live_spec(
             text,
             count=1,
         )
+        image_variable = (
+            "NPA_E2E_PAIDF_IAA_IMAGE" if "attribute" in name else "NPA_E2E_PAIDF_EVG_IMAGE"
+        )
+        generation_image = os.environ.get(image_variable, "").strip()
+        if not re.fullmatch(r".+@sha256:[0-9a-f]{64}", generation_image):
+            pytest.fail(
+                f"{image_variable} must name the scanned operator-built "
+                "generation compatibility image by exact digest"
+            )
+        text = re.sub(
+            r'generation_image:\s*"[^"]+"',
+            f'generation_image: "{generation_image}"',
+            text,
+            count=1,
+        )
     elif name == "paidf-defect-image-generation.yaml":
         text = re.sub(
             r'dataset_uri:\s*"[^"]+"',

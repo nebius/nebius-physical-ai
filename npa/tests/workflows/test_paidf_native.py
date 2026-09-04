@@ -76,7 +76,9 @@ def test_multistorage_config_uses_run_scoped_s3_environment(monkeypatch) -> None
     }
 
 
-def test_evg_local_service_preserves_upstream_two_way_hsdp(monkeypatch) -> None:
+def test_evg_local_service_preserves_upstream_two_way_hsdp(
+    tmp_path: Path, monkeypatch
+) -> None:
     launched: list[str] = []
 
     class Service:
@@ -114,15 +116,18 @@ def test_evg_local_service_preserves_upstream_two_way_hsdp(monkeypatch) -> None:
         lambda *_args: {"schema": "npa.paidf.native.evg-augmentation.v1"},
     )
 
+    manifest = _write_fixture_json(
+        tmp_path / "configs.json", _native_identity("evg-configs", "evg")
+    )
     paidf_native.run_local_augmentation(
-        "configs.json",
+        str(manifest),
         "result.json",
         COSMOS3_SUPER_IMAGE2VIDEO_MODEL,
         COSMOS3_SUPER_IMAGE2VIDEO_REVISION,
         "image2video",
         8000,
         2,
-        "run",
+        "unit-run",
     )
 
     assert launched == [
@@ -1126,7 +1131,9 @@ def test_dig_preparation_pins_real_converter_and_original_downloader(
     assert result["status"] == "completed"
 
 
-def test_iaa_generation_service_binds_only_to_loopback(monkeypatch) -> None:
+def test_iaa_generation_service_binds_only_to_loopback(
+    tmp_path: Path, monkeypatch
+) -> None:
     launched = []
 
     def inspect_launch(argv, **_kwargs):
@@ -1134,9 +1141,12 @@ def test_iaa_generation_service_binds_only_to_loopback(monkeypatch) -> None:
         raise RuntimeError("inspected launch")
 
     monkeypatch.setattr(paidf_native.subprocess, "Popen", inspect_launch)
+    manifest = _write_fixture_json(
+        tmp_path / "configs.json", _native_identity("iaa-configs", "iaa")
+    )
     with pytest.raises(RuntimeError, match="inspected launch"):
         paidf_native.run_local_augmentation(
-            "configs.json",
+            str(manifest),
             "result.json",
             QWEN_IMAGE_EDIT_MODEL,
             QWEN_IMAGE_EDIT_REVISION,
@@ -1146,6 +1156,36 @@ def test_iaa_generation_service_binds_only_to_loopback(monkeypatch) -> None:
             "unit-run",
         )
     assert launched[launched.index("--host") + 1] == "127.0.0.1"
+
+
+@pytest.mark.parametrize("mismatch", ["schema", "run_id", "workflow"])
+def test_generation_rejects_foreign_manifest_before_model_server_startup(
+    tmp_path: Path, monkeypatch, mismatch: str
+) -> None:
+    payload = _native_identity("iaa-configs", "iaa")
+    if mismatch == "workflow":
+        payload = _native_identity("evg-configs", "evg")
+    else:
+        payload[mismatch] = "foreign-artifact"
+    manifest = _write_fixture_json(tmp_path / "configs.json", payload)
+    monkeypatch.setattr(
+        paidf_native.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: pytest.fail(
+            "foreign manifest started a model server"
+        ),
+    )
+    with pytest.raises(paidf_native.PaidfNativeError, match="identity|workflow"):
+        paidf_native.run_local_augmentation(
+            str(manifest),
+            str(tmp_path / "result.json"),
+            QWEN_IMAGE_EDIT_MODEL,
+            QWEN_IMAGE_EDIT_REVISION,
+            "image-edit",
+            8000,
+            1,
+            "unit-run",
+        )
 
 
 @pytest.mark.parametrize(

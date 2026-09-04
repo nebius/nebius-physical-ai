@@ -117,7 +117,12 @@ def requires_skypilot_bootstrap_runtime_probe(image: str) -> bool:
 # redistribution decision, not a particular vendor payload. Operator-built
 # PAIDF AnomalyGen and Cosmos3-Super benchmark runtimes remain private.
 RESTRICTED_PUBLICATION_TOOLS: frozenset[str] = frozenset(
-    {"paidf-anomalygen-sky", "cosmos3-super-benchmark"}
+    {
+        "paidf-anomalygen-sky",
+        "paidf-image-edit-sky",
+        "paidf-event-video-sky",
+        "cosmos3-super-benchmark",
+    }
 )
 RESTRICTED_DERIVED_IMAGES: frozenset[str] = frozenset()
 

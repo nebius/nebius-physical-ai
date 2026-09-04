@@ -696,6 +696,22 @@
       "notes": "No torch or CUDA in the image (python:3.12-slim plus OpenCV/NumPy); the golden eval declares gpu: none. Only confirm node-pool scheduling."
     },
     {
+      "name": "npa-paidf-image-edit-sky",
+      "dockerfile": "paidf-image-edit-sky/Dockerfile",
+      "verdict": "unknown",
+      "validation": "pending-build",
+      "smoke": "Execute the corresponding full native PAIDF workflow, decode every generated image/video, require real evaluator and labeling output, and verify terminal artifact lineage.",
+      "notes": "Restricted operator-built SkyPilot wrapper over the reviewed vLLM-Omni digest. Upstream image failed the real bootstrap probe because SSH/rsync prerequisites were absent. Wrapper build, byte scans, and hardware acceptance are pending."
+    },
+    {
+      "name": "npa-paidf-event-video-sky",
+      "dockerfile": "paidf-event-video-sky/Dockerfile",
+      "verdict": "unknown",
+      "validation": "pending-build",
+      "smoke": "Execute the corresponding full native PAIDF workflow, decode every generated image/video, require real evaluator and labeling output, and verify terminal artifact lineage.",
+      "notes": "Restricted operator-built SkyPilot wrapper over the reviewed vLLM-Omni digest. Upstream image failed the real bootstrap probe because SSH/rsync prerequisites were absent. Wrapper build, byte scans, and hardware acceptance are pending."
+    },
+    {
       "name": "npa-paidf-anomalygen-sky",
       "dockerfile": "paidf-anomalygen-sky/Dockerfile",
       "verdict": "unknown",

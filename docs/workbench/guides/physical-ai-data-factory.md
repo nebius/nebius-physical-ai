@@ -25,8 +25,8 @@ boundary in `reports/upstream.json`; see `skills/NOTICE-NVIDIA-PAIDF`.
 | --- | --- | --- | --- |
 | `physical-ai-data-factory.yaml` | `NVIDIA/physical-ai-data-factory` / Video Data Augmentation | Direct VDA translation using Cosmos Transfer 2.5 | `npa.workflow/v0.0.1` on SkyPilot; Workbench GPU/CPU stages + Token Factory |
 | `paidf-defect-image-generation.yaml` | `NVIDIA/physical-ai-data-factory` / DIG Day-1 manual-ROI default fresh-finetune branch | Direct, deliberately scoped translation; not the USD Day-0 or real-alignment branch | `npa.workflow/v0.0.1` on SkyPilot; operator-built restricted AnomalyGen compatibility image on B200 |
-| `paidf-image-attribute-augmentation.yaml` | `NVIDIA/paidf-orchestration` / `image_attribute_augmentation_dag` | Direct Airflow-DAG translation | `npa.workflow/v0.0.1` on SkyPilot; Qwen Image Edit service + pinned PAIDF augmentation/auto-label protocols |
-| `paidf-event-video-generation.yaml` | `NVIDIA/paidf-orchestration` / `event_video_generation_dag` | Direct Airflow-DAG translation | `npa.workflow/v0.0.1` on SkyPilot; Cosmos3 Super service + pinned PAIDF augmentation and auto-label services |
+| `paidf-image-attribute-augmentation.yaml` | `NVIDIA/paidf-orchestration` / `image_attribute_augmentation_dag` | Direct Airflow-DAG translation | `npa.workflow/v0.0.1` on SkyPilot; operator-built Qwen Image Edit worker + pinned PAIDF augmentation/auto-label protocols |
+| `paidf-event-video-generation.yaml` | `NVIDIA/paidf-orchestration` / `event_video_generation_dag` | Direct Airflow-DAG translation | `npa.workflow/v0.0.1` on SkyPilot; operator-built Cosmos3 Super worker + pinned PAIDF augmentation and auto-label services |
 | `paidf-cosmos3.yaml` | NPA composition informed by the PAIDF VDA contract; no upstream Airflow DAG | NPA-specific Cosmos3 video2video VDA alternative, not IAA or EVG | `npa.workflow/v0.0.1` on SkyPilot; NPA Cosmos3/Curator/FiftyOne/Rerun images |
 
 All five specs write `npa.paidf.upstream.v1`. Direct translations name the
@@ -72,6 +72,14 @@ images, ROI masks, and defect specification, runtime-fetches and verifies the
 pinned AnomalyGen checkpoint closure, fine-tunes the selected upstream recipe,
 then runs the upstream generator and native label export. It intentionally does
 not claim Day-0 USD scene preparation or the separate PCBA real-alignment path.
+
+The upstream IAA/EVG generation images lack required SkyPilot worker commands.
+Build `paidf-image-edit-sky` and `paidf-event-video-sky` from their exact pinned
+parents, scan the actual bytes, publish privately, and supply their immutable
+digests with `--var generation_image=<operator-image@sha256:digest>`. DIG uses
+`--var anomalygen_image=<operator-image@sha256:digest>`. The checked-in defaults
+are deliberately non-runnable placeholders; no completed wrapper build or live
+acceptance is claimed until registry and workload evidence exist.
 
 IAA and EVG preserve the upstream service/batch boundary by starting the pinned
 vLLM-Omni generation service inside the same SkyPilot state that consumes it.
