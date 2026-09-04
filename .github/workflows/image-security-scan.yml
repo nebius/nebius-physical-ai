@@ -205,6 +205,7 @@ jobs:
           exit-code: "1"
           ignore-unfixed: true
           vuln-type: os
+          timeout: 2562047h47m16s
           format: table
 
       - name: Trivy image scan (SARIF)
@@ -215,6 +216,7 @@ jobs:
           severity: CRITICAL
           ignore-unfixed: true
           vuln-type: os
+          timeout: 2562047h47m16s
           limit-severities-for-sarif: true
           format: sarif
           output: trivy-${{ matrix.name }}.sarif

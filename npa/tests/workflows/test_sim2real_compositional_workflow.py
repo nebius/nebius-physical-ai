@@ -23,6 +23,7 @@ from npa.workflows.sim2real.workflow_io import (
     declared_loop_uri,
     write_loop_output,
 )
+from npa.workflows.sim2real.capture import DEFAULT_PPO_ITERATIONS
 from npa.workflows.sim2real.workflow_stage import _authoritative_scene_args
 from npa.orchestration.npa_workflow.submit import merge_config_overrides
 from npa.workflows.sim2real.workflow_stage import (
@@ -91,6 +92,8 @@ def test_canonical_is_one_standard_compositional_workflow() -> None:
     assert payload["config"]["cosmos3_model"] == "nvidia/Cosmos3-Super-Reasoner"
     assert "--reason-lane" not in cosmos3["run"]["argv"]
     assert "--reason-backend" not in cosmos3["run"]["argv"]
+    assert int(payload["config"]["ppo_iterations"]) == DEFAULT_PPO_ITERATIONS
+    assert DEFAULT_PPO_ITERATIONS >= 2_000
 
 
 def test_retired_monolithic_toolrefs_are_not_catalog_surfaces() -> None:
@@ -868,10 +871,10 @@ def test_exact_source_and_per_state_immutable_images_reach_rendered_tasks() -> N
     assert gpu_tasks
     for task in gpu_tasks:
         pod_config = task["config"]["kubernetes"]["pod_config"]
-        assert pod_config["metadata"]["labels"] == {
-            "kueue.x-k8s.io/queue-name": "sim2real-gpu"
-        }
-        assert pod_config["spec"]["priorityClassName"] == "sim2real-production"
+        assert "kueue.x-k8s.io/queue-name" not in pod_config.get(
+            "metadata", {}
+        ).get("labels", {})
+        assert "priorityClassName" not in pod_config["spec"]
 
     transfer_pod = spec.resources["transfer-gpu"]["kubernetes"]["pod_config"][
         "spec"

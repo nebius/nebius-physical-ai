@@ -16,6 +16,7 @@ independent, and each one ends with something you can look at.
 | [Make a Unitree G1 walk](g1-humanoid-walk-sonic.md) | Unitree G1 | MuJoCo | NVIDIA GEAR-SONIC checkpoint | H100 |
 | [Train a quadruped to run](quadruped-isaac-lab.md) | ANYmal / quadruped | Isaac Lab | Isaac Lab built-in tasks | RT-core: L40S / RTX PRO 6000 |
 | [Turn a photo capture into a 3D scene](neural-reconstruction.md) | n/a (scene capture) | NVIDIA NuRec / NRE | `nvidia/PhysicalAI-NuRec-PPISP` | RT-core: RTX PRO 6000 / L40S |
+| [Build a parameterized living-lab digital twin](living-lab-nurec-fanout.md) (default 16-GPU) | n/a (multi-zone scene capture) | NVIDIA NuRec / NRE (16-way default fan-out, parameterizable) | `nvidia/PhysicalAI-NuRec-PPISP` | 16 x RTX PRO 6000 default (8 x 2) |
 
 ## How these guides work
 

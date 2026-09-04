@@ -202,6 +202,7 @@ class RuntimeRunState:
                 "resume_block_terminal_or_legacy_absence",
                 "resume_block_output_present",
                 "resume_block_output_indeterminate",
+                "verified_absent_no_retry",
             }
             return dict(record) if status == "running" or unresolved else None
         return None
@@ -521,6 +522,41 @@ class RunStateStore:
     @property
     def run_prefix_uri(self) -> str:
         return f"s3://{self.bucket}/{self.prefix}"
+
+    def artifact_exists(self, uri: str) -> bool:
+        """Check an output with this run store's exact endpoint and credentials."""
+
+        from urllib.parse import urlparse
+
+        from botocore.exceptions import ClientError
+
+        from npa.clients.storage import StorageClient
+
+        parsed = urlparse(uri)
+        key = parsed.path.lstrip("/")
+        if parsed.scheme != "s3" or not parsed.netloc or not key:
+            raise ValueError(f"run output must be an explicit s3:// URI: {uri!r}")
+        client = StorageClient.from_environment(
+            endpoint_url=self._endpoint_url,
+            aws_access_key_id=self._aws_access_key_id,
+            aws_secret_access_key=self._aws_secret_access_key,
+        )._s3
+        try:
+            if uri.endswith("/"):
+                response = client.list_objects_v2(
+                    Bucket=parsed.netloc, Prefix=key, MaxKeys=1
+                )
+                return any(
+                    int(item.get("Size") or 0) > 0
+                    for item in response.get("Contents", [])
+                )
+            response = client.head_object(Bucket=parsed.netloc, Key=key)
+            return int(response.get("ContentLength") or 0) > 0
+        except ClientError as exc:
+            code = str(exc.response.get("Error", {}).get("Code", ""))
+            if code in {"404", "NoSuchKey", "NotFound"}:
+                return False
+            raise
 
     def read_manifest(self) -> RunManifest | None:
         key = manifest_key(self.prefix)

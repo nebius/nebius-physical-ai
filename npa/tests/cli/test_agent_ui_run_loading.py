@@ -45,7 +45,7 @@ def test_boot_reuses_session_and_status_without_blocking_on_run_details() -> Non
     assert "await loadRunDetails(activeRunId)" not in refresh
 
 
-def test_artifact_filters_reuse_complete_source_qualified_inventory() -> None:
+def test_artifact_filters_reuse_any_source_qualified_inventory() -> None:
     ui = _ui()
     wiring = ui.split(
         'for (const id of ["artifactStageFilter", "artifactTypeFilter", "artifactRoleFilter", "artifactSort"])',
@@ -56,10 +56,34 @@ def test_artifact_filters_reuse_complete_source_qualified_inventory() -> None:
     )[0]
 
     assert "reuseInventory: true" in wiring
-    assert "context.reuseInventory && activeArtifactInventoryPage" in loader
+    assert "const cachedInventoryMatches = activeArtifactInventoryPage" in loader
     assert 'String(activeArtifactInventoryPage.run_ref || "") === runRef' in loader
+    assert "const cachedInventory = cachedInventoryMatches" in loader
+    assert "context.reuseInventory || context.completeInventory" in loader
     assert "if (!data)" in loader
     assert "activeArtifactInventoryPage = data" in loader
+    assert "activeArtifactInventoryComplete = data.pagination_complete === true" in loader
+
+
+def test_default_inventory_is_lazy_and_list_artifacts_resumes_cached_cursor() -> None:
+    ui = _ui()
+    wiring = ui.split(
+        'bindClick("artifactLoadRunArtifacts"', 1
+    )[1].split('bindClick("loadRerunViewer"', 1)[0]
+    selector = ui.split("async function _loadSelectedRun", 1)[1].split(
+        "function normalizeStageStatus", 1
+    )[0]
+    loader = ui.split("async function loadArtifactsForSelectedRun", 1)[1].split(
+        "async function loadExactArtifactSource", 1
+    )[0]
+
+    assert "completeInventory: true" in wiring
+    assert "deferInventoryCompletion: true" in selector
+    assert "seededPage = cachedInventory" in loader
+    assert 'params.set("cursor", String(seededPage.next_cursor))' in loader
+    assert "no_recording: inventoryComplete && !hasRecording" in loader
+    assert "has_recording: inventoryComplete ? hasRecording : null" in loader
+    assert "if (summary.has_recording === false)" in ui
 
 
 def test_newer_run_selection_supersedes_stale_responses() -> None:
@@ -77,3 +101,31 @@ def test_newer_run_selection_supersedes_stale_responses() -> None:
     assert "isCurrent," in selector
     assert "if (!isCurrent()) return null" in history
     assert "if (leisaacUiEnabled()) await refreshLeIsaacCapability()" in history
+
+
+def test_superseded_local_demo_cannot_reach_final_refresh() -> None:
+    ui = _ui()
+    selector = ui.split("async function _loadSelectedRun", 1)[1].split(
+        "function normalizeStageStatus", 1
+    )[0]
+    local_demo = selector.split('if (entry.source_type === "local_demo")', 1)[1].split(
+        "return loadWorkflowHistoryRun", 1
+    )[0]
+
+    final_guard = local_demo.rindex("if (!isCurrent()) return null;")
+    assert final_guard > local_demo.index("await bestEffortMountRerun")
+    assert final_guard < local_demo.index("await refresh();")
+
+
+def test_foxglove_popup_uses_stable_run_boundary_not_mutable_run_ref() -> None:
+    ui = _ui()
+    handler = ui.split("async function openFoxgloveWeb", 1)[1].split(
+        "async function captureFoxgloveContext", 1
+    )[0]
+    stale_guard = handler.split("const selectedResult", 1)[1].split(
+        "const info = data && data.export", 1
+    )[0]
+
+    assert 'String(activeRunId || "").trim() !== runId' in stale_guard
+    assert "activeArtifactRunRef" not in stale_guard
+    assert "foxgloveArtifactIdentityMatches(selectedResult, selected)" in handler

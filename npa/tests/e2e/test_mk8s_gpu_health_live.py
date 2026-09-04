@@ -19,6 +19,7 @@ from npa.cluster.gpu_driver import (
     resolve_gpu_driver_strategy,
 )
 from npa.cluster.gpu_health import GpuHealthConfig, validate_gpu_health
+from npa.cluster.gpu_workload_profile import resolve_gpu_workload_profile
 
 
 pytestmark = pytest.mark.e2e
@@ -83,3 +84,49 @@ def test_fresh_reserved_mk8s_gpu_cluster_passes_fail_closed_health_gate(
 
     assert report["status"] == "healthy"
     assert len(report["cuda_smokes"]) == gpu_nodes
+
+
+def test_rtx_rendering_profile_passes_live_graphics_readiness_gate(
+    tmp_path: Path,
+) -> None:
+    if os.environ.get("NPA_E2E_MK8S_RTX_RENDERING") != "1":
+        pytest.skip("set NPA_E2E_MK8S_RTX_RENDERING=1 to authorize live graphics pods")
+    kubeconfig = Path(_required("NPA_E2E_MK8S_GPU_KUBECONFIG")).expanduser()
+    assert kubeconfig.is_file(), f"missing exact kubeconfig: {kubeconfig}"
+    selection = resolve_gpu_workload_profile(
+        profile="rtx-rendering",
+        gpu_nodes=int(_required("NPA_E2E_MK8S_GPU_NODES")),
+        gpu_platform=_required("NPA_E2E_MK8S_GPU_PLATFORM"),
+        gpu_preset=_required("NPA_E2E_MK8S_GPU_PRESET"),
+        gpu_driver_mode=_required("NPA_E2E_MK8S_GPU_DRIVER_MODE"),
+    )
+
+    report = validate_gpu_health(
+        _run_capture,
+        kubectl_bin=os.environ.get("NPA_KUBECTL_BIN", "kubectl"),
+        kubeconfig_path=kubeconfig,
+        config=GpuHealthConfig(
+            expected_nodes=int(os.environ.get("NPA_E2E_MK8S_CPU_NODES", "0"))
+            + selection.gpu_nodes,
+            expected_gpu_nodes=selection.gpu_nodes,
+            gpu_preset=selection.gpu_preset,
+            gpu_platform=selection.gpu_platform,
+            driver_mode=selection.gpu_driver_mode,
+            stabilization_seconds=int(
+                os.environ.get("NPA_E2E_MK8S_STABILIZATION_SECONDS", "120")
+            ),
+            timeout_seconds=int(
+                os.environ.get("NPA_E2E_MK8S_HEALTH_TIMEOUT_SECONDS", "3600")
+            ),
+            cuda_smoke=True,
+            graphics_smoke=True,
+        ),
+        evidence_path=tmp_path / "rtx-rendering-health-live.json",
+    )
+
+    assert report["status"] == "healthy"
+    assert len(report["cuda_smokes"]) == selection.gpu_nodes
+    assert len(report["graphics_smokes"]) == selection.gpu_nodes
+    assert all(
+        item["vulkan_physical_devices"] >= 1 for item in report["graphics_smokes"]
+    )

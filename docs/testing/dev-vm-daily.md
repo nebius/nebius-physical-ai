@@ -34,7 +34,7 @@ Optional repository **variables** (not secrets) forwarded to the run:
 | `NPA_E2E_CLUSTER_CONTEXT` | Exact disposable cluster/context for the manual `mutation-live` tier |
 | `NPA_E2E_AGENT_NAME` | Exact disposable agent name for the manual `mutation-live` tier |
 | `NPA_E2E_CONTROLLER_TRANSACTION_RUN_ID` | Unique run ID for the manual controller transaction regression |
-| `NPA_REGISTRY` | Optional full-prefix execution-registry override; defaults to public GHCR releases |
+| `NPA_E2E_REGISTRY` | Optional explicit custom registry for live workflow cases; defaults to public GHCR releases |
 | `NPA_DAILY_E2E_SHARDS` | Days to spread the S3 e2e suite over (default 7) |
 | `NPA_DAILY_ENABLE_GPU` | Set to `1` to have `e2e-daily` also run one rotating real-GPU workflow submit |
 | `NPA_DAILY_AGENT_GPU_E2E` | Set to `1` with `gpu-daily` to run the agent-confirmed self-hosted VLM proof instead of the rotating case; requires a deployed agent record |

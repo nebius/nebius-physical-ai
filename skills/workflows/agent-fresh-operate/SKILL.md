@@ -160,11 +160,12 @@ before preflight or deploy:
 NPA_NEBIUS_PROFILE=<profile> npa agent preflight --project <alias> --name <name> --agent-only
 ```
 
-Without it, the CLI queries whichever profile is active, and a tenant that
-profile cannot read answers `PermissionDenied`. Because the quota API fails
-closed by design, that denial surfaces as `unverified mutation prerequisite:
-compute.instance.count: provider/RBAC query failed` — which reads like a quota
-problem but is an identity problem. Distinguish the two in one command: if
+Without it, the CLI queries whichever profile is active. If that profile cannot
+read the tenant but can read the configured project, preflight falls back to the
+project quota catalog and emits a `WARN` that the tenant aggregate remains
+unverified. A finite project shortfall is still a hard `FAIL`; unrelated quota
+query errors and an unreadable project fallback also fail closed. Distinguish a
+profile mismatch from intentionally project-scoped access in one command: if
 
 ```bash
 nebius quotas quota-allowance list --parent-id <tenant> --all --profile <profile>
@@ -188,10 +189,15 @@ correct behavior; templates that need no cluster (PAIDF, the generic
 precondition with `GET /api/infra/backends` — `has_infra: false` and an empty
 `configured` list means cluster-backed templates cannot be exercised there.
 
-Preflight fails closed when it cannot *read* a quota (`PermissionDenied` on
-`list_quota_allowances` reports an unverified mutation prerequisite). This is
-deliberate spend safety, not a bug: an operator with create rights but no
-quota-read grant in that tenant cannot deploy until the read grant exists.
+Preflight does not require a tenant-wide quota-list grant when the provider
+specifically denies that scope and the exact project's quota catalog remains
+readable. It reports `whole_path_capacity` as `WARN`: project-local restrictions
+were verified, but the provider still enforces the unseen tenant aggregate at
+apply time. A finite project allowance with insufficient headroom is a real
+capacity denial and remains `FAIL`. A malformed response, non-RBAC provider
+failure, unreadable project catalog, missing identity, or other unverified
+mutation prerequisite also remains `FAIL`; do not treat those as the scoped-IAM
+fallback.
 
 `ssh_egress` is a generic heuristic that probes the first public IP found in
 *any* saved agent record, so its "your Nebius agent VM" wording can name an

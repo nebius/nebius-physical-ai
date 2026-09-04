@@ -37,7 +37,6 @@ from npa.clients.config import (
     remove_workbench_config,
     resolve_credentials,
     resolve_environment,
-    resolve_container_registry,
     resolve_project_storage,
     resolve_ssh_config,
     update_workbench_app_status,
@@ -376,7 +375,7 @@ def _isaac_lab_serverless_train(
         info = client.create_job(
             project_id=resolved_project_id,
             name=name,
-            image=image or container_image_for_tool("isaac-lab", registry=resolve_container_registry(proj_alias)),
+            image=image or container_image_for_tool("isaac-lab"),
             command=_isaac_lab_serverless_train_command(
                 task,
                 num_envs,
@@ -2398,10 +2397,7 @@ def deploy_cmd(
                     service_env,
                     owner=ssh_user,
                 )
-                image_ref = container_image_for_tool(
-                    "isaac-lab",
-                    registry=resolve_container_registry(proj_alias),
-                )
+                image_ref = container_image_for_tool("isaac-lab")
                 deploy_workbench_container(
                     ssh,
                     image_ref=image_ref,

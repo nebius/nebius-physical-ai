@@ -10,6 +10,8 @@ config:
   bucket: example-bucket
   repo_url: "https://github.com/google-deepmind/mujoco_playground.git"
   repo_ref: "v0.2.0"
+  repo_auth: none
+  repo_token_env: GH_TOKEN
   base_profile: ubuntu
   base_image: "nvidia/cuda:12.8.1-cudnn-devel-ubuntu24.04"
   build_command: >

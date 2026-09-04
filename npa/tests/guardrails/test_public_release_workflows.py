@@ -158,6 +158,19 @@ def test_large_image_scan_reclaims_build_cache_and_reuses_large_volume() -> None
     assert "docker image prune" not in text[scan:push]
 
 
+def test_base_image_scans_do_not_inherit_trivys_five_minute_timeout() -> None:
+    spec = _spec(SECURITY_SCAN)
+    steps = spec["jobs"]["base-image-cve-scan"]["steps"]
+    scans = [
+        step
+        for step in steps
+        if step.get("uses") == "aquasecurity/trivy-action@v0.36.0"
+    ]
+
+    assert len(scans) == 2
+    assert all(step["with"]["timeout"] == "2562047h47m16s" for step in scans)
+
+
 def test_post_push_and_promotion_gates_are_digest_bound() -> None:
     text = PUBLISH.read_text(encoding="utf-8")
     for required in (

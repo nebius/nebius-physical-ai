@@ -850,3 +850,22 @@ def test_packaging_doc_exists() -> None:
     assert "Packaging tiers" in text
     assert "Security baseline" in text
     assert "packaging-contract.yaml" in text
+
+
+def test_sim2real_control_requirement_sets_have_consistent_shared_pins() -> None:
+    """The control image installs both exact requirement sets in one pip call."""
+
+    requirement_files = (
+        WORKBENCH_DOCKER / "common" / "sim2real-controller-requirements.txt",
+        WORKBENCH_DOCKER / "common" / "sim2real-control-requirements.txt",
+    )
+    versions: dict[str, set[str]] = {}
+    for path in requirement_files:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            match = re.fullmatch(r"([A-Za-z0-9_.-]+)==([^\s;]+)", line.strip())
+            if match:
+                name = match.group(1).lower().replace("_", "-")
+                versions.setdefault(name, set()).add(match.group(2))
+
+    conflicts = {name: pins for name, pins in versions.items() if len(pins) > 1}
+    assert not conflicts, f"Sim2Real control requirement pin conflicts: {conflicts}"

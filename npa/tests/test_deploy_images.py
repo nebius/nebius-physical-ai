@@ -51,7 +51,7 @@ def test_non_sonic_workbench_images_resolve_from_supported_tools() -> None:
     assert (
         container_image_for_tool("cosmos2-transfer")
         == "ghcr.io/nebius/nebius-physical-ai/"
-        "npa-cosmos2-transfer:2.5.1-skypilot-ready-20260801T053000Z"
+        "npa-cosmos2-transfer:2.5.1-sim2real-coherent-20260904"
     )
     assert (
         container_image_for_tool("cosmos3") == "ghcr.io/nebius/nebius-physical-ai/"
@@ -65,7 +65,7 @@ def test_non_sonic_workbench_images_resolve_from_supported_tools() -> None:
     assert (
         container_image_for_tool("envgen")
         == "ghcr.io/nebius/nebius-physical-ai/npa-envgen:"
-        "cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
+        "0.1.2-sim2real-coherent-20260904"
     )
     assert (
         container_image_for_tool("reference-policy")
@@ -77,6 +77,23 @@ def test_non_sonic_workbench_images_resolve_from_supported_tools() -> None:
         == "ghcr.io/nebius/nebius-physical-ai/npa-loop-eval:"
         "cuda13-b300-0.1.3-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
     )
+
+
+def test_repository_image_defaults_ignore_ambient_private_registry(monkeypatch) -> None:
+    monkeypatch.setenv("NPA_REGISTRY", "registry.example/private-builds")
+
+    assert container_image_for_tool("retargeting") == (
+        "ghcr.io/nebius/nebius-physical-ai/npa-retargeting:0.1.1"
+    )
+    assert default_workbench_image().startswith(
+        "ghcr.io/nebius/nebius-physical-ai/npa-genesis:"
+    )
+
+
+def test_explicit_custom_registry_remains_available() -> None:
+    assert container_image_for_tool(
+        "retargeting", registry="registry.example/custom"
+    ) == "registry.example/custom/npa-retargeting:0.1.1"
 
 
 def test_packaged_supported_tool_versions_match_pyproject() -> None:

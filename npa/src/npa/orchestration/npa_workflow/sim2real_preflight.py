@@ -202,27 +202,4 @@ def kubernetes_prerequisites(
                 )
             )
 
-    queue = str(config.get("gpu_queue") or "").strip()
-    if queue:
-        result = runner(["get", "localqueue.kueue.x-k8s.io", queue, "-n", namespace, "-o", "json"])
-        if getattr(result, "returncode", 1) != 0:
-            issues.append(
-                (
-                    f"Kueue LocalQueue {queue!r} is not readable in namespace {namespace!r}",
-                    "install/configure Kueue and apply the Sim2Real ResourceFlavor, "
-                    "ClusterQueue, and LocalQueue before submission",
-                )
-            )
-
-    priority = str(config.get("gpu_priority_class") or "").strip()
-    if priority:
-        result = runner(["get", "priorityclass.scheduling.k8s.io", priority, "-o", "json"])
-        if getattr(result, "returncode", 1) != 0:
-            issues.append(
-                (
-                    f"PriorityClass {priority!r} is not readable",
-                    "create the Sim2Real PriorityClass before submission (the canonical "
-                    "default is sim2real-production)",
-                )
-            )
     return issues

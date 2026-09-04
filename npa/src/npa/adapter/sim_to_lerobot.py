@@ -169,6 +169,7 @@ def convert(
     fps: int = 20,
     robot_type: str = "franka_panda",
     task: str = "Pick and place cube to target",
+    task_from_metadata: bool = False,
 ) -> Path:
     """Convert a directory of episode numpy arrays to LeRobotDataset v3.0.
 
@@ -184,6 +185,23 @@ def convert(
     """
     episodes = discover_episodes(input_dir)
     n_episodes = len(episodes)
+    episode_tasks = [task] * n_episodes
+    if task_from_metadata:
+        metadata_path = input_dir / "metadata.json"
+        if not metadata_path.is_file():
+            raise AdapterError("--task-from-metadata requires metadata.json")
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        records = metadata.get("episodes") or []
+        by_index = {
+            int(record["episode_index"]): str(record.get("task") or record.get("env_id") or "").strip()
+            for record in records
+            if isinstance(record, dict) and "episode_index" in record
+        }
+        episode_tasks = [by_index.get(index, "") for index in range(n_episodes)]
+        if any(not value for value in episode_tasks):
+            raise AdapterError("metadata.json does not name a task for every episode")
+    tasks = list(dict.fromkeys(episode_tasks))
+    task_indices = {name: index for index, name in enumerate(tasks)}
 
     # Peek at first episode to determine shapes
     first_state = np.load(episodes[0] / "state.npy")
@@ -244,6 +262,9 @@ def convert(
             video_path = output_dir / "videos" / cam_key / "chunk-000" / f"file-{ep_idx:03d}.mp4"
             encode_video(cam_frames, video_path, fps)
 
+        episode_task = episode_tasks[ep_idx]
+        episode_task_index = task_indices[episode_task]
+
         # ── Build data rows ─────────────────────────────────────────
         dataset_from_index = global_index
         for frame_idx in range(ep_len):
@@ -254,7 +275,7 @@ def convert(
                 "frame_index": frame_idx,
                 "timestamp": frame_idx / fps,
                 "index": global_index,
-                "task_index": 0,
+                "task_index": episode_task_index,
             }
             all_data_rows.append(row)
             global_index += 1
@@ -272,7 +293,7 @@ def convert(
             "frame_index": np.arange(ep_len, dtype=np.int64),
             "episode_index": np.full(ep_len, ep_idx, dtype=np.int64),
             "index": np.arange(dataset_from_index, dataset_to_index, dtype=np.int64),
-            "task_index": np.zeros(ep_len, dtype=np.int64),
+            "task_index": np.full(ep_len, episode_task_index, dtype=np.int64),
         }
         ep_stats = _compute_episode_stats(ep_arrays, video_keys)
 
@@ -288,7 +309,7 @@ def convert(
             "dataset_from_index": dataset_from_index,
             "dataset_to_index": dataset_to_index,
             "length": ep_len,
-            "tasks": [task],
+            "tasks": [episode_task],
             "meta/episodes/chunk_index": 0,
             "meta/episodes/file_index": 0,
         }
@@ -348,7 +369,7 @@ def convert(
     _print_progress("Writing tasks parquet...")
 
     # ── Write tasks parquet ─────────────────────────────────────────
-    _write_tasks_parquet(task, output_dir / "meta" / "tasks.parquet")
+    _write_tasks_parquet(tasks, output_dir / "meta" / "tasks.parquet")
 
     _print_progress("Computing global stats...")
 
@@ -369,7 +390,7 @@ def convert(
         "robot_type": robot_type,
         "total_episodes": n_episodes,
         "total_frames": total_frames,
-        "total_tasks": 1,
+        "total_tasks": len(tasks),
         "chunks_size": DEFAULT_CHUNK_SIZE,
         "fps": fps,
         "splits": {"train": f"0:{n_episodes}"},
@@ -487,11 +508,12 @@ def _write_episodes_parquet(
     pq.write_table(table, output_path, compression="snappy")
 
 
-def _write_tasks_parquet(task: str, output_path: Path) -> None:
+def _write_tasks_parquet(task: str | list[str], output_path: Path) -> None:
     """Write the tasks.parquet metadata file."""
+    tasks = [task] if isinstance(task, str) else task
     table = pa.table({
-        "task_index": pa.array([0], type=pa.int64()),
-        "task": pa.array([task], type=pa.string()),
+        "task_index": pa.array(list(range(len(tasks))), type=pa.int64()),
+        "task": pa.array(tasks, type=pa.string()),
     })
     output_path.parent.mkdir(parents=True, exist_ok=True)
     pq.write_table(table, output_path, compression="snappy")

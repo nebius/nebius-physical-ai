@@ -17,19 +17,33 @@ COPY --chmod=0755 docker/workbench/common/workflow_runtime_entrypoint.sh \
     /usr/local/bin/npa-workflow-entrypoint
 COPY --chmod=0755 docker/workbench/common/install_workflow_runtime_prereqs.sh \
     /usr/local/bin/install-workflow-runtime-prereqs
+COPY docker/workbench/common/sanitize_sim2real_envgen_parent.py \
+    /usr/local/lib/npa/sanitize-sim2real-envgen-parent.py
+COPY docker/workbench/common/envgen_compat /opt/npa/compat
 
-# The public Genesis parent includes imageio-ffmpeg's wheel-bundled static
-# FFmpeg, which is not redistributable under this image's public packaging
-# contract. Genesis declares MoviePy at runtime, so retain that package while
-# replacing imageio-ffmpeg with its hash-pinned pure-Python sdist and bind it to
-# snapshot-pinned Ubuntu FFmpeg.
+# The public Genesis parent includes three payloads that are outside this
+# capability's public packaging/security contract:
+#
+# * imageio-ffmpeg's wheel-bundled static FFmpeg;
+# * the AGPL tetgen Python wrapper (used only for optional tetrahedralization);
+# * optional W&B and Nsight Compute tooling, including separately compiled Go
+#   binaries that are not part of canonical environment generation.
+#
+# Retain MoviePy while replacing imageio-ffmpeg with its hash-pinned
+# pure-Python sdist. Remove the optional packages and their parent metadata
+# before flattening the filesystem so their bytes cannot remain in a lower
+# layer. Genesis 0.4.6 declares tetgen and LeRobot 0.4.4 declares W&B
+# unconditionally, so remove those two Requires-Dist entries as part of
+# constructing this deliberately capability-reduced runtime distribution.
 RUN /usr/local/bin/install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}" \
     && test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
     && find /opt/npa/src /opt/npa/workflows -type d -exec chmod a+rx {} + \
     && find /opt/npa/src /opt/npa/workflows -type f -exec chmod a+r {} + \
     && chmod a+r /opt/npa/pyproject.toml \
     && python -m pip uninstall -y npa \
-    && python -m pip uninstall -y transformers imageio-ffmpeg \
+    && python -m pip uninstall -y transformers imageio-ffmpeg wandb tetgen \
+    && python /usr/local/lib/npa/sanitize-sim2real-envgen-parent.py \
+    && rm -rf /opt/nvidia/nsight-compute \
     && python -m pip install --no-deps \
       'imageio-ffmpeg @ https://files.pythonhosted.org/packages/44/bd/c3343c721f2a1b0c9fc71c1aebf1966a3b7f08c2eea8ed5437a2865611d6/imageio_ffmpeg-0.6.0.tar.gz#sha256=e2556bed8e005564a9f925bb7afa4002d82770d6b08825078b7697ab88ba1755' \
     && python -m pip install --no-deps \
@@ -42,10 +56,12 @@ RUN /usr/local/bin/install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}" \
     && IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg python -c \
       'import imageio_ffmpeg; assert imageio_ffmpeg.get_ffmpeg_exe() == "/usr/bin/ffmpeg"' \
     && python -m pip check \
-    && python -c "import site; from pathlib import Path; Path(site.getsitepackages()[0], 'npa-exact-source.pth').write_text('/opt/npa/src\\n', encoding='utf-8')" \
+    && python -c "import site; from pathlib import Path; Path(site.getsitepackages()[0], 'npa-exact-source.pth').write_text('/opt/npa/compat\\n/opt/npa/src\\n', encoding='utf-8')" \
     && env -u PYTHONPATH /opt/npa/venv/bin/python -c \
-      'import boto3; from npa.workflows.sim2real.workflow_stage import main; assert callable(main)' \
+      'import boto3, genesis; from npa.workflows.sim2real.workflow_stage import main; assert callable(main)' \
     && python -c 'import importlib.metadata as m; assert not any(d.metadata["Name"].lower() == "transformers" for d in m.distributions())' \
+    && python -c 'import importlib.metadata as m; names = {d.metadata["Name"].lower() for d in m.distributions()}; assert names.isdisjoint({"tetgen", "wandb"})' \
+    && test ! -e /opt/nvidia/nsight-compute \
     && python -m py_compile /opt/npa/src/npa/workflows/sim2real_envgen.py
 
 # Flatten the sanitized filesystem so the published image does not reference
@@ -91,7 +107,7 @@ ENV PATH=/opt/npa/venv/bin:/usr/local/cuda/bin:/usr/local/nvidia/bin:/usr/local/
     NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA} \
     NPA_BAKED_PYTHON=/opt/npa/venv/bin/python \
     IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg \
-    PYTHONPATH=/opt/npa/src
+    PYTHONPATH=/opt/npa/compat:/opt/npa/src
 
 WORKDIR /opt/npa
 USER ubuntu

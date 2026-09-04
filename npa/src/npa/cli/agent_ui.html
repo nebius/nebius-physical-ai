@@ -7693,7 +7693,9 @@
           () => refreshArtifactRuns("", { interactive: true }),
           "Discover artifact runs"
         );
-        bindClick("artifactLoadRunArtifacts", loadArtifactsForSelectedRun, "List run artifacts");
+        bindClick("artifactLoadRunArtifacts", () => loadArtifactsForSelectedRun(
+          undefined, null, null, { completeInventory: true }
+        ), "List run artifacts");
         bindClick("loadRerunViewer", () => loadRerunViewer(), "Reload Rerun data");
         bindClick("describeVisual", describeVisual, "Describe this");
         bindClick("openRerun", openRerunTab, "Open Rerun");
@@ -8490,6 +8492,22 @@
             }
             if (data && data.session_id) {
               activeChatSessionId = String(data.session_id);
+            }
+            if (data && Array.isArray(data.open_urls)) {
+              const allowedApprovalHosts = new Set([
+                "huggingface.co",
+                "catalog.ngc.nvidia.com",
+                "ngc.nvidia.com",
+                "docs.nvidia.com",
+              ]);
+              for (const rawUrl of data.open_urls) {
+                try {
+                  const approvalUrl = new URL(String(rawUrl));
+                  if (approvalUrl.protocol !== "https:" || !allowedApprovalHosts.has(approvalUrl.hostname)) continue;
+                  const opened = window.open(approvalUrl.href, "_blank", "noopener,noreferrer");
+                  if (opened) opened.opener = null;
+                } catch (_approvalUrlError) { /* invalid or blocked URL: reply retains clickable official links */ }
+              }
             }
             const reply = normalizeAssistantReply(data.reply || "");
             if (reply) {
@@ -9482,7 +9500,12 @@
         const runRef = String(activeArtifactRunRef || "").trim();
         const operation = foxgloveWebOperation;
         let staleOperationCancelled = false;
-        if (operation && (operation.runId !== runId || operation.runRef !== runRef)) {
+        // Discovery refreshes may replace an empty/legacy run_ref with the
+        // canonical reference for the same active run.  That is metadata
+        // normalization, not an operator selection change, and must not cancel
+        // a popup after its export request has already succeeded. Exact artifact
+        // opens verify the server's echoed key/source before navigation below.
+        if (operation && operation.runId !== runId) {
           operation.stale = true;
           if (operation.popup) {
             try { operation.popup.close(); } catch (_closeErr) { /* best effort */ }
@@ -11172,14 +11195,13 @@
           const selectedResult = (data && data.selected_artifact) ||
             (data && data.export && data.export.selected_artifact) || {};
           // Artifact inventory refreshes legitimately replace card DOM nodes
-          // during a slow preparation. Staleness is the immutable run/ref
-          // selection, while the exact key is verified from the server echo
-          // below; DOM-node identity is not provenance.
+          // and normalize run_ref during a slow preparation. The stable user
+          // selection boundary is the active run; exact artifact identity is
+          // independently verified from the server echo below.
           if (
             operation.stale ||
             foxgloveWebOperation !== operation ||
-            String(activeRunId || "").trim() !== runId ||
-            (runRef && String(activeArtifactRunRef || "").trim() !== runRef)
+            String(activeRunId || "").trim() !== runId
           ) {
             try { popup.close(); } catch (_closeErr) { /* best effort */ }
             return false;
@@ -11216,10 +11238,7 @@
           void (async () => {
             try {
               await refreshArtifactRuns(runId);
-              if (
-                String(activeRunId || "").trim() !== runId ||
-                String(activeArtifactRunRef || "").trim() !== runRef
-              ) return;
+              if (String(activeRunId || "").trim() !== runId) return;
               await loadArtifactsForSelectedRun(runRef || runId, {
                 suppressPreferredAutoload: true,
               });
@@ -12154,6 +12173,7 @@
       let activeArtifactInventoryRunId = "";
       let activeArtifactInventory = [];
       let activeArtifactInventoryPage = null;
+      let activeArtifactInventoryComplete = false;
       let activeLearningArtifactContract = null;
       // Load the whole run list into the picker by default so every run shows
       // without the operator having to guess a search fragment. The server still
@@ -12249,10 +12269,77 @@
         const resolvedPrefix = String((run && run.resolved_prefix) || "").trim();
         return [sourceType, project, bucket, resolvedPrefix, runId].join("|");
       }
+      function artifactSourceGroupIdentity(run) {
+        return [
+          String((run && run.project_id) || "").trim(),
+          String((run && run.bucket) || "").trim(),
+          String((run && run.run_id) || "").trim(),
+        ].join("|");
+      }
+      function artifactSourceStableIdentity(run) {
+        return [
+          String((run && run.project_id) || "").trim(),
+          String((run && run.bucket) || "").trim(),
+          String((run && run.resolved_prefix) || "").trim(),
+          String((run && run.run_ref) || "").trim(),
+        ].join("|");
+      }
+      function compareArtifactSourcePreference(a, b) {
+        const activeRef = String(activeArtifactRunRef || "").trim();
+        const activeRun = String(activeRunId || "").trim();
+        const activeScore = (run) => Number(Boolean(
+          activeRef && String((run && run.run_ref) || "").trim() === activeRef &&
+          (!activeRun || String((run && run.run_id) || "").trim() === activeRun)
+        ));
+        const booleanScore = (run, field) => Number(run && run[field] === true);
+        const numericScore = (run, field) => Number((run && run[field]) || 0) || 0;
+        const comparisons = [
+          activeScore(b) - activeScore(a),
+          booleanScore(b, "has_viewable") - booleanScore(a, "has_viewable"),
+          booleanScore(b, "summary_complete") - booleanScore(a, "summary_complete"),
+          numericScore(b, "artifact_count") - numericScore(a, "artifact_count"),
+          String((b && b.last_modified) || "").localeCompare(String((a && a.last_modified) || "")),
+        ];
+        for (const result of comparisons) if (result) return result;
+        return artifactSourceStableIdentity(a).localeCompare(artifactSourceStableIdentity(b));
+      }
+      function consolidateArtifactRunSources(discoveredRuns) {
+        const groups = new Map();
+        for (const run of Array.isArray(discoveredRuns) ? discoveredRuns : []) {
+          const runId = String((run && run.run_id) || "").trim();
+          if (!runId) continue;
+          const key = artifactSourceGroupIdentity(run);
+          const values = groups.get(key) || [];
+          values.push(run);
+          groups.set(key, values);
+        }
+        const consolidated = [];
+        for (const values of groups.values()) {
+          const ranked = [...values].sort(compareArtifactSourcePreference);
+          const primary = Object.assign({}, ranked[0]);
+          // Keep alternate exact provenance internally. It remains a source
+          // option, never evidence that seed/demo media came from policy execution.
+          primary.alternate_sources = ranked.slice(1).map((source) => ({
+            run_id: String(source.run_id || ""),
+            run_ref: String(source.run_ref || ""),
+            project_id: String(source.project_id || ""),
+            bucket: String(source.bucket || ""),
+            resolved_prefix: String(source.resolved_prefix || ""),
+            source_selected: true,
+            has_viewable: source.has_viewable,
+            summary_complete: source.summary_complete,
+            artifact_count: Number(source.artifact_count || 0),
+            last_modified: String(source.last_modified || ""),
+          }));
+          consolidated.push(primary);
+        }
+        return consolidated;
+      }
       function mergeRunsLatestFirst(knownRuns, discoveredRuns) {
         const map = new Map();
         const discoveredByRunId = new Map();
-        for (const run of Array.isArray(discoveredRuns) ? discoveredRuns : []) {
+        const consolidatedDiscovered = consolidateArtifactRunSources(discoveredRuns);
+        for (const run of consolidatedDiscovered) {
           const runId = String((run && run.run_id) || "").trim();
           if (!runId) continue;
           const values = discoveredByRunId.get(runId) || [];
@@ -12267,7 +12354,8 @@
           const identity = String(
             forcedKey || runRef || runEntryIdentity(runId, sourceType, run)
           );
-          const prev = map.get(identity) || {
+          const existing = map.get(identity);
+          const prev = existing || {
             run_id: runId,
             entry_key: identity,
             run_ref: runRef,
@@ -12300,21 +12388,51 @@
           if (run && run.summary_complete === true) prev.summary_complete = true;
           else if (run && run.summary_complete === false && prev.summary_complete !== true) prev.summary_complete = false;
           if (run && run.artifact_count) prev.artifact_count = Number(run.artifact_count) || prev.artifact_count;
-          if (run && run.project_id) prev.project_id = String(run.project_id || "");
-          if (run && run.bucket) prev.bucket = String(run.bucket || "");
-          if (run && run.resolved_prefix) prev.resolved_prefix = String(run.resolved_prefix || "");
+          if (run && run.project_id && !(existing && source === "known")) prev.project_id = String(run.project_id || "");
+          if (run && run.bucket && !(existing && source === "known")) prev.bucket = String(run.bucket || "");
+          if (run && run.resolved_prefix && !(existing && source === "known")) prev.resolved_prefix = String(run.resolved_prefix || "");
           if (run && run.stage) prev.stage = String(run.stage || "");
           prev.entry_key = identity;
-          if (runRef) prev.run_ref = runRef;
+          if (runRef && !(existing && source === "known")) prev.run_ref = runRef;
+          if (run && Array.isArray(run.alternate_sources)) {
+            prev.alternate_sources = run.alternate_sources.map((item) => Object.assign({}, item));
+          }
           if (run && run.source_prefix) prev.source_prefix = String(run.source_prefix || "");
           prev.source = prev.source === "both" || (prev.source && prev.source !== source) ? "both" : source;
           map.set(identity, prev);
         };
-        for (const run of Array.isArray(discoveredRuns) ? discoveredRuns : []) ingest(run, "discovered");
+        for (const run of consolidatedDiscovered) ingest(run, "discovered");
         for (const run of Array.isArray(knownRuns) ? knownRuns : []) {
           const runId = String((run && run.run_id) || run || "").trim();
           const matches = discoveredByRunId.get(runId) || [];
-          const key = matches.length === 1
+          // A stock/demo viewer can briefly retain a newly selected artifact
+          // run's basename while its run-specific recording is still absent.
+          // That is not a third run source: exposing it beside the real S3
+          // prefixes creates a bogus `workflow history · stage demo` match and
+          // can route the operator back to the stock Franka recording.
+          const staleDemoAlias = runId !== "franka-demo" && matches.length > 0 &&
+            String((run && run.stage) || "").trim().toLowerCase() === "demo" &&
+            !String((run && run.run_ref) || "").trim();
+          if (staleDemoAlias) continue;
+          // A viewer-history row can already be bound to one of several S3
+          // sources for the same basename. Reuse that source identity instead
+          // of manufacturing a third `history:<run-id>` option.
+          const knownRunRef = String((run && run.run_ref) || "").trim();
+          const matchingRunRef = knownRunRef && matches.some((match) =>
+            String((match && match.run_ref) || "").trim() === knownRunRef ||
+            (Array.isArray(match && match.alternate_sources) && match.alternate_sources.some((alternate) =>
+              String((alternate && alternate.run_ref) || "").trim() === knownRunRef
+            ))
+          );
+          const matchedSource = matchingRunRef && matches.find((match) =>
+            String((match && match.run_ref) || "").trim() === knownRunRef ||
+            (Array.isArray(match && match.alternate_sources) && match.alternate_sources.some((alternate) =>
+              String((alternate && alternate.run_ref) || "").trim() === knownRunRef
+            ))
+          );
+          const key = matchedSource
+            ? String(matchedSource.run_ref || runId)
+            : matches.length === 1
             ? String(matches[0].run_ref || runId)
             : "history:" + runId;
           ingest(run, "known", key);
@@ -12423,6 +12541,12 @@
           const active = mergedRunsCache.find((item) => item.entry_key === activeRunEntryKey && item.run_id === rid);
           if (active) return active;
         }
+        if (activeArtifactRunRef && activeRunId === rid) {
+          const activeSource = mergedRunsCache.find((item) =>
+            String(item.run_ref || "") === activeArtifactRunRef && item.run_id === rid
+          );
+          if (activeSource) return activeSource;
+        }
         const matches = mergedRunsCache.filter((item) => String(item.run_id || "") === rid);
         return matches.length === 1 ? matches[0] : null;
       }
@@ -12444,6 +12568,10 @@
         activeRunResourceScope = null;
         autoLoadedPreferredKey = "";
         activeArtifactRender = "";
+        activeArtifactInventoryRunId = "";
+        activeArtifactInventory = [];
+        activeArtifactInventoryPage = null;
+        activeArtifactInventoryComplete = false;
         currentLichtblickSimViz = null;
         const replacements = {
           runSummary: "Select a run to load its result.",
@@ -12912,7 +13040,7 @@
           actions.appendChild(rawToggle);
           host.appendChild(actions);
         }
-        if (!summary.has_recording) {
+        if (summary.has_recording === false) {
           const banner = document.createElement("div");
           banner.className = "no-recording";
           banner.textContent = "No RRD/MCAP recording; use the artifacts below";
@@ -12936,10 +13064,21 @@
         // Older callers passed refresh-only options in the second slot. Keep
         // those options as request context while treating only an object with
         // an artifact array as a pagination seed.
-        const seededPage = priorPage && Array.isArray(priorPage.artifacts) ? priorPage : null;
+        let seededPage = priorPage && Array.isArray(priorPage.artifacts) ? priorPage : null;
         const context = requestContext && typeof requestContext === "object"
           ? requestContext
           : (priorPage && !seededPage && typeof priorPage === "object" ? priorPage : {});
+        const deferInventoryCompletion = context.deferInventoryCompletion === true;
+        const cachedInventoryMatches = activeArtifactInventoryPage &&
+          String(activeArtifactInventoryPage.run_id || "") === runId &&
+          (!runRef || String(activeArtifactInventoryPage.run_ref || "") === runRef);
+        const cachedInventory = cachedInventoryMatches ? activeArtifactInventoryPage : null;
+        // The explicit List artifacts action resumes the already-rendered first
+        // page instead of fetching it again. A completed cache is also final.
+        if (!seededPage && context.completeInventory && cachedInventory &&
+            cachedInventory.pagination_complete !== true) {
+          seededPage = cachedInventory;
+        }
         // No path prefix: the server locates the run by id across the whole run root.
         const previous = seededPage ? seededPage.artifacts : [];
         const params = new URLSearchParams();
@@ -12963,14 +13102,19 @@
         const signal = context.signal || (localController && localController.signal);
         const requestIsCurrent = () => listRequestId === artifactListRequestId &&
           (!context.isCurrent || context.isCurrent());
-        let data = context.reuseInventory && activeArtifactInventoryPage &&
-          String(activeArtifactInventoryPage.run_id || "") === runId &&
-          (!runRef || String(activeArtifactInventoryPage.run_ref || "") === runRef)
-          ? activeArtifactInventoryPage
+        let data = (context.reuseInventory || context.completeInventory) &&
+          cachedInventory && (context.reuseInventory || cachedInventory.pagination_complete === true)
+          ? cachedInventory
           : null;
-        let paginationPageCount = data ? Number(data.inventory_page_count || 1) : 0;
-        let paginationEmptyPageCount = data ? Number(data.inventory_empty_page_count || 0) : 0;
-        let paginationDuplicateCount = data ? Number(data.inventory_duplicate_count || 0) : 0;
+        let paginationPageCount = data
+          ? Number(data.inventory_page_count || 1)
+          : (seededPage ? Number(seededPage.inventory_page_count || 1) : 0);
+        let paginationEmptyPageCount = data
+          ? Number(data.inventory_empty_page_count || 0)
+          : (seededPage ? Number(seededPage.inventory_empty_page_count || 0) : 0);
+        let paginationDuplicateCount = data
+          ? Number(data.inventory_duplicate_count || 0)
+          : (seededPage ? Number(seededPage.inventory_duplicate_count || 0) : 0);
         try {
           if (!data) {
           const runSelector = runRef || runId;
@@ -12979,7 +13123,7 @@
             signal ? { signal } : undefined
           );
           if (!requestIsCurrent()) return false;
-          paginationPageCount = 1;
+          paginationPageCount += 1;
           const selectedSource = {
             run_id: String(firstPage.run_id || runId).trim(),
             run_ref: String(firstPage.run_ref || runRef).trim(),
@@ -13013,7 +13157,7 @@
           const seenCursors = new Set();
           let page = firstPage;
           let nextCursor = String(firstPage.next_cursor || "").trim();
-          while (nextCursor) {
+          while (nextCursor && !deferInventoryCompletion) {
             if (!requestIsCurrent() || (signal && signal.aborted)) return false;
             if (seenCursors.has(nextCursor)) {
               throw new Error("Artifact inventory pagination repeated a server cursor; reload the run before selecting media.");
@@ -13044,7 +13188,7 @@
             page = nextPage;
             nextCursor = String(nextPage.next_cursor || "").trim();
           }
-          if (page && page.truncated) {
+          if (!deferInventoryCompletion && page && page.truncated) {
             throw new Error("Artifact inventory is truncated but the server returned no continuation cursor.");
           }
           const sourceFields = {
@@ -13057,23 +13201,27 @@
             source_selected: true,
           };
           const artifacts = [...merged.values()].map((item) => Object.assign({}, item, sourceFields));
-          const preferred = selectPreferredArtifact(artifacts);
+          const inventoryComplete = !nextCursor;
+          // A partial page is useful for loading run identity and stage evidence,
+          // but it must never nominate a page-local artifact as the run-wide
+          // preferred recording. A later page may contain the RRD/MCAP.
+          const preferred = inventoryComplete ? selectPreferredArtifact(artifacts) : null;
           const roleCounts = artifacts.reduce((acc, item) => {
             const artifactRole = String((item && item.role) || "output");
             acc[artifactRole] = (acc[artifactRole] || 0) + 1;
             return acc;
           }, {});
           const hasRecording = artifacts.some((item) => ["rerun", "mcap"].includes(String((item && item.render) || "")));
-          const summary = Object.assign({}, firstPage.summary || {}, {
+          const summary = Object.assign({}, (seededPage && seededPage.summary) || {}, firstPage.summary || {}, {
             run_id: selectedSource.run_id,
             artifact_count: artifacts.length,
             output_artifact_count: Number(roleCounts.output || 0),
             input_artifact_count: Number(roleCounts.input || 0),
             metadata_artifact_count: Number(roleCounts.metadata || 0),
             total_bytes: artifacts.reduce((total, item) => total + Number((item && item.size) || 0), 0),
-            has_recording: hasRecording,
+            has_recording: inventoryComplete ? hasRecording : null,
           });
-          data = Object.assign({}, firstPage, {
+          data = Object.assign({}, seededPage || {}, firstPage, {
             run_id: selectedSource.run_id,
             run_ref: selectedSource.run_ref,
             bucket: selectedSource.bucket,
@@ -13082,15 +13230,17 @@
             artifacts,
             count: artifacts.length,
             preferred,
-            truncated: false,
-            next_cursor: "",
-            pagination_complete: true,
+            truncated: !inventoryComplete,
+            next_cursor: nextCursor,
+            pagination_complete: inventoryComplete,
             output_artifact_count: Number(roleCounts.output || 0),
             input_artifact_count: Number(roleCounts.input || 0),
             metadata_artifact_count: Number(roleCounts.metadata || 0),
             summary,
-            no_recording: !hasRecording,
-            recording_state: hasRecording ? "recording_available" : String(firstPage.recording_state || "no_recording"),
+            no_recording: inventoryComplete && !hasRecording,
+            recording_state: inventoryComplete
+              ? (hasRecording ? "recording_available" : String(firstPage.recording_state || "no_recording"))
+              : "Artifact inventory is still being scanned; use List artifacts to merge every page.",
             inventory_page_count: paginationPageCount,
             inventory_empty_page_count: paginationEmptyPageCount,
             inventory_duplicate_count: paginationDuplicateCount,
@@ -13118,6 +13268,7 @@
         activeArtifactInventoryRunId = runId;
         activeArtifactInventory = artifacts;
         activeArtifactInventoryPage = data;
+        activeArtifactInventoryComplete = data.pagination_complete === true;
         const contractCandidate = data && data.summary && data.summary.learning && data.summary.learning.artifact_contract;
         activeLearningArtifactContract = contractCandidate && contractCandidate.authoritative === true
           ? contractCandidate
@@ -14693,6 +14844,7 @@
           return loadArtifactsForSelectedRun(chosen, null, entry, {
             pendingSelection: true,
             isCurrent,
+            deferInventoryCompletion: true,
           });
         }
         clearVisibleRunState("Loading " + chosen + "…");
@@ -14710,6 +14862,7 @@
           if (data && data.sim_viz && (data.sim_viz.rrd_uri || data.sim_viz.rerun_ready)) {
             await bestEffortMountRerun(String(data.sim_viz.camera || "workspace"), chosen);
           }
+          if (!isCurrent()) return null;
           await refresh();
           return data;
         }
@@ -15226,12 +15379,16 @@
               // WASM viewer mount. Viewer artifacts remain one click away and
               // their explicit load paths retain independent failure semantics.
               deferPreferredViewer: true,
+              // A direct run load is a status/timeline action. Do not make it
+              // wait for a six-figure frame inventory; the explicit artifact
+              // browser still follows every cursor before choosing preference.
+              deferInventoryCompletion: true,
             });
             if (loaded && activeArtifactInventory.length) {
-              const hasRecording = activeArtifactInventory.some((item) =>
+              const hasRecording = activeArtifactInventoryComplete && activeArtifactInventory.some((item) =>
                 ["rerun", "mcap"].includes(String((item && item.render) || ""))
               );
-              if (!hasRecording) {
+              if (activeArtifactInventoryComplete && !hasRecording) {
                 updateRenderedDataSummary({
                   run_id: runId,
                   preview_status: "no_previewable_recording",
@@ -15260,6 +15417,7 @@
         const artifactsPromise = preferredEntry && preferredEntry.source_type === "workflow_history"
           ? loadArtifactsForSelectedRun(runRef || runId, null, exactEntry, {
               pendingSelection: true,
+              deferInventoryCompletion: true,
             }).catch(() => false)
           : Promise.resolve(false);
         const data = await dataPromise;
@@ -15648,6 +15806,19 @@
           captureMediaViewerFrame,
           previewArtifact,
           artifactContentUrl,
+          consolidateArtifactRunSources,
+          mergeRunsLatestFirst,
+          preferredRunEntry,
+          loadRunData,
+          setArtifactRunsForTest: (knownRuns, discoveredRuns, activeSource) => {
+            const active = activeSource && typeof activeSource === "object" ? activeSource : {};
+            activeRunId = String(active.run_id || "").trim();
+            activeArtifactRunRef = String(active.run_ref || "").trim();
+            activeRunEntryKey = String(active.entry_key || active.run_ref || "").trim();
+            knownAvailableRuns = Array.isArray(knownRuns) ? knownRuns.slice() : [];
+            discoveredArtifactRuns = Array.isArray(discoveredRuns) ? discoveredRuns.slice() : [];
+            return applyMergedRunSelectors(activeRunEntryKey || activeArtifactRunRef || activeRunId);
+          },
           captureDataPaneExcerpt,
           captureVisualContext,
           describeVisual,

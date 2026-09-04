@@ -209,6 +209,11 @@ class RuntimeOptions:
     #: remains fail closed because an absent scheduler record alone cannot prove an
     #: arbitrary stage has no external side effects.
     retry_absent_in_flight: bool = False
+    #: Explicitly adopt an exact in-flight attempt whose scheduler record was
+    #: lost only after the ledger proves it reached RUNNING and every declared
+    #: durable output validates. This is an operator recovery for controller
+    #: loss, never a default inference from job disappearance.
+    adopt_absent_in_flight_outputs: bool = False
     project: str = "default"
     sky_bin: str = ""
     credential_resolver: Callable[[], Mapping[str, str]] | None = field(
@@ -433,7 +438,17 @@ class SkyPilotWaveExecutor:
         self._timeline_fn = timeline_fn
         self._canceller = canceller
         self._name_lookup_fn = name_lookup_fn
-        self._output_checker = output_checker or s3_artifact_exists
+        if output_checker is not None:
+            self._output_checker = output_checker
+        elif ledger is not None and callable(
+            getattr(ledger.store, "artifact_exists", None)
+        ):
+            # Recovery, completion, and durable state must all address the same
+            # object-store endpoint and account.  Process-global storage config may
+            # legitimately belong to a different NPA project.
+            self._output_checker = ledger.store.artifact_exists
+        else:
+            self._output_checker = s3_artifact_exists
         self._reconcile_fn = reconcile_fn
         self._sleep = sleeper or time.sleep
         self._clock = clock
@@ -577,6 +592,68 @@ class SkyPilotWaveExecutor:
                     infrastructure_recoveries = int(recovery_record.get("used") or 0)
                 category = str(latest.get("error_category") or "")
                 sky_status = str(latest.get("sky_status") or "").upper()
+                observations = latest.get("observations") or []
+                reached_running = any(
+                    isinstance(item, Mapping)
+                    and (
+                        str(item.get("scheduler_state") or "").upper()
+                        == "RUNNING"
+                        or "RUNNING"
+                        in {
+                            str(value or "").upper()
+                            for value in (item.get("statuses") or {}).values()
+                        }
+                    )
+                    for item in observations
+                )
+                if (
+                    self.options.adopt_absent_in_flight_outputs
+                    and reached_running
+                    and not is_terminal(sky_status)
+                    and bool(latest.get("job_id"))
+                    and bool(latest.get("job_name"))
+                    and bool(latest.get("logical_launch_id"))
+                    and bool(latest.get("outputs"))
+                    and self._outputs_exist(list(latest.get("outputs") or []))
+                ):
+                    evidence = self._reconcile_exact(
+                        str(latest.get("job_name") or ""),
+                        str(latest.get("job_id") or ""),
+                    )
+                    if str(getattr(evidence, "outcome", "") or "") == "absent":
+                        attempt = self._attempt_from_record(
+                            latest, steps=steps, kind=kind, group=group
+                        )
+                        attempt.status = "succeeded"
+                        attempt.sky_status = "SUCCEEDED"
+                        attempt.adopted = True
+                        attempt.replayed = True
+                        attempt.ended_at = attempt.ended_at or utc_now()
+                        attempt.recovery_decision = (
+                            "operator_authorized_absent_output_adoption"
+                        )
+                        attempt.operator_remedy = (
+                            "The exact attempt reached RUNNING, its scheduler "
+                            "record is absent, and every declared durable output "
+                            "validated; reuse it without resubmission."
+                        )
+                        attempt.cancellation_state = "not_applicable"
+                        attempt.reconciliation.append(
+                            {
+                                "outcome": "absent",
+                                "source": "exact_managed_job_reconciliation",
+                                "declared_outputs_valid": True,
+                                "checked_at": utc_now(),
+                            }
+                        )
+                        self.ledger.record(attempt)
+                        self.attempts.append(attempt)
+                        self._log(
+                            f"wave {key}: operator-authorized recovery adopts "
+                            "the output-complete controller-lost attempt after "
+                            "driver interruption; no duplicate will be launched"
+                        )
+                        return attempt
                 # The scheduler can reach SUCCEEDED and publish every declared
                 # artifact before the driver fails while checking/persisting that
                 # evidence.  Resubmitting such a wave would duplicate completed GPU
@@ -894,6 +971,61 @@ class SkyPilotWaveExecutor:
                 self.ledger.record(attempt)
                 return attempt
         elif outcome == "absent":
+            observations = record.get("observations") or []
+            reached_running = any(
+                isinstance(item, Mapping)
+                and (
+                    str(item.get("scheduler_state") or "").upper() == "RUNNING"
+                    or "RUNNING"
+                    in {
+                        str(value or "").upper()
+                        for value in (item.get("statuses") or {}).values()
+                    }
+                )
+                for item in observations
+            )
+            explicit_output_adoption = (
+                self.options.adopt_absent_in_flight_outputs
+                and reached_running
+                and bool(attempt.outputs)
+                and bool(job_id)
+                and bool(job_name)
+                and bool(attempt.logical_launch_id)
+                and not is_terminal(attempt.sky_status)
+            )
+            if explicit_output_adoption:
+                try:
+                    outputs_valid = self._outputs_exist(attempt.outputs)
+                except Exception as exc:  # noqa: BLE001 - storage can be unavailable
+                    attempt.reconciliation_error = sanitize_reason(exc)
+                    outputs_valid = False
+                if outputs_valid:
+                    attempt.status = "succeeded"
+                    attempt.sky_status = "SUCCEEDED"
+                    attempt.ended_at = utc_now()
+                    attempt.recovery_decision = (
+                        "operator_authorized_absent_output_adoption"
+                    )
+                    attempt.operator_remedy = (
+                        "The exact attempt reached RUNNING and every declared "
+                        "durable output validated; reuse it without resubmission."
+                    )
+                    attempt.reconciliation.append(
+                        {
+                            "outcome": "absent",
+                            "source": "exact_managed_job_reconciliation",
+                            "declared_outputs_valid": True,
+                            "checked_at": utc_now(),
+                        }
+                    )
+                    attempt.cancellation_state = "not_applicable"
+                    self.ledger.record(attempt)
+                    self._log(
+                        f"wave {key}: operator-authorized recovery adopts the "
+                        "lost scheduler record after RUNNING and declared-output "
+                        "validation; no duplicate attempt will be launched"
+                    )
+                    return attempt
             automatic_retry = attempt.launch_sequence == 0 or (
                 attempt.error_category
                 in {
@@ -907,9 +1039,32 @@ class SkyPilotWaveExecutor:
                     "interrupted_verified_absent",
                 }
             )
+            typed_pre_id_launch_failure = (
+                not job_id
+                and attempt.error_category
+                in {
+                    "kubernetes_transport",
+                    "kubernetes_rate_limit",
+                    "kubernetes_server",
+                }
+                and attempt.recovery_decision
+                in {
+                    "block_indeterminate",
+                    "resume_block_output_present",
+                    "resume_block_output_indeterminate",
+                }
+            )
+            verified_pre_id_launch_failure = (
+                not job_id
+                and attempt.recovery_decision == "verified_absent_no_retry"
+            )
             explicit_retry = (
                 self.options.retry_absent_in_flight
-                and bool(job_id)
+                and (
+                    bool(job_id)
+                    or typed_pre_id_launch_failure
+                    or verified_pre_id_launch_failure
+                )
                 and bool(job_name)
                 and bool(attempt.logical_launch_id)
                 and attempt.launch_sequence > 0
@@ -920,11 +1075,16 @@ class SkyPilotWaveExecutor:
                     "resume_block_terminal_or_legacy_absence",
                     "resume_block_output_present",
                     "resume_block_output_indeterminate",
+                    "block_indeterminate",
+                    "verified_absent_no_retry",
                 }
             )
             if explicit_retry:
-                outputs_absent, output_state = self._declared_outputs_absent(
+                recovery_outputs = self.ledger.outputs_not_from_succeeded_waves(
                     attempt.outputs
+                )
+                outputs_absent, output_state = self._declared_outputs_absent(
+                    recovery_outputs
                 )
                 if not outputs_absent:
                     attempt.status = "failed"
@@ -1279,6 +1439,17 @@ class SkyPilotWaveExecutor:
         while True:
             try:
                 current = self._status(job_id)
+                observed_status = str(
+                    getattr(current, "status", "") or "UNKNOWN"
+                ).upper()
+                if observed_status in {"UNKNOWN", "ABSENT"}:
+                    detail = str(getattr(current, "error", "") or "").strip()
+                    returncode = int(getattr(current, "returncode", 0) or 0)
+                    suffix = f": {detail}" if detail else ""
+                    raise NpaWorkflowError(
+                        f"scheduler returned {observed_status} for job {job_id} "
+                        f"(returncode={returncode}){suffix}"
+                    )
             except Exception as exc:  # noqa: BLE001 - a status hiccup must not abort a job
                 # `sky jobs queue` can time out or trip over a busy API server. The
                 # job itself is unaffected, so keep polling (bounded) instead of
@@ -1313,7 +1484,7 @@ class SkyPilotWaveExecutor:
                 self._sleep(self.options.poll_seconds)
                 continue
             consecutive_status_errors = 0
-            last = str(getattr(current, "status", "") or "UNKNOWN").upper()
+            last = observed_status
             self._observe_concurrency(
                 job_id,
                 attempt,
@@ -1870,6 +2041,26 @@ class RuntimeLedger:
 
     def latest_wave(self, key: str) -> dict[str, Any] | None:
         return self.state.latest_wave(key)
+
+    def outputs_not_from_succeeded_waves(self, outputs: Sequence[str]) -> list[str]:
+        """Return outputs that are not already attributed to completed waves.
+
+        Looping workflows may intentionally rewrite a shared component record while
+        also emitting an iteration-unique result.  A shared record from an earlier
+        succeeded wave cannot prove that an indeterminate later launch ran, so only
+        wave-unique outputs participate in explicit absent-launch recovery.  If no
+        unique output remains, the caller fails closed as indeterminate.
+        """
+
+        previously_succeeded: set[str] = set()
+        for wave in self.state.waves:
+            if str(wave.get("status") or "") != "succeeded":
+                continue
+            for output in wave.get("outputs") or []:
+                uri = output.get("uri") if isinstance(output, Mapping) else output
+                if str(uri or ""):
+                    previously_succeeded.add(str(uri))
+        return [str(uri) for uri in outputs if str(uri) not in previously_succeeded]
 
     def record(self, attempt: WaveAttempt) -> None:
         self.state.record_wave(attempt.to_dict())

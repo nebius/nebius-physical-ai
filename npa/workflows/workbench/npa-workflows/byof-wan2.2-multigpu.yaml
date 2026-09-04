@@ -22,6 +22,8 @@ config:
 
   repo_url: "https://github.com/Wan-Video/Wan2.2.git"
   repo_ref: "42bf4cfaa384bc21833865abc2f9e6c0e67233dc"
+  repo_auth: none
+  repo_token_env: GH_TOKEN
   base_profile: prebuilt
   base_image: "tool://wan2-2"
   build_command: ""

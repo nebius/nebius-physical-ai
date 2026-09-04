@@ -393,7 +393,7 @@ def test_access_advisory_reports_each_outcome_without_gating_or_secret_leak(
 
     def probe(_validator, _token, assets, **_kwargs):
         return {
-            (asset.repo, asset.repo_type): HFAccessResult(
+            (asset.repo, asset.repo_type, asset.revision, asset.probe_path): HFAccessResult(
                 repo=asset.repo,
                 ok=hf_asset_status == 200,
                 status_code=hf_asset_status,

@@ -58,6 +58,11 @@ class Workload(str, Enum):
     solution_smoke = "solution-smoke"
 
 
+class RepoAuth(str, Enum):
+    none = "none"
+    github = "github"
+
+
 class OutputFormat(str, Enum):
     text = "text"
     json = "json"
@@ -78,6 +83,8 @@ def build_byof_argv(
     *,
     repo_url: str,
     repo_ref: str = "main",
+    repo_auth: str = "none",
+    repo_token_env: str = "",
     base_profile: str = "ubuntu",
     base_image: str = "",
     workload: str = "container-verify",
@@ -112,6 +119,8 @@ def build_byof_argv(
         repo_url,
         "--repo-ref",
         repo_ref,
+        "--repo-auth",
+        repo_auth,
         "--base-profile",
         base_profile,
         "--workload",
@@ -129,6 +138,8 @@ def build_byof_argv(
         "--poll-interval",
         str(poll_interval),
     ]
+    if repo_token_env:
+        argv.extend(["--repo-token-env", repo_token_env])
     if base_image:
         argv.extend(["--base-image", base_image])
     if build_command:
@@ -170,10 +181,23 @@ def build_byof_argv(
 @app.command("run")
 def run_cmd(
     repo_url: str = typer.Option(
-        ..., "--repo-url", help="Public GitHub/GitLab repo URL."
+        ..., "--repo-url", help="GitHub/GitLab repository URL without credentials."
     ),
     repo_ref: str = typer.Option(
         "main", "--repo-ref", help="Git ref to clone into the image."
+    ),
+    repo_auth: RepoAuth = typer.Option(
+        RepoAuth.none,
+        "--repo-auth",
+        help="none for public source; github for secret-mounted private access.",
+    ),
+    repo_token_env: str = typer.Option(
+        "",
+        "--repo-token-env",
+        help=(
+            "Environment variable holding a fine-grained GitHub token; otherwise "
+            "use GH_TOKEN, GITHUB_TOKEN, or the existing gh login."
+        ),
     ),
     base_profile: BaseProfile = typer.Option(
         BaseProfile.ubuntu,
@@ -263,6 +287,8 @@ def run_cmd(
     argv = build_byof_argv(
         repo_url=repo_url,
         repo_ref=repo_ref,
+        repo_auth=repo_auth.value,
+        repo_token_env=repo_token_env,
         base_profile=base_profile.value,
         base_image=base_image,
         workload=workload.value,

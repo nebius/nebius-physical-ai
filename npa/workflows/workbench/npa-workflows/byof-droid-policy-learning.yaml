@@ -10,6 +10,8 @@ config:
   bucket: example-bucket
   repo_url: "https://github.com/droid-dataset/droid_policy_learning.git"
   repo_ref: "9a29c832b4c81bf38401111f5e4cdddaca217581"
+  repo_auth: none
+  repo_token_env: GH_TOKEN
   base_profile: ubuntu
   base_image: "nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04"
   build_command: >

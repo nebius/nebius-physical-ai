@@ -67,7 +67,6 @@ EXEMPT_IMAGE_TOOLS: frozenset[str] = frozenset(
         "alpamayo2-super",
         "cosmos3-ray-serve",
         "genesis",
-        "lerobot",
     }
 )
 

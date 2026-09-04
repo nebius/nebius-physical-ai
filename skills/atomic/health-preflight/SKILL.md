@@ -39,8 +39,11 @@ that proves the key, not entitlement to every NGC artifact. `access` performs
 the capability-specific repository/artifact probe.
 
 `access` answers the different and more specific question *"is my token actually
-entitled to the gated models this capability pulls?"* Holding an HF token is not
-the same as having accepted a model's license.
+entitled to fetch bytes from the gated assets this capability pulls?"* It probes
+a representative payload path at the exact catalog revision with HEAD or a
+one-byte Range request. Metadata access is not proof. Holding an HF token is not
+the same as having account entitlement, and `Ready` is technical fetch evidence,
+not proof of legal acceptance.
 
 ```bash
 npa workbench health access --capability all

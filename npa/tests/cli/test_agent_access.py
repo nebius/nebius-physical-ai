@@ -334,6 +334,26 @@ def test_access_model_is_embedded_with_api_ui_and_read_boundary() -> None:
     assert "No searchable artifact bucket." in ui_source
 
 
+def test_approval_browser_handoff_is_https_allowlisted_and_opener_isolated() -> None:
+    from pathlib import Path
+
+    from npa.cli import agent
+
+    ui_source = (
+        Path(agent.__file__).with_name("agent_ui.html").read_text(encoding="utf-8")
+    )
+    approval_block = ui_source.split("const allowedApprovalHosts", 1)[1].split(
+        "const reply = normalizeAssistantReply", 1
+    )[0]
+
+    assert '"huggingface.co"' in approval_block
+    assert '"catalog.ngc.nvidia.com"' in approval_block
+    assert 'approvalUrl.protocol !== "https:"' in approval_block
+    assert "!allowedApprovalHosts.has(approvalUrl.hostname)" in approval_block
+    assert 'window.open(approvalUrl.href, "_blank", "noopener,noreferrer")' in approval_block
+    assert "opened.opener = null" in approval_block
+
+
 def test_cross_project_object_read_requires_exact_run_membership(monkeypatch) -> None:
     from npa.cli import agent_access_runtime as runtime
 

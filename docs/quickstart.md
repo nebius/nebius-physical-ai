@@ -266,9 +266,10 @@ npa configure
 
 Workbench images resolve from the anonymous
 `ghcr.io/nebius/nebius-physical-ai` mirror by default, so configure does not ask
-for or save a container registry. Existing `container_registry` entries remain
-supported as custom overrides; for new private or locally modified images, set
-`NPA_REGISTRY` or pass the command's explicit image/registry option.
+for or save a container registry. Existing `container_registry` entries and
+`NPA_REGISTRY` remain available to build/BYOF compatibility paths but do not
+repoint repository-owned runtime defaults. Pass a complete image or a workflow's
+explicit `--registry` when intentionally running private or modified bytes.
 
 Storage is committed after its declared write/read capability probe succeeds.
 Delete is best-effort probe cleanup and is reported independently. The declared
@@ -469,36 +470,46 @@ npa demo stage --source-project project-a --target-project project-b \
   --target-bucket s3://customer-bucket/demo-artifacts/ --allow-host-creds
 ```
 
-### 4e. Accept and verify gated model access
+### 4e. Prepare and verify gated model access
 
 Some capability selections pull **gated** Hugging Face models or entitlement-controlled
 NGC artifacts. Complete access upstream on the owning account. NPA does not invent a
-second acceptance flag: the account token plus a successful repository probe is the
-automated access preflight, while the artifact's upstream licence still governs use.
+second acceptance flag: the account token plus a successful exact-revision payload-byte
+authorization probe is the automated access preflight. Repository metadata is public
+for many gated assets and is never entitlement proof; the upstream licence still
+governs use.
 
-When the selected capability needs them, set `HF_TOKEN` or `NGC_API_KEY` and verify
-the exact assets it will use. Public Hugging Face assets are checked anonymously:
+Workbench remains usable without either provider. To explicitly audit the full
+current catalog, including newly added gated artifacts, run:
 
 ```bash
-npa workbench health access
+npa configure --prepare-catalog-access
+```
+
+The interactive audit groups missing resources by provider and asks before
+opening official pages. NPA never clicks an acceptance control or submits legal
+assent. After completing user-bound steps, run the printed resume command to
+re-check exact upstream access. `Ready` means only that the provider authorized a
+representative payload fetch at the pinned revision; it never means NPA accepted terms
+or established legal assent. A previous Ready result is reused only while the
+credential, artifact revision, payload probe, and terms evidence are unchanged.
+
+For a selected capability, verify the exact assets it will use:
+
+```bash
+npa workbench health access --prepare
 # or export keys and persist them without putting secret values in argv:
 export HF_TOKEN='<your-token>' NGC_API_KEY='<your-key>'
 npa workbench health access --save-env-credentials
 # scope to one capability, or run offline (presence-only):
-npa workbench health access --capability groot
+npa workbench health access --capability groot --prepare
 ```
 
-A convenience wrapper is also available:
-
-```bash
-HF_TOKEN=hf_xxx NGC_API_KEY=nvapi-xxx scripts/accept-model-access.sh
-```
-
-The report is PASS/WARN/FAIL per model or repository; it exits non-zero if a
-required gated Hugging Face asset or NGC pull is definitively rejected, so it
-fits a CI or cold-start preflight. `npa configure` uses these same live access
-probes for its bounded advisory summary, but does not turn an optional missing
-credential or transient network failure into a setup failure. For the broader
+In JSON or another non-interactive context, `--prepare --json` never prompts or
+opens a browser. It returns Ready/Pending/Denied/Unavailable evidence, official
+links, and an exact safe resume command. Workflow execution performs the same
+selected-toolRef closure check before provisioning or submission; unrelated
+capabilities remain available when one dependency is blocked. For the broader
 credential preflight (presence/format plus basic HF, S3, and Token Factory
 connectivity), use `npa workbench health preflight`.
 

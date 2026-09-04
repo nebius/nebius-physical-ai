@@ -14,10 +14,12 @@ whose NVIDIA GPU Operator mounts driver-matched userspace:
 | --- | --- | --- | --- | --- |
 | `sonic-k8s-host-mounted` | `npa-sonic:0.1.2-k8s-runtime` | `host-mounted` | RTX PRO 6000 Blackwell on Kubernetes with the NVIDIA GPU Operator | The GPU Operator mounts driver-matched NVML, GL, and Vulkan libraries from the node, so the image must not carry conflicting driver libraries. |
 
-Use `${NPA_REGISTRY}/npa-sonic:<tag>` for a concrete registry reference:
+The supported image is in the public GHCR namespace; no registry environment
+variable or pull secret is required:
 
 ```bash
-export NPA_REGISTRY=ghcr.io/nebius/nebius-physical-ai
+docker manifest inspect \
+  ghcr.io/nebius/nebius-physical-ai/npa-sonic:<tag>
 ```
 
 It is the default only for supported RTX PRO Kubernetes routing. Select it
@@ -26,7 +28,6 @@ explicitly when useful:
 ```bash
 npa workbench workflow submit \
   npa/workflows/workbench/npa-workflows/sonic-train.yaml \
-  --registry "${NPA_REGISTRY}" \
   --gpu-target gpu-rtx6000 \
   --image-variant sonic-k8s-host-mounted \
   --accelerators RTXPRO-6000-BLACKWELL-SERVER-EDITION:1

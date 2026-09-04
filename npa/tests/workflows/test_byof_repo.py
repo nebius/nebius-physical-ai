@@ -4,7 +4,9 @@ import importlib.util
 import json
 import subprocess
 import sys
+from contextlib import contextmanager
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -95,6 +97,194 @@ def test_run_sanitizes_stale_nebius_tokens(monkeypatch) -> None:
 
     assert "NEBIUS_IAM_TOKEN" not in captured_env
     assert "NEBIUS_IAM_TOKEN_FILE" not in captured_env
+
+
+def test_run_redacts_private_source_values_from_command_and_captured_failure(
+    monkeypatch, capsys
+) -> None:
+    module = _load_module()
+    private_values = (
+        "github-private-token-canary",
+        "https://github.com/example/private-source.git",
+        "private-ref-canary",
+    )
+
+    def fake_subprocess_run(cmd, **kwargs):
+        return subprocess.CompletedProcess(
+            cmd,
+            1,
+            stdout="stdout accidentally contained " + " ".join(private_values),
+            stderr="stderr accidentally contained " + " ".join(private_values),
+        )
+
+    monkeypatch.setattr(module.subprocess, "run", fake_subprocess_run)
+    with pytest.raises(RuntimeError) as exc_info:
+        module._run(
+            ["tool", *private_values], capture=True, redactions=private_values
+        )
+
+    combined = str(exc_info.value) + capsys.readouterr().out
+    for private_value in private_values:
+        assert private_value not in combined
+    assert "<redacted>" in combined
+
+
+def test_private_build_uses_only_secret_mounts_and_sanitized_metadata(
+    monkeypatch, capsys, tmp_path
+) -> None:
+    module = _load_module()
+    repo_url = "https://github.com/example/private-source.git"
+    repo_ref = "private-ref-canary"
+    token = "github-private-token-canary"
+    token_path = tmp_path / "token"
+    url_path = tmp_path / "url"
+    ref_path = tmp_path / "ref"
+    token_path.write_text(token, encoding="utf-8")
+    url_path.write_text(repo_url, encoding="utf-8")
+    ref_path.write_text(repo_ref, encoding="utf-8")
+    for path in (token_path, url_path, ref_path):
+        path.chmod(0o600)
+
+    @contextmanager
+    def fake_secrets(*_args, **_kwargs):
+        yield SimpleNamespace(
+            token=token_path,
+            repo_url=url_path,
+            repo_ref=ref_path,
+            repository_sha256="a" * 64,
+            ref_sha256="b" * 64,
+            redaction_values=(token, repo_url, repo_ref),
+        )
+
+    seen: dict[str, object] = {}
+
+    def fake_run(cmd, **kwargs):
+        if cmd[:2] == ["docker", "build"]:
+            seen["cmd"] = list(cmd)
+            seen["dockerfile"] = (Path(cmd[-1]) / "Dockerfile").read_text(
+                encoding="utf-8"
+            )
+            seen["redactions"] = kwargs.get("redactions")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(
+        module,
+        "resolve_container_registry",
+        lambda *_args, **_kwargs: "registry.example/project",
+    )
+    monkeypatch.setattr(module, "private_repository_secrets", fake_secrets)
+    monkeypatch.setattr(module, "_run", fake_run)
+
+    rc = module.main(
+        [
+            "--repo-url",
+            repo_url,
+            "--repo-ref",
+            repo_ref,
+            "--repo-auth",
+            "github",
+            "--run-id",
+            "private-build-test",
+            "--skip-push",
+            "--skip-run",
+        ]
+    )
+
+    assert rc == 0
+    command = " ".join(seen["cmd"])
+    dockerfile = str(seen["dockerfile"])
+    output = capsys.readouterr().out
+    for value in (token, repo_url, repo_ref):
+        assert value not in command
+        assert value not in dockerfile
+        assert value not in output
+    assert command.count("--secret") == 3
+    assert "npa_byof_repo_token" in command
+    assert "BYOF_SOURCE_CACHE_KEY=" + "a" * 64 + "b" * 64 in command
+    assert "type=secret,id=npa_byof_repo_token" in dockerfile
+    assert "username=x-access-token" in dockerfile
+    assert "password=" in dockerfile
+    assert 'ARG OSS_REPO_URL=""' in dockerfile
+    assert 'ARG OSS_REPO_REF=""' in dockerfile
+    assert "private-byof" in dockerfile
+    assert "rm -rf /opt/byof/.git" in dockerfile
+    assert seen["redactions"] == (token, repo_url, repo_ref)
+    summary = json.loads(output)
+    assert summary["repo_url"] == "<private-repository>"
+    assert summary["source_identity"] == {
+        "repository_sha256": "a" * 64,
+        "ref_sha256": "b" * 64,
+    }
+
+
+def test_failed_private_build_redacts_summary_stdout_stderr_and_exception(
+    monkeypatch, capsys, tmp_path
+) -> None:
+    module = _load_module()
+    repo_url = "https://github.com/example/private-source.git"
+    repo_ref = "missing-private-ref-canary"
+    token = "github-private-token-canary"
+    private_values = (token, repo_url, repo_ref)
+    token_path = tmp_path / "token"
+    url_path = tmp_path / "url"
+    ref_path = tmp_path / "ref"
+    for path, value in zip(
+        (token_path, url_path, ref_path), private_values, strict=True
+    ):
+        path.write_text(value, encoding="utf-8")
+        path.chmod(0o600)
+
+    @contextmanager
+    def fake_secrets(*_args, **_kwargs):
+        yield SimpleNamespace(
+            token=token_path,
+            repo_url=url_path,
+            repo_ref=ref_path,
+            repository_sha256="a" * 64,
+            ref_sha256="b" * 64,
+            redaction_values=private_values,
+        )
+
+    def failed_build(cmd, **kwargs):
+        assert cmd[:2] == ["docker", "build"]
+        return subprocess.CompletedProcess(
+            cmd,
+            1,
+            stdout="BuildKit clone output: " + " ".join(private_values),
+            stderr="Git failure output: " + " ".join(private_values),
+        )
+
+    monkeypatch.setattr(
+        module,
+        "resolve_container_registry",
+        lambda *_args, **_kwargs: "registry.example/project",
+    )
+    monkeypatch.setattr(module, "private_repository_secrets", fake_secrets)
+    monkeypatch.setattr(module.subprocess, "run", failed_build)
+
+    rc = module.main(
+        [
+            "--repo-url",
+            repo_url,
+            "--repo-ref",
+            repo_ref,
+            "--repo-auth",
+            "github",
+            "--run-id",
+            "private-build-failure-test",
+            "--skip-push",
+            "--skip-run",
+        ]
+    )
+
+    assert rc == 1
+    published = capsys.readouterr()
+    combined = published.out + published.err
+    for private_value in private_values:
+        assert private_value not in combined
+    assert '"repo_url": "<private-repository>"' in combined
+    assert '"repo_ref": "<private-ref>"' in combined
+    assert combined.count("<redacted>") >= 3
 
 
 def test_main_reports_403_base_image_hint(monkeypatch, capsys) -> None:

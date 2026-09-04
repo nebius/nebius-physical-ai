@@ -18,6 +18,12 @@ from npa.workbench.cosmos.ray_serve import (
     service_health,
     submit_batch,
 )
+from npa.workbench.cosmos.super_benchmark import (
+    PRIMARY_SUITE,
+    TOPOLOGY_ORDER,
+    Cosmos3SuperBenchmarkError,
+    run_benchmark,
+)
 from npa.workflows.cosmos_split import Cosmos3ReasonConfig, build_cosmos3_reason_manifest
 
 
@@ -118,13 +124,40 @@ def ray_health(
     return service_health(endpoint=endpoint, token_env=token_env, timeout=timeout)
 
 
+def super_benchmark(
+    *,
+    output_path: str,
+    topologies: str = ",".join(TOPOLOGY_ORDER),
+    attempts: int = 24,
+    suite: str = PRIMARY_SUITE,
+    gpu_family: str = "B200",
+    base_port: int = 8100,
+    run_id: str = "",
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """Run the immutable Cosmos3-Super node or H200 single-GPU suite."""
+
+    return run_benchmark(
+        output_path=output_path,
+        topologies=topologies,
+        attempts=attempts,
+        suite=suite,
+        gpu_family=gpu_family,
+        base_port=base_port,
+        run_id=run_id,
+        dry_run=dry_run,
+    )
+
+
 __all__ = [
     "Cosmos3GenerateError",
     "Cosmos3RayServeError",
+    "Cosmos3SuperBenchmarkError",
     "Cosmos3ReasonConfig",
     "GENERATE_MODES",
     "generate",
     "ray_batch",
     "ray_health",
     "reason",
+    "super_benchmark",
 ]

@@ -654,10 +654,11 @@ describe("NPA agent UI — embedded Foxglove viewer", () => {
     cy.get(`button[data-action="open-foxglove-artifact"][data-key="${key}"]`)
       .should("be.enabled")
       .click();
-    // A normal same-run inventory refresh replaces the card DOM node while
-    // the immutable run/ref/key export remains in flight.
+    // A normal same-run cache-backed render replaces the card DOM node while
+    // the immutable run/ref/key export remains in flight. It must not refetch
+    // an inventory that is already complete.
     cy.get("#artifactLoadRunArtifacts").click();
-    cy.wait("@nonStockArtifactList");
+    cy.get("@nonStockArtifactList.all").should("have.length", 1);
     cy.wait("@rerenderedCardExport");
     expectMockAppState("ready");
     cy.get("#viewerPaneFoxglove")

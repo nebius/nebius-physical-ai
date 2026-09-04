@@ -421,6 +421,70 @@ containers:
       timeout_seconds: 3600
       status: ready
 
+  cosmos3-super-benchmark:
+    image: npa-cosmos3-super-benchmark
+    dockerfile: npa/docker/workbench/cosmos3-super-benchmark/Dockerfile
+    physical_ai:
+      useful: true
+      role: >-
+        Reproduces the fixed Cosmos3-Super serving frontier on one eight-B200
+        node, including the throughput/latency tradeoff across four replica
+        topologies and strict technical validation of every generated video.
+    safety:
+      runs_as: ubuntu
+      base_image: exact digest-pinned vllm/vllm-omni Cosmos3 runtime
+      network: loopback OpenAI-compatible service plus Hugging Face model fetch
+      external_fetch: [huggingface-model-and-prompt-assets]
+      notes: >-
+        Operator-private wrapper containing no model weights or credentials.
+        Runtime requires explicit NVIDIA software-license acceptance and gated
+        model access. The golden eval starts the real single-GPU topology,
+        generates the fixed BF16 video, fully decodes it, and applies the same
+        geometry, frame-count, blank-frame, and basic-motion checks as the
+        eight-GPU benchmark; the full four-topology sweep remains the release
+        evidence because a one-GPU serverless job cannot reproduce node topology.
+    golden_eval:
+      kind: entrypoint-smoke
+      command: >-
+        bash -lc 'set -euo pipefail; test "${NPA_COSMOS3_ACCEPT_NVIDIA_SOFTWARE_LICENSE:-}" = YES;
+        test -n "${HF_TOKEN:-${HUGGING_FACE_HUB_TOKEN:-}}"; out=/tmp/cosmos3-super-golden;
+        mkdir -p "$out"; root=$(python -c "from huggingface_hub import snapshot_download;
+        print(snapshot_download(\"nvidia/Cosmos3-Super\", revision=\"e0262be9d8f7586bc24c069a2aed2b665bdff266\",
+        allow_patterns=[\"assets/example_t2v_prompt.json\",\"assets/negative_prompt.json\"]))");
+        CUDA_VISIBLE_DEVICES=0 VLLM_OMNI_VIDEO_SYNC_TIMEOUT=5400 vllm serve nvidia/Cosmos3-Super
+        --revision e0262be9d8f7586bc24c069a2aed2b665bdff266 --omni --host 127.0.0.1 --port 8100
+        --init-timeout 1800 --tensor-parallel-size 1 --no-guardrails >"$out/service.log" 2>&1 & pid=$!;
+        trap "kill $pid 2>/dev/null || true" EXIT; until curl -fsS http://127.0.0.1:8100/v1/models >/dev/null;
+        do kill -0 "$pid"; sleep 5; done; curl --fail --silent --show-error --max-time 5400
+        -H "Accept: video/mp4" -F "prompt=<$root/assets/example_t2v_prompt.json"
+        -F "negative_prompt=<$root/assets/negative_prompt.json" -F size=1280x720 -F num_frames=189
+        -F fps=24 -F num_inference_steps=35 -F guidance_scale=6.0 -F flow_shift=10.0
+        -F max_sequence_length=4096 -F seed=17
+        -F "extra_params={\"use_resolution_template\":false,\"use_duration_template\":false,\"guardrails\":false}"
+        http://127.0.0.1:8100/v1/videos/sync -o "$out/video.mp4"; test -s "$out/video.mp4";
+        ffmpeg -v error -i "$out/video.mp4" -map 0:v:0 -f null -;
+        ffprobe -v error -select_streams v:0 -count_frames
+        -show_entries stream=width,height,avg_frame_rate,nb_read_frames,duration -of json "$out/video.mp4" >"$out/probe.json";
+        ffmpeg -v error -i "$out/video.mp4"
+        -vf "select=eq(n\\,0)+eq(n\\,47)+eq(n\\,94)+eq(n\\,141)+eq(n\\,188),scale=32:32,format=gray"
+        -vsync 0 -f rawvideo "$out/samples.raw";
+        python -c "import hashlib,json,statistics; from fractions import Fraction; from pathlib import Path;
+        out=Path(\"/tmp/cosmos3-super-golden\"); stream=json.loads((out/\"probe.json\").read_text())[\"streams\"][0];
+        assert (stream[\"width\"],stream[\"height\"])==(1280,720); assert int(stream[\"nb_read_frames\"])==189;
+        assert abs(float(Fraction(stream[\"avg_frame_rate\"]))-24)<0.001; raw=(out/\"samples.raw\").read_bytes();
+        assert len(raw)==5120; frames=[raw[i:i+1024] for i in range(0,5120,1024)];
+        assert max(statistics.pstdev(frame) for frame in frames)>=1.0;
+        assert max(statistics.mean(abs(a-b) for a,b in zip(frames[0],frame)) for frame in frames[1:])>=0.5;
+        video=(out/\"video.mp4\").read_bytes(); report={\"technical_valid\":True,\"output_bytes\":len(video),
+        \"output_sha256\":hashlib.sha256(video).hexdigest(),\"model_revision\":\"e0262be9d8f7586bc24c069a2aed2b665bdff266\",
+        \"seed\":17,\"stream\":stream}; (out/\"report.json\").write_text(json.dumps(report,sort_keys=True)+\"\\n\")";
+        kill "$pid"; wait "$pid" || true; trap - EXIT'
+      artifact: /tmp/cosmos3-super-golden/report.json
+      serverless_gpu: b200
+      gpu: required
+      timeout_seconds: 10800
+      status: gpu-gated
+
   cosmos3-ray-serve:
     image: npa-cosmos3-ray-serve
     dockerfile: npa/docker/workbench/cosmos3-ray-serve/Dockerfile
@@ -712,6 +776,37 @@ containers:
       timeout_seconds: 300
       status: ready
 
+
+  robocasa:
+    image: npa-robocasa
+    dockerfile: npa/docker/workbench/robocasa/Dockerfile
+    physical_ai:
+      useful: true
+      role: >-
+        RoboCasa kitchen-task simulation: Gymnasium task registration, kitchen
+        asset availability, headless EGL environment reset, and random rollouts
+        with video artifacts.
+    safety:
+      runs_as: ubuntu
+      base_image: nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04
+      network: FastAPI service on :8791 (/health, /system-info, /run, /status); kitchen assets download at run time
+      external_fetch: [pypi, github, huggingface, s3]
+      notes: >-
+        Bakes Apache-2.0 RoboCasa (v1.0) and robosuite (pinned commit) plus the
+        exact MuJoCo 3.3.1 / Gymnasium 0.29.1 / CUDA 12.4 closure from the
+        live-accepted BYOF evidence. Kitchen assets are NOT baked and download at
+        run time. No model weights, credentials, or accepted terms are baked.
+        The golden eval exercises health + system-info; real task registration,
+        EGL reset, and rollout are exercised by the capability run path.
+    golden_eval:
+      kind: server-smoke
+      module: npa.smoke.test_robocasa_functional
+      command: python /app/smoke_functional.py
+      serverless_gpu: h100
+      gpu: optional
+      timeout_seconds: 300
+      status: ready
+
   wan2-2:
     image: npa-wan2-2
     dockerfile: npa/docker/workbench/wan2-2/Dockerfile
@@ -793,7 +888,6 @@ containers:
 
   sim2real-control:
     image: npa-sim2real-control
-    internal: true
     default_tag: 0.1.2
     dockerfile: npa/docker/workbench/sim2real-control/Dockerfile
     physical_ai:
@@ -811,8 +905,9 @@ containers:
         task-pod-scoped exception for the pinned SkyPilot 0.12.2 Kubernetes
         bootstrap; the image starts no service and may not receive public ingress.
     golden_eval:
-      kind: workflow-smoke
-      command: python -m npa.workflows.sim2real.workflow_stage --help
+      kind: container-smoke
+      module: npa.smoke.test_sim2real_control_functional
+      command: python -m npa.smoke.test_sim2real_control_functional
       gpu: none
       timeout_seconds: 60
       status: ready
@@ -904,10 +999,11 @@ containers:
         and an interactive-server fallback; no models, datasets, credentials,
         persistent storage, or runtime caches are baked.
     golden_eval:
-      kind: build-import
-      command: 'python -c "import rerun; assert rerun.__version__"'
+      kind: container-smoke
+      module: npa.smoke.test_rerun_viewer_functional
+      command: python -m npa.smoke.test_rerun_viewer_functional
       gpu: none
-      timeout_seconds: 60
+      timeout_seconds: 120
       status: ready
 
   foxglove-embed:

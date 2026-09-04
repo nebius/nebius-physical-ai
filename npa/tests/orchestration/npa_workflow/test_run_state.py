@@ -244,6 +244,47 @@ def test_run_state_store_artifact_uses_explicit_storage_credentials(
     }
 
 
+def test_run_state_store_output_check_uses_explicit_storage_credentials(
+    monkeypatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeS3:
+        def head_object(self, **kwargs: object) -> dict[str, int]:
+            captured["head"] = kwargs
+            return {"ContentLength": 17}
+
+    class FakeStorage:
+        _s3 = FakeS3()
+
+    def fake_from_environment(**kwargs: str) -> FakeStorage:
+        captured["credentials"] = kwargs
+        return FakeStorage()
+
+    monkeypatch.setattr(
+        "npa.clients.storage.StorageClient.from_environment",
+        fake_from_environment,
+    )
+    state_store = RunStateStore(
+        bucket="project-bucket",
+        prefix="runs/demo",
+        endpoint_url="https://project-storage.example.invalid",
+        aws_access_key_id="project-access",
+        aws_secret_access_key="project-secret",
+    )
+
+    assert state_store.artifact_exists("s3://project-bucket/runs/demo/result.json")
+    assert captured["credentials"] == {
+        "endpoint_url": "https://project-storage.example.invalid",
+        "aws_access_key_id": "project-access",
+        "aws_secret_access_key": "project-secret",
+    }
+    assert captured["head"] == {
+        "Bucket": "project-bucket",
+        "Key": "runs/demo/result.json",
+    }
+
+
 def test_completed_wave_ignores_failed_attempts() -> None:
     from npa.orchestration.npa_workflow.run_state import RuntimeRunState
 

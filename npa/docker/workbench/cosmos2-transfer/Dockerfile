@@ -113,7 +113,7 @@ RUN set -eux; \
     uv pip uninstall --python .venv/bin/python sam2; \
     SAM2_BUILD_CUDA=0 uv pip install --python .venv/bin/python --no-deps \
       --no-build-isolation /opt/cosmos/meta-sam2; \
-    .venv/bin/python -c 'import defusedxml, importlib.metadata, msgpack, nltk, numpy; assert importlib.metadata.version("defusedxml") == "0.7.1"; assert importlib.metadata.version("nltk") == "3.10.0"; assert importlib.metadata.version("pip") == "26.2"; assert importlib.metadata.version("msgpack") == "1.2.1"; assert importlib.metadata.version("setuptools") == "83.0.0"; assert tuple(map(int, numpy.__version__.split(".")[:1])) >= (2,)'; \
+    .venv/bin/python -c 'import defusedxml, importlib.metadata, msgpack, nltk, numpy; assert importlib.metadata.version("defusedxml") == "0.7.1"; assert importlib.metadata.version("nltk") == "3.10.3"; assert importlib.metadata.version("pip") == "26.2"; assert importlib.metadata.version("msgpack") == "1.2.1"; assert importlib.metadata.version("setuptools") == "83.0.0"; assert tuple(map(int, numpy.__version__.split(".")[:1])) >= (2,)'; \
     .venv/bin/python -c 'import importlib.metadata, sam2; from sam2.build_sam import HF_MODEL_ID_TO_FILENAMES; assert importlib.metadata.version("SAM-2") == "1.0"; assert "facebook/sam2.1-hiera-tiny" in HF_MODEL_ID_TO_FILENAMES; assert not any((d.metadata.get("Name") or "").lower() == "sam2" for d in importlib.metadata.distributions())'; \
     .venv/bin/python -m pip --version; \
     rm -rf .venv/lib/python3.10/site-packages/matplotlib/mpl-data/sample_data; \
@@ -136,7 +136,7 @@ RUN set -eux; \
     test "$(readlink -f .venv/bin/python)" = \
       "$(find "${UV_PYTHON_INSTALL_DIR}" -path '*/bin/python3.10' -type f -print -quit)"; \
     ! grep -q '/root' .venv/pyvenv.cfg; \
-    .venv/bin/python -c 'import importlib.metadata, flash_attn, scipy.linalg, torch, wandb; from transformers import SiglipModel; assert importlib.metadata.version("nltk") == "3.10.0"; assert importlib.metadata.version("defusedxml") == "0.7.1"; assert wandb.run is None; print(torch.__version__)'; \
+    .venv/bin/python -c 'import importlib.metadata, flash_attn, scipy.linalg, torch, wandb; from transformers import SiglipModel; assert importlib.metadata.version("nltk") == "3.10.3"; assert importlib.metadata.version("defusedxml") == "0.7.1"; assert wandb.run is None; print(torch.__version__)'; \
     base_site="$(find "${UV_PYTHON_INSTALL_DIR}" -path '*/lib/python3.10/site-packages' -type d -print -quit)"; \
     base_python="$(find "${UV_PYTHON_INSTALL_DIR}" -path '*/bin/python3.10' -type f -print -quit)"; \
     test -n "${base_site}"; \

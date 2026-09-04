@@ -58,7 +58,10 @@ def test_isaac_lab_single_job_yaml_uses_rt_core_gpu_and_rsl_rl_entrypoint() -> N
     assert task["resources"]["accelerators"] == "L40S:1"
     assert task["resources"]["cpus"] == 16
     assert task["resources"]["memory"] == 64
-    assert "npa-isaac-lab:3.0.0b2.post1" in task["resources"]["image_id"]
+    assert (
+        "npa-isaac-lab:3.0.0b2.post1-sim2real-coherent-20260904"
+        in task["resources"]["image_id"]
+    )
     assert "scripts/reinforcement_learning/rsl_rl/train.py" in task["run"]
     assert "--num_envs" in task["run"]
     assert "--max_iterations" in task["run"]

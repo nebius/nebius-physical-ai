@@ -13,5 +13,5 @@ python-dateutil==2.9.0.post0
 PyYAML==6.0.3
 s3transfer==0.19.2
 six==1.17.0
-typing_extensions==4.15.0
+typing_extensions==4.16.0
 urllib3==2.7.0

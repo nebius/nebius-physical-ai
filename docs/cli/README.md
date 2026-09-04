@@ -44,6 +44,7 @@ Generated from `npa --help`. Run `bash scripts/build_docs.sh` after CLI changes.
 - [npa provision-if-absent](provision-if-absent.md)
 - [npa rerun](rerun.md)
 - [npa workbench sonic retargeting](retargeting.md)
+- [npa workbench robocasa](robocasa.md)
 - [npa workbench scenario-gen](scenario-gen.md)
 - [npa storage service-account](service-account.md)
 - [npa skypilot](skypilot.md)

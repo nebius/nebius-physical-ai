@@ -47,11 +47,21 @@ config:
   # EnvGen is rank-aware and scales horizontally; use half of a 16-GPU pool so
   # adjacent GPU stages retain scheduling headroom.
   shard_count: "8"
+  # Concurrent Stage 4 tasks per JobGroup. Must not exceed the cluster's
+  # concurrent-GPU capacity: a group larger than the schedulable GPU count
+  # deadlocks, because the admitted shards' pods are only reaped when the whole
+  # group starts, while the remaining shards wait on the GPUs those pods hold.
+  # Set to min(shard_count, concurrent GPUs), e.g. --var gpu_concurrency=2 on a
+  # 2-GPU cluster (renders ceil(8/2)=4 sequential batches).
+  gpu_concurrency: "8"
   envgen_seed: "42"
   rollout_count: "64"
   steps_per_rollout: "32"
   ppo_num_envs: "1024"
-  ppo_iterations: "500"
+  # Three resumed 2,000-update passes cover the manipulation curriculum's
+  # observed convergence window; 500-update passes terminate before grasp/place
+  # behavior emerges even when reward improves.
+  ppo_iterations: "2000"
   ppo_steps_per_env: "24"
   validation_count: "64"
   gold_count: "64"
@@ -73,8 +83,6 @@ config:
   viewer_image: ""
   isaac_cache_pvc: ""
   # Isaac EULA acceptance is injected by the renderer (default on, explicit CLI opt-out).
-  gpu_queue: sim2real-gpu
-  gpu_priority_class: sim2real-production
 
 resources:
   cpu:
@@ -90,11 +98,7 @@ resources:
     image: "{{config.transfer_image}}"
     kubernetes:
       pod_config:
-        metadata:
-          labels:
-            kueue.x-k8s.io/queue-name: "{{config.gpu_queue}}"
         spec:
-          priorityClassName: "{{config.gpu_priority_class}}"
           # The immutable Cosmos Transfer image keeps its model cache under /opt,
           # but SkyPilot bootstraps uv as its non-root runtime user before the task
           # starts. Keep only bootstrap caches in writable ephemeral storage; model
@@ -112,13 +116,6 @@ resources:
     cpus: 8
     memory: 32Gi
     image: "{{config.envgen_image}}"
-    kubernetes:
-      pod_config:
-        metadata:
-          labels:
-            kueue.x-k8s.io/queue-name: "{{config.gpu_queue}}"
-        spec:
-          priorityClassName: "{{config.gpu_priority_class}}"
   stage8-cpu:
     cloud: kubernetes
     cpus: 8
@@ -133,11 +130,7 @@ resources:
     kubernetes:
       provision_timeout: 2400
       pod_config:
-        metadata:
-          labels:
-            kueue.x-k8s.io/queue-name: "{{config.gpu_queue}}"
         spec:
-          priorityClassName: "{{config.gpu_priority_class}}"
           containers:
             - name: ray-node
               env:
@@ -222,7 +215,7 @@ states:
     # v0.0.1 groups are explicit. This generic assertion makes shard_count=8 an
     # honest validate/plan/submit contract instead of silently under-fanning out.
     parallelCount: "{{config.shard_count}}"
-    maxConcurrency: 8
+    maxConcurrency: "{{config.gpu_concurrency}}"
     next: stage-05-split
 
   stage-04-shard-0:

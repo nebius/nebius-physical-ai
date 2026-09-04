@@ -11,7 +11,7 @@ in chat replies; point operators here.
 
 ## When To Use
 
-- Containerize a public GitHub/GitLab repo and push to an authorized registry
+- Containerize a public GitHub/GitLab or private GitHub repo and push to an authorized registry
 - Onboard a new workbench solution (toolRef + workflow + live smoke)
 - LeIsaac validation (Isaac Lab base + datagen or RL)
 - Generic Ubuntu BYOF (any OSS repo, no sim stack required)
@@ -28,6 +28,8 @@ artifact, and collecting live Nebius validation evidence. See
 
 - `~/.npa/config.yaml` — project alias, registry override, `kubernetes` block (`cluster_name`, `gpu_profile`)
 - Exact-host registry credentials when the selected registry is private
+- Private GitHub source: a fine-grained read-only token in an environment
+  variable, or an existing authenticated `gh` login. Never put it in the URL.
 - Operator host: Docker, `nebius` CLI, `sky` (for GPU/container smokes)
 - SkyPilot must have Kubernetes enabled for the target context. The
   `solution-smoke` runner runs `sky check kubernetes` automatically before
@@ -92,6 +94,36 @@ npa workbench byof run \
   --cleanup
 ```
 
+For a private GitHub source, opt in explicitly. Workbench preflights access and
+mounts the token, URL, and ref into the clone step as BuildKit secrets; only the
+environment-variable name is an argument:
+
+```bash
+npa workbench byof run \
+  --repo-url <private-github-repo-url> \
+  --repo-ref <ref> \
+  --repo-auth github \
+  --repo-token-env NPA_BYOF_GITHUB_TOKEN \
+  --base-profile ubuntu \
+  --registry <operator-registry> \
+  --project <project-alias> \
+  --workload container-verify \
+  --cleanup
+```
+
+Omit `--repo-token-env` to use `GH_TOKEN`, `GITHUB_TOKEN`, or the existing
+`gh auth` login, in that order. For `npa.workflow`, set
+`config.repo_auth=github`, set `config.repo_token_env` to the variable name, and
+pass the same name through `workflow submit --secret-env`; never store the value
+in YAML.
+
+Repository URLs are intentionally canonical and credential-free for both public
+and private sources. URLs containing embedded credentials, a query string, or a
+fragment are rejected before registry resolution or build. This is a deliberate
+compatibility boundary: those URL components can carry secrets and do not form a
+stable source identity. Put authentication in `--repo-auth` / `--repo-token-env`
+and put the requested branch, tag, or commit in `--repo-ref` instead.
+
 Equivalent script (same flags; used by older docs and shims):
 
 ```bash
@@ -118,7 +150,9 @@ Workloads:
 | `rl-train` | `isaac-lab` | `isaac-lab-rl-train-rtxpro-smoke.yaml` |
 | `datagen` | `isaac-lab` | `byof-datagen-rtxpro-smoke.yaml` |
 
-Container layout: OSS repo cloned to `/opt/byof` + `npa_source_metadata.json`.
+Container layout: source repo cloned to `/opt/byof` + `npa_source_metadata.json`.
+Public metadata retains the source URL/ref. Private metadata contains only
+SHA-256 identities and private-source markers; image labels use placeholders.
 
 ### LeRobot-dependent solutions
 

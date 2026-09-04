@@ -300,6 +300,8 @@ def _workflow_specs() -> dict[str, dict[str, Any]]:
                 {
                     "repo_url": "<repo-url>",
                     "repo_ref": "<repo-ref>",
+                    "repo_auth": "none",
+                    "repo_token_env": "GH_TOKEN",
                     "base_profile": "ubuntu",
                     "base_image": "",
                     "build_command": "",

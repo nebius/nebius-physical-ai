@@ -7,7 +7,8 @@ ARG DEBIAN_SNAPSHOT=20260801T000000Z
 
 LABEL npa.tool="sim2real-control" \
       npa.version="${SIM2REAL_CONTROL_VERSION}" \
-      org.opencontainers.image.revision="${NPA_SOURCE_SHA}"
+      org.opencontainers.image.revision="${NPA_SOURCE_SHA}" \
+      org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"
 
 ENV NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA} \
     NPA_SKIP_EAGER_IMPORTS=1 \
@@ -44,6 +45,12 @@ RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.list \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
       curl netcat-openbsd openssh-client openssh-server procps rsync sudo \
+    && rm -f /etc/ssh/ssh_host_* \
+    && test -z "$(find /etc/ssh -maxdepth 1 -type f -name 'ssh_host_*' -print -quit)" \
+    && printf '%s\n' \
+      'PasswordAuthentication no' \
+      'PermitRootLogin no' \
+      > /etc/ssh/sshd_config.d/99-npa-runtime.conf \
     && rm -rf /var/lib/apt/lists/* \
     && printf 'ubuntu ALL=(ALL) NOPASSWD:ALL\n' \
       > /etc/sudoers.d/99-npa-runtime-user \

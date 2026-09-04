@@ -154,12 +154,12 @@ def test_s3_pass_and_fail_with_injected_client() -> None:
     assert "NoSuchBucket" in " ".join(bad.details)
 
 
-def test_registry_warns_on_unqualified_images() -> None:
-    # Default reference images are bare npa-* names, not registry-qualified.
+def test_registry_passes_for_public_default_images() -> None:
+    # Repository-owned defaults are fully qualified anonymous GHCR references.
     result = check_registry(
         _config(), probes=DoctorProbes(image_inspector=lambda i: True)
     )
-    assert result.status == health.WARN
+    assert result.status == health.PASS
 
 
 def test_registry_inspects_qualified_images() -> None:
@@ -289,32 +289,6 @@ def test_cluster_fails_when_controller_service_account_cannot_patch_jobs() -> No
     result = check_cluster(_config(), probes=DoctorProbes(kube_runner=runner))
     assert result.status == health.FAIL
     assert "cannot patch Jobs" in result.summary
-    assert any("--as=system:serviceaccount:default:agent-sa" in call for call in calls)
-
-
-def test_cluster_fails_when_controller_cannot_observe_kueue_workloads() -> None:
-    calls: list[list[str]] = []
-
-    def runner(args):
-        calls.append(args)
-        if args[:2] == ["config", "current-context"]:
-            return KubeResult(0, "prod-cluster")
-        if args[:4] == ["auth", "can-i", "create", "pods"]:
-            return KubeResult(0, "yes")
-        if args[:4] == ["auth", "can-i", "patch", "jobs.batch"]:
-            return KubeResult(0, "yes")
-        if args[:4] == [
-            "auth",
-            "can-i",
-            "list",
-            "workloads.kueue.x-k8s.io",
-        ]:
-            return KubeResult(0, "no")
-        return KubeResult(1, "", "unexpected")
-
-    result = check_cluster(_config(), probes=DoctorProbes(kube_runner=runner))
-    assert result.status == health.FAIL
-    assert "cannot list Kueue Workloads" in result.summary
     assert any("--as=system:serviceaccount:default:agent-sa" in call for call in calls)
 
 

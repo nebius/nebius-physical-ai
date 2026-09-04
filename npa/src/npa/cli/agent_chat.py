@@ -573,7 +573,10 @@ _DEFAULT_TOOL_IMAGE_TAGS: dict[str, tuple[str, str]] = {
         "npa-lancedb",
         "cuda13-b300-0.30.3-sm80-sm90-sm100-sm103-sm120-20260803T031514Z",
     ),
-    "isaac-lab": ("npa-isaac-lab", "3.0.0b2.post1"),
+    "isaac-lab": (
+        "npa-isaac-lab",
+        "3.0.0b2.post1-sim2real-coherent-20260904",
+    ),
 }
 
 
@@ -964,11 +967,13 @@ def format_tools_catalog(tool_refs: list[str], *, sample_size: int = 16) -> str:
 
 
 def _image_for_tool(tool: str) -> str:
-    from npa.deploy.images import execution_container_registry
+    from npa.deploy.images import container_image_for_tool
 
-    registry = execution_container_registry()
-    image_name, tag = _DEFAULT_TOOL_IMAGE_TAGS.get(tool, (f"npa-{tool}", "<tag>"))
-    return f"{registry.rstrip('/')}/{image_name}:{tag}"
+    _, tag = _DEFAULT_TOOL_IMAGE_TAGS.get(tool, (f"npa-{tool}", "<tag>"))
+    try:
+        return container_image_for_tool(tool, tag=tag)
+    except KeyError:
+        return f"ghcr.io/nebius/nebius-physical-ai/npa-{tool}:{tag}"
 
 
 def _format_tool_family_capabilities(name: str, tool_refs: list[str], *, prefixes: tuple[str, ...], bullets: list[str]) -> str:
@@ -996,7 +1001,7 @@ def format_cosmos_capabilities(tool_refs: list[str]) -> str:
             "**Setup + model staging**: `npa workbench cosmos check|fetch`.",
             "**Fine-tuning / post-training**: `npa workbench cosmos train` (serverless + runtime options).",
             "**Pipeline integration**: Cosmos augment via `workbench.cosmos2.transfer` and Token Factory reasoning paths.",
-            f"**Registry image default**: `{cosmos_image}` (override via `NPA_REGISTRY` if needed).",
+            f"**Registry image default**: `{cosmos_image}` (pass an explicit image for custom bytes).",
             "Use run-scoped S3 URIs for artifacts and keep credentials in `~/.npa/credentials.yaml`.",
         ],
     )
@@ -1300,7 +1305,7 @@ def format_cosmos3_setup() -> str:
 
 
 def format_onboard_solution() -> str:
-    registry = os.environ.get("NPA_REGISTRY", "").strip() or "<resolved-from-~/.npa/config.yaml>"
+    registry = os.environ.get("NPA_REGISTRY", "").strip() or "<your-registry>/<namespace>"
     byof_skill_path = BYOF_ONBOARD_SKILL_PATH
     registry_skill_path = OSS_SOLUTION_REGISTRY_ONBOARD_SKILL_PATH
     return "\n".join(
@@ -1660,6 +1665,26 @@ def apis_for_intent(intent: str) -> list[str]:
 #: which is a different file from the SkyPilot template of the same name, so the
 #: agent must lead with the spec-authoring skill rather than the SkyPilot one.
 KEYWORD_SKILL_RULES: tuple[tuple[tuple[str, ...], tuple[str, ...], str], ...] = (
+    (
+        ("approval",),
+        ("hugging face", "hf", "ngc", "catalog", "model", "dataset", "artifact"),
+        "access-approval",
+    ),
+    (
+        ("approve",),
+        ("hugging face", "hf", "ngc", "catalog", "model", "dataset", "artifact"),
+        "access-approval",
+    ),
+    (
+        ("access",),
+        ("hugging face", "hf", "ngc", "catalog", "gated"),
+        "access-approval",
+    ),
+    (
+        ("prepare",),
+        ("hugging face", "hf", "ngc", "catalog", "gated"),
+        "access-approval",
+    ),
     (("cosmos3",), ("workflow", "yaml", "spec"), "cosmos3-npa-workflow"),
     (("cosmos 3",), ("workflow", "yaml", "spec"), "cosmos3-npa-workflow"),
 )

@@ -10,6 +10,8 @@ config:
   bucket: example-bucket
   repo_url: "https://github.com/mani-skill/ManiSkill.git"
   repo_ref: "v3.0.1"
+  repo_auth: none
+  repo_token_env: GH_TOKEN
   base_profile: ubuntu
   # maniskill/base:latest is Python 3.9; PyPI sapien>=3.0.3 only ships cp310+.
   # Use CUDA Ubuntu 22.04 (python3.10) so we can upgrade SAPIEN for Blackwell.

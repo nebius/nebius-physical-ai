@@ -57,6 +57,7 @@ from npa.orchestration.skypilot.launch_transaction import (
     RecoveryPolicy,
     StabilityPolicy,
     classify_failure,
+    is_terminal_failure_job_status,
     logical_launch_identity,
     run_launch_transaction,
     wait_for_api_stability,
@@ -225,6 +226,7 @@ def _probe_local_api_daemon_cwd(
     uid: int | None = None,
     expected_home: str = "",
     expected_user_id: str = "",
+    expected_kubeconfig: str = "",
 ) -> ApiDaemonCwdProbe:
     """Inspect the actual local API daemon and descendants through procfs.
 
@@ -246,6 +248,13 @@ def _probe_local_api_daemon_cwd(
     # would put them in different parent directories and miss the real daemon.
     sky_bin_dir = Path(sky_executable).expanduser().absolute().parent
     records: dict[int, tuple[int, tuple[str, ...], Path]] = {}
+    if sys.platform == "darwin" and proc_root == Path("/proc"):
+        # macOS has no procfs, so the deleted-cwd poisoning this probe detects
+        # cannot be inspected here. Treat the daemon as healthy rather than
+        # failing closed on every macOS operator host; the Linux-specific
+        # cwd_deleted recovery below remains unchanged, as do hermetic
+        # non-/proc test fixtures on every platform.
+        return ApiDaemonCwdProbe(True, "procfs_unavailable_darwin")
     try:
         candidates = tuple(proc_root.iterdir())
     except OSError as exc:
@@ -339,11 +348,38 @@ def _probe_local_api_daemon_cwd(
         if expected_home and Path(daemon_home).expanduser().absolute() != Path(
             expected_home
         ).expanduser().absolute():
-            continue
+            return ApiDaemonCwdProbe(
+                False,
+                "stale_runtime_environment",
+                process_count=len(runtime_roots) + 1,
+                error=(
+                    "local SkyPilot API server inherited a different HOME than "
+                    "this submission"
+                ),
+            )
         daemon_user_id = environment.get("SKYPILOT_USER_ID", "").strip()
         if expected_user_id and daemon_user_id != expected_user_id:
-            continue
+            return ApiDaemonCwdProbe(
+                False,
+                "stale_runtime_environment",
+                process_count=len(runtime_roots) + 1,
+                error=(
+                    "local SkyPilot API server inherited a different user identity "
+                    "than this submission"
+                ),
+            )
         runtime_roots.add(pid)
+        daemon_kubeconfig = environment.get("KUBECONFIG", "").strip()
+        if expected_kubeconfig and daemon_kubeconfig != expected_kubeconfig:
+            return ApiDaemonCwdProbe(
+                False,
+                "stale_runtime_environment",
+                process_count=len(runtime_roots),
+                error=(
+                    "local SkyPilot API server inherited a different Kubernetes "
+                    "configuration than this submission"
+                ),
+            )
         inherited_config = environment.get("SKYPILOT_GLOBAL_CONFIG", "").strip()
         if inherited_config and not Path(inherited_config).is_file():
             return ApiDaemonCwdProbe(
@@ -413,6 +449,7 @@ def _ensure_local_api_daemon_cwd(
             sky_executable,
             expected_home=str(env.get("HOME") or ""),
             expected_user_id=str(env.get("SKYPILOT_USER_ID") or ""),
+            expected_kubeconfig=str(env.get("KUBECONFIG") or ""),
         )
     )
     before = inspect()
@@ -513,7 +550,17 @@ def _ensure_local_api_daemon_cwd_locked(
 ) -> ApiDaemonCwdProbe:
     """Run the daemon health/repair transaction under its runtime identity lock."""
 
-    with _api_daemon_repair_lock(runtime_dir):
+    # SkyPilot 0.12 exposes one local API server on a fixed loopback port per
+    # executable, even when callers isolate HOME/SKY_RUNTIME_DIR.  Serialize
+    # repairs at that real process-global boundary; a per-run lock can race two
+    # submissions into stopping and starting the same daemon concurrently.
+    daemon_lock_root = (
+        Path.home()
+        / ".npa"
+        / "skypilot-api-daemon-locks"
+        / hashlib.sha256(str(Path(sky_executable).absolute()).encode()).hexdigest()[:16]
+    )
+    with _api_daemon_repair_lock(daemon_lock_root):
         return _ensure_local_api_daemon_cwd(
             sky_executable,
             env=env,
@@ -1310,15 +1357,25 @@ def _reconcile_managed_job_env(
             )
     if not matching:
         return ReconciliationEvidence(ReconciliationState.ABSENT)
-    if len(matching) != 1:
+    # Historical cancelled/failed attempts retain the same deterministic name
+    # in SkyPilot's all-jobs queue.  Once a viable replacement exists, those
+    # terminal rows must not make exact-name reconciliation ambiguous.
+    viable = {
+        job_id
+        for job_id in matching
+        if not is_terminal_failure_job_status(statuses.get(job_id, "UNKNOWN"))
+    }
+    if len(viable) > 1:
         return ReconciliationEvidence(
             ReconciliationState.AMBIGUOUS,
             error=(
                 f"exact managed-job name {job_name!r} maps to multiple immutable IDs: "
-                + ", ".join(sorted(matching, key=int))
+                + ", ".join(sorted(viable, key=int))
             ),
         )
-    selected = next(iter(matching))
+    # Multiple historical failures are all inert. Select their latest immutable
+    # ID so the launch transaction can record what it superseded and retry.
+    selected = next(iter(viable)) if viable else max(matching, key=int)
     markers = sorted(workload_markers.get(selected) or ())
     return ReconciliationEvidence(
         ReconciliationState.FOUND,

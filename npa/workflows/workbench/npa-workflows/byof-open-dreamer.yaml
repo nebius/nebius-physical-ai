@@ -26,6 +26,8 @@ config:
   repo_url: "https://github.com/next-state/open-dreamer.git"
   # Pin to the reviewed commit ("Correct Bibtex") so the run is reproducible.
   repo_ref: "2b10640"
+  repo_auth: none
+  repo_token_env: GH_TOKEN
   base_profile: ubuntu
   # Plain Ubuntu base: uv provisions Python 3.11 and JAX CUDA-12 wheels bundle
   # their own CUDA runtime, so no CUDA devel base image is required.

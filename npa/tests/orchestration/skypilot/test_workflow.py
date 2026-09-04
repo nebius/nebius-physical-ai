@@ -320,6 +320,34 @@ def test_local_api_daemon_probe_accepts_durable_process_tree(tmp_path) -> None:
     assert result.process_count == 2
 
 
+def test_local_api_daemon_probe_is_healthy_without_procfs_on_darwin(
+    tmp_path, monkeypatch
+) -> None:
+    # macOS has no /proc, so the deleted-cwd poisoning this probe detects is
+    # un-inspectable there; submit must not fail closed on every macOS host.
+    bin_dir = tmp_path / "venv" / "bin"
+    bin_dir.mkdir(parents=True)
+    sky = bin_dir / "sky"
+    sky.touch()
+    monkeypatch.setattr(workflow_module.sys, "platform", "darwin")
+
+    result = workflow_module._probe_local_api_daemon_cwd(
+        str(sky), proc_root=Path("/proc"), uid=1234
+    )
+
+    assert result.healthy is True
+    assert result.outcome == "procfs_unavailable_darwin"
+
+    # A hermetic non-/proc fixture keeps the conservative legacy behavior even
+    # on darwin: absence there is still reported as procfs_unavailable.
+    missing = tmp_path / "missing-proc"
+    hermetic = workflow_module._probe_local_api_daemon_cwd(
+        str(sky), proc_root=missing, uid=1234
+    )
+    assert hermetic.healthy is False
+    assert hermetic.outcome == "procfs_unavailable"
+
+
 def test_local_api_daemon_probe_ignores_other_mount_namespaces(tmp_path) -> None:
     proc_root = tmp_path / "proc"
     bin_dir = tmp_path / "venv" / "bin"
@@ -450,7 +478,7 @@ def test_local_api_daemon_probe_rejects_deleted_inherited_global_config(
     assert result.outcome == "stale_global_config"
 
 
-def test_local_api_daemon_probe_ignores_other_isolated_home(tmp_path) -> None:
+def test_local_api_daemon_probe_rejects_other_isolated_home(tmp_path) -> None:
     proc_root = tmp_path / "proc"
     bin_dir = tmp_path / "venv" / "bin"
     bin_dir.mkdir(parents=True)
@@ -477,12 +505,13 @@ def test_local_api_daemon_probe_ignores_other_isolated_home(tmp_path) -> None:
         expected_home=str(tmp_path / "isolated-home"),
     )
 
-    assert result.healthy is True
-    assert result.outcome == "absent"
-    assert result.process_count == 0
+    assert result.healthy is False
+    assert result.outcome == "stale_runtime_environment"
+    assert result.process_count == 1
+    assert "different HOME" in result.error
 
 
-def test_local_api_daemon_probe_ignores_other_user_id(tmp_path) -> None:
+def test_local_api_daemon_probe_rejects_other_user_id(tmp_path) -> None:
     proc_root = tmp_path / "proc"
     bin_dir = tmp_path / "venv" / "bin"
     bin_dir.mkdir(parents=True)
@@ -513,9 +542,49 @@ def test_local_api_daemon_probe_ignores_other_user_id(tmp_path) -> None:
         expected_user_id="shared-user",
     )
 
-    assert result.healthy is True
-    assert result.outcome == "absent"
-    assert result.process_count == 0
+    assert result.healthy is False
+    assert result.outcome == "stale_runtime_environment"
+    assert result.process_count == 1
+    assert "different user identity" in result.error
+
+
+def test_local_api_daemon_probe_rejects_stale_kubeconfig(tmp_path) -> None:
+    proc_root = tmp_path / "proc"
+    bin_dir = tmp_path / "venv" / "bin"
+    bin_dir.mkdir(parents=True)
+    sky = bin_dir / "sky"
+    python = bin_dir / "python"
+    sky.touch()
+    python.touch()
+    durable = tmp_path / "durable"
+    durable.mkdir()
+    expected = tmp_path / "selected-kubeconfig"
+    _fake_proc_process(
+        proc_root,
+        pid=100,
+        ppid=1,
+        uid=1234,
+        cmdline=(str(python), "-m", "sky.server.server"),
+        cwd=durable,
+        environment={
+            "HOME": str(tmp_path / "isolated-home"),
+            "SKYPILOT_USER_ID": "shared-user",
+            "KUBECONFIG": str(tmp_path / "stale-kubeconfig"),
+        },
+    )
+
+    result = workflow_module._probe_local_api_daemon_cwd(
+        str(sky),
+        proc_root=proc_root,
+        uid=1234,
+        expected_home=str(tmp_path / "isolated-home"),
+        expected_user_id="shared-user",
+        expected_kubeconfig=str(expected),
+    )
+
+    assert result.healthy is False
+    assert result.outcome == "stale_runtime_environment"
+    assert "different Kubernetes configuration" in result.error
 
 
 def test_api_daemon_repair_lock_serializes_same_runtime(tmp_path) -> None:
@@ -1562,6 +1631,60 @@ def test_reconciliation_distinguishes_phantom_from_scheduler_observable_job(
     assert evidence.state.value == "found"
     assert evidence.workload_observable is observable
     assert evidence.workload_evidence == marker
+
+
+def test_reconciliation_prefers_viable_job_over_cancelled_history(monkeypatch) -> None:
+    rows = [
+        {
+            "job_id": 125,
+            "job_name": "exact-run",
+            "status": "CANCELLED",
+            "schedule_state": "DONE",
+        },
+        {
+            "job_id": 126,
+            "job_name": "exact-run",
+            "status": "PENDING",
+            "schedule_state": "WAITING",
+        },
+    ]
+    monkeypatch.setattr(
+        workflow_module.subprocess,
+        "run",
+        lambda cmd, **_kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout=json.dumps(rows), stderr=""
+        ),
+    )
+
+    evidence = workflow_module._reconcile_managed_job_env(
+        "exact-run", env={}, sky_executable="sky", cwd="/durable"
+    )
+
+    assert evidence.state.value == "found"
+    assert evidence.job_id == "126"
+    assert evidence.status == "PENDING"
+
+
+def test_reconciliation_selects_latest_when_all_named_jobs_failed(monkeypatch) -> None:
+    rows = [
+        {"job_id": 125, "job_name": "exact-run", "status": "CANCELLED"},
+        {"job_id": 127, "job_name": "exact-run", "status": "FAILED"},
+    ]
+    monkeypatch.setattr(
+        workflow_module.subprocess,
+        "run",
+        lambda cmd, **_kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout=json.dumps(rows), stderr=""
+        ),
+    )
+
+    evidence = workflow_module._reconcile_managed_job_env(
+        "exact-run", env={}, sky_executable="sky", cwd="/durable"
+    )
+
+    assert evidence.state.value == "found"
+    assert evidence.job_id == "127"
+    assert evidence.status == "FAILED"
 
 
 def test_wait_for_controller_ignores_only_foreign_explicit_identity(

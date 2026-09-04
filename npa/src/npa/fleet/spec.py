@@ -43,8 +43,10 @@ from npa.cluster.gpu_driver import (
 )
 from npa.cluster.gpu_health import (
     DEFAULT_CUDA_SMOKE_IMAGE,
+    DEFAULT_GRAPHICS_SMOKE_IMAGE,
     DEFAULT_STABILIZATION_SECONDS,
 )
+from npa.cluster.gpu_workload_profile import resolve_gpu_workload_profile
 from npa.fleet.mig import (
     MIG_KUBERNETES_VERSION,
     RTX_PRO_6000_BOOT_DISK_GIB,
@@ -82,6 +84,7 @@ _MK8S_ENVELOPE_FIELDS = {
     "gpu_health_timeout_minutes",
     "gpu_cuda_smoke",
     "gpu_cuda_smoke_image",
+    "gpu_workload_profile",
     "mig",
 }
 
@@ -180,6 +183,34 @@ class ClusterSpec:
     # Standalone cluster up historically permits a control-plane-only topology;
     # fleet-created clusters remain required to have workers.
     allow_control_plane_only: bool = field(default=False, repr=False, compare=False)
+    gpu_workload_profile: str = ""
+    gpu_graphics_smoke: bool = False
+    gpu_graphics_smoke_image: str = DEFAULT_GRAPHICS_SMOKE_IMAGE
+
+    def __post_init__(self) -> None:
+        gpu = self.gpu_nodes
+        selection = resolve_gpu_workload_profile(
+            profile=self.gpu_workload_profile,
+            gpu_nodes=gpu.count if gpu else -1,
+            gpu_platform=gpu.platform if gpu else "",
+            gpu_preset=gpu.preset if gpu else "",
+            gpu_driver_mode=self.gpu_driver_mode,
+        )
+        if not selection.profile:
+            return
+        if gpu is None:
+            self.gpu_nodes = NodePoolSpec(
+                count=selection.gpu_nodes,
+                platform=selection.gpu_platform,
+                preset=selection.gpu_preset,
+            )
+        else:
+            gpu.count = selection.gpu_nodes
+            gpu.platform = selection.gpu_platform
+            gpu.preset = selection.gpu_preset
+        self.gpu_workload_profile = selection.profile
+        self.gpu_driver_mode = selection.gpu_driver_mode
+        self.gpu_graphics_smoke = selection.graphics_smoke
 
     def backend_name(self) -> str:
         return self.backend.strip().lower() or "mk8s"
@@ -405,6 +436,14 @@ class ClusterSpec:
             raise FleetSpecError(
                 f"cluster {self.name!r}: gpu_cuda_smoke_image cannot be empty when enabled"
             )
+        if self.gpu_workload_profile and not self.gpu_graphics_smoke:
+            raise FleetSpecError(
+                f"cluster {self.name!r}: RTX rendering profile requires graphics readiness"
+            )
+        if self.gpu_graphics_smoke and not self.gpu_graphics_smoke_image.strip():
+            raise FleetSpecError(
+                f"cluster {self.name!r}: graphics smoke image cannot be empty when enabled"
+            )
 
 
 @dataclass
@@ -578,6 +617,7 @@ def _cluster_from(
             data.get("gpu_cuda_smoke_image", DEFAULT_CUDA_SMOKE_IMAGE)
             or DEFAULT_CUDA_SMOKE_IMAGE
         ),
+        gpu_workload_profile=str(data.get("gpu_workload_profile", "") or ""),
         mig=mig,
         backend="mk8s",
         backend_explicit=backend_explicit,

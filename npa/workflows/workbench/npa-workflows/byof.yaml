@@ -9,6 +9,10 @@ config:
   bucket: example-bucket
   repo_url: "<repo-url>"
   repo_ref: "<repo-ref>"
+  # Private GitHub: set repo_auth=github and forward the named variable with
+  # workflow submit --secret-env. The value never belongs in this spec.
+  repo_auth: none
+  repo_token_env: GH_TOKEN
   base_profile: ubuntu
   # The outer workflow task runs in this same declared base instead of silently
   # falling back to SkyPilot's default. For Isaac use base_profile=isaac-lab and

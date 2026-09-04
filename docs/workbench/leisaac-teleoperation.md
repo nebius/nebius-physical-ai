@@ -83,6 +83,13 @@ Selecting another live LeIsaac run
 updates the registered capability; switching unrelated artifact runs does not
 discard it.
 
+Run selection loads the first bounded artifact page so large frame inventories
+do not block run details. **List artifacts** resumes from that page's opaque
+cursor and merges the remaining pages before choosing a run-wide preferred
+recording or declaring that no recording exists. Type, stage, role, and sort
+changes reuse whichever source-qualified pages are already loaded and do not
+repeat artifact inventory requests.
+
 The browser receives no service nonce or agent credential. The live Isaac Sim
 5.1 path returns same-origin, authenticated `/api/leisaac/frame.jpg`,
 `/api/leisaac/input`, and `/api/leisaac/view` routes. The agent resolves only the selected run's

@@ -18,7 +18,10 @@ DEFAULT_HELDOUT_CAPTURE_STRIDE = 20
 DEFAULT_PNG_COMPRESS_LEVEL = 3
 DEFAULT_CAPTURE_FPS = 10.0
 DEFAULT_PPO_NUM_ENVS = 1024
-DEFAULT_PPO_ITERATIONS = 500
+# The canonical loop resumes three inner passes.  A 2,000-update pass gives the
+# manipulation curriculum enough runway to reach the grasp/place rewards while
+# still publishing a validation-ranked checkpoint after every pass.
+DEFAULT_PPO_ITERATIONS = 2_000
 DEFAULT_PPO_STEPS_PER_ENV = 24
 
 
