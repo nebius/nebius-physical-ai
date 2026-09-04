@@ -158,9 +158,11 @@ def test_blackwell_envgen_chain_uses_system_ffmpeg_without_bundled_payload() -> 
 
 
 def test_openpi_uses_system_ffmpeg_without_bundled_payload() -> None:
-    dockerfile = (
-        REPO_ROOT / "npa" / "docker" / "workbench" / "openpi" / "Dockerfile"
-    ).read_text(encoding="utf-8")
+    openpi_dir = REPO_ROOT / "npa" / "docker" / "workbench" / "openpi"
+    dockerfile = (openpi_dir / "Dockerfile").read_text(encoding="utf-8")
+    gsutil_lock = (openpi_dir / "gsutil-requirements.txt").read_text(
+        encoding="utf-8"
+    )
 
     assert "IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg" in dockerfile
     assert "      ca-certificates ffmpeg git" in dockerfile
@@ -172,11 +174,23 @@ def test_openpi_uses_system_ffmpeg_without_bundled_payload() -> None:
     assert "imageio_ffmpeg.read_frames" in dockerfile
     assert 'm["size"] == (2,2) and len(f) == 12' in dockerfile
     assert "linux-libc-dev" in dockerfile
+    assert "'boto3==1.42.91'" in dockerfile
+    for pin in (
+        "'botocore==1.42.91'",
+        "'jmespath==1.1.0'",
+        "'python-dateutil==2.9.0.post0'",
+        "'s3transfer==0.16.0'",
+        "'six==1.17.0'",
+        "'urllib3==2.7.0'",
+    ):
+        assert pin in dockerfile
+    assert '"boto3":"1.42.91"' in dockerfile
+    assert "boto3.session.Session()" in dockerfile
     assert "'deepdiff==8.6.1'" in dockerfile
     assert "WANDB_MODE=disabled" in dockerfile
     assert 'org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"' in dockerfile
     assert "rm -f /opt/venv/lib/python3.11/site-packages/wandb/bin/wandb-core" in dockerfile
-    assert "import importlib.metadata as m, numpy, os, tensorflow" in dockerfile
+    assert "import boto3, importlib.metadata as m, numpy, os, tensorflow" in dockerfile
     assert "import importlib.metadata as m, numpy, rerun" in dockerfile
     assert "rm -rf /opt/nvidia/nsight-compute" in dockerfile
     assert "test ! -e /opt/nvidia/nsight-compute" in dockerfile
@@ -218,6 +232,11 @@ def test_openpi_uses_system_ffmpeg_without_bundled_payload() -> None:
     assert "'pyyaml==6.0.3'" in rerun_addons
     assert "'rerun-sdk==0.31.4'" in rerun_addons
     assert "pip check --python /opt/rerun-venv/bin/python" in rerun_addons
+    assert "gsutil==5.37" in gsutil_lock
+    assert "--hash=sha256:" in gsutil_lock
+    assert "--no-deps --require-hashes -r /tmp/gsutil-requirements.txt" in rerun_addons
+    assert "pip check --python /opt/gsutil-venv/bin/python" in rerun_addons
+    assert "/opt/gsutil-venv/bin/gsutil version -l" in rerun_addons
     assert dependency_layer.index("uv sync --active") < dependency_layer.index(
         "&& cd / \\"
     )

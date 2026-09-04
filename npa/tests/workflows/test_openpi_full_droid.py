@@ -15,6 +15,7 @@ import yaml
 
 from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
 from npa.workflows.byof import openpi_full_droid as full_droid
+from npa.workflows.byof import openpi_pipeline
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -1438,6 +1439,33 @@ def test_completed_optimizer_updates_maps_zero_based_source_steps() -> None:
     assert full_droid._completed_optimizer_updates(999) == 1_000
     with pytest.raises(full_droid.OpenPIPipelineError, match="cannot be negative"):
         full_droid._completed_optimizer_updates(-1)
+
+
+@pytest.mark.parametrize("compute_capability", ["10.0", "12.0"])
+def test_cuda_hardware_probe_requires_exact_runtime_evidence(
+    compute_capability: str,
+) -> None:
+    expected = f"devices=1 cc={compute_capability}"
+
+    assert (
+        openpi_pipeline._validated_cuda_probe_output(
+            "driver diagnostic\n  " + expected + "  \n", expected_cc=compute_capability
+        )
+        == expected
+    )
+    with pytest.raises(openpi_pipeline.OpenPIPipelineError, match="unexpected"):
+        openpi_pipeline._validated_cuda_probe_output(
+            "", expected_cc=compute_capability
+        )
+    with pytest.raises(openpi_pipeline.OpenPIPipelineError, match="unexpected"):
+        openpi_pipeline._validated_cuda_probe_output(
+            "devices=2 cc=" + compute_capability,
+            expected_cc=compute_capability,
+        )
+    with pytest.raises(openpi_pipeline.OpenPIPipelineError, match="unexpected"):
+        openpi_pipeline._validated_cuda_probe_output(
+            expected + "\ndevices=1 cc=0.0", expected_cc=compute_capability
+        )
 
 
 def test_milestone_manifest_hashes_rrd_and_journal() -> None:

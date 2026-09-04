@@ -31,6 +31,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
 SHELL ["/bin/bash", "-lc"]
 USER root
 
+COPY docker/workbench/openpi/gsutil-requirements.txt /tmp/gsutil-requirements.txt
+
 RUN rm -f /etc/apt/sources.list.d/*.list \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -89,11 +91,19 @@ RUN python3 -m venv /opt/uv \
       -path '*/imageio_ffmpeg/binaries/ffmpeg*' -print -quit)" \
     && /opt/venv/bin/python -c \
       'import imageio_ffmpeg, os; p="/tmp/npa-openpi-ffmpeg-probe.mp4"; w=imageio_ffmpeg.write_frames(p,(2,2),fps=1,macro_block_size=1); w.send(None); w.send(bytes([0,0,0]*4)); w.close(); r=imageio_ffmpeg.read_frames(p,pix_fmt="rgb24"); m=next(r); f=next(r); r.close(); assert m["size"] == (2,2) and len(f) == 12; os.unlink(p)' \
+    && /opt/uv/bin/uv pip install --python /opt/venv/bin/python --no-cache --no-deps \
+      'boto3==1.42.91' \
+      'botocore==1.42.91' \
+      'jmespath==1.1.0' \
+      'python-dateutil==2.9.0.post0' \
+      's3transfer==0.16.0' \
+      'six==1.17.0' \
+      'urllib3==2.7.0' \
     && /opt/uv/bin/uv pip install --python /opt/venv/bin/python --no-cache \
-      'boto3>=1.34' 'deepdiff==8.6.1' 'numpy==1.26.4' \
+      'deepdiff==8.6.1' 'numpy==1.26.4' \
     && rm -f /opt/venv/lib/python3.11/site-packages/wandb/bin/wandb-core \
     && /opt/venv/bin/python -c \
-      'import importlib.metadata as m, numpy, os, tensorflow, torch, transformers, wandb; from transformers import GemmaForCausalLM; assert m.version("deepdiff") == "8.6.1" and m.version("numpy") == "1.26.4" and m.version("tensorflow") == "2.15.0" and m.version("transformers") == "4.53.2"; assert os.environ["WANDB_MODE"] == "disabled" and GemmaForCausalLM and numpy is not None and tensorflow is not None and torch is not None and wandb is not None' \
+      'import boto3, importlib.metadata as m, numpy, os, tensorflow, torch, transformers, wandb; from transformers import GemmaForCausalLM; expected={"boto3":"1.42.91","botocore":"1.42.91","jmespath":"1.1.0","python-dateutil":"2.9.0.post0","s3transfer":"0.16.0","six":"1.17.0","urllib3":"2.7.0"}; assert all(m.version(k)==v for k,v in expected.items()), {k:m.version(k) for k in expected}; assert boto3.session.Session() is not None and m.version("deepdiff") == "8.6.1" and m.version("numpy") == "1.26.4" and m.version("tensorflow") == "2.15.0" and m.version("transformers") == "4.53.2"; assert os.environ["WANDB_MODE"] == "disabled" and GemmaForCausalLM and numpy is not None and tensorflow is not None and torch is not None and wandb is not None' \
     && /opt/venv/bin/python -c \
       'import subprocess; expected={"The package `tensorflow-cpu` requires `ml-dtypes~=0.2.0`, but `0.5.1` is installed","The package `torch` requires `nvidia-cudnn-cu12==9.5.1.17 ; platform_machine == x86_64 and sys_platform == linux`, but `9.10.2.21` is installed","The package `torch` requires `nvidia-nccl-cu12==2.26.2 ; platform_machine == x86_64 and sys_platform == linux`, but `2.27.5` is installed","The package `tensorflow` requires `ml-dtypes~=0.2.0`, but `0.5.1` is installed","The package `openpi` requires `jax[cuda12]==0.5.3`, but `0.6.2` is installed"}; result=subprocess.run(["/opt/uv/bin/uv","pip","check","--python","/opt/venv/bin/python"],capture_output=True,text=True); actual={line.replace(chr(39),"") for line in (result.stdout+result.stderr).splitlines() if line.startswith("The package `")}; assert result.returncode == 1 and actual == expected, {"returncode":result.returncode,"unexpected":sorted(actual-expected),"missing":sorted(expected-actual)}' \
     && /opt/uv/bin/uv venv --python 3.11 /opt/rerun-venv \
@@ -105,11 +115,14 @@ RUN python3 -m venv /opt/uv \
     && /opt/rerun-venv/bin/rerun rrd --help >/dev/null \
     && test ! -e /opt/venv/lib/python3.11/site-packages/wandb/bin/wandb-core \
     && /opt/uv/bin/uv venv --python 3.11 /opt/gsutil-venv \
-    && /opt/uv/bin/uv pip install --python /opt/gsutil-venv/bin/python --no-cache gsutil \
+    && /opt/uv/bin/uv pip install --python /opt/gsutil-venv/bin/python --no-cache \
+      --no-deps --require-hashes -r /tmp/gsutil-requirements.txt \
+    && /opt/uv/bin/uv pip check --python /opt/gsutil-venv/bin/python \
+    && /opt/gsutil-venv/bin/gsutil version -l | grep -Fx 'gsutil version: 5.37' \
     && build_hash="$(sha256sum /opt/byof/uv.lock | cut -d' ' -f1)" \
     && printf '{"schema":"npa.byof.build.v1","build_command_executed":true,"build_command_sha256":"%s"}\n' \
       "$build_hash" > /opt/byof/npa_build_metadata.json \
-    && rm -rf /tmp/uv-cache
+    && rm -rf /tmp/uv-cache /tmp/gsutil-requirements.txt
 
 RUN printf '%s\n' \
       '#include <cuda_runtime.h>' \

@@ -692,6 +692,18 @@ def _checkpoint_provenance(checkpoint_uri: str) -> dict[str, object]:
     }
 
 
+def _validated_cuda_probe_output(output: str, *, expected_cc: str) -> str:
+    expected = f"devices=1 cc={expected_cc}"
+    lines = [line.strip() for line in str(output or "").splitlines() if line.strip()]
+    evidence = [line for line in lines if line.startswith("devices=")]
+    if evidence != [expected]:
+        raise OpenPIPipelineError(
+            f"CUDA probe returned unexpected SM{expected_cc.replace('.', '')} "
+            f"evidence: {evidence!r}"
+        )
+    return expected
+
+
 def _hardware_evidence(
     *, expected_gpu_type: str, expected_gpu_count: int, expected_compute_capability: str
 ) -> dict[str, object]:
@@ -743,9 +755,12 @@ def _hardware_evidence(
         probe = Path("/usr/local/bin/npa-openpi-sm100-probe")
         if not probe.is_file():
             raise OpenPIPipelineError("compiled SM100 CUDA probe is missing")
-        output = subprocess.run(
-            [str(probe)], check=True, capture_output=True, text=True
-        ).stdout.strip()
+        output = _validated_cuda_probe_output(
+            subprocess.run(
+                [str(probe)], check=True, capture_output=True, text=True
+            ).stdout,
+            expected_cc="10.0",
+        )
         elf = subprocess.run(
             ["cuobjdump", "--list-elf", str(probe)],
             check=True,
@@ -763,9 +778,12 @@ def _hardware_evidence(
         probe = Path("/usr/local/bin/npa-openpi-sm120-probe")
         if not probe.is_file():
             raise OpenPIPipelineError("compiled SM120 CUDA probe is missing")
-        output = subprocess.run(
-            [str(probe)], check=True, capture_output=True, text=True
-        ).stdout.strip()
+        output = _validated_cuda_probe_output(
+            subprocess.run(
+                [str(probe)], check=True, capture_output=True, text=True
+            ).stdout,
+            expected_cc="12.0",
+        )
         elf = subprocess.run(
             ["cuobjdump", "--list-elf", str(probe)],
             check=True,
