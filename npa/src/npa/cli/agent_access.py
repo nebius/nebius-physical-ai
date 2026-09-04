@@ -9,8 +9,68 @@ from typing import Any, Callable
 
 
 ACCESS_SCHEMA = "npa.agent.access/v1"
-ACCESS_STATES = frozenset({"available", "partial", "denied", "unavailable", "unverified"})
+ACCESS_STATES = frozenset(
+    {"available", "partial", "denied", "unavailable", "unverified"}
+)
 ACCESS_DISCOVERY_MAX_WORKERS = 8
+MAX_CONFIGURED_ARTIFACT_SOURCES = 32
+
+
+def normalize_configured_artifact_sources(value: Any) -> tuple[dict[str, str], ...]:
+    """Validate owner-configured read-only artifact source tuples.
+
+    These tuples are an explicit alternative to tenant-wide resource inventory.
+    They select where discovery may run; the live S3 probe remains the authority
+    for whether the running agent can actually list or read the source.
+    """
+    if value in (None, ""):
+        return ()
+    if not isinstance(value, (list, tuple)):
+        raise ValueError("artifact sources must be a JSON array")
+    if len(value) > MAX_CONFIGURED_ARTIFACT_SOURCES:
+        raise ValueError(
+            f"artifact sources may contain at most {MAX_CONFIGURED_ARTIFACT_SOURCES} entries"
+        )
+    normalized: list[dict[str, str]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for item in value:
+        if not isinstance(item, dict):
+            raise ValueError("each artifact source must be an object")
+        project_id = str(item.get("project_id") or "").strip()
+        bucket = str(item.get("bucket") or item.get("resource_bucket") or "").strip()
+        prefix = str(item.get("resolved_prefix") or item.get("prefix") or "").strip()
+        if not project_id or not bucket:
+            raise ValueError("each artifact source requires project_id and bucket")
+        for label, token in (("project_id", project_id), ("bucket", bucket)):
+            if (
+                len(token) > 255
+                or any(ord(char) < 33 for char in token)
+                or "/" in token
+                or "\\" in token
+            ):
+                raise ValueError(f"artifact source {label} is invalid")
+        if prefix:
+            if (
+                len(prefix) > 1024
+                or prefix.startswith("/")
+                or prefix.endswith("/")
+                or "\\" in prefix
+                or any(ord(char) < 32 for char in prefix)
+                or any(part in {"", ".", ".."} for part in prefix.split("/"))
+            ):
+                raise ValueError("artifact source resolved_prefix is invalid")
+        identity = (project_id, bucket, prefix)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        normalized.append(
+            {
+                "project_id": project_id,
+                "bucket": bucket,
+                "resolved_prefix": prefix,
+            }
+        )
+    return tuple(normalized)
 
 
 def consistent_agent_service_account_id(existing: str, refreshed: str) -> str:
@@ -70,7 +130,8 @@ class StorageResourceAccess:
             "project_id": self.project_id,
             "source": self.source,
             "capabilities": {
-                key: self.capabilities[key].to_dict() for key in sorted(self.capabilities)
+                key: self.capabilities[key].to_dict()
+                for key in sorted(self.capabilities)
             },
         }
 
@@ -91,7 +152,8 @@ class ProjectAccess:
             "deployment_project": self.deployment_project,
             "status": self.status,
             "capabilities": {
-                key: self.capabilities[key].to_dict() for key in sorted(self.capabilities)
+                key: self.capabilities[key].to_dict()
+                for key in sorted(self.capabilities)
             },
             "resources": [item.to_dict() for item in self.resources],
         }
@@ -129,7 +191,8 @@ class AgentAccessReport:
             "status": self.status,
             "scope": self.scope,
             "capabilities": {
-                key: self.capabilities[key].to_dict() for key in sorted(self.capabilities)
+                key: self.capabilities[key].to_dict()
+                for key in sorted(self.capabilities)
             },
             "projects": [item.to_dict() for item in self.projects],
             "errors": [dict(item) for item in self.errors],
@@ -141,7 +204,9 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _classified_failure(exc: Exception, operation: str) -> tuple[str, str, dict[str, str]]:
+def _classified_failure(
+    exc: Exception, operation: str
+) -> tuple[str, str, dict[str, str]]:
     """Return a safe status/reason/error without copying cloud error text."""
     status = exc.status if isinstance(exc, AccessProbeError) else "unavailable"
     if status == "denied":
@@ -213,6 +278,7 @@ def discover_agent_access(
     deployment_project_id: str,
     deployment_project_name: str = "",
     fallback_buckets: tuple[str, ...] | list[str] = (),
+    configured_sources: tuple[dict[str, str], ...] | list[dict[str, str]] = (),
     list_projects: Callable[[str], list[Any]],
     list_buckets: Callable[[str], list[Any]],
     probe_bucket: Callable[[str], BucketProbe | dict[str, str]],
@@ -240,7 +306,9 @@ def discover_agent_access(
         try:
             project_items = list(list_projects(tenant) or [])
             project_listing_status = "available"
-            project_listing_reason = "Projects visible to the running agent were listed from the tenant."
+            project_listing_reason = (
+                "Projects visible to the running agent were listed from the tenant."
+            )
         except Exception as exc:  # noqa: BLE001 - converted to a public-safe classified result
             project_listing_status, project_listing_reason, error = _classified_failure(
                 exc, "list tenant projects"
@@ -265,6 +333,20 @@ def discover_agent_access(
         value = str(bucket or "").strip()
         if value and value not in configured_fallbacks:
             configured_fallbacks.append(value)
+    exact_sources = normalize_configured_artifact_sources(configured_sources)
+    sources_by_project: dict[str, list[str]] = {}
+    for source in exact_sources:
+        source_project = source["project_id"]
+        identities.setdefault(source_project, source_project)
+        sources_by_project.setdefault(source_project, []).append(source["bucket"])
+
+    # Owner-configured exact sources may introduce a project that tenant-wide
+    # enumeration cannot see. Recompute ordering only after those durable
+    # identities have been included.
+    ordered_project_ids = sorted(
+        identities,
+        key=lambda value: (value != deployment_id, identities[value].lower(), value),
+    )
 
     def discover_project_inventory(project_id: str) -> dict[str, Any]:
         is_deployment = bool(deployment_id and project_id == deployment_id)
@@ -275,7 +357,9 @@ def discover_agent_access(
         try:
             raw_buckets = list(list_buckets(project_id) or [])
             bucket_listing_status = "available"
-            bucket_listing_reason = "Object storage resources visible in this project were listed."
+            bucket_listing_reason = (
+                "Object storage resources visible in this project were listed."
+            )
             for raw in raw_buckets:
                 resource_id, name = _bucket_identity(raw)
                 if name:
@@ -291,6 +375,11 @@ def discover_agent_access(
                 if name not in known:
                     bucket_items.append(("", name, "agent_configuration"))
                     known.add(name)
+        known = {name for _resource_id, name, _source in bucket_items}
+        for name in sources_by_project.get(project_id, []):
+            if name not in known:
+                bucket_items.append(("", name, "configured_artifact_source"))
+                known.add(name)
         return {
             "project_id": project_id,
             "is_deployment": is_deployment,
@@ -309,7 +398,9 @@ def discover_agent_access(
         )
     else:
         with ThreadPoolExecutor(max_workers=inventory_workers) as pool:
-            inventories = list(pool.map(discover_project_inventory, ordered_project_ids))
+            inventories = list(
+                pool.map(discover_project_inventory, ordered_project_ids)
+            )
     for inventory in inventories:
         if inventory["error"] is not None:
             errors.append(inventory["error"])
@@ -497,7 +588,10 @@ def discover_agent_access(
     if project_listing_status != "available" and artifact_status == "available":
         artifact_status = "partial"
     overall = _aggregate_status([project_listing_status, artifact_status])
-    if project_listing_status != "available" and artifact_status in {"available", "partial"}:
+    if project_listing_status != "available" and artifact_status in {
+        "available",
+        "partial",
+    }:
         overall = "partial"
     # A tenant-configured agent whose tenant inventory failed is *not* a healthy
     # single-project agent. The deployment-project fallback stays usable, but
@@ -565,17 +659,25 @@ def discover_agent_access(
     )
 
 
-def accessible_artifact_buckets(report: AgentAccessReport | dict[str, Any]) -> list[str]:
+def accessible_artifact_buckets(
+    report: AgentAccessReport | dict[str, Any],
+) -> list[str]:
     """Return searchable bucket names, deployment project first."""
     payload = report.to_dict() if isinstance(report, AgentAccessReport) else report
     projects = payload.get("projects", []) if isinstance(payload, dict) else []
     ordered: list[str] = []
     for project in sorted(
         (item for item in projects if isinstance(item, dict)),
-        key=lambda item: (not bool(item.get("deployment_project")), str(item.get("name") or "")),
+        key=lambda item: (
+            not bool(item.get("deployment_project")),
+            str(item.get("name") or ""),
+        ),
     ):
         for resource in project.get("resources", []) or []:
-            if not isinstance(resource, dict) or resource.get("type") != "object_storage_bucket":
+            if (
+                not isinstance(resource, dict)
+                or resource.get("type") != "object_storage_bucket"
+            ):
                 continue
             capabilities = resource.get("capabilities") or {}
             discovery = capabilities.get("artifact_discovery") or {}
@@ -585,7 +687,9 @@ def accessible_artifact_buckets(report: AgentAccessReport | dict[str, Any]) -> l
     return ordered
 
 
-def artifact_bucket_projects(report: AgentAccessReport | dict[str, Any]) -> dict[str, str]:
+def artifact_bucket_projects(
+    report: AgentAccessReport | dict[str, Any],
+) -> dict[str, str]:
     """Return accessible bucket name -> owning project id."""
     payload = report.to_dict() if isinstance(report, AgentAccessReport) else report
     mapping: dict[str, str] = {}
@@ -597,7 +701,9 @@ def artifact_bucket_projects(report: AgentAccessReport | dict[str, Any]) -> dict
             if not isinstance(resource, dict):
                 continue
             capabilities = resource.get("capabilities") or {}
-            if (capabilities.get("artifact_discovery") or {}).get("status") != "available":
+            if (capabilities.get("artifact_discovery") or {}).get(
+                "status"
+            ) != "available":
                 continue
             name = str(resource.get("name") or "").strip()
             if name:

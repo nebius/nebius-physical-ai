@@ -33,7 +33,9 @@ CONTENT_AGENTS_IMAGE_MANIFEST_RESOURCE = "content_agents_image_manifest.json"
 PUBLIC_RELEASE_MANIFEST_RESOURCE = "public_release_manifest.json"
 
 CONTAINER_IMAGE_NAMES = {
+    "openpi": "npa-openpi",
     "lerobot": "npa-lerobot",
+    "sim2real-control": "npa-sim2real-control",
     "lerobot-policy": "npa-lerobot-policy",
     "genesis": "npa-genesis",
     "isaac-lab": "npa-isaac-lab",
@@ -43,6 +45,7 @@ CONTAINER_IMAGE_NAMES = {
     "cosmos3": "npa-cosmos3",
     "cosmos3-ray-serve": "npa-cosmos3-ray-serve",
     "cosmos3-serving": "npa-cosmos3-serving",
+    "cosmos3-super-benchmark": "npa-cosmos3-super-benchmark",
     "cosmos3-reason": "npa-cosmos3-reason",
     "cosmos-curate": "npa-cosmos-curate",
     "cosmos-evaluator": "npa-cosmos-evaluator",
@@ -51,6 +54,7 @@ CONTAINER_IMAGE_NAMES = {
     "sonic": "npa-sonic",
     "sonic-mujoco": "npa-sonic-mujoco",
     "retargeting": "npa-retargeting",
+    "robocasa": "npa-robocasa",
     "envgen": "npa-envgen",
     "reference-policy": "npa-reference-policy",
     "lerobot-vlm-rl": "npa-lerobot-vlm-rl",
@@ -76,6 +80,7 @@ SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS: frozenset[str] = frozenset(
         "cosmos2-transfer",
         "cosmos3",
         "cosmos3-reason",
+        "cosmos3-super-benchmark",
         "cosmos-curate",
         "cosmos-evaluator",
         "content-agents",
@@ -83,6 +88,8 @@ SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS: frozenset[str] = frozenset(
         "groot",
         "isaac-lab",
         "rerun-viewer",
+        "sim2real-control",
+        "envgen",
     }
 )
 
@@ -107,10 +114,11 @@ def requires_skypilot_bootstrap_runtime_probe(image: str) -> bool:
 
 
 # General public-registry refusal inventories. They intentionally describe the
-# redistribution decision, not a particular vendor payload.
-# Cosmos3 serving is a zero-payload runtime bootstrap on a public Python base,
-# and sonic-mujoco is rebuilt independently without its quarantined parent.
-RESTRICTED_PUBLICATION_TOOLS: frozenset[str] = frozenset({"paidf-anomalygen-sky"})
+# redistribution decision, not a particular vendor payload. Operator-built
+# PAIDF AnomalyGen and Cosmos3-Super benchmark runtimes remain private.
+RESTRICTED_PUBLICATION_TOOLS: frozenset[str] = frozenset(
+    {"paidf-anomalygen-sky", "cosmos3-super-benchmark"}
+)
 RESTRICTED_DERIVED_IMAGES: frozenset[str] = frozenset()
 
 # Compatibility exports for installed callers. New code uses the general names.
@@ -129,8 +137,8 @@ OMNIVERSE_RESTRICTED_DERIVED_IMAGES = RESTRICTED_DERIVED_IMAGES
 #
 # Remove a tool from this set in the same change that records its accepted image
 # digest and its payload-scan/GPU evidence — not before.
-UNVALIDATED_PUBLICATION_TOOLS: frozenset[str] = frozenset()
-VALIDATION_CANDIDATE_TOOLS: frozenset[str] = frozenset()
+UNVALIDATED_PUBLICATION_TOOLS: frozenset[str] = frozenset({"openpi"})
+VALIDATION_CANDIDATE_TOOLS: frozenset[str] = frozenset({"robocasa"})
 # Compatibility view used by publication callers and public imports. Derive it
 # from the two canonical validation-state inventories; never maintain it
 # independently.
@@ -142,9 +150,13 @@ PUBLICATION_QUARANTINE_TOOLS: frozenset[str] = (
 # anonymous channel. Public execution stays on the last accepted release while
 # an explicit custom registry resolves the newer supported-tool pin.
 PUBLIC_RELEASE_TAG_OVERRIDES: dict[str, str] = {
-    "cosmos2-transfer": "2.5.1-skypilot-ready-20260801T053000Z",
     "fiftyone": "1.15.0.post1",
-    "rerun-viewer": "0.31.4",
+    # 0.31.4 (plain) predates the bootstrap contract and cannot host a SkyPilot
+    # task: the container exits immediately, the provisioner's exec finds no
+    # ray-node container, and the stage retries forever. The 20260903 build is
+    # attested (org.nebius.npa.skypilot-bootstrap-contract=skypilot-0.12.2-v1)
+    # and anonymously pullable from GHCR.
+    "rerun-viewer": "0.31.4-sim2real-coherent-20260904",
 }
 
 # Release promotion for the rebuilt surfaces is bound to the exact manifests
@@ -185,21 +197,24 @@ PUBLIC_REGISTRY_HOSTS = frozenset(
 )
 
 SUPPORTED_TOOL_VERSIONS = {
+    "openpi": "pi05-full-droid-rlds-cu128-unbuilt",
     # Default LeRobot image release. Selectable package versions and their
     # image tags live in lerobot_version_manifest.json.
     "lerobot": "cuda13-b300-0.5.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
+    "sim2real-control": "0.1.2-sim2real-coherent-20260904",
     "lerobot-policy": "0.1.1",
     "genesis": "cuda13-b300-0.4.6-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
-    "isaac-lab": "3.0.0b2.post1",
+    "isaac-lab": "3.0.0b2.post1-sim2real-coherent-20260904",
     "leisaac": "0.4.0-20260817T231825Z",
     "cosmos": "cu128-torch27-sm100-1.0.9-20260803T002017Z",
-    "cosmos2-transfer": "2.5.1-sam2-multigpu-20260817-r2",
+    "cosmos2-transfer": "2.5.1-sim2real-coherent-20260904",
     # Additive r2 release of cosmos-framework 1.2.2 (pinned commit 5e67049c) +
     # torch cu130. The immutable predecessor remains rollback provenance.
     # No weights baked; gated Cosmos3 checkpoints download at runtime.
     "cosmos3": "1.2.2-cu130-r6",
     "cosmos3-ray-serve": "ray1-cu130",
     "cosmos3-serving": "0.2.0-oss",
+    "cosmos3-super-benchmark": "0.1.0",
     "cosmos3-reason": "cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
     "cosmos-curate": "0.1.2-skypilot-v1-20260813T164700Z",
     "cosmos-evaluator": "0.1.2-skypilot-v1-20260813T164700Z-r2",
@@ -208,11 +223,12 @@ SUPPORTED_TOOL_VERSIONS = {
     "sonic": "cuda13-b300-0.1.2-k8s-runtime-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
     "sonic-mujoco": "0.2.0-runtime",
     "retargeting": "0.1.1",
-    "envgen": "cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
+    "envgen": "0.1.2-sim2real-coherent-20260904",
+    "robocasa": "0.1.0",
     "reference-policy": "cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
     "lerobot-vlm-rl": "cuda13-b300-0.1.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
     "loop-eval": "cuda13-b300-0.1.3-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
-    "rerun-viewer": "0.31.4-skypilot-v1-20260815-review5-r2",
+    "rerun-viewer": "0.31.4-sim2real-coherent-20260904",
     # Tracks the pinned @foxglove/embed SDK release (npa.workbench.foxglove).
     "foxglove-embed": "0.58.0",
     # Lichtblick (MPL-2.0): OSS, Foxglove-compatible static web viewer bundle.

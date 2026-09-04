@@ -32,6 +32,7 @@ from npa.deploy.images import (
     RESTRICTED_DERIVED_IMAGES,
     RESTRICTED_PUBLICATION_TOOLS,
     UNVALIDATED_PUBLICATION_TOOLS,
+    VALIDATION_CANDIDATE_TOOLS,
     container_image_for_tool,
     is_public_registry,
     is_publicly_redistributable,
@@ -292,7 +293,7 @@ def test_rebuilt_cosmos3_serving_and_sonic_mujoco_are_gpu_accepted() -> None:
     assert not {"cosmos3-serving", "sonic-mujoco"} & RESTRICTED_DERIVED_IMAGES
     for tool in ("isaac-lab", "sonic", "groot", "cosmos3-serving", "sonic-mujoco"):
         assert is_publicly_redistributable(tool), tool
-    assert UNVALIDATED_PUBLICATION_TOOLS == frozenset()
+    assert UNVALIDATED_PUBLICATION_TOOLS == frozenset({"openpi"})
     assert set(images.GPU_ACCEPTED_PUBLIC_IMAGE_DIGESTS) == {
         "cosmos3-ray-serve",
         "cosmos3-serving",
@@ -401,6 +402,10 @@ def test_publish_plan_promotes_dev_sha_to_release_tag() -> None:
         tool: images.accepted_publication_development_sha(tool)
         for tool in (
             "isaac-lab",
+            "sim2real-control",
+            "cosmos2-transfer",
+            "envgen",
+            "rerun-viewer",
             "ltx2",
             "wan2-2",
             "cosmos3-serving",
@@ -408,6 +413,8 @@ def test_publish_plan_promotes_dev_sha_to_release_tag() -> None:
             "sonic-mujoco",
         )
     }
+    # The five Sim2Real roles deliberately share one coherent source; the five
+    # older accepted publication sources remain distinct from it and each other.
     assert len(set(accepted_shas.values())) == 6
     for item in plan:
         source_image = item.source_ref.rsplit("/", 1)[-1]
@@ -492,14 +499,19 @@ def test_publish_plan_targets_public_registry_by_default() -> None:
     # contract-derived total rather than hardcoded, so adding a freely
     # redistributable image does not silently drift this gate.
     assert len(plan) == len(publicly_publishable_tools()) - len(
-        set(publicly_publishable_tools()) & set(UNVALIDATED_PUBLICATION_TOOLS)
+        set(publicly_publishable_tools())
+        & (set(UNVALIDATED_PUBLICATION_TOOLS) | set(VALIDATION_CANDIDATE_TOOLS))
     )
     # And, since the Isaac re-architecture emptied the restricted set: every image the repo
     # builds and has validated is publishable. This is the assertion that would catch a
     # tool silently dropping out of the plan, which the derived equality above cannot.
     assert len(plan) == len(CONTAINER_IMAGE_NAMES) - len(
         set(CONTAINER_IMAGE_NAMES)
-        & (set(RESTRICTED_PUBLICATION_TOOLS) | set(UNVALIDATED_PUBLICATION_TOOLS))
+        & (
+            set(RESTRICTED_PUBLICATION_TOOLS)
+            | set(UNVALIDATED_PUBLICATION_TOOLS)
+            | set(VALIDATION_CANDIDATE_TOOLS)
+        )
     )
     for item in plan:
         assert item.target_ref.startswith(DEFAULT_PUBLIC_CONTAINER_REGISTRY + "/npa-")
@@ -550,7 +562,7 @@ def test_the_restriction_mechanism_still_exists() -> None:
     """The general refusal API covers the restricted DIG compatibility runtime."""
     assert hasattr(images, "OMNIVERSE_RESTRICTED_TOOLS")
     assert hasattr(images, "OMNIVERSE_RESTRICTED_DERIVED_IMAGES")
-    assert restricted_image_names() == ["paidf-anomalygen-sky"]
+    assert restricted_image_names() == ["cosmos3-super-benchmark", "paidf-anomalygen-sky"]
     assert not is_publicly_redistributable("paidf-anomalygen-sky")
     assert "paidf-anomalygen-sky" not in publicly_publishable_tools()
     for symbol in (
@@ -848,11 +860,11 @@ def test_accepted_release_plan_partitions_published_and_pending_tools() -> None:
         target_registry="ghcr.io/nebius/nebius-physical-ai"
     )
 
-    assert len(plan) == 31
+    assert not manifest["publication_pending"]
+    assert len(plan) == len(manifest["releases"])
     assert set(manifest["releases"]) | set(manifest["publication_pending"]) == set(
         publicly_publishable_tools()
     )
-    assert not manifest["publication_pending"]
     for item in plan:
         recorded = manifest["releases"][item.tool]["published_digest"]
         assert item.source_ref.endswith(f"@{recorded}")

@@ -49,6 +49,7 @@ EXCUSED: dict[str, str] = {
     # downloads weights is pointed at an explicit variable above, so nothing
     # model-sized reaches its fallback here.
     "XDG_CACHE_HOME": "generic cache root, not a weight fallback in practice",
+    "NUMBA_CACHE_DIR": "JIT compilation cache, not model weights",
     # Runtime dependency closures, deliberately a separate volume: they are
     # verified wheel sets warmed once and consumed read-only, not weights that
     # accumulate. See docs/workbench/model-weight-cache.md.

@@ -83,8 +83,6 @@ config:
   viewer_image: ""
   isaac_cache_pvc: ""
   # Isaac EULA acceptance is injected by the renderer (default on, explicit CLI opt-out).
-  gpu_queue: sim2real-gpu
-  gpu_priority_class: sim2real-production
 
 resources:
   cpu:
@@ -100,11 +98,7 @@ resources:
     image: "{{config.transfer_image}}"
     kubernetes:
       pod_config:
-        metadata:
-          labels:
-            kueue.x-k8s.io/queue-name: "{{config.gpu_queue}}"
         spec:
-          priorityClassName: "{{config.gpu_priority_class}}"
           # The immutable Cosmos Transfer image keeps its model cache under /opt,
           # but SkyPilot bootstraps uv as its non-root runtime user before the task
           # starts. Keep only bootstrap caches in writable ephemeral storage; model
@@ -122,13 +116,6 @@ resources:
     cpus: 8
     memory: 32Gi
     image: "{{config.envgen_image}}"
-    kubernetes:
-      pod_config:
-        metadata:
-          labels:
-            kueue.x-k8s.io/queue-name: "{{config.gpu_queue}}"
-        spec:
-          priorityClassName: "{{config.gpu_priority_class}}"
   stage8-cpu:
     cloud: kubernetes
     cpus: 8
@@ -143,11 +130,7 @@ resources:
     kubernetes:
       provision_timeout: 2400
       pod_config:
-        metadata:
-          labels:
-            kueue.x-k8s.io/queue-name: "{{config.gpu_queue}}"
         spec:
-          priorityClassName: "{{config.gpu_priority_class}}"
           containers:
             - name: ray-node
               env:

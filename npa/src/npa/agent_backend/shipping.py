@@ -17,6 +17,7 @@ SHIPPED_BACKEND_MODULES = (
     "sim2real_loop",
     "retrieval",
     "trace",
+    "trajectory",
     "foxglove",
     "canonical_mcap",
     "foxglove_cloud",

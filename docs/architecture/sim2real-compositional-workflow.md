@@ -39,13 +39,12 @@ same workflow/S3 state instead of reconstructing private controller memory.
 ## Execution ownership
 
 SkyPilot/Kubernetes owns each state Job. Isaac rollout, PPO, and evaluation run
-their existing fail-closed payload in the already admitted workflow task; they
-do not create hidden sibling Jobs. Kubernetes scheduling, retries, queueing,
-credentials, and image pull behavior therefore remain visible to the standard
-runtime. Each GPU resource profile attaches the configurable Kueue LocalQueue
-label and Kubernetes priority class to the SkyPilot Pod, so parallel waves use
-observable admission instead of delete/recreate contention. The workflow task
-image must equal the payload's immutable digest.
+their existing fail-closed payload in the workflow task; they do not create
+hidden sibling Jobs. Kubernetes scheduling, retries, credentials, and image pull
+behavior therefore remain visible to the standard runtime. SkyPilot submits each
+bounded parallel wave directly to Kubernetes; `gpu_concurrency` keeps each wave
+within the cluster's schedulable GPU capacity. The workflow task image must equal
+the payload's immutable digest.
 
 Isaac terms remain runtime state rather than image metadata. NPA applies its
 single `ACCEPT_EULA=Y` non-interactive default only to resolved Isaac routes;

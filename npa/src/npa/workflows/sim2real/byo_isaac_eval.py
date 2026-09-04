@@ -720,6 +720,18 @@ try:
                 )
                 xyz = pts.detach().cpu().numpy().reshape(-1, 3).astype(np.float32)
                 col = cols.detach().cpu().numpy().reshape(-1, 3)
+                # Some rendered views legitimately contain no finite depth samples
+                # for a frame.  Treat that as an absent cloud before inspecting the
+                # color range: NumPy's max() is undefined for an empty array.  This
+                # keeps the other synchronized views usable without reporting a
+                # misleading capture exception.
+                if xyz.shape[0] != col.shape[0]:
+                    raise ValueError(
+                        f"point-cloud/color row mismatch for {name}: "
+                        f"{xyz.shape[0]} != {col.shape[0]}"
+                    )
+                if xyz.shape[0] == 0:
+                    continue
                 if col.dtype != np.uint8:
                     col = (np.clip(col, 0.0, 1.0) * 255).astype(np.uint8) if col.max() <= 1.0 else col.astype(np.uint8)
                 good = np.isfinite(xyz).all(axis=1)

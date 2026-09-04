@@ -1330,3 +1330,23 @@ def test_default_npa_setup_has_optin_source_overlay() -> None:
     assert "/tmp/npa-src-overlay" in setup
     # Installs route through the PEP 668-tolerant helper (see npa_pip_install).
     assert "npa_pip_install -e /tmp/npa-src-overlay --no-deps" in setup
+    assert "using isolated non-root npa overlay environment" in setup
+    assert "python3 -m venv --system-site-packages /tmp/npa-overlay-venv" in setup
+    assert setup.index("PYTHONPATH=/tmp/npa-src-overlay/src") < setup.index(
+        "npa_pip_install -e /tmp/npa-src-overlay --no-deps"
+    )
+
+
+def test_openpi_full_droid_prepare_forces_cpu_jax_before_cli_import() -> None:
+    spec = load_spec(NPA_SPECS / "openpi-pi05-full-droid-finetune.yaml")
+    rendered = render_skypilot_yaml(
+        spec,
+        build_plan(spec, run_id="openpi-prepare-cpu"),
+        run_id="openpi-prepare-cpu",
+        options=SkypilotRenderOptions(materialize_registry_secrets=False),
+    )
+    tasks = [doc for doc in yaml.safe_load_all(rendered) if doc]
+    prepare = next(task for task in tasks if "prepare_full_droid" in task["name"])
+    qualification = next(task for task in tasks if "qualify_full_droid" in task["name"])
+    assert prepare["envs"]["JAX_PLATFORMS"] == "cpu"
+    assert "JAX_PLATFORMS" not in qualification.get("envs", {})

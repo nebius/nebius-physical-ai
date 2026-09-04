@@ -79,6 +79,35 @@ Token Factory key in the hosted Stage 8 leaf. Request propagation by secret
 name even when values come from the selected project's private NPA credential
 store; never put values in YAML, receipts, logs, or reports.
 
+### Using a cluster `provision-if-absent` did not create
+
+`provision-if-absent` is for a cluster NPA provisions and tracks itself.
+Running it against a project that already has a working, externally-built
+mk8s cluster (a Living Lab test project, for example) plans a *second*,
+Terraform-managed cluster instead of adopting the one you have — do not run
+it there. Point `kubectl`/`KUBECONFIG` at the existing cluster's context
+directly, then adopt it into NPA's own local tracking (both steps are
+required exactly once per cluster; skipping either fails a later `submit`
+with a distinct, actionable error naming the missing step):
+
+```bash
+npa/.venv/bin/npa cluster kubeconfig \
+  --cluster-name "${NPA_CLUSTER_NAME}" \
+  --project-id "${NPA_PROJECT_ID}" \
+  --project "${NPA_PROJECT}" \
+  --context "${NPA_CLUSTER}"
+
+npa/.venv/bin/npa skypilot bind-controller \
+  --project "${NPA_PROJECT}" --context "${NPA_CLUSTER}"
+```
+
+`npa cluster kubeconfig` writes the kubeconfig and local cluster-identity
+record that `npa cluster status` and `workflow submit --infra k8s/<context>`
+read; without it, submit refuses with "No NPA cluster identity exists for
+context ...; refusing controller adoption." `npa skypilot bind-controller`
+records which project/context owns the shared SkyPilot jobs controller;
+without it, submit refuses with "No shared controller owner is bound."
+
 ## 3. Add a schedulable CPU pool before GPU work
 
 SkyPilot's Kubernetes jobs controller requests 2 vCPU/8 GiB. Sim2Real CPU states
@@ -107,47 +136,18 @@ controller alone, but not for the canonical Sim2Real CPU states.
 If the preflight reports no fitting CPU node, remove `NoSchedule`/`NoExecute`
 taints that the tasks do not tolerate or add/resize this pool.
 
-## 4. Create Kueue admission objects and warm Isaac once
+## 4. Warm Isaac once
 
-The canonical defaults name the `sim2real-gpu` LocalQueue and
-`sim2real-production` PriorityClass. Create the queue objects with quotas that
-cover the cluster's actual concurrent GPU, CPU, and memory requests; the helper
-generates the exact repository-owned schemas:
-
-```bash
-export NPA_GPU_PRODUCT='<exact nvidia.com/gpu.product label from kubectl get nodes>'
-export NPA_GPU_QUOTA='<concurrent GPU count>'
-export NPA_CPU_QUOTA='<aggregate CPU quota, for example 64>'
-export NPA_MEMORY_QUOTA='<aggregate memory quota, for example 512Gi>'
-
-npa/.venv/bin/python - <<'PY' | kubectl apply -f -
-import os
-import yaml
-from npa.workflows.sim2real.job_scheduling import kueue_queue_manifests
-
-docs = kueue_queue_manifests(
-    namespace="default",
-    gpu_product=os.environ["NPA_GPU_PRODUCT"],
-    gpu_quota=int(os.environ["NPA_GPU_QUOTA"]),
-    cpu_quota=os.environ["NPA_CPU_QUOTA"],
-    memory_quota=os.environ["NPA_MEMORY_QUOTA"],
-)
-print(yaml.safe_dump_all(docs, sort_keys=False))
-PY
-
-kubectl get localqueue.kueue.x-k8s.io sim2real-gpu -n default
-kubectl get priorityclass sim2real-production
-```
-
-Expected: both `get` commands return their named object. Missing Kueue CRDs mean
-Kueue must be installed first; a queue with insufficient CPU or memory quota can
-leave a GPU Job suspended even when a GPU is free.
+The canonical workflow relies on SkyPilot and the Kubernetes scheduler directly;
+it does not require Kueue, a LocalQueue, or a custom PriorityClass. Bound
+parallelism with `gpu_concurrency` so a wave never requests more GPUs than the
+cluster can schedule.
 
 Choose the digest-pinned Isaac image now, then warm a shared RWX cache. The
 template is the authoritative PVC/security/bootstrap contract:
 
 ```bash
-export NPA_ISAAC_IMAGE='<registry>/npa-isaac-lab@sha256:<64-hex>'
+export NPA_ISAAC_IMAGE='ghcr.io/nebius/nebius-physical-ai/npa-isaac-lab@sha256:0a64ffb940a62c639c00a160a21081e7c7200f1d1d740c655616e2c9a967b544'
 sed "s|image: ghcr.io/nebius/nebius-physical-ai/npa-isaac-lab@sha256:<64-hex-digest>|image: ${NPA_ISAAC_IMAGE}|" \
   npa/docker/workbench/common/warm-isaac-cache.yaml | kubectl apply -f -
 kubectl wait --for=condition=complete job/npa-warm-isaac-cache --timeout=-1s
@@ -185,17 +185,19 @@ Put the six references in shell variables, then reproduce the actual manifest
 pulls with the same config used by submit:
 
 ```bash
-export CONTROLLER_IMAGE='<registry>/npa-sim2real-control@sha256:<64-hex>'
-export TRANSFER_IMAGE='<registry>/npa-cosmos2-transfer@sha256:<64-hex>'
-export ENVGEN_IMAGE='<registry>/npa-envgen@sha256:<64-hex>'
+export CONTROLLER_IMAGE='ghcr.io/nebius/nebius-physical-ai/npa-sim2real-control@sha256:7ee326f49cf1a52fc1007dccbac02db7862246ab688bf5ec35ef14a727e33136'
+export TRANSFER_IMAGE='ghcr.io/nebius/nebius-physical-ai/npa-cosmos2-transfer@sha256:47bfe492b6d56f4141f5a6da8accbbdec7cdf2d9b02311c802e3b3b5b1ba5caf'
+export ENVGEN_IMAGE='ghcr.io/nebius/nebius-physical-ai/npa-envgen@sha256:33d49af4703c479a3be71cae6f0a4735ea6f63629b870b946c43929037304f72'
 export ISAAC_IMAGE="${NPA_ISAAC_IMAGE}"
-export VIEWER_IMAGE='<registry>/npa-rerun-viewer@sha256:<64-hex>'
+export VIEWER_IMAGE='ghcr.io/nebius/nebius-physical-ai/npa-rerun-viewer@sha256:8fc0a76f3df441fd6662e3eb5d893c9996ea66e6c61fcc815de79576f12b8160'
 export SPEC=npa/workflows/workbench/npa-workflows/sim2real.yaml
+export SOURCE_SHA=c164fd3480f8a9ea8f9df9ccb9509502fd527996
 
 npa/.venv/bin/npa workbench workflow preflight-images "${SPEC}" \
   --project "${NPA_PROJECT}" \
   --infra "k8s/${NPA_CLUSTER}" \
   --assume-decision promote_checkpoint \
+  --var source_sha="${SOURCE_SHA}" \
   --var controller_image="${CONTROLLER_IMAGE}" \
   --var transfer_image="${TRANSFER_IMAGE}" \
   --var envgen_image="${ENVGEN_IMAGE}" \
@@ -203,12 +205,42 @@ npa/.venv/bin/npa workbench workflow preflight-images "${SPEC}" \
   --var viewer_image="${VIEWER_IMAGE}"
 ```
 
+`SOURCE_SHA` must be exactly 40 hexadecimal characters and must match the baked
+`NPA_IMAGE_SOURCE_SHA` in every selected Sim2Real image. Supply the SHA attested
+by the coherent image set you selected; do not assume the current repository
+checkout matches those image bytes.
+
 Expected: every image is pullable and bootstrap-compatible. `not_found` means
 build/push the printed image; `forbidden` means fix the exact-host registry
 credential. Public GHCR releases need no credential. Private images require an
 explicit credential or operator-managed Kubernetes Docker config secret; NPA
 does not mint or refresh either. See
 [registry troubleshooting](../troubleshooting/known-footguns.md#private-registry-credentials-expire).
+
+For a private registry, `preflight-images` and `submit`'s own image preflight
+resolve credentials from `SKYPILOT_DOCKER_SERVER`/`NPA_REGISTRY_SERVER` (or
+`NPA_REGISTRY`), `..._USERNAME`, and `..._PASSWORD` — all three must match the
+exact registry host, or the resolved credentials are empty and every pull
+check 403s even with a correct password:
+
+```bash
+export NPA_REGISTRY_SERVER='<your operator-controlled registry host>'
+export NPA_REGISTRY_USERNAME=iam
+export NPA_REGISTRY_PASSWORD="$(nebius iam get-access-token)"  # ~12h lifetime; refresh before re-running
+```
+
+Nodes pulling the same private images at run time need their own
+`imagePullSecrets`, independent of the above (which only authorizes NPA's own
+preflight checks). `sim2real.yaml` has no config var for this; merge it into
+every SkyPilot-launched pod at once via `~/.sky/config.yaml`:
+
+```yaml
+kubernetes:
+  pod_config:
+    spec:
+      imagePullSecrets:
+        - name: <your-pull-secret>
+```
 
 ## 6. Validate, plan, and submit
 
@@ -235,6 +267,7 @@ derived from those objects; `dataset-manifest.json` is uploaded last.
 ```bash
 export RUN_ID="sim2real-$(date -u +%Y%m%dT%H%M%SZ)"
 export NPA_BUCKET='<bucket-name>'
+export SOURCE_SHA='<40-hex sha the images in § 5 were built from>'
 
 npa/.venv/bin/npa workbench workflow trigger stage-preset \
   --preset public-franka-lift \
@@ -247,13 +280,14 @@ npa/.venv/bin/npa workbench workflow validate-spec "${SPEC}" \
   --preset public-franka-lift --json
 npa/.venv/bin/npa workbench workflow plan-spec "${SPEC}" \
   --preset public-franka-lift --run-id "${RUN_ID}" \
-  --var bucket="${NPA_BUCKET}" --waves \
+  --var bucket="${NPA_BUCKET}" --var source_sha="${SOURCE_SHA}" --waves \
   --assume-decision promote_checkpoint
 
 npa/.venv/bin/npa workbench workflow submit "${SPEC}" \
   --preset public-franka-lift --project "${NPA_PROJECT}" \
   --infra "k8s/${NPA_CLUSTER}" --runtime --run-id "${RUN_ID}" \
   --var bucket="${NPA_BUCKET}" \
+  --var source_sha="${SOURCE_SHA}" \
   --var controller_image="${CONTROLLER_IMAGE}" \
   --var transfer_image="${TRANSFER_IMAGE}" \
   --var envgen_image="${ENVGEN_IMAGE}" \
@@ -261,6 +295,14 @@ npa/.venv/bin/npa workbench workflow submit "${SPEC}" \
   --var viewer_image="${VIEWER_IMAGE}" \
   --var isaac_cache_pvc=npa-isaac-cache
 ```
+
+`source_sha` is mandatory once `require_baked_npa` is set (the default): the
+renderer refuses to plan or submit without a 40-hex `config.source_sha`, the
+CLI does not auto-fill it from the local git checkout, and every stage
+re-verifies it against the image's own baked `NPA_IMAGE_SOURCE_SHA` at
+runtime. Use the exact commit the five images in § 5 were built from — the
+`validate-spec` graph check above does not need it, but every `plan-spec` or
+`submit` invocation below does.
 
 The source contract remains `Isaac-Lift-Cube-Franka-IK-Rel-v0`, Franka, two
 cameras (`image`, `wrist_image`), and 7D IK-relative actions. These actions and
@@ -289,11 +331,13 @@ stable-placement metric or adding a scripted inference controller.
 ```bash
 export RUN_ID="sim2real-$(date -u +%Y%m%dT%H%M%SZ)"
 export NPA_BUCKET='<bucket-name>'
+export SOURCE_SHA='<40-hex sha the images in § 5 were built from>'
 
 npa/.venv/bin/npa workbench workflow validate-spec "${SPEC}" --json
 npa/.venv/bin/npa workbench workflow plan-spec "${SPEC}" \
   --run-id "${RUN_ID}" --waves --assume-decision promote_checkpoint \
   --var bucket="${NPA_BUCKET}" \
+  --var source_sha="${SOURCE_SHA}" \
   --var controller_image="${CONTROLLER_IMAGE}" \
   --var transfer_image="${TRANSFER_IMAGE}" \
   --var envgen_image="${ENVGEN_IMAGE}" \
@@ -304,7 +348,24 @@ npa/.venv/bin/npa workbench workflow plan-spec "${SPEC}" \
 
 Expected: validation reports valid, and the wave plan shows the 14-stage graph
 with the Stage 4 parallel wave and direct Stage 7 → hosted Stage 8 → Stage 9
-sequence. Then submit through the durable runtime:
+sequence. Render the exact SkyPilot submission plan with the same source and
+image contract before launch:
+
+```bash
+npa/.venv/bin/npa workbench workflow submit "${SPEC}" \
+  --project "${NPA_PROJECT}" --infra "k8s/${NPA_CLUSTER}" \
+  --plan-only --run-id "${RUN_ID}" \
+  --var bucket="${NPA_BUCKET}" \
+  --var source_sha="${SOURCE_SHA}" \
+  --var controller_image="${CONTROLLER_IMAGE}" \
+  --var transfer_image="${TRANSFER_IMAGE}" \
+  --var envgen_image="${ENVGEN_IMAGE}" \
+  --var isaac_image="${ISAAC_IMAGE}" \
+  --var viewer_image="${VIEWER_IMAGE}" \
+  --var isaac_cache_pvc=npa-isaac-cache
+```
+
+Then submit through the durable runtime:
 
 ```bash
 npa/.venv/bin/npa workbench workflow submit "${SPEC}" \
@@ -313,6 +374,7 @@ npa/.venv/bin/npa workbench workflow submit "${SPEC}" \
   --runtime --resume --max-wait-seconds 0 \
   --run-id "${RUN_ID}" \
   --var bucket="${NPA_BUCKET}" \
+  --var source_sha="${SOURCE_SHA}" \
   --var trigger_uri="s3://${NPA_BUCKET}/sim2real-triggers/${RUN_ID}/" \
   --var seed_manifest_uri="s3://${NPA_BUCKET}/sim2real-triggers/${RUN_ID}/dataset-manifest.json" \
   --var controller_image="${CONTROLLER_IMAGE}" \
@@ -329,9 +391,8 @@ npa/.venv/bin/npa workbench workflow submit "${SPEC}" \
 
 Before any launch, submit now fails with one consolidated prerequisite report if
 the required secret propagation, three gated model probes, CPU node, cache PVC,
-Kueue queue, PriorityClass, S3 write probe, immutable images, or image pulls are
-not ready. `--skip-preflight` is an expert escape hatch and is not part of this
-runbook.
+S3 write probe, immutable images, or image pulls are not ready. `--skip-preflight`
+is an expert escape hatch and is not part of this runbook.
 
 For a reduced plumbing proof, add `--var outer_iterations=1 --var
 inner_iterations=1` and deliberately chosen smaller scenario/PPO values. Do not
@@ -347,6 +408,32 @@ npa/.venv/bin/npa workbench workflow status "${RUN_ID}" --project "${NPA_PROJECT
 npa/.venv/bin/npa workbench workflow submit "${SPEC}" \
   --project "${NPA_PROJECT}" --infra "k8s/${NPA_CLUSTER}" \
   --runtime --resume-run "${RUN_ID}" --max-wait-seconds 0 \
+  --var bucket="${NPA_BUCKET}" \
+  --var source_sha="${SOURCE_SHA}" \
+  --var trigger_uri="s3://${NPA_BUCKET}/sim2real-triggers/${RUN_ID}/" \
+  --var seed_manifest_uri="s3://${NPA_BUCKET}/sim2real-triggers/${RUN_ID}/dataset-manifest.json" \
+  --var controller_image="${CONTROLLER_IMAGE}" \
+  --var transfer_image="${TRANSFER_IMAGE}" \
+  --var envgen_image="${ENVGEN_IMAGE}" \
+  --var isaac_image="${ISAAC_IMAGE}" \
+  --var viewer_image="${VIEWER_IMAGE}" \
+  --var isaac_cache_pvc=npa-isaac-cache \
+  --secret-env AWS_ACCESS_KEY_ID \
+  --secret-env AWS_SECRET_ACCESS_KEY \
+  --secret-env HF_TOKEN \
+  --secret-env NEBIUS_TOKEN_FACTORY_KEY
+```
+
+`--resume-run` alone only replays already-succeeded waves from the ledger; a
+wave that reached a genuine terminal `FAILED` status is preserved as-is and
+*not* resubmitted, even after the root cause is fixed (accepting a missing
+gated-model license, for example). Add `--retries 1` to authorize one new
+attempt at that specific wave:
+
+```bash
+npa/.venv/bin/npa workbench workflow submit "${SPEC}" \
+  --project "${NPA_PROJECT}" --infra "k8s/${NPA_CLUSTER}" \
+  --runtime --resume-run "${RUN_ID}" --retries 1 --max-wait-seconds 0 \
   <the same --var and --secret-env arguments>
 ```
 

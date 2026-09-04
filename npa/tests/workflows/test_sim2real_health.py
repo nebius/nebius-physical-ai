@@ -292,32 +292,6 @@ def test_cluster_fails_when_controller_service_account_cannot_patch_jobs() -> No
     assert any("--as=system:serviceaccount:default:agent-sa" in call for call in calls)
 
 
-def test_cluster_fails_when_controller_cannot_observe_kueue_workloads() -> None:
-    calls: list[list[str]] = []
-
-    def runner(args):
-        calls.append(args)
-        if args[:2] == ["config", "current-context"]:
-            return KubeResult(0, "prod-cluster")
-        if args[:4] == ["auth", "can-i", "create", "pods"]:
-            return KubeResult(0, "yes")
-        if args[:4] == ["auth", "can-i", "patch", "jobs.batch"]:
-            return KubeResult(0, "yes")
-        if args[:4] == [
-            "auth",
-            "can-i",
-            "list",
-            "workloads.kueue.x-k8s.io",
-        ]:
-            return KubeResult(0, "no")
-        return KubeResult(1, "", "unexpected")
-
-    result = check_cluster(_config(), probes=DoctorProbes(kube_runner=runner))
-    assert result.status == health.FAIL
-    assert "cannot list Kueue Workloads" in result.summary
-    assert any("--as=system:serviceaccount:default:agent-sa" in call for call in calls)
-
-
 @pytest.mark.parametrize(
     ("pvc_payload", "expected"),
     [

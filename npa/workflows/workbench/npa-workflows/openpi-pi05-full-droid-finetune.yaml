@@ -1,0 +1,155 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+metadata:
+  name: openpi-pi05-full-droid-finetune
+  description: >
+    Run Physical Intelligence's pinned full-DROID pi0.5 recipe to completion
+    across exactly eight RTX PRO 6000 Blackwell GPUs, one GPU per node. Dataset,
+    base weights, normalization statistics, and checkpoints remain runtime-only.
+
+config:
+  bucket: example-bucket
+  prefix: "openpi/pi05-full-droid/{{run.id}}"
+  runtime_image: "registry.example.invalid/operator/openpi@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+
+  gpu_type: RTXPRO6000
+  gpu_count: "1"
+  gpu_cpus: "20"
+  gpu_memory: 180Gi
+  gpu_disk_size: "100"
+  gpu_num_nodes: "8"
+  multi_host_enabled: "true"
+  # Zero preserves the upstream 100,000-update recipe. An operator may set
+  # exactly 1000 for a resumable, checkpointed validation pause; a later run
+  # with zero and the same run id/PVC resumes toward the original target.
+  pause_after_updates: "0"
+  prepare_cpus: "16"
+  # Normalization is CPU-only but retains a bounded decoded-frame shuffle
+  # buffer; reserve headroom so Kubernetes does not evict factual preparation.
+  prepare_memory: 128Gi
+  prepare_disk_size: "100"
+  prepare_num_nodes: "1"
+
+  # A run-owned ReadWriteMany claim is required: DROID 1.0.1 is about 1.8 TB,
+  # all eight workers need the same files, and checkpoint resume must survive a
+  # replacement workload pod.
+  durable_pvc: openpi-full-droid-rwx
+  work_root: /workspace/openpi-full-droid
+  data_root: /workspace/openpi-full-droid/dataset
+
+  run_root_uri: "s3://{{config.bucket}}/{{config.prefix}}/"
+  prepare_uri: "{{config.run_root_uri}}reports/full-droid-prepare.json"
+  prepare_rrd_uri: "{{config.run_root_uri}}reports/rrd/preparation.rrd"
+  prepare_rrd_manifest_uri: "{{config.run_root_uri}}reports/rrd/preparation.manifest.json"
+  qualification_uri: "{{config.run_root_uri}}reports/full-droid-qualification.json"
+  qualification_checkpoint_uri: "{{config.run_root_uri}}checkpoints/qualification"
+  qualification_telemetry_uri: "{{config.run_root_uri}}reports/qualification-telemetry.jsonl"
+  trained_checkpoint_uri: "{{config.run_root_uri}}checkpoints/full-droid"
+  training_uri: "{{config.run_root_uri}}reports/full-droid-finetune.json"
+  telemetry_uri: "{{config.run_root_uri}}reports/full-droid-telemetry.jsonl"
+  rrd_root_uri: "{{config.run_root_uri}}reports/rrd"
+
+resources:
+  prepare:
+    cloud: kubernetes
+    cpus: "{{config.prepare_cpus}}"
+    memory: "{{config.prepare_memory}}"
+    disk_size: "{{config.prepare_disk_size}}"
+    num_nodes: "{{config.prepare_num_nodes}}"
+    image: "{{config.runtime_image}}"
+    kubernetes:
+      pod_config:
+        spec:
+          containers:
+            - name: ray-node
+              volumeMounts:
+                - name: full-droid
+                  mountPath: /workspace/openpi-full-droid
+          volumes:
+            - name: full-droid
+              persistentVolumeClaim:
+                claimName: "{{config.durable_pvc}}"
+  rtxpro8:
+    cloud: kubernetes
+    accelerators: "{{config.gpu_type}}:{{config.gpu_count}}"
+    cpus: "{{config.gpu_cpus}}"
+    memory: "{{config.gpu_memory}}"
+    disk_size: "{{config.gpu_disk_size}}"
+    num_nodes: "{{config.gpu_num_nodes}}"
+    image: "{{config.runtime_image}}"
+    kubernetes:
+      pod_config:
+        spec:
+          containers:
+            - name: ray-node
+              volumeMounts:
+                - name: full-droid
+                  mountPath: /workspace/openpi-full-droid
+          volumes:
+            - name: full-droid
+              persistentVolumeClaim:
+                claimName: "{{config.durable_pvc}}"
+
+initial: prepare_full_droid
+
+states:
+  prepare_full_droid:
+    description: >
+      Checksum-sync public DROID RLDS 1.0.1 to durable shared storage and
+      compute normalization statistics over the upstream-prescribed ten
+      million frames before allocating the training GPUs.
+    toolRef: workbench.openpi.full_droid_prepare
+    resources: prepare
+    outputs:
+      - uri: "{{config.prepare_uri}}"
+        schema: npa.workbench.openpi.pi05-full-droid-prepare.v1
+      - uri: "{{config.prepare_rrd_uri}}"
+        schema: application/vnd.rerun.rrd
+      - uri: "{{config.prepare_rrd_manifest_uri}}"
+        schema: npa.workbench.openpi.pi05-full-droid-rerun-milestone.v1
+    next: qualify_full_droid
+  qualify_full_droid:
+    description: >
+      Run a fixed 100-step optimizer gate on the same eight-process sharded
+      topology. Its journal, checkpoint, and RRD are isolated from full training.
+    toolRef: workbench.openpi.full_droid_qualification
+    resources: rtxpro8
+    outputs:
+      - uri: "{{config.qualification_checkpoint_uri}}/manifest.json"
+        schema: npa.workbench.openpi.checkpoint-manifest.v1
+      - uri: "{{config.qualification_uri}}"
+        schema: npa.workbench.openpi.pi05-full-droid-qualification.v1
+      - uri: "{{config.qualification_telemetry_uri}}"
+        schema: npa.workbench.openpi.pi05-full-droid-telemetry.v1
+      - uri: "{{config.rrd_root_uri}}/qualification-step-000100.rrd"
+        schema: application/vnd.rerun.rrd
+      - uri: "{{config.rrd_root_uri}}/qualification-step-000100.manifest.json"
+        schema: npa.workbench.openpi.pi05-full-droid-rerun-milestone.v1
+    next: full_droid_finetune
+  full_droid_finetune:
+    description: >
+      Invoke pinned scripts/train.py for 100,000 global-batch-256 steps on an
+      eight-process, one-GPU-per-node JAX mesh. Each process consumes a
+      disjoint pre-shuffle RLDS shard with local batch 32; durable checkpoints
+      make an identical resume safe. The default completes all 100,000 updates;
+      an explicit 1,000-update operator pause emits only the declared run-overlay
+      outputs through that checkpoint and must not be reported as convergence.
+    toolRef: workbench.openpi.full_droid_finetune
+    resources: rtxpro8
+    outputs:
+      - uri: "{{config.trained_checkpoint_uri}}/manifest.json"
+        schema: npa.workbench.openpi.checkpoint-manifest.v1
+      - uri: "{{config.training_uri}}"
+        schema: npa.workbench.openpi.pi05-full-droid-finetune.v1
+      - uri: "{{config.telemetry_uri}}"
+        schema: npa.workbench.openpi.pi05-full-droid-telemetry.v1
+      - uri: "{{config.rrd_root_uri}}/progress-step-000500.rrd"
+        schema: application/vnd.rerun.rrd
+      - uri: "{{config.rrd_root_uri}}/progress-step-000500.manifest.json"
+        schema: npa.workbench.openpi.pi05-full-droid-rerun-milestone.v1
+      - uri: "{{config.rrd_root_uri}}/progress-step-001000.rrd"
+        schema: application/vnd.rerun.rrd
+      - uri: "{{config.rrd_root_uri}}/progress-step-001000.manifest.json"
+        schema: npa.workbench.openpi.pi05-full-droid-rerun-milestone.v1
+    terminal: true

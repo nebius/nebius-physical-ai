@@ -247,7 +247,7 @@ WORKBENCH_ASSETS: tuple[GatedAsset, ...] = (
     GatedAsset(
         "nvidia/Cosmos-Guardrail1",
         HF,
-        ("cosmos3", "paidf", "paidf-dig"),
+        ("cosmos3", "paidf", "paidf-dig", "sim2real"),
         True,
         revision="d6d4bfa899a71454a700907664f3e88f503950cf",
         probe_path="video_content_safety_filter/safety_filter.pt",
@@ -307,6 +307,16 @@ WORKBENCH_ASSETS: tuple[GatedAsset, ...] = (
         revision="0c351dd01ed87e9c1b53cbc748cba10e6187ff3b",
         probe_path="tokenizer.json",
         official_url="https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct",
+    ),
+    GatedAsset(
+        "nvidia/Cosmos-Predict2.5-2B",
+        HF,
+        ("sim2real",),
+        True,
+        revision="85f8ae7bfe8f5525c8d103429524dcf12f98bf7b",
+        probe_path="tokenizer.pth",
+        official_url="https://huggingface.co/nvidia/Cosmos-Predict2.5-2B",
+        terms_revision="huggingface-gated-repository-current",
     ),
     GatedAsset(
         "nvidia/Cosmos-1.0-Guardrail",

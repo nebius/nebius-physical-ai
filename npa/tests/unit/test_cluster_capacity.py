@@ -72,6 +72,7 @@ def _capture(quota: str, advice: str = ""):
 def test_gpu_quota_name_maps_the_platform() -> None:
     assert capacity.gpu_quota_name("gpu-rtx6000") == "compute.instance.gpu.rtx6000"
     assert capacity.gpu_quota_name("gpu-h100-sxm") == "compute.instance.gpu.h100"
+    assert capacity.gpu_quota_name("gpu-b200-sxm-a") == "compute.instance.gpu.b200"
     assert capacity.gpu_quota_name("gpu-l40s-pcie") == "compute.instance.gpu.l40s"
     assert capacity.gpu_quota_name("cpu-d3") == ""
     assert capacity.gpu_quota_name("") == ""

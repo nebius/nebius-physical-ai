@@ -94,6 +94,20 @@ def test_paidf_access_covers_translation_models_and_transfer_checkpoints() -> No
     assert by_repo["nvidia/Cosmos-Guardrail1"].gated
 
 
+def test_sim2real_access_includes_cosmos_transfer_runtime_dependencies() -> None:
+    assets = {asset.repo: asset for asset in assets_for(["sim2real"])}
+
+    guardrail = assets["nvidia/Cosmos-Guardrail1"]
+    assert guardrail.revision == "d6d4bfa899a71454a700907664f3e88f503950cf"
+    assert guardrail.probe_path == "video_content_safety_filter/safety_filter.pt"
+
+    tokenizer = assets["nvidia/Cosmos-Predict2.5-2B"]
+    assert tokenizer.revision == "85f8ae7bfe8f5525c8d103429524dcf12f98bf7b"
+    assert tokenizer.probe_path == "tokenizer.pth"
+
+    assert guardrail.gated and tokenizer.gated
+
+
 def test_hf_gated_warns_without_token() -> None:
     result = check_hf_asset(_gated_asset(), "", hf_validator=None)
     assert result.status == WARN

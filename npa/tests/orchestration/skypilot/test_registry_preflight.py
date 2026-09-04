@@ -108,6 +108,16 @@ def test_parse_splits_registry_repository_and_tag() -> None:
     assert reference.pull_scope == f"repository:{REPOSITORY}:pull"
 
 
+def test_docker_hub_uses_distinct_registry_api_host() -> None:
+    reference = parse_image_reference("docker.io/vllm/vllm-omni:cosmos3")
+
+    assert reference.registry == "docker.io"
+    assert reference.api_registry == "registry-1.docker.io"
+    assert reference.manifest_url == (
+        "https://registry-1.docker.io/v2/vllm/vllm-omni/manifests/cosmos3"
+    )
+
+
 def test_parse_handles_a_docker_prefix_and_a_digest() -> None:
     reference = parse_image_reference(f"docker:{REGISTRY}/{REPOSITORY}@sha256:abc123")
 

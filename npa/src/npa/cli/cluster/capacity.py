@@ -19,11 +19,6 @@ from __future__ import annotations
 import json
 from typing import Any, Callable, Iterable
 
-#: Platform prefix stripped to build the quota name: platform ``gpu-rtx6000``
-#: maps to quota ``compute.instance.gpu.rtx6000``. Suffixes that name a form
-#: factor rather than the GPU model are dropped, since the quota counts GPUs.
-_PLATFORM_SUFFIXES = ("-sxm", "-pcie", "-nvl")
-
 CaptureFn = Callable[[list[str]], Any]
 
 
@@ -32,11 +27,11 @@ def gpu_quota_name(platform: str) -> str:
     value = str(platform or "").strip().lower()
     if not value.startswith("gpu-"):
         return ""
-    model = value[len("gpu-") :]
-    for suffix in _PLATFORM_SUFFIXES:
-        if model.endswith(suffix):
-            model = model[: -len(suffix)]
-            break
+    # Platform suffixes encode form factor and sometimes an availability-zone
+    # variant (for example ``gpu-b200-sxm-a``). Quotas are keyed only by the
+    # accelerator family, so use the first component after ``gpu-`` just as the
+    # fleet preflight does.
+    model = value[len("gpu-") :].split("-", 1)[0]
     return f"compute.instance.gpu.{model}" if model else ""
 
 

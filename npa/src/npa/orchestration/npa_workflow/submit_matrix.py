@@ -276,6 +276,51 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         ),
     ),
     SubmitLiveCase(
+        "cosmos3-super-b200-benchmark.yaml",
+        "gpu",
+        secret_envs=(
+            "HF_TOKEN",
+            "NPA_COSMOS3_ACCEPT_NVIDIA_SOFTWARE_LICENSE",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+        ),
+        notes=(
+            "Real full-node 8xB200 primary sweep in the immutable public vLLM-Omni "
+            "image: 1x8, 2x4, 4x2, and 8x1 services, 24 validated requests per "
+            "arrangement, and durable MP4/timing/hash evidence."
+        ),
+    ),
+    SubmitLiveCase(
+        "cosmos3-super-h200-benchmark.yaml",
+        "gpu",
+        secret_envs=(
+            "HF_TOKEN",
+            "NPA_COSMOS3_ACCEPT_NVIDIA_SOFTWARE_LICENSE",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+        ),
+        notes=(
+            "Real full-node 8xH200 primary sweep in the same immutable vLLM-Omni "
+            "image: 1x8, 2x4, 4x2, and 8x1 services, 24 validated requests per "
+            "arrangement, and durable MP4/timing/hash evidence."
+        ),
+    ),
+    SubmitLiveCase(
+        "cosmos3-super-h200-single-gpu.yaml",
+        "gpu",
+        secret_envs=(
+            "HF_TOKEN",
+            "NPA_COSMOS3_ACCEPT_NVIDIA_SOFTWARE_LICENSE",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+        ),
+        notes=(
+            "Real isolated one-H200 TP-1 validation in the immutable vLLM-Omni "
+            "image: one strict warmup followed by 24 sequential validated requests. "
+            "This is not the paper's eight-replica 8x1 node cell."
+        ),
+    ),
+    SubmitLiveCase(
         "cosmos3-ray-batch.yaml",
         "cpu",
         secret_envs=(
@@ -901,12 +946,42 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         notes="BYOF onboarding flow; covered by test_byof_onboarding_live_e2e.py.",
     ),
     SubmitLiveCase(
+        "robocasa-smoke.yaml",
+        "gpu",
+        plan_only=True,
+        plan_only_justification="npa-robocasa is a validation candidate; its image is not yet built or GPU-validated, so the native RoboCasa smoke cannot submit until the accepted digest and GPU evidence are recorded",
+        notes="Native RoboCasa workbench smoke: task registration, asset availability, EGL reset, random rollout.",
+    ),
+    SubmitLiveCase(
+        "robocasa-data-policy.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        notes="Production PandaOmron RoboCasa data->policy pipeline: multi-task trajectory export, LeRobotDataset materialization, real ACT training, disjoint RoboCasa exact-checkpoint evaluation, insights lineage.",
+    ),
+    SubmitLiveCase(
         "byof-openpi.yaml",
         "multi",
         secret_envs=("NPA_OPENPI_ACCEPT_GEMMA_TERMS",),
         plan_only=True,
         plan_only_justification="delegated BYOF execution is covered by its dedicated live onboarding tier",
         notes="OpenPI Polaris B200 inference; covered by test_byof_openpi_polaris_live_e2e.py.",
+    ),
+    SubmitLiveCase(
+        "openpi-pi05-full-droid-finetune.yaml",
+        "multi",
+        secret_envs=(
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "NPA_OPENPI_ACCEPT_GEMMA_TERMS",
+        ),
+        plan_only=True,
+        plan_only_justification=(
+            "the upstream 1.8-TB 100,000-step production recipe runs only in its dedicated live qualification"
+        ),
+        notes=(
+            "Exactly eight RTX PRO 6000 GPUs across eight one-GPU nodes, FSDP=8, batch 256, "
+            "DROID RLDS 1.0.1, and 100,000 upstream steps."
+        ),
     ),
     SubmitLiveCase(
         "openpi-pi05-four-mode.yaml",

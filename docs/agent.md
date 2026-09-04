@@ -1,8 +1,9 @@
 # The self-hosted `npa` agent
 
 `npa agent` deploys a **browser workbench VM** into one of your Nebius projects:
-an HTTPS UI behind basic-auth login, grounded chat over Nebius Token Factory
-(default `nvidia/Cosmos3-Super-Reasoner`), Sim Assets and Cameras panels, an
+an HTTPS UI behind basic-auth login, grounded chat with a Nebius Token Factory
+default (`nvidia/Cosmos3-Super-Reasoner`) or an explicitly configured
+OpenAI-compatible provider, Sim Assets and Cameras panels, an
 embedded [Rerun](https://www.rerun.io) viewer for `.rrd` recordings, and
 draft/validate/plan/submit endpoints for `npa.workflow/v0.0.1` specs.
 
@@ -11,7 +12,7 @@ go to look at what they produced.
 
 | | |
 | --- | --- |
-| **Prerequisites** | Everything in [the quickstart](quickstart.md), plus Terraform 1.x, an SSH key pair, a Token Factory key, and writable S3 |
+| **Prerequisites** | Everything in [the quickstart](quickstart.md), plus Terraform 1.x, an SSH key pair, writable S3, and either a Token Factory key or an owner-only custom-provider config |
 | **Typical deploy time** | ~20 minutes |
 | **Teardown** | `npa agent destroy` — see [Tear it all down](teardown.md) |
 | **Operator runbooks** | [npa-agent skill](../skills/tools/npa-agent/SKILL.md) · [fresh-operate loop](../skills/workflows/agent-fresh-operate/SKILL.md) |
@@ -52,6 +53,67 @@ npa agent fresh-setup --project <alias> \
 `fresh-setup` provisions the VM with Terraform. `npa agent bootstrap` refreshes
 only the UI/backend/nginx layer on an existing VM, without touching infra.
 
+For one custom OpenAI-compatible provider, keep its settings outside the
+checkout in a mode-`0600` JSON file. The API key stays in a separate mode-`0600`
+file and is never passed on the command line:
+
+```json
+{
+  "provider": "custom",
+  "base_url": "https://models.example/v1",
+  "api_key_file": "/owner/private/provider.key",
+  "model": "provider/model",
+  "models": ["provider/model"],
+  "timeout_seconds": 180,
+  "max_concurrency": 8
+}
+```
+
+Pass only the config path to `fresh-setup`, `deploy`, or `bootstrap` with
+`--llm-config-file <owner-only-json>`. NPA reads the key locally, transfers the
+runtime environment through the private SFTP staging path, and installs it as
+`/opt/npa-agent/llm.env` with mode `0600`; no provider secret enters Terraform,
+cloud-init, a recovery command, or a shell argument. Custom-provider timeouts
+must be at least 180 seconds and concurrency is bounded to eight. The owner-only
+agent record retains the config-file path and non-secret settings so later
+bootstraps reproduce the same provider, while systemd reloads the staged
+environment after service restart or VM reboot.
+
+When the agent's read-only identity can access a known artifact bucket but
+cannot enumerate every project or bucket in the tenant, configure that exact
+source as an owner default. Create a mode-`0600` JSON file outside the checkout:
+
+```json
+[
+  {
+    "project_id": "<artifact-project-id>",
+    "bucket": "<artifact-bucket>",
+    "resolved_prefix": "<directory-above-run-id>"
+  }
+]
+```
+
+Then refresh the existing agent with
+`npa agent bootstrap --project <alias> --name <agent-name>
+--artifact-source-file <owner-only-json>`. Bootstrap persists the tuple in the
+owner-only NPA configuration and stages it in the service environment, so an
+ordinary exact run-id search continues to use the source after a restart. The
+tuple grants no access: the backend still verifies live S3 list/read capability,
+and exact searches do not fall through to broader tenant discovery. Later
+bootstraps reuse the persisted source without requiring the file again.
+Passing a new source file explicitly replaces the saved default after a
+successful bootstrap.
+
+The `whole_path_capacity` check first reads the tenant quota aggregate. A
+project-scoped administrator may be forbidden from that tenant-wide read even
+though they can manage the deployment project. In that specific case, preflight
+checks the project's quota allowances instead and reports `WARN`, not `FAIL`.
+Finite project limits still block with exact required/used/limit/shortfall
+diagnostics. Other quota-read, identity, configuration, and capacity failures
+remain fail-closed. Because project allowances cannot prove remaining capacity
+in the unreadable tenant aggregate, the provider may still reject the apply; the
+warning says to have a tenant administrator inspect the named quota if that
+happens.
 ## Sign in to the UI
 
 The machine that runs `npa agent setup`, `deploy`, or `fresh-setup` stores the

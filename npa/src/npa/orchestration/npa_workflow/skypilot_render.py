@@ -89,6 +89,12 @@ SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
     # This entry explicitly disables the parent Cosmos3 hint: the public Nano
     # checkpoint is downloaded anonymously and this toolRef passes --no-guardrails.
     "workbench.cosmos3.text_to_image": (),
+    "workbench.cosmos3.super_benchmark": (
+        "HF_TOKEN",
+        "NPA_COSMOS3_ACCEPT_NVIDIA_SOFTWARE_LICENSE",
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+    ),
     "workbench.cosmos3": ("HF_TOKEN",),
     # Cosmos-Transfer2.5 downloads its guardrail checkpoints from a gated Hugging Face repo
     # before it will generate anything. Live job 286 got all the way into examples/inference.py
@@ -1331,9 +1337,25 @@ def default_npa_setup() -> str:
         "        break\n"
         "    token = resp.get('NextContinuationToken')\n"
         "PY\n"
+        # Put the source tree first before attempting the editable install. A secure
+        # non-root workbench image may intentionally make /opt/venv/bin/npa
+        # immutable; the source-only overlay remains sufficient and reviewable.
+        '  if [ -n "$PYTHONPATH" ]; then\n'
+        '    PYTHONPATH="/tmp/npa-src-overlay/src:$PYTHONPATH"\n'
+        "  else\n"
+        "    PYTHONPATH=/tmp/npa-src-overlay/src\n"
+        "  fi\n"
+        "  export PYTHONPATH\n"
         # --no-deps FIRST: the overlay is the same distribution the image already has, so
         # resolving its requirements would only risk moving a pinned vendor stack.
-        "  npa_pip_install -e /tmp/npa-src-overlay --no-deps\n"
+        "  if ! npa_pip_install -e /tmp/npa-src-overlay --no-deps; then\n"
+        "    echo 'using isolated non-root npa overlay environment' >&2\n"
+        "    python3 -m venv --system-site-packages /tmp/npa-overlay-venv\n"
+        "    /tmp/npa-overlay-venv/bin/python -m pip install -q -e "
+        "/tmp/npa-src-overlay --no-deps\n"
+        '    PATH="/tmp/npa-overlay-venv/bin:$PATH"\n'
+        "    export PATH\n"
+        "  fi\n"
         # ... and WITH deps if the CLI still will not import. An image that installed npa with
         # its own curated `--no-deps` list leaves the overlay short of whatever that list
         # omitted: live job 309 died on `No module named 'paramiko'` after a clean overlay of a
@@ -1347,15 +1369,6 @@ def default_npa_setup() -> str:
         "  fi\n"
         # The overlay is the freshest tree, so it is the one worth putting on the import path.
         "  npa_record_src_root /tmp/npa-src-overlay\n"
-        # Same reason as the stage preamble: the install alone is not enough to
-        # displace a baked npa, so make the overlay explicit for the rest of setup too
-        # (the interpreter recorded below is checked with `import npa`).
-        '  if [ -n "$PYTHONPATH" ]; then\n'
-        '    PYTHONPATH="/tmp/npa-src-overlay/src:$PYTHONPATH"\n'
-        "  else\n"
-        "    PYTHONPATH=/tmp/npa-src-overlay/src\n"
-        "  fi\n"
-        "  export PYTHONPATH\n"
         "fi\n"
         # Record the interpreter that can actually import npa, i.e. the one pip just
         # installed into (it has npa AND its dependencies). Stage bodies use it via a
@@ -1991,6 +2004,14 @@ def build_skypilot_task_doc(
         # This renderer/planner value is authoritative.  SkyPilot's runtime
         # variables are independent evidence and the worker cross-checks them.
         envs["NPA_COSMOS_NODE_COUNT"] = str(num_nodes)
+    if (
+        str(scheduler_task.get("tool_ref") or "")
+        == "workbench.openpi.full_droid_prepare"
+    ):
+        # The image carries CUDA JAX for later GPU stages, but preparation is a
+        # CPU-only pod. Set this before the CLI imports JAX plugins; doing it in
+        # the prepare handler is too late once the command tree is imported.
+        envs["JAX_PLATFORMS"] = "cpu"
     if num_nodes > 1:
         doc["num_nodes"] = num_nodes
     task_config = normalize_task_config(scheduler_task.get("resources") or {})

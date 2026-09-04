@@ -189,8 +189,6 @@ def coherence_failures(repo_root: Path) -> list[str]:
         "isaac_image",
         "viewer_image",
         "isaac_cache_pvc",
-        "gpu_queue",
-        "gpu_priority_class",
     }
     missing_config = sorted(required_config - set(config))
     if missing_config:
@@ -541,33 +539,6 @@ def check_cluster(config: Sim2RealLoopConfig, *, probes: DoctorProbes) -> CheckR
                 "and adopts exact-identity Jobs through the Kubernetes API."
             ),
             details=(_short(controller_patch.stderr or controller_patch.stdout),),
-        )
-
-    kueue_observe = runner(
-        [
-            "auth",
-            "can-i",
-            "list",
-            "workloads.kueue.x-k8s.io",
-            f"--as={service_account_user}",
-            "-n",
-            namespace,
-        ]
-    )
-    if kueue_observe.returncode != 0 or kueue_observe.stdout.strip().lower() != "yes":
-        return CheckResult(
-            name="cluster",
-            status=FAIL,
-            summary=(
-                f"Service account {service_account!r} cannot list Kueue Workloads "
-                f"in namespace {namespace!r}."
-            ),
-            remedy=(
-                "Grant the Sim2Real controller Role the 'list' verb on "
-                "kueue.x-k8s.io/workloads. Durable reconciliation must observe "
-                "the generated Workload admission, flavor, and terminal state."
-            ),
-            details=(_short(kueue_observe.stderr or kueue_observe.stdout),),
         )
 
     cache_pvc = config.k8s_isaac_cache_pvc.strip()

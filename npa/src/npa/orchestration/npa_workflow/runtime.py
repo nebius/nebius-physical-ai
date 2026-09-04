@@ -91,6 +91,10 @@ MAX_CONSECUTIVE_STATUS_ERRORS = 5
 #: Exact cancellation is asynchronous at the provider boundary. Poll a finite
 #: number of times so recovery never launches beside a still-live predecessor.
 CANCELLATION_VERIFY_ATTEMPTS = 12
+#: A run may need more than one terminal repair (for example, an artifact-contract
+#: migration followed by an immutable image repair), but unbounded plan drift would
+#: make one run identity meaningless. Every migration remains independently gated.
+MAX_TERMINAL_PLAN_MIGRATIONS = 3
 
 
 def is_terminal_ok(status: str) -> bool:
@@ -209,6 +213,15 @@ class RuntimeOptions:
     #: remains fail closed because an absent scheduler record alone cannot prove an
     #: arbitrary stage has no external side effects.
     retry_absent_in_flight: bool = False
+    #: Explicit operator authorization to replace the current plan fingerprint
+    #: only when every prior attempt failed terminally and produced no output.
+    allow_terminal_plan_migration: bool = False
+    plan_migration_reason: str = ""
+    #: Explicitly adopt an exact in-flight attempt whose scheduler record was
+    #: lost only after the ledger proves it reached RUNNING and every declared
+    #: durable output validates. This is an operator recovery for controller
+    #: loss, never a default inference from job disappearance.
+    adopt_absent_in_flight_outputs: bool = False
     project: str = "default"
     sky_bin: str = ""
     credential_resolver: Callable[[], Mapping[str, str]] | None = field(
@@ -587,6 +600,68 @@ class SkyPilotWaveExecutor:
                     infrastructure_recoveries = int(recovery_record.get("used") or 0)
                 category = str(latest.get("error_category") or "")
                 sky_status = str(latest.get("sky_status") or "").upper()
+                observations = latest.get("observations") or []
+                reached_running = any(
+                    isinstance(item, Mapping)
+                    and (
+                        str(item.get("scheduler_state") or "").upper()
+                        == "RUNNING"
+                        or "RUNNING"
+                        in {
+                            str(value or "").upper()
+                            for value in (item.get("statuses") or {}).values()
+                        }
+                    )
+                    for item in observations
+                )
+                if (
+                    self.options.adopt_absent_in_flight_outputs
+                    and reached_running
+                    and not is_terminal(sky_status)
+                    and bool(latest.get("job_id"))
+                    and bool(latest.get("job_name"))
+                    and bool(latest.get("logical_launch_id"))
+                    and bool(latest.get("outputs"))
+                    and self._outputs_exist(list(latest.get("outputs") or []))
+                ):
+                    evidence = self._reconcile_exact(
+                        str(latest.get("job_name") or ""),
+                        str(latest.get("job_id") or ""),
+                    )
+                    if str(getattr(evidence, "outcome", "") or "") == "absent":
+                        attempt = self._attempt_from_record(
+                            latest, steps=steps, kind=kind, group=group
+                        )
+                        attempt.status = "succeeded"
+                        attempt.sky_status = "SUCCEEDED"
+                        attempt.adopted = True
+                        attempt.replayed = True
+                        attempt.ended_at = attempt.ended_at or utc_now()
+                        attempt.recovery_decision = (
+                            "operator_authorized_absent_output_adoption"
+                        )
+                        attempt.operator_remedy = (
+                            "The exact attempt reached RUNNING, its scheduler "
+                            "record is absent, and every declared durable output "
+                            "validated; reuse it without resubmission."
+                        )
+                        attempt.cancellation_state = "not_applicable"
+                        attempt.reconciliation.append(
+                            {
+                                "outcome": "absent",
+                                "source": "exact_managed_job_reconciliation",
+                                "declared_outputs_valid": True,
+                                "checked_at": utc_now(),
+                            }
+                        )
+                        self.ledger.record(attempt)
+                        self.attempts.append(attempt)
+                        self._log(
+                            f"wave {key}: operator-authorized recovery adopts "
+                            "the output-complete controller-lost attempt after "
+                            "driver interruption; no duplicate will be launched"
+                        )
+                        return attempt
                 # The scheduler can reach SUCCEEDED and publish every declared
                 # artifact before the driver fails while checking/persisting that
                 # evidence.  Resubmitting such a wave would duplicate completed GPU
@@ -904,6 +979,61 @@ class SkyPilotWaveExecutor:
                 self.ledger.record(attempt)
                 return attempt
         elif outcome == "absent":
+            observations = record.get("observations") or []
+            reached_running = any(
+                isinstance(item, Mapping)
+                and (
+                    str(item.get("scheduler_state") or "").upper() == "RUNNING"
+                    or "RUNNING"
+                    in {
+                        str(value or "").upper()
+                        for value in (item.get("statuses") or {}).values()
+                    }
+                )
+                for item in observations
+            )
+            explicit_output_adoption = (
+                self.options.adopt_absent_in_flight_outputs
+                and reached_running
+                and bool(attempt.outputs)
+                and bool(job_id)
+                and bool(job_name)
+                and bool(attempt.logical_launch_id)
+                and not is_terminal(attempt.sky_status)
+            )
+            if explicit_output_adoption:
+                try:
+                    outputs_valid = self._outputs_exist(attempt.outputs)
+                except Exception as exc:  # noqa: BLE001 - storage can be unavailable
+                    attempt.reconciliation_error = sanitize_reason(exc)
+                    outputs_valid = False
+                if outputs_valid:
+                    attempt.status = "succeeded"
+                    attempt.sky_status = "SUCCEEDED"
+                    attempt.ended_at = utc_now()
+                    attempt.recovery_decision = (
+                        "operator_authorized_absent_output_adoption"
+                    )
+                    attempt.operator_remedy = (
+                        "The exact attempt reached RUNNING and every declared "
+                        "durable output validated; reuse it without resubmission."
+                    )
+                    attempt.reconciliation.append(
+                        {
+                            "outcome": "absent",
+                            "source": "exact_managed_job_reconciliation",
+                            "declared_outputs_valid": True,
+                            "checked_at": utc_now(),
+                        }
+                    )
+                    attempt.cancellation_state = "not_applicable"
+                    self.ledger.record(attempt)
+                    self._log(
+                        f"wave {key}: operator-authorized recovery adopts the "
+                        "lost scheduler record after RUNNING and declared-output "
+                        "validation; no duplicate attempt will be launched"
+                    )
+                    return attempt
             automatic_retry = attempt.launch_sequence == 0 or (
                 attempt.error_category
                 in {
@@ -2275,23 +2405,6 @@ def run_workflow_runtime(
             raise NpaWorkflowError(
                 f"could not persist the exact submitted workflow YAML: {exc}"
             ) from exc
-    fingerprint = plan_fingerprint(spec, run_id=run_id, assume_decision=assume_decision)
-    recorded = ledger.state.plan_fingerprint
-    if opts.resume and recorded and recorded != fingerprint:
-        raise NpaWorkflowError(
-            f"refusing to resume run {run_id!r}: the recorded ledger describes a "
-            f"different plan (fingerprint {recorded} != {fingerprint}). Resuming would "
-            "replay wave keys that no longer describe the same work and could submit "
-            "duplicate jobs. Re-run without --resume under a NEW run id, or restore the "
-            "spec/--var values the run started with."
-        )
-    if recorded != fingerprint:
-        ledger.state.plan_fingerprint = fingerprint
-    ledger.set_status("running")
-
-    recording_reader = RecordingDecisionReader(
-        decision_reader, ledger, assume_decision=assume_decision, logger=log
-    )
     wave_executor = executor or SkyPilotWaveExecutor(
         spec,
         run_id=run_id,
@@ -2299,6 +2412,144 @@ def run_workflow_runtime(
         options=opts,
         ledger=ledger,
         logger=log,
+    )
+    fingerprint = plan_fingerprint(spec, run_id=run_id, assume_decision=assume_decision)
+    recorded = ledger.state.plan_fingerprint
+    if opts.resume and recorded and recorded != fingerprint:
+        if not opts.allow_terminal_plan_migration:
+            raise NpaWorkflowError(
+                f"refusing to resume run {run_id!r}: the recorded ledger describes a "
+                f"different plan (fingerprint {recorded} != {fingerprint}). Resuming "
+                "would replay wave keys that no longer describe the same work and "
+                "could submit duplicate jobs. Restore the original plan, or use the "
+                "explicit terminal plan-migration authorization after verifying the "
+                "prior run produced no successful wave or durable output."
+            )
+        reason = opts.plan_migration_reason.strip()
+        if (
+            not reason
+            or len(reason) > 120
+            or any(
+                char
+                not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ._/-"
+                for char in reason
+            )
+        ):
+            raise NpaWorkflowError(
+                "terminal plan migration requires a non-empty, single-line, "
+                "non-sensitive --plan-migration-reason of at most 120 safe characters"
+            )
+        migrations = ledger.state.plan_migrations
+        if len(migrations) >= MAX_TERMINAL_PLAN_MIGRATIONS:
+            raise NpaWorkflowError(
+                "terminal plan migration limit reached for this run"
+            )
+        seen_fingerprints: set[str] = set()
+        expected_old = ""
+        for index, migration in enumerate(migrations, 1):
+            old = str(migration.get("old_plan_fingerprint") or "")
+            new = str(migration.get("new_plan_fingerprint") or "")
+            if not old or not new or (expected_old and old != expected_old):
+                raise NpaWorkflowError(
+                    "terminal plan migration history is not a contiguous "
+                    "append-only chain"
+                )
+            if not seen_fingerprints:
+                seen_fingerprints.add(old)
+            if old not in seen_fingerprints or new in seen_fingerprints:
+                raise NpaWorkflowError(
+                    "terminal plan migration history contains a fingerprint cycle"
+                )
+            if migration.get("migration_index", index) != index:
+                raise NpaWorkflowError(
+                    "terminal plan migration history has a non-contiguous index"
+                )
+            seen_fingerprints.add(new)
+            expected_old = new
+        if migrations and expected_old != recorded:
+            raise NpaWorkflowError(
+                "terminal plan migration history does not match the ledger head"
+            )
+        if fingerprint in seen_fingerprints:
+            raise NpaWorkflowError(
+                "terminal plan migration cannot revisit a prior fingerprint"
+            )
+        if not ledger.state.waves:
+            raise NpaWorkflowError(
+                "terminal plan migration requires at least one preserved prior attempt"
+            )
+        nonterminal = [
+            wave
+            for wave in ledger.state.waves
+            if str(wave.get("status") or "").lower() != "failed"
+            or not is_terminal_fail(str(wave.get("sky_status") or ""))
+        ]
+        if nonterminal:
+            raise NpaWorkflowError(
+                "terminal plan migration requires every prior attempt to be a "
+                "scheduler-verified terminal failure; a running, unknown, or "
+                "successful attempt remains"
+            )
+        for wave in ledger.state.waves:
+            job_id = str(wave.get("job_id") or "").strip()
+            job_name = str(wave.get("job_name") or "").strip()
+            if not job_id:
+                raise NpaWorkflowError(
+                    "terminal plan migration requires an exact managed-job identity "
+                    "for every prior attempt"
+                )
+            try:
+                evidence = wave_executor._reconcile_exact(job_name, job_id)
+            except Exception as exc:  # noqa: BLE001 - fail closed on live ambiguity
+                raise NpaWorkflowError(
+                    "terminal plan migration could not live-verify a prior managed "
+                    f"job: {sanitize_reason(exc)}"
+                ) from exc
+            outcome = str(getattr(evidence, "outcome", "") or "").lower()
+            observed = str(getattr(evidence, "status", "") or "").upper()
+            if outcome != "absent" and not (
+                outcome == "found" and is_terminal_fail(observed)
+            ):
+                raise NpaWorkflowError(
+                    "terminal plan migration requires every exact prior managed job "
+                    "to be verified absent or remain terminal-failed; observed "
+                    f"{outcome or 'unknown'}/{observed or 'UNKNOWN'}"
+                )
+        prior_outputs = sorted(
+            {
+                uri
+                for wave in ledger.state.waves
+                for output in wave.get("outputs") or []
+                if (uri := _declared_output_uri(output))
+            }
+        )
+        present_outputs = [uri for uri in prior_outputs if s3_artifact_exists(uri)]
+        if present_outputs:
+            raise NpaWorkflowError(
+                "terminal plan migration refused because a prior declared output exists"
+            )
+        migration = {
+            "migration_index": len(migrations) + 1,
+            "old_plan_fingerprint": recorded,
+            "new_plan_fingerprint": fingerprint,
+            "reason": reason,
+            "recorded_at": utc_now(),
+            "prior_attempt_count": len(ledger.state.waves),
+            "prior_outputs_verified_absent": len(prior_outputs),
+        }
+        ledger.state.plan_migrations.append(migration)
+        ledger.state.plan_fingerprint = fingerprint
+        ledger.flush()
+        log(
+            "authorized terminal plan migration: preserved all prior failed attempts "
+            "and verified their declared outputs absent"
+        )
+    if recorded != fingerprint:
+        ledger.state.plan_fingerprint = fingerprint
+    ledger.set_status("running")
+
+    recording_reader = RecordingDecisionReader(
+        decision_reader, ledger, assume_decision=assume_decision, logger=log
     )
     waiter = trigger_waiter
     if waiter is None and any(state.trigger for state in spec.states.values()):

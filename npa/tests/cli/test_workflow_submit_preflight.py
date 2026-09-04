@@ -439,6 +439,8 @@ def test_sim2real_submit_propagates_explicit_kubernetes_target(
             "k8s/sim2real-review",
             "--var",
             "bucket=real-bucket",
+            "--var",
+            "isaac_cache_pvc=npa-isaac-cache",
         ],
     )
 
@@ -451,10 +453,7 @@ def test_sim2real_submit_propagates_explicit_kubernetes_target(
     namespaced_calls = [
         call[0]
         for call in calls
-        if call[0][:2] in (
-            ["get", "pvc"],
-            ["get", "localqueue.kueue.x-k8s.io"],
-        )
+        if call[0][:2] == ["get", "pvc"]
     ]
     assert namespaced_calls
     assert all(

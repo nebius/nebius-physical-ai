@@ -5,6 +5,8 @@
 ARG NPA_CUDA_BASE=npa-workbench-cuda-base:cuda13.0-torch2.12.1
 FROM ${NPA_CUDA_BASE}
 
+ARG UBUNTU_SNAPSHOT=20260820T000000Z
+
 # The base drops to a non-root user; build steps need root, and the image drops
 # back to the ubuntu user before runtime (below).
 USER root
@@ -15,6 +17,13 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     LANCEDB_PORT=8686
 
 WORKDIR /app
+
+# Insights stages use this image through the standard SkyPilot Kubernetes
+# runtime.  Keep its non-root bootstrap closure identical to the other native
+# workflow images and source OS packages from an immutable Ubuntu snapshot.
+COPY --chmod=0755 docker/workbench/common/install_workflow_runtime_prereqs.sh \
+  /usr/local/bin/install-workflow-runtime-prereqs
+RUN /usr/local/bin/install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}"
 
 # Only the CLIP embedding dependency is unique to this image; the FastAPI +
 # lancedb + pyarrow + pillow + boto3 stack comes from the shared base.
