@@ -56,8 +56,14 @@ def test_image_uses_exact_accepted_framework_parent_and_bakes_no_weights() -> No
     assert "*.safetensors" in text
     assert "NPA_COSMOS3_RAY_GUARDRAILS=true" in text
     assert "ARG COSMOS3_RAY_VERSION=2.52.0" in text
-    assert "ARG LINUX_LIBC_DEV_VERSION=6.8.0-138.138" in text
-    assert '"linux-libc-dev=${LINUX_LIBC_DEV_VERSION}"' in text
+    # Stale linux-libc-dev version pin must not be present (it ages out of
+    # Ubuntu repos). The purge is now conditional: check the package is
+    # installed first, then purge if present.
+    assert "ARG LINUX_LIBC_DEV_VERSION" not in text
+    assert "LINUX_LIBC_DEV_VERSION" not in text
+    assert "linux-libc-dev=" not in text
+    assert "dpkg --purge --force-depends linux-libc-dev" in text
+    assert "dpkg-query -W -f'${Status}' linux-libc-dev" in text
     assert "rm -rf /opt/nvidia/nsight-compute" in text
     assert "uv sync --frozen --inexact" in text
     assert "--extra guardrail --extra serve --group cu130" in text
