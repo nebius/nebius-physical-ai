@@ -6060,6 +6060,7 @@ def test_artifact_source_file_round_trip_survives_service_environment_reload(
 
         def run_or_raise(self, _command, *, label):
             assert label == "stage private /opt/npa-agent/artifact-sources.env"
+            assert "install -m 600" in _command
 
         def run(self, _command):
             return None
@@ -6167,6 +6168,56 @@ def test_cross_project_artifact_source_rejects_mismatched_private_bucket(
             deployment_project_id="project-deployment",
             current=("", "", "", "", "", "service-account"),
         )
+
+
+def test_bootstrap_reuses_persisted_artifact_sources_without_source_file() -> None:
+    source = {
+        "project_id": "project-exact",
+        "bucket": "bucket-exact",
+        "resolved_prefix": "preserved/runs",
+    }
+
+    assert agent_module._resolve_agent_artifact_sources(
+        {"artifact_sources": [source]}
+    ) == (source,)
+
+
+def test_bootstrap_recovery_preserves_owner_artifact_source_file(
+    monkeypatch, tmp_path
+) -> None:
+    monkeypatch.setenv("NPA_OPERATION_JOURNAL_DIR", str(tmp_path / "operations"))
+    monkeypatch.setattr(
+        agent_module,
+        "resolve_environment",
+        lambda _project: SimpleNamespace(
+            project_id="project-exact",
+            tenant_id="tenant-exact",
+            region="test-region",
+        ),
+    )
+    monkeypatch.setattr(agent_module, "_agent_record", lambda *_args: {})
+    source_file = tmp_path / "artifact-sources.json"
+    source_file.write_text("[]", encoding="utf-8")
+    source_file.chmod(0o600)
+
+    result = runner.invoke(
+        app,
+        [
+            "bootstrap",
+            "--project",
+            "test-project",
+            "--name",
+            "test-agent",
+            "--artifact-source-file",
+            str(source_file),
+        ],
+    )
+
+    assert result.exit_code == 1
+    [journal] = (tmp_path / "operations").glob("*/journal.json")
+    resume_argv = json.loads(journal.read_text())["recovery_commands"]["resume_argv"]
+    option = resume_argv.index("--artifact-source-file")
+    assert resume_argv[option + 1] == str(source_file)
 
 
 def test_resolve_project_alias_prefers_the_only_configured_project(monkeypatch) -> None:

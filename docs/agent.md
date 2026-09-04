@@ -74,6 +74,8 @@ ordinary exact run-id search continues to use the source after a restart. The
 tuple grants no access: the backend still verifies live S3 list/read capability,
 and exact searches do not fall through to broader tenant discovery. Later
 bootstraps reuse the persisted source without requiring the file again.
+Passing a new source file explicitly replaces the saved default after a
+successful bootstrap.
 
 The `whole_path_capacity` check first reads the tenant quota aggregate. A
 project-scoped administrator may be forbidden from that tenant-wide read even

@@ -838,6 +838,15 @@ def _resolve_configured_artifact_storage_credentials(
     )
 
 
+def _resolve_agent_artifact_sources(
+    record: dict[str, Any], *, artifact_source_file: str = ""
+) -> tuple[dict[str, str], ...]:
+    """Prefer an explicit owner file, otherwise reuse the durable agent record."""
+    if str(artifact_source_file or "").strip():
+        return _load_agent_artifact_sources_file(artifact_source_file)
+    return normalize_configured_artifact_sources(record.get("artifact_sources") or ())
+
+
 def _write_agent_llm_env(
     ssh: SSHClient,
     *,
@@ -9620,6 +9629,11 @@ def _transactional_agent_command(command: str):
                 ("rerun_port", "--rerun-port", bound.arguments.get("rerun_port")),
                 ("llm_model", "--llm-model", bound.arguments.get("llm_model")),
                 (
+                    "artifact_source_file",
+                    "--artifact-source-file",
+                    bound.arguments.get("artifact_source_file"),
+                ),
+                (
                     "foxglove_embed_src",
                     "--foxglove-embed-src",
                     bound.arguments.get("foxglove_embed_src"),
@@ -10735,12 +10749,8 @@ def bootstrap_cmd(
     if not record:
         _fail(f"Agent config not found for {project}/{name}")
     try:
-        artifact_sources = (
-            _load_agent_artifact_sources_file(artifact_source_file)
-            if str(artifact_source_file or "").strip()
-            else normalize_configured_artifact_sources(
-                record.get("artifact_sources") or ()
-            )
+        artifact_sources = _resolve_agent_artifact_sources(
+            record, artifact_source_file=artifact_source_file
         )
     except ValueError as exc:
         _fail(str(exc))
