@@ -374,7 +374,7 @@ def cleanup_jobs_controller(
         item
         for item in controller_clusters
         if _controller_belongs_to_context(item, identity.context)
-        or _cluster_name(item) in remote_names
+        or _controller_names(item) & remote_names
     ]
     if remote_names and not context_clusters:
         if recover_orphan_controller and attest_no_active_jobs:
@@ -479,6 +479,15 @@ def cleanup_jobs_controller(
         )
         return cleanup
 
+    # A transactional HOME must not derive a new SkyPilot caller identity from
+    # its temporary path. Preserve the selected identity for teardown AND any
+    # queue recheck after SkyPilot's in-progress-job refusal. An empty override
+    # retains SkyPilot's normal cached user_hash from the copied .sky directory.
+    source_env = sky_environment(isolated_config_dir)
+    controller_env = {
+        "KUBECONFIG": str(identity.kubeconfig),
+        "SKYPILOT_USER_ID": source_env.get("SKYPILOT_USER_ID", ""),
+    }
     with _cloned_skypilot_state(isolated_config_dir) as remote_state:
         for controller_cluster in controller_clusters:
             controller_name = _cluster_name(controller_cluster)
@@ -488,7 +497,7 @@ def cleanup_jobs_controller(
                 config_path=config_path,
                 sky_bin=sky_bin,
                 job_drain_timeout=job_drain_timeout,
-                env_extra={"KUBECONFIG": str(identity.kubeconfig)},
+                env_extra=controller_env,
             )
             cleanup.commands.extend(remote_result.commands)
             if remote_result.errors:
@@ -555,7 +564,7 @@ def _controller_pods_for_clusters(
 ) -> list[tuple[str, str, str]]:
     """Keep only remote pods owned by the selected controller metadata rows."""
 
-    target_names = {_cluster_name(item) for item in controller_clusters}
+    target_names = {name for item in controller_clusters for name in _controller_names(item)}
     return [item for item in remote_pods if item[2] in target_names]
 
 
@@ -1058,6 +1067,7 @@ def wait_for_jobs_terminal(
     timeout: int = DEFAULT_JOB_DRAIN_TIMEOUT_SECONDS,
     interval: float = DEFAULT_JOB_DRAIN_INTERVAL_SECONDS,
     sleep: Callable[[float], None] = time.sleep,
+    env_extra: dict[str, str] | None = None,
 ) -> tuple[bool, list[str]]:
     """Block until the given managed jobs are terminal.
 
@@ -1075,6 +1085,7 @@ def wait_for_jobs_terminal(
             isolated_config_dir=isolated_config_dir,
             config_path=config_path,
             sky_bin=sky_bin,
+            env_extra=env_extra,
         )
         still_running = [
             job_id
@@ -1110,11 +1121,13 @@ def _nonterminal_job_ids(
     isolated_config_dir: Path | None,
     config_path: Path | None,
     sky_bin: SkyBin,
+    env_extra: dict[str, str] | None = None,
 ) -> list[str]:
     snapshot = _all_jobs(
         isolated_config_dir=isolated_config_dir,
         config_path=config_path,
         sky_bin=sky_bin,
+        env_extra=env_extra,
     )
     return sorted(
         job_id
@@ -1128,6 +1141,7 @@ def _all_jobs(
     isolated_config_dir: Path | None,
     config_path: Path | None,
     sky_bin: SkyBin,
+    env_extra: dict[str, str] | None = None,
 ) -> JobQueueSnapshot:
     runtime_config = resolve_config(
         sky_bin=sky_bin,
@@ -1148,6 +1162,7 @@ def _all_jobs(
             isolated_config_dir=runtime_config.isolated_config_dir,
             config_path=runtime_config.global_config_path,
             timeout=120,
+            env_extra=env_extra,
         )
     except (OSError, subprocess.SubprocessError) as exc:
         raise JobQueueUnreadableError(
@@ -1306,7 +1321,9 @@ def _jobs_controller_clusters(
     cmd = [str(ensure_skypilot_version(runtime_config.sky_bin)), "status"]
     if refresh:
         cmd.append("--refresh")
-    cmd.extend(["--output", "json"])
+    # SkyPilot 0.12.2's summary JSON omits cluster_name_on_cloud. The verbose
+    # response is needed to match a truncated provider name to its exact pod.
+    cmd.extend(["--verbose", "--output", "json"])
     result = _run(
         cmd,
         isolated_config_dir=runtime_config.isolated_config_dir,
@@ -1336,6 +1353,15 @@ def _jobs_controller_clusters(
 
 def _cluster_name(cluster: dict[str, Any]) -> str:
     return str(cluster.get("name") or cluster.get("cluster") or "")
+
+
+def _controller_names(cluster: dict[str, Any]) -> set[str]:
+    """Exact logical/provider names; only the logical name is a Sky CLI target."""
+    names = {_cluster_name(cluster)}
+    cloud_name = cluster.get("cluster_name_on_cloud")
+    if isinstance(cloud_name, str) and cloud_name.startswith("sky-jobs-controller-"):
+        names.add(cloud_name)
+    return names - {""}
 
 
 def _down_jobs_controller(
@@ -1378,6 +1404,7 @@ def _down_jobs_controller(
                 isolated_config_dir=isolated_config_dir,
                 config_path=config_path,
                 sky_bin=sky_bin,
+                env_extra=env_extra,
             )
             drained, still_running = wait_for_jobs_terminal(
                 pending,
@@ -1385,6 +1412,7 @@ def _down_jobs_controller(
                 config_path=config_path,
                 sky_bin=sky_bin,
                 timeout=job_drain_timeout,
+                env_extra=env_extra,
             )
         except JobQueueUnreadableError as exc:
             cleanup.errors.append(

@@ -199,6 +199,8 @@ def _image_args(case: SubmitLiveCase, registry: str) -> list[str]:
     with `No module named 'lerobot'` (live jobs 245/247).
 
     ``NPA_E2E_IMAGE_OVERRIDE_<TOOL>`` points at a SkyPilot-hostable variant of the same image.
+    Image-owned application runtimes also retain their declared immutable image:
+    clearing it would remove the entire application environment, not just NPA.
     """
 
     from npa.deploy.images import container_image_for_tool
@@ -216,6 +218,12 @@ def _image_args(case: SubmitLiveCase, registry: str) -> list[str]:
         return args
     if case.image_tool:
         return ["--image", image_for(case.image_tool)]
+    from npa.orchestration.npa_workflow.blueprints import resolve_npa_workflow_spec
+    from npa.orchestration.npa_workflow.spec import load_spec, runtime_setup_mode
+
+    path = resolve_npa_workflow_spec(case.spec)
+    if path is not None and runtime_setup_mode(load_spec(path).config) == "image":
+        return []
     if os.environ.get("NPA_E2E_CLEAR_WORKBENCH_IMAGES", "").strip() in {"1", "true", "yes"}:
         return ["--image", "none"]
     return []
