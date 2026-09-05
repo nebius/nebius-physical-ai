@@ -66,7 +66,7 @@ The old `npa-cosmos:1.0.9` cu126 image stopped at Hopper. Its additive cu128/tor
 | `npa-lancedb` | supported | **verified** [26] | **verified** [27] | **verified** [24] | **verified** [25] |
 | `npa-detection-training` | supported | **verified** [29] | **verified** [30] | **verified** [28] | **verified** [31] |
 | `npa-robocasa` | supported (cu124) | supported (cu124) | blocked (needs cu130) | blocked (needs cu130) | blocked (needs cu130) |
-| `npa-cosmos3` | supported | supported | **historical evidence** [59] (r2 measurement; not current r6 evidence) | supported | supported |
+| `npa-cosmos3` | supported | supported | **verified** [accepted records](#accepted-release-evidence) (r6) | supported | supported |
 | `npa-cosmos3-serving` (public zero-payload bootstrap) | blocked (8-GPU memory floor) | historical predecessor only; current digest unverified | unverified (8 GPUs) | **verified** [accepted records](#accepted-release-evidence) (8 GPUs) | unverified (8 GPUs) |
 | `npa-cosmos3-super-benchmark` (operator-private) | blocked (8-GPU benchmark contract) | supported (8 GPUs) | supported (8 GPUs) | **verified** [private benchmark record](#accepted-release-evidence) | supported (8 GPUs) |
 | `npa-cosmos3-ray-serve` | supported | supported | **verified** [66] | **verified** [65] | supported (same-major `sm_100` coverage; not measured) |
@@ -86,8 +86,8 @@ The old `npa-cosmos:1.0.9` cu126 image stopped at Hopper. Its additive cu128/tor
 | `npa-isaac-lab` | supported | supported (headless) | supported | blocked | blocked |
 | `npa-leisaac` | not routed or validated by the current launcher | blocked (no RT cores) | supported (current hard-selected target) | blocked (no RT cores) | blocked (no RT cores) |
 | `npa-sonic` | supported | supported (headless) | supported | blocked | blocked |
-| `npa-sonic-mujoco` | unverified | unverified (headless) | supported | **verified** [accepted records](#accepted-release-evidence) | unverified |
-| `npa-groot` | supported | supported | supported | blocked | blocked |
+| `npa-sonic-mujoco` | unverified | unverified (headless) | **verified** [accepted records](#accepted-release-evidence) | **verified** [accepted records](#accepted-release-evidence) | unverified |
+| `npa-groot` | supported | supported | **verified** [accepted records](#accepted-release-evidence) (inference) | unverified | unverified |
 | `npa-cosmos-curate` | CPU | CPU | CPU | CPU | CPU |
 | `npa-cosmos-evaluator` | CPU | CPU | CPU | CPU | CPU |
 | `npa-sim2real-control` | CPU | CPU | CPU | CPU | CPU |
@@ -211,15 +211,27 @@ Other dated measurements above remain tied to the tags they actually ran.
 
 | Image and accepted digest | Hardware | Recorded capability result | Source of evidence |
 | --- | --- | --- | --- |
+| `npa-cosmos3:1.2.2-cu130-r6`, `sha256:0eb459769eba9942b5b9004c4df68721f2c3e5490a6614e85ced67e8a6f9cd5d` | one RTX PRO 6000 | 2026-09-01 guarded Cosmos3-Nano text-to-image generation; 50 UniPC steps, 960×960 JPEG, 180,732 bytes | `npa/docker/workbench/blackwell-dc-images.json` |
+| `npa-groot:0.1.0`, `sha256:47fd6b727f249fbdb0ec237dc748c8bdc7cbf38474dc12c1cffe82f17fdde37b` | one RTX PRO 6000 | 2026-09-01 GR00T-N1.7-3B eager inference on the DROID sample; 24 steps, 0.204 s/step, 3/3 checks | `npa/docker/workbench/blackwell-dc-images.json` |
 | `npa-ltx2:2.5-rtfetch-20260817`, `sha256:c04b5b4e4c7f1c26e21671b3826ce8da75755c98bab2c54cd46137c609c2410b` | one RTX PRO 6000 | text-to-video and independent H.264 decode; 1536×1024, 121 frames, 1,994,625 bytes | `npa/src/npa/deploy/ltx2_image_manifest.json` |
 | `npa-wan2-2:2.2-ti2v5b-rtfetch-cu130-20260817`, `sha256:5780959ca6c6e7eb77ee7ea7d005fcf0f56db50783ce798dddee2809185eb837` | one RTX PRO 6000 | Torch 2.13.0/CUDA 13.0 native TI2V-5B; 1280×704, 17 decoded frames, 2,807,385 bytes; current distributed generation not claimed | `npa/src/npa/deploy/wan2_2_image_manifest.json` |
 | `npa-sonic-mujoco:0.2.0-runtime`, `sha256:2388d9e97269afaa414966e83a27f676a3f44d4271e9828c57bc13fbdce80f57` | B200 | real Unitree G1 MuJoCo rollout; 64 finite steps, fall rate 0 | `npa/src/npa/deploy/sonic_image_manifest.json` |
+| `npa-sonic-mujoco:0.2.0-runtime`, same accepted digest above | one RTX PRO 6000 | 2026-08-31 real G1 MuJoCo physics rollout with a minimal checkpoint and finite metrics; this verifies the evaluation path, not a trained policy’s performance | `npa/docker/workbench/blackwell-dc-images.json` |
 | `npa-cosmos3-serving:0.2.0-oss`, `sha256:3342bbe44bd1c00ebf05ab4c9d7286058a94bb5ce90b49b164b23604d3acf180` | eight B200s | guarded service boot, readiness, real video inference and H.264 decode | `npa/docker/workbench/blackwell-dc-images.json` |
 | `npa-cosmos3-super-benchmark` (operator-private) | eight B200s | full four-cell benchmark, 96/96 technically valid MP4s; this wrapper remains restricted and excluded from public release | `npa/docker/workbench/blackwell-dc-images.json` |
 
 LTX and Cosmos3 serving carry no GPU runtime in their public bootstrap layers;
 these results cover their operator-fetched runtime on the listed hardware.
 Unverified cells make no new architecture or capability claim.
+
+The 2026-09-01 RTX Cosmos Transfer record in the same inventory used historical
+`2.5.1-skypilot-ready-20260801T053000Z`, digest
+`sha256:9b4c5eb505353aa3dea37284c662f3cff306fa7c902f040e559f7939173345cc`.
+Its 93-frame, 1280×720 video does not qualify the newer coherent release digest.
+The CUDA-base kernel record lacks an exact accepted digest, and the
+LeRobot-policy TorchCodec record proves an import and wheel architecture flags;
+neither upgrades an exact-image functional cell here. Newly merged Dockerfile
+fixes describe future builds and do not change already-published immutable bytes.
 
 ## The import check that lied
 

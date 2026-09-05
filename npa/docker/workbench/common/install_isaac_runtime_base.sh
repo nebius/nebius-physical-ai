@@ -110,12 +110,14 @@ apt-get install -y --no-install-recommends "${system_packages[@]}"
 
 # CUDA's development base includes Nsight Compute, but Isaac Lab training neither
 # invokes nor needs it.  Its optional EFA metrics helper is a statically linked Go
-# binary inherited from the base and cannot be patched independently.  Remove the
-# owning packages (rather than deleting an untracked path) while retaining nvcc and
-# the CUDA development toolchain this image does need.
-if dpkg-query -W -f='${db:Status-Abbrev}' nsight-compute-2025.1.1 2>/dev/null \
-    | grep -q '^ii '; then
-  apt-get purge -y nsight-compute-2025.1.1 cuda-nsight-compute-12-8
+# binary inherited from the base and cannot be patched independently.  Remove any
+# nsight-compute and cuda-nsight-compute packages present (rather than deleting an
+# untracked path) while retaining nvcc and the CUDA development toolchain this
+# image does need.  Package names vary by CUDA release.
+NCOMPUTE_PKGS=$(dpkg-query -W -f='${Package}\n' 'nsight-compute-*' 'cuda-nsight-compute-*' 2>/dev/null || true)
+if [ -n "$NCOMPUTE_PKGS" ]; then
+  # shellcheck disable=SC2086
+  apt-get purge -y $NCOMPUTE_PKGS
 fi
 test ! -e /opt/nvidia/nsight-compute
 command -v nvcc >/dev/null
