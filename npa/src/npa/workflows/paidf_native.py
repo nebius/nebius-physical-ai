@@ -54,6 +54,13 @@ DIG_RUNTIME_CACHE_PROBES = {
 }
 DIG_PRETRAINED_CONTENT_MANIFEST = "npa-pretrained-content.json"
 _SERVICE_WORKFLOWS = {"image-edit": "iaa", "image2video": "evg"}
+_PAIDF_EXECUTOR_PATH = "modules/generation/executors/base.py"
+_PAIDF_EXECUTOR_SHA256 = (
+    "650283999eb6ac6f0b3bb943dccf73a1fa507b5790be9d282038893a91f55b46"
+)
+_PAIDF_EXECUTOR_PATCHED_SHA256 = (
+    "0a28db07ba1fc9703659e5e94d8a867be9ae05d8276c691778289a3506c7fa59"
+)
 _EVG_LABEL_STAGES = (
     "detection", "captioning", "visual-qa-anomaly", "visual-qa-person",
     "person-attribute-search",
@@ -384,13 +391,23 @@ def prepare_images(
         root = Path(tmp)
         for index, source_uri in enumerate(images):
             suffix = Path(urlparse(source_uri).path).suffix.lower()
-            local = root / f"input-{index:04d}{suffix}"
-            _materialize(source_uri, local)
+            source = root / f"source-{index:04d}{suffix}"
+            local = root / f"input-{index:04d}.jpg"
+            _materialize(source_uri, source)
+            source_sha256 = _sha256(source)
             try:
-                with Image.open(local) as image:
+                with Image.open(source) as image:
                     image.verify()
-                with Image.open(local) as image:
+                with Image.open(source) as image:
                     width, height = image.size
+                    image.convert("RGB").save(
+                        local,
+                        format="JPEG",
+                        quality=95,
+                        optimize=False,
+                        progressive=False,
+                        subsampling=0,
+                    )
             except Exception as exc:  # noqa: BLE001 - media decoder boundary
                 raise PaidfNativeError(
                     f"invalid input image at index {index}: {exc}"
@@ -413,6 +430,7 @@ def prepare_images(
                 {
                     "input_key": f"input-{index:04d}",
                     "source_uri": source_uri,
+                    "source_sha256": source_sha256,
                     "prepared_uri": target_uri,
                     "pane_metadata_uri": pane_metadata_uri,
                     "sha256": _sha256(local),
@@ -479,7 +497,7 @@ def _producer_descriptor(uri: str, payload: dict[str, Any]) -> dict[str, Any]:
         "document_sha256": hashlib.sha256(encoded).hexdigest(),
         **{key: payload[key] for key in (
             "schema", "run_id", "workflow", "stage", "runtime_image",
-            "upstream_revision", "component",
+            "upstream_revision", "component", "source_adaptation",
         ) if key in payload},
     }
 
@@ -511,6 +529,7 @@ def _verified_producers(
         if document.get("producers", []) != descriptors[:len(documents)]:
             raise PaidfNativeError("producer lineage does not preserve its predecessors")
         if kind.endswith("-augmentation"):
+            _require_paidf_image_output_adaptation(document.get("source_adaptation"))
             outputs = document.get("outputs")
             if not isinstance(outputs, list) or not outputs:
                 raise PaidfNativeError("augmentation producer has no completed artifacts")
@@ -801,6 +820,118 @@ def _runtime_fetch(repository: str, revision: str, destination: Path) -> Path:
     return destination
 
 
+def _paidf_image_output_patch_bytes(original: bytes) -> bytes:
+    """Apply the reviewed executor edit after its caller verifies source identity."""
+
+    text = original.decode("utf-8")
+    import_anchor = "import multistorageclient as msc\n"
+    media_anchor = '_MEDIA_KINDS = frozenset({"image", "video", "control"})\n\n\n'
+    write_anchor = (
+        '        if result.media_bytes is not None:\n'
+        '            with msc.open(output_path, "wb") as f:\n'
+        '                f.write(result.media_bytes)\n'
+    )
+    if any(text.count(anchor) != 1 for anchor in (import_anchor, media_anchor, write_anchor)):
+        raise PaidfNativeError(
+            "pinned PAIDF executor no longer has the reviewed MIME patch anchors"
+        )
+    text = text.replace(
+        import_anchor,
+        "import cv2\nimport multistorageclient as msc\nimport numpy as np\n",
+        1,
+    )
+    text = text.replace(
+        media_anchor,
+        '''_MEDIA_KINDS = frozenset({"image", "video", "control"})
+
+
+def _media_bytes_for_output(media_bytes: bytes, output_path: str) -> bytes:
+    """Make image bytes agree with a JPEG output path before VLM reuse."""
+    extension = os.path.splitext(output_path)[1].lower()
+    if extension not in {".jpg", ".jpeg"}:
+        return media_bytes
+    decoded = cv2.imdecode(
+        np.frombuffer(media_bytes, dtype=np.uint8), cv2.IMREAD_COLOR
+    )
+    if decoded is None:
+        raise ValueError("adapter returned undecodable image bytes for JPEG output")
+    encoded_ok, encoded = cv2.imencode(
+        ".jpg", decoded, [cv2.IMWRITE_JPEG_QUALITY, 95]
+    )
+    if not encoded_ok or not encoded.size:
+        raise ValueError("could not encode adapter output as JPEG")
+    payload = encoded.tobytes()
+    if not payload.startswith(b"\\xff\\xd8\\xff"):
+        raise ValueError("encoded JPEG output has invalid magic bytes")
+    return payload
+
+
+''',
+        1,
+    )
+    text = text.replace(
+        write_anchor,
+        '        if result.media_bytes is not None:\n'
+        '            payload = _media_bytes_for_output(result.media_bytes, output_path)\n'
+        '            with msc.open(output_path, "wb") as f:\n'
+        '                f.write(payload)\n',
+        1,
+    )
+    return text.encode("utf-8")
+
+
+def _paidf_image_output_adaptation() -> dict[str, Any]:
+    manifest = {
+        "schema": "npa.paidf.upstream-source-adaptation.v1",
+        "upstream_revision": PAIDF_AUGMENTATION_REVISION,
+        "purpose": "jpeg-output-byte-contract",
+        "path": _PAIDF_EXECUTOR_PATH,
+        "original_sha256": _PAIDF_EXECUTOR_SHA256,
+        "patched_sha256": _PAIDF_EXECUTOR_PATCHED_SHA256,
+    }
+    manifest["patch_sha256"] = hashlib.sha256(
+        json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    return manifest
+
+
+def _require_paidf_image_output_adaptation(value: Any) -> None:
+    if value != _paidf_image_output_adaptation():
+        raise PaidfNativeError(
+            "augmentation producer lacks the reviewed image MIME source adaptation"
+        )
+
+
+def _patch_paidf_image_output_contract(source: Path) -> dict[str, Any]:
+    """Bind a narrow JPEG writer fix to the reviewed upstream source bytes.
+
+    The image-edit API returns PNG bytes while the published IAA config names a
+    ``.jpg`` output. Upstream writes those bytes unchanged and later declares
+    them ``image/jpeg`` to its VLM, which Token Factory correctly rejects. The
+    patch keeps the published request and output paths intact and makes the
+    writer honor the existing JPEG extension before any evaluator reads it.
+    """
+
+    target = source / _PAIDF_EXECUTOR_PATH
+    try:
+        original = target.read_bytes()
+    except OSError as exc:
+        raise PaidfNativeError(
+            "pinned PAIDF executor required for the image MIME adaptation is missing"
+        ) from exc
+    original_sha256 = hashlib.sha256(original).hexdigest()
+    if original_sha256 != _PAIDF_EXECUTOR_SHA256:
+        raise PaidfNativeError(
+            "pinned PAIDF executor bytes differ from the reviewed MIME adaptation"
+        )
+    patched = _paidf_image_output_patch_bytes(original)
+    patched_sha256 = hashlib.sha256(patched).hexdigest()
+    if patched_sha256 != _PAIDF_EXECUTOR_PATCHED_SHA256:
+        raise PaidfNativeError("PAIDF image MIME adaptation produced unexpected bytes")
+    target.write_bytes(patched)
+    return _paidf_image_output_adaptation()
+
+
 def run_augmentation(
     config_manifest_uri: str, result_uri: str, run_id: str,
     *, generation_port: int | None = None,
@@ -823,46 +954,48 @@ def run_augmentation(
 
     with tempfile.TemporaryDirectory(prefix="npa-paidf-augmentation-") as tmp:
         root = Path(tmp)
-        baked = Path("/workspace/modules/cli.py")
-        if baked.is_file():
-            command_prefix = ["/workspace/.venv/bin/python", str(baked)]
-        else:
-            source = _runtime_fetch(
-                "https://github.com/NVIDIA/paidf-augmentation.git",
-                PAIDF_AUGMENTATION_REVISION,
-                root / "source",
-            )
-            command_prefix = [
-                "uv",
-                "run",
-                "--project",
-                str(source),
-                "--no-sync",
-                "--python",
-                sys.executable,
-                "python",
-                str(source / "modules/cli.py"),
-            ]
-            subprocess.run(
-                [
-                    "uv",
-                    "sync",
-                    "--project",
-                    str(source),
-                    "--frozen",
-                    "--python",
-                    sys.executable,
-                ],
-                check=True,
-            )
-        completed: list[dict[str, Any]] = []
-        failed: list[dict[str, Any]] = []
+        local_configs: list[Path] = []
         for index, item in enumerate(configs):
             local = root / f"config-{index:04d}.yaml"
             _materialize(str(item["config_uri"]), local)
             _validate_local_generation_endpoint(
-                yaml.safe_load(local.read_text(encoding="utf-8")), workflow, generation_port
+                yaml.safe_load(local.read_text(encoding="utf-8")),
+                workflow,
+                generation_port,
             )
+            local_configs.append(local)
+        source = _runtime_fetch(
+            "https://github.com/NVIDIA/paidf-augmentation.git",
+            PAIDF_AUGMENTATION_REVISION,
+            root / "source",
+        )
+        command_prefix = [
+            "uv",
+            "run",
+            "--project",
+            str(source),
+            "--no-sync",
+            "--python",
+            sys.executable,
+            "python",
+            str(source / "modules/cli.py"),
+        ]
+        source_adaptation = _patch_paidf_image_output_contract(source)
+        subprocess.run(
+            [
+                "uv",
+                "sync",
+                "--project",
+                str(source),
+                "--frozen",
+                "--python",
+                sys.executable,
+            ],
+            check=True,
+        )
+        completed: list[dict[str, Any]] = []
+        failed: list[dict[str, Any]] = []
+        for item, local in zip(configs, local_configs, strict=True):
             try:
                 _run_component([*command_prefix, "--config", str(local)], env=component_env)
                 content = _artifact_fingerprints({
@@ -899,6 +1032,7 @@ def run_augmentation(
         "failed": failed,
         "component": "NVIDIA paidf-augmentation 1.1.0",
         "upstream_revision": PAIDF_AUGMENTATION_REVISION,
+        "source_adaptation": source_adaptation,
         "outputs": completed,
         "config_manifest_uri": config_manifest_uri,
     }
@@ -1018,6 +1152,7 @@ def validate_augmentation(
     if workflow not in {"iaa", "evg"}:
         raise PaidfNativeError("augmentation config manifest has no supported workflow")
     producer = _read_run_artifact(augmentation_result_uri, f"{workflow}-augmentation", run_id, workflow)
+    _require_paidf_image_output_adaptation(producer.get("source_adaptation"))
     configs = manifest.get("configs")
     outputs = producer.get("outputs")
     failed = producer.get("failed")

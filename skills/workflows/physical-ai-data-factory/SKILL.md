@@ -69,7 +69,14 @@ images and none of the three inherits the legacy Transfer checkpoint closure.
 Never treat a credential as EULA acceptance.
 
 IAA/EVG generation keeps the vLLM-Omni service and real paidf-augmentation
-consumer in one SkyPilot state. Component subprocesses preserve three retries
+consumer in one SkyPilot state. Preparation produces actual RGB JPEG and retains
+source and prepared hashes. The exact runtime-fetched augmentation client gets
+a hash-bound writer correction so PNG model responses become real JPEG before
+the upstream verifier reuses a `.jpg` output; video bytes are unchanged. Require
+the exact `source_adaptation` record through output and terminal lineage checks.
+Previously completed PNG preparation must use a fresh run identity rather than
+altering successful artifacts or silently reusing them with this contract.
+Component subprocesses preserve three retries
 and the upstream 30-second retry delay. Require each published auto-label
 sidecar after its service stage; assemble only accepted media; then run the
 separate `validate-final-outputs` state, which re-opens all terminal handoffs and

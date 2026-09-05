@@ -74,6 +74,7 @@ def _postprocess_inputs(tmp_path: Path) -> tuple[str, str, dict]:
         "schema": "npa.paidf.native.iaa-augmentation.v1",
         "run_id": "postprocess-run",
         "workflow": "iaa",
+        "source_adaptation": native._paidf_image_output_adaptation(),
         "count": 2,
         "outputs": augmentation_outputs,
     }

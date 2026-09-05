@@ -37,6 +37,7 @@ def generation(tmp_path: Path, workflow: str = "iaa") -> tuple[str, str, dict]:
     payload = {
         "schema": f"npa.paidf.native.{workflow}-augmentation.v1", "workflow": workflow,
         "run_id": "lineage-run", "runtime_image": "example.test/worker@sha256:" + "a" * 64,
+        "source_adaptation": native._paidf_image_output_adaptation(),
         "count": 1, "attempted_count": 1, "failed_count": 0, "failed": [],
         "config_manifest_uri": manifest,
         "outputs": [{**item, "artifacts": native._artifact_fingerprints({
@@ -52,9 +53,15 @@ def test_validation_preserves_executed_generation_identity(tmp_path: Path) -> No
     assert result["accepted_count"] == 1
     assert result["producers"] == [native._producer_descriptor(producer_uri, producer)]
     assert result["producers"][0]["runtime_image"] == producer["runtime_image"]
+    assert result["producers"][0]["source_adaptation"] == (
+        native._paidf_image_output_adaptation()
+    )
 
 
-@pytest.mark.parametrize("mutation", ["run", "schema", "missing", "duplicate", "foreign-config", "foreign-media", "stale-bytes", "no-content-manifest"])
+@pytest.mark.parametrize("mutation", [
+    "run", "schema", "missing", "duplicate", "foreign-config", "foreign-media",
+    "stale-bytes", "no-content-manifest", "missing-adaptation", "changed-adaptation",
+])
 def test_validation_rejects_unbound_generation_outputs(tmp_path: Path, mutation: str) -> None:
     manifest, producer_uri, producer = generation(tmp_path)
     if mutation == "run":
@@ -71,12 +78,30 @@ def test_validation_rejects_unbound_generation_outputs(tmp_path: Path, mutation:
         producer["outputs"][0]["media_uri"] = "another-image.bmp"
     elif mutation == "stale-bytes":
         (tmp_path / "caption.txt").write_text("Changed after the producer finished.")
-    else:
+    elif mutation == "no-content-manifest":
         producer["outputs"][0].pop("artifacts")
+    elif mutation == "missing-adaptation":
+        producer.pop("source_adaptation")
+    else:
+        producer["source_adaptation"]["patched_sha256"] = "f" * 64
     write(Path(producer_uri), producer)
     with pytest.raises(native.PaidfNativeError):
         native.validate_augmentation(manifest, str(tmp_path / "validation.json"), "lineage-run", producer_uri)
     assert not (tmp_path / "validation.json").exists()
+
+
+def test_terminal_lineage_rejects_self_consistent_unreviewed_adaptation(
+    tmp_path: Path,
+) -> None:
+    _manifest, producer_uri, producer = generation(tmp_path, "evg")
+    producer["source_adaptation"]["patch_sha256"] = "f" * 64
+    write(Path(producer_uri), producer)
+    descriptor = native._producer_descriptor(producer_uri, producer)
+
+    with pytest.raises(native.PaidfNativeError, match="reviewed image MIME"):
+        native._verified_producers(
+            [descriptor], ["evg-augmentation"], "lineage-run", "evg"
+        )
 
 
 @pytest.mark.parametrize("mutation", ["runtime", "run", "missing", "stage", "broken-predecessor"])
@@ -225,6 +250,14 @@ def test_missing_output_after_successful_cli_obeys_upstream_join(tmp_path: Path,
     })
     monkeypatch.setenv("NEBIUS_TOKEN_FACTORY_KEY", "test-token")
     monkeypatch.setattr(native, "_runtime_fetch", lambda _r, _v, destination: destination)
+    monkeypatch.setattr(
+        native,
+        "_patch_paidf_image_output_contract",
+        lambda _source: {
+            "schema": "npa.paidf.upstream-source-adaptation.v1",
+            "patch_sha256": "a" * 64,
+        },
+    )
     monkeypatch.setattr(native.subprocess, "run", lambda *_a, **_k: None)
     monkeypatch.setattr(native, "_run_component", lambda *_a, **_k: None)
     if workflow == "evg":

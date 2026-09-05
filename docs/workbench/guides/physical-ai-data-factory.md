@@ -128,6 +128,15 @@ Frozen client setup and execution select the worker's Python interpreter.
 IAA postprocessing reuses its generation image on a CPU-only resource because
 the upstream client requires Python 3.11 or newer. Video validation decodes
 actual frames with NPA's pinned PyAV dependency; it requires no host `ffprobe`.
+Input preparation writes real RGB JPEG files and retains both source and
+prepared hashes. The pinned augmentation client otherwise writes PNG response
+bytes under its published `.jpg` output path and declares them as JPEG to its
+verifier. NPA applies an exact-source-bound writer correction before execution:
+JPEG outputs are encoded as JPEG, while video bytes remain unchanged. The
+augmentation report records the original and patched source hashes, and output
+and terminal validation require that exact adaptation. The configured MiniCPM
+model remains unchanged. Runs with previously completed PNG preparation need a
+fresh run identity so completed input artifacts are preserved.
 Each real PAIDF component gets the upstream three retries with a 30-second retry
 delay. EVG then preserves the serial detection → captioning → anomaly Visual QA
 → per-person Visual QA → person-attribute-search chain. Component adapters

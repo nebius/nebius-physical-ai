@@ -63,6 +63,18 @@ registered components use S3-compatible object storage for handoffs.
 Each run writes `reports/upstream.json` (`npa.paidf.upstream.v1`) so this
 adaptation boundary and the exact public revisions travel with its artifacts.
 
+NPA modifies the runtime-fetched paidf-augmentation image writer to honor its
+published JPEG output path before the upstream VLM verifier reads that output.
+The unmodified writer saves PNG model-response bytes as .jpg, while the verifier
+declares image/jpeg. Input preparation likewise normalizes source images to RGB
+JPEG and preserves source and prepared hashes. No model or evaluator is replaced.
+This Apache-2.0 source adaptation is bound to the exact original and patched
+SHA-256 of modules/generation/executors/base.py; unexpected bytes fail closed.
+The augmentation report records npa.paidf.upstream-source-adaptation.v1, and both
+output and terminal lineage validation require its exact identity. Video output
+bytes are unchanged. The declared upstream source revision remains separately
+attributed, and model weights remain runtime fetches under the operator's access.
+
 IAA and EVG generation also require restricted operator-built wrappers:
 paidf-image-edit-sky and paidf-event-video-sky use exact upstream
 vLLM-Omni parent digests listed in the container catalog and add SkyPilot

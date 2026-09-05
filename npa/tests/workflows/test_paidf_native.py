@@ -63,6 +63,10 @@ def _native_identity(kind: str, workflow: str | None = None) -> dict:
     identity = {"schema": f"npa.paidf.native.{kind}.v1", "run_id": "unit-run"}
     if workflow is not None:
         identity["workflow"] = workflow
+    if kind.endswith("-augmentation"):
+        identity["source_adaptation"] = (
+            paidf_native._paidf_image_output_adaptation()
+        )
     return identity
 
 
@@ -362,10 +366,18 @@ def test_prepare_images_writes_verified_pane_metadata(tmp_path: Path) -> None:
     assert result["count"] == 1
     item = result["images"][0]
     assert len(item["sha256"]) == 64
+    assert len(item["source_sha256"]) == 64
+    assert item["sha256"] != item["source_sha256"]
+    prepared = Path(item["prepared_uri"])
+    assert prepared.suffix == ".jpg"
+    assert prepared.read_bytes().startswith(b"\xff\xd8\xff")
+    with Image.open(prepared) as decoded:
+        assert decoded.format == "JPEG"
+        assert decoded.size == (128, 96)
     pane = json.loads(Path(item["pane_metadata_uri"]).read_text(encoding="utf-8"))
     assert pane == {
         "height": 96,
-        "image_order": ["input-0000.png"],
+        "image_order": ["input-0000.jpg"],
         "original_resolutions": [{"height": 96, "width": 128}],
         "widths": [128],
     }
@@ -1016,6 +1028,13 @@ def test_augmentation_batch_preserves_workflow_specific_partial_failure_policy(
     monkeypatch.setattr(
         paidf_native, "_runtime_fetch", lambda _r, _v, destination: destination
     )
+    adaptation = {
+        "schema": "npa.paidf.upstream-source-adaptation.v1",
+        "patch_sha256": "a" * 64,
+    }
+    monkeypatch.setattr(
+        paidf_native, "_patch_paidf_image_output_contract", lambda _source: adaptation
+    )
     sync_commands = []
     monkeypatch.setattr(
         paidf_native.subprocess,
@@ -1057,6 +1076,7 @@ def test_augmentation_batch_preserves_workflow_specific_partial_failure_policy(
         assert result["attempted_count"] == 2
         assert result["failed_count"] == 1
         assert result["failed"][0]["exit_code"] == 1
+        assert result["source_adaptation"] == adaptation
     assert len(sync_commands) == 1
     assert sync_commands[0][:3] == ["uv", "sync", "--project"]
     assert sync_commands[0][4:] == [
@@ -1150,6 +1170,14 @@ def test_all_failed_iaa_batch_records_failure_without_promoting_empty_outputs(
     )
     monkeypatch.setattr(
         paidf_native, "_runtime_fetch", lambda _r, _v, destination: destination
+    )
+    monkeypatch.setattr(
+        paidf_native,
+        "_patch_paidf_image_output_contract",
+        lambda _source: {
+            "schema": "npa.paidf.upstream-source-adaptation.v1",
+            "patch_sha256": "a" * 64,
+        },
     )
     monkeypatch.setattr(paidf_native.subprocess, "run", lambda *_a, **_k: None)
 
