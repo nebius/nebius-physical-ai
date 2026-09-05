@@ -231,8 +231,44 @@ missed active kernels, so they do not establish compute utilization.
 Visual review confirmed the requested black hoodie, black shorts, and brown
 boots. The result is a three-view illustration from a repository-authored
 silhouette; this acceptance does not establish photographic fidelity or
-preservation of a single-person composition. DIG and EVG full native acceptance
-remain pending; image and CPU protocol checks do not replace those workloads.
+preservation of a single-person composition.
+
+EVG completed all twelve states on reserved B200 capacity. The first seven
+states ran from `27700b94612d7f8297a4f879c1c3f550bff467f1`; an explicit durable
+resume retained their verified artifacts and completed the remaining five from
+`f466e119f1249de81e2e752ff3092098c5839964`. The retained first attempt records the
+hosted VLM's rejection of twelve images. The resume used the published ten-image
+controls described above. Independent end-to-end assertions and terminal replay
+verified one assembled scene, 47 files, twelve validated artifacts, no trackless
+scenes, and the complete generation, detection, captioning, VQA and search
+handoffs. All 47 assembled files (22,191,075 bytes) and seven lineage documents
+were reopened; sixteen JPEG detector crops were decoded. PAS produced one
+person with six nonempty, distinct primary queries. The canonical dataset JSON
+SHA-256 is
+`ddc54f5424d5819312bd13678716621ca4c8983b818e0a94ee192367519b9d37`.
+
+The final H.264 video contains 93 fully decoded frames at 1280×720 and 24 fps
+(3.875 seconds, 5,020,456 bytes), with SHA-256
+`d98203dba3798514b1b20dcef0a830aa26e4b1b75b8803082ec2f0895b799a0b`.
+Its bytes match the generated video reviewed visually. Anomaly VQA returned
+21 option-valid answers for 21 questions. Person VQA returned 29 valid answers
+from a 33-question bank: the upstream normalizer skipped two empty answers with
+warnings, and the model omitted two headwear-detail answers. The published
+protocol accepts this partial response; PAS retains its optional-field behavior.
+This result establishes protocol acceptance with recorded missing answers, not
+complete person-attribute coverage.
+
+Four reviewed frames show the source camera and tripod, with a person moving
+beside them and ending low to the ground. Face pixelation is visible in three
+reviewed frames; the final face is angled down and partly obscured. These stills
+do not establish physical accuracy, continuous-motion fidelity or perfect blur
+recall. The resume took 1,081.748 seconds and reused generation. Its nine GPU
+samples observed zero compute utilization and resident memory; the earlier
+generation attempt separately recorded a 100% utilization peak and 86,774 MiB
+peak resident memory. Exact run locations remain in owner-only evidence.
+
+DIG image and full native acceptance remain pending; image and CPU protocol
+checks do not replace its fine-tuning and generation workload.
 
 > **Want the from-zero runbook?** See
 > [physical-ai-data-factory-deploy.md](physical-ai-data-factory-deploy.md) for a

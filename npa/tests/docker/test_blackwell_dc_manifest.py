@@ -149,8 +149,11 @@ def test_gpu_agnostic_entries_need_no_arch_validation(entries: list[dict]) -> No
         assert "torch_cuda_arch_list" not in entry
 
 
-@pytest.mark.parametrize("role", ["captioning", "visual-qa", "attribute-search"])
-def test_paidf_labeling_publication_stays_restricted_and_digest_bound(
+@pytest.mark.parametrize(
+    "role",
+    ["image-edit", "event-video", "detection", "captioning", "visual-qa", "attribute-search"],
+)
+def test_paidf_publication_stays_restricted_and_digest_bound(
     manifest: dict, entries: list[dict], role: str
 ) -> None:
     name = f"npa-paidf-{role}-sky"
@@ -168,6 +171,37 @@ def test_paidf_labeling_publication_stays_restricted_and_digest_bound(
     assert proof["skypilot_bootstrap_contract"] == contract["skypilot_bootstrap_contract"]
     assert "published_tag" not in entry and "published_registries" not in entry
     assert "published_registries" not in proof
+
+
+@pytest.mark.parametrize("role", ["image-edit", "event-video", "detection"])
+def test_paidf_hardware_validation_keeps_actual_b200_and_workflow_scopes_separate(
+    manifest: dict, entries: list[dict], role: str
+) -> None:
+    name = f"npa-paidf-{role}-sky"
+    entry = next(item for item in entries if item["name"] == name)
+    proof = manifest["validation_evidence"][name]
+
+    assert entry["verdict"] == "ready" and entry["validation"] == "validated"
+    assert entry["measured_arch_list"] == proof["measured_arch_list"]
+    assert "sm_100" in entry["measured_arch_list"]
+    assert entry["measured_torch"] == proof["measured_torch"]
+    assert set(proof["validated_gpus"]) == {"B200"}, (
+        "wheel flags must not promote unmeasured B300 or RTX hardware"
+    )
+    b200 = proof["validated_gpus"]["B200"]
+    assert b200["capability"] == "10.0" and b200["result"] == "passed"
+    assert b200["tensor_operation"] == "float32-4x4-matmul"
+    assert b200["tensor_correct"] is True and b200["tensor_sum"] == 3680.0
+    assert re.fullmatch(r"[0-9a-f]{64}", proof["diagnostic_receipt_sha256"])
+    assert re.fullmatch(r"[0-9a-f]{40}", proof["diagnostic_source_commit"])
+    assert re.fullmatch(r"[0-9a-f]{64}", proof["diagnostic_source_fingerprint"])
+    workflow = "IAA" if role == "image-edit" else "EVG"
+    # Complete workflow acceptance is recorded separately from device/tensor success.
+    assert proof["full_workflow_acceptance"] == {workflow: "passed"}
+    if workflow == "IAA":
+        assert "full nine-state native IAA workflow" in entry["notes"]
+    else:
+        assert "all 12 logical stages and independent final acceptance" in entry["notes"]
 
 
 @pytest.mark.parametrize("role", ["captioning", "visual-qa"])

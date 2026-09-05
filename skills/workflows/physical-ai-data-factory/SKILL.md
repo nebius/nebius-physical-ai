@@ -128,6 +128,14 @@ first and last video frames. Prompts, models, resolution, sampling rate and
 retries remain unchanged. Require the exact `request_media_contract` in both
 VQA reports and every downstream producer/terminal check. This is a supported
 CLI configuration adaptation; it requires no image rebuild or vendor patch.
+Report VQA question coverage separately from protocol acceptance. In the
+completed native EVG workload, anomaly QA returned 21 valid answers from 21
+questions; person QA returned 29 valid answers from 33 questions. The upstream
+normalizer skipped two empty answers with warnings, and the model omitted two
+headwear-detail answers. Preserve those warnings and optional PAS fields; do not
+describe successful terminal validation as complete person-attribute coverage.
+The [Workbench guide](../../../docs/workbench/guides/physical-ai-data-factory.md#native-live-validation-evidence)
+records the accepted media, durable-resume source boundary and visual limitations.
 
 Three NVIDIA components in the pipeline are the real open-source projects, not
 NPA look-alikes: **Cosmos Transfer 2.5** augments, **Cosmos Evaluator**

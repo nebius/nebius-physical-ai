@@ -183,15 +183,15 @@ grants redistribution rights.
 | IAA Qwen Image Edit selected parent | `docker.io/vllm/vllm-omni@sha256:8b0cc5438eb27b34cdfd22011b735da6a94835a09e9c56ddf9e8cb300d679919` | Aligned upstream vLLM/Omni 0.22.0 security update; wrapper publication/bootstrap and complete IAA GPU workflow verified |
 | EVG Cosmos3 Super Image2Video upstream parent | `docker.io/vllm/vllm-omni@sha256:970dee6658ea223f615b2438ce41e47f1d5322225482546e6e6bc5d8134f757c` | Exact wrapper parent; upstream worker bootstrap failed |
 | IAA generation and CPU postprocessing worker | `<operator-registry>/npa-paidf-image-edit-sky@sha256:ef7450cfc12efb92a0260f09df9a83f4b0590ccb4a9fc6157b819721adc56cd8` | Operator-private publication verified 2026-09-05; bootstrap and repository security policy passed; complete nine-state IAA acceptance passed |
-| EVG generation worker | `<operator-registry>/npa-paidf-event-video-sky@sha256:277a255e8bce7bd6e0e8561f2cc6cca2ecc86abdb791c57b33eca287d0d0d29a` | Operator-private publication verified 2026-09-05; bootstrap and repository security policy passed; GPU acceptance pending |
+| EVG generation worker | `<operator-registry>/npa-paidf-event-video-sky@sha256:277a255e8bce7bd6e0e8561f2cc6cca2ecc86abdb791c57b33eca287d0d0d29a` | Operator-private publication verified 2026-09-05; bootstrap/security and complete EVG acceptance passed on B200 |
 | IAA/EVG attribute-search upstream parent | `nvcr.io/nvidia/paidf-event-and-person-attribute-search-service@sha256:0f581ff6d92efd391281e5787a8b1fda76556443ade47c1f5d59d4c345a01f6a` | Exact restricted NGC wrapper parent; original entrypoint does not forward worker argv |
 | EVG detection/tracking upstream parent | `nvcr.io/nvidia/paidf-detection-and-tracking-rfdetr-service@sha256:6b35e63b95cab7cd772906bcb08be978de7526427f0d1925ab84439dd4a9561e` | Exact restricted NGC wrapper parent; original entrypoint does not forward worker argv |
 | EVG captioning upstream parent | `nvcr.io/nvidia/paidf-captioning-service@sha256:17e1e3f53cc66342183f7d0b6eed76907993bb325a13db90c46d9a8cf664d804` | Exact restricted NGC wrapper parent; original entrypoint does not forward worker argv |
 | EVG Visual QA upstream parent | `nvcr.io/nvidia/paidf-visual-qa-service@sha256:e681c8dee849c7ac9fc5b182f51e9efd0da460972b08850d40f00aa9d5e3c97c` | Exact restricted NGC wrapper parent; original entrypoint does not forward worker argv |
-| IAA/EVG attribute-search worker | `<operator-registry>/npa-paidf-attribute-search-sky@sha256:d61d56ae69bf2971fbf5b03fe97a492a865c317906b1ec5c67a46133b5b97641` | Operator-private publication verified 2026-09-05; bootstrap/security passed; complete IAA acceptance passed; EVG acceptance pending |
-| EVG detection/tracking worker | `<operator-registry>/npa-paidf-detection-sky@sha256:6fa1c78eddad6f6d2bea732b246aa37b512008d8724a0e987291188d0e17b0b2` | Operator-private publication verified 2026-09-05; bootstrap/security and real CPU inference passed; GPU workflow acceptance pending |
-| EVG captioning worker | `<operator-registry>/npa-paidf-captioning-sky@sha256:ce97a86413005dbf844ae454a47b6e0a41ce521bd0403237e133c26bfed63ff7` | Operator-private publication verified 2026-09-05; bootstrap/security passed; native workflow acceptance pending |
-| EVG Visual QA worker | `<operator-registry>/npa-paidf-visual-qa-sky@sha256:27f600a12ccfb71c6744394d7b41375c36eed2df53833fb883b9ec5fa73070e4` | Operator-private publication verified 2026-09-05; bootstrap/security passed; native workflow acceptance pending |
+| IAA/EVG attribute-search worker | `<operator-registry>/npa-paidf-attribute-search-sky@sha256:d61d56ae69bf2971fbf5b03fe97a492a865c317906b1ec5c67a46133b5b97641` | Operator-private publication verified 2026-09-05; bootstrap/security and complete IAA/EVG acceptance passed |
+| EVG detection/tracking worker | `<operator-registry>/npa-paidf-detection-sky@sha256:6fa1c78eddad6f6d2bea732b246aa37b512008d8724a0e987291188d0e17b0b2` | Operator-private publication verified 2026-09-05; bootstrap/security, real CPU inference and complete EVG acceptance passed on B200 |
+| EVG captioning worker | `<operator-registry>/npa-paidf-captioning-sky@sha256:ce97a86413005dbf844ae454a47b6e0a41ce521bd0403237e133c26bfed63ff7` | Operator-private publication verified 2026-09-05; bootstrap/security and complete EVG acceptance passed with B200 CUVID decoding |
+| EVG Visual QA worker | `<operator-registry>/npa-paidf-visual-qa-sky@sha256:27f600a12ccfb71c6744394d7b41375c36eed2df53833fb883b9ec5fa73070e4` | Operator-private publication verified 2026-09-05; bootstrap/security and complete EVG protocol acceptance passed; person answers cover 29/33 questions |
 
 The three privately published labeling workers were built from
 `b7ae4f198b20f087afef46d31fffee367eb4fa2e` using immutable full-SHA
@@ -205,7 +205,9 @@ Each inventory contains zero HIGH/CRITICAL vulnerabilities, 74 MEDIUM and
 24 LOW; reviewed public cryptographic test vectors are retained as such. Exact
 private locations and receipts remain in access-controlled evidence. This proves
 image publication and bootstrap. Attribute search also passed the complete IAA
-workflow; EVG acceptance remains pending for these labeling workers.
+workflow, and all three workers passed the complete EVG workflow. The person
+questionnaire produced 29 valid answers from 33 questions; successful protocol
+acceptance does not establish complete attribute coverage.
 EVG captioning and anomaly Visual QA require a scheduled GPU for the pinned
 H.264 CUVID decoder even though model inference uses a hosted VLM. Their
 profiles reserve one B200 each. Crop-only person QA shares the Visual QA
@@ -235,7 +237,11 @@ Both shell bootstrap modes and NPA installation preserving vendor files passed.
 Its full inventory records six unfixed CRITICAL findings, 216 HIGH, 3,400 MEDIUM
 and 433 LOW, with zero secrets. The fixed-CRITICAL policy passed without new
 ignore entries, including clearance of the earlier NLTK finding. Its SPDX 2.3
-SBOM contains 1,831 packages. GPU and native workflow acceptance remain pending.
+SBOM contains 1,831 packages. The exact worker subsequently passed real guarded
+generation and the complete EVG workflow on reserved B200 capacity. Independent
+terminal validation reopened the assembled video and its full labeling lineage;
+the [workflow guide](guides/physical-ai-data-factory.md#native-live-validation-evidence)
+records source revisions, media hashes, timings and output limitations.
 
 The RF-DETR worker was privately published from
 `ce010547321e8fee7b8783f684349a311ace63b2`, with remote OCI
@@ -245,8 +251,15 @@ preserving vendor files, the actual service CLI and real CPU checkpoint inferenc
 passed. Its full inventory contains zero CRITICAL findings, 22 HIGH, 340 MEDIUM
 and 91 LOW. All ten inherited public TLS fixture-key findings were matched to
 exact public source bytes, with no unresolved secret findings. The repository
-policy passed and the SPDX 2.3 SBOM contains 894 packages. GPU and native workflow
-acceptance remain pending.
+policy passed and the SPDX 2.3 SBOM contains 894 packages. Real B200 detection
+and tracking and the complete EVG workflow subsequently passed with this digest.
+
+Separate queries inside the accepted IAA generation, EVG generation and
+detection images measured B200 capability 10.0, advertised `sm_100`, and an
+exact float32 matrix-multiplication result. The
+[GPU matrix](image-gpu-compatibility-matrix.md) records the actual framework
+versions and architecture lists. These receipts promote only B200; advertised
+wheel architectures alone do not establish B300 or RTX PRO 6000 acceptance.
 
 The licensing and runtime-fetch boundary is recorded in
 `skills/NOTICE-NVIDIA-PAIDF`. The machine-readable packaging contract includes
