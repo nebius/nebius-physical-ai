@@ -436,6 +436,7 @@ def terraform_env(
         return env
     env.pop("TF_VAR_iam_token", None)
     env.pop("NEBIUS_IAM_TOKEN", None)
+    env.pop("NPA_NEBIUS_IAM_TOKEN", None)
     argv = [nebius_bin, *(["--profile", profile] if profile else [])]
     capture_kwargs: dict[str, object] = {"env": env}
     if timeout is not None:

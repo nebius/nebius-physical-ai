@@ -442,6 +442,12 @@ Both `deploy` and `destroy` confirm before acting (bypass with `--yes`/`-y`;
   `NPA_REUSE_IAM_TOKEN` is set (CI injecting a short-lived token). This is also
   why `--profile` must be threaded through rather than relying on the ambient
   token: the token, not the profile, decides the principal.
+  The current vendored recipe uses the explicit profile for refreshable Nebius
+  authentication and profile-bound Kubernetes credential exec plugins. NPA
+  removes the minted token's provider override for compatible recipes, so a
+  long apply or destroy does not keep using the token minted before workers
+  began provisioning. Older recipes retain their minted-token behavior; use
+  the vendored recipe when long operations outlive that token.
 - **Default StorageClass depends on `enable_filestore`**: the recipe installs the
   filesystem CSI (`csi-mounted-fs-path-sc`, `ReadWriteMany`) only when a shared
   filesystem is attached. Without it the only class is

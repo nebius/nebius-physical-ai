@@ -15,7 +15,10 @@ from pathlib import Path
 from typing import Any, Callable
 
 
-from npa.cluster.gpu_driver import resolve_gpu_driver_strategy
+from npa.cluster.gpu_driver import (
+    inspect_recipe_declared_variables,
+    resolve_gpu_driver_strategy,
+)
 from npa.cluster.gpu_health import GpuHealthConfig, validate_gpu_health
 from npa.cluster_backends.process import (
     _redact as _redact_output,
@@ -798,12 +801,23 @@ def _cluster_tf_env(
     region: str,
     subnet_id: str,
     profile: str = "",
+    recipe_dir: Path | None = None,
 ) -> dict[str, str]:
     env = _terraform_env(nebius_bin, profile=profile)
     env["TF_VAR_tenant_id"] = tenant_id
     env["TF_VAR_parent_id"] = project_id
     env["TF_VAR_region"] = region
     env["TF_VAR_subnet_id"] = subnet_id
+    if profile and recipe_dir is not None and {
+        "nebius_profile", "nebius_cli",
+    } <= inspect_recipe_declared_variables(recipe_dir):
+        # A minted IAM token can expire while Kubernetes workers provision.
+        # Let the provider refresh the exact selected profile and let its
+        # Kubernetes clients acquire fresh ExecCredentials when needed.
+        env.pop("NEBIUS_IAM_TOKEN", None)
+        env.pop("NPA_NEBIUS_IAM_TOKEN", None)
+        env["TF_VAR_nebius_profile"] = profile
+        env["TF_VAR_nebius_cli"] = nebius_bin
     return env
 
 
@@ -2086,6 +2100,7 @@ def _deploy_one_cluster(
             region=region,
             subnet_id=subnet_id,
             profile=profile,
+            recipe_dir=workdir,
         )
         # Written before apply so ``destroy`` can reconstruct TF_VAR_* even if
         # apply fails midway. Project network ownership is recorded separately.
@@ -2464,6 +2479,7 @@ def _destroy_one_cluster(
         region=str(saved.get("region") or spec.region),
         subnet_id=subnet_id,
         profile=profile,
+        recipe_dir=workdir,
     )
     _log(
         on_status,

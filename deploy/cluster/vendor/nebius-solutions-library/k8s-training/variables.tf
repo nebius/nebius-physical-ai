@@ -425,6 +425,18 @@ variable "mig_strategy" {
   }
 }
 
+variable "nebius_profile" {
+  description = "Explicit CLI profile for refreshable provider and Kubernetes authentication."
+  type        = string
+  default     = ""
+}
+
+variable "nebius_cli" {
+  description = "Nebius CLI executable used by Kubernetes credential exec plugins."
+  type        = string
+  default     = "nebius"
+}
+
 variable "gpu_operator_rtx_driver_profile" {
   description = "Exact RTX rendering platform and preset for the marketplace driver selector."
   type = object({
