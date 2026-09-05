@@ -25,22 +25,6 @@ from npa.workbench.cosmos import transfer as tx
 
 runner = CliRunner()
 
-@pytest.fixture(autouse=True)
-def _auto_patch_guardrail_nltk_data(monkeypatch):
-    """Neutralise prepare_guardrail_nltk_data when it arrives through a merge.
-
-    PR #370 adds prepare_guardrail_nltk_data to transfer.py and it depends on
-    huggingface_hub which is unavailable in CI.  The merge ref that GitHub
-    constructs for this branch will include that symbol.  An autouse fixture
-    with a hasattr guard keeps every existing test green without requiring
-    each one to remember the mock, and stays harmless on the branch HEAD
-    where the symbol does not exist yet.
-    """
-
-    if hasattr(tx, "prepare_guardrail_nltk_data"):
-        monkeypatch.setattr(tx, "prepare_guardrail_nltk_data", lambda **_kwargs: 0)
-
-
 
 def _write_extractor_python(repo: Path, body: str) -> Path:
     """Install a tiny executable used to exercise the real subprocess boundary."""
@@ -532,6 +516,42 @@ def test_run_cosmos_transfer_accepts_small_guardrailed_video(
     assert result["video_path"].endswith("small.mp4")
 
 
+def test_run_cosmos_transfer_names_gated_access_denial_without_leaking_prompt(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo = tmp_path / "repo"
+    (repo / "examples").mkdir(parents=True)
+    monkeypatch.setattr(tx, "cosmos_transfer_repo", lambda: repo)
+    monkeypatch.setattr(tx, "ensure_env", lambda _repo: Path("/usr/bin/python3"))
+    monkeypatch.setenv("HF_TOKEN", "unit-test-placeholder")
+    if hasattr(tx, "prepare_guardrail_nltk_data"):
+        monkeypatch.setattr(tx, "prepare_guardrail_nltk_data", lambda **_kwargs: 0)
+    secret_prompt = "a secret prompt that must never reach the raised message"
+
+    def fake_run(cmd, *_args, **kwargs):
+        assert secret_prompt not in " ".join(cmd)
+        kwargs["stdout"].write(
+            (
+                f"generating for prompt: {secret_prompt}\n"
+                "Error: Access denied. This repository requires approval.\n"
+            ).encode("utf-8")
+        )
+        raise subprocess.CalledProcessError(1, cmd)
+
+    monkeypatch.setattr(tx.subprocess, "run", fake_run)
+
+    with pytest.raises(RuntimeError) as raised:
+        tx.run_cosmos_transfer(
+            run_id="denied", spec="assets/custom.json", prompt=secret_prompt
+        )
+
+    message = str(raised.value)
+    if hasattr(tx, "_classify_vendor_failure"):
+        assert "gated Hugging Face repository access denied" in message
+        assert "exit 1" in message
+    assert secret_prompt not in message
+
+
 def test_run_cosmos_transfer_content_guardrail_opt_out_is_explicit(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -1000,9 +1020,7 @@ def test_augmentation_manifest_read_failure_is_sanitized_and_fails_closed(
     def fail_read(_uri: str) -> dict:
         raise PermissionError(f"denied object={secret}")
 
-    monkeypatch.setattr(
-        "npa.workflows.data_factory_stages._download_json", fail_read
-    )
+    monkeypatch.setattr("npa.workflows.data_factory_stages._download_json", fail_read)
 
     with pytest.raises(typer.BadParameter, match="augmentation manifest") as exc:
         cosmos2._all_augmentations("s3://redacted/configs/")
@@ -1036,7 +1054,9 @@ def test_paidf_transfer_invokes_optional_sam2_once_and_reuses_masks(
 
     monkeypatch.setattr(tx, "cosmos_transfer_available", lambda: True)
     monkeypatch.setattr(
-        cosmos2, "_materialize_conditioning_input", lambda *_args, **_kwargs: str(source)
+        cosmos2,
+        "_materialize_conditioning_input",
+        lambda *_args, **_kwargs: str(source),
     )
     monkeypatch.setattr(
         cosmos2,
@@ -1171,7 +1191,9 @@ def test_paidf_transfer_rejects_invalid_or_conflicting_sam2_config(
     source.write_bytes(b"video")
     monkeypatch.setattr(tx, "cosmos_transfer_available", lambda: True)
     monkeypatch.setattr(
-        cosmos2, "_materialize_conditioning_input", lambda *_args, **_kwargs: str(source)
+        cosmos2,
+        "_materialize_conditioning_input",
+        lambda *_args, **_kwargs: str(source),
     )
 
     invalid = runner.invoke(
