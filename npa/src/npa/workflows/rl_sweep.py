@@ -277,7 +277,16 @@ def _publish_checkpoint(base_uri: str, search_root: str = "logs/rsl_rl") -> str:
     checkpoints = sorted(root.rglob("model_*.pt"))
     if not checkpoints:
         return ""
-    return _upload_file(checkpoints[-1], f"{base_uri}/checkpoint.pt")
+    # Preserve the selected run, then compare its numbered training steps.
+    latest_run = checkpoints[-1].parent
+    checkpoint = max(
+        (path for path in checkpoints if path.parent == latest_run),
+        key=lambda path: (
+            int(path.stem[6:]) if path.stem[6:].isdecimal() else -1,
+            path.name,
+        ),
+    )
+    return _upload_file(checkpoint, f"{base_uri}/checkpoint.pt")
 
 
 # --------------------------------------------------------------------- barrier
