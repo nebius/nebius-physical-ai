@@ -530,6 +530,7 @@ def run_token_factory_rollout_vlm(
                 task_description=task_description,
                 actions=actions,
                 frame_names=[path.name for path in selected_paths],
+                include_all_actions=True,
             ),
         }
     ]
@@ -723,11 +724,15 @@ def _cosmos_reason_prompt(
     task_description: str,
     actions: list[dict[str, Any]],
     frame_names: list[str],
+    include_all_actions: bool = False,
 ) -> str:
     # Simulator ground truth is deliberately excluded: Cosmos labels are
     # calibrated *against* those measurements after inference and must not see
     # the answer in their prompt. Only policy actions and temporal identifiers
     # are model inputs.
+    # Hosted validation requires every input action. Keep the historical
+    # preview only on the separately operated self-hosted inference path.
+    prompt_actions = actions if include_all_actions else actions[:64]
     action_excerpt = json.dumps(
         [
             {
@@ -735,12 +740,12 @@ def _cosmos_reason_prompt(
                 "sim_step": int(action.get("sim_step", action.get("step", index))),
                 "action": list(action.get("action") or []),
             }
-            for index, action in enumerate(actions[:64])
+            for index, action in enumerate(prompt_actions)
         ],
         sort_keys=True,
     )
     expected_steps = [
-        int(action.get("step", index)) for index, action in enumerate(actions[:64])
+        int(action.get("step", index)) for index, action in enumerate(prompt_actions)
     ]
     label = {
         "reason1": "Cosmos-Reason1",

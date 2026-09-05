@@ -652,3 +652,47 @@ def test_complete_hosted_output_retains_original_score_and_ground_truth():
     assert result["score"] == payload["score"] and result["success"] is True
     assert result["per_step"][0]["critique_source"] == "model_per_step"
     assert result["per_step"][0]["simulator_ground_truth"] == actions[0]["simulator_ground_truth"]
+
+
+@pytest.mark.parametrize("model", [DEFAULT_COSMOS3_MODEL, "MiniMaxAI/MiniMax-M3"])
+def test_hosted_prompt_and_strict_output_cover_actions_beyond_legacy_preview(tmp_path, model):
+    frame = tmp_path / "frame.png"
+    frame.write_bytes(b"synthetic-frame")
+    actions = [{"step": index, "sim_step": index * 5, "action": [index / 100]} for index in range(65)]
+
+    class Client:
+        def chat_completion(self, **kwargs):
+            prompt = kwargs["messages"][0]["content"][0]["text"]
+            lines = prompt.splitlines()
+            sent_actions = json.loads(next(line.removeprefix("Actions by step: ")
+                                           for line in lines if line.startswith("Actions by step: ")))
+            indices = json.loads(next(line.removeprefix("Required per_step indices: ")
+                                     for line in lines if line.startswith("Required per_step indices: ")))
+            assert sent_actions == actions
+            assert indices == list(range(65))
+            payload = _complete_hosted_payload()
+            payload["per_step"] = [
+                {**payload["per_step"][0], "step": index, "critique_text": f"event {index} remains visible"}
+                for index in indices
+            ]
+            return {
+                "model": kwargs["model"],
+                "choices": [{"finish_reason": "stop", "message": {"content": json.dumps(payload)}}],
+            }
+
+    result = run_token_factory_rollout_vlm(
+        model_id=model, image_paths=[frame], actions=actions,
+        task_description="synthetic event sequence", rollout_id="synthetic", threshold=0.5, client=Client(),
+    )
+    assert result["action_count"] == len(result["per_step"]) == 65
+    assert [event["step"] for event in result["per_step"]] == list(range(65))
+
+
+def test_self_hosted_prompt_retains_legacy_action_preview():
+    actions = [{"step": index, "action": [0.0]} for index in range(65)]
+    prompt = reason_module._cosmos_reason_prompt(
+        family="cosmos3", actions=actions, task_description="synthetic", frame_names=["frame.png"],
+    )
+    indices = json.loads(next(line.removeprefix("Required per_step indices: ")
+                             for line in prompt.splitlines() if line.startswith("Required per_step indices: ")))
+    assert indices == list(range(64))

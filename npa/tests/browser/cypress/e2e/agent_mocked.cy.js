@@ -1171,8 +1171,11 @@ describe("NPA agent UI with mocked APIs", () => {
   });
 
   it("embeds the Lichtblick MCAP viewer as a Viewer render mode", () => {
+    // Boot and ordinary chat must not execute the optional viewer application.
+    cy.get("#lichtblickFrame").should("have.attr", "src", "about:blank");
     cy.get("#tabRerun").click();
     cy.get("#panelRerun").should("have.class", "is-active");
+    cy.get("#lichtblickFrame").should("have.attr", "src", "about:blank");
 
     // Lichtblick render-mode tab + dedicated iframe pane exist and activate.
     cy.get("#renderModeLichtblick").should("exist").click();

@@ -15639,12 +15639,8 @@
             setStatus("Ready");
             showToast("Workbench ready", "success");
             void accessPromise;
-            // Pre-warm the Lichtblick SPA bundle so opening it later only swaps the data
-            // source (no first-load app download). Best-effort; needs the sidecar.
-            const lb = document.getElementById("lichtblickFrame");
-            if (lb && (!lb.getAttribute("src") || lb.getAttribute("src") === "about:blank")) {
-              lb.setAttribute("src", "/lichtblick/");
-            }
+            // Optional viewers mount when selected. Loading a hidden app here
+            // makes its runtime and dependencies part of unrelated chat startup.
             void artifactsPromise;
             await warmPromise;
             const mountMode = await ensureFrankaRerunLoaded();

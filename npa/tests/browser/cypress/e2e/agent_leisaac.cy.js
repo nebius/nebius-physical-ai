@@ -2390,7 +2390,9 @@ describe("NPA agent LeIsaac capability tab", () => {
       control.readyState = win.WebSocket.CLOSED;
       if (control.onclose) control.onclose({ target: control });
     });
-    cy.get("#leisaacViewMode").select("dual_slow");
+    // Closing the controller temporarily disables mutators until the recovered
+    // transport reacquires its lease. Wait for that state before interacting.
+    cy.get("#leisaacViewMode").should("not.be.disabled").select("dual_slow");
     cy.window().should((win) => {
       const evidence = win.__NPA_AGENT_TEST__.leisaacTransportEvidence();
       expect(evidence.active).to.equal("websocket-v1");
