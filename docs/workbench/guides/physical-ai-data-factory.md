@@ -78,8 +78,8 @@ Build `paidf-image-edit-sky` and `paidf-event-video-sky` from their exact pinned
 parents, scan the actual bytes, publish privately, and supply their immutable
 digests with `--var generation_image=<operator-image@sha256:digest>`. DIG uses
 `--var anomalygen_image=<operator-image@sha256:digest>`. The checked-in defaults
-are deliberately non-runnable placeholders; no completed wrapper build or live
-acceptance is claimed until registry and workload evidence exist.
+are deliberately non-runnable placeholders. The [container catalog](../container-image-catalog.md)
+records verified wrapper publication separately from native workload acceptance.
 
 IAA selects the official aligned vLLM/Omni 0.22.0 parent to fix the
 [authentication bypass in the blueprint's 0.20 runtime](https://github.com/vllm-project/vllm/security/advisories/GHSA-94f4-hr76-p5j6).
@@ -116,6 +116,11 @@ The live matrix takes these digests from
 `NPA_E2E_PAIDF_ATTRIBUTE_SEARCH_IMAGE`, `NPA_E2E_PAIDF_DETECTION_IMAGE`,
 `NPA_E2E_PAIDF_CAPTIONING_IMAGE`, and `NPA_E2E_PAIDF_VISUAL_QA_IMAGE`; it does not
 substitute the incompatible raw NGC parents when an override is missing.
+The EVG live test fetches Lav Varshney's CC0 camera photograph from a pinned
+scikit-image revision, checks its SHA-256 before staging, and records source
+provenance. It exercises real person detection and labeling; IAA and DIG use
+repository-authored inputs. See the [starter-media notice](../../../skills/NOTICE-PAIDF-STARTER-MEDIA)
+for exact source and license boundaries.
 
 IAA and EVG preserve the upstream service/batch boundary by starting the pinned
 vLLM-Omni generation service inside the same SkyPilot state that consumes it.

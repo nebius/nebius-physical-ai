@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
 import re
+import urllib.request
 from pathlib import Path
 from typing import Any, Iterable
 from urllib.parse import urlparse
@@ -24,6 +26,13 @@ from npa.orchestration.npa_workflow.submit_matrix import (
 SONIC_MOTION_FIXTURE_PREFIX = "npa-workflow-e2e/fixtures/sonic-motion-soma-g1/"
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SPECS_DIR = REPO_ROOT / "npa" / "workflows" / "workbench" / "npa-workflows"
+# CC0 photograph by Lav Varshney; see skills/NOTICE-PAIDF-STARTER-MEDIA.
+_PAIDF_CAMERA_REVISION = "e8a42ba85aaf5fd9322ef9ca51bc21063b22fcae"
+_PAIDF_CAMERA_URL = (
+    "https://raw.githubusercontent.com/scikit-image/scikit-image/"
+    f"{_PAIDF_CAMERA_REVISION}/skimage/data/camera.png"
+)
+_PAIDF_CAMERA_SHA256 = "b0793d2adda0fa6ae899c03989482bff9a42d3d5690fc7e3648f2795d730c23a"
 # A tiny, valid 64x64 H.264/MP4 clip generated from ffmpeg's deterministic
 # testsrc2 source. Keeping the bytes in the test harness makes input seeding
 # independent of an operator host's ffmpeg installation while the live worker
@@ -221,19 +230,45 @@ def seed_live_workflow_inputs(
     marker = f"npa-workflow-e2e/{run_id}/{spec_name.replace('.yaml', '')}"
     client = s3_client_for_project(e2e_project, allow_host_creds=True)
 
-    if spec_name in {
-        "paidf-image-attribute-augmentation.yaml",
-        "paidf-event-video-generation.yaml",
-    }:
+    if spec_name == "paidf-event-video-generation.yaml":
+        # Fetch public source bytes without model/registry credentials. A real
+        # photograph exercises the detector and per-person label stages.
+        with urllib.request.urlopen(_PAIDF_CAMERA_URL) as response:
+            image_bytes = response.read()
+        if hashlib.sha256(image_bytes).hexdigest() != _PAIDF_CAMERA_SHA256:
+            pytest.fail("PAIDF EVG camera fixture SHA-256 mismatch")
+        client.put_object(
+            Bucket=bucket,
+            Key=f"{marker}/fixture/seed.png",
+            Body=image_bytes,
+            ContentType="image/png",
+        )
+        client.put_object(
+            Bucket=bucket,
+            Key=f"{marker}/fixture-source.json",
+            Body=json.dumps({
+                "schema": "npa.paidf.fixture-source.v1",
+                "source_url": _PAIDF_CAMERA_URL,
+                "source_revision": _PAIDF_CAMERA_REVISION,
+                "sha256": _PAIDF_CAMERA_SHA256,
+                "bytes": len(image_bytes),
+                "license": "CC0-1.0",
+                "author": "Lav Varshney",
+            }, sort_keys=True).encode(),
+            ContentType="application/json",
+        )
+        return
+
+    if spec_name == "paidf-image-attribute-augmentation.yaml":
         try:
             from PIL import Image, ImageDraw
         except ImportError as exc:  # pragma: no cover
             pytest.fail(f"Pillow required to seed PAIDF fixtures: {exc}")
-        size = (768, 1024) if "attribute" in spec_name else (1280, 720)
+        size = (768, 1024)
         image = Image.new("RGB", size, (106, 113, 120))
         draw = ImageDraw.Draw(image)
         # Repository-authored, non-customer silhouette: enough structure for the
-        # real IAA/EVG conditioning and verifier paths without redistributing data.
+        # real IAA conditioning and verifier paths without redistributing data.
         cx, cy = size[0] // 2, size[1] // 2
         draw.ellipse((cx - 45, cy - 220, cx + 45, cy - 130), fill=(196, 155, 116))
         draw.rectangle((cx - 75, cy - 130, cx + 75, cy + 80), fill=(30, 75, 145))

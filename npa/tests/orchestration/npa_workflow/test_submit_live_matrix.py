@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
+import io
+import json
 from pathlib import Path
 
 import pytest
@@ -411,6 +414,70 @@ def test_real_cosmos_cases_seed_an_actual_input_video(
     body = bytes(videos[0]["Body"])
     assert len(body) > 1_000
     assert body[4:8] == b"ftyp"
+
+
+def test_paidf_evg_seed_verifies_source_before_writing(monkeypatch) -> None:
+    helpers = _load_live_helpers()
+    source = b"unit-test source bytes"
+    source_hash = hashlib.sha256(source).hexdigest()
+    writes = []
+    requests = []
+
+    class S3:
+        def put_object(self, **kwargs):
+            writes.append(kwargs)
+
+    def open_source(url):
+        requests.append(url)
+        return io.BytesIO(source)
+
+    monkeypatch.setattr(helpers.urllib.request, "urlopen", open_source)
+    monkeypatch.setattr(helpers, "_PAIDF_CAMERA_SHA256", source_hash)
+    monkeypatch.setattr(
+        "npa.clients.project_credentials.s3_client_for_project",
+        lambda *_args, **_kwargs: S3(),
+    )
+    helpers.seed_live_workflow_inputs(
+        spec_name="paidf-event-video-generation.yaml",
+        bucket="unit-bucket", run_id="seed-run",
+    )
+    assert requests == [helpers._PAIDF_CAMERA_URL]
+    assert writes[0]["Body"] == source
+    assert writes[0]["ContentType"] == "image/png"
+    assert writes[0]["Key"].endswith("/fixture/seed.png")
+    provenance = json.loads(writes[1]["Body"])
+    assert provenance["sha256"] == source_hash
+    assert provenance["source_revision"] in helpers._PAIDF_CAMERA_URL
+    assert provenance["license"] == "CC0-1.0"
+    assert provenance["bytes"] == len(source)
+    assert len(writes) == 2
+
+
+@pytest.mark.parametrize("failure", ["corrupt", "unavailable"])
+def test_paidf_evg_seed_never_uploads_unverified_input(monkeypatch, failure) -> None:
+    helpers = _load_live_helpers()
+    writes = []
+
+    class S3:
+        def put_object(self, **kwargs):
+            writes.append(kwargs)
+
+    def open_source(url):
+        if failure == "unavailable":
+            raise OSError("source unavailable")
+        return io.BytesIO(b"corrupt source bytes")
+
+    monkeypatch.setattr(helpers.urllib.request, "urlopen", open_source)
+    monkeypatch.setattr(
+        "npa.clients.project_credentials.s3_client_for_project",
+        lambda *_args, **_kwargs: S3(),
+    )
+    with pytest.raises((OSError, pytest.fail.Exception)):
+        helpers.seed_live_workflow_inputs(
+            spec_name="paidf-event-video-generation.yaml",
+            bucket="unit-bucket", run_id="seed-run",
+        )
+    assert writes == []
 
 
 def test_matrix_cases_declare_every_secret_the_renderer_hints_at() -> None:
