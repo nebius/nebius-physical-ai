@@ -62,6 +62,11 @@ jobs:
       - name: Install npa
         run: cd npa && pip install -e ".[dev,adapter]"
 
+      - name: Install CPU checkpoint test runtime
+        # Detector contract regressions exercise real tensor serialization and
+        # Lance dataloaders. Keep their CPU runtime explicit, without CUDA wheels.
+        run: pip install --index-url https://download.pytorch.org/whl/cpu torch==2.12.1
+
       - name: Verify checked-out CLI flags
         run: |
           cd npa

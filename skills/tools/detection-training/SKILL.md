@@ -166,6 +166,9 @@ Active, failed, or interrupted evaluation identities are not silently rerun.
 ## Verify
 
 ```bash
+# The checkpoint and Lance dataloader regressions require real CPU PyTorch.
+# CI installs this runtime explicitly; it is not part of the lightweight dev extra.
+uv pip install --python npa/.venv/bin/python --index-url https://download.pytorch.org/whl/cpu torch==2.12.1
 npa/.venv/bin/python -m pytest npa/tests/workbench/test_detection_runtime_contract.py npa/tests/workbench/test_detection_training.py -q
 # Authorized live deployment and private config with prepared LanceDB views:
 NPA_DETECTION_RUNTIME_LIVE=1 npa/.venv/bin/python -m pytest npa/tests/e2e/test_detection_runtime_live.py -q
