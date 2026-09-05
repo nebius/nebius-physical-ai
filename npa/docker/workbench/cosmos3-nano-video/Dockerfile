@@ -6,7 +6,7 @@ FROM ${BASE_IMAGE}
 ARG NPA_SOURCE_COMMIT
 USER root
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg \
+    && apt-get install -y --no-install-recommends ffmpeg linux-libc-dev \
     && rm -rf /var/lib/apt/lists/*
 COPY docker/workbench/cosmos3-nano-video/requirements.txt /opt/npa/requirements.txt
 RUN uv pip install --system --no-cache -r /opt/npa/requirements.txt \

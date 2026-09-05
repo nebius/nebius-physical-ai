@@ -43,6 +43,8 @@ and [driver strategy](../../../docs/workbench/mk8s-gpu-driver-strategy.md).
 
 The Dockerfile extends `vllm/vllm-omni:cosmos3`, pinned to manifest digest
 `sha256:6d2630c7d637b699557573f2c3fee8df5d4d0cd718977aa22549ed6a6ef30587`.
+The Dockerfile pins that index's Linux AMD64 manifest,
+`sha256:970dee6658ea223f615b2438ce41e47f1d5322225482546e6e6bc5d8134f757c`.
 The extension supplies Ray Serve, FFmpeg and the NPA adapters. It does not
 replace the diffusion engine or bake weights, data, credentials or acceptance
 state. Its inherited vendor runtime makes this an **operator-private** image;
@@ -65,9 +67,12 @@ admission.
    nebius --json`, and exact model payload access with `npa workbench health
    access --capability cosmos3 --json`. Verify the selected image and storage
    before starting generation.
-2. Provision the NPA mk8s cluster and shared filesystem. Install a pinned KubeRay
-   operator. Resolve all manifest placeholders from owner-only configuration.
-3. Create the shared claim and API token Secret, then run the weight staging
+2. Provision the NPA mk8s cluster and shared filesystem. Install KubeRay operator
+   **1.7.0** with its namespace watch restricted to `workbench`. Resolve all
+   manifest placeholders from owner-only configuration.
+3. Apply [shared-pvc.yaml](shared-pvc.yaml) after NPA installs its shared-filesystem
+   CSI driver. Create the API token Secret and operator-private registry pull
+   Secret, then run the weight staging
    Job to completion. Run the RayService only after the immutable cache is ready.
 4. Require all 16 model replicas to be healthy, confirm B200 placement, and
    verify the API rejects unauthenticated requests. Expose access through an
@@ -86,7 +91,8 @@ npa workbench cosmos3 nano-video-batch --concurrency 8 \
 
 The SDK entry is `npa.sdk.workbench.cosmos3.nano_video_batch`. The authenticated
 service accepts `/run`; `/artifacts/<request_id>/<filename>` serves the retained
-files. CLI and SDK verify returned hashes, fully decode each final MP4, and
+files. CLI and SDK verify returned hashes, fully decode all three chunks and the
+stitched MP4, and
 publish immutable S3 objects with read-after-write verification. Publication
 failure retains the local recovery copy; **do not repeat GPU generation to
 retry an upload**.
@@ -95,7 +101,8 @@ retry an upload**.
 
 Live validation is required before publication of this change. The acceptance
 test in `npa/tests/e2e/test_cosmos3_nano_video_live.py` runs one complete video
-followed by eight complete concurrent videos. Measurements will be recorded
+through the SDK followed by eight complete concurrent videos through the CLI,
+including immutable S3 publication and read-after-write verification. Measurements will be recorded
 here after that real workload completes.
 
 Each chunk records client wall time, the engine's `X-Inference-Time-S` and
@@ -103,7 +110,8 @@ Each chunk records client wall time, the engine's `X-Inference-Time-S` and
 from total GPU residency: a second measurement samples the assigned B200's
 `nvidia-smi memory.used` every 0.5 seconds. Sampling may miss shorter spikes.
 The eight-way gate requires eight successful videos, eight distinct model
-replicas, and eight overlapping server execution intervals. Visual seam review
+replicas, eight overlapping server execution intervals, and eight overlapping
+diffusion chunk requests. Visual seam review
 is a separate observation; low pixel differences alone do not establish
 perceptual continuity.
 

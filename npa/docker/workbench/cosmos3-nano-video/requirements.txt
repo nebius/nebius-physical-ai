@@ -1,3 +1,7 @@
 # Thin serving wrapper only: preserve the upstream image's CUDA/torch/vLLM stack.
 ray[serve]==2.56.0
 httpx==0.28.1
+# Security updates for dependencies inherited from the pinned vendor runtime.
+aiohttp==3.14.3
+cryptography==50.0.0
+nltk==3.10.3
