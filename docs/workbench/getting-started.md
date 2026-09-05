@@ -1,270 +1,182 @@
 # Workbench Getting Started
 
-> Prerequisites: complete docs/quickstart.md first
-> ([open quickstart](../quickstart.md), including
-> [Install npa](../quickstart.md#3-install-npa); full per-platform steps for
-> macOS, Linux, and Windows are in [docs/install.md](../install.md)).
+Complete the [platform quickstart](../quickstart.md) through credential setup,
+then use this page to prepare a GPU workflow on Nebius Kubernetes. Run commands
+from the repository root with your environment activated. Keep project settings
+and credentials in the existing NPA stores; no second credential file is needed.
 
-This guide assumes `npa` is already installed, the Nebius CLI is authenticated,
-and user-level credentials are already configured in
-`~/.npa/credentials.yaml`. It takes a first-time partner from platform setup to a
-workbench-capable machine that can run either the H100 sim-to-real quickstart or
-the Isaac Lab BYOF cookbook and write the first checkpoint to S3.
+Direct [Token Factory](token-factory.md) inference uses the hosted API. Its local
+CLI/SDK calls do not require the Kubernetes setup below.
 
-For the canonical credential setup, see [quickstart.md](../quickstart.md). For
-the H100 sim-to-real proof path, see
-[guides/sim2real-workflow.md](guides/sim2real-workflow.md). For the BYOF training
-path, see
-[cookbooks/byof-isaac-lab/README.md](cookbooks/byof-isaac-lab/README.md).
-For the SkyPilot runtime details, see
-[orchestration/skypilot-setup.md](../orchestration/skypilot-setup.md). For a
-Kubernetes-specific setup and operations checklist, see
-[kubernetes.md](kubernetes.md).
+## Choose the workload first
 
-## Day Zero Preconditions
+| Workload | Compute and setup |
+| --- | --- |
+| [Cosmos 3 generation](cosmos3-generate.md) | The default text-to-image spec requests one H100, 16 CPU, and 80 GiB host memory; gated guardrail access is required. |
+| [Compositional Sim2Real](guides/sim2real-workflow.md) | The canonical 14-stage spec requests RTX PRO 6000 GPUs, CPU capacity, and an Isaac runtime cache. Follow its full runbook. |
+| [Isaac Lab BYOF](cookbooks/byof-isaac-lab/README.md) | A custom container and RT-core GPU capacity, such as L40S or RTX PRO 6000, as specified by the cookbook. |
 
-Operator-required prerequisites:
-
-- The platform quickstart is complete. Do not create another NPA credential
-  file for workbench setup.
-- A Nebius account with access to the target project and tenant.
-- A managed Kubernetes context for the target workbench cluster, normally
-  `npa-workbench-eu-north1`.
-- H100 capacity for the headless sim-to-real quickstart.
-- Provisioned RT-core GPU capacity for Isaac Lab, normally L40S in
-  `eu-north1`. H100 and H200 do not satisfy Isaac Lab rendering requirements.
-- An S3 bucket in `eu-north1`. The access keys for that bucket should already be
-  in `~/.npa/credentials.yaml` under `storage.aws_access_key_id`,
-  `storage.aws_secret_access_key`, `storage.endpoint_url`, and `storage.bucket`
-  if the workflow needs explicit storage credentials.
-- Official GHCR development and release tags pull anonymously.
-
-Partner-specific values to collect before starting:
-
-```bash
-<your-project-id>
-<your-tenant-id>
-<your-bucket>
-<your-nebius-mk8s-context>
-```
-
-Constants for the primary workbench environment:
-
-```bash
-eu-north1
-https://storage.eu-north1.nebius.cloud
-ghcr.io/nebius/nebius-physical-ai
-```
+H100/H200 do not provide the RT cores needed for Isaac rendering. Read the
+chosen workflow's resource profiles before provisioning: model memory, CPU,
+driver, and GPU requirements differ between tools.
 
 ## Install Workbench Tools
 
-The quickstart already covers Python, Git, Terraform, `npa`, and the Nebius CLI
-(macOS, Linux, or WSL2). Install these additional tools on the operator machine:
-
-- AWS CLI v2 for direct S3 verification.
-- Docker with registry login access.
-- `kubectl`.
-
-Verify the tools and platform setup:
+In addition to the [base install](../install.md), Kubernetes runs need `kubectl`
+and the isolated SkyPilot runtime installed below. Managed infrastructure also
+requires Terraform. Docker is needed for local image builds; AWS CLI v2 is
+optional for direct S3 inspection. Public NPA images need no registry login.
 
 ```bash
 npa --version
 npa configure --show
-aws --version
-docker --version
 kubectl version --client
 terraform version
 ```
 
-Gate: every command exits successfully. `kubectl version --client` only checks
-the local client; cluster authentication is verified later.
+Gate: the CLI and required host tools work, and the intended project and storage
+appear in the configuration. The client-version check does not test cluster access.
 
 ## Confirm Platform Credentials
 
-Do not recreate `~/.npa/credentials.yaml` here. The file and its permissions
-come from the quickstart.
+Use the selected workload's access checks before provisioning GPUs. For the
+default Cosmos 3 generation workflow:
 
 ```bash
-test -r ~/.npa/credentials.yaml
-stat -f "%Sp %N" ~/.npa/credentials.yaml 2>/dev/null || \
-  stat -c "%A %n" ~/.npa/credentials.yaml
+npa workbench health preflight --checks nebius --json
+npa workbench health preflight --checks hf,s3 --json
+npa workbench health access --capability cosmos3 --json
 ```
 
-Gate: the file exists and is not group- or world-readable. If it is too open,
-run:
+Gate: all three commands exit successfully and the required checks pass.
+The explicit `nebius` check verifies the selected CLI profile can authenticate;
+it does not prove permission to create every resource. For another
+workload, use its documented capability and credential checks. Offline service
+checks prove presence only; the Nebius check is skipped. Resolve missing access on
+the provider's exact model page, then rerun the check; a token alone does not
+establish gated-model access.
+
+The S3 health check lists the configured bucket. Submission also checks that it
+can write to the bucket resolved by the workflow. If those checks disagree,
+reconcile the bucket and endpoint in NPA configuration and environment overrides.
+
+## Plan the workflow
+
+The following example prepares Cosmos 3 text-to-image generation. Replace the
+placeholder values with your existing project alias and bucket. Keep private
+values outside committed YAML.
 
 ```bash
-chmod 600 ~/.npa/credentials.yaml
+workflow_spec=npa/workflows/workbench/npa-workflows/cosmos3-generate.yaml
+project_alias='<your-project-alias>'
+bucket_name='<your-bucket>'
+cluster_name='<npa-cluster-name>'
+
+npa workbench workflow validate-spec "$workflow_spec"
+npa workbench workflow plan-spec "$workflow_spec" --var "bucket=$bucket_name"
 ```
 
-For BYOF or other S3-backed workflows, confirm the quickstart credential file
-contains these storage keys:
-
-```yaml
-storage:
-  aws_access_key_id: <your-s3-access-key-id>
-  aws_secret_access_key: <your-s3-secret-access-key>
-  endpoint_url: https://storage.eu-north1.nebius.cloud
-  bucket: s3://<your-bucket>/
-```
-
-## Configure Workbench Shell Values
-
-Export the non-secret resource identifiers used by commands and examples:
-
-```bash
-export NEBIUS_PROJECT_ID=<your-project-id>
-export NEBIUS_TENANT_ID=<your-tenant-id>
-export NPA_S3_BUCKET=<your-bucket>
-export AWS_ENDPOINT_URL=https://storage.eu-north1.nebius.cloud
-export NPA_STORAGE_ENDPOINT=storage.eu-north1.nebius.cloud
-```
-
-For local `aws s3` verification only, expose the same storage credentials that
-are already stored in `~/.npa/credentials.yaml`:
-
-```bash
-export AWS_ACCESS_KEY_ID=<YOUR_S3_ACCESS_KEY_ID_FROM_CREDENTIALS_YAML>
-export AWS_SECRET_ACCESS_KEY=<YOUR_S3_SECRET_ACCESS_KEY_FROM_CREDENTIALS_YAML>
-```
-
-These exports are not an alternate NPA credential store; they are shell values
-for tools that do not read `~/.npa/credentials.yaml`.
-
-Verify bucket access:
-
-```bash
-aws s3 ls "s3://${NPA_S3_BUCKET}/" --endpoint-url "${AWS_ENDPOINT_URL}"
-```
-
-Gate: the command lists the bucket or exits successfully with an empty listing.
-`NoSuchBucket` usually means the bucket name, endpoint, or region is wrong.
-`AccessDenied` means the access key lacks bucket access.
-
-## Verify the Image Channel
-
-The default execution channel is the anonymously pullable public release
-namespace `ghcr.io/nebius/nebius-physical-ai`. Ambient `NPA_REGISTRY` and saved
-registry values do not repoint repository-owned defaults. Use a complete image
-reference or workflow `--registry` to select custom bytes deliberately.
-
-Pre-release validation uses immutable `dev-<full-git-sha>` tags in the same
-public packages. Operator-controlled private registries may require exact-host
-SkyPilot credentials or a pre-created Kubernetes Docker config secret; NPA does
-not mint registry credentials or refresh that secret.
+Gate: validation succeeds and the plan contains the intended tool, resources,
+and output prefix. Pass the same `--var` values to image preflight and submit.
+These commands do not launch the model or verify live capacity.
 
 ## Verify Kubernetes Access
 
-> Required only if using managed Kubernetes compute.
-> Skip for serverless or VM-based workbench runs.
-
-Select the Nebius managed Kubernetes context provided by your operator:
+For a new NPA-managed cluster, use the selected workload's sizing instructions
+before running the additive provisioning command. Preview the exact plan:
 
 ```bash
-kubectl config get-contexts
-kubectl config use-context <your-nebius-mk8s-context>
-kubectl config current-context
+npa provision-if-absent --project "$project_alias" \
+  --cluster-name "$cluster_name" --dry-run --output-format json
 ```
 
-Verify the account can create SkyPilot pods in `default`:
+When its GPU/CPU topology matches the workload, run the same command without
+`--dry-run`. See [Kubernetes setup](kubernetes.md) for operational details.
+
+If your operator already provides a cluster, use its existing identity instead.
+`provision-if-absent` does not automatically adopt an externally created cluster
+and can plan a second one. Register its exact identity and kubeconfig with
+`npa cluster kubeconfig`, then bind the controller owner with
+`npa skypilot bind-controller`. The [existing-cluster instructions](guides/sim2real-workflow.md#using-a-cluster-provision-if-absent-did-not-create)
+show both commands.
+
+Inspect the selected cluster and use the kubeconfig it reports:
 
 ```bash
+npa cluster status --name "$cluster_name" --project "$project_alias"
+export KUBECONFIG="${HOME}/.npa/clusters/${cluster_name}/kubeconfig"
+kubectl config current-context
 kubectl auth can-i create pods -n default
 kubectl get nodes
-kubectl get namespace workbench
 ```
 
-Gate: `kubectl auth can-i` prints `yes`, `kubectl get nodes` lists the cluster
-nodes and the `workbench` namespace exists for deployed services. If SkyPilot later reports HTTP 403 as
-an anonymous user, the kube context is not authenticated for the cluster.
+If NPA reports a different kubeconfig path, use that path. Gate: the context
+matches the chosen cluster, pod creation is authorized, and suitable nodes are
+Ready. SkyPilot tasks use `default`; the `workbench` namespace is needed only
+for deployed services.
 
 ## Bootstrap SkyPilot
-
-> Required only if using managed Kubernetes compute.
-> Skip for serverless or VM-based workbench runs.
-
-Install the pinned isolated SkyPilot runtime:
 
 ```bash
 npa skypilot bootstrap
 export NPA_SKYPILOT_BIN="$(npa skypilot status --bin-path)"
-npa skypilot status
-"${NPA_SKYPILOT_BIN}" --version
+npa skypilot verify --cluster "$cluster_name" --output-format json
+npa workbench workflow gpus --project "$project_alias" \
+  --cluster "$cluster_name" --spec "$workflow_spec" --json
 ```
 
-Gate: the version is `0.12.2`, and `npa skypilot status` reports the isolated
-venv path under `~/.npa/skypilot-venv` unless you passed `--path`.
+Gate: the pinned runtime verifies Kubernetes access against this cluster, and
+GPU discovery resolves the spec's accelerator. A bare `sky check` can succeed
+with Kubernetes disabled or inspect another context. Each task's requested GPUs
+must fit on one node; two one-GPU nodes cannot satisfy a two-GPU task.
 
-Verify SkyPilot can see Kubernetes:
+The cluster also needs room for the jobs controller and any CPU workflow stages.
+See [SkyPilot setup](../orchestration/skypilot-setup.md) and the workload runbook
+for their resource requests.
+
+## Verify the Image Channel
 
 ```bash
-"${NPA_SKYPILOT_BIN}" check
+npa workbench workflow preflight-images "$workflow_spec" \
+  --project "$project_alias" --infra "k8s/$cluster_name" \
+  --var "bucket=$bucket_name" --json
 ```
 
-Gate: the Kubernetes check succeeds. A 403 anonymous-user error means the local
-kube context is missing or expired, not that the BYOF workflow is wrong.
+Gate: every selected image passes. Supported NPA images pull anonymously from
+`ghcr.io/nebius/nebius-physical-ai`. `NPA_REGISTRY` and saved registry settings
+do not repoint those defaults. Use a complete image reference or explicit
+workflow `--registry` only for intentional custom images, with exact-host
+credentials if that registry is private.
 
-## First Offline Workbench Commands
+## Run and inspect the result
 
-These should work before any GPU job is submitted:
+Continue with the chosen workload's submission instructions:
 
-```bash
-npa workbench --help
-npa workbench isaac-lab --help
-npa workbench fiftyone list
-```
+- [Cosmos 3 generation](cosmos3-generate.md#workflow): generated media and
+  `generate.json`.
+- [Compositional Sim2Real](guides/sim2real-workflow.md): the full 14-stage
+  composition, including runtime cache, CPU capacity, immutable images, and resume.
+- [Isaac Lab BYOF](cookbooks/byof-isaac-lab/README.md): training checkpoint and
+  its manifest.
 
-Gate: command help renders, and a fresh machine may report that no workbench
-projects are configured.
+Use the same project, cluster, bucket, and config overrides throughout. Forward
+secrets by name with `--secret-env`; never put their values in workflow YAML.
+Monitor the run to a terminal state and inspect its actual media, checkpoint,
+or report. A successful plan or job-status response alone is not an artifact check.
 
-## First Sim-To-Real Run
-
-The production loop has gated models, Isaac runtime terms/cache, immutable images,
-bounded GPU concurrency, and a dedicated CPU scheduling requirement. Follow the
-[compositional Sim2Real operator runbook](guides/sim2real-workflow.md) in order;
-it is the authoritative copy-paste path from access checks through durable
-submit and resume. Do not adapt the older environment-variable examples: the
-canonical `npa.workflow` uses lower-case `--var` config keys.
-
-## First BYOF Run
-
-For Isaac Lab, continue with
-[cookbooks/byof-isaac-lab/README.md](cookbooks/byof-isaac-lab/README.md) and
-follow its sections in order.
-
-The first live checkpoint path has this structure:
-
-```bash
-s3://${NPA_S3_BUCKET}/checkpoints/isaac-lab-byof/<run-id>/npa_isaac_lab_checkpoint.pt
-```
-
-Use the cookbook's verification commands to list the run prefix and fetch the
-manifest from S3.
+Finish with the [teardown guide](../teardown.md): cancel active owned runs before
+destroying resources that host them. Keep shared infrastructure intact.
 
 ## Common Failures
 
-| Symptom | Diagnosis | Fix |
-|---|---|---|
-| `sky check` reports HTTP 403 for an anonymous user | The active kube context is not authenticated to the Nebius MK8s cluster. | Run `kubectl config use-context <your-nebius-mk8s-context>` and refresh cluster credentials. |
-| S3 upload logs contain literal `${AWS_ENDPOINT_URL}` | SkyPilot 0.12.2 does not interpolate variables inside YAML `envs` blocks at submission time. | Use `npa/scripts/run_isaac_lab_rl.py`, which materializes endpoint values before submission, or substitute `https://storage.eu-north1.nebius.cloud` in the YAML. |
-| `NoSuchBucket` from AWS CLI or a workflow upload | Wrong bucket name, endpoint, or region. | Confirm `storage.bucket` and `storage.endpoint_url` in `~/.npa/credentials.yaml`, then re-export `NPA_S3_BUCKET` without `s3://` and `AWS_ENDPOINT_URL=https://storage.eu-north1.nebius.cloud`. |
-| `AccessDenied` from AWS CLI or a workflow upload | The access key does not have read/write access to the bucket. | Confirm `storage.aws_access_key_id` and `storage.aws_secret_access_key` in `~/.npa/credentials.yaml` are for the target bucket. |
-| An official GHCR tag is not anonymously pullable | The package visibility or tag is wrong. | Stop before launch or promotion and repair the official public package; do not add pull credentials as a workaround. |
-| L40S scheduling backoff | The cluster has no available L40S capacity or the preset is too small for the CPU request. | Ask the operator to provision an L40S node group with sufficient CPU, or use a documented RT-core alternative. |
+| Symptom | Next check |
+| --- | --- |
+| Kubernetes reports an anonymous-user `403` | Verify the exact kubeconfig/context and refresh its authentication. |
+| S3 lists successfully but submission cannot write | Compare the workflow bucket/endpoint with NPA configuration and shell overrides; verify write access. |
+| `No NPA cluster identity` or `No shared controller owner` | Complete the existing-cluster identity and controller-binding steps above. |
+| `ImagePullBackOff` | Rerun image preflight for the exact reference; repair public-tag visibility or the explicit private-registry credentials. |
+| GPU scheduling remains pending | Compare the spec with discovered GPU names, per-node capacity, and CPU/memory requests. |
 
-## Next Docs
-
-- [cli-sdk-yaml-walkthrough.md](cli-sdk-yaml-walkthrough.md): how to call any
-  Workbench tool through the CLI, SDK, and SkyPilot YAML.
-- [kubernetes.md](kubernetes.md): Workbench services, SkyPilot task pods,
-  namespace checks, GPU routing, and Kubernetes troubleshooting.
-- [cookbooks/byof-isaac-lab/README.md](cookbooks/byof-isaac-lab/README.md):
-  first Isaac Lab BYOF checkpoint.
-- [guides/sim2real-workflow.md](guides/sim2real-workflow.md): first H100
-  sim-to-real checkpoint and eval metric.
-- [orchestration/skypilot-setup.md](../orchestration/skypilot-setup.md):
-  isolated SkyPilot runtime details.
-- [quickstart.md](../quickstart.md): platform install and canonical credential
-  setup.
-- [workbench-yaml-guide.md](../workbench-yaml-guide.md): pipeline YAML
-  structure.
+For CLI/SDK examples and workflow authoring, see the
+[walkthrough](cli-sdk-yaml-walkthrough.md) and
+[workflow guide](../workbench-yaml-guide.md).

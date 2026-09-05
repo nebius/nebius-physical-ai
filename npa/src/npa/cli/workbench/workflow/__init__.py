@@ -1418,7 +1418,17 @@ def submit_cmd(
                     ["npa", "workbench", "workflow", "submit", str(yaml_path)]
                 ),
                 excluded_repos=(
-                    frozenset({"nvidia/Cosmos-Transfer2.5-2B"})
+                    # PAIDF deliberately checks only its selected Transfer
+                    # checkpoint, even though the tool also routes to cosmos2.
+                    frozenset(
+                        {
+                            "nvidia/Cosmos-Transfer2.5-2B",
+                            "nvidia/Cosmos-Guardrail1",
+                            "nvidia/Cosmos-Predict2.5-2B",
+                        }
+                    )
+                    if checkpoint_access_required and is_paidf_spec
+                    else frozenset({"nvidia/Cosmos-Transfer2.5-2B"})
                     if checkpoint_access_required
                     else frozenset()
                 ),

@@ -5,12 +5,12 @@ import subprocess
 from dataclasses import asdict
 from pathlib import Path
 
-from npa.clients.nebius_vm_auth import verify_profile
+from npa.clients.nebius_auth import verify_profile
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 GITIGNORE = REPO_ROOT / ".gitignore"
 AGENT_PATH = REPO_ROOT / "npa" / "src" / "npa" / "cli" / "agent.py"
-VM_AUTH_PATH = REPO_ROOT / "npa" / "src" / "npa" / "clients" / "nebius_vm_auth.py"
+NEBIUS_AUTH_PATH = REPO_ROOT / "npa" / "src" / "npa" / "clients" / "nebius_auth.py"
 AGENT_SKILL_PATH = REPO_ROOT / "skills" / "tools" / "npa-agent" / "SKILL.md"
 INFRA_PROTECTION_SKILL_PATH = (
     REPO_ROOT / "skills" / "atomic" / "protect-nebius-infra-details" / "SKILL.md"
@@ -91,7 +91,7 @@ def test_agent_endpoint_disclosure_requires_verified_basic_auth() -> None:
     protection_skill = INFRA_PROTECTION_SKILL_PATH.read_text(encoding="utf-8")
 
     assert "_basic_auth_protects_endpoint" in source
-    assert 'response.status_code == 401' in source
+    assert "response.status_code == 401" in source
     assert '"endpoint_disclosure_allowed": endpoint_disclosure_allowed' in source
     assert '"direct_url": ""' in source
     assert "endpoint_disclosure_allowed=true" in agent_skill
@@ -115,6 +115,7 @@ def test_vm_auth_verification_never_surfaces_iam_token_output() -> None:
         "profile": "operator",
         "identity_verified": True,
         "iam_token_minted": True,
+        "failure_reason": "",
     }
     assert secret not in repr(result)
     assert secret not in repr(public_result)
@@ -128,8 +129,9 @@ def test_vm_auth_verification_never_surfaces_iam_token_output() -> None:
     assert secret not in repr(failed)
 
     # Keep static checks as defense in depth; behavior above is the contract.
-    source = VM_AUTH_PATH.read_text(encoding="utf-8")
+    source = NEBIUS_AUTH_PATH.read_text(encoding="utf-8")
     assert "strip_ambient_token_env" in source
+    assert '"stdin": subprocess.DEVNULL' in source
     assert '"stdout": subprocess.DEVNULL' in source
     assert "iam_token_minted: bool" in source
     assert "print(token" not in source
@@ -143,7 +145,7 @@ def test_agent_tracked_files_have_no_literal_secrets_or_live_ips() -> None:
         and (
             "/agent" in path
             or path.endswith("agent.py")
-            or path.endswith("nebius_vm_auth.py")
+            or path.endswith(("nebius_auth.py", "nebius_vm_auth.py"))
         )
     ]
     violations: list[str] = []

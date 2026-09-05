@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 import json
+import math
 import re
 from typing import Any
 
@@ -79,6 +80,57 @@ def static_prerequisites(
                 "--var isaac_cache_pvc=<bound-rwx-pvc>",
             )
         )
+
+    # Rollout, validation, and gold evaluation use three distinct sealed splits.
+    # Catch undersized reduced-proof profiles before Transfer/EnvGen spend GPU time.
+    try:
+        env_count = int(str(config["env_count"]))
+        train_fraction = float(str(config["train_fraction"]))
+        rollout_count = int(str(config["rollout_count"]))
+        validation_count = int(str(config["validation_count"]))
+        gold_count = int(str(config["gold_count"]))
+    except (KeyError, TypeError, ValueError):
+        issues.append(
+            (
+                "Sim2Real train/validation/gold split inputs are missing or not numeric",
+                "set integer env_count, rollout_count, validation_count, and gold_count "
+                "with a numeric train_fraction",
+            )
+        )
+    else:
+        requested_train = (
+            int(round(env_count * train_fraction))
+            if math.isfinite(train_fraction) and 0.0 < train_fraction < 1.0
+            else -1
+        )
+        # EnvGen retains at least one train, validation, and gold row in each of
+        # its three difficulty strata, then divides the heldout remainder evenly.
+        train_count = min(env_count - 6, max(3, requested_train))
+        validation_rows = (env_count - train_count) // 2
+        gold_rows = env_count - train_count - validation_rows
+        if (
+            env_count < 9
+            or not math.isfinite(train_fraction)
+            or not 0.0 < train_fraction < 1.0
+            or rollout_count <= 0
+            or validation_count <= 0
+            or gold_count <= 0
+            or rollout_count > train_count
+            or validation_count > validation_rows
+            or gold_count > gold_rows
+        ):
+            issues.append(
+                (
+                    "Sim2Real evaluation counts exceed the sealed train/validation/gold "
+                    "splits or their split inputs are invalid "
+                    f"(env_count={env_count}, train_fraction={train_fraction}, "
+                    f"available={train_count}/{validation_rows}/{gold_rows}, "
+                    f"requested={rollout_count}/{validation_count}/{gold_count})",
+                    "choose positive counts with 0 < train_fraction < 1 and keep each "
+                    "request within its computed split; for example, env_count=640 and "
+                    "train_fraction=0.8 support 64 rollout, validation, and gold rows",
+                )
+            )
 
     requested = {str(name).strip() for name in requested_secret_envs}
     not_forwarded = [name for name in _REQUIRED_SECRET_ENVS if name not in requested]
