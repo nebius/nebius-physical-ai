@@ -2069,6 +2069,7 @@ describe("NPA agent UI with mocked APIs", () => {
 
     cy.get("#runSummary").should("contain.text", "mock-run");
     cy.get("#stagesRunInput").clear().type(maintenanceId, { delay: 0 });
+    cy.wait("@artifactRuns");
     cy.get("#stagesLoadRun").click();
     cy.wait("@maintenanceNotFound");
     cy.get("#runSummary").should("contain.text", "currently loaded run");
@@ -2076,6 +2077,18 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#runSummary").should("not.contain.text", maintenanceId);
     cy.get("#stagesRunSearchResult").should("contain.text", "Codex maintenance job IDs");
     cy.get("#stagesRunSearchResult").should("contain.text", "Currently loaded run remains mock-run");
+
+    // A later discovery refresh must preserve the actionable exact-lookup
+    // failure, even though it rebuilds the run picker for the same query.
+    cy.get("#artifactRefreshRuns").click({ force: true });
+    cy.wait("@artifactRuns");
+    cy.get("#artifactRefreshRuns").should("not.be.disabled");
+    cy.get("#stagesRunSearchResult").should("contain.text", "Codex maintenance job IDs");
+    cy.get("#stagesRunSearchResult").should("contain.text", "Currently loaded run remains mock-run");
+    cy.get("#stagesRunInput").clear().type("another-missing-run", { delay: 0 });
+    cy.get("#stagesRunSearchResult")
+      .should("contain.text", "Search results are separate")
+      .and("not.contain.text", "Codex maintenance job IDs");
   });
 
   it("loads an artifact-backed training run without a Rerun recording", () => {

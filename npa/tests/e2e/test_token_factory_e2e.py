@@ -14,6 +14,7 @@ They live under ``tests/e2e`` (excluded from the default unit run via
 from __future__ import annotations
 
 import json
+import os
 from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
@@ -31,6 +32,24 @@ from npa.clients.token_factory import (
 from npa.workbench.token_factory import reason_scene
 
 pytestmark = pytest.mark.token_factory_e2e
+
+
+def test_live_provider_contract_recheck(request: pytest.FixtureRequest, tmp_path: Path) -> None:
+    """Recheck real outputs, thinking controls and structured-output drift."""
+    _require_key()
+    from npa.live_verification.token_factory_contract import run_contract
+
+    additional = tuple(filter(None, (
+        value.strip() for value in os.environ.get("NPA_TF_RECHECK_REQUIRED_MODELS", "").split(",")
+    )))
+    report = run_contract(
+        TokenFactoryClient(), additional_models=additional,
+        expected_json_behavior=os.environ.get("NPA_TF_RECHECK_JSON_BASELINE", "malformed_json"),
+    )
+    request.node.user_properties.append(("provider_contract", report))
+    (tmp_path / "provider-contract.json").write_text(json.dumps(report, indent=2) + "\n")
+    failures = [check["check"] for check in report["checks"] if not check["passed"]]
+    assert report["passed"], f"Provider contract drift: {', '.join(failures)}"
 
 
 def _require_key() -> str:

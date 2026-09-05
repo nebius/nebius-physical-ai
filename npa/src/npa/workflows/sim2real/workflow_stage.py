@@ -17,7 +17,8 @@ from npa.workflows.sim2real.stage14_finalize import (
     finalize_in_work as _stage14_in_work,
 )
 from npa.workflows.sim2real.stage9_evaluator import (
-    validate_stage7_cosmos3_coverage as _validate_stage7_cosmos3_coverage,
+    validate_hosted_evaluator,
+    validate_stage7_cosmos3_coverage as _validate_stage7_cosmos3_coverage,  # noqa: F401 - compatibility import
 )
 from npa.workflows.sim2real.stage9_replay import (
     existing_replay as _stage9_existing_replay,
@@ -28,6 +29,7 @@ from npa.workflows.sim2real.workflow_io import (
     publish_component_lane_record,
     publish_component_record,
     read_json,
+    source_sha,
     storage,
     write_json,
     write_loop_output,
@@ -543,14 +545,12 @@ def _run_eval(
 
 
 def _stage9(args: argparse.Namespace) -> None:
-    from npa.workbench.cosmos.reason import hosted_rollout_model_family
     from npa.workflows.sim2real import byo_isaac_trainer
     from npa.workflows.sim2real.checkpoint_selection import select_best_checkpoint
     from npa.workflows.sim2real.temporal_credit import convert_evaluation
 
     root, work = _root(args), _work(9)
     expected_model = args.reason_model
-    expected_family = hosted_rollout_model_family(expected_model)
     lane_base = (
         f"{root}/vlm_eval/train/outer-{args.outer_iteration:02d}/"
         f"iter-{args.inner_iteration:02d}/"
@@ -566,76 +566,16 @@ def _stage9(args: argparse.Namespace) -> None:
     stage8_record = read_json(
         f"{root}/components/stage_08.json", directory=work / "stage8-record"
     )
-    if (
-        cosmos3.get("schema") not in {
-            "npa.sim2real.cosmos3_evaluator.v1",
-            "npa.sim2real.cosmos_reason_lane.v2",
-        }
-        or (cosmos3.get("evaluator") or cosmos3.get("lane")) != "cosmos3"
-        or cosmos3.get("model") != expected_model
-        or cosmos3.get("reason_family") != expected_family
-        or cosmos3.get("backend") != "token_factory"
-        or cosmos3.get("provider") != "nebius"
-        or not cosmos3.get("provenance")
-        or stage8_record.get("stage") != 8
-        or stage8_record.get("name") != "stage_08_vlm_eval_train"
-        or stage8_record.get("artifacts", {}).get("result")
-        != lane_base + "cosmos3.json"
-        or stage8_record.get("artifacts", {}).get("backend") != "token_factory"
-        or stage8_record.get("artifacts", {}).get("model") != expected_model
-        or stage8_record.get("artifacts", {}).get("reason_family") != expected_family
-        or int(stage8_record.get("artifacts", {}).get("outer_iteration") or 0)
-        != args.outer_iteration
-        or int(stage8_record.get("artifacts", {}).get("inner_iteration") or 0)
-        != args.inner_iteration
-    ):
-        raise RuntimeError(
-            "Stage 8 requires the configured hosted model identity, family, and provenance"
-        )
-    right = _validate_stage7_cosmos3_coverage(stage7, cosmos3)
-    cosmos3_usage = dict(cosmos3.get("evaluator_usage") or {})
-    request_fields = {
-        "request_id",
-        "input_tokens",
-        "output_tokens",
-        "total_tokens",
-        "latency_seconds",
-        "retries",
-        "cost_usd",
-    }
-    requests = [dict(item.get("request") or {}) for item in right.values()]
-    if (
-        int(cosmos3_usage.get("request_count") or 0) != len(right)
-        or cosmos3_usage.get("model") != expected_model
-        or any(not request_fields.issubset(request) for request in requests)
-        or int(cosmos3_usage.get("input_tokens") or 0)
-        != sum(int(request.get("input_tokens") or 0) for request in requests)
-        or int(cosmos3_usage.get("output_tokens") or 0)
-        != sum(int(request.get("output_tokens") or 0) for request in requests)
-        or int(cosmos3_usage.get("total_tokens") or 0)
-        != sum(int(request.get("total_tokens") or 0) for request in requests)
-        or len(cosmos3_usage.get("per_request_latency_seconds") or []) != len(right)
-        or any(
-            item.get("schema") != "npa.sim2real.vlm_eval.v3"
-            or item.get("backend") != "token_factory"
-            or item.get("provider") != "nebius"
-            or item.get("model") != cosmos3.get("model")
-            or item.get("reason_family") != expected_family
-            or not isinstance(item.get("request"), dict)
-            or int(item.get("action_count") or 0) < 1
-            or len(item.get("per_step") or []) != int(item.get("action_count") or 0)
-            or len(
-                {
-                    int(step.get("step"))
-                    for step in item.get("per_step") or []
-                    if isinstance(step, dict) and step.get("step") is not None
-                }
-            )
-            != int(item.get("action_count") or 0)
-            for item in right.values()
-        )
-    ):
-        raise RuntimeError("Stage 8 hosted evaluations do not exactly cover Stage 7 rollouts")
+    right = validate_hosted_evaluator(
+        stage7=stage7,
+        evaluator=cosmos3,
+        stage8_record=stage8_record,
+        expected_model=expected_model,
+        expected_source_sha=source_sha(),
+        evaluator_uri=lane_base + "cosmos3.json",
+        outer_iteration=args.outer_iteration,
+        inner_iteration=args.inner_iteration,
+    )
     evaluation_dir, signal_dir = work / "evaluations", work / "signals"
     evaluation_dir.mkdir()
     signal_dir.mkdir()

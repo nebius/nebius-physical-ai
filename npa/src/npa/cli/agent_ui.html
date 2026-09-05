@@ -12556,8 +12556,16 @@
               String((run && run.run_id) || "").toLowerCase().includes(needle)
             );
         const result = document.getElementById("stagesRunSearchResult");
+        // Background discovery may refresh this picker after an exact lookup.
+        // Keep that lookup's actionable result until the operator changes the
+        // query or another run loads; generic search guidance must not erase it.
+        if (result && result.dataset.lookupQuery !== needle) {
+          delete result.dataset.lookupQuery;
+        }
         if (result && needle && activeRunId && !String(activeRunId).toLowerCase().includes(needle)) {
-          result.textContent = "Search results are separate from the currently loaded run " + activeRunId + ".";
+          if (!result.dataset.lookupQuery) {
+            result.textContent = "Search results are separate from the currently loaded run " + activeRunId + ".";
+          }
           current = "";
         } else if (result && !needle) {
           result.textContent = activeRunId ? "Currently loaded run: " + activeRunId + "." : "";
@@ -13180,6 +13188,7 @@
           if (!requestIsCurrent() || (signal && signal.aborted)) return false;
           const searchResult = document.getElementById("stagesRunSearchResult");
           if (searchResult) {
+            searchResult.dataset.lookupQuery = runId.toLowerCase();
             const current = activeRunId ? " Currently loaded run remains " + activeRunId + "." : " No run is currently loaded.";
             searchResult.textContent = "Exact NPA run lookup failed for " + runId + ": " + String((err && err.message) || err) + "." + current;
           }
@@ -13193,7 +13202,10 @@
         activeRunEntryKey = String((entry && entry.entry_key) || runRef || "");
         syncRunChooserFields(runId, activeRunEntryKey || runRef);
         const searchResult = document.getElementById("stagesRunSearchResult");
-        if (searchResult) searchResult.textContent = "Loaded discovered NPA run: " + runId + ".";
+        if (searchResult) {
+          delete searchResult.dataset.lookupQuery;
+          searchResult.textContent = "Loaded discovered NPA run: " + runId + ".";
+        }
         const artifacts = Array.isArray(data.artifacts) ? data.artifacts : [];
         activeArtifactInventoryRunId = runId;
         activeArtifactInventory = artifacts;
@@ -14758,6 +14770,7 @@
         if (entry.source_type === "artifact_storage") {
           const searchResult = document.getElementById("stagesRunSearchResult");
           if (searchResult) {
+            searchResult.dataset.lookupQuery = chosen.toLowerCase();
             searchResult.textContent = "Checking exact discovered NPA run: " + chosen + "…" +
               (activeRunId ? " Currently loaded run remains " + activeRunId + " until lookup succeeds." : "");
           }

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import hashlib
 import json
 import subprocess
 import sys
@@ -571,17 +572,35 @@ def test_stage9_conflicting_same_iteration_replay_fails_closed() -> None:
 @pytest.mark.parametrize(
     "corruption",
     [None, "envelope_model", "envelope_family", "item_family", "record_model",
-     "record_family", "usage_model", "configured_model"],
+     "record_family", "usage_model", "configured_model", "legacy_family",
+     "legacy_request", "usage_total", "malformed_iteration", "extra_rollout",
+     "null_request_id", "zero_tokens", "negative_retries", "nan_latency",
+     "wrong_latency_list", "wrong_latency_sum", "wrong_usage_request_ids",
+     "wrong_usage_retries", "false_cost", "wrong_cost_sum", "priced_usage",
+     "truthy_provenance", "record_image", "record_job", "wrong_source",
+     "record_digest", "wrong_step_index", "boolean_step_index", "record_usage",
+     "record_rollout_count", "duplicate_request_ids", "inconsistent_token_total",
+     "negative_cost"],
 )
 def test_stage9_retry_republishes_exact_evidence_without_training(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, model: str, family: str, corruption: str | None
 ) -> None:
     from npa.workflows.sim2real import byo_isaac_trainer, temporal_credit
     from npa.workflows.sim2real import workflow_stage
+    from npa.workflows.sim2real.stage8_cosmos3 import _aggregate_usage
 
     root = "s3://unit/run"
     evidence, _candidate, sample_eval, sample_signal = _stage9_replay_fixture()
     sample_eval.update(model=model, reason_family=family)
+    if corruption in {"priced_usage", "wrong_cost_sum"}:
+        sample_eval["request"]["cost_usd"] = 0.00025
+    provenance = {
+        "image": "ghcr.io/example/test-evaluator@sha256:" + "a" * 64,
+        "image_digest": "sha256:" + "a" * 64,
+        "source_sha": "a" * 40,
+        "workflow_job": "synthetic-workflow-task",
+        "execution_mode": "standard_npa_workflow_skypilot",
+    }
     iteration = evidence["iterations"][0]
     iteration.update(
         {
@@ -597,13 +616,19 @@ def test_stage9_retry_republishes_exact_evidence_without_training(
             "rollout_dirs": ["/tmp/actions/rollout-1"],
         },
         f"{root}/components/stage_08.json": {
+            "schema": "npa.sim2real.component_record.v1",
+            "tier": "WORKS",
             "stage": 8,
             "name": "stage_08_vlm_eval_train",
             "artifacts": {
+                **provenance,
                 "result": lane_base + "cosmos3.json",
                 "model": model,
                 "reason_family": family,
+                "provider": "nebius",
                 "backend": "token_factory",
+                "evaluator_usage": _aggregate_usage([sample_eval], model=model),
+                "rollout_count": 1,
                 "outer_iteration": 1,
                 "inner_iteration": 1,
             },
@@ -615,15 +640,8 @@ def test_stage9_retry_republishes_exact_evidence_without_training(
             "reason_family": family,
             "provider": "nebius",
             "backend": "token_factory",
-            "provenance": {"image": "cosmos3"},
-            "evaluator_usage": {
-                "model": model,
-                "request_count": 1,
-                "input_tokens": 10,
-                "output_tokens": 5,
-                "total_tokens": 15,
-                "per_request_latency_seconds": [0.25],
-            },
+            "provenance": provenance,
+            "evaluator_usage": _aggregate_usage([sample_eval], model=model),
             "source_rollout_ids": ["rollout-1"],
             "evaluations": [sample_eval],
         },
@@ -632,6 +650,7 @@ def test_stage9_retry_republishes_exact_evidence_without_training(
     work = tmp_path / "stage9"
     work.mkdir()
     monkeypatch.setattr(workflow_stage, "_work", lambda _stage: work)
+    monkeypatch.setattr(workflow_stage, "source_sha", lambda: "a" * 40)
     monkeypatch.setattr(workflow_stage, "list_prefix", lambda _uri: [{"Size": 1}])
     monkeypatch.setattr(
         workflow_stage,
@@ -676,6 +695,77 @@ def test_stage9_retry_republishes_exact_evidence_without_training(
         record["reason_family"] = "wrong-family"
     elif corruption == "usage_model":
         envelope["evaluator_usage"]["model"] = wrong_model
+    elif corruption == "legacy_family":
+        envelope.pop("reason_family")
+        record.pop("reason_family")
+    elif corruption == "legacy_request":
+        sample_eval.pop("request")
+    elif corruption == "usage_total":
+        envelope["evaluator_usage"]["total_tokens"] += 1
+    elif corruption == "malformed_iteration":
+        record["inner_iteration"] = "invalid"
+    elif corruption == "extra_rollout":
+        envelope["source_rollout_ids"].append("rollout-unexpected")
+    elif corruption == "null_request_id":
+        sample_eval["request"]["request_id"] = None
+    elif corruption == "zero_tokens":
+        for key in ("input_tokens", "output_tokens", "total_tokens"):
+            sample_eval["request"][key] = envelope["evaluator_usage"][key] = 0
+    elif corruption == "negative_retries":
+        sample_eval["request"]["retries"] = envelope["evaluator_usage"]["retries"] = -1
+    elif corruption == "nan_latency":
+        sample_eval["request"]["latency_seconds"] = float("nan")
+    elif corruption == "wrong_latency_list":
+        envelope["evaluator_usage"]["per_request_latency_seconds"] = [2.5]
+    elif corruption == "wrong_latency_sum":
+        envelope["evaluator_usage"]["aggregate_latency_seconds"] = 2.5
+    elif corruption == "wrong_usage_request_ids":
+        envelope["evaluator_usage"]["request_ids"] = ["unrelated-request"]
+    elif corruption == "wrong_usage_retries":
+        envelope["evaluator_usage"]["retries"] = 1
+    elif corruption == "false_cost":
+        envelope["evaluator_usage"]["cost_usd"] = 0.0
+    elif corruption == "wrong_cost_sum":
+        envelope["evaluator_usage"]["cost_usd"] = 0.001
+    elif corruption == "truthy_provenance":
+        envelope["provenance"] = {"unrelated": True}
+    elif corruption == "record_image":
+        record["image"] = "ghcr.io/example/test-evaluator@sha256:" + "b" * 64
+    elif corruption == "record_job":
+        record["workflow_job"] = "different-synthetic-task"
+    elif corruption == "record_usage":
+        record["evaluator_usage"]["input_tokens"] = 99
+    elif corruption == "record_rollout_count":
+        record["rollout_count"] = 2
+    elif corruption == "wrong_source":
+        envelope["provenance"]["source_sha"] = record["source_sha"] = "b" * 40
+    elif corruption == "wrong_step_index":
+        sample_eval["per_step"][0]["step"] = 999
+    elif corruption == "boolean_step_index":
+        sample_eval["per_step"][0]["step"] = False
+    elif corruption == "duplicate_request_ids":
+        second = json.loads(json.dumps(sample_eval))
+        second["rollout_id"] = "rollout-2"
+        envelope["evaluations"].append(second)
+        envelope["source_rollout_ids"].append("rollout-2")
+        lanes[f"{root}/actions/train/outer-01/iter-01/rollouts-result.json"]["rollout_dirs"].append("/tmp/actions/rollout-2")
+        envelope["evaluator_usage"] = _aggregate_usage(envelope["evaluations"], model=model)
+        record["rollout_count"] = 2
+    elif corruption == "inconsistent_token_total":
+        sample_eval["request"]["total_tokens"] = envelope["evaluator_usage"]["total_tokens"] = 99
+    elif corruption == "negative_cost":
+        sample_eval["request"]["cost_usd"] = -0.25
+        envelope["evaluator_usage"] = _aggregate_usage([sample_eval], model=model)
+    if corruption != "record_usage":
+        # Keep duplicated component accounting consistent so accounting mutations
+        # exercise their own semantic gate rather than failing only the copy check.
+        record["evaluator_usage"] = json.loads(json.dumps(envelope["evaluator_usage"]))
+    component = lanes[f"{root}/components/stage_08.json"]
+    component["content_sha256"] = hashlib.sha256(
+        json.dumps(component, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    if corruption == "record_digest":
+        component["content_sha256"] = "b" * 64
     args = Namespace(
         root_uri=root,
         outer_iteration=1,
@@ -684,10 +774,16 @@ def test_stage9_retry_republishes_exact_evidence_without_training(
         ppo_iterations=2,
         reason_model=wrong_model if corruption == "configured_model" else model,
     )
-    if corruption:
-        with pytest.raises(RuntimeError, match="Stage 8"):
+    if corruption not in {None, "priced_usage"}:
+        unchanged = json.dumps(lanes, sort_keys=True)
+        with pytest.raises(RuntimeError, match="Stage 8") as failure:
             _stage9(args)
+        assert "Stage 9 has not started PPO or checkpoint selection" in str(failure.value)
+        assert "start a new run ID and output root" in str(failure.value)
+        assert "Do not relabel or rewrite old evaluator artifacts in place" in str(failure.value)
+        assert json.dumps(lanes, sort_keys=True) == unchanged
         assert not writes
+        assert not records
         return
     _stage9(args)
 

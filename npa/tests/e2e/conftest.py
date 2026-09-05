@@ -21,6 +21,13 @@ E2E_BUCKET_MAX_CREATIONS = int(os.environ.get("NPA_E2E_BUCKET_BUDGET", "8") or "
 E2E_BUCKET_COUNTER = Path("/tmp/npa-e2e-run-bucket-counter.txt")
 _HERMITIC_UNIT_BUCKET = "test-bucket-00000000"
 
+
+def pytest_addoption(parser: pytest.Parser) -> None:
+    parser.addoption(
+        "--require-token-factory-live", action="store_true", default=False,
+        help="Fail instead of skipping when the designated live provider job lacks its key.",
+    )
+
 # Live ops VMs commonly export AWS_* / S3_* while tool e2e suites gate on NPA_E2E_S3_*.
 _S3_ENV_FALLBACKS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("NPA_E2E_S3_ACCESS_KEY_ID", ("AWS_ACCESS_KEY_ID", "NEBIUS_ACCESS_KEY_ID")),
@@ -35,7 +42,13 @@ _S3_ENV_FALLBACKS: tuple[tuple[str, tuple[str, ...]], ...] = (
 
 def pytest_configure(config: pytest.Config) -> None:
     """Map standard AWS/S3 env vars onto NPA_E2E_S3_* so tool e2e suites run on real infra."""
-    del config
+    if config.getoption("--require-token-factory-live") and not os.environ.get(
+        "NEBIUS_TOKEN_FACTORY_KEY", ""
+    ).strip():
+        raise pytest.UsageError(
+            "Required live Token Factory mode needs NEBIUS_TOKEN_FACTORY_KEY; "
+            "a skipped or file-credential fallback run is not provider verification."
+        )
     for target, sources in _S3_ENV_FALLBACKS:
         if os.environ.get(target, "").strip():
             continue

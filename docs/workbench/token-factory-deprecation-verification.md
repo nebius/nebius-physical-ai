@@ -76,7 +76,17 @@ or upgrading to this evaluator contract, even if retaining the same Cosmos3
 model: old Stage 8 envelope and component records lack the family fields now
 required by Stage 9. Old immutable evaluation artifacts are not relabeled.
 
-## Live verification
+The hosted temporal path requires a complete JSON completion, finite scores and
+confidence in range, and exactly one model-local event for every input action.
+It rejects truncated responses and invalid scores without recovery or clamping.
+Stage 9 additionally verifies the component content hash, matching immutable
+image/source/workflow provenance, nonempty request identities, positive token
+accounting, and exact latency/retry/cost aggregates. An unavailable provider cost
+remains explicit `null`. Its migration error occurs before PPO or checkpoint
+selection and names the required new run ID/output root. Preserve the old run;
+rerun Stage 8 under the current contract before resuming the new run at Stage 9.
+
+## Initial local verification (2026-09-04/05)
 
 Local live validation passed **11 workbench/evaluator tests** and **one agent
 HTTP test covering three model tiers**. The committed live tests exercise real
@@ -108,17 +118,19 @@ npa/.venv/bin/python -m pytest \
 Authentication preflight and `models` are useful prerequisites, not proof of
 inference or artifact correctness. Private validation retains synthetic inputs,
 real outputs, model selection, available usage, and sanitized validation logs.
-Full GPU simulation/training and a deployed agent VM are outside this hosted
-model migration's live verification; agent behavior is exercised through the
-same rendered backend on isolated loopback.
+This initial proof did not cover full GPU simulation/training or a deployed
+agent UI; agent behavior used the rendered backend on isolated loopback.
+The follow-up adds a separate [protected provider contract job](../testing/token-factory-live-contracts.md),
+whose receipts distinguish hosted GitHub Actions from local invocations.
+The concrete daily schedule activates when the workflow reaches `main`.
 
-An unrelated full-suite failure already occurs on the original base commit's
-[GitHub CI run](https://github.com/nebius/nebius-physical-ai/actions/runs/33925026904):
-`test_run_cosmos_transfer_names_gated_access_denial_without_leaking_prompt`
-calls the real guardrail-data preparation helper in a unit test without its
-optional dependency. The test and its Cosmos Transfer implementation are
-unchanged by this migration. The observed error is missing `huggingface_hub`,
-before the subprocess denial/redaction assertion it intends to test.
+The follow-up fixes the previously unrelated Cosmos Transfer unit-test failure
+in `test_run_cosmos_transfer_names_gated_access_denial_without_leaking_prompt`.
+It mocks guardrail-data preparation at the call site and explicitly makes the
+optional Hub module unavailable, so the test reaches its intended subprocess
+denial/redaction assertion in every environment. The production guardrail and
+its own dedicated tests remain strict; a red required CI check is not accepted
+as a merge-readiness exception.
 
 ## Model terms
 

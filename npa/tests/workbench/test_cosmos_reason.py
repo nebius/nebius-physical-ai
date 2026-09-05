@@ -188,12 +188,14 @@ def test_token_factory_rollout_evaluator_returns_event_local_contract(tmp_path, 
             return {
                 "id": "request-public-1",
                 "model": model,
-                "choices": [{"message": {"content": json.dumps({
+                "choices": [{"finish_reason": "stop", "message": {"content": json.dumps({
                     "success": True,
                     "score": 0.9,
                     "summary": "stable cube grasp",
                     "per_step": [
-                        {"step": index, "critique_text": f"event {index} stable", "error_tags": ["ok"], "confidence": 0.8}
+                        {"step": index, "critique_text": f"event {index} stable",
+                         "error_tags": ["ok"], "confidence": 0.8,
+                         "camera_observation": "camera-000.png"}
                         for index in range(10)
                     ],
                 })}}],
@@ -539,3 +541,114 @@ def test_hosted_evaluator_rejects_missing_or_substituted_provider_model(tmp_path
             task_description="task", rollout_id="rollout-public", threshold=0.5,
             client=Client(),
         )
+
+
+def _complete_hosted_payload() -> dict:
+    return {
+        "success": True, "score": 0.9, "summary": "red square is inside green outline",
+        "per_step": [{
+            "step": 0, "critique_text": "red square finishes inside outline",
+            "error_tags": ["ok"], "confidence": 0.8,
+            "camera_observation": "frame.png",
+        }],
+    }
+
+
+@pytest.mark.parametrize("score", [-0.1, 1.01, 9, float("nan"), float("inf"), True, "0.9", None])
+def test_hosted_scores_are_rejected_without_clamping_or_coercion(score):
+    payload = _complete_hosted_payload()
+    payload["score"] = score
+    with pytest.raises(CosmosReasonError, match="score must be a finite number"):
+        reason_module._parse_hosted_rollout_output(
+            json.dumps(payload), actions=[{"step": 0, "action": [0.0]}],
+            rollout_id="synthetic", threshold=0.5, family="minimax_m3", frame_names=["frame.png"],
+        )
+
+
+@pytest.mark.parametrize("text", [
+    '{"score":0.9,"success":true,"summary":"test", "per_step":[',
+    'score: 0.9 success: true',
+    'prefix {"score":0.9,"success":true,"per_step":[]}',
+    '```json\n{"score":0.9,"success":true,"per_step":[]}\n```',
+    '[{"score":0.9,"success":true,"per_step":[]}]',
+    '{"score":0.1,"score":0.9,"success":true,"per_step":[]}',
+])
+def test_hosted_parser_does_not_recover_truncated_or_ambiguous_json(text):
+    with pytest.raises(CosmosReasonError, match="hosted evaluator contract rejected"):
+        reason_module._parse_hosted_rollout_output(
+            text, actions=[{"step": 0}], rollout_id="synthetic", threshold=0.5,
+            family="minimax_m3", frame_names=["frame.png"],
+        )
+
+
+@pytest.mark.parametrize("corruption", [
+    "missing_event", "duplicate_event", "wrong_index", "boolean_index", "blank_critique",
+    "unknown_camera", "missing_confidence", "invalid_confidence", "unknown_tag",
+    "synthetic_critique", "wrong_rollout", "non_boolean_success", "blank_summary",
+])
+def test_hosted_requires_complete_model_local_event_contract(corruption):
+    payload = _complete_hosted_payload()
+    event = payload["per_step"][0]
+    if corruption == "missing_event":
+        payload["per_step"] = []
+    elif corruption == "duplicate_event":
+        payload["per_step"].append(dict(event))
+    elif corruption == "wrong_index":
+        event["step"] = 999
+    elif corruption == "boolean_index":
+        event["step"] = False
+    elif corruption == "blank_critique":
+        event["critique_text"] = ""
+    elif corruption == "unknown_camera":
+        event["camera_observation"] = "unrelated.png"
+    elif corruption == "missing_confidence":
+        event.pop("confidence")
+    elif corruption == "invalid_confidence":
+        event["confidence"] = float("nan")
+    elif corruption == "unknown_tag":
+        event["error_tags"] = ["invented"]
+    elif corruption == "synthetic_critique":
+        event["critique_source"] = "model_missing"
+    elif corruption == "wrong_rollout":
+        payload["rollout_id"] = "unrelated"
+    elif corruption == "non_boolean_success":
+        payload["success"] = "false"
+    elif corruption == "blank_summary":
+        payload["summary"] = ""
+    with pytest.raises(CosmosReasonError, match="hosted evaluator contract rejected"):
+        reason_module._parse_hosted_rollout_output(
+            json.dumps(payload), actions=[{"step": 0}], rollout_id="synthetic",
+            threshold=0.5, family="minimax_m3", frame_names=["frame.png"],
+        )
+
+
+@pytest.mark.parametrize("finish_reason", [None, "length", "content_filter", "tool_calls"])
+def test_hosted_evaluator_rejects_unfinished_completions_even_with_parseable_json(tmp_path, finish_reason):
+    frame = tmp_path / "frame.png"
+    frame.write_bytes(b"synthetic-frame")
+
+    class Client:
+        def chat_completion(self, **kwargs):
+            return {
+                "model": kwargs["model"],
+                "choices": [{"finish_reason": finish_reason,
+                             "message": {"content": json.dumps(_complete_hosted_payload())}}],
+            }
+
+    with pytest.raises(CosmosReasonError, match="incomplete completion"):
+        run_token_factory_rollout_vlm(
+            model_id="MiniMaxAI/MiniMax-M3", image_paths=[frame], actions=[{"step": 0}],
+            task_description="task", rollout_id="synthetic", threshold=0.5, client=Client(),
+        )
+
+
+def test_complete_hosted_output_retains_original_score_and_ground_truth():
+    payload = _complete_hosted_payload()
+    actions = [{"step": 0, "action": [0.0], "simulator_ground_truth": {"placement_stable": True}}]
+    result = reason_module._parse_hosted_rollout_output(
+        json.dumps(payload), actions=actions, rollout_id="synthetic", threshold=0.5,
+        family="minimax_m3", frame_names=["frame.png"],
+    )
+    assert result["score"] == payload["score"] and result["success"] is True
+    assert result["per_step"][0]["critique_source"] == "model_per_step"
+    assert result["per_step"][0]["simulator_ground_truth"] == actions[0]["simulator_ground_truth"]

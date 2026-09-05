@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+import math
 import mimetypes
 import os
 import re
@@ -552,18 +553,22 @@ def run_token_factory_rollout_vlm(
             raise CosmosReasonError(
                 "hosted evaluator returned a missing or different model identity"
             )
-        message = response["choices"][0]["message"]
+        choice = response["choices"][0]
+        if choice.get("finish_reason") != "stop":
+            raise CosmosReasonError("hosted evaluator returned an incomplete completion")
+        message = choice["message"]
         model_text, _reasoning = split_reasoning(message)
     except (TokenFactoryError, KeyError, IndexError, TypeError) as exc:
         raise CosmosReasonError(f"hosted rollout evaluation failed: {exc}") from exc
     if not model_text:
         raise CosmosReasonError("hosted evaluator returned no visible structured evaluation")
-    payload = _parse_cosmos_reason_output(
+    payload = _parse_hosted_rollout_output(
         model_text,
         actions=actions,
         rollout_id=rollout_id,
         threshold=threshold,
         family=family,
+        frame_names=[path.name for path in selected_paths],
     )
     raw_usage = response.get("usage") if isinstance(response.get("usage"), dict) else {}
     transport = getattr(active, "last_request_metrics", {}) or {}
@@ -594,6 +599,85 @@ def run_token_factory_rollout_vlm(
         }
     )
     return payload
+
+
+def _parse_hosted_rollout_output(
+    model_text: str,
+    *,
+    actions: list[dict[str, Any]],
+    rollout_id: str,
+    threshold: float,
+    family: str,
+    frame_names: list[str],
+) -> dict[str, Any]:
+    """Validate complete hosted JSON before applying the shared output shape.
+
+    The self-hosted Cosmos parser retains its legacy recovery policy. Hosted
+    evaluators must never repair a truncated response, clamp an invalid score,
+    or synthesize missing model-local events into an accepted Stage 8 artifact.
+    """
+
+    def invalid(reason: str) -> CosmosReasonError:
+        return CosmosReasonError(f"hosted evaluator contract rejected: {reason}")
+
+    def number_in_unit_interval(value: Any) -> bool:
+        return (isinstance(value, (int, float)) and not isinstance(value, bool)
+                and math.isfinite(value) and 0 <= value <= 1)
+
+    def unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        value: dict[str, Any] = {}
+        for key, item in pairs:
+            if key in value:
+                raise invalid("duplicate JSON field")
+            value[key] = item
+        return value
+
+    try:
+        decoded = json.loads(model_text, object_pairs_hook=unique_object)
+    except (TypeError, ValueError) as exc:
+        raise invalid("expected one complete JSON object without repaired prefixes") from exc
+    if not isinstance(decoded, dict):
+        raise invalid("expected one JSON object")
+    if not number_in_unit_interval(decoded.get("score")):
+        raise invalid("score must be a finite number from 0 to 1")
+    if not isinstance(decoded.get("success"), bool):
+        raise invalid("success must be a boolean")
+    if not isinstance(decoded.get("summary"), str) or not decoded["summary"].strip():
+        raise invalid("summary must contain a visible critique")
+    if decoded.get("rollout_id", rollout_id) != rollout_id:
+        raise invalid("rollout identity does not match the input")
+    expected = [action.get("step", index) for index, action in enumerate(actions)]
+    if (not expected or any(type(step) is not int for step in expected)
+            or len(set(expected)) != len(expected)):
+        raise invalid("input action indices must be nonempty unique integers")
+    events = decoded.get("per_step")
+    if not isinstance(events, list) or len(events) != len(expected):
+        raise invalid("per_step must cover every input action exactly once")
+    indices = []
+    allowed_tags = {"collision", "missed_target", "unstable", "late_grasp", "minor_alignment", "ok"}
+    for event in events:
+        if not isinstance(event, dict) or type(event.get("step")) is not int:
+            raise invalid("event step must be an integer")
+        indices.append(event["step"])
+        if not isinstance(event.get("critique_text"), str) or not event["critique_text"].strip():
+            raise invalid("every event requires a model-local critique")
+        if not number_in_unit_interval(event.get("confidence")):
+            raise invalid("event confidence must be a finite number from 0 to 1")
+        if event.get("camera_observation") not in frame_names:
+            raise invalid("event camera must identify a selected input frame")
+        tags = event.get("error_tags")
+        if (not isinstance(tags, list) or not tags
+                or any(not isinstance(tag, str) or tag not in allowed_tags for tag in tags)):
+            raise invalid("event error_tags must use the requested vocabulary")
+        if event.get("critique_source", "model_per_step") != "model_per_step":
+            raise invalid("event critique must come from the model")
+    if len(set(indices)) != len(indices) or set(indices) != set(expected):
+        raise invalid("event indices do not exactly match the input actions")
+    # All fields the common formatter would otherwise recover or clamp were
+    # validated above. Its simulator-ground-truth join remains authoritative.
+    return _parse_cosmos_reason_output(
+        model_text, actions=actions, rollout_id=rollout_id, threshold=threshold, family=family,
+    )
 
 
 def _reason_model_class(family: str, fallback: Any) -> Any:
