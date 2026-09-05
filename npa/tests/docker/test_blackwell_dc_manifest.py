@@ -141,12 +141,57 @@ def test_lerobot_b300_uses_the_supported_python_and_cuda_stack() -> None:
     ), "build-time Linux headers must survive until evdev has compiled"
 
 
-def test_cpu_entries_need_no_arch_validation(entries: list[dict]) -> None:
+def test_gpu_agnostic_entries_need_no_arch_validation(entries: list[dict]) -> None:
     for entry in [item for item in entries if item["verdict"] == "not-applicable"]:
         assert entry["validation"] == "not-required", (
-            f"{entry['name']} is CPU-only but claims an arch validation state"
+            f"{entry['name']} is GPU-agnostic but claims an arch validation state"
         )
         assert "torch_cuda_arch_list" not in entry
+
+
+@pytest.mark.parametrize("role", ["captioning", "visual-qa", "attribute-search"])
+def test_paidf_labeling_publication_stays_restricted_and_digest_bound(
+    manifest: dict, entries: list[dict], role: str
+) -> None:
+    name = f"npa-paidf-{role}-sky"
+    entry = next(item for item in entries if item["name"] == name)
+    proof = manifest["validation_evidence"][name]
+    contract = yaml.safe_load(CONTRACT_PATH.read_text())["images"][f"paidf-{role}-sky"]
+    catalog = (ROOT / "docs/workbench/container-image-catalog.md").read_text()
+
+    assert contract["redistribution"] == "restricted"
+    assert proof["built"] is True
+    assert proof["validated_registry_scope"] == "operator"
+    assert re.fullmatch(r"sha256:[0-9a-f]{64}", proof["validated_digest"])
+    assert f"{name}@{proof['validated_digest']}" in catalog
+    assert re.fullmatch(r"[0-9a-f]{40}", proof["source_commit"])
+    assert proof["skypilot_bootstrap_contract"] == contract["skypilot_bootstrap_contract"]
+    assert "published_tag" not in entry and "published_registries" not in entry
+    assert "published_registries" not in proof
+
+
+@pytest.mark.parametrize("role", ["captioning", "visual-qa"])
+def test_paidf_gpu_agnostic_video_clients_still_require_scheduled_cuvid(
+    manifest: dict, entries: list[dict], role: str
+) -> None:
+    """A missing SASS requirement cannot silently turn GPU video decode into CPU work."""
+    name = f"npa-paidf-{role}-sky"
+    entry = next(item for item in entries if item["name"] == name)
+    proof = manifest["validation_evidence"][name]
+    workflow = yaml.safe_load(
+        (ROOT / "npa/workflows/workbench/npa-workflows/paidf-event-video-generation.yaml")
+        .read_text()
+    )
+
+    assert entry["verdict"] == "not-applicable"
+    assert entry["validation"] == "not-required"
+    assert "CUVID" in entry["local_gpu_use"]
+    assert "CPU labeling client" not in entry["notes"]
+    assert "no local GPU is requested" not in entry["notes"]
+    assert proof["architecture_specific_cuda_distributions"] == 0
+    assert workflow["resources"][role]["accelerators"] == "B200:1"
+    assert "GPU scheduling" in manifest["validation_states"]["not-required"]
+    assert "accelerators" not in workflow["resources"]["attribute-search"]
 
 
 def test_manifest_classifies_every_packaged_image() -> None:

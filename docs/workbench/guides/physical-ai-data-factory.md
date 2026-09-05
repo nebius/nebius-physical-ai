@@ -192,6 +192,17 @@ shares the same B200 profile. Person attribute search consumes the resulting
 labels and remains a CPU stage. NPA preserves the
 [upstream codec policy](https://github.com/NVIDIA/paidf-auto-labeling/blob/36dc1114dea00d9986df97325a664520993964de/scripts/ffmpeg_codec_policy.py).
 
+The selected Token Factory VLM accepts at most ten images in one request.
+Anomaly Visual QA uses the upstream CLI's `--max-frames 10` (DAG default: 16),
+and per-person Visual QA uses `--max-crops-per-track 10` (DAG default: 12).
+The pinned service [evenly subsamples the candidates](https://github.com/NVIDIA/paidf-auto-labeling/blob/36dc1114dea00d9986df97325a664520993964de/packages/tasks/visual_qa/src/visual_qa/media.py),
+including the first and last candidate in each sequence; a candidate endpoint
+is not necessarily the video's final frame. Question banks, models, resolution,
+sampling rate and retries are preserved. Each VQA result records the exact
+original/effective sampling controls and source hash in `request_media_contract`.
+Downstream stages and terminal validation reject missing or changed contracts.
+This uses the published CLI without patching vendor code or rebuilding an image.
+
 The optional Airflow-only YAML/HTML performance dashboard is not copied: it
 queries Airflow's task-instance REST metadata, which does not exist in the NPA
 runtime. SkyPilot/NPA retain stage timing and terminal state, while the terminal

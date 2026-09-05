@@ -119,6 +119,15 @@ EVG captioning and anomaly Visual QA need a visible scheduled GPU for the
 upstream H.264 CUVID decoder even when their VLM is hosted. Their profiles
 reserve one B200 each. Per-person Visual QA reads JPEG crops and shares the VQA
 profile; person attribute search stays on CPU. Preserve the pinned codec policy.
+The selected Token Factory VLM accepts at most ten images per request. EVG
+anomaly Visual QA therefore uses the published `--max-frames 10` control
+(upstream DAG: 16), and person Visual QA uses `--max-crops-per-track 10`
+(upstream DAG: 12). Keep the vendor's even subsampling, including the first and
+last candidates; these are candidate-sequence endpoints, not necessarily the
+first and last video frames. Prompts, models, resolution, sampling rate and
+retries remain unchanged. Require the exact `request_media_contract` in both
+VQA reports and every downstream producer/terminal check. This is a supported
+CLI configuration adaptation; it requires no image rebuild or vendor patch.
 
 Three NVIDIA components in the pipeline are the real open-source projects, not
 NPA look-alikes: **Cosmos Transfer 2.5** augments, **Cosmos Evaluator**

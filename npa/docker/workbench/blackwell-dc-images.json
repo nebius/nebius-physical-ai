@@ -1,6 +1,6 @@
 {
   "format": "npa_blackwell_dc_image_manifest_v1",
-  "as_of": "2026-08-08T00:00:00Z",
+  "as_of": "2026-09-05T00:00:00Z",
   "registry_ref": "${NPA_REGISTRY}",
   "registry_note": "Resolve official public development and release tags through npa.deploy.images. Development tags are immutable full-SHA tags and release provenance is digest-bound.",
   "target": {
@@ -48,7 +48,7 @@
     "validated": "get_device_capability() confirmed on a real B200/B300 node with the image's real capability smoke passing.",
     "pending-hardware": "Wheel arch set confirmed on the built image, but not yet run on a real datacenter Blackwell node.",
     "pending-build": "The Dockerfile is in tree but the image has not been built, so no wheel arch set and no GPU result exist yet. Never upgrade this from a reading of the Dockerfile.",
-    "not-required": "CPU-only image; no arch assertion applies.",
+    "not-required": "CPU-only or GPU-agnostic driver-API image; no architecture-specific wheel/SASS assertion applies. GPU scheduling and real capability checks remain required when the workload uses a GPU.",
     "pending-gpu": "The image has been built and its bytes checked (payload scan, layer history), but it has never run on a real datacenter Blackwell node, so no wheel arch set and no GPU result exist. Distinct from pending-build, which means no artifact exists at all."
   },
   "images": [
@@ -746,7 +746,8 @@
       "verdict": "not-applicable",
       "validation": "not-required",
       "smoke": "Execute the real PAIDF labeling stage within the complete IAA/EVG workflow; require native sidecars and final artifact lineage.",
-      "notes": "CPU labeling client uses the configured remote VLM/LLM; no local GPU is requested. Restricted operator-built recipe. Built-byte security scans, wrapper bootstrap and functional acceptance are pending."
+      "notes": "Restricted operator-private wrapper; built-byte scans, SPDX SBOM, SkyPilot bootstrap and isolated NPA installation preserving vendor files passed. Configured remote VLM/LLM performs inference; local H.264 decoding uses FFmpeg CUVID and the canonical EVG profile reserves B200:1. The accepted SBOM contains no architecture-specific Torch/CUDA-extension distributions. The exact private image completed actual H.264 CUVID decoding and the native captioning stage on B200. The full EVG workflow remains unaccepted because a subsequent Visual QA request exceeded the hosted endpoint image-count contract. No B300 or RTX PRO 6000 workload acceptance is claimed.",
+      "local_gpu_use": "FFmpeg CUVID H.264 video decoding"
     },
     {
       "name": "npa-paidf-visual-qa-sky",
@@ -754,7 +755,8 @@
       "verdict": "not-applicable",
       "validation": "not-required",
       "smoke": "Execute the real PAIDF labeling stage within the complete IAA/EVG workflow; require native sidecars and final artifact lineage.",
-      "notes": "CPU labeling client uses the configured remote VLM/LLM; no local GPU is requested. Restricted operator-built recipe. Built-byte security scans, wrapper bootstrap and functional acceptance are pending."
+      "notes": "Restricted operator-private wrapper; built-byte scans, SPDX SBOM, SkyPilot bootstrap and isolated NPA installation preserving vendor files passed. Configured remote VLM/LLM performs inference; local H.264 decoding uses FFmpeg CUVID and the canonical EVG profile reserves B200:1. The accepted SBOM contains no architecture-specific Torch/CUDA-extension distributions. Crop-only person QA shares the GPU profile. The exact private image decoded the generated H.264 video on B200, then its hosted endpoint rejected a request containing more than 10 images. This proves local GPU decoding, not a successful Visual QA decision or full EVG acceptance. No B300 or RTX PRO 6000 workload acceptance is claimed.",
+      "local_gpu_use": "FFmpeg CUVID H.264 video decoding"
     },
     {
       "name": "npa-paidf-attribute-search-sky",
@@ -762,7 +764,8 @@
       "verdict": "not-applicable",
       "validation": "not-required",
       "smoke": "Execute the real PAIDF labeling stage within the complete IAA/EVG workflow; require native sidecars and final artifact lineage.",
-      "notes": "CPU labeling client uses the configured remote VLM/LLM; no local GPU is requested. Restricted operator-built recipe. Built-byte security scans, wrapper bootstrap and functional acceptance are pending."
+      "notes": "Restricted operator-private wrapper; built-byte scans, SPDX SBOM, SkyPilot bootstrap and isolated NPA installation preserving vendor files passed. CPU client uses the configured remote VLM/LLM; no local GPU is requested. The exact private CPU image completed native attribute search in the fully accepted nine-state IAA workflow. EVG attribute-search acceptance remains pending. No B300 or RTX PRO 6000 workload acceptance is claimed.",
+      "local_gpu_use": "none"
     }
   ],
   "validation_evidence": {
@@ -1099,6 +1102,46 @@
       "hardware_run": "The exact final rebased tag passed its baked torch arch/native-SASS, bf16, and SDPA validators on physical RTX PRO 6000 on 2026-08-03. The immediately preceding dependency-complete image, with the same SONIC payload, reached real fine-tune environment construction; both a cold attempt and an in-pod warm-cache retry then failed inside Isaac's runtime-fetched URDF extension while opening /tmp/IsaacLab/.../configuration/pelvis.tmp.usd, before a learning step or checkpoint. The RTX cell remains pending; no import-only or startup-only result was substituted, and no datacenter rendering route is allowed.",
       "published_tag": "cuda13-b300-0.1.2-k8s-runtime-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
       "published_digest": "sha256:c9ba0996b28f54b013e36da689638b386a7ef9c0c8c4413fc4b3c72ff1a808bb"
+    },
+    "npa-paidf-captioning-sky": {
+      "built": true,
+      "validated_digest": "sha256:ce97a86413005dbf844ae454a47b6e0a41ce521bd0403237e133c26bfed63ff7",
+      "validated_registry_scope": "operator",
+      "source_commit": "b7ae4f198b20f087afef46d31fffee367eb4fa2e",
+      "skypilot_bootstrap_contract": "skypilot-0.12.2-v1",
+      "payload_scan": "Complete built-byte layer/license/secret review, vulnerability policy and SPDX SBOM passed. No model weights are added by the compatibility layer.",
+      "architecture_specific_cuda_distributions": 0,
+      "hardware_run": "The exact private image completed actual H.264 CUVID decoding and the native captioning stage on B200. The full EVG workflow remains unaccepted because a subsequent Visual QA request exceeded the hosted endpoint image-count contract.",
+      "full_workflow_acceptance": {
+        "EVG": "pending"
+      }
+    },
+    "npa-paidf-visual-qa-sky": {
+      "built": true,
+      "validated_digest": "sha256:27f600a12ccfb71c6744394d7b41375c36eed2df53833fb883b9ec5fa73070e4",
+      "validated_registry_scope": "operator",
+      "source_commit": "b7ae4f198b20f087afef46d31fffee367eb4fa2e",
+      "skypilot_bootstrap_contract": "skypilot-0.12.2-v1",
+      "payload_scan": "Complete built-byte layer/license/secret review, vulnerability policy and SPDX SBOM passed. No model weights are added by the compatibility layer.",
+      "architecture_specific_cuda_distributions": 0,
+      "hardware_run": "The exact private image decoded the generated H.264 video on B200, then its hosted endpoint rejected a request containing more than 10 images. This proves local GPU decoding, not a successful Visual QA decision or full EVG acceptance.",
+      "full_workflow_acceptance": {
+        "EVG": "pending"
+      }
+    },
+    "npa-paidf-attribute-search-sky": {
+      "built": true,
+      "validated_digest": "sha256:d61d56ae69bf2971fbf5b03fe97a492a865c317906b1ec5c67a46133b5b97641",
+      "validated_registry_scope": "operator",
+      "source_commit": "b7ae4f198b20f087afef46d31fffee367eb4fa2e",
+      "skypilot_bootstrap_contract": "skypilot-0.12.2-v1",
+      "payload_scan": "Complete built-byte layer/license/secret review, vulnerability policy and SPDX SBOM passed. No model weights are added by the compatibility layer.",
+      "architecture_specific_cuda_distributions": 0,
+      "hardware_run": "The exact private CPU image completed native attribute search in the fully accepted nine-state IAA workflow. EVG attribute-search acceptance remains pending.",
+      "full_workflow_acceptance": {
+        "IAA": "passed",
+        "EVG": "pending"
+      }
     }
   },
   "known_gaps": {

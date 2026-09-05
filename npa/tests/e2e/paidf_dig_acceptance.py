@@ -272,6 +272,9 @@ def assert_dig_live_artifacts(
     for item in manifest["files"]:
         digest_string(item["sha256"])
         assert type(item["size_bytes"]) is int and item["size_bytes"] >= 0
+        actual_hash, actual_size = hash_file("pretrained/" + item["path"])
+        assert actual_hash == item["sha256"], "retained pretrained payload changed"
+        assert actual_size == item["size_bytes"], "retained pretrained size changed"
     assert (
         sha256(read_bytes("pretrained/checkpoint_manifest_converted.sha256"))
         == pretrained["manifest_sha256"]

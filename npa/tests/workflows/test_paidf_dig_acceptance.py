@@ -97,22 +97,29 @@ def artifacts(acceptance, tmp_path):
     prefix = "s3://fixture-bucket/synthetic-dig-acceptance/"
     values = {}
     manifest_payload = b"converted checkpoint source manifest\n"
+    pretrained_payload = b"synthetic pretrained bytes: no model"
     content = {
         "schema": f"{SCHEMA_PREFIX}.dig-pretrained-content.v1",
         "run_id": run_id,
         "workflow": "dig",
-        "file_count": 1,
-        "total_bytes": len(manifest_payload),
+        "file_count": 2,
+        "total_bytes": len(manifest_payload) + len(pretrained_payload),
         "files": [
             {
                 "path": "checkpoint_manifest_converted.sha256",
                 "sha256": acceptance.sha256(manifest_payload),
                 "size_bytes": len(manifest_payload),
-            }
+            },
+            {
+                "path": "checkpoints/synthetic.bin",
+                "sha256": acceptance.sha256(pretrained_payload),
+                "size_bytes": len(pretrained_payload),
+            },
         ],
     }
     values["pretrained/" + DIG_PRETRAINED_CONTENT_MANIFEST] = content
     values["pretrained/checkpoint_manifest_converted.sha256"] = manifest_payload
+    values["pretrained/checkpoints/synthetic.bin"] = pretrained_payload
     content_hash = acceptance.sha256(json.dumps(content).encode())
 
     def report(schema, output):
@@ -129,8 +136,8 @@ def artifacts(acceptance, tmp_path):
         "content_manifest": DIG_PRETRAINED_CONTENT_MANIFEST,
         "content_manifest_sha256": content_hash,
         "manifest_sha256": acceptance.sha256(manifest_payload),
-        "file_count": 1,
-        "total_bytes": len(manifest_payload),
+        "file_count": content["file_count"],
+        "total_bytes": content["total_bytes"],
     }
     checkpoint = b"synthetic checkpoint bytes: no model"
     selected = "results/run/checkpoints/model/iter_000008000.pt"
@@ -301,10 +308,27 @@ def test_dig_acceptance_reopens_checkpoint_evaluator_masks_media_and_metadata(
         "iteration": 8000,
     }
     assert result["annotation_count"] == result["image_count"] == 1
-    assert hashes == ["finetune/results/run/checkpoints/model/iter_000008000.pt"]
+    assert hashes == [
+        "pretrained/checkpoint_manifest_converted.sha256",
+        "pretrained/checkpoints/synthetic.bin",
+        "finetune/results/run/checkpoints/model/iter_000008000.pt",
+    ]
     assert any(path.endswith("valid_kpi.csv") for path in reads)
     assert "anomaly/original_mask/sample.png" in reads
     assert "anomaly/guardrail_blocked.csv" in reads
+
+
+def test_dig_acceptance_rejects_same_size_retained_pretrained_mutation(
+    acceptance, artifacts
+):
+    values, arguments, _reads, hashes = artifacts
+    path = "pretrained/checkpoints/synthetic.bin"
+    original = values[path]
+    values[path] = bytes([original[0] ^ 1]) + original[1:]
+    assert len(values[path]) == len(original)
+    with pytest.raises(AssertionError, match="retained pretrained payload changed"):
+        acceptance.assert_dig_live_artifacts(**arguments)
+    assert path in hashes
 
 
 def test_dig_acceptance_combines_disjoint_instance_masks(acceptance, artifacts):

@@ -194,6 +194,19 @@ actual service CLI and pretrained CPU inference were checked after removal.
 This does not establish GPU workflow acceptance or alter the pinned model-fetch
 boundary.
 
+EVG adapts the upstream DAG's Visual QA sampling counts to the selected
+Token Factory VLM's ten-image request maximum: --max-frames changes from 16
+to 10 for anomaly questions, and --max-crops-per-track changes from 12 to 10
+for person questions. The published service controls retain even subsampling
+including each candidate sequence's endpoints, with unchanged prompts, models,
+resolutions, sampling rate and retries. No installed vendor source is patched.
+The algorithm is packages/tasks/visual_qa/src/visual_qa/media.py at the pinned
+paidf-auto-labeling revision 36dc1114dea00d9986df97325a664520993964de
+(SHA-256 85f09956d93a39a8e0d92be6774efaf2baaadc02072fea2e682939b4f0ea3c75).
+Both VQA stage reports record the original and effective controls in
+request_media_contract; downstream and terminal lineage require that exact
+record. Candidate endpoints do not promise sampling the video's last frame.
+
 NPA's toolRef access closure probes each exact NGC parent repository under the
 operator's credential before submission. That proves pull entitlement only and
 does not grant redistribution rights. Runtime pullability and bootstrap must be

@@ -71,6 +71,10 @@ def _native_identity(kind: str, workflow: str | None = None) -> dict:
             identity["generation_runtime"] = json.loads(
                 (Path(__file__).parent / "fixtures/paidf-evg-runtime.json").read_text()
             )
+    if kind in {"evg-auto-label-visual-qa-anomaly", "evg-auto-label-visual-qa-person"}:
+        identity["request_media_contract"] = paidf_native._evg_vqa_request_media_contract(
+            kind.split("-auto-label-", 1)[1]
+        )
     return identity
 
 

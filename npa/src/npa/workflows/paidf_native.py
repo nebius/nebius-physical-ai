@@ -65,10 +65,53 @@ _EVG_LABEL_STAGES = (
     "detection", "captioning", "visual-qa-anomaly", "visual-qa-person",
     "person-attribute-search",
 )
+_EVG_VQA_MEDIA_SOURCE_PATH = "packages/tasks/visual_qa/src/visual_qa/media.py"
+_EVG_VQA_MEDIA_SOURCE_SHA256 = (
+    "85f09956d93a39a8e0d92be6774efaf2baaadc02072fea2e682939b4f0ea3c75"
+)
+_EVG_VQA_HOSTED_MAX_IMAGES = 10
 
 
 class PaidfNativeError(RuntimeError):
     """A PAIDF protocol or artifact contract failed closed."""
+
+
+def _evg_vqa_request_media_contract(stage: str) -> dict[str, Any]:
+    """Use the vendor's existing sampler within this hosted endpoint's capacity."""
+
+    controls = {
+        "visual-qa-anomaly": ("--max-frames", 16, "_sample_frame_ids", "candidate-frame-ids"),
+        "visual-qa-person": ("--max-crops-per-track", 12, "_sample_even", "track-crop-list"),
+    }
+    if stage not in controls:
+        raise PaidfNativeError("request media contract requires an EVG VQA stage")
+    control, upstream_value, function, scope = controls[stage]
+    return {
+        "schema": f"{SCHEMA_PREFIX}.evg-vqa-request-media.v1",
+        "upstream_repository": "https://github.com/NVIDIA/paidf-auto-labeling",
+        "upstream_revision": PAIDF_AUTO_LABELING_REVISION,
+        "source_path": _EVG_VQA_MEDIA_SOURCE_PATH,
+        "source_sha256": _EVG_VQA_MEDIA_SOURCE_SHA256,
+        "hosted_provider": "nebius-token-factory",
+        "hosted_max_images": _EVG_VQA_HOSTED_MAX_IMAGES,
+        "stage": stage,
+        "control": control,
+        "value": _EVG_VQA_HOSTED_MAX_IMAGES,
+        "upstream_value": upstream_value,
+        "sampling_strategy": "endpoint-inclusive-even-subsampling",
+        "sampling_function": function,
+        "sampling_scope": scope,
+    }
+
+
+def _require_evg_vqa_request_media_contract(payload: dict[str, Any]) -> None:
+    expected = _evg_vqa_request_media_contract(payload.get("stage", ""))
+    actual = payload.get("request_media_contract")
+    if (
+        actual != expected
+        or any(type(actual.get(key)) is not int for key in ("value", "upstream_value", "hosted_max_images"))
+    ):
+        raise PaidfNativeError("EVG VQA request media contract is missing or changed")
 
 
 def _bind_detection_checkpoint() -> None:
@@ -508,6 +551,7 @@ def _producer_descriptor(uri: str, payload: dict[str, Any]) -> dict[str, Any]:
         **{key: payload[key] for key in (
             "schema", "run_id", "workflow", "stage", "runtime_image",
             "upstream_revision", "component", "source_adaptation", "generation_runtime",
+            "request_media_contract",
         ) if key in payload},
     }
 
@@ -545,6 +589,8 @@ def _verified_producers(
             raise PaidfNativeError("producer document changed after its handoff")
         if "-auto-label-" in kind and document.get("stage") != kind.split("-auto-label-", 1)[1]:
             raise PaidfNativeError("producer stage identity does not match its schema")
+        if kind in {"evg-auto-label-visual-qa-anomaly", "evg-auto-label-visual-qa-person"}:
+            _require_evg_vqa_request_media_contract(document)
         if document.get("producers", []) != descriptors[:len(documents)]:
             raise PaidfNativeError("producer lineage does not preserve its predecessors")
         if kind.endswith("-augmentation"):
@@ -1589,6 +1635,11 @@ def run_auto_label(
         raise PaidfNativeError(f"unsupported {workflow!r} auto-label stage {stage!r}")
     if stage == "detection":
         _bind_detection_checkpoint()
+    request_media_contract = (
+        _evg_vqa_request_media_contract(stage)
+        if stage in {"visual-qa-anomaly", "visual-qa-person"}
+        else None
+    )
     validation_kind = "iaa-postprocess" if workflow == "iaa" else "evg-validation"
     validation = _read_run_artifact(validation_uri, validation_kind, run_id, workflow)
     accepted = validation.get("accepted")
@@ -1718,7 +1769,7 @@ def run_auto_label(
                             "--track-crops-sidecar",
                             "detection_and_tracking/tracks.json",
                             "--max-crops-per-track",
-                            "12",
+                            str(request_media_contract["value"]),
                             "--resolution",
                             "896",
                             "--raw-windows-sidecar",
@@ -1738,7 +1789,7 @@ def run_auto_label(
                             "original",
                             "--single-window",
                             "--max-frames",
-                            "16",
+                            str(request_media_contract["value"]),
                             "--sampling-fps",
                             "3.0",
                             "--resolution",
@@ -1896,6 +1947,8 @@ def run_auto_label(
             "sha256": RFDETR_BASE_SHA256,
             "verification": "upstream streaming SHA-256 verifier",
         }
+    if request_media_contract is not None:
+        payload["request_media_contract"] = request_media_contract
     return _write_json(payload, result_uri)
 
 

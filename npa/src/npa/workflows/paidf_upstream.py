@@ -189,6 +189,16 @@ _VARIANTS: dict[str, dict[str, Any]] = {
             "NVIDIA PAIDF detection/tracking, captioning, visual-QA, and "
             "event/person attribute-search protocols"
         ),
+        "labeling_sampling_adaptation": (
+            "the selected Token Factory VLM accepts at most ten images per request; "
+            "anomaly Visual QA uses the published --max-frames 10 control instead "
+            "of the upstream DAG's 16, and person Visual QA uses "
+            "--max-crops-per-track 10 instead of 12. The pinned service evenly "
+            "subsamples each candidate sequence including its endpoints; "
+            "prompts, models, resolutions, sampling rate and retries are retained. "
+            "Both result documents carry a mandatory request_media_contract "
+            "verified through terminal lineage"
+        ),
         "execution": "workflow.paidf.run_evg_augmentation",
         "reference_runtime_images": [
             "docker.io/vllm/vllm-omni@sha256:970dee6658ea223f615b2438ce41e47f1d5322225482546e6e6bc5d8134f757c",

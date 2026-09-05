@@ -2,7 +2,7 @@
 
 Every Workbench container image against every Nebius GPU platform, and — separately — which of those cells has actually been run on real hardware.
 
-**Last measured:** 2026-08-26
+**Last measured:** 2026-09-05
 
 Two things are deliberately kept apart here, because conflating them is how "Blackwell ready" claims go wrong:
 
@@ -71,12 +71,12 @@ The old `npa-cosmos:1.0.9` cu126 image stopped at Hopper. Its additive cu128/tor
 | `npa-cosmos3-ray-serve` | supported | supported | **verified** [66] | **verified** [65] | supported (same-major `sm_100` coverage; not measured) |
 | `npa-content-agents` | supported (RT cores) | blocked (no RT cores) | **verified** [64] | blocked (no RT cores) | blocked (no RT cores) |
 | `npa-paidf-anomalygen-sky` | pending build | pending build | pending build | pending build | pending build |
-| `npa-paidf-image-edit-sky` | pending build | pending build | pending build | pending build | pending build |
-| `npa-paidf-event-video-sky` | pending build | pending build | pending build | pending build | pending build |
-| `npa-paidf-detection-sky` | pending build | pending build | pending build | pending build | pending build |
-| `npa-paidf-captioning-sky` | CPU client; build pending | CPU client; build pending | CPU client; build pending | CPU client; build pending | CPU client; build pending |
-| `npa-paidf-visual-qa-sky` | CPU client; build pending | CPU client; build pending | CPU client; build pending | CPU client; build pending | CPU client; build pending |
-| `npa-paidf-attribute-search-sky` | CPU client; build pending | CPU client; build pending | CPU client; build pending | CPU client; build pending | CPU client; build pending |
+| `npa-paidf-image-edit-sky` | built; unmeasured | built; unmeasured | built; unmeasured | IAA passed; introspection pending [PAIDF](#paidf-private-image-evidence) | built; unmeasured |
+| `npa-paidf-event-video-sky` | built; unmeasured | built; unmeasured | built; unmeasured | generation passed; full EVG pending [PAIDF](#paidf-private-image-evidence) | built; unmeasured |
+| `npa-paidf-detection-sky` | built; unmeasured | built; unmeasured | built; unmeasured | detection/tracking stage passed; full EVG pending [PAIDF](#paidf-private-image-evidence) | built; unmeasured |
+| `npa-paidf-captioning-sky` | GPU decoding; unmeasured | GPU decoding; unmeasured | GPU decoding; unmeasured | CUVID and captioning passed [PAIDF](#paidf-private-image-evidence) | GPU decoding; unmeasured |
+| `npa-paidf-visual-qa-sky` | GPU decoding; unmeasured | GPU decoding; unmeasured | GPU decoding; unmeasured | CUVID passed; hosted request rejected [PAIDF](#paidf-private-image-evidence) | GPU decoding; unmeasured |
+| `npa-paidf-attribute-search-sky` | CPU client | CPU client | CPU client | CPU client; IAA stage passed [PAIDF](#paidf-private-image-evidence) | CPU client |
 | `npa-wan2-2` | supported | supported | **historical evidence** [60] | **historical evidence** [61] | supported |
 | `npa-ltx2` | built, no GPU result | built, no GPU result | built, no GPU result | built, no GPU result | built, no GPU result |
 | `npa-openpi` | blocked (RTX-only runtime contract) | blocked (RTX-only runtime contract) | pending exact-digest full-DROID qualification | blocked (`sm_120`-only probe/runtime contract) | blocked (`sm_120`-only probe/runtime contract) |
@@ -238,19 +238,35 @@ kubectl apply -f npa/scripts/blackwell-gpu-validation-job.yaml
 ```
 
 
-The restricted `npa-paidf-anomalygen-sky` workflow runtime has no completed built
-artifact or observed GPU result yet. Full AnomalyGen fine-tuning, inference,
-media decoding, and label/mask validation are required before claiming support.
+## PAIDF private image evidence
 
-The restricted `npa-paidf-image-edit-sky` and `npa-paidf-event-video-sky`
-wrappers are pending build and full IAA/EVG GPU acceptance. The exact upstream
-parents failed real SkyPilot bootstrap probes; supplying worker prerequisites
-is not evidence of model compatibility or end-to-end output quality.
+Six PAIDF compatibility images have verified operator-private publication,
+built-byte security/SBOM records, and actual SkyPilot bootstrap and NPA-install
+proofs. Exact immutable digests and source commits are recorded in the
+[container catalog](container-image-catalog.md#external-paidf-runtime-images).
+Their restricted publication does not make them NPA public GHCR images.
 
+The exact IAA image completed all nine native workflow states on B200,
+including generation, CPU postprocessing, attribute search and terminal artifact
+lineage. A separate exact-image `get_device_capability()` receipt is still
+pending; the workload result does not fabricate that introspection result.
 
-The four restricted PAIDF labeling compatibility recipes preserve their exact
-NGC parent environments. RF-DETR detection requires real GPU validation;
-captioning, Visual QA and attribute search use configured remote model endpoints
-and do not require a local GPU. Their built-byte scans, worker bootstrap and
-full-workflow labeling evidence remain pending. Parent registry access alone
-proves neither wrapper compatibility nor redistribution permission.
+The current EVG attempt passed seven stages, including real video generation,
+detection/tracking and GPU H.264 CUVID captioning. Anomaly Visual QA also decoded
+the video on its scheduled B200, then the hosted endpoint rejected a request
+containing more than ten images. A successful Visual QA decision, downstream
+stages and complete EVG acceptance remain pending.
+
+Captioning and Visual QA perform model inference through the configured hosted
+endpoint, while their pinned FFmpeg H.264 CUVID decoder requires a local GPU.
+The canonical EVG profiles each reserve one B200; crop-only person QA shares the
+Visual QA profile. Their accepted SBOMs contain no architecture-specific
+Torch/CUDA-extension distributions, so the manifest classifies them as
+GPU-agnostic driver-API images. `not-required` waives an architecture-specific
+wheel/SASS assertion; it does not waive GPU scheduling or real decode validation.
+Attribute search remains a CPU client and passed in the complete IAA workflow.
+
+No PAIDF B300 or RTX PRO 6000 workload acceptance is claimed. The restricted
+`npa-paidf-anomalygen-sky` image still has no completed built artifact or observed
+GPU result. Full AnomalyGen fine-tuning, inference, media decoding, label/mask
+validation and checkpoint lineage are required before claiming DIG support.
