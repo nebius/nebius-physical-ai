@@ -363,6 +363,19 @@ images:
       downloads.
     redistribution: restricted
     skypilot_bootstrap_contract: skypilot-0.12.2-v1
+  cosmos3-nano-video:
+    dockerfile: cosmos3-nano-video/Dockerfile
+    tier: service
+    final_user: "10001:10001"
+    ports: [8000]
+    notes: >-
+      Operator-private Ray Serve extension of the digest-pinned
+      vllm/vllm-omni:cosmos3 runtime for BF16 Cosmos3-Nano diffusion video.
+      Adds Ray Serve, FFmpeg and NPA rollout/serving adapters. One shared
+      runtime staging job fetches and verifies the immutable model; replicas
+      consume it offline and read-only. Inherited vendor runtime is excluded
+      from the public release channel. No weights or credentials in layers.
+    redistribution: restricted
   cosmos3-ray-serve:
     dockerfile: cosmos3-ray-serve/Dockerfile
     tier: service

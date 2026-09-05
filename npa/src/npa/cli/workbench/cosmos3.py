@@ -9,6 +9,8 @@ from typing import Optional
 
 import typer
 
+from npa.lifecycle_intent import json_stdout_contract
+from npa.cli.path_contract import validate_read_path, validate_write_path
 from npa.workbench.cosmos.text_to_image import DEFAULT_UV_GROUP
 from npa.workbench.cosmos.generate import (
     DEFAULT_MODE,
@@ -41,6 +43,37 @@ app = typer.Typer(
     help="Cosmos3 omni-model generation and reasoning workflow contracts.",
     no_args_is_help=True,
 )
+
+
+@app.command("nano-video-batch")
+@json_stdout_contract
+def nano_video_batch_cmd(
+    output_path: str = typer.Option(..., "--output-path", help="S3 prefix for verified videos and measurements."),
+    concurrency: int = typer.Option(..., "--concurrency", min=1, help="Concurrent complete 30-second generation requests."),
+    input_path: str = typer.Option("", "--input-path", help="Optional S3 JSON prompt object."),
+    endpoint: str = typer.Option("", "--endpoint", help="Defaults to NPA_COSMOS3_VIDEO_ENDPOINT."),
+    token_env: str = typer.Option("NPA_COSMOS3_VIDEO_TOKEN", "--token-env"),
+    output_format: str = typer.Option("json", "--output-format", help="Output format (json)."),
+) -> None:
+    """Run measured chunked video requests through the Nano vLLM-Omni Ray service."""
+    from npa.workbench.cosmos.nano_video import submit_batch
+
+    try:
+        if output_format != "json":
+            raise ValueError("output-format must be json")
+        validate_write_path(output_path, tool="cosmos3 nano-video-batch")
+        if input_path:
+            validate_read_path(input_path, tool="cosmos3 nano-video-batch")
+        result = submit_batch(output_path=output_path, concurrency=concurrency,
+                              input_path=input_path, endpoint=endpoint, token_env=token_env)
+    except Exception as exc:
+        # Runtime evidence retains operational diagnostics; public errors do not
+        # serialize exception strings that might include private endpoints.
+        typer.echo(json.dumps({"status": "failed", "error_type": type(exc).__name__}))
+        raise typer.Exit(1) from exc
+    typer.echo(json.dumps(result))
+    if result["status"] != "succeeded":
+        raise typer.Exit(1)
 
 
 @app.command("super-benchmark")

@@ -184,6 +184,11 @@ redistribution eligibility are not evidence of publication.
 
 ## Intentionally not published as separate images
 
+- **`npa-cosmos3-nano-video`** extends the digest-pinned upstream
+  `vllm/vllm-omni:cosmos3` image with Ray Serve and a measured chunked video
+  rollout. Its inherited runtime is restricted to operator-private builds;
+  it is excluded from the public release plan. See the
+  [deployment recipe](../../npa/deploy/cosmos3-nano-video/README.md).
 - **`npa-cosmos3-super-benchmark`** is a restricted, operator-private wrapper
   around the exact digest-pinned upstream vLLM-Omni benchmark runtime. It adds
   only the SkyPilot worker bootstrap closure and must be built into the

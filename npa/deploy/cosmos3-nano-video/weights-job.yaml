@@ -1,0 +1,58 @@
+# Run once before RayService. This CPU job fetches the pinned checkpoint,
+# verifies every tensor dtype and file hash, and atomically writes READY.json.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: cosmos3-nano-video-weights
+  namespace: workbench
+spec:
+  template:
+    spec:
+      restartPolicy: OnFailure
+      imagePullSecrets:
+        - name: cosmos3-nano-video-registry
+      securityContext:
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        runAsNonRoot: true
+      containers:
+        - name: prestage
+          image: ${NPA_COSMOS3_VIDEO_IMAGE}
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+            seccompProfile:
+              type: RuntimeDefault
+          command: [python, -c]
+          args:
+            - >-
+              import os, runpy;
+              os.makedirs('/shared/models', exist_ok=True);
+              os.makedirs('/shared/outputs', exist_ok=True);
+              runpy.run_module('npa.workbench.cosmos.nano_video_stage', run_name='__main__')
+          env:
+            - name: NPA_COSMOS3_MODEL_PATH
+              value: /shared/models/Cosmos3-Nano
+            - name: HF_HOME
+              value: /shared/.hf-stage-cache
+            - name: HF_HUB_DISABLE_XET
+              value: "1"
+            - name: HF_HUB_OFFLINE
+              value: "0"
+          resources:
+            requests:
+              cpu: "4"
+              memory: 16Gi
+            limits:
+              cpu: "4"
+              memory: 16Gi
+          volumeMounts:
+            - name: shared
+              mountPath: /shared
+      volumes:
+        - name: shared
+          persistentVolumeClaim:
+            claimName: ${NPA_COSMOS3_SHARED_PVC}

@@ -1,0 +1,147 @@
+# Render outside Git with the operator's immutable image and existing shared PVC.
+# Requires the KubeRay operator and an NPA-managed Kubernetes B200 node group.
+apiVersion: ray.io/v1
+kind: RayService
+metadata:
+  name: cosmos3-nano-video
+  namespace: workbench
+spec:
+  serveConfigV2: |
+    proxy_location: HeadOnly
+    http_options:
+      host: 0.0.0.0
+      port: 8000
+    applications:
+      - name: cosmos3-nano-video
+        route_prefix: /
+        import_path: npa.workbench.cosmos.nano_video_server:app
+        args: {}
+        deployments:
+          - name: Cosmos3NanoVideo
+            num_replicas: 16
+            max_ongoing_requests: 1
+            ray_actor_options:
+              num_gpus: 1
+              num_cpus: 2
+  rayClusterConfig:
+    rayVersion: "2.56.0"
+    enableInTreeAutoscaling: false
+    headGroupSpec:
+      rayStartParams:
+        dashboard-host: "0.0.0.0"
+        num-cpus: "0"
+      template:
+        spec:
+          imagePullSecrets:
+            - name: cosmos3-nano-video-registry
+          securityContext:
+            runAsUser: 10001
+            runAsGroup: 10001
+            fsGroup: 10001
+            runAsNonRoot: true
+          containers:
+            - name: ray-head
+              image: ${NPA_COSMOS3_VIDEO_IMAGE}
+              imagePullPolicy: IfNotPresent
+              securityContext: &container-security
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: [ALL]
+                seccompProfile:
+                  type: RuntimeDefault
+              resources:
+                requests:
+                  cpu: "4"
+                  memory: 16Gi
+                limits:
+                  cpu: "4"
+                  memory: 16Gi
+              env: &runtime-env
+                - name: NPA_COSMOS3_MODEL_PATH
+                  value: /models/Cosmos3-Nano
+                - name: NPA_COSMOS3_VIDEO_OUTPUT_ROOT
+                  value: /outputs
+                - name: NPA_COSMOS3_VIDEO_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: cosmos3-nano-video-auth
+                      key: token
+                - name: HF_HUB_OFFLINE
+                  value: "1"
+                - name: TRANSFORMERS_OFFLINE
+                  value: "1"
+                - name: VLLM_OMNI_VIDEO_SYNC_TIMEOUT
+                  value: inf
+                - name: OMP_NUM_THREADS
+                  value: "2"
+              volumeMounts: &shared-mounts
+                - name: shared
+                  mountPath: /models
+                  subPath: models
+                  readOnly: true
+                - name: shared
+                  mountPath: /outputs
+                  subPath: outputs
+          volumes: &shared-volumes
+            - name: shared
+              persistentVolumeClaim:
+                claimName: ${NPA_COSMOS3_SHARED_PVC}
+    workerGroupSpecs:
+      - groupName: b200
+        replicas: 2
+        minReplicas: 2
+        maxReplicas: 2
+        rayStartParams:
+          num-gpus: "8"
+          num-cpus: "32"
+        template:
+          metadata:
+            labels:
+              app: cosmos3-nano-video-worker
+          spec:
+            imagePullSecrets:
+              - name: cosmos3-nano-video-registry
+            securityContext:
+              runAsUser: 10001
+              runAsGroup: 10001
+              fsGroup: 10001
+              runAsNonRoot: true
+            nodeSelector:
+              nvidia.com/gpu.product: ${NPA_B200_GPU_PRODUCT}
+            tolerations:
+              - key: nvidia.com/gpu
+                operator: Exists
+                effect: NoSchedule
+            containers:
+              - name: ray-worker
+                image: ${NPA_COSMOS3_VIDEO_IMAGE}
+                imagePullPolicy: IfNotPresent
+                securityContext: *container-security
+                resources:
+                  requests:
+                    cpu: "32"
+                    memory: 512Gi
+                    nvidia.com/gpu: "8"
+                  limits:
+                    cpu: "32"
+                    memory: 512Gi
+                    nvidia.com/gpu: "8"
+                env: *runtime-env
+                volumeMounts:
+                  - name: shared
+                    mountPath: /models
+                    subPath: models
+                    readOnly: true
+                  - name: shared
+                    mountPath: /outputs
+                    subPath: outputs
+                  - name: dshm
+                    mountPath: /dev/shm
+            volumes:
+              - name: shared
+                persistentVolumeClaim:
+                  claimName: ${NPA_COSMOS3_SHARED_PVC}
+              - name: dshm
+                emptyDir:
+                  medium: Memory
+                  sizeLimit: 128Gi

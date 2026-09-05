@@ -27,6 +27,17 @@ from npa.workbench.cosmos.super_benchmark import (
 from npa.workflows.cosmos_split import Cosmos3ReasonConfig, build_cosmos3_reason_manifest
 
 
+def nano_video_batch(
+    *, output_path: str, concurrency: int, endpoint: str = "", input_path: str = "",
+    token_env: str = "NPA_COSMOS3_VIDEO_TOKEN",
+) -> dict[str, Any]:
+    """Generate complete 30-second videos concurrently and verify S3 artifacts."""
+    from npa.workbench.cosmos.nano_video import submit_batch as submit_nano_batch
+
+    return submit_nano_batch(output_path=output_path, concurrency=concurrency,
+                            endpoint=endpoint, input_path=input_path, token_env=token_env)
+
+
 def generate(
     *,
     prompt: str,
@@ -156,6 +167,7 @@ __all__ = [
     "Cosmos3ReasonConfig",
     "GENERATE_MODES",
     "generate",
+    "nano_video_batch",
     "ray_batch",
     "ray_health",
     "reason",

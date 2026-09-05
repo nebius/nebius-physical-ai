@@ -290,7 +290,7 @@ def test_rebuilt_cosmos3_serving_and_sonic_mujoco_are_gpu_accepted() -> None:
     npa-sonic:0.1.2-rtfetch-rc5, 125,655 entries, 16 allowlisted paths, VERDICT clean.
     """
     assert RESTRICTED_PUBLICATION_TOOLS == frozenset(
-        {"cosmos3-super-benchmark"}
+        {"cosmos3-super-benchmark", "cosmos3-nano-video"}
     )
     assert RESTRICTED_DERIVED_IMAGES == frozenset()
     for tool in ("isaac-lab", "sonic", "groot", "cosmos3-serving", "sonic-mujoco"):
@@ -564,7 +564,9 @@ def test_the_restriction_mechanism_covers_operator_private_wrapper() -> None:
     """The general refusal API covers the operator-private benchmark wrapper."""
     assert hasattr(images, "OMNIVERSE_RESTRICTED_TOOLS")
     assert hasattr(images, "OMNIVERSE_RESTRICTED_DERIVED_IMAGES")
-    assert restricted_image_names() == ["cosmos3-super-benchmark"]
+    assert restricted_image_names() == ["cosmos3-nano-video", "cosmos3-super-benchmark"]
+    assert "cosmos3-nano-video" not in publicly_publishable_tools()
+    assert not is_publicly_redistributable("cosmos3-nano-video")
     for symbol in (
         "is_publicly_redistributable",
         "restricted_image_names",

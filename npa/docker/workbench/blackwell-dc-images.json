@@ -53,6 +53,14 @@
   },
   "images": [
     {
+      "name": "npa-cosmos3-nano-video",
+      "dockerfile": "cosmos3-nano-video/Dockerfile",
+      "verdict": "unknown",
+      "validation": "pending-build",
+      "smoke": "Run the live Nano video acceptance: one 30-second 480p BF16 rollout followed by eight complete concurrent requests on B200, with frame decode, actual latency, device VRAM and fanout evidence.",
+      "notes": "Operator-private Ray Serve extension of the pinned vllm/vllm-omni:cosmos3 image. No B300 support claim; built-image and live B200 validation are required before publication of the deployment result."
+    },
+    {
       "name": "npa-base",
       "dockerfile": "base/cuda13-b300/Dockerfile",
       "build_script": "base/cuda13-b300/build.sh",

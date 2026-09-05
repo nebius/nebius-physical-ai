@@ -1,0 +1,3 @@
+# Thin serving wrapper only: preserve the upstream image's CUDA/torch/vLLM stack.
+ray[serve]==2.56.0
+httpx==0.28.1
