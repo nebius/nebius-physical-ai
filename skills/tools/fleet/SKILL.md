@@ -389,6 +389,16 @@ Both `deploy` and `destroy` confirm before acting (bypass with `--yes`/`-y`;
   requested shapes. Reserved pools must still report non-preemptible nodes and
   the exact `STRICT` reservation binding; stale or incomplete evidence falls
   back to the ordinary conservative quota preflight.
+  The same capacity proof applies during GPU validation or after a later
+  application failure: a partial apply must have an exact saved cluster identity
+  (or one matching local Terraform cluster resource), plus running provider
+  groups. Split reserved pools are matched as separate groups. Explicit project
+  IDs take precedence over public aliases, and an RTX Helm selector update is
+  excluded from capacity demand. The v1 API represents preemption with an Empty
+  marker (`{}` enables it; omission disables it), which is decoded at the API
+  boundary before strict reservation matching. Unknown state, wrong identity,
+  missing groups, changed capacity, or non-STRICT reservation evidence still
+  fails closed.
 - **Region domain**: the recipe's `provider.tf` domain is patched to
   `api.nebius.cloud` for non-EU regions automatically (EU uses
   `api.eu.nebius.cloud`). If the upstream recipe drifts (renames `provider.tf`,
