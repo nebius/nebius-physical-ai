@@ -52,6 +52,12 @@ before running something real.
 | **Where it runs**     | Nebius S3, managed Kubernetes, and GPU clusters                                                               |
 | **How you extend it** | Declarative `npa.workflow/v0.0.1` YAML specs and reusable Workbench tool refs                                 |
 
+For an existing Fleet, run `npa fleet verify-storage --spec <fleet.yaml>` to
+verify the shared filesystem on every CPU and GPU worker, including host mount
+capacity, cross-node PVC reads and writes, and cleanup. The command and Python
+SDK share one implementation; see [Fleet storage verification](docs/fleet-storage-verification.md)
+for selectors, private evidence, and automation-safe JSON.
+
 > Partners integrate independently. Teams assemble from open blueprints.
 > Nebius owns the infrastructure layer and compute substrate.
 

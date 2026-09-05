@@ -64,11 +64,34 @@ from npa.fleet.spec import (
     spec_from_mapping,
 )
 
+
+def verify_storage(spec, *, only_projects=None, only_clusters=None,
+                   project_prefix=None, profile=None, evidence_dir=None) -> dict:
+    """Verify every selected worker through the shared Fleet storage implementation.
+
+    Args:
+        spec: Loaded Fleet declaration.
+        only_projects: Project keys or display names to include.
+        only_clusters: Cluster names within selected projects.
+        project_prefix: Optional project display-name prefix override.
+        profile: Optional authentication profile override.
+        evidence_dir: Owner-private directory for exact verification receipts.
+    Returns:
+        Sanitized target and worker evidence, counts, cleanup results, and hashes.
+    Raises:
+        StorageIdentityError: Selection or private evidence configuration is invalid.
+    """
+    from npa.fleet.storage_verification import verify_storage as verify
+
+    return verify(spec, only_projects=only_projects, only_clusters=only_clusters,
+                  project_prefix=project_prefix, profile=profile, evidence_dir=evidence_dir)
+
 __all__ = [
     "deploy",
     "destroy",
     "plan",
     "status",
+    "verify_storage",
     "FleetSpec",
     "ProjectSpec",
     "ClusterSpec",

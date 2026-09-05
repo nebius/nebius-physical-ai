@@ -24,6 +24,41 @@ Three-tier contract:
 - **YAML / agent**: `apiVersion: npa.fleet/v0.0.1` spec; workflow
   `toolRef: infra.fleet.deploy` (config key `fleet_spec`).
 
+### Verify an existing shared filesystem
+
+Run `npa fleet verify-storage --spec <private-fleet.yaml> --output json` to
+qualify every CPU and GPU worker. The shared implementation is
+`npa.fleet.storage_verification.verify_storage`, also exported as
+`npa.sdk.fleet.verify_storage`. Use `--only-projects`, `--only-clusters`,
+`--project-prefix`, and `--profile` to preserve Fleet selection and identity
+semantics. Unknown selectors and missing or stale registered identity fail
+closed; explicitly disabled filesystems are skipped.
+
+The verifier proves the exact read-write virtiofs source/path, reboot-safe
+`nofail` entry, capacity in binary GiB, unique host-file checksums, CSI health,
+and one RWX PVC shared across pods pinned to every exact worker. Every pod
+checks every worker's unique payload. It reads no pre-existing customer entries.
+Cleanup removes only owned probe paths and temporary resources with identity
+labels and UID preconditions, then proves absence on every node using
+server-synchronized Linux `statx` attributes after owned writers stop. Cached
+positive directory entries cannot substitute for fresh link-count evidence;
+unsupported synchronization and persistent linked entries fail closed.
+Partial evidence or cleanup failure cannot pass. Do not replace this with the vendored single-node shell
+smoke or infer storage health from node readiness.
+
+Use `--evidence-dir <owner-private-directory>` outside the repository for exact
+receipts. Publication surfaces receive only sanitized counts, requested capacity,
+categories, hashes, and cleanup counts. This operation does not redeploy,
+resize, change IAM, or alter customer workloads. See
+`docs/fleet-storage-verification.md` for prerequisites and the installed SDK.
+
+The all-worker live regression is
+`npa/tests/e2e/test_fleet_storage_verification_live.py`. Supply
+`NPA_INTEGRATION_E2E=1`, `NPA_FLEET_STORAGE_VERIFY=1`, an owner-private
+`NPA_FLEET_STORAGE_VERIFY_SPEC`, and `NPA_FLEET_STORAGE_EVIDENCE_DIR`.
+The daily runner reaches it only with that explicit opt-in. Its expected target,
+worker, and binary-GiB totals derive from the complete selected declaration.
+
 RTX PRO 6000 hardware MIG is an additive cluster policy. Use `mig: {enabled:
 true, strategy: mixed, config: all-balanced}` only with two strict
 reserved-capacity `gpu-rtx6000` / `1gpu-24vcpu-218gb` workers and 128 GiB boot
@@ -582,5 +617,6 @@ Both `deploy` and `destroy` confirm before acting (bypass with `--yes`/`-y`;
 npa fleet plan --help
 npa fleet deploy --help
 npa fleet verify-mig --help
+npa fleet verify-storage --help
 npa/.venv/bin/python -m pytest npa/tests/unit/test_fleet_cli.py -q
 ```

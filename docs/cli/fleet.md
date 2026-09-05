@@ -15,6 +15,7 @@ deploy  Deploy the fleet: resolve/create projects and apply each cluster.
 destroy  Destroy the fleet's spec-declared clusters (best-effort, per-target).
 status  Show the last-known deployment state for the fleet.
 verify-mig  Verify exact RTX PRO 6000 MIG labels, operands, and kubelet resources.
+verify-storage  Verify host mounts and shared PVC visibility on every selected worker.
 ```
 
 ## Options
@@ -32,6 +33,7 @@ verify-mig  Verify exact RTX PRO 6000 MIG labels, operands, and kubelet resource
 | `destroy` | Destroy the fleet's spec-declared clusters (best-effort, per-target). |
 | `status` | Show the last-known deployment state for the fleet. |
 | `verify-mig` | Verify exact RTX PRO 6000 MIG labels, operands, and kubelet resources. |
+| `verify-storage` | Verify host mounts and shared PVC visibility on every selected worker. |
 
 ## Examples
 

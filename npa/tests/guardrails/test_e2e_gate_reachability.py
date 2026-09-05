@@ -137,3 +137,14 @@ def test_pr218_mutation_gates_are_runner_reachable_not_manual() -> None:
     ):
         assert gate in runner_text
         assert gate not in MANUAL_GATES
+
+
+def test_fleet_storage_verification_has_an_opt_in_daily_runner() -> None:
+    runner = RUNNER_FILES[0].read_text(encoding="utf-8")
+    for gate in ("NPA_FLEET_STORAGE_VERIFY", "NPA_FLEET_STORAGE_VERIFY_SPEC",
+                 "NPA_FLEET_STORAGE_EVIDENCE_DIR"):
+        assert gate in runner
+        assert gate not in MANUAL_GATES
+    assert 'if [[ "${NPA_FLEET_STORAGE_VERIFY:-0}" != "1" ]]; then' in runner
+    assert 'run_fleet_storage_verification "$py"' in runner
+    assert "tests/e2e/test_fleet_storage_verification_live.py" in runner

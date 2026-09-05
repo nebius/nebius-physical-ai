@@ -63,6 +63,10 @@
 #                          bound the GPU submit wait (defaults 2400 / 30 / 2600)
 #   NPA_DAILY_ALLOW_LIVE_GPU=1  required to run the full live-gpu suite tier
 #   NPA_DAILY_PIP_EXTRAS   pip extras to install      (default: dev,adapter)
+#   NPA_FLEET_STORAGE_VERIFY=1 qualify every worker's existing shared filesystem
+#                          during e2e-daily; requires owner-private
+#                          NPA_FLEET_STORAGE_VERIFY_SPEC and
+#                          NPA_FLEET_STORAGE_EVIDENCE_DIR configuration
 #
 set -Eeuo pipefail
 
@@ -384,6 +388,24 @@ run_mutation_live() {
   )
 }
 
+run_fleet_storage_verification() {
+  local py="$1"
+  if [[ "${NPA_FLEET_STORAGE_VERIFY:-0}" != "1" ]]; then
+    return 0
+  fi
+  [[ -n "${NPA_FLEET_STORAGE_VERIFY_SPEC:-}" ]] \
+    || die "Fleet storage verification requires an owner-private spec"
+  [[ -n "${NPA_FLEET_STORAGE_EVIDENCE_DIR:-}" ]] \
+    || die "Fleet storage verification requires an owner-private evidence directory"
+  log "e2e-daily: qualifying storage on every explicitly selected Fleet worker"
+  (
+    cd "${CI_REPO_DIR}/npa"
+    NPA_INTEGRATION_E2E=1 "$py" -m pytest \
+      tests/e2e/test_fleet_storage_verification_live.py \
+      -o addopts= -q --tb=short
+  )
+}
+
 run_e2e_daily() {
   local py="$1"
   log "Tier=e2e-daily: comprehensive >= 4-step workflow coverage + all-image check + rotating S3 e2e subset"
@@ -392,6 +414,7 @@ run_e2e_daily() {
   run_workflow_plan_smoke "$py"
   run_image_reachability "$py"
   run_pr218_safe_contracts "$py"
+  run_fleet_storage_verification "$py"
   run_e2e_shard "$py"
   # Bounded real-GPU e2e is opt-in on the schedule: one rotating managed-job
   # workflow submit per day when the operator sets NPA_DAILY_ENABLE_GPU=1. The
