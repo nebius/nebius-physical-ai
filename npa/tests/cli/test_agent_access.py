@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+import base64
+import json
 import secrets
 import subprocess
 import threading
@@ -17,6 +19,7 @@ from npa.cli.agent_access import (
     accessible_artifact_buckets,
     artifact_bucket_projects,
     discover_agent_access,
+    normalize_configured_artifact_sources,
     scoped_artifact_buckets,
 )
 from npa.workflows.artifacts import encode_run_ref
@@ -79,6 +82,51 @@ def test_full_tenant_access_is_explicit_and_project_owned() -> None:
     }
     assert payload["capabilities"]["artifact_delete"]["status"] == "unavailable"
     assert payload["capabilities"]["arbitrary_s3_uri"]["status"] == "unavailable"
+
+
+def test_configured_artifact_source_survives_unavailable_tenant_inventory() -> None:
+    def unavailable_projects(_tenant: str):
+        raise AccessProbeError("unavailable", "list tenant projects")
+
+    def unavailable_buckets(_project: str):
+        raise AccessProbeError("denied", "list project object storage resources")
+
+    report = _discover(
+        list_projects=unavailable_projects,
+        list_buckets=unavailable_buckets,
+        fallback_buckets=[],
+        configured_sources=[
+            {
+                "project_id": "project-exact",
+                "bucket": "bucket-exact",
+                "resolved_prefix": "preserved/runs",
+            }
+        ],
+    )
+
+    assert report.status == "partial"
+    assert accessible_artifact_buckets(report) == ["bucket-exact"]
+    assert artifact_bucket_projects(report) == {"bucket-exact": "project-exact"}
+    exact_project = next(
+        item for item in report.to_dict()["projects"] if item["id"] == "project-exact"
+    )
+    assert exact_project["resources"][0]["source"] == "configured_artifact_source"
+
+
+def test_configured_artifact_sources_are_narrow_and_deduplicated() -> None:
+    source = {
+        "project_id": "project-exact",
+        "bucket": "bucket-exact",
+        "resolved_prefix": "preserved/runs",
+    }
+    assert normalize_configured_artifact_sources([source, dict(source)]) == (source,)
+
+    with pytest.raises(ValueError, match="resolved_prefix is invalid"):
+        normalize_configured_artifact_sources(
+            [{**source, "resolved_prefix": "preserved/../other"}]
+        )
+    with pytest.raises(ValueError, match="requires project_id and bucket"):
+        normalize_configured_artifact_sources([{"project_id": "project-exact"}])
 
 
 def test_selected_artifact_scope_is_verified_against_project_ownership() -> None:
@@ -350,7 +398,10 @@ def test_approval_browser_handoff_is_https_allowlisted_and_opener_isolated() -> 
     assert '"catalog.ngc.nvidia.com"' in approval_block
     assert 'approvalUrl.protocol !== "https:"' in approval_block
     assert "!allowedApprovalHosts.has(approvalUrl.hostname)" in approval_block
-    assert 'window.open(approvalUrl.href, "_blank", "noopener,noreferrer")' in approval_block
+    assert (
+        'window.open(approvalUrl.href, "_blank", "noopener,noreferrer")'
+        in approval_block
+    )
     assert "opened.opener = null" in approval_block
 
 
@@ -793,6 +844,109 @@ def test_exact_run_ref_authorization_checks_only_selected_project_and_bucket(
         project_id="selected-project",
         resolved_prefix="nested/source",
     ) == ("selected-bucket", "selected-project", "nested/source")
+
+
+def test_configured_exact_source_authorization_survives_process_cache_reset(
+    monkeypatch,
+) -> None:
+    from npa.cli import agent_access_runtime as runtime
+
+    source = {
+        "project_id": "selected-project",
+        "bucket": "selected-bucket",
+        "resolved_prefix": "nested/source",
+    }
+    encoded = base64.urlsafe_b64encode(json.dumps([source]).encode()).decode()
+    monkeypatch.setenv("NPA_AGENT_ARTIFACT_SOURCES_B64", encoded)
+    monkeypatch.setattr(
+        runtime,
+        "_agent_list_tenant_projects",
+        lambda _tenant: pytest.fail(
+            "configured source must not require tenant inventory"
+        ),
+    )
+    monkeypatch.setattr(
+        runtime,
+        "_agent_list_project_buckets",
+        lambda _project: pytest.fail(
+            "configured source must not require project inventory"
+        ),
+    )
+    probes: list[str] = []
+    monkeypatch.setattr(
+        runtime,
+        "_agent_probe_bucket",
+        lambda _s3, bucket: (
+            probes.append(bucket) or BucketProbe("available", "available")
+        ),
+    )
+    run_ref = encode_run_ref("selected-bucket", "nested/source", "run-one")
+
+    for _fresh_process in range(2):
+        runtime._clear_exact_run_ref_source_authorizations()
+        assert runtime._authorize_exact_run_ref_source(
+            s3=object(),
+            settings={},
+            run_id="run-one",
+            run_ref=run_ref,
+            resource_bucket="selected-bucket",
+            project_id="selected-project",
+            resolved_prefix="nested/source",
+        ) == ("selected-bucket", "selected-project", "nested/source")
+
+    assert probes == ["selected-bucket", "selected-bucket"]
+
+
+def test_configured_exact_run_search_uses_only_exact_source_tuple(monkeypatch) -> None:
+    from npa.cli import agent_access_runtime as runtime
+
+    source = {
+        "project_id": "selected-project",
+        "bucket": "selected-bucket",
+        "resolved_prefix": "nested/source",
+    }
+    encoded = base64.urlsafe_b64encode(json.dumps([source]).encode()).decode()
+    monkeypatch.setenv("NPA_AGENT_ARTIFACT_SOURCES_B64", encoded)
+    calls: list[tuple[object, ...]] = []
+
+    exact = SimpleNamespace(
+        run_id="run-one",
+        bucket="selected-bucket",
+        project_id="selected-project",
+        resolved_prefix="nested/source",
+    )
+    sibling_prefix = SimpleNamespace(
+        run_id="run-one",
+        bucket="selected-bucket",
+        project_id="selected-project",
+        resolved_prefix="nested/source-sibling",
+    )
+
+    def find(buckets, **kwargs):
+        calls.append(
+            (
+                tuple(buckets),
+                kwargs["run_id"],
+                kwargs["exact_prefix"],
+                kwargs["bucket_projects"],
+            )
+        )
+        return [exact, sibling_prefix], (), True
+
+    monkeypatch.setattr(runtime, "find_run_sources_across_buckets", find)
+    assert runtime._find_configured_exact_run_sources(object(), "run-one") == (
+        [exact],
+        (),
+        True,
+    )
+    assert calls == [
+        (
+            ("selected-bucket",),
+            "run-one",
+            "nested/source",
+            {"selected-bucket": "selected-project"},
+        )
+    ]
 
 
 @pytest.mark.parametrize(

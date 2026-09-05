@@ -189,7 +189,10 @@ def test_rendered_backend_compiles(monkeypatch) -> None:
     assert '"deployment": dict(DEPLOYMENT)' in body
     assert "register_gpu_allocation_routes(" in body
     assert "@goal_episode_boundary(" in body
-    assert "For every goal-level episode, load and follow `$agent-run-data-collection`" in body
+    assert (
+        "For every goal-level episode, load and follow `$agent-run-data-collection`"
+        in body
+    )
     assert "POST /api/agent/gpu-allocation/attempt" in body
     assert "POST /api/agent/gpu-allocation/consent" in body
 
@@ -2031,7 +2034,12 @@ def test_rendered_artifact_routes_reject_foreign_buckets_and_malformed_keys(
         # handler takes the request. Every rejection below happens before any S3
         # call, so the stubbed client is never touched.
         request = module.Request(
-            {"type": "http", "method": "GET", "path": "/artifacts/download", "headers": []}
+            {
+                "type": "http",
+                "method": "GET",
+                "path": "/artifacts/download",
+                "headers": [],
+            }
         )
         with pytest.raises(module.HTTPException) as exc_info:
             module.artifacts_download(
@@ -2152,6 +2160,101 @@ def test_rendered_backend_registers_no_shadowed_routes(monkeypatch, tmp_path) ->
         sys.modules.pop(module_name, None)
 
 
+def test_rendered_exact_query_prefers_durable_default_source_without_ui_scope(
+    monkeypatch, tmp_path
+) -> None:
+    module_name = "npa_rendered_configured_artifact_source_backend"
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+    run_id = "pi05-finetune-20260831T152730Z-synthetic"
+    found = module.RunSummary(
+        run_id,
+        "2031-01-01T00:00:00Z",
+        4,
+        "reports/final.rrd",
+        bucket="bucket-exact",
+        project_id="project-exact",
+        resolved_prefix="preserved/runs",
+    )
+    calls: list[str] = []
+    try:
+        monkeypatch.setattr(
+            module,
+            "_agent_s3_client",
+            lambda: (object(), {"bucket": "primary-bucket", "prefix": ""}),
+        )
+        monkeypatch.setattr(
+            module,
+            "_configured_agent_artifact_sources",
+            lambda: (
+                {
+                    "project_id": "project-exact",
+                    "bucket": "bucket-exact",
+                    "resolved_prefix": "preserved/runs",
+                },
+            ),
+        )
+        monkeypatch.setattr(
+            module,
+            "_find_configured_exact_run_sources",
+            lambda _s3, queried: (calls.append(queried) or [found], (), True),
+        )
+        monkeypatch.setattr(
+            module,
+            "_agent_access_report",
+            lambda **_kwargs: module.discover_agent_access(
+                tenant_id="tenant-test",
+                deployment_project_id="deployment-project",
+                configured_sources=[
+                    {
+                        "project_id": "project-exact",
+                        "bucket": "bucket-exact",
+                        "resolved_prefix": "preserved/runs",
+                    }
+                ],
+                list_projects=lambda _tenant: (_ for _ in ()).throw(
+                    module.AccessProbeError("unavailable", "list tenant projects")
+                ),
+                list_buckets=lambda _project: (_ for _ in ()).throw(
+                    module.AccessProbeError("denied", "list project buckets")
+                ),
+                probe_bucket=lambda _bucket: module.BucketProbe(
+                    "available", "available"
+                ),
+            ),
+        )
+
+        for _fresh_session in range(2):
+            response = module.artifacts_runs(limit=100, q=run_id)
+            assert response["count"] == 1
+            assert response["total_runs"] == 1
+            assert response["query_complete"] is True
+            assert response["pagination_complete"] is True
+            assert response["runs"][0]["run_id"] == run_id
+            assert response["runs"][0]["project_id"] == "project-exact"
+            assert response["runs"][0]["bucket"] == "bucket-exact"
+            assert response["runs"][0]["resolved_prefix"] == "preserved/runs"
+        assert calls == [run_id, run_id]
+
+        monkeypatch.setattr(
+            module,
+            "_find_configured_exact_run_sources",
+            lambda _s3, queried: (calls.append(queried) or [], (), True),
+        )
+        monkeypatch.setattr(
+            module,
+            "list_runs_cached_multi",
+            lambda *_args, **_kwargs: pytest.fail(
+                "empty configured exact search must not fall through"
+            ),
+        )
+        empty = module.artifacts_runs(limit=100, q=run_id)
+        assert empty["count"] == 0
+        assert empty["total_runs"] == 0
+        assert empty["query_complete"] is True
+    finally:
+        sys.modules.pop(module_name, None)
+
+
 def test_artifact_range_response_uses_get_object_metadata_consistently(
     monkeypatch, tmp_path
 ) -> None:
@@ -2234,7 +2337,6 @@ def test_artifact_range_response_uses_get_object_metadata_consistently(
         assert "changed since inventory discovery" in exc_info.value.detail
     finally:
         sys.modules.pop(module_name, None)
-
 
     paths = {getattr(route, "path", "") for route in module.app.routes}
     assert callable(module.artifacts_runs)
@@ -3137,27 +3239,19 @@ def test_rendered_grounded_access_approval_reports_skill_without_model_call(
     )
     try:
         response = module.chat(
-            {
-                "messages": [
-                    {"role": "user", "content": "prepare full catalog access"}
-                ]
-            }
+            {"messages": [{"role": "user", "content": "prepare full catalog access"}]}
         )
         assert response["grounded"] is True
         assert response["tier"] == "grounded-access-approval"
         assert response["skills_used"] == ["access-approval"]
         assert response["open_urls"] == []
 
-        opened = module.chat(
-            {"messages": [{"role": "user", "content": "yes"}]}
-        )
+        opened = module.chat({"messages": [{"role": "user", "content": "yes"}]})
         assert opened["grounded"] is True
         assert opened["skills_used"] == ["access-approval"]
         assert opened["open_urls"] == plan["official_urls"]
 
-        declined = module.chat(
-            {"messages": [{"role": "user", "content": "later"}]}
-        )
+        declined = module.chat({"messages": [{"role": "user", "content": "later"}]})
         assert declined["grounded"] is True
         assert declined["open_urls"] == []
         assert "npa configure --prepare-catalog-access" in declined["reply"]

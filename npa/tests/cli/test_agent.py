@@ -2346,6 +2346,7 @@ def test_bootstrap_embeds_artifact_browser_and_endpoints() -> None:
         in source
     )
     assert "EnvironmentFile=-/opt/npa-agent/s3.env" in source
+    assert "EnvironmentFile=-/opt/npa-agent/artifact-sources.env" in source
     embedded = agent_module._embedded_agent_artifacts_source()
     assert "list_runs" in embedded
     assert "list_artifacts" in embedded
@@ -2452,9 +2453,7 @@ def test_direct_run_load_does_not_wait_for_complete_large_inventory() -> None:
     )[0]
 
     assert "deferInventoryCompletion: true" in load_run
-    assert (
-        "activeArtifactInventoryComplete && activeArtifactInventory.some" in load_run
-    )
+    assert "activeArtifactInventoryComplete && activeArtifactInventory.some" in load_run
     assert "activeArtifactInventoryComplete && !hasRecording" in load_run
 
     selected_run = source.split("async function _loadSelectedRun", 1)[1].split(
@@ -3577,12 +3576,15 @@ def test_bootstrap_emitted_ui_script_is_valid_javascript(monkeypatch) -> None:
     assert "RERUN_CAPABILITY_NAME_RE" in setup_script
     assert "RERUN_RECORDING_HTTP_PATH" not in setup_script
     assert 'sim_viz["served_recording_sha256"] = _sha256_file(' in setup_script
-    assert 'sim_viz["served_recording_size_bytes"] = RECORDING_PATH.stat().st_size' in setup_script
+    assert (
+        'sim_viz["served_recording_size_bytes"] = RECORDING_PATH.stat().st_size'
+        in setup_script
+    )
     assert 'sim_viz.pop("served_recording_sha256", None)' in setup_script
     assert 'sim_viz.pop("served_recording_size_bytes", None)' in setup_script
     assert 'stream.read(4) == b"RRF2"' in setup_script
     assert "recording_size == bound_size" in setup_script
-    assert 'and _served_recording_is_run_specific()' in setup_script
+    assert "and _served_recording_is_run_specific()" in setup_script
     html_match = re.search(
         r"cat <<'HTML' \| sudo tee /opt/npa-agent/ui\.html >/dev/null\n(?P<html>.*?)\nHTML",
         setup_script,
@@ -3911,6 +3913,10 @@ def test_bootstrap_embeds_provider_resilience_fallback() -> None:
     assert "_provider_chat" in source
     assert "NPA_AGENT_LLM_PROVIDER" in source
     assert "NPA_AGENT_LLM_PROVIDERS" in source
+    assert "NPA_AGENT_LLM_TIMEOUT_SECONDS" in source
+    assert "NPA_AGENT_LLM_MAX_CONCURRENCY" in source
+    assert "timeout=LLM_TIMEOUT_SECONDS" in source
+    assert "with _LLM_REQUEST_SLOTS" in source
     assert "default_provider" in source
 
 
@@ -5424,9 +5430,7 @@ def test_agent_preflight_capacity_follows_requested_agent_name(
     monkeypatch.setattr(
         agent_module, "_agent_storage_result", lambda *_a, **_k: _passing_check()
     )
-    monkeypatch.setattr(
-        agent_module, "_resolve_project_alias", lambda _project: "demo"
-    )
+    monkeypatch.setattr(agent_module, "_resolve_project_alias", lambda _project: "demo")
     monkeypatch.setattr(
         agent_module,
         "resolve_environment",
@@ -5437,9 +5441,7 @@ def test_agent_preflight_capacity_follows_requested_agent_name(
     monkeypatch.setattr(
         agent_module,
         "_agent_record",
-        lambda _project, name: (
-            {"public_ip": "203.0.113.50"} if name == "agent" else {}
-        ),
+        lambda _project, name: {"public_ip": "203.0.113.50"} if name == "agent" else {},
     )
 
     seen: list[bool] = []
@@ -6046,6 +6048,289 @@ def test_agent_project_option_defaults_are_consistent() -> None:
         option = inspect.signature(command).parameters["project"].default
         default = getattr(option, "default", option)
         assert default == "", f"{command.__name__} pins --project to {default!r}"
+
+
+def test_artifact_source_file_round_trip_survives_service_environment_reload(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.cli import agent_access_runtime as runtime
+
+    source = {
+        "project_id": "project-exact",
+        "bucket": "bucket-exact",
+        "resolved_prefix": "preserved/runs",
+    }
+    source_file = tmp_path / "artifact-sources.json"
+    source_file.write_text(json.dumps([source]), encoding="utf-8")
+    source_file.chmod(0o600)
+    staged: dict[str, str] = {}
+
+    class FakeSSH:
+        def upload_private_text(self, content, remote_path):
+            staged.update(content=content, remote_path=remote_path)
+
+        def run_or_raise(self, _command, *, label):
+            assert label == "stage private /opt/npa-agent/artifact-sources.env"
+            assert "install -m 600" in _command
+
+        def run(self, _command):
+            return None
+
+    loaded = agent_module._load_agent_artifact_sources_file(str(source_file))
+    agent_module._write_agent_artifact_sources_env(
+        FakeSSH(),
+        artifact_sources=loaded,
+    )
+
+    env_line = next(
+        line
+        for line in staged["content"].splitlines()
+        if line.startswith("NPA_AGENT_ARTIFACT_SOURCES_B64=")
+    )
+    assert "project-exact" not in env_line
+    assert "bucket-exact" not in env_line
+    monkeypatch.setenv("NPA_AGENT_ARTIFACT_SOURCES_B64", env_line.split("=", 1)[1])
+    assert runtime._configured_agent_artifact_sources() == (source,)
+    assert str(staged["remote_path"]).startswith("/tmp/.npa-private-")
+
+
+def test_artifact_source_file_rejects_non_private_permissions(tmp_path) -> None:
+    source_file = tmp_path / "artifact-sources.json"
+    source_file.write_text("[]", encoding="utf-8")
+    source_file.chmod(0o644)
+
+    with pytest.raises(ValueError, match="must not be readable"):
+        agent_module._load_agent_artifact_sources_file(str(source_file))
+
+
+def test_custom_llm_config_stages_secret_only_through_private_upload(tmp_path) -> None:
+    from npa.cli import agent_llm_config
+
+    key_file = tmp_path / "provider.key"
+    key_file.write_text("synthetic-provider-secret", encoding="utf-8")
+    key_file.chmod(0o600)
+    config_file = tmp_path / "llm.json"
+    config_file.write_text(
+        json.dumps(
+            {
+                "provider": "custom-provider",
+                "base_url": "https://models.example/v1",
+                "api_key_file": str(key_file),
+                "model": "example/model",
+                "models": ["example/model"],
+                "timeout_seconds": 180,
+                "max_concurrency": 8,
+            }
+        ),
+        encoding="utf-8",
+    )
+    config_file.chmod(0o600)
+    config = agent_module._load_agent_llm_config_file(str(config_file))
+    staged: dict[str, str] = {}
+
+    class FakeSSH:
+        def upload_private_text(self, content, remote_path):
+            staged.update(content=content, remote_path=remote_path)
+
+        def run_or_raise(self, command, *, label):
+            staged.update(command=command, label=label)
+
+        def run(self, _command):
+            return None
+
+    agent_llm_config.write_agent_llm_env(
+        FakeSSH(),
+        api_key=config["api_key"],
+        provider=config["provider"],
+        providers=(config["provider"],),
+        model=config["model"],
+        models=config["models"],
+        base_url=config["base_url"],
+        timeout_seconds=config["timeout_seconds"],
+        max_concurrency=config["max_concurrency"],
+    )
+
+    assert "synthetic-provider-secret" in staged["content"]
+    assert "synthetic-provider-secret" not in staged["command"]
+    assert "NPA_AGENT_CUSTOM_PROVIDER_API_KEY=" in staged["content"]
+    assert (
+        "NPA_AGENT_CUSTOM_PROVIDER_BASE_URL=https://models.example/v1"
+        in staged["content"]
+    )
+    assert "NPA_AGENT_LLM_TIMEOUT_SECONDS=180" in staged["content"]
+    assert "NPA_AGENT_LLM_MAX_CONCURRENCY=8" in staged["content"]
+    assert staged["label"] == "stage private /opt/npa-agent/llm.env"
+    runtime = agent_llm_config.resolve_agent_llm_runtime(
+        {},
+        llm_config_file=str(config_file),
+        requested_model="",
+        requested_models=[],
+        defaults=("token_factory", "", "default/model", ("default/model",)),
+        normalize_models=agent_module._normalize_llm_models,
+    )
+    persisted = runtime["persisted"]
+    assert "api_key" not in persisted
+    assert persisted["config_file"] == str(config_file)
+    bootstrap_kwargs = agent_llm_config.bootstrap_agent_llm_kwargs(runtime)
+    assert bootstrap_kwargs["llm_api_key"] == "synthetic-provider-secret"
+    assert "tf_api_key" not in bootstrap_kwargs
+
+
+def test_custom_llm_config_rejects_weak_files_and_short_timeout(tmp_path) -> None:
+    key_file = tmp_path / "provider.key"
+    key_file.write_text("synthetic-provider-secret", encoding="utf-8")
+    key_file.chmod(0o600)
+    config_file = tmp_path / "llm.json"
+    payload = {
+        "provider": "custom",
+        "base_url": "https://models.example/v1",
+        "api_key_file": str(key_file),
+        "model": "example/model",
+        "timeout_seconds": 120,
+        "max_concurrency": 8,
+    }
+    config_file.write_text(json.dumps(payload), encoding="utf-8")
+    config_file.chmod(0o600)
+    with pytest.raises(ValueError, match="at least 180"):
+        agent_module._load_agent_llm_config_file(str(config_file))
+
+    payload["timeout_seconds"] = 180
+    config_file.write_text(json.dumps(payload), encoding="utf-8")
+    config_file.chmod(0o644)
+    with pytest.raises(ValueError, match="must not be readable"):
+        agent_module._load_agent_llm_config_file(str(config_file))
+
+
+def test_cross_project_artifact_source_uses_exact_private_credential_record(
+    monkeypatch,
+) -> None:
+    from npa.cli import agent_artifact_sources
+
+    monkeypatch.setattr(
+        agent_artifact_sources,
+        "project_credential_record",
+        lambda project_id, **_kwargs: {
+            "project_id": project_id,
+            "storage": {
+                "bucket": "bucket-exact",
+                "endpoint_url": "https://objects.example",
+                "aws_access_key_id": "synthetic-access",
+                "aws_secret_access_key": "synthetic-secret",
+            },
+        },
+    )
+    current = (
+        "deployment-bucket",
+        "",
+        "https://deployment.example",
+        "deployment-access",
+        "deployment-secret",
+        "service-account",
+    )
+
+    assert agent_module._resolve_configured_artifact_storage_credentials(
+        [
+            {
+                "project_id": "project-exact",
+                "bucket": "bucket-exact",
+                "resolved_prefix": "preserved/runs",
+            }
+        ],
+        deployment_project_id="project-deployment",
+        current=current,
+    ) == (
+        "bucket-exact",
+        "preserved/runs",
+        "https://objects.example",
+        "synthetic-access",
+        "synthetic-secret",
+        "service-account",
+    )
+
+
+def test_cross_project_artifact_source_rejects_mismatched_private_bucket(
+    monkeypatch,
+) -> None:
+    from npa.cli import agent_artifact_sources
+
+    monkeypatch.setattr(
+        agent_artifact_sources,
+        "project_credential_record",
+        lambda _project_id, **_kwargs: {
+            "storage": {
+                "bucket": "other-bucket",
+                "endpoint_url": "https://objects.example",
+                "aws_access_key_id": "synthetic-access",
+                "aws_secret_access_key": "synthetic-secret",
+            }
+        },
+    )
+
+    with pytest.raises(
+        agent_module.AgentStorageCredentialError,
+        match="no exact matching artifact source credentials",
+    ):
+        agent_module._resolve_configured_artifact_storage_credentials(
+            [
+                {
+                    "project_id": "project-exact",
+                    "bucket": "bucket-exact",
+                    "resolved_prefix": "preserved/runs",
+                }
+            ],
+            deployment_project_id="project-deployment",
+            current=("", "", "", "", "", "service-account"),
+        )
+
+
+def test_bootstrap_reuses_persisted_artifact_sources_without_source_file() -> None:
+    source = {
+        "project_id": "project-exact",
+        "bucket": "bucket-exact",
+        "resolved_prefix": "preserved/runs",
+    }
+
+    assert agent_module._resolve_agent_artifact_sources(
+        {"artifact_sources": [source]}
+    ) == (source,)
+
+
+def test_bootstrap_recovery_preserves_owner_artifact_source_file(
+    monkeypatch, tmp_path
+) -> None:
+    monkeypatch.setenv("NPA_OPERATION_JOURNAL_DIR", str(tmp_path / "operations"))
+    monkeypatch.setattr(
+        agent_module,
+        "resolve_environment",
+        lambda _project: SimpleNamespace(
+            project_id="project-exact",
+            tenant_id="tenant-exact",
+            region="test-region",
+        ),
+    )
+    monkeypatch.setattr(agent_module, "_agent_record", lambda *_args: {})
+    source_file = tmp_path / "artifact-sources.json"
+    source_file.write_text("[]", encoding="utf-8")
+    source_file.chmod(0o600)
+
+    result = runner.invoke(
+        app,
+        [
+            "bootstrap",
+            "--project",
+            "test-project",
+            "--name",
+            "test-agent",
+            "--artifact-source-file",
+            str(source_file),
+        ],
+    )
+
+    assert result.exit_code == 1
+    [journal] = (tmp_path / "operations").glob("*/journal.json")
+    resume_argv = json.loads(journal.read_text())["recovery_commands"]["resume_argv"]
+    option = resume_argv.index("--artifact-source-file")
+    assert resume_argv[option + 1] == str(source_file)
 
 
 def test_resolve_project_alias_prefers_the_only_configured_project(monkeypatch) -> None:
