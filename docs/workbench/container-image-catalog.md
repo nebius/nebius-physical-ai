@@ -189,7 +189,7 @@ grants redistribution rights.
 | EVG captioning upstream parent | `nvcr.io/nvidia/paidf-captioning-service@sha256:17e1e3f53cc66342183f7d0b6eed76907993bb325a13db90c46d9a8cf664d804` | Exact restricted NGC wrapper parent; original entrypoint does not forward worker argv |
 | EVG Visual QA upstream parent | `nvcr.io/nvidia/paidf-visual-qa-service@sha256:e681c8dee849c7ac9fc5b182f51e9efd0da460972b08850d40f00aa9d5e3c97c` | Exact restricted NGC wrapper parent; original entrypoint does not forward worker argv |
 | IAA/EVG attribute-search worker | `<operator-registry>/npa-paidf-attribute-search-sky@sha256:d61d56ae69bf2971fbf5b03fe97a492a865c317906b1ec5c67a46133b5b97641` | Operator-private publication verified 2026-09-05; bootstrap/security passed; native workflow acceptance pending |
-| EVG detection/tracking worker | `<operator-registry>/npa-paidf-detection-sky@sha256:<digest>` | Restricted rebuild after unused training/development dependency removal; exact-byte and GPU acceptance pending |
+| EVG detection/tracking worker | `<operator-registry>/npa-paidf-detection-sky@sha256:6fa1c78eddad6f6d2bea732b246aa37b512008d8724a0e987291188d0e17b0b2` | Operator-private publication verified 2026-09-05; bootstrap/security and real CPU inference passed; GPU workflow acceptance pending |
 | EVG captioning worker | `<operator-registry>/npa-paidf-captioning-sky@sha256:ce97a86413005dbf844ae454a47b6e0a41ce521bd0403237e133c26bfed63ff7` | Operator-private publication verified 2026-09-05; bootstrap/security passed; native workflow acceptance pending |
 | EVG Visual QA worker | `<operator-registry>/npa-paidf-visual-qa-sky@sha256:27f600a12ccfb71c6744394d7b41375c36eed2df53833fb883b9ec5fa73070e4` | Operator-private publication verified 2026-09-05; bootstrap/security passed; native workflow acceptance pending |
 
@@ -227,6 +227,17 @@ Its full inventory records six unfixed CRITICAL findings, 216 HIGH, 3,400 MEDIUM
 and 433 LOW, with zero secrets. The fixed-CRITICAL policy passed without new
 ignore entries, including clearance of the earlier NLTK finding. Its SPDX 2.3
 SBOM contains 1,831 packages. GPU and native workflow acceptance remain pending.
+
+The RF-DETR worker was privately published from
+`ce010547321e8fee7b8783f684349a311ace63b2`, with remote OCI
+index/child/layer/provenance identity and authenticated pull verification;
+anonymous reads were denied. Both shell bootstrap modes, NPA installation
+preserving vendor files, the actual service CLI and real CPU checkpoint inference
+passed. Its full inventory contains zero CRITICAL findings, 22 HIGH, 340 MEDIUM
+and 91 LOW. All ten inherited public TLS fixture-key findings were matched to
+exact public source bytes, with no unresolved secret findings. The repository
+policy passed and the SPDX 2.3 SBOM contains 894 packages. GPU and native workflow
+acceptance remain pending.
 
 The licensing and runtime-fetch boundary is recorded in
 `skills/NOTICE-NVIDIA-PAIDF`. The machine-readable packaging contract includes

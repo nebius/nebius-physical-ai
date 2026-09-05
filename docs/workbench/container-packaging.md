@@ -96,8 +96,12 @@ W&B/torchtitan training tools and their unused system development toolchain
 through package-manager dependency handling, while retaining the vendor service
 code and CUDA runtime libraries. The actual service CLI and a CPU forward using
 the pinned RF-DETR checkpoint passed after removal, with no native compiler
-invocations. Exact rebuilt-byte and GPU workflow acceptance remain pending; this
-CPU check establishes dependency compatibility only.
+invocations. The exact rebuilt image is privately published from
+`ce010547321e8fee7b8783f684349a311ace63b2`, with verified
+registry identity, complete scans and an 894-package SPDX SBOM recorded in the
+catalog. Its inventory has zero CRITICAL findings; all inherited public TLS
+fixture-key findings have exact source evidence. GPU workflow acceptance remains
+pending; the CPU check establishes dependency compatibility only.
 
 The AnomalyGen image keeps the exact CUDA 13.2 base image's
 `cuda-compat-13-2` libraries first on `LD_LIBRARY_PATH` while retaining the
