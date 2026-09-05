@@ -301,7 +301,7 @@ def test_cosmos2_exact_source_image_uses_light_package_imports() -> None:
     assert "import npa.workflows.sim2real.runtime_attestation" in dockerfile
 
 
-def test_rerun_viewer_exact_source_image_selects_nurec_light_cli() -> None:
+def test_rerun_viewer_exact_source_image_selects_one_light_cli() -> None:
     """The PAIDF visualization toolRef must be registered in the viewer image."""
 
     dockerfile = (
@@ -312,7 +312,11 @@ def test_rerun_viewer_exact_source_image_selects_nurec_light_cli() -> None:
         / "Dockerfile"
     ).read_text(encoding="utf-8")
     assert "NPA_SKIP_EAGER_IMPORTS=1" in dockerfile
-    assert "NPA_LIGHT_WORKBENCH_TOOL=nurec" in dockerfile
+    selectors = [
+        token for token in dockerfile.split()
+        if token.startswith("NPA_LIGHT_WORKBENCH_TOOL=")
+    ]
+    assert selectors == ["NPA_LIGHT_WORKBENCH_TOOL=rerun-viewer"]
 
 
 @pytest.mark.parametrize(
