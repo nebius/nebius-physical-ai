@@ -180,9 +180,9 @@ grants redistribution rights.
 | DIG vendor reference (not executed) | `nvcr.io/nvidia/paidf-anomalygen@sha256:e62a87d1dc58b6de8b8a352dc8ec2a2e3e400288d66b2b8b19b92d97e7a0bc09` | Vendor-owned NGC image; pull verified, but not SkyPilot-compatible |
 | DIG setup, fine-tune, generation, and native labels | `<operator-registry>/npa-paidf-anomalygen-sky@sha256:<digest>` built from `paidf-anomalygen-sky/Dockerfile` | Restricted source build on public CUDA bases; never NPA public GHCR |
 | IAA Qwen Image Edit blueprint reference | `docker.io/vllm/vllm-omni@sha256:5d8c7e742c98858f257d82307e378391f0e7d77065e141c733cc4778042128ab` | Not executed: failed bootstrap and contains vLLM 0.20 affected by CVE-2026-48746 |
-| IAA Qwen Image Edit selected parent | `docker.io/vllm/vllm-omni@sha256:8b0cc5438eb27b34cdfd22011b735da6a94835a09e9c56ddf9e8cb300d679919` | Aligned upstream vLLM/Omni 0.22.0 security update; fresh wrapper validation pending |
+| IAA Qwen Image Edit selected parent | `docker.io/vllm/vllm-omni@sha256:8b0cc5438eb27b34cdfd22011b735da6a94835a09e9c56ddf9e8cb300d679919` | Aligned upstream vLLM/Omni 0.22.0 security update; wrapper publication/bootstrap verified; GPU acceptance pending |
 | EVG Cosmos3 Super Image2Video upstream parent | `docker.io/vllm/vllm-omni@sha256:970dee6658ea223f615b2438ce41e47f1d5322225482546e6e6bc5d8134f757c` | Exact wrapper parent; upstream worker bootstrap failed |
-| IAA generation worker | `<operator-registry>/npa-paidf-image-edit-sky@sha256:<digest>` | Restricted compatibility build; byte scans and GPU acceptance pending |
+| IAA generation worker | `<operator-registry>/npa-paidf-image-edit-sky@sha256:ef7450cfc12efb92a0260f09df9a83f4b0590ccb4a9fc6157b819721adc56cd8` | Operator-private publication verified 2026-09-05; bootstrap and repository security policy passed; GPU acceptance pending |
 | EVG generation worker | `<operator-registry>/npa-paidf-event-video-sky@sha256:<digest>` | Restricted compatibility build; byte scans and GPU acceptance pending |
 | IAA/EVG attribute-search upstream parent | `nvcr.io/nvidia/paidf-event-and-person-attribute-search-service@sha256:0f581ff6d92efd391281e5787a8b1fda76556443ade47c1f5d59d4c345a01f6a` | Exact restricted NGC wrapper parent; original entrypoint does not forward worker argv |
 | EVG detection/tracking upstream parent | `nvcr.io/nvidia/paidf-detection-and-tracking-rfdetr-service@sha256:6b35e63b95cab7cd772906bcb08be978de7526427f0d1925ab84439dd4a9561e` | Exact restricted NGC wrapper parent; original entrypoint does not forward worker argv |
@@ -205,6 +205,19 @@ Each inventory contains zero HIGH/CRITICAL vulnerabilities, 74 MEDIUM and
 24 LOW; reviewed public cryptographic test vectors are retained as such. Exact
 private locations and receipts remain in access-controlled evidence. This proves
 image publication and bootstrap, while native workflow acceptance remains pending.
+
+The IAA generation worker was privately published from
+`a04508698d3813785263831741f02b8bb8040d6d`, with the same remote
+index/child/layer/provenance and authenticated-versus-anonymous pull checks.
+Both shell bootstrap modes, the installed Qwen service argv, authenticated
+middleware, and NPA installation preserving vendor files passed. Its complete
+inventory records six unfixed CRITICAL findings, 241 HIGH, 3,505 MEDIUM and
+460 LOW, with zero secret findings. It passes the repository's fixed-CRITICAL
+policy without new ignore entries; this does not mean its inventory is empty.
+The SPDX 2.3 SBOM contains 1,782 packages. Public auxiliary test/model tables
+inherited from the parent were reviewed against exact source bytes; actual
+workflow checkpoints are fetched at runtime. GPU and native workflow acceptance
+remain pending.
 
 The licensing and runtime-fetch boundary is recorded in
 `skills/NOTICE-NVIDIA-PAIDF`. The machine-readable packaging contract includes

@@ -71,6 +71,13 @@ digests and scoped acceptance evidence are recorded in the
 They remain excluded from the public release inventory. Image/bootstrap
 acceptance does not establish native workflow or GPU acceptance.
 
+The IAA generation wrapper also has a verified operator-private publication from
+`a04508698d3813785263831741f02b8bb8040d6d`. Its exact digest,
+bootstrap proof, SPDX package count and residual vulnerability counts are in
+the same catalog. The repository security gate rejects fixed CRITICAL findings;
+the full inventory separately records six unfixed CRITICAL findings, with no
+new ignore entries. Runtime GPU and workflow acceptance remain pending.
+
 The RF-DETR compatibility worker supports inference. It removes inherited
 W&B/torchtitan training tools and their unused system development toolchain
 through package-manager dependency handling, while retaining the vendor service
