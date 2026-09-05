@@ -140,6 +140,21 @@ tokenizer. Cosmos Guardrail1 remains a separately gated runtime fetch. The NPA
 model-access catalog records every public revision/probe and the exact gated
 payload; none is embedded in the restricted compatibility image.
 
+DIG also executes cosmos-framework at a904d2d36b774a51dd06ff9ff906816b1a04f579
+under OpenMDW-1.1. Its Qwen3Guard runtime source is
+cosmos_framework/auxiliary/guardrail/qwen3guard/qwen3guard.py. NPA retains the
+installed package and creates a run-private source overlay with two exact
+parser/error adaptations: require one complete published Safe, Unsafe, or
+Controversial verdict and raise on malformed/duplicate/missing verdicts or
+inference exceptions. Controversial retains upstream's allow policy. Original
+SHA-256: 3e102cef96d0f11b3af2d0b22eec54f0c7e41f9355ad8742a432681d56211be6;
+adapted SHA-256: 8d11d043d30f3794f5e4e44ac2bfe6b0fe3328a969be748c846f1e592b628bdb.
+The DIG result records and verifies this distinct source/license contract,
+vendor-interpreter import, package tree hashes, and upstream timing-summary
+hash. Text screening must be enforcing. The upstream image preset has no
+content classifier and records image_guardrail_enforcing=false; its real
+RetinaFace blur still runs. NPA does not disable or modify NLTK/pathsec.
+
 IAA/EVG labeling requires four restricted compatibility recipes:
 paidf-detection-sky, paidf-captioning-sky, paidf-visual-qa-sky, and
 paidf-attribute-search-sky. Each retains its exact vendor-owned NGC parent

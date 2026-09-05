@@ -91,7 +91,10 @@ def test_service_model_revisions_are_recorded_in_direct_translation_provenance()
     [
         (
             "defect-image-generation-day1-manual-roi",
-            {"https://github.com/NVIDIA/paidf-anomalygen"},
+            {
+                "https://github.com/NVIDIA/paidf-anomalygen",
+                "https://github.com/NVIDIA/cosmos-framework",
+            },
         ),
         (
             "image-attribute-augmentation",

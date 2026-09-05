@@ -74,6 +74,17 @@ pinned AnomalyGen checkpoint closure, fine-tunes the selected upstream recipe,
 then runs the upstream generator and native label export. It intentionally does
 not claim Day-0 USD scene preparation or the separate PCBA real-alignment path.
 
+DIG's pinned OpenMDW-1.1 Cosmos Framework Qwen guard catches inference and
+parsing errors and returns an allowed result upstream. NPA uses an exact-source
+private overlay to raise on those errors and require one complete published
+safety verdict. Safe and Controversial keep their upstream allowed decisions;
+Unsafe is rejected. The vendor interpreter must import the reviewed module,
+and the completed run must report enforced text screening before publication.
+The result binds the source/license, original and adapted hashes, package trees,
+and actual timing summary. Installed vendor files and NLTK behavior are
+preserved. The upstream image preset runs RetinaFace blur but contains no image
+content classifier; its enforcement flag remains false.
+
 The upstream IAA/EVG generation images lack required SkyPilot worker commands.
 Build `paidf-image-edit-sky` and `paidf-event-video-sky` from their exact pinned
 parents, scan the actual bytes, publish privately, and supply their immutable

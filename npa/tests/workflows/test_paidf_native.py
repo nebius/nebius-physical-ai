@@ -1413,9 +1413,12 @@ def test_dig_runtime_refuses_missing_or_drifted_cache(
         paidf_native._dig_offline_environment(tmp_path, "unit-run")
 
 
+@pytest.mark.parametrize("failure", [None, "import", "summary"])
 def test_dig_training_and_inference_children_use_the_vendor_environment(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, failure: str | None
 ) -> None:
+    from npa.workflows import paidf_dig_guardrails as dig
+
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     source = tmp_path / "physical-ai-data-factory"
@@ -1455,7 +1458,8 @@ def test_dig_training_and_inference_children_use_the_vendor_environment(
         paidf_native, "_dig_cache_manifest", lambda *_args, **_kwargs: {}
     )
     monkeypatch.setattr(paidf_native, "_runtime_fetch", lambda *_args: source)
-    monkeypatch.setattr(paidf_native, "_publish", lambda *_args: None)
+    published = []
+    monkeypatch.setattr(paidf_native, "_publish", lambda *args: published.append(args))
     monkeypatch.setattr(
         paidf_native,
         "_verify_dig_finetune_handoff",
@@ -1472,11 +1476,27 @@ def test_dig_training_and_inference_children_use_the_vendor_environment(
         "/tmp/npa-shim:/opt/npa-venv/bin:/usr/local/bin:/opt/venv/bin:/usr/bin",
     )
     monkeypatch.setenv("PYTHONPATH", "/workspace/paidf-anomalygen")
+    monkeypatch.setenv("PYTHON", "/opt/npa-venv/bin/python")
+    monkeypatch.setenv("PYTHON_EXEC", "/foreign-environment/bin/python")
+    source_record = {
+        "source_adaptation": dig.dig_qwen_source_adaptation(),
+        "installed_package_tree_sha256": "a" * 64,
+        "overlay_tree_sha256": "b" * 64,
+        "package_file_count": 5,
+    }
+    monkeypatch.setattr(dig, "prepare_dig_guardrail_overlay", lambda _path, env: (env, source_record))
+    monkeypatch.setattr(dig, "verify_dig_guardrail_overlay", lambda *_args: None)
     child_envs = []
 
     def component(_argv, **kwargs):
         env = kwargs["env"]
         child_envs.append(env)
+        if _argv[0] == dig.DIG_VENDOR_PYTHON:
+            assert _argv[2] == dig.DIG_IMPORT_PROBE
+            assert _argv[-1] == dig.DIG_QWEN_PATCHED_SHA256
+            if failure == "import":
+                raise subprocess.CalledProcessError(1, _argv)
+            return
         if "TRAIN_OUTPUT" in env:
             pointer = Path(env["TRAIN_OUTPUT"]) / "training/best_checkpoint.txt"
             pointer.parent.mkdir(parents=True)
@@ -1491,6 +1511,16 @@ def test_dig_training_and_inference_children_use_the_vendor_environment(
             (generated / "pseudo_labels/coco_annotations.json").write_text(
                 "{}", encoding="utf-8"
             )
+            flags = {
+                "guardrail_enabled": failure != "summary",
+                "text_guardrail_enforcing": True,
+                "image_guardrail_enforcing": False,
+            }
+            (generated / "timing_summary.json").write_text(json.dumps({
+                **flags, "world_size": 1, "generated_images_total": 1,
+                "guardrail_blocked_total": 0,
+                "rank_timings": [{**flags, "generated_images": 1}],
+            }))
 
     monkeypatch.setattr(paidf_native, "_run_component", component)
 
@@ -1502,7 +1532,7 @@ def test_dig_training_and_inference_children_use_the_vendor_environment(
         "pcb",
         "unit-run",
     )
-    paidf_native.run_dig_inference(
+    arguments = (
         "dataset",
         "pretrained",
         "checkpoint",
@@ -1512,11 +1542,22 @@ def test_dig_training_and_inference_children_use_the_vendor_environment(
         1,
         "unit-run",
     )
+    if failure:
+        published_before = len(published)
+        expected = subprocess.CalledProcessError if failure == "import" else paidf_native.PaidfNativeError
+        with pytest.raises(expected):
+            paidf_native.run_dig_inference(*arguments)
+        assert len(published) == published_before
+        return
+    result = paidf_native.run_dig_inference(*arguments)
 
-    assert len(child_envs) == 2
+    dig.require_dig_guardrail_runtime(result["guardrail_runtime"], 1)
+    assert len(child_envs) == 3
     for env in child_envs:
         assert env["VIRTUAL_ENV"] == "/opt/venv"
         assert env["UV_PYTHON"] == "/opt/venv/bin/python"
+        assert env["PYTHON"] == "/opt/venv/bin/python"
+        assert env["PYTHON_EXEC"] == "/opt/venv/bin/python"
         assert env["PATH"].split(":") == [
             "/opt/venv/bin",
             "/usr/local/bin",

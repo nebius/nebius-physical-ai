@@ -168,8 +168,16 @@ def test_paidf_native_toolref_closures_are_workflow_specific() -> None:
     assert len(iaa) == 1
     assert iaa[0].provider == NGC
     assert "paidf-event-and-person-attribute-search-service" in iaa[0].repo
-    assert {item.provider for item in evg} == {NGC}
-    assert len(evg) == 4
+    from npa.workflows.paidf_upstream import (
+        COSMOS_GUARDRAIL_MODEL,
+        COSMOS_GUARDRAIL_REVISION,
+    )
+
+    assert {item.provider for item in evg} == {HF, NGC}
+    assert len([item for item in evg if item.provider == NGC]) == 4
+    assert {(item.repo, item.revision) for item in evg if item.provider == HF} == {
+        (COSMOS_GUARDRAIL_MODEL, COSMOS_GUARDRAIL_REVISION)
+    }
     assert all("Cosmos-Transfer" not in item.repo for item in (*dig, *iaa, *evg))
 
 

@@ -24,6 +24,7 @@ PAIDF_ORCHESTRATION_REVISION = "f7ecd8c5d7aeec28b2d476b9e71b53a48ba8c0f9"
 PAIDF_AUGMENTATION_REVISION = "bc5719362492a1e3b40bd7d33b43c46dd89efad5"
 PAIDF_AUTO_LABELING_REVISION = "36dc1114dea00d9986df97325a664520993964de"
 PAIDF_ANOMALYGEN_REVISION = "dbaf7d7d9003f048230f9026da5969e9e5931785"
+DIG_FRAMEWORK_REVISION = "a904d2d36b774a51dd06ff9ff906816b1a04f579"
 PAIDF_SIMULATION_REVISION = "498751aceeea3dc3bac0d5fb043bf3553aec46a6"
 PAIDF_CURATION_REVISION = "02079bbd272900c837ebdbd0bf44384dfdf1f25e"
 QWEN_IMAGE_EDIT_REVISION = "6f3ccc0b56e431dc6a0c2b2039706d7d26f22cb9"
@@ -117,6 +118,14 @@ _VARIANTS: dict[str, dict[str, Any]] = {
         "preparation": "canonical clean-image, ROI-mask, and defect-spec validation",
         "training": "NVIDIA PAIDF AnomalyGen 1.1.0 fresh fine-tuning with pinned use-case recipe",
         "generation": "NVIDIA PAIDF AnomalyGen 1.1.0 inference and native labeling",
+        "guardrail_runtime": (
+            "an exact-source/hash-bound private OpenMDW-1.1 cosmos-framework "
+            "Qwen overlay rejects missing, malformed, or duplicate safety verdicts "
+            "and inference errors while preserving the upstream Controversial allow policy; "
+            "the vendor interpreter import and completed upstream enforcement summary "
+            "are required before output publication, with installed package bytes retained. "
+            "The upstream image preset performs face blurring but has no content classifier"
+        ),
         "execution": "workflow.paidf.dig_train -> workflow.paidf.dig_infer",
         "source_reference_images": [
             "nvcr.io/nvidia/paidf-anomalygen@sha256:e62a87d1dc58b6de8b8a352dc8ec2a2e3e400288d66b2b8b19b92d97e7a0bc09"
@@ -212,6 +221,13 @@ _COMPONENT_SOURCES = [
         "revision": PAIDF_ANOMALYGEN_REVISION,
         "role": "defect-generation-implementation",
         "licenses": ["Apache-2.0"],
+        "workflow_variants": ["defect-image-generation-day1-manual-roi"],
+    },
+    {
+        "repository": "https://github.com/NVIDIA/cosmos-framework",
+        "revision": DIG_FRAMEWORK_REVISION,
+        "role": "anomalygen-framework-and-source-bound-qwen-guardrail-adaptation",
+        "licenses": ["OpenMDW-1.1"],
         "workflow_variants": ["defect-image-generation-day1-manual-roi"],
     },
     {

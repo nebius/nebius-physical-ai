@@ -2351,6 +2351,10 @@ def _dig_vendor_environment() -> dict[str, str]:
     env["PATH"] = os.pathsep.join(["/opt/venv/bin", *inherited])
     env["VIRTUAL_ENV"] = "/opt/venv"
     env["UV_PYTHON"] = "/opt/venv/bin/python"
+    # The pinned preflight script reads PYTHON; torchrun reads PYTHON_EXEC for
+    # its actual workers independently of the interpreter that starts torchrun.
+    env["PYTHON"] = "/opt/venv/bin/python"
+    env["PYTHON_EXEC"] = "/opt/venv/bin/python"
     return env
 
 
@@ -2629,6 +2633,17 @@ def run_dig_inference(
 ) -> dict[str, Any]:
     """Run AnomalyGen's published Day-1 manual-ROI inference and native labels."""
 
+    from npa.workflows.paidf_dig_guardrails import (
+        DIG_IMPORT_PROBE,
+        DIG_QWEN_PATCHED_SHA256,
+        DIG_QWEN_PATH,
+        DIG_VENDOR_PYTHON,
+        dig_guardrail_runtime,
+        prepare_dig_guardrail_overlay,
+        verify_dig_guardrail_overlay,
+    )
+    from npa.workflows.paidf_guardrails import PaidfGuardrailError
+
     workspace = Path("/workspace/paidf-anomalygen")
     if not workspace.is_dir():
         raise PaidfNativeError(
@@ -2674,6 +2689,16 @@ def run_dig_inference(
             "NUM_GPUS": "1",
             "CHECKPOINT_STEP": "",
         }
+        overlay = root / "guardrail-code"
+        try:
+            env, guardrail_source = prepare_dig_guardrail_overlay(overlay, env)
+        except PaidfGuardrailError as exc:
+            raise PaidfNativeError(str(exc)) from exc
+        _run_component(
+            [DIG_VENDOR_PYTHON, "-c", DIG_IMPORT_PROBE,
+             str(overlay / DIG_QWEN_PATH), DIG_QWEN_PATCHED_SHA256],
+            env=env,
+        )
         _run_component(["bash", str(script)], env=env)
         images = sorted((generated / "reconstructed_image").glob("*"))
         labels = generated / "pseudo_labels/coco_annotations.json"
@@ -2681,6 +2706,13 @@ def run_dig_inference(
             raise PaidfNativeError(
                 "AnomalyGen returned no generated images or label metadata"
             )
+        try:
+            verify_dig_guardrail_overlay(overlay, guardrail_source)
+            guardrail_runtime = dig_guardrail_runtime(
+                generated / "timing_summary.json", guardrail_source, len(images)
+            )
+        except PaidfGuardrailError as exc:
+            raise PaidfNativeError(str(exc)) from exc
         _publish(generated, output_uri)
         payload = {
             "schema": f"{SCHEMA_PREFIX}.dig-result.v1",
@@ -2689,6 +2721,7 @@ def run_dig_inference(
             "status": "completed",
             "component": "NVIDIA paidf-anomalygen 1.1.0",
             "upstream_workflow_revision": PHYSICAL_AI_DATA_FACTORY_REVISION,
+            "guardrail_runtime": guardrail_runtime,
             "pretrained_content_manifest_sha256": pretrained_manifest_sha256,
             "finetune_result_uri": finetune_result_uri,
             "selected_checkpoint": selected_value,

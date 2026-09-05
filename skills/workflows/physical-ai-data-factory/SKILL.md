@@ -76,6 +76,16 @@ Published Safe and Controversial remain allowed and Unsafe remains rejected.
 The installed vendor package is unchanged; the runtime report records the source
 adaptation. Every executed request must retain explicit enabled guardrails.
 
+DIG uses a separate exact-source adaptation of the OpenMDW-1.1
+`cosmos-framework` Qwen guardrail, preserving real inference and the published
+Controversial allow policy while raising on inference errors or invalid
+verdicts. The private overlay retains installed package bytes. Require its
+`guardrail_runtime` source hashes, verified vendor-interpreter import, and
+completed upstream timing-summary hash before accepting generated images.
+Text screening must be enforcing; the upstream image preset performs face
+blurring with no content classifier and truthfully records image enforcement
+as false. Keep the existing regular-file checkpoint handoff and NLTK behavior.
+
 For the three native translations, use the generic workflow validate/plan/submit
 surface. Run `health access` for `paidf-dig`, `paidf-iaa`, `paidf-evg`, and the
 selected `paidf-label-*` capabilities before image preflight or GPU work. The

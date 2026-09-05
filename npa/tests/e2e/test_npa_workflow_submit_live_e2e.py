@@ -917,6 +917,16 @@ def _assert_paidf_native_live_artifacts(
         assert len(str(finetune.get("selected_checkpoint_sha256") or "")) == 64
         assert int(result.get("image_count") or 0) > 0
         assert int(result.get("label_file_count") or 0) > 0
+        from npa.workflows.paidf_dig_guardrails import require_dig_guardrail_runtime
+
+        require_dig_guardrail_runtime(result.get("guardrail_runtime"), result["image_count"])
+        timing_bytes = read_artifact(f"s3://{bucket}/{prefix}anomaly/timing_summary.json")
+        assert hashlib.sha256(timing_bytes).hexdigest() == result["guardrail_runtime"]["timing_summary_sha256"]
+        timing = json.loads(timing_bytes)
+        assert timing["guardrail_enabled"] is True
+        assert timing["text_guardrail_enforcing"] is True
+        assert timing["image_guardrail_enforcing"] is False
+        assert timing["generated_images_total"] == result["image_count"]
         image_sizes = {}
         for item in result["images"]:
             media = read_artifact(
