@@ -188,10 +188,23 @@ grants redistribution rights.
 | EVG detection/tracking upstream parent | `nvcr.io/nvidia/paidf-detection-and-tracking-rfdetr-service@sha256:6b35e63b95cab7cd772906bcb08be978de7526427f0d1925ab84439dd4a9561e` | Exact restricted NGC wrapper parent; original entrypoint does not forward worker argv |
 | EVG captioning upstream parent | `nvcr.io/nvidia/paidf-captioning-service@sha256:17e1e3f53cc66342183f7d0b6eed76907993bb325a13db90c46d9a8cf664d804` | Exact restricted NGC wrapper parent; original entrypoint does not forward worker argv |
 | EVG Visual QA upstream parent | `nvcr.io/nvidia/paidf-visual-qa-service@sha256:e681c8dee849c7ac9fc5b182f51e9efd0da460972b08850d40f00aa9d5e3c97c` | Exact restricted NGC wrapper parent; original entrypoint does not forward worker argv |
-| IAA/EVG attribute-search worker | `<operator-registry>/npa-paidf-attribute-search-sky@sha256:<digest>` | Restricted compatibility recipe; build, scans and acceptance pending |
+| IAA/EVG attribute-search worker | `<operator-registry>/npa-paidf-attribute-search-sky@sha256:d61d56ae69bf2971fbf5b03fe97a492a865c317906b1ec5c67a46133b5b97641` | Operator-private publication verified 2026-09-05; bootstrap/security passed; native workflow acceptance pending |
 | EVG detection/tracking worker | `<operator-registry>/npa-paidf-detection-sky@sha256:<digest>` | Restricted compatibility recipe; build, scans and GPU acceptance pending |
-| EVG captioning worker | `<operator-registry>/npa-paidf-captioning-sky@sha256:<digest>` | Restricted compatibility recipe; build, scans and acceptance pending |
-| EVG Visual QA worker | `<operator-registry>/npa-paidf-visual-qa-sky@sha256:<digest>` | Restricted compatibility recipe; build, scans and acceptance pending |
+| EVG captioning worker | `<operator-registry>/npa-paidf-captioning-sky@sha256:ce97a86413005dbf844ae454a47b6e0a41ce521bd0403237e133c26bfed63ff7` | Operator-private publication verified 2026-09-05; bootstrap/security passed; native workflow acceptance pending |
+| EVG Visual QA worker | `<operator-registry>/npa-paidf-visual-qa-sky@sha256:27f600a12ccfb71c6744394d7b41375c36eed2df53833fb883b9ec5fa73070e4` | Operator-private publication verified 2026-09-05; bootstrap/security passed; native workflow acceptance pending |
+
+The three privately published CPU labeling workers were built from
+`b7ae4f198b20f087afef46d31fffee367eb4fa2e` using immutable full-SHA
+development tags. The recorded digests select the runnable `linux/amd64` child
+of each OCI index. Authenticated manifest/config reads, local and remote layer
+identity, and the attached SLSA provenance were verified; both child and index
+returned HTTP 403 without credentials. Each passed the actual SkyPilot
+bootstrap, generic NPA installation with unchanged vendor files, complete
+layer/license/secret review, vulnerability policy, and SPDX SBOM generation.
+Each inventory contains zero HIGH/CRITICAL vulnerabilities, 74 MEDIUM and
+24 LOW; reviewed public cryptographic test vectors are retained as such. Exact
+private locations and receipts remain in access-controlled evidence. This proves
+image publication and bootstrap, while native workflow acceptance remains pending.
 
 The licensing and runtime-fetch boundary is recorded in
 `skills/NOTICE-NVIDIA-PAIDF`. The machine-readable packaging contract includes

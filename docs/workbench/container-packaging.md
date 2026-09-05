@@ -63,6 +63,14 @@ All first-class images live under `npa/docker/workbench/`:
 | PAIDF Visual QA Sky compatibility (restricted) | `paidf-visual-qa-sky/Dockerfile` | operator-built worker shell; remote-VLM labeling client |
 | PAIDF attribute-search Sky compatibility (restricted) | `paidf-attribute-search-sky/Dockerfile` | operator-built worker shell; remote-LLM attribute-search client |
 
+The attribute-search, captioning, and Visual QA compatibility workers have
+verified operator-private publications from source
+`b7ae4f198b20f087afef46d31fffee367eb4fa2e`. Their exact runnable
+digests and scoped acceptance evidence are recorded in the
+[external PAIDF image catalog](container-image-catalog.md#external-paidf-runtime-images).
+They remain excluded from the public release inventory. Image/bootstrap
+acceptance does not establish native workflow or GPU acceptance.
+
 The AnomalyGen image keeps the exact CUDA 13.2 base image's
 `cuda-compat-13-2` libraries first on `LD_LIBRARY_PATH` while retaining the
 base search path. This supports runtime PTX/JIT users on supported older CUDA
