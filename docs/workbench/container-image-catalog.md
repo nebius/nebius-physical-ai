@@ -224,3 +224,7 @@ This catalog does not imply that every image supports every GPU. Use the
 hardware-specific variant, and use the
 [container packaging contract](container-packaging.md) for security and
 redistribution requirements.
+
+The cuRobo V2 candidate is separately publication-quarantined: its permissively
+licensed source, robot assets and benchmark data have a checked-in recipe, but
+no public release is claimed until exact-image and real-GPU gates are accepted.

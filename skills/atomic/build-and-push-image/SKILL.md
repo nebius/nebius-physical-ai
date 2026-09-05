@@ -15,9 +15,12 @@ refusal conditions; this skill records NPA-specific build and GPU details.
 2. Resolve the exact 40-character commit and use the one official namespace,
    `ghcr.io/nebius/nebius-physical-ai`. A pre-release tag is exactly
    `dev-<full-git-sha>` on the normal `npa-<tool>` package.
-3. Require `redistribution: public` before any official push. Build restricted
-   images, including `cosmos3-serving`, only into an operator-controlled
-   registry; neither a private package nor a development tag changes licensing.
+3. Require `redistribution: public` before any official push. Resolve the selected
+   image's current classification from `npa/docker/workbench/packaging-contract.yaml`
+   and the restriction inventories in `npa/src/npa/deploy/images.py`; stop if they
+   disagree. Build restricted images only into an operator-controlled registry;
+   neither a private package nor a development tag changes licensing. Historical
+   image classifications do not establish the eligibility of replacement bytes.
 4. Run every pre-publication security, packaging, payload, provenance, SBOM,
    vulnerability, secret, non-root, base-pin, and bootstrap-contract gate before
    pushing the public development tag.

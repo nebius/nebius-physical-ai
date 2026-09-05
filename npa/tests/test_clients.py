@@ -1307,7 +1307,12 @@ def test_nebius_agent_bootstrap_reuses_verified_storage_without_access_key_iam(
         "npa.clients.nebius.ensure_service_account",
         return_value="serviceaccount-agent",
     )
-    mocker.patch("npa.clients.nebius.ensure_editors_membership")
+    mocker.patch("npa.clients.agent_iam_binding.verify_agent_project_scope")
+    tenant_grant = mocker.patch("npa.clients.nebius.ensure_editors_membership")
+    project_grant = mocker.patch(
+        "npa.clients.agent_iam_binding.ensure_agent_project_binding",
+        return_value={"agent_iam_scope_id": "project", "agent_iam_role": "editor"},
+    )
     mocker.patch("npa.clients.nebius.get_iam_token", return_value="iam-token")
     full_bootstrap = mocker.patch("npa.clients.nebius.bootstrap_environment")
     list_keys = mocker.patch("npa.clients.nebius._list_access_key_metadata")
@@ -1323,6 +1328,10 @@ def test_nebius_agent_bootstrap_reuses_verified_storage_without_access_key_iam(
     assert result["service_account_id"] == "serviceaccount-agent"
     assert result["nebius_api_key"] == "configured-access"
     assert service_account.call_args.kwargs["allow_saved_fallback"] is False
+    assert result["agent_iam_scope_id"] == "project"
+    assert project_grant.call_args.kwargs["project_id"] == "project"
+    assert project_grant.call_args.kwargs["service_account_id"] == "serviceaccount-agent"
+    tenant_grant.assert_not_called()
     full_bootstrap.assert_not_called()
     list_keys.assert_not_called()
     create_key.assert_not_called()
@@ -1379,6 +1388,7 @@ def test_agent_bootstrap_removes_a_rolled_back_key_on_a_reused_account(
         raise NebiusError("provider failed after key creation")
 
     mocker.patch("npa.clients.nebius.bootstrap_environment", side_effect=bootstrap)
+    mocker.patch("npa.cli.agent_iam._verify_access_key_absent")
     delete_key = mocker.patch("npa.clients.nebius.delete_access_key")
     delete_account = mocker.patch("npa.clients.nebius.delete_service_account")
 

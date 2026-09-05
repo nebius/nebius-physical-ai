@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import functools
 import hashlib
+import ipaddress
 import json
 import logging
 import os
@@ -18,34 +19,75 @@ import re
 import stat
 import threading
 import uuid
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import urlparse
 
 SCHEMA_VERSION = "npa.agent.trajectory.v1"
 LOGGER = logging.getLogger(__name__)
 _OUTBOX_LOCK = threading.RLock()
+_EPISODE_CONTEXT: ContextVar[tuple[str, str]] = ContextVar("npa_goal_episode", default=("", ""))
+
+
+def current_episode_id() -> str:
+    """Return the active goal id for nested observable events, without secrets."""
+    return _EPISODE_CONTEXT.get()[0]
+
+
+def current_session_id() -> str:
+    """Return the current session link; callers sanitize before persistence."""
+    return _EPISODE_CONTEXT.get()[1]
+
+
 _SECRET_KEY_RE = re.compile(
-    r"(?i)(api[_-]?key|secret[_-]?key|password|authorization|credential|"
-    r"(^|[_-])token($|[_-]))"
+    r"(?i)(api[_-]?key|(?:secret|access|private)[_-]?(?:access[_-]?)?key|"
+    r"secret|password|passwd|authorization|credential|cookie|"
+    r"(?:access|refresh|identity|id|bearer)[_-]?token|"
+    r"(^|[_-])token($|[_-])|environment|environ|(^|[_-])env($|[_-])|"
+    r"image[_-]?(?:data|bytes)|raw[_-]?(?:data|image)|base64)"
 )
 _SECRET_TEXT_PATTERNS = (
+    re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)", re.DOTALL),
+    re.compile(r"(?i)data:[^\s,]*;base64,[^\s\"']*"),
     re.compile(
-        r"(?i)(api[_-]?key|secret[_-]?key|password|token|authorization)"
-        r"\s*[:=]\s*['\"]?[^\s'\"]+"
+        r"(?i)(?:[a-z0-9_]*)(api[_-]?key|(?:secret|access|private)[_-]?(?:access[_-]?)?key|"
+        r"secret|password|passwd|token|authorization|credential)"
+        r"[a-z0-9_]*\s*[:=]\s*(?:\"[^\"]*\"|'[^']*'|[^\s,;}]+)"
     ),
     re.compile(r"(?i)Bearer\s+[A-Za-z0-9._~+/=-]+"),
-    re.compile(r"(?i)AKIA[0-9A-Z]{16}"),
-    re.compile(r"(?i)-----BEGIN [A-Z ]*PRIVATE KEY-----"),
+    re.compile(r"(?i)(?:AKIA|ASIA)[0-9A-Z]{16}"),
+    re.compile(r"\b(?:hf_|gh[pousr]_|github_pat_|sk-)[A-Za-z0-9_-]{12,}\b"),
+    re.compile(r"\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*"),
+    re.compile(r"\b(?:xox[baprs]-|xapp-)[A-Za-z0-9-]{8,}\b"),
+    re.compile(r"\b(?:sk|rk|pk)_(?:live|test)_[A-Za-z0-9]{12,}\b"),
+    re.compile(r"\bAIza[A-Za-z0-9_-]{20,}\b"),
+    re.compile(r"\bnvapi-[A-Za-z0-9_-]{12,}\b"),
 )
-_S3_URI_RE = re.compile(r"s3://[^/\s]+(?:/[^\s?#]*)?(?:\?[^\s]*)?")
-_HTTP_URI_RE = re.compile(r"https?://[^\s]+")
+_URI_RE = re.compile(r"(?:s3|https?|gs|file|ssh)://[^\s\"'<>]+")
+_INFRA_RE = re.compile(
+    r"(?i)\b(?:tenant|project|capacityblockgroup|computeinstance|mk8scluster|"
+    r"mk8snodegroup|storagebucket|registry|network|serviceaccount|cluster)-[a-z0-9]{8,}\b"
+    r"|(?<![a-z0-9])(?:e00(?!(?:[0-9a-f]{37}|[0-9a-f]{61})(?![a-z0-9]))|u00)"
+    r"[a-z0-9]{12,}(?![a-z0-9])"
+    r"|\bcr\.[a-z0-9-]+\.nebius\.cloud/[^\s\"'<>]+"
+)
+_IP_RE = re.compile(r"(?<![\w.])(?:\d{1,3}\.){3}\d{1,3}(?![\w.])|(?<![\w:])[0-9a-fA-F:]*:[0-9a-fA-F:]+(?![\w:])")
+_SAFE_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z")
+_REDACTION_MARKER_RE = re.compile(
+    r"(<(?:redacted|uri-ref|infra-ref|address-ref|inline-data-ref|tenant-ref|bucket-ref|private-ref)>"
+    r")"
+)
 
 
 class AgentRunDataError(RuntimeError):
     """Trajectory collection configuration or integrity error."""
+
+
+class AgentRunDataConflict(AgentRunDataError):
+    """Different finalized bytes were supplied for one episode."""
 
 
 class CollectionStatus:
@@ -81,11 +123,16 @@ def resolve_dataset_config(
             "NPA_AGENT_DATASET_TENANT_ID and NPA_AGENT_DATASET_URI must be set together"
         )
     parsed = urlparse(dataset_uri)
-    if parsed.scheme != "s3" or not parsed.netloc or parsed.query or parsed.fragment:
+    if (
+        parsed.scheme != "s3" or not parsed.netloc or parsed.query or parsed.fragment
+        or parsed.username or parsed.password or ":" in parsed.netloc
+    ):
         raise AgentRunDataError("NPA_AGENT_DATASET_URI must be an unsigned s3:// URI")
-    if active_tenant_id and tenant_id != active_tenant_id.strip():
+    if not active_tenant_id.strip() or not active_bucket.strip():
+        raise AgentRunDataError("verified active deployment tenant and bucket are required")
+    if tenant_id != active_tenant_id.strip():
         raise AgentRunDataError("agent dataset tenant does not match the active deployment")
-    if active_bucket and parsed.netloc != active_bucket.strip():
+    if parsed.netloc != active_bucket.strip():
         raise AgentRunDataError("agent dataset bucket does not match the active deployment")
     return DatasetConfig(
         tenant_id=tenant_id,
@@ -108,8 +155,18 @@ def _storage_client() -> Any:
 
 
 def _s3(storage: Any | None) -> Any:
-    client = storage or _storage_client()
+    client = storage if storage is not None else _storage_client()
     return getattr(client, "s3", client)
+
+
+class _UnavailableStorage:
+    """Keep a failed injected factory from falling through to live credentials."""
+
+    def head_bucket(self, **kwargs: Any) -> None:
+        raise AgentRunDataError("trajectory storage factory is unavailable")
+
+    def delete_object(self, **kwargs: Any) -> None:
+        return None
 
 
 def verify_destination(config: DatasetConfig, *, storage: Any | None = None) -> None:
@@ -139,53 +196,215 @@ def verify_destination(config: DatasetConfig, *, storage: Any | None = None) -> 
 
 
 def _redact_string(value: str) -> str:
+    # A data URI may contain wrapped base64 or whitespace. Removing its entire
+    # string prevents fragments of the inline image from surviving a regex stop.
+    if re.search(r"(?i)data:[^\s,]*;base64,", value):
+        return "<inline-data-ref>"
     text = value
     for pattern in _SECRET_TEXT_PATTERNS:
         text = pattern.sub("<redacted>", text)
 
-    def redact_s3(match: re.Match[str]) -> str:
-        parsed = urlparse(match.group(0))
-        return urlunparse(("s3", "<bucket-ref>", parsed.path, "", "", ""))
+    text = _URI_RE.sub("<uri-ref>", text)
+    text = _INFRA_RE.sub("<infra-ref>", text)
 
-    text = _S3_URI_RE.sub(redact_s3, text)
+    def redact_ip(match: re.Match[str]) -> str:
+        try:
+            ipaddress.ip_address(match.group(0))
+        except ValueError:
+            return match.group(0)
+        return "<address-ref>"
 
-    def redact_http(match: re.Match[str]) -> str:
-        parsed = urlparse(match.group(0))
-        return urlunparse((parsed.scheme, "<host-ref>", parsed.path, "", "", ""))
-
-    return _HTTP_URI_RE.sub(redact_http, text)
+    return _IP_RE.sub(redact_ip, text)
 
 
 def redact(value: Any) -> Any:
-    """Redact secrets, signed URLs, and concrete S3 bucket names recursively."""
+    """Remove secret payloads and private references before JSON serialization.
+
+    Unstructured customer names require an operator-private literal denylist;
+    recognizable infrastructure and credential forms are always removed.
+    """
     if isinstance(value, dict):
+        keys = _mapping_keys(value, _redact_string)
         return {
-            str(key): "<redacted>" if _SECRET_KEY_RE.search(str(key)) else redact(item)
+            keys[key]: "<redacted>" if _SECRET_KEY_RE.search(key) else redact(item)
             for key, item in value.items()
         }
     if isinstance(value, (list, tuple)):
         return [redact(item) for item in value]
     if isinstance(value, str):
         return _redact_string(value)
-    return value
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    raise AgentRunDataError("trajectory values must be JSON data, never raw objects or bytes")
+
+
+def _mapping_keys(value: dict[str, Any], sanitize: Callable[[str], str], *, fixed: frozenset[str] = frozenset()) -> dict[str, str]:
+    """Allocate stable names without overwriting another mapping entry.
+
+    Generated hash suffixes are data too: sanitize them before use. Reserve
+    unchanged keys first, including caller lookalikes of generated references.
+    Exact existing redaction markers provide collision suffixes that remain
+    stable even when the configured literals cover digits or punctuation.
+    """
+    if any(not isinstance(key, str) for key in value):
+        raise AgentRunDataError("trajectory mapping keys must be strings")
+    names = {key: key if key in fixed else sanitize(key) for key in value}
+    used = {key for key, safe in names.items() if key == safe}
+    for key in sorted(names):
+        if names[key] == key:
+            continue
+        candidate = sanitize(names[key] + "-" + hashlib.sha256(key.encode()).hexdigest()[:12])
+        while candidate in used:
+            candidate += "<private-ref>"
+        names[key] = candidate
+        used.add(candidate)
+    return names
 
 
 def _redact_identifiers(value: Any, replacements: dict[str, str]) -> Any:
     if isinstance(value, dict):
-        return {key: _redact_identifiers(item, replacements) for key, item in value.items()}
+        keys = _mapping_keys(value, lambda key: _redact_identifiers(key, replacements))
+        return {keys[key]: _redact_identifiers(item, replacements) for key, item in value.items()}
     if isinstance(value, list):
         return [_redact_identifiers(item, replacements) for item in value]
     if isinstance(value, str):
-        text = value
-        for identifier, replacement in replacements.items():
-            if identifier:
-                text = text.replace(identifier, replacement)
-        return text
+        # Preserve only exact internal markers. Scan surrounding text and key
+        # digest suffixes too; caller-supplied text can imitate a suffix.
+        parts = _REDACTION_MARKER_RE.split(value)
+        identifiers = sorted((item for item in replacements if item), key=lambda item: (-len(item), item))
+        if not identifiers:
+            return value
+        pattern = re.compile("|".join(re.escape(item) for item in identifiers))
+        for index in range(0, len(parts), 2):
+            # Substitution never rescans a newly inserted internal marker.
+            parts[index] = pattern.sub(lambda match: replacements[match.group()], parts[index])
+        return "".join(parts)
     return value
 
 
 def _canonical_json(payload: dict[str, Any]) -> str:
-    return json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"), allow_nan=False)
+
+
+def _private_replacements(config: DatasetConfig) -> dict[str, str]:
+    replacements = {
+        config.tenant_id: "<tenant-ref>",
+        config.bucket: "<bucket-ref>",
+        config.dataset_uri: "<uri-ref>",
+    }
+    prefix = config.prefix.strip("/")
+    if prefix:
+        # The configured prefix is private even when a tool reports it without
+        # its bucket, for example as part of a local configuration directory.
+        replacements[prefix] = "<private-ref>"
+    configured = os.environ.get("NPA_AGENT_DATASET_REDACTION_FILE", "").strip()
+    if configured:
+        path = Path(configured).expanduser()
+        mode = path.lstat().st_mode
+        if stat.S_ISLNK(mode) or not stat.S_ISREG(mode) or mode & 0o077:
+            raise AgentRunDataError("trajectory redaction configuration must be an owner-only file")
+        data = json.loads(path.read_text(encoding="utf-8"))
+        literals = data.get("literals") if isinstance(data, dict) else None
+        if not isinstance(literals, list) or any(not isinstance(item, str) or not item for item in literals):
+            raise AgentRunDataError("trajectory redaction configuration requires nonempty string literals")
+        replacements.update({literal: "<private-ref>" for literal in literals})
+    return dict(sorted(replacements.items(), key=lambda item: len(item[0]), reverse=True))
+
+
+_REMOVED_FIELDS = (
+    "credential-and-environment-payloads", "private-uris-and-addresses",
+    "infra-identifiers", "operator-private-literals", "inline-data",
+)
+# None means arbitrary JSON data. Those values never acquire protocol treatment
+# recursively just because they contain a familiar field name or schema string.
+_PROTOCOL_FIELDS = {
+    (): {"schema_version": str, "episode_id": str, "session_id": str, "scope": dict,
+         "timing": dict, "request": dict, "initial_state": None, "trajectory": list,
+         "outcome": dict, "routing": dict, "versions": dict, "redaction": dict, "collection": dict},
+    ("scope",): {"tenant_id": str, "dataset_role": str},
+    ("timing",): {"started_at": str, "ended_at": str, "latency_ms": int},
+    ("request",): {"content": str, "intent": str},
+    ("trajectory", "event"): {"sequence": int, "phase": str, "tool": str,
+                               "arguments": None, "observation": None, "status": str},
+    ("outcome",): {"status": str, "verified": bool, "verified_by": list, "artifact_uris": list,
+                   "operator_interventions": list, "preference_pairs": list},
+    ("routing",): {"grounded": bool, "tier": str, "model": str,
+                  "input_tokens": (int, type(None)), "output_tokens": (int, type(None))},
+    ("versions",): {"agent": str, "tools": dict},
+    ("redaction",): {"applied": bool, "fields_removed": list},
+    ("collection",): {"status": str, "content_sha256": str},
+}
+_PROTOCOL_CONSTANTS = {
+    ("schema_version",): (SCHEMA_VERSION,),
+    ("scope", "dataset_role"): ("agent-finetuning-raw",),
+    ("trajectory", "event", "phase"): ("plan", "tool", "observation", "confirm", "final"),
+    ("trajectory", "event", "status"): ("ok", "error", "rejected", "cancelled"),
+    ("outcome", "status"): ("succeeded", "failed", "refused", "cancelled"),
+    ("redaction", "applied"): (True,),
+    ("collection", "status"): (CollectionStatus.PENDING,),
+}
+_REQUIRED_PROTOCOL_FIELDS = {path: frozenset(_PROTOCOL_FIELDS[path]) for path in (
+    (), ("scope",), ("timing",), ("request",), ("redaction",), ("collection",),
+)}
+
+
+def _sanitize_payload(payload: dict[str, Any], config: DatasetConfig) -> dict[str, Any]:
+    replacements = _private_replacements(config)
+
+    def text(value: str) -> str:
+        return _redact_identifiers(_redact_string(value), replacements)
+
+    def visit(value: Any, path: tuple[str, ...] | None) -> Any:
+        if path in _PROTOCOL_CONSTANTS:
+            constants = _PROTOCOL_CONSTANTS[path]
+            if not any(type(value) is type(item) and value == item for item in constants):
+                raise AgentRunDataError("invalid trajectory protocol constant")
+            return value
+        if path == ("redaction", "fields_removed"):
+            if type(value) is not list or value != list(_REMOVED_FIELDS):
+                raise AgentRunDataError("invalid trajectory redaction declaration")
+            return list(_REMOVED_FIELDS)
+        fields = _PROTOCOL_FIELDS.get(path, {})
+        if fields:
+            if type(value) is not dict:
+                raise AgentRunDataError("invalid trajectory protocol mapping")
+            if not _REQUIRED_PROTOCOL_FIELDS.get(path, frozenset()) <= value.keys():
+                raise AgentRunDataError("invalid trajectory protocol structure")
+            for key, expected in fields.items():
+                allowed = expected if isinstance(expected, tuple) else (expected,)
+                if key in value and expected is not None and type(value[key]) not in allowed:
+                    raise AgentRunDataError("invalid trajectory protocol field type")
+        if isinstance(value, dict):
+            names = _mapping_keys(value, text, fixed=frozenset(fields))
+            return {
+                names[key]: (
+                    "<redacted>" if key not in fields and _SECRET_KEY_RE.search(key)
+                    else visit(item, path + (key,) if key in fields and path is not None else None)
+                )
+                for key, item in value.items()
+            }
+        if path == ("trajectory",):
+            if type(value) is not list or any(type(item) is not dict for item in value):
+                raise AgentRunDataError("invalid trajectory event population")
+            return [visit(item, ("trajectory", "event")) for item in value]
+        if isinstance(value, (list, tuple)):
+            return [visit(item, None) for item in value]
+        if isinstance(value, str):
+            return text(value)
+        if value is None or isinstance(value, (bool, int, float)):
+            return value
+        raise AgentRunDataError("trajectory values must be JSON data, never raw objects or bytes")
+
+    sanitized = visit(payload, ())
+    # This is the sole permitted concrete routing identifier in an episode.
+    sanitized["scope"]["tenant_id"] = config.tenant_id
+    return sanitized
+
+
+def _destination_digest(config: DatasetConfig) -> str:
+    return hashlib.sha256(_canonical_json({
+        "tenant_id": config.tenant_id, "bucket": config.bucket, "prefix": config.prefix,
+    }).encode()).hexdigest()
 
 
 def _content_sha256(payload: dict[str, Any]) -> str:
@@ -214,8 +433,17 @@ def _object_key(config: DatasetConfig, payload: dict[str, Any]) -> str:
 
 
 def _secure_outbox() -> Path:
-    outbox = _outbox_dir()
+    outbox = Path(os.path.abspath(_outbox_dir()))
     with _OUTBOX_LOCK:
+        # Reject symlinks before mkdir, including parents. Checking only the
+        # final directory would already create or write through a parent link.
+        for component in (outbox, *outbox.parents):
+            try:
+                mode = component.lstat().st_mode
+            except FileNotFoundError:
+                continue
+            if stat.S_ISLNK(mode):
+                raise AgentRunDataError("agent dataset outbox path must not contain symlinks")
         outbox.mkdir(mode=0o700, parents=True, exist_ok=True)
         if stat.S_ISLNK(outbox.lstat().st_mode):
             raise AgentRunDataError("agent dataset outbox must not be a symlink")
@@ -223,21 +451,57 @@ def _secure_outbox() -> Path:
     return outbox
 
 
-def _write_outbox(payload: dict[str, Any]) -> Path:
-    """Atomically preserve a pending, twice-redacted immutable record."""
-    pending = redact(payload)
-    pending["collection"]["status"] = CollectionStatus.PENDING
-    pending["collection"]["content_sha256"] = _content_sha256(pending)
-    body = _canonical_json(redact(pending)).encode()
+def _validated_body(config: DatasetConfig, payload: dict[str, Any]) -> bytes:
+    """Check finalized integrity and run the sanitizer again before persistence."""
+    sanitized = _sanitize_payload(payload, config)
+    if payload.get("schema_version") != SCHEMA_VERSION:
+        raise AgentRunDataError("unsupported trajectory schema")
+    if not all(_SAFE_ID_RE.fullmatch(str(payload.get(field, ""))) for field in ("episode_id", "session_id")):
+        raise AgentRunDataError("trajectory episode and session IDs must be safe stable identifiers")
+    valid_timing = True
+    try:
+        for field in ("started_at", "ended_at"):
+            datetime.fromisoformat(payload["timing"][field].replace("Z", "+00:00"))
+    except ValueError:
+        valid_timing = False
+    if not valid_timing:
+        raise AgentRunDataError("trajectory timestamps must remain valid after redaction")
+    if payload.get("scope", {}).get("tenant_id") != config.tenant_id:
+        raise AgentRunDataError("pending trajectory tenant does not match its destination")
+    collection = payload.get("collection", {})
+    if collection.get("status") != CollectionStatus.PENDING:
+        raise AgentRunDataError("immutable raw trajectory must retain pending delivery status")
+    if collection.get("content_sha256") != _content_sha256(payload):
+        raise AgentRunDataError("finalized trajectory content hash mismatch")
+    if sanitized != payload:
+        raise AgentRunDataError("finalized trajectory failed pre-write privacy verification")
+    return _canonical_json(payload).encode()
+
+
+def _write_outbox(config: DatasetConfig, payload: dict[str, Any], *, conflict: bool = False) -> Path:
+    """Preserve exact finalized bytes in a destination-bound private envelope."""
+    body = _validated_body(config, payload)
+    envelope = {
+        "schema_version": "npa.agent.trajectory-outbox.v1",
+        "destination_sha256": _destination_digest(config),
+        "payload_sha256": hashlib.sha256(body).hexdigest(),
+        "payload": payload,
+        "failure": "episode_conflict" if conflict else "delivery_pending",
+    }
+    encoded = _canonical_json(envelope).encode()
     outbox = _secure_outbox()
     path = outbox / (
-        f"{pending['episode_id']}-{pending['collection']['content_sha256']}.json"
+        f"{payload['episode_id']}-{payload['collection']['content_sha256']}.json"
     )
     with _OUTBOX_LOCK:
         if path.exists():
-            if path.is_symlink():
-                raise AgentRunDataError("agent dataset outbox record must not be a symlink")
-            if path.read_bytes() != body:
+            if not stat.S_ISREG(path.lstat().st_mode):
+                raise AgentRunDataError("agent dataset outbox record must be a regular file")
+            existing = json.loads(path.read_bytes())
+            # Delivery diagnostics may differ, but routing and finalized bytes may not.
+            if any(existing.get(key) != envelope[key] for key in (
+                "schema_version", "destination_sha256", "payload_sha256", "payload",
+            )):
                 raise AgentRunDataError("outbox key conflicts with different bytes")
             path.chmod(0o600)
             return path
@@ -245,31 +509,53 @@ def _write_outbox(payload: dict[str, Any]) -> Path:
         descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         try:
             with os.fdopen(descriptor, "wb") as handle:
-                handle.write(body)
+                handle.write(encoded)
                 handle.flush()
                 os.fsync(handle.fileno())
-            os.replace(temporary, path)
+            # A process-local lock cannot serialize another agent process.
+            # Hard-link publication is atomic and cannot replace its record.
+            try:
+                os.link(temporary, path, follow_symlinks=False)
+            except FileExistsError:
+                if not stat.S_ISREG(path.lstat().st_mode):
+                    raise AgentRunDataError("agent dataset outbox record must be a regular file") from None
+                existing = json.loads(path.read_bytes())
+                if any(existing.get(key) != envelope[key] for key in (
+                    "schema_version", "destination_sha256", "payload_sha256", "payload",
+                )):
+                    raise AgentRunDataError("concurrent outbox key conflicts with different bytes") from None
             path.chmod(0o600)
+            directory_fd = os.open(outbox, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
         finally:
             if temporary.exists():
                 temporary.unlink()
     return path
 
 
-def _put_and_verify(config: DatasetConfig, payload: dict[str, Any], s3: Any) -> str:
-    uploaded = redact(payload)
-    uploaded["collection"]["status"] = CollectionStatus.COLLECTED
-    uploaded["collection"]["content_sha256"] = _content_sha256(uploaded)
-    key = _object_key(config, uploaded)
-    body = _canonical_json(redact(uploaded)).encode()
+def _missing_object(error: Exception) -> bool:
+    if isinstance(error, KeyError):  # in-memory injected stores
+        return True
+    response = getattr(error, "response", {})
+    return isinstance(response, dict) and str(response.get("Error", {}).get("Code")) in {
+        "NoSuchKey", "404", "NotFound",
+    }
+
+
+def _put_immutable(config: DatasetConfig, key: str, body: bytes, s3: Any) -> None:
     try:
         existing = s3.get_object(Bucket=config.bucket, Key=key)["Body"].read()
-    except Exception:
+    except Exception as exc:
+        if not _missing_object(exc):
+            raise
         existing = None
     if existing is not None:
         if existing != body:
-            raise AgentRunDataError("immutable trajectory key contains different bytes")
-        return key
+            raise AgentRunDataConflict("immutable trajectory key contains different bytes")
+        return
     try:
         s3.put_object(
             Bucket=config.bucket,
@@ -277,14 +563,42 @@ def _put_and_verify(config: DatasetConfig, payload: dict[str, Any], s3: Any) -> 
             Body=body,
             IfNoneMatch="*",
         )
-    except TypeError:  # simple injected fakes may not model conditional writes
-        s3.put_object(Bucket=config.bucket, Key=key, Body=body)
     except Exception:
         # A concurrent identical writer may have won the conditional put.
         LOGGER.debug("conditional trajectory write did not create a new object")
     fetched = s3.get_object(Bucket=config.bucket, Key=key)["Body"].read()
     if fetched != body:
-        raise AgentRunDataError("trajectory read-after-write mismatch")
+        raise AgentRunDataConflict("trajectory read-after-write mismatch")
+
+
+def _put_and_verify(config: DatasetConfig, payload: dict[str, Any], s3: Any) -> str:
+    body = _validated_body(config, payload)
+    key = _object_key(config, payload)
+    _put_immutable(config, key, body, s3)
+    # Preserve every divergent payload, but make one atomic claim per episode.
+    # A competing digest remains visible and is reported as a data-quality conflict.
+    episode_digest = hashlib.sha256(payload["episode_id"].encode()).hexdigest()
+    claim_key = "/".join(filter(None, (config.prefix, "episode-index", episode_digest + ".json")))
+    claim = {
+        "schema_version": "npa.agent.trajectory-claim.v1",
+        "episode_id": payload["episode_id"],
+        "content_sha256": payload["collection"]["content_sha256"],
+    }
+    _put_immutable(config, claim_key, _canonical_json(claim).encode(), s3)
+    # Raw bytes never assert unverified delivery. Publish a separate immutable
+    # receipt only after their exact read-after-write check has succeeded.
+    receipt_key = "/".join(filter(None, (
+        config.prefix, "receipts", episode_digest,
+        payload["collection"]["content_sha256"] + ".json",
+    )))
+    receipt = {
+        "schema_version": "npa.agent.trajectory-receipt.v1",
+        "episode_id": payload["episode_id"],
+        "content_sha256": payload["collection"]["content_sha256"],
+        "payload_sha256": hashlib.sha256(body).hexdigest(),
+        "status": CollectionStatus.COLLECTED,
+    }
+    _put_immutable(config, receipt_key, _canonical_json(receipt).encode(), s3)
     return key
 
 
@@ -346,22 +660,24 @@ def emit_trajectory(
         "outcome": outcome,
         "routing": routing,
         "versions": versions,
-        "redaction": {"applied": True, "fields_removed": ["secret-shaped-values", "s3-bucket-names", "signed-url-queries"]},
-        "collection": {"status": CollectionStatus.COLLECTED, "content_sha256": ""},
+        "redaction": {
+            "applied": True,
+            "fields_removed": list(_REMOVED_FIELDS),
+        },
+        "collection": {"status": CollectionStatus.PENDING, "content_sha256": ""},
     }
-    payload = _redact_identifiers(
-        redact(payload),
-        {config.tenant_id: "<tenant-ref>", config.bucket: "<bucket-ref>"},
-    )
-    # Preserve the configured tenant only in its access-controlled scope field.
-    payload["scope"]["tenant_id"] = config.tenant_id
+    payload = _sanitize_payload(payload, config)
     payload["collection"]["content_sha256"] = _content_sha256(payload)
+    _validated_body(config, payload)
     try:
         verify_destination(config, storage=storage)
         _put_and_verify(config, payload, _s3(storage))
         return CollectionStatus.COLLECTED, episode_id
-    except Exception:
-        _write_outbox(payload)
+    except Exception as exc:
+        conflict = isinstance(exc, AgentRunDataConflict)
+        if conflict:
+            LOGGER.warning("trajectory content conflict; finalized record retained pending")
+        _write_outbox(config, payload, conflict=conflict)
         return CollectionStatus.PENDING, episode_id
 
 
@@ -381,18 +697,27 @@ def flush_outbox(
     if not outbox.exists():
         return []
     s3 = _s3(storage)
-    verify_destination(config, storage=s3)
     flushed: list[str] = []
     for path in sorted(outbox.glob("*.json")):
-        if path.is_symlink():
-            continue
         try:
-            payload = redact(json.loads(path.read_text(encoding="utf-8")))
-            payload["scope"]["tenant_id"] = config.tenant_id
+            if not stat.S_ISREG(path.lstat().st_mode):
+                continue
+            envelope = json.loads(path.read_text(encoding="utf-8"))
+            if envelope.get("schema_version") != "npa.agent.trajectory-outbox.v1":
+                raise AgentRunDataError("legacy outbox requires explicit destination reconciliation")
+            if envelope.get("destination_sha256") != _destination_digest(config):
+                raise AgentRunDataError("pending trajectory belongs to a different destination")
+            payload = envelope["payload"]
+            body = _validated_body(config, payload)
+            expected_name = f"{payload['episode_id']}-{payload['collection']['content_sha256']}.json"
+            if path.name != expected_name or envelope.get("payload_sha256") != hashlib.sha256(body).hexdigest():
+                raise AgentRunDataError("pending trajectory envelope integrity mismatch")
+            verify_destination(config, storage=s3)
             _put_and_verify(config, payload, s3)
             path.unlink()
             flushed.append(str(payload["episode_id"]))
         except Exception:
+            LOGGER.debug("pending trajectory retained after scope, integrity or delivery failure")
             continue
     return flushed
 
@@ -496,10 +821,16 @@ def _episode_record(
     elif isinstance(usage, dict):
         for source, target in (("prompt_tokens", "input_tokens"), ("completion_tokens", "output_tokens")):
             if source in usage:
-                routing[target] = int(usage[source])
-    verified = error is not None or (
-        isinstance(response, dict) and "ok" in response
-    )
+                try:
+                    routing[target] = int(usage[source])
+                except (TypeError, ValueError, OverflowError):
+                    # Unknown usage must not become fabricated zero or a failure
+                    # of the product operation that already completed.
+                    continue
+    # An endpoint returning normally proves response delivery, not the user's
+    # goal. Only the exception observed here is objective outcome evidence;
+    # explicit emit_trajectory callers can supply actual workload/test proof.
+    verified = error is not None
     return {
         "episode_id": episode_id,
         "session_id": session_id,
@@ -509,13 +840,7 @@ def _episode_record(
         "outcome": {
             "status": outcome_status,
             "verified": verified,
-            "verified_by": (
-                ["agent endpoint exception"]
-                if error is not None
-                else ["agent endpoint response"]
-                if verified
-                else []
-            ),
+            "verified_by": ["agent endpoint exception"] if verified else [],
             "artifact_uris": (
                 response.get("artifact_uris", [])
                 if isinstance(response, dict)
@@ -544,10 +869,15 @@ def goal_episode_boundary(
     def decorate(function: Callable[..., Any]) -> Callable[..., Any]:
         @functools.wraps(function)
         def wrapped(payload: dict[str, Any], *args: Any, **kwargs: Any) -> Any:
+            safe_payload = payload if isinstance(payload, dict) else {}
             episode_id = f"episode-{uuid.uuid4().hex}"
-            session_id = str(payload.get("session_id") or "default")
+            session_id = str(safe_payload.get("session_id") or "default")
             started_at = datetime.now(timezone.utc).isoformat()
-            storage = storage_factory() if storage_factory else None
+            try:
+                storage = storage_factory() if storage_factory else None
+            except Exception:
+                storage = _UnavailableStorage()
+                LOGGER.debug("trajectory storage factory unavailable; preserving product execution")
             try:
                 flush_outbox(
                     storage=storage,
@@ -558,6 +888,7 @@ def goal_episode_boundary(
                 LOGGER.debug("pending trajectory flush failed at episode start")
             response: dict[str, Any] | None = None
             error: BaseException | None = None
+            context_token = _EPISODE_CONTEXT.set((episode_id, session_id))
             try:
                 result = function(payload, *args, **kwargs)
                 response = result if isinstance(result, dict) else {"ok": True}
@@ -566,15 +897,15 @@ def goal_episode_boundary(
                 error = exc
                 raise
             finally:
-                record = _episode_record(
-                    payload=payload,
-                    response=response,
-                    error=error,
-                    episode_id=episode_id,
-                    session_id=session_id,
-                    started_at=started_at,
-                )
                 try:
+                    record = _episode_record(
+                        payload=safe_payload,
+                        response=response,
+                        error=error,
+                        episode_id=episode_id,
+                        session_id=session_id,
+                        started_at=started_at,
+                    )
                     emit_trajectory(
                         **record,
                         storage=storage,
@@ -583,6 +914,8 @@ def goal_episode_boundary(
                     )
                 except Exception:
                     LOGGER.debug("terminal trajectory emission failed")
+                finally:
+                    _EPISODE_CONTEXT.reset(context_token)
 
         return wrapped
 
@@ -593,6 +926,8 @@ __all__ = [
     "AgentRunDataError",
     "CollectionStatus",
     "DatasetConfig",
+    "current_episode_id",
+    "current_session_id",
     "emit_trajectory",
     "flush_outbox",
     "goal_episode_boundary",

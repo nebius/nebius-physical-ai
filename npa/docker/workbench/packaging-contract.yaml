@@ -235,6 +235,19 @@ images:
       mandatory before publication. The supported release must resolve to the
       exact zero-payload digest in ltx2_image_manifest.json, whose operator-only
       runtime fetch and real GPU generation evidence are bound to the same bytes.
+  curobo:
+    dockerfile: curobo/Dockerfile
+    tier: service
+    ports: [8080]
+    passwordless_root_exemption: "SkyPilot bootstrap only; non-root runtime, no default SSH daemon, no credentials baked."
+    redistribution: public
+    notes: >-
+      Apache-2.0 cuRobo V2 source and robot assets, MIT/BSD pinned benchmark data,
+      non-cuDNN CUDA 13 base with a hash-locked Python closure. The cuDNN wheel
+      headers/static SDK files are excluded during the install RUN before its
+      layer commits; only runtime shared libraries and notices remain. No weights or populated
+      runtime cache. Publication quarantined pending exact-byte security/license
+      scans and independent real B200 and RTX PRO 6000 capability validation.
   alpamayo2-super:
     dockerfile: alpamayo2-super/Dockerfile
     tier: service
