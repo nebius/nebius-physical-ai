@@ -2,7 +2,7 @@
 
 This is the platform entry point for Nebius Physical AI. Read this first to
 install the `npa` CLI/SDK and configure the single user-authored credential
-store. After this page is complete, continue with
+store. After credential setup, continue with
 [Workbench Getting Started](workbench/getting-started.md) for Kubernetes,
 SkyPilot, registry, S3, and first workload setup.
 
@@ -12,11 +12,10 @@ SkyPilot, registry, S3, and first workload setup.
 surface for physical AI workflows such as simulation, training, inference,
 visualization, dataset conversion, and storage handoff.
 
-Workbench is the first solution namespace on the platform. Workbench tools are
-containerized services that run on Nebius infrastructure and exchange data
-through S3-compatible object storage. This quickstart stops before
-workbench-specific setup so new engineers have one platform setup path and one
-clear next document.
+Workbench is the main solution namespace. Its tools run in containerized jobs
+or services on Nebius, or call hosted inference through Token Factory. Pipelines
+exchange artifacts through S3-compatible storage. This page covers installation,
+credentials, and choosing your first workload; the linked guides cover execution.
 
 For a broader architecture map, see the repository [README](../README.md) and
 the package overview in [npa/README.md](../npa/README.md).
@@ -258,7 +257,7 @@ the same Hugging Face model/dataset and NGC repository-entitlement paths as
 `npa workbench health access`, and prints a one-line `[NOTE]` summary. The note
 is advisory so a transient upstream outage does not undo otherwise valid local
 setup; use the health command as the access gate — see
-[§4e](#4e-accept-and-verify-gated-model-access):
+[§4e](#4e-prepare-and-verify-gated-model-access):
 
 ```bash
 npa configure
@@ -375,7 +374,7 @@ Use these canonical keys in `~/.npa/credentials.yaml`.
 | Need | `credentials.yaml` key | Environment override | Required when |
 |---|---|---|---|
 | Hugging Face token | `tokens.HF_TOKEN` | `HF_TOKEN` | Downloading gated Hugging Face models, datasets, or weights |
-| Nebius Token Factory key | `tokens.NEBIUS_TOKEN_FACTORY_KEY` | `NEBIUS_TOKEN_FACTORY_KEY` | Zero-GPU hosted inference (Token Factory / OpenAI-compatible) paths |
+| Nebius Token Factory key | `tokens.NEBIUS_TOKEN_FACTORY_KEY` | `NEBIUS_TOKEN_FACTORY_KEY` | Hosted text generation, captioning, and scene reasoning through Token Factory |
 | NGC API key | `ngc.api_key` | `NGC_API_KEY` | Pulling an entitlement-controlled NGC image or model, including NuRec NRE |
 | NGC organization | `ngc.org` | `NGC_ORG` | Your NGC key is organization-scoped |
 | NGC team | `ngc.team` | `NGC_TEAM` | Your NGC key is team-scoped |
@@ -385,7 +384,7 @@ Use these canonical keys in `~/.npa/credentials.yaml`.
 | Object-storage access key | `storage.aws_access_key_id` | `AWS_ACCESS_KEY_ID` | BYOVM, existing storage, or cross-project S3 workflows need explicit storage credentials |
 | Object-storage secret key | `storage.aws_secret_access_key` | `AWS_SECRET_ACCESS_KEY` | BYOVM, existing storage, or cross-project S3 workflows need explicit storage credentials |
 | Object-storage endpoint | `storage.endpoint_url` | `AWS_ENDPOINT_URL`, `NEBIUS_S3_ENDPOINT`, `NPA_STORAGE_ENDPOINT` | S3-compatible storage is not supplied by managed project config |
-| Object-storage bucket | `storage.bucket` | `NPA_CHECKPOINT_BUCKET`, `NEBIUS_S3_BUCKET` | A workflow needs a default checkpoint or artifact bucket |
+| Object-storage bucket | `storage.bucket` | `NPA_CHECKPOINT_BUCKET`, `NEBIUS_S3_BUCKET` | Default checkpoint/artifact location, supplied as `s3://<bucket>/<prefix>/` |
 
 **How to create each token** (step-by-step, including where to click):
 
@@ -409,11 +408,12 @@ export NPA_STORAGE_ENDPOINT=storage.eu-north1.nebius.cloud
 
 ### 4c. Populate `~/.npa/credentials.yaml`
 
-Use this complete template and delete keys you do not need yet:
+Use this example and omit keys you do not need yet:
 
 ```yaml
 tokens:
   HF_TOKEN: <YOUR_HUGGING_FACE_TOKEN>
+  NEBIUS_TOKEN_FACTORY_KEY: <YOUR_TOKEN_FACTORY_KEY>
 
 ngc:
   api_key: <YOUR_NGC_API_KEY>
@@ -529,19 +529,28 @@ S3 bucket and access key); use `npa configure --show` for a read-only view of
 the file layout, or `npa configure --no-provision` for provider-free project and
 token setup with storage deliberately unselected.
 
-### 5a. Verify the path works: zero-GPU inference (Nebius Token Factory)
+Before provisioning cloud resources, verify the selected Nebius CLI profile:
 
-Nebius AI Cloud — GPU clusters, managed Kubernetes, and object storage — is the
-main substrate `npa` targets; the flagship GPU workload is Cosmos (Section 7).
-Before requesting GPUs, though, you can confirm the whole NPA→Nebius path works
-with a zero-GPU smoke test: [Token Factory](https://tokenfactory.nebius.com/)
-hosted inference is OpenAI-compatible and needs only a `NEBIUS_TOKEN_FACTORY_KEY`
-(no cluster, registry, or S3), so it exercises your credentials and connectivity
-without spending GPU-hours. Add the key with `npa configure` (or
-`export NEBIUS_TOKEN_FACTORY_KEY=v1...`), then confirm it authenticates:
+```bash
+npa workbench health preflight --checks nebius --json
+```
+
+This opt-in check verifies authentication. Hosted Token Factory calls do not
+require it; resource creation still needs permission on the target project.
+
+<a id="5a-verify-the-path-works-zero-gpu-inference-nebius-token-factory"></a>
+
+### 5a. Hosted text generation with Nebius Token Factory
+
+For GPU image generation, continue to [Cosmos](#7-flagship-gpu-workload-nvidia-cosmos).
+For text generation, image captioning, or scene reasoning, use
+[Token Factory](https://tokenfactory.nebius.com/). Hosted inference needs its own
+`NEBIUS_TOKEN_FACTORY_KEY`; a Nebius IAM token cannot replace it. Local inputs and
+outputs need no cluster or S3. Save the key with `npa configure`, then check access:
 
 ```bash
 npa workbench token-factory verify
+npa workbench token-factory models
 ```
 
 Generate a completion against a hosted model — write a prompt and run:
@@ -555,7 +564,13 @@ npa workbench token-factory generate \
 ```
 
 Gate: `verify` reports `authenticated: true` with a non-zero model count, and
-`generate` writes `/tmp/tf-generations.jsonl` with a completion for the prompt.
+`generate` writes `/tmp/tf-generations.jsonl` with a nonempty completion. Model
+listing proves authentication; successful inference also proves the selected
+model is usable. If the default model is unavailable, pass `--model` with an
+appropriate text model returned by `models`.
+
+Read the JSONL result before using it downstream. `--dry-run` still calls the
+hosted model; it only skips the output write.
 
 More Token Factory capabilities (image captioning, physical-scene reasoning) and
 the checked-in SkyPilot templates:
@@ -563,9 +578,9 @@ the checked-in SkyPilot templates:
 
 ### 5b. The same capability, three coherent ways
 
-Every Workbench capability is usable as an `npa` CLI command, a Python SDK call,
-and a parameterizable SkyPilot YAML. The three stay coherent; pick whichever
-fits your workflow.
+Token Factory exposes CLI commands, SDK wrappers, and workflow toolRefs for the
+same operations. Use the CLI or SDK directly for hosted inference; use a
+workflow when it belongs in a larger pipeline.
 
 **CLI** (shown above):
 
@@ -577,18 +592,24 @@ npa workbench token-factory generate --input-path /tmp/prompts.txt \
 **Python SDK:**
 
 ```python
-from npa.workbench.token_factory import generate_text
+from npa.sdk.workbench import token_factory
 
-result = generate_text(
+token_factory.generate(
     input_path="/tmp/prompts.txt",
     output_path="/tmp/tf-generations.jsonl",
+    output="json",
 )
-print(result.generations[0].completion)
 ```
 
-**Workflow specs:** the checked-in `npa.workflow/v0.0.1` specs run the same tools on the
-cluster through SkyPilot — see `npa/workflows/workbench/npa-workflows/` (for example
-`tokenfactory-train-triage.yaml`) and [the workflows guide](workbench-yaml-guide.md).
+The SDK wrapper writes the artifact, prints the result, and returns `None`.
+The lower-level `npa.workbench.token_factory.generate_text` returns a dataclass;
+call `write_generations` explicitly if you use that API and need a saved result.
+
+**Workflow specs:** `npa.workflow/v0.0.1` runs these tools in CPU tasks through
+SkyPilot. This mode needs the configured cluster and S3 runtime described in
+[Workbench Getting Started](workbench/getting-started.md). For examples, see
+`npa/workflows/workbench/npa-workflows/token-factory-generate.yaml` and
+[the workflows guide](workbench-yaml-guide.md).
 
 ## 6. Developing and testing npa
 
@@ -598,79 +619,45 @@ the `make` targets from the repo root:
 ```bash
 pip install -e "npa[dev]"   # pytest, pytest-mock, pytest-cov, pytest-timeout, ruff
 
-make test         # fast default: full unit suite, no live/GPU/network
-make test-smoke   # quickest: onboarding CLI smoke tests only
-make lint         # ruff
-make test-e2e     # opt-in: launches real Nebius infrastructure
+make test PYTHON="$(pwd)/.venv/bin/python"        # unit suite
+make test-smoke PYTHON="$(pwd)/.venv/bin/python"  # onboarding CLI checks
+make lint PYTHON="$(pwd)/.venv/bin/python"        # ruff
 ```
 
-The `make` targets call `python -m pytest`; pass `PYTHON=...` to target a
-specific interpreter (for example `make test PYTHON=./.venv/bin/python`). Live,
-GPU, and end-to-end tests are marked (`gpu`, `multi_gpu`, `e2e`, `byovm_live`,
-`ngc_e2e`, ...) and are deselected from `make test`, so the default suite never
-touches real infrastructure even if your shell has Nebius credentials exported.
+Use an **absolute** interpreter path: the recipes change into `npa/` before
+running. Without an override, Make prefers the contributor environment
+`npa/.venv/bin/python`, then `python3` on `PATH`. Live and GPU tests are
+deselected from `make test`; `make test-e2e` is the explicit live-infrastructure
+target and needs the relevant credentials and resources.
 See [CONTRIBUTING.md](../CONTRIBUTING.md) for the full test layout and PR
 conventions (branch → PR → squash, one approval, never self-approve).
 
 ## 7. Flagship GPU workload: NVIDIA Cosmos
 
-With your project configured (Section 4), the headline GPU workload is **NVIDIA
-Cosmos** — a world-foundation model for synthetic data and world generation.
-Cosmos is the recommended first GPU workload because it runs across **multiple
-NVIDIA GPU platforms** (for example `gpu-h100-sxm`, `gpu-h200-sxm`,
-`gpu-b300-sxm`, `gpu-l40s`) selected with a single `--gpu-type` flag. It does
-**not** require RT cores, so you are not locked to one GPU family the way
-RT-core tools are.
+Start with [Cosmos 3 generation](workbench/cosmos3-generate.md). Its
+`cosmos3-generate.yaml` workflow runs the containerized model and publishes an
+image or video plus `generate.json` to S3. The checked-in default is
+`text2image` with public Cosmos3-Nano on one H100, 16 CPU, and 80 GiB host memory.
+Choose a compatible model/image/GPU combination; Cosmos versions do not share a
+blanket GPU compatibility guarantee.
 
-This step needs Nebius credentials, a `HF_TOKEN` for the gated Cosmos weights
-(Section 4), and GPU capacity. Set GPU routing with one flag and keep the same
-command shape across platforms:
+You need a configured project, writable S3, a GPU Kubernetes cluster, and
+SkyPilot. Guardrails are requested by default and require access to their gated
+Hugging Face weights even though Cosmos3-Nano itself is public. Follow
+[Workbench Getting Started](workbench/getting-started.md) for the ordered access,
+planning, cluster, and image checks, then the
+[Cosmos 3 guide](workbench/cosmos3-generate.md#workflow) for submission.
 
-```bash
-# Deploy a Cosmos serving endpoint on the GPU platform of your choice.
-npa workbench cosmos -p <your-project-alias> -n cosmos deploy \
-  --runtime serverless \
-  --gpu-type <gpu-platform> \
-  --gpu-preset <gpu-preset> \
-  --wait
+After the run succeeds, inspect the generated media and manifest. A completed
+job alone does not prove usable output. The Cosmos guide records the known
+upstream guardrail limitations; `guardrails: true` records the requested setting,
+not proof that every safety model ran.
 
-# Generate from a text prompt; output lands in your bucket.
-npa workbench cosmos -p <your-project-alias> -n cosmos infer \
-  --prompt "A robot arm stacks colored cubes on a table" \
-  --output-path s3://<your-bucket>/cosmos/out/ \
-  --output-format json
-
-npa workbench cosmos -p <your-project-alias> -n cosmos teardown --yes
-```
-
-Artifact-bearing end-to-end validation (a real serverless GPU job that writes a
-`checkpoint.json` to your bucket) is:
-
-```bash
-npa workbench cosmos train --runtime serverless --smoke --gpu-type <gpu-platform>
-```
-
-This same serverless job is available three coherent ways:
-
-- **CLI:** the `npa workbench cosmos train --runtime serverless` command above.
-- **SDK:** Cosmos serverless jobs are submitted programmatically with
-  `npa.clients.serverless.ServerlessClient.create_job(...)` plus the
-  `npa.serverless_common` env helpers (the `npa.sdk.workbench.cosmos` namespace
-  itself currently exposes `check`/`fetch`). See the worked SDK example in
-  [docs/sdk/cosmos-serverless.md](sdk/cosmos-serverless.md).
-- **GPU-cluster alternative:** the `npa.workflow/v0.0.1` specs under
-  `npa/workflows/workbench/npa-workflows/` (for example
-  `cosmos3-text-to-image.yaml`) run Cosmos on a GPU cluster through
-  `npa workbench workflow submit`. This is a different runtime from Serverless
-  AI Jobs (it provisions a cluster and needs network access to the Cosmos
-  framework source + gated weights).
-
-Because this launches a real, potentially long GPU job, run it from a durable
-launcher (your job queue / SkyPilot-managed job) rather than an interactive
-session you might close. See [the Cosmos guide](../skills/tools/cosmos/SKILL.md)
-and [the workflows guide](workbench-yaml-guide.md) for routing, backend
-selection, and known limits. Isaac Lab is the simulation counterpart but is
-RT-core-only (L40S / RTX Pro 6000); see its guide before choosing GPU type.
+The older `cosmos deploy --runtime serverless` endpoint has no supported
+serverless generated-media export to S3. Likewise,
+`cosmos train --runtime serverless --smoke` only checks job execution and writes
+a status `checkpoint.json`; it does not train a model or generate media. These
+are distinct from the Cosmos 3 generation workflow.
 
 ## 8. Do more with npa
 
@@ -708,12 +695,13 @@ npa --help
 
 `pytest` fails to collect with `ModuleNotFoundError: No module named 'fastapi'`
 
-The test suite needs the dev tooling (which pulls in the server extra). Install
-it into your venv:
+FastAPI is a base dependency. A missing import indicates an incomplete install
+or a different interpreter. Activate this checkout's environment and reinstall
+the package with test tooling:
 
 ```bash
 pip install -e "npa[dev]"
-make test
+make test PYTHON="$(pwd)/.venv/bin/python"
 ```
 
 `aws s3 ls` fails with `Could not connect to the endpoint URL`
@@ -726,9 +714,10 @@ endpoint and fails. Pass the endpoint explicitly, or use `aws-cli` v2:
 aws s3 ls --endpoint-url https://storage.<your-region>.nebius.cloud
 ```
 
-`npa` itself does not depend on this: it reads `storage.endpoint_url` from
-`~/.npa/credentials.yaml` (or `AWS_ENDPOINT_URL`/`NPA_STORAGE_ENDPOINT`) and
-passes it to the S3 client directly.
+Configured workflow commands resolve storage settings and pass the endpoint
+to their S3 client. Direct Token Factory S3 calls need `AWS_ENDPOINT_URL` and
+AWS credentials in the process environment; see the
+[Token Factory guide](workbench/token-factory.md#generate-and-inspect-artifacts).
 
 Jobs land on the wrong cluster, or `kubectl`/`sky` target the wrong place
 

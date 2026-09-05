@@ -1,6 +1,6 @@
 ---
 name: health-preflight
-description: Use before any deploy, image build, or GPU submit to prove credentials and gated-model access up front with `npa workbench health preflight` and `npa workbench health access`, instead of discovering a missing token mid-run.
+description: Use before any deploy, image build, provisioning, or GPU submit to prove service credentials with `npa workbench health preflight`, request `--checks nebius` before provisioning, and verify gated-model access with `npa workbench health access`.
 ---
 
 # Health preflight (the doctor before you spend)
@@ -11,10 +11,11 @@ provisions cloud resources.
 
 ```bash
 npa workbench health preflight --json
+npa workbench health preflight --checks nebius --json
 npa workbench health access --json
 ```
 
-Both exit non-zero on any FAIL. That is the point: they are gates, not reports.
+All three exit non-zero on any FAIL. That is the point: they are gates, not reports.
 Use `--warn-only` only when you deliberately want the report without the gate
 (for example while collecting a status snapshot), never to make a red run green.
 
@@ -22,16 +23,32 @@ Use `--warn-only` only when you deliberately want the report without the gate
 
 `preflight` answers *"do I hold the credentials nearly every workbench tool
 needs?"* — one PASS/WARN/FAIL/SKIP row per check over Hugging Face, NGC, S3, and
-Token Factory:
+Token Factory. Request the optional `nebius` check before provisioning:
 
 ```bash
 npa workbench health preflight --checks all
+npa workbench health preflight --checks nebius --json
 npa workbench health preflight --checks s3,token_factory
-npa workbench health preflight --offline    # presence only, no network probes
+npa workbench health preflight --checks all --offline  # presence only; Nebius is SKIP
 ```
 
-Valid `--checks` values are `all`, `hf`, `ngc`, `s3`, `token_factory`; the
-default is `hf,ngc,s3,token_factory`.
+Valid `--checks` values are `all`, `hf`, `ngc`, `s3`, `token_factory`,
+`nebius`. The default remains `hf,ngc,s3,token_factory`, so hosted-inference
+work does not require a Nebius Cloud profile. Explicit `all` includes `nebius`.
+Empty selections and unknown check names are errors, including unknown names
+combined with `all`. Repeated names run once.
+
+Online `nebius` runs the selected Nebius CLI profile through `iam whoami` and
+`iam get-access-token` with browser launch and update checks disabled. It
+discards both commands' output and removes ambient `NEBIUS_IAM_TOKEN` and
+`NEBIUS_IAM_TOKEN_FILE` values so a stale token cannot mask profile readiness.
+PASS requires both calls to succeed. In offline mode it returns SKIP because a
+local profile file is not proof of usable authentication.
+
+Profile selection uses `NPA_NEBIUS_PROFILE`, then `NEBIUS_PROFILE`, then the
+CLI's active/default profile. The project selector does not choose an auth
+profile. PASS proves authentication; permission to provision a particular
+resource still depends on the selected identity's access to that project.
 
 Online `hf` authenticates against Hugging Face `whoami-v2`; public repository
 metadata is not sufficient. Online `ngc` performs a registry token exchange;
@@ -67,10 +84,12 @@ already paid for a cluster. Run the checks in this order:
 1. `npa configure --show` — confirm the project stanza, bucket, and endpoint you
    think you are using are the ones on disk.
 2. `npa workbench health preflight` — credentials exist and authenticate.
-3. `npa workbench health access --capability <the one you will run>` — gated
+3. `npa workbench health preflight --checks nebius`: the selected Nebius CLI
+   profile can resolve identity and mint an IAM token before provisioning.
+4. `npa workbench health access --capability <the one you will run>`: gated
    model entitlements for that capability only; `all` is slower and reports
    failures you do not care about today.
-4. Only then `npa provision-if-absent`, `npa cluster up`, or
+5. Only then `npa provision-if-absent`, `npa cluster up`, or
    `npa workbench workflow submit`.
 
 Image pullability is a *separate* gate that health does not cover; see
@@ -133,9 +152,10 @@ with `npa workbench workflow gpus --cluster <name>`.
 
 ## Gotchas
 
-- **`--offline` proves presence, not validity.** It skips the live HF/NGC/S3/Token
-  Factory probes. An expired-but-present token passes offline and fails the
-  moment a stage pulls. Use offline only where there is genuinely no egress.
+- **`--offline` proves presence, not validity.** It skips live provider probes.
+  Existing credentials may pass presence checks, while `nebius` returns SKIP
+  because profile configuration is not authentication proof. Use offline only
+  where there is genuinely no egress.
 - **A SKIP is not a PASS.** Checks skip when the corresponding capability is not
   configured. If you are about to run a Cosmos stage and the NGC row says SKIP,
   you have not verified anything about NGC.
@@ -152,4 +172,12 @@ with `npa workbench workflow gpus --cluster <name>`.
 
 ```bash
 npa/.venv/bin/python -m pytest npa/tests/guardrails/test_skills_index.py -q
+```
+
+With an authenticated operator profile, exercise the real CLI's successful,
+missing-profile, and offline paths (including stale ambient token scrubbing):
+
+```bash
+NPA_INTEGRATION_E2E=1 npa/.venv/bin/python -m pytest \
+  npa/tests/e2e/test_nebius_auth_preflight.py -q
 ```

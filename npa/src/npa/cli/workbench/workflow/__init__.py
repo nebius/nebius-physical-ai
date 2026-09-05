@@ -1344,15 +1344,9 @@ def submit_cmd(
                 infra=infra,
                 self_provisions=deploy_if_absent and _spec_self_provisions(yaml_path),
                 requires_s3=_spec_requires_s3(yaml_path),
-                s3_endpoint=submit_credentials.endpoint_url,
-                s3_access_key_id=getattr(submit_credentials, "access_key_id", ""),
-                s3_secret_access_key=getattr(
-                    submit_credentials, "secret_access_key", ""
-                ),
                 requires_npa_source=requires_npa_source,
                 source_staging_planned=stage_source_planned,
                 checkpoint_access_error=checkpoint_access_error,
-                probe_storage=False,
             )
             if not plan_only and is_paidf_spec:
                 from npa.orchestration.npa_workflow.paidf_preflight import (
@@ -1459,7 +1453,17 @@ def submit_cmd(
                     ["npa", "workbench", "workflow", "submit", str(yaml_path)]
                 ),
                 excluded_repos=(
-                    frozenset({"nvidia/Cosmos-Transfer2.5-2B"})
+                    # PAIDF deliberately checks only its selected Transfer
+                    # checkpoint, even though the tool also routes to cosmos2.
+                    frozenset(
+                        {
+                            "nvidia/Cosmos-Transfer2.5-2B",
+                            "nvidia/Cosmos-Guardrail1",
+                            "nvidia/Cosmos-Predict2.5-2B",
+                        }
+                    )
+                    if checkpoint_access_required and is_paidf_spec
+                    else frozenset({"nvidia/Cosmos-Transfer2.5-2B"})
                     if checkpoint_access_required
                     else frozenset()
                 ),
@@ -3854,20 +3858,17 @@ def _submit_prerequisites(
     infra: str = "",
     self_provisions: bool = False,
     requires_s3: bool = False,
-    s3_endpoint: str = "",
-    s3_access_key_id: str = "",
-    s3_secret_access_key: str = "",
     requires_npa_source: bool = True,
     source_staging_planned: bool = False,
     checkpoint_access_error: str = "",
-    probe_storage: bool = True,
 ) -> list[tuple[str, str]]:
-    """Return ``[(missing, remedy)]`` for an npa.workflow submit.
+    """Return static ``[(missing, remedy)]`` for an npa.workflow submit.
 
     A first submit used to fail one prerequisite at a time — no npa source, then
     no SkyPilot CLI, then a placeholder bucket, then an unresolvable kube context
     — each as a separate run. Collect them so the operator sees the whole list
-    once.
+    once. The shared execution-target preflight verifies storage scope and
+    exact output-prefix access separately.
     """
     # Same resolver the renderer uses, so a prefix persisted with
     # `npa configure --src-s3-uri` satisfies the check without re-exporting it.
@@ -3930,17 +3931,6 @@ def _submit_prerequisites(
             )
         )
 
-    if probe_storage and not plan_only:
-        missing.extend(
-            _submit_storage_prerequisites(
-                spec_config,
-                requires_s3=requires_s3,
-                s3_endpoint=s3_endpoint,
-                s3_access_key_id=s3_access_key_id,
-                s3_secret_access_key=s3_secret_access_key,
-            )
-        )
-
     # Catch an `--infra k8s/<context>` that names a context the kubeconfig does
     # not define, up front. Otherwise `sky jobs launch` fails late with a long
     # SkyPilot stack ("Context <name> not found ... Available contexts: []") —
@@ -3964,44 +3954,6 @@ def _submit_prerequisites(
                 )
             )
     return missing
-
-
-def _submit_storage_prerequisites(
-    spec_config: Mapping[str, Any],
-    *,
-    requires_s3: bool,
-    s3_endpoint: str,
-    s3_access_key_id: str,
-    s3_secret_access_key: str,
-) -> list[tuple[str, str]]:
-    """Run the cleaned writable-storage probe at its explicit mutation boundary."""
-
-    bucket = str((spec_config or {}).get("bucket", "") or "")
-    if not requires_s3 or _is_placeholder_bucket(bucket):
-        return []
-    from npa.clients.storage_validation import (
-        StorageCapabilityProfile,
-        probe_storage_write,
-    )
-
-    probe = probe_storage_write(
-        bucket=bucket,
-        endpoint_url=s3_endpoint,
-        access_key_id=s3_access_key_id,
-        secret_access_key=s3_secret_access_key,
-        prefix=str(spec_config.get("prefix") or ""),
-        profile=StorageCapabilityProfile.STANDARD,
-    )
-    if probe.ok:
-        return []
-    return [
-        (
-            f"writable S3 for this workflow ({probe.summary})",
-            "run `npa provision-if-absent --project <alias> --skip-k8s`, then "
-            "retry; this append-only preflight uses a unique object and does not "
-            "require DeleteObject",
-        )
-    ]
 
 
 def _execution_target_preflight(

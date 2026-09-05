@@ -225,11 +225,20 @@ def _embedded_agent_provenance_source() -> str:
     )
 
 
-def rendered_agent_ui_html() -> str:
-    """Render the standalone UI template with agent bootstrap constants."""
+def rendered_agent_ui_from_record(record: object) -> str:
+    """Resolve the selected operator record before rendering the deployed UI."""
+    from npa.cli.agent_records import leisaac_ui_enabled
+
+    return rendered_agent_ui_html(leisaac_enabled=leisaac_ui_enabled(record))
+
+
+def rendered_agent_ui_html(*, leisaac_enabled: bool = False) -> str:
+    """Render the UI with bootstrap settings; optional features fail closed."""
     from npa.cli.agent import AGENT_UI_VERSION, DEFAULT_AGENT_USER
 
     raw = Path(__file__).with_name("agent_ui.html").read_text(encoding="utf-8")
-    return raw.replace("{AGENT_UI_VERSION}", AGENT_UI_VERSION).replace(
-        "{DEFAULT_AGENT_USER}", DEFAULT_AGENT_USER
+    return (
+        raw.replace("{AGENT_UI_VERSION}", AGENT_UI_VERSION)
+        .replace("{DEFAULT_AGENT_USER}", DEFAULT_AGENT_USER)
+        .replace("{LEISAAC_UI_ENABLED}", "true" if leisaac_enabled is True else "false")
     )

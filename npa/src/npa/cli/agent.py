@@ -151,6 +151,7 @@ from npa.cli.agent_contracts import (  # noqa: F401 - public compatibility expor
     _embedded_agent_state_source,
     _embedded_agent_visual_feedback_source,
     _embedded_agent_workflow_source,
+    rendered_agent_ui_from_record,
     rendered_agent_ui_html,
 )
 from npa.cli.agent_embed import embedded_python_source
@@ -208,7 +209,7 @@ DEFAULT_LLM_MODELS = (
     DEFAULT_LLM_MODEL,
     "Qwen/Qwen2.5-VL-72B-Instruct",
 )
-AGENT_UI_VERSION = "2026082901"
+AGENT_UI_VERSION = "2026090501"
 ARTIFACT_DISCOVERY_CONTRACT = "s3-source-qualified-v1"
 DEFAULT_HTTPS_PORT = 443
 AGENT_SOURCE_ROOT = "/opt/npa-agent/npa-src"
@@ -9069,7 +9070,10 @@ sudo systemctl enable --now npa-lichtblick 2>/dev/null || echo "npa-lichtblick s
         .replace(_AGENT_STAGE_RUNTIME_EMBED, agent_stage_runtime_source)
         .replace(_AGENT_VIEWER_RUNTIME_EMBED, agent_viewer_runtime_source)
         .replace(_AGENT_PROVENANCE_EMBED, agent_provenance_source)
-        .replace(_AGENT_UI_HTML_EMBED, rendered_agent_ui_html())
+        .replace(
+            _AGENT_UI_HTML_EMBED,
+            rendered_agent_ui_from_record(_agent_record(project_alias, agent_name)),
+        )
     )
     # Use a unique remote path so concurrent bootstrap runs cannot clobber each other.
     remote_setup_script = f"/tmp/npa-agent-bootstrap-{secrets.token_hex(6)}.sh"
