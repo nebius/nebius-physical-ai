@@ -88,12 +88,12 @@ spec:
                 claimName: ${NPA_COSMOS3_SHARED_PVC}
     workerGroupSpecs:
       - groupName: b200
-        replicas: 2
-        minReplicas: 2
-        maxReplicas: 2
+        replicas: 16
+        minReplicas: 16
+        maxReplicas: 16
         rayStartParams:
-          num-gpus: "8"
-          num-cpus: "32"
+          num-gpus: "1"
+          num-cpus: "4"
         template:
           metadata:
             labels:
@@ -119,13 +119,13 @@ spec:
                 securityContext: *container-security
                 resources:
                   requests:
-                    cpu: "32"
-                    memory: 512Gi
-                    nvidia.com/gpu: "8"
+                    cpu: "4"
+                    memory: 64Gi
+                    nvidia.com/gpu: "1"
                   limits:
-                    cpu: "32"
-                    memory: 512Gi
-                    nvidia.com/gpu: "8"
+                    cpu: "4"
+                    memory: 64Gi
+                    nvidia.com/gpu: "1"
                 env: *runtime-env
                 volumeMounts:
                   - name: shared
@@ -144,4 +144,4 @@ spec:
               - name: dshm
                 emptyDir:
                   medium: Memory
-                  sizeLimit: 128Gi
+                  sizeLimit: 16Gi

@@ -34,8 +34,10 @@ does not parse a top-level `max_sequence_length` form field).
 ## Infrastructure and image
 
 Use NPA `cluster up` or the NPA fleet mk8s backend with a task-owned project in
-`us-central1`, two eight-GPU `gpu-b200-sxm` workers, managed CUDA 13 drivers,
-a CPU pool, and shared filesystem storage. Keep NPA's quota, fabric,
+`us-central1`, 16 `gpu-b200-sxm` GPUs, managed CUDA 13 drivers,
+a CPU pool, and shared filesystem storage. Ray uses 16 one-GPU worker pods,
+so the cluster may provide two eight-GPU nodes or a validated mix of B200 node
+sizes. Keep NPA's quota, fabric,
 stabilization and per-node CUDA validation enabled. If using reserved capacity,
 supply its exact group through owner-only runtime configuration and require
 `STRICT` reservation placement. Follow the [fleet instructions](../../../skills/tools/fleet/SKILL.md)

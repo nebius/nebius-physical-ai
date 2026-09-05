@@ -1,8 +1,9 @@
-"""Live health gate for a fresh, reserved-capacity NPA mk8s GPU cluster.
+"""Live health gates for explicitly selected NPA mk8s GPU clusters.
 
 The harness deliberately does not provision or select a cluster.  An operator
-must provide the exact kubeconfig for a separately named, freshly provisioned
-NPA mk8s cluster and attest that its GPU pool is bound to reserved capacity.
+must provide the exact kubeconfig and the requested GPU topology. The original
+gate requires a fresh reserved cluster; mixed pools require their own explicit
+authorization and a separately declared GPU count for every node.
 The test creates only short-lived CUDA vectorAdd pods and deletes them itself.
 """
 
@@ -16,6 +17,7 @@ import pytest
 from npa.cli.cluster.terraform_lifecycle import _run_capture
 from npa.cluster.gpu_driver import (
     DEFAULT_MANAGED_DRIVER_PRESET,
+    is_nvswitch_topology,
     resolve_gpu_driver_strategy,
 )
 from npa.cluster.gpu_health import GpuHealthConfig, validate_gpu_health
@@ -130,3 +132,53 @@ def test_rtx_rendering_profile_passes_live_graphics_readiness_gate(
     assert all(
         item["vulkan_physical_devices"] >= 1 for item in report["graphics_smokes"]
     )
+
+
+def test_fresh_mixed_gpu_pools_pass_all_device_health_gate(tmp_path: Path) -> None:
+    """Validate an explicit pool plan, including every GPU in larger workers."""
+    if os.environ.get("NPA_E2E_MK8S_MIXED_GPU_HEALTH") != "1":
+        pytest.skip("set NPA_E2E_MK8S_MIXED_GPU_HEALTH=1 to authorize live CUDA pods")
+    if os.environ.get("NPA_E2E_MK8S_FRESH_CLUSTER") != "1":
+        pytest.skip("live GPU health requires an explicitly attested fresh cluster")
+
+    counts = tuple(int(value) for value in _required("NPA_E2E_MK8S_GPU_COUNTS").split(","))
+    gpu_nodes = int(_required("NPA_E2E_MK8S_GPU_NODES"))
+    total_gpus = int(_required("NPA_E2E_MK8S_TOTAL_GPUS"))
+    assert len(counts) == gpu_nodes and sum(counts) == total_gpus
+    kubeconfig = Path(_required("NPA_E2E_MK8S_GPU_KUBECONFIG")).expanduser()
+    assert kubeconfig.is_file(), f"missing exact kubeconfig: {kubeconfig}"
+    platform = _required("NPA_E2E_MK8S_GPU_PLATFORM")
+    preset = _required("NPA_E2E_MK8S_GPU_PRESET")
+    selection = resolve_gpu_driver_strategy(
+        gpu_nodes=gpu_nodes,
+        platform=platform,
+        preset=preset,
+        mode=_required("NPA_E2E_MK8S_GPU_DRIVER_MODE"),
+        managed_driver_preset=os.environ.get(
+            "NPA_E2E_MK8S_MANAGED_DRIVER_PRESET", DEFAULT_MANAGED_DRIVER_PRESET
+        ),
+        enable_gpu_cluster=(
+            os.environ.get("NPA_E2E_MK8S_NVSWITCH") == "1"
+            or is_nvswitch_topology(platform=platform, preset=f"{max(counts)}gpu-declared")
+        ),
+    )
+    report = validate_gpu_health(
+        _run_capture,
+        kubectl_bin=os.environ.get("NPA_KUBECTL_BIN", "kubectl"),
+        kubeconfig_path=kubeconfig,
+        config=GpuHealthConfig(
+            expected_nodes=gpu_nodes + int(_required("NPA_E2E_MK8S_CPU_NODES")),
+            expected_gpu_nodes=gpu_nodes,
+            expected_gpu_counts=counts,
+            gpu_preset=preset,
+            gpu_platform=platform,
+            driver_mode=selection.effective_mode,
+            nvswitch=selection.nvswitch,
+            cuda_smoke=True,
+        ),
+        evidence_path=tmp_path / "mixed-gpu-health-live.json",
+    )
+    assert report["status"] == "healthy"
+    assert report["final_snapshot"]["total_gpus"] == total_gpus
+    assert len(report["cuda_smokes"]) == gpu_nodes
+    assert sum(item["tested_gpus"] for item in report["cuda_smokes"]) == total_gpus

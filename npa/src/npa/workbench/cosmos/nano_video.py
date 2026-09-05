@@ -67,7 +67,10 @@ class DeviceMemorySampler:
         if visible:
             if "," in visible or not re.fullmatch(r"[A-Za-z0-9-]+", visible):
                 raise NanoVideoError("Ray must assign exactly one GPU to the replica")
-            argv.append("--id=" + visible)
+        # Each Ray worker pod requests exactly one GPU. CUDA may call that
+        # device 0 while NVML retains its physical index, so CUDA ordinals must
+        # never be passed to nvidia-smi --id. Query the pod-visible set instead
+        # and fail closed if the one-GPU deployment contract is not satisfied.
         rows = _command(argv).decode().strip().splitlines()
         if len(rows) != 1:
             raise NanoVideoError("VRAM measurement requires exactly one assigned GPU")

@@ -327,18 +327,22 @@ def test_existing_s3_output_prefix_fails_before_gpu_or_write(tmp_path, monkeypat
     assert called == []
 
 
-def test_vram_sample_targets_ray_assigned_gpu_on_multigpu_worker(monkeypatch):
+def test_vram_sample_does_not_confuse_cuda_ordinal_with_nvml_index(monkeypatch):
     observed = []
-    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "3")
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "0")
 
     def command(argv):
         observed.append(argv)
+        # A one-GPU pod can expose physical GPU3 as CUDA0. A physical-index
+        # query for 0 cannot observe that assigned GPU; the visible-set query can.
+        if any(value.startswith("--id=") for value in argv):
+            raise video.NanoVideoError("physical GPU0 is not visible in this pod")
         return b"NVIDIA B200, 40000, 180000\n"
 
     monkeypatch.setattr(video, "_command", command)
     sampler = video.DeviceMemorySampler()
     sampler._sample()
-    assert "--id=3" in observed[0]
+    assert not any(value.startswith("--id=") for value in observed[0])
     assert sampler.samples[0]["used_mib"] == 40000
     assert sampler.samples[0]["total_mib"] == 180000
 
