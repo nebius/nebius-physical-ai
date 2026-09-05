@@ -415,6 +415,14 @@ Remote API endpoints use SkyPilot's API/controller checks instead of local
 procfs inspection. Preserve the same endpoint and state when monitoring or
 cancelling the run.
 
+The workflow submitter waits for SkyPilot's API launch result while detaching
+the actual workload. A rejected storage or image precheck therefore surfaces
+as a launch error instead of an accepted request with no observable job. For
+durable Nebius mounts, configure the exact project's `nebius` AWS storage
+profile in that isolated HOME and verify storage access before submission.
+Restrict Nebius to its storage capability when compute must stay on the existing
+reserved Kubernetes fleet.
+
 The fleet is spec-driven and idempotent, so growing or shrinking it is targeted:
 
 - **Add** one or many: put the new project/cluster in the spec and deploy just

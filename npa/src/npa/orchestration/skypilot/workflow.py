@@ -784,7 +784,9 @@ def submit_workflow(
             "launch",
             "--name",
             run_id,
-            "--async",
+            # Wait for the API launch result so failed prechecks surface as
+            # errors. --async acknowledges only the request, before a managed
+            # job exists; --detach-run still leaves the workload asynchronous.
             "--detach-run",
             "--yes",
             str(prepared_yaml),

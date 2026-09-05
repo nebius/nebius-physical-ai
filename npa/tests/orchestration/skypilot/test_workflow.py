@@ -119,7 +119,8 @@ def test_submit_workflow_loads_yaml_applies_controller_and_calls_subprocess(
     cmd, kwargs = calls[1]
     assert cmd[:5] == [str(sky_bin), "jobs", "launch", "--name", "run-abc"]
     assert "--config" not in cmd
-    assert "--async" in cmd
+    # API acceptance alone must not be reported as managed-job submission.
+    assert "--async" not in cmd
     assert "--detach-run" in cmd
     assert kwargs["env"]["HOME"] == str(tmp_path / "sky-state" / "home")
     assert kwargs["env"]["SKYPILOT_GLOBAL_CONFIG"] == result.log_paths["config"]
@@ -836,6 +837,29 @@ def test_submit_workflow_yaml_parse_error_raises_typed_error(
             isolated_config_dir=tmp_path / "sky",
             sky_bin=sky_bin,
         )
+
+
+def test_submit_workflow_surfaces_api_precheck_failure(monkeypatch, tmp_path) -> None:
+    yaml_path = tmp_path / "workflow.yaml"
+    yaml_path.write_text("name: demo\nresources:\n  cloud: kubernetes\n")
+    sky_bin = _fake_sky(tmp_path)
+    launches = []
+
+    def fake_run(cmd, **kwargs):
+        if _is_status_cmd(cmd):
+            return _healthy_status(cmd)
+        launches.append(cmd)
+        if "--async" in cmd:
+            return subprocess.CompletedProcess(cmd, 0, stdout="Request accepted", stderr="")
+        return subprocess.CompletedProcess(
+            cmd, 1, stdout="",
+            stderr="Cloud-based file_mounts are specified, but no cloud storage is available.",
+        )
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    with pytest.raises(SkyPilotSubmitError, match="no cloud storage is available"):
+        submit_workflow(yaml_path, "run-precheck-fail", sky_bin=sky_bin)
+    assert len(launches) == 1
 
 
 def test_submit_workflow_cleans_owned_temp_dir_on_timeout(
