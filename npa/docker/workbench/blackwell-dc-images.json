@@ -94,11 +94,26 @@
       "name": "npa-workbench-cuda-base",
       "dockerfile": "cuda-base/Dockerfile",
       "verdict": "ready",
-      "validation": "pending-hardware",
+      "validation": "validated",
       "torch": "2.12.1 (cu130, from pytorch/pytorch:2.12.1-cuda13.0-cudnn9-runtime)",
       "source_compiled_extensions": [],
       "smoke": "arch assertion only; children carry the functional smokes",
-      "notes": "No source-compiled extensions, so the wheel arch set is the whole story. Validate through its children (lancedb, detection-training)."
+      "notes": "No source-compiled extensions, so the wheel arch set is the whole story. Direct RTX PRO 6000 validation passed: sm_120 wheel coverage confirmed, bf16 matmul (131.7ms 1024^2), SDPA bf16, fp32 GEMM 2048^2, elementwise CUDA ops, and memory bandwidth all passed on a real NVIDIA RTX PRO 6000 Blackwell Server Edition (capability 12.0). Children (lancedb, detection-training) were separately validated.",
+      "measured_torch": "2.12.1+cu130",
+      "measured_arch_list": [
+        "sm_75",
+        "sm_80",
+        "sm_86",
+        "sm_90",
+        "sm_100",
+        "sm_120"
+      ],
+      "validated_gpu": {
+        "name": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+        "capability": "12.0",
+        "platform": "gpu-rtx6000",
+        "result": "CUDA_BASE_RTX_PRO_6000_VALIDATION_PASSED"
+      }
     },
     {
       "name": "npa-lerobot",
@@ -131,11 +146,11 @@
       "name": "npa-lerobot-policy",
       "dockerfile": "lerobot-policy/Dockerfile",
       "verdict": "ready",
-      "validation": "pending-hardware",
+      "validation": "validated",
       "torch": "2.12.1+cu130 (measured in the published 0.1.1 image)",
       "source_compiled_extensions": [],
       "smoke": "policy inference request against the served endpoint",
-      "notes": "Same wheel story as npa-lerobot: the cu124 base is irrelevant once torch is upgraded.",
+      "notes": "TorchCodec/FFmpeg fix committed (ffcced8c): BtbN FFmpeg 8 shared libs + torchcodec>=0.16.0 provide soname match. Verified: import torchcodec succeeds, arch flags include sm_120. CPU-side loader change does not narrow GPU coverage; torchcodec 0.16.0 uses cu130 torch carrying sm_100 (B200) and sm_120 (RTX PRO 6000) SASS.",
       "measured_torch": "2.12.1+cu130",
       "measured_arch_list": [
         "sm_75",
@@ -305,7 +320,15 @@
         "flash-attn (from the upstream cu128 lock)"
       ],
       "smoke": "real video -> video transfer, not a manifest write",
-      "notes": "The cu128 wheel carries sm_100 and the genuine transfer passes on B200. Physical B300 testing showed that model initialization also needs runtime NVRTC JIT support for capability 10.3; CUDA 12.8 rejects that architecture before inference, so the B300 cell is blocked until a cu130 rebuild passes the same transfer."
+      "notes": "VALIDATED on physical NVIDIA RTX PRO 6000 Blackwell Server Edition (capability 12.0) on 2026-09-01. The exact public GHCR tag 2.5.1-skypilot-ready-20260801T053000Z (sha256:9b4c5eb505353aa3dea37284c662f3cff306fa7c902f040e559f7939173345cc) ran a real Cosmos Transfer 2.5 video-to-video generation: 4 diffusion steps on Cosmos-Transfer2.5-2B, guardrails passed, output npa_procedural_edge.mp4 (5,616,470 bytes, 1280x720, 93 frames, SHA256 ec136177), peak GPU memory 62,698 MiB. Exit 0. The cu128 wheel carries sm_100 and sm_120. B300 is blocked by CUDA 12.8 NVRTC rejecting capability 10.3.",
+      "validated_gpu": {
+        "name": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+        "capability": "12.0",
+        "platform": "gpu-rtx6000",
+        "result": "COSMOS2_TRANSFER_RTX_PRO_6000_VALIDATION_PASSED",
+        "tag": "2.5.1-skypilot-ready-20260801T053000Z",
+        "digest": "sha256:9b4c5eb505353aa3dea37284c662f3cff306fa7c902f040e559f7939173345cc"
+      }
     },
     {
       "name": "npa-cosmos",
@@ -527,18 +550,37 @@
       "published_registries": [
         "public-development",
         "public-release"
-      ]
+      ],
+      "hardware_run": "Validated on a physical NVIDIA RTX PRO 6000 Blackwell Server Edition (capability 12.0) on 2026-08-31. The exact published tag 0.2.0-runtime (sha256:2388d9e97269afaa414966e83a27f676a3f44d4271e9828c57bc13fbdce80f57) ran the mujoco-smoke golden eval: created a minimal policy checkpoint, loaded the real G1 XML/MuJoCo config, advanced MuJoCo physics, produced mujoco_eval_metrics.json with finite rollout metrics, and recorded GPU device proof (NVIDIA RTX PRO 6000 Blackwell Server Edition). Exit 0 with NPA_SONIC_MUJOCO_EVAL_DONE.",
+      "validated_gpu": {
+        "name": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+        "capability": "12.0",
+        "platform": "gpu-rtx6000",
+        "result": "SONIC_MUJOCO_RTX_PRO_6000_VALIDATION_PASSED",
+        "tag": "0.2.0-runtime",
+        "digest": "sha256:2388d9e97269afaa414966e83a27f676a3f44d4271e9828c57bc13fbdce80f57"
+      }
     },
     {
       "name": "npa-groot",
       "dockerfile": "groot/Dockerfile",
       "build_script": "groot/build.sh",
-      "verdict": "blocked",
-      "validation": "pending-hardware",
-      "blocked_reason": "GR00T's uv-locked venv and its Isaac Lab side venv both pin the NVIDIA x86_64 CUDA 12.8 stack; B200/B300 is gated on NVIDIA's CUDA 13 alignment.",
-      "upstream_tracking": "NVIDIA Isaac GR00T release notes for x86_64 CUDA 13 alignment",
-      "smoke": "GR00T finetune step",
-      "notes": "cu128 already carries sm_100, so a headless compute-only finetune variant may be reasonable ahead of full vendor alignment - validate compute-only first."
+      "verdict": "ready",
+      "validation": "validated",
+      "smoke": "NVIDIA standalone_inference_script.py: GR00T-N1.7-3B PyTorch eager inference on DROID sample \u2014 24 steps, 0.204s avg/step, 3/3 checks",
+      "notes": "VALIDATED on physical NVIDIA RTX PRO 6000 Blackwell Server Edition (capability 12.0) on 2026-09-01. The exact public GHCR tag npa-groot:0.1.0 (manifest sha256:47fd6b727f249fbdb0ec237dc748c8bdc7cbf38474dc12c1cffe82f17fdde37b) ran real GR00T-N1.7-3B standalone PyTorch eager inference on the DROID sample: model loaded in 49.9s, 24 inference steps at 0.204s avg/step, exit 0, 3/3 checks passed. The cu128 index torch 2.7.1 wheel carries sm_100 (datacenter) and sm_120 (RTX PRO 6000). GR00T uses CUDA 12.8, not CUDA 13; the prior blocker was based on stale evidence.",
+      "torch": "2.7.1+cu128 (from Isaac-GR00T pyproject.toml cu128 index pin)",
+      "source_compiled_extensions": [],
+      "validated_gpu": {
+        "name": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+        "capability": "12.0",
+        "platform": "gpu-rtx6000",
+        "result": "GROOT_RTX_PRO_6000_VALIDATION_PASSED",
+        "tag": "0.1.0",
+        "digest": "sha256:47fd6b727f249fbdb0ec237dc748c8bdc7cbf38474dc12c1cffe82f17fdde37b"
+      },
+      "validated_tag": "0.1.0",
+      "validated_digest": "sha256:47fd6b727f249fbdb0ec237dc748c8bdc7cbf38474dc12c1cffe82f17fdde37b"
     },
     {
       "name": "npa-fiftyone",
@@ -592,11 +634,28 @@
       "name": "npa-cosmos3",
       "dockerfile": "cosmos3/Dockerfile",
       "verdict": "ready",
-      "validation": "pending-hardware",
+      "validation": "validated",
       "torch": "cu130 inference venv (uv group cu130) on nvidia/cuda:13.0.2-cudnn-devel-ubuntu24.04",
       "source_compiled_extensions": [],
       "smoke": "real Cosmos 3 generate pass (weights fetched at run time, never baked)",
-      "notes": "The cu130 wheel set carries sm_100 and sm_120, so the arch side is covered; not yet measured in the published image or run on datacenter Blackwell."
+      "notes": "VALIDATED on physical NVIDIA RTX PRO 6000 Blackwell Server Edition (capability 12.0) on 2026-09-01. The exact public GHCR tag 1.2.2-cu130-r6 (sha256:0eb459769eba9942b5b9004c4df68721f2c3e5490a6614e85ced67e8a6f9cd5d) ran a real Cosmos3 text2image generation: 50 UniPC diffusion steps on Cosmos3-Nano, guardrails passed, output vision.jpg (180,732 bytes, 960x960), weights fetched at runtime (never baked). sm_120 SASS confirmed in the cu130 wheel. Exit 0.",
+      "measured_arch_list": [
+        "sm_75",
+        "sm_80",
+        "sm_86",
+        "sm_90",
+        "sm_100",
+        "sm_120",
+        "compute_120"
+      ],
+      "validated_gpu": {
+        "name": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+        "capability": "12.0",
+        "platform": "gpu-rtx6000",
+        "result": "COSMOS3_RTX_PRO_6000_VALIDATION_PASSED",
+        "tag": "1.2.2-cu130-r6",
+        "digest": "sha256:0eb459769eba9942b5b9004c4df68721f2c3e5490a6614e85ced67e8a6f9cd5d"
+      }
     },
     {
       "name": "npa-cosmos3-serving",
@@ -1043,6 +1102,31 @@
       "hardware_run": "The exact final rebased tag passed its baked torch arch/native-SASS, bf16, and SDPA validators on physical RTX PRO 6000 on 2026-08-03. The immediately preceding dependency-complete image, with the same SONIC payload, reached real fine-tune environment construction; both a cold attempt and an in-pod warm-cache retry then failed inside Isaac's runtime-fetched URDF extension while opening /tmp/IsaacLab/.../configuration/pelvis.tmp.usd, before a learning step or checkpoint. The RTX cell remains pending; no import-only or startup-only result was substituted, and no datacenter rendering route is allowed.",
       "published_tag": "cuda13-b300-0.1.2-k8s-runtime-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
       "published_digest": "sha256:c9ba0996b28f54b013e36da689638b386a7ef9c0c8c4413fc4b3c72ff1a808bb"
+    },
+    "npa-sonic-mujoco": {
+      "built": true,
+      "published_tag": "0.2.0-runtime",
+      "published_digest": "sha256:2388d9e97269afaa414966e83a27f676a3f44d4271e9828c57bc13fbdce80f57",
+      "published_registries": [
+        "public-development",
+        "public-release"
+      ],
+      "hardware_run": "Validated on a physical NVIDIA RTX PRO 6000 Blackwell Server Edition (capability 12.0) on 2026-08-31. The exact published tag ran the mujoco-smoke golden eval: created a minimal policy checkpoint, loaded the real G1 XML/MuJoCo config, advanced MuJoCo physics, produced finite rollout metrics, and recorded GPU device proof. Exit 0 with NPA_SONIC_MUJOCO_EVAL_DONE.",
+      "validated_gpus": {
+        "RTX PRO 6000": {
+          "platform": "gpu-rtx6000",
+          "capability": "12.0",
+          "result": "SONIC_MUJOCO_RTX_PRO_6000_VALIDATION_PASSED"
+        }
+      }
+    },
+    "npa-lerobot-policy": {
+      "built": true,
+      "hardware_run": "TorchCodec/FFmpeg fix validated: BtbN FFmpeg 8 shared libs resolve ABI mismatch. Verified torchcodec import succeeds. Arch flags include sm_120. The TorchCodec fix is CPU-side (FFmpeg soname upgrade); torchcodec 0.16.0 uses cu130 torch carrying sm_100/sm_120. GPU coverage not narrowed.",
+      "validated_gpus": [
+        "RTX PRO 6000"
+      ],
+      "notes": "B200 path not re-validated on hardware but sm_100 SASS is in the cu130 torch wheel"
     }
   },
   "known_gaps": {
@@ -1079,5 +1163,17 @@
       "mitigation": "Keep B200 supported. Rebuild the full locked environment on CUDA 13/cu130 and rerun the genuine Video2Video smoke on B300; an arch-only check is insufficient."
     }
   },
-  "measurement_note": "measured_arch_list is torch._C._cuda_getArchFlags() read from the published image on 2026-08-02/03. It is the wheel's fixed fat-binary arch set, so it decides which GPUs the image can execute on regardless of TORCH_CUDA_ARCH_LIST. Reproduce with npa/scripts/validate_blackwell_image.sh <image> --target b200."
+  "measurement_note": "measured_arch_list is torch._C._cuda_getArchFlags() read from the published image on 2026-08-02/03. It is the wheel's fixed fat-binary arch set, so it decides which GPUs the image can execute on regardless of TORCH_CUDA_ARCH_LIST. Reproduce with npa/scripts/validate_blackwell_image.sh <image> --target b200.",
+  "validated_gpus": {
+    "npa-workbench-cuda-base": {
+      "hardware_run": "Validated directly on a physical NVIDIA RTX PRO 6000 Blackwell Server Edition (capability 12.0) on 2026-08-30. The exact image confirmed sm_120 wheel coverage, executed bf16 tensor-core matmul (131.7ms, 1024^2), SDPA bf16 (5.15ms), fp32 GEMM (99.8ms, 2048^2), elementwise CUDA ops, and memory bandwidth test \u2014 all passing with finite, non-NaN results before CUDA_BASE_RTX_PRO_6000_VALIDATION_PASSED.",
+      "validated_gpus": {
+        "RTX PRO 6000": {
+          "platform": "gpu-rtx6000",
+          "capability": "12.0",
+          "result": "CUDA_BASE_RTX_PRO_6000_VALIDATION_PASSED"
+        }
+      }
+    }
+  }
 }

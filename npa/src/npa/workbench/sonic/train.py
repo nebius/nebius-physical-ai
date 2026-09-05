@@ -6,6 +6,10 @@ That is what makes SONIC usable as a stage of an ``npa.workflow``: the workflow
 already holds a GPU, so a stage that submits *more* infrastructure both needs
 credentials the job does not have and doubles the spend.
 
+If the entrypoint trainer is present but Vulkan is unavailable (e.g. on
+compute-only driver nodes), the function falls back to the reference-locomotion
+trainer automatically so that a real checkpoint is always produced on GPU hardware.
+
 Two trainers, picked by what the container actually ships:
 
 ``sonic-entrypoint``
@@ -115,6 +119,36 @@ def resolve_entrypoint(explicit: str = "") -> str:
     return str(path) if path.is_file() and os.access(path, os.X_OK) else ""
 
 
+def _vulkan_available() -> bool:
+    """Return True when the host has a working Vulkan ICD for the NVIDIA GPU.
+
+    Omniverse Kit (used by Isaac Lab for URDF→USD conversion and rendering)
+    requires Vulkan. On compute-only driver installations (common on managed
+    Kubernetes nodes), the Vulkan ICD and GL libraries are absent even though
+    CUDA works fine. This check probes the Vulkan loader so the caller can
+    fall back to the reference locomotion trainer instead of crashing inside
+    a proprietary Omniverse extension that cannot be fixed from NPA.
+    """
+
+    try:
+        import ctypes
+        import ctypes.util
+
+        lib_name = ctypes.util.find_library('vulkan')
+        if lib_name is None:
+            return False
+        lib = ctypes.CDLL(lib_name)
+        if not hasattr(lib, 'vkCreateInstance'):
+            return False
+        instance = ctypes.c_void_p()
+        create_info = (ctypes.c_char * 512)()
+        rc = lib.vkCreateInstance(create_info, None, ctypes.byref(instance))
+        return rc == 0  # VK_SUCCESS
+    except Exception:
+        return False
+
+
+
 def train_local(
     *,
     output_path: str,
@@ -142,6 +176,20 @@ def train_local(
         raise SonicTrainError(f"--num-envs must be positive, got {num_envs}")
 
     resolved_entrypoint = resolve_entrypoint(entrypoint) if allow_entrypoint else ""
+
+    if resolved_entrypoint and not _vulkan_available():
+        import warnings
+
+        warnings.warn(
+            'Vulkan is not available on this host; the SONIC entrypoint trainer '
+            'requires Vulkan for Omniverse Kit (URDF→USD conversion). Falling '
+            'back to the reference-locomotion trainer, which produces a real '
+            'checkpoint usable by sonic export and sonic eval.',
+            stacklevel=2,
+        )
+        resolved_entrypoint = ''
+
+
     with tempfile.TemporaryDirectory(prefix="npa-sonic-train-") as tmp:
         work_dir = Path(tmp)
         if resolved_entrypoint:
