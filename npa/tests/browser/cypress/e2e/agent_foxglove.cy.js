@@ -627,6 +627,8 @@ describe("NPA agent UI — embedded Foxglove viewer", () => {
 
   it("keeps the exact selected MCAP open when its card rerenders during preparation", () => {
     const config = stubFoxgloveApis();
+    let releaseExport;
+    let originalCard;
     const runRef = "npa1_mock_non_stock";
     const key = `${NON_STOCK_RUN_ID}/reports/sim2real.mcap`;
     const s3Uri = `s3://mock/${key}`;
@@ -637,8 +639,16 @@ describe("NPA agent UI — embedded Foxglove viewer", () => {
       s3Uri,
     );
     cy.intercept("POST", "/api/foxglove/export", (request) => {
-      applyExactArtifactConfig(config, exported);
-      request.reply({ delay: 900, statusCode: 200, body: exported });
+      // The rerender must happen during preparation. A fixed response delay
+      // can expire before the List click on CI, changing the resolved source
+      // and turning the next lookup into a legitimate inventory refresh.
+      return new Cypress.Promise((resolve) => {
+        releaseExport = () => {
+          applyExactArtifactConfig(config, exported);
+          request.reply({ statusCode: 200, body: exported });
+          resolve();
+        };
+      });
     }).as("rerenderedCardExport");
     cy.window().then((win) => {
       cy.stub(win, "open").as("rerenderedCardWindowOpen");
@@ -653,12 +663,19 @@ describe("NPA agent UI — embedded Foxglove viewer", () => {
     cy.wait("@nonStockArtifactList");
     cy.get(`button[data-action="open-foxglove-artifact"][data-key="${key}"]`)
       .should("be.enabled")
+      .then(($card) => { originalCard = $card[0]; })
       .click();
+    cy.wrap(null).should(() => expect(releaseExport, "export preparation started").to.be.a("function"));
     // A normal same-run cache-backed render replaces the card DOM node while
     // the immutable run/ref/key export remains in flight. It must not refetch
     // an inventory that is already complete.
     cy.get("#artifactLoadRunArtifacts").click();
     cy.get("@nonStockArtifactList.all").should("have.length", 1);
+    cy.get(`button[data-action="open-foxglove-artifact"][data-key="${key}"]`).should(($card) => {
+      expect($card[0], "the same selected MCAP has a replacement card").not.to.equal(originalCard);
+      expect($card).to.have.attr("aria-busy", "true");
+    });
+    cy.then(() => releaseExport());
     cy.wait("@rerenderedCardExport");
     expectMockAppState("ready");
     cy.get("#viewerPaneFoxglove")
