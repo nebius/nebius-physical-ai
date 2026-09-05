@@ -256,7 +256,16 @@ def _canonical_json(payload: dict[str, Any]) -> str:
 
 
 def _private_replacements(config: DatasetConfig) -> dict[str, str]:
-    replacements = {config.tenant_id: "<tenant-ref>", config.bucket: "<bucket-ref>"}
+    replacements = {
+        config.tenant_id: "<tenant-ref>",
+        config.bucket: "<bucket-ref>",
+        config.dataset_uri: "<uri-ref>",
+    }
+    prefix = config.prefix.strip("/")
+    if prefix:
+        # The configured prefix is private even when a tool reports it without
+        # its bucket, for example as part of a local configuration directory.
+        replacements[prefix] = "<private-ref>"
     configured = os.environ.get("NPA_AGENT_DATASET_REDACTION_FILE", "").strip()
     if configured:
         path = Path(configured).expanduser()

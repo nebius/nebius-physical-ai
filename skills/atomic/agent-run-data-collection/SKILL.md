@@ -64,7 +64,10 @@ Write a new immutable object for every episode:
 Never append by rewriting one shared JSONL object: concurrent S3 writers lose
 rows. Retrying the same finalized payload must resolve to the same object key;
 different payloads for one episode id remain visible and must be treated as a data
-quality conflict rather than overwritten.
+quality conflict rather than overwritten. A sanitized correction does not
+supersede an existing immutable claim: retain it pending and exclude the whole
+conflicted episode from training until explicit data-quality reconciliation. A
+delivery receipt proves byte delivery, not privacy or training eligibility.
 
 Freeze the canonical raw record once with `collection.status=pending`. Its bytes
 and content hash never change during delivery or retry. After exact S3
@@ -117,9 +120,11 @@ datasets separate, and never train on evaluation or held-out runs.
 
 The runtime removes whole private-key blocks, credential fields/environment
 payloads, data URIs, private URI paths, concrete resource IDs and addresses,
-including identifiers used as mapping keys. Unknown objects and inline bytes
-are rejected rather than stringified. For customer names or other private text
-that has no recognizable credential/infrastructure shape, configure
+including identifiers used as mapping keys. Redact the configured dataset URI
+and its nonempty prefix even when the prefix appears alone as a directory name
+or mapping key; checking only complete URIs misses those observations. Unknown
+objects and inline bytes are rejected rather than stringified. For customer names
+or other private text that has no recognizable credential/infrastructure shape, configure
 `NPA_AGENT_DATASET_REDACTION_FILE` to an owner-only JSON file containing
 `{"literals": ["<private value>"]}`. Resolve those values privately; never commit
 the file or rely on pattern matching to identify arbitrary customer data.

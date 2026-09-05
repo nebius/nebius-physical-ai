@@ -852,3 +852,92 @@ def test_recognizable_unlabelled_tokens_never_serialize(dataset_env: None, tmp_p
         if pending else b"".join(s3.objects.values()).decode()
     )
     assert all(token not in body for token in tokens)
+
+
+@pytest.mark.parametrize("pending", [False, True])
+@pytest.mark.parametrize("prefix", ["synthetic-private-prefix", "synthetic-collection/private-prefix"])
+def test_configured_dataset_uri_and_bare_prefix_never_serialize(
+    dataset_env: None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    pending: bool, prefix: str,
+) -> None:
+    uri = f"s3://test-bucket/{prefix}/"
+    monkeypatch.setenv("NPA_AGENT_DATASET_URI", uri)
+    digest = hashlib.sha256(b"unrelated safe artifact").hexdigest()
+    observation = {
+        "message": f"config directory /tmp/operator/{prefix}; destination {uri}",
+        "artifact_sha256": digest,
+        "unrelated": "safe unchanged observation",
+        prefix: "bare-prefix-key-value",
+        "<private-ref>": "existing-placeholder-key-value",
+        uri: "uri-key-value",
+    }
+    events = [{"sequence": 0, "observation": observation}]
+    s3 = FakeS3()
+    s3.fail_writes = pending
+    expected_status = CollectionStatus.PENDING if pending else CollectionStatus.COLLECTED
+    assert _emit(FakeStorage(s3), request=f"inspect {prefix} at {uri}", events=events)[0] == expected_status
+    if pending:
+        path = next((tmp_path / "outbox").glob("*.json"))
+        serialized = path.read_bytes()
+        row = json.loads(serialized)["payload"]
+    else:
+        serialized = next(body for key, body in s3.objects.items() if "/episodes/" in key)
+        row = json.loads(serialized)
+    for forbidden in (prefix, uri, "test-bucket"):
+        assert forbidden.encode() not in serialized
+    assert row["scope"]["tenant_id"] == "tenant-test"
+    assert serialized.count(b"tenant-test") == 1
+    safe = row["trajectory"][0]["observation"]
+    assert safe["artifact_sha256"] == digest
+    assert safe["unrelated"] == observation["unrelated"]
+    assert len(safe) == len(observation)
+    assert {"bare-prefix-key-value", "existing-placeholder-key-value", "uri-key-value"} <= set(safe.values())
+    assert any(key.startswith("<private-ref>-") for key in safe)
+    # A retry must resolve to the same finalized bytes and immutable key.
+    before = dict(s3.objects) if not pending else {path.name: serialized}
+    assert _emit(FakeStorage(s3), request=f"inspect {prefix} at {uri}", events=events)[0] == expected_status
+    after = dict(s3.objects) if not pending else {item.name: item.read_bytes() for item in (tmp_path / "outbox").glob("*.json")}
+    assert after == before
+
+
+def test_empty_dataset_prefix_does_not_redact_unrelated_values(dataset_env: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("NPA_AGENT_DATASET_URI", "s3://test-bucket/")
+    s3 = FakeS3()
+    assert _emit(FakeStorage(s3), request="safe unchanged request")[0] == CollectionStatus.COLLECTED
+    row = next(json.loads(body) for key, body in s3.objects.items() if key.startswith("episodes/"))
+    assert row["request"]["content"] == "safe unchanged request"
+
+
+def test_corrected_prefix_redaction_preserves_original_and_reports_conflict(
+    dataset_env: None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+) -> None:
+    from npa.agent_backend import trajectory
+
+    prefix = "synthetic-private-prefix"
+    monkeypatch.setenv("NPA_AGENT_DATASET_URI", f"s3://test-bucket/{prefix}")
+    replacements = trajectory._private_replacements
+
+    def legacy_replacements(config):
+        result = replacements(config)
+        result.pop(config.prefix, None)
+        result.pop(config.dataset_uri, None)
+        return result
+
+    s3 = FakeS3()
+    events = [{"sequence": 0, "observation": {"config_directory": f"/tmp/{prefix}"}}]
+    with monkeypatch.context() as legacy:
+        legacy.setattr(trajectory, "_private_replacements", legacy_replacements)
+        assert _emit(FakeStorage(s3), events=events)[0] == CollectionStatus.COLLECTED
+    original = dict(s3.objects)
+    original_raw = next(body for key, body in original.items() if "/episodes/" in key)
+    assert prefix.encode() in original_raw
+
+    assert _emit(FakeStorage(s3), events=events)[0] == CollectionStatus.PENDING
+    assert "content conflict" in caplog.text
+    assert all(s3.objects[key] == body for key, body in original.items())
+    assert len(_episode_payloads(s3)) == 2
+    envelope_bytes = next((tmp_path / "outbox").glob("*.json")).read_bytes()
+    assert prefix.encode() not in envelope_bytes
+    envelope = json.loads(envelope_bytes)
+    assert envelope["failure"] == "episode_conflict"
+    assert len([key for key in s3.objects if "/receipts/" in key]) == 1
