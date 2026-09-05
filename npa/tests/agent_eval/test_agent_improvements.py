@@ -123,6 +123,40 @@ def test_dedupe_occurrences_restart_and_changed_signature(store, tmp_path):
     assert len(history["occurrences"]) == 2 and len(history["events"]) == 2
 
 
+def test_private_observation_key_collisions_preserve_every_value(tmp_path):
+    literal = "canary-private"
+    store = _store(tmp_path, literals=(literal,))
+    # Include lookalikes of both legacy and current generated key suffixes.
+    suffixes = (hashlib.sha256(json.dumps(literal).encode()).hexdigest()[:12],
+                hashlib.sha256(literal.encode()).hexdigest()[:12])
+    evidence = {literal: "original", **{
+        "<private-ref>-" + suffix: "lookalike-" + str(index)
+        for index, suffix in enumerate(suffixes)
+    }}
+    item = _observation(store, evidence={"nested": evidence})
+    persisted = store.history(item["id"])["occurrences"][0]["evidence"]["nested"]
+    assert len(persisted) == len(evidence)
+    assert sorted(persisted.values()) == sorted(evidence.values())
+    assert literal not in json.dumps(persisted)
+    assert store._safe(persisted) == persisted
+
+
+def test_private_marker_literal_keeps_validation_receipts_reusable(store):
+    store.private_literals = ("private",)
+    claim, ownership = _claim(store)
+    candidate = store.begin_candidate(claim["id"], changed_files=["src/adapter.py"], **ownership)
+    completed = subprocess.run([sys.executable, "-c", "print('private check passed')"],
+                               capture_output=True, check=True)
+    reference = store.write_validation_receipt(candidate, check="reproducer",
+                                               completed=completed, report=completed.stdout)
+    result = store.record_validation(claim["id"], evidence_ref=reference, **ownership)
+    assert result["state"] == "claimed"  # The other required check remains outstanding.
+    receipt = json.loads((store.evidence_directory / (reference + ".json")).read_text())
+    report = (store.evidence_directory / (receipt["report_ref"] + ".txt")).read_text()
+    assert report == "<private-ref> check passed\n"
+    assert store._safe(report) == report
+
+
 def _process_claim(root, item_id, version, worker):
     store = _store(root)
     try:

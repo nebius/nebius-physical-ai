@@ -69,8 +69,8 @@ Existing broad grants are not removed automatically.
    Bootstrap the authorized checkout's own virtualenv before operating it.
    `NPA_CONFIG_DIR` selects local config, credentials, cluster state, agent auth,
    workbench Terraform directories, and the default Terraform plugin cache.
-   Set it before importing NPA. A detached run should use a private directory
-   and select only its own project stanza and authorized credentials. Provider
+   Set it before importing NPA. Concurrent operators should use separate private
+   directories with the selected project stanza and authorized credentials. Provider
    calls honor the selected profile per command; deploying an agent does not
    activate or rewrite the host's shared default profile. Keep explicit
    operation-journal and SkyPilot isolation and Fleet `work_root` settings when
