@@ -122,8 +122,7 @@ seconds while the provider job continues pulling its image. `IMAGE_PULLING` is
 then mapped to `unknown`, and the supervisor can exit 1 even though the exact job
 continues. Preserve its identity and inspect that same provider job and output
 prefix before retrying; do not submit another training job solely because the
-CLI exited. See the [audit's runtime recovery findings](../../architecture/npa-workbench-usability-audit.md)
-for the observed limitation and required fix.
+CLI exited.
 
 ## Use the real Franka data too
 

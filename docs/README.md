@@ -42,7 +42,6 @@ details, use [Install npa](install.md).
 | [cli/README.md](cli/README.md) | CLI command reference index |
 | [cli-errors.md](cli-errors.md) | End-user CLI error formatting, exit codes, and JSON error output |
 | [sdk/errors.md](sdk/errors.md) | Typed exceptions for programmatic SDK consumers and agents |
-| [architecture/npa-workbench-usability-audit.md](architecture/npa-workbench-usability-audit.md) | Maintainer audit of documentation and usability: implemented fixes, evidence, priorities, and acceptance criteria |
 | [testing/e2e-serverless.md](testing/e2e-serverless.md) | E2E test conventions for serverless workloads |
 | [testing/e2e.md](testing/e2e.md) | General E2E test conventions |
 | [testing/dev-vm-daily.md](testing/dev-vm-daily.md) | Daily tests run on the dev VM over SSH from GitHub Actions |
