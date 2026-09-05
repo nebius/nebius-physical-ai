@@ -54,10 +54,12 @@ RUN curl --fail --location https://developer.download.nvidia.com/compute/nvshmem
 
 # Official archive hashes are checked before extraction. Keep upstream source and
 # robot/dataset licenses in the image; no ambient repository or credential cache.
+COPY docker/workbench/curobo/correct_package_metadata.py /opt/correct_package_metadata.py
 RUN curl --fail --location https://codeload.github.com/NVlabs/curobo/tar.gz/8e734f3ced1df898990bcd92de40abce475907db -o /tmp/curobo.tar.gz \
     && echo 'ea6d8310b1ab109ceaac046b15b4de31ecb7c3b52c2a4c762c58316c81cbbf2f  /tmp/curobo.tar.gz' | sha256sum -c - \
     && mkdir /opt/curobo && tar -xzf /tmp/curobo.tar.gz --strip-components=1 -C /opt/curobo \
     && printf '%s\n' 8e734f3ced1df898990bcd92de40abce475907db > /opt/curobo/NPA_SOURCE_REVISION \
+    && python /opt/correct_package_metadata.py /opt/curobo > /usr/share/doc/npa-curobo/metadata-correction.json \
     && SETUPTOOLS_SCM_PRETEND_VERSION=0.8.0 pip install --no-deps --no-build-isolation --no-cache-dir /opt/curobo \
     && curl --fail --location https://codeload.github.com/fishbotics/robometrics/tar.gz/81e3d1d605de84100d8ab880b43096aba221a48b -o /tmp/robometrics.tar.gz \
     && echo 'ce62a3e4a721831054a533fa3646e4a6043f3eb0b38065a623edfec51ff9e172  /tmp/robometrics.tar.gz' | sha256sum -c - \

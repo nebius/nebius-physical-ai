@@ -8,6 +8,16 @@ No published image or measured performance is claimed by this record.
   `8e734f3ced1df898990bcd92de40abce475907db`, Apache-2.0. The image retains its
   `LICENSE`, `LICENSE_ASSETS` and all source/asset attributions under `/opt/curobo`.
   V1's research license does not apply to this separately pinned V2 artifact.
+- Packaging correction: that release's `project.classifiers[5]` names the
+  unregistered `Topic :: Scientific/Engineering :: Robotics` classifier. The
+  pinned setuptools/Trove validator rejects it. `correct_package_metadata.py`
+  verifies the source revision and original `pyproject.toml` SHA256, replaces
+  that one classifier with the registered `Topic :: Scientific/Engineering`
+  parent, and verifies the complete corrected metadata SHA256. It adds a
+  prominent changed-file comment while preserving upstream copyright/license
+  notices. `/usr/share/doc/npa-curobo/metadata-correction.json` records the pinned
+  archive hash and metadata hashes before/after the correction. The normal
+  validator and all dependency pins remain enabled and unchanged.
 - Robot assets: Franka assets are Apache-2.0; included UR/Unitree assets carry
   BSD-3-Clause terms described by upstream `LICENSE_ASSETS`. No asset notice is
   removed during packaging.
@@ -79,7 +89,12 @@ Official sources: [cuRobo license](https://github.com/NVlabs/curobo/blob/8e734f3
 [NVSHMEM product license](https://developer.download.nvidia.com/compute/nvshmem/redist/libnvshmem/LICENSE.txt),
 [container license](https://gitlab.com/nvidia/container-images/cuda/-/blob/master/NGC-DL-CONTAINER-LICENSE).
 
-The source install does not alter vendor code. NPA invokes upstream's benchmark
-configuration loader and MotionPlanner, and records its own factual metrics;
+Metadata sources: [pinned upstream package metadata](https://github.com/NVlabs/curobo/blob/8e734f3ced1df898990bcd92de40abce475907db/pyproject.toml),
+[PyPA classifier specification](https://packaging.python.org/en/latest/specifications/pyproject-toml/#classifiers),
+[PyPI classifier registry](https://pypi.org/classifiers/).
+
+The source install makes only the documented package metadata correction;
+vendor runtime code, robot assets and dataset bytes are unchanged. NPA invokes
+upstream's benchmark configuration loader and MotionPlanner, and records its own factual metrics;
 it does not reproduce upstream's placeholder end-effector path statistics or
 convert inverse-dynamics failures to zero energy.
