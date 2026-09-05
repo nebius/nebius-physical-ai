@@ -22,6 +22,12 @@ MANUAL_GATES = {
     "NPA_FLEET_PROJECT_VERIFY_SPEC": (
         "read-only Fleet identity checks require an owner-private exact project spec"
     ),
+    "NPA_FLEET_RTX_VERIFY_SPEC": (
+        "read-only RTX configuration checks require an owner-private Fleet spec"
+    ),
+    "NPA_FLEET_RTX_KUBECONFIGS": (
+        "read-only RTX checks require exact operator-selected cluster kubeconfigs"
+    ),
     "NPA_BURST_E2E_IMAGE": "operator supplies the exact immutable burst validation image",
     "NPA_E2E_BURST": "full burst GPU coverage is an explicitly selected live suite",
     "NPA_BYOF_LIVE_CONTAINER": "BYOF executes third-party source only after operator review",

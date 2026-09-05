@@ -15,12 +15,10 @@ pytestmark = pytest.mark.e2e
 
 
 def test_fleet_rtx_driver_config_reaches_ready_pods() -> None:
-    spec_path = os.environ.get("NPA_FLEET_RTX_VERIFY_SPEC")
-    configs_path = os.environ.get("NPA_FLEET_RTX_KUBECONFIGS")
-    if not spec_path or not configs_path:
+    if not os.environ.get("NPA_FLEET_RTX_VERIFY_SPEC") or not os.environ.get("NPA_FLEET_RTX_KUBECONFIGS"):
         pytest.skip("supply an owner-private Fleet spec and project-key kubeconfig mapping")
-    spec = load_spec(Path(spec_path))
-    configs = json.loads(Path(configs_path).read_text())
+    spec = load_spec(Path(os.environ["NPA_FLEET_RTX_VERIFY_SPEC"]))
+    configs = json.loads(Path(os.environ["NPA_FLEET_RTX_KUBECONFIGS"]).read_text())
     assert spec.profile
     env = dict(os.environ)
     for key in ("NEBIUS_IAM_TOKEN", "NPA_NEBIUS_IAM_TOKEN", "TF_VAR_iam_token"):
