@@ -3097,7 +3097,14 @@ def _chat_with_resilience(
     if requested_model:
         ladder = [requested_model, *[item for item in ladder if item != requested_model]]
     if not ladder:
-        ladder = list(configured) or [requested_model] if requested_model else list(configured)
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                f"No eligible model is configured for the '{{tier}}' tier. "
+                "Update the deployment model allowlist to include a model that "
+                "supports this input, or select an explicit model."
+            ),
+        )
     errors: list[str] = []
     for provider in providers:
         for model in ladder:

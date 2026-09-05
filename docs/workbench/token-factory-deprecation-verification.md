@@ -59,6 +59,15 @@ Two differences required more than replacing model strings:
   continues honoring explicit `response_format`. No malformed score is repaired
   or promoted into a successful result.
 
+The hosted VLM judge requires a full JSON object, boolean `success`, a finite
+numeric score in `[0, 1]`, a nonempty rationale, and `finish_reason="stop"`.
+Duplicate keys and fenced or prefixed JSON fail validation. Its `model` result
+field preserves the requested model or explicit alias; `served_model` records
+the provider's actual response identity. The two public replacement model IDs
+must match exactly. Custom aliases may resolve to another nonempty served model;
+self-hosted parsing and score overrides retain their existing behavior, with
+`served_model=null` when no provider identity was verified.
+
 Model-list membership and upstream model capability are insufficient proof:
 `Qwen/Qwen3.5-397B-A17B` was listed and its publisher describes a multimodal
 model, but this hosted deployment rejected an image request with HTTP 400,

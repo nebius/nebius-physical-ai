@@ -210,6 +210,7 @@ def test_live_visual_judge_distinguishes_completion(tmp_path: Path, inside: bool
     write_result(asdict(result), result_uri=result.result_uri)
     saved = json.loads(output.read_text())
     assert saved["model"] == DEFAULT_VISION_MODEL
+    assert saved["served_model"] == DEFAULT_VISION_MODEL
     assert saved["frame_count"] == 3
     assert saved["passed"] is inside
     assert saved["rationale"].strip()

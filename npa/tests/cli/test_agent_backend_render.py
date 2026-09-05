@@ -242,6 +242,23 @@ def test_rendered_backend_routes_models_and_parameters_without_overriding_config
     )
     assert calls[-1]["model"] == "Qwen/Qwen2.5-VL-72B-Instruct"
 
+    # An empty eligible vision ladder must not restore text-only configured
+    # models after routing deliberately excludes them. Explicit choices still
+    # remain authoritative, including custom endpoints absent from /models.
+    monkeypatch.setattr(module, "LLM_MODELS_ENV", "nvidia/Nemotron-3_5-Lightning")
+    monkeypatch.setattr(module, "_available_llm_models", lambda: ["nvidia/Nemotron-3_5-Lightning"])
+    calls.clear()
+    with pytest.raises(module.HTTPException, match="No eligible model") as raised:
+        module._chat_with_resilience(messages=[], tier="vision")
+    assert raised.value.status_code == 503
+    assert "model allowlist" in raised.value.detail
+    assert calls == []
+    for requested in ("nvidia/Nemotron-3_5-Lightning", "custom/vision"):
+        _, _, selected = module._chat_with_resilience(
+            messages=[], tier="vision", requested_model=requested
+        )
+        assert selected == calls[-1]["model"] == requested
+
     # Each fallback needs the selected model's own thinking parameter.
     monkeypatch.setattr(module, "LLM_MODELS_ENV", "")
     monkeypatch.setattr(module, "_available_llm_models", lambda: [])
