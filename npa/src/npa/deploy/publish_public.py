@@ -39,6 +39,7 @@ from __future__ import annotations
 import argparse
 import base64
 import hashlib
+import http.client
 import json
 import os
 import re
@@ -47,6 +48,7 @@ import subprocess
 import sys
 import tempfile
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -1102,45 +1104,55 @@ def _registry_host(ref: str) -> str:
     return ref.split("/", 1)[0]
 
 
-def anonymous_pull_ok(
-    ref: str, *, timeout: float = _ANON_TIMEOUT_SECONDS
+def _anonymous_manifest_digest(
+    ref: str, *, timeout: float, require_explicit_reference: bool
 ) -> tuple[bool, str]:
-    """Whether ``ref`` can be pulled with NO credentials at all.
+    """Read and verify one manifest without Docker/crane or operator credentials."""
+    from npa.orchestration.skypilot.image_bootstrap_contract import (
+        ImageBootstrapContractError,
+        parse_oci_reference,
+    )
 
-    This is the property that actually matters to an external consumer, and the only one
-    that distinguishes "pushed" from "published". Implemented with plain HTTP rather than
-    a docker/crane call so it cannot accidentally reuse an ambient login and report a
-    private package as public -- the whole point is to check the unauthenticated path.
-    """
-    host = _registry_host(ref)
-    remainder = ref[len(host) + 1 :]
-    repository, _, reference = remainder.rpartition(":")
-    if not repository:  # digest-style or malformed
-        repository, reference = remainder, "latest"
+    try:
+        parsed = parse_oci_reference(ref)
+        authority = urllib.parse.urlsplit("https://" + parsed.registry)
+        # Validate the authority before constructing either registry request.
+        port = authority.port
+        if (not authority.hostname or authority.username or authority.password
+                or authority.path or authority.query or authority.fragment):
+            raise ValueError
+        component = r"[a-z0-9]+(?:(?:[._]|__|[-]+)[a-z0-9]+)*"
+        if not re.fullmatch(component + r"(?:/" + component + r")*", parsed.repository):
+            raise ValueError
+        if parsed.tag and not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}", parsed.tag):
+            raise ValueError
+    except (ImageBootstrapContractError, ValueError):
+        return False, "invalid registry-qualified image reference"
+    if require_explicit_reference and not (parsed.tag or parsed.digest):
+        return False, "release reference must use a tag or digest"
+    reference = parsed.digest or parsed.tag or "latest"
 
     token = ""
-    if host == "ghcr.io":
-        # GHCR usually hands an anonymous bearer token to anyone and lets the manifest
-        # request decide. But when the package does not exist or is private it can refuse
-        # at the token endpoint instead, so a 401/403 here is a verdict about the package,
-        # not a transient failure -- report it as such rather than as "could not get a
-        # token", which reads like a network problem and invites a pointless retry.
+    if authority.hostname == "ghcr.io" and port in (None, 443):
+        # Anonymous bearer credentials are minted only for the repository pull
+        # scope. A digest or optional tag must never become part of that scope.
+        url = "https://ghcr.io/token?" + urllib.parse.urlencode({
+            "scope": f"repository:{parsed.repository}:pull", "service": "ghcr.io",
+        })
         try:
-            url = f"https://ghcr.io/token?scope=repository:{repository}:pull&service=ghcr.io"
-            with urllib.request.urlopen(url, timeout=timeout) as response:  # noqa: S310
-                token = json.loads(response.read()).get("token", "")
+            with urllib.request.urlopen(url, timeout=timeout) as response:  # noqa: S310 - fixed GHCR origin
+                payload = json.loads(response.read())
+            token = (payload.get("token") or payload.get("access_token")) if isinstance(payload, dict) else None
+            if not isinstance(token, str) or not token or any(character.isspace() for character in token):
+                return False, "anonymous token response is invalid"
         except urllib.error.HTTPError as exc:
-            if exc.code in (401, 403):
-                return False, (
-                    f"HTTP {exc.code} on the anonymous token request — the package is "
-                    f"private or does not exist yet"
-                )
-            return False, f"token request failed: HTTP {exc.code}"
-        except (urllib.error.URLError, json.JSONDecodeError, TimeoutError) as exc:
-            return False, f"token request failed: {exc}"
+            hint = " (package is private or does not exist yet)" if exc.code in (401, 403) else ""
+            return False, f"anonymous token request failed: HTTP {exc.code}{hint}"
+        except (OSError, http.client.HTTPException, json.JSONDecodeError, UnicodeError) as exc:
+            return False, f"anonymous token request failed: {exc}"
 
-    request = urllib.request.Request(  # noqa: S310 - https registry API
-        f"https://{host}/v2/{repository}/manifests/{reference}",
+    request = urllib.request.Request(  # noqa: S310 - validated HTTPS registry authority/path
+        f"https://{parsed.registry}/v2/{parsed.repository}/manifests/{reference}",
         method="GET",
         headers={
             "Accept": (
@@ -1154,14 +1166,37 @@ def anonymous_pull_ok(
     )
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
-            return response.status == 200, f"HTTP {response.status}"
+            if response.status != 200:
+                return False, f"HTTP {response.status}"
+            body = response.read()
+            if not body:
+                return False, "registry returned an empty manifest"
+            observed = "sha256:" + hashlib.sha256(body).hexdigest()
+            header = str(response.headers.get("Docker-Content-Digest") or "").strip()
+            if header and re.fullmatch(r"sha256:[0-9a-f]{64}", header) is None:
+                return False, "registry returned an invalid manifest digest header"
+            if header and header != observed:
+                return False, "registry manifest digest header does not match response body"
+            if parsed.digest and parsed.digest != observed:
+                return False, "registry manifest does not match requested digest"
+            return True, observed
     except urllib.error.HTTPError as exc:
-        hint = ""
-        if exc.code in (401, 403):
-            hint = " (package is private — set its visibility to Public in the package settings)"
+        hint = " (package is private — set its visibility to Public in the package settings)" if exc.code in (401, 403) else ""
         return False, f"HTTP {exc.code}{hint}"
-    except (urllib.error.URLError, TimeoutError) as exc:
+    except (OSError, http.client.HTTPException) as exc:
         return False, f"unreachable: {exc}"
+
+
+def anonymous_pull_ok(
+    ref: str, *, timeout: float = _ANON_TIMEOUT_SECONDS
+) -> tuple[bool, str]:
+    """Verify public manifest access and integrity without ambient credentials.
+
+    As with container runtimes, an untagged reference selects ``latest``. An
+    explicit digest always selects those exact bytes, including ``tag@digest``.
+    """
+    ok, detail = _anonymous_manifest_digest(ref, timeout=timeout, require_explicit_reference=False)
+    return (True, "HTTP 200") if ok else (False, detail)
 
 
 def verify_public(plan: list[PublishItem]) -> list[tuple[PublishItem, str]]:
@@ -1181,49 +1216,7 @@ def anonymous_digest(
 ) -> tuple[bool, str]:
     """Resolve an OCI manifest digest without consulting ambient credentials."""
 
-    host = _registry_host(ref)
-    remainder = ref[len(host) + 1 :]
-    repository, _, reference = remainder.rpartition(":")
-    if not repository:
-        return False, "release reference must use a tag"
-
-    token = ""
-    if host == "ghcr.io":
-        try:
-            url = f"https://ghcr.io/token?scope=repository:{repository}:pull&service=ghcr.io"
-            with urllib.request.urlopen(url, timeout=timeout) as response:  # noqa: S310
-                token = json.loads(response.read()).get("token", "")
-        except urllib.error.HTTPError as exc:
-            return False, f"anonymous token request failed: HTTP {exc.code}"
-        except (urllib.error.URLError, json.JSONDecodeError, TimeoutError) as exc:
-            return False, f"anonymous token request failed: {exc}"
-
-    request = urllib.request.Request(  # noqa: S310 - https registry API
-        f"https://{host}/v2/{repository}/manifests/{reference}",
-        method="GET",
-        headers={
-            "Accept": (
-                "application/vnd.oci.image.index.v1+json,"
-                "application/vnd.oci.image.manifest.v1+json,"
-                "application/vnd.docker.distribution.manifest.list.v2+json,"
-                "application/vnd.docker.distribution.manifest.v2+json"
-            ),
-            **({"Authorization": f"Bearer {token}"} if token else {}),
-        },
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
-            body = response.read()
-            digest = str(response.headers.get("Docker-Content-Digest") or "").strip()
-            if not digest:
-                digest = "sha256:" + hashlib.sha256(body).hexdigest()
-            if re.fullmatch(r"sha256:[0-9a-f]{64}", digest) is None:
-                return False, f"registry returned invalid digest {digest!r}"
-            return True, digest
-    except urllib.error.HTTPError as exc:
-        return False, f"HTTP {exc.code}"
-    except (urllib.error.URLError, TimeoutError) as exc:
-        return False, f"unreachable: {exc}"
+    return _anonymous_manifest_digest(ref, timeout=timeout, require_explicit_reference=True)
 
 
 def accepted_release_plan(*, target_registry: str) -> list[PublishItem]:

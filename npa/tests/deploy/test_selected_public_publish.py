@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
+import json
+import subprocess
+import urllib.error
+import urllib.parse
 import sys
 from pathlib import Path
 
@@ -248,7 +253,8 @@ def additive_registry(monkeypatch):
 
     module = _load_script()
     sha = "b" * 40
-    digest = "sha256:" + "a" * 64
+    body = b'{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","config":{},"layers":[]}'
+    digest = "sha256:" + hashlib.sha256(body).hexdigest()
     repository = "ghcr.io/nebius/nebius-physical-ai/npa-detection-training"
     source = repository + ":dev-" + sha
     target = repository + ":runtime-recovery-1"
@@ -262,20 +268,56 @@ def additive_registry(monkeypatch):
             return False, errors[ref]
         return (True, state[ref]) if ref in state else (False, "MANIFEST_UNKNOWN")
 
-    def copy(argv, **_):
-        assert argv[:2] == ["/fixture/crane", "copy"]
-        calls.append(argv)
-        state[argv[3]] = state[argv[2]]
+    def registry_process(argv, **_):
+        assert argv[0] == "/fixture/crane"
+        operation, ref = argv[1:3]
+        if operation == "copy":
+            calls.append(argv)
+            state[argv[3]] = state[ref]
+            return subprocess.CompletedProcess(argv, 0, "", "")
+        if operation == "config":
+            payload = {"config": {"Labels": {"org.opencontainers.image.revision": revision["value"]}}}
+            return subprocess.CompletedProcess(argv, 0, json.dumps(payload), "")
+        assert operation in {"digest", "manifest"}
+        ok, detail = lookup(ref)
+        return subprocess.CompletedProcess(argv, 0 if ok else 1,
+            (body.decode() if operation == "manifest" else detail) if ok else "", "" if ok else detail)
 
-    monkeypatch.setattr(publish_public, "_crane_digest", lookup)
-    monkeypatch.setattr(module, "_crane_digest", lookup)
-    monkeypatch.setattr(publish_public, "_crane_manifest_readable", lambda ref: lookup(ref))
+    class RegistryResponse:
+        status = 200
+
+        def __init__(self, payload, headers=None):
+            self.payload, self.headers = payload, headers or {}
+
+        def read(self):
+            return self.payload
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            pass
+
+    def registry_http(request, **_):
+        url = request if isinstance(request, str) else request.full_url
+        parsed = urllib.parse.urlsplit(url)
+        if parsed.path == "/token":
+            assert urllib.parse.parse_qs(parsed.query)["scope"] == ["repository:" + repository.removeprefix("ghcr.io/") + ":pull"]
+            return RegistryResponse(b'{"token":"fixture-anonymous-token"}')
+        assert request.headers.get("Authorization") == "Bearer fixture-anonymous-token"
+        prefix = "/v2/" + repository.removeprefix("ghcr.io/") + "/manifests/"
+        assert parsed.path.startswith(prefix)
+        reference = parsed.path.removeprefix(prefix)
+        ref = repository + ("@" if reference.startswith("sha256:") else ":") + reference
+        ok, detail = lookup(ref)
+        if not ok:
+            raise urllib.error.HTTPError(url, 404, detail, None, None)
+        return RegistryResponse(body, {"Docker-Content-Digest": detail})
+
     monkeypatch.setattr(publish_public.shutil, "which", lambda _: "/fixture/crane")
-    monkeypatch.setattr(publish_public.subprocess, "run", copy)
-    monkeypatch.setattr(publish_public, "anonymous_pull_ok", lookup)
-    monkeypatch.setattr(module, "anonymous_digest", lookup)
+    monkeypatch.setattr(publish_public.subprocess, "run", registry_process)
+    monkeypatch.setattr(publish_public.urllib.request, "urlopen", registry_http)
     monkeypatch.setattr(module, "_mark_copy_phase_complete", lambda: None)
-    monkeypatch.setattr(module, "_crane_json", lambda _: {"config": {"Labels": {"org.opencontainers.image.revision": revision["value"]}}})
     argv = [str(SCRIPT), "--tool", "detection-training", "--target", "ghcr.io/nebius/nebius-physical-ai", "--development-sha", sha, "--release-tag", "runtime-recovery-1", "--expected-source-digest", digest, "--mode", "publish"]
     monkeypatch.setattr(sys, "argv", argv)
     return module, state, calls, errors, revision, source, target, digest, argv
