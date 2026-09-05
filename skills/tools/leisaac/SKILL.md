@@ -149,14 +149,43 @@ extra, never `full` or core. Its wheel-bundled FFmpeg is excluded from the
 container; the image uses Debian FFmpeg. Keep coturn, pygame, aiortc, FFmpeg,
 and every other installed dependency represented accurately in notices.
 
+## Agent UI availability
+
+LeIsaac UI is off by default. Its sole opt-in is YAML boolean `true` at
+`projects.<project-alias>.agents.<agent-name>.ui.leisaac_enabled` in the
+operator's `~/.npa/config.yaml` (`$NPA_CONFIG_DIR/config.yaml` when configured).
+Absent/false, non-booleans (including `"true"` and `1`), and malformed sections
+remain disabled. Keep navigation and capability polling absent in that state;
+browser storage, URL parameters, and client-only enable controls cannot opt in.
+
+After editing the operator config, bootstrap the same agent with `npa agent
+bootstrap --project <alias> --name <name>` and reload open browser pages. The
+flag is rendered into static HTML, so service restarts or VM reboot alone do
+not apply config edits. Bootstrap preserves the nested UI setting across record
+updates. Enabling exposes the normal readiness flow without launching a runtime
+or bypassing authorization. The minimal YAML and full lifecycle are in
+`docs/workbench/leisaac-teleoperation.md`, under **What makes the tab appear**.
+
 ## Live agent UI verification
 
 Deploy or bootstrap the agent from the branch under test using `npa-agent` and
 `agent-fresh-operate`. Use only the HTTPS customer URL and owner-only auth file;
-never print credentials. At minimum verify authenticated `/api/health`, the
-LeIsaac tab/panel and unavailable state, status no-store behavior, secure
-transport labeling, and backend authorization. With an explicitly accepted,
-live LeIsaac run, also exercise connect/reconnect, controller contention,
+never print credentials. At minimum verify authenticated `/api/health` and both
+configuration states. Absent/false must produce no LeIsaac navigation or
+capability polling, including after restoring a historical localStorage opt-in.
+With boolean true, verify the normal tab/panel and unavailable state, actual
+readiness requests, status no-store behavior, secure transport labeling, and
+backend authorization. Exercise DOM interactions in Cypress, not only source
+string assertions. For temporary live configuration changes, preserve the
+operator's explicit opt-in or restore the false default after testing. With an
+existing authenticated deployment, run `npm run cy:live-access` from
+`npa/tests/browser` using protected `NPA_AGENT_BASE_URL`, `NPA_AGENT_USER`, and
+`NPA_AGENT_PASSWORD` environment values. It expects LeIsaac hidden; set
+`NPA_AGENT_EXPECT_LEISAAC=true` to assert a deployment already enabled through
+operator config. That test expectation does not enable the feature. Keep live
+output and screenshots only in access-controlled evidence outside Git.
+
+With an explicitly accepted live LeIsaac run, also exercise connect/reconnect, controller contention,
 motion and orbit, recorder transitions, finalized episode playback/ranges, and
 the live Cypress suite:
 
@@ -206,6 +235,7 @@ npa/.venv/bin/python -m pytest \
   npa/tests/workbench/test_leisaac_agent_relay.py \
   npa/tests/workbench/test_leisaac_paidf.py \
   npa/tests/cli/test_agent_leisaac.py \
+  npa/tests/cli/test_agent_ui_config.py \
   npa/tests/cli/test_agent_leisaac_bundles.py \
   npa/tests/cli/test_agent_leisaac_episodes.py \
   npa/tests/cli/test_leisaac_datachannel.py \
