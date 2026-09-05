@@ -2238,7 +2238,6 @@
         <button id="tabMain" class="main-tab" type="button" role="tab" aria-selected="true" aria-controls="panelChat" data-tab="main">Main</button>
         <button id="tabRerun" class="main-tab" type="button" role="tab" aria-selected="false" aria-controls="panelRerun" data-tab="rerun">View</button>
         <button id="tabVoxel" class="main-tab" type="button" role="tab" aria-selected="false" aria-controls="panelVoxel" data-tab="voxel51">Dataset &amp; provenance</button>
-        <button id="enableLeIsaac" class="main-tab" type="button" aria-pressed="false">Enable LeIsaac</button>
       </nav>
       <button id="chatDrawerToggle" class="btn btn-primary chat-fab" type="button" aria-expanded="false" aria-controls="panelChat" title="Open chat">
         <span class="chat-fab-icon" aria-hidden="true">
@@ -2744,35 +2743,10 @@
       let activeMainTab = "main";
       let chatDrawerOpen = false;
       const LEISAAC_CONTROL_READINESS_CONTRACT = "LEISAAC_CONTROL_READINESS_CONTRACT";
-      const LEISAAC_UI_STORAGE_KEY = "npa.agent.leisaac-ui-enabled.v1";
+      // Bootstrap renders this value from the operator's strict boolean config.
+      const LEISAAC_UI_ENABLED = {LEISAAC_UI_ENABLED};
       function leisaacUiEnabled() {
-        try {
-          return window.localStorage.getItem(LEISAAC_UI_STORAGE_KEY) === "1";
-        } catch (_err) {
-          return false;
-        }
-      }
-      function setLeIsaacUiEnabled(enabled) {
-        try {
-          if (enabled) window.localStorage.setItem(LEISAAC_UI_STORAGE_KEY, "1");
-          else window.localStorage.removeItem(LEISAAC_UI_STORAGE_KEY);
-        } catch (_err) { /* storage-disabled browsers remain default-off */ }
-        const enable = document.getElementById("enableLeIsaac");
-        if (enable) {
-          enable.hidden = Boolean(enabled);
-          enable.setAttribute("aria-pressed", enabled ? "true" : "false");
-        }
-      }
-      async function enableLeIsaacUi() {
-        setLeIsaacUiEnabled(true);
-        leisaacCapability = unavailableLeIsaacStatus("");
-        ensureLeIsaacTab(leisaacCapability);
-        await refreshLeIsaacCapability();
-        await activateMainTab("leisaac");
-      }
-      async function disableLeIsaacUi() {
-        setLeIsaacUiEnabled(false);
-        removeLeIsaacTab();
+        return LEISAAC_UI_ENABLED === true;
       }
       function updateChatQueueBadge() {
         const badge = document.getElementById("chatQueueBadge");
@@ -6558,13 +6532,6 @@
           }
           const retry = panel.querySelector("#leisaacRetry");
           if (retry) retry.addEventListener("click", () => refreshLeIsaacCapability(String((leisaacCapability || {}).run_id || "")).catch(() => null));
-          const disable = document.createElement("button");
-          disable.id = "disableLeIsaac";
-          disable.className = "btn";
-          disable.type = "button";
-          disable.textContent = "Disable LeIsaac UI";
-          disable.addEventListener("click", () => disableLeIsaacUi().catch(() => null));
-          panel.appendChild(disable);
           const episodeRetry = panel.querySelector("#leisaacEpisodesRetry");
           const episodeApply = panel.querySelector("#leisaacEpisodesApply");
           if (episodeRetry) episodeRetry.addEventListener("click", () => retryLeIsaacEpisodeSurface().catch((err) => showToast(String(err), "error")));
@@ -7598,7 +7565,6 @@
         // Viewer state is optional. A browser-specific DOM/WebGL failure here
         // must never abort the rest of this monolithic static-control pass.
         initializeUiFeature("Initial viewer", () => setRenderMode("rerun"));
-        bindClick("enableLeIsaac", enableLeIsaacUi, "Enable LeIsaac UI");
         bindClick("downloadMcap", downloadMcap);
         bindClick("foxgloveOpenWeb", openFoxgloveWeb);
         initializeUiFeature("Foxglove Web action", syncFoxgloveWebAction);
@@ -15890,11 +15856,8 @@
           activeRunId: () => activeRunId,
           selectActiveRunId,
           leisaacUiEnabled,
-          enableLeIsaacUi,
-          disableLeIsaacUi,
         };
         try {
-          setLeIsaacUiEnabled(leisaacUiEnabled());
           if (leisaacUiEnabled()) {
             leisaacCapability = unavailableLeIsaacStatus("");
             ensureLeIsaacTab(leisaacCapability);

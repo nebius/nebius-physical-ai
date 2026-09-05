@@ -203,6 +203,46 @@ service account** granted the tenant `editors` role. It mints short-lived IAM
 tokens from the Nebius VM metadata endpoint on demand, so **no static key is
 stored on the VM**.
 
+## Optional LeIsaac UI
+
+LeIsaac navigation and capability polling are disabled by default. Enable them
+for one agent with the exact key
+`projects.<project-alias>.agents.<agent-name>.ui.leisaac_enabled` in the
+**operator machine's** `~/.npa/config.yaml` (`$NPA_CONFIG_DIR/config.yaml` when
+that directory is configured). Merge this minimal example into the existing
+project and agent record:
+
+```yaml
+projects:
+  my-project:
+    agents:
+      agent:
+        ui:
+          leisaac_enabled: true
+```
+
+Only a YAML boolean `true` enables the UI. The default is `false`; an absent
+key, malformed section, string such as `"true"`, or number such as `1` keeps
+it disabled. Browser storage and URL parameters cannot enable it.
+
+Apply either an enable or disable change to the existing deployment with:
+
+```bash
+npa agent bootstrap --project my-project --name agent
+```
+
+Bootstrap reads the operator config, regenerates the served HTML, and restarts
+the agent services. It preserves this setting across later record updates.
+Editing the config or restarting nginx/the backend alone does not regenerate
+the static UI; bootstrap again, then reload already-open browser pages. Set the
+key to `false` or remove it and repeat that lifecycle to hide LeIsaac again.
+
+When enabled, the normal LeIsaac tab appears and checks readiness. Enabling its
+UI does not launch a simulator or grant additional access. Existing runtime,
+transport, and controller authorization still apply. See
+[LeIsaac teleoperation](workbench/leisaac-teleoperation.md) for operation and
+immutable episode browsing.
+
 ## What the agent can see
 
 The agent is **tenant-aware for read-only discovery**. Its *Agent access* panel
@@ -227,9 +267,12 @@ mutation boundaries.
 1,000 objects) — never the whole run. A truncated response includes
 `next_cursor`; repeat the request with that cursor plus the returned
 `resolved_prefix` and `bucket` (as `resource_bucket`) until `truncated=false`.
-The bundled UI already follows this contract. Older consumers that assumed a
-complete array must migrate to cursor following: page-local counts and
-`preferred` selection describe only the page you were handed.
+The bundled UI initially loads only the first page; **List artifacts** follows
+the remaining cursors before selecting a run-wide preferred recording. Filter
+and sort changes reuse the pages already loaded for that exact source. Older
+consumers that assumed a complete array must migrate to cursor following:
+page-local counts and `preferred` selection describe only the page you were
+handed.
 
 ## Related
 

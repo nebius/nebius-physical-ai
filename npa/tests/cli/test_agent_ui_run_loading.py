@@ -9,7 +9,7 @@ def _ui() -> str:
     return rendered_agent_ui_html()
 
 
-def test_leisaac_ui_is_default_off_with_persisted_explicit_opt_in() -> None:
+def test_leisaac_ui_uses_only_server_rendered_configuration() -> None:
     ui = _ui()
     start = ui.split("function startApp()", 1)[1].split(
         'if (document.readyState === "loading")', 1
@@ -18,13 +18,13 @@ def test_leisaac_ui_is_default_off_with_persisted_explicit_opt_in() -> None:
         "function startPeriodicRefresh", 1
     )[0]
 
-    assert 'id="enableLeIsaac"' in ui
-    assert 'const LEISAAC_UI_STORAGE_KEY = "npa.agent.leisaac-ui-enabled.v1"' in ui
-    assert 'window.localStorage.getItem(LEISAAC_UI_STORAGE_KEY) === "1"' in ui
+    assert 'id="enableLeIsaac"' not in ui
+    assert "const LEISAAC_UI_ENABLED = false;" in ui
+    assert "LEISAAC_UI_STORAGE_KEY" not in ui
     assert "if (leisaacUiEnabled())" in start
     assert "ensureLeIsaacTab(leisaacCapability);" in start
     assert "if (leisaacUiEnabled()) refreshLeIsaacCapability()" in boot
-    assert 'id = "disableLeIsaac"' in ui
+    assert 'id = "disableLeIsaac"' not in ui
 
 
 def test_boot_reuses_session_and_status_without_blocking_on_run_details() -> None:

@@ -48,8 +48,34 @@ const grantMockControllerLease = () => cy.window().then((win) =>
   win.__NPA_AGENT_TEST__.setLeIsaacControllerLeaseForTest(true),
 );
 
-describe("NPA agent LeIsaac UI opt-in", () => {
-  it("is disabled by default and enables only after an explicit click", () => {
+describe("NPA agent LeIsaac operator configuration", () => {
+  it("stays hidden without polling despite old browser opt-in state and reloads", () => {
+    cy.installAgentApiMocks();
+    let statusRequests = 0;
+    cy.intercept("GET", "/api/leisaac/status*", (req) => {
+      statusRequests += 1;
+      req.reply({ available: false });
+    });
+    cy.visit("/?leisaac_enabled=true", {
+      onBeforeLoad(win) {
+        win.localStorage.setItem("npa.agent.leisaac-ui-enabled.v1", "1");
+        win.sessionStorage.setItem("leisaac_enabled", "true");
+      },
+    });
+    cy.wait("@session");
+    cy.get("#tabMain").click();
+    cy.window().then((win) => win.__NPA_AGENT_TEST__.refresh());
+    cy.clock(Date.now(), ["setInterval", "clearInterval"]);
+    cy.get("#tabMain").click();
+    cy.tick(60000);
+    cy.get("#tabLeIsaac, #panelLeIsaac, #enableLeIsaac, #disableLeIsaac").should("not.exist");
+    cy.reload();
+    cy.wait("@session");
+    cy.get("#tabLeIsaac, #panelLeIsaac, #enableLeIsaac, #disableLeIsaac").should("not.exist");
+    cy.then(() => expect(statusRequests, "disabled config never probes LeIsaac").to.eq(0));
+  });
+
+  it("renders and polls when enabled by the server, independent of browser storage", () => {
     cy.installAgentApiMocks();
     cy.intercept("GET", "/api/leisaac/status*", {
       statusCode: 200,
@@ -59,13 +85,17 @@ describe("NPA agent LeIsaac UI opt-in", () => {
         run_id: "",
         reason: "No LeIsaac runtime is registered with this agent.",
       },
-    }).as("optInLeIsaacStatus");
-    cy.visit("/");
-    cy.get("#tabLeIsaac").should("not.exist");
-    cy.get("#enableLeIsaac").should("be.visible").click();
-    cy.wait("@optInLeIsaacStatus");
+    }).as("configuredLeIsaacStatus");
+    cy.visit("/ui-leisaac-enabled.html");
+    cy.wait("@configuredLeIsaacStatus");
     cy.get("#tabLeIsaac").should("be.visible");
-    cy.get("#disableLeIsaac").should("be.visible");
+    cy.get("#enableLeIsaac, #disableLeIsaac").should("not.exist");
+    cy.clearLocalStorage();
+    cy.reload();
+    cy.wait("@configuredLeIsaacStatus");
+    cy.get("#tabLeIsaac").should("be.visible").click();
+    cy.get("#leisaacRetry").click();
+    cy.wait("@configuredLeIsaacStatus");
   });
 });
 
@@ -174,7 +204,6 @@ describe("NPA agent LeIsaac capability tab", () => {
     cy.clearLocalStorage();
     cy.window().then((win) => win.sessionStorage.clear());
     cy.reload();
-    cy.get("#enableLeIsaac").click();
     cy.wait("@defaultStatus");
     cy.get("#tabLeIsaac", { timeout: 10000 }).click();
     cy.get("#leisaacRobotSelection").should("have.attr", "data-value", "so101_follower");

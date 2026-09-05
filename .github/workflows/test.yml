@@ -25,6 +25,14 @@ jobs:
           cache-dependency-path: npa/tests/browser/package-lock.json
       - name: Install browser test dependencies
         run: npm ci --prefix npa/tests/browser
+      - name: Set up Python for the production UI renderer
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install the production UI renderer
+        run: |
+          python -m venv npa/.venv
+          npa/.venv/bin/python -m pip install -e npa
       - name: Run mocked agent Cypress coverage
         run: npm run --prefix npa/tests/browser cy:mock
 
