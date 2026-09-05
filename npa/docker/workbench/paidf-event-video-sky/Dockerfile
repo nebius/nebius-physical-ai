@@ -31,6 +31,12 @@ RUN apt-get update \
     && command -v service >/dev/null \
     && rm -rf /var/lib/apt/lists/* /var/cache/apt/*
 
+# Patch the inherited NLTK JVM argument-injection issue (CVE-2026-79675).
+# The 3.10.3 patch has the same required dependency set as inherited 3.10.0.
+RUN uv pip install --python /usr/bin/python3 \
+      'nltk @ https://files.pythonhosted.org/packages/b6/6d/ebd2af4640b12168fdf0cb74b6118df2f32a2f62ec7e0c06fbfd80706639/nltk-3.10.3-py3-none-any.whl#sha256=ff9598a8e20518ee0d557745890cc4435b9578489e2dcbc69c4f81fa060caf7c' \
+    && /usr/bin/python3 -c 'import importlib.metadata as m; assert m.version("nltk") == "3.10.3"'
+
 COPY paidf-event-video-sky/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod 0755 /usr/local/bin/entrypoint.sh
 

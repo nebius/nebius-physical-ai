@@ -149,6 +149,10 @@ _VARIANTS: dict[str, dict[str, Any]] = {
         "upstream_workflow": "event_video_generation_dag",
         "preparation": "input validation and deterministic anomaly/environment sampling",
         "generation": "NVIDIA PAIDF Augmentation 1.1.0 Cosmos3 image2video protocol",
+        "runtime_security_update": (
+            "the original Cosmos3 vLLM-Omni parent is retained; the wrapper "
+            "upgrades NLTK to hash-pinned 3.10.3 for CVE-2026-79675"
+        ),
         "models": {COSMOS3_SUPER_IMAGE2VIDEO_MODEL: COSMOS3_SUPER_IMAGE2VIDEO_REVISION},
         "detection_checkpoint": {
             "url": RFDETR_BASE_URL,

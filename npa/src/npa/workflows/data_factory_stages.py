@@ -2490,7 +2490,13 @@ def _enrich_with_fiftyone_curation(
     return result
 
 
-def finalize(run_root_uri: str, report_uri: str) -> dict[str, Any]:
+def finalize(
+    run_root_uri: str,
+    report_uri: str,
+    *,
+    upstream_variant: str = "",
+    run_id: str = "",
+) -> dict[str, Any]:
     """Aggregate the run's stage artifacts into a real final report."""
     keys = _list_keys(run_root_uri)
     bucket, run_prefix = _split(run_root_uri)
@@ -2597,11 +2603,26 @@ def finalize(run_root_uri: str, report_uri: str) -> dict[str, Any]:
     if transfer_manifest:
         report["augmentation_engine"] = str(transfer_manifest.get("mode") or "")
         report["input_conditioned"] = transfer_manifest.get("input_conditioned") is True
-    try:
-        upstream = _download_json(run_root_uri.rstrip("/") + "/reports/upstream.json")
-    except Exception:  # noqa: BLE001 - compatibility with runs started before this artifact
-        upstream = {}
-    if isinstance(upstream, dict) and upstream.get("schema") == "npa.paidf.upstream.v1":
+    if bool(upstream_variant) != bool(run_id.strip()):
+        raise RuntimeError(
+            "PAIDF finalization requires both an upstream variant and run identity"
+        )
+    upstream = None
+    if upstream_variant:
+        try:
+            upstream = _download_json(
+                run_root_uri.rstrip("/") + "/reports/upstream.json"
+            )
+        except Exception as exc:
+            raise RuntimeError("PAIDF upstream provenance is missing or unreadable") from exc
+        if (
+            not isinstance(upstream, dict)
+            or upstream.get("schema") != "npa.paidf.upstream.v1"
+            or upstream.get("run_id") != run_id
+            or upstream.get("workflow_variant") != upstream_variant
+        ):
+            raise RuntimeError("PAIDF upstream provenance does not match this run")
+    if upstream is not None:
         report["upstream"] = upstream
     report["written_uri"] = _upload_json(report, report_uri)
     print(

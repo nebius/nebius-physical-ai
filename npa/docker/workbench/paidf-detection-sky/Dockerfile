@@ -8,7 +8,8 @@ LABEL org.opencontainers.image.source="https://github.com/nebius/nebius-physical
       org.opencontainers.image.revision="${NPA_SOURCE_SHA}" \
       npa.tool="paidf-detection-sky" \
       npa.upstream.digest="sha256:6b35e63b95cab7cd772906bcb08be978de7526427f0d1925ab84439dd4a9561e" \
-      npa.redistribution="operator-private-only"
+      npa.redistribution="operator-private-only" \
+      org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"
 
 USER root
 # SSH, rsync and sudo are absent from the inspected parent. Its existing Git

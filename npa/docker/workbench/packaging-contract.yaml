@@ -149,6 +149,7 @@ redistribution:
 images:
   paidf-detection-sky:
     dockerfile: paidf-detection-sky/Dockerfile
+    skypilot_bootstrap_contract: skypilot-0.12.2-v1
     final_user: ubuntu
     restricted_parent_image: nvcr.io/nvidia/paidf-detection-and-tracking-rfdetr-service@sha256:6b35e63b95cab7cd772906bcb08be978de7526427f0d1925ab84439dd4a9561e
     tier: interactive
@@ -168,6 +169,7 @@ images:
       proof, and real native workflow acceptance are required before use.
   paidf-captioning-sky:
     dockerfile: paidf-captioning-sky/Dockerfile
+    skypilot_bootstrap_contract: skypilot-0.12.2-v1
     final_user: appuser
     restricted_parent_image: nvcr.io/nvidia/paidf-captioning-service@sha256:17e1e3f53cc66342183f7d0b6eed76907993bb325a13db90c46d9a8cf664d804
     tier: interactive
@@ -187,6 +189,7 @@ images:
       proof, and real native workflow acceptance are required before use.
   paidf-visual-qa-sky:
     dockerfile: paidf-visual-qa-sky/Dockerfile
+    skypilot_bootstrap_contract: skypilot-0.12.2-v1
     final_user: appuser
     restricted_parent_image: nvcr.io/nvidia/paidf-visual-qa-service@sha256:e681c8dee849c7ac9fc5b182f51e9efd0da460972b08850d40f00aa9d5e3c97c
     tier: interactive
@@ -206,6 +209,7 @@ images:
       proof, and real native workflow acceptance are required before use.
   paidf-attribute-search-sky:
     dockerfile: paidf-attribute-search-sky/Dockerfile
+    skypilot_bootstrap_contract: skypilot-0.12.2-v1
     final_user: appuser
     restricted_parent_image: nvcr.io/nvidia/paidf-event-and-person-attribute-search-service@sha256:0f581ff6d92efd391281e5787a8b1fda76556443ade47c1f5d59d4c345a01f6a
     tier: interactive
@@ -251,7 +255,8 @@ images:
     notes: >-
       Operator-built compatibility layer over an exact upstream vLLM-Omni
       image digest. Adds sshd, rsync, sudo, and argument forwarding while
-      preserving the upstream model runtime. An independent /opt/npa-venv
+      preserving the upstream model runtime. Hash-pins the Apache-2.0 NLTK 3.10.3
+      wheel to fix inherited CVE-2026-79675 and updates distribution kernel headers. An independent /opt/npa-venv
       hosts NPA so dependency installation cannot replace the vendor stack.
       No weights or operator inputs are added. Private-registry-only pending complete dependency redistribution
       review, built-byte security scanning, and real GPU acceptance.

@@ -28,6 +28,9 @@ def test_generation_wrapper_preserves_reviewed_parent(image: str, variant: str) 
     if variant == "image-attribute-augmentation":
         assert parent not in components["reference_runtime_images"]
         assert "CVE-2026-48746" in components["runtime_security_update"]
+    else:
+        assert "CVE-2026-79675" in components["runtime_security_update"]
+        assert "nltk-3.10.3-py3-none-any.whl#sha256=" in source
     assert f"FROM {parent}" in source
     assert "ARG BASE_IMAGE" not in source
     for prerequisite in ("openssh-server", "rsync", "sudo", "ssh-keygen -A"):

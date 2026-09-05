@@ -847,7 +847,8 @@ states:
     run:
       shell: >
         python3 -c "from npa.workflows.data_factory_stages import finalize;
-        finalize('{{config.run_root_uri}}', '{{config.finalize_report_uri}}')"
+        finalize('{{config.run_root_uri}}', '{{config.finalize_report_uri}}',
+        upstream_variant='cosmos-transfer2.5', run_id='{{run.id}}')"
     outputs:
       - uri: "{{config.finalize_report_uri}}"
         schema: npa.sim2real.e2e_report.v1

@@ -30,7 +30,6 @@ config:
   finetune_result_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/finetune-result.json"
   checkpoint_uri: "{{config.finetune_uri}}"
   num_sdg: "30"
-  checkpoint_step: ""
   generated_uri: "s3://{{config.bucket}}/{{config.prefix}}/anomaly/"
   dig_result_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/dig-result.json"
   upstream_contract_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/upstream.json"

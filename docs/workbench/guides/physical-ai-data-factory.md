@@ -85,7 +85,13 @@ IAA selects the official aligned vLLM/Omni 0.22.0 parent to fix the
 [authentication bypass in the blueprint's 0.20 runtime](https://github.com/vllm-project/vllm/security/advisories/GHSA-94f4-hr76-p5j6).
 Its Qwen model revision and image-edit protocol are preserved. Upstream
 provenance records both the original blueprint image and this security update;
-the executed report records the actual worker digest.
+the executed report records the actual worker digest. EVG upgrades NLTK to the
+hash-pinned 3.10.3 wheel to fix its inherited
+[JVM argument injection vulnerability](https://github.com/nltk/nltk/security/advisories/GHSA-m4rf-3fr8-xwx3).
+Both generation recipes update the distribution kernel headers before scanning.
+Every native handoff retains hashed producer reports, exact scene sets, and
+content manifests; terminal validation reopens the full generation and labeling
+chain, including each executed worker image.
 
 The labeling stages likewise require the exact private digests built from
 `paidf-attribute-search-sky` (IAA and EVG), `paidf-detection-sky`,

@@ -69,6 +69,9 @@ vLLM-Omni parent digests listed in the container catalog and add SkyPilot
 worker prerequisites, an isolated NPA environment, and argument forwarding. IAA
 uses the aligned upstream 0.22.0 release to fix CVE-2026-48746 in the blueprint's
 0.20 runtime, preserving the Qwen model revision and image-edit protocol.
+EVG retains its generation parent and installs the exact Apache-2.0 NLTK 3.10.3
+wheel by SHA-256 to fix CVE-2026-79675, preserving the declared dependency contract.
+Reference: https://github.com/nltk/nltk/security/advisories/GHSA-m4rf-3fr8-xwx3
 The original blueprint digest remains separately attributed in upstream.json.
 Reference: https://github.com/vllm-project/vllm/security/advisories/GHSA-94f4-hr76-p5j6
 Actual upstream

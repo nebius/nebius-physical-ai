@@ -495,30 +495,46 @@ def test_finalize_requires_every_real_component(tmp_path: Path) -> None:
     (root / "curation" / "report.json").write_text(
         json.dumps({"curation_engine": "fiftyone-brain"}), encoding="utf-8"
     )
-    upstream = {"schema": "npa.paidf.upstream.v1", "sources": ["official"]}
+    upstream = {
+        "schema": "npa.paidf.upstream.v1",
+        "run_id": "unit-run",
+        "workflow_variant": "cosmos3-video2video",
+        "sources": ["official"],
+    }
     (root / "reports" / "upstream.json").write_text(
         json.dumps(upstream), encoding="utf-8"
     )
     (root / "reports" / "sim2real.rrd").write_bytes(b"RRF2-real")
 
-    result = c3.finalize(str(root), str(root / "reports" / "final.json"))
+    result = c3.finalize(
+        str(root), str(root / "reports" / "final.json"), "unit-run"
+    )
     assert result["status"] == "completed"
     assert result["evaluator_score"] == 0.88
     assert result["has_rrd"] is True
     assert result["upstream"] == upstream
 
+    (root / "reports" / "upstream.json").write_text(
+        json.dumps({**upstream, "run_id": "foreign-run"}), encoding="utf-8"
+    )
+    with pytest.raises(c3.PaidfCosmos3Error, match="does not match"):
+        c3.finalize(str(root), str(root / "reports" / "final.json"), "unit-run")
+    (root / "reports" / "upstream.json").write_text(
+        json.dumps(upstream), encoding="utf-8"
+    )
+
     (root / "curation" / "report.json").write_text(
         json.dumps({"curation_engine": "report-only"}), encoding="utf-8"
     )
     with pytest.raises(c3.PaidfCosmos3Error, match="FiftyOne"):
-        c3.finalize(str(root), str(root / "reports" / "final.json"))
+        c3.finalize(str(root), str(root / "reports" / "final.json"), "unit-run")
 
     (root / "curation" / "report.json").write_text(
         json.dumps({"curation_engine": "fiftyone-brain"}), encoding="utf-8"
     )
     (root / "reports" / "sim2real.rrd").write_bytes(b"")
     with pytest.raises(c3.PaidfCosmos3Error, match="missing or empty"):
-        c3.finalize(str(root), str(root / "reports" / "final.json"))
+        c3.finalize(str(root), str(root / "reports" / "final.json"), "unit-run")
 
 
 def test_extract_frames_reports_missing_ffmpeg_as_domain_error(

@@ -8,7 +8,8 @@ LABEL org.opencontainers.image.source="https://github.com/nebius/nebius-physical
       org.opencontainers.image.revision="${NPA_SOURCE_SHA}" \
       npa.tool="paidf-visual-qa-sky" \
       npa.upstream.digest="sha256:e681c8dee849c7ac9fc5b182f51e9efd0da460972b08850d40f00aa9d5e3c97c" \
-      npa.redistribution="operator-private-only"
+      npa.redistribution="operator-private-only" \
+      org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"
 
 USER root
 # These commands are absent from the inspected parent. Git fetches the pinned

@@ -18,6 +18,7 @@ metadata:
 config:
   bucket: example-bucket
   prefix: "paidf-event-video-generation/{{run.id}}"
+  previous_label_result_uri: "{{config.validation_uri}}"
   paidf_workflow: evg
   input_uri: "s3://{{config.bucket}}/paidf-authorized-input/evg/"
   prepared_uri: "s3://{{config.bucket}}/{{config.prefix}}/prepared/"
@@ -185,6 +186,7 @@ states:
     resources: captioning
     params:
       auto_label_stage: captioning
+      previous_label_result_uri: "s3://{{config.bucket}}/{{config.prefix}}/auto_labeling/detection.json"
       auto_label_result_uri: "s3://{{config.bucket}}/{{config.prefix}}/auto_labeling/captioning.json"
     outputs:
       - uri: "s3://{{config.bucket}}/{{config.prefix}}/auto_labeling/captioning.json"
@@ -196,6 +198,7 @@ states:
     resources: visual-qa
     params:
       auto_label_stage: visual-qa-anomaly
+      previous_label_result_uri: "s3://{{config.bucket}}/{{config.prefix}}/auto_labeling/captioning.json"
       auto_label_result_uri: "s3://{{config.bucket}}/{{config.prefix}}/auto_labeling/visual-qa-anomaly.json"
     outputs:
       - uri: "s3://{{config.bucket}}/{{config.prefix}}/auto_labeling/visual-qa-anomaly.json"
@@ -207,6 +210,7 @@ states:
     resources: visual-qa
     params:
       auto_label_stage: visual-qa-person
+      previous_label_result_uri: "s3://{{config.bucket}}/{{config.prefix}}/auto_labeling/visual-qa-anomaly.json"
       auto_label_result_uri: "s3://{{config.bucket}}/{{config.prefix}}/auto_labeling/visual-qa-person.json"
     outputs:
       - uri: "s3://{{config.bucket}}/{{config.prefix}}/auto_labeling/visual-qa-person.json"
@@ -218,6 +222,7 @@ states:
     resources: attribute-search
     params:
       auto_label_stage: person-attribute-search
+      previous_label_result_uri: "s3://{{config.bucket}}/{{config.prefix}}/auto_labeling/visual-qa-person.json"
     outputs:
       - uri: "{{config.auto_label_result_uri}}"
         schema: npa.paidf.native.evg-auto-label-person-attribute-search.v1

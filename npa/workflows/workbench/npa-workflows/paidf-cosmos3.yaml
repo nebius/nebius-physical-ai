@@ -396,6 +396,7 @@ states:
           finalize(*sys.argv[1:])
         - "{{config.run_root_uri}}"
         - "{{config.finalize_report_uri}}"
+        - "{{run.id}}"
     outputs:
       - uri: "{{config.finalize_report_uri}}"
         schema: npa.paidf.cosmos3.final.v1

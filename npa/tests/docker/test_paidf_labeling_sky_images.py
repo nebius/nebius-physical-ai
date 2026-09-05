@@ -44,7 +44,9 @@ def test_labeling_wrapper_preserves_vendor_boundary(
     assert "rm -f /etc/ssh/ssh_host_*" in source
     assert "PasswordAuthentication no" in source
     assert "PermitRootLogin no" in source
-    assert "org.nebius.npa.skypilot-bootstrap-contract" not in source
+    label = 'org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"'
+    # Actual non-root bootstrap and isolated NPA installation were verified.
+    assert label in source
     assert image in RESTRICTED_PUBLICATION_TOOLS
     spec = yaml.safe_load(
         (ROOT / "npa/workflows/workbench/npa-workflows/paidf-event-video-generation.yaml")

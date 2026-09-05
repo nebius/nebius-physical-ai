@@ -20,6 +20,7 @@ metadata:
 config:
   bucket: example-bucket
   prefix: "paidf-image-attribute-augmentation/{{run.id}}"
+  previous_label_result_uri: "{{config.validation_uri}}"
   paidf_workflow: iaa
   input_uri: "s3://{{config.bucket}}/paidf-authorized-input/iaa/"
   prepared_uri: "s3://{{config.bucket}}/{{config.prefix}}/prepared/"

@@ -77,6 +77,10 @@ CONTAINER_IMAGE_NAMES = {
 # npa/tests/docker/test_packaging_contract.py locks the two inventories together.
 SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS: frozenset[str] = frozenset(
     {
+        "paidf-attribute-search-sky",
+        "paidf-detection-sky",
+        "paidf-captioning-sky",
+        "paidf-visual-qa-sky",
         "paidf-event-video-sky",
         "cosmos2-transfer",
         "cosmos3",
