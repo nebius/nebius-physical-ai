@@ -17,6 +17,21 @@ RTX_RENDERING_PRESETS = frozenset(
 SUPPORTED_GPU_WORKLOAD_PROFILES = frozenset({"", RTX_RENDERING_PROFILE})
 
 
+def validate_driver_package_repositories(files: object, *, profile: str) -> None:
+    """Validate ConfigMap file keys without interpreting operator package policy."""
+    if not isinstance(files, dict):
+        raise ValueError("gpu_driver_package_repositories must be a filename/content mapping")
+    if files and str(profile or "").strip().lower() != RTX_RENDERING_PROFILE:
+        raise ValueError("GPU driver package repositories require the RTX rendering profile")
+    for name, content in files.items():
+        if (
+            not isinstance(name, str) or name in {".", ".."}
+            or not re.fullmatch(r"[A-Za-z0-9._-]+", name)
+            or not isinstance(content, str) or not content.strip()
+        ):
+            raise ValueError("GPU driver package repositories require safe filenames and nonempty text")
+
+
 class GpuWorkloadProfileError(ValueError):
     """Raised when a workload profile conflicts with explicit topology."""
 

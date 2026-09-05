@@ -2,6 +2,17 @@ locals {
   # The marketplace defaults may omit zonal RTX platforms. Replace its driver
   # profile list only for an explicit homogeneous RTX rendering pool.
   rtx_driver_values = var.rtx_driver_profile == null ? null : yamlencode({
+    driver = {
+      repoConfig = {
+        configMapName = length(var.rtx_driver_profile.package_repositories) > 0 ? "npa-rtx-driver-repositories" : ""
+      }
+    }
+    extraObjects = length(var.rtx_driver_profile.package_repositories) == 0 ? [] : [{
+      apiVersion = "v1"
+      kind       = "ConfigMap"
+      metadata   = { name = "npa-rtx-driver-repositories", namespace = "gpu-operator" }
+      data       = var.rtx_driver_profile.package_repositories
+    }]
     nebius = {
       nvidiaDriverCRDPatch = {
         profiles = [{
@@ -12,7 +23,6 @@ locals {
           }
           managerEnv = []
           rdma       = { enabled = false, useHostMofed = false }
-          gdrcopy    = { enabled = false }
         }]
       }
     }

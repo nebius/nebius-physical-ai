@@ -6,6 +6,21 @@ profile: "" # set to an owner-configured profile at runtime
 project_prefix: rtx-render-fleet-
 defaults:
   gpu_workload_profile: rtx-rendering
+  # Match these repositories to the verified Ubuntu 24.04 driver image.
+  # HTTPS also works where outbound HTTP package traffic is unavailable.
+  gpu_driver_package_repositories:
+    ubuntu.sources: |
+      Types: deb
+      URIs: https://archive.ubuntu.com/ubuntu/
+      Suites: noble noble-updates noble-backports
+      Components: main universe restricted multiverse
+      Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+
+      Types: deb
+      URIs: https://security.ubuntu.com/ubuntu/
+      Suites: noble-security
+      Components: main universe restricted multiverse
+      Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
   gpu_nodes:
     count: 2
     # uk-south2 exposes the exact zonal RTX platform name below. Other regions

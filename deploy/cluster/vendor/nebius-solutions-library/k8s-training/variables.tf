@@ -440,8 +440,9 @@ variable "nebius_cli" {
 variable "gpu_operator_rtx_driver_profile" {
   description = "Exact RTX rendering platform and preset for the marketplace driver selector."
   type = object({
-    platform = string
-    preset   = string
+    platform             = string
+    preset               = string
+    package_repositories = optional(map(string), {})
   })
   default = null
 

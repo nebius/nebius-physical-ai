@@ -51,6 +51,15 @@ releases. Alternate recipes must expose and wire
 `gpu_operator_rtx_driver_profile`; incompatible recipes fail before cloud
 mutation. Do not relabel workers to hide a selector mismatch.
 
+An RTX cluster may declare `gpu_driver_package_repositories` as a mapping of
+safe filenames to package-source text. Fleet passes it through the Operator's
+`driver.repoConfig` and an owned ConfigMap, retaining signature verification.
+Match the sources to the actual driver-image distribution. The five-cluster
+example supplies Ubuntu 24.04 HTTPS sources for networks that permit HTTPS but
+block HTTP. Empty configuration preserves the image defaults. Before workloads,
+verify the driver pod actually mounts the configured files and can fetch its
+kernel packages; do not infer network reachability from the operator VM.
+
 ## Spec (npa.fleet/v0.0.1)
 
 The version remains additive. A cluster without `backend` is the historical

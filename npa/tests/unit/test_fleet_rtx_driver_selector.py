@@ -11,6 +11,8 @@ from npa.cluster_backends.mk8s_render import (
 )
 from npa.fleet import lifecycle as L
 from npa.fleet.spec import ClusterSpec, FleetSpec, NodePoolSpec, ProjectSpec
+from npa.cluster_backends.mk8s_model import as_mk8s_desired
+from npa.cluster.gpu_workload_profile import validate_driver_package_repositories
 
 
 def rendering(platform="gpu-rtx6000-a", preset="8gpu-192vcpu-1744gb"):
@@ -66,3 +68,37 @@ def test_unprofiled_recipe_does_not_require_or_select_rtx_override(tmp_path):
     cluster = ClusterSpec(name="cpu", cpu_nodes=NodePoolSpec(count=1))
     validate_recipe_rtx_compatibility(cluster, tmp_path)
     assert "gpu_operator_rtx_driver_profile" not in render_tfvars(cluster)
+
+
+def test_package_repositories_survive_the_backend_and_tfvars_boundary(recipe):
+    cluster = rendering()
+    files = {"ubuntu.sources": "Types: deb\nURIs: https://archive.ubuntu.com/ubuntu/\nSuites: noble\n"}
+    cluster.gpu_driver_package_repositories = files
+    cluster.validate()
+    desired = as_mk8s_desired(cluster)
+    assert desired.gpu_driver_package_repositories == files
+    output = render_tfvars(desired, recipe_dir=recipe / "k8s-training")
+    import json
+
+    value = next(line.partition("=")[2] for line in output.splitlines() if line.startswith("gpu_operator_rtx_driver_profile"))
+    assert json.loads(value)["package_repositories"] == files
+
+
+@pytest.mark.parametrize("files", [None, [], {"../sources.list": "text"}, {"..": "text"}, {"valid": ""}, {"valid": 1}])
+def test_driver_package_repositories_reject_invalid_configmap_files(files):
+    with pytest.raises(ValueError):
+        validate_driver_package_repositories(files, profile="rtx-rendering")
+
+
+def test_package_repositories_do_not_apply_to_unprofiled_managed_nodes():
+    with pytest.raises(ValueError, match="require the RTX rendering profile"):
+        validate_driver_package_repositories({"sources.list": "text"}, profile="")
+
+
+def test_recipe_must_wire_package_files_before_they_can_be_requested(recipe):
+    cluster = rendering()
+    cluster.gpu_driver_package_repositories = {"sources.list": "text"}
+    path = recipe / "modules/gpu-operator/main.tf"
+    path.write_text(path.read_text().replace("var.rtx_driver_profile.package_repositories", "{}"))
+    with pytest.raises(GpuDriverStrategyError, match="exact RTX rendering driver selector"):
+        validate_recipe_rtx_compatibility(cluster, recipe / "k8s-training")

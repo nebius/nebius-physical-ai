@@ -85,6 +85,7 @@ _MK8S_ENVELOPE_FIELDS = {
     "gpu_cuda_smoke",
     "gpu_cuda_smoke_image",
     "gpu_workload_profile",
+    "gpu_driver_package_repositories",
     "mig",
 }
 
@@ -240,6 +241,7 @@ class ClusterSpec:
     gpu_workload_profile: str = ""
     gpu_graphics_smoke: bool = False
     gpu_graphics_smoke_image: str = DEFAULT_GRAPHICS_SMOKE_IMAGE
+    gpu_driver_package_repositories: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         gpu = self.gpu_nodes
@@ -345,6 +347,14 @@ class ClusterSpec:
                 f"cluster name must be a lowercase DNS-1123 label: {self.name!r}"
             )
         mig_enabled = bool(self.mig and self.mig.enabled)
+        from npa.cluster.gpu_workload_profile import validate_driver_package_repositories
+
+        try:
+            validate_driver_package_repositories(
+                self.gpu_driver_package_repositories, profile=self.gpu_workload_profile,
+            )
+        except ValueError as exc:
+            raise FleetSpecError(str(exc)) from exc
         if (
             self.cpu_count() <= 0
             and self.gpu_count() <= 0
@@ -677,6 +687,7 @@ def _cluster_from(
             or DEFAULT_CUDA_SMOKE_IMAGE
         ),
         gpu_workload_profile=str(data.get("gpu_workload_profile", "") or ""),
+        gpu_driver_package_repositories=data.get("gpu_driver_package_repositories", {}),
         mig=mig,
         backend="mk8s",
         backend_explicit=backend_explicit,

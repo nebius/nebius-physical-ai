@@ -139,14 +139,20 @@ def validate_recipe_rtx_compatibility(cluster: Any, recipe_dir: Path) -> None:
         return
     variable = "gpu_operator_rtx_driver_profile"
     module = recipe_dir.parent / "modules" / "gpu-operator"
-    required = {
-        recipe_dir / "helm.tf": rf"rtx_driver_profile\s*=\s*var\.{variable}\b",
-        module / "variables.tf": r'variable\s+"rtx_driver_profile"',
-        module / "main.tf": r"values\s*=\s*local\.rtx_driver_values\b",
-    }
+    required = [
+        (recipe_dir / "helm.tf", rf"rtx_driver_profile\s*=\s*var\.{variable}\b"),
+        (module / "variables.tf", r'variable\s+"rtx_driver_profile"'),
+        (module / "main.tf", r"values\s*=\s*local\.rtx_driver_values\b"),
+    ]
+    if cluster.gpu_driver_package_repositories:
+        required.extend([
+            (recipe_dir / "variables.tf", r"package_repositories\s*=\s*optional\(map\(string\)"),
+            (module / "variables.tf", r"package_repositories\s*=\s*optional\(map\(string\)"),
+            (module / "main.tf", r"data\s*=\s*var\.rtx_driver_profile\.package_repositories\b"),
+        ])
     if variable not in inspect_recipe_declared_variables(recipe_dir) or any(
         not path.is_file() or not re.search(pattern, path.read_text())
-        for path, pattern in required.items()
+        for path, pattern in required
     ):
         raise GpuDriverStrategyError(
             "Selected k8s-training recipe cannot honor the exact RTX rendering "
@@ -197,7 +203,11 @@ def render_tfvars(
     if cluster.gpu_workload_profile:
         lines.append(
             "gpu_operator_rtx_driver_profile = "
-            + json.dumps({"platform": gpu.platform, "preset": gpu.preset})
+            + json.dumps({
+                "platform": gpu.platform, "preset": gpu.preset,
+                **({"package_repositories": cluster.gpu_driver_package_repositories}
+                   if cluster.gpu_driver_package_repositories else {}),
+            })
         )
     lines.append(
         f"mig_strategy                 = {_tfstr(mig.strategy if mig_enabled else 'none')}"
