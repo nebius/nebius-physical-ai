@@ -1,27 +1,40 @@
 # npa
 
-`npa` is the Nebius Physical AI platform CLI/SDK. Workbench is the first
-solution namespace and covers the current sim-to-real training loop on Nebius
-workbenches.
+`npa` is the Nebius Physical AI CLI and Python package. Its primary command
+namespace, `npa workbench`, runs robotics training, simulation, perception,
+world-model generation, dataset curation, and evaluation on Nebius. Workbench
+tools compose through S3 artifacts and `npa.workflow/v0.0.1` specifications
+executed through SkyPilot.
 
-In practice it does four things:
+Start with the [Workbench guide](../docs/workbench/README.md), choose a workload,
+and follow [installation](../docs/install.md) and
+[project setup](../docs/quickstart.md) before provisioning its GPU resources.
+The [command reference](../docs/cli/workbench.md) lists the installed tools;
+`npa workbench <tool> --help` exposes each tool's actual commands.
 
-1. Provisions and updates Nebius GPU workbenches for LeRobot with Terraform, the `nebius` CLI, SSH, and a small FastAPI policy server.
-2. Runs LeRobot jobs on those workbenches: train, eval, serve checkpoints, run inference, list checkpoints, and collect benchmark/profile data.
-3. Runs Genesis-side steps in a Genesis environment: train a teacher policy, generate demonstrations, and evaluate a student.
-4. Converts simulation demos into LeRobotDataset v3 and orchestrates the full 5-stage distillation workflow:
-   teacher train -> demo generation -> dataset conversion -> student train -> student eval.
-
-The Python package exposes the same building blocks as importable modules: Nebius/Terraform helpers, SSH and HTTP clients, S3 storage utilities, dataset conversion, student training, and workflow orchestration.
+The package also provides project provisioning, storage, artifact conversion,
+viewers, and an agent interface. Python access includes typed clients, shared
+implementation functions, and wrappers around CLI callbacks; available imports
+and return types vary by tool. See the
+[CLI / SDK / workflow walkthrough](../docs/workbench/cli-sdk-yaml-walkthrough.md)
+before integrating a tool programmatically.
 
 ## Install
 
+From the repository root, with your virtual environment active:
+
 ```bash
-pip install -e .
-pip install -e ".[server]"   # policy server
-pip install -e ".[adapter]"  # dataset conversion
-pip install -e ".[genesis]"  # Genesis + distillation stages
+pip install -e npa
+npa --version
+npa workbench --help
 ```
+
+The base package includes the non-GPU Workbench dependencies, including
+FastAPI, LanceDB, and Rerun. Local engine extras such as `npa[genesis]`,
+`npa[groot]`, and `npa[sonic]` are needed only when running those engines in
+your Python environment; remote workloads use their container dependencies.
+See [installation](../docs/install.md) for supported platforms, virtual
+environments, and the separate SkyPilot environment.
 
 Extra tools required by specific commands:
 
@@ -36,12 +49,25 @@ Extra tools required by specific commands:
 ```bash
 npa workbench lerobot ...
 npa workbench genesis ...
+npa workbench cosmos ...
+npa workbench dataset ...
+npa workbench workflow ...
+npa workbench health ...
 npa adapter convert ...
 npa convert lerobot-to-mp4 ...
-npa workbench workflow ...
 ```
 
-Common examples:
+For a complete workflow, use the
+[reference catalog](workflows/workbench/npa-workflows/README.md) and
+[workflow guide](../docs/workbench/npa-workflow-guide.md): validate and plan the
+chosen specification, prepare its data and resources, submit it, then inspect
+`npa workbench workflow status`, `logs`, and `artifacts`. The
+[recovery guide](../docs/workbench/troubleshooting/known-footguns.md) covers
+setup and runtime failures.
+
+The following are individual LeRobot/Genesis commands, including the older
+five-stage distillation helper. Their setup and inputs are tool-specific; they
+are not the canonical 14-stage Sim2Real workflow:
 
 ```bash
 # Provision or update a Nebius LeRobot workbench
@@ -221,6 +247,30 @@ plus `GetObject` on that object and `ListBucket` on the bucket/prefix.
 
 ## SDK examples
 
+For Workbench integration, start with the documented module for your tool:
+
+```python
+import os
+from npa.sdk.workbench import workflow
+
+# Read an existing run's durable artifacts after workflow submission.
+artifacts = workflow.artifacts(
+    os.environ["NPA_RUN_ID"],
+    workflow_s3_uri=os.environ["NPA_WORKFLOW_S3_URI"],
+)
+print(artifacts)
+```
+
+`npa.sdk.workbench.workflow` provides durable monitoring (`status`, `logs`,
+`artifacts`, `runs`). Specification loading and planning live in
+`npa.orchestration.npa_workflow`. Some tools, such as LeRobot and Genesis,
+expose CLI callback wrappers under `npa.workbench`; those wrappers can print
+output or raise CLI exits and do not guarantee typed response objects.
+The [walkthrough](../docs/workbench/cli-sdk-yaml-walkthrough.md) explains these
+differences with a detection-training service example.
+
+Artifact utilities also have Python entry points:
+
 ```python
 from npa import convert, demo, rerun
 
@@ -257,4 +307,7 @@ from npa.clients.http import HTTPClient
 - `npa.lerobot`: local student training helpers
 - `npa.convert`, `npa.demo`, `npa.rerun`, `npa.workbench`, `npa.network`,
   `npa.workflow`: public SDK namespaces mirroring supported CLI commands
-- `npa.workflows`: end-to-end distillation orchestration
+- `npa.sdk.workbench`: tool-specific clients and compatibility imports
+- `npa.orchestration.npa_workflow`: specification loading, planning, execution,
+  durable state, and recovery
+- `npa.workflows`: workflow implementations and artifact discovery

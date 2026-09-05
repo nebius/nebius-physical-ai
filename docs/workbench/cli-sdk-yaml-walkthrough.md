@@ -3,276 +3,236 @@
 > Audience: anyone calling an existing Workbench tool.
 > Prerequisites: complete [getting-started.md](getting-started.md) first.
 
-Every Workbench tool is a single containerized FastAPI service. That service is
-the one source of truth for its behavior. The three things you actually use —
-the CLI, the SDK, and SkyPilot YAML — are just three clients that reach the same
-endpoints. Pick the client that fits where your code runs; the work performed is
-identical.
+Use `npa workbench <tool>` to run a tool, and `npa workbench workflow` to
+compose tools into a workflow on Nebius. Behavior belongs in the tool's service
+or shared implementation. The available access modes depend on the tool:
+some call deployed HTTP services, some run inside a workload container, and
+some expose local Python functions or wrappers around CLI callbacks.
 
-This walkthrough uses the `detection-training` tool as the running example
-because it exposes all three access modes cleanly and is the training stage of
-the reference BDD100K pipeline. The same shape applies to `lerobot`, `lancedb`,
-`sonic`, `cosmos`, and the other tools listed in
-[../cli/workbench.md](../cli/workbench.md).
+This walkthrough uses `detection-training`, which trains Faster R-CNN detectors
+from LanceDB materialized views. Its service, CLI, and typed SDK share request
+schemas, but their options and completion behavior differ. Check a tool's
+own documentation and `--help` before applying this example to another tool.
 
-## The Mental Model
+## Choose an access mode
 
-```text
-                +-------------------------------+
-   CLI  ─────►  |                               |
-                |   Workbench FastAPI service   |
-   SDK  ─────►  |   /health /train /eval        |  ──►  S3 artifacts
-                |   /status /system-info /runs  |
-   YAML ─────►  |                               |
-                +-------------------------------+
-```
+| Access mode | Entry point | What to check |
+| --- | --- | --- |
+| CLI | `npa workbench <tool> <command>` | Actual flags, local versus service execution, output format, and whether the command waits for completion |
+| Python | Tool-specific modules under `npa.sdk.workbench` or `npa.workbench` | Available functions, return types, and exceptions; coverage is not identical across tools |
+| Workflow | `npa.workflow/v0.0.1` YAML with catalog `toolRef` stages | Input data, GPU resources, access requirements, runtime configuration, and artifact contracts |
+| HTTP | A deployed tool service | Reachable endpoint, authentication, request schema, and completion/status contract |
 
-| Access mode | Invocation | Where it runs | Best for |
-| --- | --- | --- | --- |
-| CLI | `npa workbench <tool> <command>` | Your shell / a SkyPilot task | Interactive runs, scripting, smoke tests |
-| SDK | `npa.sdk.workbench.<tool>.<fn>(...)` | Your Python process | Notebooks, agents, custom orchestration |
-| YAML | SkyPilot task that `curl`s the endpoint | The Nebius MK8s cluster | Multi-stage pipelines and sweeps |
+The [toolRef catalog](npa-workflow-tool-catalog.md) identifies operations that
+can be composed into workflows. A CLI command's existence does not imply a
+matching SDK function, HTTP endpoint, or catalog entry.
 
-All three either call a deployed service over HTTP or run the same shared
-implementation in-process. They are not separate implementations. Behavior lives
-in the service / shared layer; never expect one client to do something the
-others cannot.
+## Detection-training prerequisites
 
-## Shared Endpoints
+Use an existing configured GPU cluster, a reachable authenticated
+detection-training service, and a prepared LanceDB view. The
+[BDD100K workflow](../../npa/workflows/workbench/npa-workflows/bdd100k-pipeline.yaml)
+shows the ingest, curation, train, and evaluation stages that produce and consume
+those views. Merely naming `bdd100k_rider_train` does not create it.
 
-Each tool exposes a standard surface. For `detection-training`:
-
-| Endpoint | Purpose |
-| --- | --- |
-| `GET /health` | Readiness check; call before any state-changing request |
-| `POST /train` | Start a Faster R-CNN training run |
-| `GET /status` | Status for a run (`?run_id=...`) |
-| `POST /eval` | Evaluate a checkpoint |
-| `GET /system-info` | Runtime/image information, including the current image tag |
-| `GET /runs` | List service-managed runs |
-
-The CLI and SDK build the exact same JSON request bodies; the YAML builds them
-with `jq`. Knowing the endpoint contract is enough to use any of the three.
-
-## Prerequisites for This Walkthrough
+Set the following to your prepared data and a new output prefix:
 
 ```bash
-export NPA_S3_BUCKET=<your-bucket>
+export NPA_LANCE_URI='s3://<your-bucket>/<prepared-lancedb-prefix>/'
+export NPA_TRAIN_OUTPUT_URI='s3://<your-bucket>/<new-training-prefix>/'
+export NPA_EVAL_OUTPUT_URI='s3://<your-bucket>/<new-evaluation-prefix>/'
 export AWS_ENDPOINT_URL=https://storage.eu-north1.nebius.cloud
 ```
 
-For the service and YAML paths, a deployed endpoint is also required:
+The endpoint must match the bucket's region. Supply S3 credentials through the
+configured credential store or environment. Detection-training deployment uses
+token authentication by default; supply `DETECTION_TRAINING_TOKEN` through your
+private runtime environment before deploying and keep it available to clients.
+See [service boundaries](../security/workbench-service-boundaries.md).
+
+Run S3 credential preflight before submitting training:
 
 ```bash
-npa workbench detection-training deploy \
-  --output-path "s3://${NPA_S3_BUCKET}/detection-training/" \
-  --namespace workbench \
-  --gpu-type h100
-
-export NPA_DETECTION_TRAINING_ENDPOINT=http://npa-detection-training.workbench.svc.cluster.local:8790
+npa workbench health preflight --checks s3 --json
 ```
 
-The deploy command prints the cluster-internal endpoint. From inside the cluster
-(a SkyPilot task) use the `*.svc.cluster.local` form; the SDK and CLI use the
-same value via `--endpoint` or `NPA_DETECTION_TRAINING_ENDPOINT`.
+The S3 health check proves listing access to the configured bucket. Confirm
+that its configuration matches the input/output bucket and that the service
+credentials also permit writing the output prefix.
 
-## 1. CLI
+**Current deployment limitation:** `detection-training deploy` defaults to token
+authentication, but its generated readiness probe requests `/health` without
+authentication. The service rejects that probe with HTTP 401, preventing the
+default deployment from becoming Ready. The probe needs an implementation fix;
+do not disable service authentication to work around it. The examples below
+assume an already reachable authenticated service and do not establish that a
+fresh deployment works.
 
-The CLI is the fastest way to drive a tool by hand or from a shell script. The
-same command runs the work in-process by default, or against a deployed service
-with `--service`.
+The deployed service endpoint is cluster-internal. Clients inside that cluster
+can use it directly. For a local notebook or shell, forward the service in
+another terminal, adjusting the namespace and service name to match its deployment:
 
-Local in-process run (no deployed service required):
+```bash
+kubectl -n workbench port-forward service/npa-detection-training 8790:8790
+```
+
+Then configure the local client and verify the authenticated service:
+
+```bash
+export NPA_DETECTION_TRAINING_ENDPOINT=http://127.0.0.1:8790
+npa workbench detection-training system-info --service
+```
+
+The service exposes `GET /health`, `GET /system-info`, `GET /runs`,
+`POST /train`, `GET /status?run_id=...`, and `POST /eval`. Its FastAPI schema is
+available at `/openapi.json` on the same reachable endpoint. Consult the
+[request schemas](../../npa/src/npa/workbench/detection_training/schemas.py)
+for field definitions; these endpoints are specific to this service.
+
+## 1. CLI: train, wait, and evaluate the produced checkpoint
+
+For a view with numeric class labels:
 
 ```bash
 npa workbench detection-training train \
+  --service --wait \
   --view bdd100k_rider_train \
-  --lance-uri "s3://${NPA_S3_BUCKET}/bdd100k-pipeline/example-run/lancedb/" \
-  --output-uri "s3://${NPA_S3_BUCKET}/detection-training/example-run/" \
-  --epochs 10 \
-  --batch-size 8 \
-  --learning-rate 0.005
+  --input-path "${NPA_LANCE_URI}" \
+  --output-path "${NPA_TRAIN_OUTPUT_URI}" \
+  --epochs 10 --batch-size 8 --learning-rate 0.005
 ```
 
-Service run (calls the deployed endpoint):
+For string labels, pass the dataset's category-to-index mapping with
+`--label-map` on **both** train and eval. Real BDD100K categories differ from
+some synthetic fixtures; use the mapping matching your prepared view.
+
+Service training returns a `run_id` and an initial `running` status unless
+`--wait` is supplied. With `--wait`, the CLI polls until completion or failure
+and verifies the reported epoch count and checkpoint pattern. Retain the JSON
+response, including `run_id`, `checkpoint_uri_pattern`, and `metrics_uri`.
+If you submitted without waiting, monitor it with:
 
 ```bash
-npa workbench detection-training train \
-  --service \
-  --endpoint "${NPA_DETECTION_TRAINING_ENDPOINT}" \
-  --view bdd100k_rider_train \
-  --lance-uri "s3://${NPA_S3_BUCKET}/bdd100k-pipeline/example-run/lancedb/" \
-  --output-uri "s3://${NPA_S3_BUCKET}/detection-training/example-run/"
+npa workbench detection-training status --service --run-id <run-id-from-train>
 ```
 
-Both print a JSON object containing `run_id` and `status`. Follow up with:
+After completion, discover the actual checkpoint from the service's run
+records and evaluate it:
 
 ```bash
-npa workbench detection-training status \
-  --service --endpoint "${NPA_DETECTION_TRAINING_ENDPOINT}" \
-  --run-id <run-id-from-train>
-
 npa workbench detection-training eval \
-  --service --endpoint "${NPA_DETECTION_TRAINING_ENDPOINT}" \
-  --checkpoint-uri "s3://${NPA_S3_BUCKET}/detection-training/example-run/model_final.pt" \
+  --service --discover-checkpoint \
+  --checkpoint-uri "${NPA_TRAIN_OUTPUT_URI}" \
   --eval-view bdd100k_rider_train \
-  --output-uri "s3://${NPA_S3_BUCKET}/detection-training/example-run/eval/"
+  --input-path "${NPA_LANCE_URI}" \
+  --output-path "${NPA_EVAL_OUTPUT_URI}" \
+  --write-canonical-metrics
 ```
 
-Notes that generalize to other tools:
+`--discover-checkpoint` searches the latest completed service run under the
+training prefix and resolves its final epoch checkpoint. It requires the
+service's in-memory `/runs` record, which does not survive a service restart.
+Retain the exact checkpoint URI for later evaluation. Checkpoints use
+`<output-prefix>/<run-id>/checkpoints/epoch_<epoch>.pt`; do not assume a
+`model_final.pt` filename. Evaluation writes the canonical `metrics.json` when
+`--write-canonical-metrics` is set and validates numeric evaluation metrics.
+Evaluating the training view checks the journey; use a held-out view to measure
+generalization.
 
-- `--input-path` / `--output-path` are accepted as aliases for the tool's
-  input/output URIs so the command composes inside pipelines. Here they alias
-  `--lance-uri` and `--output-uri`.
-- Add `--output json` (the default for `train`/`eval`) for machine-readable
-  output you can pipe into `jq`.
-- Omit `--service` to run the shared implementation in your own process; pass
-  `--service --endpoint ...` to hit a deployed service.
+For this tool, `--input-path` aliases `--lance-uri` and `--output-path` aliases
+`--output-uri`. Train and eval emit JSON by default. Other tools can use
+`--json`, `--output`, or `--output-format`; inspect the relevant command help.
 
-## 2. SDK
+The current local CLI training path fails before training with
+`TypeError: train() got an unexpected keyword argument 'label_map'`: it forwards
+a schema field that the SDK does not accept. The service commands above avoid
+that path. This is an implementation limitation, not a missing GPU dependency.
 
-The SDK is the right client from Python — notebooks, agents, or a custom
-orchestrator. Functions mirror the CLI commands and return typed Pydantic
-response models.
+## 2. SDK: inspect the concrete Python contract
 
-Local (in-process) run:
+The detection-training SDK returns Pydantic response models. This is an
+alternative submission of a new training run, using the same prepared numeric
+label view and runtime environment as above:
 
 ```python
+import os
 from npa.sdk.workbench import detection_training
 
-resp = detection_training.train(
+response = detection_training.train(
     view="bdd100k_rider_train",
-    lance_uri="s3://my-bucket/bdd100k-pipeline/example-run/lancedb/",
-    output_uri="s3://my-bucket/detection-training/example-run/",
+    lance_uri=os.environ["NPA_LANCE_URI"],
+    output_uri=os.environ["NPA_TRAIN_OUTPUT_URI"],
+    mode="service",
+    endpoint=os.environ["NPA_DETECTION_TRAINING_ENDPOINT"],
     epochs=10,
-    batch_size=8,
-    learning_rate=0.005,
 )
-print(resp.run_id, resp.status)
-```
+print(response.run_id, response.status)
 
-Service-mode run against a deployed endpoint:
-
-```python
-from npa.sdk.workbench import detection_training
-
-resp = detection_training.train(
-    view="bdd100k_rider_train",
-    lance_uri="s3://my-bucket/bdd100k-pipeline/example-run/lancedb/",
-    output_uri="s3://my-bucket/detection-training/example-run/",
-    mode="service",  # or service=True
-    endpoint="http://npa-detection-training.workbench.svc.cluster.local:8790",
-)
-
-status = detection_training.status(run_id=resp.run_id, mode="service",
-                                   endpoint="http://npa-detection-training.workbench.svc.cluster.local:8790")
+status = detection_training.status(run_id=response.run_id, mode="service")
 print(status.status, status.epochs_completed)
 ```
 
-Notes that generalize to other tools:
+A successful service-mode `train()` response acknowledges submission. Poll
+`status()` to a terminal state before consuming checkpoints. The SDK has no
+`wait` argument, and its current `train()` signature does not expose
+`label_map`; use the CLI service path for explicit label mappings. Local SDK
+execution calls the shared training function synchronously and requires its
+engine dependencies and accessible data in the calling environment.
 
-- `mode="local"` (the default) runs the shared implementation in-process;
-  `mode="service"` (or `service=True`) makes an HTTP call.
-- In service mode, `endpoint` defaults to the tool's endpoint environment
-  variable (here `NPA_DETECTION_TRAINING_ENDPOINT`) when not passed explicitly.
-- Errors raise typed exceptions (for this tool,
-  `DetectionTrainingServiceError` for transport/HTTP failures and
-  `DetectionTrainingValidationError` for bad local inputs). See
-  [../sdk/errors.md](../sdk/errors.md).
+Import `DetectionTrainingServiceError` and
+`DetectionTrainingValidationError` from
+`npa.sdk.workbench.detection_training`. Pydantic request validation can also
+raise `pydantic.ValidationError`. The separate [SDK error reference](../sdk/errors.md)
+covers the serverless client rather than all Workbench exceptions.
 
-## 3. YAML (SkyPilot)
+These return and error contracts do not generalize to every module:
 
-YAML is the client for multi-stage pipelines and sweeps that run on the cluster.
-A pipeline is a multi-document SkyPilot file; each task calls the tool's HTTP
-endpoint with `curl`, building the request body with `jq` from `envs`. This is
-exactly what the BDD100K reference pipeline does for the training stage.
+| Module | Implemented Python surface |
+| --- | --- |
+| `npa.sdk.workbench.detection_training` | Typed `train`, `eval`, and `status` functions |
+| `npa.sdk.workbench.workflow` | Durable `status`, `logs`, `artifacts`, and `runs`; dictionaries, strings, and lists |
+| `npa.orchestration.npa_workflow` | Specification loading, validation, and execution planning |
+| `npa.workbench.lerobot`, `npa.workbench.genesis` | CLI callback wrappers; may print output and raise CLI exits |
+| `npa.sdk.workbench.sonic` | Shared export helpers plus CLI wrappers for train/eval |
 
-Minimal single-task shape that mirrors the CLI/SDK `train` call above:
+## 3. YAML: compose registered tool operations
 
-```yaml
-name: detection-training-example
-execution: serial
----
-name: detection-train-rider
-resources:
-  cloud: kubernetes
-  accelerators: H100:1
-  cpus: 8
-  memory: 32
-setup: |
-  set -euo pipefail
-  command -v jq >/dev/null || (apt-get update && apt-get install -y jq)
-envs:
-  DETECTION_TRAINING_ENDPOINT: http://npa-detection-training.workbench.svc.cluster.local:8790
-  VIEW_NAME: bdd100k_rider_train
-  LANCE_URI: s3://<your-bucket>/bdd100k-pipeline/example-run/lancedb/
-  TRAIN_OUTPUT_URI: s3://<your-bucket>/detection-training/example-run/
-  TRAIN_EPOCHS: "10"
-  TRAIN_BATCH_SIZE: "8"
-  TRAIN_LEARNING_RATE: "0.005"
-  BDD100K_LABEL_MAP: '{"person":0,"rider":1,"car":2,"truck":3,"bus":4,"train":5,"motor":6,"bike":7,"traffic light":8,"traffic sign":9}'
-run: |
-  set -euo pipefail
-  curl -fsS "${DETECTION_TRAINING_ENDPOINT}/health"
+Use the maintained
+[BDD100K npa.workflow specification](../../npa/workflows/workbench/npa-workflows/bdd100k-pipeline.yaml)
+for the full ingest-to-evaluation journey. Its training stages reference
+`workbench.detection_training.train_rider`, `train_nighttime`, and
+`train_distant`; these invoke the real CLI service path and wait for training.
 
-  payload=$(jq -n \
-    --arg view "${VIEW_NAME}" \
-    --arg lance_uri "${LANCE_URI}" \
-    --arg output_uri "${TRAIN_OUTPUT_URI}" \
-    --argjson label_map "${BDD100K_LABEL_MAP}" \
-    --argjson epochs "${TRAIN_EPOCHS}" \
-    --argjson batch_size "${TRAIN_BATCH_SIZE}" \
-    --argjson learning_rate "${TRAIN_LEARNING_RATE}" \
-    '{view: $view, lance_uri: $lance_uri, output_uri: $output_uri, label_map: $label_map, epochs: $epochs, batch_size: $batch_size, learning_rate: $learning_rate}')
+From the repository root, inspect the unchanged reference before preparing
+private inputs and submission parameters:
 
-  curl -fsS -X POST "${DETECTION_TRAINING_ENDPOINT}/train" \
-    -H 'Content-Type: application/json' \
-    -d "${payload}"
+```bash
+npa workbench workflow validate-spec \
+  npa/workflows/workbench/npa-workflows/bdd100k-pipeline.yaml
+npa workbench workflow plan-spec \
+  npa/workflows/workbench/npa-workflows/bdd100k-pipeline.yaml
+npa workbench workflow submit --help
 ```
 
-Notes that generalize to other pipelines:
+Validation and planning do not run the tools or prove that data, model access,
+images, or GPU capacity are ready. Follow the
+[workflow guide](npa-workflow-guide.md) for submission and the
+[workflow catalog](../../npa/workflows/workbench/npa-workflows/README.md) for
+workload-specific setup. NPA renders the workflow into SkyPilot tasks; the
+current BDD100K reference is an `npa.workflow` state machine, not a raw
+multi-document SkyPilot `curl` pipeline.
 
-- Always `curl .../health` before any state-changing call.
-- Use `--arg` for strings and `--argjson` for numbers/objects/booleans so JSON
-  types survive into the request body.
-- SkyPilot 0.12.2 does not expand same-block `envs` inside `image_id`, and does
-  not self-reference `envs`. Keep committed YAMLs on explicit placeholders and
-  render per-run values with a runner script.
-- Dataset-specific config (like `label_map`) belongs in the YAML, not the tool.
+Keep the resolved run ID and durable state prefix returned by submission.
+Inspect `npa workbench workflow status`, `logs`, and `artifacts` with the
+matching project or durable S3 options. For a successful PAIDF run,
+`load-artifact` retries the final load into the configured agent viewer; it is
+not a generic viewer command for every workflow. S3 paths connect tool outputs
+to downstream inputs; inspect the produced artifact as well as the run status.
 
-For the full pipeline pattern, label-map injection, resources, and S3 path
-conventions, see [../workbench-yaml-guide.md](../workbench-yaml-guide.md) and
-the reference file
-`npa/workflows/workbench/npa-workflows/bdd100k-pipeline.yaml`.
+## Next docs
 
-## Same Work, Three Clients
-
-The three calls below are equivalent — they produce the same `/train` request
-against the same service:
-
-| Client | Call |
-| --- | --- |
-| CLI | `npa workbench detection-training train --service --endpoint $E --view bdd100k_rider_train --output-uri s3://.../` |
-| SDK | `detection_training.train(view="bdd100k_rider_train", output_uri="s3://.../", mode="service", endpoint=E)` |
-| YAML | `curl -X POST "$E/train" -d "$payload"` |
-
-## When to Use Which
-
-| Situation | Use |
-| --- | --- |
-| Trying a tool by hand or in a shell script | CLI |
-| Quick local run without deploying a service | CLI or SDK with `mode="local"` |
-| Calling from a notebook, agent, or custom orchestrator | SDK |
-| Composing multiple tools into a pipeline or a sweep | YAML |
-| Passing data between stages | S3 URIs via `--input-path` / `--output-path` |
-
-Tools never call each other directly for data transfer. Every stage reads its
-input from an S3 URI and writes its output to an S3 URI, so any client can hand
-work to the next stage.
-
-## Next Docs
-
-- [../cli/workbench.md](../cli/workbench.md): full list of workbench tools and commands.
-- [../sdk/errors.md](../sdk/errors.md): typed SDK exceptions.
-- [../workbench-yaml-guide.md](../workbench-yaml-guide.md): full pipeline YAML guide.
-- [getting-started.md](getting-started.md): install, credentials, and first runs.
+- [Workbench](README.md): choose a tool or end-to-end journey.
+- [Workflow guide](npa-workflow-guide.md): planning, runtime, and durable recovery.
+- [ToolRef catalog](npa-workflow-tool-catalog.md): supported workflow operations.
+- [Troubleshooting](troubleshooting/known-footguns.md): setup and runtime recovery.
+- [Workbench command reference](../cli/workbench.md): tool groups; use each command's help for options.
