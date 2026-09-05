@@ -96,13 +96,14 @@ def _avoid_registry_attestation_reads_in_unrelated_publish_tests(monkeypatch) ->
     )
 
 
-def test_gpu_accepted_publication_gate_binds_exact_digest(monkeypatch) -> None:
+@pytest.mark.parametrize("tool", ["cosmos3-serving", "detection-training"])
+def test_gpu_accepted_publication_gate_binds_exact_digest(monkeypatch, tool) -> None:
     from npa.deploy import publish_public
 
     item = PublishItem(
-        tool="cosmos3-serving",
-        source_ref="ghcr.io/example/npa-cosmos3-serving:dev-source",
-        target_ref="ghcr.io/example/npa-cosmos3-serving:release",
+        tool=tool,
+        source_ref=f"ghcr.io/example/npa-{tool}:dev-source",
+        target_ref=f"ghcr.io/example/npa-{tool}:release",
     )
     accepted = images.GPU_ACCEPTED_PUBLIC_IMAGE_DIGESTS[item.tool]
     monkeypatch.setattr(
@@ -285,7 +286,7 @@ def test_isaac_images_are_no_longer_restricted() -> None:
         assert is_publicly_redistributable(tool), tool
 
 
-def test_rebuilt_cosmos3_serving_and_sonic_mujoco_are_gpu_accepted() -> None:
+def test_rebuilt_surfaces_including_detection_training_are_gpu_accepted() -> None:
     """Clean bytes and exact GPU evidence earn release eligibility.
 
     Omniverse Kit was only the first: sonic also baked gated model weights (git-LFS
@@ -304,6 +305,7 @@ def test_rebuilt_cosmos3_serving_and_sonic_mujoco_are_gpu_accepted() -> None:
     assert set(images.GPU_ACCEPTED_PUBLIC_IMAGE_DIGESTS) == {
         "cosmos3-ray-serve",
         "cosmos3-serving",
+        "detection-training",
         "sonic-mujoco",
     }
 
@@ -418,11 +420,12 @@ def test_publish_plan_promotes_dev_sha_to_release_tag() -> None:
             "cosmos3-serving",
             "cosmos3-ray-serve",
             "sonic-mujoco",
+            "detection-training",
         )
     }
-    # The five Sim2Real roles deliberately share one coherent source; the five
-    # older accepted publication sources remain distinct from it and each other.
-    assert len(set(accepted_shas.values())) == 6
+    # The five Sim2Real roles deliberately share one coherent source. The six
+    # other accepted sources, including the detector, remain distinct from it.
+    assert len(set(accepted_shas.values())) == 7
     for item in plan:
         source_image = item.source_ref.rsplit("/", 1)[-1]
         target_image = item.target_ref.rsplit("/", 1)[-1]
@@ -446,6 +449,7 @@ def test_accepted_images_use_distinct_exact_development_sources_and_digests() ->
         "cosmos3-serving",
         "cosmos3-ray-serve",
         "sonic-mujoco",
+        "detection-training",
     ):
         entry = manifest[tool]
         assert by_tool[tool].source_ref.endswith(

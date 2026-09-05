@@ -248,13 +248,29 @@ def test_additive_release_requires_one_exact_accepted_source(tools, tag, digest,
 
 @pytest.fixture
 def additive_registry(monkeypatch):
-    """Exercise the real plan/preflight/copy adapter with only registry I/O replaced."""
+    """Supply accepted fixture bytes while exercising real gates and registry adapters."""
     from npa.deploy import publish_public
 
     module = _load_script()
     sha = "b" * 40
     body = b'{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","config":{},"layers":[]}'
     digest = "sha256:" + hashlib.sha256(body).hexdigest()
+    # Acceptance is external evidence about these fixture bytes. Keep the real
+    # GPU gate active, with a coherent synthetic catalog rather than the live
+    # release's digest, so the adapter can reach each registry-boundary check.
+    releases = publish_public.images.public_release_manifest()["releases"]
+    monkeypatch.setitem(
+        releases, "detection-training",
+        {**releases["detection-training"], "development_sha": sha, "published_digest": digest},
+    )
+    monkeypatch.setitem(
+        publish_public.images.GPU_ACCEPTED_PUBLIC_IMAGE_SOURCES,
+        "detection-training", {"development_sha": sha, "oci_digest": digest},
+    )
+    monkeypatch.setitem(
+        publish_public.images.GPU_ACCEPTED_PUBLIC_IMAGE_DIGESTS,
+        "detection-training", digest,
+    )
     repository = "ghcr.io/nebius/nebius-physical-ai/npa-detection-training"
     source = repository + ":dev-" + sha
     target = repository + ":runtime-recovery-1"
@@ -321,6 +337,23 @@ def additive_registry(monkeypatch):
     argv = [str(SCRIPT), "--tool", "detection-training", "--target", "ghcr.io/nebius/nebius-physical-ai", "--development-sha", sha, "--release-tag", "runtime-recovery-1", "--expected-source-digest", digest, "--mode", "publish"]
     monkeypatch.setattr(sys, "argv", argv)
     return module, state, calls, errors, revision, source, target, digest, argv
+
+
+def test_additive_catalog_acceptance_mismatch_stops_before_copy(
+    additive_registry, monkeypatch, capsys,
+) -> None:
+    from npa.deploy import images
+
+    module, state, calls, _, _, _, _, _, _ = additive_registry
+    before = dict(state)
+    monkeypatch.setitem(
+        images.GPU_ACCEPTED_PUBLIC_IMAGE_DIGESTS,
+        "detection-training", "sha256:" + "f" * 64,
+    )
+    assert module.main() == 1
+    assert calls == []
+    assert state == before
+    assert "GPU ACCEPTANCE GATE" in capsys.readouterr().err
 
 
 def test_additive_release_promotes_only_exact_accepted_bytes_then_is_idempotent(additive_registry) -> None:
