@@ -80,6 +80,9 @@ def test_every_fleet_target_executes_cuda_and_graphics() -> None:
         with api:
             core = client.CoreV1Api(api)
             batch = client.BatchV1Api(api)
+            # A missing RuntimeClass rejects pod creation before any Pod status
+            # exists. Check it before creating a Job that could otherwise wait.
+            assert client.NodeV1Api(api).read_runtime_class("nvidia").handler == "nvidia"
             selector = {
                 "node.kubernetes.io/instance-type": cluster.gpu_nodes.platform,
                 "nebius.com/resource-preset": cluster.gpu_nodes.preset,
@@ -125,6 +128,17 @@ def test_every_fleet_target_executes_cuda_and_graphics() -> None:
                     if any(c.status == "True" and c.type in {"Complete", "Failed"}
                            for c in current.status.conditions or []):
                         break
+                    pending = core.list_namespaced_pod(
+                        "default", label_selector=f"batch.kubernetes.io/controller-uid={uid}",
+                    ).items
+                    fatal = {
+                        "ImagePullBackOff", "ErrImagePull", "InvalidImageName",
+                        "CreateContainerConfigError", "CreateContainerError",
+                    }
+                    assert not any(
+                        status.state.waiting and status.state.waiting.reason in fatal
+                        for pod in pending for status in pod.status.container_statuses or []
+                    ), "qualification pod cannot start; inspect its image and configuration"
                     time.sleep(2)
                 pods = core.list_namespaced_pod(
                     "default", label_selector=f"batch.kubernetes.io/controller-uid={uid}",
