@@ -1939,7 +1939,12 @@ describe("NPA agent LeIsaac capability tab", () => {
     cy.get("#leisaacEpisodeVersion").select(versionId);
     cy.get("#leisaacEpisodesNextPage").should("not.be.disabled").click();
     cy.wait("@episodeListNext");
-    cy.contains("#leisaacEpisodeList button", "Open").click();
+    // The response can arrive before the previous page's DOM is replaced.
+    // Open the requested episode only after that exact row has rendered.
+    cy.contains("#leisaacEpisodeList .leisaac-episode-row", "Episode 1 · failure")
+      .should("be.visible")
+      .contains("button", "Open")
+      .click();
     cy.window().then((win) =>
       win.__NPA_AGENT_TEST__.refreshLeIsaacCapability("mock-episodes"),
     );

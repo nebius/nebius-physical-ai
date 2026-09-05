@@ -3214,22 +3214,24 @@ describe("NPA agent UI with mocked APIs", () => {
 
   it("keeps priming when Rerun replaces a decoded loading canvas", () => {
     cy.get("#tabRerun").click();
-    cy.window().then(async (win) => {
-      const api = win.__NPA_AGENT_TEST__;
+    cy.window().then((win) => {
       const iframe = win.document.getElementById("rerunFrame");
       iframe.hidden = false;
       iframe.srcdoc = `<!doctype html><html><body><script>
         const state = { initialCaptured: false, replacementCaptured: false };
+        let paintFrame;
         const paint = (canvas, color) => {
-          canvas.width = 320;
-          canvas.height = 180;
           const ctx = canvas.getContext("2d");
           ctx.fillStyle = color;
           ctx.fillRect(0, 0, canvas.width, canvas.height);
           ctx.fillStyle = "#5eead4";
           ctx.fillRect(170, 45, 110, 85);
+          paintFrame = window.requestAnimationFrame(() => paint(canvas, color));
         };
+        state.stop = () => window.cancelAnimationFrame(paintFrame);
         const initial = document.createElement("canvas");
+        initial.width = 320;
+        initial.height = 180;
         const initialCapture = initial.captureStream.bind(initial);
         initial.captureStream = (rate) => {
           state.initialCaptured = true;
@@ -3238,8 +3240,11 @@ describe("NPA agent UI with mocked APIs", () => {
         document.body.appendChild(initial);
         paint(initial, "#07111f");
         window.__NPA_CAPTURE_REPLACEMENT__ = state;
-        window.setTimeout(() => {
+        state.replace = () => {
+          state.stop();
           const replacement = document.createElement("canvas");
+          replacement.width = 320;
+          replacement.height = 180;
           const replacementCapture = replacement.captureStream.bind(replacement);
           replacement.captureStream = (rate) => {
             state.replacementCaptured = true;
@@ -3247,30 +3252,50 @@ describe("NPA agent UI with mocked APIs", () => {
           };
           initial.replaceWith(replacement);
           paint(replacement, "#ff8a1f");
-        }, 700);
+        };
       <\/script></body></html>`;
-
-      const documentDeadline = Date.now() + 1500;
-      while (
-        Date.now() < documentDeadline
-        && !iframe.contentWindow.__NPA_CAPTURE_REPLACEMENT__
-      ) {
-        await new Promise((resolve) => setTimeout(resolve, 20));
-      }
-      api.primeRerunCaptureBridge(iframe, 2200);
-      const replacementDeadline = Date.now() + 1800;
-      while (
-        Date.now() < replacementDeadline
-        && !(iframe.contentWindow.__NPA_CAPTURE_REPLACEMENT__ || {}).replacementCaptured
-      ) {
-        await new Promise((resolve) => setTimeout(resolve, 40));
-      }
-      const lifecycle = iframe.contentWindow.__NPA_CAPTURE_REPLACEMENT__;
+    });
+    cy.window().should((win) => {
+      const iframe = win.document.getElementById("rerunFrame");
+      expect(iframe.contentWindow.__NPA_CAPTURE_REPLACEMENT__, "replacement fixture loaded").to.exist;
+      const bridge = win.__NPA_AGENT_TEST__.ensureRerunCaptureBridge(iframe);
+      expect(bridge, "initial native stream").to.exist;
+      expect(bridge.video.readyState, "initial canvas has a decoded frame").to.be.at.least(2);
+      expect(bridge.video.videoWidth).to.eq(320);
+    });
+    cy.window().then((win) => {
+      const iframe = win.document.getElementById("rerunFrame");
+      // Replace only after the initial stream decoded. Continued real paints
+      // deliver frames after the primer attaches to the replacement canvas.
+      win.__NPA_AGENT_TEST__.primeRerunCaptureBridge(iframe, 2200);
+      iframe.contentWindow.__NPA_CAPTURE_REPLACEMENT__.replace();
+    });
+    cy.window().should((win) => {
+      const lifecycle = win.document.getElementById("rerunFrame").contentWindow.__NPA_CAPTURE_REPLACEMENT__;
       expect(lifecycle.initialCaptured, "loading canvas stream").to.eq(true);
       expect(lifecycle.replacementCaptured, "replacement canvas stream").to.eq(true);
-      const grabbed = await api.grabFromRerunCaptureBridge(3000, { forceRestart: false });
-      expect(grabbed).to.match(/^data:image\/jpeg;base64,/);
-      expect(grabbed.length).to.be.greaterThan(1000);
+    });
+    cy.window().then(async (win) => {
+      const lifecycle = win.document.getElementById("rerunFrame").contentWindow.__NPA_CAPTURE_REPLACEMENT__;
+      try {
+        const grabbed = await win.__NPA_AGENT_TEST__.grabFromRerunCaptureBridge(3000, { forceRestart: false });
+        expect(grabbed).to.match(/^data:image\/jpeg;base64,/);
+        expect(grabbed.length).to.be.greaterThan(1000);
+        const image = new win.Image();
+        image.src = grabbed;
+        await image.decode();
+        const sampled = win.document.createElement("canvas");
+        sampled.width = image.width;
+        sampled.height = image.height;
+        const context = sampled.getContext("2d");
+        context.drawImage(image, 0, 0);
+        const [red, green, blue] = context.getImageData(25, 25, 1, 1).data;
+        expect(red, "captured replacement orange, not the initial dark canvas").to.be.greaterThan(200);
+        expect(green).to.be.within(90, 180);
+        expect(blue).to.be.lessThan(80);
+      } finally {
+        lifecycle.stop();
+      }
     });
   });
 
