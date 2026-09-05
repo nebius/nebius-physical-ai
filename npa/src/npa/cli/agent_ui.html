@@ -7232,6 +7232,10 @@
         };
         const previous = activeArtifactBrowseScope;
         if (previous && previous.projectId === next.projectId && previous.resourceBucket === next.resourceBucket) return;
+        // Changing storage scope supersedes pending run loads and refreshes,
+        // including demo mount continuations that resume after details abort.
+        selectedRunLoadGeneration += 1;
+        activeRunSelectionGeneration += 1;
         cancelAccessAction(true);
         runSearchRequestId += 1;
         artifactLoadRequestId += 1;

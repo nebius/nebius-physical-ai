@@ -57,6 +57,50 @@ function assertSelection(projectId, name) {
 }
 
 describe("Agent access native selection", () => {
+  for (const scopeChange of ["project", "bucket"]) {
+    it(`cancels a pending demo load when the access ${scopeChange} changes`, () => {
+      visitAccess(multipleProjects);
+      let releaseDemoDetails;
+      cy.intercept({ method: "GET", url: "/api/workflows/sim2real/runs/franka-demo*", times: 1 }, (req) => {
+        return new Cypress.Promise((resolve) => {
+          releaseDemoDetails = () => {
+            req.reply({ body: { run: { run_id: "franka-demo", stages: [], logs: [] } } });
+            resolve();
+          };
+        });
+      });
+      cy.get("#tabRerun").click();
+      cy.get("#runIdInput").clear().type("franka-demo");
+      cy.get("#loadRunData").click();
+      cy.wait("@loadFranka");
+      cy.wrap(null).should(() => expect(releaseDemoDetails, "demo details are in flight").to.be.a("function"));
+      const mountedRuns = [];
+      cy.window().then((win) => {
+        const frame = win.document.getElementById("rerunFrame");
+        const observer = new win.MutationObserver(() => mountedRuns.push(frame.dataset.rerunRunKey || ""));
+        observer.observe(frame, { attributes: true, attributeFilter: ["data-rerun-run-key"] });
+      });
+      cy.get("#tabMain").click();
+      if (scopeChange === "project") {
+        cy.get("#agentAccessProjectSelect").select("project-b");
+        assertSelection("project-b", "beta-artifacts");
+      } else {
+        cy.get("#agentAccessBucketSelect").select("alpha-archive");
+        assertSelection("project-a", "alpha-archive");
+      }
+      cy.then(() => releaseDemoDetails());
+      // Await completion of the original real click, including any resumed
+      // mount/refresh, before checking that the cleared scope stayed cleared.
+      cy.get("#loadRunData").should("have.attr", "aria-busy", "false");
+      cy.get("#runSummary").should("have.text", "Select a run to load its result.");
+      cy.get("#runIdSelect option").should("not.contain.text", "franka-demo");
+      cy.get("#rerunFrame").should("have.attr", "hidden");
+      cy.get("#rerunFrame").should("not.have.attr", "src");
+      cy.then(() => expect(mountedRuns, "old demo never remounts in the new storage scope")
+        .not.to.include("franka-demo"));
+    });
+  }
+
   it("scopes discovery on the first explicit dropdown change without a preceding List action", () => {
     visitAccess(multipleProjects);
     cy.get("#agentAccessProjectSelect").select("project-b");
