@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import copy
+import bz2
 import gzip
 import hashlib
 import importlib.util
 import io
 import json
+import lzma
 from pathlib import Path
 import subprocess
 import sys
@@ -48,6 +50,7 @@ def tar_bytes(entries):
 def payload():
     """Tiny independent contract; no proprietary payload or fabricated GPU output."""
     contract = copy.deepcopy(json.loads((IMAGE / "runtime-payload.json").read_text()))
+    contract.pop("torch_cudnn_adapters")  # Adapter qualification has separate exact-byte fixtures.
     entries = []
     cudnn = contract["cudnn"]
     for index, row in enumerate(cudnn["retained"]):
@@ -362,3 +365,237 @@ def test_dot_and_parent_whiteout_targets_are_malformed(tmp_path, payload, whiteo
 
 def test_same_file_in_distinct_layers_is_valid_replacement(tmp_path, payload):
     assert verify(tmp_path, payload, [payload[1], [payload[1][0]]])["valid"] is True
+
+
+def save_oci_image(tmp_path, layers, *, docker_media=False, compressed=True,
+                   update_manifest=None, update_index=None, update_saved=None,
+                   replace_blob=None, duplicate_blob=False):
+    """Independent complete descriptor graph, including deduplicated blob storage."""
+    raw_layers = [tar_bytes(rows) for rows in layers]
+    config = json.dumps({"rootfs": {"type": "layers", "diff_ids": ["sha256:" + digest(data) for data in raw_layers]}}).encode()
+    blobs = {digest(config): config}
+
+    def descriptor(data, media):
+        blobs[digest(data)] = data
+        return {"mediaType": media, "digest": "sha256:" + digest(data), "size": len(data)}
+
+    layer_media = ("application/vnd.docker.image.rootfs.diff.tar" if docker_media else "application/vnd.oci.image.layer.v1.tar")
+    if compressed:
+        layer_media += ".gzip" if docker_media else "+gzip"
+    manifest = {
+        "schemaVersion": 2,
+        "mediaType": "application/vnd.docker.distribution.manifest.v2+json" if docker_media else "application/vnd.oci.image.manifest.v1+json",
+        "config": descriptor(config, "application/vnd.docker.container.image.v1+json" if docker_media else "application/vnd.oci.image.config.v1+json"),
+        "layers": [descriptor(gzip.compress(data, mtime=0) if compressed else data, layer_media) for data in raw_layers],
+    }
+    saved = [{"Config": "blobs/sha256/" + digest(config), "Layers": ["blobs/sha256/" + row["digest"][7:] for row in manifest["layers"]]}]
+    if update_manifest:
+        update_manifest(manifest)
+    manifest_data = json.dumps(manifest).encode()
+    manifest_descriptor = descriptor(manifest_data, manifest["mediaType"])
+    manifest_descriptor["annotations"] = {"config.digest": "sha256:" + digest(config)}
+    index = {"schemaVersion": 2, "mediaType": "application/vnd.oci.image.index.v1+json", "manifests": [manifest_descriptor]}
+    if update_index:
+        update_index(index)
+    if update_saved:
+        update_saved(saved)
+    if replace_blob:
+        replace_blob(blobs, manifest, manifest_descriptor)
+    members = [entry("manifest.json", json.dumps(saved).encode()), entry("index.json", json.dumps(index).encode()),
+               entry("oci-layout", b'{"imageLayoutVersion":"1.0.0"}')]
+    members.extend(entry("blobs/sha256/" + sha, data) for sha, data in blobs.items())
+    if duplicate_blob:
+        members.append(members[-1])
+    archive = tmp_path / "image.tar"
+    archive.write_bytes(tar_bytes(members))
+    return archive, "sha256:" + digest(manifest_data), "sha256:" + digest(config)
+
+
+@pytest.mark.parametrize("docker_media,compressed", [(False, False), (False, True), (True, True)])
+@pytest.mark.parametrize("config_id", [False, True])
+def test_oci_graph_binds_manifest_and_classic_ids_with_repeated_ordered_blobs(tmp_path, payload, docker_media, compressed, config_id):
+    layers = [[], payload[1], []]
+    archive, manifest_id, classic_id = save_oci_image(tmp_path, layers, docker_media=docker_media, compressed=compressed)
+    report = VERIFIER.verify_image(archive, expected_image_id=classic_id if config_id else manifest_id, contract=payload[0])
+    assert report["valid"]
+    assert report["layer_count"] == 3
+    assert report["verified_layer_diff_ids"][0] == report["verified_layer_diff_ids"][2]
+    assert report["image_config_digest"] == classic_id
+    assert report["image_manifest_digest"] == manifest_id
+    assert report["regular_files_read"] == 10
+
+
+def test_repeated_nonempty_blob_is_scanned_for_every_occurrence(tmp_path, payload):
+    archive, image_id, _ = save_oci_image(tmp_path, [payload[1], payload[1]])
+    report = VERIFIER.verify_image(archive, expected_image_id=image_id, contract=payload[0])
+    assert report["valid"]
+    assert report["regular_files_read"] == 20
+    assert report["content_bytes_read"] == 2 * sum(len(row[1]) for row in payload[1])
+
+
+@pytest.mark.parametrize("update", [
+    lambda m: m["config"].update(size=m["config"]["size"] + 1),
+    lambda m: m["config"].update(digest="sha256:" + "0" * 64),
+    lambda m: m["config"].update(mediaType="unsupported"),
+    lambda m: m["layers"][0].update(size=True),
+    lambda m: m["layers"][0].update(size=-1),
+    lambda m: m["layers"][0].update(size=m["layers"][0]["size"] + 1),
+    lambda m: m["layers"][0].update(digest="sha256:" + "0" * 64),
+    lambda m: m["layers"][0].update(mediaType="application/vnd.oci.image.layer.v1.tar+zstd"),
+    lambda m: m["layers"][0].update(mediaType="application/vnd.oci.image.layer.v1.tar"),
+    lambda m: m["layers"].reverse(),
+    lambda m: m["layers"].pop(),
+    lambda m: m.update(schemaVersion=1),
+])
+def test_oci_graph_rejects_descriptor_tampering(tmp_path, payload, update):
+    archive, image_id, _ = save_oci_image(tmp_path, [[], payload[1]], update_manifest=update)
+    with pytest.raises((VERIFIER.ImageVerificationError, KeyError)):
+        VERIFIER.verify_image(archive, expected_image_id=image_id, contract=payload[0])
+
+
+@pytest.mark.parametrize("update", [
+    lambda i: i["manifests"].append(copy.deepcopy(i["manifests"][0])),
+    lambda i: i["manifests"][0].update(digest="sha256:" + "0" * 64),
+    lambda i: i["manifests"][0].update(size=i["manifests"][0]["size"] + 1),
+    lambda i: i["manifests"][0]["annotations"].update({"config.digest": "sha256:" + "0" * 64}),
+    lambda i: i.update(schemaVersion=1),
+])
+def test_oci_index_cannot_redirect_or_ambiguously_select_image(tmp_path, payload, update):
+    archive, image_id, _ = save_oci_image(tmp_path, [payload[1]], update_index=update)
+    with pytest.raises((VERIFIER.ImageVerificationError, KeyError)):
+        VERIFIER.verify_image(archive, expected_image_id=image_id, contract=payload[0])
+
+
+def test_oci_manifest_and_blob_bytes_are_hashed_not_trusted_from_names(tmp_path, payload):
+    def replace(blobs, manifest, descriptor):
+        sha = descriptor["digest"][7:]
+        blobs[sha] = blobs[sha].replace(b'"schemaVersion": 2', b'"schemaVersion": 1')
+
+    archive, image_id, _ = save_oci_image(tmp_path, [payload[1]], replace_blob=replace)
+    with pytest.raises(VERIFIER.ImageVerificationError, match="manifest digest"):
+        VERIFIER.verify_image(archive, expected_image_id=image_id, contract=payload[0])
+
+
+def test_oci_compressed_blob_identity_detects_same_diff_id_with_different_compression(tmp_path, payload):
+    def replace(blobs, manifest, descriptor):
+        sha = manifest["layers"][0]["digest"][7:]
+        blobs[sha] = gzip.compress(gzip.decompress(blobs[sha]), mtime=1)
+
+    archive, image_id, _ = save_oci_image(tmp_path, [payload[1]], replace_blob=replace)
+    with pytest.raises(VERIFIER.ImageVerificationError, match="blob digest"):
+        VERIFIER.verify_image(archive, expected_image_id=image_id, contract=payload[0])
+
+
+def test_repeated_references_do_not_allow_duplicate_outer_entries(tmp_path, payload):
+    archive, image_id, _ = save_oci_image(tmp_path, [[], payload[1], []], duplicate_blob=True)
+    with pytest.raises(VERIFIER.ImageVerificationError, match="duplicate saved-image"):
+        VERIFIER.verify_image(archive, expected_image_id=image_id, contract=payload[0])
+
+
+def test_oci_compatibility_manifest_cannot_reorder_the_described_layers(tmp_path, payload):
+    archive, image_id, _ = save_oci_image(tmp_path, [[], payload[1]], update_saved=lambda rows: rows[0]["Layers"].reverse())
+    with pytest.raises(VERIFIER.ImageVerificationError, match="layer order"):
+        VERIFIER.verify_image(archive, expected_image_id=image_id, contract=payload[0])
+
+
+@pytest.fixture
+def adapter_payload(payload):
+    contract, entries, excluded = copy.deepcopy(payload)
+    adapters = copy.deepcopy(json.loads((IMAGE / "runtime-payload.json").read_text())["torch_cudnn_adapters"])
+    root = contract["cudnn"]["install_root"]
+    for index, row in enumerate([*adapters["headers"], adapters["license"]]):
+        data = f"Synthetic independently reviewed PyTorch BSD adapter or full notice {index}.".encode()
+        row.update(sha256=digest(data), size=len(data))
+        entries.append(entry(f"{root}/{row['path']}", data))
+    contract["torch_cudnn_adapters"] = adapters
+    return contract, entries, excluded
+
+
+def test_reviewed_torch_adapter_bytes_and_complete_license_pass(tmp_path, adapter_payload):
+    report = verify(tmp_path, adapter_payload)
+    assert report["valid"]
+    assert report["verified_torch_adapter_count"] == 52
+    assert report["required_payload_count"] == 63
+    assert report["regular_files_read"] == 63
+
+
+@pytest.mark.parametrize("change", ["modified", "missing", "relocated", "sdk_bytes", "symlink", "missing_license", "modified_license"])
+def test_adapter_exception_never_trusts_path_alone(tmp_path, adapter_payload, change):
+    contract, entries, excluded = adapter_payload
+    first_adapter = 10
+    if change == "modified":
+        entries[first_adapter] = entry(entries[first_adapter][0], b"unreviewed SDK header")
+    elif change == "missing":
+        del entries[first_adapter]
+    elif change == "relocated":
+        entries[first_adapter] = entry("opt/elsewhere/cudnn_affine_grid_generator.h", entries[first_adapter][1])
+    elif change == "sdk_bytes":
+        entries[first_adapter] = entry(entries[first_adapter][0], excluded[0])
+    elif change == "symlink":
+        entries[first_adapter] = entry(entries[first_adapter][0], kind=tarfile.SYMTYPE, link="untrusted")
+    elif change == "missing_license":
+        entries.pop()
+    elif change == "modified_license":
+        entries[-1] = entry(entries[-1][0], b"truncated notice")
+    report = verify(tmp_path, (contract, entries, excluded))
+    assert not report["valid"]
+    if change == "sdk_bytes":
+        assert "excluded_cudnn_sdk_bytes" in codes(report)
+
+
+def test_unknown_header_under_torch_namespace_is_still_rejected(tmp_path, adapter_payload):
+    contract, entries, _ = adapter_payload
+    root = contract["cudnn"]["install_root"]
+    entries.append(entry(f"{root}/torch/include/ATen/ops/cudnn_unreviewed.h", b"unreviewed"))
+    assert "excluded_cudnn_sdk_path" in codes(verify(tmp_path, adapter_payload))
+
+
+def test_ancestor_adapter_tampering_remains_rejected_after_valid_replacement(tmp_path, adapter_payload):
+    path = adapter_payload[1][10][0]
+    report = verify(tmp_path, adapter_payload, [[entry(path, b"old forbidden header")], adapter_payload[1]])
+    assert not report["valid"]
+    assert report["verified_torch_adapter_count"] == 52
+    assert "retained_payload_hash_mismatch" in codes(report)
+
+
+def test_adapter_whiteout_cannot_keep_prior_proof(tmp_path, adapter_payload):
+    path = Path(adapter_payload[1][10][0])
+    report = verify(tmp_path, adapter_payload, [adapter_payload[1], [entry(str(path.parent / (".wh." + path.name)))]])
+    assert not report["valid"]
+    assert report["verified_torch_adapter_count"] == 51
+
+
+def test_adapter_inventory_is_bound_to_locked_official_wheel_and_full_notice():
+    adapters = json.loads((IMAGE / "runtime-payload.json").read_text())["torch_cudnn_adapters"]
+    assert adapters["name"] == "torch" and adapters["version"] == "2.9.1+cu130"
+    assert adapters["wheel_sha256"] == "e70e1b18881e6b3c1ce402d0a989da39f956a3a057526e03c354df23d704ce9b"
+    assert "--hash=sha256:" + adapters["wheel_sha256"] in (IMAGE / "requirements.lock").read_text()
+    assert adapters["wheel_url"] == "https://download.pytorch.org/whl/cu130/torch-2.9.1%2Bcu130-cp312-cp312-manylinux_2_28_x86_64.whl"
+    assert len(adapters["headers"]) == 52
+    assert len({row["path"] for row in adapters["headers"]}) == 52
+    assert all(row["path"].startswith("torch/include/ATen/ops/cudnn_") for row in adapters["headers"])
+    assert adapters["license"]["sha256"] == "776e43288ab54330aa1d942737754b0edef0e7a07b62b736b595136ca5ccae88"
+    assert adapters["license"]["size"] == 499846
+    assert adapters["source_license_sha256"] == "a8a2c6b67cf8a597ffaa5c82380a6bd1b82629c0417e00673d8013d662eb500a"
+
+
+@pytest.mark.parametrize("compress", [bz2.compress, lzma.compress])
+def test_declared_raw_oci_layer_cannot_auto_decode_an_unsupported_codec(tmp_path, payload, compress):
+    compressed = compress(tar_bytes(payload[1]))
+    config = json.dumps({"rootfs": {"type": "layers", "diff_ids": ["sha256:" + digest(compressed)]}}).encode()
+    manifest = {
+        "schemaVersion": 2, "mediaType": "application/vnd.oci.image.manifest.v1+json",
+        "config": {"mediaType": "application/vnd.oci.image.config.v1+json", "digest": "sha256:" + digest(config), "size": len(config)},
+        "layers": [{"mediaType": "application/vnd.oci.image.layer.v1.tar", "digest": "sha256:" + digest(compressed), "size": len(compressed)}],
+    }
+    manifest_bytes = json.dumps(manifest).encode()
+    index = {"schemaVersion": 2, "manifests": [{"mediaType": manifest["mediaType"], "digest": "sha256:" + digest(manifest_bytes), "size": len(manifest_bytes)}]}
+    saved = [{"Config": "blobs/sha256/" + digest(config), "Layers": ["blobs/sha256/" + digest(compressed)]}]
+    archive = tmp_path / "unsupported-codec.tar"
+    archive.write_bytes(tar_bytes([
+        entry("oci-layout", b'{"imageLayoutVersion":"1.0.0"}'), entry("index.json", json.dumps(index).encode()),
+        entry("manifest.json", json.dumps(saved).encode()), entry("blobs/sha256/" + digest(config), config),
+        entry("blobs/sha256/" + digest(manifest_bytes), manifest_bytes), entry("blobs/sha256/" + digest(compressed), compressed),
+    ]))
+    with pytest.raises(tarfile.ReadError):
+        VERIFIER.verify_image(archive, expected_image_id="sha256:" + digest(manifest_bytes), contract=payload[0])

@@ -18,6 +18,14 @@ import tarfile
 CONTRACT = Path(__file__).with_name("runtime-payload.json")
 _SDK_NAME = re.compile(r"(?i)(?:cudnn\w*\.(?:h|hpp|hxx|cuh)|libcudnn\w*\.(?:a|lib))$")
 _RUNTIME_NAME = re.compile(r"(?i)libcudnn\w*\.so(?:\.\d+)*$")
+_MANIFEST_TYPES = {"application/vnd.oci.image.manifest.v1+json", "application/vnd.docker.distribution.manifest.v2+json"}
+_CONFIG_TYPES = {"application/vnd.oci.image.config.v1+json", "application/vnd.docker.container.image.v1+json"}
+_LAYER_TYPES = {
+    "application/vnd.oci.image.layer.v1.tar": False,
+    "application/vnd.oci.image.layer.v1.tar+gzip": True,
+    "application/vnd.docker.image.rootfs.diff.tar": False,
+    "application/vnd.docker.image.rootfs.diff.tar.gzip": True,
+}
 
 
 class ImageVerificationError(ValueError):
@@ -40,11 +48,77 @@ def _hash_stream(stream):
     return digest.hexdigest(), count
 
 
-def _layer_diff_id(stream):
+def _layer_stream(stream):
     signature = stream.read(2)
     stream.seek(0)
-    decoded = gzip.GzipFile(fileobj=stream) if signature == b"\x1f\x8b" else stream
-    return "sha256:" + _hash_stream(decoded)[0]
+    return gzip.GzipFile(fileobj=stream) if signature == b"\x1f\x8b" else stream
+
+
+def _layer_diff_id(stream):
+    with _layer_stream(stream) as decoded:
+        return "sha256:" + _hash_stream(decoded)[0]
+
+
+def _descriptor_member(descriptor, members, media_types):
+    if not isinstance(descriptor, dict) or descriptor.get("mediaType") not in media_types:
+        raise ImageVerificationError("unsupported image descriptor media type")
+    digest = descriptor.get("digest")
+    size = descriptor.get("size")
+    if not isinstance(digest, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
+        raise ImageVerificationError("invalid image descriptor digest")
+    if type(size) is not int or size < 0:
+        raise ImageVerificationError("invalid image descriptor size")
+    member = members["blobs/sha256/" + digest.removeprefix("sha256:")]
+    if not member.isfile() or member.size != size:
+        raise ImageVerificationError("image descriptor blob size or type mismatch")
+    return member
+
+
+def _json_member(archive, member):
+    if not member.isfile():
+        raise ImageVerificationError("image metadata must be regular")
+    return json.load(archive.extractfile(member))
+
+
+def _oci_graph(archive, members, config_member, config_hash, layers):
+    """Bind Docker's compatibility manifest to the single OCI descriptor graph.
+
+    Docker's containerd store reports the manifest digest as inspect .Id. Classic
+    stores report the config digest. Both identities must bind the same bytes;
+    annotations alone are never evidence. Repeated layer *references* are valid.
+    """
+    if "index.json" not in members and "oci-layout" not in members:
+        return None, None
+    layout = _json_member(archive, members["oci-layout"])
+    index = _json_member(archive, members["index.json"])
+    if not isinstance(layout, dict) or layout.get("imageLayoutVersion") != "1.0.0":
+        raise ImageVerificationError("unsupported OCI image layout")
+    if (not isinstance(index, dict) or index.get("schemaVersion") != 2
+            or index.get("mediaType", "application/vnd.oci.image.index.v1+json") != "application/vnd.oci.image.index.v1+json"
+            or not isinstance(index.get("manifests"), list) or len(index["manifests"]) != 1):
+        raise ImageVerificationError("save exactly one OCI image manifest")
+    descriptor = index["manifests"][0]
+    member = _descriptor_member(descriptor, members, _MANIFEST_TYPES)
+    data = archive.extractfile(member).read()
+    if "sha256:" + hashlib.sha256(data).hexdigest() != descriptor["digest"]:
+        raise ImageVerificationError("OCI manifest digest mismatch")
+    manifest = json.loads(data)
+    if (not isinstance(manifest, dict) or manifest.get("schemaVersion") != 2
+            or manifest.get("mediaType") != descriptor["mediaType"]):
+        raise ImageVerificationError("OCI manifest schema or media type mismatch")
+    described_config = _descriptor_member(manifest.get("config"), members, _CONFIG_TYPES)
+    if described_config is not config_member or manifest["config"]["digest"] != "sha256:" + config_hash:
+        raise ImageVerificationError("OCI and saved-image config digest mismatch")
+    annotations = descriptor.get("annotations", {})
+    if not isinstance(annotations, dict) or annotations.get("config.digest", "sha256:" + config_hash) != "sha256:" + config_hash:
+        raise ImageVerificationError("OCI config annotation mismatch")
+    described_layers = manifest.get("layers")
+    if not isinstance(described_layers, list) or len(described_layers) != len(layers):
+        raise ImageVerificationError("OCI and saved-image layer population disagree")
+    for layer_name, layer_descriptor in zip(layers, described_layers, strict=True):
+        if _descriptor_member(layer_descriptor, members, _LAYER_TYPES) is not members[_path(layer_name)]:
+            raise ImageVerificationError("OCI and saved-image layer order disagree")
+    return descriptor["digest"], described_layers
 
 
 def verify_image(tarball: Path, *, expected_image_id: str, contract: dict | None = None) -> dict:
@@ -62,6 +136,18 @@ def verify_image(tarball: Path, *, expected_image_id: str, contract: dict | None
         raise ImageVerificationError("expected exactly eight runtimes and their license")
     notice = contract["nvshmem_notice"]
     expected[_path(notice["path"])] = notice
+    # PyTorch's generated cuDNN operator declarations are BSD-licensed adapters,
+    # not NVIDIA SDK headers. Only exact independently verified wheel bytes at
+    # these exact paths qualify, together with the wheel's complete license.
+    adapters = {}
+    torch_contract = contract.get("torch_cudnn_adapters")
+    if torch_contract is not None:
+        adapters = {f"{root}/{_path(row['path'])}": row for row in torch_contract["headers"]}
+        if len(adapters) != 52 or len(torch_contract["headers"]) != 52:
+            raise ImageVerificationError("expected complete reviewed PyTorch adapter inventory")
+        expected.update(adapters)
+        torch_license = torch_contract["license"]
+        expected[f"{root}/{_path(torch_license['path'])}"] = torch_license
     excluded_hashes = {row["sha256"] for row in cudnn["excluded_sdk"]}
     runtime_hashes = {row["sha256"] for row in runtimes}
     if len(cudnn["excluded_sdk"]) != 14 or len({row["path"] for row in cudnn["excluded_sdk"]}) != 14:
@@ -96,15 +182,18 @@ def verify_image(tarball: Path, *, expected_image_id: str, contract: dict | None
         if not isinstance(manifest[0], dict):
             raise ImageVerificationError("saved-image manifest entry must be an object")
         layers = manifest[0].get("Layers")
-        if not isinstance(layers, list) or not layers or len(set(layers)) != len(layers):
-            raise ImageVerificationError("saved-image layers must be complete and unique")
+        if not isinstance(layers, list) or not layers or not all(isinstance(name, str) for name in layers):
+            raise ImageVerificationError("saved-image layers must be complete")
         config_member = members[_path(manifest[0]["Config"])]
         if not config_member.isfile():
             raise ImageVerificationError("saved-image config must be regular")
         config_bytes = archive.extractfile(config_member).read()
         config_hash = hashlib.sha256(config_bytes).hexdigest()
-        if PurePosixPath(config_member.name).stem != config_hash or expected_image_id != "sha256:" + config_hash:
+        if PurePosixPath(config_member.name).stem != config_hash:
             raise ImageVerificationError("saved-image config digest mismatch")
+        manifest_digest, layer_descriptors = _oci_graph(archive, members, config_member, config_hash, layers)
+        if expected_image_id not in {"sha256:" + config_hash, manifest_digest}:
+            raise ImageVerificationError("saved-image manifest or config digest mismatch")
         config = json.loads(config_bytes)
         if not isinstance(config, dict) or not isinstance(config.get("rootfs"), dict):
             raise ImageVerificationError("image config requires root filesystem identity")
@@ -117,12 +206,27 @@ def verify_image(tarball: Path, *, expected_image_id: str, contract: dict | None
             member = members[_path(layer_name)]
             if not member.isfile():
                 raise ImageVerificationError("saved-image layer must be regular")
+            # A blob may occur more than once in the layer stack. Verify and scan
+            # each occurrence in order, while rejecting duplicate outer entries.
+            blob_hash, blob_size = _hash_stream(archive.extractfile(member))
+            if _path(layer_name).startswith("blobs/") and _path(layer_name) != "blobs/sha256/" + blob_hash:
+                raise ImageVerificationError("saved-image layer blob digest mismatch")
+            if layer_descriptors is not None:
+                descriptor = layer_descriptors[layer_index]
+                if descriptor["digest"] != "sha256:" + blob_hash or descriptor["size"] != blob_size:
+                    raise ImageVerificationError("OCI layer blob digest or size mismatch")
+                signature = archive.extractfile(member).read(2)
+                if (signature == b"\x1f\x8b") != _LAYER_TYPES[descriptor["mediaType"]]:
+                    raise ImageVerificationError("OCI layer compression media type mismatch")
             if _layer_diff_id(archive.extractfile(member)) != diff_ids[layer_index]:
                 raise ImageVerificationError("saved-image layer diff ID mismatch")
             # Whiteouts affect lower layers, including when recorded after new files.
             current = {}
             seen_paths = set()
-            with tarfile.open(fileobj=archive.extractfile(member), mode="r|*") as layer:
+            # Use exactly the same decoding for the diff ID and tar contents.
+            # Auto-detection here would accept an undeclared bz2/xz codec while
+            # hashing its compressed bytes as a false uncompressed diff ID.
+            with _layer_stream(archive.extractfile(member)) as decoded, tarfile.open(fileobj=decoded, mode="r|") as layer:
                 for entry_index, entry in enumerate(layer):
                     entries_read += 1
                     path = _path(entry.name)
@@ -155,7 +259,7 @@ def verify_image(tarball: Path, *, expected_image_id: str, contract: dict | None
                             issue("retained_payload_not_regular", layer_index, entry_index)
                         # Ancestor bytes remain distributed even if later hidden.
                         if not entry.isdir():
-                            if _SDK_NAME.fullmatch(basename):
+                            if _SDK_NAME.fullmatch(basename) and path not in adapters:
                                 issue("excluded_cudnn_sdk_path", layer_index, entry_index)
                             if "/nvidia/cudnn/" in "/" + path and path not in expected:
                                 issue("unreviewed_cudnn_namespace_payload", layer_index, entry_index)
@@ -190,9 +294,13 @@ def verify_image(tarball: Path, *, expected_image_id: str, contract: dict | None
         "valid": not findings,
         "docker_save_sha256": archive_hash,
         "image_config_digest": "sha256:" + config_hash,
+        "expected_image_id": expected_image_id,
+        "image_manifest_digest": manifest_digest,
         "verified_layer_diff_ids": diff_ids,
         "contract_sha256": hashlib.sha256(json.dumps(contract, sort_keys=True, separators=(",", ":")).encode()).hexdigest(),
         "cudnn_source_wheel_sha256": cudnn["wheel_sha256"],
+        "torch_source_wheel_sha256": torch_contract["wheel_sha256"] if torch_contract is not None else None,
+        "verified_torch_adapter_count": sum(path in observed and observed[path]["matches"] for path in adapters),
         "layer_count": len(layers),
         "entries_read": entries_read,
         "regular_files_read": regular_files_read,

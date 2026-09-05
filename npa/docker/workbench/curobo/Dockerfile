@@ -1,6 +1,8 @@
 # Pinned Apache-2.0 cuRobo V2 plus MIT/BSD benchmark data; no model weights.
-FROM nvidia/cuda:13.0.2-devel-ubuntu24.04@sha256:5dc1bca23d05bd37b011be68ec470c03b403a5da07ec3a86e41af9470e9d0cc6
+FROM nvidia/cuda:13.0.2-base-ubuntu24.04@sha256:2ab6381d970b211fb93853796dc6707eb8a72575a375c422b17cf4d8b2641701
 
+# cuRobo V2 uses the pinned cuda.core/NVRTC and Warp wheel compilers.
+# A runtime-only base avoids unused profiler binaries and development headers.
 ARG NPA_SOURCE_SHA
 LABEL npa.tool="curobo" \
       npa.version="0.8.0-cuda13-b300-unbuilt" \
@@ -23,7 +25,7 @@ USER root
 RUN [[ "$NPA_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
 RUN rm -f /etc/apt/sources.list.d/*.list \
     && apt-get update && apt-get install -y --no-install-recommends \
-       ca-certificates curl python3.12 python3.12-dev python3.12-venv \
+       ca-certificates curl python3.12 python3.12-venv \
        openssh-server rsync sudo \
     && rm -f /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub \
     && rm -rf /var/lib/apt/lists/* /var/cache/apt/* \

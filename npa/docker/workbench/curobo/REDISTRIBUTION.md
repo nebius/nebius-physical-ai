@@ -29,12 +29,18 @@ No published image or measured performance is claimed by this record.
   NumPy/PyYAML; no robometrics distribution or optional evaluator is installed.
   This avoids falsely claiming its older NumPy<2 package constraint is compatible
   with the current Pinocchio NumPy 2 runtime.
-- Baked runtime: digest-pinned NVIDIA CUDA 13 development base **without cuDNN**,
+- Baked runtime: digest-pinned NVIDIA CUDA 13 runtime base **without cuDNN**,
   PyTorch CUDA 13 wheels, NVIDIA cuda-core/runtime, Warp, Pinocchio, Rerun and
   NPA. CUDA's Linux-specific supplement (section 2.3) permits redistribution of
   Linux components with unmodified object code; Attachment A also enumerates
   runtime/JIT libraries and runtime compilation headers. NVIDIA drivers are
   host-injected. CUDA and container license notices remain intact.
+  The minimal `base` image supplies cudart; pinned cuda.core/NVRTC, CUDA header
+  wheels and Warp provide runtime compilation. The upstream CUDA-core backend
+  discovers cudart/NVRTC headers through cuda-pathfinder. The image does not
+  install the optional pybind backend or need the full CUDA development image,
+  its unused Nsight profiler, or operating-system development headers. Native
+  GPU execution remains a required qualification gate.
 - cuDNN: the current official supplement permits only runtime `.so`/`.dll`
   distribution. The locked wheel's bundled older supplement additionally lists
   `.h`; packaging deliberately uses the narrower runtime boundary that satisfies
@@ -52,6 +58,9 @@ No published image or measured performance is claimed by this record.
   image ID and every config diff ID, scans all historical layers without a
   member-size cap, and accounts for final whiteouts and type changes. It rejects
   relocated known SDK/runtime bytes and requires the exact retained payloads.
+  Generated PyTorch ATen cuDNN operator headers are BSD-licensed and permitted
+  only by their exact pinned wheel paths/content hashes, with the complete wheel
+  notice retained; this grants no general CUDA/cuDNN SDK exemption.
   The trusted publication workflow runs this check before push and again on the
   pulled immutable digest, alongside the generic payload and security gates.
   The complete Python closure is version/hash locked. This record is an artifact
