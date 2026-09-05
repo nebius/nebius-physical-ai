@@ -5,7 +5,7 @@ instrumentation, and security model, see
 [LeIsaac low-latency browser transport](guides/leisaac-transport-latency.md).
 
 NPA exposes [LightwheelAI/LeIsaac](https://github.com/LightwheelAI/leisaac)
-as a persistent agent-UI tab for a selected session. Live controls report an
+as an optional agent-UI tab for a selected session. Live controls report an
 explicit unavailable/reconnect state, while the immutable S3 episode browser
 remains usable without a running simulator. The integration runs upstream
 LeIsaac v0.4.0 at commit
@@ -52,13 +52,41 @@ parallel control routing.
 
 ## What makes the tab appear
 
-The browser mounts the `LeIsaac` tab and its readiness panel as soon as the UI
-is wired, before remote capability or artifact discovery. With no registered
-runtime, session-only configuration, livestream, motion/orbit, and recorder
-widgets are not rendered. The available **Retry readiness** action is safe and
-does not launch infrastructure; the panel instead shows the non-secret
-operator prerequisites and a placeholder Workbench CLI launch template. It
-never accepts an EULA or creates a session from browser state.
+LeIsaac is disabled by default. Only the operator configuration flag
+`projects.<project-alias>.agents.<agent-name>.ui.leisaac_enabled` enables its
+UI. In the operator machine's `~/.npa/config.yaml` (or
+`$NPA_CONFIG_DIR/config.yaml`), merge this into the existing agent record:
+
+```yaml
+projects:
+  my-project:
+    agents:
+      agent:
+        ui:
+          leisaac_enabled: true
+```
+
+Only YAML boolean `true` enables LeIsaac. Missing or `false` values, quoted
+strings such as `"true"`, numbers, and malformed UI sections leave it disabled.
+There is no browser enable/disable control, localStorage opt-in, or URL override.
+While disabled, the page renders no LeIsaac navigation and makes no LeIsaac
+capability requests.
+
+Apply a config change with
+`npa agent bootstrap --project my-project --name agent`, then reload any open
+browser pages. Bootstrap refreshes the same agent's static HTML and restarts
+its services. Editing config, restarting the backend/nginx, or rebooting alone
+does not regenerate the HTML. To disable the UI, set the flag to `false` or
+remove it, bootstrap again, and reload. The setting survives ordinary agent
+record updates; it does not start or stop a simulator or change access grants.
+
+When enabled, the `LeIsaac` tab and its readiness panel mount before
+remote capability or artifact discovery. With no registered runtime,
+session-only configuration, livestream, motion/orbit, and recorder widgets are
+not rendered. The available **Retry readiness** action is safe and does not
+launch infrastructure; the panel instead shows the non-secret operator
+prerequisites and a placeholder Workbench CLI launch template. It never
+accepts an EULA or creates a session from browser state.
 
 A live simulator is optional; an agent-relay launch registers its run through
 the agent's authenticated, certificate-pinned HTTPS API. The browser checks
@@ -79,6 +107,13 @@ and recording are not available in this state.
 Selecting another live LeIsaac run
 updates the registered capability; switching unrelated artifact runs does not
 discard it.
+
+Run selection loads the first bounded artifact page so large frame inventories
+do not block run details. **List artifacts** resumes from that page's opaque
+cursor and merges the remaining pages before choosing a run-wide preferred
+recording or declaring that no recording exists. Type, stage, role, and sort
+changes reuse whichever source-qualified pages are already loaded and do not
+repeat artifact inventory requests.
 
 The browser receives no service nonce or agent credential. The live Isaac Sim
 5.1 path returns same-origin, authenticated `/api/leisaac/frame.jpg`,
@@ -397,8 +432,9 @@ stage, so it is intentionally launched and destroyed through the Workbench
 lifecycle command, not represented as an `npa.workflow` step that would report
 completion while the browser session still needs to remain alive.
 
-Reload the agent UI after launch, open `LeIsaac`, and choose **Connect
-teleoperation**. No run-ID entry is required. Click the simulation to focus it.
+After applying the operator UI flag above, reload the agent UI after launch,
+open `LeIsaac`, and choose **Connect teleoperation**. No
+run-ID entry is required. Click the simulation to focus it.
 Controls are the upstream bindings: `W/S`, `A/D`, `Q/E` translate; `J/L`,
 `K/I` rotate; `U/O` open/close the gripper. Episode state is explicit: **Start
 episode**, **Mark success** or **Mark failure**, then **Finalize & upload**.
