@@ -142,6 +142,9 @@ def test_fresh_mixed_gpu_pools_pass_all_device_health_gate(tmp_path: Path) -> No
         pytest.skip("live GPU health requires an explicitly attested fresh cluster")
 
     counts = tuple(int(value) for value in _required("NPA_E2E_MK8S_GPU_COUNTS").split(","))
+    fabric_counts = tuple(
+        int(value) for value in _required("NPA_E2E_MK8S_NVSWITCH_GPU_COUNTS").split(",")
+    )
     gpu_nodes = int(_required("NPA_E2E_MK8S_GPU_NODES"))
     total_gpus = int(_required("NPA_E2E_MK8S_TOTAL_GPUS"))
     assert len(counts) == gpu_nodes and sum(counts) == total_gpus
@@ -170,6 +173,7 @@ def test_fresh_mixed_gpu_pools_pass_all_device_health_gate(tmp_path: Path) -> No
             expected_nodes=gpu_nodes + int(_required("NPA_E2E_MK8S_CPU_NODES")),
             expected_gpu_nodes=gpu_nodes,
             expected_gpu_counts=counts,
+            nvswitch_gpu_counts=fabric_counts,
             gpu_preset=preset,
             gpu_platform=platform,
             driver_mode=selection.effective_mode,

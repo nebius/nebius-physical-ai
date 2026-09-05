@@ -112,7 +112,28 @@ def utc_now() -> str:
 
 
 def write_json(path: Path, value: Any) -> None:
-    path.write_text(json.dumps(value, indent=2, allow_nan=False) + "\n")
+    """Atomically publish owner-only JSON for concurrent shared-storage readers."""
+    content = json.dumps(value, indent=2, allow_nan=False) + "\n"
+    temporary: Path | None = None
+    try:
+        # NamedTemporaryFile creates mode0600. Keep the temporary file beside
+        # the destination so replacement is atomic on the shared filesystem.
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=path.parent,
+            prefix=f".{path.name}.", suffix=".tmp", delete=False,
+        ) as stream:
+            temporary = Path(stream.name)
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        if temporary is not None:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                # Cleanup must not replace the original publication failure.
+                pass
 
 
 def artifact(path: Path) -> dict[str, Any]:
@@ -471,12 +492,15 @@ def run_batch(*, endpoint: str, output_dir: Path, concurrency: int, token: str, 
     def one(index: int) -> dict[str, Any]:
         request_id = f"{batch_id}-{index}"
         root = output_dir / request_id
-        root.mkdir()
-        with httpx.Client(timeout=None, trust_env=False, headers={"Authorization": f"Bearer {token}"}) as client:
-            barrier.wait()
-            started_at = utc_now()
-            started = time.monotonic()
-            try:
+        started_at = utc_now()
+        admitted = False
+        try:
+            root.mkdir()
+            with httpx.Client(timeout=None, trust_env=False, headers={"Authorization": f"Bearer {token}"}) as client:
+                barrier.wait()
+                admitted = True
+                started_at = utc_now()
+                started = time.monotonic()
                 response = client.post(endpoint.rstrip("/") + "/run", json={
                     "request_id": request_id, "prompt": prompt, "seed": 1000 + index * 100,
                 })
@@ -489,11 +513,25 @@ def run_batch(*, endpoint: str, output_dir: Path, concurrency: int, token: str, 
                 report["client_total_wall_seconds"] = time.monotonic() - started
                 write_json(root / "report.json", report)
                 return {"request_id": request_id, "status": "succeeded", "report": report}
-            except Exception as exc:
-                result = {"request_id": request_id, "status": "failed", "error_type": type(exc).__name__,
-                          "started_at": started_at, "finished_at": utc_now()}
-                write_json(root / "client-failure.json", result)
-                return result
+        except Exception as exc:
+            # Setup failure must release peers before any failure-report I/O.
+            # BrokenBarrierError from that abort follows this same sanitized
+            # failure path. No admitted generation request is retried.
+            if not admitted:
+                barrier.abort()
+            result = {"request_id": request_id, "status": "failed", "error_type": type(exc).__name__,
+                      "started_at": started_at, "finished_at": utc_now()}
+            evidence = (
+                root / "client-failure.json" if root.is_dir()
+                else output_dir / f"{request_id}-client-failure.json"
+            )
+            try:
+                write_json(evidence, result)
+            except OSError as evidence_error:
+                # The batch manifest still retains this per-request failure if
+                # its individual recovery file cannot be published.
+                result["evidence_error_type"] = type(evidence_error).__name__
+            return result
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as executor:
         results = list(executor.map(one, range(concurrency)))

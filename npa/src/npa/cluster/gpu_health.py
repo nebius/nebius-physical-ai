@@ -56,6 +56,14 @@ class GpuHealthConfig:
     # Declared pool topology, never learned from a readiness snapshot. An empty
     # tuple keeps the existing uniform-preset contract.
     expected_gpu_counts: tuple[int, ...] = ()
+    # Optional declared pool subset that requires Fabric Manager. None retains
+    # cluster-wide fabric checks; single-GPU guests can explicitly be excluded.
+    nvswitch_gpu_counts: tuple[int, ...] | None = None
+
+    def requires_nvswitch(self, gpu_count: int) -> bool:
+        if self.nvswitch_gpu_counts is not None:
+            return gpu_count in self.nvswitch_gpu_counts
+        return self.nvswitch
 
     @property
     def expected_gpus(self) -> int:
@@ -80,6 +88,20 @@ class GpuHealthConfig:
             preset=f"{max(self.expected_gpu_counts)}gpu-declared",
         ) and not self.nvswitch:
             raise ValueError("declared multi-GPU SXM/NVL nodes require NVSwitch checks")
+        if self.nvswitch_gpu_counts is not None:
+            if not self.expected_gpu_counts or any(
+                type(count) is not int or count not in self.expected_gpu_counts
+                for count in self.nvswitch_gpu_counts
+            ):
+                raise ValueError("nvswitch_gpu_counts must be a declared GPU-count subset")
+            required_counts = {
+                count for count in self.expected_gpu_counts
+                if is_nvswitch_topology(
+                    platform=self.gpu_platform, preset=f"{count}gpu-declared"
+                )
+            }
+            if not required_counts.issubset(self.nvswitch_gpu_counts):
+                raise ValueError("NVSwitch subset cannot omit multi-GPU SXM/NVL nodes")
         if self.expected_gpu_nodes and self.expected_gpus <= 0:
             raise ValueError(
                 f"GPU preset {self.gpu_preset!r} does not encode a positive GPU count"
@@ -311,8 +333,9 @@ def probe_gpu_health(
             f"found {sorted(gpu_counts.values())}"
         )
     for node in gpu_nodes:
-        errors.extend(_node_condition_errors(node, nvswitch=config.nvswitch))
-        errors.extend(_fabric_metadata_errors(node, nvswitch=config.nvswitch))
+        nvswitch = config.requires_nvswitch(_allocatable_gpus(node))
+        errors.extend(_node_condition_errors(node, nvswitch=nvswitch))
+        errors.extend(_fabric_metadata_errors(node, nvswitch=nvswitch))
     missing_boot_ids = [
         _node_name(node) or "<unnamed>" for node in nodes if not _boot_id(node)
     ]
@@ -358,6 +381,10 @@ def probe_gpu_health(
         "expected_gpu_nodes": config.expected_gpu_nodes,
         "gpu_nodes": sorted(_node_name(node) for node in gpu_nodes),
         "gpu_counts": gpu_counts,
+        "nvswitch_nodes": sorted(
+            name for name, count in gpu_counts.items()
+            if config.requires_nvswitch(count)
+        ),
         "expected_gpus": config.expected_gpus,
         "total_gpus": total_gpus,
         "driver_mode": config.driver_mode,
@@ -546,7 +573,10 @@ def _cuda_smoke_on_node(
             "phase": phase,
             "vectoradd": "passed",
             "tested_gpus": gpu_count,
-            "fabric": "success" if nvswitch and "Fabric" in output else "not-exposed",
+            "fabric": (
+                "not-required" if require_device_evidence and not nvswitch
+                else "success" if nvswitch and "Fabric" in output else "not-exposed"
+            ),
         }
     finally:
         capture(
@@ -819,7 +849,7 @@ def validate_gpu_health(
                         node_name=node_name,
                         image=config.cuda_smoke_image,
                         timeout_seconds=remaining,
-                        nvswitch=config.nvswitch,
+                        nvswitch=node_name in final_snapshot["nvswitch_nodes"],
                         sleep_fn=sleep_fn,
                         monotonic_fn=monotonic_fn,
                         gpu_count=(

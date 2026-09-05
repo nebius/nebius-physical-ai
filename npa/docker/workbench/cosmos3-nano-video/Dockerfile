@@ -3,7 +3,6 @@
 ARG BASE_IMAGE=vllm/vllm-omni:cosmos3@sha256:970dee6658ea223f615b2438ce41e47f1d5322225482546e6e6bc5d8134f757c
 FROM ${BASE_IMAGE}
 
-ARG NPA_SOURCE_COMMIT
 USER root
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ffmpeg linux-libc-dev \
@@ -26,6 +25,7 @@ ENV PYTHONPATH=/opt/npa \
     DO_NOT_TRACK=1 \
     NPA_COSMOS3_MODEL_PATH=/models/Cosmos3-Nano \
     NPA_COSMOS3_VIDEO_OUTPUT_ROOT=/outputs
+ARG NPA_SOURCE_COMMIT
 LABEL org.opencontainers.image.source="https://github.com/nebius/nebius-physical-ai" \
       org.opencontainers.image.revision="${NPA_SOURCE_COMMIT}" \
       npa.tool="cosmos3-nano-video" \

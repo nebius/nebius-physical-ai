@@ -558,3 +558,95 @@ def test_mixed_pool_rejects_incomplete_device_execution_and_cleans_probe(
         )
     assert len(kubectl.deleted_pods) == 1
     assert json.loads((tmp_path / "gpu-health.json").read_text())["status"] == "failed"
+
+
+@pytest.mark.parametrize("counts", [(1,), (), (8, 2), (8, True)])
+def test_fabric_scope_cannot_omit_required_or_add_unknown_gpu_shapes(counts) -> None:
+    with pytest.raises(ValueError, match="NVSwitch subset|declared GPU-count subset"):
+        _mixed_config(nvswitch_gpu_counts=counts).validate()
+
+
+class _FractionalFabricKubectl(_EveryDeviceKubectl):
+    def __init__(self, *, broken_eight_gpu_fabric=False, broken_single_gpu_kernel=False):
+        super().__init__()
+        self.broken_eight_gpu_fabric = broken_eight_gpu_fabric
+        self.broken_single_gpu_kernel = broken_single_gpu_kernel
+
+    def __call__(self, args, **kwargs):
+        result = super().__call__(args, **kwargs)
+        if args[1] == "logs":
+            count = self.applied_manifests[-1]["spec"]["containers"][0]["resources"][
+                "limits"
+            ]["nvidia.com/gpu"]
+            if count == 1 or self.broken_eight_gpu_fabric:
+                result.stdout = result.stdout.replace("State : Completed", "State : N/A").replace("Status : Success", "Status : N/A")
+            if count == 1 and self.broken_single_gpu_kernel:
+                result.stdout = result.stdout.replace("Test PASSED", "Test FAILED")
+        return result
+
+
+def test_declared_fractional_guests_allow_na_fabric_after_all_device_cuda_passes(
+    tmp_path: Path,
+) -> None:
+    clock = _Clock()
+    kubectl = _FractionalFabricKubectl()
+    report = validate_gpu_health(
+        kubectl,
+        kubectl_bin="kubectl",
+        kubeconfig_path=tmp_path / "kubeconfig",
+        config=_mixed_config(cuda_smoke=True, nvswitch_gpu_counts=(8,)),
+        sleep_fn=clock.sleep,
+        monotonic_fn=clock.monotonic,
+    )
+    assert report["status"] == "healthy"
+    assert report["final_snapshot"]["nvswitch_nodes"] == ["gpu-0"]
+    assert sum(item["tested_gpus"] for item in report["cuda_smokes"]) == 16
+    assert report["cuda_smokes"][0]["fabric"] == "success"
+    assert all(item["fabric"] == "not-required" for item in report["cuda_smokes"][1:])
+
+
+@pytest.mark.parametrize(
+    "failure", [{"broken_eight_gpu_fabric": True}, {"broken_single_gpu_kernel": True}]
+)
+def test_scoped_fabric_preserves_full_node_fabric_and_fractional_kernel_failures(
+    tmp_path: Path, failure: dict[str, bool]
+) -> None:
+    clock = _Clock()
+    kubectl = _FractionalFabricKubectl(**failure)
+    with pytest.raises(GpuHealthError):
+        validate_gpu_health(
+            kubectl,
+            kubectl_bin="kubectl",
+            kubeconfig_path=tmp_path / "kubeconfig",
+            config=_mixed_config(cuda_smoke=True, nvswitch_gpu_counts=(8,)),
+            sleep_fn=clock.sleep,
+            monotonic_fn=clock.monotonic,
+        )
+    assert len(kubectl.deleted_pods) == len(kubectl.applied_manifests)
+
+
+def test_fractional_fabric_exclusion_preserves_gpu_error_conditions(tmp_path: Path) -> None:
+    nodes = _mixed_gpu_nodes()
+    nodes[1]["metadata"]["annotations"]["nebius.ai/fabric-state"] = "N/A"
+    nodes[1]["status"]["conditions"].append({"type": "NebiusGPUError", "status": "True"})
+    snapshot = probe_gpu_health(
+        _Kubectl([nodes]),
+        kubectl_bin="kubectl",
+        kubeconfig_path=tmp_path / "kubeconfig",
+        config=_mixed_config(nvswitch_gpu_counts=(8,)),
+    )
+    assert any("NebiusGPUError=True" in error for error in snapshot["errors"])
+    assert not any("fabric-state" in error for error in snapshot["errors"])
+
+
+def test_explicit_fabric_attached_single_gpu_shape_rejects_na_status(tmp_path: Path) -> None:
+    clock = _Clock()
+    with pytest.raises(GpuHealthError, match="NVSwitch Fabric State='N/A'"):
+        validate_gpu_health(
+            _FractionalFabricKubectl(),
+            kubectl_bin="kubectl",
+            kubeconfig_path=tmp_path / "kubeconfig",
+            config=_mixed_config(cuda_smoke=True, nvswitch_gpu_counts=(8, 1)),
+            sleep_fn=clock.sleep,
+            monotonic_fn=clock.monotonic,
+        )

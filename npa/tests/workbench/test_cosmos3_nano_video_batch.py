@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 from pathlib import Path
+import threading
 
 import httpx
 import pytest
@@ -187,6 +188,149 @@ def test_one_failed_complete_request_fails_batch_without_retry(tmp_path, monkeyp
     assert len(failed) == 1
     evidence = tmp_path / "batch" / failed[0]["request_id"] / "client-failure.json"
     assert json.loads(evidence.read_text())["status"] == "failed"
+
+
+@pytest.mark.parametrize("setup_failure", ["client", "directory"])
+def test_client_setup_failure_aborts_all_peers_without_generation(tmp_path, monkeypatch, setup_failure):
+    observed = _service(monkeypatch)
+    healthy_client = video.httpx.Client
+    original_barrier = threading.Barrier
+    lock = threading.Lock()
+    setup_count = 0
+    watchdog_fired = threading.Event()
+    barriers = []
+
+    class WatchedBarrier(original_barrier):
+        def __init__(self, parties):
+            super().__init__(parties)
+            self.abort_calls = 0
+            barriers.append(self)
+
+        def abort(self):
+            self.abort_calls += 1
+            return super().abort()
+
+    def client(**kwargs):
+        nonlocal setup_count
+        with lock:
+            setup_count += 1
+            fail = setup_failure == "client" and setup_count == 8
+        if fail:
+            raise RuntimeError("synthetic private client setup detail")
+        return healthy_client(**kwargs)
+
+    mkdir = Path.mkdir
+
+    def prepare_directory(path, *args, **kwargs):
+        if setup_failure == "directory" and path.name.startswith("batch-") and path.name.endswith("-7"):
+            raise OSError("synthetic private directory setup detail")
+        return mkdir(path, *args, **kwargs)
+
+    # A test-only watchdog releases the old implementation's deadlocked threads
+    # so this regression fails cleanly. It is not a workload request deadline.
+    def release_deadlock():
+        watchdog_fired.set()
+        for barrier in barriers:
+            original_barrier.abort(barrier)
+
+    watchdog = threading.Timer(10, release_deadlock)
+    monkeypatch.setattr(video.threading, "Barrier", WatchedBarrier)
+    monkeypatch.setattr(video.httpx, "Client", client)
+    monkeypatch.setattr(Path, "mkdir", prepare_directory)
+    watchdog.start()
+    try:
+        batch = _run(tmp_path)
+    finally:
+        watchdog.cancel()
+        watchdog.join()
+    assert not watchdog_fired.is_set()
+    assert barriers[0].abort_calls >= 1
+    assert setup_count == (8 if setup_failure == "client" else 7)
+    assert observed == []
+    assert batch["status"] == "failed"
+    assert batch["completed"] == 0
+    assert batch["fanout_verified"] is False
+    expected_error = "RuntimeError" if setup_failure == "client" else "OSError"
+    assert [item["error_type"] for item in batch["requests"]].count(expected_error) == 1
+    assert [item["error_type"] for item in batch["requests"]].count("BrokenBarrierError") == 7
+    for item in batch["requests"]:
+        evidence = tmp_path / "batch" / item["request_id"] / "client-failure.json"
+        if setup_failure == "directory" and item["error_type"] == "OSError":
+            evidence = tmp_path / "batch" / f"{item['request_id']}-client-failure.json"
+        assert json.loads(evidence.read_text()) == item
+    assert json.loads((tmp_path / "batch" / "batch.json").read_text()) == batch
+    assert "synthetic private" not in json.dumps(batch)
+
+
+def test_report_publication_keeps_pollers_on_complete_old_or_new_json(tmp_path, monkeypatch):
+    path = tmp_path / "report.json"
+    old = {"status": "running", "chunks": [1]}
+    new = {"status": "succeeded", "chunks": [1, 2, 3]}
+    path.write_text(json.dumps(old))
+    path.chmod(0o644)
+    replace = video.os.replace
+    observed = []
+
+    def observe_replace(source, destination):
+        source, destination = Path(source), Path(destination)
+        assert source.parent == destination.parent == tmp_path
+        assert source != destination
+        assert source.stat().st_mode & 0o777 == 0o600
+        assert json.loads(source.read_text()) == new
+        observed.append(json.loads(path.read_text()))
+        replace(source, destination)
+        observed.append(json.loads(path.read_text()))
+
+    monkeypatch.setattr(video.os, "replace", observe_replace)
+    video.write_json(path, new)
+    assert observed == [old, new]
+    assert path.stat().st_mode & 0o777 == 0o600
+    assert list(tmp_path.iterdir()) == [path]
+
+
+def test_failed_report_replacement_retains_old_json_and_cleans_temporary(tmp_path, monkeypatch):
+    path = tmp_path / "report.json"
+    old = {"status": "running"}
+    path.write_text(json.dumps(old))
+
+    def fail_replace(_source, _destination):
+        raise OSError("synthetic replacement failure")
+
+    monkeypatch.setattr(video.os, "replace", fail_replace)
+    with pytest.raises(OSError, match="synthetic replacement failure"):
+        video.write_json(path, {"status": "succeeded"})
+    assert json.loads(path.read_text()) == old
+    assert list(tmp_path.iterdir()) == [path]
+
+
+def test_report_serialization_failure_retains_old_json_without_temporary(tmp_path):
+    path = tmp_path / "report.json"
+    old = {"status": "running"}
+    path.write_text(json.dumps(old))
+    with pytest.raises(ValueError):
+        video.write_json(path, {"measurement": float("nan")})
+    assert json.loads(path.read_text()) == old
+    assert list(tmp_path.iterdir()) == [path]
+
+
+def test_unwritable_failure_file_preserves_sanitized_request_in_batch(tmp_path, monkeypatch):
+    _service(monkeypatch, failed_index=3)
+    write_json = video.write_json
+
+    def write_evidence(path, value):
+        if path.name == "client-failure.json":
+            raise PermissionError("synthetic private filesystem detail")
+        write_json(path, value)
+
+    monkeypatch.setattr(video, "write_json", write_evidence)
+    batch = _run(tmp_path)
+    assert batch["status"] == "failed"
+    assert batch["completed"] == 7
+    failed = [item for item in batch["requests"] if item["status"] == "failed"]
+    assert len(failed) == 1
+    assert failed[0]["evidence_error_type"] == "PermissionError"
+    assert json.loads((tmp_path / "batch" / "batch.json").read_text()) == batch
+    assert "synthetic private filesystem detail" not in json.dumps(batch)
 
 
 @pytest.mark.parametrize("violation", ["hash", "path"])

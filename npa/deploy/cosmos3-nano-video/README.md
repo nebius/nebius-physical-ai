@@ -43,6 +43,14 @@ supply its exact group through owner-only runtime configuration and require
 `STRICT` reservation placement. Follow the [fleet instructions](../../../skills/tools/fleet/SKILL.md)
 and [driver strategy](../../../docs/workbench/mk8s-gpu-driver-strategy.md).
 
+For a mixed cluster, declare the planned per-node GPU counts through
+`GpuHealthConfig.expected_gpu_counts`. Its optional `nvswitch_gpu_counts` subset
+identifies node sizes that require fabric checks. Every multi-GPU SXM/NVL size
+must be included. An explicitly unattached one-GPU guest can report fabric as
+not applicable while still passing driver, device-plugin and CUDA checks.
+The mixed live health test verifies the declared total, node-count distribution,
+stability and CUDA on every GPU ordinal before serving begins.
+
 The Dockerfile extends `vllm/vllm-omni:cosmos3`, pinned to manifest digest
 `sha256:6d2630c7d637b699557573f2c3fee8df5d4d0cd718977aa22549ed6a6ef30587`.
 The Dockerfile pins that index's Linux AMD64 manifest,
