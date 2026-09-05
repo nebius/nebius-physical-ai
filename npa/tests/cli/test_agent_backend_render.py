@@ -161,8 +161,8 @@ def _render_backend_body(monkeypatch) -> str:
         agent_port=8088,
         backend_port=8787,
         rerun_port=9090,
-        llm_model="nvidia/Cosmos3-Super-Reasoner",
-        llm_models=["nvidia/Cosmos3-Super-Reasoner"],
+        llm_model=agent_module.DEFAULT_LLM_MODEL,
+        llm_models=agent_module.DEFAULT_LLM_MODELS,
         tf_api_key="",
         nebius_ai_key="",
         public_https=True,
@@ -195,6 +195,69 @@ def test_rendered_backend_compiles(monkeypatch) -> None:
     )
     assert "POST /api/agent/gpu-allocation/attempt" in body
     assert "POST /api/agent/gpu-allocation/consent" in body
+
+
+def test_rendered_backend_routes_models_and_parameters_without_overriding_configuration(
+    monkeypatch, tmp_path
+) -> None:
+    # Source-archive packaging has separate coverage; this test executes the
+    # rendered backend and shipped helpers without building an unused upload.
+    monkeypatch.setattr("npa.cli.agent._stage_agent_npa_source", lambda *_args, **_kwargs: None)
+    module = _import_rendered_backend(
+        monkeypatch, tmp_path, module_name="npa_rendered_model_routing_backend"
+    )
+    monkeypatch.setattr(module, "LLM_MODELS_ENV", "")
+    monkeypatch.setattr(module, "_available_llm_models", lambda: [])
+    calls = []
+
+    def provider_chat(**kwargs):
+        calls.append(kwargs)
+        return {"choices": [{"message": {"content": "Generated answer"}}]}
+
+    monkeypatch.setattr(module, "_provider_chat", provider_chat)
+    for tier, expected_model, expected_extra in (
+        ("cheap", "nvidia/Nemotron-3_5-Lightning", {"chat_template_kwargs": {"enable_thinking": False}}),
+        ("standard", "nvidia/Nemotron-3_5-Lightning", {"chat_template_kwargs": {"enable_thinking": False}}),
+        ("reasoning", "MiniMaxAI/MiniMax-M3", {}),
+        ("vision", "MiniMaxAI/MiniMax-M3", {"chat_template_kwargs": {"thinking_mode": "disabled"}}),
+    ):
+        _, provider, selected = module._chat_with_resilience(
+            messages=[{"role": "user", "content": "A synthetic routing request"}], tier=tier
+        )
+        assert provider == "token_factory"
+        assert selected == expected_model
+        assert calls[-1]["extra"] == expected_extra
+
+    # Do not inject the new default into an explicit deployment allowlist.
+    monkeypatch.setattr(module, "LLM_MODELS_ENV", "dedicated/allowed")
+    monkeypatch.setattr(module, "LLM_MODEL", "nvidia/Nemotron-3_5-Lightning")
+    monkeypatch.setattr(module, "_available_llm_models", lambda: ["dedicated/allowed"])
+    assert module._configured_llm_models() == ["dedicated/allowed"]
+    module._chat_with_resilience(messages=[], tier="cheap")
+    assert calls[-1]["model"] == "dedicated/allowed"
+    assert calls[-1]["extra"] == {}
+    # Public model listings cannot suppress an explicit dedicated model choice.
+    module._chat_with_resilience(
+        messages=[], tier="vision", requested_model="Qwen/Qwen2.5-VL-72B-Instruct"
+    )
+    assert calls[-1]["model"] == "Qwen/Qwen2.5-VL-72B-Instruct"
+
+    # Each fallback needs the selected model's own thinking parameter.
+    monkeypatch.setattr(module, "LLM_MODELS_ENV", "")
+    monkeypatch.setattr(module, "_available_llm_models", lambda: [])
+    calls.clear()
+
+    def fallback_chat(**kwargs):
+        calls.append(kwargs)
+        if len(calls) == 1:
+            raise RuntimeError("synthetic unavailable text model")
+        return {"choices": [{"message": {"content": "Fallback answer"}}]}
+
+    monkeypatch.setattr(module, "_provider_chat", fallback_chat)
+    _, _, model = module._chat_with_resilience(messages=[], tier="cheap")
+    assert model == "MiniMaxAI/MiniMax-M3"
+    assert calls[0]["extra"] == {"chat_template_kwargs": {"enable_thinking": False}}
+    assert calls[1]["extra"] == {"chat_template_kwargs": {"thinking_mode": "disabled"}}
 
 
 def test_rendered_gpu_fallback_route_is_zero_token_and_confirmation_bound(
@@ -1060,8 +1123,8 @@ def test_shipped_agent_backend_memory_module_compiles(monkeypatch) -> None:
         agent_port=8088,
         backend_port=8787,
         rerun_port=9090,
-        llm_model="nvidia/Cosmos3-Super-Reasoner",
-        llm_models=["nvidia/Cosmos3-Super-Reasoner"],
+        llm_model=agent_module.DEFAULT_LLM_MODEL,
+        llm_models=agent_module.DEFAULT_LLM_MODELS,
         tf_api_key="",
         nebius_ai_key="",
         public_https=True,
@@ -1127,8 +1190,8 @@ def _capture_setup_script(
         agent_port=8088,
         backend_port=8787,
         rerun_port=9090,
-        llm_model="nvidia/Cosmos3-Super-Reasoner",
-        llm_models=["nvidia/Cosmos3-Super-Reasoner"],
+        llm_model=agent_module.DEFAULT_LLM_MODEL,
+        llm_models=agent_module.DEFAULT_LLM_MODELS,
         tf_api_key="",
         nebius_ai_key="",
         public_https=True,

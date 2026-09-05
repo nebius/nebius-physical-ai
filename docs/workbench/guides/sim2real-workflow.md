@@ -14,11 +14,18 @@ request/accept access:
 
 - [`nvidia/Cosmos-Transfer2.5-2B`](https://huggingface.co/nvidia/Cosmos-Transfer2.5-2B)
 
-Stage 8's second evaluator is the hosted `nvidia/Cosmos3-Super-Reasoner` through
-Nebius Token Factory. Its model classification is OpenMDW-1.1; retain NVIDIA
-Cosmos origin and attribution notices when distributing model materials. NPA
-does not distribute or cache those hosted model weights and does not add a
-second EULA boolean.
+Stage 8 uses a single hosted `MiniMaxAI/MiniMax-M3` evaluator through Nebius
+Token Factory. Review the [MiniMax-M3 model license](https://huggingface.co/MiniMaxAI/MiniMax-M3/blob/main/LICENSE)
+and the terms applicable to your hosted use. NPA does not distribute or cache
+these weights. The [August 2026 notice](https://docs.tokenfactory.nebius.com/august-2026-deprecation-notice)
+announced removal of the former public Cosmos3 model on August 31.
+
+The `cosmos3_model` config key, lane name, artifact filename, and schema remain
+for compatibility. Results record the actual model and `reason_family`; MiniMax
+results are not attributed to NVIDIA Cosmos. An explicit Cosmos3 model remains
+usable with an authorized endpoint serving it. Start a new run when changing
+models or upgrading this evaluator contract; Stage 9 verifies model identity,
+family, request accounting, and exact Stage 7 rollout coverage before PPO.
 
 Isaac runtime warming and execution additionally require the operator to review
 the [NVIDIA Omniverse terms](https://docs.omniverse.nvidia.com/usd/latest/common/NVIDIA_Omniverse_License_Agreement.html),
@@ -42,7 +49,7 @@ npa/.venv/bin/npa workbench token-factory models
 ```
 
 Expected: one Sim2Real `HF access ok` line, the exact
-`nvidia/Cosmos3-Super-Reasoner` model ID, and zero exit statuses. A `401` means the
+`MiniMaxAI/MiniMax-M3` model ID, and zero exit statuses. A `401` means the
 token is invalid or did not reach the check; a `403` means the account has not
 accepted access or a fine-grained token omits that repository. See
 [Hugging Face setup](../huggingface-token.md). `NGC_API_KEY` is not required by

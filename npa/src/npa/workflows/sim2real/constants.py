@@ -53,7 +53,8 @@ DEFAULT_ACTION_ENV_LIMIT = 256
 DEFAULT_SIGNAL_ADAPTER_LEARNING_RATE = 0.08
 DEFAULT_REFERENCE_VLM_MODEL = "nvidia/Cosmos-Reason2-8B"
 DEFAULT_REASON2_MODEL = "nvidia/Cosmos-Reason2-8B"
-DEFAULT_COSMOS3_MODEL = "nvidia/Cosmos3-Super-Reasoner"
+# Historical config/lane name retained; model provenance identifies the actual VLM.
+DEFAULT_COSMOS3_MODEL = "MiniMaxAI/MiniMax-M3"
 DEFAULT_LEROBOT_DATASET_ID = "npa/isaac-lift-cube-franka-seed-v1"
 REFERENCE_VLM_ALIASES = {
     "",

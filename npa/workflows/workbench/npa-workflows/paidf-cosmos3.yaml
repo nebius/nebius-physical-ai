@@ -67,7 +67,7 @@ config:
   appearance_blur_ksize: "7"
   appearance_max_dimension: "256"
   appearance_regions_json: ""
-  caption_model: "Qwen/Qwen2.5-VL-72B-Instruct"
+  caption_model: "MiniMaxAI/MiniMax-M3"
   vlm_backend: api
   max_images: "8"
   max_tokens: "512"

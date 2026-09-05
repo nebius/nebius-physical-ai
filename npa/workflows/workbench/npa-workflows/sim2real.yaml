@@ -10,7 +10,7 @@ metadata:
   description: >
     Compositional 14-stage Sim2Real workflow: validate a task-aligned trigger,
     consume the Isaac task contract, run Cosmos Transfer, parallel EnvGen,
-    sealed train/validation/gold split, Isaac rollouts, hosted Cosmos3 scoring,
+    sealed train/validation/gold split, Isaac rollouts, hosted vision-language scoring,
     genuine BYO Isaac PPO, validation-only checkpoint selection, untouched gold
     evaluation, an honest external seam, and Rerun plus MCAP finalization.
 
@@ -70,7 +70,7 @@ config:
   capture_width: "640"
   capture_height: "480"
   png_compress_level: "2"
-  cosmos3_model: nvidia/Cosmos3-Super-Reasoner
+  cosmos3_model: MiniMaxAI/MiniMax-M3
 
   # Required live inputs. The controller image is the purpose-built CPU-only
   # stage adapter, never a Genesis/trainer runtime. Empty defaults keep this
@@ -317,7 +317,7 @@ states:
     next: stage-12-external-seam
 
   inner-loop:
-    description: Standard durable inner loop over Isaac rollout, hosted Cosmos3 evaluation, and PPO.
+    description: Standard durable inner loop over Isaac rollout, hosted vision-language evaluation, and PPO.
     loop:
       max: "{{config.inner_iterations}}"
     sequence: [stage-07-rollouts, stage-08-cosmos3, stage-09-ppo]
@@ -334,7 +334,7 @@ states:
       - {uri: "{{config.root_uri}}/actions/train/outer-{{loop.outer-loop}}/iter-{{loop.inner-loop}}/rollouts-result.json", schema: npa.sim2real.policy_rollouts.v1}
 
   stage-08-cosmos3:
-    description: Hosted NVIDIA Cosmos3-Super-Reasoner rollout evaluation through Nebius Token Factory.
+    description: Hosted MiniMax-M3 rollout evaluation through Nebius Token Factory; historical Cosmos3 lane names remain compatible.
     resources: stage8-cpu
     params: {outer_iteration: "{{loop.outer-loop}}", inner_iteration: "{{loop.inner-loop}}"}
     run:
@@ -344,7 +344,7 @@ states:
       - {uri: "{{config.root_uri}}/components/stage_08.json", schema: npa.sim2real.component_record.v1}
 
   stage-09-ppo:
-    description: Stage 9 - require exact Stage 7 rollout coverage from the single hosted Cosmos3 evaluator, consume its temporal signals, run genuine BYO Isaac RSL-RL PPO, and select with validation only.
+    description: Stage 9 - require exact Stage 7 rollout coverage from the single hosted evaluator, consume its temporal signals, run genuine BYO Isaac RSL-RL PPO, and select with validation only.
     resources: isaac-gpu
     params: {outer_iteration: "{{loop.outer-loop}}", inner_iteration: "{{loop.inner-loop}}"}
     inputs:
@@ -352,7 +352,7 @@ states:
       - {uri: "{{config.root_uri}}/vlm_eval/train/outer-{{loop.outer-loop}}/iter-{{loop.inner-loop}}/cosmos3.json", schema: npa.sim2real.cosmos3_evaluator.v1}
       - {uri: "{{config.root_uri}}/components/stage_08.json", schema: npa.sim2real.component_record.v1}
     run:
-      argv: [python3, -m, npa.workflows.sim2real.workflow_stage, --stage, "9", --root-uri, "{{config.root_uri}}", --run-id, "{{run.id}}", --task-id, "{{config.task_id}}", --outer-iteration, "{{config.outer_iteration}}", --inner-iteration, "{{config.inner_iteration}}", --threshold, "{{config.threshold}}", --ppo-num-envs, "{{config.ppo_num_envs}}", --ppo-iterations, "{{config.ppo_iterations}}", --ppo-steps-per-env, "{{config.ppo_steps_per_env}}", --validation-count, "{{config.validation_count}}", --capture-fps, "{{config.capture_fps}}", --capture-width, "{{config.capture_width}}", --capture-height, "{{config.capture_height}}", --png-compress-level, "{{config.png_compress_level}}"]
+      argv: [python3, -m, npa.workflows.sim2real.workflow_stage, --stage, "9", --reason-model, "{{config.cosmos3_model}}", --root-uri, "{{config.root_uri}}", --run-id, "{{run.id}}", --task-id, "{{config.task_id}}", --outer-iteration, "{{config.outer_iteration}}", --inner-iteration, "{{config.inner_iteration}}", --threshold, "{{config.threshold}}", --ppo-num-envs, "{{config.ppo_num_envs}}", --ppo-iterations, "{{config.ppo_iterations}}", --ppo-steps-per-env, "{{config.ppo_steps_per_env}}", --validation-count, "{{config.validation_count}}", --capture-fps, "{{config.capture_fps}}", --capture-width, "{{config.capture_width}}", --capture-height, "{{config.capture_height}}", --png-compress-level, "{{config.png_compress_level}}"]
     outputs:
       - {uri: "{{config.root_uri}}/inner_loop/outer-{{loop.outer-loop}}/evidence.json", schema: npa.sim2real.inner_loop_evidence.v1}
 

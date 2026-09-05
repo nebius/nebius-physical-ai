@@ -199,14 +199,12 @@ DEFAULT_AGENT_NAME = "agent"
 DEFAULT_AGENT_IMAGE_FAMILY = "ubuntu24.04-driverless"
 DEFAULT_AGENT_USER = "npa"
 DEFAULT_LLM_PROVIDER = "token_factory"
-DEFAULT_LLM_MODEL = "nvidia/Cosmos3-Super-Reasoner"
+DEFAULT_LLM_MODEL = "nvidia/Nemotron-3_5-Lightning"
 # Cost-ordered ladder; per-turn routing reorders it, while no-routing paths and
 # the model picker retain the cheap workhorse as their default.
 DEFAULT_LLM_MODELS = (
-    "Qwen/Qwen3-32B",
-    "meta-llama/Llama-3.3-70B-Instruct",
     DEFAULT_LLM_MODEL,
-    "Qwen/Qwen2.5-VL-72B-Instruct",
+    "MiniMaxAI/MiniMax-M3",
 )
 AGENT_UI_VERSION = "2026082901"
 ARTIFACT_DISCOVERY_CONTRACT = "s3-source-qualified-v1"
@@ -428,8 +426,6 @@ def _normalize_llm_models(models: list[str] | tuple[str, ...] | str) -> list[str
                 normalized.append(value)
     if not normalized:
         normalized = list(DEFAULT_LLM_MODELS)
-    if DEFAULT_LLM_MODEL not in normalized:
-        normalized.insert(0, DEFAULT_LLM_MODEL)
     return normalized
 
 
@@ -2849,8 +2845,9 @@ def _normalize_llm_models(raw: str) -> list[str]:
 
 def _configured_llm_models() -> list[str]:
     configured = _normalize_llm_models(LLM_MODELS_ENV)
-    if not configured:
-        configured = [str(item) for item in DEFAULT_LLM_MODELS if str(item).strip()]
+    if configured:
+        return configured
+    configured = [str(item) for item in DEFAULT_LLM_MODELS if str(item).strip()]
     if LLM_MODEL not in configured:
         configured.insert(0, LLM_MODEL)
     return configured
@@ -3095,13 +3092,17 @@ def _chat_with_resilience(
         ladder = filter_available(ladder, _available_llm_models())
     except Exception:
         pass
+    # An explicit selection may be served by a dedicated/custom endpoint even
+    # when the public model list omits it. Try the requested ID first.
+    if requested_model:
+        ladder = [requested_model, *[item for item in ladder if item != requested_model]]
     if not ladder:
         ladder = list(configured) or [requested_model] if requested_model else list(configured)
-    extra = chat_extra(tier)
     errors: list[str] = []
     for provider in providers:
         for model in ladder:
             try:
+                extra = chat_extra(tier, model)
                 data = _provider_chat(provider=provider, messages=messages, model=model, extra=extra)
                 return data, provider, model
             except Exception as exc:

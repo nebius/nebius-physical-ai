@@ -71,8 +71,19 @@ def test_archived_reason3_config_key_does_not_change_canonical_hosted_probe():
         token_factory_validator=lambda _key, model: checked.append(model) or SimpleNamespace(ok=True),
     )
 
-    assert "nvidia/Cosmos3-Super-Reasoner" in checked
+    assert "MiniMaxAI/MiniMax-M3" in checked
     assert "nvidia/Cosmos-Reason2-2B" not in checked
+
+
+def test_unsupported_hosted_family_fails_before_model_probe():
+    issues = static_prerequisites(
+        _config(cosmos3_model="nvidia/Cosmos-Reason2-8B"),
+        requested_secret_envs=["NEBIUS_TOKEN_FACTORY_KEY"],
+        secret_values={"NEBIUS_TOKEN_FACTORY_KEY": "redacted"},
+        hf_validator=lambda *_args: SimpleNamespace(ok=True),
+        token_factory_validator=lambda *_args: pytest.fail("unsupported model was probed"),
+    )
+    assert any("unsupported hosted rollout evaluator" in message for message, _ in issues)
 
 
 def test_static_preflight_rejects_mutable_images_without_manual_eula_inputs():

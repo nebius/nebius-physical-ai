@@ -87,7 +87,7 @@ export NEBIUS_TOKEN_FACTORY_KEY=nebius_xxx     # env var for CI / one-off shells
 
 ```bash
 npa workbench token-factory verify
-npa workbench token-factory models   # confirms e.g. nvidia/Cosmos3-Super-Reasoner
+npa workbench token-factory models   # confirms e.g. MiniMaxAI/MiniMax-M3
 ```
 
 ### Both tokens, one check
@@ -115,7 +115,7 @@ If both pass, you can run any combo below.
 | --- | --- |
 | `npa workbench token-factory caption` | caption images / frames → `captions.json` |
 | `npa workbench token-factory generate` | batch text gen (triage, ranking, synthetic prompts) → `generations.jsonl` |
-| `npa workbench token-factory reason` | scene understanding + plan with Cosmos3-Super-Reasoner → `scene_reasoning.json` |
+| `npa workbench token-factory reason` | scene understanding + plan with MiniMax-M3 → `scene_reasoning.json` |
 | `npa workbench vlm-eval run --backend api` | score a rollout with a hosted VLM → eval JSON |
 
 **Pure glue helpers** — `npa/src/npa/workflows/token_factory_combos.py` holds

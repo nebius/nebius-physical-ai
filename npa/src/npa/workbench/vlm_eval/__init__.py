@@ -1309,6 +1309,16 @@ def _call_openai_compatible(
         "response_format": {"type": "json_object"},
         "messages": [{"role": "user", "content": content}],
     }
+    if backend == "api":
+        from npa.clients.token_factory import default_chat_extra
+
+        request.update(default_chat_extra(model))
+        if model == "MiniMaxAI/MiniMax-M3":
+            # Token Factory's constrained JSON decoding for this model emitted
+            # malformed prefixes in live validation. The prompt still requires
+            # JSON and parse_structured_response validates the full contract;
+            # never repair malformed model scores or accept a free-text score.
+            request.pop("response_format")
     data = _post_with_readiness_retry(
         url=url, headers=headers, request=request, backend=backend, timeout_s=timeout_s
     )

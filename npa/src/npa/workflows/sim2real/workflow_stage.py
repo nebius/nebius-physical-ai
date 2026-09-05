@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from npa.workflows.sim2real.constants import DEFAULT_COSMOS3_MODEL
 from npa.workflows.sim2real.stage14_finalize import (
     download_plan as _stage14_download_plan,  # noqa: F401 - compatibility import
     finalize_in_work as _stage14_in_work,
@@ -542,12 +543,14 @@ def _run_eval(
 
 
 def _stage9(args: argparse.Namespace) -> None:
-    from npa.workbench.cosmos.reason import cosmos_reason_family
+    from npa.workbench.cosmos.reason import hosted_rollout_model_family
     from npa.workflows.sim2real import byo_isaac_trainer
     from npa.workflows.sim2real.checkpoint_selection import select_best_checkpoint
     from npa.workflows.sim2real.temporal_credit import convert_evaluation
 
     root, work = _root(args), _work(9)
+    expected_model = args.reason_model
+    expected_family = hosted_rollout_model_family(expected_model)
     lane_base = (
         f"{root}/vlm_eval/train/outer-{args.outer_iteration:02d}/"
         f"iter-{args.inner_iteration:02d}/"
@@ -569,7 +572,8 @@ def _stage9(args: argparse.Namespace) -> None:
             "npa.sim2real.cosmos_reason_lane.v2",
         }
         or (cosmos3.get("evaluator") or cosmos3.get("lane")) != "cosmos3"
-        or cosmos_reason_family(str(cosmos3.get("model") or "")) != "cosmos3"
+        or cosmos3.get("model") != expected_model
+        or cosmos3.get("reason_family") != expected_family
         or cosmos3.get("backend") != "token_factory"
         or cosmos3.get("provider") != "nebius"
         or not cosmos3.get("provenance")
@@ -578,13 +582,15 @@ def _stage9(args: argparse.Namespace) -> None:
         or stage8_record.get("artifacts", {}).get("result")
         != lane_base + "cosmos3.json"
         or stage8_record.get("artifacts", {}).get("backend") != "token_factory"
+        or stage8_record.get("artifacts", {}).get("model") != expected_model
+        or stage8_record.get("artifacts", {}).get("reason_family") != expected_family
         or int(stage8_record.get("artifacts", {}).get("outer_iteration") or 0)
         != args.outer_iteration
         or int(stage8_record.get("artifacts", {}).get("inner_iteration") or 0)
         != args.inner_iteration
     ):
         raise RuntimeError(
-            "Stage 8 requires genuine hosted Cosmos3 identity, model family, and provenance"
+            "Stage 8 requires the configured hosted model identity, family, and provenance"
         )
     right = _validate_stage7_cosmos3_coverage(stage7, cosmos3)
     cosmos3_usage = dict(cosmos3.get("evaluator_usage") or {})
@@ -600,6 +606,7 @@ def _stage9(args: argparse.Namespace) -> None:
     requests = [dict(item.get("request") or {}) for item in right.values()]
     if (
         int(cosmos3_usage.get("request_count") or 0) != len(right)
+        or cosmos3_usage.get("model") != expected_model
         or any(not request_fields.issubset(request) for request in requests)
         or int(cosmos3_usage.get("input_tokens") or 0)
         != sum(int(request.get("input_tokens") or 0) for request in requests)
@@ -613,6 +620,7 @@ def _stage9(args: argparse.Namespace) -> None:
             or item.get("backend") != "token_factory"
             or item.get("provider") != "nebius"
             or item.get("model") != cosmos3.get("model")
+            or item.get("reason_family") != expected_family
             or not isinstance(item.get("request"), dict)
             or int(item.get("action_count") or 0) < 1
             or len(item.get("per_step") or []) != int(item.get("action_count") or 0)
@@ -627,7 +635,7 @@ def _stage9(args: argparse.Namespace) -> None:
             for item in right.values()
         )
     ):
-        raise RuntimeError("Stage 8 Cosmos3 evaluations do not exactly cover Stage 7 rollouts")
+        raise RuntimeError("Stage 8 hosted evaluations do not exactly cover Stage 7 rollouts")
     evaluation_dir, signal_dir = work / "evaluations", work / "signals"
     evaluation_dir.mkdir()
     signal_dir.mkdir()
@@ -1013,7 +1021,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--inner-iteration", type=int, default=1)
     parser.add_argument("--rollout-count", type=int, default=1)
     parser.add_argument("--steps-per-rollout", type=int, default=32)
-    parser.add_argument("--reason-model", default="nvidia/Cosmos3-Super-Reasoner")
+    parser.add_argument("--reason-model", default=DEFAULT_COSMOS3_MODEL)
     parser.add_argument("--threshold", type=float, default=0.5)
     parser.add_argument("--ppo-num-envs", type=int, default=64)
     parser.add_argument("--ppo-iterations", type=int, default=10)
