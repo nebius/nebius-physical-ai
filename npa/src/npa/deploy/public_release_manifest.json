@@ -10,7 +10,7 @@
     "cosmos3-ray-serve": {"tag": "ray1-cu130", "published_digest": "sha256:6e42f553a0d14712dc1ed7fa42c72b0f083f4ae3f89b30eaf0e93cfdf64e820d", "development_sha": "56d8c4f3f05db7aa3b03323441a3e0d7b97ac8da"},
     "cosmos3-reason": {"tag": "cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z", "published_digest": "sha256:e708aa32b9247eaedf1a7a5b0d82adbe65b95a9af50721b9d09fddbfd508bbc9"},
     "cosmos3-serving": {"tag": "0.2.0-oss", "published_digest": "sha256:3342bbe44bd1c00ebf05ab4c9d7286058a94bb5ce90b49b164b23604d3acf180", "development_sha": "d854f6a76cd87ec05ad97ccde6d596f3329efa0e"},
-    "detection-training": {"tag": "bdd100k-golden-eval-smoke-20260614T210000Z", "published_digest": "sha256:a432dd2a9e6bafed4b78466ac806f584c7fcf549cf3be0edaf75f2fecdadfdd9"},
+    "detection-training": {"tag": "runtime-v1-20260905", "published_digest": "sha256:a09126491bd660f314b8f412df7238746dc2b063e5d5b7ca87bba7596dafcb0d", "development_sha": "408700158b2e9cc9e9f6aad499e9d9c810bebeb1"},
     "envgen": {"tag": "0.1.2-sim2real-coherent-20260904", "published_digest": "sha256:08eb75118f5a04194d33a60308212db7706dd9c339d74afc5471a58608bf0422", "development_sha": "c164fd3480f8a9ea8f9df9ccb9509502fd527996"},
     "fiftyone": {"tag": "1.15.0.post1", "published_digest": "sha256:cdc0cb7b1f59f3db3f9e6f899be17f27235d5aa7fe6ad171289bee7b3d995fc3"},
     "foxglove-embed": {"tag": "0.58.0", "published_digest": "sha256:dc8e55ca8697bae7e9473d32451614b7c4a1d508b29d98e2bc8063bde2ec7828"},
