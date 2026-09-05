@@ -378,7 +378,7 @@ def test_ui_and_backend_visual_feedback_contract() -> None:
     assert "grounded-provenance" in source
     assert "build_run_origin" in _embedded_agent_provenance_source()
 
-    mount_source = ui_html.split("async function mountRerunIframe(camera, runId)", 1)[
+    mount_source = ui_html.split("async function mountRerunIframe(camera, runId,", 1)[
         1
     ].split("async function mountRerunIframeUntilSuccess", 1)[0]
     iframe_src = mount_source.index("iframe.src = src;")

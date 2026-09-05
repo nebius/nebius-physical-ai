@@ -2127,7 +2127,7 @@ def test_bootstrap_embeds_franka_rerun_ux() -> None:
     assert "allowfullscreen" in source
     assert "RERUN_RECORDING_PATH" in source
     assert "location.origin + RERUN_RECORDING_PATH" in source
-    assert "rrdUrl = await resolveRerunRecordingUrl();" in source
+    assert "rrdUrl = await resolveRerunRecordingUrl(isCurrent);" in source
     assert "rrdUrl.startsWith" in source
     assert "location.origin + rrdUrl" in source
     assert "_rerun_iframe_url" in source
@@ -2199,7 +2199,7 @@ def test_bootstrap_embeds_franka_rerun_ux() -> None:
     assert "_AGENT_RRD_PROXY_EMBED" in source
     assert "_STATE_LOCK" in source
     assert "Process-wide lock" in source
-    assert "rrdUrl = await resolveRerunRecordingUrl();" in source
+    assert "rrdUrl = await resolveRerunRecordingUrl(isCurrent);" in source
     assert "?run_id=" in source
     assert '"/api/sim-viz/status?run_id="' in source
     # Media preview uses authenticated blob URLs; Rerun still avoids parent blob URLs for wasm.

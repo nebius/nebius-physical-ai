@@ -223,6 +223,14 @@ default afterward. Agent Access browser coverage must select multiple and
 single available project/bucket options and verify dependent details and
 artifact-action provenance, using actual DOM events.
 
+Run `npm run cy:live-access` from `npa/tests/browser` with the existing
+`NPA_AGENT_BASE_URL`, `NPA_AGENT_USER`, and `NPA_AGENT_PASSWORD` supplied through
+the protected runner environment. It checks real access selections and expects
+LeIsaac hidden by default. Set `NPA_AGENT_EXPECT_LEISAAC=true` only to assert an
+already enabled deployment; this test expectation does not enable the feature.
+Keep all live runner output and screenshots in access-controlled evidence
+outside Git.
+
 ## Chat Maturity Patterns
 
 Typed GPU placement failures and consented preemptible fallback use

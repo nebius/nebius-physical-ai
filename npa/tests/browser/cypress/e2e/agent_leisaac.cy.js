@@ -63,9 +63,9 @@ describe("NPA agent LeIsaac operator configuration", () => {
       },
     });
     cy.wait("@session");
+    cy.clock(Date.now(), ["setInterval", "clearInterval"]);
     cy.get("#tabMain").click();
     cy.window().then((win) => win.__NPA_AGENT_TEST__.refresh());
-    cy.clock(Date.now(), ["setInterval", "clearInterval"]);
     cy.get("#tabMain").click();
     cy.tick(60000);
     cy.get("#tabLeIsaac, #panelLeIsaac, #enableLeIsaac, #disableLeIsaac").should("not.exist");

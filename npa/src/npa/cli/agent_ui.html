@@ -7145,6 +7145,14 @@
           (item) => String((item && item.id) || "") === selectedAccessProjectId,
         );
         const project = projectIndex >= 0 ? projects[projectIndex] : null;
+        const projectHint = document.getElementById("agentAccessProjectHint");
+        const bucketHint = document.getElementById("agentAccessBucketHint");
+        if (projectHint) projectHint.textContent = project
+          ? (projects.length === 1 ? "Only available project · selected: " : "Selected project: ") + String(project.name || project.id)
+          : "No project is available to select.";
+        if (bucketHint) bucketHint.textContent = selectedAccessBucketName
+          ? (accessProjectResources(project).length === 1 ? "Only available bucket · selected: " : "Selected bucket: ") + selectedAccessBucketName
+          : "No bucket is available in the selected project.";
         if (!project) {
           projectsHost.innerHTML = '<p class="hint">No project identity is visible to this agent.</p>';
           return;
@@ -7210,6 +7218,37 @@
           "</div>" +
           '<div class="access-resources">' + resourceHtml + "</div></article>";
       }
+      function syncAccessBrowseScope(activate) {
+        // The cards and the run browser must describe the same resource after
+        // an operator selects a new pair. Previously only the List button set
+        // this scope, leaving Discover and search pointed at the previous bucket.
+        // Initial hydration keeps independent first-page discovery; an explicit
+        // dropdown change immediately activates the operator's selected scope.
+        if (!activeArtifactBrowseScope && !activate) return;
+        const next = {
+          projectId: selectedAccessProjectId,
+          resourceBucket: selectedAccessBucketName,
+          unavailable: !selectedAccessProjectId,
+        };
+        const previous = activeArtifactBrowseScope;
+        if (previous && previous.projectId === next.projectId && previous.resourceBucket === next.resourceBucket) return;
+        cancelAccessAction(true);
+        runSearchRequestId += 1;
+        artifactLoadRequestId += 1;
+        if (artifactRunsAbortController) artifactRunsAbortController.abort();
+        activeArtifactBrowseScope = next;
+        discoveredArtifactRuns = [];
+        clearVisibleRunState(next.unavailable
+          ? "No project is available. Refresh access before listing artifacts."
+          : "Storage selection changed. List artifacts in the selected project and bucket.");
+        applyMergedRunSelectors("");
+        const status = document.getElementById("artifactDiscoverStatus");
+        if (status) status.textContent = next.unavailable
+          ? "No project is available. Refresh access before listing artifacts."
+          : "Selected project " + next.projectId +
+          (next.resourceBucket ? " · bucket " + next.resourceBucket : " · no bucket available") +
+          ". List artifacts to discover runs.";
+      }
       function selectAccessProject(projectId, options) {
         const opts = options || {};
         const projects = sortedAccessProjects(currentAccessReport);
@@ -7226,6 +7265,7 @@
         if (picker && picker.value !== requested) picker.value = requested;
         populateAccessBucketPicker(selected, !projectChanged);
         renderSelectedAccessProject();
+        syncAccessBrowseScope(!opts.renderOnly);
         return true;
       }
       function selectAccessBucket(bucketName) {
@@ -7240,6 +7280,7 @@
         const picker = document.getElementById("agentAccessBucketSelect");
         if (picker && picker.value !== requested) picker.value = requested;
         renderSelectedAccessProject();
+        syncAccessBrowseScope(true);
         return true;
       }
       function renderAccessReport(report) {
@@ -7315,6 +7356,7 @@
           persistAccessProjectId("");
           setAccessBucketPlaceholder("Select a project first");
           renderSelectedAccessProject();
+          syncAccessBrowseScope();
         }
         const errors = Array.isArray(report && report.errors) ? report.errors : [];
         if (errorsHost) {
@@ -7326,7 +7368,6 @@
       async function refreshAccess(force) {
         const invalidatedAction = cancelAccessAction(true);
         if (force && invalidatedAction) {
-          activeArtifactBrowseScope = null;
           discoveredArtifactRuns = [];
           applyMergedRunSelectors("");
           clearVisibleRunState("Access refreshed. Select a resource to list or read fresh artifacts.");
@@ -7659,9 +7700,7 @@
           () => refreshArtifactRuns("", { interactive: true }),
           "Discover artifact runs"
         );
-        bindClick("artifactLoadRunArtifacts", () => loadArtifactsForSelectedRun(
-          undefined, null, null, { completeInventory: true }
-        ), "List run artifacts");
+        bindClick("artifactLoadRunArtifacts", completeSelectedArtifactInventory, "List run artifacts");
         bindClick("loadRerunViewer", () => loadRerunViewer(), "Reload Rerun data");
         bindClick("describeVisual", describeVisual, "Describe this");
         bindClick("openRerun", openRerunTab, "Open Rerun");
@@ -7773,9 +7812,15 @@
           const node = document.getElementById(id);
           if (node) {
             node.addEventListener("change", async () => {
-              const selectedRun = selectedRunIdFromUi();
+              // These controls filter the inventory currently on screen. Its
+              // verified source is more precise than a lightweight discovery
+              // option, which may not have a run reference yet.
+              const inventory = activeArtifactInventoryPage;
+              const selectedRun = inventory
+                ? String(inventory.run_ref || inventory.run_id || "")
+                : selectedRunIdFromUi();
               if (!selectedRun) return;
-              const selectedEntry = runEntryFromSelect(document.getElementById("runIdSelect")) ||
+              const selectedEntry = inventory || runEntryFromSelect(document.getElementById("runIdSelect")) ||
                 runEntryFromSelect(document.getElementById("stagesRunSelect"));
               // A filter/sort change only re-renders the inventory. Do not let
               // its asynchronous refresh auto-open the preferred object after
@@ -9773,14 +9818,16 @@
           return false;
         }
       }
-      function scheduleRerunBundleUncover(iframe) {
+      function scheduleRerunBundleUncover(iframe, isCurrent = () => true) {
         // Uncover without blocking mount latency — poll in the background only.
         // Require non-blank canvas; do not uncover merely because DOM splash text is gone.
+        if (!isCurrent()) return Promise.resolve({ ok: false, superseded: true });
         if (safeHideRerunBundleCover(iframe)) {
           return Promise.resolve({ ok: true, immediate: true });
         }
         showRerunBundleCover("Opening viewer…", "Almost ready…");
-        return waitUntilRerunPastBundleSplash(iframe, 45000).then((past) => {
+        return waitUntilRerunPastBundleSplash(iframe, 45000, isCurrent).then((past) => {
+          if (!isCurrent()) return { ok: false, superseded: true };
           if (safeHideRerunBundleCover(iframe)) {
             return past;
           }
@@ -9794,13 +9841,14 @@
           return past;
         });
       }
-      async function waitUntilRerunPastBundleSplash(iframe, timeoutMs) {
+      async function waitUntilRerunPastBundleSplash(iframe, timeoutMs, isCurrent = () => true) {
         // Keep our cover up until Rerun's splash is gone AND pixels look non-blank
         // (async createImageBitmap probe — sync WebGL drawImage is often cleared).
         const timeout = Math.max(2000, Number(timeoutMs || 45000));
         const start = Date.now();
         let sawSplash = false;
         while (Date.now() - start < timeout) {
+          if (!isCurrent()) return { ok: false, superseded: true };
           const splash = rerunViewerShowsBundleSplash(iframe);
           if (splash) sawSplash = true;
           if (!splash && (await probeRerunCanvasContent(iframe))) {
@@ -9815,24 +9863,27 @@
           timedOut: true,
         };
       }
-      async function resolveRerunRecordingUrl() {
+      async function resolveRerunRecordingUrl(isCurrent = () => true) {
+        if (!isCurrent()) return "";
         if (!/^\/rerun\/recordings\/cap-[A-Za-z0-9_-]{43}\.rrd$/.test(RERUN_RECORDING_PATH)) {
           throw new Error("Rerun recording capability is unavailable");
         }
         const cacheBust = "?t=" + String(Date.now());
         const recordingUrl = location.origin + RERUN_RECORDING_PATH + cacheBust;
         const resp = await fetchWithTimeout(RERUN_RECORDING_PATH, { credentials: "include", method: "HEAD" }, 8000);
+        if (!isCurrent()) return "";
         if (!resp.ok) {
           throw new Error("Rerun recording not published yet");
         }
         setRerunBlobStatus(RERUN_BLOB_SUCCESS, "recording=capability");
         return recordingUrl;
       }
-      async function rerunIframeSrc(camera, runId) {
+      async function rerunIframeSrc(camera, runId, isCurrent = () => true) {
         const cam = String(camera || "workspace");
         let rrdUrl = "";
         try {
-          rrdUrl = await resolveRerunRecordingUrl();
+          rrdUrl = await resolveRerunRecordingUrl(isCurrent);
+          if (!isCurrent()) return "";
           // Still verify the authenticated blob path; the viewer itself loads
           // the unauthenticated recording copy because Rerun's WASM fetch path
           // does not reliably consume parent-created blob URLs across browsers.
@@ -9847,6 +9898,7 @@
           // so the fallback raised ReferenceError instead of returning a URL.
           rrdUrl = location.origin + "/api/sim-viz/rrd-blob?t=" + String(Date.now());
         }
+        if (!isCurrent()) return "";
         // Prefer the public recording copy; authenticated blob fetch remains the fallback.
         // Rerun parses path-only `/rerun/...` as host `rerun` → http://rerun/... (broken).
         if (rrdUrl.startsWith("/")) {
@@ -10015,7 +10067,11 @@
             : "Checking this run for a Rerun recording...";
       }
       function setRenderMode(mode, options) {
-        const next = String(mode || "rerun");
+        const requested = String(mode || "rerun");
+        // Status keeps artifact types (json/text/download), whereas the
+        // corresponding viewer tab is Data. Normalize before applying stale
+        // viewer guards so a refresh cannot turn a data preview into Rerun.
+        const next = ["json", "text", "download"].includes(requested) ? "data" : requested;
         const opts = options || {};
         if (opts.operator && next !== "foxglove") {
           foxglovePinnedArtifactSelection = null;
@@ -11425,17 +11481,21 @@
           iframe.addEventListener("error", onError, { once: true });
         });
       }
-      async function waitForRerunRenderSettle(iframe, timeoutMs) {
+      async function waitForRerunRenderSettle(iframe, timeoutMs, isCurrent = () => true) {
         const timeout = Math.max(1000, Number(timeoutMs || 8000));
         const start = Date.now();
         while (Date.now() - start < timeout) {
-          if (await probeRerunCanvasContent(iframe)) {
+          if (!isCurrent()) return;
+          const hasContent = await probeRerunCanvasContent(iframe);
+          if (!isCurrent()) return;
+          if (hasContent) {
             hideRerunBundleCover();
             return;
           }
           if (safeHideRerunBundleCover(iframe)) return;
           await new Promise((resolve) => window.setTimeout(resolve, 120));
         }
+        if (!isCurrent()) return;
         // Timed settle — still prefer non-blank; force only as last resort.
         if (!safeHideRerunBundleCover(iframe)) {
           if (!rerunViewerShowsBundleSplash(iframe) && rerunViewerHasCanvas(iframe)) {
@@ -11455,9 +11515,10 @@
         }
         return null;
       }
-      async function swapRerunRecordingInPlace(camera, runId) {
+      async function swapRerunRecordingInPlace(camera, runId, isCurrent = () => true) {
         // Soft-swap: reuse the already-started wasm viewer via WebHandle.add_receiver
         // so load-run does not pay "Loading application bundle" latency again.
+        if (!isCurrent()) return false;
         const iframe = document.getElementById("rerunFrame");
         if (!iframe || !rerunIframeLoaded || iframe.hidden || !iframe.getAttribute("src")) {
           return false;
@@ -11470,10 +11531,11 @@
         const mountKey = String(runId || activeRunId || camera || "workspace").trim() || "workspace";
         let recordingUrl = "";
         try {
-          recordingUrl = await resolveRerunRecordingUrl();
+          recordingUrl = await resolveRerunRecordingUrl(isCurrent);
         } catch (_err) {
           return false;
         }
+        if (!isCurrent()) return false;
         if (recordingUrl.startsWith("/")) {
           recordingUrl = location.origin + recordingUrl;
         }
@@ -11494,14 +11556,18 @@
           // Brief settle for display readiness (async pixel probe; not full Describe JPEG wait).
           const softDeadline = Date.now() + 4500;
           while (Date.now() < softDeadline) {
-            if (await probeRerunCanvasContent(iframe)) break;
+            const hasContent = await probeRerunCanvasContent(iframe);
+            if (!isCurrent()) return false;
+            if (hasContent) break;
             if (rerunViewerShowsBundleSplash(iframe)) {
               await new Promise((r) => window.setTimeout(r, 150));
               continue;
             }
             await new Promise((r) => window.setTimeout(r, 150));
           }
-          if (!(await probeRerunCanvasContent(iframe)) && rerunViewerShowsBundleSplash(iframe)) {
+          const hasContent = await probeRerunCanvasContent(iframe);
+          if (!isCurrent()) return false;
+          if (!hasContent && rerunViewerShowsBundleSplash(iframe)) {
             // Soft-swap did not clear splash — fall back to remount under cover.
             return false;
           }
@@ -11510,18 +11576,20 @@
           iframe.dataset.rerunRunKey = mountKey;
           iframe.dataset.rerunRecordingUrl = recordingUrl;
           if (!safeHideRerunBundleCover(iframe)) {
-            scheduleRerunBundleUncover(iframe).catch(() => { /* best-effort */ });
+            scheduleRerunBundleUncover(iframe, isCurrent).catch(() => { /* best-effort */ });
           }
           setRerunMountStatus(RERUN_MOUNT_SUCCESS, "soft-swap");
           return true;
         } catch (err) {
+          if (!isCurrent()) return false;
           console.warn("rerun soft-swap failed; falling back to remount", err);
           hideRerunBundleCover();
           return false;
         }
       }
-      async function mountRerunIframe(camera, runId) {
+      async function mountRerunIframe(camera, runId, isCurrent = () => true) {
         // Single-flight mount — overlapping remounts caused the Caching cover to loop.
+        if (!isCurrent()) return false;
         if (rerunMountInFlight) return rerunMountInFlight;
         rerunMountInFlight = (async () => {
         const iframe = document.getElementById("rerunFrame");
@@ -11530,9 +11598,10 @@
         // Always prefer soft-swap when wasm is alive — even for the same mountKey,
         // because the active per-load recording capability may have changed.
         if (rerunIframeLoaded && !iframe.hidden && iframe.getAttribute("src")) {
-          if (await swapRerunRecordingInPlace(camera, runId)) {
+          if (await swapRerunRecordingInPlace(camera, runId, isCurrent)) {
             return true;
           }
+          if (!isCurrent()) return false;
           if (mountedRerunRunKey === mountKey && lastRerunRecordingUrl) {
             // Keep live wasm when it is display-ready (past splash + non-blank canvas).
             if (rerunViewerLooksDisplayReady(iframe)) {
@@ -11561,7 +11630,9 @@
         } catch (warmErr) {
           console.warn("rerun bundle warm failed before mount", warmErr);
         }
-        const src = await rerunIframeSrc(camera, runId);
+        if (!isCurrent()) return false;
+        const src = await rerunIframeSrc(camera, runId, isCurrent);
+        if (!isCurrent()) return false;
         setRerunMountStatus("retrying", "navigating");
         showRerunBundleCover("Opening viewer…", "Almost ready…");
         rerunViewerAppReady = false;
@@ -11576,14 +11647,18 @@
         iframe.dataset.rerunRunKey = mountKey;
         hideRerunPlaceholder();
         await waitForIframeLoad(iframe, 12000);
+        if (!isCurrent()) return false;
         // The mount-time primer continues until the stream decodes a frame.
         primeRerunCaptureBridge(iframe, 12000);
         try {
-          lastRerunRecordingUrl = await resolveRerunRecordingUrl();
+          const recordingUrl = await resolveRerunRecordingUrl(isCurrent);
+          if (!isCurrent()) return false;
+          lastRerunRecordingUrl = recordingUrl;
           if (lastRerunRecordingUrl.startsWith("/")) {
             lastRerunRecordingUrl = location.origin + lastRerunRecordingUrl;
           }
         } catch (_urlErr) {
+          if (!isCurrent()) return false;
           lastRerunRecordingUrl = "";
         }
         rerunIframeLoaded = true;
@@ -11596,19 +11671,24 @@
         // else recomputes it. Observed on a real NuRec run.
         updateSimvizCta(lastSimVizStatus);
         // Uncover without blocking mount latency — splash polling stays in the background.
-        scheduleRerunBundleUncover(iframe).catch((err) => {
+        scheduleRerunBundleUncover(iframe, isCurrent).catch((err) => {
           console.warn("rerun splash uncover failed", err);
         });
         // Display-ready gate: async non-blank probe (DOM splash text alone is insufficient).
         const settleDeadline = Date.now() + 8000;
         while (Date.now() < settleDeadline) {
-          if (await probeRerunCanvasContent(iframe)) break;
+          const hasContent = await probeRerunCanvasContent(iframe);
+          if (!isCurrent()) return false;
+          if (hasContent) break;
           await new Promise((r) => window.setTimeout(r, 200));
         }
-        if (safeHideRerunBundleCover(iframe) || (await probeRerunCanvasContent(iframe))) {
+        if (!isCurrent()) return false;
+        const displayReady = safeHideRerunBundleCover(iframe) || (await probeRerunCanvasContent(iframe));
+        if (!isCurrent()) return false;
+        if (displayReady) {
           hideRerunBundleCover();
           setRerunMountStatus(RERUN_MOUNT_SUCCESS, "loaded");
-          waitForRerunRenderSettle(iframe, 6000).catch((err) => {
+          waitForRerunRenderSettle(iframe, 6000, isCurrent).catch((err) => {
             console.warn("rerun render settle probe failed", err);
           });
           return true;
@@ -11724,11 +11804,13 @@
           return false;
         });
       }
-      async function bestEffortMountRerun(camera, runId) {
+      async function bestEffortMountRerun(camera, runId, isCurrent = () => true) {
         try {
+          if (!isCurrent()) return false;
           const cam = String(camera || "workspace");
           const rid = String(runId || activeRunId || "").trim();
-          await mountRerunIframe(cam, rid);
+          await mountRerunIframe(cam, rid, isCurrent);
+          if (!isCurrent()) return false;
           // Do not force SUCCESS — trust mountRerunIframe / soft-swap status.
           const ok = lastRerunMountStatus === RERUN_MOUNT_SUCCESS;
           if (!ok) {
@@ -11736,6 +11818,7 @@
           }
           return ok;
         } catch (err) {
+          if (!isCurrent()) return false;
           console.warn("best-effort rerun mount failed", err);
           setRerunMountStatus("degraded", String(err && err.message ? err.message : err).slice(0, 120));
           return false;
@@ -12139,6 +12222,7 @@
       let activeArtifactInventoryRunId = "";
       let activeArtifactInventory = [];
       let activeArtifactInventoryPage = null;
+      let activeArtifactInventoryRequestSource = "";
       let activeArtifactInventoryComplete = false;
       let activeLearningArtifactContract = null;
       // Load the whole run list into the picker by default so every run shows
@@ -12537,6 +12621,7 @@
         activeArtifactInventoryRunId = "";
         activeArtifactInventory = [];
         activeArtifactInventoryPage = null;
+        activeArtifactInventoryRequestSource = "";
         activeArtifactInventoryComplete = false;
         currentLichtblickSimViz = null;
         const replacements = {
@@ -12685,6 +12770,12 @@
         let data = null;
         let cursor = "";
         try {
+          // Retain an unavailable scope after access loss. Dropping an empty
+          // project/bucket pair must not silently turn a scoped action into a
+          // tenant-wide discovery request.
+          if (scope.unavailable) {
+            throw new Error("No project is available to discover artifacts. Refresh access before retrying.");
+          }
           do {
             let url = "/api/artifacts/runs?limit=" + ARTIFACT_RUN_LIST_LIMIT + (q ? "&q=" + encodeURIComponent(q) : "");
             if (scope.projectId) url += "&project_id=" + encodeURIComponent(scope.projectId);
@@ -13013,6 +13104,27 @@
           host.appendChild(banner);
         }
       }
+      function artifactInventoryRequestSource(entry, selection) {
+        const source = entry || selection || {};
+        return JSON.stringify(["source_type", "run_id", "run_ref", "project_id", "bucket", "resolved_prefix"]
+          .map((field) => String(source[field] || "")));
+      }
+      function completeSelectedArtifactInventory() {
+        const requestedRun = selectedRunIdFromUi();
+        const selection = resolveRunSelection(requestedRun);
+        const entry = preferredRunEntry(selection.run_ref || selection.run_id);
+        // Discovery can omit provenance that the first inventory response
+        // resolves. Continue that exact displayed source only while the same
+        // original selection remains current; a changed discovery row must
+        // perform its own source lookup, even if its run basename is unchanged.
+        const inventory = activeArtifactInventoryPage &&
+          activeArtifactInventoryRequestSource === artifactInventoryRequestSource(entry, selection)
+          ? activeArtifactInventoryPage : null;
+        return loadArtifactsForSelectedRun(
+          inventory ? String(inventory.run_ref) : requestedRun,
+          null, inventory || entry, { completeInventory: true },
+        );
+      }
       async function loadArtifactsForSelectedRun(explicitRunId, priorPage, explicitEntry, requestContext) {
         const viewerIntentRequestId = artifactLoadRequestId;
         // explicitRunId is optional; guard against event objects passed by
@@ -13036,8 +13148,13 @@
           : (priorPage && !seededPage && typeof priorPage === "object" ? priorPage : {});
         const deferInventoryCompletion = context.deferInventoryCompletion === true;
         const cachedInventoryMatches = activeArtifactInventoryPage &&
+          Boolean(runRef) &&
           String(activeArtifactInventoryPage.run_id || "") === runId &&
-          (!runRef || String(activeArtifactInventoryPage.run_ref || "") === runRef);
+          String(activeArtifactInventoryPage.run_ref || "") === runRef &&
+          ["project_id", "bucket", "resolved_prefix"].every((field) =>
+            !entry || !Object.prototype.hasOwnProperty.call(entry, field) ||
+            String(entry[field] ?? "") === String(activeArtifactInventoryPage[field] ?? ""),
+          );
         const cachedInventory = cachedInventoryMatches ? activeArtifactInventoryPage : null;
         // The explicit List artifacts action resumes the already-rendered first
         // page instead of fetching it again. A completed cache is also final.
@@ -13102,6 +13219,15 @@
             !selectedSource.project_id || !Object.prototype.hasOwnProperty.call(firstPage, "resolved_prefix")
           ) {
             throw new Error("Artifact inventory response omitted exact run source provenance.");
+          }
+          // A resumed first-page inventory is already bound to one exact
+          // source. Validate its very first continuation before merging any
+          // retained objects; checking only later loop pages is too late.
+          if (seededPage && ["run_id", "run_ref", "project_id", "bucket", "resolved_prefix"].some(
+            (field) => !Object.prototype.hasOwnProperty.call(seededPage, field) ||
+              String(seededPage[field] ?? "") !== selectedSource[field],
+          )) {
+            throw new Error("Artifact inventory source changed during pagination; reload the selected run.");
           }
           const merged = new Map();
           const mergePage = (page) => {
@@ -13233,6 +13359,13 @@
         const artifacts = Array.isArray(data.artifacts) ? data.artifacts : [];
         activeArtifactInventoryRunId = runId;
         activeArtifactInventory = artifacts;
+        const continuedCurrentInventory = seededPage && activeArtifactInventoryPage &&
+          ["run_id", "run_ref", "project_id", "bucket", "resolved_prefix"].every((field) =>
+            String(seededPage[field] ?? "") === String(activeArtifactInventoryPage[field] ?? ""),
+          );
+        if (data !== activeArtifactInventoryPage && !continuedCurrentInventory) {
+          activeArtifactInventoryRequestSource = artifactInventoryRequestSource(entry, selection);
+        }
         activeArtifactInventoryPage = data;
         activeArtifactInventoryComplete = data.pagination_complete === true;
         const contractCandidate = data && data.summary && data.summary.learning && data.summary.learning.artifact_contract;
@@ -13408,6 +13541,8 @@
             event.preventDefault();
             try {
               await runControlAction(loadMore, () => loadArtifactsForSelectedRun(runRef || runId, {
+                run_id: runId,
+                run_ref: runRef,
                 artifacts,
                 next_cursor: data.next_cursor,
                 resolved_prefix: data.resolved_prefix,
@@ -14781,6 +14916,7 @@
         let entry = supplied || preferredRunEntry(selection.entry_key || selection.run_ref || chosen);
         if (!entry) {
           await refreshArtifactRuns(chosen).catch(() => false);
+          if (!isCurrent()) return null;
           entry = preferredRunEntry(chosen);
         }
         // A pasted id absent from workflow history is treated as an artifact run:
@@ -14825,8 +14961,9 @@
           });
           if (!isCurrent()) return null;
           await loadRunDetails(chosen);
+          if (!isCurrent()) return null;
           if (data && data.sim_viz && (data.sim_viz.rrd_uri || data.sim_viz.rerun_ready)) {
-            await bestEffortMountRerun(String(data.sim_viz.camera || "workspace"), chosen);
+            await bestEffortMountRerun(String(data.sim_viz.camera || "workspace"), chosen, isCurrent);
           }
           if (!isCurrent()) return null;
           await refresh();
@@ -15306,6 +15443,10 @@
         return data;
       }
       async function loadRunData(explicitSelection) {
+        // The Viewer Load button can resolve directly from inventory without
+        // reaching loadSelectedRun; it still supersedes an older demo load.
+        selectedRunLoadGeneration += 1;
+        activeRunSelectionGeneration += 1;
         const requested = explicitSelection && typeof explicitSelection === "object" &&
           Object.prototype.hasOwnProperty.call(explicitSelection, "run_id")
           ? explicitSelection
@@ -15388,6 +15529,7 @@
         const dataPromise = loadSelectedRun(
           preferredEntry || { run_id: runId, run_ref: runRef }
         );
+        const selectionGeneration = selectedRunLoadGeneration;
         const artifactsPromise = preferredEntry && preferredEntry.source_type === "workflow_history"
           ? loadArtifactsForSelectedRun(runRef || runId, null, exactEntry, {
               pendingSelection: true,
@@ -15396,6 +15538,7 @@
           : Promise.resolve(false);
         const data = await dataPromise;
         await artifactsPromise;
+        if (selectionGeneration !== selectedRunLoadGeneration || data === null) return null;
         if (!(data && data.sim_viz && (data.sim_viz.rrd_uri || data.sim_viz.rerun_ready))) {
           updateRenderedDataSummary({
             run_id: runId,

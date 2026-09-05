@@ -243,6 +243,14 @@ transport, and controller authorization still apply. See
 [LeIsaac teleoperation](workbench/leisaac-teleoperation.md) for operation and
 immutable episode browsing.
 
+To verify a deployed UI, run `npm run cy:live-access` from
+`npa/tests/browser`, with `NPA_AGENT_BASE_URL`, `NPA_AGENT_USER`, and
+`NPA_AGENT_PASSWORD` supplied through a protected runner environment. This
+checks real project/bucket interactions and expects LeIsaac hidden. Set
+`NPA_AGENT_EXPECT_LEISAAC=true` when verifying an already enabled deployment;
+it changes only the test expectation, not the deployment configuration. Keep
+live output and screenshots in access-controlled evidence outside Git.
+
 ## What the agent can see
 
 The agent is **tenant-aware for read-only discovery**. Its *Agent access* panel

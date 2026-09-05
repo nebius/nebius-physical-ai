@@ -1291,11 +1291,19 @@ describe("NPA agent UI — embedded Foxglove viewer", () => {
 
   it("discards a stale export response after a run switch without opening or overwriting the current run", () => {
     stubFoxgloveApis();
+    let releaseExport;
     cy.intercept("POST", "/api/foxglove/export", (request) => {
-      request.reply({
-        delay: 900,
-        statusCode: 200,
-        body: foxgloveExportResponse(String(request.body.run_id || "mock-run"), { reused: true }),
+      // Hold the response until the new run is actually selected. A fixed
+      // delay can expire while Cypress is typing on a busy browser host,
+      // turning this into a valid completed export instead of a stale one.
+      return new Cypress.Promise((resolve) => {
+        releaseExport = () => {
+          request.reply({
+            statusCode: 200,
+            body: foxgloveExportResponse(String(request.body.run_id || "mock-run"), { reused: true }),
+          });
+          resolve();
+        };
       });
     }).as("staleExport");
     cy.window().then((win) => {
@@ -1306,11 +1314,13 @@ describe("NPA agent UI — embedded Foxglove viewer", () => {
     cy.get("#tabRerun").click();
     activateFoxglovePane();
     cy.get("#foxgloveOpenWeb").click();
+    cy.wrap(null).should(() => expect(releaseExport).to.be.a("function"));
     cy.get("#runIdInput").clear().type("non-stock-customer-run");
     cy.get("#loadRunData").click();
     cy.get("#simRunId").should("contain.text", "non-stock-customer-run");
     activateFoxglovePane();
     cy.get("#foxgloveOpenWeb").should("be.enabled").and("have.attr", "aria-busy", "false");
+    cy.then(() => releaseExport());
     cy.wait("@staleExport");
     cy.get("@staleNavigate").should("not.have.been.called");
     cy.get("@stalePopupClose").should("have.been.called");

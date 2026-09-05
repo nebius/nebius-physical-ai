@@ -77,7 +77,11 @@ def test_default_inventory_is_lazy_and_list_artifacts_resumes_cached_cursor() ->
         "async function loadExactArtifactSource", 1
     )[0]
 
-    assert "completeInventory: true" in wiring
+    assert "completeSelectedArtifactInventory" in wiring
+    complete_inventory = ui.split("function completeSelectedArtifactInventory", 1)[1].split(
+        "async function loadArtifactsForSelectedRun", 1
+    )[0]
+    assert "completeInventory: true" in complete_inventory
     assert "deferInventoryCompletion: true" in selector
     assert "seededPage = cachedInventory" in loader
     assert 'params.set("cursor", String(seededPage.next_cursor))' in loader
@@ -124,6 +128,8 @@ def test_superseded_local_demo_cannot_reach_final_refresh() -> None:
     )[0]
 
     final_guard = local_demo.rindex("if (!isCurrent()) return null;")
+    details_guard = local_demo.index("if (!isCurrent()) return null;", local_demo.index("await loadRunDetails"))
+    assert details_guard < local_demo.index("await bestEffortMountRerun")
     assert final_guard > local_demo.index("await bestEffortMountRerun")
     assert final_guard < local_demo.index("await refresh();")
 

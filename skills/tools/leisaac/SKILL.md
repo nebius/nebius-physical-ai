@@ -178,7 +178,14 @@ readiness requests, status no-store behavior, secure transport labeling, and
 backend authorization. Exercise DOM interactions in Cypress, not only source
 string assertions. For temporary live configuration changes, preserve the
 operator's explicit opt-in or restore the false default after testing. With an
-explicitly accepted live LeIsaac run, also exercise connect/reconnect, controller contention,
+existing authenticated deployment, run `npm run cy:live-access` from
+`npa/tests/browser` using protected `NPA_AGENT_BASE_URL`, `NPA_AGENT_USER`, and
+`NPA_AGENT_PASSWORD` environment values. It expects LeIsaac hidden; set
+`NPA_AGENT_EXPECT_LEISAAC=true` to assert a deployment already enabled through
+operator config. That test expectation does not enable the feature. Keep live
+output and screenshots only in access-controlled evidence outside Git.
+
+With an explicitly accepted live LeIsaac run, also exercise connect/reconnect, controller contention,
 motion and orbit, recorder transitions, finalized episode playback/ranges, and
 the live Cypress suite:
 

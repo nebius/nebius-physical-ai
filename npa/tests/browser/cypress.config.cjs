@@ -10,8 +10,6 @@ const { chromium } = require("playwright-core");
 const { PNG } = require("pngjs");
 
 const repoRoot = path.resolve(__dirname, "../..");
-const generatedDir = path.join(__dirname, ".generated");
-const generatedUiPath = path.join(generatedDir, "agent-ui.html");
 // Real @foxglove/embed browser build (devDependency) + the repo's glue module,
 // served exactly the way the agent VM serves them (/foxglove/sdk, /foxglove/app).
 const foxgloveSdkDir = path.join(__dirname, "node_modules/@foxglove/embed/dist");
@@ -32,8 +30,6 @@ function generateAgentUiHtml(leisaacEnabled = false) {
     throw new Error(`Unable to render NPA agent UI: ${rendered.stderr}`);
   }
   const html = rendered.stdout;
-  fs.mkdirSync(generatedDir, { recursive: true });
-  fs.writeFileSync(generatedUiPath, html, "utf8");
   return html;
 }
 

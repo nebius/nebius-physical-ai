@@ -25,7 +25,8 @@ describe("recording-independent artifacts against the live GR00T run", () => {
     });
 
     cy.intercept("POST", "/api/sim-viz/load-run").as("loadTrainingRun");
-    cy.intercept("GET", `/api/artifacts/run/${RUN_ID}*`, (request) => {
+    // Continuations address the server's opaque run_ref rather than run_id.
+    cy.intercept("GET", "/api/artifacts/run/**", (request) => {
       inventoryRequests += 1;
       request.continue();
     }).as("liveArtifactList");
