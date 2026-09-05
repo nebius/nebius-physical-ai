@@ -1279,6 +1279,109 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#chatLog").should("contain.text", "show status");
   });
 
+  for (const refreshMethod of ["refreshChatSessions", "refresh", "restoreSession"]) {
+    it(`keeps a new chat and its reply when an older ${refreshMethod} completes`, () => {
+      let releaseRefresh;
+      let refreshDone;
+      let releaseChat;
+      const path = refreshMethod === "refreshChatSessions" ? "/api/chat/sessions" : "/api/session";
+      const stale = {
+        active_session_id: "default", active_chat_session_id: "default",
+        sessions: [{ id: "default", title: "Old chat" }],
+        chat_sessions: [{ id: "default", title: "Old chat" }],
+        chat_history: [{ role: "assistant", content: "Stale transcript" }],
+        sim_viz: SIM_VIZ,
+      };
+      cy.intercept({ method: "GET", url: path, times: 1 }, (request) =>
+        new Cypress.Promise((resolve) => {
+          releaseRefresh = () => { request.reply({ statusCode: 200, body: stale }); resolve(); };
+        }),
+      ).as("oldChatRefresh");
+      cy.window().then((win) => {
+        refreshDone = win.__NPA_AGENT_TEST__[refreshMethod]();
+      });
+      cy.wrap(null).should(() => expect(releaseRefresh).to.be.a("function"));
+      cy.get("#newChatSession").click();
+      cy.wait("@newChatSession");
+      cy.get("#chatSessionSelect").should("have.value", "new-session");
+      cy.intercept("POST", "/api/chat", (request) =>
+        new Cypress.Promise((resolve) => {
+          expect(request.body.session_id).to.eq("new-session");
+          expect(request.body.model).to.eq("mock/model");
+          releaseChat = () => {
+            request.reply({ statusCode: 200, body: {
+              ok: true, session_id: request.body.session_id,
+              model: "mock/model", reply: "A green boat floats under a silver moon.",
+            } });
+            resolve();
+          };
+        }),
+      ).as("newSessionChat");
+      cy.get("#chatModel").select("mock/model");
+      cy.get("#chatInput").type("Write about a green boat and a silver moon.");
+      cy.get("#chatSend").click();
+      cy.wrap(null).should(() => expect(releaseChat).to.be.a("function"));
+      cy.then(() => releaseRefresh());
+      cy.wait("@oldChatRefresh");
+      cy.then(() => refreshDone);
+      cy.get("#chatSessionSelect").should("have.value", "new-session");
+      cy.get("#chatLog").should("not.contain.text", "Stale transcript");
+      cy.then(() => releaseChat());
+      cy.wait("@newSessionChat");
+      cy.get("#chatLog .msg-row.assistant").should("contain.text", "A green boat floats under a silver moon.");
+    });
+  }
+
+  it("serializes overlapping chat mutations so fresh discovery keeps the newest session", () => {
+    let releaseFirst;
+    let serverActive = "default";
+    const writes = [];
+    cy.intercept("POST", "/api/chat/sessions", (request) => {
+      const id = `created-${writes.length + 1}`;
+      writes.push(id);
+      const reply = () => {
+        serverActive = id;
+        request.reply({ statusCode: 200, body: {
+          active_session_id: id, session: { id, chat_history: [] },
+          sessions: writes.map((value) => ({ id: value, title: value })),
+        } });
+      };
+      if (writes.length === 1) {
+        return new Cypress.Promise((resolve) => {
+          releaseFirst = () => { reply(); resolve(); };
+        });
+      }
+      reply();
+    }).as("serializedChatMutation");
+    cy.intercept("GET", "/api/chat/sessions", (request) => request.reply({
+      statusCode: 200, body: { active_session_id: serverActive,
+        sessions: writes.map((id) => ({ id, title: id })) },
+    })).as("currentChatDiscovery");
+    cy.get("#newChatSession").click();
+    cy.wrap(null).should(() => expect(releaseFirst).to.be.a("function"));
+    cy.get("#newChatSession").click();
+    cy.then(() => {
+      expect(writes, "second server write waits for the first").to.deep.eq(["created-1"]);
+      releaseFirst();
+    });
+    cy.wait("@serializedChatMutation");
+    cy.wait("@serializedChatMutation");
+    cy.get("#chatSessionSelect").should("have.value", "created-2");
+    cy.window().then((win) => win.__NPA_AGENT_TEST__.refreshChatSessions());
+    cy.wait("@currentChatDiscovery");
+    cy.get("#chatSessionSelect").should("have.value", "created-2");
+    cy.intercept("POST", "/api/chat", (request) => {
+      expect(request.body.session_id).to.eq("created-2");
+      request.reply({ statusCode: 200, body: {
+        ok: true, session_id: request.body.session_id, reply: "Newest session reply remains visible.",
+      } });
+    }).as("newestSessionReply");
+    cy.get("#chatInput").type("Reply in the newest session.");
+    cy.get("#chatSend").click();
+    cy.wait("@newestSessionReply");
+    cy.get("#chatLog .msg-row.assistant").should("contain.text", "Newest session reply remains visible.");
+  });
+
   it("covers workflow draft upload, validate, plan, and submit buttons", () => {
     cy.get("#workflowYaml").clear().type(WORKFLOW_YAML, { delay: 0 });
 
