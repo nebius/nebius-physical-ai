@@ -1,9 +1,8 @@
 """Generic credential preflight shared across workbench tools and deploys.
 
-Validates the credentials nearly every GPU job or deploy needs — Hugging Face,
-NVIDIA NGC, Nebius object storage (S3), and Nebius Token Factory — as explicit
-PASS/WARN/FAIL/SKIP checks, so a customer hits them as a clear preflight
-instead of a mid-pipeline failure.
+Validates the service credentials nearly every GPU job or deploy needs as
+explicit PASS/WARN/FAIL/SKIP checks. An optional Nebius CLI check verifies the
+control-plane authentication required for provisioning.
 
 Every check is a pure function that takes the resolved credentials plus an
 injectable probe. The CLI wires real probes (Hugging Face identity, NGC token
@@ -19,13 +18,18 @@ from typing import Any, Callable, Iterable
 from npa.workflows.sim2real_health import (
     FAIL,
     PASS,
+    SKIP,
     WARN,
     CheckResult,
     has_failure,
 )
 
-# Canonical order a customer should reason about credentials in.
-CREDENTIAL_CHECKS: tuple[str, ...] = ("hf", "ngc", "s3", "token_factory")
+# Preserve the lightweight default for hosted-inference users. The explicit
+# ``all`` selection also checks the Nebius CLI profile needed for cloud work.
+DEFAULT_CREDENTIAL_CHECKS: tuple[str, ...] = ("hf", "ngc", "s3", "token_factory")
+SUPPORTED_CREDENTIAL_CHECKS: tuple[str, ...] = (*DEFAULT_CREDENTIAL_CHECKS, "nebius")
+# Backward-compatible name for callers that use the default check set.
+CREDENTIAL_CHECKS = DEFAULT_CREDENTIAL_CHECKS
 
 
 @dataclass
@@ -33,15 +37,17 @@ class CredentialProbes:
     """Injectable side-effecting dependencies for credential checks.
 
     Defaults are ``None`` so the engine stays pure and import-safe. The CLI fills
-    these with real implementations; tests pass fakes. When a probe is ``None``
-    the corresponding live check is downgraded to a "present but unverified"
-    PASS/WARN rather than reaching the network.
+    these with real implementations; tests pass fakes. When a service probe is
+    ``None``, the check reports presence without reaching the network. A missing
+    Nebius profile probe produces SKIP because profile presence is not proof of
+    usable authentication.
     """
 
     hf_validator: Callable[[str], Any] | None = None
     ngc_validator: Callable[[str], str] | None = None
     s3_client_factory: Callable[[], Any] | None = None
     token_factory_verifier: Callable[[], list[str]] | None = None
+    nebius_profile_verifier: Callable[[], Any] | None = None
 
 
 def _looks_like_auth_failure(text: str) -> bool:
@@ -259,11 +265,77 @@ def check_token_factory(credentials: Any, probes: CredentialProbes) -> CheckResu
     )
 
 
+def check_nebius(_credentials: Any, probes: CredentialProbes) -> CheckResult:
+    """Check that the selected Nebius CLI profile can call the control plane."""
+
+    if probes.nebius_profile_verifier is None:
+        return CheckResult(
+            name="nebius",
+            status=SKIP,
+            summary="Nebius CLI authentication was not verified in offline mode.",
+            remedy="Run the same check without `--offline` before provisioning.",
+        )
+    verification = probes.nebius_profile_verifier()
+    profile_source = (
+        "Configured Nebius CLI profile"
+        if getattr(verification, "profile", "")
+        else "Default Nebius CLI profile"
+    )
+    if verification.identity_verified and verification.iam_token_minted:
+        return CheckResult(
+            name="nebius",
+            status=PASS,
+            summary=f"{profile_source} is authenticated.",
+        )
+    failure_reason = getattr(verification, "failure_reason", "")
+    if failure_reason == "cli_unavailable":
+        return CheckResult(
+            name="nebius",
+            status=FAIL,
+            summary="Nebius CLI is not available.",
+            remedy="Install the Nebius CLI or put `nebius` on PATH, then retry.",
+        )
+    if failure_reason == "timeout":
+        return CheckResult(
+            name="nebius",
+            status=FAIL,
+            summary="Nebius CLI authentication check timed out.",
+            remedy=(
+                "Check connectivity to Nebius IAM and retry. Re-authenticate the "
+                "selected profile if the timeout persists."
+            ),
+        )
+    if failure_reason == "probe_error":
+        return CheckResult(
+            name="nebius",
+            status=FAIL,
+            summary="Nebius CLI authentication check could not run.",
+            remedy=(
+                "Run `nebius --profile <profile> --no-browser --no-check-update iam "
+                "whoami` with the selected profile to diagnose, then retry."
+            ),
+        )
+    if failure_reason == "token_mint_failed" or verification.identity_verified:
+        return CheckResult(
+            name="nebius",
+            status=FAIL,
+            summary=f"{profile_source} resolved identity but could not mint an IAM token.",
+            remedy="Re-authenticate the selected Nebius CLI profile, then retry.",
+        )
+    return CheckResult(
+        name="nebius",
+        status=FAIL,
+        summary=f"{profile_source} could not resolve an authenticated identity.",
+        remedy="Authenticate the selected Nebius CLI profile, then retry.",
+    )
+
+
 _CHECK_FUNCS: dict[str, Callable[[Any, CredentialProbes], CheckResult]] = {
     "hf": check_hf,
     "ngc": check_ngc,
     "s3": check_s3,
     "token_factory": check_token_factory,
+    "nebius": check_nebius,
 }
 
 
@@ -281,16 +353,19 @@ def run_credential_preflight(
     if unknown:
         raise ValueError(
             f"unknown credential check(s): {', '.join(unknown)}. "
-            f"Choices: {', '.join(CREDENTIAL_CHECKS)}."
+            f"Choices: {', '.join(SUPPORTED_CREDENTIAL_CHECKS)}."
         )
     return [_CHECK_FUNCS[name](credentials, active_probes) for name in selected]
 
 
 __all__ = [
     "CREDENTIAL_CHECKS",
+    "DEFAULT_CREDENTIAL_CHECKS",
+    "SUPPORTED_CREDENTIAL_CHECKS",
     "CredentialProbes",
     "check_hf",
     "check_ngc",
+    "check_nebius",
     "check_s3",
     "check_token_factory",
     "has_failure",

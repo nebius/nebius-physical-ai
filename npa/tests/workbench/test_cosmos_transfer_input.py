@@ -745,8 +745,10 @@ def test_run_cosmos_transfer_names_gated_access_denial_without_leaking_prompt(
     # fixture so an unrelated guardrail download cannot mask that subprocess.
     _fake_env(monkeypatch, repo)
     secret_prompt = "a secret prompt that must never reach the raised message"
+    runtime_calls: list[list[str]] = []
 
     def fake_run(cmd, *_args, **kwargs):
+        runtime_calls.append(cmd)
         assert secret_prompt not in " ".join(cmd)
         kwargs["stdout"].write(
             (
@@ -763,10 +765,34 @@ def test_run_cosmos_transfer_names_gated_access_denial_without_leaking_prompt(
             run_id="denied", spec="assets/custom.json", prompt=secret_prompt
         )
 
+    assert len(runtime_calls) == 1
     message = str(raised.value)
     assert "gated Hugging Face repository access denied" in message
     assert "exit 1" in message
     assert secret_prompt not in message
+
+
+@pytest.mark.parametrize(
+    ("vendor_output", "classification"),
+    [
+        ("GatedRepoError", "Hugging Face authentication/authorization failed"),
+        ("torch.cuda.OutOfMemoryError", "CUDA out of memory"),
+        ("OSError: No space left on device", "no space left on device"),
+        ("CUDA driver version is insufficient", "CUDA/GPU error"),
+        (
+            "unexpected internal vendor failure",
+            "unrecognized vendor failure; inspect GPU/model access and retry",
+        ),
+    ],
+)
+def test_vendor_failure_classification_is_fixed_and_path_free(
+    vendor_output: str, classification: str
+) -> None:
+    result = tx._classify_vendor_failure(
+        f"/operator/private/input.mp4: {vendor_output}\nprompt: confidential example"
+    )
+
+    assert result == classification
 
 
 def test_run_cosmos_transfer_content_guardrail_opt_out_is_explicit(
