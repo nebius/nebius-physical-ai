@@ -125,12 +125,13 @@ A conclusion in a PR description is not a control. Encode it:
   fails loudly. Compatibility aliases retain the original Omniverse-named API,
   but new code must use the general inventory because any vendor runtime can be
   non-redistributable.
-- `npa/src/npa/deploy/images.py` — add tools that are licence-eligible but have
-  no built, byte-scanned artifact yet to `UNVALIDATED_PUBLICATION_TOOLS`.
+- `npa/src/npa/deploy/images.py` — add tools that are licence-eligible but lack
+  accepted built-image scans and real capability evidence on required hardware to
+  `UNVALIDATED_PUBLICATION_TOOLS`.
   "Restricted" and "unproven" are different answers to different questions, and
   conflating them is wrong in both directions: a tool here is not restricted,
-  it simply has no evidence yet, and it leaves the set in the same change that
-  records its accepted digest and scan.
+  it simply lacks the required evidence, and it leaves the set in the same change
+  that records its accepted digest, scans, and real capability result.
 - For a solution's weights/datasets, record the license and the runtime-fetch
   requirement in the capability table from the onboarding skill.
 - For an **output-layer** restriction, the record has to travel with the
@@ -141,6 +142,15 @@ A conclusion in a PR description is not a control. Encode it:
 The packaging-contract guards then fail the build if a Dockerfile bakes a
 restricted marker, or is built `FROM` a restricted image, while claiming
 `public`.
+
+Before publication, resolve current state from the packaging contract and the
+restriction/quarantine inventories in `npa/src/npa/deploy/images.py`; stop if
+they disagree. For supported release promotion, require the accepted source/digest
+evidence there and in the applicable image manifests. After promotion, verify
+the supported release against
+`npa/src/npa/deploy/public_release_manifest.json` and anonymous registry reads.
+Historical examples below explain packaging decisions; they do not replace
+current artifact scans, real capability validation, or release verification.
 
 ## Patterns That Keep Us Compliant
 
@@ -278,10 +288,12 @@ NVIDIA still delivers the runtime directly to each operator; we redistribute no 
 bytes, so the redistribution conclusion does not depend on the EULA UX default.
 The clean runtime-fetch `isaac-lab`, `sonic`, and `groot` images may therefore be
 classified `redistribution: public`. Historical SONIC L40S and inherited MuJoCo
-images remain restricted and quarantined because their built layers contain the
-old payload. The replacement MuJoCo architecture is built independently from a
-digest-pinned public Python base and must pass exact-layer scans plus real GPU
-validation before its digest can replace the quarantined variant.
+artifacts contain restricted payload; replacing them does not make those old
+bytes redistributable.
+The replacement MuJoCo design used an independent digest-pinned public Python
+base to remove that inherited runtime. Every replacement digest must pass
+exact-layer scans plus real GPU validation before release acceptance; use the
+current inventories and accepted manifests for its publication state.
 
 Three things made that verdict defensible rather than merely plausible, and a new
 solution should expect to produce all three:
@@ -406,11 +418,13 @@ fetch alone while the weight path stays guarded). Any time several controls
 share an exit code, assume they are hiding each other until a mutant proves
 otherwise.
 
-**Do not publish on the strength of the classification alone.** The licence work
-concluded `redistribution: public`, and the pushed image has since been scanned
-by digest, but no GPU has run it — so `ltx2` sits in
-`UNVALIDATED_PUBLICATION_TOOLS` and `publish_public` refuses it by name.
-Eligible and proven are different claims.
+**Do not publish on the strength of the classification alone.** LTX initially
+remained in `UNVALIDATED_PUBLICATION_TOOLS` after its public classification and
+byte scan because real GPU evidence was still missing. That was an artifact
+validation state, not a permanent restriction on the tool. Resolve today's
+quarantine and accepted-digest evidence from the current sources above. Every
+new digest must earn its own scans and real capability result before promotion;
+a previous release's evidence does not validate replacement bytes.
 
 ## Red Flags
 

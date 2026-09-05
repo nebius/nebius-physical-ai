@@ -31,8 +31,11 @@ For live validation also load `skills/atomic/gpu-selection/SKILL.md`,
    and the immutable tag `dev-<full-git-sha>`; refuse moving or abbreviated
    development tags.
 2. Require `redistribution: public` in
-   `npa/docker/workbench/packaging-contract.yaml`. Hard-refuse `restricted`
-   images, including `cosmos3-serving`, from every official GHCR tag.
+   `npa/docker/workbench/packaging-contract.yaml` and check the current restriction
+   inventories in `npa/src/npa/deploy/images.py`. Hard-refuse `restricted` images
+   from every official GHCR tag; resolve any disagreement between those sources
+   before publication. Read current eligibility and quarantine state from those
+   sources, rather than treating a historical product example as a fixed inventory.
 3. Before any public push, run the repository packaging/license guards and
    inspect the locally built artifact, including layers, history, and OCI config.
    Refuse credentials, secrets, customer data, live infrastructure identifiers,
