@@ -62,6 +62,15 @@ jobs:
       - name: Install npa
         run: cd npa && pip install -e ".[dev,adapter]"
 
+      - name: Install CPU checkpoint and export test runtime
+        # Detector contract regressions exercise real tensor serialization and
+        # Lance dataloaders. Installing torch also activates SONIC ONNX export
+        # tests, so install their supported extra after selecting CPU wheels.
+        run: |
+          pip install --index-url https://download.pytorch.org/whl/cpu torch==2.12.1
+          pip install -e "npa[sonic]"
+          python -c "import torch, onnx, onnxscript, onnxruntime; assert torch.version.cuda is None"
+
       - name: Verify checked-out CLI flags
         run: |
           cd npa

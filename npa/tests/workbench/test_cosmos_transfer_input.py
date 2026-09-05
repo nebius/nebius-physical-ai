@@ -743,10 +743,15 @@ def test_run_cosmos_transfer_names_gated_access_denial_without_leaking_prompt(
     (repo / "examples").mkdir(parents=True)
     monkeypatch.setattr(tx, "cosmos_transfer_repo", lambda: repo)
     monkeypatch.setattr(tx, "ensure_env", lambda _repo: Path("/usr/bin/python3"))
+    # Exercise the inference failure boundary without downloading the separate
+    # guardrail cache (covered by the cache preparation tests above).
+    monkeypatch.setattr(tx, "prepare_guardrail_nltk_data", lambda **_kwargs: 0)
     monkeypatch.setenv("HF_TOKEN", "unit-test-placeholder")
     secret_prompt = "a secret prompt that must never reach the raised message"
+    invocations: list[list[str]] = []
 
     def fake_run(cmd, *_args, **kwargs):
+        invocations.append(cmd)
         assert secret_prompt not in " ".join(cmd)
         kwargs["stdout"].write(
             (
@@ -764,6 +769,7 @@ def test_run_cosmos_transfer_names_gated_access_denial_without_leaking_prompt(
         )
 
     message = str(raised.value)
+    assert len(invocations) == 1
     assert "gated Hugging Face repository access denied" in message
     assert "exit 1" in message
     assert secret_prompt not in message

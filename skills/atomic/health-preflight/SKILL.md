@@ -78,21 +78,26 @@ Image pullability is a *separate* gate that health does not cover; see
 `skills/atomic/submit-workflow/SKILL.md`. A green health report with an
 unpullable image still hangs in `ImagePullBackOff`.
 
-**A green `s3` row does not mean the submit can write.** The `s3` check lists
-the configured project bucket; `submit` runs a stricter one that puts a unique
-object into the bucket the *workflow* resolves, which is a different bucket
-whenever `NPA_S3_BUCKET` or `AWS_ENDPOINT_URL` is set in the environment. The
-two disagreeing looks like a passing preflight followed by:
+**A green `s3` row does not mean the submit is execution-ready.** The generic
+`s3` check lists its configured bucket. Submit resolves one effective target,
+verifies provider project/tenant/region and exact bucket ownership before any
+write, then writes and reads a unique object in each actual workload output,
+ledger and source-staging prefix using the executing credential pair. It also
+checks the exact Kubernetes context and requested GPU product/shape, including
+single-node requests. An explicit destination never falls back to another
+writable bucket. A mismatch or unknown ownership blocks creation, even with
+`--skip-preflight`. A denied task prefix can therefore follow a green generic
+health check:
 
 ```
-Error: Cannot submit <spec>.yaml: missing prerequisites:
-  - writable S3 for this workflow (S3 write permission was denied.)
+Error: execution preflight storage_access: exact output prefix write failed (authorization)
 ```
 
-Believe the submit, not the preflight row: it is the check closer to the write
-you are about to do. Reconcile the endpoint and bucket the workflow sees with
-the ones `npa configure --show` reports before reaching for the printed
-`npa provision-if-absent --project <alias> --skip-k8s` fix.
+Use submit's execution diagnosis. Reconcile the selected project and the exact
+endpoint/bucket/prefix before changing IAM. `--s3-bucket` / `--s3-prefix` bind
+the actual spec and ledger; `--s3-endpoint` binds both probe and worker endpoint.
+S3 keys are selected as a pair from one source, with non-secret provenance;
+an incomplete explicit pair cannot borrow a saved principal's other key.
 
 ## Persisting credentials you already hold
 

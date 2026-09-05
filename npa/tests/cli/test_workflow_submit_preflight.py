@@ -50,6 +50,9 @@ SIM2REAL_SPEC = (
 
 @pytest.fixture(autouse=True)
 def _no_ambient_src(monkeypatch: pytest.MonkeyPatch) -> None:
+    # These tests isolate prerequisite/image/provisioning ordering. Exact
+    # provider scope and prefix probes have independent CLI contract coverage.
+    monkeypatch.setattr(workflow_cli, "_execution_target_preflight", lambda *args, **kwargs: (None, {}))
     monkeypatch.delenv("NPA_SRC_S3_URI", raising=False)
     monkeypatch.delenv("NPA_E2E_NPA_SRC_S3_URI", raising=False)
     monkeypatch.delenv("NPA_SKYPILOT_BIN", raising=False)

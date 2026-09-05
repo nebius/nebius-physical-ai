@@ -526,6 +526,11 @@ def test_sdk_workflow_submit_delegates_to_orchestrator(mocker, monkeypatch) -> N
     # setup; this test exercises delegation, so provide non-secret fixtures.
     monkeypatch.setenv("NEBIUS_TOKEN_FACTORY_KEY", "test-token-factory-key")
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test-access-key")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test-secret-key")
+    # This delegation test replaces the backend. The real CLI/SDK ownership
+    # and exact-output probes are covered in test_execution_preflight.
+    mocker.patch("npa.cli.workbench.workflow._execution_target_preflight", return_value=(None, {}))
+    mocker.patch("npa.cli.workbench.workflow._preflight_submit_gang_capacity")
     fake = types.SimpleNamespace(status="SUBMITTED", job_id="job-1")
     submit_mock = mocker.patch(
         "npa.orchestration.skypilot.workflow.submit_workflow", return_value=fake

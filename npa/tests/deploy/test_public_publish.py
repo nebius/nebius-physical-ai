@@ -18,8 +18,13 @@ from __future__ import annotations
 
 import json
 import copy
+import hashlib
+import http.client
 import re
 import subprocess
+import urllib.error
+import urllib.parse
+from email.message import Message
 from pathlib import Path
 
 import pytest
@@ -91,13 +96,14 @@ def _avoid_registry_attestation_reads_in_unrelated_publish_tests(monkeypatch) ->
     )
 
 
-def test_gpu_accepted_publication_gate_binds_exact_digest(monkeypatch) -> None:
+@pytest.mark.parametrize("tool", ["cosmos3-serving", "detection-training"])
+def test_gpu_accepted_publication_gate_binds_exact_digest(monkeypatch, tool) -> None:
     from npa.deploy import publish_public
 
     item = PublishItem(
-        tool="cosmos3-serving",
-        source_ref="ghcr.io/example/npa-cosmos3-serving:dev-source",
-        target_ref="ghcr.io/example/npa-cosmos3-serving:release",
+        tool=tool,
+        source_ref=f"ghcr.io/example/npa-{tool}:dev-source",
+        target_ref=f"ghcr.io/example/npa-{tool}:release",
     )
     accepted = images.GPU_ACCEPTED_PUBLIC_IMAGE_DIGESTS[item.tool]
     monkeypatch.setattr(
@@ -280,7 +286,7 @@ def test_isaac_images_are_no_longer_restricted() -> None:
         assert is_publicly_redistributable(tool), tool
 
 
-def test_rebuilt_cosmos3_serving_and_sonic_mujoco_are_gpu_accepted() -> None:
+def test_rebuilt_surfaces_including_detection_training_are_gpu_accepted() -> None:
     """Clean bytes and exact GPU evidence earn release eligibility.
 
     Omniverse Kit was only the first: sonic also baked gated model weights (git-LFS
@@ -299,6 +305,7 @@ def test_rebuilt_cosmos3_serving_and_sonic_mujoco_are_gpu_accepted() -> None:
     assert set(images.GPU_ACCEPTED_PUBLIC_IMAGE_DIGESTS) == {
         "cosmos3-ray-serve",
         "cosmos3-serving",
+        "detection-training",
         "sonic-mujoco",
     }
 
@@ -413,11 +420,12 @@ def test_publish_plan_promotes_dev_sha_to_release_tag() -> None:
             "cosmos3-serving",
             "cosmos3-ray-serve",
             "sonic-mujoco",
+            "detection-training",
         )
     }
-    # The five Sim2Real roles deliberately share one coherent source; the five
-    # older accepted publication sources remain distinct from it and each other.
-    assert len(set(accepted_shas.values())) == 6
+    # The five Sim2Real roles deliberately share one coherent source. The six
+    # other accepted sources, including the detector, remain distinct from it.
+    assert len(set(accepted_shas.values())) == 7
     for item in plan:
         source_image = item.source_ref.rsplit("/", 1)[-1]
         target_image = item.target_ref.rsplit("/", 1)[-1]
@@ -441,6 +449,7 @@ def test_accepted_images_use_distinct_exact_development_sources_and_digests() ->
         "cosmos3-serving",
         "cosmos3-ray-serve",
         "sonic-mujoco",
+        "detection-training",
     ):
         entry = manifest[tool]
         assert by_tool[tool].source_ref.endswith(
@@ -711,6 +720,201 @@ def test_registry_host_is_split_off_correctly() -> None:
     )
 
 
+@pytest.fixture
+def anonymous_registry(monkeypatch):
+    """Exercise the real anonymous client, replacing only HTTP transport."""
+    from npa.deploy import publish_public
+
+    body = b'{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json"}'
+    digest = "sha256:" + hashlib.sha256(body).hexdigest()
+    state = {
+        "body": body,
+        "digest": digest,
+        "header": digest,
+        "token_body": b'{"token":"fixture-anonymous-pull"}',
+        "requests": [],
+        "status": 200,
+    }
+
+    class Response:
+        def __init__(self, payload, *, header=None, status=200):
+            self.payload = payload
+            self.status = status
+            self.headers = Message()
+            if header is not None:
+                self.headers["docker-content-digest"] = header
+
+        def read(self):
+            if isinstance(self.payload, Exception):
+                raise self.payload
+            return self.payload
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return None
+
+    def urlopen(request, timeout=None):
+        url = request if isinstance(request, str) else request.full_url
+        headers = {} if isinstance(request, str) else dict(request.header_items())
+        state["requests"].append((url, headers))
+        token_request = urllib.parse.urlsplit(url).path == "/token"
+        error = state.get("token_error" if token_request else "manifest_error")
+        if error:
+            raise urllib.error.HTTPError(url, error, "fixture denial", {}, None)
+        if token_request:
+            return Response(state["token_body"])
+        return Response(state["body"], header=state["header"], status=state["status"])
+
+    monkeypatch.setenv("GH_TOKEN", "fixture-ambient-token")
+    monkeypatch.setenv("DOCKER_AUTH_CONFIG", '{"auths":{"ghcr.io":{"auth":"fixture"}}}')
+    monkeypatch.setattr(publish_public.urllib.request, "urlopen", urlopen)
+    return state
+
+
+@pytest.mark.parametrize("helper", ["anonymous_digest", "anonymous_pull_ok"])
+@pytest.mark.parametrize("suffix", [":release", "@{digest}", ":release@{digest}"])
+def test_anonymous_reference_selects_exact_manifest_and_repository_scope(
+    anonymous_registry, helper, suffix,
+):
+    from npa.deploy import publish_public
+
+    state = anonymous_registry
+    ref = "ghcr.io/example/workbench/image" + suffix.format(digest=state["digest"])
+    ok, detail = getattr(publish_public, helper)(ref)
+    assert ok, detail
+    assert detail == (state["digest"] if helper == "anonymous_digest" else "HTTP 200")
+    token_request, manifest_request = state["requests"]
+    query = urllib.parse.parse_qs(urllib.parse.urlsplit(token_request[0]).query)
+    assert query == {"scope": ["repository:example/workbench/image:pull"], "service": ["ghcr.io"]}
+    assert token_request[1] == {}
+    selected = state["digest"] if "@" in suffix else "release"
+    assert manifest_request[0] == "https://ghcr.io/v2/example/workbench/image/manifests/" + selected
+    assert manifest_request[1]["Authorization"] == "Bearer fixture-anonymous-pull"
+    assert "fixture-ambient-token" not in str(state["requests"])
+
+
+@pytest.mark.parametrize("suffix", [":release", "@{digest}", ":release@{digest}"])
+def test_anonymous_registry_port_is_not_a_tag(anonymous_registry, suffix):
+    from npa.deploy import publish_public
+
+    state = anonymous_registry
+    ref = "registry.example:5443/team/image" + suffix.format(digest=state["digest"])
+    assert publish_public.anonymous_digest(ref) == (True, state["digest"])
+    assert len(state["requests"]) == 1
+    url, headers = state["requests"][0]
+    selected = state["digest"] if "@" in suffix else "release"
+    assert url == "https://registry.example:5443/v2/team/image/manifests/" + selected
+    assert "Authorization" not in headers
+
+
+def test_untagged_pull_uses_latest_but_digest_resolution_requires_reference(anonymous_registry):
+    from npa.deploy import publish_public
+
+    ref = "registry.example/team/image"
+    assert publish_public.anonymous_digest(ref)[0] is False
+    assert anonymous_registry["requests"] == []
+    assert publish_public.anonymous_pull_ok(ref) == (True, "HTTP 200")
+    assert anonymous_registry["requests"][0][0].endswith("/manifests/latest")
+
+
+@pytest.mark.parametrize("suffix", [":release", "@{digest}"])
+def test_anonymous_digest_without_header_hashes_actual_bytes(anonymous_registry, suffix):
+    from npa.deploy import publish_public
+
+    state = anonymous_registry
+    state["header"] = None
+    ref = "registry.example/team/image" + suffix.format(digest=state["digest"])
+    assert publish_public.anonymous_digest(ref) == (True, state["digest"])
+
+
+@pytest.mark.parametrize("helper", ["anonymous_digest", "anonymous_pull_ok"])
+@pytest.mark.parametrize("case,reason", [
+    ("tampered_body", "does not match response body"),
+    ("invalid_header", "invalid manifest digest header"),
+    ("wrong_requested_digest", "does not match requested digest"),
+    ("wrong_requested_digest_no_header", "does not match requested digest"),
+    ("empty_body", "empty manifest"),
+    ("partial_response", "unreachable"),
+    ("wrong_status", "HTTP 206"),
+])
+def test_anonymous_manifest_integrity_failure_is_not_public(
+    anonymous_registry, helper, case, reason,
+):
+    from npa.deploy import publish_public
+
+    state = anonymous_registry
+    requested = state["digest"]
+    if case == "tampered_body":
+        state["body"] += b" "
+    elif case == "invalid_header":
+        state["header"] = "sha256:invalid"
+    elif case.startswith("wrong_requested_digest"):
+        requested = "sha256:" + "f" * 64
+        if case.endswith("no_header"):
+            state["header"] = None
+    elif case == "empty_body":
+        state["body"] = b""
+    elif case == "partial_response":
+        state["body"] = http.client.IncompleteRead(b"partial", 100)
+    elif case == "wrong_status":
+        state["status"] = 206
+    ok, detail = getattr(publish_public, helper)("registry.example/team/image@" + requested)
+    assert not ok
+    assert reason in detail
+    assert len(state["requests"]) == 1
+
+
+@pytest.mark.parametrize("helper", ["anonymous_digest", "anonymous_pull_ok"])
+@pytest.mark.parametrize("ref", [
+    "image:release",
+    "ghcr.io/team/image@sha256:abc",
+    "ghcr.io/team/image@sha256:" + "a" * 64 + "@sha256:" + "b" * 64,
+    "ghcr.io/team/image:release?alternate=1",
+    "ghcr.io/team/image:release#fragment",
+    "ghcr.io/team/image:release\nInjected: value",
+    "ghcr.io:99999/team/image:release",
+    "user:password@ghcr.io/team/image:release",
+    "ghcr.io/team/../image:release",
+])
+def test_invalid_anonymous_reference_rejected_before_http(anonymous_registry, helper, ref):
+    from npa.deploy import publish_public
+
+    assert getattr(publish_public, helper)(ref)[0] is False
+    assert anonymous_registry["requests"] == []
+
+
+@pytest.mark.parametrize("helper", ["anonymous_digest", "anonymous_pull_ok"])
+@pytest.mark.parametrize("stage", ["token", "manifest"])
+@pytest.mark.parametrize("status", [401, 403])
+def test_anonymous_denial_never_falls_back_to_credentials(
+    anonymous_registry, helper, stage, status,
+):
+    from npa.deploy import publish_public
+
+    state = anonymous_registry
+    state[stage + "_error"] = status
+    ok, detail = getattr(publish_public, helper)("ghcr.io/team/image@" + state["digest"])
+    assert not ok
+    assert f"HTTP {status}" in detail
+    assert "private" in detail
+    assert len(state["requests"]) == (1 if stage == "token" else 2)
+    assert "fixture-ambient-token" not in str(state["requests"])
+
+
+@pytest.mark.parametrize("payload", [b"{}", b"[]", b'{"token":10}', b'{"token":"bad token"}', b"not-json", b"\xff"])
+def test_invalid_anonymous_token_stops_before_manifest(anonymous_registry, payload):
+    from npa.deploy import publish_public
+
+    state = anonymous_registry
+    state["token_body"] = payload
+    ok, detail = publish_public.anonymous_digest("ghcr.io/team/image@" + state["digest"])
+    assert not ok
+    assert "token" in detail
+    assert len(state["requests"]) == 1
+
+
 def test_verify_public_reports_every_private_image(monkeypatch) -> None:
     from npa.deploy import publish_public
 
@@ -951,6 +1155,7 @@ def test_anonymous_check_sends_no_credentials_for_a_private_registry(
 
     class FakeResponse:
         status = 200
+        headers = {}
 
         def read(self) -> bytes:
             return b"{}"

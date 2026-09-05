@@ -134,3 +134,11 @@ The validated version is SkyPilot `0.12.2` with the `nebius` and `kubernetes`
 extras. To upgrade, create a new venv at a separate path, install the candidate
 SkyPilot version, run `sky check`, and replay the NPA SkyPilot e2e before
 switching `NPA_SKYPILOT_BIN`.
+
+Controller cleanup uses the originating isolated runtime's user and controller
+identity. It snapshots controller metadata into a temporary owned API, without
+replaying the original API's pending requests, and verifies remote absence before
+removing the original local metadata. The temporary API and queue must stop
+before their directory is deleted. If process cleanup cannot be verified, keep
+`<isolated-config-dir>/controller-transactions/` and the original runtime for
+recovery; do not remove their ownership records or use a shared API as a fallback.
