@@ -522,9 +522,28 @@ def _iam_stubs(
             for key in keys
         ],
     )
-    monkeypatch.setattr(
-        nebius_module, "_run_json", lambda *args, **kwargs: {"items": []}
-    )
+
+    def provider_query(args, **kwargs):
+        if args[:3] == ["compute", "instance", "list"]:
+            return {"items": []}
+        if args[:3] == ["iam", "project", "get"]:
+            return {"metadata": {"id": "project-a", "parent_id": "tenant-test"}}
+        if args[:3] == ["iam", "service-account", "get"]:
+            if args[-1] in deleted:
+                raise nebius_module.NebiusError("NotFound")
+            return {
+                "metadata": {"id": sa_id, "parent_id": "project-a", "name": "npa-agent"}
+            }
+        raise AssertionError("unexpected provider call")
+
+    monkeypatch.setattr(nebius_module, "_run_json", provider_query)
+
+    def key_scalar(key_id, *args, **kwargs):
+        if key_id in deleted:
+            raise nebius_module.NebiusError("NotFound")
+        return key_id
+
+    monkeypatch.setattr(nebius_module, "_access_key_metadata_scalar", key_scalar)
     monkeypatch.setattr(
         nebius_module, "get_compute_instance_identity", lambda *args, **kwargs: None
     )

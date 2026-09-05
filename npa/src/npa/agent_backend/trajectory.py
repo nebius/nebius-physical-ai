@@ -19,6 +19,7 @@ import re
 import stat
 import threading
 import uuid
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -28,6 +29,19 @@ from urllib.parse import urlparse
 SCHEMA_VERSION = "npa.agent.trajectory.v1"
 LOGGER = logging.getLogger(__name__)
 _OUTBOX_LOCK = threading.RLock()
+_EPISODE_CONTEXT: ContextVar[tuple[str, str]] = ContextVar("npa_goal_episode", default=("", ""))
+
+
+def current_episode_id() -> str:
+    """Return the active goal id for nested observable events, without secrets."""
+    return _EPISODE_CONTEXT.get()[0]
+
+
+def current_session_id() -> str:
+    """Return the current session link; callers sanitize before persistence."""
+    return _EPISODE_CONTEXT.get()[1]
+
+
 _SECRET_KEY_RE = re.compile(
     r"(?i)(api[_-]?key|(?:secret|access|private)[_-]?(?:access[_-]?)?key|"
     r"secret|password|passwd|authorization|credential|cookie|"
@@ -768,6 +782,7 @@ def goal_episode_boundary(
                 LOGGER.debug("pending trajectory flush failed at episode start")
             response: dict[str, Any] | None = None
             error: BaseException | None = None
+            context_token = _EPISODE_CONTEXT.set((episode_id, session_id))
             try:
                 result = function(payload, *args, **kwargs)
                 response = result if isinstance(result, dict) else {"ok": True}
@@ -793,6 +808,8 @@ def goal_episode_boundary(
                     )
                 except Exception:
                     LOGGER.debug("terminal trajectory emission failed")
+                finally:
+                    _EPISODE_CONTEXT.reset(context_token)
 
         return wrapped
 
@@ -803,6 +820,8 @@ __all__ = [
     "AgentRunDataError",
     "CollectionStatus",
     "DatasetConfig",
+    "current_episode_id",
+    "current_session_id",
     "emit_trajectory",
     "flush_outbox",
     "goal_episode_boundary",

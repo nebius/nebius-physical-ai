@@ -1,0 +1,21 @@
+# cuRobo V2 pyproject dependency closure; source is installed separately at a
+# verified immutable revision. Raw robometrics loaders need only NumPy/PyYAML.
+torch==2.9.1+cu130
+cuda-core[cu13]>=0.7
+nvidia-cuda-runtime>=13,<14
+importlib_resources
+networkx
+numpy-quaternion
+setuptools_scm>=6.2
+tqdm
+trimesh
+viser
+warp-lang>=0.10.0
+wheel
+yourdfpy>=0.0.53
+pin
+seaborn
+tabulate
+uvicorn
+# Offline source installs use these locked build backends.
+hatchling

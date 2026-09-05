@@ -233,6 +233,22 @@ Document the selected asset license, immutable revision/digest, cache tier,
 storage wiring, population protocol, and consumer mount/URI in the workflow or
 capability record. If those are absent, describe the cache as ephemeral.
 
+## CUDA And cuDNN Are Separate Payload Boundaries
+
+A public CUDA base tag does not establish redistribution rights for every
+bundled SDK. During cuRobo packaging, the inspected `cudnn-devel` base layer
+contained cuDNN development headers. The current official cuDNN supplement
+identified runtime `.so` and `.dll` files as distributable, while the inspected
+wheel's older embedded supplement also allowed `.h` files. Record that difference;
+do not claim the embedded grant excludes headers. cuRobo selects runtime-only
+bytes that satisfy both grants. CUDA's Linux-specific grant is not a substitute
+for cuDNN's separate terms. Inspect both inherited image layers
+and the exact cuDNN wheel closure. Use an appropriate base and remove any
+non-distributable install payload before its layer commits; deletion from a
+later layer cannot remove bytes from an ancestor. Retain license notices and
+recheck the built layers before publication. Runtime use consent and permission
+to redistribute are separate decisions.
+
 ## Worked Precedent: Isaac Sim / Omniverse Kit
 
 The canonical case in this repo, and the best template for reasoning — because the

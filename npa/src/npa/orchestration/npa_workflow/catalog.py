@@ -49,6 +49,7 @@ class ToolEntry:
 # even though no shipped reference spec consumes them today. Everything else in
 # TOOL_CATALOG must be reachable from at least one shipped spec.
 PUBLIC_REUSABLE_TOOLREFS: dict[str, str] = {
+    "workbench.curobo.plan": "Operator-provided Franka start/goal/scene manifests; benchmark workflow exercises the shared planner and artifact path.",
     "infra.fleet.deploy": "public npa.fleet deployment primitive",
     "infra.soperator.deploy": "public npa.soperator deployment primitive",
     "workbench.cosmos2.transfer": "public Cosmos Transfer composition primitive",
@@ -132,6 +133,31 @@ _CONTENT_AGENTS_PIPELINE = [
 ]
 
 TOOL_CATALOG: dict[str, ToolEntry] = {
+    "workbench.curobo.prepare": ToolEntry(
+        name="workbench.curobo.prepare",
+        description="cuRobo V2 prepare with verified artifact handoffs.",
+        argv_template=['npa', 'workbench', 'curobo', 'prepare', '--output-path', '{{config.curobo_output_uri}}', '--mode', '{{config.curobo_mode}}'],
+    ),
+    "workbench.curobo.benchmark": ToolEntry(
+        name="workbench.curobo.benchmark",
+        description="cuRobo V2 benchmark with verified artifact handoffs.",
+        argv_template=['npa', 'workbench', 'curobo', 'benchmark', '--input-path', '{{config.curobo_input_uri}}', '--output-path', '{{config.curobo_output_uri}}', '--run-id', '{{run.id}}'],
+    ),
+    "workbench.curobo.plan": ToolEntry(
+        name="workbench.curobo.plan",
+        description="cuRobo V2 plan with verified artifact handoffs.",
+        argv_template=['npa', 'workbench', 'curobo', 'plan', '--input-path', '{{config.curobo_input_uri}}', '--output-path', '{{config.curobo_output_uri}}', '--run-id', '{{run.id}}'],
+    ),
+    "workbench.curobo.validate": ToolEntry(
+        name="workbench.curobo.validate",
+        description="cuRobo V2 validate with verified artifact handoffs.",
+        argv_template=['npa', 'workbench', 'curobo', 'validate', '--input-path', '{{config.curobo_input_uri}}', '--output-path', '{{config.curobo_output_uri}}', '--run-id', '{{run.id}}'],
+    ),
+    "workbench.curobo.visualize": ToolEntry(
+        name="workbench.curobo.visualize",
+        description="cuRobo V2 visualize with verified artifact handoffs.",
+        argv_template=['npa', 'workbench', 'curobo', 'visualize', '--input-path', '{{config.curobo_input_uri}}', '--output-path', '{{config.curobo_output_uri}}', '--run-id', '{{run.id}}'],
+    ),
     "workbench.alpamayo2_super.infer": ToolEntry(
         name="workbench.alpamayo2_super.infer",
         description=(

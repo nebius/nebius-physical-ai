@@ -345,7 +345,8 @@ def _cleanup_agent_ingress(instance_id: str) -> None:
 
 
 def _auth_secret_path(project_alias: str, name: str) -> Path:
-    return Path.home() / ".npa" / "agents" / project_alias / name / "auth.env"
+    root = Path(os.environ.get("NPA_CONFIG_DIR", "").strip() or Path.home() / ".npa")
+    return root / "agents" / project_alias / name / "auth.env"
 
 
 def _cleanup_agent_local_files(project_alias: str, name: str) -> None:
@@ -358,7 +359,7 @@ def _cleanup_agent_local_files(project_alias: str, name: str) -> None:
     already destroyed the VM by the time this runs, so both are safe to remove;
     leaving the workdir behind was the teardown-report leftover.
     """
-    agent_dir = Path.home() / ".npa" / "agents" / project_alias / name
+    agent_dir = _auth_secret_path(project_alias, name).parent
     shutil.rmtree(agent_dir, ignore_errors=True)
 
     from npa.deploy import provisioner
@@ -2837,7 +2838,7 @@ TF_BASE_URL = os.environ.get(
 _THINK_RE = re.compile(
     r"\\A\\s*<think>(?P<reasoning>.*?)</think>\\s*", re.DOTALL
 )
-_MODELS_CACHE = {{"expires_at": 0.0, "models": []}}
+_MODELS_CACHE = {{"expires_at": 0.0, "catalog": None}}
 
 def _normalize_llm_models(raw: str) -> list[str]:
     models: list[str] = []
@@ -2885,17 +2886,18 @@ def _provider_api_key(provider: str) -> str:
             return value
     return ""
 
-def _fetch_token_factory_models() -> list[str]:
+def _fetch_token_factory_catalog() -> dict | None:
     api_key = _provider_api_key(LLM_PROVIDER)
     if not api_key:
-        return []
+        return None
     base_url = _provider_base_url(LLM_PROVIDER)
     if not base_url:
-        return []
+        return None
     url = f"{{base_url}}/models"
     try:
         response = httpx.get(
             url,
+            params={{"verbose": "true"}},
             headers={{
                 "Authorization": f"Bearer {{api_key}}",
                 "Content-Type": "application/json",
@@ -2904,38 +2906,44 @@ def _fetch_token_factory_models() -> list[str]:
         )
         response.raise_for_status()
         payload = response.json()
-    except Exception:
-        return []
-    data = payload.get("data") if isinstance(payload, dict) else None
-    if not isinstance(data, list):
-        return []
-    models: list[str] = []
-    for item in data:
-        if not isinstance(item, dict):
-            continue
-        value = str(item.get("id") or "").strip()
-        if value and value not in models:
-            models.append(value)
-    return models
+    except (httpx.HTTPError, ValueError):
+        return None
+    return parse_model_catalog(payload)
 
-def _available_llm_models(*, refresh: bool = False) -> list[str]:
-    configured = _configured_llm_models()
+def _fetch_token_factory_models() -> list[str]:
+    # Embedding discovery still needs the raw catalog, including non-chat IDs.
+    catalog = _fetch_token_factory_catalog()
+    return list(catalog["models"]) if catalog is not None else []
+
+def _available_llm_catalog(*, refresh: bool = False) -> dict | None:
     now = time.monotonic()
     cache = _MODELS_CACHE
-    if not refresh and cache.get("expires_at", 0.0) > now:
-        cached = cache.get("models", [])
-        if isinstance(cached, list) and cached:
-            return cached
-    live = _fetch_token_factory_models()
-    if live:
-        allowed = [model for model in configured if model in live]
-        extras = [model for model in live if model not in allowed]
-        resolved = (allowed + extras)[:32]
-    else:
-        resolved = configured
-    cache["models"] = resolved
+    identity = (
+        LLM_PROVIDER,
+        _provider_base_url(LLM_PROVIDER),
+        hashlib.sha256(_provider_api_key(LLM_PROVIDER).encode()).hexdigest(),
+    )
+    if not refresh and cache.get("identity") == identity and cache.get("expires_at", 0.0) > now:
+        return cache.get("catalog")
+    catalog = _fetch_token_factory_catalog()
+    cache["identity"] = identity
+    cache["catalog"] = catalog
     cache["expires_at"] = now + 300.0
-    return resolved
+    return catalog
+
+def _llm_model_info(*, refresh: bool = False) -> dict:
+    info = model_availability(
+        LLM_MODEL,
+        _configured_llm_models(),
+        _available_llm_catalog(refresh=refresh),
+        allowed_models=_normalize_llm_models(LLM_MODELS_ENV) or None,
+    )
+    info["default_provider"] = LLM_PROVIDER
+    info["providers"] = _configured_llm_providers()
+    return info
+
+def _available_llm_models(*, refresh: bool = False) -> list[str]:
+    return _llm_model_info(refresh=refresh)["models"]
 
 def _agent_system_prompt() -> str:
     lines = [
@@ -3228,7 +3236,8 @@ def _agent_npa_ready() -> tuple[bool, str]:
 
 
 def _load_agent_config_yaml() -> dict:
-    path = Path.home() / ".npa" / "config.yaml"
+    root = Path(os.environ.get("NPA_CONFIG_DIR", "").strip() or Path.home() / ".npa")
+    path = root / "config.yaml"
     if not path.is_file():
         return {{}}
     try:
@@ -3257,7 +3266,8 @@ def _agent_k8s_backends(project: str = "") -> dict:
     ready, reason = _agent_npa_ready()
     cloud_clusters = _agent_cloud_mk8s_clusters(alias)
     inventory = assemble_k8s_backend_inventory(
-        config=config, alias=alias, clusters_root=Path.home() / ".npa" / "clusters",
+        config=config, alias=alias,
+        clusters_root=Path(os.environ.get("NPA_CONFIG_DIR", "").strip() or Path.home() / ".npa") / "clusters",
         cloud_clusters=cloud_clusters, npa_ready=ready,
         npa_error=reason, terraform_dir=NPA_CLUSTER_TERRAFORM_DIR,
     )
@@ -4155,6 +4165,9 @@ def _resolve_skill_context(*, user_text: str, intent: str | None) -> tuple[list[
         excerpt = _skill_excerpt(name)
         if excerpt:
             snippets.append(f"[skill:{{name}}]\\n{{excerpt}}")
+    lessons = _agent_improvements.context(_agent_improvements.targets(names, user_text))
+    if lessons:
+        snippets.append(lessons)
     if not snippets:
         return names, ""
     return names, "Relevant NPA skill excerpts:\\n\\n" + "\\n\\n".join(snippets)
@@ -4898,6 +4911,7 @@ def chat(payload: dict):
                 chat_session_token, chat_confirm_digest, _chat_pending = _consume_agent_confirm_token()
             else:
                 chat_session_token, chat_confirm_digest = "", ""
+            feedback = _agent_improvements.prepare(_agent_improvements.targets(_resolve_skill_context(user_text=last_user, intent=intent)[0], last_user))
             action_result = run_chat_action_loop(
                 last_user,
                 tools=_agent_act_tools(),
@@ -4906,8 +4920,9 @@ def chat(payload: dict):
                 confirm_token=chat_confirm_token,
                 session_token=chat_session_token,
                 confirm_digest=chat_confirm_digest,
-                live_context=format_live_context_block(_load_state()),
+                live_context=format_live_context_block(_load_state()) + "\\n" + feedback["context"],
             )
+            _record_agent_trace(action_result, feedback=feedback)
             # Preserve the safety contract: a state-changing tool proposed from a
             # chat turn never auto-runs without a token — it stops here and we mint
             # a gate token bound to the exact action digest (same as /api/agent/act);
@@ -4947,6 +4962,7 @@ def chat(payload: dict):
                 "apis_used": ["agent/act"],
                 "session_id": session["id"],
                 "session": public_chat_session_payload(session),
+                "improvements": action_result.get("improvements"),
             }}
             if action_result.get("confirm_token"):
                 response["confirm_token"] = action_result["confirm_token"]
@@ -5426,6 +5442,10 @@ def _agent_act_tools():
     }}
 
 @app.post("/agent/act")
+@goal_episode_boundary(
+    active_tenant_id=lambda: str(DEPLOYMENT.get("tenant_id") or os.environ.get("NEBIUS_TENANT_ID", "")),
+    active_bucket=lambda: str(os.environ.get("NPA_AGENT_S3_BUCKET") or os.environ.get("NEBIUS_S3_BUCKET", "")),
+)
 def agent_act(payload: dict):
     body = payload if isinstance(payload, dict) else {{}}
     raw_messages = body.get("messages", [])
@@ -5456,7 +5476,8 @@ def agent_act(payload: dict):
         return data
 
     tier = classify_tier(goal)
-    live_ctx = format_live_context_block(_load_state())
+    feedback = _agent_improvements.prepare(_agent_improvements.targets(_resolve_skill_context(user_text=goal, intent=None)[0], goal))
+    live_ctx = format_live_context_block(_load_state()) + "\\n" + feedback["context"]
     result = run_action_loop(
         goal,
         tools=_agent_act_tools(),
@@ -5478,7 +5499,7 @@ def agent_act(payload: dict):
     result["allowlist"] = allowlist_specs()
     result["input_budget_ok"] = _budget_ok
     # Phase I: record structured spans for the offline analyzer / injected tracer.
-    _record_agent_trace(result)
+    _record_agent_trace(result, feedback=feedback)
     return result
 
 
@@ -5495,6 +5516,15 @@ register_gpu_allocation_routes(
     ),
     HTTPException,
 )
+
+from agent_backend.improvement_routes import (
+    ImprovementDeps,
+    ImprovementRuntime,
+    register_improvement_routes,
+)
+
+_agent_improvements = ImprovementRuntime()
+register_improvement_routes(app, ImprovementDeps(store=_agent_improvements.store), HTTPException)
 
 def _sim2real_gate_metrics(run_id: str, iteration: int) -> dict:
     # Read gate metrics only from real run artifacts; never fabricate a score.
@@ -5533,6 +5563,10 @@ def _sim2real_gate_metrics(run_id: str, iteration: int) -> dict:
     return metrics
 
 @app.post("/agent/sim2real/drive")
+@goal_episode_boundary(
+    active_tenant_id=lambda: str(DEPLOYMENT.get("tenant_id") or os.environ.get("NEBIUS_TENANT_ID", "")),
+    active_bucket=lambda: str(os.environ.get("NPA_AGENT_S3_BUCKET") or os.environ.get("NEBIUS_S3_BUCKET", "")),
+)
 def agent_sim2real_drive(payload: dict):
     body = payload if isinstance(payload, dict) else {{}}
     config = body.get("config") if isinstance(body.get("config"), dict) else {{}}
@@ -5564,6 +5598,7 @@ def agent_sim2real_drive(payload: dict):
     except (TypeError, ValueError):
         max_iterations = 3
     max_iterations = max(1, min(max_iterations, 5))
+    feedback = _agent_improvements.prepare(["sim2real-drive", "sim2real-operate"])
 
     def _launch(loop_cfg):
         return _act_response_to_dict(
@@ -5587,6 +5622,8 @@ def agent_sim2real_drive(payload: dict):
             "signals": signals,
             "notes": "; ".join(signals.get("notes", [])),
         }}
+        if feedback["lessons"]:
+            diagnosis["verified_lessons"] = feedback["lessons"]
         baseline_run = str(cfg.get("baseline_run_id") or cfg.get("baseline_run") or "").strip()
         current_run = str(
             (run_status or {{}}).get("run_id") if isinstance(run_status, dict) else ""
@@ -5644,7 +5681,7 @@ def agent_sim2real_drive(payload: dict):
         except Exception:
             pass
     # Phase I: record structured spans for the offline analyzer / injected tracer.
-    _record_agent_trace(result)
+    _record_agent_trace(result, feedback=feedback)
     return result
 
 def _agent_run_memory():
@@ -5915,9 +5952,10 @@ def _spans_for_trace(trace):
         return _agent_tracing.spans_from_action_loop(trace)
     return _agent_tracing.spans_from_drive(trace)
 
-def _record_agent_trace(result):
+def _record_agent_trace(result, feedback=None):
     if not isinstance(result, dict):
         return
+    result["improvements"] = _agent_improvements.record(result, feedback)
     try:
         TRACE_DIR.mkdir(parents=True, exist_ok=True)
         path = TRACE_DIR / "recent.json"
@@ -5999,15 +6037,12 @@ def agent_access(refresh: bool = False):
 def models(refresh: bool = False):
     return {{
         "ok": True,
-        "default": LLM_MODEL,
-        "default_model": LLM_MODEL,
-        "default_provider": LLM_PROVIDER,
-        "providers": _configured_llm_providers(),
-        "models": _available_llm_models(refresh=bool(refresh)),
+        **_llm_model_info(refresh=bool(refresh)),
     }}
 
 @app.get("/session")
 def session_bootstrap():
+    llm_info = _llm_model_info()
     state = _load_state()
     active_session = _get_chat_session(state, str(state.get("active_chat_session_id") or "default"))
     sim_viz = _sim_viz_for_run(state)
@@ -6040,13 +6075,9 @@ def session_bootstrap():
             "prefix": _chat_memory_prefix(),
         }},
         "llm": {{
-            "default": LLM_MODEL,
-            "default_model": LLM_MODEL,
-            "default_provider": LLM_PROVIDER,
+            **llm_info,
             "provider": LLM_PROVIDER,
-            "providers": _configured_llm_providers(),
-            "model": LLM_MODEL,
-            "models": _available_llm_models(),
+            "model": llm_info["default_model"],
         }},
     }}
 
@@ -9698,9 +9729,8 @@ def deploy_cmd(
     # the raw var also lands in outputs consumed downstream, where an unexpanded
     # ``~`` breaks non-shell consumers.
     ssh_public_key_path = str(Path(ssh_public_key_path).expanduser())
-    profile = os.environ.get("NPA_NEBIUS_PROFILE", "").strip()
-    if profile and shutil.which("nebius"):
-        subprocess.run(["nebius", "profile", "activate", profile], check=False)
+    # Provider calls resolve the selected profile per subprocess. Activating it
+    # here would change another concurrent operator's shared CLI configuration.
     saved_env = resolve_environment(
         project,
         project_id=project_id or None,
@@ -9845,11 +9875,12 @@ def deploy_cmd(
                     ),
                 }
             )
-            operation.record_resource(
-                resource_type="storage_bucket",
-                requested_name=str(configured_storage.get("s3_bucket", "")),
-                ownership="adopted",
-                ownership_source="configured-project-storage-write-probe",
+            from npa.cli.agent_terraform import _record_configured_backend
+
+            _record_configured_backend(
+                operation, project_alias=project,
+                bucket=str(configured_storage.get("s3_bucket", "")),
+                endpoint=str(configured_storage.get("s3_endpoint", "")),
                 project_id=env_project_id,
             )
 
@@ -9857,7 +9888,7 @@ def deploy_cmd(
             if operation is None:
                 return
             operation.record_resource(
-                resource_type=f"agent_{kind}",
+                resource_type=kind if kind.startswith("agent_") else f"agent_{kind}",
                 requested_name=str(metadata.get("name") or metadata.get("id") or kind),
                 provider_id=str(metadata.get("id") or ""),
                 ownership="created_by_this_operation",
@@ -10465,12 +10496,12 @@ def setup_cmd(
     instead of re-typing ids — and deploys.
 
     How the agent VM gets Nebius AI Cloud credentials: deploy provisions (or
-    reuses) an ``npa-agent`` service account in the project, grants it the tenant
-    ``editors`` role, and **attaches it to the VM**. Code on the VM then mints
+    reuses) an ``npa-agent`` service account in the project, grants it ``editor``
+    access to that project, and **attaches it to the VM**. Code on the VM then mints
     short-lived IAM access tokens from the Nebius VM metadata endpoint
     (``http://metadata.nebius.internal/v1/iam/sa/token/access_token``) on demand —
     an auto-rotating, key-less credential. No static "AI Cloud key" is stored on
-    the VM. The same service account's access key provides S3 access.
+    the VM. S3 uses the separately verified configured storage credentials.
     """
     from npa.clients.config import default_project_name, list_projects
 

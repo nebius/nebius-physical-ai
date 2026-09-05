@@ -745,8 +745,18 @@ def test_run_cosmos_transfer_names_gated_access_denial_without_leaking_prompt(
     monkeypatch.setattr(tx, "ensure_env", lambda _repo: Path("/usr/bin/python3"))
     monkeypatch.setenv("HF_TOKEN", "unit-test-placeholder")
     secret_prompt = "a secret prompt that must never reach the raised message"
+    reached: list[str] = []
+
+    def prepared_guardrail_data(**_kwargs):
+        reached.append("guardrail-prepared")
+        return 0
+
+    # This test exercises inference denial, after the separately tested tokenizer
+    # preparation. It must reach that boundary without a real download or cache.
+    monkeypatch.setattr(tx, "prepare_guardrail_nltk_data", prepared_guardrail_data)
 
     def fake_run(cmd, *_args, **kwargs):
+        reached.append("inference")
         assert secret_prompt not in " ".join(cmd)
         kwargs["stdout"].write(
             (
@@ -767,6 +777,7 @@ def test_run_cosmos_transfer_names_gated_access_denial_without_leaking_prompt(
     assert "gated Hugging Face repository access denied" in message
     assert "exit 1" in message
     assert secret_prompt not in message
+    assert reached == ["guardrail-prepared", "inference"]
 
 
 def test_run_cosmos_transfer_content_guardrail_opt_out_is_explicit(

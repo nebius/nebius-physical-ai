@@ -16,6 +16,10 @@ RUNNER_FILES = (
 # These specialized suites intentionally remain operator-invoked. The reason is
 # machine-reviewed here instead of letting an environment gate silently rot.
 MANUAL_GATES = {
+    "NPA_AGENT_IMPROVEMENT_LIVE": (
+        "requires a dedicated operator-selected queue, protected actual-check receipts "
+        "and independently obtained review evidence; shared-agent runners cannot synthesize these"
+    ),
     "NPA_BURST_E2E_IMAGE": "operator supplies the exact immutable burst validation image",
     "NPA_E2E_BURST": "full burst GPU coverage is an explicitly selected live suite",
     "NPA_BYOF_LIVE_CONTAINER": "BYOF executes third-party source only after operator review",

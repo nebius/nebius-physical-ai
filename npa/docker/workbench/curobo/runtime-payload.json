@@ -1,0 +1,146 @@
+{
+  "schema_version": "npa.curobo.runtime-payload.v1",
+  "cudnn": {
+    "name": "nvidia-cudnn-cu13",
+    "version": "9.13.0.50",
+    "wheel_url": "https://files.pythonhosted.org/packages/cf/68/2712854561170b2a81bea7b6b35cc1ae264d9794c0c218986e5c685d45f7/nvidia_cudnn_cu13-9.13.0.50-py3-none-manylinux_2_27_x86_64.whl",
+    "wheel_sha256": "2150b4850725d30653ec3e365f0732e3e2e3eb8633cf3bd2d3117628dea8b4f9",
+    "install_root": "opt/npa-venv/lib/python3.12/site-packages",
+    "retained": [
+      {
+        "path": "nvidia/cudnn/lib/libcudnn.so.9",
+        "sha256": "9f256797fa7919d04487ba825e6ad15a3488414fc17045c053f80bae5052b6b1",
+        "size": 125136,
+        "kind": "runtime"
+      },
+      {
+        "path": "nvidia/cudnn/lib/libcudnn_adv.so.9",
+        "sha256": "660ddc2125afe26192969e210fc5fed7927b0f25e5fbc9a6440f2cddebe72dd7",
+        "size": 107070704,
+        "kind": "runtime"
+      },
+      {
+        "path": "nvidia/cudnn/lib/libcudnn_cnn.so.9",
+        "sha256": "73fffc852ff5807898906d7a755bf017e8a4dc88185daa28eb9329364ffc75dd",
+        "size": 4204088,
+        "kind": "runtime"
+      },
+      {
+        "path": "nvidia/cudnn/lib/libcudnn_engines_precompiled.so.9",
+        "sha256": "b954212dd8334a891379052bf4a2cd7ea6fafadd4c6da3255d74c074241816a6",
+        "size": 232810824,
+        "kind": "runtime"
+      },
+      {
+        "path": "nvidia/cudnn/lib/libcudnn_engines_runtime_compiled.so.9",
+        "sha256": "c7f8f69783a186851da9074b34de73862d78fef329466cbacae57ce8f6fe50f5",
+        "size": 27289584,
+        "kind": "runtime"
+      },
+      {
+        "path": "nvidia/cudnn/lib/libcudnn_graph.so.9",
+        "sha256": "cd6a40481699fa25464c1f995089df281f6ffc467ffff8c9f1e8e2e899d88712",
+        "size": 4450328,
+        "kind": "runtime"
+      },
+      {
+        "path": "nvidia/cudnn/lib/libcudnn_heuristic.so.9",
+        "sha256": "05c33c8bf2548288b84a95f83e8341e9c2272d2bb28d1c8926c66b6c086afa18",
+        "size": 54532480,
+        "kind": "runtime"
+      },
+      {
+        "path": "nvidia/cudnn/lib/libcudnn_ops.so.9",
+        "sha256": "b178c4e1d0ac1758641da88bf212d76904accd1c9fa8139f472ed8377bcd50ca",
+        "size": 37758648,
+        "kind": "runtime"
+      },
+      {
+        "path": "nvidia_cudnn_cu13-9.13.0.50.dist-info/licenses/License.txt",
+        "sha256": "49cf79bdb35734b52fe6203013b3bd759f81e998cd32aa2c65c51db9a88c61d2",
+        "size": 18174,
+        "kind": "license"
+      }
+    ],
+    "excluded_sdk": [
+      {
+        "path": "nvidia/cudnn/include/cudnn.h",
+        "sha256": "1082d51d3b564bace8ef6fc6ee335b668b2bfa517f57c06efd428263e5c21855",
+        "size": 2841
+      },
+      {
+        "path": "nvidia/cudnn/include/cudnn_adv.h",
+        "sha256": "d09b874250a98821618df889ad9b8a9ebbb5b589ae017cabfed10b63f56d6b23",
+        "size": 30855
+      },
+      {
+        "path": "nvidia/cudnn/include/cudnn_adv_v9.h",
+        "sha256": "d09b874250a98821618df889ad9b8a9ebbb5b589ae017cabfed10b63f56d6b23",
+        "size": 30855
+      },
+      {
+        "path": "nvidia/cudnn/include/cudnn_backend.h",
+        "sha256": "add4f24c61d07edb2b8567894ba6d0c190d00b3addc80161a23d206d1927d45f",
+        "size": 2751
+      },
+      {
+        "path": "nvidia/cudnn/include/cudnn_backend_v9.h",
+        "sha256": "add4f24c61d07edb2b8567894ba6d0c190d00b3addc80161a23d206d1927d45f",
+        "size": 2751
+      },
+      {
+        "path": "nvidia/cudnn/include/cudnn_cnn.h",
+        "sha256": "febc7315a736c892fc6c24402bc6026ef41e854dd8b0d71164729ccf4a7f481b",
+        "size": 36700
+      },
+      {
+        "path": "nvidia/cudnn/include/cudnn_cnn_v9.h",
+        "sha256": "febc7315a736c892fc6c24402bc6026ef41e854dd8b0d71164729ccf4a7f481b",
+        "size": 36700
+      },
+      {
+        "path": "nvidia/cudnn/include/cudnn_graph.h",
+        "sha256": "fdeb705145ea521145573121f7148ddfb4d164ea82f8eb0354c63b28f572a722",
+        "size": 45431
+      },
+      {
+        "path": "nvidia/cudnn/include/cudnn_graph_v9.h",
+        "sha256": "fdeb705145ea521145573121f7148ddfb4d164ea82f8eb0354c63b28f572a722",
+        "size": 45431
+      },
+      {
+        "path": "nvidia/cudnn/include/cudnn_ops.h",
+        "sha256": "bdfe1c03f481abca3fb5909b193768d568d14a78f07cf2774e8a54330ca5fb39",
+        "size": 63635
+      },
+      {
+        "path": "nvidia/cudnn/include/cudnn_ops_v9.h",
+        "sha256": "bdfe1c03f481abca3fb5909b193768d568d14a78f07cf2774e8a54330ca5fb39",
+        "size": 63635
+      },
+      {
+        "path": "nvidia/cudnn/include/cudnn_v9.h",
+        "sha256": "1082d51d3b564bace8ef6fc6ee335b668b2bfa517f57c06efd428263e5c21855",
+        "size": 2841
+      },
+      {
+        "path": "nvidia/cudnn/include/cudnn_version.h",
+        "sha256": "648d83b31715a1d860f22d85bc7dd16f4a1051ff5d807e29b62b2ff8940ea6bd",
+        "size": 3114
+      },
+      {
+        "path": "nvidia/cudnn/include/cudnn_version_v9.h",
+        "sha256": "648d83b31715a1d860f22d85bc7dd16f4a1051ff5d807e29b62b2ff8940ea6bd",
+        "size": 3114
+      }
+    ]
+  },
+  "nvshmem_notice": {
+    "path": "usr/share/doc/npa-curobo/NVSHMEM-LICENSE.txt",
+    "sha256": "43a87c0ff94ce3196011ff75e17fbee96933c9e1d511557659ece8a326f95e8f",
+    "size": 26566,
+    "url": "https://developer.download.nvidia.com/compute/nvshmem/redist/libnvshmem/LICENSE.txt",
+    "release_manifest": "https://developer.download.nvidia.com/compute/nvshmem/redist/redistrib_3.3.24.json",
+    "release_archive_sha256": "b2ed93280582844e1cf22b429be4474c97b2b60d3aa961d25451b388392cfaf5"
+  }
+}
