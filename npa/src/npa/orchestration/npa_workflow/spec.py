@@ -62,6 +62,10 @@ class TriggerSpec:
     poll_seconds: int = 30
     max_polls: int = 0  # 0 == unbounded (bounded by the runtime deadline)
     min_objects: int = 1
+    # Preserve parse provenance for later config overrides, not workflow identity.
+    config_expressions: dict[str, str] = field(
+        default_factory=dict, repr=False, compare=False
+    )
 
 
 @dataclass
@@ -220,6 +224,16 @@ def _parse_state(
             min_objects=_positive_int(
                 name, "trigger.minObjects", trigger_raw, 1, config=config
             ),
+            config_expressions={
+                key: value
+                for key, snake in (
+                    ("pollSeconds", "poll_seconds"),
+                    ("maxPolls", "max_polls"),
+                    ("minObjects", "min_objects"),
+                )
+                if isinstance(value := trigger_raw.get(key, trigger_raw.get(snake)), str)
+                and "{{" in value
+            },
         )
 
     params_raw = entry.get("params") or {}
@@ -314,7 +328,7 @@ def _positive_int(
     if isinstance(raw, str) and "{{" in raw:
         # Config-driven knob (e.g. pollSeconds: "{{config.inbox_poll_seconds}}"); the
         # value is resolved against config, like loop.max.
-        return resolve_config_int(raw, config or {})
+        raw = resolve_config_int(raw, config or {})
     try:
         value = int(raw)
     except (TypeError, ValueError) as exc:
@@ -327,6 +341,32 @@ def _positive_int(
             f"state {state_name}: {field_name} must be >= {floor}, got {value}"
         )
     return value
+
+
+def resolve_trigger_config(
+    state_name: str, trigger: TriggerSpec, config: dict[str, Any]
+) -> TriggerSpec:
+    """Resolve retained expressions against new config without mutating the trigger."""
+
+    values = {
+        "pollSeconds": trigger.poll_seconds,
+        "maxPolls": trigger.max_polls,
+        "minObjects": trigger.min_objects,
+        **trigger.config_expressions,
+    }
+    return TriggerSpec(
+        uri=trigger.uri,
+        poll_seconds=_positive_int(
+            state_name, "trigger.pollSeconds", values, 30, config=config
+        ),
+        max_polls=_positive_int(
+            state_name, "trigger.maxPolls", values, 0, allow_zero=True, config=config
+        ),
+        min_objects=_positive_int(
+            state_name, "trigger.minObjects", values, 1, config=config
+        ),
+        config_expressions=dict(trigger.config_expressions),
+    )
 
 
 def validate_spec(spec: NpaWorkflowSpec) -> None:

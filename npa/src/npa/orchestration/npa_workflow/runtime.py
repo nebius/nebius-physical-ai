@@ -158,10 +158,13 @@ def _declared_output_uri(output: Any) -> str:
 def _workflow_identity(spec: NpaWorkflowSpec) -> str:
     """Recompute the current immutable workflow identity from the loaded spec."""
 
+    payload = asdict(spec)
+    for state in payload["states"].values():
+        if state["trigger"] is not None:
+            # Parse provenance must not invalidate pre-existing resume identities.
+            state["trigger"].pop("config_expressions", None)
     return hashlib.sha256(
-        json.dumps(asdict(spec), sort_keys=True, separators=(",", ":")).encode(
-            "utf-8"
-        )
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
 
 
