@@ -245,12 +245,24 @@ def test_direct_required_live_pytest_rejects_absent_key_before_collection(tmp_pa
     assert "Required live Token Factory mode needs NEBIUS_TOKEN_FACTORY_KEY" in result.stderr
 
 
-def test_actual_pytest_failure_diagnostics_exclude_private_exception_data(monkeypatch, tmp_path):
-    import contextlib
-    import io
+@pytest.mark.parametrize("pollute_parent", [False, True], ids=["isolated", "polluted-parent"])
+def test_actual_pytest_failure_diagnostics_exclude_private_exception_data(monkeypatch, tmp_path, pollute_parent):
     import textwrap
 
-    runner = _runner()
+    root = Path(__file__).resolve().parents[3]
+    if pollute_parent:
+        # Full-suite collection already imports this real module under the same
+        # basename as the synthetic fixture. In-process pytest then interrupts
+        # collection with an import-file mismatch instead of exercising reports.
+        path = root / "npa/tests/orchestration/skypilot/test_diagnostics.py"
+        spec = importlib.util.spec_from_file_location("test_diagnostics", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        monkeypatch.setitem(sys.modules, "test_diagnostics", module)
+        monkeypatch.setenv("PYTEST_ADDOPTS", "--invalid-parent-pytest-option")
+        monkeypatch.setenv("PYTEST_PLUGINS", "nonexistent_parent_pytest_plugin")
+        monkeypatch.setattr(pytest, "main", lambda *a, **k: pytest.fail("nested pytest must use its own interpreter"))
+
     source = textwrap.dedent("""\
         import pytest
         class PrivateProviderExceptionName(Exception):
@@ -272,16 +284,41 @@ def test_actual_pytest_failure_diagnostics_exclude_private_exception_data(monkey
             raise PrivateProviderExceptionName("PRIVATE_PROVIDER_BODY custom")
     """)
     (tmp_path / "test_diagnostics.py").write_text(source)
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(runner, "SUITES", ("test_diagnostics.py",))
-    results = runner.Results()
-    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+    (tmp_path / "pytest.ini").write_text("[pytest]\n")
+    worker = tmp_path / "run_diagnostics.py"
+    worker.write_text(textwrap.dedent("""\
+        import importlib.util
+        from pathlib import Path
+        import sys
+        import pytest
+
+        spec = importlib.util.spec_from_file_location("live_diagnostics_runner", sys.argv[1])
+        runner = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(runner)
+        runner.SUITES = ("test_diagnostics.py",)
+        results = runner.Results()
         exit_code = pytest.main([
-            "test_diagnostics.py", "-q", "--tb=no", "-o", "addopts=",
-            "-p", "no:cacheprovider",
+            "test_diagnostics.py", "-q", "--tb=short", "-c", "pytest.ini",
+            "--confcutdir=.", "-p", "no:cacheprovider",
         ], plugins=[results])
-    assert exit_code == 1
-    assert results.summary() == {
+        runner.write_receipt(Path("failure-receipt.json"), {
+            "pytest_exit_code": int(exit_code), "counts": results.summary(),
+            "tests": list(results.reports.values()),
+        })
+        raise SystemExit(exit_code)
+    """))
+    result = subprocess.run([
+        sys.executable, str(worker), str(root / "npa/scripts/token_factory_live_recheck.py"),
+    ], cwd=tmp_path, env={
+        "PATH": os.environ.get("PATH", ""), "HOME": str(tmp_path),
+        "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
+    }, text=True, capture_output=True)
+    receipt = tmp_path / "failure-receipt.json"
+    assert result.returncode == 1 and receipt.is_file(), result.stdout + result.stderr
+    saved = receipt.read_text()
+    report = json.loads(saved)
+    assert report["pytest_exit_code"] == 1
+    assert report["counts"] == {
         "collected": 4, "executed": 3, "passed": 0, "failed": 4,
         "skipped": 0, "collection_errors": 0,
     }
@@ -291,16 +328,13 @@ def test_actual_pytest_failure_diagnostics_exclude_private_exception_data(monkey
         "test_teardown": ("teardown", "RuntimeError", 'raise RuntimeError("PRIVATE_PROVIDER_BODY teardown")'),
         "test_custom_exception": ("call", "other_exception", 'raise PrivateProviderExceptionName("PRIVATE_PROVIDER_BODY custom")'),
     }
-    for row in results.reports.values():
+    for row in report["tests"]:
         phase, exception_type, failing_line = expected[row["nodeid"].split("::")[-1]]
         assert row["diagnostics"] == [{
             "phase": phase, "exception_type": exception_type,
             "source": "test_diagnostics.py",
             "source_line": [line.strip() for line in source.splitlines()].index(failing_line) + 1,
         }]
-    receipt = tmp_path / "failure-receipt.json"
-    runner.write_receipt(receipt, {"counts": results.summary(), "tests": list(results.reports.values())})
-    saved = receipt.read_text()
     assert "PRIVATE_PROVIDER_BODY" not in saved
     assert "PrivateProviderExceptionName" not in saved
     assert str(tmp_path) not in saved

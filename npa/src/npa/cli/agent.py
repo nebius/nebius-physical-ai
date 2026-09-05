@@ -1733,7 +1733,18 @@ def _sim_viz_for_run(state: dict, run_id: str = "") -> dict:
     runs = state.get("sim_viz_runs")
     target = str(run_id or state.get("active_run_id") or "").strip()
     direct = runs.get(target) if isinstance(runs, dict) and target else None
-    if isinstance(direct, dict):
+    active_ref = str(state.get("active_run_ref") or "").strip()
+    selected = runs.get(active_ref) if isinstance(runs, dict) and active_ref else None
+    if (
+        target
+        and target == str(state.get("active_run_id") or "").strip()
+        and isinstance(selected, dict)
+        and str(selected.get("run_id") or "").strip() == target
+    ):
+        # A saved explicit source outranks an unqualified basename or another
+        # same-name history entry. Never borrow it for a different run.
+        payload.update(selected)
+    elif isinstance(direct, dict):
         payload.update(direct)
     elif isinstance(runs, dict) and target:
         matches = [
@@ -8058,6 +8069,19 @@ def _boot_preload_sim_viz() -> None:
     sim_viz = state.get("sim_viz", {{}})
     if not isinstance(sim_viz, dict):
         sim_viz = {{}}
+    artifact_render = str(sim_viz.get("artifact_render") or "").strip().lower()
+    explicit_source = bool(
+        str(sim_viz.get("artifact_run_ref") or "").strip()
+        or str(sim_viz.get("artifact_uri") or "").strip()
+    )
+    if (
+        (artifact_render and artifact_render != "rerun")
+        or str(sim_viz.get("preview_status") or "").strip() == "no_previewable_recording"
+        or (explicit_source and not str(sim_viz.get("rrd_uri") or "").strip())
+    ):
+        # A stock recording must not replace the selected artifact, acquire its
+        # run ID, or discard its exact storage provenance during a restart.
+        return
     if str(sim_viz.get("rrd_uri") or "").strip() and _served_recording_is_run_specific():
         return
     capability_path = _publish_rrd_recording(RRD_PATH)

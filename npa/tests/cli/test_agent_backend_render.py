@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import ast
 import builtins
+import copy
 import hashlib
 import json
 import re
@@ -3695,3 +3696,171 @@ def test_rendered_backend_skips_unreadable_ssh_key_candidates(
         assert "TF_VAR_ssh_public_key" not in env
     finally:
         sys.modules.pop(module_name, None)
+
+
+@pytest.fixture
+def preload_backend_body(monkeypatch):
+    from npa.cli import agent as agent_module
+
+    monkeypatch.setattr(agent_module, "_stage_agent_npa_source", lambda *_args, **_kwargs: None)
+    return _render_backend_body(monkeypatch)
+
+
+
+def _preload_function(name: str, namespace: dict, source: str):
+    block = source.split("def " + name + "(", 1)[1]
+    block = re.split(r"\n(?:def |@app\.)", block, maxsplit=1)[0]
+    # Execute actual rendered function bodies without registering routes.
+    block = "def " + name + "(" + block
+    exec(compile(block, "embedded_backend_" + name, "exec"), namespace)
+    return namespace[name]
+
+
+def _preload_source(render="image"):
+    return {
+        "run_id": "public-shapes",
+        "artifact_run_ref": "npa1_selected_source",
+        "bucket": "example-artifacts",
+        "project_id": "example-project",
+        "resolved_prefix": "isolated/proof",
+        "artifact_uri": "s3://example-artifacts/isolated/proof/shapes.png",
+        "artifact_render": render,
+        "rrd_uri": "",
+    }
+
+
+def _startup(tmp_path, snapshot, body):
+    recording = tmp_path / "stock.rrd"
+    recording.write_bytes(b"RRF2-synthetic-startup-fixture")
+    ref = snapshot.get("artifact_run_ref") or snapshot.get("run_id") or "franka-demo"
+    state = {
+        "sim_viz": copy.deepcopy(snapshot),
+        "sim_viz_runs": {ref: copy.deepcopy(snapshot)},
+        "active_run_id": snapshot.get("run_id", ""),
+        "active_run_ref": snapshot.get("artifact_run_ref", ""),
+    }
+    observed = {"published": [], "saved": []}
+    namespace = {
+        "PRELOAD_STOCK_DEMO": True,
+        "RRD_PATH": recording,
+        "DEFAULT_SIM_VIZ": {"run_id": "franka-demo"},
+        "_load_state": lambda: state,
+        "_save_state": lambda value: observed["saved"].append(copy.deepcopy(value)),
+        "_publish_rrd_recording": lambda value: observed["published"].append(value) or "/recording.rrd",
+        "_served_recording_is_run_specific": lambda: False,
+        "_rerun_iframe_url": lambda *_args, **_kwargs: "/rerun/",
+        "_rerun_ready_state": lambda **_kwargs: True,
+        "_now_iso": lambda: "2026-01-01T00:00:00Z",
+        "resolve_run_source": lambda *_args: ("artifact_storage", "Artifacts"),
+    }
+    _preload_function("_record_sim_viz_run", namespace, body)
+    hook = _preload_function("_boot_preload_sim_viz", namespace, body)
+    return hook, state, observed, namespace
+
+
+@pytest.mark.parametrize(
+    "snapshot",
+    [
+        _preload_source("image"),
+        _preload_source("mcap"),
+        _preload_source("future-viewer-kind"),
+        _preload_source("rerun"),  # Selected source exists, but its recording is not ready.
+        {"run_id": "report-only", "preview_status": "no_previewable_recording"},
+        {"run_id": "legacy-media", "artifact_uri": "s3://example-artifacts/media.bin"},
+    ],
+)
+def test_stock_preload_preserves_explicit_artifact_selection(tmp_path, snapshot, preload_backend_body):
+    hook, state, observed, _namespace = _startup(tmp_path, snapshot, preload_backend_body)
+    before = copy.deepcopy(state)
+    hook()
+    assert state == before
+    assert observed == {"published": [], "saved": []}
+
+
+def test_stock_preload_initializes_an_empty_workspace(tmp_path, preload_backend_body):
+    hook, state, observed, _namespace = _startup(tmp_path, {}, preload_backend_body)
+    hook()
+    assert state["sim_viz"]["run_id"] == "franka-demo"
+    assert state["sim_viz"]["stage"] == "demo"
+    assert state["sim_viz"]["rrd_uri"].startswith("file://")
+    assert len(observed["published"]) == len(observed["saved"]) == 1
+
+
+@pytest.mark.parametrize("already_specific", [False, True])
+@pytest.mark.parametrize("render", ["rerun", "RERUN"])
+def test_stock_preload_retains_existing_rrd_preload_behavior(tmp_path, already_specific, render, preload_backend_body):
+    snapshot = dict(_preload_source(render), rrd_uri="file:///opt/npa-agent/recordings/selected.rrd")
+    hook, state, observed, namespace = _startup(tmp_path, snapshot, preload_backend_body)
+    namespace["_served_recording_is_run_specific"] = lambda: already_specific
+    hook()
+    for key, value in snapshot.items():
+        assert state["sim_viz"][key] == value
+    assert len(observed["published"]) == (0 if already_specific else 1)
+    assert state["active_run_ref"] == snapshot["artifact_run_ref"]
+
+
+def _lookup(body, state, requested=""):
+    namespace = {"DEFAULT_SIM_VIZ": {"run_id": "franka-demo"}}
+    return _preload_function("_sim_viz_for_run", namespace, body)(state, run_id=requested)
+
+
+def test_active_exact_source_outranks_a_polluted_basename_and_other_source(preload_backend_body):
+    selected = _preload_source()
+    other = dict(selected, artifact_run_ref="npa1_other_source", bucket="other-example-bucket")
+    state = {
+        "active_run_id": selected["run_id"],
+        "active_run_ref": selected["artifact_run_ref"],
+        "sim_viz_runs": {
+            selected["run_id"]: {"run_id": selected["run_id"], "stage": "demo"},
+            selected["artifact_run_ref"]: selected,
+            other["artifact_run_ref"]: other,
+        },
+    }
+    before = copy.deepcopy(state)
+    assert _lookup(preload_backend_body, state) == selected
+    assert _lookup(preload_backend_body, state, selected["run_id"]) == selected
+    assert _lookup(preload_backend_body, state, other["artifact_run_ref"]) == other
+    assert state == before
+
+
+def test_explicit_different_run_never_borrows_active_source(preload_backend_body):
+    selected = _preload_source()
+    other = {"run_id": "different-run", "stage": "running"}
+    state = {
+        "active_run_id": selected["run_id"],
+        "active_run_ref": selected["artifact_run_ref"],
+        "sim_viz_runs": {selected["artifact_run_ref"]: selected, "different-run": other},
+    }
+    assert _lookup(preload_backend_body, state, "different-run") == other
+
+
+@pytest.mark.parametrize("active_ref", ["", "missing-ref", "mismatched-ref"])
+def test_invalid_active_reference_keeps_existing_lookup_semantics(active_ref, preload_backend_body):
+    direct = {"run_id": "public-shapes", "stage": "running"}
+    state = {
+        "active_run_id": direct["run_id"],
+        "active_run_ref": active_ref,
+        "sim_viz_runs": {"public-shapes": direct, "mismatched-ref": {"run_id": "different-run"}},
+    }
+    assert _lookup(preload_backend_body, state) == direct
+
+
+def test_ambiguous_unselected_sources_remain_unresolved(preload_backend_body):
+    selected = _preload_source()
+    state = {
+        "active_run_id": "different-run",
+        "active_run_ref": "",
+        "sim_viz_runs": {"ref-a": selected, "ref-b": dict(selected, bucket="other-example-bucket")},
+    }
+    assert _lookup(preload_backend_body, state, "public-shapes") == {"run_id": "public-shapes"}
+
+
+def test_invalid_active_reference_with_empty_run_keeps_current_state(preload_backend_body):
+    current = {"run_id": "retained-context", "stage": "pending"}
+    state = {
+        "active_run_id": "",
+        "active_run_ref": "malformed-ref",
+        "sim_viz": current,
+        "sim_viz_runs": {"malformed-ref": {"run_id": "", "bucket": "wrong-example-bucket"}},
+    }
+    assert _lookup(preload_backend_body, state) == current
