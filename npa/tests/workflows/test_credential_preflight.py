@@ -6,15 +6,17 @@ import pytest
 
 from npa.workflows.credential_preflight import (
     CREDENTIAL_CHECKS,
+    SUPPORTED_CREDENTIAL_CHECKS,
     CredentialProbes,
     check_hf,
+    check_nebius,
     check_ngc,
     check_s3,
     check_token_factory,
     has_failure,
     run_credential_preflight,
 )
-from npa.workflows.sim2real_health import FAIL, PASS, WARN
+from npa.workflows.sim2real_health import FAIL, PASS, SKIP, WARN
 
 
 @dataclass
@@ -180,9 +182,91 @@ def test_token_factory_fail_when_verifier_raises() -> None:
     assert result.status == FAIL
 
 
+@dataclass
+class _ProfileVerification:
+    identity_verified: bool
+    iam_token_minted: bool
+    profile: str = ""
+    failure_reason: str = ""
+
+
+def test_nebius_skips_without_live_probe() -> None:
+    result = check_nebius(_Creds(), CredentialProbes())
+    assert result.status == SKIP
+    assert "offline mode" in result.summary
+
+
+def test_nebius_passes_only_when_identity_and_token_mint_succeed() -> None:
+    probes = CredentialProbes(
+        nebius_profile_verifier=lambda: _ProfileVerification(
+            True, True, profile="operator"
+        )
+    )
+    result = check_nebius(_Creds(), probes)
+    assert result.status == PASS
+    assert result.summary == "Configured Nebius CLI profile is authenticated."
+    assert "operator" not in result.summary
+
+
+@pytest.mark.parametrize(
+    ("identity_verified", "iam_token_minted", "expected"),
+    [
+        (False, False, "could not resolve"),
+        (False, True, "could not resolve"),
+        (True, False, "could not mint"),
+    ],
+)
+def test_nebius_fails_when_either_live_probe_fails(
+    identity_verified: bool, iam_token_minted: bool, expected: str
+) -> None:
+    probes = CredentialProbes(
+        nebius_profile_verifier=lambda: _ProfileVerification(
+            identity_verified, iam_token_minted
+        )
+    )
+    result = check_nebius(_Creds(), probes)
+    assert result.status == FAIL
+    assert expected in result.summary
+
+
+@pytest.mark.parametrize(
+    ("failure_reason", "expected_summary"),
+    [
+        ("cli_unavailable", "Nebius CLI is not available."),
+        ("timeout", "Nebius CLI authentication check timed out."),
+        ("probe_error", "Nebius CLI authentication check could not run."),
+    ],
+)
+def test_nebius_reports_execution_failure_reason(
+    failure_reason: str, expected_summary: str
+) -> None:
+    probes = CredentialProbes(
+        nebius_profile_verifier=lambda: _ProfileVerification(
+            False, False, profile="operator", failure_reason=failure_reason
+        )
+    )
+    result = check_nebius(_Creds(), probes)
+    assert result.status == FAIL
+    assert result.summary == expected_summary
+    assert "operator" not in " ".join((result.summary, result.remedy, *result.details))
+
+
+def test_nebius_names_default_profile_source_without_identifier() -> None:
+    probes = CredentialProbes(
+        nebius_profile_verifier=lambda: _ProfileVerification(True, True)
+    )
+    result = check_nebius(_Creds(), probes)
+    assert result.summary == "Default Nebius CLI profile is authenticated."
+
+
 def test_run_credential_preflight_default_order() -> None:
     results = run_credential_preflight(_Creds(), probes=CredentialProbes())
     assert [r.name for r in results] == list(CREDENTIAL_CHECKS)
+
+
+def test_supported_checks_add_nebius_without_changing_defaults() -> None:
+    assert CREDENTIAL_CHECKS == ("hf", "ngc", "s3", "token_factory")
+    assert SUPPORTED_CREDENTIAL_CHECKS == (*CREDENTIAL_CHECKS, "nebius")
 
 
 def test_run_credential_preflight_rejects_unknown_check() -> None:

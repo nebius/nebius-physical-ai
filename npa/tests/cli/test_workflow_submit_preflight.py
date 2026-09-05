@@ -322,9 +322,24 @@ def test_paidf_placement_fails_before_storage_or_staging_without_explicit_infra(
     stage_source.assert_not_called()
 
 
+@pytest.mark.parametrize("control", ["edge", "vis", "seg"])
 def test_paidf_existing_target_orders_placement_exact_access_then_image(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    control: str,
 ) -> None:
+    from npa.orchestration.npa_workflow.spec import load_spec
+
+    # The selected Transfer tool routes through cosmos2, so catalog expansion
+    # must not broaden PAIDF's deliberately narrow submit-time access fence.
+    assert {
+        item.repo for item in workflow_cli._workflow_access_requirements(load_spec(SPEC))
+    } == {
+        "nvidia/Cosmos-Transfer2.5-2B",
+        "nvidia/Cosmos-Guardrail1",
+        "nvidia/Cosmos-Predict2.5-2B",
+    }
+    monkeypatch.setenv("NPA_ACCESS_APPROVAL_STATE_PATH", str(tmp_path / "access.json"))
     events: list[str] = []
     for name in (
         "NEBIUS_TOKEN_FACTORY_KEY",
@@ -385,6 +400,8 @@ def test_paidf_existing_target_orders_placement_exact_access_then_image(
             "--no-deploy-if-absent",
             "--var",
             "bucket=real-bucket",
+            "--var",
+            f"augment_control={control}",
             "--assume-decision",
             "promote_checkpoint",
             "--secret-env",
@@ -400,7 +417,85 @@ def test_paidf_existing_target_orders_placement_exact_access_then_image(
 
     assert result.exit_code == 1
     assert isinstance(result.exception, RuntimeError)
-    assert events == ["placement", "exact:edge", "image"]
+    assert events == ["placement", f"exact:{control}", "image"]
+
+
+@pytest.mark.parametrize(
+    ("count_name", "count"),
+    [("rollout_count", "513"), ("validation_count", "65"), ("gold_count", "65")],
+)
+def test_sim2real_submit_rejects_oversized_sealed_split_before_images_or_launch(
+    monkeypatch: pytest.MonkeyPatch, mocker, count_name: str, count: str
+) -> None:
+    from types import SimpleNamespace
+
+    secret_names = (
+        "NEBIUS_TOKEN_FACTORY_KEY",
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "HF_TOKEN",
+    )
+    for name in secret_names:
+        monkeypatch.setenv(name, "redacted")
+    mocker.patch("npa.cli.workbench.workflow._submit_prerequisites", return_value=[])
+    mocker.patch(
+        "npa.orchestration.npa_workflow.sim2real_preflight.kubernetes_prerequisites",
+        return_value=[],
+    )
+    mocker.patch(
+        "npa.clients.huggingface.validate_hf_access", return_value=SimpleNamespace(ok=True)
+    )
+    mocker.patch(
+        "npa.clients.token_factory.validate_model_access",
+        return_value=SimpleNamespace(ok=True),
+    )
+    images = mocker.patch("npa.cli.workbench.workflow._preflight_submit_images")
+    launch = mocker.patch("npa.orchestration.skypilot.workflow.submit_workflow")
+    runtime = mocker.patch("npa.cli.workbench.workflow._run_npa_workflow_runtime")
+    stage = mocker.patch("npa.cli.workbench.workflow._stage_npa_src_for_submit")
+    config = {
+        "bucket": "test-bucket",
+        "source_sha": "a" * 40,
+        "isaac_cache_pvc": "test-isaac-cache",
+        "env_count": "640",
+        "train_fraction": "0.8",
+        "rollout_count": "64",
+        "validation_count": "64",
+        "gold_count": "64",
+        **{
+            key: "ghcr.io/example/test@sha256:" + "a" * 64
+            for key in (
+                "controller_image",
+                "transfer_image",
+                "envgen_image",
+                "isaac_image",
+                "viewer_image",
+            )
+        },
+        count_name: count,
+    }
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(SIM2REAL_SPEC),
+            "--run-id",
+            "sim2real-split-preflight",
+            "--no-deploy-if-absent",
+            *[arg for key, value in config.items() for arg in ("--var", f"{key}={value}")],
+            *[arg for name in secret_names for arg in ("--secret-env", name)],
+        ],
+    )
+
+    assert result.exit_code == 1, result.output
+    assert "sealed train/validation/gold" in result.output
+    assert "available=512/64/64" in result.output
+    images.assert_not_called()
+    launch.assert_not_called()
+    runtime.assert_not_called()
+    stage.assert_not_called()
 
 
 def test_sim2real_submit_propagates_explicit_kubernetes_target(
