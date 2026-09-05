@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import importlib.util
-from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -206,48 +205,6 @@ def test_plan_only_cases_have_machine_checked_justifications() -> None:
             assert not case.plan_only_justification, (
                 f"{case.spec} executes live and must not carry a plan-only exemption"
             )
-
-
-def test_ray_session_uses_dedicated_client_instead_of_unattended_gpu_rotation(monkeypatch) -> None:
-    name = "ray-clip-development-session.yaml"
-    monkeypatch.setenv("NPA_E2E_NPA_WORKFLOW_SUBMIT_TIERS", "multi")
-    monkeypatch.setenv("NPA_E2E_NPA_WORKFLOW_SUBMIT_SPECS", name)
-    case, = selected_submit_cases()
-    assert case.spec == name and case.plan_only and not case.runtime
-    assert "finish marker" in case.plan_only_justification
-    assert not runtime_submit_cases()
-    assert one_shot_submit_cases() == [case]
-    assert name not in {item.spec for item in gpu_submit_cases()}
-    spec_path = resolve_npa_workflow_spec(name)
-    assert spec_path is not None
-    spec = load_spec(spec_path)
-    assert spec.config["runtime_setup"] == "image"
-    assert all(not state.tool_ref for state in spec.states.values())
-    client = Path(__file__).resolve().parents[3] / "workflows/workbench/ray-clip-development/submit.py"
-    assert client.is_file(), "session exemption requires the committed real Jobs client"
-
-
-def test_live_image_clearing_preserves_image_owned_runtime(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[3]))
-    harness = importlib.import_module("tests.e2e.test_npa_workflow_submit_live_e2e")
-    monkeypatch.setenv("NPA_E2E_CLEAR_WORKBENCH_IMAGES", "1")
-    case = next(c for c in SUBMIT_LIVE_MATRIX if c.spec == "ray-clip-development-session.yaml")
-    assert harness._image_args(case, "registry.example/workbench") == []
-
-    normal = next(c for c in SUBMIT_LIVE_MATRIX if c.spec == "token-factory-caption.yaml")
-    assert harness._image_args(normal, "registry.example/workbench") == ["--image", "none"]
-
-    # An operator's explicit image selection still takes precedence; renderer
-    # validation remains responsible for rejecting mutable application images.
-    image = "registry.example/application@sha256:" + "a" * 64
-    monkeypatch.setenv("NPA_E2E_IMAGE_OVERRIDE_LANCEDB", image)
-    assert harness._image_args(replace(case, image_tool="lancedb"), "unused") == [
-        "--image", image,
-    ]
-    per_tool = replace(case, image_overrides=(("workbench.lancedb.backfill_clip", "lancedb"),))
-    assert harness._image_args(per_tool, "unused") == [
-        "--image-override", f"workbench.lancedb.backfill_clip={image}",
-    ]
 
 
 def test_coverage_backfill_cases_are_honestly_plan_only() -> None:

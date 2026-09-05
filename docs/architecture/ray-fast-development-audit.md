@@ -1,415 +1,273 @@
-# Ray + SkyPilot for application development
+# Ray + SkyPilot for source development
 
-Updated: 2026-09-05. The original CPU source-mount audit is retained below as
-historical evidence. The expanded integration adds an explicit image runtime and
-a reproducible CLIP application recipe. **Medium and complex GPU checks passed,
-including durable workflow completion: one GPU on one node, then two GPUs
-across two Kubernetes worker nodes.** Earlier startup and lifecycle failures are recorded below.
+Updated 2026-09-05. The customer path is the [Ray Jobs guide](../testing/fast-source-iteration.md):
+one SkyPilot development cluster, a private Jobs connection, ordinary Python,
+an explicit source edit, inspectable image/vector outputs and exact cleanup.
+The [guide comparison and API assessment](ray-development-guide-design.md)
+explains the responsibility changes and cites the upstream contracts.
 
-## Recommendation
+## Recommendation and scope
 
-Use SkyPilot to allocate Nebius GPU resources and own the NPA workflow lifecycle;
-use an independent application Ray cluster for customer Jobs, `runtime_env`
-source delivery, and GPU actors. This gives customers upstream Ray APIs while
-retaining `npa.workflow/v0.0.1` for durable workflow identity, credentials,
-artifacts, cancellation and infrastructure ownership. SkyPilot itself documents
-this separation; application Ray must not connect to its management cluster.
-[SkyPilot distributed Ray example, v0.12.2](https://github.com/skypilot-org/skypilot/blob/v0.12.2/examples/distributed_ray_train/ray_train.yaml)
+Use SkyPilot to own Nebius infrastructure and application Ray for tasks, GPU
+actors, Jobs submission and `runtime_env.working_dir` source delivery. Keep
+`npa.workflow` for durable production composition. Development does not need a
+long-lived workflow/controller, a custom submitter or a finish-marker protocol.
+The rejected prototype's mandatory versions of those mechanisms are removed.
 
-For a direct Python script, native SkyPilot `workdir` and `exec` already remove
-the image build from compatible source iterations. Ray is useful when the
-application also needs distributed tasks, actor model reuse, Jobs status, and a
-familiar source-submission contract. A new infrastructure autoscaler or KubeRay
-migration is unnecessary for this path. Native `exec` performance has not been
-measured here; the comparison is architectural.
-[SkyPilot execution, v0.12.2](https://github.com/skypilot-org/skypilot/blob/v0.12.2/sky/execution.py#L772)
+The scoped example uses the real Workbench CLIP UDF and LanceDB library. It
+does not qualify the deployed LanceDB HTTP service or its published service
+image. Source redeployment creates new actors and reloads models. Within an
+actor, multiple batches reuse resident weights. No hot-reload claim follows.
 
-## Existing mechanisms and the scoped addition
+[Ray Jobs, 2.46.0](https://github.com/ray-project/ray/blob/ray-2.46.0/doc/source/cluster/running-applications/job-submission/quickstart.rst)
+provides the familiar submission/source interface. [SkyPilot's Ray example,
+0.12.2](https://github.com/skypilot-org/skypilot/blob/v0.12.2/examples/distributed_ray_train/ray_train.yaml)
+provides the separate infrastructure/application-runtime pattern. A finite
+`sky exec` path can be simpler for users who want SkyPilot's source syncing;
+that path has not been performance-measured here and is not Ray Jobs delivery.
 
-| Mechanism | Repository surface | Support boundary |
+## Existing repository mechanisms
+
+| Mechanism | Source | Boundary |
 | --- | --- | --- |
-| Editable NPA installation | [Contributing](../../CONTRIBUTING.md), [dependencies](../../npa/pyproject.toml) | Fast local Python development with `npa/.venv`; GPU changes still require real compatible GPU work. |
-| Existing NPA source staging/overlay | [Source staging](../../npa/src/npa/orchestration/npa_workflow/src_staging.py), [renderer](../../npa/src/npa/orchestration/npa_workflow/skypilot_render.py) | NPA-owned source distribution for NPA development; staging and activating an image overlay are distinct operations. |
-| Existing Cosmos3-Nano Ray Serve | [Service](../../npa/src/npa/workbench/cosmos/ray_server.py), [guide](../workbench/cosmos3-ray-serve.md) | Persistent NVIDIA framework inference, resident weights and authenticated inference ingress; not a general Jobs endpoint or Cosmos3-Super runtime. |
-| Image-owned application runtime | [Spec](../../npa/src/npa/orchestration/npa_workflow/spec.py), [renderer](../../npa/src/npa/orchestration/npa_workflow/skypilot_render.py) | New explicit `config.runtime_setup: image` for raw `run.argv`/`run.shell` stages using a registry-qualified immutable image digest. |
-| Ray application recipe | [Session workflow](../../npa/workflows/workbench/npa-workflows/ray-clip-development-session.yaml), [Jobs application](../../npa/workflows/workbench/ray-clip-development/README.md) | Standard Ray Jobs carries reviewed application source; the NPA session owns preparation, S3 receipts and scoped shutdown within operator-configured network isolation. Medium and two-node complex GPU integration passed, including durable completion. |
+| Editable NPA installation | [Dependencies](../../npa/pyproject.toml) | Local Python development; GPU changes still need compatible real GPU execution. |
+| NPA source staging/overlay | [Staging](../../npa/src/npa/orchestration/npa_workflow/src_staging.py), [renderer](../../npa/src/npa/orchestration/npa_workflow/skypilot_render.py) | NPA-owned code distribution for NPA development. It is not used to transfer this Ray application. |
+| Existing Cosmos3-Nano Ray Serve | [Service](../../npa/src/npa/workbench/cosmos/ray_server.py), [guide](../workbench/cosmos3-ray-serve.md) | Persistent NVIDIA framework inference; not a general Jobs endpoint or Cosmos3-Super runtime. |
+| Ray CLIP development | [Application](../../npa/workflows/workbench/ray-clip-development/embed.py), [cluster task](../../npa/workflows/workbench/ray-clip-development/cluster.yaml) | Native Ray Core/Jobs and source packaging, separate SkyPilot infrastructure, direct Parquet/Lance outputs. |
 
-Image mode skips NPA installation, source-URI injection, `PYTHONPATH` replacement
-and interpreter shims. It retains the existing workflow, resource, secret and
-model-cache handling. It rejects native `toolRef` stages, mutable images, and a
-conflicting `require_baked_npa` setting. It does not invent a baked NPA source
-attestation: the image owns the application environment. SkyPilot worker
-bootstrap prerequisites and application dependency/model checks still apply.
-[Image runtime contract](../workbench/npa-workflow-guide.md#application-runtimes-in-immutable-images)
+The redesign retains the isolated SkyPilot launcher relocation fix required by
+NPA's client setup. The preceding prototype's image-runtime extension,
+managed-controller cleanup changes and associated S3 workflow fixtures are
+removed from this branch's final change: the native development path uses none
+of them. Their earlier commits and workload evidence remain historical; those
+extensions are not advertised as supported features of this final example.
 
-The associated SkyPilot CLI fix handles pip's long-interpreter-path launcher
-header when an isolated runtime is atomically moved from staging into place.
-Real generated launchers execute successfully after relocation, including paths
-with spaces; the existing ordinary-shebang behavior remains covered. This fixes
-a preparation blocker, not a Ray application feature.
+The [May workflow recommendation](workflow-engine-recommendation-20260514T233740Z.md)
+is historical. Vendored KubeRay definitions are not an enabled NPA service;
+the [Kubernetes renderer](../../npa/src/npa/cluster_backends/mk8s_render.py)
+disables those flags. No broad Ray infrastructure migration is needed.
 
-The [older May workflow-engine recommendation](workflow-engine-recommendation-20260514T233740Z.md)
-is historical: its Argo recommendation predates the current SkyPilot contract.
-Vendored KubeRay infrastructure definitions are also not an enabled NPA service;
-[the managed Kubernetes renderer](../../npa/src/npa/cluster_backends/mk8s_render.py)
-disables their cluster/service flags.
+## Redesigned guide: current GPU evidence
 
-## Medium and complex checks
+After the application readability refactor, an independent reader executed the
+basic guide using only its declared platform prerequisites. The first run,
+one-line crop edit, restoration, native status/logs, RGB/vector/retrieval
+inspection, download/hash verification and exact development-cluster cleanup
+passed. The medium loop used one physical Kubernetes worker and one RTX PRO
+6000 GPU, with 4,096 images per revision. These are fresh executions of the final
+readable application, not the preceding prototype's receipts.
 
-The [reproduction guide](../testing/fast-source-iteration.md) uses the repository's
-real Workbench `udf_clip_embedding`, a pinned public CLIP snapshot, and synthetic
-rendered RGB inputs. It reuses an official PyTorch 2.12.1/CUDA 13 runtime image
-and prepares pinned application dependencies once per session. The UDF is a
-fourth reviewed source file submitted through Ray, alongside the application,
-worker and validation modules; it is held fixed across crop-policy revisions.
-The workload performs inference, materializes Parquet and Lance outputs, and
-validates retrieval. Both live qualification checks completed on the measured
-stack, with final results below.
+| Medium phase, seconds | Baseline | Changed | Restored |
+| --- | ---: | ---: | ---: |
+| Ray CLI invocation through exit | 27.674 | 25.560 | 28.637 |
+| CLI start through first observed Job | 4.488 | 4.415 | 5.408 |
+| Package-creation log through first observed Job | 1.161 | 0.166 | Cached; no creation log |
+| Ray server job interval | 17.447 | 16.960 | 17.604 |
+| Application, including actor readiness and artifacts | 15.821 | 15.517 | 16.094 |
+| Connection and model-actor readiness | 4.901 | 4.506 | 4.796 |
+| Model load inside the CUDA actor | 2.406 | 2.241 | 2.344 |
+| Preprocessing and inference wall time | 9.669 | 9.831 | 10.050 |
+| Aggregation and artifacts | 1.251 | 1.181 | 1.248 |
 
-The first GPU session attempt exposed a prerequisite the earlier CPU audit did
-not test: the published LanceDB image runs as `ubuntu` without `sudo`, so
-SkyPilot's SSH bootstrap exited before application Ray or GPU inference started.
-An anonymously pullable image is not sufficient evidence that SkyPilot can
-bootstrap it. The revised recipe uses the existing root PyTorch image instead
-of rebuilding LanceDB; its application environment is prepared at session start.
-Root inside the isolated workload pod is not a privileged pod or host-root
-access, and must still be permitted by the target cluster's security policy.
-[SkyPilot 0.12.2 Kubernetes bootstrap](https://github.com/skypilot-org/skypilot/blob/v0.12.2/sky/templates/kubernetes-ray.yml.j2)
+These are nested timing boundaries, not additive stages. Source delivery is
+measured from the client's package-creation log to the first Job visible through
+the upstream SDK. It includes packaging, upload, submission and polling/network
+observation delay; it is not isolated wire-transfer time. Restoration reused
+Ray's cached source package and emitted no creation log, so no separate source
+interval is claimed for that revision. CLI startup, connection, status polling
+and log drainage are included outside the application; their individual
+contributions were not profiled. No image-build-duration comparison was measured.
 
-| Check | Intended scope | Required evidence | Live result |
-| --- | --- | --- | --- |
-| Medium | One GPU node, one actor, 4,096 records per source revision | Baseline → changed image crop → restored source; every worker's imported source hash, changed vectors, restoration and output completeness | Passed: three successful Jobs; source/output/recovery/cancellation, artifact persistence, process cleanup and durable terminal status verified |
-| Complex | Two GPU actors on two Kubernetes worker nodes, one GPU each, 16,384 records per revision | CPU partitions → concurrent GPU inference → aggregation/retrieval; source propagation, owned-actor failure/replacement, committed-shard replay and exact-job cancellation | Passed: source/output/recovery/cancellation, head driver placement, durable artifacts, both node shutdowns and terminal workflow/stage status verified |
+All 4,096 changed vectors exceeded L2 distance 0.01 (minimum 0.237, mean 0.361).
+Restored vectors matched exactly, tighter than the required `1e-5` absolute
+tolerance. Imported application/UDF hashes and CPU-worker source hashes matched
+each submission. Each Job used seven preprocessing processes and one CUDA actor
+for 64 batches. Ray's source-package identity changed and restored; the pod and
+immutable image identity remained fixed, with zero image-build or dependency
+installation commands in the measured loop. Each submission created a new
+model actor and reloaded weights; batches within that actor reused the model.
 
-### Measured medium result
+The reader downloaded 75 files (56,798,868 bytes) across the three revisions and
+verified their manifests. Independent artifact review rehashed 72 payload and
+JSON-manifest files; the remaining three files are the `SHA256SUMS` manifests.
+Decoded RGB inputs/crops, all 4,096 finite normalized 512-dimensional Parquet
+vectors per revision, reopened Lance tables and retrieval checks passed. A
+second reviewer independently reopened all three Lance tables, verified their
+vectors against Parquet, and repeated first/middle/last-row retrieval. The
+published preview images match these freshly verified outputs. Procedural
+images establish execution/retrieval consistency, not semantic model accuracy.
 
-The final medium session passed both live SkyPilot status and the durable NPA
-stage receipt: **SUCCEEDED**, with its end timestamp present. One Kubernetes worker node
-with one **RTX PRO 6000 Blackwell Server Edition** GPU completed baseline,
-changed crop, restored source and a separate cancellation job in **104.720
-seconds** of client wall time. Each source job processed 4,096 records in 64
-shards, persisted all 4,096 Lance rows and passed five retrieval checks. The
-image was reused with **zero image builds**.
+The medium Jobs all reached `SUCCEEDED`; their status and logs were inspected
+through upstream Ray commands. The final advanced sequence also passed on
+**two distinct physical GPU workers**, with one RTX PRO 6000 per SkyPilot pod.
+Each revision processed 16,384 images in 256 shards with two concurrent CUDA
+actors, producing 49,152 qualified embeddings across baseline/change/restore.
 
-| Revision | SDK package/upload/submit (s) | Total iteration (s) |
-| --- | ---: | ---: |
-| Baseline | 0.577 | 30.290 |
-| Changed crop policy | 0.049 | 29.894 |
-| Restored source | 0.030 | 30.053 |
+| Complex phase, seconds | Baseline | Changed | Restored |
+| --- | ---: | ---: | ---: |
+| Ray CLI invocation through exit | 53.917 | 55.333 | 64.093 |
+| CLI start through submission banner | 6.224 | 3.407 | 10.058 |
+| Package-creation log through submission banner | 0.713 | 0.148 | Cached; no creation log |
+| Ray server job interval | 42.397 | 48.306 | 49.910 |
+| Application, including recovery and output checks | 40.241 | 45.977 | 47.560 |
+| Connection and initial actors ready | 5.947 | 6.269 | 6.769 |
+| Preprocessing, inference and actor recovery wall time | 30.027 | 30.396 | 31.668 |
+| Aggregation into Parquet/Lance and retrieval | 4.249 | 4.410 | 4.280 |
 
-The restored submission reused the baseline source package; it still started a
-new job and loaded new actors/models. SDK timing combines source hashing,
-packaging, upload and submission. These observations are not a controlled
-comparison of cold and warm caches or of Ray versus native SkyPilot execution.
+The complex source interval ends at the observed native CLI submission banner;
+it includes packaging/upload and submission, not isolated network transfer.
+Its endpoint differs from the medium SDK-observation boundary, so the source
+rows are not direct performance comparisons. Individual model loads, including
+replacement actors, took 3.373–4.120 s; separate source/model fingerprint
+verification took 0.434–0.517 s. Changed/restored application totals also include
+full-vector comparison. All 16,384 edited vectors changed above L2 0.01;
+restoration's maximum error was zero. Imported application, UDF and worker
+hashes matched every relevant actor and preprocessor. Runtime Ray-node/pod/
+Kubernetes-node mapping verified both physical workers. Coordinator-clock
+measurements around CUDA-synchronized calls observed concurrent inference;
+these include RPC edges and are not a kernel-profiler trace.
 
-Session preparation took **37.795 seconds**, including **7.856 seconds** to
-fetch and verify the model snapshot. This starts at the application's
-preparation command and stops before its Ray CLI starts; it excludes image
-pulling and SkyPilot bootstrap. Preparation happens once, outside every source
-iteration.
+Each revision killed one exact owned actor after committing a real shard,
+loaded a replacement and replayed the checkpoint with zero further inference
+or writes. Full output IDs were complete and unique. This proves the
+application's checkpoint idempotency for actor failure; it does not qualify
+driver/node-loss recovery or automatic Ray exactly-once external writes.
 
-For the changed-source job, cluster connection and initial actor readiness took
-**5.902 seconds**; initial model loading was **2.437 seconds**. The
-preprocessing/inference interval was **19.027 seconds**, including the controlled
-actor replacement and its **2.358-second** model reload. Synchronized inference
-totaled **8.368 actor-seconds** within that interval; aggregation took **0.870
-seconds**. The application measured **27.775 seconds**, while the client's
-**29.894-second** total also includes Jobs startup and polling. These intervals
-overlap and should not be added as independent costs.
+A separate active job committed 64 real embeddings, continued CUDA inference,
+and reached `STOPPED` through `ray job stop`; the native status command also
+confirmed it. The first terminal message arrived 6.239 s after stop-command
+start, including CLI startup/polling. This is an observed upper bound, not an
+isolated scheduler cancellation latency. All 18 observed application actors
+were dead before infrastructure teardown. Application Ray and SkyPilot's
+management Ray remained separate, and their core processes survived these
+controlled application failures.
 
-All 4,096 changed vectors differed by L2 distance above 0.01; the mean embedding
-changed by **0.229948**. Restoration produced **zero maximum absolute error**
-and identical persisted Parquet and vector-byte hashes. Worker SHA-256 prefixes
-were `7c9b617426935a28` for baseline/restoration and `9c4629dd941110b4` for the
-edit. Every driver/actor import matched the submitted four-file manifest; model,
-UDF and runtime fingerprints stayed fixed. Full hashes remain in private evidence.
+Artifact transfer and SHA verification took 74.282 s. The three result trees
+contained 1,617 files (376,727,478 bytes), including 1,614 manifest-listed payload
+files plus three checksum manifests. All checkpoints, final Parquet vectors,
+Lance tables, decoded RGB previews and retrieval checks passed 917 independent
+qualification assertions. The initial verifier compared an OCI configuration
+digest with the image manifest digest; its failed receipt is preserved. The
+corrected check verifies both the pod's requested image and resolved image ID
+against the pinned manifest. No application or image was changed for that
+observer correction. The first Jobs readiness probe preceded service startup;
+the documented Sky log-follow and readiness retry passed without restarting
+the service.
 
-Each source job killed its exact first actor after a committed shard, loaded a
-replacement, and replayed that shard with **zero additional inference calls**.
-The replacement then handled 63 batches with its resident model. Source
-redeployment reloaded weights. The separate cancellation job performed GPU work
-and took **10.021 seconds** from submission to `STOPPED`; this is not the
-latency of the stop API alone. Independent inspection found no live workload
-actors or remaining GPU compute processes.
+Exact service cancellation and named SkyPilot teardown passed for both
+customer paths. Complex cleanup took 48.966 s. Their workload pods, services,
+PVCs, SkyPilot development clusters and tunnels were absent afterward. After
+the GPU loops, recreating the owned API with the final readable Compose
+healthcheck took 28.935 s and passed. Final API-container/network/state-volume
+removal took 8.519 s; deletion of the owned namespace and NetworkPolicy took
+6.017 s. Read-only verification confirmed all owned platform resources absent,
+all four pre-existing Kubernetes nodes and seven unrelated running containers
+retained, and the original host API healthy before and after cleanup. An
+absence-observer message-casing correction required only read-only verification;
+no destructive command or GPU workload was repeated for it.
 
-Artifact publication verified **416 files totaling 95,567,696 bytes**, plus the
-manifest object. Independent downloads reopened Parquet and Lance data and
-rechecked completeness, source provenance, full vectors and retrieval. The
-finish client completed in **15.572 seconds**. Scoped Ray shutdown took **2.435
-seconds** and ended with zero surviving children, signal errors or fallback
-TERM/KILL signals. Both scheduler status and the durable stage receipt then
-reported success.
+Earlier redesign investigation found two API-readiness failures before GPU
+allocation: request-local Kubernetes configuration was lost in a validation
+thread, and a shared API lacked a working long-request executor. The exact
+pending request was cancelled through the upstream API. The final platform
+contract uses an explicitly owned upstream API with a fixed private backend;
+no shared API is patched or restarted. Fresh platform qualification verified
+that API, Kubernetes permissions, explicit compute enablement and a native
+SkyPilot dry run. The separate pre-existing host API was healthy before and
+after that setup and was not targeted. The [decision record](ray-development-guide-design.md)
+explains why credential checks alone do not prove launch readiness.
 
-Actual worker versions were Python **3.12.3**, Ray **2.46.0**, Torch
-**2.12.1+cu130**, CUDA **13.0**, Transformers **5.10.2**, PyArrow **23.0.1**,
-LanceDB **0.30.2** and NumPy **2.4.6**. The official PyTorch image digest stayed
-fixed across all source iterations.
+## Runtime and reproducibility boundary
 
-### Measured complex result
+The selected existing public image is:
 
-The final complex session used **two Kubernetes worker nodes with one RTX PRO 6000
-Blackwell Server Edition GPU each**. Its three source jobs each processed
-**16,384 records in 256 shards**, materialized 16,384 Lance rows and passed five
-retrieval checks. Baseline, crop-policy change, restoration and the separate
-cancellation job completed in **156.965 seconds** of client wall time, with
-**zero image builds**.
+```text
+docker.io/pytorch/pytorch@sha256:72f863fa1fe13d5d87a72d00db2c85fb2d43409ee08dd26bc469de4c8a28b427
+```
 
-| Revision | SDK package/upload/submit (s) | Total iteration (s) |
-| --- | ---: | ---: |
-| Baseline | 0.707 | 44.439 |
-| Changed crop policy | 0.052 | 49.224 |
-| Restored source | 0.038 | 48.955 |
+The current GPU runs report Python 3.12.3, Torch 2.12.1+cu130 and CUDA 13.0.
+Application preparation pins Ray 2.46.0, LanceDB 0.30.2, PyArrow 23.0.1,
+NumPy 2.4.6, Pillow 12.2.0 and Transformers 5.10.2. The CLIP revision is
+`3d74acf9a28c67741b2f4f2ea7635f0aaf6f0268`; its 605,247,071-byte weights hash is
+`a63082132ba4f97a80bea76823f544493bffa8082296d62d71581a4feff1576f`.
+The API/client report SkyPilot 0.12.2. Actual management processes use Ray 2.9.3
+on Python 3.10.21, separate from application Ray 2.46.0 and its Jobs endpoint.
 
-CPU partitions fed two GPU actors, followed by aggregation, Parquet persistence,
-LanceDB materialization and retrieval validation. Every CPU shard and GPU actor,
-including the replacement actor, matched the submitted source manifest.
-Independent state checks verified two Kubernetes worker nodes and all Jobs drivers on
-the head, where the recipe keeps its durable-output staging and checkpoints.
-The coordinator observed overlapping inference calls on both actors; its start
-and post-CUDA-synchronization finish events include RPC edges. This establishes
-concurrent application execution, not a precise cross-node CUDA-kernel timeline.
+The generic credential preflight also reported `NoSuchBucket` for an unused
+default S3 destination. That failure is preserved; no bucket or routing was
+changed to hide it. This example uses downloaded local artifacts and does not
+access S3. Online Nebius authentication, public-model access and the real CUDA
+workload passed. This qualifies the selected path, not every configured service.
 
-Application preparation took **35.873 seconds** on the head and **36.995 seconds**
-on the worker, including model fetch/verification of **8.000** and **8.183
-seconds**. These per-node intervals overlap and exclude image pull, SkyPilot
-bootstrap and Ray startup. Both nodes reused their prepared environment across
-source submissions.
+The image digest does not attest packages installed afterward. Preparation
+records a resolved dependency freeze; this is not a fully hash-locked transitive
+supply chain. Preparation exposed an inherited, unused `spin 0.18` requirement
+for `click<8.4` while the resolved environment contains Click 8.5.0; the selected
+Ray/CLIP/Lance paths passed, but the image's unrelated developer tooling is not
+qualified as a consistent environment. Pure compatible source changes need no image build. Package
+changes require a new preparation/environment record; Python, CUDA, native ABI
+or image-owned system changes require a suitable image and possibly a rebuild.
 
-For the changed-source job, initial actor readiness took **6.062 seconds**.
-The two initial model loads were **2.502** and **2.472 seconds**; the controlled
-replacement reloaded in **2.564 seconds**. Preprocessing/inference took **31.878
-seconds** wall time. Its CPU tasks totaled **92.048 task-seconds** and GPU
-inference **30.774 actor-seconds** across the workers; these are sums of parallel
-work and are not additional wall-clock costs. Aggregation took **3.453 seconds**,
-application execution **47.131 seconds**, and the client iteration **49.224
-seconds**.
+The final medium Sky launch took 95.703 s. Within node preparation, dependency
+installation took 23.564 s, model fetch plus weights-hash verification 8.718 s,
+and CUDA/environment inspection (including `pip freeze`) 2.171 s. The receipt
+records distinct start/end timestamps for each boundary. Sky launch also
+includes scheduling, image pull, SSH setup and runtime startup; those components
+were not separately profiled. The observed image-pull event was 349 ms on the
+existing physical worker. Its image layers were not purged, so this is a fresh
+pod/application environment rather than a first-ever image-download benchmark.
+The two-worker Sky launch command took 112.263 s. Per-worker dependencies took
+23.028–24.699 s, model fetch/hash verification 8.658–8.857 s, and separate
+CUDA/environment inspection 2.268–2.406 s. Kubernetes reported image pulls of
+342/328 ms; downloaded layer bytes and cache participation were not measured.
+Sky launch returned before the application service was ready, so the guide's
+readiness check remains necessary.
+The original owned-API startup-and-health command took 27.538 s using a cached
+image; that platform was reused across the measured development clusters.
 
-All 16,384 edited vectors changed by L2 distance above 0.01; the mean embedding
-changed by **0.230283**. Restored vectors matched baseline exactly, with zero
-maximum absolute error and identical output hashes. Each revision killed one
-owned actor after a committed shard, replayed that shard with zero additional
-inference calls, and completed all outputs. The final actors served **127 and
-128 batches** with resident weights; actor replacement and each new source job
-loaded weights again. The cancellation job performed GPU work and reached
-`STOPPED` **9.936 seconds** after submission. Independent state and GPU queries
-found no remaining workload actors or compute processes.
+Setup does not supply a node rank, so preparation records no inferred rank.
+Actual Ray-node, pod and Kubernetes-node evidence establishes placement during
+the run. Earlier preparation receipts that included CUDA inspection in the
+model-fetch duration remain historical; the final refactored bootstrap measures
+those phases separately. These measurements do not bound a slower network.
 
-Publication verified **1,568 files totaling 375,856,595 bytes**, plus the manifest,
-and independent downloads revalidated full vectors, every CPU shard's source,
-Parquet, Lance rows and retrieval. The finish client took **33.347 seconds**.
-Head/worker application shutdown took **2.419** and **0.303 seconds**, with zero
-survivors, errors or fallback TERM/KILL signals. Live scheduler status and the
-durable stage both reported **SUCCEEDED**, with the stage end timestamp present.
+Model download and dependencies are node-local preparation, separate from
+image pull/SkyPilot startup and from the source-iteration loop. Replacement SkyPilot pods
+repeat preparation unless a separately configured durable cache supplies weights;
+replacement Ray actors reload from the existing pod's model files. Artifacts
+are driver files until downloaded and hash-verified on durable local storage;
+Ray's object store is not an artifact archive. Production cross-tool workflows
+continue to use their declared S3 outputs.
 
-After both sessions, canonical cancellation and controller cleanup verified
-remote absence. The owned API container, Kubernetes namespace, tunnels and
-temporary local profiles were removed. Independent checks preserved the existing
-cluster nodes and unrelated controllers. Workload outputs and private evidence
-were retained outside the source checkout.
+## Historical medium and complex GPU evidence
 
-### Earlier attempts and repairs
+These results belong to the **superseded session workflow**, completed before
+the guide redesign. Its immutable private evidence remains preserved. They must
+not be presented as current guide execution evidence.
 
-The first medium application sequence passed in **102.822 seconds**, but its
-workflow failed an immediate descendant-absence check: ten Ray children had
-not yet exited after their CLI parent. The pod was subsequently removed and no
-GPU orphan remained. The shutdown repair waits for the recorded PID/creation-time
-identities, then signals only surviving owned processes and verifies absence.
-[Ray 2.46 process cleanup](https://github.com/ray-project/ray/blob/ray-2.46.0/python/ray/_private/node.py)
+| Check | Actual scope | Records per revision | Baseline / changed / restored wall seconds |
+| --- | --- | ---: | --- |
+| Medium | One Kubernetes worker, one RTX PRO 6000 GPU actor | 4,096 | 30.290 / 29.894 / 30.053 |
+| Complex | Two distinct Kubernetes workers, one RTX PRO 6000 GPU each | 16,384 | 44.439 / 49.224 / 48.955 |
 
-A second medium sequence passed in **101.407 seconds**, including artifacts and
-process cleanup, but exposed a separate durable-state defect. Image mode's
-`exec` replaced the shell owning NPA's EXIT trap, leaving its stage receipt at
-RUNNING while live SkyPilot status was SUCCEEDED. Keeping the shell preserves
-that finalizer; real Bash regression tests verify success and failure receipts
-and exit codes. The final complete medium run above validates both repairs.
+The previous full sequences took 104.720 s and 156.965 s respectively, including
+separate exact-job cancellation checks. All changed vectors exceeded L2 0.01;
+restoration's maximum absolute error was zero. Real decoded RGB inputs,
+Parquet/Lance row completeness and retrieval passed. Imported source/UDF hashes
+were checked on relevant workers. Concurrent actors, controlled replacement,
+verified committed-shard reuse without duplicate output, Jobs `STOPPED`, artifact
+Put/Get/hash verification and owned cleanup were recorded. Medium retained
+416 files (95,567,696 bytes); complex retained 1,568 (375,856,595 bytes).
+Both sessions reached live and durable `SUCCEEDED` before their owned resources
+were cleaned up. These procedural images validate execution/retrieval consistency,
+not semantic CLIP accuracy.
 
-Early operator client setup also omitted NumPy for comparison and, separately,
-boto3 for the finish-marker write. The missing dependencies were installed and
-are now explicit in the recipe; completed GPU work and failed-client evidence
-were retained. The isolated local SkyPilot API container later exited with code
-137 while Docker reported `OOMKilled=false`. Its exact existing identity was
-restarted before status verification. The cause remains unknown; cloud GPU work
-was unaffected. A private wrapper also initially omitted the documented caller
-identity during status lookup; restoring that environment fixed the lookup.
-These operator-side incidents are distinct from application inference failures.
-
-The initial complex sequence already processed **three sets of 16,384 records
-across two Kubernetes GPU worker nodes** in **160.523 seconds**, with concurrent actors,
-source restoration, committed-shard recovery and cancellation checks passing.
-Its artifact checks also passed. That session used the same faulty outer
-finalizer. The final complex run above repeated the full workload and verified
-the corrected durable completion receipt.
-
-### Source and recovery contract
-
-The client sends source-only temporary directories through upstream
-`runtime_env.working_dir`; model weights, inputs, credentials and output files
-are outside that payload. Both CPU preprocessing and GPU actors verify the
-worker source. A crop-policy edit must change at least 99% of per-record vectors
-by an L2 distance above 0.01; restoration must match the baseline within absolute
-tolerance 0.00001. Raw model/output hashes and runtime versions belong in private
-evidence, alongside sanitized aggregate results suitable for publication.
-
-These results qualify this canonical Workbench CLIP UDF and LanceDB library
-recipe on the measured single-node and two-node stack. It does not qualify the published LanceDB service image,
-its HTTP backfill API, or a general Ray backend for every Workbench tool.
-
-The recovery check kills one owned actor after a shard is committed, replaces
-it, and replays the shard through a verified checkpoint. Its identity includes
-source, input, model and runtime hashes. This tests recovery after a durable local
-commit, not recovery of an in-flight CUDA kernel or loss of the driver node.
-The replacement initializes its model again. A separate job executes real GPU
-work before an exact-ID stop; Ray Jobs stop is asynchronous and must reach a
-terminal state before session shutdown.
-[Ray 2.46 actor fault tolerance](https://github.com/ray-project/ray/blob/ray-2.46.0/doc/source/ray-core/fault_tolerance/actors.rst),
-[Ray 2.46 Jobs SDK](https://github.com/ray-project/ray/blob/ray-2.46.0/python/ray/dashboard/modules/job/sdk.py)
-
-## Compatibility, security and ownership
-
-The selected application Ray version is **2.46.0**; NPA's SkyPilot version is
-**0.12.2**. Keep the application interpreter and package environment separate
-from management Ray. Use explicit application GCS and Jobs addresses, separate
-component/worker ports and scratch directories, and a private controlled network.
-The recipe advertises `config.gpus_per_node` application GPUs per node. Match
-that count to the requested accelerator allocation; record actual node/GPU
-counts and do not call a one-node run multi-node validation.
-[SkyPilot application cluster helper](https://github.com/skypilot-org/skypilot/blob/v0.12.2/sky_templates/ray/start_cluster)
-
-The management head's worker range is **11002–65535**: Ray 2.9.3 uses 65535
-when a minimum is set without a maximum. The session places every application
-service and worker port below 11002, avoiding SkyPilot's fixed ports; its
-application workers use 10010–10999. Non-head management workers can request
-OS-assigned ports, so startup also verifies the Linux ephemeral range begins
-above 10999. Do not rely on a presumed management maximum of 19999.
-[Ray 2.9.3 worker-port allocation](https://github.com/ray-project/ray/blob/ray-2.9.3/src/ray/raylet/worker_pool.cc#L122-L138)
-
-Local SkyPilot state isolation does not isolate its host-wide API endpoint.
-SkyPilot's API server fixes its own identity for its lifetime and uses it for
-the jobs-controller name; individual request user IDs do not replace that
-identity. A private development session therefore needs a separately owned API
-endpoint as well as isolated state and exact Kubernetes targeting. Do not stop a
-shared API server to obtain this isolation.
-[SkyPilot 0.12.2 server/controller identity](https://github.com/skypilot-org/skypilot/blob/v0.12.2/sky/utils/common.py)
-
-Changing only that server's HTTP port is insufficient: the pinned request queue
-also uses a fixed port. The upstream Docker deployment supplies a separate
-network namespace without modifying SkyPilot internals. Publish its HTTP port
-only on host loopback and mount only run-owned state plus the exact required
-credential/configuration paths. The container and its state remain session-owned
-resources to clean up after managed jobs are terminal.
-[SkyPilot 0.12.2 API container deployment](https://github.com/skypilot-org/skypilot/blob/v0.12.2/docs/source/reference/api-server/examples/api-server-in-docker.rst),
-[Pinned request queue](https://github.com/skypilot-org/skypilot/blob/v0.12.2/sky/server/requests/queues/mp_queue.py)
-
-The qualified API setup uses a non-root UID and drops capabilities. The pinned
-Kubernetes runner calls `chmod` on its installed rsync helper, so that one file
-must belong to the API UID. The reproduction copies the exact helper out and
-back with archive ownership, verifies identical bytes, and tests non-root
-`chmod`; it changes neither package code nor the image.
-[SkyPilot 0.12.2 Kubernetes command runner](https://github.com/skypilot-org/skypilot/blob/v0.12.2/sky/utils/command_runner.py)
-
-The API container needs the selected Nebius storage profile in its own private
-`.aws/credentials` and `.aws/config`, even when AWS credential environment
-variables are present. Require `sky check nebius` to enable both compute and
-storage before submission. NPA's general S3 health row checks bucket visibility;
-the workflow's write preflight remains a separate requirement.
-[SkyPilot 0.12.2 Nebius credentials](https://github.com/skypilot-org/skypilot/blob/v0.12.2/sky/clouds/nebius.py)
-
-The pinned Jobs SDK lets ambient `RAY_ADDRESS` override an explicit client URL.
-The client deliberately selects the private application endpoint. Never use
-`address="auto"`, `ray stop`, an ambiguous management address, or a second cloud
-autoscaler. The recipe stops only its own application Ray CLI after jobs are
-terminal and artifacts have been verified in S3. NPA and SkyPilot retain control
-of cancellation and infrastructure teardown.
-[Ray 2.46 Jobs address handling](https://github.com/ray-project/ray/blob/ray-2.46.0/python/ray/dashboard/modules/job/sdk.py),
-[Ray 2.46 owned-node shutdown](https://github.com/ray-project/ray/blob/ray-2.46.0/python/ray/_private/node.py#L451)
-
-Ray Jobs permits arbitrary code execution. Bind Dashboard/Jobs to loopback and
-reach it through authenticated SSH or Kubernetes forwarding; do not publish
-Jobs, Dashboard, Client or other Ray component ports. Namespaces group resources
-but do not isolate mutually untrusted customers. `runtime_env` is dependency
-configuration, not a sandbox; use separate clusters and external network/access
-controls where trust boundaries require them. The existing Cosmos HTTP bearer
-token does not secure a general Ray endpoint.
-[Ray 2.46 security guidance](https://github.com/ray-project/ray/blob/ray-2.46.0/doc/source/ray-security/index.md)
-
-The live runs used a dedicated Kubernetes namespace with an ingress
-NetworkPolicy selecting all its pods and allowing only same-namespace pod peers.
-The operator must provide an enforcing CNI and retain that policy; the session
-YAML does not install it. Dashboard loopback alone does not protect Ray's other
-pod-interface ports. This configuration permits egress and trusts the underlying
-nodes. Policy configuration was verified, without a penetration-test claim.
-The [reproduction](../testing/fast-source-iteration.md#prepare-the-session-and-client)
-includes the exact policy shape and private receipt commands.
-[Kubernetes NetworkPolicy](https://kubernetes.io/docs/concepts/services-networking/network-policies/)
-
-A Jobs-level runtime environment covers the driver and descendants. Merely
-setting `ray.init(runtime_env=...)` does not replace an already-running driver's
-environment. Local `working_dir` uploads have a 500 MiB limit; symlinks may pull
-in unintended content. Select a reviewed source-only directory. Record your own
-SHA-256 manifest and every worker's actual imports: a Ray package URI is useful
-cache evidence, not a cryptographic trust attestation.
-[Ray 2.46 dependency handling](https://github.com/ray-project/ray/blob/ray-2.46.0/doc/source/ray-core/handling-dependencies.rst),
-[Ray 2.46 packaging implementation](https://github.com/ray-project/ray/blob/ray-2.46.0/python/ray/_private/runtime_env/packaging.py)
-
-The recipe reuses a model within each actor across batches. A new source job
-creates new actors and reloads weights. Retrieving a detached named actor would
-return its existing implementation, not hot-reload its class. Persistent Serve
-has its own deployment/update contract and should be evaluated separately when
-cross-job model residency is the actual requirement.
-[Ray 2.46 actor lifetimes](https://github.com/ray-project/ray/blob/ray-2.46.0/doc/source/ray-core/actors/named-actors.rst)
-
-Compatible Python dependency, packaging-metadata and console-entrypoint changes
-require pinned reinstallation or environment re-preparation, followed by workload
-validation and refreshed dependency-freeze and hash evidence. They do not
-inherently require an image build. Copying source alone does not update installed
-metadata or regenerate console-script wrappers.
-[PyPA entry points specification](https://packaging.python.org/en/latest/specifications/entry-points/)
-
-Rebuild or choose another compatible base image when the change requires different
-image-owned Python, Torch/CUDA, native libraries, OS packages or baked vendor
-components. Source delivery does not repair native ABI mismatches or SkyPilot
-bootstrap incompatibility. Retain normal immutable-image release validation.
-
-This recipe prepares pinned Ray, LanceDB, Transformers and the supporting
-application stack in a separate environment once per session, records the
-resulting dependency freeze, and leaves model downloads outside the image.
-The image digest identifies the base environment; it does not attest the
-subsequently installed Python environment. Record both, including actual
-installed versions and the submitted UDF hash. Preparation is not an iteration
-measurement. Named package pins plus a recorded freeze are not a hash-locked
-transitive installation; dependency resolution remains part of its reproducibility
-boundary.
-The selected image's verified interpreter is `/usr/bin/python3.12`. It provides
-pip but lacks `ensurepip`; the workflow creates a system-site-packages venv with
-`--without-pip` and uses the base interpreter's `pip --python` option to install
-into it. This is standard pip behavior and requires no image build or OS package
-change. Startup repairs and cancelled preparation attempts are excluded from
-source-iteration measurements.
-[pip interpreter targeting](https://pip.pypa.io/en/stable/topics/python-option/)
-
-## Comparison with native SkyPilot source syncing
-
-| Path | What runs again after an application edit | What remains fixed | Evidence here |
-| --- | --- | --- | --- |
-| Ray Jobs `working_dir` | Source packaging/upload, job runtime setup, driver and new actors/model loading | Application cluster, image and prepared model files | Complete medium and two-node complex iterations and lifecycles measured above |
-| SkyPilot `workdir` + `exec` | Source sync and command execution, including any model load in that command | Allocated cluster and setup environment | Architectural analysis only |
-| Local Docker source mount | New container/process and workload | Cached image and fixed dependency directory | Historical CPU measurement below |
-| Existing NPA staging/overlay | NPA source transfer/setup, scheduled stage and model initialization | Compatible tool image | Existing implementation inspected; remote performance not measured |
-
-Pinned SkyPilot `exec` synchronizes workdir and executes the command while
-skipping provisioning, setup and file-mount synchronization. A changed setup or
-file mount needs the corresponding launch/sync path. `.skyignore` replaces the
-default `.gitignore`/`.git/info/exclude` filtering, so inspect the actual source
-payload. Use NPA's bootstrapped SkyPilot executable for the selected release.
-[SkyPilot v0.12.2 execution](https://github.com/skypilot-org/skypilot/blob/v0.12.2/sky/execution.py#L772),
-[SkyPilot source syncing](https://docs.skypilot.ai/en/latest/examples/syncing-code-artifacts.html)
-
-Do not infer a speedup without running the same workload through both paths.
-The Jobs SDK submission interval includes package hashing/upload and its submit
-request. Keep it separate from environment preparation, model initialization,
-synchronized GPU work, aggregation, artifact persistence and total wall time.
-Compare durations within each process; do not subtract unsynchronized timestamps
-across worker nodes.
+Those runs found real cold-start boundaries: the published non-root LanceDB
+image lacked `sudo` required by SkyPilot SSH bootstrap; the selected PyTorch
+interpreter has pip but no ensurepip; application and management worker-port
+ranges must be disjoint. The old recipe also needed API/controller and S3 finish
+repairs. The redesigned path removes the latter protocol rather than asking
+developers to reproduce it. Earlier diagnostic evidence remains private.
 
 ## Historical CPU measurement: 2026-09-04
 
@@ -427,15 +285,16 @@ same, with **zero image builds**. The image was cached; dependency preparation
 was excluded. This is evidence of a working development loop, not a measured
 speedup over rebuilding or a Ray benchmark.
 
-See the [complete reproduction](../testing/fast-source-iteration.md) for the
-executed workload, source-change proof, artifacts, commands, and measured limits.
+The historical command transcript, source-change proof and artifact hashes remain
+in the preserved audit evidence. The current guide describes the redesigned GPU
+Ray Jobs path, not this earlier CPU experiment.
 
 ## Historical audit-only repository validation
 
-After reconciliation with current main, repository Ruff, 13,479-test
+After reconciliation with that audit's then-current main, repository Ruff, 13,479-test
 collection, 2,564 combined guardrail/source-staging/SkyPilot-renderer/dataset
 tests, CLI documentation drift, and the reproduction's shell syntax/link checks
-passed. The documentation embeds the executed workload and
+passed. That audit documentation embedded the executed CPU workload and
 runner; staged confidentiality and credential scans passed.
 
 The full `make test` run reported 12,929 passed, 36 skipped, 12 deselected,
@@ -451,11 +310,13 @@ an empty `git diff origin/main` before rerunning them:
   environment lacks `huggingface_hub`. Installing that optional runtime package
   would introduce a real fetch instead of repairing test isolation.
 
-The same Cosmos failure is present in the base's
+The same Cosmos failure appeared in that historical base's
 [Python 3.12 CI job](https://github.com/nebius/nebius-physical-ai/actions/runs/33911450997/job/101148584343).
-Its test, implementation, conftest, and CI workflow remain unchanged in the
-subsequent main revision used by this audit.
+Main subsequently fixed it: the isolated test passed after reconciliation with
+main revision `0143535e40746bdfe06b0f8cb87fb5e3217bcadc`, without a local test or
+environment change. The former failure is not a current validation exemption.
 
-These are qualified base/environment failures, not a claim that the complete
-suite passed. That audit-only revision changed no product code or tests. Detailed reproduction
-and file-identity evidence is retained outside Git.
+Those historical base/environment failures do not mean the earlier complete
+suite passed. That audit-only revision changed no product code or tests.
+Detailed reproduction and file-identity evidence remains outside Git; final
+redesign repository validation is reported separately after its gates complete.

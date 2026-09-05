@@ -146,62 +146,6 @@ inventing YAML fields.
 
 ## Runtime features (v0.0.1+)
 
-### Application runtimes in immutable images
-
-Set `config.runtime_setup: image` when a workflow runs customer application
-commands in an existing image and the application owns its Python environment
-and source delivery. This mode applies to every executable state in the workflow:
-use `run.argv` or `run.shell`, and pin each resolved image by its registry-qualified
-SHA-256 digest. A mutable image tag, a `toolRef`, or combining image mode with
-`require_baked_npa` is rejected.
-
-```yaml
-config:
-  runtime_setup: image
-  runtime_image: "registry.example.invalid/application@sha256:0000000000000000000000000000000000000000000000000000000000000000"
-resources:
-  application:
-    cloud: kubernetes
-    image: "{{config.runtime_image}}"
-    accelerators: H100:1
-states:
-  application:
-    run:
-      argv: ["/opt/application/bin/python", "/app/driver.py"]
-    resources: application
-    terminal: true
-```
-
-Supply the real image digest and application command before submitting. NPA
-retains workflow state, resource placement, model-cache mounts, credential
-forwarding and cancellation. It does not install NPA, inject an NPA source
-overlay, change `PYTHONPATH`, or replace the application's interpreter. The image
-must still satisfy SkyPilot's worker bootstrap requirements. Application
-dependencies, runtime-fetched models, source provenance and declared S3 outputs
-remain the application's responsibility. This mode does not attest an NPA source
-revision; `require_baked_npa` keeps its separate source-attestation contract.
-
-The [Ray CLIP development session](../../npa/workflows/workbench/npa-workflows/ray-clip-development-session.yaml)
-uses this mode to keep SkyPilot in charge of the workflow while the
-[application client](../../npa/workflows/workbench/ray-clip-development/README.md)
-submits source updates through standard Ray Jobs. Its application Ray runtime is
-separate from SkyPilot's management runtime. The recipe reuses an official
-PyTorch runtime image, prepares its pinned Python stack once per session, and
-ships the explicitly selected real Workbench UDF with the application through
-Ray; record that source hash and dependency freeze separately from the image
-digest. SkyPilot SSH bootstrap still requires a compatible image runtime user
-and prerequisites; a non-root image without `sudo` can fail before Ray starts.
-Reach the loopback Jobs endpoint
-through authenticated forwarding, submit only reviewed application files, and
-persist artifacts before finishing the session. Match `config.gpus_per_node`
-to the per-node accelerator request. The recipe supports multiple GPU workers
-on one node or across `config.nodes`; report the actual physical node/GPU scope.
-The recipe's new source jobs create new actors and reload their models. Changes
-to CUDA, native extensions or incompatible dependencies still require a compatible
-image or a new build.
-
-### Submission and runtime controls
-
 | Flag / module | Behavior |
 | --- | --- |
 | `--persist-state` | Write `npa-workflow/manifest.json` + `status.json` under `config.prefix` |

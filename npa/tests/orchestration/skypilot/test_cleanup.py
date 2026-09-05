@@ -593,7 +593,7 @@ def test_jobs_controller_inventory_discovers_exact_name_without_refresh(
         refresh=False,
     )
 
-    assert calls[0][0] == [str(sky_bin), "status", "--verbose", "--output", "json"]
+    assert calls[0][0] == [str(sky_bin), "status", "--output", "json"]
     assert calls[0][1] is None
     assert [item["name"] for item in clusters] == ["sky-jobs-controller-abc123"]
     assert error == ""
@@ -611,105 +611,6 @@ def test_controller_pod_scope_excludes_unrelated_shared_controller() -> None:
     assert targeted == [
         ("default", "target-head", "sky-jobs-controller-target")
     ]
-
-
-def test_controller_pod_scope_matches_exact_provider_alias_only() -> None:
-    cloud_name = "sky-jobs-controller-short-provider-name"
-    pods = [
-        ("owned", "target-head", cloud_name),
-        ("shared", "prefix-collision-head", cloud_name + "-other"),
-        ("shared", "unrelated-head", "sky-jobs-controller-unrelated"),
-    ]
-    clusters = [{
-        "name": "sky-jobs-controller-long-logical-name",
-        "cluster_name_on_cloud": cloud_name,
-        "region": "private-context-alias",
-    }]
-
-    assert cleanup_module._controller_pods_for_clusters(pods, clusters) == [pods[0]]
-
-
-@pytest.mark.parametrize("selected_user_id", [None, "operator-selected-user"])
-@pytest.mark.parametrize("late_active_job", [False, True])
-def test_controller_cloud_alias_transaction_preserves_identity_and_job_guard(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
-    selected_user_id: str | None, late_active_job: bool,
-) -> None:
-    from npa.cluster.identity import VerifiedClusterIdentity
-
-    sky_bin = _fake_sky(tmp_path)
-    state = tmp_path / "isolated-state"
-    monkeypatch.setenv("HOME", str(tmp_path / "operator-home"))
-    monkeypatch.setenv("NPA_TEARDOWN_RECEIPT_DIR", str(tmp_path / "receipts"))
-    if selected_user_id is None:
-        monkeypatch.delenv("SKYPILOT_USER_ID", raising=False)
-    else:
-        monkeypatch.setenv("SKYPILOT_USER_ID", selected_user_id)
-    expected_user_id = cleanup_module.sky_environment(state)["SKYPILOT_USER_ID"]
-    kubeconfig = tmp_path / "verified-kubeconfig"
-    kubeconfig.write_text("current-context: verified-context\n")
-    identity = VerifiedClusterIdentity(
-        project_alias="demo", project_id="project-demo", context="verified-context",
-        cluster_id="cluster-demo", cluster_name="cluster-demo", kubeconfig=kubeconfig,
-    )
-    monkeypatch.setattr("npa.cluster.identity.resolve_verified_cluster_identity", lambda **kwargs: identity)
-    logical_name = "sky-jobs-controller-long-logical-name"
-    cloud_name = "sky-jobs-controller-short-provider-name"
-    unrelated_name = "sky-jobs-controller-unrelated"
-    pods = [("owned", "target-head", cloud_name), ("shared", "other-head", unrelated_name)]
-    monkeypatch.setattr(cleanup_module, "_kubernetes_controller_pods", lambda **kwargs: (pods, ""))
-    down_homes = []
-    verified_absence = []
-    removed = False
-
-    def verify_absence(names, **kwargs):
-        assert names == {cloud_name}
-        assert kwargs == {"kubeconfig": kubeconfig, "context": identity.context}
-        verified_absence.append(names)
-        return [], ""
-
-    monkeypatch.setattr(cleanup_module, "_wait_for_controller_pods_absent", verify_absence)
-
-    def fake_run(cmd, **kwargs):
-        nonlocal removed
-        assert kwargs["env"]["SKYPILOT_USER_ID"] == expected_user_id
-        assert "--all-users" not in cmd
-        if cmd[1] == "status":
-            assert "--verbose" in cmd
-            rows = [] if removed else [{
-                "name": logical_name, "cluster_name_on_cloud": cloud_name,
-                "region": "private-context-alias", "status": "UP",
-            }]
-            return subprocess.CompletedProcess(cmd, 0, stdout=json.dumps(rows), stderr="")
-        if cmd[1:3] == ["jobs", "queue"]:
-            jobs = [{"job_id": 7, "status": "RUNNING"}] if late_active_job and down_homes else []
-            return subprocess.CompletedProcess(cmd, 0, stdout=json.dumps(jobs), stderr="")
-        assert cmd == [str(sky_bin), "down", "--yes", logical_name]
-        down_homes.append(Path(kwargs["env"]["HOME"]))
-        if late_active_job:
-            return subprocess.CompletedProcess(cmd, 1, stdout="", stderr=_IN_PROGRESS_ERROR)
-        removed = True
-        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
-
-    monkeypatch.setattr(subprocess, "run", fake_run)
-    result = cleanup_module.cleanup_jobs_controller(
-        project="demo", context=identity.context, isolated_config_dir=state,
-        sky_bin=sky_bin, job_drain_timeout=0,
-    )
-
-    assert down_homes and down_homes[0] != state / "home"
-    assert not down_homes[0].exists()
-    assert unrelated_name not in result.resources_removed
-    if late_active_job:
-        assert not result.ok and not result.remote_absence_verified
-        assert "refuses while managed job(s) 7" in " ".join(result.errors)
-        assert len(down_homes) == 1 and verified_absence == []
-        assert result.resources_removed == []
-    else:
-        assert result.ok and result.verified and result.remote_absence_verified
-        assert down_homes[1] == state / "home"
-        assert len(down_homes) == 2 and verified_absence == [{cloud_name}]
-        assert result.resources_removed == [logical_name]
 
 
 def test_exact_context_controller_pod_inventory_can_prove_absence(

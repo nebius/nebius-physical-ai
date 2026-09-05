@@ -13,7 +13,7 @@ import yaml
 from npa.orchestration.npa_workflow.errors import NpaWorkflowError
 from npa.orchestration.npa_workflow.interpreter import ExecutionPlan, PlanStep  # noqa: F401
 from npa.orchestration.npa_workflow.scheduler import build_scheduler_task
-from npa.orchestration.npa_workflow.spec import NpaWorkflowSpec, runtime_setup_mode
+from npa.orchestration.npa_workflow.spec import NpaWorkflowSpec
 from npa.workbench.model_cache import (
     RUNTIME_KUBERNETES,
     RUNTIME_PREMOUNTED,
@@ -951,9 +951,7 @@ def render_run_preamble_for_tool(tool_ref: str, *, config: Mapping[str, Any]) ->
     return render_self_hosted_vlm_preamble(config)
 
 
-def render_task_run_script(
-    command: Sequence[str], *, preamble: str = "", image_runtime: bool = False
-) -> str:
+def render_task_run_script(command: Sequence[str], *, preamble: str = "") -> str:
     """Turn an argv list into a SkyPilot ``run:`` shell script.
 
     ``preamble`` is shell inserted just before the command (after the npa
@@ -965,13 +963,6 @@ def render_task_run_script(
         raise NpaWorkflowRenderError("cannot render empty command for SkyPilot task")
     quoted = " ".join(shlex.quote(str(part)) for part in command)
     preamble_block = f"{preamble.rstrip(chr(10))}\n" if preamble.strip() else ""
-    if image_runtime:
-        # Customer applications choose their own interpreter and source delivery
-        # (e.g. Ray Jobs runtime_env). Never prepend NPA's source or interpreter
-        # shims, source profile scripts, or probe/import an unrelated NPA package.
-        # Retain the stage shell so the durable workflow's EXIT trap can publish
-        # terminal status after either a successful or failed application exit.
-        return f"set -euo pipefail\n{preamble_block}{quoted}\n"
     return (
         "set -euo pipefail\n"
         # Use unbraced $HOME/$PATH so SkyPilot placeholder lint stays clean.
@@ -1536,13 +1527,6 @@ def render_setup_for_tool(
 ) -> str:
     """Return a SkyPilot ``setup:`` block for a toolRef."""
 
-    if runtime_setup_mode(config) == "image":
-        if tool_ref:
-            raise NpaWorkflowRenderError(
-                "config.runtime_setup=image supports raw run commands only; "
-                "toolRef requires the NPA runtime"
-            )
-        return ""
     if not options.default_setup:
         return ""
     if tool_ref.startswith("workbench.content_agents."):
@@ -1837,12 +1821,6 @@ def build_skypilot_task_doc(
     """Build one SkyPilot task document from a planned step."""
 
     scheduler_task = build_scheduler_task(spec, step, run_id=run_id)
-    image_runtime = runtime_setup_mode(spec.config) == "image"
-    if image_runtime and scheduler_task.get("tool_ref"):
-        raise NpaWorkflowRenderError(
-            "config.runtime_setup=image supports raw run commands only; "
-            "toolRef requires the NPA runtime"
-        )
     resources = normalize_resources(
         scheduler_task.get("resources") or {},
         accelerator_overrides=options.gpu_accelerator_overrides,
@@ -1863,30 +1841,25 @@ def build_skypilot_task_doc(
         "on",
     }
     expected_source_sha = str(spec.config.get("source_sha") or "").strip().lower()
-    if require_baked or image_runtime:
+    if require_baked:
         from npa.orchestration.skypilot.image_bootstrap_contract import (
             ImageBootstrapContractError,
             parse_oci_reference,
         )
 
-        image_requirement = (
-            "config.runtime_setup=image is enabled"
-            if image_runtime
-            else "config.require_baked_npa is enabled"
-        )
         try:
             parsed_image = parse_oci_reference(image)
         except ImageBootstrapContractError as exc:
             raise NpaWorkflowRenderError(
                 f"planned step {scheduler_task['name']!r} requires a "
                 "registry-qualified immutable image because "
-                f"{image_requirement}"
+                "config.require_baked_npa is enabled"
             ) from exc
         if not parsed_image.digest:
             raise NpaWorkflowRenderError(
                 f"planned step {scheduler_task['name']!r} requires a "
                 "registry-qualified immutable image because "
-                f"{image_requirement}"
+                "config.require_baked_npa is enabled"
             )
     if require_baked and (
         len(expected_source_sha) != 40
@@ -1925,7 +1898,7 @@ def build_skypilot_task_doc(
         envs["AWS_ENDPOINT_URL"] = options.aws_endpoint_url
     if image:
         envs["NPA_TASK_IMAGE"] = image.removeprefix("docker:")
-    if expected_source_sha and not image_runtime:
+    if expected_source_sha:
         if len(expected_source_sha) != 40 or any(
             char not in "0123456789abcdef" for char in expected_source_sha
         ):
@@ -1999,7 +1972,6 @@ def build_skypilot_task_doc(
         "envs": envs,
         "run": render_task_run_script(
             command,
-            image_runtime=image_runtime,
             preamble=render_model_cache_shell(cache_root, mounted=cache_mounted)
             + render_run_preamble_for_tool(
                 str(scheduler_task.get("tool_ref") or ""), config=spec.config
@@ -2073,10 +2045,10 @@ def build_skypilot_task_doc(
     # it once with `npa configure --src-s3-uri` so the next shell still finds it.
     import os
 
-    src_uri = "" if image_runtime else resolve_src_s3_uri()
-    if require_baked or image_runtime:
-        # The attested NPA image owns its runtime; a customer application owns
-        # its image runtime and source delivery. Neither uses NPA source staging.
+    src_uri = resolve_src_s3_uri()
+    if require_baked:
+        # Exact images must contain the full runtime and pinned dependencies. Never
+        # inject a source tree or install packages after a task acquires a GPU.
         pass
     elif not image:
         if not src_uri:

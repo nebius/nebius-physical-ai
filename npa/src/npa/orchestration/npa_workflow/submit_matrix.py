@@ -338,25 +338,6 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         ),
     ),
     SubmitLiveCase(
-        "ray-clip-development-session.yaml",
-        "multi",
-        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
-        plan_only=True,
-        plan_only_justification=(
-            "the dedicated Ray Jobs client and scoped finish marker must be "
-            "coordinated for this application session; the generic submit harness "
-            "cannot complete that external session protocol"
-        ),
-        notes=(
-            "Real GPU CLIP development qualification uses "
-            "npa/workflows/workbench/ray-clip-development/submit.py for baseline, "
-            "changed-source, restoration, actor recovery and exact-job cancellation. "
-            "The session recipe separately owns readiness, authenticated forwarding, "
-            "durable artifact publication and the scoped finish marker. Shared matrix "
-            "coverage is rendering only; it does not claim GPU execution."
-        ),
-    ),
-    SubmitLiveCase(
         "cosmos3-checkpoint-eval.yaml",
         "gpu",
         secret_envs=("HF_TOKEN", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
