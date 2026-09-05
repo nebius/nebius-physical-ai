@@ -65,6 +65,24 @@ For live validation also load `skills/atomic/gpu-selection/SKILL.md`,
    Retain a successful dev tag only when the documented release policy requires
    it to preserve the release's shared digest/provenance.
 
+## Verify What A Scanner Actually Reads
+
+A successful scanner exit proves only its configured coverage. Check the pinned
+implementation for base-layer, binary, extension, size, and chunk exclusions.
+Trivy's secret scanner can exclude base layers and binary files; a file-oriented
+Gitleaks invocation is not automatically a complete-byte check either. Keep the
+mandatory vulnerability, secret, license, and payload gates, and record their
+limits accurately.
+
+For an additional complete-byte check, bind the exact saved-image hash, OCI
+config and ordered layers, scanner policy and dependencies, and observed byte
+and file counts. Read every ancestor layer, including files deleted later, plus
+archive metadata and padding. Unaccounted bytes, malformed archives, missing
+confidentiality configuration, unfinished child processes, and incomplete counts
+must fail the check. Keep matches and input policy private; investigate each
+finding against exact bytes and provenance before publication. A public upstream
+filename alone is not proof that a match is harmless.
+
 ## Refusal Conditions
 
 Stop before publication if any mandatory evidence is missing, a scan is

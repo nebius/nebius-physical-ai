@@ -422,6 +422,9 @@ direct service-to-service file coupling.
 
 ## Related docs
 
+- [Complete-byte image checks](image-byte-scanning.md) — cuRobo's additional
+  pre-push and exact-digest archive scan, policy configuration, and coverage limits.
+
 - Cosmos Transfer 2.5 has an artifact-by-artifact redistribution record at
   `npa/docker/workbench/cosmos2-transfer/REDISTRIBUTION.md`; its `public`
   classification is valid only after the registry-image audits named there pass.
