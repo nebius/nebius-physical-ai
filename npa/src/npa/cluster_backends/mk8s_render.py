@@ -10,6 +10,7 @@ its provider domain for the target region, and drive it with a rendered
 from __future__ import annotations
 
 from pathlib import Path
+import re
 from typing import Any, Final
 
 from npa.cluster.gpu_driver import (
@@ -28,6 +29,35 @@ from npa.cluster_backends.mig import (
     GPU_MIG_MANAGER_VERSION,
     GPU_OPERATOR_VERSION,
 )
+
+
+def patch_explicit_region_defaults(text: str) -> str:
+    """Allow explicit node selectors in regions absent from older recipes.
+
+    Preserve the upstream defaults for known regions. Unknown regions acquire
+    no inferred platform, preset, or fabric; inactive pools may remain null.
+    Only rewrite the legacy expressions whose semantics are known here.
+    """
+
+    text = re.sub(
+        r"(current_region_defaults\s*=\s*)local\.regions_default\[var\.region\]",
+        r"\1try(local.regions_default[var.region], {})",
+        text,
+    )
+    for field in (
+        "cpu_nodes_platform", "cpu_nodes_preset", "gpu_nodes_platform",
+        "gpu_nodes_preset", "infiniband_fabric",
+    ):
+        expression = f"coalesce(var.{field}, local.current_region_defaults.{field})"
+        # Looking up a missing default must not discard an explicit value:
+        # Terraform eagerly evaluates function arguments before coalesce.
+        replacement = (
+            f"try(coalesce(var.{field}, "
+            f"try(local.current_region_defaults.{field}, null)), null)"
+        )
+        text = text.replace(expression, replacement)
+    return text
+
 
 _EU_DOMAIN = "api.eu.nebius.cloud:443"
 

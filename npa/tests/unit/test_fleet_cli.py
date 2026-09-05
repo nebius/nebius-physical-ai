@@ -1296,6 +1296,57 @@ def test_prepare_install_dir_patches_eu_domain(tmp_path) -> None:
     assert not any("not patched" in m for m in msgs)
 
 
+def test_prepare_install_dir_supports_explicit_region_without_changing_source(tmp_path) -> None:
+    from npa.fleet import lifecycle as L
+    from npa.cluster_backends.mk8s_render import patch_explicit_region_defaults
+
+    root = _fake_recipe(tmp_path, 'provider "nebius" {}\n')
+    fields = (
+        "cpu_nodes_platform", "cpu_nodes_preset", "gpu_nodes_platform",
+        "gpu_nodes_preset", "infiniband_fabric",
+    )
+    original = (
+        'locals {\n  regions_default = { known = { cpu_nodes_platform = "cpu-d3" } }\n'
+        '  current_region_defaults = local.regions_default[var.region]\n'
+        + "".join(
+            f"  {field} = coalesce(var.{field}, local.current_region_defaults.{field})\n"
+            for field in fields
+        )
+        + "}\n"
+    )
+    source = root / "k8s-training" / "locals.tf"
+    source.write_text(original)
+    (root / "k8s-training" / "helm.tf").write_text('module "gpu-operator" {}\n')
+    workdir = L._prepare_install_dir(
+        tmp_path / "installation", recipe_root=root, region="uk-south2",
+        cluster=ClusterSpec(
+            name="render", gpu_workload_profile="rtx-rendering",
+            gpu_nodes=NodePoolSpec(
+                count=1, platform="gpu-rtx6000-a", preset="8gpu-192vcpu-1744gb",
+            ),
+            cpu_nodes=NodePoolSpec(count=1, platform="cpu-d3", preset="48vcpu-192gb"),
+        ),
+        ssh_public_key="ssh-test",
+    )
+    patched = (workdir / "locals.tf").read_text()
+    assert source.read_text() == original
+    assert 'known = { cpu_nodes_platform = "cpu-d3" }' in patched
+    assert "try(local.regions_default[var.region], {})" in patched
+    for field in fields:
+        assert f"try(local.current_region_defaults.{field}, null)" in patched
+    assert patch_explicit_region_defaults(patched) == patched
+    tfvars = (workdir / "terraform.tfvars").read_text()
+    assert '"gpu-rtx6000-a"' in tfvars and '"8gpu-192vcpu-1744gb"' in tfvars
+    assert "uk-south2" not in patched  # no invented per-region defaults
+
+
+def test_region_compatibility_patch_preserves_custom_recipe_expressions() -> None:
+    from npa.cluster_backends.mk8s_render import patch_explicit_region_defaults
+
+    custom = 'locals { current_region_defaults = var.operator_defaults }\n'
+    assert patch_explicit_region_defaults(custom) == custom
+
+
 def test_prepare_install_dir_warns_when_provider_domain_not_matched(tmp_path) -> None:
     from npa.fleet import lifecycle as L
 
@@ -2721,6 +2772,11 @@ def _destroy_one_with_mocked_terraform(tmp_path, monkeypatch, *, destroy_fails: 
     )
     calls: list[list[str]] = []
     lock_active = False
+    cached_package = tmp_path / "cached-package"
+    cached_package.mkdir()
+    cached_binary = cached_package / "provider"
+    cached_binary.write_text("verified provider")
+    installed_package = install / L._K8S_TRAINING_SUBDIR / ".terraform/providers/package"
 
     class CacheLock:
         def __enter__(self):
@@ -2731,6 +2787,7 @@ def _destroy_one_with_mocked_terraform(tmp_path, monkeypatch, *, destroy_fails: 
         def __exit__(self, *_args):
             nonlocal lock_active
             lock_active = False
+            cached_binary.write_text("a later init rewrote the cache")
 
     monkeypatch.setattr(
         L._mk8s_execution,
@@ -2742,8 +2799,11 @@ def _destroy_one_with_mocked_terraform(tmp_path, monkeypatch, *, destroy_fails: 
         calls.append(args)
         if "init" in args:
             assert lock_active is True
+            installed_package.parent.mkdir(parents=True)
+            installed_package.symlink_to(cached_package, target_is_directory=True)
         if "destroy" in args:
             assert lock_active is False
+            assert (installed_package / "provider").read_text() == "verified provider"
         if destroy_fails and "destroy" in args:
             raise RuntimeError("terraform destroy failed")
 

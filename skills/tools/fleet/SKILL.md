@@ -176,6 +176,17 @@ depends on it.
 
 ## Procedure
 
+Parallel applies use a shared download cache only during initialization. NPA
+holds the cache lock through initialization and copying each target's selected
+providers into its own Terraform data directory. Later initialization can then
+rewrite cached downloads without changing binaries used by another apply or
+destroy. Dependency-lock checksum verification remains enabled.
+
+Older recipe sources can omit newer regions from their default-node table.
+Materialization preserves known-region defaults while allowing explicit
+platforms and presets in other regions. It supplies no guessed GPU or fabric;
+resolve those values from the provider inventory before deployment.
+
 1. Keep committed files public-safe: never hardcode tenant/project/registry IDs
    or SSH keys. The spec resolves tenant/region from `~/.nebius/config.yaml` and
    `~/.npa/config.yaml` when its fields are empty; the SSH public key comes from

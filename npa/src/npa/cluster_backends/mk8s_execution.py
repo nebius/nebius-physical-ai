@@ -19,6 +19,7 @@ from npa.cluster.gpu_driver import resolve_gpu_driver_strategy
 from npa.cluster.gpu_health import GpuHealthConfig, validate_gpu_health
 from npa.cluster_backends.process import (
     _redact as _redact_output,
+    isolate_terraform_providers,
     require_bin as _require_bin,
     run_capture as _run_capture,
     run_stream as _run_stream,
@@ -34,6 +35,7 @@ from npa.cluster_backends.mk8s_model import (
 from npa.cluster_backends.mig import wait_for_mig_ready
 from npa.cluster_backends.mk8s_render import (
     gpu_node_group_layout,
+    patch_explicit_region_defaults,
     patch_provider_domain,
     provider_domain,
     render_tfvars,
@@ -552,6 +554,14 @@ def _prepare_install_dir(
     if modules_dst.exists():
         shutil.rmtree(modules_dst, ignore_errors=True)
     shutil.copytree(recipe_root / _MODULES_SUBDIR, modules_dst)
+
+    locals_file = workdir / "locals.tf"
+    if locals_file.is_file():
+        original = locals_file.read_text()
+        patched = patch_explicit_region_defaults(original)
+        if patched != original:
+            locals_file.write_text(patched)
+            _log(on_status, "enabled explicit node settings beyond legacy recipe regions")
 
     # kubectl 1.36's `debug --quiet` suppresses both attached verifier output and
     # the generated debugger-pod name. That defeats success-evidence checking and
@@ -2109,6 +2119,7 @@ def _deploy_one_cluster(
                 timeout=900,
                 log_path=log_path,
             )
+            isolate_terraform_providers(workdir, env)
         recovered_identity = _reconcile_tainted_node_groups(
             terraform_bin=terraform_bin,
             workdir=workdir,
@@ -2470,6 +2481,7 @@ def _destroy_one_cluster(
                 timeout=900,
                 log_path=log_path,
             )
+            isolate_terraform_providers(workdir, env)
         _tf_run(
             [terraform_bin, "destroy", "-auto-approve", "-input=false"],
             cwd=workdir,
