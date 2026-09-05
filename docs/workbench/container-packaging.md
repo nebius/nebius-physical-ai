@@ -78,6 +78,13 @@ the same catalog. The repository security gate rejects fixed CRITICAL findings;
 the full inventory separately records six unfixed CRITICAL findings, with no
 new ignore entries. Runtime GPU and workflow acceptance remain pending.
 
+The EVG generation wrapper is also privately published from
+`b7ae4f198b20f087afef46d31fffee367eb4fa2e`, with independently
+verified registry bytes, bootstrap, complete scans and SPDX evidence in the
+catalog. Its full inventory retains six unfixed CRITICAL findings; the
+repository's fixed-CRITICAL policy passed without new ignore entries. Native
+GPU/workflow acceptance remains separate and pending.
+
 The RF-DETR compatibility worker supports inference. It removes inherited
 W&B/torchtitan training tools and their unused system development toolchain
 through package-manager dependency handling, while retaining the vendor service

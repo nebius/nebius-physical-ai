@@ -183,7 +183,7 @@ grants redistribution rights.
 | IAA Qwen Image Edit selected parent | `docker.io/vllm/vllm-omni@sha256:8b0cc5438eb27b34cdfd22011b735da6a94835a09e9c56ddf9e8cb300d679919` | Aligned upstream vLLM/Omni 0.22.0 security update; wrapper publication/bootstrap verified; GPU acceptance pending |
 | EVG Cosmos3 Super Image2Video upstream parent | `docker.io/vllm/vllm-omni@sha256:970dee6658ea223f615b2438ce41e47f1d5322225482546e6e6bc5d8134f757c` | Exact wrapper parent; upstream worker bootstrap failed |
 | IAA generation worker | `<operator-registry>/npa-paidf-image-edit-sky@sha256:ef7450cfc12efb92a0260f09df9a83f4b0590ccb4a9fc6157b819721adc56cd8` | Operator-private publication verified 2026-09-05; bootstrap and repository security policy passed; GPU acceptance pending |
-| EVG generation worker | `<operator-registry>/npa-paidf-event-video-sky@sha256:<digest>` | Restricted compatibility build; byte scans and GPU acceptance pending |
+| EVG generation worker | `<operator-registry>/npa-paidf-event-video-sky@sha256:277a255e8bce7bd6e0e8561f2cc6cca2ecc86abdb791c57b33eca287d0d0d29a` | Operator-private publication verified 2026-09-05; bootstrap and repository security policy passed; GPU acceptance pending |
 | IAA/EVG attribute-search upstream parent | `nvcr.io/nvidia/paidf-event-and-person-attribute-search-service@sha256:0f581ff6d92efd391281e5787a8b1fda76556443ade47c1f5d59d4c345a01f6a` | Exact restricted NGC wrapper parent; original entrypoint does not forward worker argv |
 | EVG detection/tracking upstream parent | `nvcr.io/nvidia/paidf-detection-and-tracking-rfdetr-service@sha256:6b35e63b95cab7cd772906bcb08be978de7526427f0d1925ab84439dd4a9561e` | Exact restricted NGC wrapper parent; original entrypoint does not forward worker argv |
 | EVG captioning upstream parent | `nvcr.io/nvidia/paidf-captioning-service@sha256:17e1e3f53cc66342183f7d0b6eed76907993bb325a13db90c46d9a8cf664d804` | Exact restricted NGC wrapper parent; original entrypoint does not forward worker argv |
@@ -218,6 +218,15 @@ The SPDX 2.3 SBOM contains 1,782 packages. Public auxiliary test/model tables
 inherited from the parent were reviewed against exact source bytes; actual
 workflow checkpoints are fetched at runtime. GPU and native workflow acceptance
 remain pending.
+
+The EVG generation worker was privately published from
+`b7ae4f198b20f087afef46d31fffee367eb4fa2e` and independently
+verified against its remote OCI index, runnable child, layers and provenance.
+Both shell bootstrap modes and NPA installation preserving vendor files passed.
+Its full inventory records six unfixed CRITICAL findings, 216 HIGH, 3,400 MEDIUM
+and 433 LOW, with zero secrets. The fixed-CRITICAL policy passed without new
+ignore entries, including clearance of the earlier NLTK finding. Its SPDX 2.3
+SBOM contains 1,831 packages. GPU and native workflow acceptance remain pending.
 
 The licensing and runtime-fetch boundary is recorded in
 `skills/NOTICE-NVIDIA-PAIDF`. The machine-readable packaging contract includes
