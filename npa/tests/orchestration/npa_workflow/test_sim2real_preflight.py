@@ -22,6 +22,11 @@ def _config(**overrides):
         "viewer_image": digest,
         "isaac_cache_pvc": "npa-isaac-cache",
         "cosmos3_model": "nvidia/Cosmos3-Super-Reasoner",
+        "env_count": "10000",
+        "train_fraction": "0.8",
+        "rollout_count": "64",
+        "validation_count": "64",
+        "gold_count": "64",
     }
     config.update(overrides)
     return config
@@ -108,6 +113,108 @@ def test_static_preflight_rejects_unresolved_token_factory_key():
         token_factory_validator=lambda *_args: pytest.fail("missing key must not be probed"),
     )
     assert "could not be resolved" in "\n".join(item for item, _ in issues)
+
+
+@pytest.mark.parametrize(
+    ("env_count", "train_fraction", "rollout_count", "validation_count", "gold_count"),
+    [
+        ("64", "0.8", "64", "6", "7"),
+        ("80", "nan", "64", "8", "8"),
+        ("80", "inf", "64", "8", "8"),
+        ("640", "1e308", "64", "64", "64"),
+        ("640", "-1e308", "64", "64", "64"),
+        ("80", "1.0", "64", "3", "3"),
+        ("80", "0.8", "0", "8", "8"),
+        ("80", "0.8", "64", "9", "8"),
+        ("80", "0.8", "64", "8", "9"),
+        ("9", "0.8", "4", "3", "3"),
+        ("24", "0.8", "19", "3", "3"),
+        ("8", "0.8", "2", "3", "3"),
+    ],
+)
+def test_static_preflight_rejects_counts_larger_than_sealed_splits(
+    env_count, train_fraction, rollout_count, validation_count, gold_count
+):
+    issues = static_prerequisites(
+        _config(
+            env_count=env_count,
+            train_fraction=train_fraction,
+            rollout_count=rollout_count,
+            validation_count=validation_count,
+            gold_count=gold_count,
+        ),
+        requested_secret_envs=[
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "HF_TOKEN",
+            "NEBIUS_TOKEN_FACTORY_KEY",
+        ],
+        secret_values={"HF_TOKEN": "redacted", "NEBIUS_TOKEN_FACTORY_KEY": "redacted"},
+        hf_validator=lambda _token, repo: SimpleNamespace(ok=True, repo=repo),
+        token_factory_validator=lambda _key, model: SimpleNamespace(ok=True, model=model),
+    )
+
+    rendered = "\n".join(item for item, _ in issues)
+    assert "train/validation/gold" in rendered
+    assert "env_count=640" in "\n".join(fix for _, fix in issues)
+
+
+@pytest.mark.parametrize(
+    ("env_count", "train_fraction", "rollout_count", "validation_count", "gold_count"),
+    [
+        ("640", "0.8", "64", "64", "64"),
+        ("80", "0.8", "64", "8", "8"),
+        ("64", "0.8", "51", "6", "7"),
+        ("9", "0.8", "3", "3", "3"),
+        ("24", "0.8", "18", "3", "3"),
+        ("24", "0.01", "3", "10", "11"),
+    ],
+)
+def test_static_preflight_accepts_counts_that_fit_all_sealed_splits(
+    env_count, train_fraction, rollout_count, validation_count, gold_count
+):
+    issues = static_prerequisites(
+        _config(
+            env_count=env_count,
+            train_fraction=train_fraction,
+            rollout_count=rollout_count,
+            validation_count=validation_count,
+            gold_count=gold_count,
+        ),
+        requested_secret_envs=[
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "HF_TOKEN",
+            "NEBIUS_TOKEN_FACTORY_KEY",
+        ],
+        secret_values={"HF_TOKEN": "redacted", "NEBIUS_TOKEN_FACTORY_KEY": "redacted"},
+        hf_validator=lambda _token, repo: SimpleNamespace(ok=True, repo=repo),
+        token_factory_validator=lambda _key, model: SimpleNamespace(ok=True, model=model),
+    )
+
+    assert not any("train/validation/gold" in item for item, _ in issues)
+
+
+@pytest.mark.parametrize(
+    "key", ["env_count", "train_fraction", "rollout_count", "validation_count", "gold_count"]
+)
+@pytest.mark.parametrize("invalid_value", [None, "invalid"])
+def test_static_preflight_rejects_unparseable_split_inputs(key, invalid_value):
+    config = _config()
+    if invalid_value is None:
+        config.pop(key)
+    else:
+        config[key] = invalid_value
+
+    issues = static_prerequisites(
+        config,
+        requested_secret_envs=[],
+        secret_values={},
+        hf_validator=lambda *_args: pytest.fail("no token supplied"),
+        token_factory_validator=lambda *_args: pytest.fail("no key supplied"),
+    )
+
+    assert any("split inputs are missing or not numeric" in item for item, _ in issues)
 
 
 def _nodes(*, cpu="10", memory="40Gi", gpu="0", taints=None):
