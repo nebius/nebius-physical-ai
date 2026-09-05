@@ -43,14 +43,18 @@ Use the selected workload's access checks before provisioning GPUs. For the
 default Cosmos 3 generation workflow:
 
 ```bash
+npa workbench health preflight --checks nebius --json
 npa workbench health preflight --checks hf,s3 --json
 npa workbench health access --capability cosmos3 --json
 ```
 
-Gate: both commands exit successfully and the required checks pass. For another
-workload, use its documented capability and credential checks. `--offline` checks
-presence only. Resolve missing access on the provider's exact model page, then
-rerun the check; a token alone does not establish gated-model access.
+Gate: all three commands exit successfully and the required checks pass.
+The explicit `nebius` check verifies the selected CLI profile can authenticate;
+it does not prove permission to create every resource. For another
+workload, use its documented capability and credential checks. Offline service
+checks prove presence only; the Nebius check is skipped. Resolve missing access on
+the provider's exact model page, then rerun the check; a token alone does not
+establish gated-model access.
 
 The S3 health check lists the configured bucket. Submission also checks that it
 can write to the bucket resolved by the workflow. If those checks disagree,

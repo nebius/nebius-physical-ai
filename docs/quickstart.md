@@ -529,6 +529,15 @@ S3 bucket and access key); use `npa configure --show` for a read-only view of
 the file layout, or `npa configure --no-provision` for provider-free project and
 token setup with storage deliberately unselected.
 
+Before provisioning cloud resources, verify the selected Nebius CLI profile:
+
+```bash
+npa workbench health preflight --checks nebius --json
+```
+
+This opt-in check verifies authentication. Hosted Token Factory calls do not
+require it; resource creation still needs permission on the target project.
+
 <a id="5a-verify-the-path-works-zero-gpu-inference-nebius-token-factory"></a>
 
 ### 5a. Hosted text generation with Nebius Token Factory

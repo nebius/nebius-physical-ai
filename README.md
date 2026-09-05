@@ -158,7 +158,8 @@ project object storage. Without --provision, known-project setup must remain
 provider-free and leave storage unselected.
 Confirm the active identity can manage the project-scoped IAM objects that
 secure that storage. Then run npa configure --show,
-npa workbench health preflight --json, and
+npa workbench health preflight --json,
+npa workbench health preflight --checks nebius --json, and
 npa workbench health access --capability paidf,cosmos3 --json.
 
 Do not bypass a failed gate or provision GPU resources yet. If Hugging Face
