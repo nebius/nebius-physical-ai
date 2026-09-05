@@ -627,6 +627,8 @@ describe("NPA agent UI — embedded Foxglove viewer", () => {
 
   it("keeps the exact selected MCAP open when its card rerenders during preparation", () => {
     const config = stubFoxgloveApis();
+    let releaseExport;
+    let originalCard;
     const runRef = "npa1_mock_non_stock";
     const key = `${NON_STOCK_RUN_ID}/reports/sim2real.mcap`;
     const s3Uri = `s3://mock/${key}`;
@@ -637,8 +639,16 @@ describe("NPA agent UI — embedded Foxglove viewer", () => {
       s3Uri,
     );
     cy.intercept("POST", "/api/foxglove/export", (request) => {
-      applyExactArtifactConfig(config, exported);
-      request.reply({ delay: 900, statusCode: 200, body: exported });
+      // The rerender must happen during preparation. A fixed response delay
+      // can expire before the List click on CI, changing the resolved source
+      // and turning the next lookup into a legitimate inventory refresh.
+      return new Cypress.Promise((resolve) => {
+        releaseExport = () => {
+          applyExactArtifactConfig(config, exported);
+          request.reply({ statusCode: 200, body: exported });
+          resolve();
+        };
+      });
     }).as("rerenderedCardExport");
     cy.window().then((win) => {
       cy.stub(win, "open").as("rerenderedCardWindowOpen");
@@ -653,11 +663,19 @@ describe("NPA agent UI — embedded Foxglove viewer", () => {
     cy.wait("@nonStockArtifactList");
     cy.get(`button[data-action="open-foxglove-artifact"][data-key="${key}"]`)
       .should("be.enabled")
+      .then(($card) => { originalCard = $card[0]; })
       .click();
-    // A normal same-run inventory refresh replaces the card DOM node while
-    // the immutable run/ref/key export remains in flight.
+    cy.wrap(null).should(() => expect(releaseExport, "export preparation started").to.be.a("function"));
+    // A normal same-run cache-backed render replaces the card DOM node while
+    // the immutable run/ref/key export remains in flight. It must not refetch
+    // an inventory that is already complete.
     cy.get("#artifactLoadRunArtifacts").click();
-    cy.wait("@nonStockArtifactList");
+    cy.get("@nonStockArtifactList.all").should("have.length", 1);
+    cy.get(`button[data-action="open-foxglove-artifact"][data-key="${key}"]`).should(($card) => {
+      expect($card[0], "the same selected MCAP has a replacement card").not.to.equal(originalCard);
+      expect($card).to.have.attr("aria-busy", "true");
+    });
+    cy.then(() => releaseExport());
     cy.wait("@rerenderedCardExport");
     expectMockAppState("ready");
     cy.get("#viewerPaneFoxglove")
@@ -1291,15 +1309,20 @@ describe("NPA agent UI — embedded Foxglove viewer", () => {
   it("discards a stale export response after a run switch without opening or overwriting the current run", () => {
     stubFoxgloveApis();
     let releaseExport;
-    cy.intercept("POST", "/api/foxglove/export", (request) =>
-      new Cypress.Promise((resolve) => {
+    cy.intercept("POST", "/api/foxglove/export", (request) => {
+      // Hold the response until the new run is actually selected. A fixed
+      // delay can expire while Cypress is typing on a busy browser host,
+      // turning this into a valid completed export instead of a stale one.
+      return new Cypress.Promise((resolve) => {
         releaseExport = () => {
-          request.reply({ statusCode: 200,
-            body: foxgloveExportResponse(String(request.body.run_id || "mock-run"), { reused: true }) });
+          request.reply({
+            statusCode: 200,
+            body: foxgloveExportResponse(String(request.body.run_id || "mock-run"), { reused: true }),
+          });
           resolve();
         };
-      }),
-    ).as("staleExport");
+      });
+    }).as("staleExport");
     cy.window().then((win) => {
       const replace = cy.stub().as("staleNavigate");
       const close = cy.stub().as("stalePopupClose");

@@ -2127,7 +2127,7 @@ def test_bootstrap_embeds_franka_rerun_ux() -> None:
     assert "allowfullscreen" in source
     assert "RERUN_RECORDING_PATH" in source
     assert "location.origin + RERUN_RECORDING_PATH" in source
-    assert "rrdUrl = await resolveRerunRecordingUrl();" in source
+    assert "rrdUrl = await resolveRerunRecordingUrl(isCurrent);" in source
     assert "rrdUrl.startsWith" in source
     assert "location.origin + rrdUrl" in source
     assert "_rerun_iframe_url" in source
@@ -2199,7 +2199,7 @@ def test_bootstrap_embeds_franka_rerun_ux() -> None:
     assert "_AGENT_RRD_PROXY_EMBED" in source
     assert "_STATE_LOCK" in source
     assert "Process-wide lock" in source
-    assert "rrdUrl = await resolveRerunRecordingUrl();" in source
+    assert "rrdUrl = await resolveRerunRecordingUrl(isCurrent);" in source
     assert "?run_id=" in source
     assert '"/api/sim-viz/status?run_id="' in source
     # Media preview uses authenticated blob URLs; Rerun still avoids parent blob URLs for wasm.
@@ -2441,6 +2441,9 @@ def test_artifact_inventory_autopaginates_before_global_preference_and_selection
     ) in block
     assert "has_recording: inventoryComplete ? hasRecording : null" in block
     assert "no_recording: inventoryComplete && !hasRecording" in block
+    assert "seededPage = cachedInventory" in block
+    assert "context.reuseInventory || context.completeInventory" in block
+    assert "inventory_page_count: paginationPageCount" in block
 
 
 def test_direct_run_load_does_not_wait_for_complete_large_inventory() -> None:
@@ -2452,6 +2455,11 @@ def test_direct_run_load_does_not_wait_for_complete_large_inventory() -> None:
     assert "deferInventoryCompletion: true" in load_run
     assert "activeArtifactInventoryComplete && activeArtifactInventory.some" in load_run
     assert "activeArtifactInventoryComplete && !hasRecording" in load_run
+
+    selected_run = source.split("async function _loadSelectedRun", 1)[1].split(
+        "function normalizeStageStatus", 1
+    )[0]
+    assert "deferInventoryCompletion: true" in selected_run
 
 
 def test_active_duplicate_run_source_remains_selectable_by_pasted_id() -> None:
@@ -2672,10 +2680,9 @@ def test_run_details_resolves_run_generically_by_id() -> None:
     assert '"/api/workflows/sim2real/runs/" + encodeURIComponent(target)' in ui
     assert "body: JSON.stringify({ run_id: targetRunId, run_ref: targetRunRef })" in ui
     assert 'entry.source_type === "artifact_storage"' in ui
-    assert (
-        "loadArtifactsForSelectedRun(chosen, null, entry, { pendingSelection: true })"
-        in ui
-    )
+    assert "loadArtifactsForSelectedRun(chosen, null, entry, {" in ui
+    assert "pendingSelection: true," in ui
+    assert "isCurrent," in ui
     assert "prefix: artifactPrefixValue()" not in ui
     assert 'params.set("resource_bucket", resourceBucket)' in ui
     assert 'params.set("resolved_prefix", resolvedPrefix)' in ui
