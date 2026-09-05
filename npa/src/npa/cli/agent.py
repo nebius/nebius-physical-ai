@@ -12,7 +12,6 @@ import secrets
 import shlex
 import shutil
 import subprocess
-import ipaddress
 import tarfile
 import tempfile
 from pathlib import Path
@@ -75,6 +74,7 @@ from npa.cli.agent_records import (  # noqa: F401 - compatibility re-exports
     store_agent_record as _store_agent_record,
 )
 from npa.cli.agent_network import (
+    is_routable_public_ip as _is_routable_public_ip,
     _agent_ssh_egress_result,
 )
 from npa.cli.agent_payloads import (
@@ -817,21 +817,6 @@ def _stage_agent_npa_source(ssh: SSHClient) -> None:
     finally:
         Path(archive_path).unlink(missing_ok=True)
         ssh.run(f"rm -f {shlex.quote(remote_archive)}")
-
-
-def _is_routable_public_ip(value: str) -> bool:
-    candidate = (value or "").strip()
-    if not candidate:
-        return False
-    if candidate == "localhost":
-        return False
-    try:
-        ip = ipaddress.ip_address(candidate)
-    except ValueError:
-        return False
-    if ip.is_loopback or ip.is_private or ip.is_unspecified or ip.is_link_local:
-        return False
-    return True
 
 
 def _agent_strip_url_credentials_js() -> str:
