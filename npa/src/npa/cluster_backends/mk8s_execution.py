@@ -1995,12 +1995,33 @@ def _is_verified_unchanged_target(
     ]
     if len(unmatched) != len(groups):
         return False
+    instances: list[dict[str, Any]] = []
+    if any(item.get("status", {}).get("state") == "PROVISIONING" for item in unmatched):
+        try:
+            inventory = _run_capture(
+                [*_nebius_argv(nebius_bin, profile), "compute", "v1", "instance",
+                 "list", "--parent-id", project_id, "--all", "--format", "json"],
+                env=env, check=False,
+            )
+            payload = json.loads(inventory.stdout or "{}")
+            instances = payload.get("items") if isinstance(payload, dict) else None
+            if inventory.returncode != 0 or not isinstance(instances, list):
+                return False
+            if not all(isinstance(item, dict) for item in instances):
+                return False
+        except (OSError, RuntimeError, ValueError):
+            return False
     for pool in expected_pools:
         match_index = next(
             (
                 index
                 for index, item in enumerate(unmatched)
-                if _provider_node_group_matches_pool(item, pool)
+                if _provider_node_group_matches_pool(
+                    item, pool,
+                    allocated_repair=_node_group_has_allocated_workers(
+                        item, instances, project_id=project_id, cluster_id=cluster_id,
+                    ),
+                )
             ),
             None,
         )
@@ -2008,6 +2029,47 @@ def _is_verified_unchanged_target(
             return False
         unmatched.pop(match_index)
     return not unmatched
+
+
+def _node_group_has_allocated_workers(
+    payload: dict[str, Any], instances: list[dict[str, Any]], *,
+    project_id: str, cluster_id: str,
+) -> bool:
+    """Distinguish a readiness repair from unallocated provisioning demand."""
+
+    metadata = payload.get("metadata") or {}
+    spec = payload.get("spec") or {}
+    status = payload.get("status") or {}
+    template = spec.get("template") or {}
+    group_id = metadata.get("id")
+    reservation = template.get("reservation_policy") or {}
+    if (
+        status.get("state") != "PROVISIONING" or not group_id
+        or metadata.get("parent_id") != cluster_id
+        or reservation.get("policy") != "STRICT"
+        or len(reservation.get("reservation_ids") or []) != 1
+    ):
+        return False
+    try:
+        count = int(spec["fixed_node_count"])
+        if count <= 0 or int(status["node_count"]) != count or int(status["target_node_count"]) != count:
+            return False
+    except (KeyError, TypeError, ValueError):
+        return False
+    workers = [item for item in instances if
+               ((item.get("metadata") or {}).get("labels") or {}).get("mk8s-node-group-id") == group_id]
+    if len(workers) != count or len({(item.get("metadata") or {}).get("id") for item in workers}) != count:
+        return False
+    return all(
+        _instance_matches_node_group(
+            item, project_id=project_id, cluster_id=cluster_id,
+            node_group_id=group_id, template=template,
+        )
+        and (item.get("status") or {}).get("state") == "RUNNING"
+        and (item.get("status") or {}).get("reservation_id")
+        and (item.get("status") or {}).get("disk_attachments")
+        for item in workers
+    )
 
 
 def _decode_v1_node_group_preemptibility(payload: dict[str, Any]) -> dict[str, Any]:
@@ -2033,7 +2095,7 @@ def _decode_v1_node_group_preemptibility(payload: dict[str, Any]) -> dict[str, A
 
 
 def _provider_node_group_matches_pool(
-    payload: dict[str, Any], pool: MK8sNodePool
+    payload: dict[str, Any], pool: MK8sNodePool, *, allocated_repair: bool = False,
 ) -> bool:
     """Compare one provider node-group payload with one desired pool."""
 
@@ -2077,7 +2139,8 @@ def _provider_node_group_matches_pool(
     )
     expected_preemptible = bool(pool.preemptible)
     if (
-        str(status.get("state") or "") != "RUNNING"
+        (str(status.get("state") or "") != "RUNNING"
+         and not (allocated_repair and status.get("state") == "PROVISIONING"))
         or fixed_node_count != pool.count
         or str(resources.get("platform") or "") != pool.platform
         or str(resources.get("preset") or "") != pool.preset

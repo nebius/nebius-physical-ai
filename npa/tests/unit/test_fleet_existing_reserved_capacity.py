@@ -189,3 +189,65 @@ def test_partial_apply_requires_exact_local_and_live_cluster_identity(
         )
     )
     assert E._is_verified_unchanged_target(**kwargs) is valid_identity
+
+
+@pytest.mark.parametrize("failure", [
+    "", "node-count", "target-count", "stopped", "missing-binding",
+    "missing-disk", "wrong-template", "wrong-project", "wrong-cluster",
+    "wrong-group", "duplicate", "unreadable",
+])
+def test_readiness_repair_requires_allocated_instance_evidence(existing, monkeypatch, failure):
+    kwargs, _, groups, _, _ = existing
+    instances = []
+    for index, group in enumerate(groups[1:]):
+        group_id = f"node-group-test-{index}"
+        group["metadata"] = {"id": group_id, "parent_id": "cluster-test"}
+        group["status"] = {"state": "PROVISIONING", "node_count": "1", "target_node_count": "1"}
+        template = group["spec"]["template"]
+        template.update(
+            network_interfaces=[{"subnet_id": "subnet-test"}],
+            boot_disk={"type": "NETWORK_SSD", "size_gibibytes": 128},
+        )
+        instance_spec = deepcopy(template)
+        instance_spec["boot_disk"] = {"managed_disk": {"spec": deepcopy(template["boot_disk"])}}
+        instance_spec["gpu_cluster"] = {}
+        instances.append({
+            "metadata": {
+                "id": f"instance-test-{index}", "parent_id": "project-test",
+                "labels": {"mk8s-cluster-id": "cluster-test", "mk8s-node-group-id": group_id},
+            },
+            "spec": instance_spec,
+            "status": {"state": "RUNNING", "reservation_id": "reservation-test", "disk_attachments": [{}]},
+        })
+    if failure == "node-count":
+        groups[-1]["status"]["node_count"] = "0"
+    if failure == "target-count":
+        groups[-1]["status"]["target_node_count"] = "2"
+    if failure == "stopped":
+        instances[-1]["status"]["state"] = "STOPPED"
+    if failure == "missing-binding":
+        instances[-1]["status"].pop("reservation_id")
+    if failure == "missing-disk":
+        instances[-1]["status"]["disk_attachments"] = []
+    if failure == "wrong-template":
+        instances[-1]["spec"]["resources"]["preset"] = "1gpu-24vcpu-218gb"
+    if failure == "wrong-project":
+        instances[-1]["metadata"]["parent_id"] = "project-other"
+    if failure == "wrong-cluster":
+        instances[-1]["metadata"]["labels"]["mk8s-cluster-id"] = "cluster-other"
+    if failure == "wrong-group":
+        instances[-1]["metadata"]["labels"]["mk8s-node-group-id"] = "node-group-other"
+    if failure == "duplicate":
+        instances.append(deepcopy(instances[-1]))
+    capture = E._run_capture
+
+    def run(cmd, **options):
+        if "compute" in cmd:
+            assert cmd[:3] == ["nebius", "--profile", "selected"]
+            assert "--all" in cmd
+            return CompletedProcess(cmd, 1 if failure == "unreadable" else 0,
+                                    json.dumps({"items": instances}), "")
+        return capture(cmd, **options)
+
+    monkeypatch.setattr(E, "_run_capture", run)
+    assert E._is_verified_unchanged_target(**kwargs) is (not failure)

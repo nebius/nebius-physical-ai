@@ -97,6 +97,13 @@ containerd. Verify the replacement toolkit produces a compatible fragment and
 the full health gate passes. Do not change version numbers blindly or discard
 unrelated host configuration.
 
+A node group can report `PROVISIONING` again when its workers lose readiness.
+Fleet treats it as zero incremental reserved demand only after a complete
+Compute inventory proves the exact group/cluster/project labels, requested
+template, running worker count, reservation bindings, and attached disks.
+Target and actual node counts must also match. This capacity proof does not
+mark the cluster healthy: every deployment readiness gate still runs.
+
 ## Spec (npa.fleet/v0.0.1)
 
 The version remains additive. A cluster without `backend` is the historical
