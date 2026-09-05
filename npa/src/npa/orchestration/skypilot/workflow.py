@@ -229,6 +229,7 @@ def _probe_local_api_daemon_cwd(
     expected_user_id: str = "",
     expected_kubeconfig: str = "",
     expected_endpoint: str = "",
+    expected_runtime_dir: str = "",
 ) -> ApiDaemonCwdProbe:
     """Inspect the actual local API daemon and descendants through procfs.
 
@@ -308,16 +309,15 @@ def _probe_local_api_daemon_cwd(
             )
         records[int(candidate.name)] = (ppid, cmdline, candidate)
 
-    roots = {
+    daemon_roots = {
         pid
         for pid, (_ppid, cmdline, _process) in records.items()
         if cmdline
-        and Path(cmdline[0]).expanduser().absolute().parent == sky_bin_dir
         and "-m" in cmdline
         and "sky.server.server" in cmdline
     }
     endpoint_roots = set()
-    for pid in roots:
+    for pid in daemon_roots:
         cmdline = records[pid][1]
         daemon_port = "46580"
         for index, argument in enumerate(cmdline):
@@ -349,8 +349,41 @@ def _probe_local_api_daemon_cwd(
         roots = scoped_roots
     if not roots:
         return ApiDaemonCwdProbe(True, "absent")
+    if any(
+        Path(records[pid][1][0]).expanduser().absolute().parent != sky_bin_dir
+        for pid in roots
+    ):
+        return ApiDaemonCwdProbe(
+            False,
+            "runtime_ownership_conflict",
+            process_count=len(roots),
+            error=(
+                "the selected local SkyPilot API endpoint is served by "
+                "a different SkyPilot executable"
+            ),
+        )
 
-    runtime_roots: set[int] = set()
+    def unhealthy_runtime(
+        outcome: str, *, process_count: int, error: str
+    ) -> ApiDaemonCwdProbe:
+        # SkyPilot 0.12.2's api stop kills the first matching server process,
+        # without filtering its endpoint or executable. A healthy selected
+        # daemon can coexist with peers, but repairing it could stop a peer.
+        if daemon_roots - roots:
+            return ApiDaemonCwdProbe(
+                False,
+                "runtime_ownership_conflict",
+                process_count=process_count,
+                error=(
+                    "another local SkyPilot API server exists outside the "
+                    "selected endpoint/runtime; api stop is not endpoint-scoped"
+                ),
+            )
+        return ApiDaemonCwdProbe(
+            False, outcome, process_count=process_count, error=error
+        )
+
+    environments: dict[int, dict[str, str]] = {}
     for pid in roots:
         try:
             raw_environment = (records[pid][2] / "environ").read_bytes()
@@ -370,12 +403,34 @@ def _probe_local_api_daemon_cwd(
             for item in raw_environment.split(b"\0")
             if b"=" in item
         }
+        daemon_runtime_dir = environment.get("SKY_RUNTIME_DIR", "").strip()
+        if (
+            expected_runtime_dir
+            and daemon_runtime_dir
+            and Path(daemon_runtime_dir).expanduser().resolve()
+            != Path(expected_runtime_dir).expanduser().resolve()
+        ):
+            return ApiDaemonCwdProbe(
+                False,
+                "runtime_ownership_conflict",
+                process_count=len(roots),
+                error=(
+                    "local SkyPilot API server at the selected endpoint declares "
+                    "a different SKY_RUNTIME_DIR than this submission"
+                ),
+            )
+        environments[pid] = environment
+
+    # Check every selected daemon's explicit runtime ownership before any
+    # recoverable staleness. HOME, user ID, and kubeconfig mismatches alone are
+    # legacy local-environment drift, not proof of another runtime's ownership.
+    runtime_roots: set[int] = set()
+    for pid, environment in environments.items():
         daemon_home = environment.get("HOME", "").strip()
         if expected_home and Path(daemon_home).expanduser().absolute() != Path(
             expected_home
         ).expanduser().absolute():
-            return ApiDaemonCwdProbe(
-                False,
+            return unhealthy_runtime(
                 "stale_runtime_environment",
                 process_count=len(runtime_roots) + 1,
                 error=(
@@ -385,8 +440,7 @@ def _probe_local_api_daemon_cwd(
             )
         daemon_user_id = environment.get("SKYPILOT_USER_ID", "").strip()
         if expected_user_id and daemon_user_id != expected_user_id:
-            return ApiDaemonCwdProbe(
-                False,
+            return unhealthy_runtime(
                 "stale_runtime_environment",
                 process_count=len(runtime_roots) + 1,
                 error=(
@@ -397,8 +451,7 @@ def _probe_local_api_daemon_cwd(
         runtime_roots.add(pid)
         daemon_kubeconfig = environment.get("KUBECONFIG", "").strip()
         if expected_kubeconfig and daemon_kubeconfig != expected_kubeconfig:
-            return ApiDaemonCwdProbe(
-                False,
+            return unhealthy_runtime(
                 "stale_runtime_environment",
                 process_count=len(runtime_roots),
                 error=(
@@ -408,8 +461,7 @@ def _probe_local_api_daemon_cwd(
             )
         inherited_config = environment.get("SKYPILOT_GLOBAL_CONFIG", "").strip()
         if inherited_config and not Path(inherited_config).is_file():
-            return ApiDaemonCwdProbe(
-                False,
+            return unhealthy_runtime(
                 "stale_global_config",
                 process_count=len(runtime_roots),
                 error=(
@@ -446,8 +498,7 @@ def _probe_local_api_daemon_cwd(
         if cwd.endswith(" (deleted)") or not Path(cwd).is_dir():
             unusable.append(pid)
     if unusable:
-        return ApiDaemonCwdProbe(
-            False,
+        return unhealthy_runtime(
             "cwd_deleted",
             process_count=len(process_tree),
             error=(
@@ -477,16 +528,17 @@ def _ensure_local_api_daemon_cwd(
             expected_user_id=str(env.get("SKYPILOT_USER_ID") or ""),
             expected_kubeconfig=str(env.get("KUBECONFIG") or ""),
             expected_endpoint=str(env.get("SKYPILOT_API_SERVER_ENDPOINT") or ""),
+            expected_runtime_dir=str(env.get("SKY_RUNTIME_DIR") or ""),
         )
     )
     before = inspect()
     if before.healthy:
         return before
-    if before.outcome == "stale_runtime_environment":
+    if before.outcome == "runtime_ownership_conflict":
         raise SkyPilotSubmitError(
-            "The selected SkyPilot API endpoint belongs to a different runtime "
-            "environment. Select a dedicated API endpoint for this isolated "
-            "state; no API server was stopped and no submission was attempted."
+            "SkyPilot local API server repair could affect a different endpoint "
+            f"or runtime: {before.error}; "
+            "no API server was stopped and no submission was attempted."
         )
     if before.outcome not in {
         "cwd_deleted",

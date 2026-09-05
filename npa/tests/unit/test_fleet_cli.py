@@ -278,6 +278,45 @@ def test_project_object_storage_rejects_invalid_contract(
         storage.validate()
 
 
+@pytest.mark.parametrize(
+    ("bucket_name", "accepted"),
+    [
+        ("", True),  # Empty selects Fleet's generated bucket name.
+        ("a", True),
+        ("0", True),
+        ("a-0", True),
+        ("a" * 63, True),
+        ("a" * 31 + "-" + "0" * 31, True),
+        ("é", True),  # Preserve the existing Unicode alphanumeric contract.
+        ("a" * 64, False),
+        ("-", False),
+        ("-a", False),
+        ("a-", False),
+        ("a--b", False),
+        ("A", False),
+        (" a", False),
+        ("a ", False),
+        ("a_b", False),
+        ("a.b", False),
+        ("a\nb", False),
+    ],
+)
+def test_object_storage_bucket_name_preserves_dns_helper_boundaries(
+    bucket_name: str, accepted: bool
+) -> None:
+    from npa.fleet.spec import _is_dns_name
+
+    storage = ObjectStorageSpec(
+        enabled=True, size_gibibytes=1, bucket_name=bucket_name
+    )
+    assert _is_dns_name(bucket_name) is (accepted and bool(bucket_name))
+    if accepted:
+        storage.validate()
+    else:
+        with pytest.raises(FleetSpecError, match="lowercase DNS-style bucket name"):
+            storage.validate()
+
+
 def test_object_storage_provider_readback_requires_exact_shape() -> None:
     from npa.fleet.lifecycle import _verify_object_storage_shape
 
@@ -297,16 +336,37 @@ def test_object_storage_provider_readback_requires_exact_shape() -> None:
         _verify_object_storage_shape(item, storage)
 
 
+@pytest.mark.parametrize("fallback", [None, "yes", "0"])
+def test_fleet_storage_scope_restores_ambient_fallback_after_error(
+    monkeypatch: pytest.MonkeyPatch, fallback: str | None
+) -> None:
+    from npa.fleet.lifecycle import _storage_profile_scope
+
+    key = "NPA_ALLOW_EDITORS_STORAGE_FALLBACK"
+    if fallback is None:
+        monkeypatch.delenv(key, raising=False)
+    else:
+        monkeypatch.setenv(key, fallback)
+    with pytest.raises(RuntimeError, match="bootstrap failed"):
+        with _storage_profile_scope(""):
+            assert os.environ[key] == "0"
+            raise RuntimeError("bootstrap failed")
+    assert os.environ.get(key) == fallback
+
+
 @pytest.mark.parametrize("cleanup_ok", [True, False])
+@pytest.mark.parametrize("bucket_exists", [True, False])
 def test_project_object_storage_reconciles_and_persists_private_state(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     cleanup_ok: bool,
+    bucket_exists: bool,
 ) -> None:
-    from types import SimpleNamespace
+    from inspect import signature
 
     from npa.clients import nebius as nebius_client
     from npa.clients import storage_setup
+    from npa.clients.storage_validation import StorageProbeResult
     from npa.fleet.lifecycle import _ensure_project_object_storage
 
     storage = ObjectStorageSpec(
@@ -335,21 +395,57 @@ def test_project_object_storage_reconciles_and_persists_private_state(
         },
     }
     storage.bucket_name = "test-bucket"
-    lookups = iter([None, provider_item])
+    lookups = iter([provider_item if bucket_exists else None, provider_item])
     monkeypatch.setattr(
         nebius_client,
         "get_bucket_by_name",
         lambda _project_id, _bucket_name: next(lookups),
     )
     calls: list[dict] = []
+    provision_storage = storage_setup.provision_storage
+    provision_parameters = signature(provision_storage).parameters
+    monkeypatch.setenv("NPA_ALLOW_EDITORS_STORAGE_FALLBACK", "yes")
 
-    def fake_provision_storage(**kwargs):
-        calls.append(kwargs)
-        return {}, SimpleNamespace(
-            ok=True,
+    def fake_bootstrap(*args, allow_editors_fallback=False, **kwargs):
+        assert args == ("project-test", "tenant-test", "test-region")
+        assert allow_editors_fallback is False
+        assert kwargs["service_account_name"] == "npa-fleet-storage"
+        assert kwargs["access_key_name"] == "npa-fleet-access-key"
+        return {
+            "service_account_id": "serviceaccount-test",
+            "nebius_api_key": "NPA_ACCESS_CANARY",
+            "nebius_secret_key": "NPA_SECRET_CANARY",
+            "s3_bucket": "test-bucket",
+            "s3_endpoint": "https://storage.example",
+        }
+
+    monkeypatch.setattr(nebius_client, "bootstrap_environment", fake_bootstrap)
+    monkeypatch.setattr(
+        storage_setup,
+        "probe_storage_write",
+        lambda **kwargs: StorageProbeResult(
+            True,
+            "ok",
+            "verified",
+            cleanup_attempted=True,
             cleanup_succeeded=cleanup_ok,
             retained_object=not cleanup_ok,
-        )
+        ),
+    )
+
+    def fake_provision_storage(**kwargs):
+        # Fleet must explicitly select its own stable identity for both create
+        # and reuse, keeping LeRobot's bootstrap identity independent.
+        assert kwargs["service_account_name"] == "npa-fleet-storage"
+        assert kwargs["access_key_name"] == "npa-fleet-access-key"
+        for name in ("service_account_name", "access_key_name"):
+            assert kwargs[name] != provision_parameters[name].default
+        assert kwargs["allow_editors_fallback"] is False
+        assert kwargs["project_id"] == "project-test"
+        assert kwargs["tenant_id"] == "tenant-test"
+        assert kwargs["bucket_name"] == "test-bucket"
+        calls.append(kwargs)
+        return provision_storage(**kwargs)
 
     monkeypatch.setattr(storage_setup, "provision_storage", fake_provision_storage)
 
@@ -368,11 +464,13 @@ def test_project_object_storage_reconciles_and_persists_private_state(
     if not cleanup_ok:
         with pytest.raises(RuntimeError, match="write/read/delete probe"):
             _ensure_project_object_storage(**kwargs)
+        assert os.environ["NPA_ALLOW_EDITORS_STORAGE_FALLBACK"] == "yes"
         assert not (tmp_path / "a" / ".npa-fleet-object-storage.json").exists()
         return
 
     result = _ensure_project_object_storage(**kwargs)
 
+    assert os.environ["NPA_ALLOW_EDITORS_STORAGE_FALLBACK"] == "yes"
     assert result["status"] == "ready"
     assert result["writable"] is True
     assert calls[0]["bucket_storage_class"] == "enhanced_throughput"

@@ -988,17 +988,24 @@ def _fleet_bucket_name(*, fleet_name: str, tenant_id: str, project_id: str) -> s
 
 @contextmanager
 def _storage_profile_scope(profile: str):
-    """Pin legacy storage bootstrap subprocesses to the Fleet profile safely."""
+    """Pin the legacy bootstrap to Fleet's profile and narrow storage IAM."""
 
     with _STORAGE_PROFILE_LOCK:
         previous = {
             key: os.environ.get(key)
-            for key in ("NEBIUS_PROFILE", "NPA_NEBIUS_PROFILE")
+            for key in (
+                "NEBIUS_PROFILE",
+                "NPA_NEBIUS_PROFILE",
+                "NPA_ALLOW_EDITORS_STORAGE_FALLBACK",
+            )
         }
         try:
             if profile:
                 os.environ["NEBIUS_PROFILE"] = profile
                 os.environ["NPA_NEBIUS_PROFILE"] = profile
+            # provision_storage honors this legacy opt-in even when its
+            # explicit allow_editors_fallback argument is False.
+            os.environ["NPA_ALLOW_EDITORS_STORAGE_FALLBACK"] = "0"
             yield
         finally:
             for key, value in previous.items():
@@ -1177,6 +1184,11 @@ def _ensure_project_object_storage(
             tenant_id=tenant_id,
             region=region,
             bucket_name=bucket_name,
+            # Keep Fleet's project-scoped identity separate from LeRobot's
+            # bootstrap defaults, including when either path runs again later.
+            service_account_name="npa-fleet-storage",
+            access_key_name="npa-fleet-access-key",
+            allow_editors_fallback=False,
             project_alias=project.display_name(prefix),
             bucket_max_size_bytes=storage.size_gibibytes * 1024**3,
             bucket_storage_class=storage.normalized_storage_class(),
@@ -1416,6 +1428,25 @@ def deploy_fleet(
     )
     selected_projects = kwargs.get("only_projects")
     selected_clusters = kwargs.get("only_clusters")
+    # Storage quota checks and reconciliation currently run through mk8s.
+    # Reject unsupported selections before either backend can mutate state.
+    for project in spec.projects:
+        if not _project_in_scope(project, selected_projects, selected_prefix):
+            continue
+        if project.object_storage is None or not project.object_storage.enabled:
+            continue
+        scoped_clusters = [
+            cluster
+            for cluster in project.clusters
+            if not selected_clusters or cluster.name in selected_clusters
+        ]
+        if scoped_clusters and not any(
+            cluster.backend_name() == "mk8s" for cluster in scoped_clusters
+        ):
+            raise ValueError(
+                "object_storage requires at least one selected mk8s target in its "
+                "project; soperator-only storage reconciliation is unsupported"
+            )
     for project, cluster in spec.cluster_targets():
         if not _project_in_scope(project, selected_projects, selected_prefix):
             continue

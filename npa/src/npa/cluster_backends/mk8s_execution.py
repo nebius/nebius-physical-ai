@@ -2011,24 +2011,29 @@ def _is_verified_unchanged_target(
                 return False
         except (OSError, RuntimeError, ValueError):
             return False
+    # Allocation evidence depends on the provider item, not the desired pool.
+    # Keep it with the item as matched groups are removed from consideration.
+    unmatched_with_allocation = [
+        (item, _node_group_has_allocated_workers(
+            item, instances, project_id=project_id, cluster_id=cluster_id,
+        ))
+        for item in unmatched
+    ]
     for pool in expected_pools:
         match_index = next(
             (
                 index
-                for index, item in enumerate(unmatched)
+                for index, (item, allocated_repair) in enumerate(unmatched_with_allocation)
                 if _provider_node_group_matches_pool(
-                    item, pool,
-                    allocated_repair=_node_group_has_allocated_workers(
-                        item, instances, project_id=project_id, cluster_id=cluster_id,
-                    ),
+                    item, pool, allocated_repair=allocated_repair,
                 )
             ),
             None,
         )
         if match_index is None:
             return False
-        unmatched.pop(match_index)
-    return not unmatched
+        unmatched_with_allocation.pop(match_index)
+    return not unmatched_with_allocation
 
 
 def _node_group_has_allocated_workers(

@@ -3,6 +3,7 @@
 from copy import deepcopy
 import json
 from subprocess import CompletedProcess
+from unittest.mock import Mock
 
 import pytest
 
@@ -196,7 +197,10 @@ def test_partial_apply_requires_exact_local_and_live_cluster_identity(
     "missing-disk", "wrong-template", "wrong-project", "wrong-cluster",
     "wrong-group", "duplicate", "unreadable",
 ])
-def test_readiness_repair_requires_allocated_instance_evidence(existing, monkeypatch, failure):
+@pytest.mark.parametrize("gpu_groups_first", [False, True])
+def test_readiness_repair_requires_allocated_instance_evidence(
+    existing, monkeypatch, failure, gpu_groups_first,
+):
     kwargs, _, groups, _, _ = existing
     instances = []
     for index, group in enumerate(groups[1:]):
@@ -239,7 +243,12 @@ def test_readiness_repair_requires_allocated_instance_evidence(existing, monkeyp
         instances[-1]["metadata"]["labels"]["mk8s-node-group-id"] = "node-group-other"
     if failure == "duplicate":
         instances.append(deepcopy(instances[-1]))
+    if gpu_groups_first:
+        # Each GPU group is considered for the CPU pool before its own pool.
+        groups.append(groups.pop(0))
     capture = E._run_capture
+    allocation_probe = Mock(wraps=E._node_group_has_allocated_workers)
+    monkeypatch.setattr(E, "_node_group_has_allocated_workers", allocation_probe)
 
     def run(cmd, **options):
         if "compute" in cmd:
@@ -251,3 +260,9 @@ def test_readiness_repair_requires_allocated_instance_evidence(existing, monkeyp
 
     monkeypatch.setattr(E, "_run_capture", run)
     assert E._is_verified_unchanged_target(**kwargs) is (not failure)
+    if failure == "unreadable":
+        allocation_probe.assert_not_called()
+    else:
+        # Allocation evidence depends only on the provider item, regardless of
+        # which desired pool is being compared or which earlier matches pop.
+        assert [call.args[0] for call in allocation_probe.call_args_list] == groups

@@ -176,10 +176,7 @@ class ObjectStorageSpec:
             raise FleetSpecError(
                 "object_storage.size_gibibytes must be positive when enabled"
             )
-        if self.bucket_name and (
-            len(self.bucket_name) > 63
-            or self.bucket_name != _slug(self.bucket_name)
-        ):
+        if self.bucket_name and not _is_dns_name(self.bucket_name):
             raise FleetSpecError(
                 "object_storage.bucket_name must be a lowercase DNS-style bucket name"
             )

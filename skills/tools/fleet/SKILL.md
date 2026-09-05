@@ -139,6 +139,11 @@ requires provider read-back plus a write/read/delete probe. Leave `bucket_name`
 empty in public specs so Fleet derives a stable private name at runtime. Fleet
 retains buckets and durable artifacts on cluster destroy; explicit
 `npa storage bucket delete` remains the destructive cleanup boundary.
+Fleet uses its own project-scoped storage service account and access key,
+separate from LeRobot bootstrap identities, and never enables the editors
+fallback. Storage reconciliation currently requires at least one selected mk8s
+target in each project that declares storage; soperator-only selections fail
+before mutation.
 
 Before any project, bucket, subnet, or cluster mutation, deploy budgets all new
 bucket declarations against tenant `storage.bucket.count` and the matching
@@ -425,8 +430,11 @@ state and API endpoint separate. An isolated HOME does not isolate SkyPilot's
 default listening port. Supply the operator-managed endpoint through
 `SKYPILOT_API_SERVER_ENDPOINT`, with a stable HOME, user identity, and exact
 project kubeconfig on its server. NPA inspects only the selected local port;
-unrelated servers cannot poison that check. A selected server with a different
-runtime identity fails before submission and is never stopped automatically.
+unrelated servers cannot poison a healthy selected server's check. Legacy
+HOME, user-ID, or kubeconfig staleness remains automatically repairable when
+stopping the local daemon is safe. Explicitly conflicting runtime ownership or
+another daemon that SkyPilot's stop API could affect blocks repair before any
+server is stopped.
 Remote API endpoints use SkyPilot's API/controller checks instead of local
 procfs inspection. Preserve the same endpoint and state when monitoring or
 cancelling the run.
