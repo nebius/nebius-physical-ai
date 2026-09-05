@@ -871,11 +871,21 @@ def test_iaa_postprocessing_records_actual_split_image_bytes(
     monkeypatch.setattr(
         paidf_native, "_runtime_fetch", lambda _r, _v, destination: destination
     )
-    monkeypatch.setattr(paidf_native.subprocess, "run", lambda *_a, **_k: None)
+    sync_commands = []
+    monkeypatch.setattr(
+        paidf_native.subprocess,
+        "run",
+        lambda argv, **_kwargs: sync_commands.append(argv),
+    )
 
     def component(argv, *, env):
         assert env["VLM_API_KEY"] == "test-token"
         assert env["LLM_API_KEY"] == "test-token"
+        assert argv[:3] == ["uv", "run", "--project"]
+        assert argv[3] == sync_commands[0][3]
+        assert argv[4:8] == [
+            "--no-sync", "--python", paidf_native.sys.executable, "python"
+        ]
         output = Path(argv[argv.index("--output-dir") + 1])
         media = output / "augmented_imgs/person_aug0/person.jpg"
         media.parent.mkdir(parents=True)
@@ -919,6 +929,11 @@ def test_iaa_postprocessing_records_actual_split_image_bytes(
     assert item["sha256"] != paidf_native._sha256(original)
     assert item["generation_sha256"] == paidf_native._sha256(original)
     assert item["generation_media_uri"] == str(original)
+    assert len(sync_commands) == 1
+    assert sync_commands[0][:3] == ["uv", "sync", "--project"]
+    assert sync_commands[0][4:] == [
+        "--frozen", "--python", paidf_native.sys.executable
+    ]
 
 
 
@@ -952,13 +967,23 @@ def test_augmentation_batch_preserves_workflow_specific_partial_failure_policy(
     monkeypatch.setattr(
         paidf_native, "_runtime_fetch", lambda _r, _v, destination: destination
     )
-    monkeypatch.setattr(paidf_native.subprocess, "run", lambda *_a, **_k: None)
+    sync_commands = []
+    monkeypatch.setattr(
+        paidf_native.subprocess,
+        "run",
+        lambda argv, **_kwargs: sync_commands.append(argv),
+    )
     attempted = []
 
     def component(argv, *, env):
         assert env["VLM_API_KEY"] == "test-token"
         assert env["LLM_API_KEY"] == "test-token"
         assert env["GENERATION_API_KEY"] == "local"
+        assert argv[:3] == ["uv", "run", "--project"]
+        assert argv[3] == sync_commands[0][3]
+        assert argv[4:8] == [
+            "--no-sync", "--python", paidf_native.sys.executable, "python"
+        ]
         index = yaml.safe_load(Path(argv[-1]).read_text())["index"]
         attempted.append(index)
         if index == 0:
@@ -983,6 +1008,11 @@ def test_augmentation_batch_preserves_workflow_specific_partial_failure_policy(
         assert result["attempted_count"] == 2
         assert result["failed_count"] == 1
         assert result["failed"][0]["exit_code"] == 1
+    assert len(sync_commands) == 1
+    assert sync_commands[0][:3] == ["uv", "sync", "--project"]
+    assert sync_commands[0][4:] == [
+        "--frozen", "--python", paidf_native.sys.executable
+    ]
 
 
 

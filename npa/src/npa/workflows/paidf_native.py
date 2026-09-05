@@ -17,6 +17,7 @@ import random
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 import urllib.request
@@ -809,11 +810,22 @@ def run_augmentation(
                 "--project",
                 str(source),
                 "--no-sync",
+                "--python",
+                sys.executable,
                 "python",
                 str(source / "modules/cli.py"),
             ]
             subprocess.run(
-                ["uv", "sync", "--project", str(source), "--frozen"], check=True
+                [
+                    "uv",
+                    "sync",
+                    "--project",
+                    str(source),
+                    "--frozen",
+                    "--python",
+                    sys.executable,
+                ],
+                check=True,
             )
         completed: list[dict[str, Any]] = []
         failed: list[dict[str, Any]] = []
@@ -1156,7 +1168,18 @@ def postprocess_iaa(
             PAIDF_AUGMENTATION_REVISION,
             root / "source",
         )
-        subprocess.run(["uv", "sync", "--project", str(source), "--frozen"], check=True)
+        subprocess.run(
+            [
+                "uv",
+                "sync",
+                "--project",
+                str(source),
+                "--frozen",
+                "--python",
+                sys.executable,
+            ],
+            check=True,
+        )
         script = (
             source / "modules/data_processing/create_attribute_augmented_dataset.py"
         )
@@ -1180,6 +1203,8 @@ def postprocess_iaa(
                         "--project",
                         str(source),
                         "--no-sync",
+                        "--python",
+                        sys.executable,
                         "python",
                         str(script),
                         "--base-dir",
