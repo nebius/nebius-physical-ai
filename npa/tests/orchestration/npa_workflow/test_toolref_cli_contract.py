@@ -150,3 +150,23 @@ def test_visualize_stage_uses_prebuilt_rerun_image_without_runtime_install() -> 
     assert state["toolRef"] == "workbench.nurec.visualize"
     assert tool_image_key(state["toolRef"]) == "rerun-viewer"
     assert "pip install" not in str(state)
+
+
+@pytest.mark.parametrize(("tool_ref", "config_key"), [
+    ("workbench.token_factory.reason", "reason_model"),
+    ("workbench.vlm_eval.run", "vlm_model"),
+    ("workbench.vlm_eval.loop", "vlm_model"),
+    ("workbench.vlm_eval.judge_against_plan", "vlm_model"),
+])
+@pytest.mark.parametrize("model", ["", "vendor/explicit-model", "nvidia/Cosmos3-Super-Reasoner"])
+def test_hosted_model_override_survives_rendering(tool_ref, config_key, model) -> None:
+    from npa.orchestration.npa_workflow.catalog import drop_empty_optional_flags
+    entry = TOOL_CATALOG[tool_ref]
+    assert entry.config_defaults[config_key] == ""
+    token = "{{config." + config_key + "}}"
+    argv = drop_empty_optional_flags(tool_ref, [model if item == token else item
+                                              for item in entry.argv_template])
+    if model:
+        assert argv[argv.index("--model") + 1] == model
+    else:
+        assert "--model" not in argv

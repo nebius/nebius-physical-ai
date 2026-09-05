@@ -1,5 +1,10 @@
 # Nebius Token Factory Integration Guide
 
+The public defaults were migrated after the August 2026 model retirements. See
+[the verification report](token-factory-deprecation-verification.md) for exact
+IDs, live results, API differences, override behavior, and vendor terms.
+
+
 > **Just want the fastest serverless copy-paste path (e.g. for a hackathon)?**
 > See [../hackathon-cosmos3-reasoner.md](../hackathon-cosmos3-reasoner.md). This
 > page is the full reference.
@@ -49,7 +54,7 @@ Registering and minting a key takes about two minutes:
 > it's handy when filtering models by project in the console.
 
 Optional 10-second self-test from your own terminal (proves the key works and
-shows the served catalog, including whether `nvidia/Cosmos3-Super-Reasoner` is
+shows the served catalog, including whether `MiniMaxAI/MiniMax-M3` is
 enabled for you):
 
 ```bash
@@ -97,7 +102,7 @@ Expected output confirms the key authenticated and lists a few available models:
   authenticated: True
   base_url: https://api.tokenfactory.nebius.com/v1/
   model_count: 42
-  sample_models: ['meta-llama/Llama-3.3-70B-Instruct', ...]
+  sample_models: ['nvidia/Nemotron-3_5-Lightning', ...]
 ```
 
 `npa workbench token-factory status` shows the resolved base URL and whether a
@@ -112,7 +117,7 @@ Caption a folder of images (local or S3):
 npa workbench token-factory caption \
   --input-path ./frames \
   --output-path /tmp/captions \
-  --model Qwen/Qwen2.5-VL-72B-Instruct \
+  --model MiniMaxAI/MiniMax-M3 \
   --output json
 ```
 
@@ -123,7 +128,7 @@ per line) or a `.txt` file (one prompt per line):
 npa workbench token-factory generate \
   --input-path ./prompts.jsonl \
   --output-path /tmp/generations \
-  --model meta-llama/Llama-3.3-70B-Instruct \
+  --model nvidia/Nemotron-3_5-Lightning \
   --output json
 ```
 
@@ -192,7 +197,7 @@ state: they are deleted once results are collected, unless `--keep-datasets` is
 passed. A `--no-wait` run deliberately leaves its request dataset in place,
 because the operation reads it after the submitting process exits.
 
-Reason over a scene with NVIDIA Cosmos3-Super-Reasoner — point it at scene
+Reason over a scene with the hosted MiniMax-M3 reasoner — point it at scene
 images and ask what a robot should do (scene understanding + plan of action):
 
 ```bash
@@ -200,7 +205,7 @@ npa workbench token-factory reason \
   --input-path ./scene \
   --output-path /tmp/scene-reasoning \
   --task "What is in this scene and how should a robot pick up the red box?" \
-  --model nvidia/Cosmos3-Super-Reasoner \
+  --model MiniMaxAI/MiniMax-M3 \
   --output json
 ```
 
@@ -243,9 +248,10 @@ NEBIUS_TOKEN_FACTORY_KEY=nebius_xxx npa/.venv/bin/python -m pytest \
 ```
 
 They cover: `list_models` authenticates, a text chat completion returns text,
-and `nvidia/Cosmos3-Super-Reasoner` produces a scene plan (that last one skips if
-the model is not available for your key). For a quick manual check use
-`npa workbench token-factory verify`.
+saved CLI/SDK text artifacts, image captions and scene plans, positive/negative
+visual scores, and attribute question/answer chains. With a configured key,
+unavailable defaults fail these tests; they never select an arbitrary fallback.
+`npa workbench token-factory verify` only checks authentication and model listing.
 
 ## Use it in Python
 
@@ -256,7 +262,7 @@ from npa.clients.token_factory import TokenFactoryClient
 
 client = TokenFactoryClient()  # reads NEBIUS_TOKEN_FACTORY_KEY
 text = client.chat_completion_text(
-    model="meta-llama/Llama-3.3-70B-Instruct",
+    model="nvidia/Nemotron-3_5-Lightning",
     messages=[{"role": "user", "content": "Give me one robot task instruction."}],
 )
 print(text)

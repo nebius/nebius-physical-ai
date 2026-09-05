@@ -89,7 +89,7 @@ def test_canonical_is_one_standard_compositional_workflow() -> None:
     cosmos3 = payload["states"]["stage-08-cosmos3"]
     assert cosmos3["resources"] == "stage8-cpu"
     assert "accelerators" not in payload["resources"]["stage8-cpu"]
-    assert payload["config"]["cosmos3_model"] == "nvidia/Cosmos3-Super-Reasoner"
+    assert payload["config"]["cosmos3_model"] == "MiniMaxAI/MiniMax-M3"
     assert "--reason-lane" not in cosmos3["run"]["argv"]
     assert "--reason-backend" not in cosmos3["run"]["argv"]
     assert int(payload["config"]["ppo_iterations"]) == DEFAULT_PPO_ITERATIONS
@@ -106,8 +106,12 @@ def test_retired_monolithic_toolrefs_are_not_catalog_surfaces() -> None:
         assert tool_ref not in TOOL_CATALOG
 
 
+@pytest.mark.parametrize(
+    ("model", "family"),
+    [("nvidia/Cosmos3-Super-Reasoner", "cosmos3"), ("MiniMaxAI/MiniMax-M3", "minimax_m3")],
+)
 def test_stage8_scores_every_rollout_once_with_hosted_cosmos3(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, model: str, family: str
 ) -> None:
     from npa.workbench.cosmos import reason
     from npa.workflows.sim2real import stage8_cosmos3
@@ -184,7 +188,7 @@ def test_stage8_scores_every_rollout_once_with_hosted_cosmos3(
             root_uri="s3://unit/run",
             outer_iteration=1,
             inner_iteration=1,
-            reason_model="nvidia/Cosmos3-Super-Reasoner",
+            reason_model=model,
             threshold=0.5,
         )
     )
@@ -193,6 +197,10 @@ def test_stage8_scores_every_rollout_once_with_hosted_cosmos3(
     payload = writes[0][1]
     assert payload["schema"] == "npa.sim2real.cosmos3_evaluator.v1"
     assert payload["source_rollout_ids"] == calls
+    assert payload["model"] == model
+    assert payload["reason_family"] == family
+    assert records[0]["artifacts"]["reason_family"] == family
+    assert model in records[0]["evidence"]
     assert payload["evaluator_usage"]["request_count"] == 2
     assert payload["evaluator_usage"]["total_tokens"] == 30
     assert payload["evaluator_usage"]["cost_usd"] is None
@@ -556,14 +564,24 @@ def test_stage9_conflicting_same_iteration_replay_fails_closed() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    ("model", "family"),
+    [("nvidia/Cosmos3-Super-Reasoner", "cosmos3"), ("MiniMaxAI/MiniMax-M3", "minimax_m3")],
+)
+@pytest.mark.parametrize(
+    "corruption",
+    [None, "envelope_model", "envelope_family", "item_family", "record_model",
+     "record_family", "usage_model", "configured_model"],
+)
 def test_stage9_retry_republishes_exact_evidence_without_training(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, model: str, family: str, corruption: str | None
 ) -> None:
     from npa.workflows.sim2real import byo_isaac_trainer, temporal_credit
     from npa.workflows.sim2real import workflow_stage
 
     root = "s3://unit/run"
     evidence, _candidate, sample_eval, sample_signal = _stage9_replay_fixture()
+    sample_eval.update(model=model, reason_family=family)
     iteration = evidence["iterations"][0]
     iteration.update(
         {
@@ -583,6 +601,8 @@ def test_stage9_retry_republishes_exact_evidence_without_training(
             "name": "stage_08_vlm_eval_train",
             "artifacts": {
                 "result": lane_base + "cosmos3.json",
+                "model": model,
+                "reason_family": family,
                 "backend": "token_factory",
                 "outer_iteration": 1,
                 "inner_iteration": 1,
@@ -591,11 +611,13 @@ def test_stage9_retry_republishes_exact_evidence_without_training(
         lane_base + "cosmos3.json": {
             "schema": "npa.sim2real.cosmos3_evaluator.v1",
             "evaluator": "cosmos3",
-            "model": "nvidia/Cosmos3-Super-Reasoner",
+            "model": model,
+            "reason_family": family,
             "provider": "nebius",
             "backend": "token_factory",
             "provenance": {"image": "cosmos3"},
             "evaluator_usage": {
+                "model": model,
                 "request_count": 1,
                 "input_tokens": 10,
                 "output_tokens": 5,
@@ -639,15 +661,35 @@ def test_stage9_retry_republishes_exact_evidence_without_training(
         lambda **kwargs: records.append(kwargs),
     )
 
-    _stage9(
-        Namespace(
-            root_uri=root,
-            outer_iteration=1,
-            inner_iteration=1,
-            threshold=0.5,
-            ppo_iterations=2,
-        )
+    envelope = lanes[lane_base + "cosmos3.json"]
+    record = lanes[f"{root}/components/stage_08.json"]["artifacts"]
+    wrong_model = "MiniMaxAI/MiniMax-M3" if family == "cosmos3" else "nvidia/Cosmos3-Super-Reasoner"
+    if corruption == "envelope_model":
+        envelope["model"] = wrong_model
+    elif corruption == "envelope_family":
+        envelope["reason_family"] = "wrong-family"
+    elif corruption == "item_family":
+        sample_eval["reason_family"] = "wrong-family"
+    elif corruption == "record_model":
+        record["model"] = wrong_model
+    elif corruption == "record_family":
+        record["reason_family"] = "wrong-family"
+    elif corruption == "usage_model":
+        envelope["evaluator_usage"]["model"] = wrong_model
+    args = Namespace(
+        root_uri=root,
+        outer_iteration=1,
+        inner_iteration=1,
+        threshold=0.5,
+        ppo_iterations=2,
+        reason_model=wrong_model if corruption == "configured_model" else model,
     )
+    if corruption:
+        with pytest.raises(RuntimeError, match="Stage 8"):
+            _stage9(args)
+        assert not writes
+        return
+    _stage9(args)
 
     assert writes == [(f"{root}/inner_loop/outer-01/evidence.json", evidence, 1)]
     assert len(evidence["iterations"]) == len(evidence["checkpoint_candidates"]) == 1
@@ -921,3 +963,14 @@ def test_canonical_isaac_eula_acceptance_is_operator_supplied_and_fail_closed() 
     ][0]["env"]
     by_name = {item["name"]: item["value"] for item in env}
     assert "ACCEPT_EULA" not in by_name
+
+
+def test_sim2real_hosted_defaults_and_stage9_model_contract_agree():
+    from npa.clients.token_factory import DEFAULT_REASONER_MODEL
+    from npa.workflows.sim2real.constants import DEFAULT_COSMOS3_MODEL
+
+    payload = yaml.safe_load(SPEC.read_text())
+    assert DEFAULT_COSMOS3_MODEL == DEFAULT_REASONER_MODEL == payload["config"]["cosmos3_model"]
+    for stage in ("stage-08-cosmos3", "stage-09-ppo"):
+        argv = payload["states"][stage]["run"]["argv"]
+        assert argv[argv.index("--reason-model") + 1] == "{{config.cosmos3_model}}"

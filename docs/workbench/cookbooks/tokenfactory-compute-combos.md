@@ -57,7 +57,7 @@ NEBIUS_TOKEN_FACTORY_KEY=... python npa/scripts/run_tokenfactory_train_triage.py
 
 Output: a `generations.jsonl` triage report under `<artifacts>/triage/` (or
 `--triage-root`). Choose the triage model with `--model` (default
-`meta-llama/Llama-3.3-70B-Instruct`; `nvidia/Cosmos3-Super-Reasoner` also works).
+`nvidia/Nemotron-3_5-Lightning`; `MiniMaxAI/MiniMax-M3` also works).
 
 ## 2. rollout-judge (Kubernetes GPU → Token Factory VLM judge)
 
@@ -123,7 +123,7 @@ the design notes under `<sweep-root>/design/` and per-variant artifacts under
 
 The physical-common-sense loop as one serial SkyPilot pipeline. Stage
 1 (zero-GPU) runs `token-factory reason` over scene images with
-`nvidia/Cosmos3-Super-Reasoner` and writes a plan of action. Stage 2 rolls out a
+`MiniMaxAI/MiniMax-M3` and writes a plan of action. Stage 2 rolls out a
 policy on a Nebius **Managed Kubernetes GPU**. Stage 3 (zero-GPU) folds the
 Stage 1 plan into the `vlm-eval` task and has a hosted VLM judge whether the
 rollout accomplished the plan.

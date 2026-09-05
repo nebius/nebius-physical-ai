@@ -2,13 +2,22 @@
 
 `npa agent` deploys a **browser workbench VM** into one of your Nebius projects:
 an HTTPS UI behind basic-auth login, grounded chat with a Nebius Token Factory
-default (`nvidia/Cosmos3-Super-Reasoner`) or an explicitly configured
+default (`nvidia/Nemotron-3_5-Lightning` for text and `MiniMaxAI/MiniMax-M3`
+for reasoning and vision) or an explicitly configured
 OpenAI-compatible provider, Sim Assets and Cameras panels, an
 embedded [Rerun](https://www.rerun.io) viewer for `.rrd` recordings, and
 draft/validate/plan/submit endpoints for `npa.workflow/v0.0.1` specs.
 
 It is **optional**. Workflows submit and run without it; the agent is where you
 go to look at what they produced.
+
+These public defaults replace the models retired in the
+[August 2026 Token Factory notice](https://docs.tokenfactory.nebius.com/august-2026-deprecation-notice).
+Routine text and visual descriptions disable thinking with each model's supported
+parameter; analytical turns retain reasoning. Explicit model IDs, configured
+allowlists, and custom provider endpoints remain supported, including dedicated
+deployments of retired public models. Existing agent configurations retain their
+saved model choices; update them explicitly when migrating.
 
 | | |
 | --- | --- |

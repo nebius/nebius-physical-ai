@@ -399,7 +399,7 @@ Grounded response:
 ```json
 {
   "ok": true,
-  "model": "nvidia/Cosmos3-Super-Reasoner",
+  "model": "nvidia/Nemotron-3_5-Lightning",
   "reply": "**Sim2Real status** … **run_id**: `franka-demo` …",
   "grounded": true,
   "apis_used": ["sim-viz/status", "workflows/sim2real/status"]

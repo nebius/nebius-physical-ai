@@ -11,7 +11,7 @@ from npa.workbench.vlm_eval import (
 
 
 def test_api_backend_defaults_to_token_factory_served_vision_model(tmp_path) -> None:
-    """The Token Factory API serves Qwen2.5-VL-72B, not vlm_eval's self-hosted
+    """The Token Factory API serves MiniMax-M3, not vlm_eval's self-hosted
     default (Qwen2-VL-7B, which 404s), so the api backend must pick the served
     model unless --model is overridden."""
     from npa.clients.token_factory import DEFAULT_VISION_MODEL
@@ -49,3 +49,41 @@ def test_api_backend_requires_a_key(monkeypatch) -> None:
         monkeypatch.delenv(key, raising=False)
     with pytest.raises(VlmEvalError):
         _resolve_api_key(backend="api", api_key_env="VLM_EVAL_API_KEY")
+
+
+@pytest.mark.parametrize(("model", "constrained"), [
+    ("MiniMaxAI/MiniMax-M3", False), ("vendor/explicit-vision", True),
+])
+def test_api_judge_uses_model_specific_json_mode(monkeypatch, model, constrained) -> None:
+    from npa.workbench import vlm_eval
+    requests = []
+
+    def post(**kwargs):
+        requests.append(kwargs["request"])
+        return {"choices": [{"message": {"content":
+            '{"success":true,"score":0.9,"rationale":"target reached"}'}}]}
+
+    monkeypatch.setattr(vlm_eval, "_post_with_readiness_retry", post)
+    monkeypatch.setattr(vlm_eval, "_resolve_api_key", lambda **kwargs: "test-key")
+    result = vlm_eval._call_openai_compatible(
+        backend="api", model=model, endpoint_url="https://example.test/v1",
+        api_key_env="TEST_KEY", prompt="Return JSON", frames=[], timeout_s=120,
+    )
+    assert result.score == 0.9
+    assert ("response_format" in requests[0]) is constrained
+    if not constrained:
+        assert requests[0]["chat_template_kwargs"] == {"thinking_mode": "disabled"}
+
+
+def test_malformed_minimax_json_remains_an_error(monkeypatch) -> None:
+    from npa.workbench import vlm_eval
+    monkeypatch.setattr(vlm_eval, "_resolve_api_key", lambda **kwargs: "test-key")
+    monkeypatch.setattr(vlm_eval, "_post_with_readiness_retry", lambda **kwargs: {
+        "choices": [{"message": {"content": '{"{"}success":true,"score":1}'}}]
+    })
+    with pytest.raises(VlmEvalError, match="JSON could not be parsed"):
+        vlm_eval._call_openai_compatible(
+            backend="api", model="MiniMaxAI/MiniMax-M3",
+            endpoint_url="https://example.test/v1", api_key_env="TEST_KEY",
+            prompt="Return JSON", frames=[], timeout_s=120,
+        )

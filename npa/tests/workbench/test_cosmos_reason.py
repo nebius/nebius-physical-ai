@@ -8,9 +8,12 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from npa.workbench.cosmos import reason as reason_module
 
 from npa.workbench.cosmos.reason import (
+    CosmosReasonError,
     DEFAULT_REASON2_CACHE,
     DEFAULT_REASON2_MODEL,
     DEFAULT_REASON3_CACHE,
@@ -161,7 +164,11 @@ def test_hosted_frame_selection_is_bounded_and_rollout_wide() -> None:
     assert selected == select_hosted_event_frames(frames)
 
 
-def test_token_factory_rollout_evaluator_returns_event_local_contract(tmp_path) -> None:
+@pytest.mark.parametrize(
+    ("model", "family"),
+    [(DEFAULT_COSMOS3_MODEL, "cosmos3"), ("MiniMaxAI/MiniMax-M3", "minimax_m3")],
+)
+def test_token_factory_rollout_evaluator_returns_event_local_contract(tmp_path, model, family) -> None:
     frames = []
     for index in range(10):
         frame = tmp_path / f"camera-{index:03d}.png"
@@ -172,12 +179,15 @@ def test_token_factory_rollout_evaluator_returns_event_local_contract(tmp_path) 
         last_request_metrics = {"latency_seconds": 1.25, "retries": 1}
 
         def chat_completion(self, **kwargs):
-            assert kwargs["model"] == DEFAULT_COSMOS3_MODEL
+            assert kwargs["model"] == model
+            prompt = kwargs["messages"][0]["content"][0]["text"]
+            assert ("You are NVIDIA" in prompt) is (family == "cosmos3")
             images = kwargs["messages"][0]["content"][1:]
             assert len(images) == 8
             assert all(item["image_url"]["url"].startswith("data:image/png;base64,") for item in images)
             return {
                 "id": "request-public-1",
+                "model": model,
                 "choices": [{"message": {"content": json.dumps({
                     "success": True,
                     "score": 0.9,
@@ -191,7 +201,7 @@ def test_token_factory_rollout_evaluator_returns_event_local_contract(tmp_path) 
             }
 
     result = run_token_factory_rollout_vlm(
-        model_id=DEFAULT_COSMOS3_MODEL,
+        model_id=model,
         image_paths=frames,
         actions=[{"step": index, "action": [0.0]} for index in range(10)],
         task_description="strict cube grasp",
@@ -202,6 +212,9 @@ def test_token_factory_rollout_evaluator_returns_event_local_contract(tmp_path) 
     assert len(result["per_step"]) == 10
     assert result["schema"] == "npa.sim2real.vlm_eval.v3"
     assert result["backend"] == "token_factory"
+    assert result["model"] == model
+    assert result["reason_family"] == family
+    assert result["component_source"] == "token_factory_rollout_vlm"
     assert result["request"] == {
         "request_id": "request-public-1",
         "input_tokens": 100,
@@ -497,3 +510,32 @@ def test_dual_reason_rejects_missing_local_model_label() -> None:
 
     assert merged["per_step"][0]["critique_source"] == "model_missing"
     assert merged["per_step"][0]["confidence"] == 0.0
+
+
+@pytest.mark.parametrize("model", ["nvidia/Cosmos-Reason2-8B", "vendor/not-a-Cosmos3-Super-Reasoner"])
+def test_hosted_evaluator_rejects_unsupported_model_before_request(model, tmp_path):
+    with pytest.raises(CosmosReasonError, match="unsupported hosted rollout evaluator"):
+        run_token_factory_rollout_vlm(
+            model_id=model, image_paths=[], actions=[], task_description="task",
+            rollout_id="rollout-public", threshold=0.5,
+        )
+
+
+@pytest.mark.parametrize("model_payload", [
+    {}, {"model": None}, {"model": ""}, {"model": 17}, {"model": []},
+    {"model": DEFAULT_COSMOS3_MODEL},
+])
+def test_hosted_evaluator_rejects_missing_or_substituted_provider_model(tmp_path, model_payload):
+    frame = tmp_path / "frame.png"
+    frame.write_bytes(b"synthetic-frame")
+
+    class Client:
+        def chat_completion(self, **_kwargs):
+            return {**model_payload, "choices": []}
+
+    with pytest.raises(CosmosReasonError, match="different model identity"):
+        run_token_factory_rollout_vlm(
+            model_id="MiniMaxAI/MiniMax-M3", image_paths=[frame], actions=[],
+            task_description="task", rollout_id="rollout-public", threshold=0.5,
+            client=Client(),
+        )
