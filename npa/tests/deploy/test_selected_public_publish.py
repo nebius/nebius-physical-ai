@@ -214,3 +214,155 @@ def test_copy_phase_marker_uses_the_github_output_file(monkeypatch, tmp_path) ->
     publish_public._mark_copy_phase_complete()
 
     assert github_output.read_text(encoding="utf-8") == "copy_phase_completed=true\n"
+
+
+@pytest.mark.parametrize(
+    "tag", ["latest", "dev-deadbeef", "release-latest", "main", "edge", "../release", "-option", "bad:tag", "a/b", "release\nnew", "x" * 129]
+)
+def test_additive_release_refuses_mutable_or_unsafe_tags(tag) -> None:
+    module = _load_script()
+    with pytest.raises(ValueError, match="safe, immutable"):
+        module._validate_release_override(["detection-training"], tag, "sha256:" + "a" * 64, "b" * 40)
+
+
+@pytest.mark.parametrize(
+    "tools,tag,digest,sha",
+    [
+        (["detection-training", "genesis"], "release-1", "sha256:" + "a" * 64, "b" * 40),
+        (["detection-training"], "release-1", "", "b" * 40),
+        (["detection-training"], "", "sha256:" + "a" * 64, "b" * 40),
+        (["detection-training"], "release-1", "sha256:" + "a" * 64, None),
+        (["detection-training"], "release-1", "sha256:short", "b" * 40),
+        (["detection-training"], "release-1", "sha256:" + "a" * 64, "short"),
+    ],
+)
+def test_additive_release_requires_one_exact_accepted_source(tools, tag, digest, sha) -> None:
+    with pytest.raises(ValueError):
+        _load_script()._validate_release_override(tools, tag, digest, sha)
+
+
+@pytest.fixture
+def additive_registry(monkeypatch):
+    """Exercise the real plan/preflight/copy adapter with only registry I/O replaced."""
+    from npa.deploy import publish_public
+
+    module = _load_script()
+    sha = "b" * 40
+    digest = "sha256:" + "a" * 64
+    repository = "ghcr.io/nebius/nebius-physical-ai/npa-detection-training"
+    source = repository + ":dev-" + sha
+    target = repository + ":runtime-recovery-1"
+    state = {source: digest, repository + "@" + digest: digest}
+    calls = []
+    errors = {}
+    revision = {"value": sha}
+
+    def lookup(ref, **_):
+        if ref in errors:
+            return False, errors[ref]
+        return (True, state[ref]) if ref in state else (False, "MANIFEST_UNKNOWN")
+
+    def copy(argv, **_):
+        assert argv[:2] == ["/fixture/crane", "copy"]
+        calls.append(argv)
+        state[argv[3]] = state[argv[2]]
+
+    monkeypatch.setattr(publish_public, "_crane_digest", lookup)
+    monkeypatch.setattr(module, "_crane_digest", lookup)
+    monkeypatch.setattr(publish_public, "_crane_manifest_readable", lambda ref: lookup(ref))
+    monkeypatch.setattr(publish_public.shutil, "which", lambda _: "/fixture/crane")
+    monkeypatch.setattr(publish_public.subprocess, "run", copy)
+    monkeypatch.setattr(publish_public, "anonymous_pull_ok", lookup)
+    monkeypatch.setattr(module, "anonymous_digest", lookup)
+    monkeypatch.setattr(module, "_mark_copy_phase_complete", lambda: None)
+    monkeypatch.setattr(module, "_crane_json", lambda _: {"config": {"Labels": {"org.opencontainers.image.revision": revision["value"]}}})
+    argv = [str(SCRIPT), "--tool", "detection-training", "--target", "ghcr.io/nebius/nebius-physical-ai", "--development-sha", sha, "--release-tag", "runtime-recovery-1", "--expected-source-digest", digest, "--mode", "publish"]
+    monkeypatch.setattr(sys, "argv", argv)
+    return module, state, calls, errors, revision, source, target, digest, argv
+
+
+def test_additive_release_promotes_only_exact_accepted_bytes_then_is_idempotent(additive_registry) -> None:
+    module, state, calls, _, _, source, target, digest, _ = additive_registry
+    before = dict(state)
+    assert module.main() == 0
+    assert calls == [["/fixture/crane", "copy", source.rsplit(":", 1)[0] + "@" + digest, target]]
+    assert state == {**before, target: digest}
+    assert module.main() == 0
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("mode", ["plan", "preflight", "verify"])
+def test_additive_read_modes_never_copy(additive_registry, mode) -> None:
+    module, state, calls, _, _, _, target, digest, argv = additive_registry
+    argv[-1] = mode
+    if mode == "verify":
+        state[target] = digest
+    assert module.main() == 0
+    assert calls == []
+
+
+def test_additive_wrong_accepted_digest_stops_before_copy(additive_registry) -> None:
+    module, _, calls, _, _, _, _, _, argv = additive_registry
+    argv[argv.index("--expected-source-digest") + 1] = "sha256:" + "c" * 64
+    with pytest.raises(RuntimeError, match="GPU-accepted expected digest"):
+        module.main()
+    assert calls == []
+
+
+def test_additive_wrong_source_revision_stops_before_copy(additive_registry) -> None:
+    module, _, calls, _, revision, *_ = additive_registry
+    revision["value"] = "c" * 40
+    with pytest.raises(RuntimeError, match="source revision"):
+        module.main()
+    assert calls == []
+
+
+@pytest.mark.parametrize("mode", ["preflight", "publish"])
+def test_additive_existing_different_target_is_never_overwritten(additive_registry, mode) -> None:
+    module, state, calls, _, _, _, target, _, argv = additive_registry
+    argv[-1] = mode
+    state[target] = "sha256:" + "c" * 64
+    with pytest.raises(RuntimeError, match="refusing to overwrite"):
+        module.main()
+    assert calls == []
+    assert state[target] == "sha256:" + "c" * 64
+
+
+@pytest.mark.parametrize("error", ["UNAUTHORIZED", "FORBIDDEN MANIFEST_UNKNOWN", "upstream unavailable", "timed out"])
+def test_additive_unknown_or_denied_target_never_copies(additive_registry, error) -> None:
+    module, _, calls, errors, _, _, target, *_ = additive_registry
+    errors[target] = error
+    with pytest.raises(RuntimeError, match="cannot prove additive target"):
+        module.main()
+    assert calls == []
+
+
+def test_additive_target_race_is_rechecked_at_actual_copy_boundary(additive_registry, monkeypatch) -> None:
+    module, state, calls, _, _, _, target, *_ = additive_registry
+    original = module._require_additive_target
+
+    def concurrent_publish(item, digest):
+        original(item, digest)
+        state[target] = "sha256:" + "c" * 64
+
+    monkeypatch.setattr(module, "_require_additive_target", concurrent_publish)
+    with pytest.raises(RuntimeError, match="refusing to overwrite"):
+        module.main()
+    assert calls == []
+
+
+def test_additive_source_gate_failure_is_not_bypassed(additive_registry, monkeypatch) -> None:
+    from npa.deploy import publish_public
+    module, _, calls, *_ = additive_registry
+    monkeypatch.setattr(publish_public, "verify_validated_publication", lambda _: (False, "payload/GPU acceptance missing"))
+    assert module.main() == 1
+    assert calls == []
+
+
+def test_additive_anonymous_parity_failure_is_reported(additive_registry, monkeypatch) -> None:
+    module, _, calls, _, _, _, target, *_ = additive_registry
+    original = module.anonymous_digest
+    monkeypatch.setattr(module, "anonymous_digest", lambda ref: (True, "sha256:" + "c" * 64) if ref == target else original(ref))
+    with pytest.raises(RuntimeError, match="additive release is not anonymously verified"):
+        module.main()
+    assert len(calls) == 1

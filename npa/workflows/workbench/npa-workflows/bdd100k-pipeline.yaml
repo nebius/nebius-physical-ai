@@ -117,6 +117,7 @@ states:
     outputs:
       - uri: "{{config.rider_train_uri}}"
         schema: npa.detection_training.checkpoint.v1
+        kind: directory
 
   train-nighttime:
     description: Train on the nighttime-person failure-mode view.
@@ -125,6 +126,7 @@ states:
     outputs:
       - uri: "{{config.nighttime_train_uri}}"
         schema: npa.detection_training.checkpoint.v1
+        kind: directory
 
   train-distant:
     description: Train on the distant-person failure-mode view.
@@ -133,6 +135,7 @@ states:
     outputs:
       - uri: "{{config.distant_train_uri}}"
         schema: npa.detection_training.checkpoint.v1
+        kind: directory
 
   evaluate-models:
     description: Evaluate each trained detector on its training view.

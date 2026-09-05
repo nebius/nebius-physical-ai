@@ -1356,7 +1356,7 @@ def _pin_publication_sources(
     return pinned, failures
 
 
-def _crane_copy(item: PublishItem) -> bool:
+def _crane_copy(item: PublishItem, *, allow_replace: bool = True) -> bool:
     """Copy ``item`` only when the target is absent or has a different digest.
 
     Returns ``True`` when a copy ran and ``False`` when the exact source digest was
@@ -1383,6 +1383,8 @@ def _crane_copy(item: PublishItem) -> bool:
         print(f"Already current; skipping copy: {item.target_ref} ({source_detail})")
         return False
     if target_ok:
+        if not allow_replace:
+            raise RuntimeError("refusing to overwrite an existing additive release tag")
         print(
             f"Digest changed; copying {item.target_ref}: "
             f"{target_detail} -> {source_detail}"

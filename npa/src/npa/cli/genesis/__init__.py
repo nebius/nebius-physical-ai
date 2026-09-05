@@ -28,11 +28,9 @@ from npa.clients.config import (
     default_project_name,
     default_workbench_name,
     resolve_environment,
-    resolve_project_storage,
 )
-from npa.clients.credentials import load_credentials, shared_credential_env
 from npa.clients.credentials import apply_shared_credential_env
-from npa.clients.serverless import EndpointNotFoundError, ServerlessClient, ServerlessClientError
+from npa.clients.serverless import EndpointNotFoundError, JobIdentityError, ServerlessClient, ServerlessClientError
 from npa.deploy.byovm import (
     RUNTIME_HELP,
     apply_project_storage_vars,
@@ -203,21 +201,21 @@ def _serverless_job_env(
     output_path: str,
     extra_env: dict[str, str] | None = None,
 ) -> tuple[dict[str, str], dict[str, str]]:
-    storage = resolve_project_storage(project)
-    shared_env = shared_credential_env(load_credentials(environ={}))
-    s3_credentials = {
-        "aws_access_key_id": storage.aws_access_key_id or shared_env.get("AWS_ACCESS_KEY_ID", ""),
-        "aws_secret_access_key": storage.aws_secret_access_key
-        or shared_env.get("AWS_SECRET_ACCESS_KEY", ""),
-        "endpoint_url": storage.endpoint_url or shared_env.get("AWS_ENDPOINT_URL", ""),
-    }
+    from npa.orchestration.npa_workflow.submit_credentials import resolve_submit_credentials
+
     try:
+        selected = resolve_submit_credentials(project=project, requested=("HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"))
+        s3_credentials = {
+            "aws_access_key_id": selected.access_key_id,
+            "aws_secret_access_key": selected.secret_access_key,
+            "endpoint_url": selected.endpoint_url,
+        }
         require_s3_credentials(s3_credentials, context="Genesis serverless jobs")
-    except MissingS3CredentialsError as exc:
+    except (MissingS3CredentialsError, ValueError) as exc:
         _fail(str(exc))
     env = build_serverless_job_env(
         output_path=output_path,
-        hf_token=shared_env.get("HF_TOKEN") or shared_env.get("HUGGING_FACE_HUB_TOKEN") or None,
+        hf_token=selected.secret_values.get("HF_TOKEN") or selected.secret_values.get("HUGGING_FACE_HUB_TOKEN") or None,
         s3_credentials=s3_credentials,
         extra_env=extra_env,
     )
@@ -329,6 +327,8 @@ def _genesis_serverless_train_teacher(
     action_space: str,
     output_format: OutputFormat,
 ) -> None:
+    from npa.execution_preflight import ExecutionPreflightError, verify_serverless_execution
+
     if not output_path:
         _fail("Genesis train-teacher --runtime serverless requires --output-path.")
     try:
@@ -368,11 +368,10 @@ def _genesis_serverless_train_teacher(
     env, extra_env = split_serverless_env(merged_env)
     client = ServerlessClient()
     selected_image = image or container_image_for_tool("genesis")
-    if not submit_only:
-        try:
-            selected_image = _pin_serverless_image(selected_image)
-        except Exception as exc:  # noqa: BLE001 - immutable image is a launch gate
-            _fail(f"Serverless image digest preflight failed: {exc}")
+    try:
+        selected_image = _pin_serverless_image(selected_image)
+    except Exception as exc:  # noqa: BLE001 - immutable image is a launch gate
+        _fail(f"Serverless image digest preflight failed: {exc}")
     command = _genesis_serverless_train_teacher_command(
         n_envs=n_envs,
         max_iterations=max_iterations,
@@ -386,13 +385,31 @@ def _genesis_serverless_train_teacher(
         existing = client.get_job(name, resolved_project_id)
     except EndpointNotFoundError:
         existing = None
+    launch_request = dict(
+        project_id=resolved_project_id,
+        name=name,
+        image=selected_image,
+        command=command,
+        gpu_type=platform,
+        gpu_count=resolved_gpu_count,
+        preset=preset,
+        subnet_id=subnet,
+        output_path=out,
+        env=env,
+        extra_env=extra_env,
+        durable=True,
+    )
     try:
         if existing is not None:
-            info = existing
+            # The name lookup discovers a candidate only. Reconnect must prove
+            # the saved request and immutable provider ID before supervision.
+            info = client.create_job(**launch_request, adopt_only=True)
+            if info.id != existing.id:
+                raise JobIdentityError("The job name now resolves to a different provider identity")
             if not submit_only:
                 info = _supervise_genesis_serverless_job(
                     client=client,
-                    info=existing,
+                    info=info,
                     project_id=resolved_project_id,
                     image=selected_image,
                     command=command,
@@ -409,19 +426,16 @@ def _genesis_serverless_train_teacher(
                 )
             _output({"status": "existing", "job_id": info.id, "job_name": info.name, "job_status": info.status, "output_path": out}, output_format)
             return
-        info = client.create_job(
+        verify_serverless_execution(
+            project=proj_alias,
             project_id=resolved_project_id,
-            name=name,
-            image=selected_image,
-            command=command,
             gpu_type=platform,
             gpu_count=resolved_gpu_count,
             preset=preset,
-            subnet_id=subnet,
-            output_path=out,
-            env=env,
-            extra_env=extra_env,
+            output_uri=out,
+            extra_env={**env, **extra_env},
         )
+        info = client.create_job(**launch_request)
         if not submit_only:
             info = _supervise_genesis_serverless_job(
                 client=client,
@@ -441,6 +455,8 @@ def _genesis_serverless_train_teacher(
                 max_infrastructure_recoveries=max_infrastructure_recoveries,
             )
     except ValueError as exc:
+        _fail(str(exc))
+    except ExecutionPreflightError as exc:
         _fail(str(exc))
     except ServerlessClientError as exc:
         _fail(f"Serverless Job failed: {exc}")
@@ -485,6 +501,7 @@ def _supervise_genesis_serverless_job(
     from botocore.exceptions import ClientError
 
     from npa.clients.storage import StorageClient
+    from npa.execution_preflight import verify_serverless_execution
     from npa.orchestration.npa_workflow.run_state import RunStateStore
     from npa.orchestration.npa_workflow.supervisor import (
         AttemptIdentity,
@@ -582,6 +599,11 @@ def _supervise_genesis_serverless_job(
             secret_env=extra_env,
         ),
         client=client,
+        launch_preflight=lambda: verify_serverless_execution(
+            project=_project_alias or default_project_name(), project_id=project_id,
+            gpu_type=platform, gpu_count=gpu_count, preset=preset,
+            output_uri=output_path, extra_env={**env, **extra_env},
+        ),
     )
     _identity, final = supervise_serverless_job(
         adapter=adapter,

@@ -142,7 +142,10 @@ Before any Kubernetes mutation, deploy binds the selected project to its exact
 saved context, verifies the selected GPU product and node selector, and probes
 the exact output directory with the same atomic credential pair injected into
 the service. Ambiguous/foreign contexts, mixed credential pairs, denied output
-writes, and unknown or mismatched GPU evidence fail before apply. Dry-run only
+writes, and unknown or mismatched GPU evidence fail before apply. GPU capacity
+checks count free devices; busy allocations count toward a `Recreate` replacement
+only with the exact pod → ReplicaSet → Deployment controller UID chain. Labels
+do not prove ownership, and unbound GPU demand makes availability unknown. Dry-run only
 renders; it does not establish execution readiness.
 
 A retained PVC holds SQLite run records; `--state-pvc` reuses an existing claim.

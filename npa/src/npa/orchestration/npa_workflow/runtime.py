@@ -151,15 +151,23 @@ def _declared_output_uri(output: Any) -> str:
     """
 
     if isinstance(output, Mapping):
-        return str(output.get("uri") or "").strip()
+        uri = str(output.get("uri") or "").strip()
+        return uri.rstrip("/") + "/" if output.get("kind") == "directory" and uri else uri
     return str(output or "").strip()
 
 
 def _workflow_identity(spec: NpaWorkflowSpec) -> str:
     """Recompute the current immutable workflow identity from the loaded spec."""
 
+    payload = asdict(spec)
+    # Optional output roles must not invalidate resumable identities for an
+    # unchanged older spec that did not declare them.
+    for state in payload.get("states", {}).values():
+        for artifact in [*state.get("inputs", []), *state.get("outputs", [])]:
+            if not artifact.get("kind"):
+                artifact.pop("kind", None)
     return hashlib.sha256(
-        json.dumps(asdict(spec), sort_keys=True, separators=(",", ":")).encode(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode(
             "utf-8"
         )
     ).hexdigest()
@@ -920,7 +928,7 @@ class SkyPilotWaveExecutor:
         job_name = str(record.get("job_name") or "")
         attempt = self._attempt_from_record(record, steps=steps, kind=kind, group=group)
         attempt.started_at = attempt.started_at or utc_now()
-        attempt.outputs = [item["uri"] for step in steps for item in step.outputs]
+        attempt.outputs = [dict(item) for step in steps for item in step.outputs]
         attempt.adopted = True
         self.attempts.append(attempt)
 
@@ -1832,6 +1840,15 @@ class SkyPilotWaveExecutor:
         secret_values = dict(self.options.secret_env_values)
         if self.options.credential_resolver is not None:
             secret_values = dict(self.options.credential_resolver())
+        # The spec has already resolved CLI/env/config precedence. Carry its
+        # exact target into the shared SDK gate instead of reopening ambient
+        # bucket/prefix selection for each wave (including SDK-driven runs).
+        from npa.orchestration.npa_workflow.interpreter import _make_context
+
+        resolved_config = _make_context(self.spec, run_id=self.run_id).config
+        for key in ("bucket", "prefix"):
+            if key in resolved_config:
+                secret_values[f"NPA_S3_{key.upper()}"] = str(resolved_config[key] or "")
         missing = sorted(set(self.options.secret_envs) - set(secret_values))
         if missing:
             raise NpaWorkflowError(
@@ -1862,6 +1879,7 @@ class SkyPilotWaveExecutor:
             kwargs.update(
                 {
                     "logical_launch_id": attempt.logical_launch_id,
+                    "project": self.options.project,
                     "transaction_recorder": lambda payload: (
                         self._record_launch_transaction(attempt, payload)
                     ),

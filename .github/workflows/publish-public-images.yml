@@ -27,6 +27,14 @@ on:
         description: "Comma/space-separated tools to preflight or promote"
         required: false
         default: ""
+      release_tag:
+        description: "Optional new immutable release tag; requires exactly one tool and accepted digest"
+        required: false
+        default: ""
+      expected_source_digest:
+        description: "Exact public dev digest already accepted on a real GPU; required with release_tag"
+        required: false
+        default: ""
       build_development_tools:
         description: "Comma/space-separated public tools to build and push as dev-<sha>"
         required: false
@@ -47,7 +55,8 @@ permissions:
   id-token: write
 
 concurrency:
-  group: public-image-${{ inputs.target || 'ghcr.io/nebius/nebius-physical-ai' }}-${{ inputs.development_sha || github.sha }}
+  # Serialize additive aliases even when two reviewed development SHAs differ.
+  group: public-image-${{ inputs.target || 'ghcr.io/nebius/nebius-physical-ai' }}-${{ inputs.release_tag || inputs.development_sha || github.sha }}
   cancel-in-progress: false
 
 jobs:
@@ -142,6 +151,28 @@ jobs:
           print(f"cleanup_matrix={json.dumps(cleanup, separators=(',', ':'))}")
           print(f"cleanup_count={len(cleanup)}")
           PY
+
+      - name: Validate additive release selection without changing defaults
+        env:
+          TARGET: ${{ steps.plan.outputs.target }}
+          DEVELOPMENT_SHA: ${{ inputs.development_sha }}
+          SELECTED_TOOLS: ${{ inputs.tool }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          EXPECTED_SOURCE_DIGEST: ${{ inputs.expected_source_digest }}
+          BUILD_COUNT: ${{ steps.plan.outputs.build_count }}
+          CLEANUP_COUNT: ${{ steps.plan.outputs.cleanup_count }}
+        run: |
+          set -euo pipefail
+          if [ -n "$RELEASE_TAG" ] || [ -n "$EXPECTED_SOURCE_DIGEST" ]; then
+            test "$BUILD_COUNT" = 0 && test "$CLEANUP_COUNT" = 0 || {
+              echo "::error::Additive release selection cannot build or clean development images"
+              exit 1
+            }
+            npa/.venv/bin/python .github/scripts/publish_selected_public_image.py \
+              --target "$TARGET" --development-sha "$DEVELOPMENT_SHA" \
+              --tool "$SELECTED_TOOLS" --release-tag "$RELEASE_TAG" \
+              --expected-source-digest "$EXPECTED_SOURCE_DIGEST" --mode plan
+          fi
 
   build-development:
     needs: resolve
@@ -527,7 +558,7 @@ jobs:
 
   cleanup-requested:
     needs: resolve
-    if: ${{ always() && needs.resolve.outputs.cleanup_count != '0' }}
+    if: ${{ always() && needs.resolve.result == 'success' && needs.resolve.outputs.cleanup_count != '0' }}
     strategy:
       fail-fast: false
       matrix:
@@ -658,6 +689,8 @@ jobs:
       TARGET: ${{ needs.resolve.outputs.target }}
       DEVELOPMENT_SHA: ${{ needs.resolve.outputs.development_sha }}
       SELECTED_TOOLS: ${{ inputs.tool }}
+      RELEASE_TAG: ${{ inputs.release_tag }}
+      EXPECTED_SOURCE_DIGEST: ${{ inputs.expected_source_digest }}
       NPA_PUBLIC_REGISTRY: ${{ needs.resolve.outputs.target }}
     steps:
       - uses: actions/checkout@v6
@@ -685,6 +718,7 @@ jobs:
         run: |
           args=(--target "$TARGET" --development-sha "$DEVELOPMENT_SHA")
           if [ -n "$SELECTED_TOOLS" ]; then
+            args+=(--release-tag "$RELEASE_TAG" --expected-source-digest "$EXPECTED_SOURCE_DIGEST")
             npa/.venv/bin/python .github/scripts/publish_selected_public_image.py \
               "${args[@]}" --tool "$SELECTED_TOOLS" --mode plan
             npa/.venv/bin/python .github/scripts/publish_selected_public_image.py \
@@ -700,6 +734,7 @@ jobs:
         run: |
           args=(--target "$TARGET" --development-sha "$DEVELOPMENT_SHA")
           if [ -n "$SELECTED_TOOLS" ]; then
+            args+=(--release-tag "$RELEASE_TAG" --expected-source-digest "$EXPECTED_SOURCE_DIGEST")
             npa/.venv/bin/python .github/scripts/publish_selected_public_image.py \
               "${args[@]}" --tool "$SELECTED_TOOLS" --mode publish
           else

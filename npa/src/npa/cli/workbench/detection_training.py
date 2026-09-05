@@ -167,6 +167,7 @@ def deploy_cmd(
                 context=identity.context, kubeconfig=resolved_kubeconfig,
                 selector_key=node_selector_key, selector_value=selector_value,
                 gpu_type=gpu_type,
+                deployment_name=name, namespace=namespace,
             ),
         )
     except (RuntimeError, ValueError) as exc:
@@ -755,17 +756,36 @@ def _deployment_cluster(*, project: str, cluster_name: str, kubeconfig: str):
     return identity
 
 
-def _verify_deployment_gpu(*, context: str, kubeconfig: str, selector_key: str, selector_value: str, gpu_type: str) -> None:
+def _verify_deployment_gpu(*, context: str, kubeconfig: str, selector_key: str, selector_value: str, gpu_type: str, deployment_name: str, namespace: str) -> None:
     from npa.execution_preflight import ExecutionPreflightError
     from npa.orchestration.skypilot.k8s_gpu_catalog import (
         KubernetesGpuCatalog, UnsatisfiableAcceleratorError,
         discover_kubernetes_gpu_inventory, resolve_kubernetes_accelerator,
     )
 
-    inventory = discover_kubernetes_gpu_inventory(context=context, kubeconfig=kubeconfig)
+    pod_snapshot: list[dict[str, Any]] | None = None
+
+    def capture_inventory(command, **kwargs):
+        nonlocal pod_snapshot
+        result = subprocess.run(command, **kwargs)
+        if "pods" in command and "--all-namespaces" in command and result.returncode == 0:
+            try:
+                payload = json.loads(result.stdout)
+                if isinstance(payload, dict) and isinstance(payload.get("items"), list):
+                    pod_snapshot = payload["items"]
+            except (ValueError, TypeError):
+                pod_snapshot = None
+        return result
+
+    inventory = discover_kubernetes_gpu_inventory(context=context, kubeconfig=kubeconfig, runner=capture_inventory)
     if inventory.error:
         raise ExecutionPreflightError("gpu", "exact cluster GPU inventory is unavailable", status="unknown")
+    if pod_snapshot is None:
+        raise ExecutionPreflightError("gpu", "pod allocation snapshot is incomplete", status="unknown")
+    if inventory.unbound_pending_gpu_pods:
+        raise ExecutionPreflightError("gpu", "unbound GPU workloads make free capacity uncertain", status="unknown")
     candidates = [node for node in inventory.nodes if dict(node.labels).get(selector_key) == selector_value]
+    compatible = []
     for node in candidates:
         if not (node.ready and node.schedulable and node.allocatable >= 1 and node.capacity >= 1):
             continue
@@ -774,8 +794,74 @@ def _verify_deployment_gpu(*, context: str, kubeconfig: str, selector_key: str, 
                 resolve_kubernetes_accelerator(f"{gpu_type}:1", catalog=KubernetesGpuCatalog({product: frozenset({1})}, context=context))
             except UnsatisfiableAcceleratorError:
                 continue
+            compatible.append(node)
+            break
+    if any(node.free >= 1 for node in compatible):
+        return
+    if compatible:
+        credits = _owned_deployment_gpu_credits(
+            context=context, kubeconfig=kubeconfig, namespace=namespace,
+            deployment_name=deployment_name, pods=pod_snapshot,
+        )
+        if any(node.free + min(node.committed, credits.get(node.name, 0)) >= 1 for node in compatible):
             return
-    raise ExecutionPreflightError("gpu", "requested selector and GPU product have no ready schedulable node with allocatable capacity")
+    raise ExecutionPreflightError("gpu", "requested selector and GPU product have no free capacity or verified owned replacement allocation")
+
+
+def _owned_deployment_gpu_credits(*, context: str, kubeconfig: str, namespace: str, deployment_name: str, pods: list[dict[str, Any]] | None) -> dict[str, int]:
+    """Credit only current Recreate allocations using immutable controller UIDs."""
+    from npa.execution_preflight import ExecutionPreflightError
+    from npa.orchestration.skypilot.k8s_gpu_catalog import _pod_commitment
+
+    if pods is None:
+        raise ExecutionPreflightError("gpu", "pod allocation snapshot is unavailable", status="unknown")
+
+    def read(args):
+        command = ["kubectl", "--kubeconfig", kubeconfig, "--context", context, "-n", namespace, *args, "-o", "json"]
+        try:
+            result = subprocess.run(command, capture_output=True, text=True, check=True)
+            return json.loads(result.stdout) if result.stdout.strip() else None
+        except (OSError, ValueError, subprocess.SubprocessError) as exc:
+            raise ExecutionPreflightError("gpu", "deployment allocation ownership is unavailable", status="unknown") from exc
+
+    deployment = read(["get", "deployment", deployment_name, "--ignore-not-found"])
+    if deployment is None:
+        return {}
+    metadata = deployment.get("metadata", {}) if isinstance(deployment, dict) else {}
+    deployment_uid = metadata.get("uid")
+    if not deployment_uid or metadata.get("name") != deployment_name or metadata.get("namespace") != namespace:
+        raise ExecutionPreflightError("gpu", "deployment allocation identity is incomplete", status="unknown")
+    if deployment.get("spec", {}).get("strategy", {}).get("type") != "Recreate":
+        return {}
+    replica_sets = read(["get", "replicasets"])
+    if not isinstance(replica_sets, dict) or not isinstance(replica_sets.get("items"), list):
+        raise ExecutionPreflightError("gpu", "replica set ownership is incomplete", status="unknown")
+
+    def controller_uid(item, kind):
+        owners = [owner for owner in item.get("metadata", {}).get("ownerReferences", []) if isinstance(owner, dict) and owner.get("controller") is True]
+        return owners[0].get("uid") if len(owners) == 1 and owners[0].get("kind") == kind else None
+
+    owned_sets = {
+        replica_set["metadata"]["uid"] for replica_set in replica_sets["items"]
+        if isinstance(replica_set, dict) and replica_set.get("metadata", {}).get("namespace") == namespace
+        and replica_set.get("metadata", {}).get("uid")
+        and controller_uid(replica_set, "Deployment") == deployment_uid
+    }
+    credits: dict[str, int] = {}
+    seen = set()
+    for pod in pods:
+        if not isinstance(pod, dict) or pod.get("metadata", {}).get("namespace") != namespace:
+            continue
+        if controller_uid(pod, "ReplicaSet") not in owned_sets:
+            continue
+        pod_uid = pod.get("metadata", {}).get("uid")
+        if not pod_uid or pod_uid in seen:
+            raise ExecutionPreflightError("gpu", "pod allocation identity is incomplete", status="unknown")
+        seen.add(pod_uid)
+        node_name, gpu, *_ = _pod_commitment(pod)
+        if node_name and gpu:
+            credits[node_name] = credits.get(node_name, 0) + gpu
+    return credits
 
 
 def _provision_service_secret(*, name: str, namespace: str, kubeconfig: str, env: dict[str, str]) -> None:

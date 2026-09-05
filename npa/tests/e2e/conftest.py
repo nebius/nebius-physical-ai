@@ -85,7 +85,7 @@ def pytest_collection_modifyitems(
         )
     )
     for item in items:
-        if item.get_closest_marker("e2e_serverless"):
+        if item.get_closest_marker("e2e_serverless") and not item.get_closest_marker("public_inputs"):
             item.add_marker(serverless_skip)
 
 

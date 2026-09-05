@@ -122,6 +122,7 @@ states:
     outputs:
       - uri: "{{config.nighttime_train_uri}}"
         schema: npa.detection_training.checkpoint.v1
+        kind: directory
 
   eval-nighttime:
     description: Evaluate the nighttime-person detector checkpoint.
@@ -139,6 +140,7 @@ states:
     outputs:
       - uri: "{{config.distant_train_uri}}"
         schema: npa.detection_training.checkpoint.v1
+        kind: directory
 
   eval-distant:
     description: Evaluate the distant-person detector checkpoint.
