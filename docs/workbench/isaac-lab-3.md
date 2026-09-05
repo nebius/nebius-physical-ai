@@ -77,6 +77,9 @@ export. This matters for RSL-RL 5, which replaces the legacy `stochastic`
 model options with `distribution_cfg`. Evaluation also preserves the task's
 action clipping. Policy construction and checkpoint-load errors remain fatal;
 an evaluation never substitutes random actions for an unavailable policy.
+For Reach tasks without an `ee_frame` sensor, goal-distance evaluation reads
+the pose command's measured position error in metres. Missing or nonfinite
+distance data fails the requested metric instead of becoming a survival test.
 
 The read-only live gate `test_isaac_lab_policy_eval_live.py` accepts an
 owner-private JSON file through `NPA_ISAAC_EVAL_VERIFY_CONFIG`. Supply

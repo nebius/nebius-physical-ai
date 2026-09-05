@@ -229,6 +229,35 @@ def test_apply_goal_distance_and_survival_metrics() -> None:
     assert [episode["success"] for episode in survival_episodes] == [True, False]
 
 
+@pytest.mark.parametrize("distance", [0.042, float("nan"), float("inf"), -0.1])
+def test_reach_distance_uses_pose_command_metric_without_frame_sensor(distance) -> None:
+    import numpy as np
+
+    from npa.cli.isaac_lab.eval_runner import _goal_distance
+
+    class Commands:
+        def get_command(self, name):
+            if name != "ee_pose":
+                raise KeyError(name)
+            return np.zeros((1, 7))
+
+        def get_term(self, name):
+            assert name == "ee_pose"
+            return SimpleNamespace(metrics={"position_error": np.array([distance])})
+
+    # Franka Reach has a robot and pose command, but no ee_frame sensor.
+    env = SimpleNamespace(
+        unwrapped=SimpleNamespace(command_manager=Commands(), scene={})
+    )
+    measured, source = _goal_distance(env, SimpleNamespace(as_tensor=np.asarray))
+
+    if np.isfinite(distance) and distance >= 0:
+        assert measured == pytest.approx(distance)
+        assert source == "ee_pose.position_error"
+    else:
+        assert measured is None and source == ""
+
+
 def test_eval_config_validates_quality_gate() -> None:
     config = EvalConfig(
         task="Isaac-Cartpole-v0",

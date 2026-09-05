@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from importlib import import_module, metadata
 import json
 import logging
+import math
 import os
 from pathlib import Path
 import re
@@ -289,6 +290,21 @@ def _goal_distance(env: Any, torch: Any) -> tuple[float | None, str]:
         )
     except Exception as exc:
         _LOGGER.debug("ee_pose goal distance is unavailable", exc_info=exc)
+    try:
+        # Reach tasks do not necessarily have an ee_frame sensor. Isaac Lab's
+        # pose command already measures the commanded body's world-position
+        # error in metres, including the robot's root transform.
+        command = unwrapped.command_manager.get_term("ee_pose")
+        distance = float(
+            torch.as_tensor(command.metrics["position_error"]).min().item()
+        )
+        if not math.isfinite(distance) or distance < 0:
+            raise ValueError(
+                "pose command position error must be finite and nonnegative"
+            )
+        return distance, "ee_pose.position_error"
+    except Exception as exc:
+        _LOGGER.debug("ee_pose command distance is unavailable", exc_info=exc)
         return None, ""
 
 
