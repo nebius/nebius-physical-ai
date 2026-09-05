@@ -8,11 +8,7 @@ FROM ${BASE_IMAGE}
 ARG NPA_SOURCE_SHA
 ARG COSMOS3_RAY_SERVE_VERSION=ray1-cu130
 ARG COSMOS3_REF=5e67049cd94acb667786f1e6dd0dab821cb90c97
-ARG COSMOS3_RAY_VERSION=2.46.0
-# Exact Ubuntu Noble security build that fixes the parent image's known
-# linux-libc-dev critical findings. This package is compile-time headers only;
-# the workload still uses the host's managed kernel and NVIDIA driver.
-ARG LINUX_LIBC_DEV_VERSION=6.8.0-138.138
+ARG COSMOS3_RAY_VERSION=2.52.0
 
 LABEL npa.tool="cosmos3-ray-serve" \
       npa.version="${COSMOS3_RAY_SERVE_VERSION}" \
@@ -24,6 +20,7 @@ LABEL npa.tool="cosmos3-ray-serve" \
       org.opencontainers.image.licenses="OpenMDW-1.1"
 
 ENV NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA} \
+    NPA_LIGHT_WORKBENCH_TOOL=cosmos3-ray-serve \
     NPA_COSMOS3_FRAMEWORK_REVISION=${COSMOS3_REF} \
     NPA_COSMOS3_FRAMEWORK_PYTHON=/opt/cosmos3/cosmos-framework/.venv/bin/python \
     NPA_COSMOS3_RAY_MODEL=Cosmos3-Nano \
@@ -38,11 +35,17 @@ ENV NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA} \
     NPA_COSMOS3_RAY_BATCH_WAIT_TIMEOUT_S=0.05 \
     PYTHONPATH=/opt/npa/src
 
+# Purge linux-libc-dev (compile-time headers only) if the parent image installed
+# it. Do not depend on a specific repository version that can age out; the
+# package is not needed at runtime and is safely removable.
 USER root
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-       "linux-libc-dev=${LINUX_LIBC_DEV_VERSION}" \
-    && rm -rf /var/lib/apt/lists/* \
+RUN if dpkg-query -W -f'${Status}' linux-libc-dev 2>/dev/null \
+          | grep -q '^install ok installed$'; then \
+         dpkg --purge --force-depends linux-libc-dev; \
+       fi \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives \
+    && rm -rf /opt/nvidia/nsight-compute \
     && mkdir -p /outputs /tmp/ray \
     && chown ubuntu:ubuntu /outputs /tmp/ray
 USER ubuntu
@@ -50,19 +53,27 @@ USER ubuntu
 # Replace only NPA's thin control/client layer. The model implementation and
 # dependency lock remain the exact pinned upstream bytes in the parent. The
 # parent generation image intentionally omits upstream's `serve` extra, so sync
-# that extra from the already-pinned upstream uv.lock. `--inexact` retains the
-# parent's two explicitly pinned generate-only dependencies.
+# that extra from the already-pinned upstream uv.lock. After syncing the frozen
+# environment (preserving all other pins), upgrade Ray and NLTK to the
+# security-fixed versions via hash-verified wheel URLs. uv-managed environments
+# intentionally omit pip — use `uv pip install --python` instead of the
+# nonexistent `.venv/bin/pip`.  Do NOT use --frozen for the serve extra alone
+# — that would silently keep the vulnerable pins.
 COPY --chown=ubuntu:ubuntu pyproject.toml /opt/npa/pyproject.toml
 COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa
 COPY --chown=ubuntu:ubuntu workflows /opt/npa/workflows
 COPY --chown=ubuntu:ubuntu docker/workbench/cosmos3-ray-serve/verify_env.py /opt/cosmos3-ray-serve/verify_env.py
 COPY --chown=ubuntu:ubuntu --chmod=755 docker/workbench/cosmos3-ray-serve/entrypoint.sh /usr/local/bin/cosmos3-ray-serve-entrypoint
 COPY --chown=ubuntu:ubuntu --chmod=755 docker/workbench/cosmos3-ray-serve/smoke_functional.sh /opt/cosmos3-ray-serve/smoke_functional.sh
+COPY --chown=ubuntu:ubuntu docker/workbench/cosmos3-ray-serve/security-upgrades-requirements.txt /tmp/cosmos3-ray-security-upgrades-requirements.txt
 
 RUN cd /opt/cosmos3/cosmos-framework \
     && UV_CACHE_DIR=/tmp/uv-cache uv sync --frozen --inexact \
        --extra guardrail --extra serve --group cu130 \
+    && uv pip install --python .venv/bin/python --no-deps \
+       --requirement /tmp/cosmos3-ray-security-upgrades-requirements.txt \
     && test "$(.venv/bin/python -c 'import ray; print(ray.__version__)')" = "${COSMOS3_RAY_VERSION}" \
+    && .venv/bin/python -c 'import importlib.metadata; assert importlib.metadata.version("nltk") == "3.10.3"' \
     && rm -rf /tmp/uv-cache \
     && uv pip install --python /opt/npa/.venv/bin/python --no-deps -e /opt/npa \
     && /opt/cosmos3/cosmos-framework/.venv/bin/python /opt/cosmos3-ray-serve/verify_env.py \

@@ -407,6 +407,15 @@ change the strict 5 cm metric or sealed gold contract. Do not add arbitrary run
 deadlines; `--max-wait-seconds 0` keeps durable status in
 `s3://<bucket>/sim2real/<run-id>/npa-workflow/runtime.json`.
 
+Keep every evaluation request within its sealed split. Submit computes the same
+bounded, stratified train/validation/gold allocation as EnvGen and checks
+`rollout_count` against training rows, `validation_count` against validation
+rows, and `gold_count` against gold rows before GPU work. For 64 requested rows
+at each boundary, `env_count=640` and
+`train_fraction=0.8` produce 512 training, 64 validation, and 64 gold scenarios.
+Smaller profiles are valid only when all three requested counts fit their
+respective split.
+
 ## Resume and verify
 
 ```bash

@@ -35,7 +35,7 @@ jobs:
       - name: Install isolated test runtime
         run: |
           python -m venv npa/.venv
-          npa/.venv/bin/python -m pip install -e 'npa[dev,adapter]' uvicorn
+          npa/.venv/bin/python -m pip install -e 'npa[dev,adapter]' uvicorn websockets
       - name: Prove a missing key fails closed
         env:
           NEBIUS_TOKEN_FACTORY_KEY: ""

@@ -214,7 +214,7 @@ WORKBENCH_ASSETS: tuple[GatedAsset, ...] = (
     GatedAsset(
         "nvidia/Cosmos-Guardrail1",
         HF,
-        ("cosmos3", "sim2real"),
+        ("cosmos2", "cosmos3", "sim2real"),
         True,
         revision="d6d4bfa899a71454a700907664f3e88f503950cf",
         probe_path="video_content_safety_filter/safety_filter.pt",
@@ -224,7 +224,7 @@ WORKBENCH_ASSETS: tuple[GatedAsset, ...] = (
     GatedAsset(
         "nvidia/Cosmos-Predict2.5-2B",
         HF,
-        ("sim2real",),
+        ("cosmos2", "sim2real"),
         True,
         revision="85f8ae7bfe8f5525c8d103429524dcf12f98bf7b",
         probe_path="tokenizer.pth",

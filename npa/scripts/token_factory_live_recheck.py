@@ -38,6 +38,7 @@ class Results:
         self.reports: dict[str, dict[str, Any]] = {}
         self.contract: dict[str, Any] = {}
         self.collection_errors = 0
+        self.failure_diagnostics: dict[str, list[dict[str, Any]]] = {}
 
     def pytest_collection_finish(self, session: pytest.Session) -> None:
         self.collected = [item.nodeid for item in session.items]
@@ -45,6 +46,31 @@ class Results:
     def pytest_collectreport(self, report: pytest.CollectReport) -> None:
         if report.failed:
             self.collection_errors += 1
+
+    def pytest_runtest_makereport(self, item: pytest.Item, call: pytest.CallInfo) -> None:
+        """Keep failure location/type without exception text, locals or provider data."""
+        if call.excinfo is None:
+            return
+        known_exceptions = {
+            "AssertionError", "SystemExit", "RuntimeError", "ValueError", "TypeError",
+            "KeyError", "ImportError", "ModuleNotFoundError", "FileNotFoundError",
+            "ConnectionError", "TimeoutError", "HTTPStatusError", "ConnectError",
+            "ConnectTimeout", "ReadTimeout", "RemoteProtocolError", "TokenFactoryError",
+            "VlmEvalError", "Failed",
+        }
+        exception_type = type(call.excinfo.value).__name__
+        diagnostic: dict[str, Any] = {
+            "phase": call.when,
+            "exception_type": exception_type if exception_type in known_exceptions else "other_exception",
+            "source": None,
+            "source_line": None,
+        }
+        suite_paths = {Path(suite).resolve(): suite for suite in SUITES}
+        for entry in call.excinfo.traceback:
+            source = suite_paths.get(Path(str(entry.path)).resolve())
+            if source is not None:
+                diagnostic.update(source=source, source_line=entry.lineno + 1)
+        self.failure_diagnostics.setdefault(item.nodeid, []).append(diagnostic)
 
     def pytest_runtest_logreport(self, report: pytest.TestReport) -> None:
         row = self.reports.setdefault(report.nodeid, {
@@ -55,6 +81,8 @@ class Results:
         row["failed"] |= report.failed
         row["skipped"] |= report.skipped or hasattr(report, "wasxfail")
         row["passed"] |= report.when == "call" and report.passed
+        if report.failed:
+            row["diagnostics"] = self.failure_diagnostics.get(report.nodeid, [])
         for name, value in report.user_properties:
             if name == "provider_contract":
                 self.contract = value

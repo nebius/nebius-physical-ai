@@ -245,6 +245,67 @@ def test_direct_required_live_pytest_rejects_absent_key_before_collection(tmp_pa
     assert "Required live Token Factory mode needs NEBIUS_TOKEN_FACTORY_KEY" in result.stderr
 
 
+def test_actual_pytest_failure_diagnostics_exclude_private_exception_data(monkeypatch, tmp_path):
+    import contextlib
+    import io
+    import textwrap
+
+    runner = _runner()
+    source = textwrap.dedent("""\
+        import pytest
+        class PrivateProviderExceptionName(Exception):
+            pass
+        @pytest.fixture
+        def broken_setup():
+            raise ModuleNotFoundError("PRIVATE_PROVIDER_BODY setup")
+        @pytest.fixture
+        def broken_teardown():
+            yield
+            raise RuntimeError("PRIVATE_PROVIDER_BODY teardown")
+        def test_call():
+            assert False, "PRIVATE_PROVIDER_BODY assertion"
+        def test_setup(broken_setup):
+            pass
+        def test_teardown(broken_teardown):
+            pass
+        def test_custom_exception():
+            raise PrivateProviderExceptionName("PRIVATE_PROVIDER_BODY custom")
+    """)
+    (tmp_path / "test_diagnostics.py").write_text(source)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(runner, "SUITES", ("test_diagnostics.py",))
+    results = runner.Results()
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        exit_code = pytest.main([
+            "test_diagnostics.py", "-q", "--tb=no", "-o", "addopts=",
+            "-p", "no:cacheprovider",
+        ], plugins=[results])
+    assert exit_code == 1
+    assert results.summary() == {
+        "collected": 4, "executed": 3, "passed": 0, "failed": 4,
+        "skipped": 0, "collection_errors": 0,
+    }
+    expected = {
+        "test_call": ("call", "AssertionError", 'assert False, "PRIVATE_PROVIDER_BODY assertion"'),
+        "test_setup": ("setup", "ModuleNotFoundError", 'raise ModuleNotFoundError("PRIVATE_PROVIDER_BODY setup")'),
+        "test_teardown": ("teardown", "RuntimeError", 'raise RuntimeError("PRIVATE_PROVIDER_BODY teardown")'),
+        "test_custom_exception": ("call", "other_exception", 'raise PrivateProviderExceptionName("PRIVATE_PROVIDER_BODY custom")'),
+    }
+    for row in results.reports.values():
+        phase, exception_type, failing_line = expected[row["nodeid"].split("::")[-1]]
+        assert row["diagnostics"] == [{
+            "phase": phase, "exception_type": exception_type,
+            "source": "test_diagnostics.py",
+            "source_line": [line.strip() for line in source.splitlines()].index(failing_line) + 1,
+        }]
+    receipt = tmp_path / "failure-receipt.json"
+    runner.write_receipt(receipt, {"counts": results.summary(), "tests": list(results.reports.values())})
+    saved = receipt.read_text()
+    assert "PRIVATE_PROVIDER_BODY" not in saved
+    assert "PrivateProviderExceptionName" not in saved
+    assert str(tmp_path) not in saved
+
+
 def test_workflow_limits_credentialed_code_to_reviewed_branches():
     import yaml
 
@@ -259,6 +320,8 @@ def test_workflow_limits_credentialed_code_to_reviewed_branches():
     assert len(triggers["push"]["branches"]) == 1
     assert "refs/heads/" + triggers["push"]["branches"][0] in job["if"]
     assert workflow["permissions"] == {"contents": "read"}
+    install = next(step for step in job["steps"] if step.get("name") == "Install isolated test runtime")
+    assert "uvicorn websockets" in install["run"]
     uploads = [step for step in job["steps"] if "upload-artifact" in step.get("uses", "")]
     assert uploads[0]["with"]["path"].splitlines() == [
         "${{ runner.temp }}/token-factory-live/receipt.json",

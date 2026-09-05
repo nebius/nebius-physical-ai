@@ -14,6 +14,10 @@ the job independently checks its repository and branch. Preserve existing
 environment approvals and branch protections; a blocked job is not successful
 verification. The checkout does not persist GitHub credentials.
 
+The live test runtime installs `npa[dev,adapter]`, `uvicorn`, and `websockets`.
+The rendered-agent HTTP test starts the production websocket protocol; installing
+only base `uvicorn` omits that optional dependency and prevents startup.
+
 Optional environment configuration:
 
 | Setting | Purpose |
@@ -65,7 +69,8 @@ skips or collection errors. A skipped/xfail test cannot create green proof.
 
 Every invocation writes an exclusive `0600` `receipt.json` with source commit
 and file hashes, execution location, scope-label and endpoint hashes, test
-outcomes/counts, provider contract observations, model identity hashes, usage,
+outcomes/counts, allowlisted failure exception types and suite source lines,
+provider contract observations, model identity hashes, usage,
 and visible-output hashes. Raw provider text, pytest tracebacks, credentials,
 private endpoints and image bytes are excluded from the published receipt.
 Custom model IDs are hashed; only the two canonical public migration model names

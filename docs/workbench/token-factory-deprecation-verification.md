@@ -106,7 +106,7 @@ no customer data, simulation result, or robot policy quality is implied.
 With a configured key, an unavailable default fails instead of falling back
 to the first listed model or skipping the affected capability.
 The local test environment uses the repository's `dev,adapter` extras plus
-`uvicorn` for the agent HTTP process.
+`uvicorn` and `websockets` for the agent HTTP process.
 
 The shipped generation and caption reference workflows also completed through
 standard NPA/SkyPilot submission on existing CPU capacity, using a byte-verified

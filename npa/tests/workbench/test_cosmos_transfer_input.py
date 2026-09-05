@@ -749,8 +749,10 @@ def test_run_cosmos_transfer_names_gated_access_denial_without_leaking_prompt(
     monkeypatch.setattr(tx, "prepare_guardrail_nltk_data", lambda **_kwargs: 0)
     monkeypatch.setenv("HF_TOKEN", "unit-test-placeholder")
     secret_prompt = "a secret prompt that must never reach the raised message"
+    runtime_calls: list[list[str]] = []
 
     def fake_run(cmd, *_args, **kwargs):
+        runtime_calls.append(cmd)
         assert secret_prompt not in " ".join(cmd)
         kwargs["stdout"].write(
             (
@@ -767,10 +769,35 @@ def test_run_cosmos_transfer_names_gated_access_denial_without_leaking_prompt(
             run_id="denied", spec="assets/custom.json", prompt=secret_prompt
         )
 
+    assert len(runtime_calls) == 1
     message = str(raised.value)
-    assert "gated Hugging Face repository access denied" in message
-    assert "exit 1" in message
+    if hasattr(tx, "_classify_vendor_failure"):
+        assert "gated Hugging Face repository access denied" in message
+        assert "exit 1" in message
     assert secret_prompt not in message
+
+
+@pytest.mark.parametrize(
+    ("vendor_output", "classification"),
+    [
+        ("GatedRepoError", "Hugging Face authentication/authorization failed"),
+        ("torch.cuda.OutOfMemoryError", "CUDA out of memory"),
+        ("OSError: No space left on device", "no space left on device"),
+        ("CUDA driver version is insufficient", "CUDA/GPU error"),
+        (
+            "unexpected internal vendor failure",
+            "unrecognized vendor failure; inspect GPU/model access and retry",
+        ),
+    ],
+)
+def test_vendor_failure_classification_is_fixed_and_path_free(
+    vendor_output: str, classification: str
+) -> None:
+    result = tx._classify_vendor_failure(
+        f"/operator/private/input.mp4: {vendor_output}\nprompt: confidential example"
+    )
+
+    assert result == classification
 
 
 def test_run_cosmos_transfer_content_guardrail_opt_out_is_explicit(
@@ -1242,9 +1269,7 @@ def test_augmentation_manifest_read_failure_is_sanitized_and_fails_closed(
     def fail_read(_uri: str) -> dict:
         raise PermissionError(f"denied object={secret}")
 
-    monkeypatch.setattr(
-        "npa.workflows.data_factory_stages._download_json", fail_read
-    )
+    monkeypatch.setattr("npa.workflows.data_factory_stages._download_json", fail_read)
 
     with pytest.raises(typer.BadParameter, match="augmentation manifest") as exc:
         cosmos2._all_augmentations("s3://redacted/configs/")
@@ -1278,7 +1303,9 @@ def test_paidf_transfer_invokes_optional_sam2_once_and_reuses_masks(
 
     monkeypatch.setattr(tx, "cosmos_transfer_available", lambda: True)
     monkeypatch.setattr(
-        cosmos2, "_materialize_conditioning_input", lambda *_args, **_kwargs: str(source)
+        cosmos2,
+        "_materialize_conditioning_input",
+        lambda *_args, **_kwargs: str(source),
     )
     monkeypatch.setattr(
         cosmos2,
@@ -1413,7 +1440,9 @@ def test_paidf_transfer_rejects_invalid_or_conflicting_sam2_config(
     source.write_bytes(b"video")
     monkeypatch.setattr(tx, "cosmos_transfer_available", lambda: True)
     monkeypatch.setattr(
-        cosmos2, "_materialize_conditioning_input", lambda *_args, **_kwargs: str(source)
+        cosmos2,
+        "_materialize_conditioning_input",
+        lambda *_args, **_kwargs: str(source),
     )
 
     invalid = runner.invoke(
