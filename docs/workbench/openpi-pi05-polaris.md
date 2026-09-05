@@ -11,6 +11,88 @@ The connected OpenPI workflow family has two deliberately separate surfaces:
   negative terms probe, direct inference, private cross-pod serving, real
   optimizer/checkpoint work, and disjoint held-out evaluation.
 
+## Antioch closed-loop simulation
+
+`npa.workflows.byof.openpi_antioch` is the operator-side live harness for a
+fifth, deliberately external surface: a containerized pi0.5-DROID policy server
+drives an Antioch-authored Isaac simulation over upstream OpenPI websocket
+messages. The harness does not bundle Antioch, simulator assets, model weights,
+credentials, or a machine address. The operator supplies an existing Antioch
+project whose scenario emits the documented validation fields and a network
+address that its assigned simulator can reach.
+
+The image is built locally from the same pinned OpenPI source used by the
+workflow family. It is not pushed or classified for redistribution; the Polaris
+checkpoint remains a runtime-mounted operator cache. As with every OpenPI path,
+the exact run-scoped `NPA_OPENPI_ACCEPT_GEMMA_TERMS` value must already be in the
+environment. The harness forwards the variable by name only and never writes
+its value to the image, project, result, or command line.
+
+```bash
+npa/.venv/bin/python -m npa.workflows.byof.openpi_antioch build-image \
+  --openpi-dir <pinned-openpi-checkout> \
+  --image <local-image-tag>
+
+npa/.venv/bin/python -m npa.workflows.byof.openpi_antioch live-loop \
+  --project-dir <antioch-project> \
+  --cache-dir <operator-openpi-cache> \
+  --image <local-image-tag> \
+  --policy-host <address-reachable-from-the-simulator> \
+  --output <private-evidence.json>
+```
+
+The default and preferred topology binds the one labelled policy container
+directly to host port `8000`, with Docker restart policy `unless-stopped`, a
+socket healthcheck, and the operator cache mounted read-only. A matching
+healthy container is reused and remains running after validation. Use
+`--cleanup-container` only when an ephemeral policy endpoint is intentional;
+cleanup refuses to remove a same-named container without the harness label.
+The harness never creates, changes, or persists firewall or NAT rules.
+
+The two network paths have different owners and directions:
+
+- The operator CLI makes outbound authenticated HTTPS requests from the dev VM
+  to the Antioch control plane to submit, inspect, rerun, or cancel only the
+  selected scenario. This path does not open the simulator VM to operator SSH.
+- The Antioch-run simulator initiates the separate OpenPI WebSocket connection
+  to the dev VM's policy port. Observations travel to pi0.5 and action chunks
+  return on that connection; no repository credential is sent over it.
+
+Do not troubleshoot control-plane egress by changing the policy listener, or
+troubleshoot simulator-to-policy reachability by modifying an Antioch-managed
+machine. Prove each path at its own boundary.
+
+If the simulator-facing port must differ from the local published port, pass
+both `--host-port <local>` and `--policy-port <simulator-facing>` only after the
+operator has independently established that network path. This exception is
+for pre-existing infrastructure; the harness does not build the indirection.
+
+For an immutable reproduction of a known completed Antioch environment, add
+`--rerun-from <completed-run-id>`. Antioch creates a distinct fresh run from
+the saved source, image, parameters, and inputs; the harness waits for and
+validates that new run rather than trusting the referenced historical result.
+When several machines are assigned, `--machine <assigned-machine>` prevents a
+stale automatic placement from masking the policy/simulator result. Machine
+selectors remain operator inputs and never appear in sanitized evidence.
+
+For diagnostics, `--script <project-relative-loop.py>` uses Antioch's direct
+`run` surface and enforces the same measured loop gates. It does not replace the
+scenario path for release evidence because only the scenario path guarantees a
+fresh saved, viewable Antioch result.
+
+The live path first runs an unaccepted child that must exit 64 before the model
+entrypoint. It then starts the accepted GPU container, runs the real Antioch
+scenario, requires a fresh saved result, and fails unless every mechanical and
+feedback gate passes: measured jaw stroke, finite `(15, 8)` action chunks,
+policy-driven arm motion, and stable joint state. Its sanitized output excludes
+project, machine, user, host, and scenario-run identifiers.
+
+The opt-in regression entrypoint is
+`npa/tests/e2e/test_openpi_antioch_live_e2e.py`. Set
+`NPA_INTEGRATION_E2E=1`, `NPA_OPENPI_ANTIOCH_LIVE=1`, and the operator-local
+project, cache, image, policy-host, and executable variables named in that test.
+No infrastructure address or credential has a repository default.
+
 The builder uses CUDA 12.8, compiles an `sm_100` runtime probe, and retains
 upstream's pinned JAX CUDA 12 stack. A CUDA 13.0 managed-driver MK8s node is
 backward compatible with that userspace stack. GPU artifacts record the actual
