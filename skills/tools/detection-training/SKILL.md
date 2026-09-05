@@ -37,7 +37,7 @@ npa workbench detection-training deploy \
 npa workbench detection-training deploy --project <alias> --destroy
 ```
 
-`--gpu-type` is `h100` or `l40s`. Auth defaults to `token` (the token comes from
+`--gpu-type` accepts `h100`, `b200`, `l40s`, and `rtxpro6000`; verify actual cluster labels and reservation placement before deploying. Auth defaults to `token` (the token comes from
 the variable named by `--token-env`, default `DETECTION_TRAINING_TOKEN`);
 `--insecure-no-auth` exists but should not be used. Official NPA GHCR images
 pull anonymously, so `--image-pull-secret` defaults to empty. For an optional
@@ -51,7 +51,6 @@ manifest.
 npa workbench detection-training train \
   --view <materialized-view> \
   --output-uri s3://<bucket>/detection/runs/<id>/ \
-  --num-classes 10 \
   --label-map '{"person":0,"rider":1,"car":2}' \
   --epochs 10 --batch-size 8 --learning-rate 0.005 \
   --wait --poll-seconds 30 --timeout-seconds 21600 \
@@ -79,7 +78,11 @@ invalid literal for int() with base 10: 'train'
 `train` is a real BDD100K category — the vehicle. Reading that traceback as a
 bug in the training code, rather than a missing label map, costs more time than
 it should. Accepted formats are JSON (`{"person":0,...}`) or comma-separated
-pairs (`person=0,rider=1`). Keep `--num-classes` consistent with the map.
+pairs (`person=0,rider=1`). Class count is inferred from the map by default.
+Source maps containing zero shift all IDs by one inside the detector because
+Faster R-CNN reserves zero for background. Checkpoints retain both maps; string
+and numeric annotations from materialized views keep the same category identity.
+Explicit `--num-classes` includes background and must cover every mapped ID.
 
 ## Evaluate
 
@@ -95,14 +98,17 @@ npa workbench detection-training eval \
 
 `--eval-view` and `--output-uri` are required. `--discover-checkpoint` changes
 what `--checkpoint-uri` means: it becomes the training **output prefix** to
-search, and the checkpoint is resolved from the last completed `/runs` entry with
-the trained epoch count substituted. Use it instead of hand-assembling a
+search, and the checkpoint is selected from the last completed `/runs` entry
+using its verified final checkpoint artifact. Legacy records without artifact
+metadata retain the epoch-pattern fallback. Use it instead of hand-assembling a
 checkpoint filename from an epoch count you assumed.
 
 `--write-canonical-metrics` publishes the response under the output prefix so
-downstream stages and `npa workbench insights` can pick it up. Pass the **same**
-`--label-map` you trained with; a different map silently reindexes classes and
-produces plausible-looking but wrong per-class numbers.
+downstream stages and `npa workbench insights` can pick it up. Evaluation reads
+the checkpoint map automatically. An explicit map must match its category
+identity; mismatches fail before model execution. Legacy checkpoints preserve
+the original IDs. Missing metric dependencies fail instead of returning fake
+zero scores; an undefined COCO metric remains `-1`.
 
 ## In workflows
 
@@ -114,8 +120,8 @@ and evaluates each against its validation view.
 
 ## Gotchas
 
-- **Train and eval must agree on the label map and class count.** Mismatches do
-  not error; they produce wrong metrics.
+- **Train and eval must agree on category identity.** New checkpoints record it
+  and evaluation rejects a conflicting explicit map.
 - **Without `--wait`, "started" is not "succeeded".** Check `status` before
   reporting a result.
 - **A view is a slice, so the metric is about that slice.** Nighttime mAP is not
@@ -126,8 +132,38 @@ and evaluates each against its validation view.
 - **Refresh the view after the underlying table changes.** `refresh-mv` is not
   automatic, and training a stale view silently trains on old rows.
 
+## Persistent service records and readiness
+
+The default authenticated deployment probes `/readyz`, which returns only a
+minimal readiness result. `/health`, training/evaluation, status and artifacts
+remain protected. Tokens and storage credentials are provisioned separately
+through private files/stdin; workload manifests contain Secret references.
+Before any Kubernetes mutation, deploy binds the selected project to its exact
+saved context, verifies the selected GPU product and node selector, and probes
+the exact output directory with the same atomic credential pair injected into
+the service. Ambiguous/foreign contexts, mixed credential pairs, denied output
+writes, and unknown or mismatched GPU evidence fail before apply. Dry-run only
+renders; it does not establish execution readiness.
+
+A retained PVC holds SQLite run records; `--state-pvc` reuses an existing claim.
+One worker owns the volume under a process lock, while transactions serialize
+concurrent updates. Restart preserves terminal results and marks unfinished work
+`interrupted` with its original identity and progress. It never resumes training
+automatically. `deploy --destroy` preserves the state claim.
+
+`/status` and `/artifacts` expose exact artifact roles, locations, media/schema
+metadata, sizes and read-after-write SHA-256 hashes. Authenticated
+`/artifacts/content?run_id=...&sha256=...` checks current bytes before returning
+them. Service writes and retrieval stay under its configured output prefix.
+Direct synchronous CLI/SDK runs return artifact manifests; service runs own
+persistent status records. Evaluation results and metric artifacts are also
+durable under `eval_run_id`; identical completed requests reuse that result.
+Active, failed, or interrupted evaluation identities are not silently rerun.
+
 ## Verify
 
 ```bash
-npa/.venv/bin/python -m pytest npa/tests/guardrails/test_skills_index.py -q
+npa/.venv/bin/python -m pytest npa/tests/workbench/test_detection_runtime_contract.py npa/tests/workbench/test_detection_training.py -q
+# Authorized live deployment and private config with prepared LanceDB views:
+NPA_DETECTION_RUNTIME_LIVE=1 npa/.venv/bin/python -m pytest npa/tests/e2e/test_detection_runtime_live.py -q
 ```

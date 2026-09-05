@@ -15,7 +15,23 @@ DEFAULT_BATCH_SIZE = 8
 DEFAULT_LEARNING_RATE = 0.005
 DEFAULT_PORT = 8790
 DEFAULT_TOKEN_ENV = "DETECTION_TRAINING_TOKEN"
-RunStatus = Literal["queued", "running", "completed", "failed"]
+RunStatus = Literal["queued", "running", "completed", "failed", "interrupted"]
+
+
+class ArtifactRecord(BaseModel):
+    """A produced object, verified by reading its bytes after publication."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    role: Literal["checkpoint", "training_metrics", "evaluation_metrics"]
+    uri: str = Field(..., min_length=1)
+    media_type: str
+    schema_version: str
+    sha256: str = Field(..., pattern=r"^[0-9a-f]{64}$")
+    size_bytes: int = Field(..., gt=0)
+    exists: bool = True
+    integrity_verified: bool = True
+    epoch: int | None = None
 
 
 class WandbSettings(BaseModel):
@@ -106,6 +122,11 @@ class TrainRequest(BaseModel):
             setattr(self, key, value)
         if self.data_path:
             self.lance_uri = self.data_path
+        from .labels import detector_label_map
+
+        mapped = detector_label_map(self.label_map)
+        if mapped and self.num_classes is not None and self.num_classes <= max(mapped.values()):
+            raise ValueError("num_classes must include background and every mapped detector category")
         return self
 
     @field_validator("validation_filter_sql")
@@ -132,6 +153,8 @@ class TrainRequest(BaseModel):
             resolved[name] = label_id
         if not resolved:
             raise ValueError("label_map must not be empty when provided")
+        if len(set(resolved.values())) != len(resolved):
+            raise ValueError("label_map values must identify distinct categories")
         return resolved
 
 
@@ -148,6 +171,7 @@ class TrainResponse(BaseModel):
     manifest_sha256: str
     data_path: str = ""
     training_config: dict[str, Any] = Field(default_factory=dict)
+    artifacts: list[ArtifactRecord] = Field(default_factory=list)
 
 
 class EvalRequest(BaseModel):
@@ -185,6 +209,8 @@ class EvalRequest(BaseModel):
             resolved[name] = label_id
         if not resolved:
             raise ValueError("label_map must not be empty when provided")
+        if len(set(resolved.values())) != len(resolved):
+            raise ValueError("label_map values must identify distinct categories")
         return resolved
 
 
@@ -199,6 +225,7 @@ class EvalResponse(BaseModel):
     per_category_AP: dict[str, float] = Field(default_factory=dict)
     eval_run_id: str
     manifest_sha256: str
+    artifacts: list[ArtifactRecord] = Field(default_factory=list)
 
 
 class StatusResponse(BaseModel):
@@ -207,6 +234,7 @@ class StatusResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     run_id: str
+    kind: Literal["train", "eval"] = "train"
     status: RunStatus
     epochs_completed: int = 0
     total_epochs: int = 0
@@ -215,6 +243,11 @@ class StatusResponse(BaseModel):
     manifest_sha256: str = ""
     last_metrics: dict[str, Any] = Field(default_factory=dict)
     error: str | None = None
+    artifacts: list[ArtifactRecord] = Field(default_factory=list)
+    created_at: str = ""
+    updated_at: str = ""
+    revision: int = 0
+    evaluation: EvalResponse | None = None
 
 
 class RunListResponse(BaseModel):

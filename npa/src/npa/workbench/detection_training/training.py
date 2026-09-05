@@ -6,15 +6,15 @@ import hashlib
 import io
 import json
 import math
-import os
 import time
-from contextlib import contextmanager
+import uuid
 from typing import Any, Callable
 
 from .dataloader import make_dataloader
 from .models import build_fasterrcnn_resnet50_fpn_v2
+from .labels import category_id_map, detector_label_map
 from .schemas import DEFAULT_NUM_CLASSES, TrainRequest, TrainResponse
-from .storage import uri_join, write_bytes_uri, write_json_uri
+from .storage import describe_artifact, storage_settings, uri_join, write_bytes_uri, write_json_uri
 
 StatusCallback = Callable[[str, int, dict[str, Any], str | None], None]
 
@@ -26,6 +26,9 @@ class DetectionTrainingError(RuntimeError):
 def compute_manifest_sha256(kind: str, payload: dict[str, Any]) -> str:
     """Compute a deterministic manifest hash for inputs and hyperparameters."""
     digest = hashlib.sha256()
+    if kind == "train" and payload.get("num_classes") is None:
+        mapped = detector_label_map(payload.get("label_map"))
+        payload = {**payload, "num_classes": max(mapped.values()) + 1 if mapped else DEFAULT_NUM_CLASSES}
     digest.update(kind.encode("utf-8"))
     digest.update(b"\n")
     digest.update(json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8"))
@@ -35,7 +38,7 @@ def compute_manifest_sha256(kind: str, payload: dict[str, Any]) -> str:
 
 def make_run_id(prefix: str, manifest_sha256: str) -> str:
     """Create a reproducible-looking but unique run id."""
-    return f"{prefix}-{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}-{manifest_sha256[:12]}"
+    return f"{prefix}-{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}-{manifest_sha256[:12]}-{uuid.uuid4().hex[:12]}"
 
 
 def checkpoint_uri_pattern(output_uri: str, run_id: str) -> str:
@@ -51,6 +54,7 @@ def train_detector(
     *,
     run_id: str | None = None,
     status_callback: StatusCallback | None = None,
+    artifact_callback: Callable[[list[Any]], None] | None = None,
 ) -> TrainResponse:
     """Run Faster R-CNN training and persist checkpoints plus metrics."""
     manifest = compute_manifest_sha256("train", request.model_dump(mode="json"))
@@ -58,10 +62,11 @@ def train_detector(
     effective_output_uri = request.checkpoint_s3.uri or request.output_uri
     pattern = checkpoint_uri_pattern(effective_output_uri, resolved_run_id)
     metrics_path = metrics_uri(effective_output_uri, resolved_run_id)
+    artifacts = []
     if status_callback:
         status_callback("running", 0, {}, None)
 
-    with _checkpoint_s3_environment(request):
+    with storage_settings(request.checkpoint_s3):
         try:
             import torch
         except ImportError as exc:
@@ -76,7 +81,8 @@ def train_detector(
                 view=request.view,
                 batch_size=request.batch_size,
                 shuffle=True,
-                label_map=request.label_map,
+                label_map=detector_label_map(request.label_map),
+                category_id_map=category_id_map(request.label_map),
             )
             model = build_fasterrcnn_resnet50_fpn_v2(num_classes=num_classes)
             model.to(device)
@@ -108,8 +114,12 @@ def train_detector(
                     epoch=epoch,
                     manifest_sha256=manifest,
                     num_classes=num_classes,
-                    request=request.model_dump(mode="json"),
+                    request=_checkpoint_request(request),
                 )
+                artifacts.append(describe_artifact(
+                    checkpoint_uri, role="checkpoint", media_type="application/x-pytorch",
+                    schema_version="npa.detection.checkpoint.v1", epoch=epoch,
+                ))
                 write_json_uri(
                     metrics_path,
                     {
@@ -119,6 +129,12 @@ def train_detector(
                         "epochs": history,
                     },
                 )
+                metrics_artifact = describe_artifact(
+                    metrics_path, role="training_metrics", media_type="application/json",
+                    schema_version="npa.detection.training-metrics.v1",
+                )
+                if artifact_callback:
+                    artifact_callback([*artifacts, metrics_artifact])
                 if status_callback:
                     status_callback("running" if epoch < request.epochs else "completed", epoch, snapshot, None)
         finally:
@@ -134,29 +150,15 @@ def train_detector(
         manifest_sha256=manifest,
         data_path=request.data_path or request.lance_uri,
         training_config=_training_config_public_dict(request),
+        artifacts=[*artifacts, metrics_artifact],
     )
 
 
-@contextmanager
-def _checkpoint_s3_environment(request: TrainRequest):
-    values = {
-        "AWS_ENDPOINT_URL": request.checkpoint_s3.endpoint_url,
-        "NEBIUS_S3_ENDPOINT": request.checkpoint_s3.endpoint_url,
-        "AWS_ACCESS_KEY_ID": request.checkpoint_s3.aws_access_key_id,
-        "AWS_SECRET_ACCESS_KEY": request.checkpoint_s3.aws_secret_access_key,
-    }
-    previous = {key: os.environ.get(key) for key in values}
-    try:
-        for key, value in values.items():
-            if value:
-                os.environ[key] = value
-        yield
-    finally:
-        for key, value in previous.items():
-            if value is None:
-                os.environ.pop(key, None)
-            else:
-                os.environ[key] = value
+def _checkpoint_request(request: TrainRequest) -> dict[str, Any]:
+    payload = request.model_dump(mode="json")
+    payload["checkpoint_s3"].pop("aws_access_key_id", None)
+    payload["checkpoint_s3"].pop("aws_secret_access_key", None)
+    return payload
 
 
 def _start_wandb(request: TrainRequest) -> Any | None:
@@ -170,7 +172,7 @@ def _start_wandb(request: TrainRequest) -> Any | None:
         project=request.wandb.project or None,
         name=request.wandb.run_name or None,
         mode=request.wandb.mode or "offline",
-        config=request.model_dump(mode="json"),
+        config=_checkpoint_request(request),
     )
 
 
@@ -193,7 +195,7 @@ def resolve_num_classes(request: TrainRequest) -> int:
     if request.num_classes is not None:
         return request.num_classes
     if request.label_map is not None:
-        return len(request.label_map) + 1
+        return max(detector_label_map(request.label_map).values()) + 1
     return DEFAULT_NUM_CLASSES
 
 
@@ -248,6 +250,9 @@ def save_checkpoint(
         "manifest_sha256": manifest_sha256,
         "num_classes": num_classes,
         "request": request,
+        "schema_version": "npa.detection.checkpoint.v1",
+        "label_map": request.get("label_map"),
+        "detector_label_map": detector_label_map(request.get("label_map")),
         "model_state_dict": model.state_dict() if hasattr(model, "state_dict") else {},
         "optimizer_state_dict": optimizer.state_dict() if optimizer is not None and hasattr(optimizer, "state_dict") else {},
     }

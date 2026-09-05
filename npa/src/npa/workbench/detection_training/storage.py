@@ -4,9 +4,29 @@ from __future__ import annotations
 
 import json
 import os
+import hashlib
+import tempfile
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlparse
+
+_S3_SETTINGS: ContextVar[dict[str, str]] = ContextVar("detection_s3_settings", default={})
+
+
+@contextmanager
+def storage_settings(settings: Any):
+    """Request-local credentials; concurrent runs never mutate process credentials."""
+    token = _S3_SETTINGS.set({
+        "endpoint_url": settings.endpoint_url,
+        "aws_access_key_id": settings.aws_access_key_id,
+        "aws_secret_access_key": settings.aws_secret_access_key,
+    })
+    try:
+        yield
+    finally:
+        _S3_SETTINGS.reset(token)
 
 
 @dataclass(frozen=True)
@@ -40,7 +60,16 @@ def write_bytes_uri(uri: str, payload: bytes) -> None:
         return
     path = _local_path(uri)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(payload)
+    fd, temporary = tempfile.mkstemp(dir=path.parent, prefix=".artifact-")
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
 
 
 def read_bytes_uri(uri: str) -> bytes:
@@ -54,6 +83,19 @@ def read_bytes_uri(uri: str) -> bytes:
 def write_json_uri(uri: str, payload: dict[str, Any]) -> None:
     data = json.dumps(payload, indent=2, sort_keys=True).encode("utf-8")
     write_bytes_uri(uri, data)
+
+
+def describe_artifact(uri: str, *, role: str, media_type: str, schema_version: str, epoch: int | None = None):
+    """Read the actual object, then record its exact identity and content hash."""
+    from .schemas import ArtifactRecord
+
+    data = read_bytes_uri(uri)
+    if not data:
+        raise ValueError("produced artifact is empty")
+    return ArtifactRecord(
+        uri=uri, role=role, media_type=media_type, schema_version=schema_version,
+        sha256=hashlib.sha256(data).hexdigest(), size_bytes=len(data), epoch=epoch,
+    )
 
 
 def _local_path(uri: str):
@@ -70,7 +112,9 @@ def _s3_client():
 
     return boto3.client(
         "s3",
-        endpoint_url=os.environ.get("AWS_ENDPOINT_URL") or os.environ.get("NEBIUS_S3_ENDPOINT") or None,
+        **{
+            **{"endpoint_url": os.environ.get("AWS_ENDPOINT_URL_S3") or os.environ.get("AWS_ENDPOINT_URL") or os.environ.get("NEBIUS_S3_ENDPOINT") or None},
+            **{key: value for key, value in _S3_SETTINGS.get().items() if value},
+        },
         config=BotoConfig(signature_version="s3v4"),
     )
-

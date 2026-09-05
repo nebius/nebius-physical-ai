@@ -21,6 +21,12 @@ from npa.workbench.detection_training.schemas import EvalRequest, TrainRequest
 runner = CliRunner()
 
 
+@pytest.fixture(autouse=True)
+def isolate_run_store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("DETECTION_TRAINING_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.delenv("NPA_OUTPUT_PATH", raising=False)
+
+
 class FakeTensor:
     def __init__(self, value: Any):
         import numpy as np
@@ -267,7 +273,7 @@ def test_evaluation_passes_label_map_to_dataloader(monkeypatch: pytest.MonkeyPat
     fake_torch.cuda = types.SimpleNamespace(is_available=lambda: False)
     fake_torch.device = lambda value: value
     monkeypatch.setitem(sys.modules, "torch", fake_torch)
-    monkeypatch.setattr(evaluation, "_load_checkpoint", lambda _uri: {"num_classes": 3, "model_state_dict": {}})
+    monkeypatch.setattr(evaluation, "_load_checkpoint", lambda _uri: {"num_classes": 3, "model_state_dict": {"synthetic_weight": 1}})
 
     class FakeModel:
         def load_state_dict(self, *_args: Any, **_kwargs: Any) -> None:
@@ -338,7 +344,7 @@ def test_train_endpoint_accepts_label_map_without_num_classes(monkeypatch: pytes
 
     seen: dict[str, Any] = {}
 
-    def fake_train(request: TrainRequest, *, run_id: str | None = None, status_callback: Any = None):
+    def fake_train(request: TrainRequest, *, run_id: str | None = None, status_callback: Any = None, artifact_callback: Any = None):
         from npa.workbench.detection_training.schemas import TrainResponse
         from npa.workbench.detection_training.training import checkpoint_uri_pattern, compute_manifest_sha256, metrics_uri
 
@@ -383,7 +389,7 @@ def test_api_cli_sdk_service_mode_manifest_parity(monkeypatch: pytest.MonkeyPatc
     import npa.workbench.detection_training.service as service_module
     from npa.workbench.detection_training.service import create_app
 
-    def fake_train(request: TrainRequest, *, run_id: str | None = None, status_callback: Any = None):
+    def fake_train(request: TrainRequest, *, run_id: str | None = None, status_callback: Any = None, artifact_callback: Any = None):
         from npa.workbench.detection_training.training import checkpoint_uri_pattern, compute_manifest_sha256, metrics_uri
         from npa.workbench.detection_training.schemas import TrainResponse
 
@@ -481,7 +487,7 @@ def test_sdk_workbench_namespace_exports_sdk_module() -> None:
 
 def test_deploy_dry_run_contains_gpu_selector(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        "npa.cli.workbench.detection_training.load_credentials",
+        "npa.cli.workbench.detection_training.resolve_submit_credentials",
         lambda: types.SimpleNamespace(s3_access_key_id="", s3_secret_access_key="", s3_endpoint="https://storage.example"),
     )
     monkeypatch.setenv("DETECTION_TRAINING_TOKEN", "deploy-secret")
@@ -503,13 +509,14 @@ def test_deploy_dry_run_contains_gpu_selector(monkeypatch: pytest.MonkeyPatch) -
     deployment = [item for item in payload["items"] if item["kind"] == "Deployment"][0]
     assert deployment["spec"]["template"]["spec"]["nodeSelector"]["node.kubernetes.io/instance-type"] == "gpu-h100-sxm"
     assert deployment["spec"]["template"]["spec"]["containers"][0]["resources"]["limits"]["nvidia.com/gpu"] == "1"
-    secret = [item for item in payload["items"] if item["kind"] == "Secret"][0]
-    assert secret["data"]["DETECTION_TRAINING_AUTH_MODE"] == "<redacted>"
+    assert all(item["kind"] != "Secret" for item in payload["items"])
+    assert "deploy-secret" not in result.output
+    assert deployment["spec"]["template"]["spec"]["containers"][0]["envFrom"] == [{"secretRef": {"name": "npa-detection-training-env"}}]
 
 
 def test_deploy_defaults_to_token_auth_and_requires_token(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        "npa.cli.workbench.detection_training.load_credentials",
+        "npa.cli.workbench.detection_training.resolve_submit_credentials",
         lambda: types.SimpleNamespace(s3_access_key_id="", s3_secret_access_key="", s3_endpoint="https://storage.example"),
     )
     monkeypatch.delenv("DETECTION_TRAINING_TOKEN", raising=False)
@@ -524,7 +531,7 @@ def test_deploy_defaults_to_token_auth_and_requires_token(monkeypatch: pytest.Mo
 
 def test_deploy_insecure_no_auth_opt_out(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        "npa.cli.workbench.detection_training.load_credentials",
+        "npa.cli.workbench.detection_training.resolve_submit_credentials",
         lambda: types.SimpleNamespace(s3_access_key_id="", s3_secret_access_key="", s3_endpoint="https://storage.example"),
     )
     monkeypatch.delenv("DETECTION_TRAINING_TOKEN", raising=False)
@@ -534,8 +541,8 @@ def test_deploy_insecure_no_auth_opt_out(monkeypatch: pytest.MonkeyPatch) -> Non
         ["deploy", "--image", "registry/x:test", "--output-path", "s3://bucket/out", "--insecure-no-auth", "--dry-run"],
     )
     assert result.exit_code == 0, result.output
-    secret = [item for item in json.loads(result.output)["items"] if item["kind"] == "Secret"][0]
-    assert "DETECTION_TRAINING_TOKEN" not in secret["data"]
+    assert all(item["kind"] != "Secret" for item in json.loads(result.output)["items"])
+    assert "DETECTION_TRAINING_TOKEN" not in result.output
 
 
 def test_deploy_uses_only_an_explicit_operator_managed_pull_secret() -> None:

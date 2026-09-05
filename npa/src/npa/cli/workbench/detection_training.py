@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import base64
 import json
 import os
 import subprocess
+import tempfile
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -13,7 +13,7 @@ from typing import Any
 import httpx
 import typer
 
-from npa.clients.credentials import load_credentials
+from npa.orchestration.npa_workflow.submit_credentials import SubmitCredentialContext, resolve_submit_credentials
 from npa.deploy.images import DEFAULT_CONTAINER_REGISTRY, container_image_for_tool
 from npa.workbench.detection_training.artifacts import (
     EVAL_METRICS_FILENAME,
@@ -47,6 +47,7 @@ DEFAULT_NAMESPACE = "default"
 #: only symptom was `rollout status` timing out with nothing said about node labels
 #: (EVIDENCE.md §R46). `--node-selector-value` still overrides for anything not listed.
 GPU_NODE_SELECTORS = {
+    "b200": "gpu-b200-sxm",
     "h100": "gpu-h100-sxm",
     "l40s": "gpu-l40s-d",
     "rtx6000": "gpu-rtx6000",
@@ -72,13 +73,12 @@ def emit(payload: dict[str, Any], *, output: OutputFormat, text: str | None = No
 
 
 def deploy_cmd(
-    project: str = typer.Option("", "--project", "-p", help="Project alias used to resolve container_registry."),
+    project: str = typer.Option("", "--project", "-p", help="Project alias owning the cluster and output storage."),
     cluster_name: str = typer.Option(
         "",
         "--cluster-name",
         help=(
-            "NPA cluster profile whose cached kubeconfig to use. Empty (the default) uses the "
-            "ambient kubeconfig, i.e. the cluster `kubectl` is already pointed at."
+            "Exact NPA cluster context. Empty selects the selected project's sole saved cluster."
         ),
     ),
     kubeconfig: str = typer.Option("", "--kubeconfig", help="Kubeconfig path override."),
@@ -88,10 +88,11 @@ def deploy_cmd(
     port: int = typer.Option(DEFAULT_PORT, "--port", help="Service port."),
     input_path: str = typer.Option(DEFAULT_LANCE_URI, "--input-path", help="Default LanceDB input URI."),
     output_path: str = typer.Option("", "--output-path", help="Default S3 output URI."),
-    gpu_type: str = typer.Option("h100", "--gpu-type", help="GPU type: h100 or l40s."),
+    gpu_type: str = typer.Option("h100", "--gpu-type", help="GPU type: h100, b200, l40s, or rtxpro6000."),
     node_selector_key: str = typer.Option("node.kubernetes.io/instance-type", "--node-selector-key", help="GPU node selector label key."),
     node_selector_value: str = typer.Option("", "--node-selector-value", help="GPU node selector label value override."),
     image_pull_secret: str = typer.Option("", "--image-pull-secret", help="Existing operator-managed Kubernetes imagePullSecret for a private registry."),
+    state_pvc: str = typer.Option("", "--state-pvc", help="Existing persistent volume claim for run records; defaults to a retained claim created for this service."),
     token_env: str = typer.Option(DEFAULT_TOKEN_ENV, "--token-env", help="Environment variable containing service token."),
     auth_mode: str = typer.Option("token", "--auth-mode", help="Auth mode: none or token. Defaults to token (secure)."),
     insecure_no_auth: bool = typer.Option(
@@ -114,6 +115,9 @@ def deploy_cmd(
         fail("--output-path is required")
     resolved_kubeconfig = _resolve_kubeconfig(cluster_name=cluster_name, kubeconfig=kubeconfig)
     if destroy:
+        if not dry_run:
+            identity = _deployment_cluster(project=project, cluster_name=cluster_name, kubeconfig=kubeconfig)
+            resolved_kubeconfig = str(identity.kubeconfig)
         _kubectl(["delete", "service", name, "-n", namespace, "--ignore-not-found=true"], dry_run=dry_run, kubeconfig=resolved_kubeconfig)
         _kubectl(["delete", "deployment", name, "-n", namespace, "--ignore-not-found=true"], dry_run=dry_run, kubeconfig=resolved_kubeconfig)
         _kubectl(["delete", "secret", f"{name}-env", "-n", namespace, "--ignore-not-found=true"], dry_run=dry_run, kubeconfig=resolved_kubeconfig)
@@ -140,10 +144,33 @@ def deploy_cmd(
         image_pull_secret=image_pull_secret,
         auth_mode=auth_mode,
         token_env=token_env,
+        state_pvc=state_pvc,
     )
     if dry_run:
         typer.echo(json.dumps(_redact_manifest(manifest), indent=2, sort_keys=True))
         return
+    identity = _deployment_cluster(project=project, cluster_name=cluster_name, kubeconfig=kubeconfig)
+    resolved_kubeconfig = str(identity.kubeconfig)
+    try:
+        from npa.execution_preflight import resolve_execution_target, verify_execution_target
+
+        credentials = resolve_submit_credentials(project=identity.project_alias)
+        target = resolve_execution_target(
+            project=identity.project_alias, project_id=identity.project_id,
+            context=identity.context, output_uris=[output_path.rstrip("/") + "/"],
+            credentials=credentials,
+            provenance={"outputs": "cli.output-path.directory", "context": "verified.cluster"},
+        )
+        preflight = verify_execution_target(
+            target,
+            gpu_check=lambda: _verify_deployment_gpu(
+                context=identity.context, kubeconfig=resolved_kubeconfig,
+                selector_key=node_selector_key, selector_value=selector_value,
+                gpu_type=gpu_type,
+            ),
+        )
+    except (RuntimeError, ValueError) as exc:
+        fail(str(exc))
     if auth_mode == "none":
         typer.echo(
             "Warning: --auth-mode none deploys detection-training without token auth. The service "
@@ -151,6 +178,10 @@ def deploy_cmd(
             "Use --auth-mode token with DETECTION_TRAINING_TOKEN set.",
             err=True,
         )
+    _provision_service_secret(
+        name=name, namespace=namespace, kubeconfig=resolved_kubeconfig,
+        env=_service_env(input_path=input_path, output_path=output_path, auth_mode=auth_mode, token_env=token_env, port=port, credentials=credentials, region=target.region),
+    )
     _kubectl(["apply", "-f", "-"], stdin=json.dumps(manifest), kubeconfig=resolved_kubeconfig)
     _kubectl(["rollout", "status", f"deployment/{name}", "-n", namespace, "--timeout=900s"], kubeconfig=resolved_kubeconfig)
     endpoint = f"http://{name}.{namespace}.svc.cluster.local:{port}"
@@ -162,6 +193,7 @@ def deploy_cmd(
             "image": resolved_image,
             "endpoint": endpoint,
             "node_selector": {node_selector_key: selector_value},
+            "preflight": preflight,
         },
         output=output,
         text=f"Detection-training service deployed: {endpoint}",
@@ -247,7 +279,7 @@ def wait_for_training_run(
         if status == TRAINING_DONE:
             _assert_training_run_is_complete(status_payload)
             return status_payload
-        if status == TRAINING_FAILED:
+        if status in {TRAINING_FAILED, "interrupted"}:
             typer.echo(json.dumps(status_payload, indent=2, sort_keys=True), err=True)
             fail(f"detection-training run {run_id} failed")
         if time.monotonic() >= deadline:
@@ -285,7 +317,7 @@ def train_cmd(
     checkpoint_s3_endpoint_url: str = typer.Option("", "--checkpoint-s3-endpoint-url", help="S3-compatible endpoint URL."),
     checkpoint_s3_access_key_id: str = typer.Option("", "--checkpoint-s3-access-key-id", help="S3 access key ID."),
     checkpoint_s3_secret_access_key: str = typer.Option("", "--checkpoint-s3-secret-access-key", help="S3 secret access key."),
-    num_classes: int = typer.Option(10, "--num-classes", help="Detector class count."),
+    num_classes: int | None = typer.Option(None, "--num-classes", help="Detector class count including background; inferred from --label-map, otherwise 10."),
     label_map: str = typer.Option(
         "",
         "--label-map",
@@ -609,19 +641,20 @@ def _kubernetes_manifest(
     image_pull_secret: str,
     auth_mode: str,
     token_env: str,
+    state_pvc: str = "",
 ) -> dict[str, Any]:
-    env = _service_env(input_path=input_path, output_path=output_path, auth_mode=auth_mode, token_env=token_env, port=port)
+    # Validate secret inputs without placing their values in the workload manifest.
+    if auth_mode == "token" and not os.environ.get(token_env):
+        fail(f"{token_env} is required when --auth-mode token")
     return {
         "apiVersion": "v1",
         "kind": "List",
         "items": [
-            {
-                "apiVersion": "v1",
-                "kind": "Secret",
-                "metadata": {"name": f"{name}-env", "namespace": namespace},
-                "type": "Opaque",
-                "data": {key: base64.b64encode(value.encode("utf-8")).decode("ascii") for key, value in env.items()},
-            },
+            *([] if state_pvc else [{
+                "apiVersion": "v1", "kind": "PersistentVolumeClaim",
+                "metadata": {"name": f"{name}-state", "namespace": namespace},
+                "spec": {"accessModes": ["ReadWriteOnce"], "resources": {"requests": {"storage": "1Gi"}}},
+            }]),
             {
                 "apiVersion": "apps/v1",
                 "kind": "Deployment",
@@ -637,6 +670,8 @@ def _kubernetes_manifest(
                     "template": {
                         "metadata": {"labels": {"app.kubernetes.io/name": "npa-detection-training", "app.kubernetes.io/instance": name}},
                         "spec": {
+                            "securityContext": {"runAsUser": 1000, "runAsGroup": 1000, "fsGroup": 1000},
+                            "volumes": [{"name": "run-state", "persistentVolumeClaim": {"claimName": state_pvc or f"{name}-state"}}],
                             "nodeSelector": {node_selector_key: node_selector_value},
                             **({"imagePullSecrets": [{"name": image_pull_secret}]} if image_pull_secret else {}),
                             "tolerations": [{"key": "nvidia.com/gpu", "operator": "Exists", "effect": "NoSchedule"}],
@@ -647,11 +682,13 @@ def _kubernetes_manifest(
                                     "imagePullPolicy": "Always",
                                     "ports": [{"containerPort": port, "name": "http"}],
                                     "envFrom": [{"secretRef": {"name": f"{name}-env"}}],
+                                    "env": [{"name": "DETECTION_TRAINING_STATE_DIR", "value": "/var/lib/npa/detection-training"}],
+                                    "volumeMounts": [{"name": "run-state", "mountPath": "/var/lib/npa/detection-training"}],
                                     "resources": {
                                         "limits": {"nvidia.com/gpu": "1"},
                                         "requests": {"nvidia.com/gpu": "1"},
                                     },
-                                    "readinessProbe": {"httpGet": {"path": "/health", "port": "http"}, "initialDelaySeconds": 10, "periodSeconds": 10},
+                                    "readinessProbe": {"httpGet": {"path": "/readyz", "port": "http"}, "initialDelaySeconds": 10, "periodSeconds": 10},
                                     "securityContext": {
                                         "allowPrivilegeEscalation": False,
                                         "capabilities": {"drop": ["ALL"]},
@@ -676,23 +713,22 @@ def _kubernetes_manifest(
     }
 
 
-def _service_env(*, input_path: str, output_path: str, auth_mode: str, token_env: str, port: int) -> dict[str, str]:
-    creds = load_credentials()
+def _service_env(*, input_path: str, output_path: str, auth_mode: str, token_env: str, port: int, credentials: SubmitCredentialContext, region: str) -> dict[str, str]:
     env = {
         "DETECTION_TRAINING_AUTH_MODE": auth_mode,
         "DETECTION_TRAINING_PORT": str(port),
         "NPA_INPUT_PATH": input_path,
         "NPA_OUTPUT_PATH": output_path,
-        "AWS_REGION": os.environ.get("AWS_REGION", "auto"),
+        "AWS_REGION": region,
     }
     if auth_mode == "token":
         token = os.environ.get(token_env, "")
         if not token:
             fail(f"{token_env} is required when --auth-mode token")
         env["DETECTION_TRAINING_TOKEN"] = token
-    access_key = os.environ.get("AWS_ACCESS_KEY_ID") or creds.s3_access_key_id
-    secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY") or creds.s3_secret_access_key
-    endpoint = os.environ.get("AWS_ENDPOINT_URL") or creds.s3_endpoint
+    access_key = credentials.access_key_id
+    secret_key = credentials.secret_access_key
+    endpoint = credentials.endpoint_url
     if access_key:
         env["AWS_ACCESS_KEY_ID"] = access_key
     if secret_key:
@@ -704,6 +740,58 @@ def _service_env(*, input_path: str, output_path: str, auth_mode: str, token_env
     return {key: value for key, value in env.items() if value}
 
 
+def _deployment_cluster(*, project: str, cluster_name: str, kubeconfig: str):
+    from npa.cluster.identity import ClusterIdentityError, resolve_verified_cluster_identity
+
+    try:
+        identity = resolve_verified_cluster_identity(
+            project=project, context=cluster_name,
+            kubeconfig=Path(kubeconfig) if kubeconfig else None,
+        )
+    except ClusterIdentityError:
+        fail("selected project and exact Kubernetes context could not be verified")
+    if identity.cluster_absent:
+        fail("selected project cluster does not exist")
+    return identity
+
+
+def _verify_deployment_gpu(*, context: str, kubeconfig: str, selector_key: str, selector_value: str, gpu_type: str) -> None:
+    from npa.execution_preflight import ExecutionPreflightError
+    from npa.orchestration.skypilot.k8s_gpu_catalog import (
+        KubernetesGpuCatalog, UnsatisfiableAcceleratorError,
+        discover_kubernetes_gpu_inventory, resolve_kubernetes_accelerator,
+    )
+
+    inventory = discover_kubernetes_gpu_inventory(context=context, kubeconfig=kubeconfig)
+    if inventory.error:
+        raise ExecutionPreflightError("gpu", "exact cluster GPU inventory is unavailable", status="unknown")
+    candidates = [node for node in inventory.nodes if dict(node.labels).get(selector_key) == selector_value]
+    for node in candidates:
+        if not (node.ready and node.schedulable and node.allocatable >= 1 and node.capacity >= 1):
+            continue
+        for product in node.products:
+            try:
+                resolve_kubernetes_accelerator(f"{gpu_type}:1", catalog=KubernetesGpuCatalog({product: frozenset({1})}, context=context))
+            except UnsatisfiableAcceleratorError:
+                continue
+            return
+    raise ExecutionPreflightError("gpu", "requested selector and GPU product have no ready schedulable node with allocatable capacity")
+
+
+def _provision_service_secret(*, name: str, namespace: str, kubeconfig: str, env: dict[str, str]) -> None:
+    """Provision only the Secret through private files/stdin; never print its payload."""
+    with tempfile.TemporaryDirectory(prefix="npa-detection-secret-") as temporary:
+        arguments = ["create", "secret", "generic", f"{name}-env", "-n", namespace]
+        for key, value in env.items():
+            path = Path(temporary) / key
+            fd = os.open(path, os.O_CREAT | os.O_WRONLY | os.O_EXCL, 0o600)
+            with os.fdopen(fd, "w") as handle:
+                handle.write(value)
+            arguments.append(f"--from-file={key}={path}")
+        secret = _kubectl([*arguments, "--dry-run=client", "-o", "json"], capture=True, kubeconfig=kubeconfig, redact_errors=True)
+        _kubectl(["apply", "--server-side", "-f", "-"], stdin=secret, capture=True, kubeconfig=kubeconfig, redact_errors=True)
+
+
 def _kubectl(
     args: list[str],
     *,
@@ -711,6 +799,7 @@ def _kubectl(
     dry_run: bool = False,
     capture: bool = False,
     kubeconfig: str = "",
+    redact_errors: bool = False,
 ) -> str:
     cmd = ["kubectl"]
     if kubeconfig:
@@ -724,6 +813,8 @@ def _kubectl(
     except FileNotFoundError:
         fail("kubectl is not installed or not on PATH")
     except subprocess.CalledProcessError as exc:
+        if redact_errors:
+            fail("Kubernetes Secret provisioning failed; secret-bearing provider output withheld")
         detail = (exc.stderr or exc.stdout or "").strip()
         fail(f"kubectl command failed: {detail}")
     if not capture and result.stdout.strip():
@@ -746,8 +837,11 @@ def _resolve_kubeconfig(*, cluster_name: str, kubeconfig: str) -> str:
         return kubeconfig.strip()
     if not cluster_name.strip():
         return ""
-    path = Path.home() / ".npa" / "clusters" / cluster_name.strip() / "kubeconfig"
-    return str(path) if path.exists() else ""
+    config_dir = Path(os.environ.get("NPA_CONFIG_DIR") or Path.home() / ".npa")
+    path = config_dir / "clusters" / cluster_name.strip() / "kubeconfig"
+    if not path.exists():
+        fail("explicit cluster profile has no cached kubeconfig")
+    return str(path)
 
 
 def _redact_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
