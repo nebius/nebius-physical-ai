@@ -57,6 +57,9 @@ def train_detector(
     artifact_callback: Callable[[list[Any]], None] | None = None,
 ) -> TrainResponse:
     """Run Faster R-CNN training and persist checkpoints plus metrics."""
+    # Direct callers can supply a mutated/model_copy request. Validate the final
+    # override values before callbacks, runtime initialization, or artifact IO.
+    request = TrainRequest.model_validate(request.model_dump())
     manifest = compute_manifest_sha256("train", request.model_dump(mode="json"))
     resolved_run_id = run_id or make_run_id("train", manifest)
     effective_output_uri = request.checkpoint_s3.uri or request.output_uri

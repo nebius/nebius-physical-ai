@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator, model_validator
 
 from npa.workbench.training_config import TrainingConfigError, overrides_to_mapping
 
@@ -88,10 +88,16 @@ class TrainRequest(BaseModel):
     def _strip_data_path(cls, value: str) -> str:
         return value.strip()
 
-    @model_validator(mode="after")
-    def _apply_overrides(self) -> "TrainRequest":
+    @model_validator(mode="before")
+    @classmethod
+    def _apply_overrides(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        payload = dict(value)
+        overrides = TypeAdapter(list[str]).validate_python(payload.get("overrides", []))
+        payload["overrides"] = overrides
         try:
-            parsed = overrides_to_mapping(self.overrides)
+            parsed = overrides_to_mapping(overrides)
         except TrainingConfigError as exc:
             raise ValueError(str(exc)) from exc
         supported = {
@@ -119,7 +125,13 @@ class TrainRequest(BaseModel):
             key = aliases.get(raw_key, raw_key)
             if key not in supported:
                 raise ValueError(f"unsupported detection-training override: {raw_key}")
-            setattr(self, key, value)
+            payload[key] = value
+        # Run every overridden value through the normal field constraints and
+        # normalization instead of bypassing validation with raw assignment.
+        return payload
+
+    @model_validator(mode="after")
+    def _resolve_training_fields(self) -> "TrainRequest":
         if self.data_path:
             self.lance_uri = self.data_path
         from .labels import detector_label_map
