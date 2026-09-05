@@ -48,3 +48,28 @@ def test_existing_project_identity_live(live_spec: FleetSpec, mismatch: str) -> 
             project_id, created = resolve_project_id("nebius", tenant, project, **kwargs)
             assert project_id == project.project_id
             assert created is False
+
+
+def test_existing_fleet_controller_identity_live(live_spec: FleetSpec) -> None:
+    from npa.cluster.api import MK8sClient
+    from npa.cluster.identity import resolve_verified_cluster_identity
+    from npa.cluster.state import list_local_clusters
+
+    states = list_local_clusters()
+    client = MK8sClient(profile=live_spec.profile)
+    for project in live_spec.projects:
+        matching = [state for state in states if state.project_id == project.project_id]
+        assert len(matching) == len(project.clusters)
+        for state in matching:
+            verified = resolve_verified_cluster_identity(
+                context=state.name,
+                project_id=state.project_id,
+                cluster_id=state.cluster_id,
+                cluster_name=state.provider_name or state.name,
+                client=client,
+            )
+            assert not verified.cluster_absent
+            assert verified.project_id == project.project_id
+            assert verified.cluster_id == state.cluster_id
+            assert verified.context == state.name
+            assert verified.cluster_name == (state.provider_name or state.name)

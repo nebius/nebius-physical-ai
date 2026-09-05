@@ -370,6 +370,10 @@ resolve those values from the provider inventory before deployment.
    write also registers the fleet target under `~/.npa/clusters/<context>` so
    project-scoped workflow, controller, and `provision-if-absent` commands can
    consume it without a second manual cluster registration step.
+   Fleet's unique local context may differ from the provider cluster name.
+   Exact controller cleanup compares `--cluster-name` with the saved
+   `provider_name`, while still verifying the immutable project/cluster IDs
+   and the saved kubeconfig against the live provider.
 7. **Consume the latest recipe**: `--k8s-training-ref main` clones
    `nebius-solutions-library` and uses its `k8s-training` (or `--k8s-training-dir`
    for a local checkout). Omit both to use the repo-vendored, tested copy. NPA
