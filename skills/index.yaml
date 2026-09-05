@@ -194,7 +194,7 @@ skills:
         contains: "--preemptible"
   - name: health-preflight
     category: atomic
-    when_to_use: "Before any deploy, image build, or GPU submit: prove HF/NGC/S3/Token Factory credentials and gated-model access with `npa workbench health preflight` and `npa workbench health access` instead of failing mid-run."
+    when_to_use: "Before any deploy, image build, provisioning, or GPU submit: prove service credentials with `npa workbench health preflight`, request `--checks nebius` before provisioning, and verify gated-model access with `npa workbench health access`."
     path: skills/atomic/health-preflight/SKILL.md
     smoke:
       - type: cli_help
