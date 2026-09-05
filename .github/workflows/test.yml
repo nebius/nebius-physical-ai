@@ -25,6 +25,14 @@ jobs:
           cache-dependency-path: npa/tests/browser/package-lock.json
       - name: Install browser test dependencies
         run: npm ci --prefix npa/tests/browser
+      - name: Set up Python for the production UI renderer
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install the production UI renderer
+        run: |
+          python -m venv npa/.venv
+          npa/.venv/bin/python -m pip install -e npa
       - name: Run mocked agent Cypress coverage
         run: npm run --prefix npa/tests/browser cy:mock
 
@@ -60,13 +68,16 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install npa
-        run: cd npa && pip install -e ".[dev,adapter]"
+        run: |
+          python -m venv npa/.venv
+          npa/.venv/bin/python -m pip install -e "npa[dev,adapter]"
+          echo "${GITHUB_WORKSPACE}/npa/.venv/bin" >> "$GITHUB_PATH"
 
       - name: Verify checked-out CLI flags
         run: |
           cd npa
           git rev-parse HEAD
-          python - <<'PY'
+          .venv/bin/python - <<'PY'
           from pathlib import Path
 
           from click.utils import strip_ansi
@@ -102,7 +113,7 @@ jobs:
       - name: Run pytest with coverage
         # The floor sits below the current ~66% so version-dependent skips
         # don't flake the gate; raise it as coverage grows, never lower it.
-        run: cd npa && python -m pytest tests/ -v --tb=short --cov=npa --cov-report=term-missing --cov-fail-under=60
+        run: cd npa && .venv/bin/python -m pytest tests/ -v --tb=short --cov=npa --cov-report=term-missing --cov-fail-under=60
 
       - name: Run CLI install test
         run: cd npa && bash tests/integration/test_cli_install.sh

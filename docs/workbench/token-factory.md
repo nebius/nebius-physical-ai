@@ -1,277 +1,225 @@
-# Nebius Token Factory Integration Guide
+# Nebius Token Factory integration
 
-> **Just want the fastest serverless copy-paste path (e.g. for a hackathon)?**
-> See [../hackathon-cosmos3-reasoner.md](../hackathon-cosmos3-reasoner.md). This
-> page is the full reference.
+Token Factory provides hosted text generation, image captioning, and scene
+reasoning. Use these capabilities to annotate inputs or interpret results from
+your Nebius GPU workloads. Direct CLI calls run from your machine; the
+checked-in NPA workflows run their calling stages on Kubernetes CPUs.
 
-Nebius Token Factory is an OpenAI-compatible hosted-inference API for open text
-and vision models. NPA uses it natively for zero-GPU workflows: captioning,
-batch text generation, and VLM-based rollout scoring all call the hosted API
-instead of starting a GPU server.
+## Configure and verify the key
 
-Authentication is a single API key sent as an `Authorization: Bearer <key>`
-header. NPA reads it from the `NEBIUS_TOKEN_FACTORY_KEY` environment variable (or
-`~/.npa/credentials.yaml`). The default endpoint is
-`https://api.tokenfactory.nebius.com/v1/`.
-
-> **The Token Factory key is its own credential.** It is a long opaque token
-> that starts with `v1.` (not a `nebius_…` string). It is **not** your Nebius
-> IAM / `nebius` CLI access token — an IAM token returns `403` against Token
-> Factory. You must mint a Token Factory key in the Token Factory console
-> (step 1 below); having `nebius` CLI access is not enough.
-
-> **Just need to create and set the key?** See the focused
-> [Token Factory key setup guide](token-factory-key.md). This page is the full
-> integration reference.
-
-## 1. Register and get an API key
-
-Token Factory has its own console, separate from the main Nebius cloud console.
-Registering and minting a key takes about two minutes:
-
-1. **Create an account / sign in.** Go to <https://tokenfactory.nebius.com/> and
-   sign up (Google/GitHub/email all work) or sign in. New accounts land in a
-   default organization and project.
-2. **Make sure the project has credit.** Token Factory is pay-per-token. New
-   accounts usually get trial credit; otherwise open **Billing** and add a
-   payment method or redeem credits. A project with no balance returns
-   `402`/`403` on inference calls. If your team already has a Token Factory
-   project, just confirm you're switched into it (top-left project switcher).
-3. **Create the API key.** In the left nav open **API keys** → **Create API
-   key**, give it a name (e.g. `npa-workbench`), and click **Create**.
-4. **Copy it now.** The key is shown **once** and cannot be reopened later. It's
-   a long opaque Bearer token. Store it somewhere safe (a password manager) —
-   you'll paste it into NPA in step 2.
-
-> Tip: each Token Factory project also has an **AI project ID** (looks like
-> `aiproject-...`, visible in the project switcher / settings). You don't need
-> it for normal use — the API key already scopes requests to its project — but
-> it's handy when filtering models by project in the console.
-
-Optional 10-second self-test from your own terminal (proves the key works and
-shows the served catalog, including whether `nvidia/Cosmos3-Super-Reasoner` is
-enabled for you):
+Complete the [installation](../install.md), then create a key in the
+[Token Factory console](https://tokenfactory.nebius.com/) and enter it through
+`npa configure`. The key is separate from your Nebius Cloud IAM token. See
+[key setup](token-factory-key.md) for credential-file and environment options.
 
 ```bash
-curl -s https://api.tokenfactory.nebius.com/v1/models \
-  -H "Authorization: Bearer <PASTE_KEY>" | head
-```
-
-## 2. Give the key to NPA
-
-Pick one (NPA checks them in this order: explicit arg → env var → credentials file).
-
-**A. Interactive setup (recommended)**
-
-```bash
-npa configure
-# ... answer the "Nebius Token Factory API key (NEBIUS_TOKEN_FACTORY_KEY)" prompt
-```
-
-**B. Credentials file by hand** — `~/.npa/credentials.yaml`:
-
-```yaml
-tokens:
-  NEBIUS_TOKEN_FACTORY_KEY: v1.XXXXXXXXXXXXXXXXXXXXXXXX   # your real key, paste it verbatim
-```
-
-```bash
-chmod 600 ~/.npa/credentials.yaml
-```
-
-**C. Environment variable** (good for CI / one-off shells):
-
-```bash
-export NEBIUS_TOKEN_FACTORY_KEY=v1.XXXXXXXXXXXXXXXXXXXXXXXX
-```
-
-## 3. Verify authentication
-
-```bash
+npa workbench token-factory status
 npa workbench token-factory verify
+npa workbench token-factory models
 ```
 
-Expected output confirms the key authenticated and lists a few available models:
+`status` checks local settings. `verify` makes a live model-list request and
+reports `authenticated` and `model_count`; it does not test inference or
+billing access. Select compatible text and vision models from your key's
+catalog. The implementation defaults below are not guaranteed to be available:
 
+| Command | Default model |
+| --- | --- |
+| `generate` | `meta-llama/Llama-3.3-70B-Instruct` |
+| `caption` | `Qwen/Qwen2.5-VL-72B-Instruct` |
+| `reason` | `nvidia/Cosmos3-Super-Reasoner` |
+| `batch-generate` | `openai/gpt-oss-120b` |
+
+NPA reads `NEBIUS_TOKEN_FACTORY_KEY` from the environment or
+`tokens.NEBIUS_TOKEN_FACTORY_KEY` in `~/.npa/credentials.yaml`. Keep the file
+mode `0600`. The default API URL is
+`https://api.tokenfactory.nebius.com/v1/`; use
+`NEBIUS_TOKEN_FACTORY_BASE_URL` only when selecting another endpoint deliberately.
+
+## Generate and inspect artifacts
+
+These commands accept local paths or `s3://` URIs. Direct S3 calls require
+`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and the correct `AWS_ENDPOINT_URL`
+in the process environment; their storage client does not load those values
+from the NPA credential file. Supply them through your protected credential
+loader. Workflow submission resolves named secrets from the selected project's
+credentials instead. Use inputs you are authorized to send to the hosted model.
+
+Set the model names selected above, then create a prompt file:
+
+```bash
+text_model="<available-text-model>"
+vision_model="<available-vision-model>"
+reason_model="<available-vision-reasoning-model>"
+mkdir -p ./token-factory-results
+cat > ./token-factory-results/prompts.jsonl <<'PROMPTS'
+{"id":"pick-place","prompt":"Write a robot task instruction for moving a red block into a tray."}
+{"id":"inspection","prompt":"List observable success criteria for a robot moving a red block into a tray."}
+PROMPTS
+
+npa workbench token-factory generate \
+  --input-path ./token-factory-results/prompts.jsonl \
+  --output-path ./token-factory-results/generations.jsonl \
+  --model "$text_model" --output json
 ```
-  authenticated: True
-  base_url: https://api.tokenfactory.nebius.com/v1/
-  model_count: 42
-  sample_models: ['meta-llama/Llama-3.3-70B-Instruct', ...]
-```
 
-`npa workbench token-factory status` shows the resolved base URL and whether a
-key is configured **without** making a network call.
-`npa workbench token-factory models` lists the full model catalog.
+Each prompt is an independent request. A `.txt` file with one prompt per line
+also works. Open `generations.jsonl`: it should contain one row per input with
+`id`, `prompt`, and a nonempty `completion`. `generate` processes all prompts by
+default.
 
-## 4. Run something
-
-Caption a folder of images (local or S3):
+For images, place your JPEG, PNG, WebP, BMP, or PPM files under `./frames`:
 
 ```bash
 npa workbench token-factory caption \
   --input-path ./frames \
-  --output-path /tmp/captions \
-  --model Qwen/Qwen2.5-VL-72B-Instruct \
-  --output json
+  --output-path ./token-factory-results/captions.json \
+  --model "$vision_model" --output json
+
+npa workbench token-factory reason \
+  --input-path ./frames \
+  --output-path ./token-factory-results/scene_reasoning.json \
+  --task "Describe the scene and the steps a robot would need to move the red block into the tray." \
+  --model "$reason_model" --output json
 ```
 
-Text generation from a JSONL prompt file (`{"id": ..., "prompt": ...}`
-per line) or a `.txt` file (one prompt per line):
+Captioning sends one request per image. Reasoning sends the selected images
+together with the task. Neither command reads video files directly; extract
+frames first. Check saved results against the source images:
 
-```bash
-npa workbench token-factory generate \
-  --input-path ./prompts.jsonl \
-  --output-path /tmp/generations \
-  --model meta-llama/Llama-3.3-70B-Instruct \
-  --output json
-```
+| Artifact | Check |
+| --- | --- |
+| `captions.json` | `image_count` matches the processed inputs; every `captions` entry names an image and has a useful `caption`. |
+| `scene_reasoning.json` | `images` names the intended inputs and `analysis` addresses the supplied `task`. |
 
-## 4a. Batch inference
+The default image limits are 50 for `caption` and 8 for `reason`. Set
+`--max-images` to your intended input count when processing more. A directory
+output appends the filenames shown above. Use an explicit `.json` filename
+for caption/reason results or `.jsonl` for generations. `--output json` formats status on stdout;
+`--output-path` controls the saved artifact.
 
-`generate` issues one request per prompt and waits for each. `batch-generate`
-submits the whole prompt file as a single Token Factory batch operation instead:
-tokens are billed at batch rates, and the prompt count is not bounded by how
-long a stage can sit in a request loop. It takes the same input file and writes
-the same `generations.jsonl`, so it is a drop-in replacement for `generate`.
+**`--dry-run` still calls the model.** It only skips saving the result. Use
+`workflow validate-spec` or `plan-spec` for static workflow checks.
 
-```bash
-npa workbench token-factory batch-generate \
-  --input-path ./prompts.jsonl \
-  --output-path /tmp/generations \
-  --model openai/gpt-oss-120b \
-  --completion-window 24h \
-  --output json
-```
+Scene reasoning produces a proposed plan. To score observed rollout frames
+against a task, use `npa workbench vlm-eval run --backend api`; see the
+[rollout cookbook](cookbooks/tokenfactory-compute-combos.md). A generated plan
+does not establish task success.
 
-Three things differ from every other command in this tool, and all of them
-matter:
+## Batch generation
 
-**Batch routing is a per-model entitlement, unrelated to real-time chat.** Most
-models that serve `/chat/completions` are rejected for batch: measured across
-eight text models on one key, only `openai/gpt-oss-120b` was batch routable.
-That is why the default here is not the default text model. Confirm a model on a
-few prompts before pointing a large run at it.
-
-**Batch is text-to-text only.** A vision model is rejected at submit, so there is
-no batch captioning path — `caption` is real-time by necessity.
-
-**It is asynchronous.** The completion window is a deadline, not an expected
-latency: batches of a few prompts have been observed still running after an hour
-against a 24h window. Use `--no-wait` when you do not want to hold the process
-open. That writes a `batch_operation.json` handle next to the eventual output and
-exits, and the run is collected later:
+`batch-generate` submits text prompts asynchronously and writes the same JSONL
+row format as `generate`. Batch access is a separate model entitlement, so a
+model working for direct generation may still be rejected for batch.
 
 ```bash
 npa workbench token-factory batch-generate \
-  --input-path ./prompts.jsonl --output-path s3://<bucket>/run/out/ --no-wait
+  --input-path ./token-factory-results/prompts.jsonl \
+  --output-path ./token-factory-results/batch/generations.jsonl \
+  --model "<batch-enabled-text-model>" --no-wait --output json
 
 npa workbench token-factory batch-status \
-  --operation-id <operation-id> --output-path s3://<bucket>/run/out/ --wait
+  --operation-id "<operation-id-from-submit>" \
+  --output-path ./token-factory-results/batch/generations.jsonl \
+  --wait --output json
 ```
 
-`batch-status` without `--wait` reports the current status and exits, so a caller
-can poll on its own schedule. It reports `request_counts` (`total`, `completed`,
-`failed`, `invalid`) — the only real progress signal a pending batch offers — and
-recovers prompts from the operation's own source dataset, so collecting does not
-need the original prompt file.
+Submission writes a `batch_operation.json` handle beside the eventual output.
+Without `--no-wait`, submission waits for collection; `batch-status` without
+`--wait` reports the current state. Pending is not completion. Check
+`request_counts` and the collected `failures`, then inspect saved rows.
+The completion window is a service deadline, not expected response latency.
+Batch does not provide image captioning.
 
-When a batch does fail, the reason is not where the operations API suggests:
-`/operations/{id}/errors` returns a single empty string. The per-row reason lives
-in the batch record's error file, and `batch-generate` reads it and reports it
-verbatim, so a rejected model produces a message naming the model and the reason
-rather than an empty failure.
+Request and response datasets are deleted after results are collected unless
+`--keep-datasets` is set. A pending operation still needs its request dataset.
+If the service rejects or cannot execute batches, follow its reported error and
+cancel your pending batch through the provider before switching to `generate`.
 
-A batch that is accepted and then sits at `completed: 0` for hours is usually a
-degraded platform rather than a bad job — batch execution has been observed
-unavailable while submissions were still accepted. Cancel what you queued and
-fall back to `generate` until it recovers.
+## Run a workflow on Nebius
 
-The request and response datasets Token Factory creates server-side are scratch
-state: they are deleted once results are collected, unless `--keep-datasets` is
-passed. A `--no-wait` run deliberately leaves its request dataset in place,
-because the operation reads it after the submitting process exits.
+The files under `npa/workflows/workbench/npa-workflows/` are
+`npa.workflow/v0.0.1` specs. Submit them through NPA, which renders SkyPilot
+tasks. Passing these files directly to `sky jobs launch` does not work.
 
-Reason over a scene with NVIDIA Cosmos3-Super-Reasoner — point it at scene
-images and ask what a robot should do (scene understanding + plan of action):
+Complete [Workbench setup](getting-started.md), including the selected
+Kubernetes context, writable S3 storage, and `npa skypilot bootstrap`. Upload
+the prompt file to the S3 URI you supply below. Replace the placeholders and use
+the same config overrides for planning and execution:
 
 ```bash
-npa workbench token-factory reason \
-  --input-path ./scene \
-  --output-path /tmp/scene-reasoning \
-  --task "What is in this scene and how should a robot pick up the red box?" \
-  --model nvidia/Cosmos3-Super-Reasoner \
-  --output json
+spec=npa/workflows/workbench/npa-workflows/token-factory-generate.yaml
+bucket="<your-bucket>"
+run_id="<unique-run-id>"
+prompts_uri="s3://${bucket}/inputs/prompts.jsonl"
+
+npa workbench workflow validate-spec "$spec"
+npa workbench workflow plan-spec "$spec" --run-id "$run_id" \
+  --var "bucket=${bucket}" --var "prompts_uri=${prompts_uri}" \
+  --var "generate_model=${text_model}" --json
+
+npa workbench workflow submit "$spec" \
+  --project "<project-alias>" --infra "k8s/<context>" \
+  --run-id "$run_id" --stage-src \
+  --var "bucket=${bucket}" --var "prompts_uri=${prompts_uri}" \
+  --var "generate_model=${text_model}" \
+  --secret-env NEBIUS_TOKEN_FACTORY_KEY \
+  --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY
 ```
 
-Score a rollout with a hosted VLM (no GPU, no vLLM):
+`--stage-src` stages the current package for the calling stage. `--secret-env`
+takes credential names, never values. For a rendered preview, add `--plan-only`
+to the same submit command. Config keys are case-sensitive: `bucket`,
+`prompts_uri`, and `generate_model` are declared by this spec.
 
-```bash
-npa workbench vlm-eval run \
-  --input-path ./rollouts/episode-000 \
-  --output-path /tmp/vlm-eval \
-  --backend api \
-  --api-key-env NEBIUS_TOKEN_FACTORY_KEY \
-  --output json
-```
+The default result is
+`s3://<your-bucket>/runs/<run-id>/token-factory/generations.jsonl`.
+Use `workflow status`, `logs`, and `artifacts` with the returned run ID and
+selected project, as described in the [run lifecycle](../run-lifecycle.md).
+Verify the saved output after the stage succeeds. See the
+[composition guide](composing-cloud-and-token-factory.md) for GPU producer and
+hosted consumer stages.
 
-## 5. Run on Nebius (SkyPilot)
+## Python integration
 
-The checked-in CPU-only workflows pass the key as a SkyPilot secret:
-
-```bash
-sky jobs launch \
-  --secret NEBIUS_TOKEN_FACTORY_KEY \
-  --secret AWS_ACCESS_KEY_ID \
-  --secret AWS_SECRET_ACCESS_KEY \
-  npa/workflows/workbench/npa-workflows/token-factory-caption.yaml
-```
-
-Other workflows: `token-factory-generate.yaml`,
-`token-factory-cosmos-reason.yaml`, `vlm-eval-token-factory.yaml`.
-
-## Live testing (first-class)
-
-The mocked unit tests never touch the network. The *live* tests that actually
-authenticate against Token Factory are in `npa/tests/e2e/test_token_factory_e2e.py`
-and are marked `token_factory_e2e`. They self-skip when no key is configured, so
-the only thing you need to run them is a real key:
-
-```bash
-NEBIUS_TOKEN_FACTORY_KEY=nebius_xxx npa/.venv/bin/python -m pytest \
-  npa/tests/e2e/test_token_factory_e2e.py -v
-```
-
-They cover: `list_models` authenticates, a text chat completion returns text,
-and `nvidia/Cosmos3-Super-Reasoner` produces a scene plan (that last one skips if
-the model is not available for your key). For a quick manual check use
-`npa workbench token-factory verify`.
-
-## Use it in Python
-
-NPA's client is a thin OpenAI-compatible wrapper, so you can call it directly:
+The SDK wrapper performs the CLI operation, saves the artifact, and prints its
+status; it returns `None`. Select an available model as above:
 
 ```python
-from npa.clients.token_factory import TokenFactoryClient
+from npa.sdk.workbench import token_factory
 
-client = TokenFactoryClient()  # reads NEBIUS_TOKEN_FACTORY_KEY
-text = client.chat_completion_text(
-    model="meta-llama/Llama-3.3-70B-Instruct",
-    messages=[{"role": "user", "content": "Give me one robot task instruction."}],
+token_factory.generate(
+    input_path="./token-factory-results/prompts.jsonl",
+    output_path="./token-factory-results/sdk-generations.jsonl",
+    model="<available-text-model>",
+    output="json",
 )
-print(text)
 ```
 
-Override the endpoint with `NEBIUS_TOKEN_FACTORY_BASE_URL` (or `NEBIUS_BASE_URL`)
-if you are pointed at a non-default deployment.
+For in-memory results, use `generate_text`, `caption_images`, or `reason_scene`
+from `npa.workbench.token_factory`. These return dataclasses; persistence
+requires the corresponding `write_generations`, `write_captions`, or
+`write_reason` function. `TokenFactoryClient.chat_completion_text` returns text
+without creating an artifact.
 
-## Troubleshooting
+## Troubleshooting and validation
 
-- **`NEBIUS_TOKEN_FACTORY_KEY is not set`** — provide the key via step 2; confirm with
-  `npa workbench token-factory status`.
-- **`Token Factory request failed (401)`** — the key is invalid or revoked;
-  create a new one.
-- **`Token Factory request failed (404)` on a model** — the model id is wrong or
-  retired; check `npa workbench token-factory models`.
-- **Workflow exits with "NEBIUS_TOKEN_FACTORY_KEY is required"** — you did not pass
-  `--secret NEBIUS_TOKEN_FACTORY_KEY` to `sky jobs launch`.
+| Symptom | Next step |
+| --- | --- |
+| Key missing | Run `npa configure`, then `token-factory status`. |
+| Authentication fails | Check that you supplied the Token Factory key, not an IAM token; check revocation and project access. |
+| Model or inference request rejected | Check `models`, the returned error, and your project's inference/billing entitlement. |
+| Workflow says the key is required | Include `--secret-env NEBIUS_TOKEN_FACTORY_KEY` on `workflow submit`. |
+| S3 read/write fails | Check storage credentials, endpoint, bucket, and input objects; direct calls need AWS variables in their process environment. |
+| Batch remains pending | Inspect `batch-status` and provider status; acceptance alone does not prove execution. |
+
+With the real key already configured, run the live integration tests from the
+repository root:
+
+```bash
+npa/.venv/bin/python -m pytest npa/tests/e2e/test_token_factory_e2e.py -v
+```
+
+These tests exercise real model requests. They skip without a key, and the
+reasoner test skips if that model is unavailable. Inspect pass/skip results;
+a skip is not proof that inference worked.
