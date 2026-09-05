@@ -1264,9 +1264,7 @@ def test_augmentation_manifest_read_failure_is_sanitized_and_fails_closed(
     def fail_read(_uri: str) -> dict:
         raise PermissionError(f"denied object={secret}")
 
-    monkeypatch.setattr(
-        "npa.workflows.data_factory_stages._download_json", fail_read
-    )
+    monkeypatch.setattr("npa.workflows.data_factory_stages._download_json", fail_read)
 
     with pytest.raises(typer.BadParameter, match="augmentation manifest") as exc:
         cosmos2._all_augmentations("s3://redacted/configs/")
@@ -1300,7 +1298,9 @@ def test_paidf_transfer_invokes_optional_sam2_once_and_reuses_masks(
 
     monkeypatch.setattr(tx, "cosmos_transfer_available", lambda: True)
     monkeypatch.setattr(
-        cosmos2, "_materialize_conditioning_input", lambda *_args, **_kwargs: str(source)
+        cosmos2,
+        "_materialize_conditioning_input",
+        lambda *_args, **_kwargs: str(source),
     )
     monkeypatch.setattr(
         cosmos2,
@@ -1435,7 +1435,9 @@ def test_paidf_transfer_rejects_invalid_or_conflicting_sam2_config(
     source.write_bytes(b"video")
     monkeypatch.setattr(tx, "cosmos_transfer_available", lambda: True)
     monkeypatch.setattr(
-        cosmos2, "_materialize_conditioning_input", lambda *_args, **_kwargs: str(source)
+        cosmos2,
+        "_materialize_conditioning_input",
+        lambda *_args, **_kwargs: str(source),
     )
 
     invalid = runner.invoke(

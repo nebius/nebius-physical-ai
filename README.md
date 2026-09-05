@@ -135,11 +135,10 @@ Workbench setup even though the PAIDF + Cosmos 3 path below currently obtains
 its model weights from Hugging Face. Token Factory is required by that path for
 captioning and evaluation.
 
-The active Nebius CLI identity must also be allowed to administer tenant IAM
-during first-time storage setup. `npa configure` creates a project service
-account and access key plus a tenant IAM group and bucket-scoped permit; project
-admin alone is not sufficient. Remove any temporary broad role after setup and
-teardown are complete.
+First-time storage setup needs **admin permission on the target project**.
+`npa configure` creates a project service account, access key, and project-scoped
+IAM group with a bucket-scoped `storage.object-editor` permit. Tenant-wide admin
+permission and tenant-wide project listing are not required.
 
 Then give your agent this prompt:
 
@@ -163,9 +162,10 @@ non-interactively. Persist supported environment credentials with npa configure
 --save-env-credentials and use explicit --provision to create or reuse writable
 project object storage. Without --provision, known-project setup must remain
 provider-free and leave storage unselected.
-Confirm the active identity can create the tenant IAM objects that secure that
-storage. Then run npa configure --show,
-npa workbench health preflight --json, and
+Confirm the active identity can manage the project-scoped IAM objects that
+secure that storage. Then run npa configure --show,
+npa workbench health preflight --json,
+npa workbench health preflight --checks nebius --json, and
 npa workbench health access --capability paidf,cosmos3 --json.
 
 Do not bypass a failed gate or provision GPU resources yet. If Hugging Face
