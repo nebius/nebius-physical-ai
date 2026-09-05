@@ -1,158 +1,150 @@
-# Token Factory + Nebius compute combos
+# Token Factory with Nebius GPU workloads
 
-Most Token Factory workflows are **zero-GPU** — they only call the hosted API.
-These two **combo** workflows are different: each pairs *real Nebius cloud
-compute* (a GPU job) with *hosted Token Factory inference*. The GPU stage
-produces artifacts; the hosted, zero-GPU stage reasons over them. They show
-Token Factory working alongside Nebius compute, not just on its own.
+These workflows train or roll out a policy on Nebius GPUs, then use hosted
+Token Factory inference to interpret the resulting artifacts. Start with the
+[composition guide](../composing-cloud-and-token-factory.md) for credentials,
+storage, and the producer/consumer contract.
 
-| Workflow | Nebius compute | Token Factory stage | Entry point |
-| --- | --- | --- | --- |
-| **train-triage** | Serverless GPU Job (LeRobot train) | Text model writes a triage report from the run's artifacts | [`run_tokenfactory_train_triage.py`](../../../npa/scripts/run_tokenfactory_train_triage.py) |
-| **sim-sweep** | N serverless GPU Jobs (LeRobot train fan-out) | Text model designs the sweep, then ranks the runs | [`run_tokenfactory_sim_sweep.py`](../../../npa/scripts/run_tokenfactory_sim_sweep.py) |
-| **rollout-judge** | Managed Kubernetes GPU (LeRobot eval rollout) | Hosted VLM scores the rollout (`vlm-eval --backend api`) | [`tokenfactory-rollout-judge-combo.yaml`](../../../npa/workflows/workbench/npa-workflows/tokenfactory-rollout-judge-combo.yaml) |
-| **scene-to-rollout-judge** | Managed Kubernetes GPU (LeRobot eval rollout) | Reasoner extracts a plan, then a VLM judges the rollout against it | [`tokenfactory-scene-to-rollout-judge.yaml`](../../../npa/workflows/workbench/npa-workflows/tokenfactory-scene-to-rollout-judge.yaml) |
+## Prepare the runtime and inputs
 
-All are intentionally **smoke-sized** so they are cheap to run end-to-end. New to
-composing these? Read
-[composing-cloud-and-token-factory.md](../composing-cloud-and-token-factory.md)
-first — it explains the contract, both tokens, and the two composition styles.
+Complete [Workbench setup](../getting-started.md), including the selected
+Kubernetes context, S3 credentials, and `npa skypilot bootstrap`. The checked-in
+GPU stages request one H100, 16 CPUs, and 64 GiB memory; hosted stages request
+4 CPUs and 16 GiB. Verify the models available to your Token Factory key.
 
-## Prerequisites
+The two rollout specs currently use `Qwen/Qwen2.5-VL-72B-Instruct` for their
+hosted judge; the judge toolRefs do not pass a model override. Confirm access
+before launching. Setting `--var vlm_model=...` does not change these hosted
+judge commands. If that model is unavailable, score existing rollouts directly
+with `vlm-eval run --backend api --model "<available-vision-model>"` or use
+`vlm-eval loop` for separate rollout scores.
 
-- A Token Factory API key in `NEBIUS_TOKEN_FACTORY_KEY` (see
-  [token-factory.md](../token-factory.md) to register and mint one).
-- Nebius cloud credentials for compute + storage. The serverless path needs a
-  Nebius **project ID** and an S3 **bucket** you can write to; the Kubernetes
-  path needs SkyPilot bootstrapped (`npa skypilot bootstrap`).
-- Object-storage credentials in `~/.npa/credentials.yaml` (the runner exports
-  them for you; SkyPilot reads them as `--secret`s).
+Use a unique run ID and replace the bucket, project, context, and checkpoint
+placeholders. The rollout examples need a checkpoint compatible with the
+selected LeRobot image, including its processor configuration. The legacy
+`lerobot/diffusion_pusht` checkpoint lacks the processor files required by
+LeRobot 0.6; the specs do not supply a ready-to-use policy automatically.
+Stage a compatible checkpoint under the input URI before submitting.
 
-Never hardcode project, registry, or bucket IDs in committed files — pass them
-at launch via flags, `--var`, or SkyPilot secrets.
+## Roll out a policy, then judge the result
 
-## 1. train-triage (serverless GPU → Token Factory report)
-
-A LeRobot **serverless GPU Job** trains a policy (smoke settings by default) and
-uploads its run artifacts (configs, logs, metrics) to S3. A Token Factory text
-model then reads those artifacts and writes a triage + next-steps report next to
-the run.
+The first state runs `workbench.lerobot.policy_rollout` and uploads videos; the
+second runs hosted `workbench.vlm_eval.run` on that same prefix.
 
 ```bash
-# No-infrastructure preview of exactly what will run.
-python npa/scripts/run_tokenfactory_train_triage.py --render-only
+spec=npa/workflows/workbench/npa-workflows/tokenfactory-rollout-judge-combo.yaml
+bucket="<your-bucket>"
+run_id="<unique-run-id>"
+checkpoint="s3://${bucket}/inputs/policy/"
 
-# Full live run: serverless GPU smoke train, then Token Factory triage.
-# --project-id and --output-path are required unless your workbench config
-# already provides a project and storage.checkpoint_bucket.
-NEBIUS_TOKEN_FACTORY_KEY=... python npa/scripts/run_tokenfactory_train_triage.py \
-  --project-id project-xxxxxxxx \
-  --output-path s3://your-bucket/tf-triage/<run-id>/ \
-  --gpu-type h200
+npa workbench workflow validate-spec "$spec"
+npa workbench workflow plan-spec "$spec" --run-id "$run_id" \
+  --var "bucket=${bucket}" --var "policy_checkpoint=${checkpoint}" --json
 
-# Cheap iteration: skip the GPU stage and only triage an existing run prefix.
-NEBIUS_TOKEN_FACTORY_KEY=... python npa/scripts/run_tokenfactory_train_triage.py \
-  --from-output-path s3://your-bucket/lerobot-serverless-test/<ts>/
+npa workbench workflow submit "$spec" \
+  --project "<project-alias>" --infra "k8s/<context>" \
+  --run-id "$run_id" --stage-src \
+  --var "bucket=${bucket}" --var "policy_checkpoint=${checkpoint}" \
+  --secret-env NEBIUS_TOKEN_FACTORY_KEY \
+  --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY
 ```
 
-Output: a `generations.jsonl` triage report under `<artifacts>/triage/` (or
-`--triage-root`). Choose the triage model with `--model` (default
-`meta-llama/Llama-3.3-70B-Instruct`; `nvidia/Cosmos3-Super-Reasoner` also works).
+The spec defaults to the `pusht` environment. Set `--var rollout_env=...` only
+with a compatible policy and environment. For custom destinations, use
+`rollouts_uri` and `scores_uri`; uppercase `ROLLOUTS_URI` and `JUDGE_URI` do not
+override those config keys. Images resolve from the supported release catalog;
+use `--image-override TOOL_REF=IMAGE` for a deliberate per-tool override.
 
-## 2. rollout-judge (Kubernetes GPU → Token Factory VLM judge)
+Outputs are under
+`s3://<your-bucket>/tokenfactory-rollout-judge/<run-id>/`: inspect videos in
+`rollouts/` and the report in `scores/vlm_eval_stub.json`. The filename is
+historical; check that the report records the `api` backend, actual rollout
+inputs, score, rationale, and pass/fail outcome. A successful command alone
+does not establish that the policy completed the task.
 
-A two-stage serial SkyPilot pipeline. Stage 1 runs `lerobot-eval` on a Nebius
-**Managed Kubernetes GPU**, renders rollout videos, and uploads them to S3.
-Stage 2 is zero-GPU: `vlm-eval --backend api` scores the rollout with a hosted
-Token Factory VLM — no local vLLM serving stage.
+The shipped judge uses `vlm-eval run`, which produces one score across the
+selected frames in its input prefix. Its default two rollout episodes are not
+scored independently. Use `vlm-eval loop` on a compatible set of rollout
+directories when you need per-rollout reports and an aggregate success rate.
+
+## Plan from a scene, then judge the rollout against it
+
+Use `tokenfactory-scene-to-rollout-judge.yaml` for the three-stage chain:
+scene reasoning → GPU rollout → judgment against the saved plan. The scene,
+task, policy, and rollout environment must describe the same task.
+
+The current reasoner toolRef passes only the input and output paths. It uses
+the CLI's default `nvidia/Cosmos3-Super-Reasoner` and built-in task;
+`reason_model` and `reason_task` in the spec do not reach the command. Confirm
+access to that model and inspect the saved task and plan. For a chosen model
+or task, run `token-factory reason --model ... --task ...` directly as shown in
+the [integration guide](../token-factory.md#generate-and-inspect-artifacts).
 
 ```bash
-npa skypilot bootstrap
-export NPA_SKYPILOT_BIN="$(npa skypilot status --bin-path)"
+spec=npa/workflows/workbench/npa-workflows/tokenfactory-scene-to-rollout-judge.yaml
+run_id="<another-unique-run-id>"
+scene_uri="s3://${bucket}/inputs/scene/"
 
-npa workbench workflow submit \
-  npa/workflows/workbench/npa-workflows/tokenfactory-rollout-judge-combo.yaml \
-  --run-id rollout-judge \
-  --var NPA_LEROBOT_IMAGE=ghcr.io/nebius/nebius-physical-ai/npa-lerobot:0.5.1 \
-  --var NPA_TOKEN_FACTORY_IMAGE=ghcr.io/nebius/nebius-physical-ai/npa-cosmos:cu128-torch27-sm100-1.0.9-20260803T002017Z \
-  --var ROLLOUTS_URI=s3://your-bucket/tokenfactory/<run-id>/rollouts/ \
-  --var JUDGE_URI=s3://your-bucket/tokenfactory/<run-id>/vlm-judge/
+npa workbench workflow validate-spec "$spec"
+npa workbench workflow plan-spec "$spec" --run-id "$run_id" \
+  --var "bucket=${bucket}" --var "policy_checkpoint=${checkpoint}" \
+  --var "scene_uri=${scene_uri}" --json
+
+npa workbench workflow submit "$spec" \
+  --project "<project-alias>" --infra "k8s/<context>" \
+  --run-id "$run_id" --stage-src \
+  --var "bucket=${bucket}" --var "policy_checkpoint=${checkpoint}" \
+  --var "scene_uri=${scene_uri}" \
+  --secret-env NEBIUS_TOKEN_FACTORY_KEY \
+  --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY
 ```
 
-Pass the key and storage creds as secrets when launching the YAML directly:
+Upload scene images before submission. The plan is `plan/scene_reasoning.json`;
+the judge consumes its `analysis`
+through `--task-from`. Inspect that plan, generated videos in `rollouts/`, and
+`vlm-judge/vlm_eval_stub.json` under
+`s3://<your-bucket>/tokenfactory-scene-to-rollout-judge/<run-id>/`.
+
+## Train, then triage
+
+[`tokenfactory-train-triage.yaml`](../../../npa/workflows/workbench/npa-workflows/tokenfactory-train-triage.yaml)
+runs LeRobot training and publishes its checkpoint, config, logs, and metrics
+before a hosted text model produces a triage report. Use the same
+validate/plan/submit sequence above with this spec and your `bucket` override.
+
+Set `lerobot_dataset`, `policy_type`, `train_steps`, and `train_batch_size` for
+your training objective, and `triage_model` for your available text model. The
+shipped values are a one-step wiring check, not evidence of a learned policy.
+The training output is under `artifacts/`; the hosted report is
+`triage/generations.jsonl`, beneath
+`s3://<your-bucket>/tokenfactory-train-triage/<run-id>/`. Compare its claims with
+the original metrics and logs.
+
+## Serverless runner alternatives
+
+The existing Python runners use Serverless GPU Jobs for training:
+
+| Runner | Behavior |
+| --- | --- |
+| `npa/scripts/run_tokenfactory_train_triage.py` | Train, download textual artifacts, then write a triage report. `--from-output-path` triages an existing run. |
+| `npa/scripts/run_tokenfactory_sim_sweep.py` | Generate experiment rationale, train a deterministic grid, then rank the real run artifacts. `--rank-existing` ranks supplied run prefixes. |
+
+From the repository root, inspect their plans and options with the repository
+environment:
 
 ```bash
-sky jobs launch --secret NEBIUS_TOKEN_FACTORY_KEY --secret AWS_ACCESS_KEY_ID \
-  --secret AWS_SECRET_ACCESS_KEY \
-  npa/workflows/workbench/npa-workflows/tokenfactory-rollout-judge-combo.yaml
+npa/.venv/bin/python npa/scripts/run_tokenfactory_train_triage.py --render-only
+npa/.venv/bin/python npa/scripts/run_tokenfactory_train_triage.py --help
+npa/.venv/bin/python npa/scripts/run_tokenfactory_sim_sweep.py --render-only
+npa/.venv/bin/python npa/scripts/run_tokenfactory_sim_sweep.py --help
 ```
 
-Output: a `vlm-eval` task-success report under `JUDGE_URI` with per-rollout
-`{passed, score, rationale}`. The default rollout uses the public
-`lerobot/diffusion_pusht` checkpoint on the `pusht` environment, so it runs out
-of the box; swap `CHECKPOINT`/`ENV_TYPE` for your own policy.
+Both runners default to smoke training. `--no-smoke` selects the full training
+path; the triage runner also accepts `--steps`. The sweep varies training steps
+on a fixed grid; the model supplies rationale and ranking, not executable
+hyperparameters. Configure real training settings before treating the output
+as policy-quality evidence.
 
-## 3. sim-sweep (Token Factory design → N serverless GPUs → Token Factory rank)
-
-A fan-out sweep that uses Token Factory **twice** around a batch of Nebius GPU
-jobs. A hosted text model writes a per-variant hypothesis; a deterministic grid
-launches one LeRobot serverless GPU smoke train per variant (varying `--steps`,
-the real comparable knob — `lerobot train` has no `--seed`); a hosted text model
-then ranks the completed runs from their real artifacts and names a winner.
-
-```bash
-# No-infrastructure preview of design prompt + grid + per-variant commands.
-python npa/scripts/run_tokenfactory_sim_sweep.py --render-only --num-variants 2
-
-# Full live run: design -> N serverless GPU trains -> ranking.
-NEBIUS_TOKEN_FACTORY_KEY=... python npa/scripts/run_tokenfactory_sim_sweep.py \
-  --project-id project-xxxxxxxx \
-  --bucket s3://your-bucket/tf-sim-sweep \
-  --num-variants 2
-
-# Cheap iteration: rank existing run prefixes (skips design + GPU stages).
-NEBIUS_TOKEN_FACTORY_KEY=... python npa/scripts/run_tokenfactory_sim_sweep.py \
-  --rank-existing s3://your-bucket/runA/,s3://your-bucket/runB/
-```
-
-Output: a `generations.jsonl` ranking report under `<sweep-root>/ranking/`, plus
-the design notes under `<sweep-root>/design/` and per-variant artifacts under
-`<sweep-root>/variants/<id>/`.
-
-## 4. scene-to-rollout-judge (Token Factory reason → k8s GPU → Token Factory VLM)
-
-The physical-common-sense loop as one serial SkyPilot pipeline. Stage
-1 (zero-GPU) runs `token-factory reason` over scene images with
-`nvidia/Cosmos3-Super-Reasoner` and writes a plan of action. Stage 2 rolls out a
-policy on a Nebius **Managed Kubernetes GPU**. Stage 3 (zero-GPU) folds the
-Stage 1 plan into the `vlm-eval` task and has a hosted VLM judge whether the
-rollout accomplished the plan.
-
-```bash
-npa skypilot bootstrap
-
-npa workbench workflow submit \
-  npa/workflows/workbench/npa-workflows/tokenfactory-scene-to-rollout-judge.yaml \
-  --run-id scene-judge \
-  --var NPA_LEROBOT_IMAGE=ghcr.io/nebius/nebius-physical-ai/npa-lerobot:0.5.1 \
-  --var NPA_TOKEN_FACTORY_IMAGE=ghcr.io/nebius/nebius-physical-ai/npa-cosmos:cu128-torch27-sm100-1.0.9-20260803T002017Z \
-  --var SCENE_URI=s3://your-bucket/tokenfactory/<run-id>/scene/ \
-  --var PLAN_URI=s3://your-bucket/tokenfactory/<run-id>/plan/ \
-  --var ROLLOUTS_URI=s3://your-bucket/tokenfactory/<run-id>/rollouts/ \
-  --var JUDGE_URI=s3://your-bucket/tokenfactory/<run-id>/vlm-judge/
-```
-
-Put a few scene images (jpg/png) under `SCENE_URI` first. Output: a
-`scene_reasoning.json` plan under `PLAN_URI` and a per-rollout
-`{passed, score, rationale}` report under `JUDGE_URI`.
-
-## Why these are "combo" workflows
-
-The other Token Factory workflows (`token-factory-caption`,
-`token-factory-generate`, `token-factory-cosmos-reason`,
-`vlm-eval-token-factory`) are CPU-only and only call the hosted API. These four
-deliberately put a real Nebius GPU stage alongside the hosted stage(s) so the
-pipeline exercises **both** Nebius cloud compute and Token Factory in one run.
-See [composing-cloud-and-token-factory.md](../composing-cloud-and-token-factory.md)
-to build your own.
-```
+For all paths, inspect actual output artifacts and use the
+[run lifecycle](../../run-lifecycle.md) for status and recovery. Finish or
+cancel owned jobs before following [safe teardown](../../teardown.md).
