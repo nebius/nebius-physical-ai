@@ -1,0 +1,1620 @@
+{
+  "content": [
+    {
+      "public_origin": {
+        "artifact_sha256": "943cc6d8f2a6be8eddb05ed3aab323123e280b0931de93dd6a20637b9a91195e",
+        "kind": "signed-ubuntu-package-member",
+        "member": "usr/lib/x86_64-linux-gnu/libgnutls.so.30.37.1",
+        "member_sha256": "96137275400f39510c9a533c6ad8a921e94266e664e7e09c9ad6ea9f23277c23",
+        "package": "libgnutls30t64",
+        "version": "3.8.3-1.1ubuntu3.4"
+      },
+      "record_kind": "layer_regular_content",
+      "record_sha256": "96137275400f39510c9a533c6ad8a921e94266e664e7e09c9ad6ea9f23277c23",
+      "semantic_source": {
+        "artifact_bytes": 998002,
+        "artifact_sha256": "943cc6d8f2a6be8eddb05ed3aab323123e280b0931de93dd6a20637b9a91195e",
+        "artifact_url": "https://snapshot.ubuntu.com/ubuntu/20260101T000000Z/pool/main/g/gnutls28/libgnutls30t64_3.8.3-1.1ubuntu3.4_amd64.deb",
+        "authenticated_indexes": [
+          {
+            "inrelease_sha256": "f4d12f62574e57f64a2495b436f6f44524d322ced2db29339b9eaf4cae50d640",
+            "inrelease_url": "https://archive.ubuntu.com/ubuntu/dists/noble-updates/InRelease",
+            "packages_sha256": "74e7fdc0c22972b3d3c1a273925ac04c04684127cbb84e5dc4c9a126e2022195"
+          },
+          {
+            "inrelease_sha256": "64d2a1fe0698d189765d97b663350179e1645b3f94f8cd194138f66ed8c78912",
+            "inrelease_url": "https://security.ubuntu.com/ubuntu/dists/noble-security/InRelease",
+            "packages_sha256": "40ce126d85799e13e8e40ad5d369a9f6ebbdf623c5a515d7d8877cf9a1171384"
+          },
+          {
+            "inrelease_sha256": "42d0833b154a7a5d7c5f5aabc3eab2d021d887d59826a2bdf150dcc800171b54",
+            "inrelease_url": "https://snapshot.ubuntu.com/ubuntu/20260101T000000Z/dists/noble-updates/InRelease",
+            "packages_sha256": "95e049dbd6b60b6a9d20f763492bb09072944aaf06102f4bd0381dc47599e79b"
+          }
+        ],
+        "member": "usr/lib/x86_64-linux-gnu/libgnutls.so.30.37.1",
+        "member_bytes": 2057632,
+        "member_sha256": "96137275400f39510c9a533c6ad8a921e94266e664e7e09c9ad6ea9f23277c23",
+        "package": "libgnutls30t64",
+        "semantic_source": {
+          "artifact_sha256": "f74fc5954b27d4ec6dfbb11dea987888b5b124289a3703afcada0ee520f4173e",
+          "artifact_url": "https://snapshot.ubuntu.com/ubuntu/20260101T000000Z/pool/main/g/gnutls28/gnutls28_3.8.3.orig.tar.xz",
+          "constant_declarations": [
+            {
+              "decoded_value_sha256": "f4b1de2f94f1df2d588ff6c18290e0f7f5091267b9ef0da8433c622bad3d127a",
+              "end": 3166,
+              "start": 1317,
+              "symbol": "rsa_2048_privkey"
+            },
+            {
+              "decoded_value_sha256": "80ec06e06b06635bcad5c71b0e9e7a3516c02133c682a2369b09599addb8d7f3",
+              "end": 5685,
+              "start": 4334,
+              "symbol": "dsa_2048_privkey"
+            },
+            {
+              "decoded_value_sha256": "d653005e4d23cf91e3572fe8148ab6db2e474924d9711838521d3ba352b193f5",
+              "end": 6332,
+              "start": 6034,
+              "symbol": "ecdsa_secp256r1_privkey"
+            },
+            {
+              "decoded_value_sha256": "934b3e9bfd9936c5e30c7f0ed7d36a05e2044f755c0aa433e1d6bef6a68d1391",
+              "end": 7012,
+              "start": 6756,
+              "symbol": "ecdsa_secp192r1_privkey"
+            },
+            {
+              "decoded_value_sha256": "a0b9679665e29ac220dfb0b366317e1b9dd5fe31e9def8b2e511669a041389ae",
+              "end": 7600,
+              "start": 7332,
+              "symbol": "ecdsa_secp224r1_privkey"
+            },
+            {
+              "decoded_value_sha256": "293216817f0d585f0b54f225582f59e7b2e2a795b5f8002e2d71c5e3d49ce9b0",
+              "end": 8315,
+              "start": 7963,
+              "symbol": "ecdsa_secp384r1_privkey"
+            },
+            {
+              "decoded_value_sha256": "f8766749b0c6f9b5661364568226af0ba7ae8d87c0073df24e440de4417521cd",
+              "end": 9271,
+              "start": 8843,
+              "symbol": "ecdsa_secp521r1_privkey"
+            },
+            {
+              "decoded_value_sha256": "b8369cc647a1e1e8f8e420b6b8580c36223f89b0f8e70281732d028aebf15fac",
+              "end": 10143,
+              "start": 9934,
+              "symbol": "gost01_privkey"
+            },
+            {
+              "decoded_value_sha256": "3de5d1d9ca9af8e24d29bab925c3d500c2cdd11a06c4a2c6a6b336e73bb3ad56",
+              "end": 10391,
+              "start": 10174,
+              "symbol": "gost12_256_privkey"
+            },
+            {
+              "decoded_value_sha256": "c72070fc1ffb2df729650b949157c85ec03d8ec9743ba7956c03e21d385bce4e",
+              "end": 10689,
+              "start": 10422,
+              "symbol": "gost12_512_privkey"
+            }
+          ],
+          "functions": [
+            "test_rsa_enc",
+            "test_sig",
+            "test_known_sig",
+            "gnutls_pk_self_test"
+          ],
+          "member": "gnutls-3.8.3/lib/crypto-selftests-pk.c",
+          "member_sha256": "0199a5b05732d825e235001455afa1d54178d8508da1fd2e0eb8a5ef271405b8"
+        },
+        "version": "3.8.3-1.1ubuntu3.4"
+      }
+    },
+    {
+      "public_origin": {
+        "artifact_sha256": "8f952895697d19a6f1caa71f17c7d4e8c1f1fb485eb824ffe3e4c77dd587b338",
+        "kind": "signed-ubuntu-package-member",
+        "member": "usr/bin/rsync-ssl",
+        "member_sha256": "b25e002f448246d7271adb0d9e72281e33aa822b07afff4c96c476d79fe1fc80",
+        "package": "rsync",
+        "version": "3.2.7-1ubuntu1.5"
+      },
+      "record_kind": "layer_regular_content",
+      "record_sha256": "b25e002f448246d7271adb0d9e72281e33aa822b07afff4c96c476d79fe1fc80",
+      "semantic_source": {
+        "artifact_bytes": 442954,
+        "artifact_sha256": "8f952895697d19a6f1caa71f17c7d4e8c1f1fb485eb824ffe3e4c77dd587b338",
+        "artifact_url": "https://archive.ubuntu.com/ubuntu/pool/main/r/rsync/rsync_3.2.7-1ubuntu1.5_amd64.deb",
+        "authenticated_indexes": [
+          {
+            "inrelease_sha256": "f4d12f62574e57f64a2495b436f6f44524d322ced2db29339b9eaf4cae50d640",
+            "inrelease_url": "https://archive.ubuntu.com/ubuntu/dists/noble-updates/InRelease",
+            "packages_sha256": "74e7fdc0c22972b3d3c1a273925ac04c04684127cbb84e5dc4c9a126e2022195"
+          },
+          {
+            "inrelease_sha256": "64d2a1fe0698d189765d97b663350179e1645b3f94f8cd194138f66ed8c78912",
+            "inrelease_url": "https://security.ubuntu.com/ubuntu/dists/noble-security/InRelease",
+            "packages_sha256": "40ce126d85799e13e8e40ad5d369a9f6ebbdf623c5a515d7d8877cf9a1171384"
+          },
+          {
+            "inrelease_sha256": "42d0833b154a7a5d7c5f5aabc3eab2d021d887d59826a2bdf150dcc800171b54",
+            "inrelease_url": "https://snapshot.ubuntu.com/ubuntu/20260101T000000Z/dists/noble-updates/InRelease",
+            "packages_sha256": "95e049dbd6b60b6a9d20f763492bb09072944aaf06102f4bd0381dc47599e79b"
+          }
+        ],
+        "member": "usr/bin/rsync-ssl",
+        "member_bytes": 5136,
+        "member_sha256": "b25e002f448246d7271adb0d9e72281e33aa822b07afff4c96c476d79fe1fc80",
+        "package": "rsync",
+        "semantic_source": {
+          "artifact_sha256": "8f952895697d19a6f1caa71f17c7d4e8c1f1fb485eb824ffe3e4c77dd587b338",
+          "artifact_url": "https://archive.ubuntu.com/ubuntu/pool/main/r/rsync/rsync_3.2.7-1ubuntu1.5_amd64.deb",
+          "member": "usr/bin/rsync-ssl",
+          "member_sha256": "b25e002f448246d7271adb0d9e72281e33aa822b07afff4c96c476d79fe1fc80",
+          "one_based_lines": [
+            81,
+            82
+          ],
+          "role": "empty key-option assignment followed by shell variable assignment"
+        },
+        "version": "3.2.7-1ubuntu1.5"
+      }
+    },
+    {
+      "public_origin": {
+        "artifact_sha256": "2448ce5f99e49721d12f8b227f2472dd08ed7a78184dd819fd03a42693024a16",
+        "kind": "signed-ubuntu-package-member",
+        "member": "usr/lib/x86_64-linux-gnu/libssh.so.4.9.6",
+        "member_sha256": "b82bd54edb908605b8142be1a6d242df65501af0e9bb7581cc36ebf4d8a5ecfd",
+        "package": "libssh-4",
+        "version": "0.10.6-2ubuntu0.5"
+      },
+      "record_kind": "layer_regular_content",
+      "record_sha256": "b82bd54edb908605b8142be1a6d242df65501af0e9bb7581cc36ebf4d8a5ecfd",
+      "semantic_source": {
+        "artifact_bytes": 191284,
+        "artifact_sha256": "2448ce5f99e49721d12f8b227f2472dd08ed7a78184dd819fd03a42693024a16",
+        "artifact_url": "https://archive.ubuntu.com/ubuntu/pool/main/libs/libssh/libssh-4_0.10.6-2ubuntu0.5_amd64.deb",
+        "authenticated_indexes": [
+          {
+            "inrelease_sha256": "f4d12f62574e57f64a2495b436f6f44524d322ced2db29339b9eaf4cae50d640",
+            "inrelease_url": "https://archive.ubuntu.com/ubuntu/dists/noble-updates/InRelease",
+            "packages_sha256": "74e7fdc0c22972b3d3c1a273925ac04c04684127cbb84e5dc4c9a126e2022195"
+          },
+          {
+            "inrelease_sha256": "64d2a1fe0698d189765d97b663350179e1645b3f94f8cd194138f66ed8c78912",
+            "inrelease_url": "https://security.ubuntu.com/ubuntu/dists/noble-security/InRelease",
+            "packages_sha256": "40ce126d85799e13e8e40ad5d369a9f6ebbdf623c5a515d7d8877cf9a1171384"
+          },
+          {
+            "inrelease_sha256": "42d0833b154a7a5d7c5f5aabc3eab2d021d887d59826a2bdf150dcc800171b54",
+            "inrelease_url": "https://snapshot.ubuntu.com/ubuntu/20260101T000000Z/dists/noble-updates/InRelease",
+            "packages_sha256": "95e049dbd6b60b6a9d20f763492bb09072944aaf06102f4bd0381dc47599e79b"
+          }
+        ],
+        "member": "usr/lib/x86_64-linux-gnu/libssh.so.4.9.6",
+        "member_bytes": 462360,
+        "member_sha256": "b82bd54edb908605b8142be1a6d242df65501af0e9bb7581cc36ebf4d8a5ecfd",
+        "package": "libssh-4",
+        "semantic_source": {
+          "artifact_sha256": "1861d498f5b6f1741b6abc73e608478491edcf9c9d4b6630eef6e74596de9dc1",
+          "artifact_url": "https://security.ubuntu.com/ubuntu/pool/main/libs/libssh/libssh_0.10.6.orig.tar.xz",
+          "members": [
+            {
+              "member": "libssh-0.10.6/include/libssh/pki_priv.h",
+              "member_sha256": "9b22800a4b85d7173b693291f99ae0b52e8f684d02d37744e77404ea5028f106"
+            },
+            {
+              "member": "libssh-0.10.6/src/pki.c",
+              "member_sha256": "c8a3d3d6abb438ad159c7b4c4c2745bd6d9e656905887c659fe86174cb30da22"
+            }
+          ],
+          "role": "PEM format delimiter definitions and private-key parser diagnostic",
+          "symbols": [
+            "OPENSSH_HEADER_BEGIN",
+            "OPENSSH_HEADER_END",
+            "ssh_pki_import_privkey_base64"
+          ]
+        },
+        "version": "0.10.6-2ubuntu0.5"
+      }
+    },
+    {
+      "public_origin": {
+        "artifact_sha256": "dae4c1ee35cc57555f4e594805845c280350e2d40f0fecf84c6e8bb245848581",
+        "kind": "signed-ubuntu-package-member",
+        "member": "usr/share/openssh/sshd_config.md5sum",
+        "member_sha256": "b3869b19414dd941a47282e42d504de302dce0b5ac91dbaad8c299328b088958",
+        "package": "openssh-server",
+        "version": "1:9.6p1-3ubuntu13.19"
+      },
+      "record_kind": "layer_regular_content",
+      "record_sha256": "b3869b19414dd941a47282e42d504de302dce0b5ac91dbaad8c299328b088958",
+      "semantic_source": {
+        "artifact_bytes": 511342,
+        "artifact_sha256": "dae4c1ee35cc57555f4e594805845c280350e2d40f0fecf84c6e8bb245848581",
+        "artifact_url": "https://archive.ubuntu.com/ubuntu/pool/main/o/openssh/openssh-server_9.6p1-3ubuntu13.19_amd64.deb",
+        "authenticated_indexes": [
+          {
+            "inrelease_sha256": "f4d12f62574e57f64a2495b436f6f44524d322ced2db29339b9eaf4cae50d640",
+            "inrelease_url": "https://archive.ubuntu.com/ubuntu/dists/noble-updates/InRelease",
+            "packages_sha256": "74e7fdc0c22972b3d3c1a273925ac04c04684127cbb84e5dc4c9a126e2022195"
+          },
+          {
+            "inrelease_sha256": "64d2a1fe0698d189765d97b663350179e1645b3f94f8cd194138f66ed8c78912",
+            "inrelease_url": "https://security.ubuntu.com/ubuntu/dists/noble-security/InRelease",
+            "packages_sha256": "40ce126d85799e13e8e40ad5d369a9f6ebbdf623c5a515d7d8877cf9a1171384"
+          },
+          {
+            "inrelease_sha256": "42d0833b154a7a5d7c5f5aabc3eab2d021d887d59826a2bdf150dcc800171b54",
+            "inrelease_url": "https://snapshot.ubuntu.com/ubuntu/20260101T000000Z/dists/noble-updates/InRelease",
+            "packages_sha256": "95e049dbd6b60b6a9d20f763492bb09072944aaf06102f4bd0381dc47599e79b"
+          }
+        ],
+        "member": "usr/share/openssh/sshd_config.md5sum",
+        "member_bytes": 4391,
+        "member_sha256": "b3869b19414dd941a47282e42d504de302dce0b5ac91dbaad8c299328b088958",
+        "package": "openssh-server",
+        "semantic_source": {
+          "artifact_sha256": "dae4c1ee35cc57555f4e594805845c280350e2d40f0fecf84c6e8bb245848581",
+          "artifact_url": "https://archive.ubuntu.com/ubuntu/pool/main/o/openssh/openssh-server_9.6p1-3ubuntu13.19_amd64.deb",
+          "member": "usr/share/openssh/sshd_config.md5sum",
+          "member_sha256": "b3869b19414dd941a47282e42d504de302dce0b5ac91dbaad8c299328b088958",
+          "one_based_lines": [
+            41
+          ],
+          "role": "historical packaged sshd_config MD5 list"
+        },
+        "version": "1:9.6p1-3ubuntu13.19"
+      }
+    },
+    {
+      "public_origin": {
+        "compressed_layer_digests": [
+          "sha256:4b3ffd8ccb5201a0fc03585952effb4ed2d1ea5e704d2e7330212fb8b16c86a3",
+          "sha256:c567a87f21d2f8e46feb4f6c427eb5559d45a1a222f73d601352403d13af1ada",
+          "sha256:0b3b5bd928240da4156c41fcfb400c1f4f8674acd2faee0413ab5a032dfb5f76",
+          "sha256:70f87b6ed43e1cbbe67ce74c7877fb771bf352b25d602a82ee4f840f2e265155",
+          "sha256:526d5438c009ab7178af1646fed10ff6f47a73f5a1ae7b9f49e63e4ade7e3ae6"
+        ],
+        "config_digest": "sha256:c04d5b77a27ff92cdd123bb52bf4b4a5fb4ce7a3d4279c1c5acca425967b2766",
+        "index_digest": "sha256:2ab6381d970b211fb93853796dc6707eb8a72575a375c422b17cf4d8b2641701",
+        "kind": "exact-public-base-layer-logical-path",
+        "metadata_file_type": "triggers",
+        "metadata_role": "dpkg metadata pathname naming the public Kerberos GSS-API package and architecture; no credential value",
+        "path_input_sha256": "fb46c104e3ef44f1353c323c847b2ed7e224eb3d23b1e7df90ec0253f10f9270",
+        "platform_manifest_digest": "sha256:605fb0c8acf8674e164d822da8a8521f3a655056e569f0899e72ae940e1fe7dc",
+        "public_repository": "docker.io/nvidia/cuda",
+        "reproduction": "Hash the raw UTF-8 logical member names in the five pinned public base layers. Locate the exact path_input_sha256 and inspect the package/architecture metadata basename. No name pattern authorizes another record."
+      },
+      "record_kind": "logical_tar_path",
+      "record_sha256": "fb46c104e3ef44f1353c323c847b2ed7e224eb3d23b1e7df90ec0253f10f9270",
+      "semantic_source": {}
+    },
+    {
+      "public_origin": {
+        "compressed_layer_digests": [
+          "sha256:4b3ffd8ccb5201a0fc03585952effb4ed2d1ea5e704d2e7330212fb8b16c86a3",
+          "sha256:c567a87f21d2f8e46feb4f6c427eb5559d45a1a222f73d601352403d13af1ada",
+          "sha256:0b3b5bd928240da4156c41fcfb400c1f4f8674acd2faee0413ab5a032dfb5f76",
+          "sha256:70f87b6ed43e1cbbe67ce74c7877fb771bf352b25d602a82ee4f840f2e265155",
+          "sha256:526d5438c009ab7178af1646fed10ff6f47a73f5a1ae7b9f49e63e4ade7e3ae6"
+        ],
+        "config_digest": "sha256:c04d5b77a27ff92cdd123bb52bf4b4a5fb4ce7a3d4279c1c5acca425967b2766",
+        "index_digest": "sha256:2ab6381d970b211fb93853796dc6707eb8a72575a375c422b17cf4d8b2641701",
+        "kind": "exact-public-base-layer-logical-path",
+        "metadata_file_type": "triggers",
+        "metadata_role": "dpkg metadata pathname naming the public Kerberos GSS-API package and architecture; no credential value",
+        "path_input_sha256": "e03287709e8e16898a6834541beaf96414631cae385a54a63fcfb55826381725",
+        "platform_manifest_digest": "sha256:605fb0c8acf8674e164d822da8a8521f3a655056e569f0899e72ae940e1fe7dc",
+        "public_repository": "docker.io/nvidia/cuda",
+        "reproduction": "Hash the raw UTF-8 logical member names in the five pinned public base layers. Locate the exact path_input_sha256 and inspect the package/architecture metadata basename. No name pattern authorizes another record."
+      },
+      "record_kind": "logical_tar_path",
+      "record_sha256": "e03287709e8e16898a6834541beaf96414631cae385a54a63fcfb55826381725",
+      "semantic_source": {}
+    },
+    {
+      "public_origin": {
+        "artifact_sha256": "f9a65d1f48b818323fb411e80358f89d77dec340b01d27c6b2dfbb9cbf4b779f",
+        "artifact_url": "https://files.pythonhosted.org/packages/77/43/96b35170bf2e64e00a41748c6400ff73232dc0fc62ded283679fb07c7fe0/av-17.1.0-cp311-abi3-manylinux_2_28_x86_64.whl",
+        "kind": "locked-public-wheel-member",
+        "member": "av.libs/libgnutls-71454fd1.so.30.42.0",
+        "member_bytes": 2416425,
+        "member_sha256": "aabbf4bb6fe30585ac0c704d4b505ab29a1b4b8dfb30ab2bf8928dc58ac63d66",
+        "package": "av",
+        "version": "17.1.0"
+      },
+      "record_kind": "layer_regular_content",
+      "record_sha256": "aabbf4bb6fe30585ac0c704d4b505ab29a1b4b8dfb30ab2bf8928dc58ac63d66",
+      "semantic_source": {
+        "semantic_source": {
+          "artifact_sha256": "ffed8ec1bf09c2426d4f14aae377de4753b53e537d685e604e99a8b16ca9c97e",
+          "artifact_url": "https://www.gnupg.org/ftp/gcrypt/gnutls/v3.8/gnutls-3.8.13.tar.xz",
+          "constant_declarations": [
+            {
+              "decoded_value_sha256": "f4b1de2f94f1df2d588ff6c18290e0f7f5091267b9ef0da8433c622bad3d127a",
+              "end": 3166,
+              "start": 1317,
+              "symbol": "rsa_2048_privkey"
+            },
+            {
+              "decoded_value_sha256": "80ec06e06b06635bcad5c71b0e9e7a3516c02133c682a2369b09599addb8d7f3",
+              "end": 6832,
+              "start": 5481,
+              "symbol": "dsa_2048_privkey"
+            },
+            {
+              "decoded_value_sha256": "d653005e4d23cf91e3572fe8148ab6db2e474924d9711838521d3ba352b193f5",
+              "end": 7486,
+              "start": 7188,
+              "symbol": "ecdsa_secp256r1_privkey"
+            },
+            {
+              "decoded_value_sha256": "934b3e9bfd9936c5e30c7f0ed7d36a05e2044f755c0aa433e1d6bef6a68d1391",
+              "end": 8166,
+              "start": 7910,
+              "symbol": "ecdsa_secp192r1_privkey"
+            },
+            {
+              "decoded_value_sha256": "a0b9679665e29ac220dfb0b366317e1b9dd5fe31e9def8b2e511669a041389ae",
+              "end": 8754,
+              "start": 8486,
+              "symbol": "ecdsa_secp224r1_privkey"
+            },
+            {
+              "decoded_value_sha256": "293216817f0d585f0b54f225582f59e7b2e2a795b5f8002e2d71c5e3d49ce9b0",
+              "end": 9469,
+              "start": 9117,
+              "symbol": "ecdsa_secp384r1_privkey"
+            },
+            {
+              "decoded_value_sha256": "f8766749b0c6f9b5661364568226af0ba7ae8d87c0073df24e440de4417521cd",
+              "end": 10425,
+              "start": 9997,
+              "symbol": "ecdsa_secp521r1_privkey"
+            },
+            {
+              "decoded_value_sha256": "b8369cc647a1e1e8f8e420b6b8580c36223f89b0f8e70281732d028aebf15fac",
+              "end": 11297,
+              "start": 11088,
+              "symbol": "gost01_privkey"
+            },
+            {
+              "decoded_value_sha256": "3de5d1d9ca9af8e24d29bab925c3d500c2cdd11a06c4a2c6a6b336e73bb3ad56",
+              "end": 11545,
+              "start": 11328,
+              "symbol": "gost12_256_privkey"
+            },
+            {
+              "decoded_value_sha256": "c72070fc1ffb2df729650b949157c85ec03d8ec9743ba7956c03e21d385bce4e",
+              "end": 11843,
+              "start": 11576,
+              "symbol": "gost12_512_privkey"
+            },
+            {
+              "decoded_value_sha256": "3aed91bdaf682226d080b2d6cd473ec542de17924db839ed58dc0247a1e2b5f8",
+              "end": 12063,
+              "start": 11885,
+              "symbol": "eddsa_ed25519_privkey"
+            },
+            {
+              "decoded_value_sha256": "19eb40f0c2c341a16b99274151649822a7611744d99cf29ac8e1365d74a0a8bc",
+              "end": 12635,
+              "start": 12417,
+              "symbol": "eddsa_ed448_privkey"
+            }
+          ],
+          "functions": [
+            "test_rsa_enc",
+            "test_sig",
+            "test_known_sig",
+            "gnutls_pk_self_test"
+          ],
+          "member": "gnutls-3.8.13/lib/crypto-selftests-pk.c",
+          "member_sha256": "6e596be00754107fd7f7d1f132c2dc8cd0ff12bbdfc6de08c162a1dd5eedc7e8",
+          "signature_sha256": "fbe8e5a702febffba6df45bbcfc0e6f46300e68fb380b0757f3ad0c3544abada",
+          "signature_url": "https://www.gnupg.org/ftp/gcrypt/gnutls/v3.8/gnutls-3.8.13.tar.xz.sig"
+        }
+      }
+    },
+    {
+      "public_origin": {
+        "artifact_sha256": "d7211220c815427fe71225acc6909e4ab5dfab3b03770e72fd16cf9eb86b3d1a",
+        "artifact_url": "https://files.pythonhosted.org/packages/9e/9d/96f9dee6d12eedf1c2b4264eefd59c7ac8cac10daadb9a7bfccc9ee881c6/botocore-1.43.89-py3-none-any.whl",
+        "kind": "locked-public-wheel-member",
+        "member": "botocore/data/autoscaling/2011-01-01/examples-1.json",
+        "member_bytes": 54289,
+        "member_sha256": "f952e2b7d8f63270a98790240de8f1cacfc8aaddc9694c1e1240b5074ff7ee3e",
+        "package": "botocore",
+        "version": "1.43.89"
+      },
+      "record_kind": "layer_regular_content",
+      "record_sha256": "f952e2b7d8f63270a98790240de8f1cacfc8aaddc9694c1e1240b5074ff7ee3e",
+      "semantic_source": {}
+    },
+    {
+      "public_origin": {
+        "artifact_sha256": "d7211220c815427fe71225acc6909e4ab5dfab3b03770e72fd16cf9eb86b3d1a",
+        "artifact_url": "https://files.pythonhosted.org/packages/9e/9d/96f9dee6d12eedf1c2b4264eefd59c7ac8cac10daadb9a7bfccc9ee881c6/botocore-1.43.89-py3-none-any.whl",
+        "kind": "locked-public-wheel-member",
+        "member": "botocore/data/ec2/2016-04-01/examples-1.json",
+        "member_bytes": 109914,
+        "member_sha256": "d31754a0d5735cd9f964c980fda88fc22402ebc69dad78c124f870dc0cd00bc3",
+        "package": "botocore",
+        "version": "1.43.89"
+      },
+      "record_kind": "layer_regular_content",
+      "record_sha256": "d31754a0d5735cd9f964c980fda88fc22402ebc69dad78c124f870dc0cd00bc3",
+      "semantic_source": {}
+    },
+    {
+      "public_origin": {
+        "artifact_sha256": "d7211220c815427fe71225acc6909e4ab5dfab3b03770e72fd16cf9eb86b3d1a",
+        "artifact_url": "https://files.pythonhosted.org/packages/9e/9d/96f9dee6d12eedf1c2b4264eefd59c7ac8cac10daadb9a7bfccc9ee881c6/botocore-1.43.89-py3-none-any.whl",
+        "kind": "locked-public-wheel-member",
+        "member": "botocore/data/ec2/2016-09-15/examples-1.json",
+        "member_bytes": 110174,
+        "member_sha256": "0efd7c425f1f68e78131095e9c2ec7073960acd41735ea24bcbb3215fe90ff26",
+        "package": "botocore",
+        "version": "1.43.89"
+      },
+      "record_kind": "layer_regular_content",
+      "record_sha256": "0efd7c425f1f68e78131095e9c2ec7073960acd41735ea24bcbb3215fe90ff26",
+      "semantic_source": {}
+    },
+    {
+      "public_origin": {
+        "artifact_sha256": "d7211220c815427fe71225acc6909e4ab5dfab3b03770e72fd16cf9eb86b3d1a",
+        "artifact_url": "https://files.pythonhosted.org/packages/9e/9d/96f9dee6d12eedf1c2b4264eefd59c7ac8cac10daadb9a7bfccc9ee881c6/botocore-1.43.89-py3-none-any.whl",
+        "kind": "locked-public-wheel-member",
+        "member": "botocore/data/ec2/2016-11-15/examples-1.json",
+        "member_bytes": 147949,
+        "member_sha256": "801f3e32e31297d37889cd680580afd3607f62997139d9cab1f4bb839a58ee19",
+        "package": "botocore",
+        "version": "1.43.89"
+      },
+      "record_kind": "layer_regular_content",
+      "record_sha256": "801f3e32e31297d37889cd680580afd3607f62997139d9cab1f4bb839a58ee19",
+      "semantic_source": {}
+    },
+    {
+      "public_origin": {
+        "artifact_sha256": "d7211220c815427fe71225acc6909e4ab5dfab3b03770e72fd16cf9eb86b3d1a",
+        "artifact_url": "https://files.pythonhosted.org/packages/9e/9d/96f9dee6d12eedf1c2b4264eefd59c7ac8cac10daadb9a7bfccc9ee881c6/botocore-1.43.89-py3-none-any.whl",
+        "kind": "locked-public-wheel-member",
+        "member": "botocore/data/ec2/2016-11-15/paginators-1.json",
+        "member_bytes": 32633,
+        "member_sha256": "15f4c2922398001137688d4230856ff8d89a2e9a1076fc4db85aece38955549f",
+        "package": "botocore",
+        "version": "1.43.89"
+      },
+      "record_kind": "layer_regular_content",
+      "record_sha256": "15f4c2922398001137688d4230856ff8d89a2e9a1076fc4db85aece38955549f",
+      "semantic_source": {}
+    },
+    {
+      "public_origin": {
+        "artifact_sha256": "d7211220c815427fe71225acc6909e4ab5dfab3b03770e72fd16cf9eb86b3d1a",
+        "artifact_url": "https://files.pythonhosted.org/packages/9e/9d/96f9dee6d12eedf1c2b4264eefd59c7ac8cac10daadb9a7bfccc9ee881c6/botocore-1.43.89-py3-none-any.whl",
+        "kind": "locked-public-wheel-member",
+        "member": "botocore/data/eks/2017-11-01/examples-1.json",
+        "member_bytes": 5021,
+        "member_sha256": "bc24f730507b0f7b4dcea68877177c9f20dbb7b85ebec02f0c4e1141341c10a8",
+        "package": "botocore",
+        "version": "1.43.89"
+      },
+      "record_kind": "layer_regular_content",
+      "record_sha256": "bc24f730507b0f7b4dcea68877177c9f20dbb7b85ebec02f0c4e1141341c10a8",
+      "semantic_source": {}
+    },
+    {
+      "public_origin": {
+        "artifact_sha256": "d7211220c815427fe71225acc6909e4ab5dfab3b03770e72fd16cf9eb86b3d1a",
+        "artifact_url": "https://files.pythonhosted.org/packages/9e/9d/96f9dee6d12eedf1c2b4264eefd59c7ac8cac10daadb9a7bfccc9ee881c6/botocore-1.43.89-py3-none-any.whl",
+        "kind": "locked-public-wheel-member",
+        "member": "botocore/data/fsx/2018-03-01/examples-1.json",
+        "member_bytes": 14242,
+        "member_sha256": "62ce0f4b819cadf5771792e0e2191a660c9e98680d28d2d84a6fae7a92c3911e",
+        "package": "botocore",
+        "version": "1.43.89"
+      },
+      "record_kind": "layer_regular_content",
+      "record_sha256": "62ce0f4b819cadf5771792e0e2191a660c9e98680d28d2d84a6fae7a92c3911e",
+      "semantic_source": {}
+    },
+    {
+      "public_origin": {
+        "artifact_sha256": "d7211220c815427fe71225acc6909e4ab5dfab3b03770e72fd16cf9eb86b3d1a",
+        "artifact_url": "https://files.pythonhosted.org/packages/9e/9d/96f9dee6d12eedf1c2b4264eefd59c7ac8cac10daadb9a7bfccc9ee881c6/botocore-1.43.89-py3-none-any.whl",
+        "kind": "locked-public-wheel-member",
+        "member": "botocore/data/kms/2014-11-01/examples-1.json",
+        "member_bytes": 77655,
+        "member_sha256": "4e06a14e5d6e058887231bfade6c7268273ee5cf7140aa1b5873e10e2a38c777",
+        "package": "botocore",
+        "version": "1.43.89"
+      },
+      "record_kind": "layer_regular_content",
+      "record_sha256": "4e06a14e5d6e058887231bfade6c7268273ee5cf7140aa1b5873e10e2a38c777",
+      "semantic_source": {}
+    },
+    {
+      "public_origin": {
+        "artifact_sha256": "d7211220c815427fe71225acc6909e4ab5dfab3b03770e72fd16cf9eb86b3d1a",
+        "artifact_url": "https://files.pythonhosted.org/packages/9e/9d/96f9dee6d12eedf1c2b4264eefd59c7ac8cac10daadb9a7bfccc9ee881c6/botocore-1.43.89-py3-none-any.whl",
+        "kind": "locked-public-wheel-member",
+        "member": "botocore/data/redshift/2012-12-01/paginators-1.json",
+        "member_bytes": 6883,
+        "member_sha256": "c490f229809ec417cad69e56c45ad576965dca547fd052743beef83519e320ab",
+        "package": "botocore",
+        "version": "1.43.89"
+      },
+      "record_kind": "layer_regular_content",
+      "record_sha256": "c490f229809ec417cad69e56c45ad576965dca547fd052743beef83519e320ab",
+      "semantic_source": {}
+    },
+    {
+      "public_origin": {
+        "artifact_sha256": "d7211220c815427fe71225acc6909e4ab5dfab3b03770e72fd16cf9eb86b3d1a",
+        "artifact_url": "https://files.pythonhosted.org/packages/9e/9d/96f9dee6d12eedf1c2b4264eefd59c7ac8cac10daadb9a7bfccc9ee881c6/botocore-1.43.89-py3-none-any.whl",
+        "kind": "locked-public-wheel-member",
+        "member": "botocore/data/s3/2006-03-01/examples-1.json",
+        "member_bytes": 57596,
+        "member_sha256": "6c6c3d32b6e6c074444bfc3b9305be1ebdf5f89b3b2463ffa31a04e13c36d5be",
+        "package": "botocore",
+        "version": "1.43.89"
+      },
+      "record_kind": "layer_regular_content",
+      "record_sha256": "6c6c3d32b6e6c074444bfc3b9305be1ebdf5f89b3b2463ffa31a04e13c36d5be",
+      "semantic_source": {}
+    },
+    {
+      "public_origin": {
+        "artifact_sha256": "d7211220c815427fe71225acc6909e4ab5dfab3b03770e72fd16cf9eb86b3d1a",
+        "artifact_url": "https://files.pythonhosted.org/packages/9e/9d/96f9dee6d12eedf1c2b4264eefd59c7ac8cac10daadb9a7bfccc9ee881c6/botocore-1.43.89-py3-none-any.whl",
+        "kind": "locked-public-wheel-member",
+        "member": "botocore/data/secretsmanager/2017-10-17/examples-1.json",
+        "member_bytes": 22410,
+        "member_sha256": "dcb298c7fb9ce3ca970c5c7b9bc714da5f17072ab5c2edbc8797ce820ae60c22",
+        "package": "botocore",
+        "version": "1.43.89"
+      },
+      "record_kind": "layer_regular_content",
+      "record_sha256": "dcb298c7fb9ce3ca970c5c7b9bc714da5f17072ab5c2edbc8797ce820ae60c22",
+      "semantic_source": {}
+    },
+    {
+      "public_origin": {
+        "artifact_sha256": "d7211220c815427fe71225acc6909e4ab5dfab3b03770e72fd16cf9eb86b3d1a",
+        "artifact_url": "https://files.pythonhosted.org/packages/9e/9d/96f9dee6d12eedf1c2b4264eefd59c7ac8cac10daadb9a7bfccc9ee881c6/botocore-1.43.89-py3-none-any.whl",
+        "kind": "locked-public-wheel-member",
+        "member": "botocore/data/storagegateway/2013-06-30/examples-1.json",
+        "member_bytes": 49947,
+        "member_sha256": "dbe9813c9a9b485bf67f7b7a2aa76dad4e5d5b4678f73ca506f1469a8404024f",
+        "package": "botocore",
+        "version": "1.43.89"
+      },
+      "record_kind": "layer_regular_content",
+      "record_sha256": "dbe9813c9a9b485bf67f7b7a2aa76dad4e5d5b4678f73ca506f1469a8404024f",
+      "semantic_source": {}
+    },
+    {
+      "public_origin": {
+        "artifact_sha256": "d7211220c815427fe71225acc6909e4ab5dfab3b03770e72fd16cf9eb86b3d1a",
+        "artifact_url": "https://files.pythonhosted.org/packages/9e/9d/96f9dee6d12eedf1c2b4264eefd59c7ac8cac10daadb9a7bfccc9ee881c6/botocore-1.43.89-py3-none-any.whl",
+        "kind": "locked-public-wheel-member",
+        "member": "botocore/data/waf/2015-08-24/examples-1.json",
+        "member_bytes": 29749,
+        "member_sha256": "e8e3ee0a72f29c921f18ef95c616fd65957d92d10a869072bdfda34b0020f836",
+        "package": "botocore",
+        "version": "1.43.89"
+      },
+      "record_kind": "layer_regular_content",
+      "record_sha256": "e8e3ee0a72f29c921f18ef95c616fd65957d92d10a869072bdfda34b0020f836",
+      "semantic_source": {}
+    },
+    {
+      "public_origin": {
+        "artifact_sha256": "d7211220c815427fe71225acc6909e4ab5dfab3b03770e72fd16cf9eb86b3d1a",
+        "artifact_url": "https://files.pythonhosted.org/packages/9e/9d/96f9dee6d12eedf1c2b4264eefd59c7ac8cac10daadb9a7bfccc9ee881c6/botocore-1.43.89-py3-none-any.whl",
+        "kind": "locked-public-wheel-member",
+        "member": "botocore/handlers.py",
+        "member_bytes": 69098,
+        "member_sha256": "fc8b9772647e89c4fd575ff1c793da6ac34171344cab96148ccf62af09496cf7",
+        "package": "botocore",
+        "version": "1.43.89"
+      },
+      "record_kind": "layer_regular_content",
+      "record_sha256": "fc8b9772647e89c4fd575ff1c793da6ac34171344cab96148ccf62af09496cf7",
+      "semantic_source": {}
+    },
+    {
+      "public_origin": {
+        "artifact_sha256": "c306b9af69d13502a6598672a341deb4f549fa3eb8cfb363de190e7409919a4a",
+        "artifact_url": "https://files.pythonhosted.org/packages/32/67/c4dd452193fc017e80a8b0abd03c4bcbf45cebb21b87006268062cf2df8b/cmeel_boost-1.90.0-0-cp312-cp312-manylinux_2_28_x86_64.whl",
+        "kind": "locked-public-wheel-member",
+        "member": "cmeel.prefix/include/boost/math/special_functions/detail/daubechies_scaling_integer_grid.hpp",
+        "member_bytes": 233803,
+        "member_sha256": "dccb4e515c5b2e3f2fc1535bd81b54628adf5cf2516e5a499bc4bfa80cf6e54e",
+        "package": "cmeel-boost",
+        "version": "1.90.0"
+      },
+      "record_kind": "layer_regular_content",
+      "record_sha256": "dccb4e515c5b2e3f2fc1535bd81b54628adf5cf2516e5a499bc4bfa80cf6e54e",
+      "semantic_source": {}
+    },
+    {
+      "public_origin": {
+        "artifact_sha256": "ff838d62ec1bfce4f9ba7fa16f4a7b554cd8d0c299e6be37502161a660c84eef",
+        "artifact_url": "https://files.pythonhosted.org/packages/57/26/e6d4fc8512a51a5f9ee7bfdbfb853bce1197087df40c9ad993ad370b846f/cryptography-50.0.1-cp311-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl",
+        "kind": "locked-public-wheel-member",
+        "member": "cryptography/hazmat/bindings/_rust/openssl/hpke.pyi",
+        "member_bytes": 2914,
+        "member_sha256": "a7f8462e7e981fe11aac91755796d4b14b638a9be2100a5c4793b4b141c92ed7",
+        "package": "cryptography",
+        "version": "50.0.1"
+      },
+      "record_kind": "layer_regular_content",
+      "record_sha256": "a7f8462e7e981fe11aac91755796d4b14b638a9be2100a5c4793b4b141c92ed7",
+      "semantic_source": {}
+    },
+    {
+      "public_origin": {
+        "compile_mode": "exec",
+        "compiler_executable_sha256": "a92f0f95e883390c7256b2e441484aac06b1002dbe1d924141a77c8d82f96223",
+        "invalidation_flags": 3,
+        "kind": "exact-checked-hash-bytecode",
+        "magic_hex": "cb0d0d0a",
+        "marshal_version": 4,
+        "optimization": 0,
+        "public_compiler_packages": [
+          {
+            "bytes": 838090,
+            "members": [
+              {
+                "bytes": 7878,
+                "member": "usr/lib/python3.12/py_compile.py",
+                "sha256": "ba0e2ea55612c24ed88c075bdf37dba1527492bd848b1b7f068bbbb3371ac2d9"
+              }
+            ],
+            "package": "libpython3.12-minimal",
+            "sha256": "b3bfbc02cc6767d02170781c9cb4c703ea18822b2703667473c3a402ff73088c",
+            "url": "https://archive.ubuntu.com/ubuntu/pool/main/p/python3.12/libpython3.12-minimal_3.12.3-1ubuntu0.16_amd64.deb",
+            "version": "3.12.3-1ubuntu0.16"
+          },
+          {
+            "bytes": 2069898,
+            "members": [],
+            "package": "libpython3.12-stdlib",
+            "sha256": "41081d5b192a03b48844eed1efd08bbf9c09cc33eb9863da6d7add9f5f3dd0c9",
+            "url": "https://archive.ubuntu.com/ubuntu/pool/main/p/python3.12/libpython3.12-stdlib_3.12.3-1ubuntu0.16_amd64.deb",
+            "version": "3.12.3-1ubuntu0.16"
+          },
+          {
+            "bytes": 650728,
+            "members": [],
+            "package": "python3.12",
+            "sha256": "0e8313f418201f1c0861ff7accbd30cefe459895feeffa5be27b18fc0417428e",
+            "url": "https://archive.ubuntu.com/ubuntu/pool/main/p/python3.12/python3.12_3.12.3-1ubuntu0.16_amd64.deb",
+            "version": "3.12.3-1ubuntu0.16"
+          },
+          {
+            "bytes": 2334704,
+            "members": [
+              {
+                "bytes": 8025024,
+                "member": "usr/bin/python3.12",
+                "sha256": "a92f0f95e883390c7256b2e441484aac06b1002dbe1d924141a77c8d82f96223"
+              }
+            ],
+            "package": "python3.12-minimal",
+            "sha256": "3535ddab53a2f39f8cda32250bbf5bb066616f5902b642d15ef56047f83911d3",
+            "url": "https://archive.ubuntu.com/ubuntu/pool/main/p/python3.12/python3.12-minimal_3.12.3-1ubuntu0.16_amd64.deb",
+            "version": "3.12.3-1ubuntu0.16"
+          }
+        ],
+        "public_compiler_signed_index": {
+          "inrelease_sha256": "f4d12f62574e57f64a2495b436f6f44524d322ced2db29339b9eaf4cae50d640",
+          "inrelease_url": "https://archive.ubuntu.com/ubuntu/dists/noble-updates/InRelease",
+          "package_index_path": "main/binary-amd64/Packages.xz",
+          "package_index_sha256": "74e7fdc0c22972b3d3c1a273925ac04c04684127cbb84e5dc4c9a126e2022195"
+        },
+        "py_compile_sha256": "ba0e2ea55612c24ed88c075bdf37dba1527492bd848b1b7f068bbbb3371ac2d9",
+        "python_version": "3.12.3 (main, Jul 15 2026, 23:46:41) [GCC 13.3.0]",
+        "source": {
+          "artifact_sha256": "ab439dee60a6856412bc058f13a68eb6a59c5b81526bb89cfdcf89ce9c0a48c9",
+          "artifact_url": "https://files.pythonhosted.org/packages/3b/27/0f7247b8002a1404fdb5412aeb15fb0fe70288eb8f88a5873d1c0d8262cf/google_auth-2.57.1-py3-none-any.whl",
+          "kind": "locked-public-wheel-member",
+          "member": "google/auth/crypt/_python_rsa.py",
+          "member_bytes": 6747,
+          "member_sha256": "131ab3f4e8039bedc91c777adfa82701d5dd707ea98c3581349cf6d6e0d19d41",
+          "package": "google-auth",
+          "version": "2.57.1"
+        },
+        "source_bytes_sha256": "131ab3f4e8039bedc91c777adfa82701d5dd707ea98c3581349cf6d6e0d19d41",
+        "source_module": "/opt/npa-venv/lib/python3.12/site-packages/google/auth/crypt/_python_rsa.py"
+      },
+      "record_kind": "layer_regular_content",
+      "record_sha256": "aaafb8417982bb401041d78380f4cbf7911eb840b9f3ae3ccd5b6638f9aff1de",
+      "semantic_source": {}
+    },
+    {
+      "public_origin": {
+        "artifact_sha256": "ab439dee60a6856412bc058f13a68eb6a59c5b81526bb89cfdcf89ce9c0a48c9",
+        "artifact_url": "https://files.pythonhosted.org/packages/3b/27/0f7247b8002a1404fdb5412aeb15fb0fe70288eb8f88a5873d1c0d8262cf/google_auth-2.57.1-py3-none-any.whl",
+        "kind": "locked-public-wheel-member",
+        "member": "google/auth/crypt/_python_rsa.py",
+        "member_bytes": 6747,
+        "member_sha256": "131ab3f4e8039bedc91c777adfa82701d5dd707ea98c3581349cf6d6e0d19d41",
+        "package": "google-auth",
+        "version": "2.57.1"
+      },
+      "record_kind": "layer_regular_content",
+      "record_sha256": "131ab3f4e8039bedc91c777adfa82701d5dd707ea98c3581349cf6d6e0d19d41",
+      "semantic_source": {}
+    },
+    {
+      "public_origin": {
+        "artifact_sha256": "ab439dee60a6856412bc058f13a68eb6a59c5b81526bb89cfdcf89ce9c0a48c9",
+        "artifact_url": "https://files.pythonhosted.org/packages/3b/27/0f7247b8002a1404fdb5412aeb15fb0fe70288eb8f88a5873d1c0d8262cf/google_auth-2.57.1-py3-none-any.whl",
+        "kind": "locked-public-wheel-member",
+        "member": "google/auth/transport/_mtls_helper.py",
+        "member_bytes": 32583,
+        "member_sha256": "5c01786fd61b0ccfc074becdca3233a9c83404de080b8ce96692a7355a554e88",
+        "package": "google-auth",
+        "version": "2.57.1"
+      },
+      "record_kind": "layer_regular_content",
+      "record_sha256": "5c01786fd61b0ccfc074becdca3233a9c83404de080b8ce96692a7355a554e88",
+      "semantic_source": {}
+    },
+    {
+      "public_origin": {
+        "artifact_sha256": "7fabc0f57944fd79ddef62ed8cf4df770654b172b1ad1019a999304fed3169f3",
+        "artifact_url": "https://files.pythonhosted.org/packages/28/4c/a51af0ce1d18fd86afa3e8538a81abf5523d24632abe7665ce6795b8009d/lancedb-0.30.2-cp39-abi3-manylinux_2_28_x86_64.whl",
+        "kind": "locked-public-wheel-member",
+        "member": "lancedb/_lancedb.abi3.so",
+        "member_bytes": 120319200,
+        "member_sha256": "7cff674e8604491032df35cdf047741bf00e5195149a4b05823d44fdcecbb7d8",
+        "package": "lancedb",
+        "version": "0.30.2"
+      },
+      "record_kind": "layer_regular_content",
+      "record_sha256": "7cff674e8604491032df35cdf047741bf00e5195149a4b05823d44fdcecbb7d8",
+      "semantic_source": {}
+    },
+    {
+      "public_origin": {
+        "artifact_sha256": "22de65bb9010a725b0dac248f353bb072969c94fa8d6b1f34b87d7953cf7bbe4",
+        "artifact_url": "https://files.pythonhosted.org/packages/7f/81/d60984052df5c97b1d24365bc1e30024379b42c4edcd79d2436b1b9806f2/pynacl-1.6.2-cp38-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl",
+        "kind": "locked-public-wheel-member",
+        "member": "nacl/bindings/crypto_sign.py",
+        "member_bytes": 10347,
+        "member_sha256": "3f948b91f440ab9963e452db03506e06b283c305b45e30caff1a67f091386aa2",
+        "package": "pynacl",
+        "version": "1.6.2"
+      },
+      "record_kind": "layer_regular_content",
+      "record_sha256": "3f948b91f440ab9963e452db03506e06b283c305b45e30caff1a67f091386aa2",
+      "semantic_source": {}
+    },
+    {
+      "public_origin": {
+        "artifact_sha256": "22de65bb9010a725b0dac248f353bb072969c94fa8d6b1f34b87d7953cf7bbe4",
+        "artifact_url": "https://files.pythonhosted.org/packages/7f/81/d60984052df5c97b1d24365bc1e30024379b42c4edcd79d2436b1b9806f2/pynacl-1.6.2-cp38-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl",
+        "kind": "locked-public-wheel-member",
+        "member": "nacl/pwhash/__init__.py",
+        "member_bytes": 2675,
+        "member_sha256": "5d20d777bc101cd2c41e5d269077d56f994542ca7aca01e485e9fbd7c8740523",
+        "package": "pynacl",
+        "version": "1.6.2"
+      },
+      "record_kind": "layer_regular_content",
+      "record_sha256": "5d20d777bc101cd2c41e5d269077d56f994542ca7aca01e485e9fbd7c8740523",
+      "semantic_source": {}
+    },
+    {
+      "public_origin": {
+        "artifact_sha256": "22de65bb9010a725b0dac248f353bb072969c94fa8d6b1f34b87d7953cf7bbe4",
+        "artifact_url": "https://files.pythonhosted.org/packages/7f/81/d60984052df5c97b1d24365bc1e30024379b42c4edcd79d2436b1b9806f2/pynacl-1.6.2-cp38-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl",
+        "kind": "locked-public-wheel-member",
+        "member": "nacl/pwhash/argon2i.py",
+        "member_bytes": 4405,
+        "member_sha256": "208bc8b8ef6c88a52ee7e5a9cf44868a5b4b42fec3bbf9a2f41504f083512bfe",
+        "package": "pynacl",
+        "version": "1.6.2"
+      },
+      "record_kind": "layer_regular_content",
+      "record_sha256": "208bc8b8ef6c88a52ee7e5a9cf44868a5b4b42fec3bbf9a2f41504f083512bfe",
+      "semantic_source": {}
+    },
+    {
+      "public_origin": {
+        "artifact_sha256": "22de65bb9010a725b0dac248f353bb072969c94fa8d6b1f34b87d7953cf7bbe4",
+        "artifact_url": "https://files.pythonhosted.org/packages/7f/81/d60984052df5c97b1d24365bc1e30024379b42c4edcd79d2436b1b9806f2/pynacl-1.6.2-cp38-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl",
+        "kind": "locked-public-wheel-member",
+        "member": "nacl/pwhash/argon2id.py",
+        "member_bytes": 4434,
+        "member_sha256": "7994c345cccdd479049f07281df8120bd979d2758b574a206be06c04e59c06f0",
+        "package": "pynacl",
+        "version": "1.6.2"
+      },
+      "record_kind": "layer_regular_content",
+      "record_sha256": "7994c345cccdd479049f07281df8120bd979d2758b574a206be06c04e59c06f0",
+      "semantic_source": {}
+    },
+    {
+      "public_origin": {
+        "artifact_sha256": "3cdec01fa790a186d430433fdd4d4ffb70eed6f0eeb4bf05c8dbe2dce0a9bcb8",
+        "artifact_url": "https://files.pythonhosted.org/packages/3a/5f/62d28cf019460c7f1394105b4d49d9911a9c444cb77ab0bd95a204c5a6de/numpy-2.5.2-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl",
+        "kind": "locked-public-wheel-member",
+        "member": "numpy/random/tests/test_generator_mt19937.py",
+        "member_bytes": 119035,
+        "member_sha256": "853efa839354a0358e2d157c953e23e19ca4d4a452730b644c9d38ccad2f9931",
+        "package": "numpy",
+        "version": "2.5.2"
+      },
+      "record_kind": "layer_regular_content",
+      "record_sha256": "853efa839354a0358e2d157c953e23e19ca4d4a452730b644c9d38ccad2f9931",
+      "semantic_source": {}
+    },
+    {
+      "public_origin": {
+        "artifact_sha256": "6f54c2eed5edab54c224dd1852dde80ba76b2b78e6d3ce7344fef5dfc66d16ab",
+        "artifact_url": "https://files.pythonhosted.org/packages/a5/87/e3c9ee227b750e5b61572e7509f586cc8d494a4f7874b5163e734ed852c2/nvidia_cusolver-12.0.3.29-py3-none-manylinux_2_27_x86_64.whl",
+        "kind": "locked-public-wheel-member",
+        "member": "nvidia/cu13/lib/libcusolver.so.12",
+        "member_bytes": 137006536,
+        "member_sha256": "eb49632264066a1497bc09aecacb900929550a5baaaf4f1351d9b555fdc6a180",
+        "package": "nvidia-cusolver",
+        "version": "12.0.3.29"
+      },
+      "record_kind": "layer_regular_content",
+      "record_sha256": "eb49632264066a1497bc09aecacb900929550a5baaaf4f1351d9b555fdc6a180",
+      "semantic_source": {}
+    },
+    {
+      "public_origin": {
+        "artifact_sha256": "efcf0b01e3a0827c144feff5391456b8a06e9ce63dcd51c0943e32e605251952",
+        "artifact_url": "https://files.pythonhosted.org/packages/ba/e8/b3f7a87cc719dca926c7baee92f2544de8909573a4126c85a9f1625431e8/nvidia_cusparse-12.6.2.49-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl",
+        "kind": "locked-public-wheel-member",
+        "member": "nvidia/cu13/lib/libcusparse.so.12",
+        "member_bytes": 156214040,
+        "member_sha256": "faf92a21d4c2805b7da99e7b0dc1af55272522504c1fd768f3ac330b54ec73e5",
+        "package": "nvidia-cusparse",
+        "version": "12.6.2.49"
+      },
+      "record_kind": "layer_regular_content",
+      "record_sha256": "faf92a21d4c2805b7da99e7b0dc1af55272522504c1fd768f3ac330b54ec73e5",
+      "semantic_source": {}
+    },
+    {
+      "public_origin": {
+        "compile_mode": "exec",
+        "compiler_executable_sha256": "a92f0f95e883390c7256b2e441484aac06b1002dbe1d924141a77c8d82f96223",
+        "invalidation_flags": 3,
+        "kind": "exact-checked-hash-bytecode",
+        "magic_hex": "cb0d0d0a",
+        "marshal_version": 4,
+        "optimization": 0,
+        "public_compiler_packages": [
+          {
+            "bytes": 838090,
+            "members": [
+              {
+                "bytes": 7878,
+                "member": "usr/lib/python3.12/py_compile.py",
+                "sha256": "ba0e2ea55612c24ed88c075bdf37dba1527492bd848b1b7f068bbbb3371ac2d9"
+              }
+            ],
+            "package": "libpython3.12-minimal",
+            "sha256": "b3bfbc02cc6767d02170781c9cb4c703ea18822b2703667473c3a402ff73088c",
+            "url": "https://archive.ubuntu.com/ubuntu/pool/main/p/python3.12/libpython3.12-minimal_3.12.3-1ubuntu0.16_amd64.deb",
+            "version": "3.12.3-1ubuntu0.16"
+          },
+          {
+            "bytes": 2069898,
+            "members": [],
+            "package": "libpython3.12-stdlib",
+            "sha256": "41081d5b192a03b48844eed1efd08bbf9c09cc33eb9863da6d7add9f5f3dd0c9",
+            "url": "https://archive.ubuntu.com/ubuntu/pool/main/p/python3.12/libpython3.12-stdlib_3.12.3-1ubuntu0.16_amd64.deb",
+            "version": "3.12.3-1ubuntu0.16"
+          },
+          {
+            "bytes": 650728,
+            "members": [],
+            "package": "python3.12",
+            "sha256": "0e8313f418201f1c0861ff7accbd30cefe459895feeffa5be27b18fc0417428e",
+            "url": "https://archive.ubuntu.com/ubuntu/pool/main/p/python3.12/python3.12_3.12.3-1ubuntu0.16_amd64.deb",
+            "version": "3.12.3-1ubuntu0.16"
+          },
+          {
+            "bytes": 2334704,
+            "members": [
+              {
+                "bytes": 8025024,
+                "member": "usr/bin/python3.12",
+                "sha256": "a92f0f95e883390c7256b2e441484aac06b1002dbe1d924141a77c8d82f96223"
+              }
+            ],
+            "package": "python3.12-minimal",
+            "sha256": "3535ddab53a2f39f8cda32250bbf5bb066616f5902b642d15ef56047f83911d3",
+            "url": "https://archive.ubuntu.com/ubuntu/pool/main/p/python3.12/python3.12-minimal_3.12.3-1ubuntu0.16_amd64.deb",
+            "version": "3.12.3-1ubuntu0.16"
+          }
+        ],
+        "public_compiler_signed_index": {
+          "inrelease_sha256": "f4d12f62574e57f64a2495b436f6f44524d322ced2db29339b9eaf4cae50d640",
+          "inrelease_url": "https://archive.ubuntu.com/ubuntu/dists/noble-updates/InRelease",
+          "package_index_path": "main/binary-amd64/Packages.xz",
+          "package_index_sha256": "74e7fdc0c22972b3d3c1a273925ac04c04684127cbb84e5dc4c9a126e2022195"
+        },
+        "py_compile_sha256": "ba0e2ea55612c24ed88c075bdf37dba1527492bd848b1b7f068bbbb3371ac2d9",
+        "python_version": "3.12.3 (main, Jul 15 2026, 23:46:41) [GCC 13.3.0]",
+        "source": {
+          "artifact_sha256": "88119c938d2b8fb88561af5f6ee0eec8cc8d552b7bb1f712743136eb7523b7a1",
+          "artifact_url": "https://files.pythonhosted.org/packages/be/9c/92789c596b8df838baa98fa71844d84283302f7604ed565dafe5a6b5041a/oauthlib-3.3.1-py3-none-any.whl",
+          "kind": "locked-public-wheel-member",
+          "member": "oauthlib/oauth1/rfc5849/parameters.py",
+          "member_bytes": 4802,
+          "member_sha256": "01b9f1a62c7f632ecfdc0def6e4ad5d9b905c6d9d1e534534ca74ebbd30ac9da",
+          "package": "oauthlib",
+          "version": "3.3.1"
+        },
+        "source_bytes_sha256": "01b9f1a62c7f632ecfdc0def6e4ad5d9b905c6d9d1e534534ca74ebbd30ac9da",
+        "source_module": "/opt/npa-venv/lib/python3.12/site-packages/oauthlib/oauth1/rfc5849/parameters.py"
+      },
+      "record_kind": "layer_regular_content",
+      "record_sha256": "8cc2ca175e61f67ea93967dc6b4211be6dfafc380301869559d1715d235c9435",
+      "semantic_source": {}
+    },
+    {
+      "public_origin": {
+        "artifact_sha256": "88119c938d2b8fb88561af5f6ee0eec8cc8d552b7bb1f712743136eb7523b7a1",
+        "artifact_url": "https://files.pythonhosted.org/packages/be/9c/92789c596b8df838baa98fa71844d84283302f7604ed565dafe5a6b5041a/oauthlib-3.3.1-py3-none-any.whl",
+        "kind": "locked-public-wheel-member",
+        "member": "oauthlib/oauth1/rfc5849/parameters.py",
+        "member_bytes": 4802,
+        "member_sha256": "01b9f1a62c7f632ecfdc0def6e4ad5d9b905c6d9d1e534534ca74ebbd30ac9da",
+        "package": "oauthlib",
+        "version": "3.3.1"
+      },
+      "record_kind": "layer_regular_content",
+      "record_sha256": "01b9f1a62c7f632ecfdc0def6e4ad5d9b905c6d9d1e534534ca74ebbd30ac9da",
+      "semantic_source": {}
+    },
+    {
+      "public_origin": {
+        "compile_mode": "exec",
+        "compiler_executable_sha256": "a92f0f95e883390c7256b2e441484aac06b1002dbe1d924141a77c8d82f96223",
+        "invalidation_flags": 3,
+        "kind": "exact-checked-hash-bytecode",
+        "magic_hex": "cb0d0d0a",
+        "marshal_version": 4,
+        "optimization": 0,
+        "public_compiler_packages": [
+          {
+            "bytes": 838090,
+            "members": [
+              {
+                "bytes": 7878,
+                "member": "usr/lib/python3.12/py_compile.py",
+                "sha256": "ba0e2ea55612c24ed88c075bdf37dba1527492bd848b1b7f068bbbb3371ac2d9"
+              }
+            ],
+            "package": "libpython3.12-minimal",
+            "sha256": "b3bfbc02cc6767d02170781c9cb4c703ea18822b2703667473c3a402ff73088c",
+            "url": "https://archive.ubuntu.com/ubuntu/pool/main/p/python3.12/libpython3.12-minimal_3.12.3-1ubuntu0.16_amd64.deb",
+            "version": "3.12.3-1ubuntu0.16"
+          },
+          {
+            "bytes": 2069898,
+            "members": [],
+            "package": "libpython3.12-stdlib",
+            "sha256": "41081d5b192a03b48844eed1efd08bbf9c09cc33eb9863da6d7add9f5f3dd0c9",
+            "url": "https://archive.ubuntu.com/ubuntu/pool/main/p/python3.12/libpython3.12-stdlib_3.12.3-1ubuntu0.16_amd64.deb",
+            "version": "3.12.3-1ubuntu0.16"
+          },
+          {
+            "bytes": 650728,
+            "members": [],
+            "package": "python3.12",
+            "sha256": "0e8313f418201f1c0861ff7accbd30cefe459895feeffa5be27b18fc0417428e",
+            "url": "https://archive.ubuntu.com/ubuntu/pool/main/p/python3.12/python3.12_3.12.3-1ubuntu0.16_amd64.deb",
+            "version": "3.12.3-1ubuntu0.16"
+          },
+          {
+            "bytes": 2334704,
+            "members": [
+              {
+                "bytes": 8025024,
+                "member": "usr/bin/python3.12",
+                "sha256": "a92f0f95e883390c7256b2e441484aac06b1002dbe1d924141a77c8d82f96223"
+              }
+            ],
+            "package": "python3.12-minimal",
+            "sha256": "3535ddab53a2f39f8cda32250bbf5bb066616f5902b642d15ef56047f83911d3",
+            "url": "https://archive.ubuntu.com/ubuntu/pool/main/p/python3.12/python3.12-minimal_3.12.3-1ubuntu0.16_amd64.deb",
+            "version": "3.12.3-1ubuntu0.16"
+          }
+        ],
+        "public_compiler_signed_index": {
+          "inrelease_sha256": "f4d12f62574e57f64a2495b436f6f44524d322ced2db29339b9eaf4cae50d640",
+          "inrelease_url": "https://archive.ubuntu.com/ubuntu/dists/noble-updates/InRelease",
+          "package_index_path": "main/binary-amd64/Packages.xz",
+          "package_index_sha256": "74e7fdc0c22972b3d3c1a273925ac04c04684127cbb84e5dc4c9a126e2022195"
+        },
+        "py_compile_sha256": "ba0e2ea55612c24ed88c075bdf37dba1527492bd848b1b7f068bbbb3371ac2d9",
+        "python_version": "3.12.3 (main, Jul 15 2026, 23:46:41) [GCC 13.3.0]",
+        "source": {
+          "artifact_sha256": "88119c938d2b8fb88561af5f6ee0eec8cc8d552b7bb1f712743136eb7523b7a1",
+          "artifact_url": "https://files.pythonhosted.org/packages/be/9c/92789c596b8df838baa98fa71844d84283302f7604ed565dafe5a6b5041a/oauthlib-3.3.1-py3-none-any.whl",
+          "kind": "locked-public-wheel-member",
+          "member": "oauthlib/oauth2/rfc6749/parameters.py",
+          "member_bytes": 21355,
+          "member_sha256": "82d64e886e9f4f62b70a8cbc4479dcbbd2b8d5aa3a01dc00863bc378b037ac1c",
+          "package": "oauthlib",
+          "version": "3.3.1"
+        },
+        "source_bytes_sha256": "82d64e886e9f4f62b70a8cbc4479dcbbd2b8d5aa3a01dc00863bc378b037ac1c",
+        "source_module": "/opt/npa-venv/lib/python3.12/site-packages/oauthlib/oauth2/rfc6749/parameters.py"
+      },
+      "record_kind": "layer_regular_content",
+      "record_sha256": "908f9708d611fb7479e62d156231c17d42639f40a6825e78c1b821bfa8f3632b",
+      "semantic_source": {}
+    },
+    {
+      "public_origin": {
+        "artifact_sha256": "88119c938d2b8fb88561af5f6ee0eec8cc8d552b7bb1f712743136eb7523b7a1",
+        "artifact_url": "https://files.pythonhosted.org/packages/be/9c/92789c596b8df838baa98fa71844d84283302f7604ed565dafe5a6b5041a/oauthlib-3.3.1-py3-none-any.whl",
+        "kind": "locked-public-wheel-member",
+        "member": "oauthlib/oauth2/rfc6749/parameters.py",
+        "member_bytes": 21355,
+        "member_sha256": "82d64e886e9f4f62b70a8cbc4479dcbbd2b8d5aa3a01dc00863bc378b037ac1c",
+        "package": "oauthlib",
+        "version": "3.3.1"
+      },
+      "record_kind": "layer_regular_content",
+      "record_sha256": "82d64e886e9f4f62b70a8cbc4479dcbbd2b8d5aa3a01dc00863bc378b037ac1c",
+      "semantic_source": {}
+    },
+    {
+      "public_origin": {
+        "artifact_sha256": "d373ce03ffd84010ed9839fa73672a9c8256990532e158440c0085db7d914b34",
+        "artifact_url": "https://files.pythonhosted.org/packages/12/98/e976540c1addf70442be7842a18cf70884a964abbf69442504f4d2939989/pandas-3.0.5-cp312-cp312-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl",
+        "kind": "locked-public-wheel-member",
+        "member": "pandas/_libs/tslibs/timestamps.cpython-312-x86_64-linux-gnu.so",
+        "member_bytes": 473168,
+        "member_sha256": "df4906b2f6e68e8f8b418e8c68e86e8a374966b74eb77d0db0c137a2f86ed7f2",
+        "package": "pandas",
+        "version": "3.0.5"
+      },
+      "record_kind": "layer_regular_content",
+      "record_sha256": "df4906b2f6e68e8f8b418e8c68e86e8a374966b74eb77d0db0c137a2f86ed7f2",
+      "semantic_source": {}
+    },
+    {
+      "public_origin": {
+        "artifact_sha256": "5389cdf79447ed1515c9e31620e6e1e2302249564d603f2ad727d4f6d313e4c3",
+        "artifact_url": "https://files.pythonhosted.org/packages/60/c9/711ca85d79f1ec98f29a5eae2b051e25b4ecec5de3e3c0e2d5c5dcb15664/pyarrow-25.0.1-cp312-cp312-manylinux_2_28_x86_64.whl",
+        "kind": "locked-public-wheel-member",
+        "member": "pyarrow/_azurefs.cpython-312-x86_64-linux-gnu.so",
+        "member_bytes": 136016,
+        "member_sha256": "30260e683424409e8d57f0503f57ef7aeb6eb8ed569e4f9d1b030a919de90c6d",
+        "package": "pyarrow",
+        "version": "25.0.1"
+      },
+      "record_kind": "layer_regular_content",
+      "record_sha256": "30260e683424409e8d57f0503f57ef7aeb6eb8ed569e4f9d1b030a919de90c6d",
+      "semantic_source": {}
+    },
+    {
+      "public_origin": {
+        "artifact_sha256": "5389cdf79447ed1515c9e31620e6e1e2302249564d603f2ad727d4f6d313e4c3",
+        "artifact_url": "https://files.pythonhosted.org/packages/60/c9/711ca85d79f1ec98f29a5eae2b051e25b4ecec5de3e3c0e2d5c5dcb15664/pyarrow-25.0.1-cp312-cp312-manylinux_2_28_x86_64.whl",
+        "kind": "locked-public-wheel-member",
+        "member": "pyarrow/_azurefs.pyx",
+        "member_bytes": 8688,
+        "member_sha256": "c6b898d8ec521127f29b72bf747ab26c2e80668bebb2e6bacb1763117cf6124f",
+        "package": "pyarrow",
+        "version": "25.0.1"
+      },
+      "record_kind": "layer_regular_content",
+      "record_sha256": "c6b898d8ec521127f29b72bf747ab26c2e80668bebb2e6bacb1763117cf6124f",
+      "semantic_source": {}
+    },
+    {
+      "public_origin": {
+        "artifact_sha256": "5389cdf79447ed1515c9e31620e6e1e2302249564d603f2ad727d4f6d313e4c3",
+        "artifact_url": "https://files.pythonhosted.org/packages/60/c9/711ca85d79f1ec98f29a5eae2b051e25b4ecec5de3e3c0e2d5c5dcb15664/pyarrow-25.0.1-cp312-cp312-manylinux_2_28_x86_64.whl",
+        "kind": "locked-public-wheel-member",
+        "member": "pyarrow/include/arrow/vendored/xxhash/xxhash.h",
+        "member_bytes": 279426,
+        "member_sha256": "3c31621e634be2e978034c2248b0e963d252ac34bbdd132e96bd56f5a3445bcb",
+        "package": "pyarrow",
+        "version": "25.0.1"
+      },
+      "record_kind": "layer_regular_content",
+      "record_sha256": "3c31621e634be2e978034c2248b0e963d252ac34bbdd132e96bd56f5a3445bcb",
+      "semantic_source": {}
+    },
+    {
+      "public_origin": {
+        "artifact_sha256": "5389cdf79447ed1515c9e31620e6e1e2302249564d603f2ad727d4f6d313e4c3",
+        "artifact_url": "https://files.pythonhosted.org/packages/60/c9/711ca85d79f1ec98f29a5eae2b051e25b4ecec5de3e3c0e2d5c5dcb15664/pyarrow-25.0.1-cp312-cp312-manylinux_2_28_x86_64.whl",
+        "kind": "locked-public-wheel-member",
+        "member": "pyarrow/tests/parquet/test_encryption.py",
+        "member_bytes": 37403,
+        "member_sha256": "fa5b24a8f943228bdd7d6f0ff7360aa5a291f37ab674fe85f965877314100f2b",
+        "package": "pyarrow",
+        "version": "25.0.1"
+      },
+      "record_kind": "layer_regular_content",
+      "record_sha256": "fa5b24a8f943228bdd7d6f0ff7360aa5a291f37ab674fe85f965877314100f2b",
+      "semantic_source": {}
+    },
+    {
+      "public_origin": {
+        "artifact_sha256": "29253a9207ce32b64c3ac6600edc75368f98473906e8fd1043bd6b5b1de2c14a",
+        "artifact_url": "https://files.pythonhosted.org/packages/47/8d/d529b5d697919ba8c11ad626e835d4039be708a35b0d22de83a269a6682c/pyasn1_modules-0.4.2-py3-none-any.whl",
+        "kind": "locked-public-wheel-member",
+        "member": "pyasn1_modules/rfc4490.py",
+        "member_bytes": 3401,
+        "member_sha256": "67d9e49ed49273d9e958706357d73ce90196fe2b6f1984389798c93b46b61820",
+        "package": "pyasn1-modules",
+        "version": "0.4.2"
+      },
+      "record_kind": "layer_regular_content",
+      "record_sha256": "67d9e49ed49273d9e958706357d73ce90196fe2b6f1984389798c93b46b61820",
+      "semantic_source": {}
+    },
+    {
+      "public_origin": {
+        "artifact_sha256": "29253a9207ce32b64c3ac6600edc75368f98473906e8fd1043bd6b5b1de2c14a",
+        "artifact_url": "https://files.pythonhosted.org/packages/47/8d/d529b5d697919ba8c11ad626e835d4039be708a35b0d22de83a269a6682c/pyasn1_modules-0.4.2-py3-none-any.whl",
+        "kind": "locked-public-wheel-member",
+        "member": "pyasn1_modules/rfc7906.py",
+        "member_bytes": 18921,
+        "member_sha256": "9837f5a56c1536509c1107ecc1486d4034ad027c12fb9c5b66d8cc95f9d62dd2",
+        "package": "pyasn1-modules",
+        "version": "0.4.2"
+      },
+      "record_kind": "layer_regular_content",
+      "record_sha256": "9837f5a56c1536509c1107ecc1486d4034ad027c12fb9c5b66d8cc95f9d62dd2",
+      "semantic_source": {}
+    },
+    {
+      "public_origin": {
+        "artifact_sha256": "29253a9207ce32b64c3ac6600edc75368f98473906e8fd1043bd6b5b1de2c14a",
+        "artifact_url": "https://files.pythonhosted.org/packages/47/8d/d529b5d697919ba8c11ad626e835d4039be708a35b0d22de83a269a6682c/pyasn1_modules-0.4.2-py3-none-any.whl",
+        "kind": "locked-public-wheel-member",
+        "member": "pyasn1_modules/rfc8017.py",
+        "member_bytes": 4178,
+        "member_sha256": "a703d149c86f32d5ee6ad7022d42c7baf48bf2400f12a902e1a2098dde6f100a",
+        "package": "pyasn1-modules",
+        "version": "0.4.2"
+      },
+      "record_kind": "layer_regular_content",
+      "record_sha256": "a703d149c86f32d5ee6ad7022d42c7baf48bf2400f12a902e1a2098dde6f100a",
+      "semantic_source": {}
+    },
+    {
+      "public_origin": {
+        "compile_mode": "exec",
+        "compiler_executable_sha256": "a92f0f95e883390c7256b2e441484aac06b1002dbe1d924141a77c8d82f96223",
+        "invalidation_flags": 3,
+        "kind": "exact-checked-hash-bytecode",
+        "magic_hex": "cb0d0d0a",
+        "marshal_version": 4,
+        "optimization": 0,
+        "public_compiler_packages": [
+          {
+            "bytes": 838090,
+            "members": [
+              {
+                "bytes": 7878,
+                "member": "usr/lib/python3.12/py_compile.py",
+                "sha256": "ba0e2ea55612c24ed88c075bdf37dba1527492bd848b1b7f068bbbb3371ac2d9"
+              }
+            ],
+            "package": "libpython3.12-minimal",
+            "sha256": "b3bfbc02cc6767d02170781c9cb4c703ea18822b2703667473c3a402ff73088c",
+            "url": "https://archive.ubuntu.com/ubuntu/pool/main/p/python3.12/libpython3.12-minimal_3.12.3-1ubuntu0.16_amd64.deb",
+            "version": "3.12.3-1ubuntu0.16"
+          },
+          {
+            "bytes": 2069898,
+            "members": [],
+            "package": "libpython3.12-stdlib",
+            "sha256": "41081d5b192a03b48844eed1efd08bbf9c09cc33eb9863da6d7add9f5f3dd0c9",
+            "url": "https://archive.ubuntu.com/ubuntu/pool/main/p/python3.12/libpython3.12-stdlib_3.12.3-1ubuntu0.16_amd64.deb",
+            "version": "3.12.3-1ubuntu0.16"
+          },
+          {
+            "bytes": 650728,
+            "members": [],
+            "package": "python3.12",
+            "sha256": "0e8313f418201f1c0861ff7accbd30cefe459895feeffa5be27b18fc0417428e",
+            "url": "https://archive.ubuntu.com/ubuntu/pool/main/p/python3.12/python3.12_3.12.3-1ubuntu0.16_amd64.deb",
+            "version": "3.12.3-1ubuntu0.16"
+          },
+          {
+            "bytes": 2334704,
+            "members": [
+              {
+                "bytes": 8025024,
+                "member": "usr/bin/python3.12",
+                "sha256": "a92f0f95e883390c7256b2e441484aac06b1002dbe1d924141a77c8d82f96223"
+              }
+            ],
+            "package": "python3.12-minimal",
+            "sha256": "3535ddab53a2f39f8cda32250bbf5bb066616f5902b642d15ef56047f83911d3",
+            "url": "https://archive.ubuntu.com/ubuntu/pool/main/p/python3.12/python3.12-minimal_3.12.3-1ubuntu0.16_amd64.deb",
+            "version": "3.12.3-1ubuntu0.16"
+          }
+        ],
+        "public_compiler_signed_index": {
+          "inrelease_sha256": "f4d12f62574e57f64a2495b436f6f44524d322ced2db29339b9eaf4cae50d640",
+          "inrelease_url": "https://archive.ubuntu.com/ubuntu/dists/noble-updates/InRelease",
+          "package_index_path": "main/binary-amd64/Packages.xz",
+          "package_index_sha256": "74e7fdc0c22972b3d3c1a273925ac04c04684127cbb84e5dc4c9a126e2022195"
+        },
+        "py_compile_sha256": "ba0e2ea55612c24ed88c075bdf37dba1527492bd848b1b7f068bbbb3371ac2d9",
+        "python_version": "3.12.3 (main, Jul 15 2026, 23:46:41) [GCC 13.3.0]",
+        "source": {
+          "artifact_sha256": "7dd8a5c40426b779b0868c404bdef9768deccf22749cde15852df527e6269b36",
+          "artifact_url": "https://files.pythonhosted.org/packages/3b/5d/63d4ae3b9daea098d5d6f5da83984853c1bbacd5dc826764b249fe119d24/requests_oauthlib-2.0.0-py2.py3-none-any.whl",
+          "kind": "locked-public-wheel-member",
+          "member": "requests_oauthlib/oauth1_session.py",
+          "member_bytes": 16942,
+          "member_sha256": "03a8fb0a043c9f622be009fef14d09f65c9435e63c1f959f7f92393d61f39477",
+          "package": "requests-oauthlib",
+          "version": "2.0.0"
+        },
+        "source_bytes_sha256": "03a8fb0a043c9f622be009fef14d09f65c9435e63c1f959f7f92393d61f39477",
+        "source_module": "/opt/npa-venv/lib/python3.12/site-packages/requests_oauthlib/oauth1_session.py"
+      },
+      "record_kind": "layer_regular_content",
+      "record_sha256": "7558a5078563cc0675c8f902f5e42cba5cfad20698bfd69328448dc7217d5953",
+      "semantic_source": {}
+    },
+    {
+      "public_origin": {
+        "artifact_sha256": "7dd8a5c40426b779b0868c404bdef9768deccf22749cde15852df527e6269b36",
+        "artifact_url": "https://files.pythonhosted.org/packages/3b/5d/63d4ae3b9daea098d5d6f5da83984853c1bbacd5dc826764b249fe119d24/requests_oauthlib-2.0.0-py2.py3-none-any.whl",
+        "kind": "locked-public-wheel-member",
+        "member": "requests_oauthlib/oauth1_session.py",
+        "member_bytes": 16942,
+        "member_sha256": "03a8fb0a043c9f622be009fef14d09f65c9435e63c1f959f7f92393d61f39477",
+        "package": "requests-oauthlib",
+        "version": "2.0.0"
+      },
+      "record_kind": "layer_regular_content",
+      "record_sha256": "03a8fb0a043c9f622be009fef14d09f65c9435e63c1f959f7f92393d61f39477",
+      "semantic_source": {}
+    },
+    {
+      "public_origin": {
+        "artifact_sha256": "f55fa87b6c612ecd6b058f167c53231b1d14e412efe361d3d6e38b3631c73218",
+        "artifact_url": "https://files.pythonhosted.org/packages/df/64/ff35eb9e54894cf471ff4716abd3c81eb0a0626869217ce3e6ba4ccf17d7/scipy-1.18.1-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl",
+        "kind": "locked-public-wheel-member",
+        "member": "scipy/optimize/_highspy/_core.cpython-312-x86_64-linux-gnu.so",
+        "member_bytes": 6755920,
+        "member_sha256": "33fb5a6a86b8fb914b26e69f8f046274b0b043d202511109365d3fde180c540d",
+        "package": "scipy",
+        "version": "1.18.1"
+      },
+      "record_kind": "layer_regular_content",
+      "record_sha256": "33fb5a6a86b8fb914b26e69f8f046274b0b043d202511109365d3fde180c540d",
+      "semantic_source": {}
+    },
+    {
+      "public_origin": {
+        "compile_mode": "exec",
+        "compiler_executable_sha256": "a92f0f95e883390c7256b2e441484aac06b1002dbe1d924141a77c8d82f96223",
+        "invalidation_flags": 3,
+        "kind": "exact-checked-hash-bytecode",
+        "magic_hex": "cb0d0d0a",
+        "marshal_version": 4,
+        "optimization": 0,
+        "public_compiler_packages": [
+          {
+            "bytes": 838090,
+            "members": [
+              {
+                "bytes": 7878,
+                "member": "usr/lib/python3.12/py_compile.py",
+                "sha256": "ba0e2ea55612c24ed88c075bdf37dba1527492bd848b1b7f068bbbb3371ac2d9"
+              }
+            ],
+            "package": "libpython3.12-minimal",
+            "sha256": "b3bfbc02cc6767d02170781c9cb4c703ea18822b2703667473c3a402ff73088c",
+            "url": "https://archive.ubuntu.com/ubuntu/pool/main/p/python3.12/libpython3.12-minimal_3.12.3-1ubuntu0.16_amd64.deb",
+            "version": "3.12.3-1ubuntu0.16"
+          },
+          {
+            "bytes": 2069898,
+            "members": [],
+            "package": "libpython3.12-stdlib",
+            "sha256": "41081d5b192a03b48844eed1efd08bbf9c09cc33eb9863da6d7add9f5f3dd0c9",
+            "url": "https://archive.ubuntu.com/ubuntu/pool/main/p/python3.12/libpython3.12-stdlib_3.12.3-1ubuntu0.16_amd64.deb",
+            "version": "3.12.3-1ubuntu0.16"
+          },
+          {
+            "bytes": 650728,
+            "members": [],
+            "package": "python3.12",
+            "sha256": "0e8313f418201f1c0861ff7accbd30cefe459895feeffa5be27b18fc0417428e",
+            "url": "https://archive.ubuntu.com/ubuntu/pool/main/p/python3.12/python3.12_3.12.3-1ubuntu0.16_amd64.deb",
+            "version": "3.12.3-1ubuntu0.16"
+          },
+          {
+            "bytes": 2334704,
+            "members": [
+              {
+                "bytes": 8025024,
+                "member": "usr/bin/python3.12",
+                "sha256": "a92f0f95e883390c7256b2e441484aac06b1002dbe1d924141a77c8d82f96223"
+              }
+            ],
+            "package": "python3.12-minimal",
+            "sha256": "3535ddab53a2f39f8cda32250bbf5bb066616f5902b642d15ef56047f83911d3",
+            "url": "https://archive.ubuntu.com/ubuntu/pool/main/p/python3.12/python3.12-minimal_3.12.3-1ubuntu0.16_amd64.deb",
+            "version": "3.12.3-1ubuntu0.16"
+          }
+        ],
+        "public_compiler_signed_index": {
+          "inrelease_sha256": "f4d12f62574e57f64a2495b436f6f44524d322ced2db29339b9eaf4cae50d640",
+          "inrelease_url": "https://archive.ubuntu.com/ubuntu/dists/noble-updates/InRelease",
+          "package_index_path": "main/binary-amd64/Packages.xz",
+          "package_index_sha256": "74e7fdc0c22972b3d3c1a273925ac04c04684127cbb84e5dc4c9a126e2022195"
+        },
+        "py_compile_sha256": "ba0e2ea55612c24ed88c075bdf37dba1527492bd848b1b7f068bbbb3371ac2d9",
+        "python_version": "3.12.3 (main, Jul 15 2026, 23:46:41) [GCC 13.3.0]",
+        "source": {
+          "artifact_sha256": "e70e1b18881e6b3c1ce402d0a989da39f956a3a057526e03c354df23d704ce9b",
+          "artifact_url": null,
+          "kind": "locked-public-wheel-member",
+          "member": "torch/nn/attention/flex_attention.py",
+          "member_bytes": 70075,
+          "member_sha256": "1e1753a4571f1ad5e1598a5b48920432a33fd102dc88bc5fd378e1ee5e403e7a",
+          "package": "torch",
+          "version": "2.9.1+cu130"
+        },
+        "source_bytes_sha256": "1e1753a4571f1ad5e1598a5b48920432a33fd102dc88bc5fd378e1ee5e403e7a",
+        "source_module": "/opt/npa-venv/lib/python3.12/site-packages/torch/nn/attention/flex_attention.py"
+      },
+      "record_kind": "layer_regular_content",
+      "record_sha256": "100bc58669e744505277dab8d955fe3764d67ba6e26640c6e567acdf209a7145",
+      "semantic_source": {}
+    },
+    {
+      "public_origin": {
+        "artifact_sha256": "e70e1b18881e6b3c1ce402d0a989da39f956a3a057526e03c354df23d704ce9b",
+        "artifact_url": null,
+        "kind": "locked-public-wheel-member",
+        "member": "torch/nn/attention/flex_attention.py",
+        "member_bytes": 70075,
+        "member_sha256": "1e1753a4571f1ad5e1598a5b48920432a33fd102dc88bc5fd378e1ee5e403e7a",
+        "package": "torch",
+        "version": "2.9.1+cu130"
+      },
+      "record_kind": "layer_regular_content",
+      "record_sha256": "1e1753a4571f1ad5e1598a5b48920432a33fd102dc88bc5fd378e1ee5e403e7a",
+      "semantic_source": {}
+    },
+    {
+      "public_origin": {
+        "artifact_sha256": "e70e1b18881e6b3c1ce402d0a989da39f956a3a057526e03c354df23d704ce9b",
+        "artifact_url": null,
+        "kind": "locked-public-wheel-member",
+        "member": "torch/testing/_internal/common_modules.py",
+        "member_bytes": 215854,
+        "member_sha256": "36d942303fe76156a3d4f3f0626df7cdb9aced1ed844358b075752f1ec9723ea",
+        "package": "torch",
+        "version": "2.9.1+cu130"
+      },
+      "record_kind": "layer_regular_content",
+      "record_sha256": "36d942303fe76156a3d4f3f0626df7cdb9aced1ed844358b075752f1ec9723ea",
+      "semantic_source": {}
+    },
+    {
+      "public_origin": {
+        "artifact_sha256": "0fa85d1d131e321b683c00747c20090200b92071298b905ea588f609eb204c89",
+        "artifact_url": "https://files.pythonhosted.org/packages/f5/c8/5ede3b786ef58e0076e9ca748b2c1787183f85e5ad8133373715c31248f9/trimesh-5.1.0-py3-none-any.whl",
+        "kind": "locked-public-wheel-member",
+        "member": "trimesh/exchange/threedxml.py",
+        "member_bytes": 15995,
+        "member_sha256": "cd5db27ed5c04b909d05d278f6a62c692bb4e11edb1fc156ac1a223a3fb3368a",
+        "package": "trimesh",
+        "version": "5.1.0"
+      },
+      "record_kind": "layer_regular_content",
+      "record_sha256": "cd5db27ed5c04b909d05d278f6a62c692bb4e11edb1fc156ac1a223a3fb3368a",
+      "semantic_source": {}
+    },
+    {
+      "public_origin": {
+        "artifact_sha256": "e1a673830a9c7bfa47b1cd3d5e4178f4c9651d80a4eab02c9c23a1c3ec6250ce",
+        "kind": "locked-public-wheel-member",
+        "member": "websocket/tests/test_websocket.py",
+        "member_sha256": "d4fb7d8e1d0f221cbb04a75b1a07e7e48d26db7a3fc35ae29e09fdd4c017a217",
+        "package": "websocket-client",
+        "version": "1.9.2"
+      },
+      "record_kind": "layer_regular_content",
+      "record_sha256": "d4fb7d8e1d0f221cbb04a75b1a07e7e48d26db7a3fc35ae29e09fdd4c017a217",
+      "semantic_source": {}
+    },
+    {
+      "public_origin": {
+        "compile_mode": "exec",
+        "compiler_executable_sha256": "a92f0f95e883390c7256b2e441484aac06b1002dbe1d924141a77c8d82f96223",
+        "invalidation_flags": 3,
+        "kind": "exact-checked-hash-bytecode",
+        "magic_hex": "cb0d0d0a",
+        "marshal_version": 4,
+        "optimization": 0,
+        "public_compiler_packages": [
+          {
+            "bytes": 838090,
+            "members": [
+              {
+                "bytes": 7878,
+                "member": "usr/lib/python3.12/py_compile.py",
+                "sha256": "ba0e2ea55612c24ed88c075bdf37dba1527492bd848b1b7f068bbbb3371ac2d9"
+              }
+            ],
+            "package": "libpython3.12-minimal",
+            "sha256": "b3bfbc02cc6767d02170781c9cb4c703ea18822b2703667473c3a402ff73088c",
+            "url": "https://archive.ubuntu.com/ubuntu/pool/main/p/python3.12/libpython3.12-minimal_3.12.3-1ubuntu0.16_amd64.deb",
+            "version": "3.12.3-1ubuntu0.16"
+          },
+          {
+            "bytes": 2069898,
+            "members": [],
+            "package": "libpython3.12-stdlib",
+            "sha256": "41081d5b192a03b48844eed1efd08bbf9c09cc33eb9863da6d7add9f5f3dd0c9",
+            "url": "https://archive.ubuntu.com/ubuntu/pool/main/p/python3.12/libpython3.12-stdlib_3.12.3-1ubuntu0.16_amd64.deb",
+            "version": "3.12.3-1ubuntu0.16"
+          },
+          {
+            "bytes": 650728,
+            "members": [],
+            "package": "python3.12",
+            "sha256": "0e8313f418201f1c0861ff7accbd30cefe459895feeffa5be27b18fc0417428e",
+            "url": "https://archive.ubuntu.com/ubuntu/pool/main/p/python3.12/python3.12_3.12.3-1ubuntu0.16_amd64.deb",
+            "version": "3.12.3-1ubuntu0.16"
+          },
+          {
+            "bytes": 2334704,
+            "members": [
+              {
+                "bytes": 8025024,
+                "member": "usr/bin/python3.12",
+                "sha256": "a92f0f95e883390c7256b2e441484aac06b1002dbe1d924141a77c8d82f96223"
+              }
+            ],
+            "package": "python3.12-minimal",
+            "sha256": "3535ddab53a2f39f8cda32250bbf5bb066616f5902b642d15ef56047f83911d3",
+            "url": "https://archive.ubuntu.com/ubuntu/pool/main/p/python3.12/python3.12-minimal_3.12.3-1ubuntu0.16_amd64.deb",
+            "version": "3.12.3-1ubuntu0.16"
+          }
+        ],
+        "public_compiler_signed_index": {
+          "inrelease_sha256": "f4d12f62574e57f64a2495b436f6f44524d322ced2db29339b9eaf4cae50d640",
+          "inrelease_url": "https://archive.ubuntu.com/ubuntu/dists/noble-updates/InRelease",
+          "package_index_path": "main/binary-amd64/Packages.xz",
+          "package_index_sha256": "74e7fdc0c22972b3d3c1a273925ac04c04684127cbb84e5dc4c9a126e2022195"
+        },
+        "py_compile_sha256": "ba0e2ea55612c24ed88c075bdf37dba1527492bd848b1b7f068bbbb3371ac2d9",
+        "python_version": "3.12.3 (main, Jul 15 2026, 23:46:41) [GCC 13.3.0]",
+        "source": {
+          "artifact_sha256": "ea6d8310b1ab109ceaac046b15b4de31ecb7c3b52c2a4c762c58316c81cbbf2f",
+          "artifact_url": "https://codeload.github.com/NVlabs/curobo/tar.gz/8e734f3ced1df898990bcd92de40abce475907db",
+          "kind": "public-source-archive-member",
+          "member": "curobo-8e734f3ced1df898990bcd92de40abce475907db/curobo/tests/_src/transition/test_robot_state_transition.py",
+          "member_sha256": "2111dbfbd4280784da95971307ae6d2c328d181a5f91cd300c5a8fa782fc44a5"
+        },
+        "source_bytes_sha256": "2111dbfbd4280784da95971307ae6d2c328d181a5f91cd300c5a8fa782fc44a5",
+        "source_module": "/opt/npa-venv/lib/python3.12/site-packages/curobo/tests/_src/transition/test_robot_state_transition.py"
+      },
+      "record_kind": "layer_regular_content",
+      "record_sha256": "502f6385f256e013f72510c7a8dea2b23a9feff678b9aa13c758398cbb40ef32",
+      "semantic_source": {}
+    },
+    {
+      "public_origin": {
+        "kind": "public-git-source",
+        "member": "npa/src/npa/cli/cluster/terraform_lifecycle.py",
+        "member_sha256": "cefdfee3294b6aa5d9001985a3bce19b45e795dcfbbdd87980f5ef9b84c86e94",
+        "repository": "https://github.com/nebius/nebius-physical-ai",
+        "revision": "4681d9a0cd286dee661d9d9a29f79aec1eea79bb"
+      },
+      "record_kind": "layer_regular_content",
+      "record_sha256": "cefdfee3294b6aa5d9001985a3bce19b45e795dcfbbdd87980f5ef9b84c86e94",
+      "semantic_source": {}
+    },
+    {
+      "public_origin": {
+        "compile_mode": "exec",
+        "compiler_executable_sha256": "a92f0f95e883390c7256b2e441484aac06b1002dbe1d924141a77c8d82f96223",
+        "invalidation_flags": 3,
+        "kind": "exact-checked-hash-bytecode",
+        "magic_hex": "cb0d0d0a",
+        "marshal_version": 4,
+        "optimization": 0,
+        "public_compiler_packages": [
+          {
+            "bytes": 838090,
+            "members": [
+              {
+                "bytes": 7878,
+                "member": "usr/lib/python3.12/py_compile.py",
+                "sha256": "ba0e2ea55612c24ed88c075bdf37dba1527492bd848b1b7f068bbbb3371ac2d9"
+              }
+            ],
+            "package": "libpython3.12-minimal",
+            "sha256": "b3bfbc02cc6767d02170781c9cb4c703ea18822b2703667473c3a402ff73088c",
+            "url": "https://archive.ubuntu.com/ubuntu/pool/main/p/python3.12/libpython3.12-minimal_3.12.3-1ubuntu0.16_amd64.deb",
+            "version": "3.12.3-1ubuntu0.16"
+          },
+          {
+            "bytes": 2069898,
+            "members": [],
+            "package": "libpython3.12-stdlib",
+            "sha256": "41081d5b192a03b48844eed1efd08bbf9c09cc33eb9863da6d7add9f5f3dd0c9",
+            "url": "https://archive.ubuntu.com/ubuntu/pool/main/p/python3.12/libpython3.12-stdlib_3.12.3-1ubuntu0.16_amd64.deb",
+            "version": "3.12.3-1ubuntu0.16"
+          },
+          {
+            "bytes": 650728,
+            "members": [],
+            "package": "python3.12",
+            "sha256": "0e8313f418201f1c0861ff7accbd30cefe459895feeffa5be27b18fc0417428e",
+            "url": "https://archive.ubuntu.com/ubuntu/pool/main/p/python3.12/python3.12_3.12.3-1ubuntu0.16_amd64.deb",
+            "version": "3.12.3-1ubuntu0.16"
+          },
+          {
+            "bytes": 2334704,
+            "members": [
+              {
+                "bytes": 8025024,
+                "member": "usr/bin/python3.12",
+                "sha256": "a92f0f95e883390c7256b2e441484aac06b1002dbe1d924141a77c8d82f96223"
+              }
+            ],
+            "package": "python3.12-minimal",
+            "sha256": "3535ddab53a2f39f8cda32250bbf5bb066616f5902b642d15ef56047f83911d3",
+            "url": "https://archive.ubuntu.com/ubuntu/pool/main/p/python3.12/python3.12-minimal_3.12.3-1ubuntu0.16_amd64.deb",
+            "version": "3.12.3-1ubuntu0.16"
+          }
+        ],
+        "public_compiler_signed_index": {
+          "inrelease_sha256": "f4d12f62574e57f64a2495b436f6f44524d322ced2db29339b9eaf4cae50d640",
+          "inrelease_url": "https://archive.ubuntu.com/ubuntu/dists/noble-updates/InRelease",
+          "package_index_path": "main/binary-amd64/Packages.xz",
+          "package_index_sha256": "74e7fdc0c22972b3d3c1a273925ac04c04684127cbb84e5dc4c9a126e2022195"
+        },
+        "py_compile_sha256": "ba0e2ea55612c24ed88c075bdf37dba1527492bd848b1b7f068bbbb3371ac2d9",
+        "python_version": "3.12.3 (main, Jul 15 2026, 23:46:41) [GCC 13.3.0]",
+        "source": {
+          "kind": "public-git-source",
+          "member": "npa/src/npa/cli/cluster/terraform_lifecycle.py",
+          "member_sha256": "cefdfee3294b6aa5d9001985a3bce19b45e795dcfbbdd87980f5ef9b84c86e94",
+          "repository": "https://github.com/nebius/nebius-physical-ai",
+          "revision": "4681d9a0cd286dee661d9d9a29f79aec1eea79bb"
+        },
+        "source_bytes_sha256": "cefdfee3294b6aa5d9001985a3bce19b45e795dcfbbdd87980f5ef9b84c86e94",
+        "source_module": "/opt/npa-venv/lib/python3.12/site-packages/npa/cli/cluster/terraform_lifecycle.py"
+      },
+      "record_kind": "layer_regular_content",
+      "record_sha256": "e743775cbd6ff9caf3d705479110c09a5e3423fea55ab4b156532e412bbffd63",
+      "semantic_source": {}
+    }
+  ],
+  "schema_version": "npa.public-native-source-proofs.v1"
+}

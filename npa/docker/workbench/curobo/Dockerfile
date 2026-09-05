@@ -4,6 +4,8 @@ FROM nvidia/cuda:13.0.2-base-ubuntu24.04@sha256:2ab6381d970b211fb93853796dc6707e
 # cuRobo V2 uses the pinned cuda.core/NVRTC and Warp wheel compilers.
 # A runtime-only base avoids unused profiler binaries and development headers.
 ARG NPA_SOURCE_SHA
+# Build-only commit epoch makes pip emit reproducible PEP 552 checked-hash pyc.
+ARG SOURCE_DATE_EPOCH
 LABEL npa.tool="curobo" \
       npa.version="0.8.0-cuda13-b300-unbuilt" \
       org.opencontainers.image.revision="${NPA_SOURCE_SHA}" \
@@ -22,7 +24,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 USER root
-RUN [[ "$NPA_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+RUN [[ "$NPA_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] \
+    && [[ "$SOURCE_DATE_EPOCH" =~ ^[1-9][0-9]*$ ]]
 RUN rm -f /etc/apt/sources.list.d/*.list \
     && apt-get update && apt-get install -y --no-install-recommends \
        ca-certificates curl python3.12 python3.12-venv \

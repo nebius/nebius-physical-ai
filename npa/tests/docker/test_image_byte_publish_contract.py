@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
-from pathlib import Path
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 import yaml
-
 
 ROOT = Path(__file__).resolve().parents[3]
 PUBLISH = ROOT / ".github/workflows/publish-public-images.yml"
@@ -78,7 +78,10 @@ elif script == "scan_image_bytes.py":
     assert option("--trusted-root") == os.environ["GITHUB_WORKSPACE"]
     out = pathlib.Path(option("--output-dir"))
     out.mkdir(mode=0o700)
-    (out / "report.json").write_text('{"complete":true,"valid":true}')
+    assert option("--public-native-policy") == os.environ["GITHUB_WORKSPACE"] + "/npa/scripts/image_byte_scan/public_policies/curobo-v2.json"
+    assert option("--public-native-policy-sha256") == os.environ["CUROBO_PUBLIC_NATIVE_POLICY_SHA256"]
+    (out / "report.json").write_text('{"complete":true,"valid":false,"findings":1}')
+    (out / "public-policy-acceptance.json").write_text('{"accepted":true,"raw_scan_valid":false,"accepted_native_occurrences":1}')
 else:
     raise SystemExit(29)
 ''')
@@ -110,6 +113,7 @@ print(json.loads(pathlib.Path(sys.argv[3]).read_text())["expected_image_id"])
         "IMAGE": "local-image",
         "RUNNER_TEMP": str(runtime),
         "CUROBO_BYTE_GATE_ROOT": str(analysis),
+        "CUROBO_PUBLIC_NATIVE_POLICY_SHA256": yaml.safe_load(PUBLISH.read_text())["jobs"]["build-development"]["env"]["CUROBO_PUBLIC_NATIVE_POLICY_SHA256"],
         "GITHUB_WORKSPACE": str(checkout),
         "GATE_LOG": str(tmp_path / "gate.jsonl"),
         "FAIL_OPERATION": "",
@@ -130,7 +134,7 @@ def test_actual_publication_block_retains_failed_inputs_and_stops_later_actions(
     script = 'set -euo pipefail\nexact="local-image@sha256:fixture"\n'
     script += curobo_block(step_name) + '\nprintf "gate completed\\n"\n'
     result = subprocess.run(
-        ["bash", "-c", script], cwd=checkout, env=env, capture_output=True, text=True,
+        ["bash", "-c", script], cwd=checkout, env=env, capture_output=True, text=True, check=False,
     )
     calls = [json.loads(line) for line in Path(env["GATE_LOG"]).read_text().splitlines()]
     expected = ["verify_image.py", "authorize", "scan_image_bytes.py"]
@@ -146,7 +150,10 @@ def test_actual_publication_block_retains_failed_inputs_and_stops_later_actions(
         assert [call["operation"] for call in calls] == expected
         assert not original.exists()
         assert not (analysis / phase / "image.tar").exists()
-        assert json.loads((analysis / phase / "scan/report.json").read_text())["valid"]
+        assert json.loads((analysis / phase / "scan/report.json").read_text())["valid"] is False
+        acceptance = json.loads((analysis / phase / "scan/public-policy-acceptance.json").read_text())
+        assert acceptance["accepted"] is True and acceptance["raw_scan_valid"] is False
+        assert acceptance["accepted_native_occurrences"] == 1
 
 
 @pytest.mark.parametrize("step_name", [PRE, POST])
@@ -156,7 +163,7 @@ def test_other_images_do_not_enter_curobo_policy_or_native_scan(shell_environmen
     del env["CUROBO_BYTE_GATE_ROOT"]
     result = subprocess.run(
         ["bash", "-euc", curobo_block(step_name)], cwd=checkout, env=env,
-        capture_output=True, text=True,
+        capture_output=True, text=True, check=False,
     )
     assert result.returncode == 0, result.stderr
     assert not Path(env["GATE_LOG"]).exists()
@@ -219,3 +226,13 @@ def test_minimal_curobo_base_gets_the_unchanged_critical_vulnerability_gate():
     gate = next(step for step in job["steps"] if step.get("name") == "Trivy image scan")
     assert gate["with"]["severity"] == "CRITICAL"
     assert gate["with"]["exit-code"] == "1"
+
+
+def test_publisher_policy_pin_matches_the_reviewed_product_catalog():
+    # This verifies the checked-in binding; it does not authorize a changed file.
+    policy = ROOT / "npa/scripts/image_byte_scan/public_policies/curobo-v2.json"
+    job = yaml.safe_load(PUBLISH.read_text())["jobs"]["build-development"]
+    assert job["env"]["CUROBO_PUBLIC_NATIVE_POLICY_SHA256"] == hashlib.sha256(policy.read_bytes()).hexdigest()
+    for name in [PRE, POST]:
+        assert '--public-native-policy-sha256 "$CUROBO_PUBLIC_NATIVE_POLICY_SHA256"' in named(name)["run"]
+        assert "sha256sum" not in curobo_block(name)

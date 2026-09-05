@@ -32,7 +32,12 @@ REVIEW_SCHEMA = "npa.image-byte-independent-review.v1"
 PROOF_SCHEMA = "npa.image-byte-occurrence-provenance.v1"
 ROLES = frozenset({"cryptographic-self-test", "parser-format-delimiter",
                    "package-integrity-metadata", "non-operational-source-example",
-                   "public-source-symbol", "public-license-reference"})
+                   "public-source-symbol", "public-license-reference",
+                   "encoded-device-payload", "bytecode-framing",
+                   "public-package-path-metadata", "linker-type-framing",
+                   "encoded-image-pixel-data", "numeric-source-constant",
+                   "encoded-geometry-data", "public-package-reference",
+                   "encoded-gzip-payload"})
 HEX = re.compile(r"[0-9a-f]{64}")
 
 

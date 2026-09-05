@@ -4,12 +4,11 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
-
 
 ROOT = Path(__file__).resolve().parents[3]
 BUILD = ROOT / "npa/docker/workbench/curobo/build.sh"
@@ -49,6 +48,11 @@ with Path(os.environ["TEST_GIT_CALLS"]).open("a") as log:
 mode = os.environ.get("TEST_GIT_MODE", "clean")
 if args[0] == "rev-parse":
     print("bad-sha" if mode == "bad-sha" else "a" * 40)
+elif args[0] == "show":
+    assert args == ["show", "-s", "--format=%ct", "a" * 40]
+    if mode == "epoch-read-failure":
+        sys.exit(1)
+    print({"bad-epoch": "invalid", "zero-epoch": "0", "negative-epoch": "-1", "empty-epoch": "", "leading-zero-epoch": "0123"}.get(mode, "1700000000"))
 elif args[0] == "cat-file":
     sys.exit(1 if mode == "missing-dockerfile" else 0)
 elif args[0] == "diff":
@@ -136,6 +140,8 @@ def test_only_exact_commit_snapshot_reaches_docker(build_boundary, mode):
     assert not Path(docker["context"]).exists(), "The run-owned build snapshot must be removed"
     assert f"npa-curobo:dev-{SOURCE_SHA}" in docker["args"]
     assert f"NPA_SOURCE_SHA={SOURCE_SHA}" in docker["args"]
+    assert "SOURCE_DATE_EPOCH=1700000000" in docker["args"]
+    assert ["show", "-s", "--format=%ct", SOURCE_SHA] in calls
     assert "--push" not in docker["args"]
     for call in calls:
         if call[0] in {"diff", "ls-files", "archive"}:
@@ -148,6 +154,12 @@ def test_only_exact_commit_snapshot_reaches_docker(build_boundary, mode):
     ("mode", "message"),
     [
         ("bad-sha", "Full source SHA is required"),
+        ("bad-epoch", "Positive source commit epoch is required"),
+        ("zero-epoch", "Positive source commit epoch is required"),
+        ("negative-epoch", "Positive source commit epoch is required"),
+        ("empty-epoch", "Positive source commit epoch is required"),
+        ("leading-zero-epoch", "Positive source commit epoch is required"),
+        ("epoch-read-failure", ""),
         ("missing-dockerfile", "Dockerfile must be checked in"),
         ("dirty-source", "Commit the cuRobo build input changes"),
         ("staged-source", "Commit the cuRobo build input changes"),

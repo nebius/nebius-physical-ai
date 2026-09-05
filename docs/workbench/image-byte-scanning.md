@@ -126,3 +126,41 @@ validation. The hosted publication workflow continues to require zero raw
 findings by default. It has no implicit access to an operator's private review
 bundle. Do not upload that bundle as a public Actions artifact or add private
 evidence to Git to transport it.
+
+## Reviewed public native content
+
+The optional public content policy is distinct from private occurrence review.
+A trusted scanner invocation may provide `--public-native-policy PATH` and
+`--public-native-policy-sha256 SHA256` together. The expected hash must come from
+independently reviewed publishing configuration. Computing it from an unreviewed
+catalog does not establish authorization. The catalog and every referenced proof
+must belong to the exact committed scanner source closure.
+
+The scanner performs a fresh scan in the same invocation, binds the exact emitted
+ledger, and conserves every native occurrence, including duplicate coordinates
+and identical files in ancestor layers. Entries bind the record kind, complete
+byte hash and size, pinned detector identity, exact native finding multiset, and
+independently reviewed public provenance and semantic evidence. An upstream file
+name, package name or public origin does not establish noncredential semantics.
+Typed path metadata requires an explicit exact-byte proof of its own role.
+
+Literal and confidentiality-regex findings always refuse this public policy.
+Structural findings, unknown bytes, changed native populations, incomplete scans,
+changed inputs or unreviewed evidence also refuse. The raw report retains its
+original verdict; a successful separate `public-policy-acceptance.json` receipt
+binds the actual image source, scanner source, archive, config, manifest, policy,
+proofs, authorization, ledger and raw report. This receipt alone does not prove
+other security gates, redistribution eligibility or a real GPU workload.
+
+Python bytecode entries require whole-file equality, including every header byte.
+For cuRobo, the supported build paths pass the exact source commit epoch as a
+build-only argument so pinned CPython emits checked-hash bytecode. Source and
+compiler provenance, full marshal structure and actual layer readback remain
+required before reviewing a catalog entry; header masking is never permitted.
+
+The trusted cuRobo publishing workflow pins the reviewed catalog hash in its
+build job and passes that same pin to both the local-image and pushed-digest
+complete scans. It obtains no approval hash from an unreviewed file at runtime.
+A failed policy gate stops subsequent publication actions and retains failed
+inputs for private investigation. Confidentiality configuration remains required
+before building; exact public native content cannot authorize denied identifiers.

@@ -19,6 +19,8 @@ if [[ "$PUSH" == 1 ]]; then
   echo "Push requires the repository trusted publication workflow and all exact-image safety gates." >&2
   exit 1
 fi
+CUROBO_SOURCE_EPOCH="$(git -C "$REPO_ROOT" show -s --format=%ct "$SOURCE_SHA")"
+[[ "$CUROBO_SOURCE_EPOCH" =~ ^[1-9][0-9]*$ ]] || { echo "Positive source commit epoch is required" >&2; exit 1; }
 BUILD_INPUTS=(
   npa/src/npa npa/pyproject.toml npa/README.md npa/.dockerignore
   npa/docker/workbench/curobo
@@ -53,4 +55,5 @@ env -u HF_TOKEN -u NGC_API_KEY -u NVIDIA_API_KEY -u NEBIUS_IAM_TOKEN \
   -u AWS_ACCESS_KEY_ID -u AWS_SECRET_ACCESS_KEY \
   docker buildx build --platform linux/amd64 --file "$BUILD_CONTEXT/docker/workbench/curobo/Dockerfile" \
     --tag "$IMAGE" --build-arg "NPA_SOURCE_SHA=$SOURCE_SHA" \
+    --build-arg "SOURCE_DATE_EPOCH=$CUROBO_SOURCE_EPOCH" \
     --load --provenance=false "$BUILD_CONTEXT"

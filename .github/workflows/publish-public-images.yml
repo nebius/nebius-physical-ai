@@ -157,6 +157,8 @@ jobs:
       DOCKERFILE: ${{ matrix.dockerfile }}
       DEVELOPMENT_SHA: ${{ needs.resolve.outputs.development_sha }}
       NPA_PUBLIC_REGISTRY: ${{ needs.resolve.outputs.target }}
+      # Updated only after independent review of the exact public content proofs.
+      CUROBO_PUBLIC_NATIVE_POLICY_SHA256: 149396accf79a4b40335c1a1934679acfb4d16dd0ae4dba6b105541d408bdb5c
     steps:
       - uses: actions/checkout@v6
         with:
@@ -292,10 +294,17 @@ jobs:
       # occurs until the final explicit docker push.
       - name: Build immutable development image locally
         run: |
+          set -euo pipefail
+          build_args=(--build-arg "NPA_SOURCE_SHA=$DEVELOPMENT_SHA")
+          if [[ "$TOOL" == curobo ]]; then
+            curobo_source_epoch="$(git show -s --format=%ct "$DEVELOPMENT_SHA")"
+            [[ "$curobo_source_epoch" =~ ^[1-9][0-9]*$ ]] || { echo "Positive source commit epoch is required" >&2; exit 1; }
+            build_args+=(--build-arg "SOURCE_DATE_EPOCH=$curobo_source_epoch")
+          fi
           docker buildx build \
             --load \
             --file "$DOCKERFILE" \
-            --build-arg "NPA_SOURCE_SHA=$DEVELOPMENT_SHA" \
+            "${build_args[@]}" \
             --label "org.opencontainers.image.revision=$DEVELOPMENT_SHA" \
             --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
             --tag "$IMAGE" \
@@ -365,7 +374,9 @@ jobs:
             npa/.venv/bin/python npa/scripts/scan_image_bytes.py \
               --analysis-root "$CUROBO_BYTE_GATE_ROOT" --trusted-root "$GITHUB_WORKSPACE" \
               --authorization "$phase/authorization/authorization.json" \
-              --output-dir "$phase/scan"
+              --output-dir "$phase/scan" \
+              --public-native-policy "$GITHUB_WORKSPACE/npa/scripts/image_byte_scan/public_policies/curobo-v2.json" \
+              --public-native-policy-sha256 "$CUROBO_PUBLIC_NATIVE_POLICY_SHA256"
             rm -f "$phase/image.tar"
           fi
           if [ "$TOOL" = ltx2 ]; then
@@ -552,7 +563,9 @@ jobs:
             npa/.venv/bin/python npa/scripts/scan_image_bytes.py \
               --analysis-root "$CUROBO_BYTE_GATE_ROOT" --trusted-root "$GITHUB_WORKSPACE" \
               --authorization "$phase/authorization/authorization.json" \
-              --output-dir "$phase/scan"
+              --output-dir "$phase/scan" \
+              --public-native-policy "$GITHUB_WORKSPACE/npa/scripts/image_byte_scan/public_policies/curobo-v2.json" \
+              --public-native-policy-sha256 "$CUROBO_PUBLIC_NATIVE_POLICY_SHA256"
             rm -f "$phase/image.tar"
           fi
           if [ "$TOOL" = ltx2 ]; then

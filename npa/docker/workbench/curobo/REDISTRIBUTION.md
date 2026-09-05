@@ -41,6 +41,14 @@ No published image or measured performance is claimed by this record.
   install the optional pybind backend or need the full CUDA development image,
   its unused Nsight profiler, or operating-system development headers. Native
   GPU execution remains a required qualification gate.
+- Reproducible Python bytecode: the build helper and trusted workflow pass the
+  exact source commit epoch as a build-only `SOURCE_DATE_EPOCH` argument. The
+  pinned CPython compiler then uses PEP 552 checked-hash bytecode for newly
+  installed packages. This removes installation-time header variation while
+  preserving the complete compiled code payload; it does not modify inherited
+  image layers or change runtime authentication. Verify actual built-layer
+  headers and full bytecode hashes against the exact source and compiler before
+  accepting image findings. The argument is not retained in runtime environment.
 - Dependency source correction: scikit-image 0.26.0 includes a historical
   download recipe containing bearer material whose continued usability cannot
   be established. `remove_scikit_image_recipe.py` checks the exact installed
