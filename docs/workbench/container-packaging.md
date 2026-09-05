@@ -63,6 +63,14 @@ All first-class images live under `npa/docker/workbench/`:
 | PAIDF Visual QA Sky compatibility (restricted) | `paidf-visual-qa-sky/Dockerfile` | operator-built worker shell; remote-VLM labeling client |
 | PAIDF attribute-search Sky compatibility (restricted) | `paidf-attribute-search-sky/Dockerfile` | operator-built worker shell; remote-LLM attribute-search client |
 
+The AnomalyGen image keeps the exact CUDA 13.2 base image's
+`cuda-compat-13-2` libraries first on `LD_LIBRARY_PATH` while retaining the
+base search path. This supports runtime PTX/JIT users on supported older CUDA
+13 driver branches; NVIDIA documents both the compatibility-package matrix and
+the container-runtime loading behavior in the
+[CUDA Compatibility guide](https://docs.nvidia.com/deploy/cuda-compatibility/latest/forward-compatibility.html)
+and [container compatibility FAQ](https://docs.nvidia.com/deploy/cuda-compatibility/frequently-asked-questions.html).
+
 BYOF images (`npa-byof:<run-id>`) are **ad-hoc** and are not registered in
 `CONTAINER_IMAGE_NAMES` until promoted to Tier 2 (see
 `docs/architecture/oss-onboarding-ladder.md`). The canonical BYOF builder still

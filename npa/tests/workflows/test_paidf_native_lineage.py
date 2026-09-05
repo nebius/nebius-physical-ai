@@ -236,3 +236,22 @@ def test_missing_output_after_successful_cli_obeys_upstream_join(tmp_path: Path,
         assert result["failed_count"] == 1
         assert result["failed"][0]["reason"] == "component_output_missing_or_empty"
         assert result["outputs"][0]["augmentation_index"] == 1
+
+
+@pytest.mark.parametrize("parallel_size", [0, 3, 4])
+def test_unsupported_cfg_override_fails_before_model_start(tmp_path: Path, monkeypatch, parallel_size: int) -> None:
+    from npa.workflows.paidf_upstream import (
+        COSMOS3_SUPER_IMAGE2VIDEO_MODEL, COSMOS3_SUPER_IMAGE2VIDEO_REVISION,
+    )
+
+    config = write(tmp_path / "config.yaml", {"endpoints": [{
+        "role": "image2video", "url": "http://127.0.0.1:8000/v1",
+        "model": COSMOS3_SUPER_IMAGE2VIDEO_MODEL, "api_key_env": "GENERATION_API_KEY",
+    }]})
+    manifest = write(tmp_path / "configs.json", {
+        "schema": "npa.paidf.native.evg-configs.v1", "run_id": "lineage-run",
+        "workflow": "evg", "configs": [{"config_uri": config}],
+    })
+    monkeypatch.setattr(native.subprocess, "Popen", lambda *_a, **_k: pytest.fail("unsupported CFG override started a model server"))
+    with pytest.raises(native.PaidfNativeError, match="parallel_size 1 or 2"):
+        native.run_local_augmentation(manifest, "unused", COSMOS3_SUPER_IMAGE2VIDEO_MODEL, COSMOS3_SUPER_IMAGE2VIDEO_REVISION, "image2video", 8000, parallel_size, "lineage-run")

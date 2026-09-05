@@ -47,11 +47,7 @@ def test_generation_wrapper_preserves_reviewed_parent(image: str, variant: str) 
     # Added after the built workers passed actual non-root service, key
     # regeneration, sudo, writable-path, and argv-forwarding probes.
     label = 'org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"'
-    if variant == "image-attribute-augmentation":
-        # A changed security parent must earn fresh built-byte proof.
-        assert label not in source
-    else:
-        assert label in source
+    assert label in source
     spec = yaml.safe_load(
         (ROOT / "npa/workflows/workbench/npa-workflows" / f"paidf-{variant}.yaml")
         .read_text()

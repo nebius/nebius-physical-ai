@@ -30,3 +30,16 @@ def test_paidf_anomalygen_sky_bootstrap_source_is_complete() -> None:
     entrypoint = ENTRYPOINT.read_text(encoding="utf-8")
     assert 'exec "$@"' in entrypoint
     assert "exec /bin/bash" in entrypoint
+
+
+def test_paidf_anomalygen_sky_preserves_cuda_forward_compatibility() -> None:
+    text = DOCKERFILE.read_text(encoding="utf-8")
+    assert "CUDA_COMPAT_PATH=/usr/local/cuda/compat" in text
+    assert (
+        "LD_LIBRARY_PATH=${CUDA_COMPAT_PATH}:${NV_SITE}/cudnn/lib:"
+        "${NV_SITE}/nccl/lib:${NV_SITE}/cusparselt/lib:${LD_LIBRARY_PATH}"
+    ) in text
+    assert "dpkg-query -W -f='${Version}' cuda-compat-13-2" in text
+    assert '"595.58.03-1ubuntu1"' in text
+    assert "libcuda.so.595.58.03" in text
+    assert "libnvidia-ptxjitcompiler.so.595.58.03" in text

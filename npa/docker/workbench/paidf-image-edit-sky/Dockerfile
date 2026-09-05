@@ -9,7 +9,8 @@ LABEL org.opencontainers.image.source="https://github.com/nebius/nebius-physical
       org.opencontainers.image.revision="${NPA_SOURCE_SHA}" \
       npa.tool="paidf-image-edit-sky" \
       npa.upstream.digest="sha256:8b0cc5438eb27b34cdfd22011b735da6a94835a09e9c56ddf9e8cb300d679919" \
-      npa.redistribution="operator-private-only"
+      npa.redistribution="operator-private-only" \
+      org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"
 
 USER root
 RUN apt-get update \

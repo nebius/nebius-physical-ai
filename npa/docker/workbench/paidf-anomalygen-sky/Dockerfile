@@ -39,7 +39,9 @@ ARG TORCH_INDEX_URL=https://download.pytorch.org/whl/cu132
 ARG PAIDF_ANOMALYGEN_REVISION=dbaf7d7d9003f048230f9026da5969e9e5931785
 
 LABEL npa.tool="paidf-anomalygen-sky" \
+      npa.redistribution="operator-private-only" \
       npa.paidf-anomalygen.ref="${PAIDF_ANOMALYGEN_REVISION}" \
+      org.opencontainers.image.source="https://github.com/nebius/nebius-physical-ai" \
       org.opencontainers.image.revision="${NPA_SOURCE_SHA}"
 
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -81,9 +83,13 @@ RUN uv pip install -r /tmp/requirements.txt \
     && python -c 'import cv2; cv2.connectedComponentsWithStats' \
     && python -c 'import cosmos_framework.model.generator.mot.unified_mot'
 
-ENV NV_SITE=/opt/venv/lib/python${PY_VER}/site-packages/nvidia
-ENV LD_LIBRARY_PATH=${NV_SITE}/cudnn/lib:${NV_SITE}/nccl/lib:${NV_SITE}/cusparselt/lib
-RUN { for directory in ${NV_SITE}/*/lib; do echo "${directory}"; done; } \
+ENV NV_SITE=/opt/venv/lib/python${PY_VER}/site-packages/nvidia \
+    CUDA_COMPAT_PATH=/usr/local/cuda/compat
+ENV LD_LIBRARY_PATH=${CUDA_COMPAT_PATH}:${NV_SITE}/cudnn/lib:${NV_SITE}/nccl/lib:${NV_SITE}/cusparselt/lib:${LD_LIBRARY_PATH}
+RUN test "$(dpkg-query -W -f='${Version}' cuda-compat-13-2)" = "595.58.03-1ubuntu1" \
+    && test -f ${CUDA_COMPAT_PATH}/libcuda.so.595.58.03 \
+    && test -f ${CUDA_COMPAT_PATH}/libnvidia-ptxjitcompiler.so.595.58.03 \
+    && { for directory in ${NV_SITE}/*/lib; do echo "${directory}"; done; } \
          > /etc/ld.so.conf.d/cosmos.conf \
     && ldconfig
 

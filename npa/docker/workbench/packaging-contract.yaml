@@ -229,6 +229,7 @@ images:
       proof, and real native workflow acceptance are required before use.
   paidf-image-edit-sky:
     dockerfile: paidf-image-edit-sky/Dockerfile
+    skypilot_bootstrap_contract: skypilot-0.12.2-v1
     tier: interactive
     redistribution: restricted
     passwordless_root_exemption: >-

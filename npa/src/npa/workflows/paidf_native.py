@@ -920,8 +920,8 @@ def run_local_augmentation(
             str(port),
         ]
     elif service_kind == "image2video":
-        if parallel_size < 1:
-            raise PaidfNativeError("parallel_size must be positive")
+        if parallel_size not in {1, 2}:
+            raise PaidfNativeError("the installed Cosmos3 CFG protocol supports parallel_size 1 or 2")
         command = [
             "vllm",
             "serve",
@@ -2511,7 +2511,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--service-kind", choices=("image-edit", "image2video"), required=True
     )
     local_augment.add_argument("--port", type=int, default=8000)
-    local_augment.add_argument("--parallel-size", type=int, default=1)
+    local_augment.add_argument("--parallel-size", type=int, choices=(1, 2), default=1)
 
     validate = subparsers.add_parser("validate-augmentation")
     for name in ("config-manifest-uri", "augmentation-result-uri", "validation-uri", "run-id"):
