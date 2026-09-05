@@ -1,13 +1,20 @@
-# Thin detector train/eval layer on the shared CUDA/torch base. NPA_CUDA_BASE
-# defaults to the locally-built base tag; override with
-# --build-arg NPA_CUDA_BASE=<registry>/npa-workbench-cuda-base:<tag> to build
-# against a published base.
-ARG NPA_CUDA_BASE=npa-workbench-cuda-base:cuda13.0-torch2.12.1
+# Reuse the accepted public detector's CUDA 13 / torch 2.12.1 runtime and
+# replace its application source below. Pinning the published foundation makes
+# clean builds independent of a builder-local shared CUDA base tag.
+# NPA_CUDA_BASE remains available for an explicitly selected compatible base.
+ARG NPA_CUDA_BASE=ghcr.io/nebius/nebius-physical-ai/npa-detection-training@sha256:a432dd2a9e6bafed4b78466ac806f584c7fcf549cf3be0edaf75f2fecdadfdd9
 FROM ${NPA_CUDA_BASE}
 
 # The base drops to a non-root user; build steps need root, and the image drops
 # back to the ubuntu user before runtime (below).
 USER root
+
+# Refresh vulnerable userspace headers inherited from the accepted runtime;
+# the CUDA, torch and torchvision closure remains the same.
+ARG LINUX_LIBC_DEV_VERSION=6.8.0-139.139
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends linux-libc-dev=${LINUX_LIBC_DEV_VERSION} \
+    && rm -rf /var/lib/apt/lists/*
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
