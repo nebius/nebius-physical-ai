@@ -293,7 +293,7 @@ WORKBENCH_ASSETS: tuple[GatedAsset, ...] = (
     GatedAsset(
         "Qwen/Qwen3Guard-Gen-0.6B",
         HF,
-        ("paidf-dig",),
+        ("paidf", "paidf-dig", "paidf-evg"),
         False,
         revision="fada3b2f655b89601929198343c94cd2f64d93cc",
         probe_path="model.safetensors",
@@ -321,7 +321,7 @@ WORKBENCH_ASSETS: tuple[GatedAsset, ...] = (
     GatedAsset(
         "nvidia/Cosmos-1.0-Guardrail",
         HF,
-        ("cosmos3-serving",),
+        ("cosmos3-serving", "paidf", "paidf-evg"),
         True,
         revision="cf03c0395fac8c4de386c0bdab12cc4fc8d66362",
         probe_path="video_content_safety_filter/safety_filter.pt",

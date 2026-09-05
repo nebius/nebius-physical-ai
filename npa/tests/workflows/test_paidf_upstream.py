@@ -80,7 +80,9 @@ def test_service_model_revisions_are_recorded_in_direct_translation_provenance()
         "Qwen/Qwen-Image-Edit-2511": "6f3ccc0b56e431dc6a0c2b2039706d7d26f22cb9"
     }
     assert evg["npa_integration"]["components"]["models"] == {
-        "nvidia/Cosmos3-Super-Image2Video": "4f847566f3d3388fbf0ac07b99dd1a6432db9ecd"
+        "nvidia/Cosmos3-Super-Image2Video": "4f847566f3d3388fbf0ac07b99dd1a6432db9ecd",
+        "nvidia/Cosmos-1.0-Guardrail": "cf03c0395fac8c4de386c0bdab12cc4fc8d66362",
+        "Qwen/Qwen3Guard-Gen-0.6B": "fada3b2f655b89601929198343c94cd2f64d93cc",
     }
 
 
@@ -171,7 +173,8 @@ def test_write_upstream_contract_accepts_reviewed_direct_generation_model(
         generation_revision=revision,
     )
     components = result["npa_integration"]["components"]
-    assert components["models"] == {model: revision}
+    assert components["models"][model] == revision
+    assert components["models"] == upstream_contract(variant)["npa_integration"]["components"]["models"]
     assert "runtime_images" not in components
     assert (
         "renderer-selected runtime_image"

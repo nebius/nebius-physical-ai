@@ -1,0 +1,46 @@
+{
+  "schema": "npa.paidf.evg-generation-runtime.v1",
+  "models": [
+    {
+      "repository": "nvidia/Cosmos3-Super-Image2Video",
+      "revision": "4f847566f3d3388fbf0ac07b99dd1a6432db9ecd",
+      "file_count": 1,
+      "size_bytes": 5,
+      "tree_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "repository": "nvidia/Cosmos-1.0-Guardrail",
+      "revision": "cf03c0395fac8c4de386c0bdab12cc4fc8d66362",
+      "file_count": 1,
+      "size_bytes": 5,
+      "tree_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "repository": "Qwen/Qwen3Guard-Gen-0.6B",
+      "revision": "fada3b2f655b89601929198343c94cd2f64d93cc",
+      "file_count": 1,
+      "size_bytes": 5,
+      "tree_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  ],
+  "offline": true,
+  "guardrails_enabled": true,
+  "nltk_data": {
+    "repository": "nvidia/Cosmos-1.0-Guardrail",
+    "revision": "cf03c0395fac8c4de386c0bdab12cc4fc8d66362",
+    "file_count": 1,
+    "tree_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "regular_files": true
+  },
+  "contract_sha256": "c5bf9ec125a13a09dc9b25d152c4b47b826bbe42a4393865a459566b539d8947",
+  "guardrail_source_adaptation": {
+    "schema": "npa.paidf.evg-guardrail-source-adaptation.v1",
+    "path": "cosmos_guardrail/cosmos_guardrail.py",
+    "original_sha256": "117e834a4362ad82748c4146391ab1116039243cfe4cca94954f4c204024daea",
+    "patched_sha256": "ab6855b91597e86d8ff57302c323b0df8e88a8bce4d16b3f990a6ee485dd6223",
+    "verdict_protocol": "one complete Safety line: Safe, Unsafe, or Controversial",
+    "controversial_policy": "allow-as-upstream",
+    "invalid_verdict_or_inference_exception": "raise-before-generation",
+    "patch_sha256": "ac2926b197fd6a155ae7cb77eb0033e35a7d63460898985a8a368a16c1cc9380"
+  }
+}

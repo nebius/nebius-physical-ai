@@ -102,6 +102,31 @@ Runtime model snapshots are also pinned and remain outside published images:
   nvidia/Cosmos3-Super-Image2Video
   revision 4f847566f3d3388fbf0ac07b99dd1a6432db9ecd
 
+  nvidia/Cosmos-1.0-Guardrail (EVG; NVIDIA Open Model License, gated)
+  revision cf03c0395fac8c4de386c0bdab12cc4fc8d66362
+
+  Qwen/Qwen3Guard-Gen-0.6B (EVG; Apache-2.0)
+  revision fada3b2f655b89601929198343c94cd2f64d93cc
+
+The EVG vendor runtime uses Cosmos-1.0-Guardrail, separately from DIG's
+Cosmos-Guardrail1. NPA verifies exact payload access, stages the generation and
+guardrail snapshots in an isolated revision-bound cache, verifies every cached
+path/hash/size against the exact Hugging Face revision manifest, and runs the service offline.
+Only the small NLTK data subtree is copied into regular files; model weights
+remain in the runtime cache. NLTK 3.10.3 pathsec protections and the original
+Cosmos guardrails remain enabled. NPA deliberately changes the upstream EVG
+template's extra_params.guardrails=false to true for every request. A private
+runtime source overlay makes Qwen3Guard require one complete published safety
+verdict and raise on malformed, missing, or duplicate verdicts or inference
+exceptions. Safe and Controversial remain allowed; Unsafe remains rejected.
+The installed vendor package and real model inference are preserved. The edited
+Apache-2.0 cosmos_guardrail/cosmos_guardrail.py source is bound by SHA-256:
+  original 117e834a4362ad82748c4146391ab1116039243cfe4cca94954f4c204024daea
+  adapted  ab6855b91597e86d8ff57302c323b0df8e88a8bce4d16b3f990a6ee485dd6223
+Runtime reports record this adaptation, model revisions, file counts, byte totals,
+and content-tree hashes. Enabled guardrails are a request/runtime contract,
+not evidence that every input will receive an accepted verdict.
+
 EVG detection downloads the public RF-DETR Base checkpoint at runtime. The
 pinned auto-labeling source requires SHA-256
 d8f70210e425a4a4234d547737f57500bcc4ac24a333b99e33d9d5a371e0b80f;

@@ -30,6 +30,10 @@ QWEN_IMAGE_EDIT_REVISION = "6f3ccc0b56e431dc6a0c2b2039706d7d26f22cb9"
 COSMOS3_SUPER_IMAGE2VIDEO_REVISION = "4f847566f3d3388fbf0ac07b99dd1a6432db9ecd"
 QWEN_IMAGE_EDIT_MODEL = "Qwen/Qwen-Image-Edit-2511"
 COSMOS3_SUPER_IMAGE2VIDEO_MODEL = "nvidia/Cosmos3-Super-Image2Video"
+COSMOS_GUARDRAIL_MODEL = "nvidia/Cosmos-1.0-Guardrail"
+COSMOS_GUARDRAIL_REVISION = "cf03c0395fac8c4de386c0bdab12cc4fc8d66362"
+QWEN_GUARD_MODEL = "Qwen/Qwen3Guard-Gen-0.6B"
+QWEN_GUARD_REVISION = "fada3b2f655b89601929198343c94cd2f64d93cc"
 RFDETR_BASE_URL = "https://storage.googleapis.com/rfdetr/rf-detr-base-coco.pth"
 RFDETR_BASE_SHA256 = "d8f70210e425a4a4234d547737f57500bcc4ac24a333b99e33d9d5a371e0b80f"
 
@@ -153,7 +157,20 @@ _VARIANTS: dict[str, dict[str, Any]] = {
             "the original Cosmos3 vLLM-Omni parent is retained; the wrapper "
             "upgrades NLTK to hash-pinned 3.10.3 for CVE-2026-79675"
         ),
-        "models": {COSMOS3_SUPER_IMAGE2VIDEO_MODEL: COSMOS3_SUPER_IMAGE2VIDEO_REVISION},
+        "models": {
+            COSMOS3_SUPER_IMAGE2VIDEO_MODEL: COSMOS3_SUPER_IMAGE2VIDEO_REVISION,
+            COSMOS_GUARDRAIL_MODEL: COSMOS_GUARDRAIL_REVISION,
+            QWEN_GUARD_MODEL: QWEN_GUARD_REVISION,
+        },
+        "guardrail_runtime": (
+            "exact Cosmos-1.0-Guardrail and Qwen3Guard snapshots are staged "
+            "with exact Hub path/hash/size manifests; the service consumes its isolated cache "
+            "offline, with regular-file NLTK data and upstream pathsec enabled. "
+            "NPA explicitly sets each EVG request's guardrails=true (the upstream template "
+            "sets false) and uses an exact-source-bound private Qwen code overlay to "
+            "reject malformed/duplicate/missing verdicts and inference exceptions; "
+            "published Controversial decisions retain the upstream allow policy"
+        ),
         "detection_checkpoint": {
             "url": RFDETR_BASE_URL,
             "sha256": RFDETR_BASE_SHA256,

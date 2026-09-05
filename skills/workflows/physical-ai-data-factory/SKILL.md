@@ -1,20 +1,21 @@
 ---
 name: physical-ai-data-factory
-description: Use when authoring, running, submitting, or viewing the NVIDIA Physical AI Data Factory blueprint on Nebius + SkyPilot (no OSMO) — annotate → Cosmos Transfer augment → Cosmos Evaluator gate → re-label → Cosmos Curator + FiftyOne curate → Rerun visualize — implemented as an npa.workflow that composes existing workbench tools.
+description: Use when authoring, running, submitting, or validating native NVIDIA PAIDF workflows on Nebius + SkyPilot — VDA, scoped DIG, IAA, EVG, and the NPA-specific Cosmos3 VDA variant — with real components, exact model provenance, artifact handoffs, and runtime access checks.
 ---
 
 # Physical AI Data Factory (NPA-native, no OSMO)
 
 ## Source And Attribution
 
-NPA-native re-implementation of NVIDIA's Physical AI Data Factory / Video Data
-Augmentation workflow. The current official ecosystem entry point is
-https://github.com/NVIDIA/physical-ai-data-factory: it publishes the VDA agent
-skill for OSMO and links the PAIDF component repositories. The separate
+NPA translates NVIDIA's Physical AI Data Factory workflows into native SkyPilot
+graphs. The official ecosystem entry point is
+https://github.com/NVIDIA/physical-ai-data-factory: it publishes VDA and DIG
+agent workflows and links the PAIDF component repositories. The separate
 https://github.com/NVIDIA/paidf-orchestration repository is an Apache-2.0
-Airflow-on-Kubernetes scaler whose current DAGs are Image Attribute Augmentation
-and Event Video Generation; it is a design reference, not the VDA implementation
-and not an NPA runtime dependency. Exact reviewed revisions and license boundaries
+Airflow-on-Kubernetes scaler that publishes the Image Attribute Augmentation and
+Event Video Generation DAGs translated here. NPA runtime-fetches their pinned
+component/configuration contracts and executes the graphs through SkyPilot;
+it does not execute the Airflow controller. Exact revisions and license boundaries
 are recorded in `skills/NOTICE-NVIDIA-PAIDF`.
 
 Earlier design analysis was adapted from https://github.com/NVIDIA/skills,
@@ -60,6 +61,20 @@ leave the genuine `/app/.venv/bin/main` service CLI available to NPA.
 The IAA and EVG service model snapshots are also immutable workflow config:
 Qwen Image Edit `6f3ccc0b56e431dc6a0c2b2039706d7d26f22cb9` and Cosmos3 Super
 Image2Video `4f847566f3d3388fbf0ac07b99dd1a6432db9ecd`, respectively.
+EVG also requires gated Cosmos-1.0-Guardrail at
+`cf03c0395fac8c4de386c0bdab12cc4fc8d66362` and Qwen3Guard-Gen-0.6B at
+`fada3b2f655b89601929198343c94cd2f64d93cc`. Its service stages exact model
+snapshots into an isolated cache and consumes them offline. The NLTK subtree is
+materialized as verified regular files so NLTK 3.10.3 can keep its symlink
+protection enabled; do not disable pathsec or Cosmos guardrails to work around
+Hugging Face snapshot links. The augmentation report's `generation_runtime`
+record carries the exact model and NLTK content evidence.
+NPA explicitly changes the upstream EVG template's request guardrails from false
+to true. A hash-bound private code overlay makes real Qwen guardrail inference
+fail closed on errors or missing, malformed, or duplicate safety verdicts.
+Published Safe and Controversial remain allowed and Unsafe remains rejected.
+The installed vendor package is unchanged; the runtime report records the source
+adaptation. Every executed request must retain explicit enabled guardrails.
 
 For the three native translations, use the generic workflow validate/plan/submit
 surface. Run `health access` for `paidf-dig`, `paidf-iaa`, `paidf-evg`, and the
@@ -95,9 +110,10 @@ runs and where NPA substitutes its own endpoint.
 
 ## When To Use
 
-Load this skill when the user wants to author, validate, submit, run, or view the
-`physical-ai-data-factory.yaml` blueprint, adapt it to a new dataset, run it on
-GPUs, or troubleshoot why a run's Rerun panel / augmented output looks wrong.
+Load this skill to author, validate, submit, run, or inspect any of the five
+PAIDF-related YAMLs in the inventory: VDA, scoped DIG, IAA, EVG, or the NPA
+Cosmos3 VDA alternative. It also covers dataset adaptation, GPU/runtime access,
+generated media and label validation, provenance, and viewer troubleshooting.
 
 Do NOT invent an `npa workbench data-factory` tool — there is none. The blueprint
 is pure composition of existing toolRefs; only add real tools with tests.

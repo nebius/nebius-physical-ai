@@ -67,6 +67,10 @@ def _native_identity(kind: str, workflow: str | None = None) -> dict:
         identity["source_adaptation"] = (
             paidf_native._paidf_image_output_adaptation()
         )
+        if workflow == "evg":
+            identity["generation_runtime"] = json.loads(
+                (Path(__file__).parent / "fixtures/paidf-evg-runtime.json").read_text()
+            )
     return identity
 
 
@@ -167,7 +171,15 @@ def test_multistorage_config_uses_run_scoped_s3_environment(monkeypatch) -> None
 def test_evg_local_service_preserves_upstream_two_way_hsdp(
     tmp_path: Path, monkeypatch
 ) -> None:
+    from npa.workflows import paidf_guardrails
+
     launched: list[str] = []
+    runtime_environment = {"HF_HUB_OFFLINE": "1", "NLTK_DATA": "/verified-regular-data"}
+    runtime_manifest = {"schema": "npa.paidf.evg-generation-runtime.v1"}
+    monkeypatch.setattr(
+        paidf_guardrails, "prepare_evg_generation_environment",
+        lambda: (runtime_environment, runtime_manifest),
+    )
 
     class Service:
         returncode = None
@@ -191,6 +203,7 @@ def test_evg_local_service_preserves_upstream_two_way_hsdp(
             return None
 
     def popen(argv, **_kwargs):
+        assert _kwargs["env"] == runtime_environment
         launched.extend(argv)
         return Service()
 
@@ -198,14 +211,17 @@ def test_evg_local_service_preserves_upstream_two_way_hsdp(
     monkeypatch.setattr(
         paidf_native.urllib.request, "urlopen", lambda *_a, **_k: Response()
     )
-    monkeypatch.setattr(
-        paidf_native,
-        "run_augmentation",
-        lambda *_args, **_kwargs: {"schema": "npa.paidf.native.evg-augmentation.v1"},
-    )
+    def augmentation(*_args, **kwargs):
+        assert kwargs["generation_runtime"] == runtime_manifest
+        return {"schema": "npa.paidf.native.evg-augmentation.v1"}
+
+    monkeypatch.setattr(paidf_native, "run_augmentation", augmentation)
 
     config = tmp_path / "service.yaml"
-    config.write_text(yaml.safe_dump({"endpoints": [_generation_endpoint("evg")]}))
+    config.write_text(yaml.safe_dump({
+        "endpoints": [_generation_endpoint("evg")],
+        "augmentation": {"parameters": {"extra_params": {"guardrails": True}}},
+    }))
     manifest = _write_fixture_json(
         tmp_path / "configs.json",
         {**_native_identity("evg-configs", "evg"), "configs": [{"config_uri": str(config)}]},
@@ -383,8 +399,9 @@ def test_prepare_images_writes_verified_pane_metadata(tmp_path: Path) -> None:
     }
 
 
+@pytest.mark.parametrize("workflow", ["iaa", "evg"])
 def test_build_configs_mutates_pinned_upstream_protocol_without_replacing_it(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, workflow: str
 ) -> None:
     prepared = tmp_path / "prepared.json"
     prepared.write_text(
@@ -403,9 +420,10 @@ def test_build_configs_mutates_pinned_upstream_protocol_without_replacing_it(
     )
 
     def fake_fetch(_repository: str, _revision: str, destination: Path) -> Path:
+        directory = "image_attribute_augmentation_dag" if workflow == "iaa" else "event_video_generation_dag"
         config = (
             destination
-            / "airflow/dags/workflows/image_attribute_augmentation_dag/configs/cosmos_config.yaml"
+            / f"airflow/dags/workflows/{directory}/configs/cosmos_config.yaml"
         )
         config.parent.mkdir(parents=True)
         config.write_text(
@@ -416,8 +434,8 @@ def test_build_configs_mutates_pinned_upstream_protocol_without_replacing_it(
                         {"id": "vlm", "role": "vlm", "url": "<>", "model": "<>"},
                         {"id": "llm", "role": "llm", "url": "<>", "model": "<>"},
                         {
-                            "id": "image_edit",
-                            "role": "image_edit",
+                            "id": "image_edit" if workflow == "iaa" else "image2video",
+                            "role": "image_edit" if workflow == "iaa" else "image2video",
                             "url": "<>",
                             "model": "<>",
                             "adapter": "openai.chat.completions",
@@ -431,7 +449,7 @@ def test_build_configs_mutates_pinned_upstream_protocol_without_replacing_it(
                             "verification_options": {"top_outer_color": ["blue"]},
                         }
                     },
-                    "augmentation": {"parameters": {"extra_body": {"seed": None}}},
+                    "augmentation": {"parameters": {"extra_body": {"seed": None}, "extra_params": {"guardrails": False}}},
                     "evaluators": [{"attribute_verification": {"enabled": True}}],
                 },
                 sort_keys=False,
@@ -443,7 +461,7 @@ def test_build_configs_mutates_pinned_upstream_protocol_without_replacing_it(
     monkeypatch.setattr(paidf_native, "_runtime_fetch", fake_fetch)
     output = tmp_path / "out"
     result = paidf_native.build_augmentation_configs(
-        "iaa",
+        workflow,
         str(prepared),
         str(output),
         str(tmp_path / "configs.json"),
@@ -454,7 +472,7 @@ def test_build_configs_mutates_pinned_upstream_protocol_without_replacing_it(
         TOKEN_FACTORY_ENDPOINT,
         "llm-model",
         "http://127.0.0.1:8000/v1",
-        QWEN_IMAGE_EDIT_MODEL,
+        QWEN_IMAGE_EDIT_MODEL if workflow == "iaa" else COSMOS3_SUPER_IMAGE2VIDEO_MODEL,
         "unit-run",
     )
 
@@ -464,7 +482,11 @@ def test_build_configs_mutates_pinned_upstream_protocol_without_replacing_it(
         "top_outer_color": ["blue"]
     }
     assert config["evaluators"] == [{"attribute_verification": {"enabled": True}}]
-    assert config["augmentation"]["parameters"]["extra_body"]["seed"] == 7
+    if workflow == "iaa":
+        assert config["augmentation"]["parameters"]["extra_body"]["seed"] == 7
+    else:
+        assert config["augmentation"]["parameters"]["seed"] == 7
+        assert config["augmentation"]["parameters"]["extra_params"]["guardrails"] is True
     assert config["data"][0]["output"]["metadata"].endswith("output_metadata.json")
 
 
@@ -477,7 +499,7 @@ def test_evg_finalize_and_terminal_validation_require_published_sidecars(
     for path in (media, caption, metadata):
         path.write_text("real-artifact", encoding="utf-8")
     config = tmp_path / "config.yaml"
-    config.write_text("pipeline: {}\n", encoding="utf-8")
+    config.write_text("pipeline: {}\naugmentation:\n  parameters:\n    extra_params:\n      guardrails: true\n", encoding="utf-8")
     data_path = tmp_path / "auto_labeling/input-0000/0"
     required = (
         "contextual/objects.json",
@@ -659,7 +681,7 @@ def _link_validation_fixture(validation: Path) -> None:
             media.parent.mkdir(parents=True, exist_ok=True)
             Image.new("RGB", (96, 96), "blue").save(media, format="BMP")
         for field, suffix, content in (
-            ("config_uri", ".yaml", "evaluators: []\n"),
+            ("config_uri", ".yaml", "evaluators: []\n" + ("augmentation:\n  parameters:\n    extra_params:\n      guardrails: true\n" if workflow == "evg" else "")),
             ("caption_uri", ".txt", "A person wearing blue."),
             ("metadata_uri", ".json", "{}"),
         ):
@@ -1006,7 +1028,10 @@ def test_augmentation_batch_preserves_workflow_specific_partial_failure_policy(
     configs = []
     for index in range(2):
         config = tmp_path / f"config-{index}.yaml"
-        config.write_text(yaml.safe_dump({"index": index, "endpoints": [_generation_endpoint(workflow)]}))
+        config.write_text(yaml.safe_dump({
+            "index": index, "endpoints": [_generation_endpoint(workflow)],
+            "augmentation": {"parameters": {"extra_params": {"guardrails": True}}},
+        }))
         configs.append(
             {
                 "config_uri": str(config),
@@ -1104,7 +1129,8 @@ def test_output_validation_rejects_explicit_evaluator_failure(
         )
         config = tmp_path / f"config-{index}.yaml"
         config.write_text(
-            "evaluators:\n  - attribute_verification:\n      enabled: true\n",
+            "evaluators:\n  - attribute_verification:\n      enabled: true\n"
+            + ("augmentation:\n  parameters:\n    extra_params:\n      guardrails: true\n" if workflow == "evg" else ""),
             encoding="utf-8",
         )
         configs.append(

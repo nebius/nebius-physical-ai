@@ -63,7 +63,8 @@ npa workbench health access --capability paidf-label-attribute-search
 
 `validate-spec` derives only human-gated workflow blockers. DIG therefore names
 the exact Cosmos Guardrail payload; IAA names only the attribute-search NGC
-image; EVG names its four exact NGC service digests. The broader
+image; EVG names its four exact NGC service digests and gated
+Cosmos-1.0-Guardrail snapshot. The broader
 `health access` calls also probe public, revision-pinned model payloads used at
 runtime. None of these checks accepts terms for the operator.
 
@@ -88,6 +89,26 @@ provenance records both the original blueprint image and this security update;
 the executed report records the actual worker digest. EVG upgrades NLTK to the
 hash-pinned 3.10.3 wheel to fix its inherited
 [JVM argument injection vulnerability](https://github.com/nltk/nltk/security/advisories/GHSA-m4rf-3fr8-xwx3).
+Its actual service also needs `nvidia/Cosmos-1.0-Guardrail` at
+`cf03c0395fac8c4de386c0bdab12cc4fc8d66362` and
+`Qwen/Qwen3Guard-Gen-0.6B` at `fada3b2f655b89601929198343c94cd2f64d93cc`.
+NPA checks access, fetches the exact snapshots, verifies each file's path, size,
+and hash against the pinned revision's Hub manifest, and
+binds vendor default references inside an isolated cache consumed offline.
+Only the small NLTK data subtree is copied to verified regular files; NLTK's
+symlink protection and the upstream content guardrails stay enabled. The EVG
+`generation_runtime` report binds model inventories and the NLTK tree hash
+through output validation and terminal lineage.
+The pinned upstream EVG template sets per-request `guardrails: false`. NPA
+explicitly sets it to `true` and rejects missing, false, or malformed values
+before execution; this deliberate adaptation keeps the declared guardrail
+contract consistent with actual generation requests.
+The installed Qwen guardrail also catches inference/parser errors and returns
+allow. An exact-source-bound runtime code copy changes those errors to failures
+and requires one complete `Safety: Safe`, `Safety: Unsafe`, or
+`Safety: Controversial` verdict line. Real model inference is preserved;
+`Controversial` retains the upstream allow policy. The installed package remains
+unchanged, and EVG provenance records the original and adapted source hashes.
 Both generation recipes update the distribution kernel headers before scanning.
 Every native handoff retains hashed producer reports, exact scene sets, and
 content manifests; terminal validation reopens the full generation and labeling

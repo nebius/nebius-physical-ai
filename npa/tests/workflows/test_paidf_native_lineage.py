@@ -23,7 +23,10 @@ def generation(tmp_path: Path, workflow: str = "iaa") -> tuple[str, str, dict]:
     Image.new("RGB", (96, 96), "blue").save(media)
     (tmp_path / "caption.txt").write_text("A person wearing blue.")
     (tmp_path / "metadata.json").write_text('{"attribute_verification":{"passed":true}}')
-    (tmp_path / "config.yaml").write_text("evaluators:\n- attribute_verification:\n    enabled: true\n")
+    (tmp_path / "config.yaml").write_text(
+        "evaluators:\n- attribute_verification:\n    enabled: true\n"
+        + ("augmentation:\n  parameters:\n    extra_params:\n      guardrails: true\n" if workflow == "evg" else "")
+    )
     item = {
         "input_key": "person", "augmentation_index": 0,
         "media_uri": str(media), "caption_uri": str(tmp_path / "caption.txt"),
@@ -44,7 +47,44 @@ def generation(tmp_path: Path, workflow: str = "iaa") -> tuple[str, str, dict]:
             field: item[field] for field in ("media_uri", "config_uri", "caption_uri", "metadata_uri")
         })}],
     }
+    if workflow == "evg":
+        payload["generation_runtime"] = json.loads(
+            (Path(__file__).parent / "fixtures/paidf-evg-runtime.json").read_text()
+        )
     return manifest, write(tmp_path / "augmentation.json", payload), payload
+
+
+@pytest.mark.parametrize("terminal", [False, True])
+def test_evg_handoff_rejects_missing_guardrail_runtime(tmp_path: Path, terminal: bool) -> None:
+    manifest, producer_uri, producer = generation(tmp_path, "evg")
+    producer.pop("generation_runtime")
+    write(Path(producer_uri), producer)
+    with pytest.raises(native.PaidfNativeError, match="generation runtime contract"):
+        if terminal:
+            native._verified_producers(
+                [native._producer_descriptor(producer_uri, producer)],
+                ["evg-augmentation"], "lineage-run", "evg",
+            )
+        else:
+            native.validate_augmentation(manifest, str(tmp_path / "validation.json"), "lineage-run", producer_uri)
+
+
+@pytest.mark.parametrize("setting", [False, None, "true", 1, {}])
+def test_evg_terminal_rejects_self_consistent_disabled_request(tmp_path: Path, setting) -> None:
+    import yaml
+
+    _manifest, producer_uri, producer = generation(tmp_path, "evg")
+    config = tmp_path / "config.yaml"
+    value = yaml.safe_load(config.read_text())
+    value["augmentation"]["parameters"]["extra_params"]["guardrails"] = setting
+    config.write_text(yaml.safe_dump(value))
+    producer["outputs"][0]["artifacts"] = native._artifact_fingerprints({
+        field: producer["outputs"][0][field]
+        for field in ("media_uri", "config_uri", "caption_uri", "metadata_uri")
+    })
+    write(Path(producer_uri), producer)
+    with pytest.raises(native.PaidfNativeError, match="explicit enabled guardrails"):
+        native._verified_producers([native._producer_descriptor(producer_uri, producer)], ["evg-augmentation"], "lineage-run", "evg")
 
 
 def test_validation_preserves_executed_generation_identity(tmp_path: Path) -> None:
@@ -213,7 +253,7 @@ def test_local_service_cannot_be_replaced_by_another_generation_endpoint(mutatio
 def test_foreign_generation_endpoint_fails_before_starting_model_server(tmp_path: Path, monkeypatch) -> None:
     from npa.workflows.paidf_upstream import QWEN_IMAGE_EDIT_REVISION
 
-    config = write(tmp_path / "config.yaml", {"endpoints": [{
+    config = write(tmp_path / "config.yaml", {"augmentation": {"parameters": {"extra_params": {"guardrails": True}}}, "endpoints": [{
         "role": "image_edit", "url": "https://foreign.example.test/v1",
         "model": QWEN_IMAGE_EDIT_MODEL, "api_key_env": "GENERATION_API_KEY",
     }]})
@@ -277,7 +317,7 @@ def test_unsupported_cfg_override_fails_before_model_start(tmp_path: Path, monke
         COSMOS3_SUPER_IMAGE2VIDEO_MODEL, COSMOS3_SUPER_IMAGE2VIDEO_REVISION,
     )
 
-    config = write(tmp_path / "config.yaml", {"endpoints": [{
+    config = write(tmp_path / "config.yaml", {"augmentation": {"parameters": {"extra_params": {"guardrails": True}}}, "endpoints": [{
         "role": "image2video", "url": "http://127.0.0.1:8000/v1",
         "model": COSMOS3_SUPER_IMAGE2VIDEO_MODEL, "api_key_env": "GENERATION_API_KEY",
     }]})

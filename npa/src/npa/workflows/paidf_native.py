@@ -154,6 +154,16 @@ def _validate_local_generation_endpoint(
     _require_direct_generation_model(workflow, str(endpoint.get("model") or ""))
     if any(item.get("api_key_env") == "GENERATION_API_KEY" and item is not endpoint for item in endpoints):
         raise PaidfNativeError("generation credential alias may only name the local model service")
+    if workflow == "evg":
+        _require_evg_request_guardrails(config)
+
+
+def _require_evg_request_guardrails(config: Any) -> None:
+    augmentation = config.get("augmentation") if isinstance(config, dict) else None
+    parameters = augmentation.get("parameters") if isinstance(augmentation, dict) else None
+    extra = parameters.get("extra_params") if isinstance(parameters, dict) else None
+    if not isinstance(extra, dict) or extra.get("guardrails") is not True:
+        raise PaidfNativeError("EVG requires explicit enabled guardrails in every executed request")
 
 
 def _run_component(
@@ -497,9 +507,18 @@ def _producer_descriptor(uri: str, payload: dict[str, Any]) -> dict[str, Any]:
         "document_sha256": hashlib.sha256(encoded).hexdigest(),
         **{key: payload[key] for key in (
             "schema", "run_id", "workflow", "stage", "runtime_image",
-            "upstream_revision", "component", "source_adaptation",
+            "upstream_revision", "component", "source_adaptation", "generation_runtime",
         ) if key in payload},
     }
+
+
+def _require_evg_generation_runtime(payload: dict[str, Any]) -> None:
+    from npa.workflows.paidf_guardrails import PaidfGuardrailError, require_evg_generation_runtime
+
+    try:
+        require_evg_generation_runtime(payload.get("generation_runtime"))
+    except PaidfGuardrailError as exc:
+        raise PaidfNativeError(str(exc)) from exc
 
 
 def _lineage_kinds(workflow: str) -> list[str]:
@@ -530,11 +549,17 @@ def _verified_producers(
             raise PaidfNativeError("producer lineage does not preserve its predecessors")
         if kind.endswith("-augmentation"):
             _require_paidf_image_output_adaptation(document.get("source_adaptation"))
+            if workflow == "evg":
+                _require_evg_generation_runtime(document)
             outputs = document.get("outputs")
             if not isinstance(outputs, list) or not outputs:
                 raise PaidfNativeError("augmentation producer has no completed artifacts")
             for output in outputs:
                 _verify_fingerprints(output.get("artifacts"))
+                if workflow == "evg":
+                    with tempfile.TemporaryDirectory(prefix="npa-paidf-guardrail-lineage-") as tmp:
+                        config = _materialize(output["config_uri"], Path(tmp) / "config.yaml")
+                        _require_evg_request_guardrails(yaml.safe_load(config.read_text(encoding="utf-8")))
         documents.append(document)
     return documents
 
@@ -759,6 +784,10 @@ def build_augmentation_configs(
                     parameters["extra_body"]["seed"] = seed + len(configs)
                 else:
                     parameters["seed"] = seed + len(configs)
+                    if not isinstance(parameters.get("extra_params"), dict):
+                        raise PaidfNativeError("upstream EVG config has no extra_params object")
+                    parameters["extra_params"]["guardrails"] = True
+                    _require_evg_request_guardrails(config)
                 local = root / f"{input_key}-{augmentation_index}.yaml"
                 local.write_text(
                     yaml.safe_dump(config, sort_keys=False), encoding="utf-8"
@@ -934,7 +963,7 @@ def _patch_paidf_image_output_contract(source: Path) -> dict[str, Any]:
 
 def run_augmentation(
     config_manifest_uri: str, result_uri: str, run_id: str,
-    *, generation_port: int | None = None,
+    *, generation_port: int | None = None, generation_runtime: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Invoke the real paidf-augmentation CLI once for every rendered config."""
 
@@ -1036,6 +1065,8 @@ def run_augmentation(
         "outputs": completed,
         "config_manifest_uri": config_manifest_uri,
     }
+    if generation_runtime is not None:
+        payload["generation_runtime"] = generation_runtime
     _write_json(payload, result_uri)
     if not completed:
         raise PaidfNativeError(
@@ -1117,7 +1148,20 @@ def run_local_augmentation(
         ]
     else:
         raise PaidfNativeError("service_kind must be image-edit or image2video")
-    service = subprocess.Popen(command, start_new_session=True)  # noqa: S603 - fixed executable contract
+    generation_runtime = None
+    service_options: dict[str, Any] = {"start_new_session": True}
+    if workflow == "evg":
+        from npa.workflows.paidf_guardrails import (
+            PaidfGuardrailError,
+            prepare_evg_generation_environment,
+        )
+
+        try:
+            environment, generation_runtime = prepare_evg_generation_environment()
+        except PaidfGuardrailError as exc:
+            raise PaidfNativeError(str(exc)) from exc
+        service_options["env"] = environment
+    service = subprocess.Popen(command, **service_options)  # noqa: S603 - fixed executable contract
     try:
         health = f"http://127.0.0.1:{port}/health"
         while True:
@@ -1131,7 +1175,10 @@ def run_local_augmentation(
                         break
             except OSError:
                 time.sleep(5)
-        return run_augmentation(config_manifest_uri, result_uri, run_id, generation_port=port)
+        batch_options: dict[str, Any] = {"generation_port": port}
+        if generation_runtime is not None:
+            batch_options["generation_runtime"] = generation_runtime
+        return run_augmentation(config_manifest_uri, result_uri, run_id, **batch_options)
     finally:
         service.terminate()
         try:
@@ -1153,6 +1200,8 @@ def validate_augmentation(
         raise PaidfNativeError("augmentation config manifest has no supported workflow")
     producer = _read_run_artifact(augmentation_result_uri, f"{workflow}-augmentation", run_id, workflow)
     _require_paidf_image_output_adaptation(producer.get("source_adaptation"))
+    if workflow == "evg":
+        _require_evg_generation_runtime(producer)
     configs = manifest.get("configs")
     outputs = producer.get("outputs")
     failed = producer.get("failed")
@@ -1208,6 +1257,8 @@ def validate_augmentation(
                 config_path = root / f"config-{index:04d}.yaml"
                 _materialize(item["config_uri"], config_path)
                 config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+                if workflow == "evg":
+                    _require_evg_request_guardrails(config)
                 evaluators = (
                     config.get("evaluators") if isinstance(config, dict) else None
                 )
