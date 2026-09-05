@@ -35,6 +35,15 @@ class S3Uri:
     key: str
 
 
+@dataclass(frozen=True)
+class ArtifactWriteReceipt:
+    """Integrity metadata for the exact bytes of one successful write."""
+
+    uri: str
+    sha256: str
+    size_bytes: int
+
+
 def uri_join(base: str, *parts: str) -> str:
     """Join URI path fragments without losing the scheme."""
     prefix = base.rstrip("/")
@@ -53,11 +62,12 @@ def is_s3_uri(uri: str) -> bool:
     return uri.startswith("s3://")
 
 
-def write_bytes_uri(uri: str, payload: bytes) -> None:
+def write_bytes_uri(uri: str, payload: bytes) -> ArtifactWriteReceipt:
+    receipt = ArtifactWriteReceipt(uri=uri, sha256=hashlib.sha256(payload).hexdigest(), size_bytes=len(payload))
     if is_s3_uri(uri):
         target = parse_s3_uri(uri)
         _s3_client().put_object(Bucket=target.bucket, Key=target.key, Body=payload)
-        return
+        return receipt
     path = _local_path(uri)
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, temporary = tempfile.mkstemp(dir=path.parent, prefix=".artifact-")
@@ -70,6 +80,7 @@ def write_bytes_uri(uri: str, payload: bytes) -> None:
     finally:
         if os.path.exists(temporary):
             os.unlink(temporary)
+    return receipt
 
 
 def read_bytes_uri(uri: str) -> bytes:
@@ -80,21 +91,28 @@ def read_bytes_uri(uri: str) -> bytes:
     return _local_path(uri).read_bytes()
 
 
-def write_json_uri(uri: str, payload: dict[str, Any]) -> None:
+def write_json_uri(uri: str, payload: dict[str, Any]) -> ArtifactWriteReceipt:
     data = json.dumps(payload, indent=2, sort_keys=True).encode("utf-8")
-    write_bytes_uri(uri, data)
+    return write_bytes_uri(uri, data)
 
 
-def describe_artifact(uri: str, *, role: str, media_type: str, schema_version: str, epoch: int | None = None):
-    """Read the actual object, then record its exact identity and content hash."""
+def describe_artifact(
+    uri: str, *, role: str, media_type: str, schema_version: str,
+    epoch: int | None = None, write_receipt: ArtifactWriteReceipt | None = None,
+):
+    """Describe a successful write, or read an existing object when no receipt is supplied."""
     from .schemas import ArtifactRecord
 
-    data = read_bytes_uri(uri)
-    if not data:
+    if write_receipt is None:
+        data = read_bytes_uri(uri)
+        write_receipt = ArtifactWriteReceipt(uri=uri, sha256=hashlib.sha256(data).hexdigest(), size_bytes=len(data))
+    elif write_receipt.uri != uri:
+        raise ValueError("artifact write receipt URI does not match artifact URI")
+    if not write_receipt.size_bytes:
         raise ValueError("produced artifact is empty")
     return ArtifactRecord(
         uri=uri, role=role, media_type=media_type, schema_version=schema_version,
-        sha256=hashlib.sha256(data).hexdigest(), size_bytes=len(data), epoch=epoch,
+        sha256=write_receipt.sha256, size_bytes=write_receipt.size_bytes, epoch=epoch,
     )
 
 

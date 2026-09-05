@@ -31,8 +31,8 @@ def evaluate_detector(request: EvalRequest) -> EvalResponse:
         manifest_sha256=manifest,
     )
     output_uri = uri_join(request.output_uri, eval_run_id, "eval_metrics.json")
-    write_json_uri(output_uri, result.model_dump(mode="json"))
-    artifact = describe_artifact(output_uri, role="evaluation_metrics", media_type="application/json", schema_version="npa.detection.evaluation-metrics.v1")
+    receipt = write_json_uri(output_uri, result.model_dump(mode="json"))
+    artifact = describe_artifact(output_uri, role="evaluation_metrics", media_type="application/json", schema_version="npa.detection.evaluation-metrics.v1", write_receipt=receipt)
     return result.model_copy(update={"artifacts": [artifact]})
 
 

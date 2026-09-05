@@ -155,7 +155,7 @@ concurrent updates. Restart preserves terminal results and marks unfinished work
 automatically. `deploy --destroy` preserves the state claim.
 
 `/status` and `/artifacts` expose exact artifact roles, locations, media/schema
-metadata, sizes and read-after-write SHA-256 hashes. Authenticated
+metadata, sizes and SHA-256 hashes of the successfully written bytes. Authenticated
 `/artifacts/content?run_id=...&sha256=...` checks current bytes before returning
 them. Service writes and retrieval stay under its configured output prefix.
 Direct synchronous CLI/SDK runs return artifact manifests; service runs own

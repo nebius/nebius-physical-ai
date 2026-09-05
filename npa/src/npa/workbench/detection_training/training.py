@@ -14,7 +14,7 @@ from .dataloader import make_dataloader
 from .models import build_fasterrcnn_resnet50_fpn_v2
 from .labels import category_id_map, detector_label_map
 from .schemas import DEFAULT_NUM_CLASSES, TrainRequest, TrainResponse
-from .storage import describe_artifact, storage_settings, uri_join, write_bytes_uri, write_json_uri
+from .storage import ArtifactWriteReceipt, describe_artifact, storage_settings, uri_join, write_bytes_uri, write_json_uri
 
 StatusCallback = Callable[[str, int, dict[str, Any], str | None], None]
 
@@ -110,7 +110,7 @@ def train_detector(
                 if wandb_run is not None:
                     wandb_run.log(snapshot, step=epoch)
                 checkpoint_uri = pattern.format(epoch=epoch)
-                save_checkpoint(
+                checkpoint_receipt = save_checkpoint(
                     checkpoint_uri,
                     model=model,
                     optimizer=optimizer,
@@ -122,8 +122,9 @@ def train_detector(
                 artifacts.append(describe_artifact(
                     checkpoint_uri, role="checkpoint", media_type="application/x-pytorch",
                     schema_version="npa.detection.checkpoint.v1", epoch=epoch,
+                    write_receipt=checkpoint_receipt,
                 ))
-                write_json_uri(
+                metrics_receipt = write_json_uri(
                     metrics_path,
                     {
                         "run_id": resolved_run_id,
@@ -135,6 +136,7 @@ def train_detector(
                 metrics_artifact = describe_artifact(
                     metrics_path, role="training_metrics", media_type="application/json",
                     schema_version="npa.detection.training-metrics.v1",
+                    write_receipt=metrics_receipt,
                 )
                 if artifact_callback:
                     artifact_callback([*artifacts, metrics_artifact])
@@ -242,8 +244,8 @@ def save_checkpoint(
     manifest_sha256: str,
     num_classes: int,
     request: dict[str, Any],
-) -> None:
-    """Serialize a checkpoint with torch and write it to local storage or S3."""
+) -> ArtifactWriteReceipt:
+    """Serialize and write a checkpoint, returning its exact uploaded byte metadata."""
     try:
         import torch
     except ImportError as exc:
@@ -261,7 +263,7 @@ def save_checkpoint(
     }
     buffer = io.BytesIO()
     torch.save(payload, buffer)
-    write_bytes_uri(uri, buffer.getvalue())
+    return write_bytes_uri(uri, buffer.getvalue())
 
 
 def _to_device(value: Any, device: Any) -> Any:

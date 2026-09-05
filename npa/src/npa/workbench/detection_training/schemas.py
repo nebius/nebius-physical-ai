@@ -19,7 +19,7 @@ RunStatus = Literal["queued", "running", "completed", "failed", "interrupted"]
 
 
 class ArtifactRecord(BaseModel):
-    """A produced object, verified by reading its bytes after publication."""
+    """A stored object with integrity metadata from its written or read bytes."""
 
     model_config = ConfigDict(extra="forbid")
 
