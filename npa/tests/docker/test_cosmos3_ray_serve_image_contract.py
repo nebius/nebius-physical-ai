@@ -105,7 +105,7 @@ def test_security_upgrades_requirements_file_has_hash_pinned_cves() -> None:
     content = req_file.read_text(encoding="utf-8")
     assert "CVE-2025-62593" in content
     assert "CVE-2026-79675" in content
-    assert "ray-2.52.0-cp310-cp310-manylinux2014_x86_64.whl#sha256=" in content
+    assert "ray-2.52.0-cp313-cp313-manylinux2014_x86_64.whl#sha256=" in content
     assert "nltk-3.10.3-py3-none-any.whl#sha256=" in content
     assert "--no-deps" in content
 

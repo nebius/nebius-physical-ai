@@ -8,5 +8,5 @@
 #   serve deploy. Fixed in 2.52.0.
 # CVE-2026-79675 NLTK <=3.10.2: insecure unpickling in NLTK data downloads.
 #   Fixed in 3.10.3.
-https://files.pythonhosted.org/packages/9d/2a/89b68cfa37e386093e91367ccfa67d899a837cb457a54d5a01070056491e/ray-2.52.0-cp310-cp310-manylinux2014_x86_64.whl#sha256=88f7ac912b78cb436b4a8e5b370ad116318f926d54f8731020032cfb09cfc7dc
+https://files.pythonhosted.org/packages/ac/2a/5da04ee7a71e5d0e71def1250b82e90380c30a14adb68129a2e0f6753bda/ray-2.52.0-cp313-cp313-manylinux2014_x86_64.whl#sha256=36f9945e01661f6a1010f4440d5a955caa2dea10b930f7bd35ae64016b58129c
 https://files.pythonhosted.org/packages/b6/6d/ebd2af4640b12168fdf0cb74b6118df2f32a2f62ec7e0c06fbfd80706639/nltk-3.10.3-py3-none-any.whl#sha256=ff9598a8e20518ee0d557745890cc4435b9578489e2dcbc69c4f81fa060caf7c
