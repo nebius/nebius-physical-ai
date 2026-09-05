@@ -2666,6 +2666,13 @@ def run_dig_inference(
         checkpoint_record, selected = _verify_dig_finetune_handoff(
             checkpoint, checkpoint_uri, finetune_result_uri, run_id
         )
+        if (
+            checkpoint_record.get("pretrained_content_manifest_sha256")
+            != pretrained_manifest_sha256
+        ):
+            raise PaidfNativeError(
+                "DIG inference pretrained content differs from its finetune handoff"
+            )
         selected_value = str(checkpoint_record["selected_checkpoint"])
         selected_sha256 = str(checkpoint_record["selected_checkpoint_sha256"])
         defect_specs = list(dataset.rglob("defect_spec.jsonl"))

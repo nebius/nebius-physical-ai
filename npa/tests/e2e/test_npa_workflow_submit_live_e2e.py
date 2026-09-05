@@ -909,66 +909,44 @@ def _assert_paidf_native_live_artifacts(
             sources["https://github.com/NVIDIA/physical-ai-data-factory"]["revision"]
             == PHYSICAL_AI_DATA_FACTORY_REVISION
         )
-        pretrained = read_json("reports/pretrained-result.json")
-        finetune = read_json("reports/finetune-result.json")
-        result = read_json("reports/dig-result.json")
-        assert int(pretrained.get("file_count") or 0) > 0
-        assert int(pretrained.get("total_bytes") or 0) > 0
-        assert len(str(finetune.get("selected_checkpoint_sha256") or "")) == 64
-        assert int(result.get("image_count") or 0) > 0
-        assert int(result.get("label_file_count") or 0) > 0
-        from npa.workflows.paidf_dig_guardrails import require_dig_guardrail_runtime
+        from npa.orchestration.npa_workflow import load_spec
+        from tests.e2e.paidf_dig_acceptance import assert_dig_live_artifacts
 
-        require_dig_guardrail_runtime(result.get("guardrail_runtime"), result["image_count"])
-        timing_bytes = read_artifact(f"s3://{bucket}/{prefix}anomaly/timing_summary.json")
-        assert hashlib.sha256(timing_bytes).hexdigest() == result["guardrail_runtime"]["timing_summary_sha256"]
-        timing = json.loads(timing_bytes)
-        assert timing["guardrail_enabled"] is True
-        assert timing["text_guardrail_enforcing"] is True
-        assert timing["image_guardrail_enforcing"] is False
-        assert timing["generated_images_total"] == result["image_count"]
-        image_sizes = {}
-        for item in result["images"]:
-            media = read_artifact(
-                f"s3://{bucket}/{prefix}anomaly/reconstructed_image/{item['name']}"
-            )
-            assert hashlib.sha256(media).hexdigest() == item["sha256"]
-            assert len(media) == int(item["size_bytes"])
-            with Image.open(BytesIO(media)) as decoded:
-                decoded.load()
-                assert decoded.width > 0 and decoded.height > 0
-                image_sizes[item["name"]] = decoded.size
-        labels = read_json("anomaly/pseudo_labels/coco_annotations.json")
-        assert labels.get("images") and labels.get("annotations")
-        label_ids = {item["id"] for item in labels["images"]}
-        categories = {item["id"] for item in labels["categories"]}
-        assert len(label_ids) == len(labels["images"]) == len(image_sizes)
-        mask_areas = {}
-        for item in labels["images"]:
-            name = Path(item["file_name"]).name
-            assert image_sizes[name] == (item["width"], item["height"])
-            # The pinned upstream pseudo-label stage emits masks and actual
-            # instance overlays alongside COCO. Decode those bytes too.
-            for kind in ("masks", "visualization"):
-                media = read_artifact(
-                    f"s3://{bucket}/{prefix}anomaly/pseudo_labels/{kind}/{name}"
-                )
-                with Image.open(BytesIO(media)) as decoded:
-                    decoded.load()
-                    assert decoded.size == image_sizes[name]
-                    if kind == "masks":
-                        histogram = decoded.convert("L").histogram()
-                        assert sum(histogram[1:]) > 0
-                        mask_areas[item["id"]] = sum(histogram[1:])
-        assert all(item["image_id"] in label_ids for item in labels["annotations"])
-        for item in labels["annotations"]:
-            assert item["category_id"] in categories
-            assert 0 < item["area"] <= mask_areas[item["image_id"]]
-            x, y, width, height = item["bbox"]
-            assert x >= 0 and y >= 0 and width > 0 and height > 0
-            segmentation = item["segmentation"]
-            assert isinstance(segmentation, dict) and segmentation["counts"]
-            assert len(segmentation["size"]) == 2
+        submitted = load_spec(spec_path)
+        submitted.config.update(dict(config_vars))
+
+        def list_keys(relative):
+            keys = []
+            for page in client.get_paginator("list_objects_v2").paginate(
+                Bucket=bucket, Prefix=prefix + relative
+            ):
+                for item in page.get("Contents", []):
+                    assert item["Key"].startswith(prefix + relative)
+                    keys.append(item["Key"][len(prefix):])
+            return keys
+
+        def hash_file(relative):
+            # Checkpoints can be large; hash their actual bytes as a stream.
+            value = hashlib.sha256()
+            size = 0
+            body = client.get_object(Bucket=bucket, Key=prefix + relative)["Body"]
+            try:
+                for chunk in iter(lambda: body.read(4 * 1024 * 1024), b""):
+                    value.update(chunk)
+                    size += len(chunk)
+            finally:
+                body.close()
+            return value.hexdigest(), size
+
+        assert_dig_live_artifacts(
+            read_bytes=lambda relative: read_artifact(f"s3://{bucket}/{prefix}{relative}"),
+            list_keys=list_keys,
+            hash_file=hash_file,
+            run_id=run_id,
+            prefix_uri=f"s3://{bucket}/{prefix}",
+            num_sdg=int(submitted.config["num_sdg"]),
+            usecase=submitted.config["usecase"],
+        )
         return
 
     assert (

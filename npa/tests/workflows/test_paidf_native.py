@@ -1418,7 +1418,9 @@ def test_dig_runtime_refuses_missing_or_drifted_cache(
         paidf_native._dig_offline_environment(tmp_path, "unit-run")
 
 
-@pytest.mark.parametrize("failure", [None, "import", "summary"])
+@pytest.mark.parametrize(
+    "failure", [None, "import", "summary", "different_pretrained", "missing_pretrained"]
+)
 def test_dig_training_and_inference_children_use_the_vendor_environment(
     tmp_path: Path, monkeypatch, failure: str | None
 ) -> None:
@@ -1472,6 +1474,10 @@ def test_dig_training_and_inference_children_use_the_vendor_environment(
             {
                 "selected_checkpoint": "training/model/checkpoint-10.pt",
                 "selected_checkpoint_sha256": "b" * 64,
+                "pretrained_content_manifest_sha256": (
+                    None if failure == "missing_pretrained"
+                    else "c" * 64 if failure == "different_pretrained" else "a" * 64
+                ),
             },
             selected,
         ),
@@ -1549,10 +1555,13 @@ def test_dig_training_and_inference_children_use_the_vendor_environment(
     )
     if failure:
         published_before = len(published)
+        children_before = len(child_envs)
         expected = subprocess.CalledProcessError if failure == "import" else paidf_native.PaidfNativeError
         with pytest.raises(expected):
             paidf_native.run_dig_inference(*arguments)
         assert len(published) == published_before
+        if failure in {"different_pretrained", "missing_pretrained"}:
+            assert len(child_envs) == children_before
         return
     result = paidf_native.run_dig_inference(*arguments)
 
