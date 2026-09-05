@@ -147,6 +147,18 @@ redistribution:
 
 # Relative to npa/docker/workbench/
 images:
+  openpi:
+    dockerfile: openpi/Dockerfile
+    tier: job
+    passwordless_root_exemption: "SkyPilot Kubernetes bootstrap only; the final runtime user is non-root, no sshd service is enabled by default, and no credentials are baked into the image."
+    redistribution: public
+    notes: >-
+      Bakes pinned Apache-2.0 OpenPI source, its frozen RLDS/JAX dependency
+      environment, and an SM120 probe on the redistributable CUDA base. Gemma
+      and pi0.5 weights, DROID records, terms acceptance, credentials, trained
+      checkpoints, and populated caches are runtime-only. Built-image byte and
+      layer scanning plus an eight-node RTX PRO 6000 qualification are required
+      before release promotion.
   lerobot:
     dockerfile: lerobot/Dockerfile
     tier: service
@@ -267,8 +279,9 @@ images:
       command allowlist would be equivalent to allowing its root shell and would
       provide a false boundary. This exception is limited to the CPU-only
       Sim2Real standard-workflow adapter image: its final user is uid 1000, sshd
-      is not started by the image, password/root SSH login is disabled by the
-      Debian defaults used here, no credentials or GPU/vendor runtime are baked,
+      is not started by the image, all build-time host keys are deleted, explicit
+      configuration disables password/root SSH login, no credentials or
+      GPU/vendor runtime are baked,
       and the task pod/container—not the uid—is the documented trust boundary.
       Remove this grant when the pinned SkyPilot bootstrap supports rootless
       Kubernetes task setup; it is not an authorization pattern for services.
@@ -277,6 +290,7 @@ images:
       expires_with: skypilot-rootless-kubernetes-bootstrap
       scope: ephemeral-standard-workflow-task-pod
       prohibited_uses: [service, public-ingress, baked-credentials]
+    skypilot_bootstrap_contract: skypilot-0.12.2-v1
   cosmos2-transfer:
     dockerfile: cosmos2-transfer/Dockerfile
     tier: job
@@ -505,7 +519,7 @@ images:
     dockerfile: retargeting/Dockerfile
     tier: interactive
     redistribution: public
-  sim2real-envgen:
+  envgen:
     dockerfile: sim2real-envgen/Dockerfile
     tier: interactive
     notes: >-
@@ -518,6 +532,7 @@ images:
       while build-time imports and pip consistency checks protect the reduced
       contract.
     redistribution: public
+    skypilot_bootstrap_contract: skypilot-0.12.2-v1
   rerun-viewer:
     dockerfile: rerun-viewer/Dockerfile
     tier: job

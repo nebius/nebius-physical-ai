@@ -82,10 +82,10 @@ flowchart TB
     policy["lerobot-policy: short train + eval"]
     vlm["lerobot-vlm-rl: VLM signal RL step"]
     genesis["genesis: scene build + step"]
-    isaac["isaac-lab: headless env + step"]
+    isaac["isaac-lab: headless env + RTX render"]
     content["content-agents: rigid physics + OVRTX validation"]
     cosmos["cosmos: model load + infer"]
-    transfer["cosmos2-transfer: CUDA venv probe"]
+    transfer["cosmos2-transfer: real 4-step transfer"]
     c3["cosmos3: real text2image generation"]
     sonic["sonic: entrypoint smoke artifact"]
     s2r["envgen / reference-policy / loop-eval rollouts"]
@@ -106,10 +106,10 @@ flowchart TB
 | `lerobot-policy` | `0.1.1` | container-smoke | short train; short eval on checkpoint | optional | gpu-gated |
 | `lerobot-vlm-rl` | `0.1.1` | container-smoke | CUDA; VLM signal parse + RL step | required | gpu-gated |
 | `genesis` | `0.4.6` | container-smoke | import; Franka scene; step; body state | required | gpu-gated |
-| `isaac-lab` | `3.0.0b2.post1` | container-smoke | version; runtime; real four-variant RSL-RL training; checkpoints; strict winner barrier | required | gpu-gated |
+| `isaac-lab` | `3.0.0b2.post1-sim2real-coherent-20260904` | container-smoke | version; runtime; vectorized environment steps and replay; separately validated RTX/Vulkan render | required | gpu-gated |
 | `content-agents` | `0.5.2-npa2` | container-smoke | exact OVRTX runtime fetch; real rigid-physics authoring; upstream validation + render | required | gpu-gated |
 | `cosmos` | `cu128-torch27-sm100-1.0.9-20260803T002017Z` | container-smoke | version; model load; single inference (safety on) | required | gpu-gated |
-| `cosmos2-transfer` | `2.5.1-golden-eval-smoke-*` | container-smoke | venv torch; CUDA; GPU matmul probe | required | gpu-gated |
+| `cosmos2-transfer` | `2.5.1-sim2real-coherent-20260904` | container-smoke | procedural input; four real diffusion steps; decoded, numerically validated output MP4; guardrails enabled | required | gpu-gated |
 | `cosmos3` | `1.2.2-cu130-r6` | container-smoke | real Cosmos 3 text2image generation; decodable image; guardrails on | required | gpu-gated |
 | `cosmos3-reason` | `cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z` | container-smoke | CUDA; real Reason VLM pass | optional | gpu-gated |
 | `sonic` | `0.1.2` | entrypoint-smoke | `/entrypoint.sh smoke`; GPU proofs; JSON artifact | required | gpu-gated |
@@ -117,11 +117,11 @@ flowchart TB
 | `fiftyone` | `1.15.0.post1` | container-smoke | import+version; CLI; app config (env smoke) | none | ready |
 | `lancedb` | `0.30.3` | server-smoke | server start; create table; vector query; list | optional | ready |
 | `detection-training` | `bdd100k-golden-eval-smoke-*` | server-smoke | server start; `/health`; `/system-info` | optional | ready |
-| `sim2real-control` | `0.1.2` | workflow-smoke | stage adapter import; 1-through-14 CLI contract; exact-source guard | none | ready |
-| `envgen` | `0.1.2` | container-smoke | raw envgen JSONL; Genesis CUDA step | optional | gpu-gated |
+| `sim2real-control` | `0.1.2-sim2real-coherent-20260904` | container-smoke | load canonical graph; expand promote and loop-back plans across all 14 stages; exact-source guard | none | ready |
+| `envgen` | `0.1.2-sim2real-coherent-20260904` | container-smoke | raw envgen JSONL; Genesis CUDA physics step | optional | gpu-gated |
 | `reference-policy` | `0.1.2` | container-smoke | policy contract (envgen functional delegate) | optional | gpu-gated |
 | `loop-eval` | `cuda13-b300-0.1.3-sm80-sm90-sm100-sm103-sm120-20260803T034152Z` | container-smoke | CUDA; FrankaPickPlace rollout step | optional | gpu-gated |
-| `rerun-viewer` | `0.31.4` | build-import | rerun SDK import + version | none | ready |
+| `rerun-viewer` | `0.31.4-sim2real-coherent-20260904` | container-smoke | robotics trace → RRD; CLI verify/read; HTTP viewer serve/read | none | ready |
 | `foxglove-embed` | `0.58.0` | server-smoke | health + pinned SDK version; real `@foxglove/embed` (FoxgloveViewer + embed handshake); NPA glue module; host page; `/data` 206 byte range; Range CORS preflight | none | ready |
 
 Machine-readable probes: ``npa/src/npa/smoke/capabilities.py`` (enforced by
@@ -158,6 +158,29 @@ re-verified by building the images from source and running the eval:
 | `fiftyone` | **PASS 3/3** | local rebuild + run | import + version + CLI + app config (env smoke) |
 | `genesis` | fix verified | `_versions` unit test | py3.10 import fix; full GPU run still pending |
 | `isaac-lab` | command fixed | static + manifest | standalone-script command; GPU run pending |
+
+### Coherent Sim2Real release (2026-09-04)
+
+The controller, Cosmos Transfer, EnvGen, Isaac Lab, and Rerun viewer were built
+from the one reviewed source SHA
+`c164fd3480f8a9ea8f9df9ccb9509502fd527996`. Each exact development digest
+passed the mandatory build, SBOM, provenance, vulnerability, secret, license,
+payload/history, and anonymous-pull gates before it was functionally validated
+and promoted byte-for-byte to its additive supported tag.
+
+Real validation passed for all five roles: both complete controller decision
+branches over the canonical 14 stages; guarded four-step Transfer inference
+with a decoded 93-frame, 1280×720 MP4; 16 EnvGen records and a Genesis CUDA
+physics step; three distinct nondegenerate 512×512 Isaac RayTracedLighting
+frames over Vulkan on RTX PRO 6000; and Rerun conversion, independent reopen,
+serve, and read of an actual robotics trace. Empty-config checks resolved all
+five development digests twice and all five release tags once with identical
+digests. The controller digest additionally passed a real Kubernetes
+rootless-bootstrap pod start with UID 1000, runtime-generated SSH host keys,
+ready `sshd`, `rsync`, and worker-argument forwarding. This validates the image
+set and its individual capabilities; the complete 14-stage run remains open
+because the required hosted Cosmos3 model returned an upstream stopped-model
+response before any workflow task launched.
 
 ### Bugs the golden evals surfaced (now fixed)
 
@@ -240,7 +263,7 @@ pipeline. Key safety notes are condensed below.
 | `fiftyone` | dataset curation/visualization (CPU) | `container-smoke` | none | ready |
 | `lancedb` | vector store for AV/perception data | `server-smoke` | optional | ready |
 | `detection-training` | object-detection train/eval service | `server-smoke` | optional | ready |
-| `sim2real-control` | canonical compositional Sim2Real stage adapter | `workflow-smoke` | none | ready |
+| `sim2real-control` | canonical compositional Sim2Real stage adapter | `container-smoke` | none | ready |
 | `envgen` | randomized Genesis env generation | `workflow-smoke` | optional | gpu-gated |
 | `reference-policy` | reference policy contract | `workflow-smoke` | optional | gpu-gated |
 | `loop-eval` | sim-to-real full-loop evaluation | `workflow-smoke` | optional | gpu-gated |
@@ -295,10 +318,10 @@ pipeline. Key safety notes are condensed below.
   `COSMOS_DISABLE_SAFETY` must remain `"0"` in production; the functional smoke
   keeps safety enabled by default.
 - **External fetches** — `isaac-lab` and `sonic` fetch hash-pinned Isaac wheels
-  from `pypi.nvidia.com` at runtime after EULA validation; they do not pull an
-  `nvcr.io` Isaac base. `groot`/`sonic` clone pinned Git refs, and several images
-  fetch from Hugging Face. Base images are digest-pinned and tracked by the
-  weekly Trivy CVE scan.
+  from `pypi.nvidia.com` only after run-scoped EULA acceptance; no Isaac/Kit
+  payload is baked into their public layers. `groot`/`sonic` clone pinned Git
+  refs, and several images fetch model weights from Hugging Face at runtime.
+  Base images are digest-pinned and tracked by the weekly Trivy CVE scan.
 - **B300 / CUDA13 family** — `base-cuda13-b300`, `cosmos3-reason`, LeRobot,
   LanceDB, Genesis, and the Sim2Real children have physical B300 capability
   evidence recorded in `blackwell-dc-images.json`. Keep per-image blockers
@@ -317,7 +340,7 @@ Run these inside the corresponding built image (or via
 - `genesis` — `python -m npa.smoke.test_genesis_functional` (env: `test_genesis_env`)
 - `isaac-lab` — `python -m npa.smoke.test_isaac_lab_functional` (env: `test_isaac_lab_env`)
 - `cosmos` — `python -m npa.smoke.test_cosmos_functional` (env: `test_cosmos_env`)
-- `cosmos2-transfer` — `bash /opt/cosmos2-transfer/smoke_functional.sh` (venv CUDA probe)
+- `cosmos2-transfer` — `bash /opt/cosmos2-transfer/smoke_functional.sh` (procedural input and four-step transfer inference)
 - `cosmos3` — `npa workbench cosmos3 generate --help` (job entrypoint; the eval
   itself runs a real text2image generation and needs an operator HF token, since
   the image bakes no weights)
@@ -327,7 +350,8 @@ Run these inside the corresponding built image (or via
 - `fiftyone` — `python -m npa.smoke.test_fiftyone_functional` (env: `test_fiftyone_env`)
 - `lancedb` — `python -m npa.smoke.test_lancedb_functional`
 - `detection-training` — `python -m npa.smoke.test_detection_training_functional`
-- `sim2real-control` — `python -m npa.workflows.sim2real.workflow_stage --help`
+- `sim2real-control` — `python -m npa.smoke.test_sim2real_control_functional`
+- `rerun-viewer` — `python -m npa.smoke.test_rerun_viewer_functional`
 - `envgen` — `python -m npa.workflows.sim2real_envgen --help`
 - `reference-policy` — `python -m npa.workflows.sim2real_envgen policy-contract --help`
 - `loop-eval` — `python -m npa.workflows.sim2real_loop full-loop --help`

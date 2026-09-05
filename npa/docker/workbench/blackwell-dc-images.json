@@ -243,6 +243,20 @@
       "accepted_image_manifest": "npa/src/npa/deploy/ltx2_image_manifest.json"
     },
     {
+      "name": "npa-openpi",
+      "dockerfile": "openpi/Dockerfile",
+      "verdict": "unknown",
+      "validation": "pending-build",
+      "redistribution": "public",
+      "source_compiled_extensions": [
+        "npa-openpi-sm120-probe"
+      ],
+      "smoke": "the pinned full-DROID pi0.5 recipe completes 100,000 steps with global batch 256 across an eight-process JAX mesh and publishes a content-hashed checkpoint manifest",
+      "port_blocker": "The production image intentionally compiles its native hardware probe only for sm_120 and the full-DROID runtime refuses any device other than compute capability 12.0. A B200/B300 build must add the matching architecture and retain a separate real full-recipe qualification.",
+      "upstream_tracking": "https://github.com/Physical-Intelligence/openpi",
+      "notes": "This integration is scoped to eight RTX PRO 6000 one-GPU nodes. CUDA-major compatibility is not inferred across sm_120 and datacenter Blackwell sm_100/sm_103, and no B200 prerequisite run is needed for the requested RTX PRO training."
+    },
+    {
       "name": "npa-alpamayo2-super",
       "dockerfile": "alpamayo2-super/Dockerfile",
       "build_script": "alpamayo2-super/build.sh",

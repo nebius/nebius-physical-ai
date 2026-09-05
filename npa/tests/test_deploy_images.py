@@ -51,7 +51,7 @@ def test_non_sonic_workbench_images_resolve_from_supported_tools() -> None:
     assert (
         container_image_for_tool("cosmos2-transfer")
         == "ghcr.io/nebius/nebius-physical-ai/"
-        "npa-cosmos2-transfer:2.5.1-skypilot-ready-20260801T053000Z"
+        "npa-cosmos2-transfer:2.5.1-sim2real-coherent-20260904"
     )
     assert (
         container_image_for_tool("cosmos3") == "ghcr.io/nebius/nebius-physical-ai/"
@@ -65,7 +65,7 @@ def test_non_sonic_workbench_images_resolve_from_supported_tools() -> None:
     assert (
         container_image_for_tool("envgen")
         == "ghcr.io/nebius/nebius-physical-ai/npa-envgen:"
-        "cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
+        "0.1.2-sim2real-coherent-20260904"
     )
     assert (
         container_image_for_tool("reference-policy")

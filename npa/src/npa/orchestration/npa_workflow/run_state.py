@@ -116,6 +116,10 @@ class RuntimeRunState:
     #: by key, and keys only line up when the traversal is identical, so a resumed run
     #: whose spec/config changed must not silently reuse them.
     plan_fingerprint: str = ""
+    #: Append-only audit records for an explicitly authorized migration from one
+    #: terminal-failed plan to another under the same run identity. Prior waves
+    #: remain byte-for-byte represented below; a migration never rewrites them.
+    plan_migrations: list[dict[str, Any]] = field(default_factory=list)
     waves: list[dict[str, Any]] = field(default_factory=list)
     # Additive, per-stage projection of the wave ledger.  This is deliberately
     # kept in runtime.json so status/logs/cancel all consume one state store.
@@ -134,6 +138,7 @@ class RuntimeRunState:
             "status": self.status,
             "run_prefix_uri": self.run_prefix_uri,
             "plan_fingerprint": self.plan_fingerprint,
+            "plan_migrations": list(self.plan_migrations),
             "updated_at": self.updated_at,
             "waves": list(self.waves),
             "stages": list(self.stages),
@@ -150,6 +155,11 @@ class RuntimeRunState:
             status=str(payload.get("status") or "running"),
             run_prefix_uri=str(payload.get("run_prefix_uri") or ""),
             plan_fingerprint=str(payload.get("plan_fingerprint") or ""),
+            plan_migrations=[
+                dict(item)
+                for item in payload.get("plan_migrations") or []
+                if isinstance(item, dict)
+            ],
             waves=[
                 dict(item)
                 for item in payload.get("waves") or []

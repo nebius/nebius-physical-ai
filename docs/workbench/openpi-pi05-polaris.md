@@ -117,6 +117,146 @@ trajectory.
 
 ## Validate and run
 
+### Full-DROID fine-tuning on eight RTX PRO 6000 GPUs
+
+The production training surface is deliberately separate from the miniature LoRA
+optimizer gate. `npa-openpi` packages the same pinned Apache-2.0 source with
+Python 3.11, the upstream `rlds` dependency group, JAX CUDA 12, and a compiled
+`sm_120` probe. After resolving upstream's frozen environment, the image applies
+a narrow runtime compatibility overlay: JAX/JAXlib/CUDA plugin/PJRT 0.6.2,
+ml-dtypes 0.5.1, cuDNN 9.10.2.21, NCCL 2.27.5, and NVSHMEM 3.2.5. That exact
+stack is required for cross-node collectives on RTX PRO 6000 Blackwell; the
+upstream JAX 0.5.3 and NCCL 2.26.2 pair fails the first collective. The image
+keeps OpenPI's frozen NumPy 1.26.4 and TensorFlow 2.15 ABI in the trainer
+environment. Rerun 0.31.4 and its NumPy 2 dependency live in a separate
+RRD-worker environment; a local owner-only JSON contract passes only aggregate
+telemetry and sanitized lineage to that worker, and any worker or decoded
+verification failure fails the mandatory milestone while preserving the
+journal and checkpoint. Both environments contain the same NPA source revision.
+The image contains no checkpoint, dataset, terms value, credentials, or
+populated runtime cache. New bytes first publish as an immutable, scanned
+`dev-<full-git-sha>` image; a supported release tag remains quarantined until
+the exact digest completes the eight-node qualification. The trusted public
+image workflow is the sole build surface, so no multi-stage builder is hidden
+inside a BYOF resource profile.
+
+`openpi-pi05-full-droid-finetune.yaml` then invokes upstream
+`scripts/train.py:main` without reimplementing its loop. The workflow hard-codes
+the pinned recipe's completion contract rather than exposing smoke-sized knobs:
+
+- DROID RLDS `1.0.1` from the public `gs://gresearch/robotics/droid/1.0.1`
+  source, checksum-synchronized to a run-owned durable PVC;
+- normalization statistics over `10,000,000` frames;
+- runtime staging of OpenPI's pinned DROID sample-range JSON as the exact
+  single public object into the durable run cache, with byte/SHA-256/JSON
+  validation before normalization (the file is not baked into the image);
+- global batch size `256` (`32` samples per visible device);
+- `100,000` optimizer steps, approximately one upstream-described epoch;
+- eight nodes with exactly one RTX PRO 6000 GPU each, compute capability
+  `12.0`, and `fsdp_devices=8`, which must produce a global `(1, 8)` JAX mesh.
+
+The pinned OpenPI RLDS wrapper rejects multi-process JAX even though its trainer
+and Orbax checkpoint manager are multi-host capable. The NPA adapter makes only
+the required input-side change: it initializes one JAX process per node, shards
+the RLDS source before shuffle, divides the unchanged global batch into eight
+local batches of 32, and passes process-local batches into the upstream global
+data sharding. NumPy 2 can expose the RLDS action tensor as a read-only view,
+while the pinned joint-position recipe's next `DeltaActions` transform updates
+that tensor in place. The same adapter therefore inserts a fail-closed writable
+copy of only the action tensor between the pinned `DroidInputs` and
+`DeltaActions` transforms; it rejects any upstream transform-order drift and
+does not copy image payloads or patch the upstream checkout. All ranks still
+invoke `scripts/train.py:main`; the recipe,
+optimizer, step count, model, and checkpoint implementation remain upstream.
+Rank zero wraps the pinned trainer's existing `wandb.log` and checkpoint-save
+callbacks to append a fsynced, resume-deduplicated telemetry journal. It records
+the real reduced loss, gradient and parameter norms, exact optimizer schedule,
+measured interval throughput/timing, and checkpoint events; it does not add a
+collective or change the upstream loop. The workflow turns factual journal
+prefixes into independent immutable Rerun recordings rather than appending to a
+partial file:
+
+- preparation emits `reports/rrd/preparation.rrd` after checksum verification
+  and normalization complete, with dataset coverage and normalization progress;
+- a separate fixed 100-update qualification emits
+  `qualification-step-000100.rrd` from its own journal and checkpoint;
+- full training emits an early, explicitly checkpoint-free
+  `progress-step-000500.rrd` from the stable journal prefix through source step
+  499, followed by `progress-step-001000.rrd` and checkpoint-aligned snapshots
+  at 10,000, 25,000, 50,000, 75,000, and 100,000 completed updates. During an
+  explicit 1,000-update operator pause, the 1,000-update recording is instead
+  checkpoint-required and covers source steps 0 through 999.
+
+The upstream loop numbers its final update `optimizer_step=99999`, so the
+`progress-step-100000` manifest explicitly records factual coverage through
+99,999; it does not invent a 100,000 timeline row. Each checkpoint-aligned
+snapshot waits for the asynchronous Orbax manager and atomically records a
+run-scoped completion marker before conversion. Every closed RRD is decoded,
+its optimizer coverage is compared with the source journal prefix, and its
+uploaded bytes are read back before a content-hashed companion manifest is
+written. No mutable `latest.rrd` exists. The recordings carry sanitized
+source/recipe/run provenance and aggregate device health, and state that this
+offline run produced no held-out before/after policy trajectory. No stock
+trajectory is substituted.
+
+The durable claim must have room for the roughly 1.8 TB dataset plus runtime
+caches and checkpoints. It is an operator-created run resource, supplied through
+`--var durable_pvc=<claim>`, and is not committed with a live infrastructure
+identity. A replacement pod sees the same dataset and checkpoint directory;
+the wrapper selects upstream `resume=True` only when a checkpoint is actually
+present. The reference workflow defaults to the complete 100,000-update recipe
+with `pause_after_updates: "0"`. The only supported nonzero value is an explicit
+operator-requested pause after 1,000 completed updates. That run-scoped override
+uses optimizer steps 0 through 999, logs every update, waits for the ordinary
+upstream final-save callback and Orbax manager, writes the atomic completion
+marker, and publishes a checkpoint-required `progress-step-001000.rrd` plus a
+content-hashed paused report. It reports 99,000 updates outstanding and never
+claims convergence. Re-running with zero, the same run id, durable PVC, and
+artifact prefix restores optimizer state and continues at step 1,000 without
+rewriting the immutable pause recording or manifest.
+
+Full-recipe success requires all of the following machine evidence in the run-scoped report:
+eight matching physical devices on eight distinct nodes, the exact one-by-eight mesh, byte-and-object
+agreement with the authoritative GCS listing after checksum sync, normalization
+statistics, normal return from the pinned upstream trainer, the final upstream
+checkpoint directory, an immutable content-hashed S3 checkpoint manifest, and
+a read-after-write preparation RRD, qualification RRD, and every required full
+training milestone RRD that pass `rerun rrd verify`, decoded
+identity/timeline/entity inspection, journal-coverage comparison, and manifest
+hash validation. The telemetry journals and the pause-compatible preparation,
+qualification, 500-update, and 1,000-update RRD/manifests are declared run
+outputs so artifact discovery can find them. Later complete-recipe milestones
+remain immutable artifacts indexed by the final report's `rerun_milestones`
+list; they are not static required outputs because a deliberate 1,000-update
+pause must not be failed or retried for correctly absent future milestones.
+Offline training does not by itself claim physical-robot task success.
+
+For an explicit 1,000-update pause, the terminal status is `paused`, not
+`passed`. Acceptance requires exact journal coverage for optimizer steps
+0–999, the finalized step-999 checkpoint and completion marker, checkpoint
+upload/download hash agreement, decoded RRD coverage through step 999, the
+write-once milestone manifest, and a content-hashed paused report carrying the
+`operator_requested_pause` limitation and resume-next-step contract.
+
+Validate the production spec locally:
+
+```bash
+npa/.venv/bin/npa workbench workflow validate-spec \
+  npa/workflows/workbench/npa-workflows/openpi-pi05-full-droid-finetune.yaml
+npa/.venv/bin/npa workbench workflow plan-spec \
+  npa/workflows/workbench/npa-workflows/openpi-pi05-full-droid-finetune.yaml \
+  --run-id openpi-full-droid-plan \
+  --var runtime_image=registry.example.invalid/operator/openpi@sha256:<digest> \
+  --var durable_pvc=<run-owned-claim>
+```
+
+Before live submission, prove the selected project/tenant/region, eight reserved
+one-GPU node shapes, a ReadWriteMany volume, writable workflow S3 prefix, exact
+image digest and pull, and runtime-only terms secret. Submit with
+`--max-wait-seconds 0`; no workflow,
+job, cost, or training deadline is added. Preserve the same run id, PVC, digest,
+and output prefix when resuming.
+
 Validate and render both connected workflows:
 
 ```bash

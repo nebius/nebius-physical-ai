@@ -38,26 +38,26 @@ If it is older than 3.10 (or missing):
 - **Windows:** install from [python.org](https://www.python.org/downloads/)
   (check "Add python.exe to PATH"), or from the Microsoft Store.
 
-## 2. Create a virtual environment
+## 2. Clone the repository and create a virtual environment
 
 ```bash
+git clone https://github.com/nebius/nebius-physical-ai.git
+cd nebius-physical-ai
 python3 -m venv .venv
 source .venv/bin/activate
 ```
 
 On Windows, do this inside **WSL2 Ubuntu** (see [§6](#6-windows-via-wsl2)).
 
-> **`.venv` vs `npa/.venv`.** Every user-facing doc uses repo-root `.venv`.
-> Contributor tooling — [`docs/testing/e2e.md`](testing/e2e.md), the agent
-> skills, and `AGENTS.md` — validates the repo with `npa/.venv/bin/python`.
-> Both work; pick one per checkout so `npa` resolves to the interpreter you
-> think it does.
+> Create the environment **after entering the clone** so activation and cleanup
+> resolve the same directory. User-facing quickstarts use repo-root `.venv`.
+> [Contributor tooling](../CONTRIBUTING.md#testing-requirements) and `AGENTS.md`
+> use `npa/.venv/bin/python` for repository validation. Both layouts work; keep
+> one environment per checkout and use its path consistently.
 
 ## 3. Install npa (editable, from the clone)
 
 ```bash
-git clone https://github.com/nebius/nebius-physical-ai.git
-cd nebius-physical-ai
 pip install -e npa
 ```
 
@@ -65,10 +65,17 @@ Verify:
 
 ```bash
 npa --version
+npa workbench --help
 ```
 
-Prefer [`uv`](https://docs.astral.sh/uv/)? It can install Python and create the
-env in one go: `uv venv .venv && source .venv/bin/activate && uv pip install -e npa`.
+Prefer [`uv`](https://docs.astral.sh/uv/)? From the clone root, use these commands
+instead of the venv creation and installation commands above:
+
+```bash
+uv venv .venv
+source .venv/bin/activate
+uv pip install --python .venv/bin/python -e npa
+```
 
 The base install is fully capable: a plain `pip install -e npa` already
 includes every non-GPU workbench dependency (dataframe/reporting, LanceDB, the
@@ -89,8 +96,9 @@ The GPU/simulation wheels above are only needed when you run those engines
 `full`, `data`, `lancedb`, `viz`, and `server` extras still resolve (as no-ops
 now folded into the base install) so older `npa[full]` commands keep working.
 
-Activate the venv in every new shell (`source .venv/bin/activate`), or call the
-interpreter directly with `./.venv/bin/npa` without activating.
+From the clone root, activate the venv in every new shell
+(`source .venv/bin/activate`), or call `.venv/bin/npa` directly without
+activating.
 
 ### Safely uninstall the repository-local environment
 

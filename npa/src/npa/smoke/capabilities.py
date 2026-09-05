@@ -9,6 +9,13 @@ from __future__ import annotations
 
 # Each value is an ordered list of concrete checks the golden eval runs.
 GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
+    "openpi": [
+        "pinned upstream full-DROID config remains batch 256 and 100,000 steps",
+        "eight JAX processes form one global (1, 8) FSDP mesh",
+        "each distinct node exposes exactly one RTX PRO 6000 SM120 GPU",
+        "DROID 1.0.1 byte/object inventory and ten-million-frame normalization pass",
+        "upstream trainer writes final step 99999 and an immutable checkpoint manifest",
+    ],
     "base-cuda13-b300": [
         "torch import + CUDA device available",
         "flash_attn import (Blackwell/CUDA13 stack)",
@@ -170,8 +177,8 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
         "no LTX source, weights, or CUDA distribution present in the image",
     ],
     "sim2real-control": [
-        "canonical compositional stage-adapter module imports",
-        "stage CLI exposes the complete 1-through-14 contract",
+        "canonical 14-stage compositional workflow loads and validates",
+        "real controller expands promote and loop-back execution plans",
         "exact baked source and immutable-image checks run before stage work",
     ],
     "envgen": [
@@ -186,7 +193,9 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
         "FrankaPickPlace rollout step",
     ],
     "rerun-viewer": [
-        "rerun SDK import + __version__",
+        "robotics joint trace conversion to a non-empty RRD recording",
+        "Rerun CLI verify and entity readback",
+        "Rerun web viewer serves the recording over HTTP",
     ],
     "foxglove-embed": [
         "/healthz reports the service and the pinned @foxglove/embed version",
