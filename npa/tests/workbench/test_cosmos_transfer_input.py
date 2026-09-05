@@ -741,9 +741,9 @@ def test_run_cosmos_transfer_names_gated_access_denial_without_leaking_prompt(
 ) -> None:
     repo = tmp_path / "repo"
     (repo / "examples").mkdir(parents=True)
-    monkeypatch.setattr(tx, "cosmos_transfer_repo", lambda: repo)
-    monkeypatch.setattr(tx, "ensure_env", lambda _repo: Path("/usr/bin/python3"))
-    monkeypatch.setenv("HF_TOKEN", "unit-test-placeholder")
+    # The denial being tested comes from inference. Reuse the isolated runtime
+    # fixture so an unrelated guardrail download cannot mask that subprocess.
+    _fake_env(monkeypatch, repo)
     secret_prompt = "a secret prompt that must never reach the raised message"
 
     def fake_run(cmd, *_args, **kwargs):
