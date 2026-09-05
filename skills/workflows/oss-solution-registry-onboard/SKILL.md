@@ -350,8 +350,9 @@ The candidate uses one RTX PRO 6000 Blackwell (`sm_120`), native
 with an explicit `sm_120` architecture check, and run-time model acquisition.
 No weights are baked, and the upstream native PyTorch SDPA fallback is used.
 
-Accepted historical hard-gate evidence, validated by a prior private record on
-one RTX PRO 6000 Blackwell (`sm_120`) using Torch 2.7.1/CUDA 12.8:
+Accepted current single-GPU evidence, bound to the exact public digest in
+`npa/src/npa/deploy/wan2_2_image_manifest.json`, on one RTX PRO 6000 Blackwell
+(`sm_120`) using Torch 2.13.0/CUDA 13.0:
 
 - `wan2.2_ti2v_5b_text_to_video` (real 1280x704 MP4)
 - `wan2.2_decoded_mp4_validation` (decode all frames; dimensions/count/fps and
@@ -376,11 +377,11 @@ qualification:
 The primary artifact is `wan2_2_ti2v_5b_text_to_video.json`; the MP4 is
 `wan2_2_ti2v_5b.mp4`, and the actual pulled image emits
 `wan2_2_runtime_inventory.json` with installed package/license metadata and a
-baked-checkpoint scan. All three are present in S3 for the acceptance run; its
-2,923,858-byte H.264 MP4 (SHA-256 `60001084…92328`) decoded as 17 1280x704
-frames at 24 fps and passed the non-uniform-content gates. Kubernetes observed
-the immutable accepted image digest as the running `imageID` in both fresh
-single- and four-GPU proofs; each fresh RRD embeds the exact generated MP4.
+baked-checkpoint scan. The current single-GPU acceptance record binds the
+runtime inventory, MP4, and verified RRD to the accepted digest. Its
+2,807,385-byte H.264 MP4 decoded as 17 1280x704 frames at 24 fps and passed
+the non-uniform-content gates. The prior four-GPU proof remains historical
+and does not qualify the current release's distributed path.
 
 Deferred: TI2V image-to-video until its own live input/output evidence; T2V and
 I2V A14B, S2V-14B, Animate-14B, and official training as separate contracts.
@@ -393,10 +394,11 @@ MP4 alongside static run evidence; see `skills/tools/wan2-2/SKILL.md` and
 
 Pinned upstream source:
 `Lightricks/LTX-2@fd4ded7f2d88d3da713abcdd4ad41ecc4a9314ca`; gated checkpoint
-set: `Lightricks/LTX-2.5`. **No capability here is live**: the image has been
-built, pushed, and scanned by digest, but no GPU has run it. The entry exists so
-the contract is reviewable before evidence, not so it can be mistaken for
-evidence.
+set: `Lightricks/LTX-2.5`. The accepted `2.5-rtfetch-20260817` release passed
+payload and entitlement-refusal gates plus real text-to-video generation and
+independent MP4 decoding on one RTX PRO 6000. The exact digest and 1536×1024,
+121-frame, 1,994,625-byte result are recorded in
+`npa/src/npa/deploy/ltx2_image_manifest.json`; new image bytes require new proof.
 
 Read this one before onboarding any non-OSI model, because it breaks the habit
 the other entries teach. The LTX-2.x Community License Agreement (2026-08-11)
@@ -476,7 +478,7 @@ A solution is registry-ready only after all applicable gates pass:
 | Documentation | Upstream docs read and cited for every claimed capability |
 | License | Upstream license and asset/model/data restrictions recorded, and the image's redistribution class set per `skills/atomic/solution-licensing/SKILL.md` |
 | Packaging | BYOF image builds and includes `npa_source_metadata.json` |
-| Registry | Redistributable candidate pushed to private GHCR with an immutable dev SHA, or restricted image pushed only to an operator-controlled registry |
+| Registry | Official public development image passes all pre-publication gates and uses `dev-<full-git-sha>`; BYOF or restricted images use only an operator-controlled registry |
 | Contract | Inputs, outputs, runtime, GPU, credentials, and failure modes documented |
 | Workflow | NPA workflow validates/plans if a workflow is part of the registry entry |
 | Smoke | Capability-level smoke commands pass in the container or service |
