@@ -27,7 +27,7 @@ function generateAgentUiHtml(leisaacEnabled = false) {
       `print(rendered_agent_ui_html(leisaac_enabled=${leisaacEnabled ? "True" : "False"}))`,
   ], { encoding: "utf8", maxBuffer: 4 * 1024 * 1024 });
   if (rendered.status !== 0) {
-    throw new Error(`Unable to render NPA agent UI: ${rendered.stderr}`);
+    throw new Error(`Unable to render NPA agent UI: ${rendered.error?.message || rendered.stderr || `exit ${rendered.status}`}`);
   }
   const html = rendered.stdout;
   return html;
