@@ -30,6 +30,8 @@ QWEN_IMAGE_EDIT_REVISION = "6f3ccc0b56e431dc6a0c2b2039706d7d26f22cb9"
 COSMOS3_SUPER_IMAGE2VIDEO_REVISION = "4f847566f3d3388fbf0ac07b99dd1a6432db9ecd"
 QWEN_IMAGE_EDIT_MODEL = "Qwen/Qwen-Image-Edit-2511"
 COSMOS3_SUPER_IMAGE2VIDEO_MODEL = "nvidia/Cosmos3-Super-Image2Video"
+RFDETR_BASE_URL = "https://storage.googleapis.com/rfdetr/rf-detr-base-coco.pth"
+RFDETR_BASE_SHA256 = "d8f70210e425a4a4234d547737f57500bcc4ac24a333b99e33d9d5a371e0b80f"
 
 DIRECT_GENERATION_MODELS = {
     "image-attribute-augmentation": (
@@ -134,6 +136,12 @@ _VARIANTS: dict[str, dict[str, Any]] = {
             "docker.io/vllm/vllm-omni@sha256:5d8c7e742c98858f257d82307e378391f0e7d77065e141c733cc4778042128ab",
             "nvcr.io/nvidia/paidf-event-and-person-attribute-search-service@sha256:0f581ff6d92efd391281e5787a8b1fda76556443ade47c1f5d59d4c345a01f6a",
         ],
+        "selected_generation_parent": "docker.io/vllm/vllm-omni@sha256:8b0cc5438eb27b34cdfd22011b735da6a94835a09e9c56ddf9e8cb300d679919",
+        "runtime_security_update": (
+            "aligned upstream vLLM and vLLM-Omni 0.22.0 replace the blueprint's "
+            "vulnerable 0.20 runtime for CVE-2026-48746; the Qwen image-edit "
+            "model revision and published service protocol remain unchanged"
+        ),
         "outputs": "augmented image dataset, attributes, skips, and provenance",
     },
     "event-video-generation": {
@@ -142,6 +150,11 @@ _VARIANTS: dict[str, dict[str, Any]] = {
         "preparation": "input validation and deterministic anomaly/environment sampling",
         "generation": "NVIDIA PAIDF Augmentation 1.1.0 Cosmos3 image2video protocol",
         "models": {COSMOS3_SUPER_IMAGE2VIDEO_MODEL: COSMOS3_SUPER_IMAGE2VIDEO_REVISION},
+        "detection_checkpoint": {
+            "url": RFDETR_BASE_URL,
+            "sha256": RFDETR_BASE_SHA256,
+            "fetch": "public runtime download with mandatory upstream SHA-256 verification",
+        },
         "labeling": (
             "NVIDIA PAIDF detection/tracking, captioning, visual-QA, and "
             "event/person attribute-search protocols"

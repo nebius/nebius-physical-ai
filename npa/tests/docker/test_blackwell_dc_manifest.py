@@ -262,6 +262,10 @@ def test_names_match_the_real_container_image_names(entries: list[dict]) -> None
         "npa-paidf-anomalygen-sky",
         "npa-paidf-image-edit-sky",
         "npa-paidf-event-video-sky",
+        "npa-paidf-detection-sky",
+        "npa-paidf-captioning-sky",
+        "npa-paidf-visual-qa-sky",
+        "npa-paidf-attribute-search-sky",
     }
     unknown = [
         entry["name"]

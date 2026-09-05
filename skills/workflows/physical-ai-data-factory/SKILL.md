@@ -45,6 +45,18 @@ placeholders deliberately cannot run. The live matrix uses
 use the corresponding checked-in compatibility recipe and prove its built
 bytes, pullability, and full workload before claiming support.
 
+IAA additionally requires `attribute_search_image`; EVG requires that image plus
+`detection_image`, `captioning_image`, and `visual_qa_image`. These are restricted
+operator-built wrappers over the exact NGC service parents. The live matrix
+requires `NPA_E2E_PAIDF_ATTRIBUTE_SEARCH_IMAGE`, and for EVG also
+`NPA_E2E_PAIDF_DETECTION_IMAGE`, `NPA_E2E_PAIDF_CAPTIONING_IMAGE`, and
+`NPA_E2E_PAIDF_VISUAL_QA_IMAGE`. Every value must be an exact scanned digest.
+Supply the operator registry's pull secret through the resource configuration;
+an NGC pull secret authorizes the parent fetch during the operator's build.
+The original `main` entrypoints consume CLI arguments instead of forwarding
+SkyPilot's shell. The compatibility entrypoints preserve arbitrary argv and
+leave the genuine `/app/.venv/bin/main` service CLI available to NPA.
+
 The IAA and EVG service model snapshots are also immutable workflow config:
 Qwen Image Edit `6f3ccc0b56e431dc6a0c2b2039706d7d26f22cb9` and Cosmos3 Super
 Image2Video `4f847566f3d3388fbf0ac07b99dd1a6432db9ecd`, respectively.

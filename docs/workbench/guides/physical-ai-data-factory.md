@@ -81,6 +81,36 @@ digests with `--var generation_image=<operator-image@sha256:digest>`. DIG uses
 are deliberately non-runnable placeholders; no completed wrapper build or live
 acceptance is claimed until registry and workload evidence exist.
 
+IAA selects the official aligned vLLM/Omni 0.22.0 parent to fix the
+[authentication bypass in the blueprint's 0.20 runtime](https://github.com/vllm-project/vllm/security/advisories/GHSA-94f4-hr76-p5j6).
+Its Qwen model revision and image-edit protocol are preserved. Upstream
+provenance records both the original blueprint image and this security update;
+the executed report records the actual worker digest.
+
+The labeling stages likewise require the exact private digests built from
+`paidf-attribute-search-sky` (IAA and EVG), `paidf-detection-sky`,
+`paidf-captioning-sky`, and `paidf-visual-qa-sky` (EVG). Set
+`attribute_search_image`, `detection_image`, `captioning_image`, and
+`visual_qa_image` as applicable. Their placeholders deliberately fail before
+launch. These restricted recipes retain the pinned NGC service environment and
+real `/app/.venv/bin/main` CLI, adding worker bootstrap and command forwarding.
+NPA uses an independent `/opt/npa-venv` so its setup leaves vendor dependencies
+unchanged.
+Configure pull secrets for the operator registry. Build-byte scanning, registry
+pullability, bootstrap proof and real labeling artifacts remain required.
+
+EVG's detector runtime-fetches the public RF-DETR Base checkpoint with the
+SHA-256 published in the pinned auto-labeling source. NPA requires that same
+digest for custom cache filenames too; a different model hash fails before
+labeling. The source URL and expected hash appear in both upstream provenance
+and the completed detection report. The selected BoostTrack path uses no
+additional ReID model.
+
+The live matrix takes these digests from
+`NPA_E2E_PAIDF_ATTRIBUTE_SEARCH_IMAGE`, `NPA_E2E_PAIDF_DETECTION_IMAGE`,
+`NPA_E2E_PAIDF_CAPTIONING_IMAGE`, and `NPA_E2E_PAIDF_VISUAL_QA_IMAGE`; it does not
+substitute the incompatible raw NGC parents when an override is missing.
+
 IAA and EVG preserve the upstream service/batch boundary by starting the pinned
 vLLM-Omni generation service inside the same SkyPilot state that consumes it.
 Each real PAIDF component gets the upstream three retries with a 30-second retry

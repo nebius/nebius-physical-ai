@@ -77,6 +77,7 @@ CONTAINER_IMAGE_NAMES = {
 # npa/tests/docker/test_packaging_contract.py locks the two inventories together.
 SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS: frozenset[str] = frozenset(
     {
+        "paidf-event-video-sky",
         "cosmos2-transfer",
         "cosmos3",
         "cosmos3-reason",
@@ -118,6 +119,10 @@ def requires_skypilot_bootstrap_runtime_probe(image: str) -> bool:
 # PAIDF AnomalyGen and Cosmos3-Super benchmark runtimes remain private.
 RESTRICTED_PUBLICATION_TOOLS: frozenset[str] = frozenset(
     {
+        "paidf-detection-sky",
+        "paidf-captioning-sky",
+        "paidf-visual-qa-sky",
+        "paidf-attribute-search-sky",
         "paidf-anomalygen-sky",
         "paidf-image-edit-sky",
         "paidf-event-video-sky",

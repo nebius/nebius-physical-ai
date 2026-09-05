@@ -21,6 +21,32 @@ from npa.workflows.paidf_upstream import (
 TOKEN_FACTORY_ENDPOINT = "https://api.tokenfactory.nebius.com/v1"
 
 
+@pytest.mark.parametrize("configured", [None, "", paidf_native.RFDETR_BASE_SHA256])
+def test_detection_custom_cache_cannot_skip_published_hash(monkeypatch, configured):
+    monkeypatch.setenv("RFDETR_MODEL_PATH", "/tmp/custom-checkpoint.pth")
+    if configured is None:
+        monkeypatch.delenv("RFDETR_MODEL_SHA256", raising=False)
+    else:
+        monkeypatch.setenv("RFDETR_MODEL_SHA256", configured)
+
+    paidf_native._bind_detection_checkpoint()
+
+    assert os.environ["RFDETR_MODEL_SHA256"] == paidf_native.RFDETR_BASE_SHA256
+
+
+def test_detection_rejects_a_different_model_digest_before_materialization(monkeypatch):
+    monkeypatch.setenv("RFDETR_MODEL_SHA256", "f" * 64)
+    monkeypatch.setattr(
+        paidf_native, "_read_run_artifact",
+        lambda *_args: pytest.fail("must reject unsupported weights before reading input"),
+    )
+    with pytest.raises(paidf_native.PaidfNativeError, match="published RF-DETR"):
+        paidf_native.run_auto_label(
+            "evg", "detection", "unused", "unused", "unused",
+            TOKEN_FACTORY_ENDPOINT, "vlm", TOKEN_FACTORY_ENDPOINT, "llm", "unit-run",
+        )
+
+
 def _native_identity(kind: str, workflow: str | None = None) -> dict:
     identity = {"schema": f"npa.paidf.native.{kind}.v1", "run_id": "unit-run"}
     if workflow is not None:
@@ -596,6 +622,7 @@ def test_iaa_labeling_consumes_postprocessing_and_stages_query_prompt(
         return destination
 
     def component(argv):
+        assert argv[0] == "/app/.venv/bin/main"
         assert argv[argv.index("--attribute-json") + 1] == str(attributes)
         config = yaml.safe_load(Path(argv[argv.index("--config-file") + 1]).read_text())
         assert config["attribute_json"] == str(attributes)

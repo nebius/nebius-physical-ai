@@ -731,6 +731,38 @@
       "notes": "Built on the CUDA 12.4 base from the live-accepted BYOF evidence. cu124 wheels stop at sm_90, so the image cannot run on datacenter Blackwell (sm_100/sm_103) without a CUDA 13 rebuild; RTX PRO 6000 (sm_120) also requires a cu130 rebuild. RoboCasa/robosuite are Apache-2.0 and kitchen assets are runtime downloads. Validation candidate: not yet built or GPU-validated.",
       "blocked_reason": "CUDA 12.4 base wheels stop at sm_90; datacenter Blackwell (sm_100/sm_103) and RTX PRO 6000 (sm_120) need a CUDA 13 rebuild",
       "upstream_tracking": "robosuite/MuJoCo CUDA 13 wheel availability and a cu130 rebuild of the npa-robocasa image"
+    },
+    {
+      "name": "npa-paidf-detection-sky",
+      "dockerfile": "paidf-detection-sky/Dockerfile",
+      "verdict": "unknown",
+      "validation": "pending-build",
+      "smoke": "Execute the real PAIDF labeling stage within the complete IAA/EVG workflow; require native sidecars and final artifact lineage.",
+      "notes": "Retains the pinned NGC PyTorch RF-DETR runtime; B200 compatibility requires real detection/tracking output. Restricted operator-built recipe. Built-byte security scans, wrapper bootstrap and functional acceptance are pending."
+    },
+    {
+      "name": "npa-paidf-captioning-sky",
+      "dockerfile": "paidf-captioning-sky/Dockerfile",
+      "verdict": "not-applicable",
+      "validation": "not-required",
+      "smoke": "Execute the real PAIDF labeling stage within the complete IAA/EVG workflow; require native sidecars and final artifact lineage.",
+      "notes": "CPU labeling client uses the configured remote VLM/LLM; no local GPU is requested. Restricted operator-built recipe. Built-byte security scans, wrapper bootstrap and functional acceptance are pending."
+    },
+    {
+      "name": "npa-paidf-visual-qa-sky",
+      "dockerfile": "paidf-visual-qa-sky/Dockerfile",
+      "verdict": "not-applicable",
+      "validation": "not-required",
+      "smoke": "Execute the real PAIDF labeling stage within the complete IAA/EVG workflow; require native sidecars and final artifact lineage.",
+      "notes": "CPU labeling client uses the configured remote VLM/LLM; no local GPU is requested. Restricted operator-built recipe. Built-byte security scans, wrapper bootstrap and functional acceptance are pending."
+    },
+    {
+      "name": "npa-paidf-attribute-search-sky",
+      "dockerfile": "paidf-attribute-search-sky/Dockerfile",
+      "verdict": "not-applicable",
+      "validation": "not-required",
+      "smoke": "Execute the real PAIDF labeling stage within the complete IAA/EVG workflow; require native sidecars and final artifact lineage.",
+      "notes": "CPU labeling client uses the configured remote VLM/LLM; no local GPU is requested. Restricted operator-built recipe. Built-byte security scans, wrapper bootstrap and functional acceptance are pending."
     }
   ],
   "validation_evidence": {

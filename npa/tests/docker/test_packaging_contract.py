@@ -12,6 +12,7 @@ import yaml
 
 from npa.deploy.images import (
     CONTAINER_IMAGE_NAMES,
+    RESTRICTED_PUBLICATION_TOOLS,
     SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS,
     SKYPILOT_BOOTSTRAP_RUNTIME_PROBED_TOOLS,
 )
@@ -828,19 +829,69 @@ def test_no_image_bakes_eula_acceptance(image_name: str) -> None:
     )
 
 
-@pytest.mark.parametrize("image_name", sorted(_load_contract()["images"]))
-def test_no_image_builds_from_an_nvcr_base(image_name: str) -> None:
-    """No workbench image may pull from NVIDIA's credentialed registry.
+def _assert_restricted_nvcr_parent(
+    image_name: str,
+    entry: Mapping,
+    bases: list[str],
+    restricted_tools: frozenset[str] | set[str] = RESTRICTED_PUBLICATION_TOOLS,
+) -> None:
+    """Only reviewed, exact PAIDF parents may enter operator-private recipes."""
+    from npa.workflows.paidf_upstream import upstream_contract
 
-    An nvcr.io base both bakes proprietary content and makes the build depend on an NGC
-    login, so build-your-own stops working for anyone without NGC credentials.
-    """
+    roles = {
+        "paidf-detection-sky": "detection-and-tracking-rfdetr",
+        "paidf-captioning-sky": "captioning",
+        "paidf-visual-qa-sky": "visual-qa",
+        "paidf-attribute-search-sky": "event-and-person-attribute-search",
+    }
+    vendor_bases = [base for base in bases if "nvcr.io" in base]
+    declared = entry.get("restricted_parent_image")
+    if not vendor_bases and not declared:
+        return
+    assert image_name in roles, f"{image_name}: unreviewed NGC parent"
+    assert entry.get("redistribution") == "restricted", image_name
+    assert image_name in restricted_tools, f"{image_name}: missing restricted inventory"
+    parents = upstream_contract("event-video-generation")["npa_integration"][
+        "components"
+    ]["reference_runtime_images"]
+    expected = next(
+        ref for ref in parents
+        if ref.startswith(f"nvcr.io/nvidia/paidf-{roles[image_name]}-service@")
+    )
+    assert re.fullmatch(r"nvcr\.io/[^@]+@sha256:[0-9a-f]{64}", expected)
+    assert declared == expected, f"{image_name}: unreviewed parent digest"
+    assert vendor_bases == [expected], f"{image_name}: parent differs from provenance"
+
+
+@pytest.mark.parametrize("image_name", sorted(_load_contract()["images"]))
+def test_nvcr_parents_require_exact_restricted_contract(image_name: str) -> None:
+    """Public recipes exclude NGC; private exceptions remain exact and inventoried."""
     contract = _load_contract()
     text = (WORKBENCH_DOCKER / contract["images"][image_name]["dockerfile"]).read_text(
         encoding="utf-8"
     )
-    for base in _base_image_refs(_normalize_dockerfile(text)):
-        assert "nvcr.io" not in base, f"{image_name}: builds FROM {base}"
+    _assert_restricted_nvcr_parent(
+        image_name, contract["images"][image_name],
+        _base_image_refs(_normalize_dockerfile(text)),
+    )
+
+
+@pytest.mark.parametrize("mutation", ["wrong-digest", "public", "missing-inventory"])
+def test_restricted_nvcr_parent_rejects_unsafe_contract_mutations(mutation: str) -> None:
+    name = "paidf-detection-sky"
+    entry = deepcopy(_load_contract()["images"][name])
+    bases = [entry["restricted_parent_image"]]
+    restricted = set(RESTRICTED_PUBLICATION_TOOLS)
+    if mutation == "wrong-digest":
+        entry["restricted_parent_image"] = bases[0] = bases[0].split("@")[0] + (
+            "@sha256:" + "0" * 64
+        )
+    elif mutation == "public":
+        entry["redistribution"] = "public"
+    else:
+        restricted.remove(name)
+    with pytest.raises(AssertionError):
+        _assert_restricted_nvcr_parent(name, entry, bases, restricted)
 
 
 def test_packaging_doc_exists() -> None:

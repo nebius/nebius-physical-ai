@@ -58,6 +58,10 @@ All first-class images live under `npa/docker/workbench/`:
 | PAIDF AnomalyGen Sky compatibility (restricted) | `paidf-anomalygen-sky/Dockerfile` | operator-built job shell; never public GHCR |
 | PAIDF Qwen Image Edit Sky compatibility (restricted) | `paidf-image-edit-sky/Dockerfile` | operator-built worker shell over the pinned upstream runtime; never public GHCR |
 | PAIDF Cosmos3 Super Image2Video Sky compatibility (restricted) | `paidf-event-video-sky/Dockerfile` | operator-built worker shell over the pinned upstream runtime; never public GHCR |
+| PAIDF RF-DETR detection Sky compatibility (restricted) | `paidf-detection-sky/Dockerfile` | operator-built worker shell; retains the upstream GPU detection CLI |
+| PAIDF captioning Sky compatibility (restricted) | `paidf-captioning-sky/Dockerfile` | operator-built worker shell; remote-VLM labeling client |
+| PAIDF Visual QA Sky compatibility (restricted) | `paidf-visual-qa-sky/Dockerfile` | operator-built worker shell; remote-VLM labeling client |
+| PAIDF attribute-search Sky compatibility (restricted) | `paidf-attribute-search-sky/Dockerfile` | operator-built worker shell; remote-LLM attribute-search client |
 
 BYOF images (`npa-byof:<run-id>`) are **ad-hoc** and are not registered in
 `CONTAINER_IMAGE_NAMES` until promoted to Tier 2 (see

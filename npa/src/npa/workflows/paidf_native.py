@@ -32,6 +32,8 @@ from npa.workflows.paidf_upstream import (
     PAIDF_AUTO_LABELING_REVISION,
     PAIDF_ORCHESTRATION_REVISION,
     PHYSICAL_AI_DATA_FACTORY_REVISION,
+    RFDETR_BASE_SHA256,
+    RFDETR_BASE_URL,
     validate_direct_generation_model,
     validate_token_factory_endpoint,
 )
@@ -54,6 +56,19 @@ _SERVICE_WORKFLOWS = {"image-edit": "iaa", "image2video": "evg"}
 
 class PaidfNativeError(RuntimeError):
     """A PAIDF protocol or artifact contract failed closed."""
+
+
+def _bind_detection_checkpoint() -> None:
+    """Keep custom cache paths subject to the published checkpoint digest."""
+
+    expected = os.environ.get("RFDETR_MODEL_SHA256", "").strip().lower()
+    if expected and expected != RFDETR_BASE_SHA256:
+        raise PaidfNativeError(
+            "direct EVG detection requires the published RF-DETR checkpoint SHA-256"
+        )
+    # Upstream otherwise permits a custom RFDETR_MODEL_PATH basename to skip
+    # hashing. Bind its existing streaming verifier even for those cache paths.
+    os.environ["RFDETR_MODEL_SHA256"] = RFDETR_BASE_SHA256
 
 
 def _require_token_factory_endpoint(endpoint: str, role: str) -> None:
@@ -730,7 +745,7 @@ def run_local_augmentation(
 
     if service_kind == "image-edit":
         command = [
-            "vllm-omni",
+            "vllm",
             "serve",
             generation_model,
             "--revision",
@@ -1133,6 +1148,8 @@ def run_auto_label(
     }
     if workflow not in allowed or stage not in allowed[workflow]:
         raise PaidfNativeError(f"unsupported {workflow!r} auto-label stage {stage!r}")
+    if stage == "detection":
+        _bind_detection_checkpoint()
     validation_kind = "iaa-postprocess" if workflow == "iaa" else "evg-validation"
     validation = _read_run_artifact(validation_uri, validation_kind, run_id, workflow)
     accepted = validation.get("accepted")
@@ -1177,7 +1194,10 @@ def run_auto_label(
                 [{"media_path": item["media_uri"], "data_path": data_path}],
                 separators=(",", ":"),
             )
-            args = ["main", "--input", input_json]
+            # Keep the pinned vendor service environment separate from the NPA
+            # orchestration interpreter bootstrapped by SkyPilot. All reviewed
+            # paidf-auto-labeling images install this console entrypoint here.
+            args = ["/app/.venv/bin/main", "--input", input_json]
             if stage == "detection":
                 args.extend(
                     [
@@ -1409,10 +1429,17 @@ def run_auto_label(
         "workflow": workflow,
         "stage": stage,
         "component": "NVIDIA paidf-auto-labeling 1.1.0",
+        "component_executable": "/app/.venv/bin/main",
         "upstream_revision": PAIDF_AUTO_LABELING_REVISION,
         "count": len(completed),
         "outputs": completed,
     }
+    if stage == "detection":
+        payload["detection_checkpoint"] = {
+            "url": RFDETR_BASE_URL,
+            "sha256": RFDETR_BASE_SHA256,
+            "verification": "upstream streaming SHA-256 verifier",
+        }
     return _write_json(payload, result_uri)
 
 

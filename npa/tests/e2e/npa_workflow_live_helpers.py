@@ -1022,6 +1022,28 @@ def materialize_live_spec(
             text,
             count=1,
         )
+        labeling_images = {
+            "attribute_search_image": "NPA_E2E_PAIDF_ATTRIBUTE_SEARCH_IMAGE",
+        }
+        if name == "paidf-event-video-generation.yaml":
+            labeling_images.update(
+                detection_image="NPA_E2E_PAIDF_DETECTION_IMAGE",
+                captioning_image="NPA_E2E_PAIDF_CAPTIONING_IMAGE",
+                visual_qa_image="NPA_E2E_PAIDF_VISUAL_QA_IMAGE",
+            )
+        for config_key, environment_key in labeling_images.items():
+            image = os.environ.get(environment_key, "").strip()
+            if not re.fullmatch(r".+@sha256:[0-9a-f]{64}", image):
+                pytest.fail(
+                    f"{environment_key} must name the scanned operator-built "
+                    "labeling compatibility image by exact digest"
+                )
+            text = re.sub(
+                rf'{config_key}:\s*"[^"]+"',
+                f'{config_key}: "{image}"',
+                text,
+                count=1,
+            )
     elif name == "paidf-defect-image-generation.yaml":
         text = re.sub(
             r'dataset_uri:\s*"[^"]+"',

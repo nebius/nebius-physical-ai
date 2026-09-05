@@ -163,10 +163,11 @@ published, and anonymously pullable status for this exact digest only.
 
 ## External PAIDF runtime images
 
-The direct translations require operator-built compatibility images for DIG
-and generation in IAA/EVG. The exact upstream generation images failed real
-SkyPilot bootstrap probes; the wrappers supply the missing SSH/rsync worker
-prerequisites while retaining their pinned upstream runtimes. DIG builds the
+The direct translations require operator-built compatibility images for DIG,
+generation in IAA/EVG, and the four labeling services. The upstream generation
+images lack worker prerequisites; the labeling images invoke `main` instead of
+forwarding SkyPilot shell arguments. The wrappers supply missing prerequisites
+and argument forwarding while retaining their pinned upstream runtimes. DIG builds the
 pinned Apache-2.0 AnomalyGen source on public CUDA bases. Every
 workflow image reference is immutable, and submit must
 prove both registry pullability and the SkyPilot worker bootstrap contract for
@@ -178,20 +179,28 @@ grants redistribution rights.
 | --- | --- | --- |
 | DIG vendor reference (not executed) | `nvcr.io/nvidia/paidf-anomalygen@sha256:e62a87d1dc58b6de8b8a352dc8ec2a2e3e400288d66b2b8b19b92d97e7a0bc09` | Vendor-owned NGC image; pull verified, but not SkyPilot-compatible |
 | DIG setup, fine-tune, generation, and native labels | `<operator-registry>/npa-paidf-anomalygen-sky@sha256:<digest>` built from `paidf-anomalygen-sky/Dockerfile` | Restricted source build on public CUDA bases; never NPA public GHCR |
-| IAA Qwen Image Edit upstream parent | `docker.io/vllm/vllm-omni@sha256:5d8c7e742c98858f257d82307e378391f0e7d77065e141c733cc4778042128ab` | Exact wrapper parent; upstream worker bootstrap failed |
+| IAA Qwen Image Edit blueprint reference | `docker.io/vllm/vllm-omni@sha256:5d8c7e742c98858f257d82307e378391f0e7d77065e141c733cc4778042128ab` | Not executed: failed bootstrap and contains vLLM 0.20 affected by CVE-2026-48746 |
+| IAA Qwen Image Edit selected parent | `docker.io/vllm/vllm-omni@sha256:8b0cc5438eb27b34cdfd22011b735da6a94835a09e9c56ddf9e8cb300d679919` | Aligned upstream vLLM/Omni 0.22.0 security update; fresh wrapper validation pending |
 | EVG Cosmos3 Super Image2Video upstream parent | `docker.io/vllm/vllm-omni@sha256:970dee6658ea223f615b2438ce41e47f1d5322225482546e6e6bc5d8134f757c` | Exact wrapper parent; upstream worker bootstrap failed |
 | IAA generation worker | `<operator-registry>/npa-paidf-image-edit-sky@sha256:<digest>` | Restricted compatibility build; byte scans and GPU acceptance pending |
 | EVG generation worker | `<operator-registry>/npa-paidf-event-video-sky@sha256:<digest>` | Restricted compatibility build; byte scans and GPU acceptance pending |
-| IAA/EVG person attribute search | `nvcr.io/nvidia/paidf-event-and-person-attribute-search-service@sha256:0f581ff6d92efd391281e5787a8b1fda76556443ade47c1f5d59d4c345a01f6a` | Vendor-owned NGC image; restricted pull, not NPA-published |
-| EVG detection and tracking | `nvcr.io/nvidia/paidf-detection-and-tracking-rfdetr-service@sha256:6b35e63b95cab7cd772906bcb08be978de7526427f0d1925ab84439dd4a9561e` | Vendor-owned NGC image; restricted pull, not NPA-published |
-| EVG captioning | `nvcr.io/nvidia/paidf-captioning-service@sha256:17e1e3f53cc66342183f7d0b6eed76907993bb325a13db90c46d9a8cf664d804` | Vendor-owned NGC image; restricted pull, not NPA-published |
-| EVG Visual QA | `nvcr.io/nvidia/paidf-visual-qa-service@sha256:e681c8dee849c7ac9fc5b182f51e9efd0da460972b08850d40f00aa9d5e3c97c` | Vendor-owned NGC image; restricted pull, not NPA-published |
+| IAA/EVG attribute-search upstream parent | `nvcr.io/nvidia/paidf-event-and-person-attribute-search-service@sha256:0f581ff6d92efd391281e5787a8b1fda76556443ade47c1f5d59d4c345a01f6a` | Exact restricted NGC wrapper parent; original entrypoint does not forward worker argv |
+| EVG detection/tracking upstream parent | `nvcr.io/nvidia/paidf-detection-and-tracking-rfdetr-service@sha256:6b35e63b95cab7cd772906bcb08be978de7526427f0d1925ab84439dd4a9561e` | Exact restricted NGC wrapper parent; original entrypoint does not forward worker argv |
+| EVG captioning upstream parent | `nvcr.io/nvidia/paidf-captioning-service@sha256:17e1e3f53cc66342183f7d0b6eed76907993bb325a13db90c46d9a8cf664d804` | Exact restricted NGC wrapper parent; original entrypoint does not forward worker argv |
+| EVG Visual QA upstream parent | `nvcr.io/nvidia/paidf-visual-qa-service@sha256:e681c8dee849c7ac9fc5b182f51e9efd0da460972b08850d40f00aa9d5e3c97c` | Exact restricted NGC wrapper parent; original entrypoint does not forward worker argv |
+| IAA/EVG attribute-search worker | `<operator-registry>/npa-paidf-attribute-search-sky@sha256:<digest>` | Restricted compatibility recipe; build, scans and acceptance pending |
+| EVG detection/tracking worker | `<operator-registry>/npa-paidf-detection-sky@sha256:<digest>` | Restricted compatibility recipe; build, scans and GPU acceptance pending |
+| EVG captioning worker | `<operator-registry>/npa-paidf-captioning-sky@sha256:<digest>` | Restricted compatibility recipe; build, scans and acceptance pending |
+| EVG Visual QA worker | `<operator-registry>/npa-paidf-visual-qa-sky@sha256:<digest>` | Restricted compatibility recipe; build, scans and acceptance pending |
 
 The licensing and runtime-fetch boundary is recorded in
 `skills/NOTICE-NVIDIA-PAIDF`. The machine-readable packaging contract includes
-the three restricted compatibility sources. NGC labeling images remain external
-images for which NPA has no Dockerfile or distributable artifact. None of the
-new compatibility images is claimed as built, published, or GPU-accepted yet.
+all seven restricted compatibility sources. The labeling wrappers preserve
+`/app/.venv/bin/main` and the vendor service packages. NPA installs into an
+independent `/opt/npa-venv`; the vendor environment remains untouched. Parent payloads
+remain subject to complete built-layer licensing and security review. No new
+compatibility image is claimed as built, published, or functionally accepted
+merely because a recipe exists.
 
 ## Validated source-registry candidates pending public release
 

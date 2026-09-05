@@ -518,6 +518,10 @@ def test_npa_workflow_runtime_live_reaches_terminal(
     }:
         _assert_paidf_native_live_artifacts(
             spec=case.spec,
+            spec_path=path,
+            config_vars=case.config_vars,
+            image_args=_image_args(case, e2e_registry),
+            registry=e2e_registry,
             waves=waves,
             bucket=live_bucket(e2e_project),
             run_id=run_id,
@@ -745,9 +749,70 @@ def _assert_paidf_live_artifacts(
     assert int(final.get("artifact_count") or 0) > 0
 
 
+def _assert_paidf_stage_image_lineage(
+    *,
+    spec_path: Path,
+    config_vars: tuple[tuple[str, str], ...],
+    image_args: list[str],
+    registry: str,
+    run_id: str,
+    read_artifact,
+) -> int:
+    """Compare executed native reports with the submitted plan's actual image routes."""
+
+    import re
+
+    from npa.orchestration.npa_workflow import build_plan, load_spec
+    from npa.orchestration.npa_workflow.skypilot_render import (
+        SkypilotRenderOptions,
+        resolve_task_image,
+    )
+
+    submitted = load_spec(spec_path)
+    submitted.config.update(dict(config_vars))
+    overrides = {}
+    for flag, value in zip(image_args[::2], image_args[1::2], strict=True):
+        if flag == "--image":
+            overrides["*"] = value
+        elif flag == "--image-override":
+            tool_ref, image = value.split("=", 1)
+            overrides[tool_ref] = image
+        else:
+            raise AssertionError("unrecognized submitted image argument")
+    options = SkypilotRenderOptions(registry=registry, image_overrides=overrides)
+    checked = 0
+    for step in build_plan(submitted, run_id=run_id).steps:
+        expected = resolve_task_image(
+            step.tool_ref, step.resources_profile, options=options
+        ).removeprefix("docker:")
+        if expected.lower() in {"", "none", "null"}:
+            continue
+        for output in step.outputs:
+            if not str(output.get("schema") or "").startswith("npa.paidf.native."):
+                continue
+            if not re.fullmatch(r".+@sha256:[0-9a-f]{64}", expected):
+                raise AssertionError(
+                    f"{step.state}: native image evidence requires a submitted digest pin"
+                )
+            report = json.loads(read_artifact(output["uri"]))
+            if not isinstance(report, dict) or (
+                report.get("schema") != output["schema"]
+                or report.get("run_id") != run_id
+            ):
+                raise AssertionError(f"{step.state}: native report identity mismatch")
+            if report.get("runtime_image") != expected:
+                raise AssertionError(f"{step.state}: runtime image provenance mismatch")
+            checked += 1
+    return checked
+
+
 def _assert_paidf_native_live_artifacts(
     *,
     spec: str,
+    spec_path: Path,
+    config_vars: tuple[tuple[str, str], ...],
+    image_args: list[str],
+    registry: str,
     waves: list[dict],
     bucket: str,
     run_id: str,
@@ -816,7 +881,21 @@ def _assert_paidf_native_live_artifacts(
         parsed = urlparse(uri)
         assert parsed.scheme == "s3" and parsed.netloc == bucket
         assert parsed.path.lstrip("/").startswith(prefix)
-        return client.get_object(Bucket=bucket, Key=parsed.path.lstrip("/"))["Body"].read()
+        return client.get_object(Bucket=bucket, Key=parsed.path.lstrip("/"))[
+            "Body"
+        ].read()
+
+    assert (
+        _assert_paidf_stage_image_lineage(
+            spec_path=spec_path,
+            config_vars=config_vars,
+            image_args=image_args,
+            registry=registry,
+            run_id=run_id,
+            read_artifact=read_artifact,
+        )
+        > 0
+    )
 
     upstream = read_json("reports/upstream.json")
     assert upstream["run_id"] == run_id

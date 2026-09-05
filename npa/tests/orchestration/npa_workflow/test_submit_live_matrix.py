@@ -6,6 +6,7 @@ import importlib.util
 from pathlib import Path
 
 import pytest
+import yaml
 
 from npa.orchestration.npa_workflow.blueprints import (
     iter_npa_workflow_specs,
@@ -37,6 +38,45 @@ def _load_live_argv():
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
+
+
+@pytest.mark.parametrize("variant", ["image-attribute-augmentation", "event-video-generation"])
+def test_paidf_live_materializer_requires_labeling_digests(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, variant: str
+) -> None:
+    helpers = _load_live_helpers()
+    image = "registry.example.invalid/npa-paidf-test@sha256:" + "a" * 64
+    for name in ("NPA_E2E_PAIDF_IAA_IMAGE", "NPA_E2E_PAIDF_EVG_IMAGE"):
+        monkeypatch.setenv(name, image)
+    monkeypatch.delenv("NPA_E2E_PAIDF_ATTRIBUTE_SEARCH_IMAGE", raising=False)
+    with pytest.raises(pytest.fail.Exception, match="NPA_E2E_PAIDF_ATTRIBUTE_SEARCH_IMAGE"):
+        helpers.materialize_live_spec(
+            tmp_path, f"paidf-{variant}.yaml", bucket="example-bucket", run_id="fixture"
+        )
+
+
+def test_paidf_live_materializer_routes_each_exact_labeling_image(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    helpers = _load_live_helpers()
+    variables = {
+        "generation_image": "NPA_E2E_PAIDF_EVG_IMAGE",
+        "attribute_search_image": "NPA_E2E_PAIDF_ATTRIBUTE_SEARCH_IMAGE",
+        "detection_image": "NPA_E2E_PAIDF_DETECTION_IMAGE",
+        "captioning_image": "NPA_E2E_PAIDF_CAPTIONING_IMAGE",
+        "visual_qa_image": "NPA_E2E_PAIDF_VISUAL_QA_IMAGE",
+    }
+    expected = {}
+    for index, (config_key, environment_key) in enumerate(variables.items(), start=1):
+        expected[config_key] = (
+            "registry.example.invalid/npa-paidf-test@sha256:" + str(index) * 64
+        )
+        monkeypatch.setenv(environment_key, expected[config_key])
+    path = helpers.materialize_live_spec(
+        tmp_path, "paidf-event-video-generation.yaml", bucket="example-bucket", run_id="fixture"
+    )
+    spec = yaml.safe_load(path.read_text())
+    assert {key: spec["config"][key] for key in expected} == expected
 
 
 def test_force_accelerators_on_cpu_profiles() -> None:

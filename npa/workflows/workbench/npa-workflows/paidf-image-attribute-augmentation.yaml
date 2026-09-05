@@ -47,6 +47,8 @@ config:
   generation_revision: "6f3ccc0b56e431dc6a0c2b2039706d7d26f22cb9"
   # Supply the scanned operator-built SkyPilot wrapper by exact digest.
   generation_image: "registry.example.invalid/npa-paidf-image-edit-sky@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  # Labeling also requires scanned operator-built compatibility images.
+  attribute_search_image: "registry.example.invalid/npa-paidf-attribute-search-sky@sha256:0000000000000000000000000000000000000000000000000000000000000000"
   service_kind: image-edit
   service_port: "8000"
   service_parallel_size: "1"
@@ -82,12 +84,7 @@ resources:
     cloud: kubernetes
     cpus: 4
     memory: 16Gi
-    image: "nvcr.io/nvidia/paidf-event-and-person-attribute-search-service@sha256:0f581ff6d92efd391281e5787a8b1fda76556443ade47c1f5d59d4c345a01f6a"
-    kubernetes:
-      pod_config:
-        spec:
-          imagePullSecrets:
-            - name: ngc-nvcr-imagepullsecret
+    image: "{{config.attribute_search_image}}"
 
 initial: record-upstream
 

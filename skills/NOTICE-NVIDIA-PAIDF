@@ -64,9 +64,14 @@ Each run writes `reports/upstream.json` (`npa.paidf.upstream.v1`) so this
 adaptation boundary and the exact public revisions travel with its artifacts.
 
 IAA and EVG generation also require restricted operator-built wrappers:
-paidf-image-edit-sky and paidf-event-video-sky retain the exact upstream
-vLLM-Omni parent digests listed in the container catalog and add only SkyPilot
-worker prerequisites and an argument-forwarding entrypoint. Actual upstream
+paidf-image-edit-sky and paidf-event-video-sky use exact upstream
+vLLM-Omni parent digests listed in the container catalog and add SkyPilot
+worker prerequisites, an isolated NPA environment, and argument forwarding. IAA
+uses the aligned upstream 0.22.0 release to fix CVE-2026-48746 in the blueprint's
+0.20 runtime, preserving the Qwen model revision and image-edit protocol.
+The original blueprint digest remains separately attributed in upstream.json.
+Reference: https://github.com/vllm-project/vllm/security/advisories/GHSA-94f4-hr76-p5j6
+Actual upstream
 bootstrap probes failed before generation. These source recipes do not claim
 built-byte security clearance or publication; the complete inherited dependency
 closure must be reviewed before any change to private-only redistribution.
@@ -79,6 +84,12 @@ Runtime model snapshots are also pinned and remain outside published images:
   nvidia/Cosmos3-Super-Image2Video
   revision 4f847566f3d3388fbf0ac07b99dd1a6432db9ecd
 
+EVG detection downloads the public RF-DETR Base checkpoint at runtime. The
+pinned auto-labeling source requires SHA-256
+d8f70210e425a4a4234d547737f57500bcc4ac24a333b99e33d9d5a371e0b80f;
+NPA preserves this verification even when an operator supplies a custom cache
+filename. The selected BoostTrack adapter does not load a ReID embedder.
+
 The DIG runtime additionally consumes the exact public snapshots pinned by
 NVIDIA/paidf-anomalygen: Cosmos3 Nano and Edge, DINOv2 Large, C-RADIOv3-B,
 Wan2.2 TI2V-5B's VAE, SAM2.1 Hiera Large, Qwen3Guard 0.6B, and the Qwen3-VL 8B
@@ -86,10 +97,25 @@ tokenizer. Cosmos Guardrail1 remains a separately gated runtime fetch. The NPA
 model-access catalog records every public revision/probe and the exact gated
 payload; none is embedded in the restricted compatibility image.
 
-IAA/EVG labeling runs vendor-owned NGC images at the immutable digests listed in
-the workflow provenance. NPA's toolRef access closure probes each exact image
-repository under the operator's NGC credential before submission. That proves
-pull entitlement only and does not grant redistribution rights.
+IAA/EVG labeling requires four restricted compatibility recipes:
+paidf-detection-sky, paidf-captioning-sky, paidf-visual-qa-sky, and
+paidf-attribute-search-sky. Each retains its exact vendor-owned NGC parent
+digest, upstream user and /app/.venv service environment. It adds missing
+SkyPilot prerequisites and Git for the pinned orchestration-asset checkout,
+then replaces ENTRYPOINT ["main"] with argument forwarding. The original
+service CLI remains /app/.venv/bin/main. NPA setup installs into a separate
+owner-writable /opt/npa-venv, with PATH preserved for login shells; it does not
+install dependencies into the vendor /app/.venv. These recipes add no model weights,
+datasets, credentials or recorded consent. The complete inherited image layers
+still require payload/license/security review; neither source inspection nor
+private registry access establishes permission to redistribute gated weights.
+They are excluded from NPA public publication and are not claimed built or
+functionally accepted merely because their source recipes exist.
+
+NPA's toolRef access closure probes each exact NGC parent repository under the
+operator's credential before submission. That proves pull entitlement only and
+does not grant redistribution rights. Runtime pullability and bootstrap must be
+proved separately against each operator-built wrapper's exact private digest.
 
 Gated weights remain runtime fetches under the operator's own upstream identity.
 Access credentials prove fetch authorization, not permission to redistribute
