@@ -5,6 +5,20 @@ description: Start, recover, or verify human Nebius CLI authentication on a remo
 
 # VM Nebius Authentication
 
+## Diagnose before starting login
+
+For a read-only readiness request, use
+`npa workbench health preflight --checks nebius --json`; do not start profile
+creation. A failed identity probe alone does not distinguish missing profile
+configuration, expired authentication, denied access, or a network failure.
+Check the selected profile's presence using the installed CLI's profile help
+and non-secret metadata. Do not dump configuration or token values. Report
+missing configuration only when established; otherwise leave the cause unknown.
+
+Create or recover a human profile only when the user authorizes login. A
+successful authentication check does not prove resource-creation permissions,
+quota, or capacity. Preserve attached-service-account profiles on agent VMs.
+
 Run on the operator/dev VM:
 
 ```bash

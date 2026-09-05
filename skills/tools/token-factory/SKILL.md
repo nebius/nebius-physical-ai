@@ -39,6 +39,27 @@ Defaults: base URL `https://api.tokenfactory.nebius.com/v1/`, overridable with
 
 ## Commands
 
+### Current pricing and usage
+
+When the task requires a price check, fetch the official public catalog at
+<https://tokenfactory.nebius.com/api/public/models_info>. The field meanings
+are documented at <https://tokenfactory.nebius.com/model-catalog.md>; the site
+also exposes <https://tokenfactory.nebius.com/llms.txt> for discovery. An empty
+rendered pricing page is not evidence that pricing is unavailable.
+
+Match pricing to the exact catalog model/flavor. Record the retrieval date and
+applicable input/output rates, including the serving mode. A public-price lookup
+does not require credentials. When inference is requested, also verify that the
+selected model is in the key-scoped model list. Public catalog presence does not
+prove account access or account-specific billing.
+If required pricing remains unresolved, stop before paid inference.
+
+Report inference usage and finish reason only when the response exposes them.
+Keep the coding agent's token usage separate. Requested output tokens are a
+limit, not measured usage; missing provider usage means cost is unmeasured.
+
+### Inference commands
+
 Every command takes local paths or `s3://` URIs for both input and output, and
 supports `--dry-run` (compute without writing the artifact) and
 `--output text|json`.

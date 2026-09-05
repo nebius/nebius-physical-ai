@@ -45,6 +45,13 @@ discards both commands' output and removes ambient `NEBIUS_IAM_TOKEN` and
 PASS requires both calls to succeed. In offline mode it returns SKIP because a
 local profile file is not proof of usable authentication.
 
+A failed Nebius identity probe does not establish that a token expired. Profile
+configuration may be missing, or access or connectivity may have failed. For
+diagnosis or authorized human login on an operator VM, see
+`skills/atomic/vm-nebius-auth/SKILL.md`. A readiness-only request does not
+authorize login or credential changes. Authentication PASS also leaves project
+permissions, quota, and capacity unverified.
+
 Profile selection uses `NPA_NEBIUS_PROFILE`, then `NEBIUS_PROFILE`, then the
 CLI's active/default profile. The project selector does not choose an auth
 profile. PASS proves authentication; permission to provision a particular
