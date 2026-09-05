@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+import hashlib
 import json
 import os
+import re
 import textwrap
 from pathlib import Path
+from typing import Any
+from uuid import uuid4
 
+from botocore.exceptions import ClientError
 import pytest
 from typer.testing import CliRunner
 
@@ -42,6 +48,126 @@ RUNNER = CliRunner()
 @pytest.fixture(scope="module")
 def forbidden_markers() -> list[str]:
     return live_credential_markers()
+
+
+@pytest.fixture
+def live_run_id(e2e_project: str | None, tmp_path: Path) -> Iterator[str]:
+    """Archive and remove only this test's uniquely owned storage objects."""
+    run_id = f"live-infra-{uuid4().hex}"
+    bucket = live_bucket(e2e_project)
+    client = s3_client_for_project(e2e_project)
+    try:
+        yield run_id
+    finally:
+        _archive_and_cleanup_live_prefix(
+            client, bucket=bucket, run_id=run_id,
+            evidence_dir=tmp_path / "live-s3-evidence",
+        )
+
+
+def _archive_and_cleanup_live_prefix(
+    client: Any, *, bucket: str, run_id: str, evidence_dir: Path,
+) -> dict[str, Any]:
+    """Keep private byte/hash evidence before deleting exact UUID-owned keys.
+
+    Cleanup failures remain visible after attempting every owned object. An
+    object whose bytes could not be archived is preserved for manual recovery.
+    No bucket lifecycle operations or parent-prefix listings are performed.
+    """
+    if not re.fullmatch(r"live-infra-[0-9a-f]{32}", run_id):
+        raise ValueError("Live cleanup requires this test's UUID run identifier")
+    prefix = f"npa-workflow-e2e/{run_id}/"
+    evidence_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    evidence_dir.chmod(0o700)
+    receipt: dict[str, Any] = {
+        "bucket": bucket, "prefix": prefix, "objects": [], "errors": [],
+        "all_owned_objects_absent": False,
+    }
+
+    def persist_receipt() -> None:
+        descriptor = os.open(
+            evidence_dir / "cleanup.json", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600,
+        )
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            json.dump(receipt, stream, indent=2, sort_keys=True)
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+
+    def error(operation: str, exc: Exception, key: str | None = None) -> None:
+        row = {"operation": operation, "error_type": type(exc).__name__}
+        if key is not None:
+            row["key"] = key
+        if isinstance(exc, ClientError):
+            row["provider_code"] = str(exc.response.get("Error", {}).get("Code", ""))
+        receipt["errors"].append(row)
+
+    persist_receipt()
+    try:
+        keys = []
+        for page in client.get_paginator("list_objects_v2").paginate(Bucket=bucket, Prefix=prefix):
+            for item in page.get("Contents", []):
+                key = item["Key"]
+                if not isinstance(key, str) or not key.startswith(prefix):
+                    raise ValueError("Storage returned an object outside the owned test prefix")
+                keys.append(key)
+    except Exception as exc:
+        error("list owned prefix", exc)
+        persist_receipt()
+        raise RuntimeError("Live S3 cleanup inventory failed; see private cleanup.json") from exc
+
+    for key in sorted(set(keys)):
+        row: dict[str, Any] = {"key": key, "archived": False, "deleted": False}
+        receipt["objects"].append(row)
+        try:
+            filename = hashlib.sha256(key.encode()).hexdigest() + ".bin"
+            archive = evidence_dir / filename
+            body = client.get_object(Bucket=bucket, Key=key)["Body"]
+            digest = hashlib.sha256()
+            try:
+                descriptor = os.open(archive, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                with os.fdopen(descriptor, "wb") as stream:
+                    for chunk in iter(lambda: body.read(1024 * 1024), b""):
+                        stream.write(chunk)
+                        digest.update(chunk)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+            finally:
+                body.close()
+            persisted = archive.read_bytes()
+            if hashlib.sha256(persisted).digest() != digest.digest():
+                raise ValueError("Archived object bytes failed hash verification")
+            row.update(archived=True, archive_file=filename, sha256=digest.hexdigest(),
+                       size_bytes=len(persisted))
+            persist_receipt()
+        except Exception as exc:
+            error("archive owned object", exc, key)
+            persist_receipt()
+            continue
+        try:
+            client.delete_object(Bucket=bucket, Key=key)
+            try:
+                client.head_object(Bucket=bucket, Key=key)
+            except ClientError as exc:
+                if str(exc.response.get("Error", {}).get("Code", "")) not in {
+                    "404", "NoSuchKey", "NotFound",
+                }:
+                    raise
+            else:
+                raise RuntimeError("Owned object remains after deletion")
+            row["deleted"] = True
+        except Exception as exc:
+            error("delete and verify owned object", exc, key)
+        persist_receipt()
+    try:
+        remaining = client.list_objects_v2(Bucket=bucket, Prefix=prefix, MaxKeys=1)
+        receipt["all_owned_objects_absent"] = not remaining.get("Contents")
+    except Exception as exc:
+        error("verify owned prefix absence", exc)
+    persist_receipt()
+    if receipt["errors"] or not receipt["all_owned_objects_absent"]:
+        raise RuntimeError("Live S3 cleanup incomplete; see private cleanup.json")
+    return receipt
 
 
 def _live_store(e2e_project: str | None, *, bucket: str, prefix: str) -> RunStateStore:
@@ -132,9 +258,10 @@ def test_guide_run_spec_scheduler_and_persist_state(
     e2e_project: str | None,
     tmp_path: Path,
     forbidden_markers: list[str],
+    live_run_id: str,
 ) -> None:
     bucket = live_bucket(e2e_project)
-    run_id = "guide-persist-live"
+    run_id = live_run_id
     spec_path = _write_live_spec(
         tmp_path,
         bucket=bucket,
@@ -180,9 +307,10 @@ def test_guide_run_spec_scheduler_and_persist_state(
 def test_guide_failed_execute_persists_failed_manifest_on_real_s3(
     e2e_project: str | None,
     tmp_path: Path,
+    live_run_id: str,
 ) -> None:
     bucket = live_bucket(e2e_project)
-    run_id = "guide-fail-live"
+    run_id = live_run_id
     spec_path = _write_live_spec(
         tmp_path,
         bucket=bucket,
@@ -204,9 +332,10 @@ def test_guide_failed_execute_persists_failed_manifest_on_real_s3(
 def test_guide_require_inputs_fails_on_missing_artifact(
     e2e_project: str | None,
     tmp_path: Path,
+    live_run_id: str,
 ) -> None:
     bucket = live_bucket(e2e_project)
-    run_id = "guide-require-inputs"
+    run_id = live_run_id
     path = tmp_path / "require-inputs.yaml"
     path.write_text(
         textwrap.dedent(
@@ -327,11 +456,12 @@ def test_live_golden_persist_manifest_on_real_s3(
     e2e_project: str | None,
     tmp_path: Path,
     forbidden_markers: list[str],
+    live_run_id: str,
 ) -> None:
     """Plan-only persist-state for every golden spec against real S3."""
 
     bucket = live_bucket(e2e_project)
-    run_id = f"live-persist-{name.replace('.yaml', '')}"
+    run_id = live_run_id
     path = materialize_live_spec(tmp_path, name, bucket=bucket, run_id=run_id)
     spec = load_spec(path)
     prefix = str(spec.config.get("prefix") or run_id)

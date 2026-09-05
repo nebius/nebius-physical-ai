@@ -939,7 +939,7 @@ def _activate_staged_runtime(path: Path, staging: Path) -> None:
 
 
 def _relocate_staged_scripts(staging: Path, target: Path) -> None:
-    """Rewrite venv console-script shebangs before the atomic directory swap."""
+    """Relocate Python shebangs and pip's long-path shell launcher header."""
 
     source = os.fsencode(str(staging))
     destination = os.fsencode(str(target))
@@ -952,9 +952,40 @@ def _relocate_staged_scripts(staging: Path, target: Path) -> None:
         except OSError:
             continue
         first_line, separator, remainder = body.partition(b"\n")
-        if not first_line.startswith(b"#!") or source not in first_line:
+        if first_line.startswith(b"#!") and source in first_line:
+            relocated = first_line.replace(source, destination) + separator + remainder
+        elif first_line == b"#!/bin/sh":
+            # pip/distlib uses this exact three-line shell/Python polyglot
+            # header when the interpreter path exceeds the shebang limit or
+            # contains spaces. Only relocate its interpreter token: replacing
+            # staging paths across a script body would corrupt application data.
+            launch, launch_separator, tail = remainder.partition(b"\n")
+            closing, closing_separator, payload = tail.partition(b"\n")
+            prefix, suffix = b"'''exec' ", b' "$0" "$@"'
+            if (
+                closing != b"' '''" or not closing_separator
+                or not launch.startswith(prefix) or not launch.endswith(suffix)
+            ):
+                continue
+            try:
+                tokens = shlex.split(os.fsdecode(launch[len(prefix):-len(suffix)]))
+            except ValueError:
+                continue
+            if len(tokens) != 1:
+                continue
+            interpreter = Path(tokens[0])
+            if interpreter.parent != bin_dir or not re.fullmatch(
+                r"python(?:\d+(?:\.\d+)?)?", interpreter.name
+            ):
+                continue
+            replacement = os.fsencode(shlex.quote(str(target / bin_dir.name / interpreter.name)))
+            relocated = (
+                first_line + separator + prefix + replacement + suffix
+                + launch_separator + closing + closing_separator + payload
+            )
+        else:
             continue
-        entry.write_bytes(first_line.replace(source, destination) + separator + remainder)
+        entry.write_bytes(relocated)
 
 
 def _validate_staged_runtime(state: VenvState, *, expected_version: str) -> None:

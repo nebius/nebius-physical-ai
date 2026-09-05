@@ -1,5 +1,10 @@
 # Workflow Engine Recommendation - W8
 
+> Historical recommendation from May 2026. NPA now uses SkyPilot as its sole
+> workflow execution engine; Argo is deprecated. See the current
+> [Ray and faster source iteration audit](ray-fast-development-audit.md) for
+> repository-grounded Ray scope and development options.
+
 ## Verdict
 
 Verdict C: Hybrid. Use Argo Workflows as the Workbench Composition layer

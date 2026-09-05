@@ -329,6 +329,26 @@ def _positive_int(
     return value
 
 
+def runtime_setup_mode(config: Mapping[str, Any]) -> str:
+    """Select NPA bootstrap or the explicitly owned image application runtime.
+
+    Image mode makes no claim that the image contains an attested NPA checkout.
+    It is for raw application commands whose dependencies and source delivery
+    are owned by that application, on an immutable image verified at render.
+    """
+
+    mode = config.get("runtime_setup", "npa")
+    if mode not in ("npa", "image"):
+        raise NpaWorkflowError("config.runtime_setup must be 'npa' or 'image'")
+    if mode == "image" and str(config.get("require_baked_npa") or "").strip().lower() in {
+        "1", "true", "yes", "on",
+    }:
+        raise NpaWorkflowError(
+            "config.runtime_setup=image cannot be combined with require_baked_npa"
+        )
+    return str(mode)
+
+
 def validate_spec(spec: NpaWorkflowSpec) -> None:
     if spec.api_version not in SUPPORTED_API_VERSIONS:
         raise NpaWorkflowError(
@@ -340,7 +360,13 @@ def validate_spec(spec: NpaWorkflowSpec) -> None:
     if spec.initial not in spec.states:
         raise NpaWorkflowError(f"initial state {spec.initial!r} is not defined")
 
+    image_runtime = runtime_setup_mode(spec.config) == "image"
     for state in spec.states.values():
+        if image_runtime and state.tool_ref:
+            raise NpaWorkflowError(
+                f"state {state.name}: config.runtime_setup=image supports raw run "
+                "commands only; toolRef requires the NPA runtime"
+            )
         if state.loop and state.loop.until and state.loop.until not in PREDICATES:
             raise NpaWorkflowError(
                 f"state {state.name}: unknown loop.until {state.loop.until!r}"

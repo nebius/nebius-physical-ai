@@ -67,6 +67,85 @@ into SkyPilot documents:
 
 ## Live Debugging Traps
 
+### Customer application image runtime
+
+For raw `run.argv` / `run.shell` stages whose application owns its interpreter
+and source delivery, set `config.runtime_setup: image`. Every executable stage
+must use a registry-qualified immutable image digest. The mode rejects `toolRef`
+and conflicting `require_baked_npa`; it skips the NPA installer, source-URI
+injection and interpreter/PYTHONPATH shims. It retains the standard workflow,
+SkyPilot lifecycle, credential forwarding and model-cache handling. The image
+still needs SkyPilot's worker bootstrap prerequisites. Image mode makes no claim
+about a baked NPA source revision.
+
+Do not infer SkyPilot compatibility from image pullability or local Docker
+success. A live attempt with the published non-root LanceDB image failed its SSH
+bootstrap because `sudo` was absent. The Ray development recipe therefore uses
+an existing official root PyTorch runtime image, prepares pinned application
+dependencies once per session, and sends the actual Workbench UDF as the fourth
+reviewed file through standard Ray `working_dir` via required `--udf-source`.
+No image build or NPA source overlay is involved. Root inside its isolated pod
+does not imply privileged/host-root access, but the target policy must permit
+that runtime user. Record the base digest and prepared dependency freeze
+separately; the base digest does not attest later pip installations.
+The selected PyTorch image's interpreter is `/usr/bin/python3.12`; pip is present
+but ensurepip is absent. Use its tested `venv --system-site-packages --without-pip`
+plus base `pip --python <venv-python>` preparation. The recipe qualifies the
+canonical Workbench UDF and LanceDB library, not the published service image or
+HTTP backfill API. Keep startup failures separate from source-iteration timing.
+
+The scoped example is
+`npa/workflows/workbench/npa-workflows/ray-clip-development-session.yaml`, with
+the standard Ray Jobs client under
+`npa/workflows/workbench/ray-clip-development/`. Keep application Ray in its own
+environment with explicit addresses and separate ports; never use ambient
+management-Ray discovery or `ray stop`. Keep Jobs/Dashboard on loopback behind
+authenticated forwarding. Customer source travels through Ray `runtime_env`;
+do not stage it through the NPA overlay. Verify worker source hashes and real
+outputs after an edit. This recipe's new source jobs create new actors and reload models;
+native/ABI dependency changes need a compatible image. Finish exact jobs, persist
+artifacts, then complete the session's scoped finish protocol before teardown.
+Match `config.gpus_per_node` to the accelerator request. Use `config.nodes`
+for multiple nodes or several GPUs on one node; report the actual node/GPU scope
+and do not claim multi-node validation from a one-node run.
+Put the run ID in the application prefix and end the durable workflow URI in
+`/<run-id>/workflow`; explicit status/cancel locators must resolve the same run.
+Prepared rank receipts precede Ray readiness. Verify the application Jobs API
+and expected live GPU/node resources before submitting the source sequence.
+SkyPilot's Ray 2.9.3 management head worker range is 11002–65535, not 19999.
+Keep all application service/worker ports below 11002 while avoiding fixed
+management ports, and verify the OS ephemeral range starts above the application's
+highest port for non-head management workers. The canonical worker range is
+10010–10999. Keep Jobs drivers on the head for this recipe's local checkpoint,
+baseline comparison and finish-upload contract.
+An isolated config directory does not change SkyPilot's host-wide default API
+endpoint. In SkyPilot 0.12.2, controller identity belongs to the API server;
+per-request user IDs do not select independent controllers on a shared server.
+Use an explicitly owned API endpoint and exact Kubernetes context for an isolated
+session. Never stop another run's API daemon to make a development submit work.
+The pinned API queue also binds fixed port 50011, so changing only the HTTP port
+does not isolate two host processes. Use the upstream Docker API deployment with
+bridge networking and loopback-only HTTP publication; mount only run-owned state
+and the exact provider/kubeconfig inputs. Verify this path before GPU submission.
+For the non-root API recipe, preserve the installed rsync helper's bytes while
+making only that helper owned by the API UID, then verify non-root chmod works;
+SkyPilot 0.12.2 performs that chmod before Kubernetes source syncing. Follow the
+exact-file copy/hash procedure in the reproduction; do not change package code,
+grant broad package ownership, or add capabilities to bypass it.
+Nebius storage additionally requires `[nebius]` in that API home's
+`.aws/credentials` and `[profile nebius]` in `.aws/config`. Materialize the
+existing selected S3 credentials/region/endpoint in owner-only files there;
+AWS environment variables alone do not enable storage. Require `sky check nebius`
+inside the container to report both compute and storage enabled. A listable
+bucket from NPA health does not replace the exact workflow write preflight.
+
+This interactive session is render-only in the shared submit matrix because its
+separate Jobs client and finish marker must be coordinated. Run the dedicated
+session recipe for real GPU qualification; a planned session is not workload
+evidence.
+
+### Existing NPA runtime
+
 - A vendor image may put a stale npa tree on `PYTHONPATH`; the renderer stages
   the selected source first and runs the recorded interpreter.
 - Operator wrappers must set `NPA_LIVE_WT` to an existing, durable worktree and
