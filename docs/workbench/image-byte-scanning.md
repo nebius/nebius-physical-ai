@@ -76,3 +76,53 @@ as stored. Encrypted content and unsupported semantic encodings remain limits of
 pattern detection. Whole-record regexes can also require substantial memory or
 CPU. An interrupted or exhausted scan is incomplete, with no truncation fallback.
 Functional GPU workloads and artifact inspection remain separate release gates.
+
+## Review specific findings locally
+
+An exact match may be a public cryptographic self-test or an inert source
+example. Public provenance alone does not establish that it is safe: a working
+bearer token remains a credential even if upstream published it in an example.
+Remove such unnecessary material before the installation layer commits and
+rebuild; never approve it merely because the surrounding code is inactive.
+
+`image_byte_scan/adjudicate.py` verifies an explicit independent review of a
+complete scan. The original report and findings stay unchanged, including its
+`valid: false` verdict. A separate acceptance receipt requires every native,
+regex and literal occurrence, including identical repeated detections, to have
+an independently reviewed proof. Missing, new, duplicate, unreviewed or changed
+occurrences fail. Structural archive findings cannot be accepted by this
+protocol.
+
+Each proof binds the exact record bytes, an explicit non-operational content
+role, retained provenance evidence and a separate semantic review. The review
+must investigate actual credential use; a role label, filename or origin URL is
+not proof. Keep manifests, occurrence proofs, reviews and their evidence in an
+owner-only directory outside Git. Obtain the exact manifest and review hashes
+from the independent review's accepted result. These hashes authorize particular
+bytes; they are not reviewer signatures. Never calculate approval inputs
+automatically from an unreviewed bundle.
+
+```bash
+npa/.venv/bin/python npa/scripts/image_byte_scan/adjudicate.py \
+  --analysis-root "$SCAN_ROOT" --trusted-root "$PWD" \
+  --authorization "$SCAN_AUTHORIZATION" \
+  --report "$SCAN_REPORT" --records "$SCAN_RECORDS" \
+  --manifest "$REVIEWED_MANIFEST" --manifest-sha256 "$REVIEWED_MANIFEST_SHA256" \
+  --review "$INDEPENDENT_REVIEW" --review-sha256 "$INDEPENDENT_REVIEW_SHA256" \
+  --output-dir "$SCAN_ROOT/accepted-review"
+```
+
+The command rechecks the archive, OCI config, scanner source, toolchain, policy,
+raw report, complete ledger and every evidence binding. It distinguishes the
+image's committed source revision from the committed scanner revision; changing
+either requires the corresponding new evidence. Its input format is a Docker
+save archive accepted by the scanner, including its `manifest.json`, rather than
+an arbitrary OCI directory. A source change after scanning requires a new scan;
+editing hashes in an old report is not a substitute.
+
+This local review does not publish an image, authorize a registry operation, or
+replace licensing, vulnerability, SBOM/provenance, runtime or physical-GPU
+validation. The hosted publication workflow continues to require zero raw
+findings by default. It has no implicit access to an operator's private review
+bundle. Do not upload that bundle as a public Actions artifact or add private
+evidence to Git to transport it.

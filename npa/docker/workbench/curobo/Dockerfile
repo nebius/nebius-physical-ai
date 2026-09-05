@@ -36,6 +36,7 @@ RUN rm -f /etc/apt/sources.list.d/*.list \
 
 COPY docker/workbench/curobo/requirements.lock /opt/curobo-requirements.lock
 COPY docker/workbench/curobo/filter_cudnn_runtime.py /opt/filter_cudnn_runtime.py
+COPY docker/workbench/curobo/remove_scikit_image_recipe.py /opt/remove_scikit_image_recipe.py
 # The current cuDNN supplement permits runtime-only redistribution. Use that
 # narrower boundary even though this wheel embeds older, broader header terms.
 # The non-cuDNN base contains none; filter the wheel in this SAME RUN before a
@@ -45,6 +46,9 @@ RUN pip install --no-cache-dir --require-hashes \
       -r /opt/curobo-requirements.lock \
     && mkdir -p /usr/share/doc/npa-curobo \
     && python /opt/filter_cudnn_runtime.py > /usr/share/doc/npa-curobo/cudnn-runtime.json \
+    && python /opt/remove_scikit_image_recipe.py \
+      --site-packages /opt/npa-venv/lib/python3.12/site-packages \
+      > /usr/share/doc/npa-curobo/dependency-source-correction.json \
     && pip check
 
 # The NVSHMEM wheel omits its release's product supplement and third-party
