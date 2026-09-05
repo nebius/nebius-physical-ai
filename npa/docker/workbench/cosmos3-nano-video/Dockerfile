@@ -16,6 +16,7 @@ COPY src/npa/workbench/cosmos/nano_video.py \
      src/npa/workbench/cosmos/nano_video_server.py \
      src/npa/workbench/cosmos/nano_video_router.py \
      src/npa/workbench/cosmos/nano_video_stage.py /opt/npa/npa/workbench/cosmos/
+COPY src/npa/workbench/cosmos/nano_video_golden.py /opt/npa/npa/workbench/cosmos/nano_video_golden.py
 
 ENV PYTHONPATH=/opt/npa \
     PYTHONUNBUFFERED=1 \

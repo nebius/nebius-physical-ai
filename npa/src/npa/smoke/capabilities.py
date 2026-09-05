@@ -87,6 +87,15 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
         "decodable image artifact produced (capability, not a CUDA probe)",
         "no baked weights: checkpoint fetched with the operator's HF token",
     ],
+    "cosmos3-nano-video": [
+        "pinned BF16 Cosmos3-Nano weights prestaged once and their immutable manifest verified",
+        "real Cosmos3OmniDiffusersPipeline initializes on one B200 with TP=1 and init-timeout=1800",
+        "three real 297/297/137-frame chunks reuse the generated tail as clean V2V conditioning",
+        "all three chunks and the stitched 720-frame 832x480 video fully decode at 24 fps",
+        "positive finite chunk latency, engine peak memory and sampled device VRAM are required",
+        "run reports and video hashes are retained; each rerun has a separate output directory",
+        "separate deployment acceptance requires 16 Ray replicas and eight concurrent complete requests",
+    ],
     "cosmos3-ray-serve": [
         "native cosmos-framework OmniModelDeployment loads Cosmos3-Nano once",
         "two requests coalesce through upstream @ray.serve.batch",

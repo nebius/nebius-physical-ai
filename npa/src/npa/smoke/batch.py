@@ -11,7 +11,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any, Callable
 
 from npa.deploy.images import CONTAINER_IMAGE_NAMES
-from npa.smoke.manifest import container, load_manifest
+from npa.smoke.manifest import UNLIMITED_SERVERLESS_ERROR, container, load_manifest
 
 
 @dataclass(frozen=True)
@@ -109,6 +109,17 @@ def run_container_eval(
     )
 
     if serverless:
+        if ge.execution_timeout is None:
+            return ContainerRunResult(
+                name=name,
+                mode=mode,
+                ok=False,
+                exit_code=1,
+                status=ge.status,
+                gpu=ge.gpu,
+                command=ge.command,
+                detail={"error": "UnlimitedServerlessUnsupported", "message": UNLIMITED_SERVERLESS_ERROR},
+            )
         from npa.clients.serverless import ServerlessClientError
         from npa.smoke.serverless_runner import submit_golden_eval
 
@@ -163,7 +174,7 @@ def run_container_eval(
             command_parts[0] = sys.executable
         completed = subprocess.run(
             command_parts,
-            timeout=ge.timeout_seconds,
+            timeout=ge.execution_timeout,
             check=False,
         )
     except FileNotFoundError as exc:

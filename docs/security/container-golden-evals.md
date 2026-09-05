@@ -111,6 +111,7 @@ flowchart TB
 | `cosmos` | `cu128-torch27-sm100-1.0.9-20260803T002017Z` | container-smoke | version; model load; single inference (safety on) | required | gpu-gated |
 | `cosmos2-transfer` | `2.5.1-sim2real-coherent-20260904` | container-smoke | procedural input; four real diffusion steps; decoded, numerically validated output MP4; guardrails enabled | required | gpu-gated |
 | `cosmos3` | `1.2.2-cu130-r6` | container-smoke | real Cosmos 3 text2image generation; decodable image; guardrails on | required | gpu-gated |
+| `cosmos3-nano-video` | operator-controlled immutable image | container-smoke | real BF16 TP=1 diffusion; three V2V chunks; four fully decoded MP4s; 30-second 480p result and measured memory/latency | required | gpu-gated |
 | `cosmos3-reason` | `cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z` | container-smoke | CUDA; real Reason VLM pass | optional | gpu-gated |
 | `sonic` | `0.1.2` | entrypoint-smoke | `/entrypoint.sh smoke`; GPU proofs; JSON artifact | required | gpu-gated |
 | `retargeting` | `0.1.1` | container-smoke | validate_motion_lib on synthetic motion | none | ready |
@@ -257,6 +258,7 @@ pipeline. Key safety notes are condensed below.
 | `cosmos` | Cosmos world-model serving (text2world) | `container-smoke` | required | gpu-gated |
 | `cosmos2-transfer` | Cosmos-Transfer2 video-to-video for synthetic data | `container-smoke` | required | gpu-gated |
 | `cosmos3` | Cosmos 3 omni-model generation (image/video) | `container-smoke` | required | gpu-gated |
+| `cosmos3-nano-video` | Chunked Cosmos3-Nano diffusion video generation | `container-smoke` | required | gpu-gated |
 | `cosmos3-reason` | Cosmos-Reason1 VLM reasoning stage | `workflow-smoke` | optional | blocked-on-upstream |
 | `sonic` | SONIC whole-body humanoid locomotion | `entrypoint-smoke` | required | gpu-gated |
 | `retargeting` | CPU motion retargeting for SONIC locomotion | `build-import` | none | ready |
@@ -344,6 +346,21 @@ Run these inside the corresponding built image (or via
 - `cosmos3` — `npa workbench cosmos3 generate --help` (job entrypoint; the eval
   itself runs a real text2image generation and needs an operator HF token, since
   the image bakes no weights)
+- `cosmos3-nano-video` — `python -m npa.workbench.cosmos.nano_video_golden` inside its
+  restricted image on an NPA mk8s B200. It requires the pinned BF16 weights and
+  verified `READY.json` on a read-only model-cache mount selected by
+  `NPA_COSMOS3_MODEL_PATH`, starts the real
+  diffusion runtime with guardrails off, generates
+  three chunks, and fully decodes all four MP4s. The default result index is
+  `/tmp/cosmos3-nano-video-golden/result.json`; set
+  `NPA_COSMOS3_GOLDEN_OUTPUT_ROOT` to retain it on mounted storage. Reruns keep
+  separate artifact directories. Stage the cache separately before GPU execution;
+  this golden command never downloads weights. `timeout_seconds: unlimited` removes the local
+  golden-eval deadline while preserving the server's `--init-timeout 1800`.
+  This entry requires local execution because the serverless runner imposes job
+  deadlines. The deployment acceptance additionally requires 16 Ray replicas
+  and eight concurrent complete generation requests; this catalog entry does
+  not claim that fanout has passed.
 - `cosmos3-reason` — `python -m npa.workflows.sim2real_loop inner-loop --help`
 - `sonic` — `/entrypoint.sh smoke` (artifact: `sonic_smoke_result.json`)
 - `retargeting` — `python -c "import npa.workbench.retargeting"`

@@ -19,7 +19,12 @@ from rich.console import Console
 from rich.table import Table
 
 from npa.deploy.images import CONTAINER_IMAGE_NAMES
-from npa.smoke.manifest import container, load_manifest, validate_manifest
+from npa.smoke.manifest import (
+    UNLIMITED_SERVERLESS_ERROR,
+    container,
+    load_manifest,
+    validate_manifest,
+)
 
 app = typer.Typer(
     name="golden-eval",
@@ -90,14 +95,18 @@ def show(name: str = typer.Argument(..., help="Container key, e.g. 'lerobot'."))
             "kind": spec.golden_eval.kind,
             "command": spec.golden_eval.command,
             "gpu": spec.golden_eval.gpu,
-            "timeout_seconds": spec.golden_eval.timeout_seconds,
+            "timeout_seconds": (
+                "unlimited"
+                if spec.golden_eval.execution_timeout is None
+                else spec.golden_eval.timeout_seconds
+            ),
             "status": spec.golden_eval.status,
             "module": spec.golden_eval.module,
             "env_module": spec.golden_eval.env_module,
             "artifact": spec.golden_eval.artifact,
         },
     }
-    console.print_json(json.dumps(payload))
+    console.print_json(json.dumps(payload, allow_nan=False))
 
 
 @app.command("validate")
@@ -152,6 +161,9 @@ def run(
     console.print(f"  $ {ge.command}")
 
     if serverless:
+        if ge.execution_timeout is None:
+            err_console.print(f"[red]{UNLIMITED_SERVERLESS_ERROR}[/red]")
+            raise typer.Exit(code=1)
         from npa.serverless_common import MissingS3CredentialsError
         from npa.smoke.serverless_runner import submit_golden_eval
 
@@ -179,7 +191,7 @@ def run(
     try:
         completed = subprocess.run(
             shlex.split(ge.command),
-            timeout=ge.timeout_seconds,
+            timeout=ge.execution_timeout,
             check=False,
         )
     except FileNotFoundError as exc:
