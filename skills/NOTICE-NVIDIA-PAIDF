@@ -1,0 +1,220 @@
+NVIDIA Physical AI Data Factory upstream references
+
+Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+
+NPA's Physical AI Data Factory workflows are NPA-native adaptations informed by
+two official NVIDIA repositories with distinct roles:
+
+  https://github.com/NVIDIA/physical-ai-data-factory
+  revision e4c663cbbdcf159ad952751274c883c81d3ab4be
+  documentation and skills: CC-BY-4.0; source code: Apache-2.0
+
+This is NVIDIA's PAIDF ecosystem entry point. At the recorded revision it
+publishes agent skills for Defect Image Generation and Video Data Augmentation,
+run upstream through NVIDIA OSMO, and links to the reusable PAIDF component
+repositories.
+
+  https://github.com/NVIDIA/paidf-orchestration
+  revision f7ecd8c5d7aeec28b2d476b9e71b53a48ba8c0f9
+  source code: Apache-2.0
+
+This is NVIDIA's separate Airflow-on-Kubernetes scaled orchestrator. At the
+recorded revision it publishes Image Attribute Augmentation and Event Video
+Generation DAGs. It is not the implementation repository for the upstream VDA
+skill and it is not embedded or executed by NPA.
+
+NPA keeps `npa.workflow/v0.0.1` as the authoring surface and SkyPilot as its sole
+execution engine. It does not vendor OSMO, Airflow, either repository, PAIDF NGC
+service images, model weights, or input datasets. The shipped workflow set is:
+
+  physical-ai-data-factory.yaml              direct VDA translation
+  paidf-defect-image-generation.yaml         direct DIG Day-1 manual-ROI translation
+  paidf-image-attribute-augmentation.yaml    direct Airflow IAA translation
+  paidf-event-video-generation.yaml          direct Airflow EVG translation
+  paidf-cosmos3.yaml                         NPA-specific Cosmos3 VDA alternative
+
+Executable component sources are independently pinned:
+
+  https://github.com/NVIDIA/paidf-augmentation
+  revision bc5719362492a1e3b40bd7d33b43c46dd89efad5 (Apache-2.0)
+
+  https://github.com/NVIDIA/paidf-auto-labeling
+  revision 36dc1114dea00d9986df97325a664520993964de (Apache-2.0)
+
+  https://github.com/NVIDIA/paidf-anomalygen
+  revision dbaf7d7d9003f048230f9026da5969e9e5931785 (Apache-2.0)
+
+  https://github.com/NVIDIA/paidf-simulation
+  revision 498751aceeea3dc3bac0d5fb043bf3553aec46a6 (Apache-2.0; ecosystem
+  attribution only for the scoped manual-ROI DIG translation)
+
+  https://github.com/NVIDIA/paidf-curation-and-retrieval
+  revision 02079bbd272900c837ebdbd0bf44384dfdf1f25e (Apache-2.0)
+
+Vendor runtime images are referenced by immutable registry digest and are not
+claimed as NPA-published images. NVIDIA's AnomalyGen image fails SkyPilot
+bootstrap, so the checked-in restricted `paidf-anomalygen-sky` image builds the
+exact Apache-2.0 source revision on digest-pinned public CUDA bases. It belongs
+in an operator-controlled registry and may never be published to NPA's public
+GHCR namespace without a separate redistribution review. NPA runtime-fetches exact
+Apache-2.0 protocol source where the selected vendor service image does not
+carry its client, and verifies the fetched commit before execution. All
+registered components use S3-compatible object storage for handoffs.
+Each run writes `reports/upstream.json` (`npa.paidf.upstream.v1`) so this
+adaptation boundary and the exact public revisions travel with its artifacts.
+
+NPA modifies the runtime-fetched paidf-augmentation image writer to honor its
+published JPEG output path before the upstream VLM verifier reads that output.
+The unmodified writer saves PNG model-response bytes as .jpg, while the verifier
+declares image/jpeg. Input preparation likewise normalizes source images to RGB
+JPEG and preserves source and prepared hashes. No model or evaluator is replaced.
+This Apache-2.0 source adaptation is bound to the exact original and patched
+SHA-256 of modules/generation/executors/base.py; unexpected bytes fail closed.
+The augmentation report records npa.paidf.upstream-source-adaptation.v1, and both
+output and terminal lineage validation require its exact identity. Video output
+bytes are unchanged. The declared upstream source revision remains separately
+attributed, and model weights remain runtime fetches under the operator's access.
+
+IAA and EVG generation also require restricted operator-built wrappers:
+paidf-image-edit-sky and paidf-event-video-sky use exact upstream
+vLLM-Omni parent digests listed in the container catalog and add SkyPilot
+worker prerequisites, an isolated NPA environment, and argument forwarding. IAA
+uses the aligned upstream 0.22.0 release to fix CVE-2026-48746 in the blueprint's
+0.20 runtime, preserving the Qwen model revision and image-edit protocol.
+EVG retains its generation parent and installs the exact Apache-2.0 NLTK 3.10.3
+wheel by SHA-256 to fix CVE-2026-79675, preserving the declared dependency contract.
+The AnomalyGen compatibility recipe applies the same wheel after its upstream
+requirements. Its separate NPA environment preserves the compiled vendor stack;
+AnomalyGen subprocesses explicitly select the vendor interpreter environment.
+Reference: https://github.com/nltk/nltk/security/advisories/GHSA-m4rf-3fr8-xwx3
+The original blueprint digest remains separately attributed in upstream.json.
+Reference: https://github.com/vllm-project/vllm/security/advisories/GHSA-94f4-hr76-p5j6
+Actual upstream
+bootstrap probes failed before generation. These source recipes do not claim
+built-byte security clearance or publication; the complete inherited dependency
+closure must be reviewed before any change to private-only redistribution.
+
+Runtime model snapshots are also pinned and remain outside published images:
+
+  Qwen/Qwen-Image-Edit-2511
+  revision 6f3ccc0b56e431dc6a0c2b2039706d7d26f22cb9
+
+  nvidia/Cosmos3-Super-Image2Video
+  revision 4f847566f3d3388fbf0ac07b99dd1a6432db9ecd
+
+  nvidia/Cosmos-1.0-Guardrail (EVG; NVIDIA Open Model License, gated)
+  revision cf03c0395fac8c4de386c0bdab12cc4fc8d66362
+
+  Qwen/Qwen3Guard-Gen-0.6B (EVG; Apache-2.0)
+  revision fada3b2f655b89601929198343c94cd2f64d93cc
+
+The EVG vendor runtime uses Cosmos-1.0-Guardrail, separately from DIG's
+Cosmos-Guardrail1. NPA verifies exact payload access, stages the generation and
+guardrail snapshots in an isolated revision-bound cache, verifies every cached
+path/hash/size against the exact Hugging Face revision manifest, and runs the service offline.
+Only the small NLTK data subtree is copied into regular files; model weights
+remain in the runtime cache. NLTK 3.10.3 pathsec protections and the original
+Cosmos guardrails remain enabled. NPA deliberately changes the upstream EVG
+template's extra_params.guardrails=false to true for every request. A private
+runtime source overlay makes Qwen3Guard require one complete published safety
+verdict and raise on malformed, missing, or duplicate verdicts or inference
+exceptions. Safe and Controversial remain allowed; Unsafe remains rejected.
+The installed vendor package and real model inference are preserved. The edited
+Apache-2.0 cosmos_guardrail/cosmos_guardrail.py source is bound by SHA-256:
+  original 117e834a4362ad82748c4146391ab1116039243cfe4cca94954f4c204024daea
+  adapted  ab6855b91597e86d8ff57302c323b0df8e88a8bce4d16b3f990a6ee485dd6223
+Runtime reports record this adaptation, model revisions, file counts, byte totals,
+and content-tree hashes. Enabled guardrails are a request/runtime contract,
+not evidence that every input will receive an accepted verdict.
+
+EVG detection downloads the public RF-DETR Base checkpoint at runtime. The
+pinned auto-labeling source requires SHA-256
+d8f70210e425a4a4234d547737f57500bcc4ac24a333b99e33d9d5a371e0b80f;
+NPA preserves this verification even when an operator supplies a custom cache
+filename. The selected BoostTrack adapter does not load a ReID embedder.
+
+The DIG runtime additionally consumes the exact public snapshots pinned by
+NVIDIA/paidf-anomalygen: Cosmos3 Nano and Edge, DINOv2 Large, C-RADIOv3-B,
+Wan2.2 TI2V-5B's VAE, SAM2.1 Hiera Large, Qwen3Guard 0.6B, and the Qwen3-VL 8B
+tokenizer. Cosmos Guardrail1 remains a separately gated runtime fetch. The NPA
+model-access catalog records every public revision/probe and the exact gated
+payload; none is embedded in the restricted compatibility image.
+
+DIG also executes cosmos-framework at a904d2d36b774a51dd06ff9ff906816b1a04f579
+under OpenMDW-1.1. Its Qwen3Guard runtime source is
+cosmos_framework/auxiliary/guardrail/qwen3guard/qwen3guard.py. NPA retains the
+installed package and creates a run-private source overlay with two exact
+parser/error adaptations: require one complete published Safe, Unsafe, or
+Controversial verdict and raise on malformed/duplicate/missing verdicts or
+inference exceptions. Controversial retains upstream's allow policy. Original
+SHA-256: 3e102cef96d0f11b3af2d0b22eec54f0c7e41f9355ad8742a432681d56211be6;
+adapted SHA-256: 8d11d043d30f3794f5e4e44ac2bfe6b0fe3328a969be748c846f1e592b628bdb.
+The DIG result records and verifies this distinct source/license contract,
+vendor-interpreter import, package tree hashes, and upstream timing-summary
+hash. Text screening must be enforcing. The upstream image preset has no
+content classifier and records image_guardrail_enforcing=false; its real
+RetinaFace blur still runs. NPA does not disable or modify NLTK/pathsec.
+
+EVG additionally adapts the Apache-2.0 vLLM-Omni pipeline installed in its
+digest-pinned compatibility image (distribution version
+0.25.0rc2.dev62+g9c1b7504b). The version string is recorded as build metadata,
+not claimed as an independent full-source attestation. Exact installed path:
+vllm_omni/diffusion/models/cosmos3/pipeline_cosmos3.py. Original SHA-256:
+8a70b5d446315d2f6281bfacb4c332dac17cf256f813cbd26c4e01a105d41f49;
+adapted SHA-256: e0cfe2d60c44900d38bcae930740944cf3a23772cefab97328c372687bb0b262.
+Its single runtime-only change supplies tokenizer_type="qwen2" to the original
+AutoTokenizer call. The pinned model's tokenizer_config.json explicitly selects
+Qwen2Tokenizer (SHA-256
+355f2b4e5bad7b01f11ef6cb68ebc176f61b95c3276092ea225b1bea0e01e95c), but does not
+publish text_tokenizer/config.json, which Transformers 5.13 otherwise requests
+before dispatch. A private package copy preserves installed vendor bytes and
+the original prompt, tokenization and special-token methods. Runtime lineage
+requires the exact source/model/config adaptation record. The accepted-image
+offline proof executes genuine CPU prompt tokenization; it is not model or GPU
+inference acceptance. Upstream source: https://github.com/vllm-project/vllm-omni.
+
+IAA/EVG labeling requires four restricted compatibility recipes:
+paidf-detection-sky, paidf-captioning-sky, paidf-visual-qa-sky, and
+paidf-attribute-search-sky. Each retains its exact vendor-owned NGC parent
+digest, upstream user and /app/.venv service environment. It adds missing
+SkyPilot prerequisites and Git for the pinned orchestration-asset checkout,
+then replaces ENTRYPOINT ["main"] with argument forwarding. The original
+service CLI remains /app/.venv/bin/main. NPA setup installs into a separate
+owner-writable /opt/npa-venv, with PATH preserved for login shells; it does not
+install dependencies into the vendor /app/.venv. These recipes add no model weights,
+datasets, credentials or recorded consent. The complete inherited image layers
+still require payload/license/security review; neither source inspection nor
+private registry access establishes permission to redistribute gated weights.
+They are excluded from NPA public publication and are not claimed built or
+functionally accepted merely because their source recipes exist.
+The detection wrapper additionally removes inherited W&B/torchtitan training
+tools and the unused system development toolchain through package-manager
+dependency handling. RF-DETR declares W&B in its optional logging extra; the
+actual service CLI and pretrained CPU inference were checked after removal.
+This does not establish GPU workflow acceptance or alter the pinned model-fetch
+boundary.
+
+EVG adapts the upstream DAG's Visual QA sampling counts to the selected
+Token Factory VLM's ten-image request maximum: --max-frames changes from 16
+to 10 for anomaly questions, and --max-crops-per-track changes from 12 to 10
+for person questions. The published service controls retain even subsampling
+including each candidate sequence's endpoints, with unchanged prompts, models,
+resolutions, sampling rate and retries. No installed vendor source is patched.
+The algorithm is packages/tasks/visual_qa/src/visual_qa/media.py at the pinned
+paidf-auto-labeling revision 36dc1114dea00d9986df97325a664520993964de
+(SHA-256 85f09956d93a39a8e0d92be6774efaf2baaadc02072fea2e682939b4f0ea3c75).
+Both VQA stage reports record the original and effective controls in
+request_media_contract; downstream and terminal lineage require that exact
+record. Candidate endpoints do not promise sampling the video's last frame.
+
+NPA's toolRef access closure probes each exact NGC parent repository under the
+operator's credential before submission. That proves pull entitlement only and
+does not grant redistribution rights. Runtime pullability and bootstrap must be
+proved separately against each operator-built wrapper's exact private digest.
+
+Gated weights remain runtime fetches under the operator's own upstream identity.
+Access credentials prove fetch authorization, not permission to redistribute
+weights. See `skills/NOTICE-NVIDIA-COSMOS-OSS` and
+`skills/NOTICE-NVIDIA-COSMOS3` for the executable component boundaries.
+
+NVIDIA, Cosmos, Omniverse, and OSMO are trademarks of NVIDIA.

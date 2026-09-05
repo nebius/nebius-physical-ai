@@ -77,6 +77,12 @@ CONTAINER_IMAGE_NAMES = {
 # npa/tests/docker/test_packaging_contract.py locks the two inventories together.
 SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS: frozenset[str] = frozenset(
     {
+        "paidf-attribute-search-sky",
+        "paidf-detection-sky",
+        "paidf-captioning-sky",
+        "paidf-visual-qa-sky",
+        "paidf-event-video-sky",
+        "paidf-image-edit-sky",
         "cosmos2-transfer",
         "cosmos3",
         "cosmos3-reason",
@@ -114,11 +120,19 @@ def requires_skypilot_bootstrap_runtime_probe(image: str) -> bool:
 
 
 # General public-registry refusal inventories. They intentionally describe the
-# redistribution decision, not a particular vendor payload. The Cosmos3-Super
-# benchmark wrapper inherits the exact upstream vLLM-Omni runtime and therefore
-# remains build-your-own in an operator-controlled registry.
+# redistribution decision, not a particular vendor payload. Operator-built
+# PAIDF AnomalyGen and Cosmos3-Super benchmark runtimes remain private.
 RESTRICTED_PUBLICATION_TOOLS: frozenset[str] = frozenset(
-    {"cosmos3-super-benchmark"}
+    {
+        "paidf-detection-sky",
+        "paidf-captioning-sky",
+        "paidf-visual-qa-sky",
+        "paidf-attribute-search-sky",
+        "paidf-anomalygen-sky",
+        "paidf-image-edit-sky",
+        "paidf-event-video-sky",
+        "cosmos3-super-benchmark",
+    }
 )
 RESTRICTED_DERIVED_IMAGES: frozenset[str] = frozenset()
 

@@ -688,6 +688,7 @@ def test_renderer_installs_the_nurec_runtime_deps_the_vendor_image_lacks() -> No
     assert "nvidia-ncore" in setup
     assert "rerun-sdk==" in setup
     assert "ffmpeg" in setup
+    assert "export NPA_LIGHT_WORKBENCH_TOOL=nurec" in setup
     # Installed into the interpreter npa itself went into, so a second npa-less
     # python winning on PATH cannot silently break the stage.
     assert "/tmp/npa-python" in setup

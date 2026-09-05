@@ -2490,9 +2490,51 @@ def _enrich_with_fiftyone_curation(
     return result
 
 
-def finalize(run_root_uri: str, report_uri: str) -> dict[str, Any]:
+def finalize(
+    run_root_uri: str,
+    report_uri: str,
+    *,
+    upstream_variant: str = "",
+    run_id: str = "",
+) -> dict[str, Any]:
     """Aggregate the run's stage artifacts into a real final report."""
     keys = _list_keys(run_root_uri)
+    bucket, run_prefix = _split(run_root_uri)
+    iteration_numbers: set[int] = set()
+    for key in keys:
+        match = re.search(r"cosmos_augmented/iteration-(\d+)/", key)
+        if match:
+            iteration_numbers.add(int(match.group(1)))
+
+    # Adaptive runs keep every iteration immutable. Once an accepted run reaches
+    # finalization, publish the winning iteration through the stable root paths
+    # promised by the workflow output contract and artifact browser. This is a
+    # copy, not a move: iteration evidence remains append-only and auditable.
+    if iteration_numbers:
+        final_iteration = max(iteration_numbers)
+        canonical_sources = {
+            "cosmos_augmented/manifest.json": (
+                f"cosmos_augmented/iteration-{final_iteration}/manifest.json"
+            ),
+            "grade/cosmos_evaluator.json": (
+                f"grade/iteration-{final_iteration}/cosmos_evaluator.json"
+            ),
+            "grade/decision.json": f"grade/iteration-{final_iteration}/decision.json",
+        }
+        for target_relative, source_relative in canonical_sources.items():
+            if not any(key.endswith("/" + source_relative) for key in keys):
+                continue
+            payload = _download_json(run_root_uri.rstrip("/") + "/" + source_relative)
+            if not isinstance(payload, dict):
+                raise RuntimeError(
+                    f"adaptive canonical source is not a JSON object: {source_relative}"
+                )
+            _upload_json(
+                payload, run_root_uri.rstrip("/") + "/" + target_relative
+            )
+            target_key = run_prefix.rstrip("/") + "/" + target_relative
+            if target_key not in keys:
+                keys.append(target_key)
     run_seg = run_root_uri.rstrip("/").split("/")[-1]
     marker = f"/{run_seg}/"
     stages: dict[str, int] = {}
@@ -2509,11 +2551,6 @@ def finalize(run_root_uri: str, report_uri: str) -> dict[str, Any]:
     # excluding the top-level run manifest) so the final report reflects the real
     # "multiply" fan-out — one Cosmos Transfer 2.5 inference per sampled combo.
     aug_marker = "cosmos_augmented/"
-    iteration_numbers: set[int] = set()
-    for key in keys:
-        match = re.search(r"cosmos_augmented/iteration-(\d+)/", key)
-        if match:
-            iteration_numbers.add(int(match.group(1)))
     selected_aug_marker = (
         f"{aug_marker}iteration-{max(iteration_numbers)}/"
         if iteration_numbers
@@ -2534,7 +2571,6 @@ def finalize(run_root_uri: str, report_uri: str) -> dict[str, Any]:
                 if segment and segment != "_attempts":
                     aug_clips.add(segment)
         n_variants = len(aug_clips)
-    bucket, _prefix = _split(run_root_uri)
     lineage_key = next(
         (key for key in keys if key.endswith("/input/leisaac-lineage.json")), ""
     )
@@ -2567,6 +2603,27 @@ def finalize(run_root_uri: str, report_uri: str) -> dict[str, Any]:
     if transfer_manifest:
         report["augmentation_engine"] = str(transfer_manifest.get("mode") or "")
         report["input_conditioned"] = transfer_manifest.get("input_conditioned") is True
+    if bool(upstream_variant) != bool(run_id.strip()):
+        raise RuntimeError(
+            "PAIDF finalization requires both an upstream variant and run identity"
+        )
+    upstream = None
+    if upstream_variant:
+        try:
+            upstream = _download_json(
+                run_root_uri.rstrip("/") + "/reports/upstream.json"
+            )
+        except Exception as exc:
+            raise RuntimeError("PAIDF upstream provenance is missing or unreadable") from exc
+        if (
+            not isinstance(upstream, dict)
+            or upstream.get("schema") != "npa.paidf.upstream.v1"
+            or upstream.get("run_id") != run_id
+            or upstream.get("workflow_variant") != upstream_variant
+        ):
+            raise RuntimeError("PAIDF upstream provenance does not match this run")
+    if upstream is not None:
+        report["upstream"] = upstream
     report["written_uri"] = _upload_json(report, report_uri)
     print(
         json.dumps(

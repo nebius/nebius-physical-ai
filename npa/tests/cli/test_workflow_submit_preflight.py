@@ -523,7 +523,8 @@ def test_plan_only_human_output_is_compact_and_details_are_explicit() -> None:
 
     assert compact.exit_code == 0, compact.output
     assert compact.output.count("setup:\n") == 1
-    assert "stages:\n  1. generate-configs:" in compact.output
+    assert "stages:\n  1. record-upstream:" in compact.output
+    assert "  2. generate-configs:" in compact.output
     assert "--- full rendered SkyPilot YAML ---" not in compact.output
     assert "details: pass --details" in compact.output
     assert verbose.exit_code == 0, verbose.output

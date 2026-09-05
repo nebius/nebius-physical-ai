@@ -40,6 +40,30 @@ def _groot_light_app() -> typer.Typer:
     return light
 
 
+def _nurec_light_app() -> typer.Typer:
+    """Build the dependency-minimal NuRec surface used by viewer workers."""
+
+    from npa.cli.nurec import app as nurec_app
+
+    light = typer.Typer(
+        name="workbench",
+        help="Physical AI workbench tools.",
+        no_args_is_help=True,
+    )
+
+    @light.callback()
+    def main() -> None:
+        """Physical AI workbench tools."""
+
+        load_credentials(
+            warn=lambda msg: typer.echo(msg, err=True),
+            export_to_environment=True,
+        )
+
+    light.add_typer(nurec_app, name="nurec")
+    return light
+
+
 def _full_app() -> typer.Typer:
     """Build the complete workstation command tree on ordinary clients."""
 
@@ -168,7 +192,7 @@ if _LIGHT_IMPORT:
     # surface unless an image explicitly declares another narrow capability.
     if _LIGHT_TOOL == "groot":
         app = _groot_light_app()
-    elif _LIGHT_TOOL == "rerun-viewer":
+    elif _LIGHT_TOOL in {"nurec", "rerun-viewer"}:
         app = _rerun_viewer_light_app()
     else:
         from npa.cli.workbench.cosmos2 import app

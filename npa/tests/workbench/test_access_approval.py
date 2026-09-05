@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -19,6 +20,66 @@ from npa.workbench.model_access import GatedAsset, HF, NGC
 
 def _hf_result(*, ok: bool, status_code: int = 200):
     return SimpleNamespace(ok=ok, status_code=status_code, error="synthetic")
+
+
+def test_ngc_legacy_ready_evidence_is_reprobed_at_exact_manifest(
+    tmp_path: Path,
+) -> None:
+    from npa.workbench.access_approval import SCHEMA_VERSION, credential_fingerprint
+
+    item = exact_requirements(["paidf-label-detection"])[0]
+    secret = "synthetic-key"
+    fingerprint = credential_fingerprint(NGC, secret)
+    legacy_key = hashlib.sha256(
+        "\0".join(
+            (
+                item.provider,
+                item.repo,
+                item.repo_type,
+                item.revision,
+                item.terms_revision,
+                item.probe_path,
+                fingerprint,
+            )
+        ).encode()
+    ).hexdigest()
+    state_path = tmp_path / "legacy.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "schema_version": SCHEMA_VERSION,
+                "evidence": {
+                    legacy_key: {"status": "Ready", "checked_at": "previous-probe"}
+                },
+            }
+        )
+    )
+    probed: list[str] = []
+    evidence = probe_requirements(
+        [item],
+        hf_token="",
+        ngc_key=secret,
+        hf_validator=None,
+        ngc_validator=lambda key, *, image: (
+            probed.append(image) or "entitlement-required"
+        ),
+        state_path=state_path,
+    )
+    assert probed == [item.repo]
+    assert evidence[0].status == AccessStatus.DENIED
+    assert evidence[0].cached is False
+
+
+def test_ngc_key_only_validator_cannot_claim_exact_access(tmp_path: Path) -> None:
+    evidence = probe_requirements(
+        exact_requirements(["paidf-label-detection"]),
+        hf_token="",
+        ngc_key="synthetic-key",
+        hf_validator=None,
+        ngc_validator=lambda key: "reachable",
+        state_path=tmp_path / "state.json",
+    )
+    assert evidence[0].status == AccessStatus.UNAVAILABLE
 
 
 def test_full_catalog_is_deduplicated_grouped_and_excludes_token_factory() -> None:
@@ -83,7 +144,46 @@ def test_toolref_closure_comes_from_catalog_metadata() -> None:
     }
 
 
-def test_hf_ready_pending_denied_unavailable_and_public_anonymous(tmp_path: Path) -> None:
+def test_paidf_native_toolref_closures_are_workflow_specific() -> None:
+    dig = requirements_for_tool_refs(["workflow.paidf.dig_prepare_pretrained"])
+    iaa = requirements_for_tool_refs(
+        [
+            "workflow.paidf.run_iaa_augmentation",
+            "workflow.paidf.run_attribute_search",
+        ]
+    )
+    evg = requirements_for_tool_refs(
+        [
+            "workflow.paidf.run_evg_augmentation",
+            "workflow.paidf.run_detection",
+            "workflow.paidf.run_captioning",
+            "workflow.paidf.run_visual_qa",
+            "workflow.paidf.run_attribute_search",
+        ]
+    )
+
+    assert {(item.provider, item.repo) for item in dig} == {
+        (HF, "nvidia/Cosmos-Guardrail1")
+    }
+    assert len(iaa) == 1
+    assert iaa[0].provider == NGC
+    assert "paidf-event-and-person-attribute-search-service" in iaa[0].repo
+    from npa.workflows.paidf_upstream import (
+        COSMOS_GUARDRAIL_MODEL,
+        COSMOS_GUARDRAIL_REVISION,
+    )
+
+    assert {item.provider for item in evg} == {HF, NGC}
+    assert len([item for item in evg if item.provider == NGC]) == 4
+    assert {(item.repo, item.revision) for item in evg if item.provider == HF} == {
+        (COSMOS_GUARDRAIL_MODEL, COSMOS_GUARDRAIL_REVISION)
+    }
+    assert all("Cosmos-Transfer" not in item.repo for item in (*dig, *iaa, *evg))
+
+
+def test_hf_ready_pending_denied_unavailable_and_public_anonymous(
+    tmp_path: Path,
+) -> None:
     gated = GatedAsset(
         "vendor/gated",
         HF,
@@ -188,9 +288,7 @@ def test_metadata_visibility_cannot_make_denied_payload_ready(
 
     assert evidence[0].status == AccessStatus.PENDING
     assert evidence[0].reason == "manual_approval_required_or_pending"
-    assert observed == [
-        ("vendor/gated", "rev-gated", "weights/model.safetensors")
-    ]
+    assert observed == [("vendor/gated", "rev-gated", "weights/model.safetensors")]
 
 
 @pytest.mark.parametrize("credential", ["nvapi-personal", "registry-credential"])
@@ -305,9 +403,7 @@ def test_ready_cache_reuses_only_unchanged_credential_revision_and_terms(
         ngc_validator=None,
         state_path=state_path,
     )
-    changed_revision = GatedAsset(
-        **{**base.__dict__, "revision": "rev-b"}
-    )
+    changed_revision = GatedAsset(**{**base.__dict__, "revision": "rev-b"})
     probe_requirements(
         [changed_revision],
         hf_token="token-a",
@@ -341,7 +437,9 @@ def test_ready_cache_reuses_only_unchanged_credential_revision_and_terms(
     assert "token-a" not in serialized and "token-b" not in serialized
 
 
-def test_ready_cache_is_invalidated_when_exact_probe_path_changes(tmp_path: Path) -> None:
+def test_ready_cache_is_invalidated_when_exact_probe_path_changes(
+    tmp_path: Path,
+) -> None:
     state_path = tmp_path / "state.json"
     calls: list[tuple[str, str]] = []
 

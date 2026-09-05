@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
 import re
+import urllib.request
 from pathlib import Path
 from typing import Any, Iterable
 from urllib.parse import urlparse
@@ -24,6 +26,13 @@ from npa.orchestration.npa_workflow.submit_matrix import (
 SONIC_MOTION_FIXTURE_PREFIX = "npa-workflow-e2e/fixtures/sonic-motion-soma-g1/"
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SPECS_DIR = REPO_ROOT / "npa" / "workflows" / "workbench" / "npa-workflows"
+# CC0 photograph by Lav Varshney; see skills/NOTICE-PAIDF-STARTER-MEDIA.
+_PAIDF_CAMERA_REVISION = "e8a42ba85aaf5fd9322ef9ca51bc21063b22fcae"
+_PAIDF_CAMERA_URL = (
+    "https://raw.githubusercontent.com/scikit-image/scikit-image/"
+    f"{_PAIDF_CAMERA_REVISION}/skimage/data/camera.png"
+)
+_PAIDF_CAMERA_SHA256 = "b0793d2adda0fa6ae899c03989482bff9a42d3d5690fc7e3648f2795d730c23a"
 # A tiny, valid 64x64 H.264/MP4 clip generated from ffmpeg's deterministic
 # testsrc2 source. Keeping the bytes in the test harness makes input seeding
 # independent of an operator host's ffmpeg installation while the live worker
@@ -220,6 +229,129 @@ def seed_live_workflow_inputs(
 
     marker = f"npa-workflow-e2e/{run_id}/{spec_name.replace('.yaml', '')}"
     client = s3_client_for_project(e2e_project, allow_host_creds=True)
+
+    if spec_name == "paidf-event-video-generation.yaml":
+        # Fetch public source bytes without model/registry credentials. A real
+        # photograph exercises the detector and per-person label stages.
+        with urllib.request.urlopen(_PAIDF_CAMERA_URL) as response:
+            image_bytes = response.read()
+        if hashlib.sha256(image_bytes).hexdigest() != _PAIDF_CAMERA_SHA256:
+            pytest.fail("PAIDF EVG camera fixture SHA-256 mismatch")
+        client.put_object(
+            Bucket=bucket,
+            Key=f"{marker}/fixture/seed.png",
+            Body=image_bytes,
+            ContentType="image/png",
+        )
+        client.put_object(
+            Bucket=bucket,
+            Key=f"{marker}/fixture-source.json",
+            Body=json.dumps({
+                "schema": "npa.paidf.fixture-source.v1",
+                "source_url": _PAIDF_CAMERA_URL,
+                "source_revision": _PAIDF_CAMERA_REVISION,
+                "sha256": _PAIDF_CAMERA_SHA256,
+                "bytes": len(image_bytes),
+                "license": "CC0-1.0",
+                "author": "Lav Varshney",
+            }, sort_keys=True).encode(),
+            ContentType="application/json",
+        )
+        return
+
+    if spec_name == "paidf-image-attribute-augmentation.yaml":
+        try:
+            from PIL import Image, ImageDraw
+        except ImportError as exc:  # pragma: no cover
+            pytest.fail(f"Pillow required to seed PAIDF fixtures: {exc}")
+        size = (768, 1024)
+        image = Image.new("RGB", size, (106, 113, 120))
+        draw = ImageDraw.Draw(image)
+        # Repository-authored, non-customer silhouette: enough structure for the
+        # real IAA conditioning and verifier paths without redistributing data.
+        cx, cy = size[0] // 2, size[1] // 2
+        draw.ellipse((cx - 45, cy - 220, cx + 45, cy - 130), fill=(196, 155, 116))
+        draw.rectangle((cx - 75, cy - 130, cx + 75, cy + 80), fill=(30, 75, 145))
+        draw.rectangle((cx - 70, cy + 80, cx - 10, cy + 260), fill=(35, 35, 40))
+        draw.rectangle((cx + 10, cy + 80, cx + 70, cy + 260), fill=(35, 35, 40))
+        buf = BytesIO()
+        image.save(buf, format="PNG")
+        client.put_object(
+            Bucket=bucket,
+            Key=f"{marker}/fixture/seed.png",
+            Body=buf.getvalue(),
+            ContentType="image/png",
+        )
+        return
+
+    if spec_name == "paidf-defect-image-generation.yaml":
+        try:
+            from PIL import Image, ImageDraw
+        except ImportError as exc:  # pragma: no cover
+            pytest.fail(f"Pillow required to seed PAIDF DIG fixtures: {exc}")
+
+        defect_types = ("MT_Blowhole", "MT_Break", "MT_Crack", "MT_Fray", "MT_Uneven")
+        root = f"{marker}/fixture/dataset"
+
+        def put_image(key: str, image: Image.Image, fmt: str) -> None:
+            buf = BytesIO()
+            image.save(buf, format=fmt)
+            client.put_object(
+                Bucket=bucket,
+                Key=key,
+                Body=buf.getvalue(),
+                ContentType="image/jpeg" if fmt == "JPEG" else "image/png",
+            )
+
+        for index in range(20):
+            clean = Image.new("RGB", (512, 512), (118 + index % 9, 122, 126))
+            draw = ImageDraw.Draw(clean)
+            for x in range(0, 512, 32):
+                draw.line((x, 0, x + 60, 512), fill=(128, 132, 136), width=2)
+            put_image(
+                f"{root}/metal_surface/clean_image/clean_{index:03d}.jpg", clean, "JPEG"
+            )
+
+        specs = []
+        for defect_index, defect in enumerate(defect_types):
+            specs.append(
+                json.dumps(
+                    {
+                        "defect_type": f"metal_surface+{defect}",
+                        "spatial_dependency": "free",
+                        "roi_prompt_defect_location": "",
+                    },
+                    sort_keys=True,
+                )
+            )
+            slug = defect.lower()
+            for index in range(5):
+                base = Image.new("RGB", (512, 512), (120, 124, 128))
+                mask = Image.new("L", (512, 512), 0)
+                defect_draw = ImageDraw.Draw(base)
+                mask_draw = ImageDraw.Draw(mask)
+                left = 80 + 47 * index
+                top = 90 + 39 * defect_index
+                box = (left, top, left + 72, top + 38)
+                defect_draw.ellipse(box, fill=(55, 38, 30))
+                mask_draw.ellipse(box, fill=255)
+                put_image(
+                    f"{root}/metal_surface/anomaly_image/{defect}/{slug}_{index:03d}.png",
+                    base,
+                    "PNG",
+                )
+                put_image(
+                    f"{root}/metal_surface/mask/{defect}/{slug}_{index:03d}_mask.png",
+                    mask,
+                    "PNG",
+                )
+        client.put_object(
+            Bucket=bucket,
+            Key=f"{root}/defect_spec.jsonl",
+            Body=("\n".join(specs) + "\n").encode(),
+            ContentType="application/x-ndjson",
+        )
+        return
 
     if spec_name == "paidf-cosmos3.yaml":
         body = base64.b64decode(_CONDITIONED_COSMOS_MP4_B64, validate=True)
@@ -899,6 +1031,76 @@ def materialize_live_spec(
         text,
         count=1,
     )
+    paidf_stem = name.replace(".yaml", "")
+    if name in {
+        "paidf-image-attribute-augmentation.yaml",
+        "paidf-event-video-generation.yaml",
+    }:
+        text = re.sub(
+            r'input_uri:\s*"[^"]+"',
+            f'input_uri: "s3://{bucket}/{marker}/{paidf_stem}/fixture/"',
+            text,
+            count=1,
+        )
+        image_variable = (
+            "NPA_E2E_PAIDF_IAA_IMAGE" if "attribute" in name else "NPA_E2E_PAIDF_EVG_IMAGE"
+        )
+        generation_image = os.environ.get(image_variable, "").strip()
+        if not re.fullmatch(r".+@sha256:[0-9a-f]{64}", generation_image):
+            pytest.fail(
+                f"{image_variable} must name the scanned operator-built "
+                "generation compatibility image by exact digest"
+            )
+        text = re.sub(
+            r'generation_image:\s*"[^"]+"',
+            f'generation_image: "{generation_image}"',
+            text,
+            count=1,
+        )
+        labeling_images = {
+            "attribute_search_image": "NPA_E2E_PAIDF_ATTRIBUTE_SEARCH_IMAGE",
+        }
+        if name == "paidf-event-video-generation.yaml":
+            labeling_images.update(
+                detection_image="NPA_E2E_PAIDF_DETECTION_IMAGE",
+                captioning_image="NPA_E2E_PAIDF_CAPTIONING_IMAGE",
+                visual_qa_image="NPA_E2E_PAIDF_VISUAL_QA_IMAGE",
+            )
+        for config_key, environment_key in labeling_images.items():
+            image = os.environ.get(environment_key, "").strip()
+            if not re.fullmatch(r".+@sha256:[0-9a-f]{64}", image):
+                pytest.fail(
+                    f"{environment_key} must name the scanned operator-built "
+                    "labeling compatibility image by exact digest"
+                )
+            text = re.sub(
+                rf'{config_key}:\s*"[^"]+"',
+                f'{config_key}: "{image}"',
+                text,
+                count=1,
+            )
+    elif name == "paidf-defect-image-generation.yaml":
+        text = re.sub(
+            r'dataset_uri:\s*"[^"]+"',
+            f'dataset_uri: "s3://{bucket}/{marker}/{paidf_stem}/fixture/dataset/"',
+            text,
+            count=1,
+        )
+        text = text.replace("usecase: pcb", "usecase: metal_surface", 1)
+        anomalygen_image = os.environ.get(
+            "NPA_E2E_PAIDF_ANOMALYGEN_IMAGE", ""
+        ).strip()
+        if not re.fullmatch(r".+@sha256:[0-9a-f]{64}", anomalygen_image):
+            pytest.fail(
+                "NPA_E2E_PAIDF_ANOMALYGEN_IMAGE must name the operator-built "
+                "restricted compatibility image by exact digest"
+            )
+        text = re.sub(
+            r'anomalygen_image:\s*"[^"]+"',
+            f'anomalygen_image: "{anomalygen_image}"',
+            text,
+            count=1,
+        )
     # Optional bdd100k smoke knobs: synthesize rows so the pipeline runs without
     # a real BDD100K dataset, and shrink training epochs to keep the live run
     # bounded. Both are pure config toggles (synthetic_rows=0 -> real source).
