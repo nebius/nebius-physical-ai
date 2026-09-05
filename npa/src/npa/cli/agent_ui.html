@@ -13255,6 +13255,7 @@
         activeRunResourceScope = {
           run_id: runId,
           run_ref: runRef,
+          entry_key: activeRunEntryKey,
           bucket: String(data.bucket || (entry && entry.bucket) || ""),
           project_id: String(data.project_id || (entry && entry.project_id) || ""),
           resolved_prefix: String(data.resolved_prefix || ""),
@@ -14745,13 +14746,32 @@
             source_label: runId === "franka-demo" ? "Local demo" : "Workflow history",
           }));
         }
-        if (currentRef) activeArtifactRunRef = currentRef;
-        if (currentRun && simViz && simViz.bucket) {
-          activeRunEntryKey = currentRef || runEntryIdentity(
-            currentRun, "artifact_storage", simViz
-          );
+        // Restored media already carries its exact storage identity. Keep it
+        // available before background discovery has hydrated the run cache.
+        const restoredRef = String((simViz && (simViz.artifact_run_ref || simViz.active_run_ref)) || "").trim();
+        const reportedRun = String((simViz && simViz.run_id) || "").trim();
+        const selectionMatches = currentRun === activeRunId &&
+          (!reportedRun || reportedRun === currentRun) &&
+          (!activeArtifactRunRef || activeArtifactRunRef === currentRef);
+        const restoreSource = selectionMatches && restoredRef &&
+          simViz.bucket && simViz.project_id &&
+          Object.prototype.hasOwnProperty.call(simViz, "resolved_prefix");
+        if (restoreSource) {
+          activeRunResourceScope = {
+            run_id: currentRun, run_ref: restoredRef, entry_key: currentRef,
+            bucket: String(simViz.bucket), project_id: String(simViz.project_id),
+            resolved_prefix: String(simViz.resolved_prefix || ""), source_selected: true,
+          };
         }
-        applyMergedRunSelectors(activeRunEntryKey || currentRef || currentRun);
+        if (selectionMatches) {
+          if (currentRef) activeArtifactRunRef = currentRef;
+          if (currentRun && simViz && simViz.bucket) {
+            activeRunEntryKey = currentRef || runEntryIdentity(
+              currentRun, "artifact_storage", simViz
+            );
+          }
+        }
+        applyMergedRunSelectors(activeRunEntryKey || activeArtifactRunRef || activeRunId);
       }
       async function loadSelectedRun(entryOrRunId) {
         const supplied = entryOrRunId && typeof entryOrRunId === "object" ? entryOrRunId : null;
@@ -15214,12 +15234,20 @@
       async function loadRunDetails(runId, options) {
         const target = String(runId || activeRunId || "").trim();
         const opts = options && typeof options === "object" ? options : {};
-        const entry = opts.entry || preferredRunEntry(target) || {};
+        const activeScope = activeRunResourceScope;
+        const scopeMatches = activeScope && activeScope.run_id === target &&
+          activeScope.run_ref && activeScope.run_ref === activeArtifactRunRef &&
+          (!activeScope.entry_key || activeScope.entry_key === activeRunEntryKey);
+        const entry = opts.entry || (scopeMatches ? activeScope : preferredRunEntry(target)) || {};
         const params = new URLSearchParams();
-        const resourceBucket = String(opts.resourceBucket || entry.bucket || "").trim();
-        const projectId = String(opts.projectId || entry.project_id || "").trim();
-        const resolvedPrefix = String(opts.resolvedPrefix || entry.resolved_prefix || "").trim();
-        const sourceSelected = Boolean(opts.sourceSelected || entry.bucket);
+        const resourceBucket = String(Object.prototype.hasOwnProperty.call(opts, "resourceBucket")
+          ? (opts.resourceBucket || "") : (entry.bucket || "")).trim();
+        const projectId = String(Object.prototype.hasOwnProperty.call(opts, "projectId")
+          ? (opts.projectId || "") : (entry.project_id || "")).trim();
+        const resolvedPrefix = String(Object.prototype.hasOwnProperty.call(opts, "resolvedPrefix")
+          ? (opts.resolvedPrefix || "") : (entry.resolved_prefix || "")).trim();
+        const sourceSelected = Object.prototype.hasOwnProperty.call(opts, "sourceSelected")
+          ? Boolean(opts.sourceSelected) : Boolean(entry.source_selected || entry.bucket);
         if (resourceBucket) params.set("resource_bucket", resourceBucket);
         if (projectId) params.set("project_id", projectId);
         if (resolvedPrefix) params.set("resolved_prefix", resolvedPrefix);
@@ -15763,6 +15791,8 @@
           captureVisualContext,
           describeVisual,
           loadArtifact,
+          loadRunDetails,
+          updateRunSelector,
           setRenderMode,
           showRerunBundleCover,
           hideRerunBundleCover,

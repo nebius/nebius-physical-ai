@@ -1336,8 +1336,8 @@ describe("NPA agent UI with mocked APIs", () => {
     let releaseFirst;
     let serverActive = "default";
     const writes = [];
-    cy.intercept("POST", "/api/chat/sessions", (request) => {
-      const id = `created-${writes.length + 1}`;
+    cy.intercept({ method: "POST", url: /\/api\/chat\/sessions(?:\/[^/]+\/select)?$/ }, (request) => {
+      const id = request.url.endsWith("/select") ? "session-two" : "created-1";
       writes.push(id);
       const reply = () => {
         serverActive = id;
@@ -1359,19 +1359,20 @@ describe("NPA agent UI with mocked APIs", () => {
     })).as("currentChatDiscovery");
     cy.get("#newChatSession").click();
     cy.wrap(null).should(() => expect(releaseFirst).to.be.a("function"));
-    cy.get("#newChatSession").click();
+    // The New chat button is busy; the separate selector remains actionable.
+    cy.get("#chatSessionSelect").select("session-two");
     cy.then(() => {
       expect(writes, "second server write waits for the first").to.deep.eq(["created-1"]);
       releaseFirst();
     });
     cy.wait("@serializedChatMutation");
     cy.wait("@serializedChatMutation");
-    cy.get("#chatSessionSelect").should("have.value", "created-2");
+    cy.get("#chatSessionSelect").should("have.value", "session-two");
     cy.window().then((win) => win.__NPA_AGENT_TEST__.refreshChatSessions());
     cy.wait("@currentChatDiscovery");
-    cy.get("#chatSessionSelect").should("have.value", "created-2");
+    cy.get("#chatSessionSelect").should("have.value", "session-two");
     cy.intercept("POST", "/api/chat", (request) => {
-      expect(request.body.session_id).to.eq("created-2");
+      expect(request.body.session_id).to.eq("session-two");
       request.reply({ statusCode: 200, body: {
         ok: true, session_id: request.body.session_id, reply: "Newest session reply remains visible.",
       } });
@@ -1380,6 +1381,62 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#chatSend").click();
     cy.wait("@newestSessionReply");
     cy.get("#chatLog .msg-row.assistant").should("contain.text", "Newest session reply remains visible.");
+  });
+
+  it("restores exact artifact status scope before discovery and preserves explicit overrides", () => {
+    const runId = "restored-synthetic-artifact";
+    let detailRequests = 0;
+    cy.intercept("GET", `/api/workflows/sim2real/runs/${runId}*`, (request) => {
+      detailRequests += 1;
+      const query = new URL(request.url).searchParams;
+      expect(query.get("source_selected")).to.eq("1");
+      expect(query.get("resource_bucket")).to.eq(detailRequests <= 3 ? "project-artifacts" : "explicit-artifacts");
+      expect(query.get("project_id")).to.eq(detailRequests <= 3 ? "project-a" : "project-b");
+      expect(query.get("resolved_prefix")).to.eq(detailRequests <= 3 ? "synthetic-results" : null);
+      request.reply({ statusCode: 200, body: { ok: true, run: { run_id: runId, stages: [] } } });
+    }).as("restoredArtifactStatus");
+    cy.window().then((win) => {
+      const hooks = win.__NPA_AGENT_TEST__;
+      hooks.setArtifactRunsForTest([], [], { run_id: runId });
+      hooks.updateRunSelector({
+        run_id: runId, active_run_id: runId, artifact_run_ref: "npa1_restored_source",
+        bucket: "project-artifacts", project_id: "project-a", resolved_prefix: "synthetic-results",
+        available_runs: [], available_run_ids: [],
+      });
+      return hooks.loadRunDetails(runId);
+    });
+    cy.wait("@restoredArtifactStatus");
+    cy.window().then((win) => {
+      const hooks = win.__NPA_AGENT_TEST__;
+      hooks.updateRunSelector({
+        run_id: runId, active_run_id: runId, artifact_run_ref: "npa1_stale_other_source",
+        bucket: "stale-artifacts", project_id: "project-stale", resolved_prefix: "stale-results",
+        available_runs: [], available_run_ids: [],
+      });
+      return hooks.loadRunDetails(runId);
+    });
+    cy.wait("@restoredArtifactStatus");
+    cy.window().then((win) => {
+      const hooks = win.__NPA_AGENT_TEST__;
+      hooks.updateRunSelector({
+        run_id: "different-artifact", active_run_id: runId, artifact_run_ref: "npa1_restored_source",
+        bucket: "mismatched-artifacts", project_id: "project-other", resolved_prefix: "other-results",
+        available_runs: [], available_run_ids: [],
+      });
+      return hooks.loadRunDetails(runId);
+    });
+    cy.wait("@restoredArtifactStatus");
+    cy.window().then((win) => win.__NPA_AGENT_TEST__.loadRunDetails(runId, {
+      resourceBucket: "explicit-artifacts", projectId: "project-b", resolvedPrefix: "", sourceSelected: true,
+    }));
+    cy.wait("@restoredArtifactStatus");
+    cy.intercept("GET", "/api/workflows/sim2real/runs/different-artifact*", (request) => {
+      const query = new URL(request.url).searchParams;
+      expect(query.has("resource_bucket"), "scope never crosses run identities").to.eq(false);
+      request.reply({ statusCode: 200, body: { ok: true, run: { run_id: "different-artifact", stages: [] } } });
+    }).as("differentArtifactStatus");
+    cy.window().then((win) => win.__NPA_AGENT_TEST__.loadRunDetails("different-artifact"));
+    cy.wait("@differentArtifactStatus");
   });
 
   it("covers workflow draft upload, validate, plan, and submit buttons", () => {
