@@ -14,6 +14,7 @@ import pytest
 
 from npa.workbench.cosmos import transfer
 from npa.workflows import paidf_guardrails as guardrails
+from npa.workflows import paidf_evg_tokenizer as tokenizer
 
 
 def _expected_files(snapshot):
@@ -152,6 +153,7 @@ def test_disabled_or_malformed_request_is_rejected_before_model_fetch(
         "revision",
         "online",
         "no_guardrails",
+        "tokenizer",
         "linked_nltk",
         "empty",
         "hash",
@@ -172,6 +174,11 @@ def test_runtime_handoff_requires_exact_complete_enabled_contract(mutation):
         value["offline"] = False
     elif mutation == "no_guardrails":
         value["guardrails_enabled"] = False
+    elif mutation == "tokenizer":
+        value["tokenizer_source_adaptation"]["tokenizer_type"] = "unreviewed"
+        value["tokenizer_source_adaptation"]["patch_sha256"] = guardrails._digest_document(
+            {k: v for k, v in value["tokenizer_source_adaptation"].items() if k != "patch_sha256"}
+        )
     elif mutation == "linked_nltk":
         value["nltk_data"]["regular_files"] = False
     elif mutation == "empty":
@@ -405,6 +412,9 @@ def test_runtime_stages_exact_cli_revisions_and_regular_nltk_offline(
     monkeypatch.setenv("HF_HOME", str(tmp_path))
     monkeypatch.setenv("HF_ENDPOINT", "https://mirror.example.test")
     monkeypatch.setenv("HUGGINGFACE_CO_STAGING", "1")
+    aliases = ("HUGGING_FACE_HUB_TOKEN", "HUGGINGFACE_HUB_TOKEN", "HF_TOKEN_PATH")
+    for name in aliases:
+        monkeypatch.setenv(name, "synthetic-private-access")
     calls = []
     accesses = []
 
@@ -429,6 +439,9 @@ def test_runtime_stages_exact_cli_revisions_and_regular_nltk_offline(
     )
     monkeypatch.setattr(
         guardrails, "_prepare_qwen_guardrail_overlay", lambda *_: tmp_path / "overlay"
+    )
+    monkeypatch.setattr(
+        tokenizer, "prepare_evg_tokenizer_overlay", lambda *_: tmp_path / "tokenizer-overlay"
     )
     if tamper_nltk:
         original_prepare = guardrails.prepare_guardrail_nltk_data
@@ -474,6 +487,11 @@ def test_runtime_stages_exact_cli_revisions_and_regular_nltk_offline(
         "face_blur_filter/Resnet50_Final.pth",
     ]
     assert environment["HF_HUB_OFFLINE"] == environment["TRANSFORMERS_OFFLINE"] == "1"
+    assert not any(name in environment for name in ("HF_TOKEN", *aliases))
+    assert os.environ["HF_TOKEN"] == token
+    assert environment["PYTHONPATH"].split(os.pathsep)[:2] == [
+        str(tmp_path / "tokenizer-overlay"), str(tmp_path / "overlay")
+    ]
     assert environment["HF_HOME"] != str(tmp_path)
     assert environment["HF_ENDPOINT"] == "https://huggingface.co"
     assert "HUGGINGFACE_CO_STAGING" not in environment
@@ -481,6 +499,7 @@ def test_runtime_stages_exact_cli_revisions_and_regular_nltk_offline(
         manifest["guardrail_source_adaptation"]
         == guardrails.qwen_guardrail_source_adaptation()
     )
+    assert manifest["tokenizer_source_adaptation"] == tokenizer.tokenizer_source_adaptation()
     nltk = Path(environment["NLTK_DATA"])
     assert not any(path.is_symlink() for path in nltk.rglob("*"))
     assert (

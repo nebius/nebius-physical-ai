@@ -2328,7 +2328,7 @@ def _dig_offline_environment(pretrained: Path, run_id: str) -> dict[str, str]:
     if not run_id.strip():
         raise PaidfNativeError("DIG runtime cache requires the workflow run identity")
     _dig_cache_manifest(pretrained, run_id)
-    return {
+    environment = {
         **_dig_vendor_environment(),
         "CKPT_DIR": str(pretrained),
         "HF_HUB_CACHE": str(pretrained / "hf"),
@@ -2336,6 +2336,9 @@ def _dig_offline_environment(pretrained: Path, run_id: str) -> dict[str, str]:
         "HF_HUB_OFFLINE": "1",
         "TRANSFORMERS_OFFLINE": "1",
     }
+    for name in ("HF_TOKEN", "HUGGING_FACE_HUB_TOKEN", "HUGGINGFACE_HUB_TOKEN", "HF_TOKEN_PATH"):
+        environment.pop(name, None)
+    return environment
 
 
 def _dig_vendor_environment() -> dict[str, str]:

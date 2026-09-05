@@ -1365,6 +1365,9 @@ def test_dig_runtime_uses_only_verified_preflight_pinned_cache(
     manifest = paidf_native._dig_cache_manifest(tmp_path, "unit-run", initialize=True)
     monkeypatch.setenv("HF_HUB_CACHE", "/unrelated/cache")
     monkeypatch.setenv("HF_HUB_OFFLINE", "0")
+    credentials = ("HF_TOKEN", "HUGGING_FACE_HUB_TOKEN", "HUGGINGFACE_HUB_TOKEN", "HF_TOKEN_PATH")
+    for name in credentials:
+        monkeypatch.setenv(name, "synthetic-private-access")
     monkeypatch.setenv("CKPT_DIR", "/unrelated/checkpoints")
     monkeypatch.setenv(
         "PATH",
@@ -1376,6 +1379,8 @@ def test_dig_runtime_uses_only_verified_preflight_pinned_cache(
     env = paidf_native._dig_offline_environment(tmp_path, "unit-run")
     assert env["HF_HUB_OFFLINE"] == "1"
     assert env["TRANSFORMERS_OFFLINE"] == "1"
+    assert not any(name in env for name in credentials)
+    assert all(os.environ[name] == "synthetic-private-access" for name in credentials)
     assert env["HF_HUB_CACHE"] == str(tmp_path / "hf")
     assert env["CKPT_DIR"] == str(tmp_path)
     assert env["VIRTUAL_ENV"] == "/opt/venv"

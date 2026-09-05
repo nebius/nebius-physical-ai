@@ -86,6 +86,15 @@ preserved. The upstream image preset runs RetinaFace blur but contains no image
 content classifier; its enforcement flag remains false.
 
 The upstream IAA/EVG generation images lack required SkyPilot worker commands.
+The accepted EVG image also needs an exact-source tokenizer adaptation for its
+Transformers 5.13 runtime: the published Cosmos3 tokenizer specifies Qwen2 but
+does not ship the model config that automatic dispatch requests. NPA selects the
+published `qwen2` tokenizer type in a private copy of the verified vLLM-Omni
+pipeline. The seven pinned tokenizer files, prompt method, special tokens and
+installed vendor package remain unchanged. `generation_runtime` requires the
+exact `tokenizer_source_adaptation` alongside its guardrail adaptation. EVG
+serving and DIG offline children receive no Hugging Face token after staging.
+
 Build `paidf-image-edit-sky` and `paidf-event-video-sky` from their exact pinned
 parents, scan the actual bytes, publish privately, and supply their immutable
 digests with `--var generation_image=<operator-image@sha256:digest>`. DIG uses

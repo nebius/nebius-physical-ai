@@ -155,6 +155,24 @@ hash. Text screening must be enforcing. The upstream image preset has no
 content classifier and records image_guardrail_enforcing=false; its real
 RetinaFace blur still runs. NPA does not disable or modify NLTK/pathsec.
 
+EVG additionally adapts the Apache-2.0 vLLM-Omni pipeline installed in its
+digest-pinned compatibility image (distribution version
+0.25.0rc2.dev62+g9c1b7504b). The version string is recorded as build metadata,
+not claimed as an independent full-source attestation. Exact installed path:
+vllm_omni/diffusion/models/cosmos3/pipeline_cosmos3.py. Original SHA-256:
+8a70b5d446315d2f6281bfacb4c332dac17cf256f813cbd26c4e01a105d41f49;
+adapted SHA-256: e0cfe2d60c44900d38bcae930740944cf3a23772cefab97328c372687bb0b262.
+Its single runtime-only change supplies tokenizer_type="qwen2" to the original
+AutoTokenizer call. The pinned model's tokenizer_config.json explicitly selects
+Qwen2Tokenizer (SHA-256
+355f2b4e5bad7b01f11ef6cb68ebc176f61b95c3276092ea225b1bea0e01e95c), but does not
+publish text_tokenizer/config.json, which Transformers 5.13 otherwise requests
+before dispatch. A private package copy preserves installed vendor bytes and
+the original prompt, tokenization and special-token methods. Runtime lineage
+requires the exact source/model/config adaptation record. The accepted-image
+offline proof executes genuine CPU prompt tokenization; it is not model or GPU
+inference acceptance. Upstream source: https://github.com/vllm-project/vllm-omni.
+
 IAA/EVG labeling requires four restricted compatibility recipes:
 paidf-detection-sky, paidf-captioning-sky, paidf-visual-qa-sky, and
 paidf-attribute-search-sky. Each retains its exact vendor-owned NGC parent

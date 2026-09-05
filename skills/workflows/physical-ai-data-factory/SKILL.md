@@ -75,6 +75,11 @@ fail closed on errors or missing, malformed, or duplicate safety verdicts.
 Published Safe and Controversial remain allowed and Unsafe remains rejected.
 The installed vendor package is unchanged; the runtime report records the source
 adaptation. Every executed request must retain explicit enabled guardrails.
+The accepted EVG vLLM-Omni/Transformers 5.13 pair also requires the exact-source
+tokenizer overlay: explicitly select the pinned model's Qwen2 tokenizer without
+changing its prompt or token IDs. Require `tokenizer_source_adaptation` in every
+generation-runtime handoff. Keep HF credentials in staging only; the verified
+offline EVG and DIG vendor children must not inherit token aliases or token paths.
 
 DIG uses a separate exact-source adaptation of the OpenMDW-1.1
 `cosmos-framework` Qwen guardrail, preserving real inference and the published

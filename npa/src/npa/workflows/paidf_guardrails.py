@@ -268,12 +268,15 @@ def _load_snapshot_manifest(
 
 def require_evg_generation_runtime(value: Any) -> None:
     """Reject missing, changed, or unreviewed EVG model provenance at handoff."""
+    from npa.workflows.paidf_evg_tokenizer import tokenizer_source_adaptation
+
     if not isinstance(value, dict) or set(value) != {
         "schema",
         "models",
         "offline",
         "guardrails_enabled",
         "guardrail_source_adaptation",
+        "tokenizer_source_adaptation",
         "nltk_data",
         "contract_sha256",
     }:
@@ -285,6 +288,7 @@ def require_evg_generation_runtime(value: Any) -> None:
         or value["offline"] is not True
         or value["guardrails_enabled"] is not True
         or value["guardrail_source_adaptation"] != qwen_guardrail_source_adaptation()
+        or value["tokenizer_source_adaptation"] != tokenizer_source_adaptation()
         or value["contract_sha256"]
         != _digest_document({k: v for k, v in value.items() if k != "contract_sha256"})
     ):
@@ -480,6 +484,11 @@ def prepare_evg_generation_environment() -> tuple[dict[str, str], dict[str, Any]
     genuine Qwen guardrail reject malformed verdicts and inference exceptions;
     installed vendor files, model inference, and NLTK path security are preserved.
     """
+    from npa.workflows.paidf_evg_tokenizer import (
+        prepare_evg_tokenizer_overlay,
+        tokenizer_source_adaptation,
+    )
+
     token = os.environ.get("HF_TOKEN", "").strip()
     if not token:
         raise PaidfGuardrailError(
@@ -574,6 +583,8 @@ def prepare_evg_generation_environment() -> tuple[dict[str, str], dict[str, Any]
                 "tree_sha256": _digest_document(files),
             }
         )
+    tokenizer_overlay = prepare_evg_tokenizer_overlay(home, hub)
+    environment["PYTHONPATH"] = str(tokenizer_overlay) + os.pathsep + environment["PYTHONPATH"]
     guardrail_snapshot = (
         hub
         / ("models--" + COSMOS_GUARDRAIL_MODEL.replace("/", "--"))
@@ -601,12 +612,15 @@ def prepare_evg_generation_environment() -> tuple[dict[str, str], dict[str, Any]
         HF_HUB_OFFLINE="1",
         TRANSFORMERS_OFFLINE="1",
     )
+    for name in ("HF_TOKEN", "HUGGING_FACE_HUB_TOKEN", "HUGGINGFACE_HUB_TOKEN", "HF_TOKEN_PATH"):
+        environment.pop(name, None)
     manifest = {
         "schema": "npa.paidf.evg-generation-runtime.v1",
         "models": assets,
         "offline": True,
         "guardrails_enabled": True,
         "guardrail_source_adaptation": qwen_guardrail_source_adaptation(),
+        "tokenizer_source_adaptation": tokenizer_source_adaptation(),
         "nltk_data": {
             "repository": COSMOS_GUARDRAIL_MODEL,
             "revision": COSMOS_GUARDRAIL_REVISION,
