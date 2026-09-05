@@ -161,7 +161,23 @@ runtime parser contract cannot silently drift apart.
 `nebius profile create` step). See <https://docs.nebius.com/cli/install> for
 details.
 
-## 5. Optional operator tools
+<a id="5-optional-operator-tools"></a>
+
+## 5. Tools for cloud workloads
+
+Install the tools your workload uses:
+
+- **Terraform 1.x** is required for managed VM/cluster provisioning and agent
+  deployment. The Python package does not install it. Check `terraform version`;
+  agent bootstrap installs the tested 1.13.3 baseline only if Terraform is absent.
+- **kubectl** is required for Kubernetes operations.
+- **socat** is required by SkyPilot Kubernetes on Debian/Ubuntu:
+  `sudo apt-get install -y socat`.
+- **Docker** is needed for local container runs and image builds. Supported NPA
+  images pull anonymously from GHCR.
+- **jq** is used by shell examples that parse JSON.
+
+Platform installation:
 
 - **macOS:** `brew install jq`, plus `kubectl` and `terraform` from their
   official installers (Terraform is no longer in Homebrew core:
