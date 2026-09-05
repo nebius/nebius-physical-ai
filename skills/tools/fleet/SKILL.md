@@ -84,6 +84,18 @@ The mapping is `{project_key: {cluster_name: kubeconfig_path}}`; keep its exact
 values outside Git. This check creates no pods and complements the real
 CUDA/graphics and representative workload validation.
 
+For qualification on **every individual eight-GPU RTX cluster**, additionally run
+`npa/tests/e2e/test_fleet_rtx_workload_live.py` with the same private spec/mapping,
+`NPA_FLEET_RTX_RUN_WORKLOADS=1`, and an owner-only
+`NPA_FLEET_RTX_WORKLOAD_EVIDENCE_DIR`. It creates one Job per target using the
+provisioning gate's immutable, payload-clean image. Each Job executes verified
+CUDA arithmetic and matrix multiplication, dynamically loads GLX/EGL, and
+creates a Vulkan instance with an NVIDIA physical device. It verifies the
+runtime digest and deletes each Job with a UID precondition, then proves both
+Job and pod absence. The evidence directory holds private execution receipts
+and a separate sanitized result summary. This does not replace representative
+Isaac training or the canonical Sim2Real ladder.
+
 The RTX override also sets toolkit `RUNTIME_CONFIG_SOURCE=file`. With newer
 containerd binaries, `containerd config dump` can migrate the configuration in
 memory. Using that output may produce a version-4 NVIDIA drop-in beside a

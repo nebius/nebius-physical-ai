@@ -16,6 +16,9 @@ RUNNER_FILES = (
 # These specialized suites intentionally remain operator-invoked. The reason is
 # machine-reviewed here instead of letting an environment gate silently rot.
 MANUAL_GATES = {
+    "NPA_FLEET_RTX_RUN_WORKLOADS": (
+        "creates real driver qualification Jobs on every explicitly selected Fleet cluster"
+    ),
     "NPA_ISAAC_EVAL_VERIFY_CONFIG": (
         "read-only policy evaluation checks require owner-private project artifact references"
     ),
