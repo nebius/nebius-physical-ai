@@ -3,8 +3,11 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import wave
 from pathlib import Path
 
+import av
+import numpy as np
 import pytest
 import yaml
 from PIL import Image
@@ -72,6 +75,52 @@ def _upstream_identity(workflow: str) -> dict:
             "evg": "event-video-generation",
         }[workflow],
     }
+
+
+def _write_tiny_video(path: Path, *, frame_count: int = 2) -> Path:
+    with av.open(str(path), mode="w") as container:
+        stream = container.add_stream("mpeg4", rate=4)
+        stream.width = 32
+        stream.height = 24
+        stream.pix_fmt = "yuv420p"
+        for index in range(frame_count):
+            pixels = np.full((24, 32, 3), index * 80, dtype=np.uint8)
+            frame = av.VideoFrame.from_ndarray(pixels, format="rgb24")
+            for packet in stream.encode(frame):
+                container.mux(packet)
+        for packet in stream.encode():
+            container.mux(packet)
+    return path
+
+
+def test_video_validation_decodes_multiple_real_frames(tmp_path: Path) -> None:
+    paidf_native._validate_video(_write_tiny_video(tmp_path / "valid.mp4"))
+
+
+@pytest.mark.parametrize("fixture", ["corrupt", "one-frame", "empty"])
+def test_video_validation_rejects_invalid_or_incomplete_mp4(
+    tmp_path: Path, fixture: str
+) -> None:
+    path = tmp_path / f"{fixture}.mp4"
+    if fixture == "corrupt":
+        path.write_bytes(b"not-an-mp4" * 256)
+    elif fixture == "one-frame":
+        _write_tiny_video(path, frame_count=1)
+    else:
+        path.write_bytes(b"")
+    with pytest.raises(paidf_native.PaidfNativeError, match="decoded|decode"):
+        paidf_native._validate_video(path)
+
+
+def test_video_validation_rejects_audio_only_media(tmp_path: Path) -> None:
+    path = tmp_path / "audio-only.wav"
+    with wave.open(str(path), "wb") as output:
+        output.setnchannels(1)
+        output.setsampwidth(2)
+        output.setframerate(8_000)
+        output.writeframes(b"\0\0" * 800)
+    with pytest.raises(paidf_native.PaidfNativeError, match="no video stream"):
+        paidf_native._validate_video(path)
 
 
 def test_component_runner_preserves_three_upstream_retries(monkeypatch) -> None:

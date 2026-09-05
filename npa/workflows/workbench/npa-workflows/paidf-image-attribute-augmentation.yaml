@@ -81,6 +81,13 @@ resources:
               emptyDir:
                 medium: Memory
                 sizeLimit: 32Gi
+  postprocess:
+    # The upstream client requires Python >=3.11; reuse the verified worker
+    # environment for this CPU-only stage without starting a generation service.
+    cloud: kubernetes
+    cpus: 4
+    memory: 16Gi
+    image: "{{config.generation_image}}"
   attribute-search:
     cloud: kubernetes
     cpus: 4
@@ -151,7 +158,7 @@ states:
       dataset writer over each accepted image edit.
     needs: [validate-outputs]
     toolRef: workflow.paidf.postprocess_iaa
-    resources: cpu
+    resources: postprocess
     outputs:
       - uri: "{{config.validation_uri}}"
         schema: npa.paidf.native.iaa-postprocess.v1

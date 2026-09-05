@@ -327,9 +327,19 @@ def test_native_iaa_preserves_postprocess_and_attribute_search_boundaries() -> N
 
     states = workflow["states"]
     assert states["validate-outputs"]["next"] == "cosmos-post-processing"
+    assert states["validate-outputs"]["resources"] == "cpu"
     assert (
         states["cosmos-post-processing"]["toolRef"] == "workflow.paidf.postprocess_iaa"
     )
+    assert states["cosmos-post-processing"]["needs"] == ["validate-outputs"]
+    assert states["cosmos-post-processing"]["resources"] == "postprocess"
+    assert workflow["resources"]["postprocess"] == {
+        "cloud": "kubernetes",
+        "cpus": 4,
+        "memory": "16Gi",
+        "image": "{{config.generation_image}}",
+    }
+    assert "accelerators" not in workflow["resources"]["postprocess"]
     assert (
         states["cosmos-post-processing"]["next"] == "event-and-person-attribute-search"
     )

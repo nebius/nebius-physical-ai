@@ -235,6 +235,34 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _validate_video(path: Path) -> None:
+    """Decode a real video stream without relying on host ffmpeg executables."""
+
+    try:
+        import av
+    except ImportError as exc:
+        raise PaidfNativeError("PyAV is required to validate generated video") from exc
+
+    frame_count = 0
+    try:
+        with av.open(str(path)) as container:
+            streams = list(container.streams.video)
+            if not streams:
+                raise PaidfNativeError("generated media has no video stream")
+            for frame in container.decode(streams[0]):
+                if frame.width <= 0 or frame.height <= 0:
+                    raise PaidfNativeError(
+                        "generated video decoded a frame with invalid dimensions"
+                    )
+                frame_count += 1
+    except PaidfNativeError:
+        raise
+    except (av.FFmpegError, OSError, ValueError) as exc:
+        raise PaidfNativeError("generated video could not be decoded") from exc
+    if frame_count < 2:
+        raise PaidfNativeError("generated video decoded fewer than two frames")
+
+
 def _materialize(uri: str, destination: Path) -> Path:
     destination.parent.mkdir(parents=True, exist_ok=True)
     if _is_s3(uri):
@@ -1079,22 +1107,7 @@ def validate_augmentation(
                     with Image.open(media) as image:
                         image.verify()
                 else:
-                    probe = subprocess.run(
-                        [
-                            "ffprobe",
-                            "-v",
-                            "error",
-                            "-show_entries",
-                            "stream=codec_type",
-                            "-of",
-                            "json",
-                            str(media),
-                        ],
-                        text=True,
-                        capture_output=True,
-                    )
-                    if probe.returncode or "video" not in probe.stdout:
-                        raise PaidfNativeError("ffprobe found no video stream")
+                    _validate_video(media)
                 accepted.append(
                     {
                         **item,

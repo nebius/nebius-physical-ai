@@ -119,6 +119,10 @@ substitute the incompatible raw NGC parents when an override is missing.
 
 IAA and EVG preserve the upstream service/batch boundary by starting the pinned
 vLLM-Omni generation service inside the same SkyPilot state that consumes it.
+Frozen client setup and execution select the worker's Python interpreter.
+IAA postprocessing reuses its generation image on a CPU-only resource because
+the upstream client requires Python 3.11 or newer. Video validation decodes
+actual frames with NPA's pinned PyAV dependency; it requires no host `ffprobe`.
 Each real PAIDF component gets the upstream three retries with a 30-second retry
 delay. EVG then preserves the serial detection → captioning → anomaly Visual QA
 → per-person Visual QA → person-attribute-search chain. Component adapters
