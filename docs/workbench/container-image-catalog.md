@@ -193,7 +193,7 @@ grants redistribution rights.
 | EVG captioning worker | `<operator-registry>/npa-paidf-captioning-sky@sha256:ce97a86413005dbf844ae454a47b6e0a41ce521bd0403237e133c26bfed63ff7` | Operator-private publication verified 2026-09-05; bootstrap/security passed; native workflow acceptance pending |
 | EVG Visual QA worker | `<operator-registry>/npa-paidf-visual-qa-sky@sha256:27f600a12ccfb71c6744394d7b41375c36eed2df53833fb883b9ec5fa73070e4` | Operator-private publication verified 2026-09-05; bootstrap/security passed; native workflow acceptance pending |
 
-The three privately published CPU labeling workers were built from
+The three privately published labeling workers were built from
 `b7ae4f198b20f087afef46d31fffee367eb4fa2e` using immutable full-SHA
 development tags. The recorded digests select the runnable `linux/amd64` child
 of each OCI index. Authenticated manifest/config reads, local and remote layer
@@ -206,6 +206,10 @@ Each inventory contains zero HIGH/CRITICAL vulnerabilities, 74 MEDIUM and
 private locations and receipts remain in access-controlled evidence. This proves
 image publication and bootstrap. Attribute search also passed the complete IAA
 workflow; EVG acceptance remains pending for these labeling workers.
+EVG captioning and anomaly Visual QA require a scheduled GPU for the pinned
+H.264 CUVID decoder even though model inference uses a hosted VLM. Their
+profiles reserve one B200 each. Crop-only person QA shares the Visual QA
+profile; the attribute-search stage remains on CPU.
 
 The IAA generation worker was privately published from
 `a04508698d3813785263831741f02b8bb8040d6d`, with the same remote

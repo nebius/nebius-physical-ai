@@ -185,6 +185,12 @@ require the published contextual and sidecar files immediately after each
 service exits. Dataset assembly performs the upstream track-aware completeness
 rules, and a separate terminal state re-opens every media, caption, metadata,
 and labeling handoff before writing `reports/terminal-validation.json`.
+Captioning and anomaly Visual QA need one B200 because the pinned labeling
+stack decodes H.264 through NVIDIA CUVID; hosted VLM calls do not remove that
+local decoder requirement. Per-person Visual QA reads detector JPEG crops and
+shares the same B200 profile. Person attribute search consumes the resulting
+labels and remains a CPU stage. NPA preserves the
+[upstream codec policy](https://github.com/NVIDIA/paidf-auto-labeling/blob/36dc1114dea00d9986df97325a664520993964de/scripts/ffmpeg_codec_policy.py).
 
 The optional Airflow-only YAML/HTML performance dashboard is not copied: it
 queries Airflow's task-instance REST metadata, which does not exist in the NPA

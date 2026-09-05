@@ -73,8 +73,12 @@ def test_labeling_wrapper_preserves_vendor_boundary(
     )
     profile = spec["resources"][config_key.replace("_", "-")]
     assert profile["image"] == "{{config." + config_key + "_image}}"
-    if config_key != "detection":
+    if config_key == "attribute_search":
         assert "accelerators" not in profile
+    else:
+        # Captioning and anomaly Visual QA use hosted VLMs, but their H.264
+        # decoder is CUVID-only. Crop-only person QA shares the VQA profile.
+        assert profile["accelerators"] == "B200:1"
 
 
 @pytest.mark.parametrize("image,config_key,vendor,user", CASES)

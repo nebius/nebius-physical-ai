@@ -95,11 +95,15 @@ resources:
     image: "{{config.detection_image}}"
   captioning:
     cloud: kubernetes
+    # The pinned H.264 decoder requires NVIDIA CUVID even with a hosted VLM.
+    accelerators: B200:1
     cpus: 4
     memory: 32Gi
     image: "{{config.captioning_image}}"
   visual-qa:
     cloud: kubernetes
+    # Anomaly VQA needs CUVID; crop-only person VQA shares this profile.
+    accelerators: B200:1
     cpus: 4
     memory: 32Gi
     image: "{{config.visual_qa_image}}"

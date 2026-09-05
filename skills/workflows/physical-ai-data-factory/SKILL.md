@@ -115,6 +115,10 @@ the track-dependent PAS artifacts. The optional upstream Airflow REST-derived
 HTML timing dashboard has no Airflow-free equivalent; use NPA/SkyPilot stage
 timings plus the terminal JSON counts and manifest digest, and state that
 orchestration-reporting substitution explicitly.
+EVG captioning and anomaly Visual QA need a visible scheduled GPU for the
+upstream H.264 CUVID decoder even when their VLM is hosted. Their profiles
+reserve one B200 each. Per-person Visual QA reads JPEG crops and shares the VQA
+profile; person attribute search stays on CPU. Preserve the pinned codec policy.
 
 Three NVIDIA components in the pipeline are the real open-source projects, not
 NPA look-alikes: **Cosmos Transfer 2.5** augments, **Cosmos Evaluator**
