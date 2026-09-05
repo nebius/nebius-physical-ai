@@ -60,6 +60,43 @@ block HTTP. Empty configuration preserves the image defaults. Before workloads,
 verify the driver pod actually mounts the configured files and can fetch its
 kernel packages; do not infer network reachability from the operator VM.
 
+The marketplace may disable automatic upgrades and use an `OnDelete` driver
+DaemonSet. A successful Helm update then changes the template without replacing
+existing pods. Compare actual pod mounts with the template. Replacing stale
+driver pods is maintenance: first verify no application GPU workloads are
+active, cordon each affected node, recheck workloads, and delete only the
+identified stale pod with a UID precondition. Wait for its ready replacement
+and restore the node's prior scheduling state. Retain private receipts and
+rerun the full CUDA/graphics health gate; never delete application pods or
+relax readiness to finish an upgrade.
+
+Read-only live coverage checks exact selectors, per-node GPU quantities,
+ConfigMap contents, ready driver containers, and actual repository mounts:
+
+```bash
+NPA_INTEGRATION_E2E=1 NPA_FLEET_RTX_VERIFY_SPEC=<private-spec-path> \
+  NPA_FLEET_RTX_KUBECONFIGS=<private-project-cluster-path-mapping.json> \
+  npa/.venv/bin/python -m pytest \
+  npa/tests/e2e/test_fleet_rtx_driver_config_live.py -q
+```
+
+The mapping is `{project_key: {cluster_name: kubeconfig_path}}`; keep its exact
+values outside Git. This check creates no pods and complements the real
+CUDA/graphics and representative workload validation.
+
+The RTX override also sets toolkit `RUNTIME_CONFIG_SOURCE=file`. With newer
+containerd binaries, `containerd config dump` can migrate the configuration in
+memory. Using that output may produce a version-4 NVIDIA drop-in beside a
+version-2 root, preventing containerd startup. Reading the file preserves the
+host schema; see NVIDIA's [configuration-source guidance](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/getting-started.html#specifying-configuration-options-for-containerd).
+For an already broken node, apply the corrected toolkit configuration first.
+After verifying no application workloads are active, retain the root and
+drop-in files privately, move only the proven incompatible NVIDIA drop-in out
+of the imports directory, validate `containerd config dump`, and restart
+containerd. Verify the replacement toolkit produces a compatible fragment and
+the full health gate passes. Do not change version numbers blindly or discard
+unrelated host configuration.
+
 ## Spec (npa.fleet/v0.0.1)
 
 The version remains additive. A cluster without `backend` is the historical

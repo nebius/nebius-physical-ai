@@ -2,6 +2,11 @@ locals {
   # The marketplace defaults may omit zonal RTX platforms. Replace its driver
   # profile list only for an explicit homogeneous RTX rendering pool.
   rtx_driver_values = var.rtx_driver_profile == null ? null : yamlencode({
+    # containerd config dump can migrate a v2 root to v4 in memory. The toolkit
+    # must use the on-disk schema, otherwise its newer drop-in prevents startup.
+    toolkit = {
+      env = [{ name = "RUNTIME_CONFIG_SOURCE", value = "file" }]
+    }
     driver = {
       repoConfig = {
         configMapName = length(var.rtx_driver_profile.package_repositories) > 0 ? "npa-rtx-driver-repositories" : ""
