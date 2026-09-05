@@ -511,6 +511,65 @@ def test_local_api_daemon_probe_rejects_other_isolated_home(tmp_path) -> None:
     assert "different HOME" in result.error
 
 
+@pytest.mark.parametrize("port_args", [("--port", "48001"), ("--port=48001",)])
+def test_local_api_daemon_probe_scopes_processes_to_selected_endpoint(tmp_path, port_args) -> None:
+    proc_root = tmp_path / "proc"
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    durable = tmp_path / "durable"
+    durable.mkdir()
+    own_home = str(tmp_path / "own-home")
+    for pid, args, cwd, home in (
+        (100, port_args, durable, own_home),
+        (200, (), tmp_path / "deleted-unrelated-cwd", str(tmp_path / "other-home")),
+        (300, ("--port=48002",), tmp_path / "also-deleted", str(tmp_path / "third-home")),
+    ):
+        _fake_proc_process(
+            proc_root, pid=pid, ppid=1, uid=1234,
+            cmdline=(str(bin_dir / "python"), "-m", "sky.server.server", *args),
+            cwd=cwd, environment={"HOME": home},
+        )
+    result = workflow_module._probe_local_api_daemon_cwd(
+        str(bin_dir / "sky"), proc_root=proc_root, uid=1234,
+        expected_endpoint="http://127.0.0.1:48001", expected_home=own_home,
+    )
+    assert result.healthy
+    assert result.outcome == "cwd_live"
+    assert result.process_count == 1
+    absent = workflow_module._probe_local_api_daemon_cwd(
+        str(bin_dir / "sky"), proc_root=proc_root, uid=1234,
+        expected_endpoint="http://127.0.0.1:48003", expected_home=own_home,
+    )
+    assert absent.healthy and absent.outcome == "absent"
+
+
+def test_local_api_daemon_probe_does_not_inspect_remote_server(tmp_path) -> None:
+    result = workflow_module._probe_local_api_daemon_cwd(
+        "/opt/sky/bin/sky", proc_root=tmp_path / "missing",
+        expected_endpoint="https://sky.example.com",
+    )
+    assert result.healthy and result.outcome == "remote_api_endpoint"
+
+
+@pytest.mark.parametrize("endpoint", ["invalid", "http://localhost:invalid"])
+def test_local_api_daemon_probe_rejects_invalid_endpoint(endpoint) -> None:
+    result = workflow_module._probe_local_api_daemon_cwd(
+        "/opt/sky/bin/sky", expected_endpoint=endpoint,
+    )
+    assert not result.healthy and result.outcome == "invalid_api_endpoint"
+
+
+def test_api_daemon_repair_never_stops_a_different_runtime() -> None:
+    calls = []
+    with pytest.raises(SkyPilotSubmitError, match="no API server was stopped"):
+        workflow_module._ensure_local_api_daemon_cwd(
+            "/opt/sky/bin/sky", env={}, cwd="/durable",
+            runner=lambda *args, **kwargs: calls.append(args),
+            probe=lambda: workflow_module.ApiDaemonCwdProbe(False, "stale_runtime_environment"),
+        )
+    assert calls == []
+
+
 def test_local_api_daemon_probe_rejects_other_user_id(tmp_path) -> None:
     proc_root = tmp_path / "proc"
     bin_dir = tmp_path / "venv" / "bin"

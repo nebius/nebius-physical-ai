@@ -404,6 +404,17 @@ resolve those values from the provider inventory before deployment.
 
 ## Add / remove clusters and projects
 
+For concurrent workflows from one operator host, keep each project's SkyPilot
+state and API endpoint separate. An isolated HOME does not isolate SkyPilot's
+default listening port. Supply the operator-managed endpoint through
+`SKYPILOT_API_SERVER_ENDPOINT`, with a stable HOME, user identity, and exact
+project kubeconfig on its server. NPA inspects only the selected local port;
+unrelated servers cannot poison that check. A selected server with a different
+runtime identity fails before submission and is never stopped automatically.
+Remote API endpoints use SkyPilot's API/controller checks instead of local
+procfs inspection. Preserve the same endpoint and state when monitoring or
+cancelling the run.
+
 The fleet is spec-driven and idempotent, so growing or shrinking it is targeted:
 
 - **Add** one or many: put the new project/cluster in the spec and deploy just
