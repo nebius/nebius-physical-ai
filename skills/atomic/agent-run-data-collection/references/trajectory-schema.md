@@ -72,6 +72,9 @@ contract; an implementation may use stricter typed models.
 - `trajectory.sequence` is strictly increasing and preserves retries.
 - `outcome.verified=true` requires at least one objective `verified_by` entry.
 - A grounded reply records zero model tokens; missing usage is not fabricated as zero.
+  Unknown `routing.input_tokens` and `routing.output_tokens` may be omitted or
+  explicitly `null`. Observed counts are integers; booleans, strings and floats
+  are invalid token counts.
 - Store large artifacts by sanitized URI and digest, never inline their bytes.
 - `content_sha256` is computed over canonical JSON with that field empty.
 - Collection metadata must not claim `collected` until S3 read-after-write verifies

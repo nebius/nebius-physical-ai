@@ -38,6 +38,12 @@ context. Standard pytest uses synthetic protocol fixtures without downloading
 tools. The separate native CI job executes the actual detector and matcher and
 fails when either is missing.
 
+Before launching the detector, the scanner copies the verified helper and
+configuration into sealed Linux memory files and checks their hashes again.
+The child uses these immutable copies. Original-file checks remain in place to
+detect changes to the authorized inputs; a later refusal alone cannot prevent
+changed executable bytes from running.
+
 ## Run and inspect
 
 Use `prepare.py authorize --help` to prepare an authorization from the exact

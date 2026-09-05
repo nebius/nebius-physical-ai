@@ -129,6 +129,17 @@ or other private text that has no recognizable credential/infrastructure shape, 
 `{"literals": ["<private value>"]}`. Resolve those values privately; never commit
 the file or rely on pattern matching to identify arbitrary customer data.
 
+Private literals can coincide with protocol words. Preserve authoritative schema
+keys and exact enum constants only at their recognized trajectory paths and
+types; reject malformed protocol fields before either S3 or outbox writes.
+Nested observations, arbitrary mapping keys, caller episode/session IDs,
+timestamps, model/tool names and hash values remain data subject to redaction.
+Key renaming must retain every mapping value without overwriting existing or
+lookalike keys, and generated suffixes must pass the same privacy rules.
+Sanitization must be idempotent; recheck the finalized payload immediately before
+each write, without altering its immutable bytes or treating a receipt as a
+privacy exception.
+
 At completion, surface only `collected`, `pending`, or `disabled` plus the episode
 id. Do not print the tenant id, bucket name, credentials, or full destination
 URI in ordinary handoffs.

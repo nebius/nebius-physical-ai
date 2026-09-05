@@ -224,15 +224,11 @@ def redact(value: Any) -> Any:
     recognizable infrastructure and credential forms are always removed.
     """
     if isinstance(value, dict):
-        result = {}
-        for key, item in value.items():
-            if not isinstance(key, str):
-                raise AgentRunDataError("trajectory mapping keys must be strings")
-            safe_key = _redact_string(key)
-            if safe_key != key:
-                safe_key += "-" + hashlib.sha256(key.encode()).hexdigest()[:12]
-            result[safe_key] = "<redacted>" if _SECRET_KEY_RE.search(key) else redact(item)
-        return result
+        keys = _mapping_keys(value, _redact_string)
+        return {
+            keys[key]: "<redacted>" if _SECRET_KEY_RE.search(key) else redact(item)
+            for key, item in value.items()
+        }
     if isinstance(value, (list, tuple)):
         return [redact(item) for item in value]
     if isinstance(value, str):
@@ -242,25 +238,46 @@ def redact(value: Any) -> Any:
     raise AgentRunDataError("trajectory values must be JSON data, never raw objects or bytes")
 
 
+def _mapping_keys(value: dict[str, Any], sanitize: Callable[[str], str], *, fixed: frozenset[str] = frozenset()) -> dict[str, str]:
+    """Allocate stable names without overwriting another mapping entry.
+
+    Generated hash suffixes are data too: sanitize them before use. Reserve
+    unchanged keys first, including caller lookalikes of generated references.
+    Exact existing redaction markers provide collision suffixes that remain
+    stable even when the configured literals cover digits or punctuation.
+    """
+    if any(not isinstance(key, str) for key in value):
+        raise AgentRunDataError("trajectory mapping keys must be strings")
+    names = {key: key if key in fixed else sanitize(key) for key in value}
+    used = {key for key, safe in names.items() if key == safe}
+    for key in sorted(names):
+        if names[key] == key:
+            continue
+        candidate = sanitize(names[key] + "-" + hashlib.sha256(key.encode()).hexdigest()[:12])
+        while candidate in used:
+            candidate += "<private-ref>"
+        names[key] = candidate
+        used.add(candidate)
+    return names
+
+
 def _redact_identifiers(value: Any, replacements: dict[str, str]) -> Any:
     if isinstance(value, dict):
-        result = {}
-        for key, item in value.items():
-            safe_key = _redact_identifiers(key, replacements)
-            if safe_key != key:
-                safe_key += "-" + hashlib.sha256(key.encode()).hexdigest()[:12]
-            result[safe_key] = _redact_identifiers(item, replacements)
-        return result
+        keys = _mapping_keys(value, lambda key: _redact_identifiers(key, replacements))
+        return {keys[key]: _redact_identifiers(item, replacements) for key, item in value.items()}
     if isinstance(value, list):
         return [_redact_identifiers(item, replacements) for item in value]
     if isinstance(value, str):
         # Preserve only exact internal markers. Scan surrounding text and key
         # digest suffixes too; caller-supplied text can imitate a suffix.
         parts = _REDACTION_MARKER_RE.split(value)
+        identifiers = sorted((item for item in replacements if item), key=lambda item: (-len(item), item))
+        if not identifiers:
+            return value
+        pattern = re.compile("|".join(re.escape(item) for item in identifiers))
         for index in range(0, len(parts), 2):
-            for identifier, replacement in replacements.items():
-                if identifier:
-                    parts[index] = parts[index].replace(identifier, replacement)
+            # Substitution never rescans a newly inserted internal marker.
+            parts[index] = pattern.sub(lambda match: replacements[match.group()], parts[index])
         return "".join(parts)
     return value
 
@@ -294,8 +311,91 @@ def _private_replacements(config: DatasetConfig) -> dict[str, str]:
     return dict(sorted(replacements.items(), key=lambda item: len(item[0]), reverse=True))
 
 
+_REMOVED_FIELDS = (
+    "credential-and-environment-payloads", "private-uris-and-addresses",
+    "infra-identifiers", "operator-private-literals", "inline-data",
+)
+# None means arbitrary JSON data. Those values never acquire protocol treatment
+# recursively just because they contain a familiar field name or schema string.
+_PROTOCOL_FIELDS = {
+    (): {"schema_version": str, "episode_id": str, "session_id": str, "scope": dict,
+         "timing": dict, "request": dict, "initial_state": None, "trajectory": list,
+         "outcome": dict, "routing": dict, "versions": dict, "redaction": dict, "collection": dict},
+    ("scope",): {"tenant_id": str, "dataset_role": str},
+    ("timing",): {"started_at": str, "ended_at": str, "latency_ms": int},
+    ("request",): {"content": str, "intent": str},
+    ("trajectory", "event"): {"sequence": int, "phase": str, "tool": str,
+                               "arguments": None, "observation": None, "status": str},
+    ("outcome",): {"status": str, "verified": bool, "verified_by": list, "artifact_uris": list,
+                   "operator_interventions": list, "preference_pairs": list},
+    ("routing",): {"grounded": bool, "tier": str, "model": str,
+                  "input_tokens": (int, type(None)), "output_tokens": (int, type(None))},
+    ("versions",): {"agent": str, "tools": dict},
+    ("redaction",): {"applied": bool, "fields_removed": list},
+    ("collection",): {"status": str, "content_sha256": str},
+}
+_PROTOCOL_CONSTANTS = {
+    ("schema_version",): (SCHEMA_VERSION,),
+    ("scope", "dataset_role"): ("agent-finetuning-raw",),
+    ("trajectory", "event", "phase"): ("plan", "tool", "observation", "confirm", "final"),
+    ("trajectory", "event", "status"): ("ok", "error", "rejected", "cancelled"),
+    ("outcome", "status"): ("succeeded", "failed", "refused", "cancelled"),
+    ("redaction", "applied"): (True,),
+    ("collection", "status"): (CollectionStatus.PENDING,),
+}
+_REQUIRED_PROTOCOL_FIELDS = {path: frozenset(_PROTOCOL_FIELDS[path]) for path in (
+    (), ("scope",), ("timing",), ("request",), ("redaction",), ("collection",),
+)}
+
+
 def _sanitize_payload(payload: dict[str, Any], config: DatasetConfig) -> dict[str, Any]:
-    sanitized = _redact_identifiers(redact(payload), _private_replacements(config))
+    replacements = _private_replacements(config)
+
+    def text(value: str) -> str:
+        return _redact_identifiers(_redact_string(value), replacements)
+
+    def visit(value: Any, path: tuple[str, ...] | None) -> Any:
+        if path in _PROTOCOL_CONSTANTS:
+            constants = _PROTOCOL_CONSTANTS[path]
+            if not any(type(value) is type(item) and value == item for item in constants):
+                raise AgentRunDataError("invalid trajectory protocol constant")
+            return value
+        if path == ("redaction", "fields_removed"):
+            if type(value) is not list or value != list(_REMOVED_FIELDS):
+                raise AgentRunDataError("invalid trajectory redaction declaration")
+            return list(_REMOVED_FIELDS)
+        fields = _PROTOCOL_FIELDS.get(path, {})
+        if fields:
+            if type(value) is not dict:
+                raise AgentRunDataError("invalid trajectory protocol mapping")
+            if not _REQUIRED_PROTOCOL_FIELDS.get(path, frozenset()) <= value.keys():
+                raise AgentRunDataError("invalid trajectory protocol structure")
+            for key, expected in fields.items():
+                allowed = expected if isinstance(expected, tuple) else (expected,)
+                if key in value and expected is not None and type(value[key]) not in allowed:
+                    raise AgentRunDataError("invalid trajectory protocol field type")
+        if isinstance(value, dict):
+            names = _mapping_keys(value, text, fixed=frozenset(fields))
+            return {
+                names[key]: (
+                    "<redacted>" if key not in fields and _SECRET_KEY_RE.search(key)
+                    else visit(item, path + (key,) if key in fields and path is not None else None)
+                )
+                for key, item in value.items()
+            }
+        if path == ("trajectory",):
+            if type(value) is not list or any(type(item) is not dict for item in value):
+                raise AgentRunDataError("invalid trajectory event population")
+            return [visit(item, ("trajectory", "event")) for item in value]
+        if isinstance(value, (list, tuple)):
+            return [visit(item, None) for item in value]
+        if isinstance(value, str):
+            return text(value)
+        if value is None or isinstance(value, (bool, int, float)):
+            return value
+        raise AgentRunDataError("trajectory values must be JSON data, never raw objects or bytes")
+
+    sanitized = visit(payload, ())
     # This is the sole permitted concrete routing identifier in an episode.
     sanitized["scope"]["tenant_id"] = config.tenant_id
     return sanitized
@@ -353,10 +453,19 @@ def _secure_outbox() -> Path:
 
 def _validated_body(config: DatasetConfig, payload: dict[str, Any]) -> bytes:
     """Check finalized integrity and run the sanitizer again before persistence."""
+    sanitized = _sanitize_payload(payload, config)
     if payload.get("schema_version") != SCHEMA_VERSION:
         raise AgentRunDataError("unsupported trajectory schema")
     if not all(_SAFE_ID_RE.fullmatch(str(payload.get(field, ""))) for field in ("episode_id", "session_id")):
         raise AgentRunDataError("trajectory episode and session IDs must be safe stable identifiers")
+    valid_timing = True
+    try:
+        for field in ("started_at", "ended_at"):
+            datetime.fromisoformat(payload["timing"][field].replace("Z", "+00:00"))
+    except ValueError:
+        valid_timing = False
+    if not valid_timing:
+        raise AgentRunDataError("trajectory timestamps must remain valid after redaction")
     if payload.get("scope", {}).get("tenant_id") != config.tenant_id:
         raise AgentRunDataError("pending trajectory tenant does not match its destination")
     collection = payload.get("collection", {})
@@ -364,7 +473,7 @@ def _validated_body(config: DatasetConfig, payload: dict[str, Any]) -> bytes:
         raise AgentRunDataError("immutable raw trajectory must retain pending delivery status")
     if collection.get("content_sha256") != _content_sha256(payload):
         raise AgentRunDataError("finalized trajectory content hash mismatch")
-    if _sanitize_payload(payload, config) != payload:
+    if sanitized != payload:
         raise AgentRunDataError("finalized trajectory failed pre-write privacy verification")
     return _canonical_json(payload).encode()
 
@@ -553,10 +662,7 @@ def emit_trajectory(
         "versions": versions,
         "redaction": {
             "applied": True,
-            "fields_removed": [
-                "credential-and-environment-payloads", "private-uris-and-addresses",
-                "infra-identifiers", "operator-private-literals", "inline-data",
-            ],
+            "fields_removed": list(_REMOVED_FIELDS),
         },
         "collection": {"status": CollectionStatus.PENDING, "content_sha256": ""},
     }

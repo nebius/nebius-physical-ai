@@ -191,6 +191,30 @@ def bound_file(spec, *, secret=True):
         return path
 
 
+@contextmanager
+def sealed_execution_input(source_fd, expected_digest, *, executable=False):
+    """Execute/read verified immutable bytes while retaining original-file audits."""
+    fd = os.memfd_create("verified-scanner-input", os.MFD_ALLOW_SEALING | os.MFD_CLOEXEC)
+    try:
+        os.fchmod(fd, 0o500 if executable else 0o400)
+        offset = 0
+        while data := os.pread(source_fd, CHUNK, offset):
+            offset += len(data)
+            remaining = memoryview(data)
+            while remaining:
+                written = os.write(fd, remaining)
+                require(written > 0, "execution_input_short_write")
+                remaining = remaining[written:]
+        # Linux UAPI constants, also used for the verified native literal matcher.
+        fcntl.fcntl(fd, 1033, 15)
+        require(fcntl.fcntl(fd, 1034) == 15, "execution_input_not_sealed")
+        require(descriptor_digest(fd) == expected_digest, "execution_input_digest_changed")
+        os.lseek(fd, 0, os.SEEK_SET)
+        yield fd
+    finally:
+        os.close(fd)
+
+
 def json_object(data):
     def pairs(items):
         result = {}
@@ -450,8 +474,10 @@ class Detector:
                 os.close(parent_fd)
             self.stderr = os.fdopen(stderr_fd, "wb")
             with (
-                bound_open(authorization["helper"], secret=True) as (_, helper_fd, _),
-                bound_open(authorization["config"], secret=False) as (_, config_fd, _),
+                bound_open(authorization["helper"], secret=True) as (_, helper_source_fd, _),
+                bound_open(authorization["config"], secret=False) as (_, config_source_fd, _),
+                sealed_execution_input(helper_source_fd, authorization["helper"]["sha256"], executable=True) as helper_fd,
+                sealed_execution_input(config_source_fd, authorization["config"]["sha256"]) as config_fd,
             ):
                 _SPAWNING = True
                 try:
