@@ -1233,11 +1233,28 @@ def test_dig_runtime_uses_only_verified_preflight_pinned_cache(
     monkeypatch.setenv("HF_HUB_CACHE", "/unrelated/cache")
     monkeypatch.setenv("HF_HUB_OFFLINE", "0")
     monkeypatch.setenv("CKPT_DIR", "/unrelated/checkpoints")
+    monkeypatch.setenv(
+        "PATH",
+        "/tmp/npa-shim:/opt/npa-venv/bin:/usr/local/bin:/opt/venv/bin:/usr/bin",
+    )
+    monkeypatch.setenv(
+        "PYTHONPATH", "/tmp/npa-src-overlay/src:/workspace/paidf-anomalygen"
+    )
     env = paidf_native._dig_offline_environment(tmp_path, "unit-run")
     assert env["HF_HUB_OFFLINE"] == "1"
     assert env["TRANSFORMERS_OFFLINE"] == "1"
     assert env["HF_HUB_CACHE"] == str(tmp_path / "hf")
     assert env["CKPT_DIR"] == str(tmp_path)
+    assert env["VIRTUAL_ENV"] == "/opt/venv"
+    assert env["PATH"].split(":") == [
+        "/opt/venv/bin",
+        "/usr/local/bin",
+        "/usr/bin",
+    ]
+    assert env["PYTHONPATH"] == (
+        "/tmp/npa-src-overlay/src:/workspace/paidf-anomalygen"
+    )
+    assert env["UV_PYTHON"] == "/opt/venv/bin/python"
     assert len(manifest["models"]) == 4
     assert all(len(model["revision"]) == 40 for model in manifest["models"])
 
@@ -1261,6 +1278,118 @@ def test_dig_runtime_refuses_missing_or_drifted_cache(
         _write_fixture_json(tmp_path / "runtime-hf-snapshots.json", manifest)
     with pytest.raises(paidf_native.PaidfNativeError, match="cache"):
         paidf_native._dig_offline_environment(tmp_path, "unit-run")
+
+
+def test_dig_training_and_inference_children_use_the_vendor_environment(
+    tmp_path: Path, monkeypatch
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    source = tmp_path / "physical-ai-data-factory"
+    dataset = tmp_path / "dataset"
+    pretrained = tmp_path / "pretrained"
+    checkpoint = tmp_path / "checkpoint"
+    for directory in (source, dataset, pretrained, checkpoint):
+        directory.mkdir()
+    (dataset / "defect_spec.jsonl").write_text("{}\n", encoding="utf-8")
+    selected = checkpoint / "training/model/checkpoint-10.pt"
+    selected.parent.mkdir(parents=True)
+    selected.write_bytes(b"checkpoint")
+    real_path = Path
+    monkeypatch.setattr(
+        paidf_native,
+        "Path",
+        lambda path: (
+            workspace if str(path) == "/workspace/paidf-anomalygen" else real_path(path)
+        ),
+    )
+    materialized = {
+        "dataset": dataset,
+        "pretrained": pretrained,
+        "checkpoint": checkpoint,
+    }
+    monkeypatch.setattr(
+        paidf_native,
+        "_materialize",
+        lambda uri, _target: materialized[uri],
+    )
+    monkeypatch.setattr(
+        paidf_native,
+        "_dig_pretrained_content_manifest",
+        lambda *_args, **_kwargs: ({}, "a" * 64),
+    )
+    monkeypatch.setattr(
+        paidf_native, "_dig_cache_manifest", lambda *_args, **_kwargs: {}
+    )
+    monkeypatch.setattr(paidf_native, "_runtime_fetch", lambda *_args: source)
+    monkeypatch.setattr(paidf_native, "_publish", lambda *_args: None)
+    monkeypatch.setattr(
+        paidf_native,
+        "_verify_dig_finetune_handoff",
+        lambda *_args: (
+            {
+                "selected_checkpoint": "training/model/checkpoint-10.pt",
+                "selected_checkpoint_sha256": "b" * 64,
+            },
+            selected,
+        ),
+    )
+    monkeypatch.setenv(
+        "PATH",
+        "/tmp/npa-shim:/opt/npa-venv/bin:/usr/local/bin:/opt/venv/bin:/usr/bin",
+    )
+    monkeypatch.setenv("PYTHONPATH", "/workspace/paidf-anomalygen")
+    child_envs = []
+
+    def component(_argv, **kwargs):
+        env = kwargs["env"]
+        child_envs.append(env)
+        if "TRAIN_OUTPUT" in env:
+            pointer = Path(env["TRAIN_OUTPUT"]) / "training/best_checkpoint.txt"
+            pointer.parent.mkdir(parents=True)
+            (pointer.parent / "model").mkdir()
+            (pointer.parent / "model/checkpoint-10.pt").write_bytes(b"checkpoint")
+            pointer.write_text("checkpoint-10.pt", encoding="utf-8")
+        if "OUTPUT_DIR" in env:
+            generated = Path(env["OUTPUT_DIR"])
+            (generated / "reconstructed_image").mkdir(parents=True)
+            (generated / "reconstructed_image/image.png").write_bytes(b"image")
+            (generated / "pseudo_labels").mkdir()
+            (generated / "pseudo_labels/coco_annotations.json").write_text(
+                "{}", encoding="utf-8"
+            )
+
+    monkeypatch.setattr(paidf_native, "_run_component", component)
+
+    paidf_native.run_dig_train(
+        "dataset",
+        "pretrained",
+        str(tmp_path / "finetune"),
+        str(tmp_path / "train-result.json"),
+        "pcb",
+        "unit-run",
+    )
+    paidf_native.run_dig_inference(
+        "dataset",
+        "pretrained",
+        "checkpoint",
+        str(tmp_path / "finetune-result.json"),
+        str(tmp_path / "generated"),
+        str(tmp_path / "infer-result.json"),
+        1,
+        "unit-run",
+    )
+
+    assert len(child_envs) == 2
+    for env in child_envs:
+        assert env["VIRTUAL_ENV"] == "/opt/venv"
+        assert env["UV_PYTHON"] == "/opt/venv/bin/python"
+        assert env["PATH"].split(":") == [
+            "/opt/venv/bin",
+            "/usr/local/bin",
+            "/usr/bin",
+        ]
+        assert env["PYTHONPATH"] == "/workspace/paidf-anomalygen"
 
 
 @pytest.mark.parametrize("mutation", ["changed", "added", "removed"])
@@ -1422,6 +1551,11 @@ def test_dig_preparation_pins_real_converter_and_original_downloader(
             target.write_text("synthetic-fixture", encoding="utf-8")
 
     monkeypatch.setattr(paidf_native, "_run_component", component)
+    monkeypatch.setenv(
+        "PATH",
+        "/tmp/npa-shim:/opt/npa-venv/bin:/usr/local/bin:/opt/venv/bin:/usr/bin",
+    )
+    monkeypatch.setenv("PYTHONPATH", "/workspace/paidf-anomalygen")
     output = tmp_path / "published"
     result = paidf_native.prepare_dig_pretrained(
         str(output), str(tmp_path / "result.json"), "unit-run"
@@ -1429,6 +1563,16 @@ def test_dig_preparation_pins_real_converter_and_original_downloader(
     revisions = paidf_native._dig_model_revisions()
     downloads = [argv for argv, _env in calls if argv[0] == "uvx"]
     assert len(downloads) == 6
+    assert calls
+    for _argv, env in calls:
+        assert env["VIRTUAL_ENV"] == "/opt/venv"
+        assert env["UV_PYTHON"] == "/opt/venv/bin/python"
+        assert env["PATH"].split(":") == [
+            "/opt/venv/bin",
+            "/usr/local/bin",
+            "/usr/bin",
+        ]
+        assert env["PYTHONPATH"] == "/workspace/paidf-anomalygen"
     for argv in downloads:
         assert argv[1] == "hf==1.26.0"
         assert argv[argv.index("--revision") + 1] == revisions[argv[3]]

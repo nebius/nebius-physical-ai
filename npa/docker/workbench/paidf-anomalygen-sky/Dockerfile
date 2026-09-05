@@ -75,10 +75,15 @@ RUN --mount=type=bind,from=wheelbuilder,source=/wheels,target=/wheels \
 
 COPY --from=source /src/requirements.txt /tmp/requirements.txt
 COPY --from=source /src/requirements-nodeps.txt /tmp/requirements-nodeps.txt
+# Replace upstream NLTK 3.10.0 with its hash-pinned CVE-2026-79675 fix.
+# Version 3.10.3 keeps the same required dependency set.
 RUN uv pip install -r /tmp/requirements.txt \
     && (uv pip uninstall av opencv-python 2>/dev/null || true) \
     && uv pip install --no-deps --force-reinstall /tmp/cvwheel/*.whl \
     && uv pip install -r /tmp/requirements-nodeps.txt --no-deps \
+    && uv pip install --no-deps \
+         'nltk @ https://files.pythonhosted.org/packages/b6/6d/ebd2af4640b12168fdf0cb74b6118df2f32a2f62ec7e0c06fbfd80706639/nltk-3.10.3-py3-none-any.whl#sha256=ff9598a8e20518ee0d557745890cc4435b9578489e2dcbc69c4f81fa060caf7c' \
+    && python -c 'import importlib.metadata as m; assert m.version("nltk") == "3.10.3"' \
     && rm -rf /tmp/cvwheel /tmp/requirements.txt /tmp/requirements-nodeps.txt \
     && python -c 'import cv2; cv2.connectedComponentsWithStats' \
     && python -c 'import cosmos_framework.model.generator.mot.unified_mot'
@@ -103,7 +108,14 @@ RUN uv pip install -e assets/lerobot_stub --no-deps \
          \( -name '*.safetensors' -o -name '*.ckpt' -o -name '*.pth' -o -name '*.pt' \) \
          -size +50M -print -quit)"
 
-RUN install -d -m 0755 /run/sshd \
+# Keep NPA's installation separate from upstream's compiled CUDA environment.
+# Both environments use the same pinned Python, with independent site-packages.
+RUN uv venv --python "${PYTHON_VERSION}" /opt/npa-venv \
+    && uv pip install --python /opt/npa-venv/bin/python pip \
+    && chown -R ubuntu:ubuntu /opt/npa-venv \
+    && printf '%s\n' 'export PATH="/opt/npa-venv/bin:$PATH"' \
+         > /etc/profile.d/npa-runtime-python.sh \
+    && install -d -m 0755 /run/sshd \
     && sed -i '/^  start)$/a\    ssh-keygen -A' /etc/init.d/ssh \
     && grep -q 'ssh-keygen -A' /etc/init.d/ssh \
     && rm -f /etc/ssh/ssh_host_* \
@@ -118,6 +130,7 @@ COPY paidf-anomalygen-sky/entrypoint.sh /usr/local/bin/npa-sky-entrypoint
 RUN chmod 0755 /usr/local/bin/npa-sky-entrypoint
 
 USER ubuntu
-ENV HOME=/home/ubuntu
+ENV HOME=/home/ubuntu \
+    PATH=/opt/npa-venv/bin:${PATH}
 ENTRYPOINT ["/usr/local/bin/npa-sky-entrypoint"]
 CMD ["/bin/bash"]

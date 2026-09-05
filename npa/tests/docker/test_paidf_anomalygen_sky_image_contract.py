@@ -27,6 +27,11 @@ def test_paidf_anomalygen_sky_bootstrap_source_is_complete() -> None:
         assert dependency in dockerfile
     assert "rm -f /etc/ssh/ssh_host_*" in dockerfile
     assert "ubuntu ALL=(ALL) NOPASSWD:ALL" in dockerfile
+    assert 'uv venv --python "${PYTHON_VERSION}" /opt/npa-venv' in dockerfile
+    assert "uv pip install --python /opt/npa-venv/bin/python pip" in dockerfile
+    assert "chown -R ubuntu:ubuntu /opt/npa-venv" in dockerfile
+    assert 'export PATH="/opt/npa-venv/bin:$PATH"' in dockerfile
+    assert "PATH=/opt/npa-venv/bin:${PATH}" in dockerfile
     entrypoint = ENTRYPOINT.read_text(encoding="utf-8")
     assert 'exec "$@"' in entrypoint
     assert "exec /bin/bash" in entrypoint
@@ -43,3 +48,14 @@ def test_paidf_anomalygen_sky_preserves_cuda_forward_compatibility() -> None:
     assert '"595.58.03-1ubuntu1"' in text
     assert "libcuda.so.595.58.03" in text
     assert "libnvidia-ptxjitcompiler.so.595.58.03" in text
+
+
+def test_paidf_anomalygen_security_patch_preserves_the_wheel_build() -> None:
+    text = DOCKERFILE.read_text(encoding="utf-8")
+    builder, runtime = text.split("FROM ${CUDA_RUNTIME_IMAGE} AS runtime", 1)
+    assert "nltk" not in builder
+    assert "nltk-3.10.3-py3-none-any.whl#sha256=" in runtime
+    assert "ff9598a8e20518ee0d557745890cc4435b9578489e2dcbc69c4f81fa060caf7c" in runtime
+    assert runtime.index("uv pip install -r /tmp/requirements-nodeps.txt") < runtime.index(
+        "nltk-3.10.3-py3-none-any.whl#sha256="
+    )

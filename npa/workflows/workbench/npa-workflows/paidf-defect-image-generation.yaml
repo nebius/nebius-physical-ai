@@ -118,8 +118,8 @@ states:
 
   anomaly-infer:
     description: >-
-      Execute the real upstream prep_testcase -> validate_jsonl -> run_sdg ->
-      verify_output chain in the immutable AnomalyGen image. Missing datasets,
+      Execute pinned upstream ROI placement, checkpoint-based generation, and
+      pseudo-labeling, including output counts and guardrail-blocked accounting. Missing datasets,
       masks, checkpoint bytes, labels, or model access fail closed.
     needs: [finetune]
     toolRef: workflow.paidf.dig_infer

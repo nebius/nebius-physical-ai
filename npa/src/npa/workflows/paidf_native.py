@@ -2105,13 +2105,29 @@ def _dig_offline_environment(pretrained: Path, run_id: str) -> dict[str, str]:
         raise PaidfNativeError("DIG runtime cache requires the workflow run identity")
     _dig_cache_manifest(pretrained, run_id)
     return {
-        **os.environ,
+        **_dig_vendor_environment(),
         "CKPT_DIR": str(pretrained),
         "HF_HUB_CACHE": str(pretrained / "hf"),
         "HUGGINGFACE_HUB_CACHE": str(pretrained / "hf"),
         "HF_HUB_OFFLINE": "1",
         "TRANSFORMERS_OFFLINE": "1",
     }
+
+
+def _dig_vendor_environment() -> dict[str, str]:
+    """Run AnomalyGen children in its pinned environment, outside NPA's venv."""
+
+    env = dict(os.environ)
+    excluded = {"/tmp/npa-shim", "/opt/npa-venv/bin"}
+    inherited = [
+        entry
+        for entry in env.get("PATH", "").split(os.pathsep)
+        if entry and entry not in excluded and entry != "/opt/venv/bin"
+    ]
+    env["PATH"] = os.pathsep.join(["/opt/venv/bin", *inherited])
+    env["VIRTUAL_ENV"] = "/opt/venv"
+    env["UV_PYTHON"] = "/opt/venv/bin/python"
+    return env
 
 
 def run_dig_train(
@@ -2205,7 +2221,7 @@ def prepare_dig_pretrained(
         converted_manifest = workspace / "assets/checkpoint_manifest_converted.sha256"
         revisions = _dig_model_revisions()
         env = {
-            **os.environ,
+            **_dig_vendor_environment(),
             "CKPT_DIR": str(output),
             "HF_HUB_OFFLINE": "0",
             "TRANSFORMERS_OFFLINE": "0",

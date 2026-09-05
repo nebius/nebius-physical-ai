@@ -206,9 +206,6 @@ PYTHON_MODULE_PROBE = "python:"
 #: When a candidate exists, setup installs npa INTO it and records it as the stage interpreter,
 #: so the tool and the vendor library share one environment.
 TOOL_REF_VENDOR_INTERPRETERS: dict[str, tuple[str, ...]] = {
-    "workflow.paidf.dig_infer": ("/opt/venv/bin/python",),
-    "workflow.paidf.dig_train": ("/opt/venv/bin/python",),
-    "workflow.paidf.dig_prepare_pretrained": ("/opt/venv/bin/python",),
     "workbench.groot.baseline_eval": ("/opt/groot/Isaac-GR00T/.venv/bin/python",),
     "workbench.groot.posttrain_eval": ("/opt/groot/Isaac-GR00T/.venv/bin/python",),
     "workbench.lerobot": ("/opt/lerobot/venv/bin/python",),

@@ -85,6 +85,12 @@ catalog. Its full inventory retains six unfixed CRITICAL findings; the
 repository's fixed-CRITICAL policy passed without new ignore entries. Native
 GPU/workflow acceptance remains separate and pending.
 
+The AnomalyGen recipe keeps NPA installation in its own writable Python
+environment and selects the compiled upstream environment for DIG subprocesses.
+It applies the same hash-pinned NLTK security update as EVG after installing
+upstream requirements. Final built-byte and native workload acceptance remain
+pending; the CUDA wheel build is unchanged.
+
 The RF-DETR compatibility worker supports inference. It removes inherited
 W&B/torchtitan training tools and their unused system development toolchain
 through package-manager dependency handling, while retaining the vendor service
