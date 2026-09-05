@@ -180,15 +180,15 @@ grants redistribution rights.
 | DIG vendor reference (not executed) | `nvcr.io/nvidia/paidf-anomalygen@sha256:e62a87d1dc58b6de8b8a352dc8ec2a2e3e400288d66b2b8b19b92d97e7a0bc09` | Vendor-owned NGC image; pull verified, but not SkyPilot-compatible |
 | DIG setup, fine-tune, generation, and native labels | `<operator-registry>/npa-paidf-anomalygen-sky@sha256:<digest>` built from `paidf-anomalygen-sky/Dockerfile` | Restricted source build on public CUDA bases with isolated NPA installation and a pinned NLTK security patch; built-byte and GPU acceptance pending; never NPA public GHCR |
 | IAA Qwen Image Edit blueprint reference | `docker.io/vllm/vllm-omni@sha256:5d8c7e742c98858f257d82307e378391f0e7d77065e141c733cc4778042128ab` | Not executed: failed bootstrap and contains vLLM 0.20 affected by CVE-2026-48746 |
-| IAA Qwen Image Edit selected parent | `docker.io/vllm/vllm-omni@sha256:8b0cc5438eb27b34cdfd22011b735da6a94835a09e9c56ddf9e8cb300d679919` | Aligned upstream vLLM/Omni 0.22.0 security update; wrapper publication/bootstrap verified; GPU acceptance pending |
+| IAA Qwen Image Edit selected parent | `docker.io/vllm/vllm-omni@sha256:8b0cc5438eb27b34cdfd22011b735da6a94835a09e9c56ddf9e8cb300d679919` | Aligned upstream vLLM/Omni 0.22.0 security update; wrapper publication/bootstrap and complete IAA GPU workflow verified |
 | EVG Cosmos3 Super Image2Video upstream parent | `docker.io/vllm/vllm-omni@sha256:970dee6658ea223f615b2438ce41e47f1d5322225482546e6e6bc5d8134f757c` | Exact wrapper parent; upstream worker bootstrap failed |
-| IAA generation and CPU postprocessing worker | `<operator-registry>/npa-paidf-image-edit-sky@sha256:ef7450cfc12efb92a0260f09df9a83f4b0590ccb4a9fc6157b819721adc56cd8` | Operator-private publication verified 2026-09-05; bootstrap and repository security policy passed; GPU acceptance pending |
+| IAA generation and CPU postprocessing worker | `<operator-registry>/npa-paidf-image-edit-sky@sha256:ef7450cfc12efb92a0260f09df9a83f4b0590ccb4a9fc6157b819721adc56cd8` | Operator-private publication verified 2026-09-05; bootstrap and repository security policy passed; complete nine-state IAA acceptance passed |
 | EVG generation worker | `<operator-registry>/npa-paidf-event-video-sky@sha256:277a255e8bce7bd6e0e8561f2cc6cca2ecc86abdb791c57b33eca287d0d0d29a` | Operator-private publication verified 2026-09-05; bootstrap and repository security policy passed; GPU acceptance pending |
 | IAA/EVG attribute-search upstream parent | `nvcr.io/nvidia/paidf-event-and-person-attribute-search-service@sha256:0f581ff6d92efd391281e5787a8b1fda76556443ade47c1f5d59d4c345a01f6a` | Exact restricted NGC wrapper parent; original entrypoint does not forward worker argv |
 | EVG detection/tracking upstream parent | `nvcr.io/nvidia/paidf-detection-and-tracking-rfdetr-service@sha256:6b35e63b95cab7cd772906bcb08be978de7526427f0d1925ab84439dd4a9561e` | Exact restricted NGC wrapper parent; original entrypoint does not forward worker argv |
 | EVG captioning upstream parent | `nvcr.io/nvidia/paidf-captioning-service@sha256:17e1e3f53cc66342183f7d0b6eed76907993bb325a13db90c46d9a8cf664d804` | Exact restricted NGC wrapper parent; original entrypoint does not forward worker argv |
 | EVG Visual QA upstream parent | `nvcr.io/nvidia/paidf-visual-qa-service@sha256:e681c8dee849c7ac9fc5b182f51e9efd0da460972b08850d40f00aa9d5e3c97c` | Exact restricted NGC wrapper parent; original entrypoint does not forward worker argv |
-| IAA/EVG attribute-search worker | `<operator-registry>/npa-paidf-attribute-search-sky@sha256:d61d56ae69bf2971fbf5b03fe97a492a865c317906b1ec5c67a46133b5b97641` | Operator-private publication verified 2026-09-05; bootstrap/security passed; native workflow acceptance pending |
+| IAA/EVG attribute-search worker | `<operator-registry>/npa-paidf-attribute-search-sky@sha256:d61d56ae69bf2971fbf5b03fe97a492a865c317906b1ec5c67a46133b5b97641` | Operator-private publication verified 2026-09-05; bootstrap/security passed; complete IAA acceptance passed; EVG acceptance pending |
 | EVG detection/tracking worker | `<operator-registry>/npa-paidf-detection-sky@sha256:6fa1c78eddad6f6d2bea732b246aa37b512008d8724a0e987291188d0e17b0b2` | Operator-private publication verified 2026-09-05; bootstrap/security and real CPU inference passed; GPU workflow acceptance pending |
 | EVG captioning worker | `<operator-registry>/npa-paidf-captioning-sky@sha256:ce97a86413005dbf844ae454a47b6e0a41ce521bd0403237e133c26bfed63ff7` | Operator-private publication verified 2026-09-05; bootstrap/security passed; native workflow acceptance pending |
 | EVG Visual QA worker | `<operator-registry>/npa-paidf-visual-qa-sky@sha256:27f600a12ccfb71c6744394d7b41375c36eed2df53833fb883b9ec5fa73070e4` | Operator-private publication verified 2026-09-05; bootstrap/security passed; native workflow acceptance pending |
@@ -204,7 +204,8 @@ layer/license/secret review, vulnerability policy, and SPDX SBOM generation.
 Each inventory contains zero HIGH/CRITICAL vulnerabilities, 74 MEDIUM and
 24 LOW; reviewed public cryptographic test vectors are retained as such. Exact
 private locations and receipts remain in access-controlled evidence. This proves
-image publication and bootstrap, while native workflow acceptance remains pending.
+image publication and bootstrap. Attribute search also passed the complete IAA
+workflow; EVG acceptance remains pending for these labeling workers.
 
 The IAA generation worker was privately published from
 `a04508698d3813785263831741f02b8bb8040d6d`, with the same remote
@@ -216,8 +217,12 @@ inventory records six unfixed CRITICAL findings, 241 HIGH, 3,505 MEDIUM and
 policy without new ignore entries; this does not mean its inventory is empty.
 The SPDX 2.3 SBOM contains 1,782 packages. Public auxiliary test/model tables
 inherited from the parent were reviewed against exact source bytes; actual
-workflow checkpoints are fetched at runtime. GPU and native workflow acceptance
-remain pending.
+workflow checkpoints are fetched at runtime. The complete nine-state IAA workflow
+subsequently passed on reserved B200 capacity with this exact generation digest
+and the recorded attribute-search digest: one evaluated JPEG, CPU postprocessing,
+structured attributes, nine grounded search queries, and independently verified
+terminal artifacts. The [workflow guide](guides/physical-ai-data-factory.md#native-live-validation-evidence)
+records source, hashes, timings, and observed quality limitations.
 
 The EVG generation worker was privately published from
 `b7ae4f198b20f087afef46d31fffee367eb4fa2e` and independently

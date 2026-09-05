@@ -152,6 +152,30 @@ JSON records output counts, manifest digest, validated-artifact count, and
 trackless-scene count. This is an explicit orchestration-reporting substitution,
 not a model or data-path substitution.
 
+### Native live validation evidence
+
+IAA completed all nine states on reserved B200 capacity from source
+`39120bc9b567d6400d4fe955988132ba1f6ce682`. The upstream attribute evaluator
+accepted one 896×1184 JPEG (81,149 bytes); CPU postprocessing and the real
+attribute-search service produced one person with structured clothing attributes
+and three queries in each of the easy, medium, and hard tiers. The final dataset
+has one entry and 13 assembled files. Independent live assertions and a fresh
+terminal-validation replay verified all four producer handoffs, the executed
+image digests, copied artifacts, and both required terminal artifact groups.
+
+The generated JPEG SHA-256 is
+`d47fb223aa0e4d2354beb94af68b2ae7417a04549c92e336ae3eb3a63c9bb9d0`;
+the dataset manifest SHA-256 is
+`fc245007886b6372a10afd082e156ed2bedf1af7eb7b3ad4ecaef0e63e7b858a`.
+Submission to terminal completion took 1,664.3 seconds; the GPU state took
+269.0 seconds. Ten GPU samples observed up to 61,496 MiB resident memory but
+missed active kernels, so they do not establish compute utilization.
+Visual review confirmed the requested black hoodie, black shorts, and brown
+boots. The result is a three-view illustration from a repository-authored
+silhouette; this acceptance does not establish photographic fidelity or
+preservation of a single-person composition. DIG and EVG full native acceptance
+remain pending; image and CPU protocol checks do not replace those workloads.
+
 > **Want the from-zero runbook?** See
 > [physical-ai-data-factory-deploy.md](physical-ai-data-factory-deploy.md) for a
 > copy-paste deploy guide: install `npa`, set credentials/config, deploy the NPA
