@@ -71,6 +71,14 @@ digests and scoped acceptance evidence are recorded in the
 They remain excluded from the public release inventory. Image/bootstrap
 acceptance does not establish native workflow or GPU acceptance.
 
+The RF-DETR compatibility worker supports inference. It removes inherited
+W&B/torchtitan training tools and their unused system development toolchain
+through package-manager dependency handling, while retaining the vendor service
+code and CUDA runtime libraries. The actual service CLI and a CPU forward using
+the pinned RF-DETR checkpoint passed after removal, with no native compiler
+invocations. Exact rebuilt-byte and GPU workflow acceptance remain pending; this
+CPU check establishes dependency compatibility only.
+
 The AnomalyGen image keeps the exact CUDA 13.2 base image's
 `cuda-compat-13-2` libraries first on `LD_LIBRARY_PATH` while retaining the
 base search path. This supports runtime PTX/JIT users on supported older CUDA

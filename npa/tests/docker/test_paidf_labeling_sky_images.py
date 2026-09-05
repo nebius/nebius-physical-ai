@@ -24,6 +24,22 @@ CASES = (
 )
 
 
+def test_detection_worker_removes_only_unused_training_and_development_packages() -> None:
+    source = (
+        ROOT / "npa/docker/workbench/paidf-detection-sky/Dockerfile"
+    ).read_text()
+    assert "/usr/bin/python3 -m pip uninstall -y wandb torchtitan" in source
+    assert "apt-get purge -y linux-libc-dev" in source
+    assert 'importlib.util.find_spec("wandb") is None' in source
+    assert 'importlib.util.find_spec("torchtitan") is None' in source
+    # Dependency-aware removal must preserve package-manager consistency and
+    # runtime libraries. Do not force-remove headers or rewrite vendor code.
+    assert "--force-depends" not in source
+    assert "autoremove" not in source
+    assert "rm -rf /app/.venv" not in source
+    assert "pip uninstall -y torch" not in source
+
+
 @pytest.mark.parametrize("image,config_key,vendor,user", CASES)
 def test_labeling_wrapper_preserves_vendor_boundary(
     image: str, config_key: str, vendor: str, user: str

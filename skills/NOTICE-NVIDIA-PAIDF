@@ -114,6 +114,12 @@ still require payload/license/security review; neither source inspection nor
 private registry access establishes permission to redistribute gated weights.
 They are excluded from NPA public publication and are not claimed built or
 functionally accepted merely because their source recipes exist.
+The detection wrapper additionally removes inherited W&B/torchtitan training
+tools and the unused system development toolchain through package-manager
+dependency handling. RF-DETR declares W&B in its optional logging extra; the
+actual service CLI and pretrained CPU inference were checked after removal.
+This does not establish GPU workflow acceptance or alter the pinned model-fetch
+boundary.
 
 NPA's toolRef access closure probes each exact NGC parent repository under the
 operator's credential before submission. That proves pull entitlement only and

@@ -12,6 +12,19 @@ LABEL org.opencontainers.image.source="https://github.com/nebius/nebius-physical
       org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"
 
 USER root
+# RF-DETR's published inference extra uses prebuilt PyTorch operations. W&B is
+# only a logger extra; its inherited torchtitan consumer is a training tool.
+# Remove those unused packages and the dependency-linked development toolchain
+# with normal package management, preserving the upstream service and CUDA
+# runtime libraries. The exact service CLI and pretrained eager forward were
+# checked after removal; training, export and native-extension builds are not
+# capabilities of this detection worker.
+RUN /usr/bin/python3 -m pip uninstall -y wandb torchtitan \
+    && DEBIAN_FRONTEND=noninteractive apt-get purge -y linux-libc-dev \
+    && /app/.venv/bin/python -c \
+         'import importlib.util; assert importlib.util.find_spec("wandb") is None; assert importlib.util.find_spec("torchtitan") is None' \
+    && ! dpkg-query -W -f='${db:Status-Status}' linux-libc-dev 2>/dev/null | grep -qx installed
+
 # SSH, rsync and sudo are absent from the inspected parent. Its existing Git
 # fetches the pinned orchestration configuration without replacing vendor code.
 RUN apt-get update \

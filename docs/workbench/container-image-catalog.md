@@ -189,7 +189,7 @@ grants redistribution rights.
 | EVG captioning upstream parent | `nvcr.io/nvidia/paidf-captioning-service@sha256:17e1e3f53cc66342183f7d0b6eed76907993bb325a13db90c46d9a8cf664d804` | Exact restricted NGC wrapper parent; original entrypoint does not forward worker argv |
 | EVG Visual QA upstream parent | `nvcr.io/nvidia/paidf-visual-qa-service@sha256:e681c8dee849c7ac9fc5b182f51e9efd0da460972b08850d40f00aa9d5e3c97c` | Exact restricted NGC wrapper parent; original entrypoint does not forward worker argv |
 | IAA/EVG attribute-search worker | `<operator-registry>/npa-paidf-attribute-search-sky@sha256:d61d56ae69bf2971fbf5b03fe97a492a865c317906b1ec5c67a46133b5b97641` | Operator-private publication verified 2026-09-05; bootstrap/security passed; native workflow acceptance pending |
-| EVG detection/tracking worker | `<operator-registry>/npa-paidf-detection-sky@sha256:<digest>` | Restricted compatibility recipe; build, scans and GPU acceptance pending |
+| EVG detection/tracking worker | `<operator-registry>/npa-paidf-detection-sky@sha256:<digest>` | Restricted rebuild after unused training/development dependency removal; exact-byte and GPU acceptance pending |
 | EVG captioning worker | `<operator-registry>/npa-paidf-captioning-sky@sha256:ce97a86413005dbf844ae454a47b6e0a41ce521bd0403237e133c26bfed63ff7` | Operator-private publication verified 2026-09-05; bootstrap/security passed; native workflow acceptance pending |
 | EVG Visual QA worker | `<operator-registry>/npa-paidf-visual-qa-sky@sha256:27f600a12ccfb71c6744394d7b41375c36eed2df53833fb883b9ec5fa73070e4` | Operator-private publication verified 2026-09-05; bootstrap/security passed; native workflow acceptance pending |
 
