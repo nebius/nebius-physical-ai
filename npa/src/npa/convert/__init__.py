@@ -47,9 +47,12 @@ def lerobot_to_rrd(
     output_path: str | Path,
     duration: float | None = None,
     predictions_path: str | Path | None = None,
-) -> Path:
-    """Convert a LeRobot dataset, optionally with GR00T predictions, to Rerun RRD."""
-    output = Path(output_path)
+) -> Path | str:
+    """Convert a LeRobot dataset, optionally with GR00T predictions, to Rerun RRD.
+
+    Return a local ``Path`` or the unchanged S3 URI after a successful upload.
+    """
+    output = output_path if isinstance(output_path, str) and output_path.startswith("s3://") else Path(output_path)
     if predictions_path:
         groot_predictions_to_rerun(
             predictions_path,
