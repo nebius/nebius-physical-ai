@@ -22,6 +22,7 @@ from npa.clients.kube import run_kubectl
 from npa.clients.nebius_auth import ProfileVerification, nebius_profile, verify_profile
 from npa.clients.storage import StorageClient
 from npa.guardrails.skypilot import inspect_image_exists
+from npa.lifecycle_intent import json_stdout_contract
 from npa.workflows.credential_preflight import (
     DEFAULT_CREDENTIAL_CHECKS,
     SUPPORTED_CREDENTIAL_CHECKS,
@@ -121,6 +122,7 @@ def _nebius_profile_verifier() -> ProfileVerification:
 
 
 @app.command("preflight")
+@json_stdout_contract
 def preflight_command(
     checks: str = typer.Option(
         ",".join(DEFAULT_CREDENTIAL_CHECKS),
@@ -150,15 +152,20 @@ def preflight_command(
     mid-run. Exits non-zero on any FAIL unless ``--warn-only`` is passed.
     """
 
-    selected = [item.strip() for item in checks.split(",") if item.strip()]
-    if "all" in selected:
-        selected = list(SUPPORTED_CREDENTIAL_CHECKS)
-    unknown = [item for item in selected if item not in SUPPORTED_CREDENTIAL_CHECKS]
+    selected = list(dict.fromkeys(item.strip() for item in checks.split(",") if item.strip()))
+    if not selected:
+        raise typer.BadParameter("select at least one check or 'all'.", param_hint="--checks")
+    unknown = [
+        item for item in selected if item != "all" and item not in SUPPORTED_CREDENTIAL_CHECKS
+    ]
     if unknown:
         raise typer.BadParameter(
             "unknown check(s): "
-            f"{', '.join(unknown)}. Choices: {', '.join(SUPPORTED_CREDENTIAL_CHECKS)}."
+            f"{', '.join(unknown)}. Choices: all, {', '.join(SUPPORTED_CREDENTIAL_CHECKS)}.",
+            param_hint="--checks",
         )
+    if "all" in selected:
+        selected = list(SUPPORTED_CREDENTIAL_CHECKS)
 
     credentials = load_credentials()
     if offline:

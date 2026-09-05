@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import subprocess
 
+import pytest
+
 from npa.clients import nebius_auth
 from npa.clients.nebius_auth import nebius_profile, verify_profile
 
@@ -140,3 +142,46 @@ def test_profile_readiness_reports_token_mint_failure() -> None:
     assert result.identity_verified is True
     assert result.iam_token_minted is False
     assert result.failure_reason == "token_mint_failed"
+
+
+@pytest.mark.parametrize("identity_returncode", [0, 1])
+@pytest.mark.parametrize(
+    ("error", "failure_reason"),
+    [
+        (FileNotFoundError("synthetic-provider-output"), "cli_unavailable"),
+        (
+            subprocess.TimeoutExpired(
+                "nebius", 30, output="synthetic-provider-output", stderr="synthetic-provider-output"
+            ),
+            "timeout",
+        ),
+        (OSError("synthetic-provider-output"), "probe_error"),
+        (
+            subprocess.CalledProcessError(
+                1, "nebius", output="synthetic-provider-output", stderr="synthetic-provider-output"
+            ),
+            "probe_error",
+        ),
+    ],
+)
+def test_token_probe_error_preserves_identity_result_without_output(
+    identity_returncode: int, error: Exception, failure_reason: str, capsys
+) -> None:
+    calls: list[list[str]] = []
+
+    def runner(command, **kwargs):
+        calls.append(command)
+        if command[-1] == "whoami":
+            return subprocess.CompletedProcess(command, identity_returncode)
+        raise error
+
+    result = verify_profile("operator", runner=runner)
+
+    assert [command[-1] for command in calls] == ["whoami", "get-access-token"]
+    assert result.identity_verified is (identity_returncode == 0)
+    assert result.iam_token_minted is False
+    assert result.failure_reason == failure_reason
+    assert "synthetic-provider-output" not in repr(result)
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == ""

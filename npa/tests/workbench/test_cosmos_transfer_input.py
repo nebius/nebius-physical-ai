@@ -744,9 +744,12 @@ def test_run_cosmos_transfer_names_gated_access_denial_without_leaking_prompt(
     monkeypatch.setattr(tx, "cosmos_transfer_repo", lambda: repo)
     monkeypatch.setattr(tx, "ensure_env", lambda _repo: Path("/usr/bin/python3"))
     monkeypatch.setenv("HF_TOKEN", "unit-test-placeholder")
+    monkeypatch.setattr(tx, "prepare_guardrail_nltk_data", lambda **_kwargs: 0)
     secret_prompt = "a secret prompt that must never reach the raised message"
+    runtime_calls: list[list[str]] = []
 
     def fake_run(cmd, *_args, **kwargs):
+        runtime_calls.append(cmd)
         assert secret_prompt not in " ".join(cmd)
         kwargs["stdout"].write(
             (
@@ -763,6 +766,7 @@ def test_run_cosmos_transfer_names_gated_access_denial_without_leaking_prompt(
             run_id="denied", spec="assets/custom.json", prompt=secret_prompt
         )
 
+    assert len(runtime_calls) == 1
     message = str(raised.value)
     assert "gated Hugging Face repository access denied" in message
     assert "exit 1" in message

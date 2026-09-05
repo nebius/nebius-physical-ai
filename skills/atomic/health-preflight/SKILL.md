@@ -35,6 +35,8 @@ npa workbench health preflight --checks all --offline  # presence only; Nebius i
 Valid `--checks` values are `all`, `hf`, `ngc`, `s3`, `token_factory`,
 `nebius`. The default remains `hf,ngc,s3,token_factory`, so hosted-inference
 work does not require a Nebius Cloud profile. Explicit `all` includes `nebius`.
+Empty selections and unknown check names are errors, including unknown names
+combined with `all`. Repeated names run once.
 
 Online `nebius` runs the selected Nebius CLI profile through `iam whoami` and
 `iam get-access-token` with browser launch and update checks disabled. It
@@ -42,6 +44,11 @@ discards both commands' output and removes ambient `NEBIUS_IAM_TOKEN` and
 `NEBIUS_IAM_TOKEN_FILE` values so a stale token cannot mask profile readiness.
 PASS requires both calls to succeed. In offline mode it returns SKIP because a
 local profile file is not proof of usable authentication.
+
+Profile selection uses `NPA_NEBIUS_PROFILE`, then `NEBIUS_PROFILE`, then the
+CLI's active/default profile. The project selector does not choose an auth
+profile. PASS proves authentication; permission to provision a particular
+resource still depends on the selected identity's access to that project.
 
 Online `hf` authenticates against Hugging Face `whoami-v2`; public repository
 metadata is not sufficient. Online `ngc` performs a registry token exchange;
@@ -160,4 +167,12 @@ with `npa workbench workflow gpus --cluster <name>`.
 
 ```bash
 npa/.venv/bin/python -m pytest npa/tests/guardrails/test_skills_index.py -q
+```
+
+With an authenticated operator profile, exercise the real CLI's successful,
+missing-profile, and offline paths (including stale ambient token scrubbing):
+
+```bash
+NPA_INTEGRATION_E2E=1 npa/.venv/bin/python -m pytest \
+  npa/tests/e2e/test_nebius_auth_preflight.py -q
 ```

@@ -83,16 +83,17 @@ def verify_profile(
         "check": False,
         "env": clean_env,
     }
+    identity_verified = False
     try:
         identity = runner([*prefix, "iam", "whoami"], **common)
+        identity_verified = getattr(identity, "returncode", 1) == 0
         minted = runner([*prefix, "iam", "get-access-token"], **common)
     except FileNotFoundError:
-        return ProfileVerification(profile, False, False, "cli_unavailable")
+        return ProfileVerification(profile, identity_verified, False, "cli_unavailable")
     except subprocess.TimeoutExpired:
-        return ProfileVerification(profile, False, False, "timeout")
+        return ProfileVerification(profile, identity_verified, False, "timeout")
     except (OSError, subprocess.SubprocessError):
-        return ProfileVerification(profile, False, False, "probe_error")
-    identity_verified = getattr(identity, "returncode", 1) == 0
+        return ProfileVerification(profile, identity_verified, False, "probe_error")
     iam_token_minted = getattr(minted, "returncode", 1) == 0
     if not identity_verified:
         failure_reason: ProfileFailureReason = "identity_failed"
