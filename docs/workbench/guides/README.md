@@ -1,16 +1,33 @@
-# Easy Guides
+# Workbench Guides
 
-Short, friendly, copy-paste guides for getting a robot doing something
-interesting on Nebius Physical AI. Each one picks a **robot**, a **simulation
-environment**, and a **cool public dataset**, then walks you from zero to a
-result.
+Choose a robot, generation, reconstruction, or data workflow to run on Nebius.
+Complete the [npa quickstart](../../quickstart.md) first, then follow the chosen
+guide's input, access, and GPU requirements through to its output artifacts.
 
-New here? Pick whichever robot sounds like the most fun — the guides are
-independent, and each one ends with something you can look at.
+## Choose a workflow
+
+| I want to… | Guide |
+| --- | --- |
+| Train or evaluate a robot policy | Pick a [robot guide](#robot-and-reconstruction-guides) below |
+| Generate images with Cosmos 3 | [Cosmos 3 generation](../cosmos3-generate.md) |
+| Augment a source video with Cosmos 3 | [PAIDF + Cosmos 3](paidf-cosmos3.md) |
+| Build a labeled and curated dataset with Cosmos Transfer | [Physical AI Data Factory](physical-ai-data-factory-deploy.md) |
+| Run the compositional simulation-to-policy loop | [Sim2Real workflow](sim2real-workflow.md) |
+
+For an existing YAML spec, browse the
+[workflow catalog](../../../npa/workflows/workbench/npa-workflows/README.md).
+For hosted captioning, generation, and reasoning stages, see
+[Token Factory](../token-factory.md).
+
+## Robot and reconstruction guides
+
+Pick a guide for the robot or scene you want to work with. Check its runtime and
+validation scope before running; the recorded backend checks below distinguish
+local checks, smoke runs, and live outcomes.
 
 | Guide | Robot | Sim / engine | Public dataset | GPU |
 | --- | --- | --- | --- | --- |
-| [Pick-and-place with a Franka arm](franka-pick-and-place-genesis.md) | Franka Emika Panda | Genesis | DROID (Franka) | L40S+ |
+| [Pick-and-place with a Franka arm](franka-pick-and-place-genesis.md) | Franka Emika Panda | Genesis | DROID (Franka) | H200 for headless training; see rendering caveat |
 | [Teach a robot to push a T](pusht-sim-to-real.md) | sim pusher | sim-to-real loop | `lerobot/pusht` | H100 |
 | [Train a Reachy 2 humanoid policy](reachy2-lerobot-policy.md) | Reachy 2 | LeRobot | Pollen Robotics / LeRobot Hub | yes |
 | [Make a Unitree G1 walk](g1-humanoid-walk-sonic.md) | Unitree G1 | MuJoCo | NVIDIA GEAR-SONIC checkpoint | H100 |
@@ -50,9 +67,12 @@ The guides assume you have completed
 [../getting-started.md](../getting-started.md) (Nebius auth, an S3 bucket, and
 `npa configure`). Each guide calls out exactly when credentials are required.
 
-## What's been validated on real backends
+## Recorded backend checks
 
-These guides were exercised against live Nebius (via `npa`), not just read:
+These entries record earlier checks against local and live backends. Each result
+applies to the stated runtime and scope; the table does not establish that every
+guide has completed end to end. Consult the selected tool's current guide and
+skill for implementation changes since these checks.
 
 | Path | Backend | Result |
 | --- | --- | --- |

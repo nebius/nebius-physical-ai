@@ -161,6 +161,27 @@ published, and anonymously pullable status for this exact digest only.
 | Cosmos Evaluator 0.1.2 | `npa-cosmos-evaluator` | `0.1.2-skypilot-v1-20260813T164700Z-r2` | 2026-08-21 | Runs the upstream `HallucinationProcessor` quality gate on generated video using classical computer vision and no weights. The additive r2 image exposes the deterministic ranking/holdout attribute-sample policy consumed by PAIDF. Attribute verification calls an OpenAI-compatible endpoint; the LFS/EULA-gated obstacle checker is deliberately not fetched. |
 | FiftyOne 1.15.0.post1 (Voxel51) | `npa-fiftyone` | `1.15.0.post1` | 2026-08-13 | Dataset curation and visualization UI on port 5151, including uniqueness, similarity, and embedding visualization. Bundles a `mongod` binary so FiftyOne can launch its own metadata database. |
 
+## Validated source-registry candidates pending public release
+
+`npa-openpi` is a zero-weight, zero-dataset public-image candidate for the
+pinned pi0.5 full-DROID runtime. It includes `rerun-sdk==0.31.4` in an isolated
+RRD-worker environment solely to turn the actual run's rank-zero training journal
+into the declared, verified RRD. The separation preserves the pinned OpenPI
+RLDS/TensorFlow NumPy 1.x ABI while keeping the current Rerun NumPy 2 contract;
+the recording is not a baked demo or image payload. Its only permitted initial publication is the
+immutable `dev-<full-git-sha>` channel; the supported tag remains explicitly
+`-unbuilt` until byte scans, anonymous pull, and the eight-node RTX PRO 6000
+qualification are recorded together.
+
+The supported worker defaults currently select additive Cosmos Transfer,
+FiftyOne, and Rerun releases with the immutable SkyPilot Kubernetes bootstrap
+closure. Those candidate tags are present in the maintainer source registry but
+were not anonymously available in the 2026-08-17 audit. The public resolver and
+publisher therefore retain the prior verified tags shown above. Moving any of
+these candidates to GHCR requires the separately authorized publication workflow
+and a successful unauthenticated manifest check; private availability and
+redistribution eligibility are not evidence of publication.
+
 ## Intentionally not published as separate images
 
 - **`npa-cosmos3-super-benchmark`** is a restricted, operator-private wrapper

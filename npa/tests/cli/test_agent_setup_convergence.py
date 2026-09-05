@@ -22,7 +22,12 @@ def _remote_payload(**overrides):
         "phase": "remote_health_ready",
         "service_fingerprint": "service-sha",
         "credential_fingerprint": "credential-sha",
-        "credential_fingerprint_files": ["llm.env", "s3.env", "nebius.env"],
+        "credential_fingerprint_files": [
+            "llm.env",
+            "s3.env",
+            "artifact-sources.env",
+            "nebius.env",
+        ],
     }
     payload.update(overrides)
     return payload

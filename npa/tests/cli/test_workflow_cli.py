@@ -1968,6 +1968,10 @@ def test_manifest_pending_status_logs_artifacts_and_cancel_share_resolution(
         lambda *args, **kwargs: evidence,
     )
     monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.cancellation.lookup_managed_job",
+        lambda *args, **kwargs: evidence,
+    )
+    monkeypatch.setattr(
         "npa.orchestration.skypilot.workflow.workflow_controller_logs",
         lambda *args, **kwargs: __import__("subprocess").CompletedProcess(
             [],
