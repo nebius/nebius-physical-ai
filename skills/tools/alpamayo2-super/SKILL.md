@@ -55,9 +55,9 @@ separately because B200 `sm_100` does not prove RTX `sm_120`.
 
 ```bash
 npa workbench workflow validate-spec \
-  npa/workflows/workbench/npa-workflows/alpamayo2-super-inference.yaml
+  workflows/testing/alpamayo2-super-inference.yaml
 npa workbench workflow submit \
-  npa/workflows/workbench/npa-workflows/alpamayo2-super-inference.yaml \
+  workflows/testing/alpamayo2-super-inference.yaml \
   --infra <configured-infra-target> --var bucket=<operator-bucket> \
   --secret-env HF_TOKEN --secret-env AWS_ACCESS_KEY_ID \
   --secret-env AWS_SECRET_ACCESS_KEY

@@ -37,7 +37,7 @@ The independent `paidf-cosmos3.yaml` variant is documented at
 Cosmos 3 `video2video` generation and does not replace or silently change this
 skill's Cosmos Transfer 2.5 blueprint.
 
-`npa/workflows/workbench/npa-workflows/physical-ai-data-factory.yaml` — one
+`workflows/testing/physical-ai-data-factory.yaml` — one
 `npa.workflow/v0.0.1` spec. Blueprint → NPA stage mapping:
 
 | NVIDIA stage | NPA state | Tool (all REAL — no stubs) | Runtime |
@@ -339,7 +339,7 @@ Token Factory model.
 ## Commands
 
 ```bash
-SPEC=npa/workflows/workbench/npa-workflows/physical-ai-data-factory.yaml
+SPEC=workflows/testing/physical-ai-data-factory.yaml
 npa workbench workflow validate-spec "$SPEC" --json
 # --var bucket= is required for a meaningful plan; without it the spec's
 # `example-bucket` placeholder is planned (plan-spec warns). The shipped

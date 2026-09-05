@@ -58,7 +58,7 @@ console = Console(stderr=True)
 # `token-factory workflow` / `status` print them; submitting is
 # `npa workbench workflow submit <path>`. Previously these named raw SkyPilot task
 # templates, which are retired.
-NPA_WORKFLOWS = Path("npa/workflows/workbench/npa-workflows")
+NPA_WORKFLOWS = Path("workflows/testing")
 CAPTION_WORKFLOW_PATH = NPA_WORKFLOWS / "token-factory-caption.yaml"
 GENERATE_WORKFLOW_PATH = NPA_WORKFLOWS / "token-factory-generate.yaml"
 REASON_WORKFLOW_PATH = NPA_WORKFLOWS / "token-factory-cosmos-reason.yaml"

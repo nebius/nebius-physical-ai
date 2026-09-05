@@ -259,6 +259,9 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Stage supported workflow catalog in the package build context
+        run: npa/.venv/bin/python npa/src/npa/workflow_build.py --stage-catalog --package-root npa
+
       # Build locally first. Every gate below inspects these exact bytes; no registry write
       # occurs until the final explicit docker push.
       - name: Build immutable development image locally

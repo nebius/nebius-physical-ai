@@ -14,11 +14,8 @@ from npa.orchestration.npa_workflow.presets import (
 
 runner = CliRunner()
 SPEC = (
-    Path(__file__).resolve().parents[3]
-    / "workflows"
-    / "workbench"
-    / "npa-workflows"
-    / "sim2real.yaml"
+    Path(__file__).resolve().parents[4]
+    / "workflows" / "main" / "sim2real.yaml"
 )
 
 

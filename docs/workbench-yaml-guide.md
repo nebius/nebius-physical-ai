@@ -14,16 +14,18 @@ SkyPilot remains the execution engine, not the repository authoring surface. The
 old shipped multi-document SkyPilot workflow catalog is retired and guarded from
 returning. `npa workbench workflow submit` still accepts customer-provided raw
 SkyPilot YAML, and a few tool-specific single-task examples or resource profiles
-remain in guarded locations, but new repository pipelines belong under:
+remain in guarded locations. The supported catalog has two workflow directories:
 
 ```text
-npa/workflows/workbench/npa-workflows/
+workflows/main/     # sim2real.yaml and paidf-cosmos3.yaml only
+workflows/testing/  # All other catalog workflows; add new pipelines here
 ```
 
+Catalog documentation lives in [`workflows/README.md`](../workflows/README.md).
 The concise language reference is
 [`docs/workbench/npa-workflow-guide.md`](workbench/npa-workflow-guide.md). This guide
 uses
-[`bdd100k-pipeline.yaml`](../npa/workflows/workbench/npa-workflows/bdd100k-pipeline.yaml)
+[`bdd100k-pipeline.yaml`](../workflows/testing/bdd100k-pipeline.yaml)
 as the longer service-backed example.
 
 ## Spec Structure
@@ -262,7 +264,7 @@ The parallel sweep is an authored workflow spec:
 
 ```bash
 npa/.venv/bin/npa workbench workflow submit \
-  npa/workflows/workbench/npa-workflows/isaac-lab-rl-sweep.yaml \
+  workflows/testing/isaac-lab-rl-sweep.yaml \
   --run-id isaac-cartpole-sweep --runtime
 ```
 
@@ -277,7 +279,7 @@ H200 do not provide the RT cores used by rendering/simulation.
 ## Adding a Pipeline
 
 1. Start from the closest spec under
-   `npa/workflows/workbench/npa-workflows/`.
+   `workflows/` and save the new pipeline under `workflows/testing/`.
 2. Reuse an existing toolRef. If the needed capability is missing, add it to the
    workbench tool and catalog rather than embedding a second implementation.
 3. Put runtime values and S3 URIs in `config:`; never depend on a repository path
@@ -302,7 +304,7 @@ catalog is retired and its absence is guardrail-enforced.
 - [`docs/workbench/npa-workflow-guide.md`](workbench/npa-workflow-guide.md)
 - [`docs/workbench/npa-workflow-tool-catalog.md`](workbench/npa-workflow-tool-catalog.md)
 - [`docs/workbench/cookbooks/bdd100k-pipeline.md`](workbench/cookbooks/bdd100k-pipeline.md)
-- [`npa/workflows/workbench/npa-workflows/README.md`](../npa/workflows/workbench/npa-workflows/README.md)
+- [`workflows/README.md`](../workflows/README.md)
 
 ## Changelog
 

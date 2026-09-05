@@ -78,7 +78,7 @@ The client sends all samples concurrently so upstream Ray Serve can coalesce
 them. It downloads each returned file, verifies bytes and SHA-256, and publishes
 `request.json`, `response.json`, media under `artifacts/`, and
 `provenance.json` (`npa.cosmos3.ray-serve.provenance.v1`). Use
-`npa/workflows/workbench/npa-workflows/cosmos3-ray-batch.yaml` for the workflow
+`workflows/testing/cosmos3-ray-batch.yaml` for the workflow
 client; the persistent service must already be ready.
 
 ## GPU validation

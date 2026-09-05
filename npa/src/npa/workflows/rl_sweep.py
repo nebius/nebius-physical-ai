@@ -1,7 +1,7 @@
 """Real stage implementations for the Isaac Lab RL sweep blueprint.
 
 These back the ``run.shell`` stages of
-``npa/workflows/workbench/npa-workflows/isaac-lab-rl-sweep.yaml`` — the
+``workflows/testing/isaac-lab-rl-sweep.yaml`` — the
 ``npa.workflow`` port of the one ``execution: parallel`` SkyPilot template, which is
 now retired (the spec is live-verified on four GPUs; see ``EVIDENCE.md`` §R3):
 

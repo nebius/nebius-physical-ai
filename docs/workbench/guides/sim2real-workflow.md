@@ -1,7 +1,7 @@
 # Compositional Sim2Real operator runbook
 
 This is the onboarding source of truth for the canonical 14-stage workflow:
-[`sim2real.yaml`](../../../npa/workflows/workbench/npa-workflows/sim2real.yaml).
+[`sim2real.yaml`](../../../workflows/main/sim2real.yaml).
 Complete the gates in order. A production submit repeats the decisive S3,
 model-access, cluster-object, immutable-image, and image-pull checks before it
 creates a run or launches work.
@@ -190,7 +190,7 @@ export TRANSFER_IMAGE='ghcr.io/nebius/nebius-physical-ai/npa-cosmos2-transfer@sh
 export ENVGEN_IMAGE='ghcr.io/nebius/nebius-physical-ai/npa-envgen@sha256:33d49af4703c479a3be71cae6f0a4735ea6f63629b870b946c43929037304f72'
 export ISAAC_IMAGE="${NPA_ISAAC_IMAGE}"
 export VIEWER_IMAGE='ghcr.io/nebius/nebius-physical-ai/npa-rerun-viewer@sha256:8fc0a76f3df441fd6662e3eb5d893c9996ea66e6c61fcc815de79576f12b8160'
-export SPEC=npa/workflows/workbench/npa-workflows/sim2real.yaml
+export SPEC=workflows/main/sim2real.yaml
 export SOURCE_SHA=c164fd3480f8a9ea8f9df9ccb9509502fd527996
 
 npa/.venv/bin/npa workbench workflow preflight-images "${SPEC}" \

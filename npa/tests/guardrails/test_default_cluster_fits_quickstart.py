@@ -20,11 +20,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 VARIABLES_TF = REPO_ROOT / "deploy" / "cluster" / "variables.tf"
 QUICKSTART_SPEC = (
     REPO_ROOT
-    / "npa"
-    / "workflows"
-    / "workbench"
-    / "npa-workflows"
-    / "physical-ai-data-factory.yaml"
+    / "workflows" / "testing" / "physical-ai-data-factory.yaml"
 )
 
 #: Headroom a Kubernetes node never offers to pods (kubelet + system reserve).

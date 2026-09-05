@@ -19,12 +19,12 @@ from npa.workflows.distill_two_vm import TwoVMDistillError
 
 
 runner = CliRunner()
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = Path(__file__).resolve().parents[3]
 #: Frozen raw-task fixtures. The submit wrapper accepts a customer's own SkyPilot YAML,
 #: so that contract needs a raw task to exercise -- but not a SHIPPED one, which is what
 #: made these tests block the catalog's retirement. See tests/fixtures/skypilot/README.md.
 SKYPILOT_FIXTURES = Path(__file__).resolve().parents[1] / "fixtures/skypilot"
-NPA_SPECS = REPO_ROOT / "workflows" / "workbench" / "npa-workflows"
+NPA_SPECS = REPO_ROOT / "workflows" / "testing"
 
 
 @pytest.mark.parametrize(
@@ -1818,13 +1818,7 @@ def test_prepare_run_persists_current_schema_plan_only_evidence(
     monkeypatch, tmp_path: Path
 ) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
-    spec = (
-        REPO_ROOT
-        / "workflows"
-        / "workbench"
-        / "npa-workflows"
-        / "physical-ai-data-factory.yaml"
-    )
+    spec = NPA_SPECS / "physical-ai-data-factory.yaml"
 
     prepared = runner.invoke(
         app,

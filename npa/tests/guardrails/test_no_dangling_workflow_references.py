@@ -26,6 +26,7 @@ SEARCH_ROOTS = (
     "skills",
     "docs",
     ".github",
+    "workflows",
     "npa/workflows",
     "npa/src/npa",
     "npa/scripts",
@@ -37,13 +38,14 @@ SEARCH_SUFFIXES = {".md", ".py", ".sh", ".toml", ".yaml", ".yml"}
 # The declarative catalog plus the guarded raw-task/resource-profile locations
 # that remain after retirement: burst, NuRec, and BYOF profiles.
 FULL_WORKFLOW_PATH = re.compile(
+    r"(?:workflows/(?:main|testing)|"
     r"npa/(?:workflows|src/npa/(?:burst/examples|workbench/nurec/examples|"
-    r"workflows/byof/profiles))/[A-Za-z0-9._/{}$<>*-]+\.ya?ml"
+    r"workflows/byof/profiles)))/[A-Za-z0-9._/{}$<>*-]+\.ya?ml"
 )
-WORKFLOW_SHORTHAND = re.compile(
+# Obsolete shorthand must fail instead of silently resolving an obsolete path.
+RETIRED_WORKFLOW_SHORTHAND = re.compile(
     r"(?<![A-Za-z0-9._/-])npa-workflows/[A-Za-z0-9._/{}$<>*-]+\.ya?ml"
 )
-CATALOG_ROOT = "npa/workflows/workbench/npa-workflows/"
 
 # Only explicit template syntax is exempt. Literal names such as
 # ``example-training.yaml`` or ``your-data.yaml`` may be real shipped files and
@@ -70,20 +72,14 @@ def _candidate_files() -> list[Path]:
     return sorted(set(files))
 
 
-def _normalize_workflow_reference(reference: str) -> str:
-    if reference.startswith("npa-workflows/"):
-        return CATALOG_ROOT + reference.removeprefix("npa-workflows/")
-    return reference
-
-
 def _workflow_references_in(path: Path) -> list[str]:
     try:
         text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):  # pragma: no cover - unreadable/binary
         return []
-    matches = FULL_WORKFLOW_PATH.findall(text) + WORKFLOW_SHORTHAND.findall(text)
+    matches = FULL_WORKFLOW_PATH.findall(text) + RETIRED_WORKFLOW_SHORTHAND.findall(text)
     references = (
-        _normalize_workflow_reference(match)
+        match
         for match in matches
         if not any(marker in match for marker in PLACEHOLDER_MARKERS)
     )
@@ -112,6 +108,8 @@ def test_no_shipped_file_points_at_a_missing_workflow(path: Path) -> None:
 @pytest.mark.parametrize(
     "missing",
     [
+        "workflows/main/definitely-missing.yaml",
+        "workflows/testing/definitely-missing.yaml",
         "npa/workflows/workbench/npa-workflows/definitely-missing.yaml",
         "npa/src/npa/burst/examples/definitely-missing.yaml",
         "npa/src/npa/workbench/nurec/examples/definitely-missing.yaml",
@@ -124,20 +122,19 @@ def test_guard_detects_missing_paths_in_every_guarded_location(
 ) -> None:
     victim = tmp_path / "doc.md"
     victim.write_text(f"see {missing}\n", encoding="utf-8")
-    expected = _normalize_workflow_reference(missing)
-    assert _dangling_in(victim) == [expected]
+    assert _dangling_in(victim) == [missing]
 
 
 def test_guard_ignores_placeholder_paths(tmp_path: Path) -> None:
     victim = tmp_path / "doc.md"
     victim.write_text(
-        "npa/workflows/workbench/npa-workflows/<your-spec>.yaml\n",
+        "workflows/testing/<your-spec>.yaml\n",
         encoding="utf-8",
     )
     assert _dangling_in(victim) == []
 
 
-def test_guard_normalizes_catalog_shorthand_before_checking(tmp_path: Path) -> None:
+def test_guard_rejects_retired_catalog_shorthand(tmp_path: Path) -> None:
     victim = tmp_path / "doc.md"
     victim.write_text(
         "npa-workflows/vlm-eval-single.yaml\n"
@@ -145,17 +142,16 @@ def test_guard_normalizes_catalog_shorthand_before_checking(tmp_path: Path) -> N
         encoding="utf-8",
     )
 
-    assert _workflow_references_in(victim) == [
-        f"{CATALOG_ROOT}vlm-eval-single.yaml",
-        f"{CATALOG_ROOT}definitely-missing.yaml",
+    assert _dangling_in(victim) == [
+        "npa-workflows/vlm-eval-single.yaml",
+        "npa-workflows/definitely-missing.yaml",
     ]
-    assert _dangling_in(victim) == [f"{CATALOG_ROOT}definitely-missing.yaml"]
 
 
 @pytest.mark.parametrize(
     "reference",
     [
-        "npa/workflows/workbench/npa-workflows/example-missing.yaml",
+        "workflows/testing/example-missing.yaml",
         "npa-workflows/example-missing.yaml",
         "npa-workflows/your-data-missing.yaml",
     ],
@@ -166,7 +162,7 @@ def test_guard_does_not_exempt_literal_example_names(
     victim = tmp_path / "doc.md"
     victim.write_text(f"see {reference}\n", encoding="utf-8")
 
-    assert _dangling_in(victim) == [_normalize_workflow_reference(reference)]
+    assert _dangling_in(victim) == [reference]
 
 
 def test_guard_scans_top_level_operator_markdown() -> None:
@@ -179,7 +175,7 @@ def test_guard_scans_top_level_operator_markdown() -> None:
 def test_guard_scans_npa_operator_roots_without_virtualenv() -> None:
     candidates = set(_candidate_files())
 
-    for root in ("npa/scripts", "npa/docs"):
+    for root in ("npa/scripts", "npa/docs", "workflows"):
         base = REPO_ROOT / root
         shipped = {
             path

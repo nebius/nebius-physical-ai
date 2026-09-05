@@ -11,7 +11,7 @@ Configured operators submit through the standard durable runtime:
 
 ```bash
 npa workbench workflow submit \
-  npa/workflows/workbench/npa-workflows/sim2real.yaml \
+  workflows/main/sim2real.yaml \
   --runtime --run-id <run-id> \
   --var bucket=<bucket> \
   --var robot_spec_uri=<exact-s3-object-or-empty> \

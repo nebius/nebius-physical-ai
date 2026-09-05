@@ -27,7 +27,9 @@ nebius-physical-ai/
 │   ├── workbench/                # Workbench onboarding, cookbooks, troubleshooting
 │   ├── workbench-yaml-guide.md   # SkyPilot YAML pipeline guide (living doc)
 │   └── demos/                    # Demo runbooks and assets
-├── npa/workflows/workbench/npa-workflows/ # Declarative workflow specs
+├── workflows/                    # Declarative workflow catalog and README
+│   ├── main/                     # sim2real.yaml and paidf-cosmos3.yaml only
+│   └── testing/                  # All other catalog workflow specs
 ├── npa/scripts/                  # Pipeline runner scripts
 ├── skills/                       # Root agent skills manifest and workflow/atomic/tool skills
 ├── .agents/skills                # Compatibility symlink to ../skills
@@ -46,7 +48,7 @@ nebius-physical-ai/
 
 Never duplicate logic across layers. If you add a new Workbench capability, it goes in the FastAPI service; the CLI and SDK call it. This is enforced in code review.
 
-**SkyPilot = sole runtime orchestrator**: workflow execution uses SkyPilot managed jobs under the hood. Argo is deprecated. New pipeline YAMLs are authored as `npa.workflow/v0.0.1` specs under `npa/workflows/workbench/npa-workflows/`, then rendered to SkyPilot at submit time. SkyPilot runs in an isolated venv (not the NPA venv) accessed via `NPA_SKYPILOT_BIN`.
+**SkyPilot = sole runtime orchestrator**: workflow execution uses SkyPilot managed jobs under the hood. Argo is deprecated. New pipeline YAMLs are authored as `npa.workflow/v0.0.1` specs under `workflows/testing/`, then rendered to SkyPilot at submit time. SkyPilot runs in an isolated venv (not the NPA venv) accessed via `NPA_SKYPILOT_BIN`.
 
 **S3 as the data bus**: tools communicate via S3 object storage, never directly. Every tool accepts `--input-path` and `--output-path` pointing to S3 URIs.
 
@@ -85,7 +87,7 @@ Not all tools run on all GPU types. Document in your tool's SKILL.md:
 
 ## Workflow YAML conventions
 
-Reference: `docs/workbench-yaml-guide.md` and `npa/workflows/workbench/npa-workflows/bdd100k-pipeline.yaml`.
+Reference: `docs/workbench-yaml-guide.md` and `workflows/testing/bdd100k-pipeline.yaml`.
 
 Key rules:
 - SkyPilot 0.12.2 `envs` block does NOT support self-referencing variable interpolation

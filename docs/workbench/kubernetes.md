@@ -134,7 +134,7 @@ cleanup behavior consistent.
 RUN_ID=workbench-$(date -u +%Y%m%dT%H%M%SZ)
 
 npa workbench workflow submit \
-  npa/workflows/workbench/npa-workflows/vlm-eval-single.yaml \
+  workflows/testing/vlm-eval-single.yaml \
   --run-id "${RUN_ID}" \
   --durable-s3 \
   --workflow-s3-uri "s3://${NPA_S3_BUCKET}/workflows/${RUN_ID}/" \

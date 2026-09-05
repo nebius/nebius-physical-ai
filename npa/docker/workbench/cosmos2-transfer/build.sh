@@ -101,6 +101,7 @@ else
 fi
 
 echo "Building ${LOCAL_REF} from the checked-in immutable inputs (build credentials: none)"
+"${NPA_ROOT}/.venv/bin/python" "${NPA_ROOT}/src/npa/workflow_build.py" --stage-catalog --package-root "${NPA_ROOT}"
 env -u HF_TOKEN -u NGC_API_KEY -u NEBIUS_IAM_TOKEN -u NPA_NEBIUS_IAM_TOKEN \
   docker buildx build "${BUILD_ARGS[@]}" "${NPA_ROOT}"
 

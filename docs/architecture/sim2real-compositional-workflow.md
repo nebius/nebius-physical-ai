@@ -1,7 +1,7 @@
 # Sim2Real compositional workflow and resume contract
 
 The operator-facing Sim2Real pipeline is
-`npa/workflows/workbench/npa-workflows/sim2real.yaml`. It is an
+`workflows/main/sim2real.yaml`. It is an
 `npa.workflow/v0.0.1` graph executed by `npa workbench workflow ... --runtime`.
 It is not detected or submitted through a Sim2Real-specific controller.
 

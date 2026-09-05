@@ -15,7 +15,7 @@ it. For the raw SkyPilot template, or for guardrail/prompt semantics, use
 ## npa.workflow YAML Is The Supported Surface
 
 The supported Cosmos 3 generation workflow is
-`npa/workflows/workbench/npa-workflows/cosmos3-generate.yaml`. The raw SkyPilot
+`workflows/testing/cosmos3-generate.yaml`. The raw SkyPilot
 template was retired after the spec twin reached a terminal live success in the
 submit matrix, so do not recreate a SkyPilot task template for this path.
 
@@ -24,7 +24,7 @@ URIs, and records declared outputs.
 
 ## Reference Spec
 
-`npa/workflows/workbench/npa-workflows/cosmos3-generate.yaml` is the working
+`workflows/testing/cosmos3-generate.yaml` is the working
 example. Copy its shape:
 
 ```yaml
@@ -84,8 +84,8 @@ and has no cosmos-framework in it.
 ## Author And Validate
 
 ```bash
-npa workbench workflow validate-spec npa/workflows/workbench/npa-workflows/cosmos3-generate.yaml
-npa workbench workflow plan-spec     npa/workflows/workbench/npa-workflows/cosmos3-generate.yaml
+npa workbench workflow validate-spec workflows/testing/cosmos3-generate.yaml
+npa workbench workflow plan-spec     workflows/testing/cosmos3-generate.yaml
 ```
 
 Then render without submitting to confirm the image and secrets:
@@ -104,7 +104,7 @@ Check the rendered output for:
 ## Submit
 
 ```bash
-npa workbench workflow submit npa/workflows/workbench/npa-workflows/cosmos3-generate.yaml \
+npa workbench workflow submit workflows/testing/cosmos3-generate.yaml \
   --infra k8s/<context> --registry <your-registry> \
   --var bucket=<bucket> --runtime \
   --secret-env HF_TOKEN --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY

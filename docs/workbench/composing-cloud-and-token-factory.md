@@ -38,7 +38,7 @@ their names through `workflow submit --secret-env`; keep secrets out of YAML.
 | `tokenfactory-scene-to-rollout-judge.yaml` | LeRobot policy rollout | Plan from scene images, then judge against that plan | Scene images and a compatible policy for the same task |
 
 All paths are under
-[`npa/workflows/workbench/npa-workflows/`](../../npa/workflows/workbench/npa-workflows/).
+[`workflows/`](../../workflows/).
 The [cookbook](cookbooks/tokenfactory-compute-combos.md) gives current config
 keys and launch commands. The older `tokenfactory-rollout-judge.yaml` is a
 different pipeline: it reasons about a scene and scores externally supplied

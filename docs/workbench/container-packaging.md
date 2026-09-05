@@ -389,6 +389,20 @@ direct service-to-service file coupling.
 
 ## Build and tag
 
+For a Docker build whose context is `npa/`, stage the supported workflow catalog
+from the repository root before building:
+
+```bash
+npa/.venv/bin/python npa/src/npa/workflow_build.py --stage-catalog --package-root npa
+```
+
+This copies `workflows/main/*.yaml` and `workflows/testing/*.yaml` into ignored
+package data in `main/` and `testing/` under `npa/src/npa/workflows/`, where existing
+Docker `COPY src` instructions include them. Repeat staging after catalog edits;
+it also removes stale generated YAMLs. Edit the top-level catalog source files.
+Wheel and source-distribution builds stage the same catalog through the package
+build hook.
+
 1. Select the immutable public GHCR development namespace for an official build;
    use `npa.clients.config.resolve_container_registry` only for an explicit
    operator build/BYOF destination.

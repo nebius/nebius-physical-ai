@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from npa.cli.agent_source_embed import embedded_module_source
+from npa.orchestration.npa_workflow.blueprints import resolve_npa_workflow_spec
 
 
 LEISAAC_CONTROL_READINESS_CONTRACT = "LEISAAC_CONTROL_READINESS_CONTRACT"
@@ -158,13 +159,10 @@ def _embedded_source(path: Path) -> str:
 
 def _embedded_agent_workflow_source() -> str:
     source = _embedded_source(Path(__file__).with_name("agent_workflow.py"))
-    canonical = (
-        Path(__file__).resolve().parents[3]
-        / "workflows"
-        / "workbench"
-        / "npa-workflows"
-        / "sim2real.yaml"
-    ).read_text(encoding="utf-8")
+    canonical_path = resolve_npa_workflow_spec("sim2real.yaml")
+    if canonical_path is None:
+        raise FileNotFoundError("canonical packaged sim2real.yaml is missing")
+    canonical = canonical_path.read_text(encoding="utf-8")
     marker = '_EMBEDDED_CANONICAL_SIM2REAL_YAML = ""'
     if marker not in source:
         raise RuntimeError(

@@ -256,7 +256,7 @@ def test_agent_eval_live_operate_round_trip():  # pragma: no cover - opt-in live
     prefix = f"agent-eval/{run_id}"
     store_uri = f"s3://{bucket}/{prefix}/store/"
     empty_store_uri = f"s3://{bucket}/{prefix}/empty/"
-    workflow_path = Path(__file__).parents[2] / "workflows/workbench/npa-workflows/insights-smoke.yaml"
+    workflow_path = Path(__file__).parents[3] / "workflows/testing/insights-smoke.yaml"
 
     def submit(observed_run_id: str) -> dict:
         npa_executable = str(Path(sys.executable).with_name("npa"))

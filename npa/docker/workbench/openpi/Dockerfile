@@ -136,12 +136,6 @@ RUN printf '%s\n' \
 
 COPY pyproject.toml README.md /opt/npa-src/
 COPY src/npa /opt/npa-src/src/npa
-COPY workflows/workbench/npa-workflows/sim2real.yaml \
-  /opt/npa-src/workflows/workbench/npa-workflows/sim2real.yaml
-COPY workflows/workbench/npa-workflows/physical-ai-data-factory.yaml \
-  /opt/npa-src/workflows/workbench/npa-workflows/physical-ai-data-factory.yaml
-COPY workflows/workbench/npa-workflows/openpi-pi05-full-droid-finetune.yaml \
-  /opt/npa-src/workflows/workbench/npa-workflows/openpi-pi05-full-droid-finetune.yaml
 RUN /opt/uv/bin/uv pip install --python /opt/venv/bin/python --no-cache --no-deps /opt/npa-src \
     && /opt/uv/bin/uv pip install --python /opt/rerun-venv/bin/python --no-cache --no-deps /opt/npa-src \
     && /opt/venv/bin/python -m npa.workflows.byof.openpi_full_droid --help >/dev/null \

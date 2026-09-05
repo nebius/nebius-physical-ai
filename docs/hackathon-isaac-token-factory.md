@@ -45,7 +45,7 @@ Full sequence: `docs/assets/hackathon/isaac-franka-lift-cube/frame_00.png` …
 ```
 
 SkyPilot YAML:
-[`npa/workflows/workbench/npa-workflows/isaac-franka-capture-reason.yaml`](../npa/workflows/workbench/npa-workflows/isaac-franka-capture-reason.yaml)
+[`workflows/testing/isaac-franka-capture-reason.yaml`](../workflows/testing/isaac-franka-capture-reason.yaml)
 
 ---
 
@@ -148,7 +148,7 @@ run id come from the command line and the images are resolved for you.
 
 ```bash
 npa workbench workflow submit \
-  npa/workflows/workbench/npa-workflows/isaac-franka-capture-reason.yaml \
+  workflows/testing/isaac-franka-capture-reason.yaml \
   --run-id hackathon-franka-001 \
   --var bucket=YOUR_BUCKET \
   --secret-env NEBIUS_TOKEN_FACTORY_KEY \

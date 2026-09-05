@@ -30,7 +30,7 @@ from npa.guardrails.three_tier import (
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-SPECS = Path("npa/workflows/workbench/npa-workflows")
+SPECS = Path("workflows/testing")
 SIM2REAL_DEMO = Path("npa/tests/fixtures/npa-workflows/sim2real-vlm-rl-demo.yaml")
 
 

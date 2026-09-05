@@ -52,7 +52,7 @@ sky jobs launch \
   --secret NEBIUS_TOKEN_FACTORY_KEY \
   --secret AWS_ACCESS_KEY_ID \
   --secret AWS_SECRET_ACCESS_KEY \
-  npa/workflows/workbench/npa-workflows/token-factory-cosmos-reason.yaml
+  workflows/testing/token-factory-cosmos-reason.yaml
 ```
 
 Set `INPUT_URI`, `OUTPUT_URI`, and `TASK` in the YAML's `envs:` (or override at

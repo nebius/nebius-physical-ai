@@ -94,7 +94,7 @@ unique and must be tested with its own upstream-named capabilities.
 > FastAPI service, CLI, SDK, and workflow toolRefs. The BYOF candidate
 > (`byof-robocasa.yaml`) is preserved for compatibility, but the native tool is
 > the maintained surface. See `skills/tools/robocasa/SKILL.md` and
-> `npa/workflows/workbench/npa-workflows/robocasa-smoke.yaml`.
+> `workflows/testing/robocasa-smoke.yaml`.
 
 ### OpenPI
 
@@ -282,7 +282,7 @@ Plan an individual candidate:
 
 ```bash
 npa/.venv/bin/npa workbench workflow plan-spec \
-  npa/workflows/workbench/npa-workflows/byof-maniskill.yaml \
+  workflows/testing/byof-maniskill.yaml \
   --run-id byof-maniskill-smoke --json
 ```
 

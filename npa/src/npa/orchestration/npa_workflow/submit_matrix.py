@@ -2,7 +2,7 @@
 
 Shared by e2e tests and the operator runner. SkyPilot-only exceptions (burst,
 sim-to-real monolithic, etc.) are intentionally absent — see
-``npa/workflows/workbench/npa-workflows/README.md``.
+``workflows/README.md``.
 
 Parallel sweeps are no longer such an exception: ``isaac-lab-rl-sweep.yaml`` is an
 ``npa.workflow`` spec in this matrix, verified live on four GPUs, and the raw SkyPilot

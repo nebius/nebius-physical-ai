@@ -79,7 +79,7 @@ into SkyPilot documents:
 
 ## Reference Pattern
 
-- Canonical spec: `npa/workflows/workbench/npa-workflows/bdd100k-pipeline.yaml`.
+- Canonical spec: `workflows/testing/bdd100k-pipeline.yaml`.
 - Runner script pattern: `npa/scripts/run_bdd100k_pipeline.py`, a thin wrapper around `npa.orchestration.skypilot.submit_workflow`.
 - Isaac Lab runners follow the same shape through `npa/scripts/run_isaac_lab_rl.py`.
 

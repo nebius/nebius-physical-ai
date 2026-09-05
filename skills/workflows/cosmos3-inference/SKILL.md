@@ -30,7 +30,7 @@ one-off text-to-image smoke.
 ### Containerized generate (preferred)
 
 ```text
-npa/workflows/workbench/npa-workflows/cosmos3-generate.yaml
+workflows/testing/cosmos3-generate.yaml
 npa workbench cosmos3 generate
 npa.sdk.workbench.cosmos3.generate(...)
 workbench.cosmos3.generate            # npa.workflow toolRef
@@ -55,7 +55,7 @@ host.
 ### Clone-at-job-time text-to-image smoke
 
 ```text
-npa/workflows/workbench/npa-workflows/cosmos3-text-to-image.yaml
+workflows/testing/cosmos3-text-to-image.yaml
 ```
 
 A real H100 text-to-image smoke that needs no prebuilt image: it clones the

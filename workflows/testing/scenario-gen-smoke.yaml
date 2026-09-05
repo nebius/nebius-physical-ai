@@ -19,7 +19,7 @@ kind: Workflow
 # backend becomes selectable).
 #
 # For the retired template's production scale:
-#   npa workbench workflow submit npa/workflows/workbench/npa-workflows/scenario-gen-smoke.yaml \
+#   npa workbench workflow submit workflows/testing/scenario-gen-smoke.yaml \
 #     --var num_scenarios=16 --var adversary_steps=200000 --var rank_top_k=4
 
 metadata:

@@ -38,7 +38,7 @@ TRIAGE_RUNNER = ROOT / "npa" / "scripts" / "run_tokenfactory_train_triage.py"
 SWEEP_RUNNER = ROOT / "npa" / "scripts" / "run_tokenfactory_sim_sweep.py"
 
 # Combo workflows that still have a raw SkyPilot YAML form. train-triage is retired: its twin
-# `npa-workflows/tokenfactory-train-triage.yaml` was verified live (job 256, EVIDENCE.md §R32–R33),
+# `workflows/testing/tokenfactory-train-triage.yaml` was verified live (job 256, EVIDENCE.md §R32–R33),
 # and the shape assertions moved onto the spec below.
 COMBO_YAMLS: list = []
 
@@ -202,11 +202,7 @@ def test_rollout_judge_combo_spec_is_gpu_producer_then_hosted_judge() -> None:
 
     spec = load_spec(
         ROOT
-        / "npa"
-        / "workflows"
-        / "workbench"
-        / "npa-workflows"
-        / "tokenfactory-rollout-judge-combo.yaml"
+        / "workflows" / "testing" / "tokenfactory-rollout-judge-combo.yaml"
     )
     plan = build_plan(spec, run_id="rollout-judge-test")
     steps = {step.state: step for step in plan.steps if step.argv}
@@ -401,11 +397,7 @@ def test_scene_to_rollout_judge_spec_chains_reason_to_judge() -> None:
 
     spec = load_spec(
         ROOT
-        / "npa"
-        / "workflows"
-        / "workbench"
-        / "npa-workflows"
-        / "tokenfactory-scene-to-rollout-judge.yaml"
+        / "workflows" / "testing" / "tokenfactory-scene-to-rollout-judge.yaml"
     )
     plan = build_plan(spec, run_id="scene-judge-test")
     steps = {step.state: step for step in plan.steps if step.argv}
@@ -434,7 +426,7 @@ def test_the_retired_scene_judge_template_is_gone() -> None:
 def test_combo_specs_have_no_hardcoded_infra_ids() -> None:
     """Every combo is a spec now, and a spec parameterises infra instead of placeholdering it."""
 
-    specs = ROOT / "npa" / "workflows" / "workbench" / "npa-workflows"
+    specs = ROOT / "workflows" / "testing"
     for name in (
         "tokenfactory-rollout-judge-combo.yaml",
         "tokenfactory-scene-to-rollout-judge.yaml",
@@ -461,7 +453,7 @@ def test_train_triage_spec_is_two_stage_gpu_then_hosted_triage() -> None:
     from npa.orchestration.npa_workflow.spec import load_spec
 
     spec = load_spec(
-        ROOT / "npa" / "workflows" / "workbench" / "npa-workflows" / "tokenfactory-train-triage.yaml"
+        ROOT / "workflows" / "testing" / "tokenfactory-train-triage.yaml"
     )
     plan = build_plan(spec, run_id="train-triage-test")
     steps = {step.state: step for step in plan.steps if step.argv}
@@ -533,11 +525,7 @@ def test_sdk_workflow_submit_delegates_to_orchestrator(mocker, monkeypatch) -> N
 
     workflow.submit(
         ROOT
-        / "npa"
-        / "workflows"
-        / "workbench"
-        / "npa-workflows"
-        / "tokenfactory-scene-to-rollout-judge.yaml",
+        / "workflows" / "testing" / "tokenfactory-scene-to-rollout-judge.yaml",
         run_id="rj-test",
         secret_env=["NEBIUS_TOKEN_FACTORY_KEY", "AWS_ACCESS_KEY_ID"],
         # Clear the workbench image pins: this test is not exercising image preflight.

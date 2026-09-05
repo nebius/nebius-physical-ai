@@ -9,8 +9,8 @@ wiring the GPU-backed production pipelines
 Both are ordinary `npa.workflow/v0.0.1` specs, so every stage is a catalog
 `toolRef` and the whole thing runs through `npa workbench workflow`.
 
-- `npa/workflows/workbench/npa-workflows/scenario-gen-smoke.yaml`
-- `npa/workflows/workbench/npa-workflows/dataset-of-record-smoke.yaml`
+- `workflows/testing/scenario-gen-smoke.yaml`
+- `workflows/testing/dataset-of-record-smoke.yaml`
 
 ## What each toolRef executes
 
@@ -40,7 +40,7 @@ BUCKET=<your-bucket>
 RUN_ID="scenario-gen-smoke-$(date +%Y%m%d%H%M%S)"
 SPEC=/tmp/${RUN_ID}.yaml
 sed "s/example-bucket/${BUCKET}/g" \
-  npa/workflows/workbench/npa-workflows/scenario-gen-smoke.yaml > "${SPEC}"
+  workflows/testing/scenario-gen-smoke.yaml > "${SPEC}"
 
 npa workbench workflow validate-spec "${SPEC}" --json
 npa workbench workflow run-spec "${SPEC}" --run-id "${RUN_ID}" --execute --json
@@ -77,7 +77,7 @@ aws s3 cp /tmp/records.json s3://${BUCKET}/dataset-of-record-fixtures/records.js
 
 SPEC=/tmp/${RUN_ID}.yaml
 sed "s/example-bucket/${BUCKET}/g" \
-  npa/workflows/workbench/npa-workflows/dataset-of-record-smoke.yaml > "${SPEC}"
+  workflows/testing/dataset-of-record-smoke.yaml > "${SPEC}"
 
 npa workbench workflow validate-spec "${SPEC}" --json
 npa workbench workflow run-spec "${SPEC}" --run-id "${RUN_ID}" --execute --json
@@ -147,7 +147,7 @@ Submit as usual; provisioning runs first (dry-run under `--plan-only`, skip with
 
 ```bash
 npa workbench workflow submit \
-  npa/workflows/workbench/npa-workflows/adversarial-scenario-hardening.yaml \
+  workflows/testing/adversarial-scenario-hardening.yaml \
   --run-id hardening-1 --infra k8s/npa-rtxpro-mk8s --deploy-if-absent \
   --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY
 ```

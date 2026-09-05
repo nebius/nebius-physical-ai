@@ -79,11 +79,8 @@ def test_canonical_sim2real_workflow_requires_operator_pinned_images() -> None:
     """The standard workflow must not supply mutable image-tag fallbacks."""
 
     path = (
-        Path(__file__).resolve().parents[2]
-        / "workflows"
-        / "workbench"
-        / "npa-workflows"
-        / "sim2real.yaml"
+        Path(__file__).resolve().parents[3]
+        / "workflows" / "main" / "sim2real.yaml"
     )
     runbook = yaml.safe_load(path.read_text(encoding="utf-8"))
     config = runbook["config"]

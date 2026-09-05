@@ -37,7 +37,7 @@ from npa.workbench.cosmos.cosmos3 import build_cosmos3_inference_args
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 CONFIG_PATH = REPO_ROOT / "npa/workflows/workbench/configs/cosmos3-checkpoint-eval.json"
-SPEC_PATH = REPO_ROOT / "npa/workflows/workbench/npa-workflows/cosmos3-checkpoint-eval.yaml"
+SPEC_PATH = REPO_ROOT / "workflows/testing/cosmos3-checkpoint-eval.yaml"
 
 
 def _config() -> dict:

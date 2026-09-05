@@ -26,7 +26,7 @@ from npa.orchestration.npa_workflow.skypilot_render import (
 from npa.orchestration.npa_workflow.spec import load_spec
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
-SPECS = REPO_ROOT / "npa" / "workflows" / "workbench" / "npa-workflows"
+SPECS = REPO_ROOT / "workflows" / "testing"
 
 
 @pytest.mark.parametrize(

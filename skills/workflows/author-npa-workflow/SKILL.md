@@ -8,9 +8,13 @@ description: Use when authoring, validating, or reviewing NPA workflow specs (ap
 ## When To Use
 
 Load when creating or editing **NPA workflow YAML** under
-`npa/workflows/workbench/npa-workflows/`, wiring tool stages, loops, or
+`workflows/`, wiring tool stages, loops, or
 transitions, or when helping agents/users convert SkyPilot bash pipelines into
 specs.
+
+Keep `workflows/main/` limited to `sim2real.yaml` and `paidf-cosmos3.yaml`.
+Add all other catalog specs under `workflows/testing/`; keep catalog
+documentation in `workflows/README.md`.
 
 For **new creative pipelines**, also load `skills/workflows/generate-npa-workflow/SKILL.md`.
 

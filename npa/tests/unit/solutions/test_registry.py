@@ -20,7 +20,7 @@ CONFIGURED_SOLUTIONS = [
         # The canonical 14-stage path is an ordinary npa.workflow graph.
         "cli_command": (
             "npa workbench workflow submit "
-            "npa/workflows/workbench/npa-workflows/sim2real.yaml --runtime"
+            "workflows/main/sim2real.yaml --runtime"
         ),
     },
     {
@@ -40,7 +40,7 @@ CONFIGURED_SOLUTIONS = [
         ),
         "cli_command": (
             "npa workbench workflow submit "
-            "npa/workflows/workbench/npa-workflows/sonic-locomotion-finetuning.yaml"
+            "workflows/testing/sonic-locomotion-finetuning.yaml"
         ),
     },
 ]

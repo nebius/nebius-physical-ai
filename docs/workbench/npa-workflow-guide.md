@@ -7,24 +7,24 @@ three ways: YAML file, CLI, and Python SDK.
 
 ```bash
 # Validate structure and closed toolRef / predicate registries
-npa workbench workflow validate-spec npa/workflows/workbench/npa-workflows/vlm-eval-single.yaml
+npa workbench workflow validate-spec workflows/testing/vlm-eval-single.yaml
 
 # Expand loops/branches in the demo-only Sim2Real DSL fixture (dry-run)
-npa workbench workflow plan-spec npa/workflows/workbench/npa-workflows/sim2real.yaml \
+npa workbench workflow plan-spec workflows/main/sim2real.yaml \
   --run-id demo --assume-decision loop_back
 
 # Plan + optional scheduler hints + S3 run manifest
-npa workbench workflow run-spec npa/workflows/workbench/npa-workflows/vlm-eval-single.yaml \
+npa workbench workflow run-spec workflows/testing/vlm-eval-single.yaml \
   --plan-only --scheduler-plan --persist-state --json
 
 # Submit an npa.workflow spec
-npa workbench workflow submit npa/workflows/workbench/npa-workflows/vlm-eval-single.yaml \
+npa workbench workflow submit workflows/testing/vlm-eval-single.yaml \
   --run-id demo --registry <your-registry>/<namespace>
 
 # Plan only (no submit) — inspect planned steps
 # Token Factory (and other no-image tools) need NPA_SRC_S3_URI or --image
 NPA_SRC_S3_URI=s3://<bucket>/npa-src/npa \
-  npa workbench workflow submit npa/workflows/workbench/npa-workflows/token-factory-caption.yaml \
+  npa workbench workflow submit workflows/testing/token-factory-caption.yaml \
   --plan-only --run-id demo
 ```
 
@@ -38,9 +38,10 @@ npa workbench workflow list \
   --s3-bucket <bucket> --workflow-s3-prefix <parent-prefix> --json
 ```
 
-Author and submit `npa.workflow/v0.0.1` specs under
-[`npa-workflows/`](../../npa/workflows/workbench/npa-workflows/). See that
-README for the full catalog.
+Author and submit `npa.workflow/v0.0.1` specs from the
+[`workflow catalog`](../../workflows/README.md). `workflows/main/` contains only
+`sim2real.yaml` and `paidf-cosmos3.yaml`; all other catalog specs, including new
+workflows, belong in `workflows/testing/`.
 
 **No-image tools** (Token Factory specs): set
 `NPA_SRC_S3_URI=s3://bucket/prefix/npa` so the job can sync and install `npa`,
@@ -269,7 +270,7 @@ Matrix: `npa/src/npa/orchestration/npa_workflow/submit_matrix.py`
 ```python
 from npa.orchestration.npa_workflow import build_plan, load_spec, run_workflow
 
-spec = load_spec("npa/workflows/workbench/npa-workflows/vlm-eval-single.yaml")
+spec = load_spec("workflows/testing/vlm-eval-single.yaml")
 plan = build_plan(spec, run_id="sdk-demo")
 report = run_workflow(spec, run_id="sdk-demo", persist_state=True)
 ```

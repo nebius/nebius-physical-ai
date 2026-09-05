@@ -12,7 +12,7 @@ cd "$REPO"
 PY="${REPO}/npa/.venv/bin/python"
 NPA="${REPO}/npa/.venv/bin/npa"
 export NPA_INTEGRATION_E2E=1
-SPECS_DIR="${REPO}/npa/workflows/workbench/npa-workflows"
+SPECS_DIR="${REPO}/workflows"
 DYNAMIC="sim2real.yaml tokenfactory-cosmos-gate.yaml"
 RUN_ID="npa-workflow-live-$(date -u +%Y%m%dT%H%M%SZ)"
 LOG="/tmp/${RUN_ID}.log"
@@ -40,7 +40,7 @@ while true; do
   fi
 
   echo "--- CLI validate-spec / plan-spec (all golden YAMLs) ---"
-  for spec in "${SPECS_DIR}"/*.yaml; do
+  for spec in "${SPECS_DIR}/main"/*.yaml "${SPECS_DIR}/testing"/*.yaml; do
     base=$(basename "$spec")
     echo "spec: ${spec}"
     if ! "${NPA}" workbench workflow validate-spec "${spec}"; then
