@@ -79,6 +79,7 @@ from npa.cluster_backends.quotas import preflight_region, shortfall_message
 from npa.fleet.spec import ClusterSpec, FleetSpec, ObjectStorageSpec, ProjectSpec
 from npa.cluster_backends.mk8s_render import (
     validate_recipe_mig_compatibility,
+    validate_recipe_rtx_compatibility,
 )
 
 # Deprecated test/developer compatibility names. Production orchestration calls
@@ -1738,6 +1739,9 @@ def _deploy_mk8s_fleet(
             if only_clusters and cluster.name not in only_clusters:
                 continue
             validate_recipe_mig_compatibility(
+                cluster, recipe_root / _K8S_TRAINING_SUBDIR
+            )
+            validate_recipe_rtx_compatibility(
                 cluster, recipe_root / _K8S_TRAINING_SUBDIR
             )
 

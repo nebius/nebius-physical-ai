@@ -42,6 +42,15 @@ non-fabric and does not opt into the NVSwitch unsafe-operator path. The profile
 does not alter the empty/default managed-image contract and cannot be
 generalized to NVSwitch targets.
 
+The rendering profile supplies the exact platform **and preset** to the
+marketplace GPU Operator's `nebius.nvidiaDriverCRDPatch.profiles` values. Its
+default `gpu-rtx6000` selector does not match zonal `gpu-rtx6000-a` workers.
+The override contains only the requested RTX pool, keeps RDMA disabled, and
+uses a revision hash so Terraform reconciles write-only values on existing
+releases. Alternate recipes must expose and wire
+`gpu_operator_rtx_driver_profile`; incompatible recipes fail before cloud
+mutation. Do not relabel workers to hide a selector mismatch.
+
 ## Spec (npa.fleet/v0.0.1)
 
 The version remains additive. A cluster without `backend` is the historical

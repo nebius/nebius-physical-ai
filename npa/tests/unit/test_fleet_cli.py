@@ -1317,6 +1317,15 @@ def test_prepare_install_dir_supports_explicit_region_without_changing_source(tm
     source = root / "k8s-training" / "locals.tf"
     source.write_text(original)
     (root / "k8s-training" / "helm.tf").write_text('module "gpu-operator" {}\n')
+    # This test exercises region compatibility with the real RTX selector
+    # contract, so materialize the same Operator wiring as the shipped recipe.
+    shipped = L._find_vendored_recipe_root()
+    assert shipped is not None
+    import shutil
+
+    for filename in ("variables.tf", "helm.tf"):
+        shutil.copy2(shipped / "k8s-training" / filename, root / "k8s-training" / filename)
+    shutil.copytree(shipped / "modules" / "gpu-operator", root / "modules" / "gpu-operator")
     workdir = L._prepare_install_dir(
         tmp_path / "installation", recipe_root=root, region="uk-south2",
         cluster=ClusterSpec(

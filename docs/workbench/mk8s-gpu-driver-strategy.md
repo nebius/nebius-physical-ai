@@ -57,6 +57,13 @@ npa cluster up --gpu-workload-profile rtx-rendering
 npa provision-if-absent --gpu-workload-profile rtx-rendering
 ```
 
+The marketplace driver defaults may omit zonal RTX selectors. NPA supplies an
+exact platform and preset override through
+`nebius.nvidiaDriverCRDPatch.profiles`, with RDMA disabled. A configuration hash
+makes changes to those write-only Helm values update existing releases.
+Alternate recipes must wire `gpu_operator_rtx_driver_profile` or preflight
+rejects them before cloud mutation.
+
 `rtx-rendering` selects `gpu-rtx6000`, or preserves an explicitly resolved
 zonal variant such as `gpu-rtx6000-a`, and defaults to one
 `1gpu-24vcpu-218gb` GPU node, and also accepts the platform's

@@ -3,6 +3,15 @@ variable "cluster_id" {
   type        = string
 }
 
+variable "rtx_driver_profile" {
+  description = "Optional exact RTX rendering selector; does not enable RDMA or other GPU platforms."
+  type = object({
+    platform = string
+    preset   = string
+  })
+  default = null
+}
+
 variable "parent_id" {
   description = "Project id."
   type        = string
