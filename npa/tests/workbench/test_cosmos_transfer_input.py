@@ -25,6 +25,22 @@ from npa.workbench.cosmos import transfer as tx
 
 runner = CliRunner()
 
+@pytest.fixture(autouse=True)
+def _auto_patch_guardrail_nltk_data(monkeypatch):
+    """Neutralise prepare_guardrail_nltk_data when it arrives through a merge.
+
+    PR #370 adds prepare_guardrail_nltk_data to transfer.py and it depends on
+    huggingface_hub which is unavailable in CI.  The merge ref that GitHub
+    constructs for this branch will include that symbol.  An autouse fixture
+    with a hasattr guard keeps every existing test green without requiring
+    each one to remember the mock, and stays harmless on the branch HEAD
+    where the symbol does not exist yet.
+    """
+
+    if hasattr(tx, "prepare_guardrail_nltk_data"):
+        monkeypatch.setattr(tx, "prepare_guardrail_nltk_data", lambda **_kwargs: 0)
+
+
 
 def _write_extractor_python(repo: Path, body: str) -> Path:
     """Install a tiny executable used to exercise the real subprocess boundary."""
