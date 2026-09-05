@@ -108,6 +108,11 @@ context ...; refusing controller adoption." `npa skypilot bind-controller`
 records which project/context owns the shared SkyPilot jobs controller;
 without it, submit refuses with "No shared controller owner is bound."
 
+`npa workbench health sim2real` checks pod creation and Job patch permissions
+using the selected kubeconfig identity. It does not impersonate the retired
+Sim2Real sibling-Job controller's `agent-sa`. Keep the same project, kubeconfig,
+and context for health checks and canonical `workflow submit --runtime`.
+
 ## 3. Add a schedulable CPU pool before GPU work
 
 SkyPilot's Kubernetes jobs controller requests 2 vCPU/8 GiB. Sim2Real CPU states
@@ -191,7 +196,7 @@ export ENVGEN_IMAGE='ghcr.io/nebius/nebius-physical-ai/npa-envgen@sha256:33d49af
 export ISAAC_IMAGE="${NPA_ISAAC_IMAGE}"
 export VIEWER_IMAGE='ghcr.io/nebius/nebius-physical-ai/npa-rerun-viewer@sha256:8fc0a76f3df441fd6662e3eb5d893c9996ea66e6c61fcc815de79576f12b8160'
 export SPEC=npa/workflows/workbench/npa-workflows/sim2real.yaml
-export SOURCE_SHA=c164fd3480f8a9ea8f9df9ccb9509502fd527996
+export SOURCE_SHA=d099b1f93cb38de8d26b04b3bb0bb9a054841c6a
 
 npa/.venv/bin/npa workbench workflow preflight-images "${SPEC}" \
   --project "${NPA_PROJECT}" \

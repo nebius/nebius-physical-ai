@@ -33,10 +33,88 @@ and zero whole-GPU capacity/allocatable. See
 `docs/fleet-rtx-pro-6000-mig.md` and `npa/examples/fleet/rtxpro-mig.yaml`.
 
 RTX rendering without MIG uses the separate explicit cluster setting
-`gpu_workload_profile: rtx-rendering`. It selects RTX PRO 6000, the supported
-single-GPU preset, GPU Operator mounted drivers, and mandatory per-node
-GLX/EGL/Vulkan readiness. It does not alter the empty/default managed-image
-contract and cannot be generalized to NVSwitch targets.
+`gpu_workload_profile: rtx-rendering`. It selects RTX PRO 6000 (including an
+explicitly resolved zonal platform such as `gpu-rtx6000-a`), the supported
+single-GPU preset by default or accepts the explicit
+`8gpu-192vcpu-1744gb` RTX PCIe preset, uses GPU Operator mounted drivers, and
+requires per-node GLX/EGL/Vulkan readiness. The 8-GPU RTX shape remains
+non-fabric and does not opt into the NVSwitch unsafe-operator path. The profile
+does not alter the empty/default managed-image contract and cannot be
+generalized to NVSwitch targets.
+
+The rendering profile supplies the exact platform **and preset** to the
+marketplace GPU Operator's `nebius.nvidiaDriverCRDPatch.profiles` values. Its
+default `gpu-rtx6000` selector does not match zonal `gpu-rtx6000-a` workers.
+The override contains only the requested RTX pool, keeps RDMA disabled, and
+uses a revision hash so Terraform reconciles write-only values on existing
+releases. Alternate recipes must expose and wire
+`gpu_operator_rtx_driver_profile`; incompatible recipes fail before cloud
+mutation. Do not relabel workers to hide a selector mismatch.
+
+An RTX cluster may declare `gpu_driver_package_repositories` as a mapping of
+safe filenames to package-source text. Fleet passes it through the Operator's
+`driver.repoConfig` and an owned ConfigMap, retaining signature verification.
+Match the sources to the actual driver-image distribution. The five-cluster
+example supplies Ubuntu 24.04 HTTPS sources for networks that permit HTTPS but
+block HTTP. Empty configuration preserves the image defaults. Before workloads,
+verify the driver pod actually mounts the configured files and can fetch its
+kernel packages; do not infer network reachability from the operator VM.
+
+The marketplace may disable automatic upgrades and use an `OnDelete` driver
+DaemonSet. A successful Helm update then changes the template without replacing
+existing pods. Compare actual pod mounts with the template. Replacing stale
+driver pods is maintenance: first verify no application GPU workloads are
+active, cordon each affected node, recheck workloads, and delete only the
+identified stale pod with a UID precondition. Wait for its ready replacement
+and restore the node's prior scheduling state. Retain private receipts and
+rerun the full CUDA/graphics health gate; never delete application pods or
+relax readiness to finish an upgrade.
+
+Read-only live coverage checks exact selectors, per-node GPU quantities,
+ConfigMap contents, ready driver containers, and actual repository mounts:
+
+```bash
+NPA_INTEGRATION_E2E=1 NPA_FLEET_RTX_VERIFY_SPEC=<private-spec-path> \
+  NPA_FLEET_RTX_KUBECONFIGS=<private-project-cluster-path-mapping.json> \
+  npa/.venv/bin/python -m pytest \
+  npa/tests/e2e/test_fleet_rtx_driver_config_live.py -q
+```
+
+The mapping is `{project_key: {cluster_name: kubeconfig_path}}`; keep its exact
+values outside Git. This check creates no pods and complements the real
+CUDA/graphics and representative workload validation.
+
+For qualification on **every individual eight-GPU RTX cluster**, additionally run
+`npa/tests/e2e/test_fleet_rtx_workload_live.py` with the same private spec/mapping,
+`NPA_FLEET_RTX_RUN_WORKLOADS=1`, and an owner-only
+`NPA_FLEET_RTX_WORKLOAD_EVIDENCE_DIR`. It creates one Job per target using the
+provisioning gate's immutable, payload-clean image. Each Job executes verified
+CUDA arithmetic and matrix multiplication, dynamically loads GLX/EGL, and
+creates a Vulkan instance with an NVIDIA physical device. It verifies the
+runtime digest and deletes each Job with a UID precondition, then proves both
+Job and pod absence. The evidence directory holds private execution receipts
+and a separate sanitized result summary. This does not replace representative
+Isaac training or the canonical Sim2Real ladder.
+
+The RTX override also sets toolkit `RUNTIME_CONFIG_SOURCE=file`. With newer
+containerd binaries, `containerd config dump` can migrate the configuration in
+memory. Using that output may produce a version-4 NVIDIA drop-in beside a
+version-2 root, preventing containerd startup. Reading the file preserves the
+host schema; see NVIDIA's [configuration-source guidance](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/getting-started.html#specifying-configuration-options-for-containerd).
+For an already broken node, apply the corrected toolkit configuration first.
+After verifying no application workloads are active, retain the root and
+drop-in files privately, move only the proven incompatible NVIDIA drop-in out
+of the imports directory, validate `containerd config dump`, and restart
+containerd. Verify the replacement toolkit produces a compatible fragment and
+the full health gate passes. Do not change version numbers blindly or discard
+unrelated host configuration.
+
+A node group can report `PROVISIONING` again when its workers lose readiness.
+Fleet treats it as zero incremental reserved demand only after a complete
+Compute inventory proves the exact group/cluster/project labels, requested
+template, running worker count, reservation bindings, and attached disks.
+Target and actual node counts must also match. This capacity proof does not
+mark the cluster healthy: every deployment readiness gate still runs.
 
 ## Spec (npa.fleet/v0.0.1)
 
@@ -53,6 +131,42 @@ fleets are just project entries with no overrides. Projects may declare custom
 `clusters` (overrides and/or several clusters), and identical + custom may be
 freely **mixed**. Projects reference an existing `project_id` or a `name` that is
 created on demand as `project_prefix` + `name`.
+
+Project-scoped `object_storage` is independent of a cluster's shared
+filesystem. `storage_class: enhanced` maps to Nebius Enhanced Throughput,
+`size_gibibytes` becomes the bucket's exact binary capacity cap, and deploy
+requires provider read-back plus a write/read/delete probe. Leave `bucket_name`
+empty in public specs so Fleet derives a stable private name at runtime. Fleet
+retains buckets and durable artifacts on cluster destroy; explicit
+`npa storage bucket delete` remains the destructive cleanup boundary.
+
+Before any project, bucket, subnet, or cluster mutation, deploy budgets all new
+bucket declarations against tenant `storage.bucket.count` and the matching
+`storage.bucket.size.<class>` allowance (`enhanced-throughput` for Enhanced).
+The size allowance uses bytes, separately from filesystem quotas. Missing,
+unreadable, or insufficient evidence fails closed. Every selected existing
+bucket must match the exact project, name, region, active/unsuspended state,
+storage class, and cap before reuse. Verified existing buckets are not charged
+again as new quota demand; a new storage declaration is still checked when its
+cluster is unchanged. Read/write success without verified probe deletion cannot
+mark Fleet storage ready.
+
+A bucket cap is a maximum, not reserved storage. Available tenant capacity can
+change after preflight, including when other buckets grow. See the official
+[bucket contract](https://docs.nebius.com/terraform-provider/reference/resources/storage_v1_bucket)
+and [storage quotas](https://docs.nebius.com/object-storage/resources/quotas-limits).
+
+Run the read-only reservation and storage quota regression against a private
+planning spec even before its target projects exist:
+
+```bash
+NPA_INTEGRATION_E2E=1 NPA_FLEET_QUOTA_VERIFY_SPEC=<private-spec-path> \
+  npa/.venv/bin/python -m pytest \
+  npa/tests/e2e/test_fleet_storage_quota_live_e2e.py -q
+```
+
+This proves capacity evidence only; project identity, actual bucket provisioning,
+GPU readiness, and representative workloads remain separate deployment gates.
 
 ```yaml
 apiVersion: npa.fleet/v0.0.1
@@ -86,6 +200,10 @@ defaults:
   filesystem_csi_chart_repository: ""
 projects:
   - name: a                  # -> project fleet1-test-a (identical profile)
+    object_storage:          # separate from enable_filestore
+      enabled: true
+      storage_class: enhanced
+      size_gibibytes: 1024
   - name: b                  # -> project fleet1-test-b (identical profile)
   # - name: c                # custom: overrides + a second cluster
   #   clusters:
@@ -131,6 +249,17 @@ previous one (`nebius profile activate <prev>`) if other tooling on the host
 depends on it.
 
 ## Procedure
+
+Parallel applies use a shared download cache only during initialization. NPA
+holds the cache lock through initialization and copying each target's selected
+providers into its own Terraform data directory. Later initialization can then
+rewrite cached downloads without changing binaries used by another apply or
+destroy. Dependency-lock checksum verification remains enabled.
+
+Older recipe sources can omit newer regions from their default-node table.
+Materialization preserves known-region defaults while allowing explicit
+platforms and presets in other regions. It supplies no guessed GPU or fabric;
+resolve those values from the provider inventory before deployment.
 
 1. Keep committed files public-safe: never hardcode tenant/project/registry IDs
    or SSH keys. The spec resolves tenant/region from `~/.nebius/config.yaml` and
@@ -198,6 +327,25 @@ depends on it.
    existing immutable project ID when a name already exists. An unreadable
    project inventory fails closed rather than assuming the project exists.
 
+   Both explicit `project_id` targets and projects resolved by name require a
+   provider read verifying exact ID, tenant, region, active state, and absence of
+   suspension or deletion. An explicit ID may use a local Fleet role whose name
+   differs from the provider project name. With `--no-create-projects`, a missing
+   target aborts the entire preflight before any project's storage or workers
+   are created; never substitute a stale or deleting project from local state.
+
+   Run the read-only live identity regression against an owner-private spec with
+   explicit tenant, region, profile, and project IDs:
+
+   ```bash
+   NPA_INTEGRATION_E2E=1 NPA_FLEET_PROJECT_VERIFY_SPEC=<private-spec-path> \
+     npa/.venv/bin/python -m pytest \
+     npa/tests/e2e/test_fleet_project_identity_live_e2e.py -q
+   ```
+
+   This checks valid identity and rejects mismatched tenant/region selections.
+   It creates no resources and does not replace GPU or workload validation.
+
    The allowance read is paged to completion and selects records whose
    `metadata.parent_id` is the requested tenant. A project/unset allowance can
    never shadow a finite tenant allowance; duplicate finite evidence must agree
@@ -234,6 +382,10 @@ depends on it.
    write also registers the fleet target under `~/.npa/clusters/<context>` so
    project-scoped workflow, controller, and `provision-if-absent` commands can
    consume it without a second manual cluster registration step.
+   Fleet's unique local context may differ from the provider cluster name.
+   Exact controller cleanup compares `--cluster-name` with the saved
+   `provider_name`, while still verifying the immutable project/cluster IDs
+   and the saved kubeconfig against the live provider.
 7. **Consume the latest recipe**: `--k8s-training-ref main` clones
    `nebius-solutions-library` and uses its `k8s-training` (or `--k8s-training-dir`
    for a local checkout). Omit both to use the repo-vendored, tested copy. NPA
@@ -267,6 +419,25 @@ depends on it.
    cluster in validation-failed state instead of reporting deployment success.
 
 ## Add / remove clusters and projects
+
+For concurrent workflows from one operator host, keep each project's SkyPilot
+state and API endpoint separate. An isolated HOME does not isolate SkyPilot's
+default listening port. Supply the operator-managed endpoint through
+`SKYPILOT_API_SERVER_ENDPOINT`, with a stable HOME, user identity, and exact
+project kubeconfig on its server. NPA inspects only the selected local port;
+unrelated servers cannot poison that check. A selected server with a different
+runtime identity fails before submission and is never stopped automatically.
+Remote API endpoints use SkyPilot's API/controller checks instead of local
+procfs inspection. Preserve the same endpoint and state when monitoring or
+cancelling the run.
+
+The workflow submitter waits for SkyPilot's API launch result while detaching
+the actual workload. A rejected storage or image precheck therefore surfaces
+as a launch error instead of an accepted request with no observable job. For
+durable Nebius mounts, configure the exact project's `nebius` AWS storage
+profile in that isolated HOME and verify storage access before submission.
+Restrict Nebius to its storage capability when compute must stay on the existing
+reserved Kubernetes fleet.
 
 The fleet is spec-driven and idempotent, so growing or shrinking it is targeted:
 
@@ -306,6 +477,16 @@ Both `deploy` and `destroy` confirm before acting (bypass with `--yes`/`-y`;
   requested shapes. Reserved pools must still report non-preemptible nodes and
   the exact `STRICT` reservation binding; stale or incomplete evidence falls
   back to the ordinary conservative quota preflight.
+  The same capacity proof applies during GPU validation or after a later
+  application failure: a partial apply must have an exact saved cluster identity
+  (or one matching local Terraform cluster resource), plus running provider
+  groups. Split reserved pools are matched as separate groups. Explicit project
+  IDs take precedence over public aliases, and an RTX Helm selector update is
+  excluded from capacity demand. The v1 API represents preemption with an Empty
+  marker (`{}` enables it; omission disables it), which is decoded at the API
+  boundary before strict reservation matching. Unknown state, wrong identity,
+  missing groups, changed capacity, or non-STRICT reservation evidence still
+  fails closed.
 - **Region domain**: the recipe's `provider.tf` domain is patched to
   `api.nebius.cloud` for non-EU regions automatically (EU uses
   `api.eu.nebius.cloud`). If the upstream recipe drifts (renames `provider.tf`,
@@ -359,6 +540,12 @@ Both `deploy` and `destroy` confirm before acting (bypass with `--yes`/`-y`;
   `NPA_REUSE_IAM_TOKEN` is set (CI injecting a short-lived token). This is also
   why `--profile` must be threaded through rather than relying on the ambient
   token: the token, not the profile, decides the principal.
+  The current vendored recipe uses the explicit profile for refreshable Nebius
+  authentication and profile-bound Kubernetes credential exec plugins. NPA
+  removes the minted token's provider override for compatible recipes, so a
+  long apply or destroy does not keep using the token minted before workers
+  began provisioning. Older recipes retain their minted-token behavior; use
+  the vendored recipe when long operations outlive that token.
 - **Default StorageClass depends on `enable_filestore`**: the recipe installs the
   filesystem CSI (`csi-mounted-fs-path-sc`, `ReadWriteMany`) only when a shared
   filesystem is attached. Without it the only class is

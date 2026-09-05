@@ -18,6 +18,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping, Sequence
+from urllib.parse import urlsplit
 
 import yaml
 
@@ -227,6 +228,7 @@ def _probe_local_api_daemon_cwd(
     expected_home: str = "",
     expected_user_id: str = "",
     expected_kubeconfig: str = "",
+    expected_endpoint: str = "",
 ) -> ApiDaemonCwdProbe:
     """Inspect the actual local API daemon and descendants through procfs.
 
@@ -235,6 +237,18 @@ def _probe_local_api_daemon_cwd(
     deleted.  Those executor processes perform controller provisioning and
     rsync, so every cwd in the local server process tree must remain resolvable.
     """
+
+    try:
+        endpoint = urlsplit(expected_endpoint or "http://127.0.0.1:46580")
+        if endpoint.scheme not in {"http", "https"} or not endpoint.hostname:
+            raise ValueError("invalid API endpoint")
+        port = endpoint.port or (443 if endpoint.scheme == "https" else 80)
+    except ValueError:
+        return ApiDaemonCwdProbe(False, "invalid_api_endpoint")
+    if endpoint.hostname not in {"localhost", "127.0.0.1", "::1", "0.0.0.0"}:
+        # A remote API server has no inspectable local process tree. SkyPilot's
+        # authenticated API and controller checks still run during submission.
+        return ApiDaemonCwdProbe(True, "remote_api_endpoint")
 
     expected_uid = os.getuid() if uid is None else uid
     try:
@@ -302,6 +316,18 @@ def _probe_local_api_daemon_cwd(
         and "-m" in cmdline
         and "sky.server.server" in cmdline
     }
+    endpoint_roots = set()
+    for pid in roots:
+        cmdline = records[pid][1]
+        daemon_port = "46580"
+        for index, argument in enumerate(cmdline):
+            if argument.startswith("--port="):
+                daemon_port = argument.partition("=")[2]
+            elif argument == "--port" and index + 1 < len(cmdline):
+                daemon_port = cmdline[index + 1]
+        if daemon_port == str(port):
+            endpoint_roots.add(pid)
+    roots = endpoint_roots
     if caller_mount_namespace is not None:
         scoped_roots = set()
         for pid in roots:
@@ -450,11 +476,18 @@ def _ensure_local_api_daemon_cwd(
             expected_home=str(env.get("HOME") or ""),
             expected_user_id=str(env.get("SKYPILOT_USER_ID") or ""),
             expected_kubeconfig=str(env.get("KUBECONFIG") or ""),
+            expected_endpoint=str(env.get("SKYPILOT_API_SERVER_ENDPOINT") or ""),
         )
     )
     before = inspect()
     if before.healthy:
         return before
+    if before.outcome == "stale_runtime_environment":
+        raise SkyPilotSubmitError(
+            "The selected SkyPilot API endpoint belongs to a different runtime "
+            "environment. Select a dedicated API endpoint for this isolated "
+            "state; no API server was stopped and no submission was attempted."
+        )
     if before.outcome not in {
         "cwd_deleted",
         "stale_global_config",
@@ -751,7 +784,9 @@ def submit_workflow(
             "launch",
             "--name",
             run_id,
-            "--async",
+            # Wait for the API launch result so failed prechecks surface as
+            # errors. --async acknowledges only the request, before a managed
+            # job exists; --detach-run still leaves the workload asynchronous.
             "--detach-run",
             "--yes",
             str(prepared_yaml),

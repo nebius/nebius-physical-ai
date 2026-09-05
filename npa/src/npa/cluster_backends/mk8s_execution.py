@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 import logging
 import os
 import re
@@ -15,10 +16,14 @@ from pathlib import Path
 from typing import Any, Callable
 
 
-from npa.cluster.gpu_driver import resolve_gpu_driver_strategy
+from npa.cluster.gpu_driver import (
+    inspect_recipe_declared_variables,
+    resolve_gpu_driver_strategy,
+)
 from npa.cluster.gpu_health import GpuHealthConfig, validate_gpu_health
 from npa.cluster_backends.process import (
     _redact as _redact_output,
+    isolate_terraform_providers,
     require_bin as _require_bin,
     run_capture as _run_capture,
     run_stream as _run_stream,
@@ -34,6 +39,7 @@ from npa.cluster_backends.mk8s_model import (
 from npa.cluster_backends.mig import wait_for_mig_ready
 from npa.cluster_backends.mk8s_render import (
     gpu_node_group_layout,
+    patch_explicit_region_defaults,
     patch_provider_domain,
     provider_domain,
     render_tfvars,
@@ -553,6 +559,14 @@ def _prepare_install_dir(
         shutil.rmtree(modules_dst, ignore_errors=True)
     shutil.copytree(recipe_root / _MODULES_SUBDIR, modules_dst)
 
+    locals_file = workdir / "locals.tf"
+    if locals_file.is_file():
+        original = locals_file.read_text()
+        patched = patch_explicit_region_defaults(original)
+        if patched != original:
+            locals_file.write_text(patched)
+            _log(on_status, "enabled explicit node settings beyond legacy recipe regions")
+
     # kubectl 1.36's `debug --quiet` suppresses both attached verifier output and
     # the generated debugger-pod name. That defeats success-evidence checking and
     # cleanup. Apply this compatibility shim to the materialized recipe so local,
@@ -788,12 +802,23 @@ def _cluster_tf_env(
     region: str,
     subnet_id: str,
     profile: str = "",
+    recipe_dir: Path | None = None,
 ) -> dict[str, str]:
     env = _terraform_env(nebius_bin, profile=profile)
     env["TF_VAR_tenant_id"] = tenant_id
     env["TF_VAR_parent_id"] = project_id
     env["TF_VAR_region"] = region
     env["TF_VAR_subnet_id"] = subnet_id
+    if profile and recipe_dir is not None and {
+        "nebius_profile", "nebius_cli",
+    } <= inspect_recipe_declared_variables(recipe_dir):
+        # A minted IAM token can expire while Kubernetes workers provision.
+        # Let the provider refresh the exact selected profile and let its
+        # Kubernetes clients acquire fresh ExecCredentials when needed.
+        env.pop("NEBIUS_IAM_TOKEN", None)
+        env.pop("NPA_NEBIUS_IAM_TOKEN", None)
+        env["TF_VAR_nebius_profile"] = profile
+        env["TF_VAR_nebius_cli"] = nebius_bin
     return env
 
 
@@ -1813,8 +1838,35 @@ def _is_verified_unchanged_target(
     saved = _load_env_sidecar(install_dir) or {}
     project_id = str(saved.get("project_id") or "")
     cluster_id = str(saved.get("cluster_id") or "")
+    if not cluster_id and saved.get("status") == "provisioning":
+        # A later application failure must not count existing workers twice.
+        # Recover only this target's exact local resource identity, then
+        # independently verify every requested cloud pool below.
+        try:
+            state = json.loads(
+                (install_dir / _K8S_TRAINING_SUBDIR / "terraform.tfstate").read_text()
+            )
+            candidates = [
+                instance.get("attributes", {})
+                for resource in state.get("resources", [])
+                if resource.get("mode") == "managed"
+                and resource.get("type") == "nebius_mk8s_v1_cluster"
+                and not resource.get("module")
+                for instance in resource.get("instances", [])
+                if not instance.get("deposed")
+            ]
+            if len(candidates) == 1:
+                candidate = candidates[0]
+                if candidate.get("parent_id") == project_id and candidate.get("name") == cluster.name:
+                    cluster_id = str(candidate.get("id") or "")
+        except (OSError, ValueError, TypeError, AttributeError):
+            return False
     if (
-        str(saved.get("status") or "") != "deployed"
+        str(saved.get("status") or "") not in {
+            "deployed", "provisioning", "validating-gpu-health", "validating-mig",
+            "validating-cluster-basics", "deployed-validation-failed",
+            "deployed-credentials-failed",
+        }
         or not project_id
         or not cluster_id
         or str(saved.get("tenant_id") or "") != tenant_id
@@ -1829,9 +1881,15 @@ def _is_verified_unchanged_target(
         saved_tfvars = tfvars_path.read_text(encoding="utf-8")
         rendered_tfvars = render_tfvars(cluster, ssh_public_key=ssh_public_key)
 
-        if _normalize_tfvars_assignments(saved_tfvars) != _normalize_tfvars_assignments(
-            rendered_tfvars
-        ):
+        def capacity_configuration(text: str) -> str:
+            # The RTX Helm selector consumes no new cloud capacity. Keep every
+            # other rendered setting in the conservative comparison.
+            return _normalize_tfvars_assignments("\n".join(
+                line for line in text.splitlines()
+                if not re.match(r"\s*gpu_operator_rtx_driver_profile\s*=", line)
+            ))
+
+        if capacity_configuration(saved_tfvars) != capacity_configuration(rendered_tfvars):
             return False
         provider_project = _get_project(nebius_bin, project_id, env, profile)
     except (OSError, RuntimeError, ValueError):
@@ -1845,7 +1903,7 @@ def _is_verified_unchanged_target(
         or metadata.get("region")
         or ""
     )
-    expected_name = project.display_name(prefix) if project.name else ""
+    expected_name = project.display_name(prefix) if project.name and not project.project_id else ""
     provider_parent_id = _provider_field(metadata, "parent_id", "parentId")
     if (
         str(metadata.get("id") or "") != project_id
@@ -1878,6 +1936,7 @@ def _is_verified_unchanged_target(
         [
             *_nebius_argv(nebius_bin, profile),
             "mk8s",
+            "v1",
             "node-group",
             "list",
             "--parent-id",
@@ -1920,18 +1979,49 @@ def _is_verified_unchanged_target(
         for pool in (cluster.cpu_nodes, cluster.gpu_nodes)
         if pool is not None and pool.count > 0
     ]
+    if cluster.gpu_nodes and cluster.gpu_count() > 0:
+        per_group, group_count = gpu_node_group_layout(cluster)
+        if group_count > 1:
+            expected_pools = [pool for pool in expected_pools if pool is not cluster.gpu_nodes]
+            expected_pools.extend(
+                replace(cluster.gpu_nodes, count=per_group) for _ in range(group_count)
+            )
     if len(groups) != len(expected_pools):
         return False
 
-    unmatched = [item for item in groups if isinstance(item, dict)]
+    unmatched = [
+        _decode_v1_node_group_preemptibility(item)
+        for item in groups if isinstance(item, dict)
+    ]
     if len(unmatched) != len(groups):
         return False
+    instances: list[dict[str, Any]] = []
+    if any(item.get("status", {}).get("state") == "PROVISIONING" for item in unmatched):
+        try:
+            inventory = _run_capture(
+                [*_nebius_argv(nebius_bin, profile), "compute", "v1", "instance",
+                 "list", "--parent-id", project_id, "--all", "--format", "json"],
+                env=env, check=False,
+            )
+            payload = json.loads(inventory.stdout or "{}")
+            instances = payload.get("items") if isinstance(payload, dict) else None
+            if inventory.returncode != 0 or not isinstance(instances, list):
+                return False
+            if not all(isinstance(item, dict) for item in instances):
+                return False
+        except (OSError, RuntimeError, ValueError):
+            return False
     for pool in expected_pools:
         match_index = next(
             (
                 index
                 for index, item in enumerate(unmatched)
-                if _provider_node_group_matches_pool(item, pool)
+                if _provider_node_group_matches_pool(
+                    item, pool,
+                    allocated_repair=_node_group_has_allocated_workers(
+                        item, instances, project_id=project_id, cluster_id=cluster_id,
+                    ),
+                )
             ),
             None,
         )
@@ -1941,8 +2031,71 @@ def _is_verified_unchanged_target(
     return not unmatched
 
 
+def _node_group_has_allocated_workers(
+    payload: dict[str, Any], instances: list[dict[str, Any]], *,
+    project_id: str, cluster_id: str,
+) -> bool:
+    """Distinguish a readiness repair from unallocated provisioning demand."""
+
+    metadata = payload.get("metadata") or {}
+    spec = payload.get("spec") or {}
+    status = payload.get("status") or {}
+    template = spec.get("template") or {}
+    group_id = metadata.get("id")
+    reservation = template.get("reservation_policy") or {}
+    if (
+        status.get("state") != "PROVISIONING" or not group_id
+        or metadata.get("parent_id") != cluster_id
+        or reservation.get("policy") != "STRICT"
+        or len(reservation.get("reservation_ids") or []) != 1
+    ):
+        return False
+    try:
+        count = int(spec["fixed_node_count"])
+        if count <= 0 or int(status["node_count"]) != count or int(status["target_node_count"]) != count:
+            return False
+    except (KeyError, TypeError, ValueError):
+        return False
+    workers = [item for item in instances if
+               ((item.get("metadata") or {}).get("labels") or {}).get("mk8s-node-group-id") == group_id]
+    if len(workers) != count or len({(item.get("metadata") or {}).get("id") for item in workers}) != count:
+        return False
+    return all(
+        _instance_matches_node_group(
+            item, project_id=project_id, cluster_id=cluster_id,
+            node_group_id=group_id, template=template,
+        )
+        and (item.get("status") or {}).get("state") == "RUNNING"
+        and (item.get("status") or {}).get("reservation_id")
+        and (item.get("status") or {}).get("disk_attachments")
+        for item in workers
+    )
+
+
+def _decode_v1_node_group_preemptibility(payload: dict[str, Any]) -> dict[str, Any]:
+    """Decode the v1 API's presence marker at the authoritative CLI boundary.
+
+    `template.preemptible` is an Empty message: {} enables preemption and
+    omission disables it. It is not an omitted, unknown boolean. Keep malformed
+    values intact so the strict pool matcher rejects them; preserve legacy
+    explicit booleans accepted by that matcher.
+    """
+
+    spec = payload.get("spec")
+    template = spec.get("template") if isinstance(spec, dict) else None
+    if not isinstance(template, dict):
+        return payload
+    if "preemptible" not in template:
+        value = False
+    elif template["preemptible"] == {}:
+        value = True
+    else:
+        return payload
+    return {**payload, "spec": {**spec, "template": {**template, "preemptible": value}}}
+
+
 def _provider_node_group_matches_pool(
-    payload: dict[str, Any], pool: MK8sNodePool
+    payload: dict[str, Any], pool: MK8sNodePool, *, allocated_repair: bool = False,
 ) -> bool:
     """Compare one provider node-group payload with one desired pool."""
 
@@ -1986,7 +2139,8 @@ def _provider_node_group_matches_pool(
     )
     expected_preemptible = bool(pool.preemptible)
     if (
-        str(status.get("state") or "") != "RUNNING"
+        (str(status.get("state") or "") != "RUNNING"
+         and not (allocated_repair and status.get("state") == "PROVISIONING"))
         or fixed_node_count != pool.count
         or str(resources.get("platform") or "") != pool.platform
         or str(resources.get("preset") or "") != pool.preset
@@ -2076,6 +2230,7 @@ def _deploy_one_cluster(
             region=region,
             subnet_id=subnet_id,
             profile=profile,
+            recipe_dir=workdir,
         )
         # Written before apply so ``destroy`` can reconstruct TF_VAR_* even if
         # apply fails midway. Project network ownership is recorded separately.
@@ -2109,6 +2264,7 @@ def _deploy_one_cluster(
                 timeout=900,
                 log_path=log_path,
             )
+            isolate_terraform_providers(workdir, env)
         recovered_identity = _reconcile_tainted_node_groups(
             terraform_bin=terraform_bin,
             workdir=workdir,
@@ -2453,6 +2609,7 @@ def _destroy_one_cluster(
         region=str(saved.get("region") or spec.region),
         subnet_id=subnet_id,
         profile=profile,
+        recipe_dir=workdir,
     )
     _log(
         on_status,
@@ -2470,6 +2627,7 @@ def _destroy_one_cluster(
                 timeout=900,
                 log_path=log_path,
             )
+            isolate_terraform_providers(workdir, env)
         _tf_run(
             [terraform_bin, "destroy", "-auto-approve", "-input=false"],
             cwd=workdir,
