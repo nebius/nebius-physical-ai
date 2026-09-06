@@ -28,7 +28,7 @@ from npa.serverless_common import (
     split_serverless_env,
 )
 
-from npa.smoke.manifest import container
+from npa.smoke.manifest import UNLIMITED_SERVERLESS_ERROR, container
 
 # Nebius AI Jobs always require a GPU preset, even for CPU-only workloads, so a
 # small default is used when a golden eval does not pin its own serverless GPU.
@@ -110,6 +110,8 @@ def submit_golden_eval(
     """
 
     spec = container(tool)
+    if spec.golden_eval.execution_timeout is None:
+        raise RuntimeError(UNLIMITED_SERVERLESS_ERROR)
     command = spec.golden_eval.command
     gpu = gpu_type or spec.golden_eval.serverless_gpu or DEFAULT_SERVERLESS_GPU
 
