@@ -536,8 +536,10 @@ try:
     print("EVAL_SEED_APPLIED", SEED, flush=True)
     # Capture synchronized primary, side, and overhead views. Isaac Lab's
     # ``world`` camera convention looks along +X; the orchestrator serializes
-    # validated wxyz poses into CAMERA_VIEWS. ``heldout_cam`` remains the primary
-    # sensor key for backward compatibility with existing real-run tooling.
+    # validated wxyz poses into CAMERA_VIEWS. Convert only at the sensor boundary
+    # because Lab 3 consumes xyzw while Lab 2 consumes wxyz. ``heldout_cam`` remains
+    # the primary sensor key for compatibility with existing real-run tooling.
+    from npa.workflows.sim2real.camera_views import camera_rotation_for_isaac_lab
     def _camera_key(name):
         return "heldout_cam" if name == "primary" else "heldout_cam_" + name
     for view in CAMERA_VIEWS:
@@ -548,7 +550,7 @@ try:
                 prim_path="{ENV_REGEX_NS}/heldout_cam_" + view["name"],
                 offset=TiledCameraCfg.OffsetCfg(
                     pos=tuple(view["position"]),
-                    rot=tuple(view["rotation"]),
+                    rot=camera_rotation_for_isaac_lab(view["rotation"]),
                     convention="world",
                 ),
                 data_types=["rgb", "distance_to_image_plane"],

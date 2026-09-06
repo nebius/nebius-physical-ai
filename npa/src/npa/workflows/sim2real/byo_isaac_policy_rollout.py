@@ -363,6 +363,7 @@ try:
     from isaaclab_tasks.utils import parse_env_cfg
     import isaaclab.sim as sim_utils
     from isaaclab.sensors import CameraCfg, TiledCameraCfg
+    from npa.workflows.sim2real.camera_views import camera_rotation_for_isaac_lab
     try:
         from isaaclab_rl.rsl_rl import RslRlVecEnvWrapper
     except Exception:
@@ -394,7 +395,7 @@ try:
                 prim_path="{ENV_REGEX_NS}/rollout_cam_" + view["name"],
                 offset=CameraType.OffsetCfg(
                     pos=tuple(view["position"]),
-                    rot=tuple(view["rotation"]),
+                    rot=camera_rotation_for_isaac_lab(view["rotation"]),
                     convention="world",
                 ),
                 data_types=["rgb"],

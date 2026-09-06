@@ -1264,6 +1264,124 @@ def module_source() -> str:
     return Path(__file__).read_text(encoding="utf-8")
 
 
+def initial_action_noise_config(
+    agent_cfg: dict[str, Any],
+) -> tuple[dict[str, Any], str]:
+    """Return the live initial-noise setting across supported RSL-RL APIs.
+
+    Isaac Lab's migration clears ``policy`` for RSL-RL 4 and later. Version 4
+    puts the setting on ``actor``; version 5 puts it in the actor distribution.
+    Resolve the migrated config itself so an override reaches the model that
+    the runner will actually construct.
+    """
+
+    actor = agent_cfg.get("actor")
+    if isinstance(actor, dict):
+        distribution = actor.get("distribution_cfg")
+        if isinstance(distribution, dict) and "init_std" in distribution:
+            return distribution, "init_std"
+        if "init_noise_std" in actor:
+            return actor, "init_noise_std"
+        raise RuntimeError("RSL-RL actor config lacks a supported action-noise setting")
+    policy = agent_cfg.get("policy")
+    if isinstance(policy, dict) and "init_noise_std" in policy:
+        return policy, "init_noise_std"
+    raise RuntimeError("RSL-RL registry config lacks a supported actor/policy config")
+
+
+def next_ppo_iteration(
+    runner: Any,
+    *,
+    resumed: bool,
+    checkpoint_info: Mapping[str, Any] | None = None,
+) -> int:
+    """Resolve the next update without confusing checkpoint index conventions.
+
+    Upstream RSL-RL stores the last completed zero-based index in ``iter``,
+    including periodic saves. Our final saves retain that same convention.
+    Explicit next-index metadata is understood for checkpoints that already
+    normalize their counter; absent metadata means the upstream convention.
+    """
+
+    index = runner.current_learning_iteration
+    if isinstance(index, bool) or not isinstance(index, int) or index < 0:
+        raise RuntimeError("RSL-RL learning iteration must be a nonnegative integer")
+    if not resumed:
+        if index != 0:
+            raise RuntimeError("fresh RSL-RL runner must start at iteration zero")
+        return 0
+    if checkpoint_info is not None and not isinstance(checkpoint_info, Mapping):
+        raise RuntimeError("invalid PPO checkpoint info")
+    metadata = (checkpoint_info or {}).get("npa_ppo_iteration")
+    semantics = "last_completed_zero_based"
+    if metadata is not None:
+        if not isinstance(metadata, Mapping):
+            raise RuntimeError("invalid PPO checkpoint iteration metadata")
+        semantics = metadata.get("value_semantics")
+    if semantics == "last_completed_zero_based":
+        next_index = index + 1
+    elif semantics in {"next_zero_based", "completed_updates"}:
+        next_index = index
+    else:
+        raise RuntimeError(
+            f"unsupported PPO checkpoint iteration semantics: {semantics!r}"
+        )
+    if metadata is not None:
+        completed = metadata.get("completed_updates")
+        if (
+            isinstance(completed, bool)
+            or not isinstance(completed, int)
+            or completed != next_index
+        ):
+            raise RuntimeError(
+                "PPO checkpoint iteration metadata disagrees with saved iter"
+            )
+    return next_index
+
+
+def learn_ppo_phase(
+    runner: Any,
+    *,
+    start_iteration: int,
+    num_learning_iterations: int,
+    init_at_random_ep_len: bool,
+) -> dict[str, int]:
+    """Run exactly the requested updates with contiguous absolute indices.
+
+    ``learn`` leaves the runner at the last completed index, and the next call
+    otherwise repeats that index. Keep its save convention intact and set the
+    next phase's start explicitly instead of normalizing saved counters.
+    """
+
+    if (
+        isinstance(start_iteration, bool)
+        or not isinstance(start_iteration, int)
+        or start_iteration < 0
+        or isinstance(num_learning_iterations, bool)
+        or not isinstance(num_learning_iterations, int)
+        or num_learning_iterations < 1
+    ):
+        raise ValueError(
+            "PPO phase requires a nonnegative start and positive update count"
+        )
+    runner.current_learning_iteration = start_iteration
+    runner.learn(
+        num_learning_iterations=num_learning_iterations,
+        init_at_random_ep_len=init_at_random_ep_len,
+    )
+    last_index = start_iteration + num_learning_iterations - 1
+    if runner.current_learning_iteration != last_index:
+        raise RuntimeError(
+            "RSL-RL did not report the requested final learning iteration"
+        )
+    return {
+        "first_iteration_index": start_iteration,
+        "last_iteration_index": last_index,
+        "updates_this_phase": num_learning_iterations,
+        "completed_updates": last_index + 1,
+    }
+
+
 def configure_convergence_action_noise(
     policy: Any,
     *,
@@ -1477,9 +1595,9 @@ try:
     # can then anneal it within this pass so stable placement is not defeated by
     # a permanently high action-noise floor.
     algo = acfg.get("algorithm")
-    policy_cfg = acfg.get("policy")
-    if not isinstance(algo, dict) or not isinstance(policy_cfg, dict):
-        raise RuntimeError("RSL-RL registry config lacks algorithm/policy dictionaries")
+    if not isinstance(algo, dict):
+        raise RuntimeError("RSL-RL registry config lacks an algorithm dictionary")
+    noise_cfg, noise_key = robotmod.initial_action_noise_config(acfg)
     ENT = os.environ.get("ROBOT_ENTROPY_COEF", "").strip()
     if ENT and ENT.lower() not in ("stock", "default", "none"):
         algo["entropy_coef"] = float(ENT)
@@ -1501,13 +1619,13 @@ try:
         algo["learning_rate"] = float(ppo_lr)
     init_noise = os.environ.get("ROBOT_INIT_NOISE_STD", "").strip()
     if init_noise:
-        policy_cfg["init_noise_std"] = float(init_noise)
+        noise_cfg[noise_key] = float(init_noise)
     print("ROBOT_PPO_SETTINGS_APPLIED", json.dumps({
         "learning_rate": algo.get("learning_rate"),
         "entropy_coef": algo.get("entropy_coef"),
         "entropy_final_coef": float(ENT_FINAL) if ENT_FINAL else None,
         "entropy_anneal_fraction": float(ENT_FRACTION) if ENT_FRACTION else None,
-        "init_noise_std": policy_cfg.get("init_noise_std"),
+        "init_noise_std": noise_cfg.get(noise_key),
         "save_interval": acfg["save_interval"],
     }, sort_keys=True), flush=True)
     print("ROBOT_AGENT_CFG_KEYS", sorted(acfg.keys()), flush=True)
@@ -1557,10 +1675,14 @@ try:
     if expected_observation_dim and actual_observation_dim != expected_observation_dim:
         raise RuntimeError("training observation dimension disagrees with RobotSpec")
     runner = OnPolicyRunner(env, acfg, log_dir=OUT, device="cuda:0")
+    next_iteration = robotmod.next_ppo_iteration(runner, resumed=False)
     resume_ckpt = os.environ.get("ROBOT_RESUME_CKPT_LOCAL", "").strip()
     if resume_ckpt and os.path.isfile(resume_ckpt):
         try:
-            runner.load(resume_ckpt)
+            resume_info = runner.load(resume_ckpt)
+            next_iteration = robotmod.next_ppo_iteration(
+                runner, resumed=True, checkpoint_info=resume_info,
+            )
         except Exception as exc:
             raise RuntimeError(
                 "resume checkpoint cannot load for RobotSpec embodiment "
@@ -1571,10 +1693,14 @@ try:
     if ENT_FINAL and ITERS > 1:
         exploration_iterations = max(1, min(ITERS - 1, int(round(ITERS * float(ENT_FRACTION)))))
         convergence_iterations = ITERS - exploration_iterations
-        runner.learn(
+        phase = robotmod.learn_ppo_phase(
+            runner,
+            start_iteration=next_iteration,
             num_learning_iterations=exploration_iterations,
             init_at_random_ep_len=True,
         )
+        print("ROBOT_PPO_PHASE " + json.dumps(phase, sort_keys=True), flush=True)
+        next_iteration = phase["completed_updates"]
         if not hasattr(runner.alg, "entropy_coef"):
             raise RuntimeError("RSL-RL algorithm cannot apply the entropy curriculum")
         runner.alg.entropy_coef = float(ENT_FINAL)
@@ -1602,23 +1728,31 @@ try:
             % (ENT, ENT_FINAL, exploration_iterations, convergence_iterations),
             flush=True,
         )
-        runner.learn(
+        phase = robotmod.learn_ppo_phase(
+            runner,
+            start_iteration=next_iteration,
             num_learning_iterations=convergence_iterations,
             init_at_random_ep_len=False,
         )
     else:
-        runner.learn(num_learning_iterations=ITERS, init_at_random_ep_len=True)
-    # Defensive explicit save (learn saves at save_interval; ensure one exists).
-    try:
-        final_iteration = max(
-            ITERS,
-            int(getattr(runner, "current_learning_iteration", ITERS) or ITERS),
+        phase = robotmod.learn_ppo_phase(
+            runner,
+            start_iteration=next_iteration,
+            num_learning_iterations=ITERS,
+            init_at_random_ep_len=True,
         )
-        final_path = os.path.join(OUT, "model_%d.pt" % final_iteration)
-        runner.save(final_path)
-        print("ROBOT_FINAL_CHECKPOINT iteration=%d path=%s" % (final_iteration, final_path), flush=True)
-    except Exception as e:
-        print("explicit save failed (learn may have saved already):", repr(e), flush=True)
+    print("ROBOT_PPO_PHASE " + json.dumps(phase, sort_keys=True), flush=True)
+    # Defensive explicit save (learn saves at save_interval; ensure one exists).
+    # Match upstream periodic saves: filename and payload iter both name the
+    # last completed zero-based update. Completed updates are explicitly +1.
+    final_iteration = int(runner.current_learning_iteration)
+    final_path = os.path.join(OUT, "model_%d.pt" % final_iteration)
+    runner.save(final_path, infos={"npa_ppo_iteration": {
+        "value_semantics": "last_completed_zero_based",
+        "completed_updates": final_iteration + 1,
+    }})
+    print("ROBOT_FINAL_CHECKPOINT iteration_index=%d completed_updates=%d path=%s"
+          % (final_iteration, final_iteration + 1, final_path), flush=True)
     import glob
     ckpts = sorted(glob.glob(os.path.join(OUT, "**", "model_*.pt"), recursive=True))
     try:

@@ -319,8 +319,17 @@ PY
 }
 
 deep_verify() {
-  local venv="$1"
+  local venv="$1" kit_args
   log "launching Isaac Sim headless (deep verify; needs a GPU with RT cores)"
+  # This entrypoint bypasses isaac_python.sh. Apply the same privacy controls
+  # before the interpreter starts, including when caller arguments enable them.
+  kit_args="${NPA_ISAAC_KIT_ARGS:---portable-root /tmp/npa-isaac-kit}"
+  kit_args+=" --/telemetry/enableAnonymousData=false --/structuredLog/enable=false"
+  # Emptying the upload URL preserves local crash diagnostics.
+  kit_args+=" --/crashreporter/url= --/crashreporter/skipOldDumpUpload=true --/app/uploadDumpsOnStartup=false"
+  OMNI_TELEMETRY_DISABLE_ANONYMOUS_DATA=1 \
+  OMNI_CRASHREPORTER_URL="" OMNI_CRASHREPORTER_SKIPOLDDUMPUPLOAD=1 \
+  NPA_ISAAC_KIT_ARGS="$kit_args" \
   "$venv/bin/python" - >&2 <<'PY'
 import os
 

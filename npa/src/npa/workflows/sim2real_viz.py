@@ -202,7 +202,10 @@ def emit_sim2real_rerun(
         has_3d_scene=bool(heldout_pointclouds),
         has_synthetic_data=has_synthetic_data,
     )
-    recording = rr.RecordingStream(APPLICATION_ID)
+    recording = rr.RecordingStream(
+        APPLICATION_ID,
+        recording_id=str((run_metadata or {}).get("run_id") or "") or None,
+    )
     rr.save(output_rrd, default_blueprint=blueprint, recording=recording)
     _send_blueprint(rr, blueprint, recording)
 
@@ -507,13 +510,16 @@ def _all_inner_iteration_records(
 ) -> list[tuple[int, dict[str, Any]]]:
     """Load every persisted outer/inner evidence record in chronological order."""
 
-    records: list[tuple[int, dict[str, Any]]] = []
-    seen: set[tuple[int, int, str]] = set()
+    records: dict[tuple[int, str, int], dict[str, Any]] = {}
+    payloads: list[tuple[int, dict[str, Any]]] = []
     for path in sorted((Path(local_dir) / "inner_loop").glob("outer-*/evidence.json")):
         payload = _read_json(path)
         outer = int(
             payload.get("outer_iteration") or path.parent.name.rsplit("-", 1)[-1]
         )
+        payloads.append((outer, payload))
+    payloads.append((int(inner_evidence.get("outer_iteration") or 1), inner_evidence))
+    for outer, payload in payloads:
         reward_trend = list(payload.get("reward_trend") or [])
         for record_index, record in enumerate(payload.get("iterations") or []):
             if not isinstance(record, dict):
@@ -521,33 +527,44 @@ def _all_inner_iteration_records(
             record = dict(record)
             if record.get("mean_reward") is None and record_index < len(reward_trend):
                 record["mean_reward"] = reward_trend[record_index]
-            key = (
-                outer,
-                int(record.get("iteration") or 0),
-                str(record.get("actions_dir") or ""),
+            # Legacy regeneration accepts passes without explicit iteration IDs.
+            # Their list positions pair persisted and localized copies without
+            # conflating distinct passes or an explicit ID with a position.
+            identity = (
+                ("iteration", int(record.get("iteration") or 0))
+                if "iteration" in record
+                else ("position", record_index)
             )
-            if key not in seen:
-                records.append((outer, record))
-                seen.add(key)
-    fallback_outer = int(inner_evidence.get("outer_iteration") or 1)
-    reward_trend = list(inner_evidence.get("reward_trend") or [])
-    for record_index, record in enumerate(inner_evidence.get("iterations") or []):
-        if not isinstance(record, dict):
-            continue
-        record = dict(record)
-        if record.get("mean_reward") is None and record_index < len(reward_trend):
-            record["mean_reward"] = reward_trend[record_index]
-        key = (
-            fallback_outer,
-            int(record.get("iteration") or 0),
-            str(record.get("actions_dir") or ""),
-        )
-        if key not in seen:
-            records.append((fallback_outer, record))
-            seen.add(key)
+            key = (outer, *identity)
+            records[key] = _merge_iteration_evidence(records.get(key, {}), record)
     return sorted(
-        records, key=lambda item: (item[0], int(item[1].get("iteration") or 0))
+        [(key[0], record) for key, record in records.items()],
+        key=lambda item: (item[0], int(item[1].get("iteration") or 0)),
     )
+
+
+def _merge_iteration_evidence(
+    persisted: dict[str, Any], localized: dict[str, Any], *, field_path: str = ""
+) -> dict[str, Any]:
+    """Merge one pass's local media paths without replacing contradictory facts."""
+
+    merged = dict(persisted)
+    for key, value in localized.items():
+        if value is None:
+            continue
+        previous = merged.get(key)
+        path = f"{field_path}.{key}" if field_path else key
+        if not field_path and key in {"actions_dir", "vlm_eval_dir", "signal_dir"}:
+            # A replacement controller materializes the same artifacts elsewhere.
+            if value:
+                merged[key] = value
+        elif isinstance(previous, dict) and isinstance(value, dict):
+            merged[key] = _merge_iteration_evidence(previous, value, field_path=path)
+        elif previous is None or previous == value:
+            merged[key] = value
+        else:
+            raise Sim2RealVizError(f"Conflicting iteration evidence for {path}")
+    return merged
 
 
 def _log_training_iteration_metrics(

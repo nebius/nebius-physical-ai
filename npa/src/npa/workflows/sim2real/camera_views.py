@@ -2,18 +2,46 @@
 
 The Isaac scripts are embedded into GPU Jobs, so this module serializes the
 validated view poses into JSON that those scripts can consume without importing
-the orchestrator environment.  Quaternions use Isaac Lab's ``world`` camera
+the orchestrator environment. Serialized quaternions use the ``world`` camera
 convention and ``(w, x, y, z)`` ordering; the optical axis points along +X.
+The runtime converts that artifact convention at the Isaac Lab sensor boundary.
 """
 
 from __future__ import annotations
 
 import json
 import math
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass
+from importlib import metadata
 
 DEFAULT_CAMERA_VIEWS = ("primary", "side", "overhead")
 _VIEW_ALIASES = {"front": "primary", "left": "side", "top": "overhead"}
+
+
+def camera_rotation_for_isaac_lab(
+    rotation: Sequence[float], *, isaac_lab_version: str | None = None
+) -> tuple[float, float, float, float]:
+    """Convert a serialized WXYZ pose to the installed sensor's convention.
+
+    Isaac Lab 2 CameraCfg.OffsetCfg consumes WXYZ; Lab 3 consumes XYZW.
+    Resolve the installed distribution rather than an image label or ambient
+    version hint, and reject unknown generations instead of misdirecting cameras.
+    The serialized pose and its artifact metadata remain unchanged.
+    """
+
+    version = (
+        metadata.version("isaaclab") if isaac_lab_version is None else isaac_lab_version
+    )
+    major = version.partition(".")[0]
+    if major not in {"2", "3"}:
+        raise ValueError(
+            f"unsupported Isaac Lab camera quaternion convention: {version!r}"
+        )
+    if len(rotation) != 4 or not all(math.isfinite(value) for value in rotation):
+        raise ValueError("camera rotation must contain four finite WXYZ values")
+    w, x, y, z = (float(value) for value in rotation)
+    return (x, y, z, w) if major == "3" else (w, x, y, z)
 
 
 @dataclass(frozen=True)

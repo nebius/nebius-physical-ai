@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -785,6 +786,115 @@ def test_shim_defaults_internal_kit_acceptance_without_manual_env(tmp_path: Path
     )
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "YES"
+
+
+@pytest.mark.parametrize("entrypoint", ["shim", "verify"])
+@pytest.mark.parametrize("caller_enables_uploads", [False, True])
+def test_isaac_startup_disables_remote_diagnostics_before_import(
+    tmp_path: Path, entrypoint: str, caller_enables_uploads: bool
+) -> None:
+    """Observe the real launch boundary; no Kit runtime or network is needed."""
+    harness = Harness(tmp_path)
+    harness.fake_ready_tree()
+    probe = tmp_path / "probe"
+    package = probe / "isaaclab"
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    observations = tmp_path / "startup.jsonl"
+    (package / "app.py").write_text(
+        """import json
+import os
+import shlex
+from pathlib import Path
+
+output = Path(os.environ["NPA_TEST_STARTUP_OBSERVATIONS"])
+def record(event, **values):
+    with output.open("a") as stream:
+        stream.write(json.dumps({"event": event, **values}) + "\\n")
+
+record("import", environment={key: os.environ.get(key) for key in (
+    "OMNI_TELEMETRY_DISABLE_ANONYMOUS_DATA", "OMNI_CRASHREPORTER_URL",
+    "OMNI_CRASHREPORTER_SKIPOLDDUMPUPLOAD", "OMNI_KIT_ACCEPT_EULA",
+    "PRIVACY_CONSENT",
+)}, kit_args=os.environ.get("NPA_ISAAC_KIT_ARGS"))
+
+class AppLauncher:
+    def __init__(self, **kwargs):
+        record("launch", argv=shlex.split(kwargs["kit_args"]))
+        self.app = self
+    def update(self):
+        record("update")
+    def close(self):
+        record("close")
+""",
+        encoding="utf-8",
+    )
+    environment = harness.env(
+        NPA_ISAAC_BOOTSTRAP=str(BOOTSTRAP),
+        NPA_ISAAC_CACHE_READONLY="1",
+        PYTHONPATH=str(probe),
+        NPA_TEST_STARTUP_OBSERVATIONS=str(observations),
+    )
+    if caller_enables_uploads:
+        environment.update(
+            OMNI_TELEMETRY_DISABLE_ANONYMOUS_DATA="0",
+            OMNI_CRASHREPORTER_URL="https://diagnostics.invalid/submit",
+            OMNI_CRASHREPORTER_SKIPOLDDUMPUPLOAD="0",
+            NPA_ISAAC_KIT_ARGS=(
+                "--portable-root /tmp/custom-kit --/app/window/enabled=false "
+                "--/telemetry/enableAnonymousData=true --/structuredLog/enable=true "
+                "--/crashreporter/url=https://diagnostics.invalid/submit "
+                "--/crashreporter/skipOldDumpUpload=false --/app/uploadDumpsOnStartup=true"
+            ),
+        )
+    command = ["bash", str(BOOTSTRAP), "verify"]
+    if entrypoint == "shim":
+        command = [
+            "bash",
+            str(SHIM),
+            "-c",
+            "import os; from isaaclab.app import AppLauncher; "
+            "AppLauncher(kit_args=os.environ['NPA_ISAAC_KIT_ARGS']).app.close()",
+        ]
+
+    result = subprocess.run(
+        command,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    events = [json.loads(line) for line in observations.read_text().splitlines()]
+    assert [event["event"] for event in events[:2]] == ["import", "launch"]
+    assert events[-1]["event"] == "close"
+    assert events[0]["environment"] == {
+        "OMNI_TELEMETRY_DISABLE_ANONYMOUS_DATA": "1",
+        "OMNI_CRASHREPORTER_URL": "",
+        "OMNI_CRASHREPORTER_SKIPOLDDUMPUPLOAD": "1",
+        "OMNI_KIT_ACCEPT_EULA": "YES",
+        "PRIVACY_CONSENT": None,
+    }
+    arguments = events[1]["argv"]
+    assert shlex.split(events[0]["kit_args"]) == arguments
+    # Kit consumes the final command-line value for each setting. Caller flags
+    # remain intact, with the no-upload settings applied after them.
+    settings = dict(arg[2:].split("=", 1) for arg in arguments if arg.startswith("--/"))
+    assert settings["/telemetry/enableAnonymousData"] == "false"
+    assert settings["/structuredLog/enable"] == "false"
+    assert settings["/crashreporter/url"] == ""
+    assert settings["/crashreporter/skipOldDumpUpload"] == "true"
+    assert settings["/app/uploadDumpsOnStartup"] == "false"
+    # Local diagnostics remain available.
+    assert "/crashreporter/enabled" not in settings
+    if caller_enables_uploads:
+        assert arguments[:2] == ["--portable-root", "/tmp/custom-kit"]
+        assert settings["/app/window/enabled"] == "false"
+    else:
+        assert arguments[:2] == ["--portable-root", "/tmp/npa-isaac-kit"]
+    assert not harness.downloaded_anything()
 
 
 def test_shim_propagates_the_refusal_exit_code(tmp_path: Path) -> None:

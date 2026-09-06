@@ -60,6 +60,13 @@ PYTHON="$TREE/venv/bin/python"
 # This never derives or enables privacy consent.
 export OMNI_KIT_ACCEPT_EULA=YES
 
+# Kit initializes anonymous telemetry before Python can change its settings.
+# Disable it in the launched process environment, independently of EULA consent.
+export OMNI_TELEMETRY_DISABLE_ANONYMOUS_DATA=1
+# Retain local crash diagnostics while disabling current and previous uploads.
+export OMNI_CRASHREPORTER_URL=""
+export OMNI_CRASHREPORTER_SKIPOLDDUMPUPLOAD=1
+
 # Isaac Lab's repo layout (scripts/, source/, apps/) lives in the cache because the
 # isaaclab wheel ships the library without scripts/, and every SkyPilot Isaac task
 # asserts `test -f /workspace/isaaclab/scripts/reinforcement_learning/rsl_rl/train.py`.
@@ -87,7 +94,11 @@ export XDG_DATA_HOME="${XDG_DATA_HOME:-/tmp/isaac-sim-cache/xdg-data}"
 # which takes precedence over XDG/OMNI path overrides. Every AppLauncher entrypoint
 # in the exact runtime consumes this argument so mutable user, shader, log, and data
 # state lands in Pod-local scratch instead of the read-only dependency closure.
+# Keep these final overrides after caller arguments: disabling structured logging
+# also prevents omni.kit.telemetry from launching its transmitter.
 export NPA_ISAAC_KIT_ARGS="${NPA_ISAAC_KIT_ARGS:---portable-root /tmp/npa-isaac-kit}"
+NPA_ISAAC_KIT_ARGS+=" --/telemetry/enableAnonymousData=false --/structuredLog/enable=false"
+NPA_ISAAC_KIT_ARGS+=" --/crashreporter/url= --/crashreporter/skipOldDumpUpload=true --/app/uploadDumpsOnStartup=false"
 mkdir -p \
   "$OMNI_USER_DIR" "$OMNI_LOG_DIR" "$XDG_RUNTIME_DIR" \
   "$XDG_CACHE_HOME" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" \
