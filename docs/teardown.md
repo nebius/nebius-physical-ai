@@ -243,3 +243,30 @@ unrelated caches stay outside the plan.
 - [Physical AI Data Factory deploy runbook §8](workbench/guides/physical-ai-data-factory-deploy.md) — teardown in the context of one full run
 - [teardown-and-cost skill](../skills/atomic/teardown-and-cost/SKILL.md) — the operator/agent version of this page
 - [Run lifecycle](run-lifecycle.md) — run identity and status semantics that cancellation depends on
+
+## Repository-local environment removal and recovery
+
+Preview and remove a supported checkout environment with the
+[uninstall commands](install.md#safely-uninstall-the-repository-local-environment).
+
+NPA refuses system, conda, pipx, user-wide, externally managed, symlinked,
+arbitrary, dirty-overlapping, active, and identity-mismatched environments. The
+command writes a mode-0600 one-time receipt, prints and flushes the status path,
+then launches a base-Python helper outside the target. The helper waits for the
+parent process to exit and revalidates the exact realpath, device/inode,
+`pyvenv.cfg` digest, repository markers, nonce, and other-process use before
+descriptor-relative removal. Source, `.git`, credentials, user data, and
+unrelated caches are never in the plan.
+
+If deferred deletion fails, the target and failure receipt remain. While the
+environment still exists, inspect or retry with the exact commands printed in
+the receipt:
+
+```bash
+npa uninstall --status <receipt-id>
+npa uninstall --remove-environment --yes --retry <receipt-id>
+```
+
+Successful removal naturally removes that environment's `npa` executable; the
+receipt remains under `~/.npa/uninstall-receipts/` for direct inspection or for
+`npa uninstall --status` after reinstalling NPA.
