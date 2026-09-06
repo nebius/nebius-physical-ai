@@ -59,7 +59,7 @@ npa workbench workflow submit <workflow.yaml> --project <project> --run-id <run-
 ```
 
 For the canonical compositional Sim2Real workflow, use
-`npa/workflows/workbench/npa-workflows/sim2real.yaml` and always retain
+`workflows/main/sim2real.yaml` and always retain
 `--runtime`. If the controller is interrupted, resume the exact run rather than
 creating a replacement:
 

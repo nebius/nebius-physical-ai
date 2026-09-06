@@ -38,6 +38,7 @@ from npa.clients.config import SSHConfig, write_config
 from npa.clients.nebius import NebiusError, bootstrap_environment
 from npa.clients.ssh import SSHClient, SSHError
 from npa.deploy.provisioner import ProvisionerError
+from npa.workflow_build import stage_catalog
 from npa.workflows.distill import generate_run_id
 
 logger = logging.getLogger(__name__)
@@ -345,6 +346,7 @@ def _setup_vm(ssh: SSHClient, spec: VMSpec, label: str) -> None:
     logger.info("[%s] Uploading npa package ...", label)
 
     # Package only the pip-installable parts of the npa source tree.
+    stage_catalog(_NPA_PACKAGE_ROOT)
     with tempfile.NamedTemporaryFile(suffix=".tgz", delete=False) as tmp:
         archive_path = tmp.name
     try:

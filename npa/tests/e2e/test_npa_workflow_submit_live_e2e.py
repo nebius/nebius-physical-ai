@@ -71,7 +71,7 @@ pytestmark = [
 ]
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-SPECS = REPO_ROOT / "npa" / "workflows" / "workbench" / "npa-workflows"
+SPECS = REPO_ROOT / "workflows"
 RUNNER = CliRunner()
 
 TERMINAL_OK = frozenset({"SUCCEEDED", "SUCCESS", "COMPLETED", "DONE"})

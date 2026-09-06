@@ -577,7 +577,7 @@ npa workbench leisaac export-paidf \
 ```
 
 The result reports the exact runnable
-`npa/workflows/workbench/npa-workflows/physical-ai-data-factory.yaml` command with
+`workflows/testing/physical-ai-data-factory.yaml` command with
 `NPA_COSMOS_CONDITION_ON_INPUT=1`. The workflow invokes the real
 `workbench.cosmos2.transfer_execute` toolRef with
 `--condition-on-input --execute`; a manifest-only stub is not accepted.

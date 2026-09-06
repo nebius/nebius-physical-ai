@@ -565,6 +565,8 @@ def build_and_push_command(image: str) -> str:
     registry = ref.rsplit("/", 1)[0]
     tag = supported_tool_version(tool)
     return (
+        "npa/.venv/bin/python npa/src/npa/workflow_build.py "
+        "--stage-catalog --package-root npa && "
         f"docker buildx build --push -f {dockerfile} "
         f"-t {registry}/{image_name}:{tag} npa"
     )

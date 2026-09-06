@@ -5,7 +5,7 @@ every member finished. :func:`join_shards` makes that contract observable — it
 reads each shard's manifest from S3, fails loudly when a shard is missing, and
 writes a merged report with per-shard counts.
 
-Used by ``npa/workflows/workbench/npa-workflows/token-factory-parallel-fanout.yaml``
+Used by ``workflows/testing/token-factory-parallel-fanout.yaml``
 via ``run.shell`` (``npa`` is pip-installed in the rendered task).
 """
 

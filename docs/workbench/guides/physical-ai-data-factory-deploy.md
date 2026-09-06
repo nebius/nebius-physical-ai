@@ -10,7 +10,7 @@ the "how to stand it up".
 
 The blueprint is a single `npa.workflow/v0.0.1` spec, promoted to the top of the
 workflow tree for prominence:
-[`npa/workflows/workbench/npa-workflows/physical-ai-data-factory.yaml`](../../../npa/workflows/workbench/npa-workflows/physical-ai-data-factory.yaml).
+[`workflows/testing/physical-ai-data-factory.yaml`](../../../workflows/testing/physical-ai-data-factory.yaml).
 SkyPilot is the only orchestrator; there is no OSMO and no bespoke "data factory"
 tool — every stage is an existing workbench tool or a real `run.shell` step.
 
@@ -40,7 +40,7 @@ repository files.
 The Nebius CLI is already authenticated. Configure NPA, deploy and verify the NPA
 agent, provision one CPU node and one on-demand RTX PRO 6000 GPU node (use
 preemptible only if needed), then run
-`npa/workflows/workbench/npa-workflows/physical-ai-data-factory.yaml`
+`workflows/testing/physical-ai-data-factory.yaml`
 end to end with its verified real RoboPro starter input and one augmentation.
 
 Tenant: <tenant-id>
@@ -80,7 +80,7 @@ python -m pip install -e npa
 npa configure
 eval "$(npa configure --show --env)"   # emits non-secret NPA_* assignments only
 
-SPEC=npa/workflows/workbench/npa-workflows/physical-ai-data-factory.yaml
+SPEC=workflows/testing/physical-ai-data-factory.yaml
 PROJECT="$NPA_PROJECT_ALIAS"
 BUCKET="$NPA_BUCKET"
 RUN_ID="$(npa workbench workflow prepare-run "$SPEC" --project "$PROJECT")"
@@ -313,7 +313,7 @@ to on-demand capacity.
 set -eu
 set -o pipefail
 CONTEXT=npa-cluster
-SPEC=npa/workflows/workbench/npa-workflows/physical-ai-data-factory.yaml
+SPEC=workflows/testing/physical-ai-data-factory.yaml
 
 npa configure
 # For prompt-free setup, export supported credential variables first and use:
@@ -632,7 +632,7 @@ used when you select it explicitly. Pick one path and preflight the same registr
 submit will use:
 
 ```bash
-npa workbench workflow preflight-images npa/workflows/workbench/npa-workflows/physical-ai-data-factory.yaml \
+npa workbench workflow preflight-images workflows/testing/physical-ai-data-factory.yaml \
   --project "$PROJECT"
 ```
 
@@ -692,7 +692,7 @@ for ref in npa-cosmos2-transfer:2.5.1-sim2real-coherent-20260904 \
   docker manifest inspect "$REGISTRY/$ref" >/dev/null && echo "OK   $ref" || echo "MISS $ref"
 done
 
-npa workbench workflow preflight-images npa/workflows/workbench/npa-workflows/physical-ai-data-factory.yaml \
+npa workbench workflow preflight-images workflows/testing/physical-ai-data-factory.yaml \
   --project "$PROJECT" --registry "$REGISTRY"
 ```
 
@@ -703,7 +703,7 @@ npa workbench workflow preflight-images npa/workflows/workbench/npa-workflows/ph
 The blueprint lives at the promoted top-level path. Validate and plan first:
 
 ```bash
-SPEC=npa/workflows/workbench/npa-workflows/physical-ai-data-factory.yaml
+SPEC=workflows/testing/physical-ai-data-factory.yaml
 
 npa workbench workflow validate-spec "$SPEC" --json
 npa workbench workflow plan-spec   "$SPEC" \

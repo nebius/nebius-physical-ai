@@ -103,11 +103,8 @@ def test_every_toolref_the_data_factory_submits_is_checked() -> None:
     from npa.orchestration.npa_workflow.spec import load_spec
 
     blueprint = (
-        Path(__file__).resolve().parents[3]
-        / "workflows"
-        / "workbench"
-        / "npa-workflows"
-        / "physical-ai-data-factory.yaml"
+        Path(__file__).resolve().parents[4]
+        / "workflows" / "testing" / "physical-ai-data-factory.yaml"
     )
     states = yaml.safe_load(blueprint.read_text(encoding="utf-8"))["states"]
     submitted = {
@@ -136,13 +133,12 @@ def test_visualize_stage_uses_prebuilt_rerun_image_without_runtime_install() -> 
 
     from npa.orchestration.npa_workflow.skypilot_render import tool_image_key
 
-    repo = Path(__file__).resolve().parents[3]
+    repo = Path(__file__).resolve().parents[4]
     blueprint = yaml.safe_load(
         (
             repo
             / "workflows"
-            / "workbench"
-            / "npa-workflows"
+            / "testing"
             / "physical-ai-data-factory.yaml"
         ).read_text(encoding="utf-8")
     )

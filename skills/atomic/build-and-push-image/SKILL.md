@@ -11,6 +11,17 @@ refusal conditions; this skill records NPA-specific build and GPU details.
 
 ## Build Contract
 
+Before building with `npa/` as the Docker context, stage the top-level workflow
+catalog into the ignored package data from the repository root:
+
+```bash
+npa/.venv/bin/python npa/src/npa/workflow_build.py --stage-catalog --package-root npa
+```
+
+Repeat after catalog edits. The generated `main/` and `testing/` copies under
+`npa/src/npa/workflows/` belong only to the build context; edit `workflows/main/` and
+`workflows/testing/` as the source of truth.
+
 1. Build only a checked-in Dockerfile under `npa/docker/workbench/<tool>/`.
 2. Resolve the exact 40-character commit and use the one official namespace,
    `ghcr.io/nebius/nebius-physical-ai`. A pre-release tag is exactly

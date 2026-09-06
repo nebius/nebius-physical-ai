@@ -748,7 +748,8 @@ def _create_agent_source_archive() -> str:
     repo_root = Path(__file__).resolve().parents[4]
     include_roots = [
         repo_root / "npa",
-        repo_root / "deploy" / "cluster",
+        repo_root / "deploy/cluster",
+        repo_root / "workflows",
     ]
     for path in include_roots:
         if not path.exists():
@@ -777,10 +778,8 @@ def _create_agent_source_archive() -> str:
         return info
 
     with tarfile.open(tmp.name, "w:gz") as archive:
-        archive.add(repo_root / "npa", arcname="npa", filter=_filter)
-        archive.add(
-            repo_root / "deploy" / "cluster", arcname="deploy/cluster", filter=_filter
-        )
+        for path in include_roots:
+            archive.add(path, arcname=path.relative_to(repo_root).as_posix(), filter=_filter)
         # Stage the repo-root docs/ + skills/ trees so the agent's retrieval
         # corpus (Blueprint Phase H) can ground on them at
         # /opt/npa-agent/npa-src/{docs,skills}. Text-only; excluded via _filter.

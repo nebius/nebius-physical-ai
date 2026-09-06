@@ -124,7 +124,7 @@ For each capability marked for admission:
 
 ### 3. Encode into BYOF + workflow
 
-Author `npa/workflows/workbench/npa-workflows/byof-<solution>.yaml` with:
+Author `workflows/testing/byof-<solution>.yaml` with:
 
 ```yaml
 config:
@@ -188,7 +188,7 @@ its solution documentation, not in the public-image table.
 ## Current Onboarded Solutions
 
 Catalog: `docs/workbench/oss-solution-catalog.md`.
-Specs: `npa/workflows/workbench/npa-workflows/byof-<solution>.yaml`.
+Specs: `workflows/testing/byof-<solution>.yaml`.
 
 Keep each solution's capability list and smoke command unique. When promoting a
 deferred capability, change that solution's smoke (or add a second workflow
@@ -521,7 +521,7 @@ Build-only validation is not sufficient for registry admission.
 
 4. **NPA contract**
    - If the solution is workflow-shaped, author a YAML under
-     `npa/workflows/workbench/npa-workflows/` and validate with:
+     `workflows/testing/` and validate with:
      ```bash
      npa/.venv/bin/npa workbench workflow validate-spec <spec.yaml> --json
      npa/.venv/bin/npa workbench workflow plan-spec <spec.yaml> --run-id <run-id> --json

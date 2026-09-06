@@ -16,7 +16,7 @@ from npa.orchestration.npa_workflow.submit import load_spec_for_submit
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SPEC_PATH = (
     REPO_ROOT
-    / "npa/workflows/workbench/npa-workflows/cosmos3-super-h200-single-gpu.yaml"
+    / "workflows/testing/cosmos3-super-h200-single-gpu.yaml"
 )
 
 

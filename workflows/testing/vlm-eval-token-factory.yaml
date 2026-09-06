@@ -10,7 +10,7 @@ kind: Workflow
 # checks for in `setup` for every workbench.token_factory-family stage.
 #
 # Submit with:
-#   npa workbench workflow submit npa/workflows/workbench/npa-workflows/vlm-eval-token-factory.yaml \
+#   npa workbench workflow submit workflows/testing/vlm-eval-token-factory.yaml \
 #     --run-id <run-id> \
 #     --secret-env NEBIUS_TOKEN_FACTORY_KEY \
 #     --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY

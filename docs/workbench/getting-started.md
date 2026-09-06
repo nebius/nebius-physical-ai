@@ -67,7 +67,7 @@ placeholder values with your existing project alias and bucket. Keep private
 values outside committed YAML.
 
 ```bash
-workflow_spec=npa/workflows/workbench/npa-workflows/cosmos3-generate.yaml
+workflow_spec=workflows/testing/cosmos3-generate.yaml
 project_alias='<your-project-alias>'
 bucket_name='<your-bucket>'
 cluster_name='<npa-cluster-name>'

@@ -32,7 +32,7 @@ each stage repeats the field.
 
 Repository facts:
 
-- [`sim2real.yaml`](../../npa/workflows/workbench/npa-workflows/sim2real.yaml)
+- [`sim2real.yaml`](../../workflows/main/sim2real.yaml)
   sets `require_baked_npa` globally and maps all CPU/GPU roles to five mandatory
   operator-provided images.
 - The renderer rejects a step without a registry-qualified digest and rejects

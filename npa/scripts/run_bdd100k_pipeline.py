@@ -43,10 +43,8 @@ from npa.orchestration.npa_workflow.submit import prepare_npa_workflow_for_submi
 #: being retired. `--yaml` still accepts a customer's own SkyPilot YAML (see `--spec`).
 DEFAULT_SPEC = (
     Path(__file__).resolve().parents[2]
-    / "npa"
     / "workflows"
-    / "workbench"
-    / "npa-workflows"
+    / "testing"
     / "bdd100k-pipeline.yaml"
 )
 DEFAULT_BUCKET = os.environ.get("NPA_S3_BUCKET", "your-bucket-name")

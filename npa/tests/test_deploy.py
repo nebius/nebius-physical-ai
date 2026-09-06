@@ -1215,6 +1215,7 @@ def test_deploy_server_runs_expected_remote_steps(mocker) -> None:
     ssh = mocker.MagicMock()
     ssh._config = SSHConfig(host="vm", user="ubuntu", key_path="key")
     run = mocker.patch("subprocess.run")
+    mocker.patch("npa.deploy.configurator.stage_catalog")
     uploads: list[tuple[str, str]] = []
     mocker.patch(
         "npa.deploy.configurator._sftp_upload",

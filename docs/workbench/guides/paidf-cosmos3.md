@@ -1,6 +1,6 @@
 # PAIDF with Cosmos 3 video conditioning
 
-`npa/workflows/workbench/npa-workflows/paidf-cosmos3.yaml` is an independent
+`workflows/main/paidf-cosmos3.yaml` is an independent
 Physical AI Data Factory composition. It does not replace or change
 `physical-ai-data-factory.yaml`, whose augmentation engine remains Cosmos
 Transfer 2.5.
@@ -86,7 +86,7 @@ supported.
 ## Validate, plan, and render
 
 ```bash
-SPEC=npa/workflows/workbench/npa-workflows/paidf-cosmos3.yaml
+SPEC=workflows/main/paidf-cosmos3.yaml
 npa/.venv/bin/npa workbench workflow validate-spec "$SPEC" --json
 npa/.venv/bin/npa workbench workflow plan-spec "$SPEC" --run-id demo \
   --assume-decision promote_checkpoint --var bucket=example-bucket --json

@@ -1,7 +1,7 @@
 # SONIC Locomotion Fine-Tuning
 
 This cookbook describes the SkyPilot workflow at
-`npa/workflows/workbench/npa-workflows/sonic-locomotion-finetuning.yaml`.
+`workflows/testing/sonic-locomotion-finetuning.yaml`.
 
 The workflow composes three Workbench stages:
 
@@ -51,15 +51,15 @@ npa workbench mjlab workflow
 
 Those commands point to:
 
-- `npa/workflows/workbench/npa-workflows/retargeting.yaml`
-- `npa/workflows/workbench/npa-workflows/mjlab-eval.yaml`
+- `workflows/testing/retargeting.yaml`
+- `workflows/testing/mjlab-eval.yaml`
 
 ## Raw SkyPilot
 
 Copy the YAML, edit literals, then run it directly with SkyPilot:
 
 ```bash
-cp npa/workflows/workbench/npa-workflows/sonic-locomotion-finetuning.yaml /tmp/sonic.yaml
+cp workflows/testing/sonic-locomotion-finetuning.yaml /tmp/sonic.yaml
 # Edit /tmp/sonic.yaml so image_id, AWS_ENDPOINT_URL, and all s3:// prefixes
 # contain concrete values. Do not leave ${VAR} in envs or image_id fields.
 sky jobs launch \
@@ -86,7 +86,7 @@ npa skypilot bootstrap
 export NPA_SKYPILOT_BIN="$(npa skypilot status --bin-path)"
 
 npa workbench workflow submit \
-  npa/workflows/workbench/npa-workflows/sonic-locomotion-finetuning.yaml \
+  workflows/testing/sonic-locomotion-finetuning.yaml \
   --run-id sonic-locomotion-<run-id> \
   --registry <your-registry>/<namespace> \
   --npa-image <your-registry>/<namespace>/npa:<tag> \
@@ -103,7 +103,7 @@ fallback:
 
 ```bash
 npa workbench workflow submit \
-  npa/workflows/workbench/npa-workflows/sonic-locomotion-finetuning.yaml \
+  workflows/testing/sonic-locomotion-finetuning.yaml \
   --run-id sonic-locomotion-<run-id> \
   --controller-backend kubernetes
 ```
@@ -141,7 +141,7 @@ from pathlib import Path
 from npa.sdk.workbench import sonic
 
 sonic.submit_workflow(
-    Path("npa/workflows/workbench/npa-workflows/sonic-locomotion-finetuning.yaml"),
+    Path("workflows/testing/sonic-locomotion-finetuning.yaml"),
     run_id="sonic-locomotion-run",
     registry="<your-registry>/<namespace>",
     npa_image="<your-registry>/<namespace>/npa:<tag>",

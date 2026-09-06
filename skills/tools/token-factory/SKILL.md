@@ -191,7 +191,7 @@ the full inventory:
   reason about a scene, then judge a rollout against that plan.
 - `tokenfactory-train-triage.yaml` — triage a training run's artifacts.
 
-All live under `npa/workflows/workbench/npa-workflows/`.
+All live under `workflows/testing/`.
 
 ## Choosing between Token Factory and VLM eval
 

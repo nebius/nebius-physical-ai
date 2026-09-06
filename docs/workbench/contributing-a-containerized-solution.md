@@ -41,7 +41,7 @@ Use `docs/architecture/oss-onboarding-ladder.md` for promotion criteria.
 
 For a BYOF candidate:
 
-1. Add `npa/workflows/workbench/npa-workflows/byof-<solution>.yaml`.
+1. Add `workflows/testing/byof-<solution>.yaml`.
 2. Use `workload: solution-smoke` with the real upstream capability command.
 3. Pin the source/install and write a named JSON result under
    `$NPA_SMOKE_OUTPUT_DIR` containing `solution`, `capability`, and a real proof

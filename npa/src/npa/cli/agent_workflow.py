@@ -2734,22 +2734,9 @@ def _canonical_sim2real_spec(*, bucket: str, name: str | None) -> OrderedDict[st
     if _EMBEDDED_CANONICAL_SIM2REAL_YAML:
         payload = yaml.safe_load(_EMBEDDED_CANONICAL_SIM2REAL_YAML)
     else:
-        here = Path(__file__).resolve()
-        candidates = (
-            here.parents[3]
-            / "workflows"
-            / "workbench"
-            / "npa-workflows"
-            / "sim2real.yaml",
-            here.parents[1]
-            / "workflows"
-            / "workbench"
-            / "npa-workflows"
-            / "sim2real.yaml",
-        )
-        path = next(
-            (candidate for candidate in candidates if candidate.is_file()), None
-        )
+        from npa.orchestration.npa_workflow.blueprints import resolve_npa_workflow_spec
+
+        path = resolve_npa_workflow_spec("sim2real.yaml")
         if path is None:
             raise FileNotFoundError("canonical packaged sim2real.yaml is missing")
         payload = yaml.safe_load(path.read_text(encoding="utf-8"))

@@ -6,7 +6,7 @@ description: Use when navigating, reviewing, or changing the compositional Sim2R
 # Compositional Sim2Real engine
 
 The canonical engine surface is the ordinary workflow
-`npa/workflows/workbench/npa-workflows/sim2real.yaml`. Its leaf states call
+`workflows/main/sim2real.yaml`. Its leaf states call
 `npa.workflows.sim2real.workflow_stage`; S3/content-addressed evidence primitives
 live in `workflow_io`. The shared `npa_workflow` interpreter/runtime owns loops,
 parallel waves, SkyPilot jobs, ledger persistence, and resume.
