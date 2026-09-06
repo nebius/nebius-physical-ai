@@ -761,6 +761,7 @@ describe("NPA agent UI — embedded Foxglove viewer", () => {
 
   it("lets a rapid second MCAP click win without binding the stale first source", () => {
     const config = stubFoxgloveApis();
+    const canonicalLayoutStorageKey = config.layout_storage_key;
     const runRef = "npa1_mock_non_stock";
     const canonicalKey = `${NON_STOCK_RUN_ID}/reports/sim2real.mcap`;
     const nativeKey = `${NON_STOCK_RUN_ID}/recordings/native-single-camera.mcap`;
@@ -819,13 +820,32 @@ describe("NPA agent UI — embedded Foxglove viewer", () => {
       .and("have.attr", "data-recording-url", native.export.recording_url);
     mockAppFrame().should(($frame) => {
       const messages = $frame[0].contentWindow.__mockFoxgloveReceived || [];
-      const sourceCommands = messages.filter((message) => message?.type === "set-data-source");
-      expect(sourceCommands, "only the latest generation binds a source").to.have.length(1);
-      expect(sourceCommands[0].payload.urls).to.deep.eq([native.export.recording_url]);
+      // Before command readiness, the real SDK delivers its queued source in
+      // the handshake acknowledgement; later selections use set-data-source.
+      const sources = messages.flatMap((message) => {
+        if (message?.type === "set-data-source") return [message.payload];
+        if (message?.type === "handshake-ack" && message.payload.initialDataSource) {
+          return [message.payload.initialDataSource];
+        }
+        return [];
+      });
+      expect(sources, "only the latest generation binds a source").to.have.length(1);
+      expect(sources[0].type).to.eq("remote-file");
+      expect(sources[0].urls).to.deep.eq([native.export.recording_url]);
       expect(
         messages.filter((message) => message?.type === "select-layout"),
         "generic native MCAP does not inherit the canonical layout",
       ).to.have.length(0);
+      for (const message of messages.filter((entry) => entry?.type === "handshake-ack")) {
+        expect(
+          message.payload.initialLayoutParams?.storageKey,
+          "generic native MCAP does not restore the canonical saved layout",
+        ).not.to.eq(canonicalLayoutStorageKey);
+        expect(
+          message.payload.initialLayoutParams?.layout,
+          "generic native MCAP does not inherit a canonical initial layout",
+        ).to.eq(undefined);
+      }
     });
     cy.get("@rapidArtifactWindowOpen").should("not.have.been.called");
     cy.then(() => expect(requests, "both rapid exact selections reached the backend").to.eq(2));
@@ -928,14 +948,12 @@ describe("NPA agent UI — embedded Foxglove viewer", () => {
     cy.get("#renderModeFoxglove").click();
     cy.wait("@foxgloveConfig");
 
+    // Re-query the iframe while its asynchronous SDK handshake completes.
     mockAppFrame()
-      .its("0.contentWindow")
-      .then((win) => {
-        return Cypress.Promise.resolve()
-          .then(() => new Cypress.Promise((resolve) => setTimeout(resolve, 500)))
-          .then(() => win.__mockFoxgloveReceived || []);
-      })
-      .then((messages) => {
+      .should(($frame) => {
+        const win = $frame[0].contentWindow;
+        expect(win, "embedded app window").to.exist;
+        const messages = win.__mockFoxgloveReceived || [];
         const ack = messages.find((m) => m && m.type === "handshake-ack");
         expect(ack, "handshake-ack was sent by the SDK").to.exist;
         expect(ack.payload.orgSlug).to.eq("acme-robotics");

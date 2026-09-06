@@ -154,6 +154,20 @@ VALID_GAP_CATEGORIES = frozenset({"boolean", "infra", "knob"})
 
 CONTRACTS: tuple[CapabilityContract, ...] = (
     CapabilityContract(
+        name="curobo/benchmark",
+        cli_module="npa.cli.workbench.curobo",
+        cli_callback="benchmark_cmd",
+        sdk_module="npa.sdk.workbench.curobo",
+        sdk_attr="benchmark",
+        spec_path=SPECS / "curobo-benchmark.yaml",
+        tool_ref="workbench.curobo.benchmark",
+        params=(
+            _p("input_path", "input_path", "--input-path"),
+            _p("output_path", "output_path", "--output-path"),
+            _p("run_id", "run_id", "--run-id"),
+        ),
+    ),
+    CapabilityContract(
         name="alpamayo2-super/infer",
         cli_module="npa.cli.workbench.alpamayo2_super",
         cli_callback="infer_cmd",

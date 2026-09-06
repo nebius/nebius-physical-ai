@@ -38,6 +38,11 @@ For **new creative pipelines**, also load `skills/workflows/generate-npa-workflo
   one `toolRef` and still differ.
 - **Trigger:** `trigger: {uri, pollSeconds, maxPolls, minObjects}` makes the runtime
   driver wait for data before that state runs (the state must also do work).
+  Numeric config expressions are resolved again after `--var` overrides;
+  `pollSeconds` and `minObjects` must be positive, while `maxPolls: 0` retains
+  the supported unbounded setting. Exercise the submitted configuration through
+  the actual watcher when validating overrides: check observed object counts
+  and polling behavior as well as successful spec parsing.
 - **Decision states:** `writesDecision: true` when the state writes `config.decision_uri`.
 - **needs:** ordering hints only (validated acyclic; not enforced at runtime).
 - **I/O:** `inputs` / `outputs` with `uri` + optional `schema`.

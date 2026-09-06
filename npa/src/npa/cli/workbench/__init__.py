@@ -55,6 +55,7 @@ def _full_app() -> typer.Typer:
     from npa.cli.workbench.cosmos3 import app as cosmos3_app
     from npa.cli.workbench.cosmos_curate import app as cosmos_curate_app
     from npa.cli.workbench.cosmos_evaluator import app as cosmos_evaluator_app
+    from npa.cli.workbench.curobo import app as curobo_app
     from npa.cli.workbench.data import app as data_app
     from npa.cli.workbench.dataset import app as dataset_app
     from npa.cli.workbench.detection_training import app as detection_training_app
@@ -110,6 +111,7 @@ def _full_app() -> typer.Typer:
     full.add_typer(lichtblick_app, name="lichtblick")
     full.add_typer(ltx2_app, name="ltx2")
     full.add_typer(alpamayo2_super_app, name="alpamayo2-super")
+    full.add_typer(curobo_app, name="curobo")
     full.add_typer(lancedb_app, name="lancedb")
     full.add_typer(detection_training_app, name="detection-training")
     full.add_typer(scenario_gen_app, name="scenario-gen")

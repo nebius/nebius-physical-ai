@@ -29,6 +29,17 @@ licenses:
     applies_to:
       - physical-ai-data-factory
 skills:
+  - name: curobo
+    category: tools
+    when_to_use: "Run, validate or review cuRobo V2 Franka pose planning and full motion benchmarks on CUDA with factual RRD artifacts."
+    path: skills/tools/curobo/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "curobo", "benchmark", "--help"]
+        contains: "input-path"
+      - type: npa_workflow_yaml
+        paths:
+          - npa/workflows/workbench/npa-workflows/curobo-benchmark.yaml
   - name: access-approval
     category: atomic
     when_to_use: "Prepare, verify, or resume human-bound Hugging Face and NVIDIA NGC access approvals for exact catalog or workflow dependencies, including consent-gated opening of official approval pages."

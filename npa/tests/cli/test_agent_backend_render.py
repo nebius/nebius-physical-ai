@@ -3931,3 +3931,70 @@ def test_selected_run_artifact_chat_preserves_exact_source(monkeypatch, tmp_path
                             "resolved_prefix": "synthetic/metrics", "source_selected": True})]
     assert "report.json" in result["reply"] and "`2`" in result["reply"]
     assert "example-bucket" not in result["reply"] and "synthetic/metrics" not in result["reply"]
+
+def test_rendered_action_catalog_returns_every_registered_tool_ref(
+    monkeypatch, tmp_path
+):
+    from npa.agent_backend import actions
+    from npa.cli import agent as agent_module
+    from npa.cli.agent_payloads import tool_catalog_payload
+
+    # These are render/handler tests, so do not package or upload a source tree.
+    monkeypatch.setattr(
+        agent_module, "_stage_agent_npa_source", lambda *_args, **_kwargs: None
+    )
+
+    module = _import_rendered_backend(
+        monkeypatch, tmp_path, module_name="npa_rendered_full_action_catalog"
+    )
+    handlers = module._agent_act_tools()
+    expected = sorted(tool_catalog_payload())
+    assert expected
+    assert module.TOOL_REFS == expected
+    assert handlers["health"]({})["tool_refs"] == len(expected)
+    result = handlers["tools_catalog"]({})
+    assert result == {"tool_refs": expected}
+    result["tool_refs"].clear()
+    assert handlers["tools_catalog"]({}) == {"tool_refs": expected}
+    spec = actions.TOOL_ALLOWLIST["tools_catalog"]
+    assert spec.read_only is True
+    assert spec.requires_confirmation is False
+    assert spec.params == ()
+
+
+def test_rendered_catalog_action_reaches_factual_completion(monkeypatch, tmp_path):
+    from npa.cli import agent as agent_module
+    from npa.cli.agent_payloads import tool_catalog_payload
+
+    # These are render/handler tests, so do not package or upload a source tree.
+    monkeypatch.setattr(
+        agent_module, "_stage_agent_npa_source", lambda *_args, **_kwargs: None
+    )
+
+    module = _import_rendered_backend(
+        monkeypatch, tmp_path, module_name="npa_rendered_action_catalog_completion"
+    )
+    expected = sorted(tool_catalog_payload())
+    plans = iter(
+        [
+            {"tool": "tools_catalog", "args": {}},
+            {"final": "The catalog observation was retrieved."},
+        ]
+    )
+
+    def planner(_messages, *, tier):
+        return {"choices": [{"message": {"content": json.dumps(next(plans))}}]}
+
+    result = module.run_action_loop(
+        "Use tools_catalog to inspect the registered capabilities.",
+        tools=module._agent_act_tools(),
+        model_call=planner,
+    )
+    assert result["ok"] is True
+    assert result["stopped_reason"] == "done"
+    assert result["needs_confirmation"] is False
+    calls = [step for step in result["steps"] if step["phase"] == "call"]
+    assert len(calls) == 1
+    assert calls[0]["tool"] == "tools_catalog"
+    assert calls[0]["status"] == "ok"
+    assert calls[0]["observation"] == {"tool_refs": expected}

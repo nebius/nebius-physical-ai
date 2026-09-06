@@ -891,6 +891,27 @@ containers:
       timeout_seconds: 120
       status: ready
 
+  curobo:
+    image: npa-curobo
+    dockerfile: npa/docker/workbench/curobo/Dockerfile
+    physical_ai:
+      useful: true
+      role: Real GPU motion planning, benchmark evaluation and reviewable joint/FK trajectories.
+    safety:
+      runs_as: ubuntu
+      base_image: nvidia/cuda:13.0.2-base-ubuntu24.04 (digest pinned, no base cuDNN)
+      network: S3 artifact upload only; source and permissively licensed benchmark data are baked.
+      external_fetch: [s3]
+      notes: No weights, gated data, credentials or populated runtime cache.
+    golden_eval:
+      kind: container-smoke
+      module: npa.smoke.test_curobo_functional
+      command: python -m npa.smoke.test_curobo_functional
+      serverless_gpu: b200
+      gpu: required
+      timeout_seconds: 600
+      status: gpu-gated
+
   alpamayo2-super:
     image: npa-alpamayo2-super
     dockerfile: npa/docker/workbench/alpamayo2-super/Dockerfile

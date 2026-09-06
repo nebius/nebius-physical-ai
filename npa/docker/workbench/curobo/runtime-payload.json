@@ -1,0 +1,426 @@
+{
+  "schema_version": "npa.curobo.runtime-payload.v1",
+  "cudnn": {
+    "name": "nvidia-cudnn-cu13",
+    "version": "9.13.0.50",
+    "wheel_url": "https://files.pythonhosted.org/packages/cf/68/2712854561170b2a81bea7b6b35cc1ae264d9794c0c218986e5c685d45f7/nvidia_cudnn_cu13-9.13.0.50-py3-none-manylinux_2_27_x86_64.whl",
+    "wheel_sha256": "2150b4850725d30653ec3e365f0732e3e2e3eb8633cf3bd2d3117628dea8b4f9",
+    "install_root": "opt/npa-venv/lib/python3.12/site-packages",
+    "retained": [
+      {
+        "path": "nvidia/cudnn/lib/libcudnn.so.9",
+        "sha256": "9f256797fa7919d04487ba825e6ad15a3488414fc17045c053f80bae5052b6b1",
+        "size": 125136,
+        "kind": "runtime"
+      },
+      {
+        "path": "nvidia/cudnn/lib/libcudnn_adv.so.9",
+        "sha256": "660ddc2125afe26192969e210fc5fed7927b0f25e5fbc9a6440f2cddebe72dd7",
+        "size": 107070704,
+        "kind": "runtime"
+      },
+      {
+        "path": "nvidia/cudnn/lib/libcudnn_cnn.so.9",
+        "sha256": "73fffc852ff5807898906d7a755bf017e8a4dc88185daa28eb9329364ffc75dd",
+        "size": 4204088,
+        "kind": "runtime"
+      },
+      {
+        "path": "nvidia/cudnn/lib/libcudnn_engines_precompiled.so.9",
+        "sha256": "b954212dd8334a891379052bf4a2cd7ea6fafadd4c6da3255d74c074241816a6",
+        "size": 232810824,
+        "kind": "runtime"
+      },
+      {
+        "path": "nvidia/cudnn/lib/libcudnn_engines_runtime_compiled.so.9",
+        "sha256": "c7f8f69783a186851da9074b34de73862d78fef329466cbacae57ce8f6fe50f5",
+        "size": 27289584,
+        "kind": "runtime"
+      },
+      {
+        "path": "nvidia/cudnn/lib/libcudnn_graph.so.9",
+        "sha256": "cd6a40481699fa25464c1f995089df281f6ffc467ffff8c9f1e8e2e899d88712",
+        "size": 4450328,
+        "kind": "runtime"
+      },
+      {
+        "path": "nvidia/cudnn/lib/libcudnn_heuristic.so.9",
+        "sha256": "05c33c8bf2548288b84a95f83e8341e9c2272d2bb28d1c8926c66b6c086afa18",
+        "size": 54532480,
+        "kind": "runtime"
+      },
+      {
+        "path": "nvidia/cudnn/lib/libcudnn_ops.so.9",
+        "sha256": "b178c4e1d0ac1758641da88bf212d76904accd1c9fa8139f472ed8377bcd50ca",
+        "size": 37758648,
+        "kind": "runtime"
+      },
+      {
+        "path": "nvidia_cudnn_cu13-9.13.0.50.dist-info/licenses/License.txt",
+        "sha256": "49cf79bdb35734b52fe6203013b3bd759f81e998cd32aa2c65c51db9a88c61d2",
+        "size": 18174,
+        "kind": "license"
+      }
+    ],
+    "excluded_sdk": [
+      {
+        "path": "nvidia/cudnn/include/cudnn.h",
+        "sha256": "1082d51d3b564bace8ef6fc6ee335b668b2bfa517f57c06efd428263e5c21855",
+        "size": 2841
+      },
+      {
+        "path": "nvidia/cudnn/include/cudnn_adv.h",
+        "sha256": "d09b874250a98821618df889ad9b8a9ebbb5b589ae017cabfed10b63f56d6b23",
+        "size": 30855
+      },
+      {
+        "path": "nvidia/cudnn/include/cudnn_adv_v9.h",
+        "sha256": "d09b874250a98821618df889ad9b8a9ebbb5b589ae017cabfed10b63f56d6b23",
+        "size": 30855
+      },
+      {
+        "path": "nvidia/cudnn/include/cudnn_backend.h",
+        "sha256": "add4f24c61d07edb2b8567894ba6d0c190d00b3addc80161a23d206d1927d45f",
+        "size": 2751
+      },
+      {
+        "path": "nvidia/cudnn/include/cudnn_backend_v9.h",
+        "sha256": "add4f24c61d07edb2b8567894ba6d0c190d00b3addc80161a23d206d1927d45f",
+        "size": 2751
+      },
+      {
+        "path": "nvidia/cudnn/include/cudnn_cnn.h",
+        "sha256": "febc7315a736c892fc6c24402bc6026ef41e854dd8b0d71164729ccf4a7f481b",
+        "size": 36700
+      },
+      {
+        "path": "nvidia/cudnn/include/cudnn_cnn_v9.h",
+        "sha256": "febc7315a736c892fc6c24402bc6026ef41e854dd8b0d71164729ccf4a7f481b",
+        "size": 36700
+      },
+      {
+        "path": "nvidia/cudnn/include/cudnn_graph.h",
+        "sha256": "fdeb705145ea521145573121f7148ddfb4d164ea82f8eb0354c63b28f572a722",
+        "size": 45431
+      },
+      {
+        "path": "nvidia/cudnn/include/cudnn_graph_v9.h",
+        "sha256": "fdeb705145ea521145573121f7148ddfb4d164ea82f8eb0354c63b28f572a722",
+        "size": 45431
+      },
+      {
+        "path": "nvidia/cudnn/include/cudnn_ops.h",
+        "sha256": "bdfe1c03f481abca3fb5909b193768d568d14a78f07cf2774e8a54330ca5fb39",
+        "size": 63635
+      },
+      {
+        "path": "nvidia/cudnn/include/cudnn_ops_v9.h",
+        "sha256": "bdfe1c03f481abca3fb5909b193768d568d14a78f07cf2774e8a54330ca5fb39",
+        "size": 63635
+      },
+      {
+        "path": "nvidia/cudnn/include/cudnn_v9.h",
+        "sha256": "1082d51d3b564bace8ef6fc6ee335b668b2bfa517f57c06efd428263e5c21855",
+        "size": 2841
+      },
+      {
+        "path": "nvidia/cudnn/include/cudnn_version.h",
+        "sha256": "648d83b31715a1d860f22d85bc7dd16f4a1051ff5d807e29b62b2ff8940ea6bd",
+        "size": 3114
+      },
+      {
+        "path": "nvidia/cudnn/include/cudnn_version_v9.h",
+        "sha256": "648d83b31715a1d860f22d85bc7dd16f4a1051ff5d807e29b62b2ff8940ea6bd",
+        "size": 3114
+      }
+    ]
+  },
+  "nvshmem_notice": {
+    "path": "usr/share/doc/npa-curobo/NVSHMEM-LICENSE.txt",
+    "sha256": "43a87c0ff94ce3196011ff75e17fbee96933c9e1d511557659ece8a326f95e8f",
+    "size": 26566,
+    "url": "https://developer.download.nvidia.com/compute/nvshmem/redist/libnvshmem/LICENSE.txt",
+    "release_manifest": "https://developer.download.nvidia.com/compute/nvshmem/redist/redistrib_3.3.24.json",
+    "release_archive_sha256": "b2ed93280582844e1cf22b429be4474c97b2b60d3aa961d25451b388392cfaf5"
+  },
+  "torch_cudnn_adapters": {
+    "source": "https://download.pytorch.org/whl/cu130/torch/",
+    "wheel_url": "https://download.pytorch.org/whl/cu130/torch-2.9.1%2Bcu130-cp312-cp312-manylinux_2_28_x86_64.whl",
+    "wheel_sha256": "e70e1b18881e6b3c1ce402d0a989da39f956a3a057526e03c354df23d704ce9b",
+    "wheel_size": 612623135,
+    "name": "torch",
+    "version": "2.9.1+cu130",
+    "license": {
+      "path": "torch-2.9.1+cu130.dist-info/licenses/LICENSE",
+      "sha256": "776e43288ab54330aa1d942737754b0edef0e7a07b62b736b595136ca5ccae88",
+      "size": 499846
+    },
+    "headers": [
+      {
+        "path": "torch/include/ATen/ops/cudnn_affine_grid_generator.h",
+        "sha256": "1bf7b4a791a9a02f6f3f7af3230585fd927ad7d706653b1047f1ee82d60363ff",
+        "size": 1503
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_affine_grid_generator_backward.h",
+        "sha256": "9f27acd8ea98d1177fcef65d115449c965a5c0dfb5bebe5321a96a69be430813",
+        "size": 1590
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_affine_grid_generator_backward_compositeexplicitautograd_dispatch.h",
+        "sha256": "a268157c6698b1a556491716d08077298b6c82ff2d8fbb98ff7a24d147709aea",
+        "size": 1015
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_affine_grid_generator_backward_cuda_dispatch.h",
+        "sha256": "e9cff3b124b851a1451826a1823b5dfb958624049a1c7a455fe9fcf5f1e32e45",
+        "size": 796
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_affine_grid_generator_backward_native.h",
+        "sha256": "204e85c944fb973e027bb54efa9d2393718b48150288fbb303ceab90244048ff",
+        "size": 702
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_affine_grid_generator_backward_ops.h",
+        "sha256": "201ad42bc8dee87d1939edea6a45f89483950d6fa336020ec9e6efeba9d9a463",
+        "size": 2042
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_affine_grid_generator_compositeexplicitautograd_dispatch.h",
+        "sha256": "ad7aff89dfa55252f43d92c31409dd58576e5553e4f7399c04749b454e78ff7e",
+        "size": 999
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_affine_grid_generator_cuda_dispatch.h",
+        "sha256": "320f996f1f43e0a3bf44729c901672b9a07966798be64ff26f0f953aff41021a",
+        "size": 788
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_affine_grid_generator_native.h",
+        "sha256": "9735d6f2b67c742ce861dc8c831ebf9a104a4d76199bf3be8e62c2eab9c7ed69",
+        "size": 694
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_affine_grid_generator_ops.h",
+        "sha256": "1b8482a3f940b7553aed11ea4b66af430e47e3a13d95844f923a8ca1a063f382",
+        "size": 1988
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_batch_norm.h",
+        "sha256": "341456a2e54e321d6cfc61b9fcb7fb049a788e0dab0e1f98bb1a14112f992fc4",
+        "size": 3023
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_batch_norm_backward.h",
+        "sha256": "196f0bdfddfaa4cea83de09c30e678c2bad1cafca5ecddfc28b47546d95957ac",
+        "size": 3215
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_batch_norm_backward_compositeexplicitautograd_dispatch.h",
+        "sha256": "33dca79a8e7c5c44d981ae31391dc55c4dda06541b365ac3d0de41a655d9acb8",
+        "size": 1665
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_batch_norm_backward_cuda_dispatch.h",
+        "sha256": "d49cb505999f14d3c810dc979525983636f56a556857dc515f87e4abdda4d0fe",
+        "size": 1078
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_batch_norm_backward_native.h",
+        "sha256": "ecda608f917658fadf7e502ec34519f1ef60f44b5cc7ed146ba162cd876ab5e8",
+        "size": 1309
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_batch_norm_backward_ops.h",
+        "sha256": "4dd5af17d8a8505961f9e6d38506288f6ae19613fd16633335ed5599908326fa",
+        "size": 4014
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_batch_norm_cuda_dispatch.h",
+        "sha256": "5b0837929902401354be291bf9b1e6ad7e2bbd16072ba043927dba92f04e6607",
+        "size": 1883
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_batch_norm_native.h",
+        "sha256": "7838ceb16b9950cacfe8c7e0c0d16f665e96669c19f6bcec3144e5be37f8ed30",
+        "size": 1202
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_batch_norm_ops.h",
+        "sha256": "e48f95e7133cdd7bd4ef7f52829d5aed09878759366c35c5300989767c01eb0a",
+        "size": 3701
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_convolution.h",
+        "sha256": "68c8be7020909b22940c15cb07fc98c01ef825b7a5ad6ab773e514ab152b2c79",
+        "size": 7636
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_convolution_add_relu.h",
+        "sha256": "67467d7514ae18211462979bc4c4961a293577ee4aad6e36f49cecdc67d0dfb5",
+        "size": 8215
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_convolution_add_relu_compositeexplicitautograd_dispatch.h",
+        "sha256": "1624213bc020c4252bbaf7d6bdc6ed492f8ad243b3d80d41f870ec5929c61d79",
+        "size": 2050
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_convolution_add_relu_cuda_dispatch.h",
+        "sha256": "92a57be01225f2c527935f51ef870e59541ef2ef9c0da3095b577310a12c659a",
+        "size": 1289
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_convolution_add_relu_native.h",
+        "sha256": "91918487a95b03e58da6d21bc79769f8724ea8632ce66ad4ab6c5f125c3e85a1",
+        "size": 1067
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_convolution_add_relu_ops.h",
+        "sha256": "df6d6fa8bcd3250c6b107623b82e2c36ff4b21ae608fbb4f9d948ec1d883ac98",
+        "size": 3257
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_convolution_cuda_dispatch.h",
+        "sha256": "61a158f608ca33893574d40e2c08139442d73c742764e38dcc18cc3a759fc2bb",
+        "size": 2251
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_convolution_native.h",
+        "sha256": "0318ed24c8f4b9a503b3da225fb5d0c263791f94b605457c94869ef072f2e47f",
+        "size": 918
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_convolution_ops.h",
+        "sha256": "357a20ee474ca0b3fdef09fc53346774588177f00b6797ab46fbd0088552dfd8",
+        "size": 2863
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_convolution_relu.h",
+        "sha256": "7b710011ac0d896449ee7a9b218ec5f62185cb58610a206843495e3b8ed97dfc",
+        "size": 7041
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_convolution_relu_compositeexplicitautograd_dispatch.h",
+        "sha256": "13cf83c36c0794cb5f6fabf54f4d71b1c6ac2648e903604b67a3c8d95d9be56b",
+        "size": 1774
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_convolution_relu_cuda_dispatch.h",
+        "sha256": "0b3396efc8340b9118b791749b864d653f7bf5e9c658acab12b6e13f1e0cbb40",
+        "size": 1151
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_convolution_relu_native.h",
+        "sha256": "f183b644300e71efb73b1aa032b6927d3f6209a7a7d091e620362a53f55eba12",
+        "size": 929
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_convolution_relu_ops.h",
+        "sha256": "60972c8da063b1157a85b2fa7eb5e9feccaf40bc64dbc8294cdc35f5194e03cc",
+        "size": 2809
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_convolution_transpose.h",
+        "sha256": "6dc8ad288298b575b93df94cd9d2b6cdffe9e13acc50cd4c2b27fcb445308c2d",
+        "size": 8852
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_convolution_transpose_compositeexplicitautograd_dispatch.h",
+        "sha256": "024e76301aa38fc4e4c57e4cb51abbccb0d1fe8ddcd3f49d4095d4d550ef6d37",
+        "size": 1974
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_convolution_transpose_cuda_dispatch.h",
+        "sha256": "c66bd3c7c12415e0388fec5c9fe6b548763a2d9af45c2138c5100fc719f9f53f",
+        "size": 1251
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_convolution_transpose_native.h",
+        "sha256": "90f42b0e757486c48b530a9b047742f7a3588e95de0514a4b3155afec7d1f462",
+        "size": 1029
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_convolution_transpose_ops.h",
+        "sha256": "07eaa471a21d4a104b04e03c0c6f9599cfe62aef11b5da4932a11f124c2cfc0b",
+        "size": 3159
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_grid_sampler.h",
+        "sha256": "cd14821e30ae2cd506244870291523011bc993e2a7f9823d8dceef72c8ede771",
+        "size": 1286
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_grid_sampler_backward.h",
+        "sha256": "05fc2a7b6db8e48480882172182bed73ac6f7ac3edba3bc1ac9606a68856e2a3",
+        "size": 1791
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_grid_sampler_backward_compositeexplicitautograd_dispatch.h",
+        "sha256": "6e56f5939c84a600e1bfeac4cb24e95222773dcbccb8ec1ed9a177954bdfec71",
+        "size": 1117
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_grid_sampler_backward_cuda_dispatch.h",
+        "sha256": "eaebc5b7c520d76c5fdf727d00dc5a691c3aefeaa624cc125dd498ebd417239d",
+        "size": 825
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_grid_sampler_backward_native.h",
+        "sha256": "852cb98be1384db5f37c9a473e0d5d25e4313d45514f4df11ae708a819875cef",
+        "size": 782
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_grid_sampler_backward_ops.h",
+        "sha256": "ee5a65549b5814e82848c729a71189ab8b0cc2744a77b20c08babc6f748a12c3",
+        "size": 2319
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_grid_sampler_compositeexplicitautograd_dispatch.h",
+        "sha256": "b17fcfa7a60c846bc37f461252e11e6b24db57f02abe9f680bf80767e1e7cca2",
+        "size": 941
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_grid_sampler_cuda_dispatch.h",
+        "sha256": "63064f0f3aeb24079f094b3c560d79ca4ece76639b408e31b0a8c9daf7aea542",
+        "size": 759
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_grid_sampler_native.h",
+        "sha256": "d81060128ff0af74ce1fb7610052dcc3afef5aa2939de6a583df3b09d94807d4",
+        "size": 636
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_grid_sampler_ops.h",
+        "sha256": "54b09e33c64bbb278b079069341f86a2ac01ad901b4597f9c63f98c0d9069151",
+        "size": 1792
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_is_acceptable.h",
+        "sha256": "6a148a45ce39c0b779532a008ee8742ceb9e228e3d492ad4044b4afa0b1fb2dd",
+        "size": 681
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_is_acceptable_compositeimplicitautograd_dispatch.h",
+        "sha256": "1346607e445072fbc668fdf838dc62427d4fb4f6651661fd9f2602cf7fb0194a",
+        "size": 771
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_is_acceptable_native.h",
+        "sha256": "4d7dc65e93b192ba8a27b715f9fcde1a3764c2eb23632a7ac754c031eb6ba1a4",
+        "size": 483
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_is_acceptable_ops.h",
+        "sha256": "d3dccd71ee11555e19143d1c89258005242c7669f9d012c7280c2fdfca71aba6",
+        "size": 976
+      }
+    ],
+    "classification": "PyTorch generated ATen operator declarations, BSD-3-Clause; exact wheel header bytes only, not a path-prefix exemption for NVIDIA cuDNN SDK payload.",
+    "source_license_url": "https://raw.githubusercontent.com/pytorch/pytorch/v2.9.1/LICENSE",
+    "source_license_sha256": "a8a2c6b67cf8a597ffaa5c82380a6bd1b82629c0417e00673d8013d662eb500a",
+    "source_license_is_wheel_notice_prefix": true,
+    "generator_url": "https://github.com/pytorch/pytorch/blob/v2.9.1/torchgen/gen.py"
+  }
+}
