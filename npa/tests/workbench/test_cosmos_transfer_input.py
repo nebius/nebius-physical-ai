@@ -741,14 +741,24 @@ def test_run_cosmos_transfer_names_gated_access_denial_without_leaking_prompt(
 ) -> None:
     repo = tmp_path / "repo"
     (repo / "examples").mkdir(parents=True)
-    # The denial being tested comes from inference. Reuse the isolated runtime
-    # fixture so an unrelated guardrail download cannot mask that subprocess.
-    _fake_env(monkeypatch, repo)
+    monkeypatch.setattr(tx, "cosmos_transfer_repo", lambda: repo)
+    monkeypatch.setattr(tx, "ensure_env", lambda _repo: Path("/usr/bin/python3"))
+    # Keep inference-denial setup hermetic when the optional Hub client is installed.
+    monkeypatch.setitem(sys.modules, "huggingface_hub", None)
+    monkeypatch.setenv("HF_TOKEN", "unit-test-placeholder")
     secret_prompt = "a secret prompt that must never reach the raised message"
-    runtime_calls: list[list[str]] = []
+    reached: list[str] = []
+
+    def prepared_guardrail_data(**_kwargs):
+        reached.append("guardrail-prepared")
+        return 0
+
+    # This test exercises inference denial, after the separately tested tokenizer
+    # preparation. It must reach that boundary without a real download or cache.
+    monkeypatch.setattr(tx, "prepare_guardrail_nltk_data", prepared_guardrail_data)
 
     def fake_run(cmd, *_args, **kwargs):
-        runtime_calls.append(cmd)
+        reached.append("inference")
         assert secret_prompt not in " ".join(cmd)
         kwargs["stdout"].write(
             (
@@ -765,11 +775,11 @@ def test_run_cosmos_transfer_names_gated_access_denial_without_leaking_prompt(
             run_id="denied", spec="assets/custom.json", prompt=secret_prompt
         )
 
-    assert len(runtime_calls) == 1
     message = str(raised.value)
     assert "gated Hugging Face repository access denied" in message
     assert "exit 1" in message
     assert secret_prompt not in message
+    assert reached == ["guardrail-prepared", "inference"]
 
 
 @pytest.mark.parametrize(

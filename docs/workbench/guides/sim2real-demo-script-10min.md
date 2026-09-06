@@ -2,7 +2,7 @@
 
 > **Presentation-only legacy script.** Do not use the private operator-pack
 > commands below to launch a qualification run. The sole production entrypoint
-> is `npa workbench workflow submit npa/workflows/workbench/npa-workflows/sim2real.yaml --runtime`; follow
+> is `npa workbench workflow submit workflows/main/sim2real.yaml --runtime`; follow
 > [the canonical operator guide](sim2real-workflow.md). Pre-staged artifacts here
 > are for a timed presentation, never live-run evidence.
 
@@ -47,7 +47,7 @@ s3://<bucket>/<prefix>/<run-id>/
    ```bash
    export KUBECONFIG=~/.npa/clusters/<cluster>/kubeconfig
    npa workbench workflow submit \
-     npa/workflows/workbench/npa-workflows/sim2real.yaml \
+     workflows/main/sim2real.yaml \
      --runtime --resume --run-id <live-run-id> <operator-vars-and-secrets>
    ```
 
@@ -111,7 +111,7 @@ Show one slide or browser tab: the 14-state graph from [sim2real-architecture.md
 
 ```bash
 # What runs on cluster (abbreviated)
-npa workbench workflow submit npa/workflows/workbench/npa-workflows/sim2real.yaml \
+npa workbench workflow submit workflows/main/sim2real.yaml \
   --runtime --resume --run-id <run-id> <operator-vars-and-secrets>
 ```
 

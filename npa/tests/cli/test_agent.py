@@ -2740,7 +2740,7 @@ def test_resolve_deploy_llm_credentials_reads_credentials(monkeypatch) -> None:
 
     key, model = _resolve_deploy_llm_credentials()
     assert key == "tf-test-key"
-    assert model == "nvidia/Cosmos3-Super-Reasoner"
+    assert model == "nvidia/Nemotron-3_5-Lightning"
 
 
 def test_normalize_llm_models_supports_repeated_and_csv_values() -> None:
@@ -2751,9 +2751,13 @@ def test_normalize_llm_models_supports_repeated_and_csv_values() -> None:
             "meta-llama/Llama-3.3-70B-Instruct",
         ]
     )
-    assert models[0] == "nvidia/Cosmos3-Super-Reasoner"
-    assert "meta-llama/Llama-3.3-70B-Instruct" in models
-    assert "Qwen/Qwen2.5-VL-72B-Instruct" in models
+    # Explicit legacy IDs remain usable with dedicated endpoints; public
+    # replacement defaults must not be silently injected into this allowlist.
+    assert models == [
+        "nvidia/Cosmos3-Super-Reasoner",
+        "meta-llama/Llama-3.3-70B-Instruct",
+        "Qwen/Qwen2.5-VL-72B-Instruct",
+    ]
 
 
 def test_agent_status_json(monkeypatch) -> None:
@@ -3945,7 +3949,7 @@ def test_bootstrap_embeds_cost_aware_routing() -> None:
     assert ".replace(_AGENT_ROUTING_EMBED, agent_routing_source)" in source
     assert "build_model_ladder(" in source
     assert "classify_tier(" in source
-    assert "chat_extra(tier)" in source
+    assert "chat_extra(tier, model)" in source
     assert "enforce_input_budget(" in source
     assert "usage_summary(data)" in source
     # The embedded routing source must actually be inlined (function defs present).
@@ -3959,10 +3963,8 @@ def test_default_llm_models_are_cost_ordered() -> None:
     from npa.cli import agent as agent_module
 
     models = list(agent_module.DEFAULT_LLM_MODELS)
-    # Cheap workhorse leads; branded reasoner is not first.
-    assert models[0] == "Qwen/Qwen3-32B"
-    assert models[0] != agent_module.DEFAULT_LLM_MODEL
-    assert agent_module.DEFAULT_LLM_MODEL in models
+    assert models == ["nvidia/Nemotron-3_5-Lightning", "MiniMaxAI/MiniMax-M3"]
+    assert models[0] == agent_module.DEFAULT_LLM_MODEL
 
 
 def test_deploy_seeds_cost_ordered_ladder_without_explicit_models(
@@ -4008,7 +4010,7 @@ def test_deploy_seeds_cost_ordered_ladder_without_explicit_models(
     )
     monkeypatch.setattr(
         "npa.cli.agent._resolve_deploy_llm_credentials",
-        lambda: ("tf-key", "nvidia/Cosmos3-Super-Reasoner"),
+        lambda: ("tf-key", "nvidia/Nemotron-3_5-Lightning"),
     )
     monkeypatch.setattr("npa.cli.agent._bootstrap_agent_stack", lambda **k: None)
     monkeypatch.setattr("npa.cli.agent.ensure_ingress", lambda **k: None)
@@ -4043,18 +4045,16 @@ def test_deploy_seeds_cost_ordered_ladder_without_explicit_models(
         agent_port=8088,
         backend_port=8787,
         rerun_port=9090,
-        llm_model="nvidia/Cosmos3-Super-Reasoner",
+        llm_model="nvidia/Nemotron-3_5-Lightning",
         llm_models=[],
         no_public_https=True,
     )
 
     configured = list(captured.get("llm", {}).get("models", []))  # type: ignore[union-attr]
-    # All four routing tiers are present without the operator listing them.
+    # The two supported models cover all four routing tiers.
     for expected in (
-        "Qwen/Qwen3-32B",
-        "meta-llama/Llama-3.3-70B-Instruct",
-        "nvidia/Cosmos3-Super-Reasoner",
-        "Qwen/Qwen2.5-VL-72B-Instruct",
+        "nvidia/Nemotron-3_5-Lightning",
+        "MiniMaxAI/MiniMax-M3",
     ):
         assert expected in configured, f"{expected} missing from {configured}"
 

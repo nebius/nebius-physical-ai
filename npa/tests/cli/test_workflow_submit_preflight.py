@@ -24,27 +24,15 @@ runner = CliRunner()
 
 SPEC = (
     Path(__file__).resolve().parents[3]
-    / "npa"
-    / "workflows"
-    / "workbench"
-    / "npa-workflows"
-    / "physical-ai-data-factory.yaml"
+    / "workflows" / "testing" / "physical-ai-data-factory.yaml"
 )
 COSMOS3_SPEC = (
     Path(__file__).resolve().parents[3]
-    / "npa"
-    / "workflows"
-    / "workbench"
-    / "npa-workflows"
-    / "paidf-cosmos3.yaml"
+    / "workflows" / "main" / "paidf-cosmos3.yaml"
 )
 SIM2REAL_SPEC = (
     Path(__file__).resolve().parents[3]
-    / "npa"
-    / "workflows"
-    / "workbench"
-    / "npa-workflows"
-    / "sim2real.yaml"
+    / "workflows" / "main" / "sim2real.yaml"
 )
 
 
@@ -1254,11 +1242,7 @@ def test_plan_only_skips_the_kube_context_check(monkeypatch, tmp_path) -> None:
 
 HARDENING_SPEC = (
     Path(__file__).resolve().parents[3]
-    / "npa"
-    / "workflows"
-    / "workbench"
-    / "npa-workflows"
-    / "adversarial-scenario-hardening.yaml"
+    / "workflows" / "testing" / "adversarial-scenario-hardening.yaml"
 )
 
 

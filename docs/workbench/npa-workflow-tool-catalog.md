@@ -10,7 +10,7 @@ This table must list every `TOOL_CATALOG` key (enforced by
 Catalog reachability is fail-closed: every entry is consumed by a shipped spec
 except the explicitly public composition primitives `infra.fleet.deploy`,
 `infra.soperator.deploy`, `workbench.cosmos2.transfer`,
-`workbench.foxglove.convert`, `workbench.insights.record`,
+`workbench.curobo.plan`, `workbench.foxglove.convert`, `workbench.insights.record`,
 `workbench.isaac_lab.byof_repo`, and `workbench.lerobot.eval`. The
 reusable-only list is machine-checked against `PUBLIC_REUSABLE_TOOLREFS`;
 accidental dead entries fail the guardrail. The retired monolithic
@@ -18,6 +18,11 @@ accidental dead entries fail the guardrail. The retired monolithic
 
 | toolRef | CLI / module | Typical inputs | Typical outputs | Stub? |
 | --- | --- | --- | --- | --- |
+| `workbench.curobo.prepare` | `npa workbench curobo prepare` | full benchmark mode selection | recipe JSON | no |
+| `workbench.curobo.benchmark` | `npa workbench curobo benchmark` | recipe JSON | all problem statuses, real trajectories and metrics | no |
+| `workbench.curobo.plan` | `npa workbench curobo plan` | Franka start/goal/cuboid manifest | real trajectories and metrics | no |
+| `workbench.curobo.validate` | `npa workbench curobo validate` | result prefix | hash and complete coverage validation | no |
+| `workbench.curobo.visualize` | `npa workbench curobo visualize` | validated result prefix | verified RRD joint/FK recording | no |
 | `workbench.alpamayo2_super.infer` | `npa workbench alpamayo2-super infer` | pinned model/dataset revisions and PhysicalAI-AV sample index | trajectory JSON, calibrated PNG, immutable provenance under `config.output_uri` | no (real upstream VLM + diffusion expert inference on GPU) |
 | `infra.fleet.deploy` | `npa fleet deploy` | `config.fleet_spec` | fleet deploy JSON | no |
 | `infra.soperator.deploy` | `npa soperator deploy` | `config.soperator_spec` | cluster deploy JSON | no |
@@ -164,3 +169,9 @@ See `docs/workbench/npa-workflow-guide.md` for the full authoring guide.
 | --- | --- |
 | `promote_checkpoint` | Last decision is promote |
 | `loop_back` | Last decision is loop-back |
+
+Hosted model selection: `workbench.token_factory.reason` accepts optional
+`config.reason_model`; `workbench.vlm_eval.run`, `.loop`, and
+`.judge_against_plan` accept optional `config.vlm_model`. An omitted or empty
+value leaves model selection to the CLI default for the chosen backend; an
+explicit value is passed as `--model`, including legacy dedicated model IDs.

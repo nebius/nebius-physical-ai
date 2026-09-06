@@ -17,7 +17,7 @@ from npa.workbench.cosmos.super_benchmark import IMAGE, MODEL_REVISION, WORKLOAD
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SPEC_PATH = (
     REPO_ROOT
-    / "npa/workflows/workbench/npa-workflows/cosmos3-super-b200-benchmark.yaml"
+    / "workflows/testing/cosmos3-super-b200-benchmark.yaml"
 )
 
 
@@ -46,8 +46,8 @@ def test_workflow_is_fixed_full_node_primary_sweep() -> None:
             "volumeMounts": [{"name": "dshm", "mountPath": "/dev/shm"}],
         }
     ]
-    assert MODEL_REVISION in SPEC_PATH.parent.parent.parent.parent.joinpath(
-        "src/npa/workbench/cosmos/super_benchmark.py"
+    assert MODEL_REVISION in REPO_ROOT.joinpath(
+        "npa/src/npa/workbench/cosmos/super_benchmark.py"
     ).read_text(encoding="utf-8")
     assert WORKLOAD["guardrails"] is False
 

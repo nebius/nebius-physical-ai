@@ -12,7 +12,7 @@ cd "$REPO"
 PY="${REPO}/npa/.venv/bin/python"
 NPA="${REPO}/npa/.venv/bin/npa"
 export NPA_INTEGRATION_E2E=1
-SPECS="${REPO}/npa/workflows/workbench/npa-workflows"
+SPECS="${REPO}/workflows"
 DYNAMIC="sim2real.yaml tokenfactory-cosmos-gate.yaml"
 
 LOG="/tmp/npa-workflow-real-infra-$(date -u +%Y%m%dT%H%M%SZ).log"
@@ -20,7 +20,7 @@ exec > >(tee -a "$LOG") 2>&1
 
 echo "=== npa.workflow FULL LIVE INFRA matrix log=${LOG} ==="
 echo "branch: $(git branch --show-current) @ $(git rev-parse --short HEAD)"
-echo "golden specs: $(find "${SPECS}" -maxdepth 1 -name '*.yaml' | wc -l)"
+echo "golden specs: $(find "${SPECS}/main" "${SPECS}/testing" -maxdepth 1 -name '*.yaml' | wc -l)"
 
 echo "--- S3 preflight (project credentials, not stale AWS_*) ---"
 "${PY}" - <<'PY' || { echo "S3 preflight failed; fix ~/.npa/credentials.yaml or unset stale AWS_* in tmux server"; exit 1; }
@@ -75,7 +75,7 @@ from npa_workflow_live_helpers import live_bucket
 print(live_bucket(None))
 PY
 )"
-  for spec in "${SPECS}"/*.yaml; do
+  for spec in "${SPECS}/main"/*.yaml "${SPECS}/testing"/*.yaml; do
     base=$(basename "$spec")
     stem="${base%.yaml}"
     echo "live CLI: ${base} bucket=${BUCKET}"

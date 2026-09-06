@@ -23,7 +23,7 @@ from npa.orchestration.npa_workflow.submit_matrix import (
 
 SONIC_MOTION_FIXTURE_PREFIX = "npa-workflow-e2e/fixtures/sonic-motion-soma-g1/"
 REPO_ROOT = Path(__file__).resolve().parents[3]
-SPECS_DIR = REPO_ROOT / "npa" / "workflows" / "workbench" / "npa-workflows"
+SPECS_DIR = REPO_ROOT / "workflows"
 # A tiny, valid 64x64 H.264/MP4 clip generated from ffmpeg's deterministic
 # testsrc2 source. Keeping the bytes in the test harness makes input seeding
 # independent of an operator host's ffmpeg installation while the live worker

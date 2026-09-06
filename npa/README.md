@@ -58,7 +58,7 @@ npa convert lerobot-to-mp4 ...
 ```
 
 For a complete workflow, use the
-[reference catalog](workflows/workbench/npa-workflows/README.md) and
+[reference catalog](../workflows/README.md) and
 [workflow guide](../docs/workbench/npa-workflow-guide.md): validate and plan the
 chosen specification, prepare its data and resources, submit it, then inspect
 `npa workbench workflow status`, `logs`, and `artifacts`. The

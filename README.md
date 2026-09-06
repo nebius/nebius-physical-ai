@@ -210,7 +210,7 @@ local H.264 MP4 or set `PAIDF_INPUT_URI` to one private `s3://` MP4, then paste:
 
 ```text
 Run my first Workbench workflow with me: the PAIDF Cosmos 3 video-conditioning
-workflow at npa/workflows/workbench/npa-workflows/paidf-cosmos3.yaml. Follow
+workflow at workflows/main/paidf-cosmos3.yaml. Follow
 docs/workbench/guides/paidf-cosmos3.md and the repository skills. Use the
 configured Nebius project, region, writable bucket, and credentials. Use the
 attached local H.264 MP4, or PAIDF_INPUT_URI if it is set; if neither is
@@ -283,7 +283,7 @@ A few highlights:
 - **`token-factory`** — hosted inference, captioning, and reasoning against your
   own frames.
 - **`vlm-eval`** — scores rollouts with API or self-hosted vLLM backends; see
-  [`vlm-eval-single.yaml`](npa/workflows/workbench/npa-workflows/vlm-eval-single.yaml).
+  [`vlm-eval-single.yaml`](workflows/testing/vlm-eval-single.yaml).
 - **`health preflight`** — validates HF / NGC / S3 / Token Factory before a
   deploy or a GPU job.
 - **`foxglove`** — packs run frames, metrics, and logs into MCAP for the
@@ -299,13 +299,13 @@ A few highlights:
 | Category         | Workbench commands                                                                                                                                                                                                                                                                                     |
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Data curation    | `npa workbench fiftyone curate`, `eval`, `load-dataset`, `datasets list`; `npa workbench lancedb deploy`, `create-table`, `import-lerobot`, `import-bdd100k`, `backfill`, `create-mv`, `refresh-mv`, `query-table`, `query`; `npa workbench detection-training train`, `eval`, `status`, `list`         |
-| Synthetic data   | `npa workbench cosmos infer`, `train`, `serve`, `status`; `npa workbench cosmos2 transfer`; `npa workbench cosmos3 reason`; `npa workbench genesis generate-demos`; specs such as [`bdd100k-pipeline.yaml`](npa/workflows/workbench/npa-workflows/bdd100k-pipeline.yaml) |
+| Synthetic data   | `npa workbench cosmos infer`, `train`, `serve`, `status`; `npa workbench cosmos2 transfer`; `npa workbench cosmos3 reason`; `npa workbench genesis generate-demos`; specs such as [`bdd100k-pipeline.yaml`](workflows/testing/bdd100k-pipeline.yaml) |
 | Simulation      | `npa workbench isaac-lab train`, `eval`, `export-lerobot`, `export-onnx`; `npa workbench leisaac launch`, `status`, `destroy` (browser teleoperation); `npa workbench genesis train-teacher`, `generate-demos`, `eval-teacher`, `eval-student`, `diagnose`, `tune`; `npa workbench sonic retargeting run`, `workflow`                                                                    |
 | Eval            | `npa workbench vlm-eval run`, `benchmark`, `workflow`, `status`, `list`; `npa workbench mjlab eval`, `workflow`; `npa workbench sonic eval`; `npa workbench fiftyone eval`; `npa workbench isaac-lab eval`; `npa workbench genesis eval-student`; `npa workbench golden-eval run`, `run-all`, `validate` |
 | Robot policy    | `npa workbench lerobot train`, `eval`, `serve`, `infer`, `list-checkpoints`, `benchmark`, `profile-train`, `train-student`; `npa workbench groot download`, `finetune`, `eval`, `serve`, `infer`, `convert`; `npa workbench sonic train`, `serve`, `export`, `eval`, `status`, `list`                    |
 | World models    | `npa workbench cosmos deploy`, `serve`, `infer`, `train`, `finetune`, `optimize`, `autoscale`, `status`, `system-info`                                                                                                                                                                                   |
 | Hosted LLM      | `npa workbench token-factory caption`, `generate`, `reason`, `verify`, `models`, `workflow`, `status`                                                                                                                                                                                                    |
-| Workflows       | `npa workbench workflow validate-spec`, `plan-spec`, `run-spec`, `submit`; workbench workflows under [`npa-workflows/`](npa/workflows/workbench/npa-workflows/)                                                                                                                                           |
+| Workflows       | `npa workbench workflow validate-spec`, `plan-spec`, `run-spec`, `submit`; workbench workflows under [`workflows/`](workflows/)                                                                                                                                           |
 | Observability   | Tool-level `status`, `list`, and `system-info` commands; `npa workbench workflow status`, `logs`; `npa workbench health preflight`; `npa workbench foxglove convert-run`, `inspect`, `install-sdk`, `config`; `npa rerun host`, `share`, `list-shares`, `revoke`; `npa cluster status`, `list`                                                                                       |
 | Platform utils  | `npa configure` / `init`, `npa provision-if-absent`; `npa agent`, `npa skypilot bootstrap/status/verify`, `npa soperator`, `npa burst`, `npa cluster`, `npa network`, `npa adapter convert`, `npa convert lerobot-to-rrd/-mp4`, `npa viz`, `npa demo`                                                    |
 
@@ -323,15 +323,15 @@ what you validate, plan, and submit.
 
 ```bash
 # Validate and plan (no submit)
-npa workbench workflow validate-spec npa/workflows/workbench/npa-workflows/vlm-eval-single.yaml
-npa workbench workflow plan-spec     npa/workflows/workbench/npa-workflows/vlm-eval-single.yaml --run-id demo
+npa workbench workflow validate-spec workflows/testing/vlm-eval-single.yaml
+npa workbench workflow plan-spec     workflows/testing/vlm-eval-single.yaml --run-id demo
 
 # Launch on Nebius (after npa configure)
-npa workbench workflow submit npa/workflows/workbench/npa-workflows/vlm-eval-single.yaml \
+npa workbench workflow submit workflows/testing/vlm-eval-single.yaml \
   --run-id demo --registry registry.example/customer
 
 # Inspect the plan without launching
-npa workbench workflow submit npa/workflows/workbench/npa-workflows/token-factory-caption.yaml \
+npa workbench workflow submit workflows/testing/token-factory-caption.yaml \
   --plan-only --run-id demo
 ```
 
@@ -339,7 +339,7 @@ npa workbench workflow submit npa/workflows/workbench/npa-workflows/token-factor
 | ----------------------- | ------------------------------------------------------------------------------------ |
 | **Format**              | `apiVersion: npa.workflow/v0.0.1`                                                    |
 | **CLI**                 | `validate-spec` · `plan-spec` · `run-spec` · `submit`                                |
-| **Workbench workflows** | [`npa/workflows/workbench/npa-workflows/`](npa/workflows/workbench/npa-workflows/)   |
+| **Workbench workflows** | [`workflows/`](workflows/)   |
 | **Tool catalog**        | [npa-workflow-tool-catalog.md](docs/workbench/npa-workflow-tool-catalog.md)          |
 | **Authoring guide**     | [npa-workflow-guide.md](docs/workbench/npa-workflow-guide.md)                        |
 | **What submit does**    | [Run lifecycle](docs/run-lifecycle.md) — gates, run identity, restart safety, status |
@@ -430,8 +430,10 @@ npa/                       # Python package (CLI + SDK); install with `pip insta
   src/npa/cli/             # Typer entry point and every top-level command
   src/npa/workbench/       # Per-tool implementations (cosmos, lerobot, sonic, ...)
   workflows/workbench/
-    npa-workflows/         # Workbench npa.workflow/v0.0.1 specs (author + submit these)
-    sim2real/              # Staged 14-stage sim2real runbook
+    sim2real/              # Operator notes and legacy compatibility
+workflows/                 # Supported npa.workflow/v0.0.1 catalog; see README.md
+  main/                    # sim2real.yaml and paidf-cosmos3.yaml only
+  testing/                 # All other catalog workflow specs
 docs/                      # Quickstart, architecture, workbench guides, cookbooks
 skills/                    # SKILL.md files for agents and contributors (source of truth)
 deploy/                    # Terraform + cluster provisioning (uses Nebius solutions library)

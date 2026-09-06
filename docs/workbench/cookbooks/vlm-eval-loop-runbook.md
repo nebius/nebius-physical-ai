@@ -25,7 +25,7 @@ export RUN_ID="vlm-eval-loop-smoke"
 export NPA_S3_BUCKET="<your-bucket-name>"
 
 npa workbench workflow submit \
-  npa/workflows/workbench/npa-workflows/vlm-eval-loop.yaml \
+  workflows/testing/vlm-eval-loop.yaml \
   --run-id "${RUN_ID}" \
   --var "bucket=${NPA_S3_BUCKET}" \
   --var "prefix=sim-to-real/${RUN_ID}" \
@@ -45,7 +45,7 @@ The default model is `Qwen/Qwen2-VL-7B-Instruct`, the default frame selection is
 `keyframes`, and the default success threshold is `0.8`.
 
 To score a *single* rollout instead of a set, use
-`npa/workflows/workbench/npa-workflows/vlm-eval-single.yaml`, or call
+`workflows/testing/vlm-eval-single.yaml`, or call
 `npa workbench vlm-eval run` directly.
 
 ## Inputs
@@ -112,7 +112,7 @@ npa workbench vlm-eval benchmark \
 
 Use the best threshold and rubric from the benchmark report to update
 `vlm_success_threshold` in the loop spec (or pass `--var` at submit time).
-`npa/workflows/workbench/npa-workflows/vlm-eval-benchmark.yaml` runs the same sweep as
+`workflows/testing/vlm-eval-benchmark.yaml` runs the same sweep as
 a workflow stage.
 
 ## Troubleshooting

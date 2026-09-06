@@ -367,11 +367,7 @@ def test_exact_pin_golden_eval_and_workflow_use_the_legal_path() -> None:
     workflow = yaml.safe_load(
         (
             ROOT
-            / "npa"
-            / "workflows"
-            / "workbench"
-            / "npa-workflows"
-            / "cosmos2-transfer.yaml"
+            / "workflows" / "testing" / "cosmos2-transfer.yaml"
         ).read_text(encoding="utf-8")
     )
     assert (

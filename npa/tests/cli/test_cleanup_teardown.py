@@ -770,9 +770,28 @@ def _iam_stubs(
             for key in keys
         ],
     )
-    monkeypatch.setattr(
-        nebius_module, "_run_json", lambda *args, **kwargs: {"items": []}
-    )
+
+    def provider_query(args, **kwargs):
+        if args[:3] == ["compute", "instance", "list"]:
+            return {"items": []}
+        if args[:3] == ["iam", "project", "get"]:
+            return {"metadata": {"id": "project-a", "parent_id": "tenant-test"}}
+        if args[:3] == ["iam", "service-account", "get"]:
+            if args[-1] in deleted:
+                raise nebius_module.NebiusError("NotFound")
+            return {
+                "metadata": {"id": sa_id, "parent_id": "project-a", "name": "npa-agent"}
+            }
+        raise AssertionError("unexpected provider call")
+
+    monkeypatch.setattr(nebius_module, "_run_json", provider_query)
+
+    def key_scalar(key_id, *args, **kwargs):
+        if key_id in deleted:
+            raise nebius_module.NebiusError("NotFound")
+        return key_id
+
+    monkeypatch.setattr(nebius_module, "_access_key_metadata_scalar", key_scalar)
     monkeypatch.setattr(
         nebius_module, "get_compute_instance_identity", lambda *args, **kwargs: None
     )
@@ -854,7 +873,11 @@ def test_agent_iam_purge_protects_same_project_peer_missing_from_local_config(
         lambda *args, **kwargs: {
             "items": [
                 {
-                    "metadata": {"id": "instance-peer", "name": "agent-peer"},
+                    "metadata": {
+                        "id": "instance-peer",
+                        "name": "agent-peer",
+                        "parent_id": "project-a",
+                    },
                     "spec": {
                         "account": {"service_account": {"id": "serviceaccount-agent"}}
                     },
@@ -910,7 +933,16 @@ def test_agent_iam_schema_invalid_inventory_uses_exact_terminal_graph_receipt(
     deleted = _iam_stubs(monkeypatch)
     monkeypatch.setattr("npa.cli.agent_iam.agent_iam_owned", lambda *_args: True)
     monkeypatch.setattr("npa.cli.agent_iam.clear_agent_iam_record", lambda *_args: True)
-    monkeypatch.setattr(nebius_module, "_run_json", lambda *_a, **_k: {"items": {}})
+    provider_query = nebius_module._run_json
+    monkeypatch.setattr(
+        nebius_module,
+        "_run_json",
+        lambda args, **kwargs: (
+            {"items": {}}
+            if args[:3] == ["compute", "instance", "list"]
+            else provider_query(args, **kwargs)
+        ),
+    )
     record_teardown_event(
         phase="agent",
         resource="agent",

@@ -28,7 +28,7 @@ agent_ui_load_viewer_verification
 Use the repository virtual environment for repository validation:
 
 ```bash
-SPEC=npa/workflows/workbench/npa-workflows/groot-1-7-finetune.yaml
+SPEC=workflows/testing/groot-1-7-finetune.yaml
 RUN_ID=groot-n1-7-operational-example
 
 npa/.venv/bin/npa workbench workflow validate-spec "$SPEC"

@@ -39,7 +39,7 @@ WORKFLOW = (
     / "nurec-reconstruct.yaml"
 )
 SPEC = (
-    ROOT / "npa" / "workflows" / "workbench" / "npa-workflows" / "nurec-reconstruct.yaml"
+    ROOT / "workflows" / "testing" / "nurec-reconstruct.yaml"
 )
 CATEGORY = "neural-reconstruction"
 DEFAULT_IMAGE = "nvcr.io/nvidia/nre/nre-ga:26.04"

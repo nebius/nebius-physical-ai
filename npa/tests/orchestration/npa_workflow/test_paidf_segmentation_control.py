@@ -24,11 +24,8 @@ from npa.orchestration.npa_workflow.skypilot_render import (
 from npa.orchestration.npa_workflow.submit import merge_config_overrides
 
 BLUEPRINT = (
-    Path(__file__).resolve().parents[3]
-    / "workflows"
-    / "workbench"
-    / "npa-workflows"
-    / "physical-ai-data-factory.yaml"
+    Path(__file__).resolve().parents[4]
+    / "workflows" / "testing" / "physical-ai-data-factory.yaml"
 )
 RUNNER = CliRunner()
 
@@ -315,11 +312,8 @@ def test_submit_capacity_preflight_does_not_resolve_sky_for_cpu_only_spec(
     import npa.cli.workbench.workflow as workflow_cli
 
     cpu_only = (
-        Path(__file__).resolve().parents[3]
-        / "workflows"
-        / "workbench"
-        / "npa-workflows"
-        / "token-factory-parallel-fanout.yaml"
+        Path(__file__).resolve().parents[4]
+        / "workflows" / "testing" / "token-factory-parallel-fanout.yaml"
     )
     spec = load_spec(cpu_only)
     monkeypatch.setattr(

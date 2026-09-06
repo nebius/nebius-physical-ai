@@ -9,6 +9,11 @@ from __future__ import annotations
 
 # Each value is an ordered list of concrete checks the golden eval runs.
 GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
+    "curobo": [
+        "real NVIDIA cuRobo V2 Franka pose optimization on CUDA",
+        "finite interpolated joint trajectories and actual FK tool path",
+        "factual RRD artifact passes decoder verification",
+    ],
     "openpi": [
         "pinned upstream full-DROID config remains batch 256 and 100,000 steps",
         "eight JAX processes form one global (1, 8) FSDP mesh",

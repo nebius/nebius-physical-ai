@@ -30,11 +30,7 @@ runner = CliRunner()
 REPO_ROOT = Path(__file__).resolve().parents[3]
 OPENPI_FOUR_MODE_SPEC = (
     REPO_ROOT
-    / "npa"
-    / "workflows"
-    / "workbench"
-    / "npa-workflows"
-    / "openpi-pi05-four-mode.yaml"
+    / "workflows" / "testing" / "openpi-pi05-four-mode.yaml"
 )
 
 SPEC = {

@@ -16,6 +16,10 @@ RUNNER_FILES = (
 # These specialized suites intentionally remain operator-invoked. The reason is
 # machine-reviewed here instead of letting an environment gate silently rot.
 MANUAL_GATES = {
+    "NPA_AGENT_IMPROVEMENT_LIVE": (
+        "requires a dedicated operator-selected queue, protected actual-check receipts "
+        "and independently obtained review evidence; shared-agent runners cannot synthesize these"
+    ),
     "NPA_E2E_SKYPILOT_LOCAL_DAEMON": (
         "restarts a real local API daemon in an isolated CPU-only PID/network namespace"
     ),

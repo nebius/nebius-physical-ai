@@ -20,7 +20,7 @@ from npa.config_schema import (
 SkyBin = str | os.PathLike[str] | None
 
 _SETUP_DOC = "docs/orchestration/skypilot-setup.md"
-CONFIG_PATH = Path.home() / ".npa" / "config.yaml"
+CONFIG_PATH = Path(os.environ.get("NPA_CONFIG_DIR", "").strip() or Path.home() / ".npa") / "config.yaml"
 REQUIRED_SKYPILOT_VERSION = "0.12.2"
 _VERSION_CHECK_CACHE: set[tuple[str, int, int]] = set()
 

@@ -1,5 +1,12 @@
 # Hackathon Guide — Isaac Lab Franka + Token Factory (sim visuals → serverless reasoner)
 
+> Historical Cosmos3 recipe: its public hosted model was retired under the
+> [August 2026 notice](https://docs.tokenfactory.nebius.com/august-2026-deprecation-notice).
+> Use the current [Token Factory guide](/docs/workbench/token-factory.md) and
+> [migration verification](/docs/workbench/token-factory-deprecation-verification.md)
+> for current defaults. Explicit legacy model IDs require a serving endpoint;
+> this page does not establish their current availability.
+
 This guide shows **one complete pipeline** that pairs an **existing workbench tool**
 (Isaac Lab on Nebius GPU) with **Nebius Token Factory** (zero-GPU hosted inference).
 You simulate a **Franka arm** in Isaac Lab, capture RGB frames from the rollout,
@@ -45,7 +52,7 @@ Full sequence: `docs/assets/hackathon/isaac-franka-lift-cube/frame_00.png` …
 ```
 
 SkyPilot YAML:
-[`npa/workflows/workbench/npa-workflows/isaac-franka-capture-reason.yaml`](../npa/workflows/workbench/npa-workflows/isaac-franka-capture-reason.yaml)
+[`workflows/testing/isaac-franka-capture-reason.yaml`](../workflows/testing/isaac-franka-capture-reason.yaml)
 
 ---
 
@@ -148,7 +155,7 @@ run id come from the command line and the images are resolved for you.
 
 ```bash
 npa workbench workflow submit \
-  npa/workflows/workbench/npa-workflows/isaac-franka-capture-reason.yaml \
+  workflows/testing/isaac-franka-capture-reason.yaml \
   --run-id hackathon-franka-001 \
   --var bucket=YOUR_BUCKET \
   --secret-env NEBIUS_TOKEN_FACTORY_KEY \

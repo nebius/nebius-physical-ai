@@ -608,7 +608,7 @@ call `write_generations` explicitly if you use that API and need a saved result.
 **Workflow specs:** `npa.workflow/v0.0.1` runs these tools in CPU tasks through
 SkyPilot. This mode needs the configured cluster and S3 runtime described in
 [Workbench Getting Started](workbench/getting-started.md). For examples, see
-`npa/workflows/workbench/npa-workflows/token-factory-generate.yaml` and
+`workflows/testing/token-factory-generate.yaml` and
 [the workflows guide](workbench-yaml-guide.md).
 
 ## 6. Developing and testing npa

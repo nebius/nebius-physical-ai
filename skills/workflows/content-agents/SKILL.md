@@ -73,7 +73,7 @@ Never include credentials in cache paths, markers, metadata, logs, or artifacts.
 4. Resolve the candidate image to `@sha256:`, byte-scan that exact digest, and
    verify labels and the running pod image ID before workflow submission.
 5. Validate and plan
-   `npa/workflows/workbench/npa-workflows/content-agents-rigid-object.yaml` with
+   `workflows/testing/content-agents-rigid-object.yaml` with
    the private bucket and digest-pinned candidate image.
 6. Submit through `npa workbench workflow submit ... --runtime`, forwarding
    `NEBIUS_TOKEN_FACTORY_KEY` and S3 credentials through `--secret-env`.

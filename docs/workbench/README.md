@@ -12,7 +12,7 @@ to each tool's documented contract.
    model-access checks. Use [platform installation details](../install.md) when
    needed.
 2. Choose a GPU workload from the [guides](guides/README.md) or the
-   [workflow catalog](../../npa/workflows/workbench/npa-workflows/README.md).
+   [workflow catalog](../../workflows/README.md).
    Follow that workload's input, model, and GPU requirements.
 3. Prepare its runtime using [Workbench setup](getting-started.md) and, for
    cluster-backed runs, [managed Kubernetes](kubernetes.md).
@@ -52,7 +52,7 @@ For Python or HTTP integration, start with the
 | [agent-workflow-operations.md](agent-workflow-operations.md) | Provider-neutral, bounded NPA operations for agents authoring and running Workbench workflows |
 | [kubernetes.md](kubernetes.md) | User setup and operational checklist for running Workbench services and SkyPilot workflows on Kubernetes |
 | [mk8s-gpu-driver-strategy.md](mk8s-gpu-driver-strategy.md) | Managed GPU driver modes, fail-closed post-deploy health validation, recipe compatibility, and existing-pool migration |
-| [../../npa/workflows/workbench/npa-workflows/README.md](../../npa/workflows/workbench/npa-workflows/README.md) | **Workflow catalog** — find the right `npa.workflow` spec by what you want to do |
+| [../../workflows/README.md](../../workflows/README.md) | **Workflow catalog** — find the right `npa.workflow` spec by what you want to do |
 | [oss-solution-catalog.md](oss-solution-catalog.md) | OSS Physical AI registry candidates with pinned refs, cloud-fit notes, and E2E gates |
 | [cli-sdk-yaml-walkthrough.md](cli-sdk-yaml-walkthrough.md) | Detection-training CLI, Python, and HTTP examples; check each tool's supported surfaces |
 | [guides/physical-ai-data-factory-deploy.md](guides/physical-ai-data-factory-deploy.md) | **Physical AI Data Factory** — copy-paste runbook (stage input frames, submit) for the annotate → Cosmos augment → curate → visualize blueprint |
@@ -74,7 +74,7 @@ For Python or HTTP integration, start with the
 
 | Reader | Start with |
 | --- | --- |
-| Salesperson or evaluator | [Workflow catalog](../../npa/workflows/workbench/npa-workflows/README.md) to see what the platform runs |
+| Salesperson or evaluator | [Workflow catalog](../../workflows/README.md) to see what the platform runs |
 | Customer running their first Workbench workload | [Quickstart](../quickstart.md), then [guides](guides/README.md) |
 | Customer or operator using managed Kubernetes | [kubernetes.md](kubernetes.md) |
 | Anyone choosing between CLI, SDK, and YAML | [cli-sdk-yaml-walkthrough.md](cli-sdk-yaml-walkthrough.md) |

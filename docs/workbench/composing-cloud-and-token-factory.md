@@ -8,6 +8,12 @@ reports. The hosted stage runs on a CPU worker and calls the Token Factory API.
 GPU training / rollout → S3 artifacts → hosted inference → saved report
 ```
 
+Public defaults are `nvidia/Nemotron-3_5-Lightning` for text and
+`MiniMaxAI/MiniMax-M3` for vision and reasoning. Explicit model selections remain
+authoritative; verify access for your credential and endpoint. See the
+[migration verification](token-factory-deprecation-verification.md) for provider
+controls and strict hosted evaluation behavior.
+
 The artifact format matters as much as the URI: captioning expects images,
 text generation expects prompt records, and rollout scoring expects supported
 rollout inputs. Sending an arbitrary checkpoint prefix to `generate` does not
@@ -38,7 +44,7 @@ their names through `workflow submit --secret-env`; keep secrets out of YAML.
 | `tokenfactory-scene-to-rollout-judge.yaml` | LeRobot policy rollout | Plan from scene images, then judge against that plan | Scene images and a compatible policy for the same task |
 
 All paths are under
-[`npa/workflows/workbench/npa-workflows/`](../../npa/workflows/workbench/npa-workflows/).
+[`workflows/`](../../workflows/).
 The [cookbook](cookbooks/tokenfactory-compute-combos.md) gives current config
 keys and launch commands. The older `tokenfactory-rollout-judge.yaml` is a
 different pipeline: it reasons about a scene and scores externally supplied

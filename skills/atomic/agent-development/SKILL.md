@@ -70,9 +70,10 @@ Pure, side-effect-free functions (no network) so they unit-test cheaply:
 - `build_model_ladder(tier, configured, interactive, requested_model,
   allow_tier_defaults)` → cheapest-capable first; explicit user model wins;
   operator allowlist (`NPA_AGENT_LLM_MODELS`) respected when set.
-- `flavor_variants` + `filter_available` — prefer the Token Factory `-fast`
-  flavor for interactive turns, but drop variants the key cannot serve (never
-  strand a turn).
+- `flavor_variants` + `filter_available` — use only documented concrete model
+  IDs and drop unavailable defaults. The current public replacements have no
+  verified `-fast` variants; never invent one. Explicit selections are tried
+  even when absent from the model list (dedicated endpoints can differ).
 - `chat_extra` / `thinking_enabled` — disable hidden reasoning traces off the
   reasoning tier (don't pay for discarded tokens).
 - `enforce_input_budget` — cap oversized pastes (head+tail preserved).
@@ -104,7 +105,7 @@ explicit model override, and returns `tier` + `usage` + `input_budget_ok`.
 2. **Cheap model** — if it needs generation, let routing pick the cheap tier;
    only add reasoning/vision signals to `classify_tier` when the turn truly
    needs them.
-3. **Escalate deliberately** — reserve `nvidia/Cosmos3-Super-Reasoner` for
+3. **Escalate deliberately** — reserve `MiniMaxAI/MiniMax-M3` for
    analytical/physical-AI/vision turns; it is overkill for routine chat.
 4. **Visual feedback** — UI **Describe this** captures the active viewer frame
    and posts multimodal `/api/chat` with `visual_context`. Helpers live in
@@ -115,8 +116,10 @@ explicit model override, and returns `tier` + `usage` + `input_budget_ok`.
 
 - OpenAI-compatible: base `https://api.tokenfactory.nebius.com/v1/`, key
   `NEBIUS_TOKEN_FACTORY_KEY`. Same `chat/completions` shape everywhere.
-- Model **flavors**: `-fast` (low latency, pricier) vs base; identical output.
-  Only append `-fast` when the key exposes it (`filter_available`).
+- Public defaults follow the [August 2026 migration notice](https://docs.tokenfactory.nebius.com/august-2026-deprecation-notice):
+  `nvidia/Nemotron-3_5-Lightning` for cheap/standard text,
+  `MiniMaxAI/MiniMax-M3` for reasoning/vision. No default `-fast` IDs are added.
+  Vision never falls back to the text-only Lightning default.
 - Cost-ordered default ladder lives in `DEFAULT_LLM_MODELS` (cheap first). A bare
   `npa agent deploy` seeds this whole ladder, so per-turn routing reaches every
   tier without `--llm-models`. Explicit `--llm-models` is a governance allowlist;
@@ -124,6 +127,25 @@ explicit model override, and returns `tier` + `usage` + `input_budget_ok`.
   selection.
 - Reasoning-trace handling: `split_reasoning()` normalizes Cosmos3 inline
   `<think>` and Kimi/GLM `reasoning` fields.
+- `chat_extra(tier, model)` selects thinking parameters per attempted model:
+  Lightning uses `chat_template_kwargs.enable_thinking=false`; MiniMax uses
+  `chat_template_kwargs.thinking_mode="disabled"`. Analytical turns retain
+  reasoning, and unknown custom models receive no guessed template options.
+
+`/api/models` and `/api/session` share observed model availability. Prefer the
+configured default only when the provider lists it as chat-capable and it is
+within the explicit operator allowlist; otherwise choose the first eligible
+configured fallback. Keep the actual full provider catalog for explicit model
+selection. Never append an unavailable configured model to make a default look
+valid. The documented `GET /v1/models?verbose=true` supplies architecture
+modality; basic listings identify only known chat families, not arbitrary
+embedding or custom models. Empty successful discovery reports unavailable;
+failed discovery or unknown chat suitability reports unknown, with a null
+default and no provider diagnostics. Grounded/session operations still work.
+`test_agent_model_availability.py` exercises the rendered routes, refresh and
+failure cache, allowlist, explicit selection and non-chat exclusion. A catalog
+entry proves listing availability, not successful inference; retain live chat
+verification after deployment.
 
 ## Testing tiers (keep tokens out of CI)
 
@@ -151,6 +173,21 @@ Follow `skills/atomic/testing-conventions/SKILL.md`; use `npa/.venv/bin/python`.
 - **Tier 2 — live e2e (bounded tokens):** gate behind `NPA_AGENT_CHAT_LIVE=1` /
   `NPA_INTEGRATION_E2E=1`; pin the cheapest model; assert `grounded: true` where
   possible so most turns cost 0 tokens.
+- **Live public-model migration coverage:**
+  `npa/tests/e2e/test_agent_token_factory_e2e.py` runs the rendered backend under
+  uvicorn on loopback, sends synthetic text/reasoning/vision requests through
+  `/chat`, and checks real Token Factory answers and model selection. Only the
+  deployment SSH transport is replaced while rendering; inference is real.
+  It uses `token_factory_e2e` and skips without configured provider credentials.
+
+For action-loop validation, inspect the final answer against the original goal
+as well as the successful tool observations. `stopped_reason="done"` can come
+from a deterministic empty-result reply; it does not prove the model produced a
+final answer or that every requested part was answered. An empty lookup is
+terminal only when its subject and scope satisfy the whole request. A filtered
+query with zero matches cannot establish an empty store, and an unrelated empty
+run lookup cannot replace an available status or tool-catalog answer. Preserve
+these distinctions in evaluation receipts and regression tests.
 
 ```bash
 npa/.venv/bin/python -m pytest npa/tests/cli/test_agent_routing.py \
@@ -242,6 +279,72 @@ Embeddings default to
 LanceDB URI, SearXNG URL, and tracer keys are env/config-resolved, never
 hardcoded. New agentic tests: `test_agent_retrieval.py`, `test_agent_trace.py`,
 and `agent_eval/test_agent_adversarial_scorecard.py`.
+
+## Evidence-backed improvements
+
+The shipped `agent_backend/improvements.py` queue detects explicit tool failures,
+nonterminal empty results, truncation and exhausted action loops. Direct action,
+Sim2Real drive and semantic-action chat record observations linked to the active
+trajectory episode. Successful recovery and empty discovery that answers the
+whole request are not implementation defects. Premature empty-result termination
+requires separate goal-answer review even when the loop reports `done`.
+The queue produces triage work packages; it does not run
+shell commands, modify source, launch workers or publish code.
+
+Enable it explicitly with `NPA_AGENT_IMPROVEMENT_CONFIG`, pointing to an
+owner-only JSON file outside the checkout. Configure `directory`, `repository`,
+`evidence_directory`, `reviewers`, optional `private_literals`, and `scopes`.
+Each scope requires a stable `scope_id`, known `component`, exact relative
+`files`, full `base_revision`, `required_checks`, supported `lesson_keys`, and
+optional `version`. Queue and evidence directories must be outside the source
+repository, mode 0700; configuration, database and reports are mode 0600.
+Dataset URI/prefix and the configured trajectory literal denylist also apply
+before queue persistence. Never put a live configuration or raw report in Git.
+
+Use `ImprovementStore.claim` to obtain an exact work package and opaque
+`claim_token`. Its field name ensures trajectory redaction removes the credential.
+SQLite transactions prevent overlapping file ownership across processes; every
+update requires the current generation and lease. Release only after joining
+the worker. Scope comes from coordinator configuration, never an exception or
+model-supplied path. Changed scope configuration requires explicit reconciliation.
+
+The coordinator captures `begin_candidate` **before** running the scope's real
+checks with `npa/.venv/bin/python`. Supply the complete candidate changed-file
+list, excluding separately owned concurrent work. Feed the actual
+`subprocess.CompletedProcess` and nonempty report bytes to
+`write_validation_receipt`, then `record_validation`. The adapter binds the
+report digest, check identity, exit code, source snapshot, scope and claim
+generation. It never executes commands supplied by a finding. Failed, partial,
+missing or changed evidence cannot advance to independent review.
+
+An independently obtained review report enters through the **local trusted**
+`write_review_receipt` adapter and `review`. Reviewer identities are explicitly
+coordinator-attested external evidence; the agent's shared HTTP login does not
+establish multiple independent reviewers. HTTP routes under
+`/agent/improvements` accept existing protected receipt references, never a
+`passed` flag or an asserted reviewer name as proof. Workers cannot create
+receipts through HTTP. Retain the separate actor's actual report privately.
+
+Verified lessons are fixed behavior keys with evidence references, not arbitrary
+prose inserted into prompts. Current keys are
+`trajectory_observation_conservation` and `inspect_failed_tool_evidence`.
+Relevant skill/action context retrieves them without a model call. Reuse checks
+the source snapshot and retained evidence, records consumption and action
+outcome, and deactivates after a distinct recurring failure. A storage failure
+returns pending feedback while preserving the completed product action; never
+repeat a successful GPU operation to repair feedback. Missing opt-in config
+reports disabled.
+
+Regression checks include `test_agent_improvements.py`,
+`test_improvement_episode_context.py`, and `test_agent_improvement_render.py`.
+The rendered tests exercise all three action hooks and actual shipped modules.
+They do not replace a deployed zero-token lifecycle exercise with independent
+review evidence. The opt-in `test_agent_improvements_live.py` uses
+`NPA_AGENT_IMPROVEMENT_LIVE=1`, a dedicated approved component supplied through
+`NPA_AGENT_IMPROVEMENT_LIVE_COMPONENT`, and an owner-only lifecycle bundle at
+`NPA_AGENT_IMPROVEMENT_LIVE_BUNDLE`. The coordinator prepares that bundle from
+actual check receipts and a separately obtained review; the live test cannot
+invent either. Use the existing private live-agent credential configuration.
 
 ## Source Layout
 

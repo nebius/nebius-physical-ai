@@ -31,6 +31,7 @@ lichtblick  Lichtblick (MPL-2.0) - an open-source, Foxglove-compatible MCAP / RO
 ltx2  LTX-2.5 licence surface: print the LTX-2.x Community License terms, the pinned upstream source, and the gated weights repository the operator's own Hugging Face entitlement
     unlocks.
 alpamayo2-super  NVIDIA Alpamayo 2 Super trajectory-inference workbench.
+curobo  NVIDIA cuRobo V2 motion planning and complete benchmark evaluation.
 lancedb  Deploy and query LanceDB vector-search workbenches.
 detection-training  Train Faster R-CNN detectors from LanceDB materialized views.
 scenario-gen  Adversarial scenario generation: mine hard scenarios that fail a policy-under-test (pluggable Isaac Lab RL backend; deterministic default).
@@ -73,6 +74,7 @@ golden-eval  Per-container golden-eval / hello-world reruns.
 | `lichtblick` | Lichtblick (MPL-2.0) - an open-source, Foxglove-compatible MCAP / ROS-bag log viewer. |
 | `ltx2` | LTX-2.5 licence surface: print the LTX-2.x Community License terms, the pinned upstream source, and the gated weights repository the operator's own Hugging Face entitlement unlocks. |
 | `alpamayo2-super` | NVIDIA Alpamayo 2 Super trajectory-inference workbench. |
+| `curobo` | NVIDIA cuRobo V2 motion planning and complete benchmark evaluation. |
 | `lancedb` | Deploy and query LanceDB vector-search workbenches. |
 | `detection-training` | Train Faster R-CNN detectors from LanceDB materialized views. |
 | `scenario-gen` | Adversarial scenario generation: mine hard scenarios that fail a policy-under-test (pluggable Isaac Lab RL backend; deterministic default). |

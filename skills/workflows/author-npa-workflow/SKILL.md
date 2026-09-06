@@ -8,9 +8,13 @@ description: Use when authoring, validating, or reviewing NPA workflow specs (ap
 ## When To Use
 
 Load when creating or editing **NPA workflow YAML** under
-`npa/workflows/workbench/npa-workflows/`, wiring tool stages, loops, or
+`workflows/`, wiring tool stages, loops, or
 transitions, or when helping agents/users convert SkyPilot bash pipelines into
 specs.
+
+Keep `workflows/main/` limited to `sim2real.yaml` and `paidf-cosmos3.yaml`.
+Add all other catalog specs under `workflows/testing/`; keep catalog
+documentation in `workflows/README.md`.
 
 For **new creative pipelines**, also load `skills/workflows/generate-npa-workflow/SKILL.md`.
 
@@ -34,6 +38,11 @@ For **new creative pipelines**, also load `skills/workflows/generate-npa-workflo
   one `toolRef` and still differ.
 - **Trigger:** `trigger: {uri, pollSeconds, maxPolls, minObjects}` makes the runtime
   driver wait for data before that state runs (the state must also do work).
+  Numeric config expressions are resolved again after `--var` overrides;
+  `pollSeconds` and `minObjects` must be positive, while `maxPolls: 0` retains
+  the supported unbounded setting. Exercise the submitted configuration through
+  the actual watcher when validating overrides: check observed object counts
+  and polling behavior as well as successful spec parsing.
 - **Decision states:** `writesDecision: true` when the state writes `config.decision_uri`.
 - **needs:** ordering hints only (validated acyclic; not enforced at runtime).
 - **I/O:** `inputs` / `outputs` with `uri` + optional `schema`.

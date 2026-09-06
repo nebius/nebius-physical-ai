@@ -29,7 +29,7 @@ photographed:
 
 ## The spec
 
-**`npa/workflows/workbench/npa-workflows/nurec-reconstruct.yaml`**
+**`workflows/testing/nurec-reconstruct.yaml`**
 
 Six stages, each a real `npa workbench nurec` command — no manifest stubs:
 
@@ -54,7 +54,7 @@ it:
 
 ```bash
 npa workbench workflow plan-spec \
-  npa/workflows/workbench/npa-workflows/nurec-reconstruct.yaml
+  workflows/testing/nurec-reconstruct.yaml
 ```
 
 Then the cheap real preflight (seconds, no image pull):
@@ -86,7 +86,7 @@ Submit:
 RUN_ID="nurec-$(date -u +%Y%m%dt%H%M%S)z"
 
 npa workbench workflow submit \
-  npa/workflows/workbench/npa-workflows/nurec-reconstruct.yaml \
+  workflows/testing/nurec-reconstruct.yaml \
   --run-id "$RUN_ID" \
   --infra k8s/<your-rt-core-context> \
   --var bucket=<your-bucket> \

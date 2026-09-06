@@ -38,7 +38,7 @@ from npa.cli.main import app
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 EXAMPLE_YAML = (
-    REPO_ROOT / "npa/workflows/workbench/npa-workflows/sim2real-two-step-agent.yaml"
+    REPO_ROOT / "workflows/testing/sim2real-two-step-agent.yaml"
 )
 
 _GOLDEN_YAMLS = [
@@ -459,11 +459,7 @@ def test_embedded_agent_uses_the_exact_canonical_sim2real_yaml() -> None:
 
     canonical = (
         REPO_ROOT
-        / "npa"
-        / "workflows"
-        / "workbench"
-        / "npa-workflows"
-        / "sim2real.yaml"
+        / "workflows" / "main" / "sim2real.yaml"
     ).read_text(encoding="utf-8")
     source = _embedded_agent_workflow_source()
 
@@ -1427,7 +1423,8 @@ def test_generate_workflow_yaml_aliases() -> None:
 @pytest.mark.parametrize("yaml_name", _GOLDEN_YAMLS)
 def test_golden_yaml_validates(yaml_name: str) -> None:
     """All golden NPA workflow YAMLs in the repo should parse and validate."""
-    yaml_path = REPO_ROOT / "npa/workflows/workbench/npa-workflows" / yaml_name
+    tier = "main" if yaml_name in {"sim2real.yaml", "paidf-cosmos3.yaml"} else "testing"
+    yaml_path = REPO_ROOT / "workflows" / tier / yaml_name
     if not yaml_path.is_file():
         pytest.skip(f"golden YAML not found: {yaml_name}")
     yaml_text = yaml_path.read_text(encoding="utf-8")
@@ -1438,7 +1435,8 @@ def test_golden_yaml_validates(yaml_name: str) -> None:
 @pytest.mark.parametrize("yaml_name", _GOLDEN_YAMLS)
 def test_golden_yaml_plan_spec_cli(yaml_name: str) -> None:
     """Golden YAMLs should plan successfully with the CLI."""
-    yaml_path = REPO_ROOT / "npa/workflows/workbench/npa-workflows" / yaml_name
+    tier = "main" if yaml_name in {"sim2real.yaml", "paidf-cosmos3.yaml"} else "testing"
+    yaml_path = REPO_ROOT / "workflows" / tier / yaml_name
     if not yaml_path.is_file():
         pytest.skip(f"golden YAML not found: {yaml_name}")
     result = runner.invoke(

@@ -81,7 +81,7 @@ npa cluster up \
   --gpu-nodes 2 --gpu-platform <platform> --gpu-preset <preset> \
   --cpu-nodes 1 --cpu-platform <platform> --cpu-preset <preset> \
   --gpu-driver-mode auto --managed-driver-preset cuda13.0 \
-  --gpu-health-stability-seconds 120 \
+  --gpu-health-stabilization-seconds 120 \
   --validation-timeout 60 --timeout 120
 ```
 
@@ -91,7 +91,7 @@ Defaults are deliberately strict, and every one of them is on for a reason:
   components, CUDA vectorAdd, and the default StorageClass.
 - `--gpu-cuda-smoke` (default) runs NVIDIA's CUDA vectorAdd **on every requested
   GPU node**, which is the cheapest proof that drivers actually work.
-- `--gpu-health-stability-seconds` (default 120) requires nodes, boot IDs,
+- `--gpu-health-stabilization-seconds` (default 120) requires nodes, boot IDs,
   fabric, capacity, and components to stay healthy for that window. It exists
   because GPU nodes routinely look healthy for a few seconds during labelling.
 - `--sky-smoke` (default) runs a SkyPilot Kubernetes GPU task and cleans it up.
@@ -103,7 +103,7 @@ Do not reach for `--skip-validate` / `--skip-gpu-cuda-smoke` to make a deploy
 it costs more and is harder to attribute. `-1` on `--gpu-nodes` / `--cpu-nodes`
 keeps the configured value rather than meaning zero.
 
-For reserved capacity, `--capacity-block-group-id` selects a private capacity
+For reserved capacity, `--capacity-block-group` selects a private capacity
 block for strict GPU node-group reservation. `--preemptible` is often the only
 way to get several GPUs at once, but a reclaim stops nodes mid-run — keep CPU
 stages on the CPU pool, and note that preemptibility changes the capacity pool

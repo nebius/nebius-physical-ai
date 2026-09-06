@@ -1,0 +1,58 @@
+# One operator-owned SkyPilot API, reusable by this team's development clusters.
+# It provisions Kubernetes pods; application source is delivered by Ray Jobs.
+services:
+  api:
+    image: berkeleyskypilot/skypilot@sha256:e6cacad12f78519e0f55a33a9b38c0c9672af367749e34552889f4158b3e4b3b
+    user: "0:0"
+    init: true
+    cap_drop: [ALL]
+    # Read the operator's 0600 credentials through the explicit read-only mounts.
+    cap_add: [DAC_OVERRIDE]
+    security_opt: [no-new-privileges:true]
+    ports:
+      - "127.0.0.1:${SKY_API_PORT:-46590}:46580"
+    environment:
+      HOME: /root
+      KUBECONFIG: /root/.kube/config
+      SKYPILOT_DISABLE_USAGE_COLLECTION: "1"
+    volumes:
+      - api-state:/root/.sky
+      - type: bind
+        source: ${KUBECONFIG:?Set the absolute path to the platform kubeconfig}
+        target: /root/.kube/config
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${NEBIUS_CONFIG_DIR:?Set the existing Nebius CLI configuration directory}
+        target: /root/.nebius
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${NEBIUS_BIN:?Set the absolute path to the installed Nebius CLI}
+        target: /usr/local/bin/nebius
+        read_only: true
+        bind:
+          create_host_path: false
+    command: [sky, api, start, --host, 0.0.0.0, --foreground]
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - |
+          import json
+          import urllib.request
+
+          with urllib.request.urlopen('http://127.0.0.1:46580/api/health') as response:
+              health_response = json.load(response)
+          assert health_response['status'] == 'healthy', health_response
+          assert health_response['version'] == '0.12.2', health_response
+      interval: 5s
+      timeout: 10s
+      start_period: 1m
+      retries: 12
+
+volumes:
+  api-state:

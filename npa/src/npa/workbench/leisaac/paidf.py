@@ -257,7 +257,7 @@ def export_episode_to_paidf(
     )
     command = (
         "NPA_COSMOS_CONDITION_ON_INPUT=1 npa workbench workflow submit "
-        "npa/workflows/workbench/npa-workflows/physical-ai-data-factory.yaml "
+        "workflows/testing/physical-ai-data-factory.yaml "
         f"--run-id {paidf_run_id} --assume-decision promote_checkpoint "
         f"--var bucket={output_bucket} --var prefix={output_prefix} "
         "--secret-env NEBIUS_TOKEN_FACTORY_KEY --secret-env AWS_ACCESS_KEY_ID "
@@ -268,7 +268,7 @@ def export_episode_to_paidf(
         "input_uri": lineage["paidf"]["input_uri"],
         "lineage_uri": f"s3://{output_bucket}/{lineage_key}",
         "paidf_run_uri": lineage["paidf"]["run_uri"],
-        "workflow": "npa/workflows/workbench/npa-workflows/physical-ai-data-factory.yaml",
+        "workflow": "workflows/testing/physical-ai-data-factory.yaml",
         "tool_ref": "workbench.cosmos2.transfer_execute",
         "condition_on_input": True,
         "annotation_frame_count": len(annotation_frames),

@@ -48,6 +48,13 @@ npa convert lerobot-to-rrd \
 trajectory, which is how you see *where* a policy diverges rather than only that
 it scored badly. `--duration` caps the recording; the default is the adapter cap.
 
+The SDK entrypoint is `npa.convert.lerobot_to_rrd(input_path=...,
+output_path=..., predictions_path=...)`. Pass an S3 destination as a string:
+the SDK uploads the recording and returns the unchanged URI. Local destinations
+return a `Path`. Constructing `Path("s3://...")` removes a slash and changes the
+destination into a local path. Verify uploaded bytes and decode the recording
+before treating its returned reference as an artifact handoff.
+
 ## LeRobotDataset → MP4
 
 ```bash

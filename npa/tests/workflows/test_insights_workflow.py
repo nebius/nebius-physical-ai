@@ -6,7 +6,7 @@ from npa.orchestration.npa_workflow import build_plan, load_spec, validate_spec
 from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG, argv_for_tool
 
 ROOT = Path(__file__).resolve().parents[3]
-NPA_WORKFLOWS = ROOT / "npa" / "workflows" / "workbench" / "npa-workflows"
+NPA_WORKFLOWS = ROOT / "workflows" / "testing"
 HARDENING = NPA_WORKFLOWS / "hardening-with-insights.yaml"
 SMOKE = NPA_WORKFLOWS / "insights-smoke.yaml"
 AGGREGATE = NPA_WORKFLOWS / "insights-aggregate.yaml"
