@@ -144,3 +144,53 @@ def test_workflow_identity_keeps_artifact_roles_and_resolved_trigger_values(
     setattr(component, field, value)
 
     assert _workflow_identity(spec) != identity
+
+
+def test_zero_max_polls_override_keeps_watcher_unbounded():
+    spec = load_spec_for_submit(SHIPPED, config_overrides={"inbox_max_polls": "0"})
+    # Readiness arrives after the shipped limit of 40 polls has elapsed.
+    listing_sizes = iter([0] * 41 + [1])
+    sleeps = []
+    result = wait_for_trigger(
+        spec.states["caption-inbox"],
+        _make_context(spec, run_id="trigger-test"),
+        waiter=s3_trigger_waiter(
+            lister=lambda bucket, prefix: ["frame"] * next(listing_sizes),
+            sleeper=sleeps.append,
+            max_wait_seconds=0,
+        ),
+    )
+    assert result["objects"] == 1
+    assert result["polls"] == 42
+    assert sleeps == [15] * 41
+
+
+def test_literal_trigger_fields_ignore_unrelated_config_overrides(tmp_path):
+    document = yaml.safe_load(SHIPPED.read_text())
+    document["states"]["caption-inbox"]["trigger"].update(
+        pollSeconds=15, maxPolls=40, minObjects=1
+    )
+    path = tmp_path / "literal-trigger.yaml"
+    path.write_text(yaml.safe_dump(document))
+    original = load_spec(path)
+    overrides = {
+        "inbox_poll_seconds": "2",
+        "inbox_max_polls": "4",
+        "inbox_min_objects": "9",
+    }
+    changed = merge_config_overrides(original, overrides)
+    assert {key: changed.config[key] for key in overrides} == overrides
+    assert changed.states["caption-inbox"].trigger == original.states["caption-inbox"].trigger
+    listing_sizes = iter([0] * 4 + [1])
+    sleeps = []
+    result = wait_for_trigger(
+        changed.states["caption-inbox"],
+        _make_context(changed, run_id="trigger-test"),
+        waiter=s3_trigger_waiter(
+            lister=lambda bucket, prefix: ["frame"] * next(listing_sizes),
+            sleeper=sleeps.append,
+        ),
+    )
+    assert result["objects"] == 1
+    assert result["polls"] == 5
+    assert sleeps == [15] * 4
