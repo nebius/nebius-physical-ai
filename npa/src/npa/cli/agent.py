@@ -4229,6 +4229,36 @@ def _maybe_toolground_chat_reply(
         if match:
             mentioned_run = match.group(1)
         try:
+            selected_request = not mentioned_run and re.search(
+                r"\\b(?:selected|current|this)\\b.{{0,40}}\\brun\\b", str(user_text or ""), re.IGNORECASE
+            )
+            if selected_request:
+                selected = _sim_viz_for_run(state)
+                run_id = str(selected.get("run_id") or "")
+                run_ref = str(selected.get("run_ref") or state.get("active_run_ref") or "")
+                if not run_id or not run_ref:
+                    return "Select a run in **Runs & artifacts** first.", [], suggested_apis, None, {{"ok": False}}, intent
+                listed = artifacts_for_run(
+                    run_ref,
+                    resource_bucket=str(selected.get("resource_bucket") or selected.get("bucket") or ""),
+                    project_id=str(selected.get("project_id") or ""),
+                    resolved_prefix=str(selected.get("resolved_prefix") or ""),
+                    source_selected=True,
+                )
+                payload = json.loads(listed.body.decode("utf-8")) if isinstance(listed, JSONResponse) else listed
+                apis_used.append("artifacts/run/{{run_id}}")
+                if payload.get("ok") is False:
+                    return "The selected run's artifacts could not be listed. Check its access and source selection.", apis_used, suggested_apis, None, payload, intent
+                preferred = payload.get("preferred") or {{}}
+                reply = (
+                    "**Selected run artifacts** (from its exact storage source):\\n"
+                    f"- **run_id**: `{{run_id}}`\\n"
+                    f"- **artifact_count**: `{{int(payload.get('count') or 0)}}`\\n"
+                    f"- **preferred file**: `{{str(preferred.get('key') or '').rsplit('/', 1)[-1] or 'none'}}`\\n"
+                    f"- **render**: `{{preferred.get('render') or 'none'}}`\\n"
+                    "Use **List artifacts** for the selected run to preview or download its outputs. Artifact presence alone does not establish execution success."
+                )
+                return reply, apis_used, suggested_apis, None, payload, intent
             if mentioned_run:
                 listed = artifacts_for_run(mentioned_run)
                 apis_used.append("artifacts/run/{{run_id}}")

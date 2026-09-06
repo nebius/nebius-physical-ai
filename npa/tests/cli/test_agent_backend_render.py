@@ -3904,3 +3904,30 @@ states:
     )
     assert missing["workflow_validation"]["ok"] is False
     assert "validation failed" in missing["reply"]
+
+
+def test_selected_run_artifact_chat_preserves_exact_source(monkeypatch, tmp_path):
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name="selected_artifact_chat_backend")
+    from npa.workflows.artifacts import encode_run_ref
+
+    ref = encode_run_ref("example-bucket", "synthetic/metrics", "metrics")
+    selected = {"run_id": "metrics", "run_ref": ref, "bucket": "example-bucket",
+                "project_id": "example-project", "resolved_prefix": "synthetic/metrics"}
+    state = {"active_run_id": "metrics", "active_run_ref": ref, "sim_viz_runs": {ref: selected}}
+    monkeypatch.setattr(module, "_load_state", lambda: copy.deepcopy(state))
+    monkeypatch.setattr(module, "artifacts_runs", lambda **_: pytest.fail("selected run widened to global discovery"))
+    calls = []
+
+    def list_selected(run_ref, **scope):
+        calls.append((run_ref, scope))
+        return {"ok": True, "count": 2, "preferred": {"key": "synthetic/metrics/report.json", "render": "json"}}
+
+    monkeypatch.setattr(module, "artifacts_for_run", list_selected)
+    result = module._agent_chat_with_tools(
+        raw_messages=[{"role": "user", "content": "What can I view for the selected task-owned run?"}], model="unused"
+    )
+    assert result["grounded"] is True
+    assert calls == [(ref, {"resource_bucket": "example-bucket", "project_id": "example-project",
+                            "resolved_prefix": "synthetic/metrics", "source_selected": True})]
+    assert "report.json" in result["reply"] and "`2`" in result["reply"]
+    assert "example-bucket" not in result["reply"] and "synthetic/metrics" not in result["reply"]
