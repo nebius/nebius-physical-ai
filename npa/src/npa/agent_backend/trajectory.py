@@ -9,6 +9,8 @@ owner-only outbox and are retried at the next episode boundary.
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import functools
 import hashlib
 import ipaddress
@@ -75,6 +77,31 @@ _INFRA_RE = re.compile(
     r"|\bcr\.[a-z0-9-]+\.nebius\.cloud/[^\s\"'<>]+"
 )
 _IP_RE = re.compile(r"(?<![\w.])(?:\d{1,3}\.){3}\d{1,3}(?![\w.])|(?<![\w:])[0-9a-fA-F:]*:[0-9a-fA-F:]+(?![\w:])")
+# Native CLI output can occur inside JSON strings with literal escape sequences.
+_NATIVE_STYLE = r"(?:\x1b|\\+(?:u001b|x1b))\[[0-9;]*m"
+_NATIVE_START = rf"(?:(?<![\w.-])|\\+[nrt]|\\+u00(?:09|0a|0d|20)|{_NATIVE_STYLE})"
+_NATIVE_SPACE = r"(?:[ \t]|\\+t|\\+u00(?:09|20))+"
+_REQUEST_UUID = r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}"
+_SKY_LAUNCH_REFERENCE_RE = re.compile(
+    rf"(?P<context>{_NATIVE_START}(?:{_NATIVE_STYLE})*Submitted{_NATIVE_SPACE}"
+    rf"sky\.jobs\.launch{_NATIVE_SPACE}request:{_NATIVE_SPACE})"
+    rf"{_REQUEST_UUID}(?![\w-])", re.IGNORECASE,
+)
+_SKY_API_REFERENCE_RE = re.compile(
+    rf"(?P<context>{_NATIVE_START}(?:{_NATIVE_STYLE})*sky{_NATIVE_SPACE}api"
+    rf"{_NATIVE_SPACE}(?:logs|cancel){_NATIVE_SPACE})"
+    rf"(?:{_REQUEST_UUID}|[0-9a-f]{{8}})(?![\w-])", re.IGNORECASE,
+)
+_SSH_PUBLIC_KEY_TYPE = (
+    r"(?:(?:ssh-(?:rsa|dss|ed25519)|ecdsa-sha2-nistp(?:256|384|521))"
+    r"(?:-cert-v01@openssh\.com)?|sk-(?:ssh-ed25519|ecdsa-sha2-nistp256)"
+    r"(?:-cert-v01)?@openssh\.com)"
+)
+_SSH_PUBLIC_KEY_RE = re.compile(
+    rf"(?P<context>{_NATIVE_START}(?P<kind>{_SSH_PUBLIC_KEY_TYPE}){_NATIVE_SPACE})"
+    r"(?P<blob>(?:[A-Za-z0-9+/]|\\+/)+={0,2})"
+    r"(?=$|[\s\"'<>),;.\]}]|\\+[nrt\"']|\\+u00(?:09|0a|0d|20|22|27))"
+)
 _SAFE_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z")
 _REDACTION_MARKER_RE = re.compile(
     r"(<(?:redacted|uri-ref|infra-ref|address-ref|inline-data-ref|tenant-ref|bucket-ref|private-ref)>"
@@ -195,12 +222,33 @@ def verify_destination(config: DatasetConfig, *, storage: Any | None = None) -> 
             LOGGER.debug("agent dataset probe cleanup failed")
 
 
+def _redact_native_references(text: str) -> str:
+    for pattern in (_SKY_LAUNCH_REFERENCE_RE, _SKY_API_REFERENCE_RE):
+        text = pattern.sub(lambda match: match["context"] + "<infra-ref>", text)
+
+    def public_key(match: re.Match[str]) -> str:
+        # SSH public keys identify hosts/users; they are not private-key secrets.
+        # Check the wire-format algorithm to avoid treating ordinary base64 as a key.
+        token = re.sub(r"\\+/", "/", match["blob"])
+        try:
+            decoded = base64.b64decode(token + "=" * (-len(token) % 4), validate=True)
+        except (binascii.Error, ValueError):
+            return match[0]
+        kind = match["kind"].encode("ascii")
+        if (int.from_bytes(decoded[:4], "big") != len(kind)
+                or decoded[4:4 + len(kind)] != kind or len(decoded) <= 4 + len(kind)):
+            return match[0]
+        return match["context"] + "<infra-ref>"
+
+    return _SSH_PUBLIC_KEY_RE.sub(public_key, text)
+
+
 def _redact_string(value: str) -> str:
     # A data URI may contain wrapped base64 or whitespace. Removing its entire
     # string prevents fragments of the inline image from surviving a regex stop.
     if re.search(r"(?i)data:[^\s,]*;base64,", value):
         return "<inline-data-ref>"
-    text = value
+    text = _redact_native_references(value)
     for pattern in _SECRET_TEXT_PATTERNS:
         text = pattern.sub("<redacted>", text)
 

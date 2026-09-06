@@ -13,7 +13,7 @@ entrypoint that forwards orchestrator arguments. Compliant first-party images
 record `org.nebius.npa.skypilot-bootstrap-contract=skypilot-0.12.2-v1` in OCI
 config, with Dockerfile behavior covered by build tests.
 
-The canonical `npa-groot:0.1.0` is not in that attested publication set. It has
+The accepted historical `npa-groot:0.1.0` artifact has
 the non-root `ubuntu` user, system Python, `rsync`, an SSH client, and
 passwordless sudo, but lacks `openssh-server`, runtime host-key generation, and
 an argument-forwarding entrypoint. `groot/Dockerfile.k8s-prereqs` is the exact
@@ -22,8 +22,10 @@ from `packaging-contract.yaml`, but its OCI label is only a declaration: because
 the canonical and repaired artifacts share the `npa-groot` repository, submit
 ignores label-backed (including cached) evidence and requires a capability probe
 against the selected immutable digest. Public-image verification continues to
-check only canonical Dockerfiles that independently satisfy the declared
-publication contract; GR00T is deliberately absent from that set.
+check canonical Dockerfiles that independently satisfy the declared
+publication contract. The current canonical GR00T source now includes that
+contract and is in the attested-tool inventory; this does not retroactively
+attest the historical release bytes.
 
 Submit resolves the selected tag to an immutable digest and validates metadata
 on that digest. Missing/mismatched first-party evidence fails before launch.
@@ -322,21 +324,27 @@ export DOCKER_CONFIG="$(mktemp -d)"
 crane manifest ghcr.io/nebius/nebius-physical-ai/npa-lerobot:dev-<full-git-sha> >/dev/null
 ```
 
-### The plan is what we build, not what is pushed
+### Publication intent and registry state
 
-The publish plan is derived from the packaging contract, which records what this repo
-**builds**. The registry holds what someone actually **pushed**. Those two diverge every
-time a new tool lands — Dockerfile, contract entry and version pin merge together, while
-building and pushing the image is a separate manual step (there is no build-and-push
-automation). A brand-new tool is therefore *expected* to be absent from the registry for a
-while, and the preflight reports it as `NAME_UNKNOWN`.
+The packaging contract records build sources and redistribution eligibility.
+The public plan selects `publicly_publishable_tools()` and each resolved public
+release pin; restricted tools and validation candidates are excluded. A
+Dockerfile or `redistribution: public` alone does not put an image in that plan.
+The manually dispatched `publish-public-images.yml` workflow builds selected
+development images and separately promotes validated digests. Registry state
+must still be checked: source availability is not proof of publication.
 
-By default that blocks the publish, which is the right default: silently mirroring a subset
+The 2026-09-05 anonymous audit resolved all 32 current public-plan tags and
+matched all 32 accepted release digests. It required no build or registry write.
+See the [public image catalog](container-image-catalog.md) for retained aliases,
+exclusions, and the distinction between current source and released bytes.
+
+A missing planned source blocks publication by default: silently mirroring a subset
 would make a pin regression that dropped an image look exactly like success. When the gap is
 known and intended, publish the ready images anyway:
 
 ```bash
-python -m npa.deploy.publish_public --skip-missing            # or the workflow's skip_missing input
+npa/.venv/bin/python -m npa.deploy.publish_public --skip-missing
 ```
 
 It drops only the images the registry has no copy of, prints each one with the reason, and
@@ -361,7 +369,7 @@ defaults select the public release channel directly:
 docker pull ghcr.io/nebius/nebius-physical-ai/npa-retargeting:0.1.1
 ```
 
-Both development and release tags must pass the unauthenticated check:
+Check accepted release tags without relying on retained development tags:
 
 ```bash
 npa/.venv/bin/python -m npa.deploy.publish_public --verify-accepted-releases
@@ -376,8 +384,9 @@ release-byte verdict.
 Never add a `restricted` image to official GHCR.
 `publish_public` and `development_image_for_tool` refuse every member of the
 general restricted-image inventory. Separately, license-eligible candidates
-remain in `UNVALIDATED_PUBLICATION_TOOLS` until exact-digest GPU evidence is
-recorded, so a classification change alone cannot create a supported release.
+remain in `UNVALIDATED_PUBLICATION_TOOLS` or `VALIDATION_CANDIDATE_TOOLS`
+until their required exact-digest evidence is recorded, so a classification
+change alone cannot create a supported release.
 
 > **Publishing is a business decision.** The engineering makes publication defensible —
 > the images contain no NVIDIA-proprietary bytes, and NVIDIA delivers Isaac to each

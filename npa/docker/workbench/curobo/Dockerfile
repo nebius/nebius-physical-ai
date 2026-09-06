@@ -4,6 +4,8 @@ FROM nvidia/cuda:13.0.2-base-ubuntu24.04@sha256:2ab6381d970b211fb93853796dc6707e
 # cuRobo V2 uses the pinned cuda.core/NVRTC and Warp wheel compilers.
 # A runtime-only base avoids unused profiler binaries and development headers.
 ARG NPA_SOURCE_SHA
+# Build-only commit epoch makes pip emit reproducible PEP 552 checked-hash pyc.
+ARG SOURCE_DATE_EPOCH
 LABEL npa.tool="curobo" \
       npa.version="0.8.0-cuda13-b300-unbuilt" \
       org.opencontainers.image.revision="${NPA_SOURCE_SHA}" \
@@ -22,7 +24,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 USER root
-RUN [[ "$NPA_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+RUN [[ "$NPA_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] \
+    && [[ "$SOURCE_DATE_EPOCH" =~ ^[1-9][0-9]*$ ]]
 RUN rm -f /etc/apt/sources.list.d/*.list \
     && apt-get update && apt-get install -y --no-install-recommends \
        ca-certificates curl python3.12 python3.12-venv \
@@ -36,6 +39,7 @@ RUN rm -f /etc/apt/sources.list.d/*.list \
 
 COPY docker/workbench/curobo/requirements.lock /opt/curobo-requirements.lock
 COPY docker/workbench/curobo/filter_cudnn_runtime.py /opt/filter_cudnn_runtime.py
+COPY docker/workbench/curobo/remove_scikit_image_recipe.py /opt/remove_scikit_image_recipe.py
 # The current cuDNN supplement permits runtime-only redistribution. Use that
 # narrower boundary even though this wheel embeds older, broader header terms.
 # The non-cuDNN base contains none; filter the wheel in this SAME RUN before a
@@ -45,6 +49,9 @@ RUN pip install --no-cache-dir --require-hashes \
       -r /opt/curobo-requirements.lock \
     && mkdir -p /usr/share/doc/npa-curobo \
     && python /opt/filter_cudnn_runtime.py > /usr/share/doc/npa-curobo/cudnn-runtime.json \
+    && python /opt/remove_scikit_image_recipe.py \
+      --site-packages /opt/npa-venv/lib/python3.12/site-packages \
+      > /usr/share/doc/npa-curobo/dependency-source-correction.json \
     && pip check
 
 # The NVSHMEM wheel omits its release's product supplement and third-party

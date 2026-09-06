@@ -199,13 +199,14 @@ WORKBENCH_ASSETS: tuple[GatedAsset, ...] = (
         terms_revision="huggingface-gated-repository-current",
     ),
     GatedAsset(
-        "nvidia/Cosmos3-Super-Reasoner",
+        "MiniMaxAI/MiniMax-M3",
         TOKEN_FACTORY,
-        ("sim2real", "token_factory"),
+        ("sim2real", "token_factory", "vlm_eval"),
         False,
         note=(
-            "Hosted OpenMDW-1.1 model; verify key/project availability and balance "
-            "through Token Factory, not Hugging Face."
+            "Hosted MiniMax Community License model; verify key/project access "
+            "through Token Factory. API access does not establish commercial "
+            "license entitlement; review the model's vendor terms."
         ),
     ),
     GatedAsset("nvidia/Cosmos-Reason1-7B", HF, ("cosmos",), False),
@@ -213,7 +214,7 @@ WORKBENCH_ASSETS: tuple[GatedAsset, ...] = (
     GatedAsset(
         "nvidia/Cosmos-Guardrail1",
         HF,
-        ("cosmos3", "sim2real"),
+        ("cosmos2", "cosmos3", "sim2real"),
         True,
         revision="d6d4bfa899a71454a700907664f3e88f503950cf",
         probe_path="video_content_safety_filter/safety_filter.pt",
@@ -223,7 +224,7 @@ WORKBENCH_ASSETS: tuple[GatedAsset, ...] = (
     GatedAsset(
         "nvidia/Cosmos-Predict2.5-2B",
         HF,
-        ("sim2real",),
+        ("cosmos2", "sim2real"),
         True,
         revision="85f8ae7bfe8f5525c8d103429524dcf12f98bf7b",
         probe_path="tokenizer.pth",
@@ -258,20 +259,13 @@ WORKBENCH_ASSETS: tuple[GatedAsset, ...] = (
         repo_type="dataset",
     ),
     GatedAsset(
-        "meta-llama/Llama-3.3-70B-Instruct",
-        HF,
+        "nvidia/Nemotron-3_5-Lightning",
+        TOKEN_FACTORY,
         ("token_factory",),
-        True,
-        note="Only needed to self-host; Token Factory serves it hosted (no HF gating).",
-        official_url="https://huggingface.co/meta-llama/Llama-3.3-70B-Instruct",
-        terms_revision="llama-3.3-community-license-current",
-        revision="6f6073b423013f6a7d4d9f39144961bfbfbc386b",
-        probe_path="model-00001-of-00030.safetensors",
+        False,
+        note="Hosted text model; verify Token Factory access, not Hugging Face gating.",
     ),
     GatedAsset("Qwen/Qwen2-VL-7B-Instruct", HF, ("vlm_eval",), False),
-    GatedAsset(
-        "Qwen/Qwen2.5-VL-72B-Instruct", HF, ("vlm_eval", "token_factory"), False
-    ),
     GatedAsset("lerobot/pusht", HF, ("lerobot", "sim2real"), False),
     GatedAsset(
         "nvcr.io/nvidia/nre/nre-ga:26.04",

@@ -307,9 +307,12 @@ classified `redistribution: public`. Historical SONIC L40S and inherited MuJoCo
 artifacts contain restricted payload; replacing them does not make those old
 bytes redistributable.
 The replacement MuJoCo design used an independent digest-pinned public Python
-base to remove that inherited runtime. Every replacement digest must pass
-exact-layer scans plus real GPU validation before release acceptance; use the
-current inventories and accepted manifests for its publication state.
+base to remove that inherited runtime. Its accepted `0.2.0-runtime` digest passed
+exact-layer scans and a real B200 Unitree G1 rollout, as recorded in
+`npa/src/npa/deploy/sonic_image_manifest.json`. That evidence applies only to the
+replacement digest; historical variants remain quarantined. Every new digest
+must pass its own exact-layer scans and real GPU validation before release
+acceptance; use the current inventories and accepted manifests for its state.
 
 Three things made that verdict defensible rather than merely plausible, and a new
 solution should expect to produce all three:
@@ -436,11 +439,16 @@ otherwise.
 
 **Do not publish on the strength of the classification alone.** LTX initially
 remained in `UNVALIDATED_PUBLICATION_TOOLS` after its public classification and
-byte scan because real GPU evidence was still missing. That was an artifact
-validation state, not a permanent restriction on the tool. Resolve today's
-quarantine and accepted-digest evidence from the current sources above. Every
-new digest must earn its own scans and real capability result before promotion;
-a previous release's evidence does not validate replacement bytes.
+byte scan because real GPU evidence was still missing. Its accepted
+`2.5-rtfetch-20260817` digest subsequently passed the payload,
+entitlement-refusal, and real RTX PRO 6000 text-to-video/decoded-MP4 gates.
+`npa/src/npa/deploy/ltx2_image_manifest.json` binds those results to the exact
+bytes, which are now in the public release plan. OpenPI remains in
+`UNVALIDATED_PUBLICATION_TOOLS`; eligibility alone does not qualify its pending
+full-DROID image for release. Resolve current quarantine and accepted-digest
+state from the current sources above. Every new digest must earn its own scans
+and real capability result before promotion; a previous release's evidence does
+not validate replacement bytes.
 
 ## Red Flags
 

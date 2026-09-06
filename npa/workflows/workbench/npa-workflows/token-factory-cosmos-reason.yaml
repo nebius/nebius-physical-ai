@@ -3,7 +3,7 @@ kind: Workflow
 
 metadata:
   name: token-factory-cosmos-reason
-  description: Reason over scene frames with Token Factory Cosmos reasoner (zero-GPU).
+  description: Reason over scene frames with Token Factory hosted reasoner (zero-GPU).
 
 config:
   bucket: example-bucket
@@ -22,7 +22,7 @@ initial: reason-scene
 
 states:
   reason-scene:
-    description: Token Factory Cosmos reasoner over captured scene frames.
+    description: Token Factory hosted reasoner over captured scene frames.
     toolRef: workbench.token_factory.reason
     resources: cpu
     outputs:

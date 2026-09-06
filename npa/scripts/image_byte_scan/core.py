@@ -24,9 +24,9 @@ import zlib
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import asdict
+from pathlib import Path, PurePosixPath
 
 from . import confidentiality as C
-from pathlib import Path, PurePosixPath
 
 _ROOTS = ContextVar("image_byte_scan_authorized_roots", default=None)
 CHUNK = 1024 * 1024
@@ -571,13 +571,14 @@ class Detector:
 
 
 class Ledger:
-    def __init__(self, directory, detector, literals, policy, literal_engine=None, *, policy_config=None, literal_binding=None):
+    def __init__(self, directory, detector, literals, policy, literal_engine=None, *, policy_config=None, literal_binding=None, record_observer=None):
         parent_fd = directory_fd(directory)
         try:
             stream_fd = os.open("records.jsonl", os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600, dir_fd=parent_fd)
         finally:
             os.close(parent_fd)
         self.stream = os.fdopen(stream_fd, "w", encoding="utf-8")
+        self.record_observer = record_observer
         self.detector, self.literals, self.policy = detector, literals, policy
         if literal_engine is None:
             self.compiled_literals = compile_literals(literals, policy)
@@ -595,8 +596,11 @@ class Ledger:
         self.regular_files = self.regular_bytes = 0
 
     def write(self, record):
-        self.stream.write(json.dumps(record, sort_keys=True) + "\n")
+        serialized = json.dumps(record, sort_keys=True) + "\n"
+        self.stream.write(serialized)
         self.stream.flush()
+        if self.record_observer is not None:
+            self.record_observer(serialized.encode("utf-8"))
 
     def issue(self, code, context):
         self.findings += 1
@@ -912,7 +916,7 @@ def recheck_snapshots(snapshots):
             require(current_path == path and stat_fingerprint(info) == before, "input_changed_during_scan")
 
 
-def _scan(authorization, directory, detector_type=Detector):
+def _scan(authorization, directory, detector_type=Detector, *, record_observer=None):
     require(isinstance(authorization, dict) and authorization.get("schema_version") == "npa.image-byte-scan-authorization.v1", "authorization_schema")
     required = {"schema_version", "accepted_verification", "archive", "verification_report", "expected_image_id", "helper", "config", "sources", "tools_receipt"}
     require(required <= set(authorization) <= required | {"literal_inventory", "literal_engine", "confidentiality"}, "authorization_fields")
@@ -957,7 +961,7 @@ def _scan(authorization, directory, detector_type=Detector):
             literal_engine = AuthorizedAho(authorization["literal_engine"])
         detector = detector_type(authorization, directory / "helper-stderr.jsonl")
         sink = Ledger(directory, detector, values, policy, literal_engine, policy_config=policy_config,
-                      literal_binding=literal_binding)
+                      literal_binding=literal_binding, **({"record_observer": record_observer} if record_observer is not None else {}))
         report["confidentiality_policy"] = sink.confidentiality.receipt() if sink.confidentiality is not None else {"mode": "exact-literals-v1", "binding": sink.literal_policy_receipt}
         layer_names = {row["name"] for row in layers}
         locations = {}
@@ -1110,25 +1114,70 @@ def create_output(path):
         os.close(parent)
 
 
+def output_identity(directory, held_fd):
+    """Require the current path to name the directory held by this invocation."""
+    current = directory_fd(directory)
+    try:
+        expected, observed = os.fstat(held_fd), os.fstat(current)
+        require((expected.st_dev, expected.st_ino) == (observed.st_dev, observed.st_ino),
+                "output_directory_replaced")
+    finally:
+        os.close(current)
+
+
+def verify_private_json(directory, held_fd, name, result, identity):
+    """Read the complete published payload through the original directory."""
+    require(re.fullmatch(r"[a-zA-Z0-9_.-]+", name) is not None, "output_name")
+    output_identity(directory, held_fd)
+    fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
+                 dir_fd=held_fd)
+    try:
+        before = os.fstat(fd)
+        require(stat.S_ISREG(before.st_mode) and before.st_uid == os.geteuid()
+                and stat.S_IMODE(before.st_mode) == 0o600 and before.st_nlink == 1
+                and stat_fingerprint(before) == identity, "output_file_changed")
+        payload = (json.dumps(result, sort_keys=True, indent=2) + "\n").encode("utf-8")
+        actual = descriptor_bytes(fd)
+        after = os.fstat(fd)
+        named = os.stat(name, dir_fd=held_fd, follow_symlinks=False)
+        require(actual == payload and stat_fingerprint(before) == stat_fingerprint(after)
+                == stat_fingerprint(named) and after.st_nlink == named.st_nlink == 1,
+                "output_bytes_changed")
+        output_identity(directory, held_fd)
+    finally:
+        os.close(fd)
+
+
 def write_private_json(directory, name, result):
+    """Publish once and return the original file's final identity for readback."""
     require(re.fullmatch(r"[a-zA-Z0-9_.-]+", name) is not None, "output_name")
     fd = directory_fd(directory)
     created = False
+    output = None
     temporary = name + ".pending"
     try:
         output = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600, dir_fd=fd)
         created = True
-        with os.fdopen(output, "w", encoding="utf-8") as stream:
+        with os.fdopen(output, "w", encoding="utf-8", closefd=False) as stream:
             json.dump(result, stream, sort_keys=True, indent=2)
             stream.write("\n")
             stream.flush()
             os.fsync(stream.fileno())
         os.link(temporary, name, src_dir_fd=fd, dst_dir_fd=fd, follow_symlinks=False)
+        os.unlink(temporary, dir_fd=fd)
+        created = False
         os.fsync(fd)
+        return stat_fingerprint(os.fstat(output))
     finally:
-        if created:
-            os.unlink(temporary, dir_fd=fd)
-        os.close(fd)
+        try:
+            if created:
+                os.unlink(temporary, dir_fd=fd)
+        finally:
+            try:
+                if output is not None:
+                    os.close(output)
+            finally:
+                os.close(fd)
 
 
 def main(argv=None):
@@ -1138,6 +1187,9 @@ def main(argv=None):
     previous_cancel = _CANCEL_REQUESTED
     _CANCEL_REQUESTED = False
     directory = output_fd = None
+    policy_requested = False
+    policy_review = None
+    outputs_verified = False
 
     def cancelled(signum, frame):
         global _CANCEL_REQUESTED
@@ -1155,7 +1207,11 @@ def main(argv=None):
             parser.add_argument("--trusted-root", type=Path, required=True)
             parser.add_argument("--authorization", type=Path, required=True)
             parser.add_argument("--output-dir", type=Path, required=True)
+            parser.add_argument("--public-native-policy", type=Path)
+            parser.add_argument("--public-native-policy-sha256")
             args = parser.parse_args(argv)
+            policy_requested = args.public_native_policy is not None or args.public_native_policy_sha256 is not None
+            require(not policy_requested or (args.public_native_policy is not None and args.public_native_policy_sha256 is not None), "public_policy_arguments")
             with authorized_roots(args.analysis_root, args.trusted_root):
                 directory, output_fd = create_output(args.output_dir)
                 try:
@@ -1165,23 +1221,49 @@ def main(argv=None):
                         require(stat_fingerprint(os.fstat(fd)) == stat_fingerprint(info), "authorization_changed_during_read")
                     finally:
                         os.close(fd)
-                    result = _scan(json_object(raw), directory)
+                    authorization = json_object(raw)
+                    if policy_requested:
+                        from .public_native_policy import FreshPolicyReview
+                        policy_review = FreshPolicyReview(args.public_native_policy, args.public_native_policy_sha256, authorization,
+                                                          {"path": str(args.authorization), "sha256": sha(raw)}, output_fd=output_fd)
+                    result = (_scan(authorization, directory, record_observer=policy_review.observe) if policy_review
+                              else _scan(authorization, directory))
                     with bound_open({"path": str(args.authorization), "sha256": sha(raw)}) as (_path, _fd, after):
                         require(stat_fingerprint(after) == stat_fingerprint(info), "authorization_changed_during_scan")
                 except INPUT_ERRORS as error:
                     result = {"schema_version": "npa.image-byte-scan.v1", "valid": False, "complete": False,
                               "failure_code": str(error) if isinstance(error, ScanError) else "invalid_scan_configuration"}
-                current = directory_fd(directory)
-                try:
-                    require((os.fstat(current).st_dev, os.fstat(current).st_ino) ==
-                            (os.fstat(output_fd).st_dev, os.fstat(output_fd).st_ino), "output_directory_replaced")
-                finally:
-                    os.close(current)
-                write_private_json(directory, "report.json", result)
+                output_identity(directory, output_fd)
+                report_identity = write_private_json(directory, "report.json", result)
+                verify_private_json(directory, output_fd, "report.json", result, report_identity)
+                if policy_review is not None:
+                    policy_review.accept_fresh_scan(result, directory)
+                # Receipt publication can race with changes to any earlier output.
+                verify_private_json(directory, output_fd, "report.json", result, report_identity)
+                if policy_review is not None:
+                    policy_review.verify_output(directory)
+                output_identity(directory, output_fd)
+                outputs_verified = True
         except INPUT_ERRORS:
+            outputs_verified = False
             result = {"valid": False, "complete": False}
-        print("complete image byte scan " + ("passed" if result["valid"] else "failed"))
-        return 0 if result["valid"] else 1
+            if policy_review is not None:
+                policy_review.accepted = False
+            if policy_requested and output_fd is not None:
+                # Revoke only the acceptance name in our original directory; the
+                # raw report/ledger and any replacement directory remain intact.
+                try:
+                    os.unlink("public-policy-acceptance.json", dir_fd=output_fd)
+                    os.fsync(output_fd)
+                except FileNotFoundError:
+                    pass
+                except OSError:
+                    result["failure_code"] = "public_policy_receipt_cleanup_failed"
+        passed = outputs_verified and (bool(policy_review and policy_review.accepted)
+                                       if policy_requested else result["valid"])
+        label = "image byte public-policy gate " if policy_requested else "complete image byte scan "
+        print(label + ("passed" if passed else "failed"))
+        return 0 if passed else 1
     finally:
         if output_fd is not None:
             os.close(output_fd)

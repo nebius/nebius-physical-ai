@@ -70,9 +70,10 @@ Pure, side-effect-free functions (no network) so they unit-test cheaply:
 - `build_model_ladder(tier, configured, interactive, requested_model,
   allow_tier_defaults)` → cheapest-capable first; explicit user model wins;
   operator allowlist (`NPA_AGENT_LLM_MODELS`) respected when set.
-- `flavor_variants` + `filter_available` — prefer the Token Factory `-fast`
-  flavor for interactive turns, but drop variants the key cannot serve (never
-  strand a turn).
+- `flavor_variants` + `filter_available` — use only documented concrete model
+  IDs and drop unavailable defaults. The current public replacements have no
+  verified `-fast` variants; never invent one. Explicit selections are tried
+  even when absent from the model list (dedicated endpoints can differ).
 - `chat_extra` / `thinking_enabled` — disable hidden reasoning traces off the
   reasoning tier (don't pay for discarded tokens).
 - `enforce_input_budget` — cap oversized pastes (head+tail preserved).
@@ -104,7 +105,7 @@ explicit model override, and returns `tier` + `usage` + `input_budget_ok`.
 2. **Cheap model** — if it needs generation, let routing pick the cheap tier;
    only add reasoning/vision signals to `classify_tier` when the turn truly
    needs them.
-3. **Escalate deliberately** — reserve `nvidia/Cosmos3-Super-Reasoner` for
+3. **Escalate deliberately** — reserve `MiniMaxAI/MiniMax-M3` for
    analytical/physical-AI/vision turns; it is overkill for routine chat.
 4. **Visual feedback** — UI **Describe this** captures the active viewer frame
    and posts multimodal `/api/chat` with `visual_context`. Helpers live in
@@ -115,8 +116,10 @@ explicit model override, and returns `tier` + `usage` + `input_budget_ok`.
 
 - OpenAI-compatible: base `https://api.tokenfactory.nebius.com/v1/`, key
   `NEBIUS_TOKEN_FACTORY_KEY`. Same `chat/completions` shape everywhere.
-- Model **flavors**: `-fast` (low latency, pricier) vs base; identical output.
-  Only append `-fast` when the key exposes it (`filter_available`).
+- Public defaults follow the [August 2026 migration notice](https://docs.tokenfactory.nebius.com/august-2026-deprecation-notice):
+  `nvidia/Nemotron-3_5-Lightning` for cheap/standard text,
+  `MiniMaxAI/MiniMax-M3` for reasoning/vision. No default `-fast` IDs are added.
+  Vision never falls back to the text-only Lightning default.
 - Cost-ordered default ladder lives in `DEFAULT_LLM_MODELS` (cheap first). A bare
   `npa agent deploy` seeds this whole ladder, so per-turn routing reaches every
   tier without `--llm-models`. Explicit `--llm-models` is a governance allowlist;
@@ -124,6 +127,10 @@ explicit model override, and returns `tier` + `usage` + `input_budget_ok`.
   selection.
 - Reasoning-trace handling: `split_reasoning()` normalizes Cosmos3 inline
   `<think>` and Kimi/GLM `reasoning` fields.
+- `chat_extra(tier, model)` selects thinking parameters per attempted model:
+  Lightning uses `chat_template_kwargs.enable_thinking=false`; MiniMax uses
+  `chat_template_kwargs.thinking_mode="disabled"`. Analytical turns retain
+  reasoning, and unknown custom models receive no guessed template options.
 
 `/api/models` and `/api/session` share observed model availability. Prefer the
 configured default only when the provider lists it as chat-capable and it is
@@ -166,6 +173,21 @@ Follow `skills/atomic/testing-conventions/SKILL.md`; use `npa/.venv/bin/python`.
 - **Tier 2 — live e2e (bounded tokens):** gate behind `NPA_AGENT_CHAT_LIVE=1` /
   `NPA_INTEGRATION_E2E=1`; pin the cheapest model; assert `grounded: true` where
   possible so most turns cost 0 tokens.
+- **Live public-model migration coverage:**
+  `npa/tests/e2e/test_agent_token_factory_e2e.py` runs the rendered backend under
+  uvicorn on loopback, sends synthetic text/reasoning/vision requests through
+  `/chat`, and checks real Token Factory answers and model selection. Only the
+  deployment SSH transport is replaced while rendering; inference is real.
+  It uses `token_factory_e2e` and skips without configured provider credentials.
+
+For action-loop validation, inspect the final answer against the original goal
+as well as the successful tool observations. `stopped_reason="done"` can come
+from a deterministic empty-result reply; it does not prove the model produced a
+final answer or that every requested part was answered. An empty lookup is
+terminal only when its subject and scope satisfy the whole request. A filtered
+query with zero matches cannot establish an empty store, and an unrelated empty
+run lookup cannot replace an available status or tool-catalog answer. Preserve
+these distinctions in evaluation receipts and regression tests.
 
 ```bash
 npa/.venv/bin/python -m pytest npa/tests/cli/test_agent_routing.py \
@@ -263,8 +285,10 @@ and `agent_eval/test_agent_adversarial_scorecard.py`.
 The shipped `agent_backend/improvements.py` queue detects explicit tool failures,
 nonterminal empty results, truncation and exhausted action loops. Direct action,
 Sim2Real drive and semantic-action chat record observations linked to the active
-trajectory episode. Successful recovery and empty terminal discovery are not
-implementation defects. The queue produces triage work packages; it does not run
+trajectory episode. Successful recovery and empty discovery that answers the
+whole request are not implementation defects. Premature empty-result termination
+requires separate goal-answer review even when the loop reports `done`.
+The queue produces triage work packages; it does not run
 shell commands, modify source, launch workers or publish code.
 
 Enable it explicitly with `NPA_AGENT_IMPROVEMENT_CONFIG`, pointing to an

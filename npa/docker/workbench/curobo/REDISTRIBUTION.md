@@ -41,6 +41,27 @@ No published image or measured performance is claimed by this record.
   install the optional pybind backend or need the full CUDA development image,
   its unused Nsight profiler, or operating-system development headers. Native
   GPU execution remains a required qualification gate.
+- Reproducible Python bytecode: the build helper and trusted workflow pass the
+  exact source commit epoch as a build-only `SOURCE_DATE_EPOCH` argument. The
+  pinned CPython compiler then uses PEP 552 checked-hash bytecode for newly
+  installed packages. This removes installation-time header variation while
+  preserving the complete compiled code payload; it does not modify inherited
+  image layers or change runtime authentication. Verify actual built-layer
+  headers and full bytecode hashes against the exact source and compiler before
+  accepting image findings. The argument is not retained in runtime environment.
+- Dependency source correction: scikit-image 0.26.0 includes a historical
+  download recipe containing bearer material whose continued usability cannot
+  be established. `remove_scikit_image_recipe.py` checks the exact installed
+  version and source hash, removes only that second, inert string expression
+  from `grass()`, and verifies the resulting source hash. The executable module
+  AST, primary documentation and image-loading call remain identical; original
+  notices are retained. The same installation RUN removes the affected old
+  bytecode, regenerates it from the corrected source and updates the wheel's
+  `RECORD`. `/usr/share/doc/npa-curobo/dependency-source-correction.json` records
+  the source, resulting source, bytecode and before/after metadata hashes.
+  A later-layer deletion would leave the original bytes distributed, so this
+  correction must finish before the installation layer commits. It is not a
+  scanner-rule exception, and the resulting image still requires all scans.
 - cuDNN: the current official supplement permits only runtime `.so`/`.dll`
   distribution. The locked wheel's bundled older supplement additionally lists
   `.h`; packaging deliberately uses the narrower runtime boundary that satisfies
@@ -102,8 +123,10 @@ Metadata sources: [pinned upstream package metadata](https://github.com/NVlabs/c
 [PyPA classifier specification](https://packaging.python.org/en/latest/specifications/pyproject-toml/#classifiers),
 [PyPI classifier registry](https://pypi.org/classifiers/).
 
-The source install makes only the documented package metadata correction;
-vendor runtime code, robot assets and dataset bytes are unchanged. NPA invokes
+The cuRobo source install makes only the documented package metadata correction;
+its runtime code, robot assets and dataset bytes are unchanged. The separate
+scikit-image correction removes an inert historical example while preserving
+its executable AST. NPA invokes
 upstream's benchmark configuration loader and MotionPlanner, and records its own factual metrics;
 it does not reproduce upstream's placeholder end-effector path statistics or
 convert inverse-dynamics failures to zero energy.

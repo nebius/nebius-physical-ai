@@ -36,6 +36,9 @@ For live validation also load `skills/atomic/gpu-selection/SKILL.md`,
    from every official GHCR tag; resolve any disagreement between those sources
    before publication. Read current eligibility and quarantine state from those
    sources, rather than treating a historical product example as a fixed inventory.
+   The supported `cosmos3-serving` release is bound to its accepted,
+   payload-scanned and GPU-validated digest; historical restricted bytes remain
+   prohibited. Future development bytes must pass the sequence below.
 3. Before any public push, run the repository packaging/license guards and
    inspect the locally built artifact, including layers, history, and OCI config.
    Refuse credentials, secrets, customer data, live infrastructure identifiers,

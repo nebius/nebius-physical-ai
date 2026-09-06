@@ -23,9 +23,9 @@ import stat
 from typing import Any, Iterator, Mapping, Sequence
 
 try:
-    from agent_backend.trajectory import redact
+    from agent_backend.trajectory import _redact_identifiers, redact
 except ImportError:  # installed SDK / repository tests
-    from npa.agent_backend.trajectory import redact
+    from npa.agent_backend.trajectory import _redact_identifiers, redact
 
 
 class ImprovementError(ValueError):
@@ -256,26 +256,12 @@ class ImprovementStore:
             """)
 
     def _safe(self, value: Any) -> Any:
-        clean = redact(value)
-
-        def replace(item: Any) -> Any:
-            if isinstance(item, str):
-                for literal in self.private_literals:
-                    item = item.replace(literal, "<private-ref>")
-                return item
-            if isinstance(item, list):
-                return [replace(part) for part in item]
-            if isinstance(item, dict):
-                result = {}
-                for key, part in item.items():
-                    safe_key = replace(key)
-                    if safe_key != key:
-                        safe_key += "-" + _digest(key)[:12]
-                    result[safe_key] = replace(part)
-                return result
-            return item
-
-        return replace(clean)
+        # Use the trajectory's collision-safe, idempotent literal pass for the
+        # queue too. Reports and receipts cross this boundary more than once;
+        # replacing text inside generated markers corrupts their retained proof.
+        return _redact_identifiers(
+            redact(value), {literal: "<private-ref>" for literal in self.private_literals}
+        )
 
     @contextmanager
     def _transaction(self) -> Iterator[sqlite3.Connection]:

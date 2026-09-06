@@ -104,7 +104,7 @@ _AMBIENT_CREDENTIAL_ENV_VARS = (
 # they are unset. Non-live tests that need a value set them via monkeypatch after
 # this scrub runs; live-marked tests are exempt and keep the real context.
 _AMBIENT_INFRA_TARGET_ENV_VARS = (
-    # Detached operator runs select private runtime roots. Non-live tests must
+    # Operator configuration can select private runtime roots. Non-live tests must
     # resolve their temporary HOME, never the operator's config or journals.
     "NPA_CONFIG_DIR",
     "NPA_OPERATION_JOURNAL_DIR",

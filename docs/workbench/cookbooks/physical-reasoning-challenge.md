@@ -1,5 +1,12 @@
 # Physical Reasoning Challenge (Token Factory + Cosmos3-Super-Reasoner)
 
+> Historical Cosmos3 recipe: its public hosted model was retired under the
+> [August 2026 notice](https://docs.tokenfactory.nebius.com/august-2026-deprecation-notice).
+> Use the current [Token Factory guide](/docs/workbench/token-factory.md) and
+> [migration verification](/docs/workbench/token-factory-deprecation-verification.md)
+> for current defaults. Explicit legacy model IDs require a serving endpoint;
+> this page does not establish their current availability.
+
 A zero-GPU challenge built on Nebius Token Factory's hosted
 `nvidia/Cosmos3-Super-Reasoner`. Teams walk a robot (or just a phone camera) to
 different scenes around campus, capture images, and use the reasoner to extract

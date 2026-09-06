@@ -20,10 +20,11 @@ def test_baked_identity_uses_checked_build_input_and_absolute_interpreter():
 
 @pytest.mark.parametrize("sha", ["", "a" * 39, "a" * 41, "g" * 40, "a" * 40])
 def test_docker_source_gate_executes_and_rejects_nonfull_sha(sha):
-    instruction = next(line for line in DOCKERFILE.read_text().splitlines() if line.startswith("RUN [[ "))
+    instructions = DOCKERFILE.read_text().replace("\\\n", " ").splitlines()
+    instruction = next(line for line in instructions if line.startswith("RUN [[ "))
     result = subprocess.run(
         ["/bin/bash", "-c", instruction.removeprefix("RUN ")],
-        env={"NPA_SOURCE_SHA": sha},
+        env={"NPA_SOURCE_SHA": sha, "SOURCE_DATE_EPOCH": "1700000000"},
         check=False,
         capture_output=True,
     )
