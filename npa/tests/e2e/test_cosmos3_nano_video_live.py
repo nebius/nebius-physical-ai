@@ -45,8 +45,10 @@ def test_one_then_eight_complete_generation_requests(monkeypatch):
                 "--output-path", destination,
             ])
             (recovery / "cli-output.txt").write_text(cli.output)
+            (recovery / "cli-stdout.txt").write_text(cli.stdout)
+            (recovery / "cli-stderr.txt").write_text(cli.stderr)
             assert cli.exit_code == 0, "Inspect retained CLI output and recovery artifacts"
-            result = json.loads(cli.output)
+            result = json.loads(cli.stdout)
         assert result["status"] == "succeeded"
         assert result["completed"] == concurrency
         assert result["distinct_replicas"] == concurrency
