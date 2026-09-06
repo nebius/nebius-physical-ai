@@ -743,8 +743,9 @@ def test_run_cosmos_transfer_names_gated_access_denial_without_leaking_prompt(
     (repo / "examples").mkdir(parents=True)
     monkeypatch.setattr(tx, "cosmos_transfer_repo", lambda: repo)
     monkeypatch.setattr(tx, "ensure_env", lambda _repo: Path("/usr/bin/python3"))
-    # Exercise the inference failure boundary without downloading the separate
-    # guardrail cache (covered by the cache preparation tests above).
+    # This test exercises the inference subprocess error, after runtime setup.
+    # Keep that setup hermetic even when the optional Hub client is installed.
+    monkeypatch.setitem(sys.modules, "huggingface_hub", None)
     monkeypatch.setattr(tx, "prepare_guardrail_nltk_data", lambda **_kwargs: 0)
     monkeypatch.setenv("HF_TOKEN", "unit-test-placeholder")
     secret_prompt = "a secret prompt that must never reach the raised message"

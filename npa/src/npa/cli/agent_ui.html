@@ -2735,6 +2735,10 @@
         }
       }
       let activeChatSessionId = "default";
+      let chatSessionSelectionGeneration = 0;
+      let chatSessionMutationGeneration = 0;
+      let chatSessionMutationQueue = Promise.resolve();
+      const chatSessionSnapshotGenerations = new WeakMap();
       let chatSendInFlight = false;
       const chatQueue = [];
       let chatQueueDrain = null;
@@ -8261,41 +8265,59 @@
           select.appendChild(opt);
         }
       }
+      function chatSessionRefreshIsCurrent(generation) {
+        return generation === chatSessionSelectionGeneration && !chatSessionMutationGeneration;
+      }
       async function refreshChatSessions(activeId) {
+        const generation = chatSessionSelectionGeneration;
         const data = await apiJson("/api/chat/sessions");
-        activeChatSessionId = String(data.active_session_id || activeId || activeChatSessionId || "default");
+        if (!chatSessionRefreshIsCurrent(generation)) return data;
+        activeChatSessionId = String(activeId || data.active_session_id || activeChatSessionId || "default");
         updateChatSessionSelector(data.sessions, activeChatSessionId);
         return data;
       }
+      async function changeChatSession(sessionId, create) {
+        // Invalidate older discovery before any await, and block refreshes while
+        // the server is changing its active session. A second selection wins.
+        const generation = ++chatSessionSelectionGeneration;
+        chatSessionMutationGeneration = generation;
+        const previousMutation = chatSessionMutationQueue;
+        const mutationCompletion = {};
+        chatSessionMutationQueue = new Promise((resolve) => { mutationCompletion.resolve = resolve; });
+        try {
+          // Serialize server writes as well as local selection. Otherwise an
+          // older POST can save last and be restored by the next fresh GET.
+          await previousMutation;
+          if (generation !== chatSessionSelectionGeneration) return false;
+          if (chatQueueDrain) await chatQueueDrain;
+          if (generation !== chatSessionSelectionGeneration) return false;
+          const safeId = String(sessionId || "default").trim() || "default";
+          const path = create ? "/api/chat/sessions"
+            : "/api/chat/sessions/" + encodeURIComponent(safeId) + "/select";
+          const data = await apiJson(path, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(create ? { title: "New chat" } : {}),
+          });
+          if (generation !== chatSessionSelectionGeneration) return false;
+          // Also invalidate refreshes that started during this mutation.
+          chatSessionSelectionGeneration += 1;
+          const session = data.session || {};
+          activeChatSessionId = String(data.active_session_id || session.id || safeId);
+          updateChatSessionSelector(data.sessions, activeChatSessionId);
+          renderChatHistory(create ? [] : (session.chat_history || []));
+          showToast(create ? "New chat session ready" : "Loaded chat session", "success");
+          return create ? true : session;
+        } finally {
+          if (chatSessionMutationGeneration === generation) chatSessionMutationGeneration = 0;
+          mutationCompletion.resolve();
+        }
+      }
       async function selectChatSession(sessionId) {
-        // Wait for in-flight chat jobs so replies do not paint into the wrong session.
-        if (chatQueueDrain) await chatQueueDrain;
-        const safeId = String(sessionId || "default").trim() || "default";
-        const data = await apiJson("/api/chat/sessions/" + encodeURIComponent(safeId) + "/select", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({}),
-        });
-        const session = data.session || {};
-        activeChatSessionId = String(data.active_session_id || session.id || safeId);
-        updateChatSessionSelector(data.sessions, activeChatSessionId);
-        renderChatHistory(session.chat_history || []);
-        showToast("Loaded chat session", "success");
-        return session;
+        return changeChatSession(sessionId, false);
       }
       async function createNewChatSession() {
-        if (chatQueueDrain) await chatQueueDrain;
-        const data = await apiJson("/api/chat/sessions", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ title: "New chat" }),
-        });
-        const session = data.session || {};
-        activeChatSessionId = String(data.active_session_id || session.id || "default");
-        updateChatSessionSelector(data.sessions, activeChatSessionId);
-        renderChatHistory([]);
-        showToast("New chat session ready", "success");
-        return true;
+        return changeChatSession("default", true);
       }
       let lastAppliedDraftYaml = "";
       function setWorkflowYaml(text, validation) {
@@ -12657,8 +12679,16 @@
               String((run && run.run_id) || "").toLowerCase().includes(needle)
             );
         const result = document.getElementById("stagesRunSearchResult");
+        // Background discovery may refresh this picker after an exact lookup.
+        // Keep that lookup's actionable result until the operator changes the
+        // query or another run loads; generic search guidance must not erase it.
+        if (result && result.dataset.lookupQuery !== needle) {
+          delete result.dataset.lookupQuery;
+        }
         if (result && needle && activeRunId && !String(activeRunId).toLowerCase().includes(needle)) {
-          result.textContent = "Search results are separate from the currently loaded run " + activeRunId + ".";
+          if (!result.dataset.lookupQuery) {
+            result.textContent = "Search results are separate from the currently loaded run " + activeRunId + ".";
+          }
           current = "";
         } else if (result && !needle) {
           result.textContent = activeRunId ? "Currently loaded run: " + activeRunId + "." : "";
@@ -13346,6 +13376,7 @@
           if (!requestIsCurrent() || (signal && signal.aborted)) return false;
           const searchResult = document.getElementById("stagesRunSearchResult");
           if (searchResult) {
+            searchResult.dataset.lookupQuery = runId.toLowerCase();
             const current = activeRunId ? " Currently loaded run remains " + activeRunId + "." : " No run is currently loaded.";
             searchResult.textContent = "Exact NPA run lookup failed for " + runId + ": " + String((err && err.message) || err) + "." + current;
           }
@@ -13359,7 +13390,10 @@
         activeRunEntryKey = String((entry && entry.entry_key) || runRef || "");
         syncRunChooserFields(runId, activeRunEntryKey || runRef);
         const searchResult = document.getElementById("stagesRunSearchResult");
-        if (searchResult) searchResult.textContent = "Loaded discovered NPA run: " + runId + ".";
+        if (searchResult) {
+          delete searchResult.dataset.lookupQuery;
+          searchResult.textContent = "Loaded discovered NPA run: " + runId + ".";
+        }
         const artifacts = Array.isArray(data.artifacts) ? data.artifacts : [];
         activeArtifactInventoryRunId = runId;
         activeArtifactInventory = artifacts;
@@ -13396,6 +13430,7 @@
         activeRunResourceScope = {
           run_id: runId,
           run_ref: runRef,
+          entry_key: activeRunEntryKey,
           bucket: String(data.bucket || (entry && entry.bucket) || ""),
           project_id: String(data.project_id || (entry && entry.project_id) || ""),
           resolved_prefix: String(data.resolved_prefix || ""),
@@ -14641,6 +14676,12 @@
       async function refresh(options) {
         const opts = options && typeof options === "object" ? options : {};
         const generation = ++refreshGeneration;
+        // Boot may reuse a session fetched before a newer local selection.
+        // Keep that fetch generation instead of granting the stale snapshot
+        // the generation current when refresh happens to consume it.
+        const chatGeneration = opts.session
+          ? chatSessionSnapshotGenerations.get(opts.session)
+          : chatSessionSelectionGeneration;
         try {
           const selectionGeneration = activeRunSelectionGeneration;
           const requestedRunId = String(activeRunId || "").trim();
@@ -14662,7 +14703,7 @@
             );
             setChatModels(session.llm.models, currentModel);
           }
-          if (session && session.chat_sessions) {
+          if (session && session.chat_sessions && chatSessionRefreshIsCurrent(chatGeneration)) {
             activeChatSessionId = String(session.active_chat_session_id || activeChatSessionId || "default");
             updateChatSessionSelector(session.chat_sessions, activeChatSessionId);
           }
@@ -14885,13 +14926,32 @@
             source_label: runId === "franka-demo" ? "Local demo" : "Workflow history",
           }));
         }
-        if (currentRef) activeArtifactRunRef = currentRef;
-        if (currentRun && simViz && simViz.bucket) {
-          activeRunEntryKey = currentRef || runEntryIdentity(
-            currentRun, "artifact_storage", simViz
-          );
+        // Restored media already carries its exact storage identity. Keep it
+        // available before background discovery has hydrated the run cache.
+        const restoredRef = String((simViz && (simViz.artifact_run_ref || simViz.active_run_ref)) || "").trim();
+        const reportedRun = String((simViz && simViz.run_id) || "").trim();
+        const selectionMatches = currentRun === activeRunId &&
+          (!reportedRun || reportedRun === currentRun) &&
+          (!activeArtifactRunRef || activeArtifactRunRef === currentRef);
+        const restoreSource = selectionMatches && restoredRef &&
+          simViz.bucket && simViz.project_id &&
+          Object.prototype.hasOwnProperty.call(simViz, "resolved_prefix");
+        if (restoreSource) {
+          activeRunResourceScope = {
+            run_id: currentRun, run_ref: restoredRef, entry_key: currentRef,
+            bucket: String(simViz.bucket), project_id: String(simViz.project_id),
+            resolved_prefix: String(simViz.resolved_prefix || ""), source_selected: true,
+          };
         }
-        applyMergedRunSelectors(activeRunEntryKey || currentRef || currentRun);
+        if (selectionMatches) {
+          if (currentRef) activeArtifactRunRef = currentRef;
+          if (currentRun && simViz && simViz.bucket) {
+            activeRunEntryKey = currentRef || runEntryIdentity(
+              currentRun, "artifact_storage", simViz
+            );
+          }
+        }
+        applyMergedRunSelectors(activeRunEntryKey || activeArtifactRunRef || activeRunId);
       }
       let selectedRunLoadGeneration = 0;
       async function loadSelectedRun(entryOrRunId) {
@@ -14944,6 +15004,7 @@
         if (entry.source_type === "artifact_storage") {
           const searchResult = document.getElementById("stagesRunSearchResult");
           if (searchResult) {
+            searchResult.dataset.lookupQuery = chosen.toLowerCase();
             searchResult.textContent = "Checking exact discovered NPA run: " + chosen + "…" +
               (activeRunId ? " Currently loaded run remains " + activeRunId + " until lookup succeeds." : "");
           }
@@ -15372,12 +15433,20 @@
       async function loadRunDetails(runId, options) {
         const target = String(runId || activeRunId || "").trim();
         const opts = options && typeof options === "object" ? options : {};
-        const entry = opts.entry || preferredRunEntry(target) || {};
+        const activeScope = activeRunResourceScope;
+        const scopeMatches = activeScope && activeScope.run_id === target &&
+          activeScope.run_ref && activeScope.run_ref === activeArtifactRunRef &&
+          (!activeScope.entry_key || activeScope.entry_key === activeRunEntryKey);
+        const entry = opts.entry || (scopeMatches ? activeScope : preferredRunEntry(target)) || {};
         const params = new URLSearchParams();
-        const resourceBucket = String(opts.resourceBucket || entry.bucket || "").trim();
-        const projectId = String(opts.projectId || entry.project_id || "").trim();
-        const resolvedPrefix = String(opts.resolvedPrefix || entry.resolved_prefix || "").trim();
-        const sourceSelected = Boolean(opts.sourceSelected || entry.bucket);
+        const resourceBucket = String(Object.prototype.hasOwnProperty.call(opts, "resourceBucket")
+          ? (opts.resourceBucket || "") : (entry.bucket || "")).trim();
+        const projectId = String(Object.prototype.hasOwnProperty.call(opts, "projectId")
+          ? (opts.projectId || "") : (entry.project_id || "")).trim();
+        const resolvedPrefix = String(Object.prototype.hasOwnProperty.call(opts, "resolvedPrefix")
+          ? (opts.resolvedPrefix || "") : (entry.resolved_prefix || "")).trim();
+        const sourceSelected = Object.prototype.hasOwnProperty.call(opts, "sourceSelected")
+          ? Boolean(opts.sourceSelected) : Boolean(entry.source_selected || entry.bucket);
         if (resourceBucket) params.set("resource_bucket", resourceBucket);
         if (projectId) params.set("project_id", projectId);
         if (resolvedPrefix) params.set("resolved_prefix", resolvedPrefix);
@@ -15672,11 +15741,16 @@
         window.open(src, "_blank", "noopener");
       }
       async function restoreSession() {
+        const chatGeneration = chatSessionSelectionGeneration;
         const selectionGeneration = activeRunSelectionGeneration;
         try {
           const session = await loadJson("/api/session");
+          chatSessionSnapshotGenerations.set(session, chatGeneration);
           if (session && session.deployment) applyDeploymentIdentity(session.deployment);
-          activeChatSessionId = String(session.active_chat_session_id || activeChatSessionId || "default");
+          const restoreChat = chatSessionRefreshIsCurrent(chatGeneration);
+          if (restoreChat) {
+            activeChatSessionId = String(session.active_chat_session_id || activeChatSessionId || "default");
+          }
           if (session && session.sim_viz) {
             if (selectionGeneration === activeRunSelectionGeneration) {
               setActiveRunId(
@@ -15691,14 +15765,14 @@
             activeArtifactRender = String(session.sim_viz.artifact_render || activeArtifactRender || "");
             updateRenderedDataSummary(session.sim_viz);
           }
-          updateChatSessionSelector(session.chat_sessions, activeChatSessionId);
+          if (restoreChat) updateChatSessionSelector(session.chat_sessions, activeChatSessionId);
           if (session && session.llm) {
             const currentModel = String(
               (session.llm.model || session.llm.default_model || session.llm.default || "")
             );
             setChatModels(session.llm.models, currentModel);
           }
-          renderChatHistory(session.chat_history || []);
+          if (restoreChat) renderChatHistory(session.chat_history || []);
           const draft = session.workflow_draft;
           if (draft && draft.yaml) {
             setWorkflowYaml(draft.yaml, draft.validation || draft);
@@ -15840,12 +15914,8 @@
             setStatus("Ready");
             showToast("Workbench ready", "success");
             void accessPromise;
-            // Pre-warm the Lichtblick SPA bundle so opening it later only swaps the data
-            // source (no first-load app download). Best-effort; needs the sidecar.
-            const lb = document.getElementById("lichtblickFrame");
-            if (lb && (!lb.getAttribute("src") || lb.getAttribute("src") === "about:blank")) {
-              lb.setAttribute("src", "/lichtblick/");
-            }
+            // Optional viewers mount when selected. Loading a hidden app here
+            // makes its runtime and dependencies part of unrelated chat startup.
             void artifactsPromise;
             await warmPromise;
             const mountMode = await ensureFrankaRerunLoaded(lastSimVizStatus);
@@ -15944,6 +16014,8 @@
           captureVisualContext,
           describeVisual,
           loadArtifact,
+          loadRunDetails,
+          updateRunSelector,
           setRenderMode,
           showRerunBundleCover,
           hideRerunBundleCover,
@@ -15959,6 +16031,8 @@
           lichtblickNeedsLayoutSeed,
           markLichtblickLayoutSeeded,
           requestTimeoutMs,
+          refreshChatSessions,
+          restoreSession,
           LICHTBLICK_LAYOUT_SEED_KEY,
           refreshLeIsaacCapability,
           leisaacPeriodicRefreshRunId,
