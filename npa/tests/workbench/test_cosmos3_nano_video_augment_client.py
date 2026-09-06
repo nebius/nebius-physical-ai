@@ -9,6 +9,7 @@ import shutil
 import subprocess
 from types import SimpleNamespace
 
+from botocore.exceptions import ClientError
 import httpx
 import pytest
 
@@ -48,6 +49,47 @@ class SyntheticStorage:
 
 def _hash(data):
     return hashlib.sha256(data).hexdigest()
+
+
+@pytest.mark.parametrize("actual", [b"expected", b"conflict", b"short"])
+def test_key_already_exists_requires_exact_storage_readback(actual):
+    calls = []
+
+    def put_object(**kwargs):
+        assert kwargs["IfNoneMatch"] == "*"
+        raise ClientError({"Error": {"Code": "KeyAlreadyExists",
+                          "Message": "Object already exists in the bucket, but If-None-Match header was sent"}},
+                          "PutObject")
+
+    def get_object(**kwargs):
+        calls.append(kwargs)
+        return {"Body": BytesIO(actual)}
+
+    storage = SimpleNamespace(s3=SimpleNamespace(put_object=put_object, get_object=get_object))
+    if actual == b"expected":
+        assert client._put_verified(storage, "example-bucket", "artifact.mp4", b"expected") == {
+            "bytes": 8, "sha256": _hash(b"expected")}
+    else:
+        with pytest.raises(client.AugmentationClientError, match="differs"):
+            client._put_verified(storage, "example-bucket", "artifact.mp4", b"expected")
+    assert calls == [{"Bucket": "example-bucket", "Key": "artifact.mp4"}]
+
+
+@pytest.mark.parametrize("code", ["AccessDenied", "InvalidAccessKeyId", "SignatureDoesNotMatch",
+                                  "InternalError", "keyalreadyexists", "KeyAlreadyExistsElsewhere"])
+def test_non_collision_storage_failures_are_not_converted_to_readback(code):
+    failure = ClientError({"Error": {"Code": code}}, "PutObject")
+
+    def put_object(**kwargs):
+        raise failure
+
+    def get_object(**kwargs):
+        pytest.fail("unexpected storage error was treated as a conditional-write collision")
+
+    storage = SimpleNamespace(s3=SimpleNamespace(put_object=put_object, get_object=get_object))
+    with pytest.raises(ClientError) as observed:
+        client._put_verified(storage, "example-bucket", "artifact.mp4", b"expected")
+    assert observed.value is failure
 
 
 @pytest.fixture

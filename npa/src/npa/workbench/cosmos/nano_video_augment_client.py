@@ -94,7 +94,7 @@ def _put_verified(storage: Any, bucket: str, key: str, data: bytes) -> dict[str,
         storage.s3.put_object(Bucket=bucket, Key=key, Body=data, IfNoneMatch="*")
     except Exception as exc:
         code = getattr(exc, "response", {}).get("Error", {}).get("Code")
-        if code not in {"PreconditionFailed", "412", "ConditionalRequestConflict", "409"}:
+        if code not in {"PreconditionFailed", "412", "ConditionalRequestConflict", "409", "KeyAlreadyExists"}:
             raise
     actual = _read_object(storage, bucket, key)
     digest = hashlib.sha256(data).hexdigest()
