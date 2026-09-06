@@ -39,7 +39,7 @@ skills:
         contains: "input-path"
       - type: npa_workflow_yaml
         paths:
-          - npa/workflows/workbench/npa-workflows/curobo-benchmark.yaml
+          - workflows/testing/curobo-benchmark.yaml
   - name: access-approval
     category: atomic
     when_to_use: "Prepare, verify, or resume human-bound Hugging Face and NVIDIA NGC access approvals for exact catalog or workflow dependencies, including consent-gated opening of official approval pages."

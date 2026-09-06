@@ -790,14 +790,15 @@ containers:
         Object-detection training/eval service (torchvision + pycocotools) on
         curated AV data; BDD100K perception pipeline stage.
     safety:
-      runs_as: root
-      base_image: pytorch/pytorch:2.12.1-cuda13.0-cudnn9-runtime
-      network: FastAPI service on :8790 (/health, /system-info, /train, /eval)
+      runs_as: ubuntu
+      base_image: ghcr.io/nebius/nebius-physical-ai/npa-detection-training@sha256:a432dd2a9e6bafed4b78466ac806f584c7fcf549cf3be0edaf75f2fecdadfdd9
+      network: FastAPI service on :8790 (public /readyz; authenticated /health, /system-info, /train, /eval)
       external_fetch: [pypi, lancedb, s3]
       notes: >-
-        Golden eval exercises health + system-info only; no training run, so it
-        stays GPU-optional and fast. The smoke ships as a standalone script in
-        /app and targets the in-image service module.
+        Golden eval exercises public readiness, rejection of unauthenticated
+        health requests, and authorized health + system-info using an ephemeral
+        runtime token. It launches no training run and remains GPU-optional.
+        The standalone /app script uses the in-image service and isolated state.
     golden_eval:
       kind: server-smoke
       module: npa.smoke.test_detection_training_functional

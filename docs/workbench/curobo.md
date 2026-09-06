@@ -16,7 +16,7 @@ S3 destination. The default evaluates both kinematic and 3 kg dynamics
 configurations. B200 and RTX PRO 6000 require separate GPU qualification.
 
 ```bash
-npa workbench workflow submit npa/workflows/workbench/npa-workflows/curobo-benchmark.yaml --var bucket=<your-bucket>
+npa workbench workflow submit workflows/testing/curobo-benchmark.yaml --var bucket=<your-bucket>
 ```
 
 All input problems remain in the success denominator, including invalid queries

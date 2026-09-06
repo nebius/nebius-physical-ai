@@ -1144,6 +1144,10 @@ def test_prepare_requires_assume_decision_for_dynamic_specs() -> None:
 
 
 def test_workbench_workflow_submit_npa_workflow_renders_and_submits(mocker) -> None:
+    # This test replaces the runtime; provider boundary coverage lives in
+    # test_execution_preflight and must not be bypassed by --skip-preflight.
+    mocker.patch("npa.cli.workbench.workflow._execution_target_preflight", return_value=(None, {}))
+    mocker.patch("npa.cli.workbench.workflow._preflight_submit_gang_capacity")
     captured: dict[str, object] = {}
 
     def fake_submit(path, run_id, **kwargs):
@@ -1285,6 +1289,7 @@ def test_e2e_clear_workbench_images_env_is_not_global_cli_override(
 def test_workbench_workflow_submit_npa_var_merges_config(
     mocker, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    mocker.patch("npa.cli.workbench.workflow._execution_target_preflight", return_value=(None, {}))
     monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/npa-src/npa")
     captured: dict[str, object] = {}
 

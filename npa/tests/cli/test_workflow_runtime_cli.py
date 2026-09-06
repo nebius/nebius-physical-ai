@@ -177,6 +177,8 @@ def satisfied_preflight(mocker, monkeypatch):
     from npa.clients import storage_validation
     from npa.clients.storage_validation import StorageProbeResult
 
+    mocker.patch("npa.cli.workbench.workflow._execution_target_preflight", return_value=(None, {}))
+
     mocker.patch.object(skybin, "resolve_sky_bin", lambda _bin: "/usr/bin/sky")
     monkeypatch.setenv("NPA_SRC_S3_URI", "s3://rt-bucket/npa-src/npa")
     monkeypatch.setattr(
