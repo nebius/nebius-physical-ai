@@ -147,7 +147,7 @@ Choose the digest-pinned Isaac image now, then warm a shared RWX cache. The
 template is the authoritative PVC/security/bootstrap contract:
 
 ```bash
-export NPA_ISAAC_IMAGE='ghcr.io/nebius/nebius-physical-ai/npa-isaac-lab@sha256:0a64ffb940a62c639c00a160a21081e7c7200f1d1d740c655616e2c9a967b544'
+export NPA_ISAAC_IMAGE='ghcr.io/nebius/nebius-physical-ai/npa-isaac-lab@sha256:e321e8631c7e318b5012dad210d9cd1001b7dc833cbff0369e420c5c12657ab6'
 sed "s|image: ghcr.io/nebius/nebius-physical-ai/npa-isaac-lab@sha256:<64-hex-digest>|image: ${NPA_ISAAC_IMAGE}|" \
   npa/docker/workbench/common/warm-isaac-cache.yaml | kubectl apply -f -
 kubectl wait --for=condition=complete job/npa-warm-isaac-cache --timeout=-1s
@@ -181,15 +181,17 @@ Relevant build entrypoints are
 `npa/docker/workbench/isaac-lab/build.sh`. Follow
 [build and push](../container-packaging.md) when images are absent.
 
-Put the six references in shell variables, then reproduce the actual manifest
+The five image digests below are the accepted coherent release set, built from
+`c164fd3480f8a9ea8f9df9ccb9509502fd527996` and verified anonymously on
+2026-09-05. Put them in shell variables, then reproduce the actual manifest
 pulls with the same config used by submit:
 
 ```bash
-export CONTROLLER_IMAGE='ghcr.io/nebius/nebius-physical-ai/npa-sim2real-control@sha256:7ee326f49cf1a52fc1007dccbac02db7862246ab688bf5ec35ef14a727e33136'
-export TRANSFER_IMAGE='ghcr.io/nebius/nebius-physical-ai/npa-cosmos2-transfer@sha256:47bfe492b6d56f4141f5a6da8accbbdec7cdf2d9b02311c802e3b3b5b1ba5caf'
-export ENVGEN_IMAGE='ghcr.io/nebius/nebius-physical-ai/npa-envgen@sha256:33d49af4703c479a3be71cae6f0a4735ea6f63629b870b946c43929037304f72'
+export CONTROLLER_IMAGE='ghcr.io/nebius/nebius-physical-ai/npa-sim2real-control@sha256:87fe8530710eea43364a21ad76dbe4b4c2d60e4b49705824fcdb62dc7d185af7'
+export TRANSFER_IMAGE='ghcr.io/nebius/nebius-physical-ai/npa-cosmos2-transfer@sha256:0caddf68ccac1b69bd9fe3fb089bcc325a111059065452d31fdf0576629895d3'
+export ENVGEN_IMAGE='ghcr.io/nebius/nebius-physical-ai/npa-envgen@sha256:08eb75118f5a04194d33a60308212db7706dd9c339d74afc5471a58608bf0422'
 export ISAAC_IMAGE="${NPA_ISAAC_IMAGE}"
-export VIEWER_IMAGE='ghcr.io/nebius/nebius-physical-ai/npa-rerun-viewer@sha256:8fc0a76f3df441fd6662e3eb5d893c9996ea66e6c61fcc815de79576f12b8160'
+export VIEWER_IMAGE='ghcr.io/nebius/nebius-physical-ai/npa-rerun-viewer@sha256:4c09c9cf3c14606db8e45c8ee564388888cd3261448f7c3f1304bfdfb1b9e5b2'
 export SPEC=workflows/main/sim2real.yaml
 export SOURCE_SHA=c164fd3480f8a9ea8f9df9ccb9509502fd527996
 

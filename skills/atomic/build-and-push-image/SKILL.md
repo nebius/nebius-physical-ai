@@ -27,7 +27,7 @@ Repeat after catalog edits. The generated `main/` and `testing/` copies under
    `ghcr.io/nebius/nebius-physical-ai`. A pre-release tag is exactly
    `dev-<full-git-sha>` on the normal `npa-<tool>` package.
 3. Require `redistribution: public` before any official push. Build restricted
-   images, including `cosmos3-serving`, only into an operator-controlled
+   images, including `cosmos3-super-benchmark`, only into an operator-controlled
    registry; neither a private package nor a development tag changes licensing.
 4. Run every pre-publication security, packaging, payload, provenance, SBOM,
    vulnerability, secret, non-root, base-pin, and bootstrap-contract gate before
