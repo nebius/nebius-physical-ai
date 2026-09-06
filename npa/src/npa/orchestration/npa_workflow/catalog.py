@@ -454,11 +454,15 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
     "workbench.vlm_eval.run": ToolEntry(
         name="workbench.vlm_eval.run",
         description="Score rollout directories with the VLM eval workbench tool.",
+        config_defaults={"vlm_model": ""},
+        omit_flags_when_empty=("--model",),
         argv_template=[
             "npa",
             "workbench",
             "vlm-eval",
             "run",
+            "--model",
+            "{{config.vlm_model}}",
             "--input-path",
             "{{config.rollouts_uri}}",
             "--output-path",
@@ -472,11 +476,15 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
         description=(
             "Score a rollout against the plan an earlier reasoning stage produced."
         ),
+        config_defaults={"vlm_model": ""},
+        omit_flags_when_empty=("--model",),
         argv_template=[
             "npa",
             "workbench",
             "vlm-eval",
             "run",
+            "--model",
+            "{{config.vlm_model}}",
             "--input-path",
             "{{config.rollouts_uri}}",
             "--output-path",
@@ -502,11 +510,15 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
         description=(
             "Score every rollout under a prefix and write an aggregate task-success report."
         ),
+        config_defaults={"vlm_model": ""},
+        omit_flags_when_empty=("--model",),
         argv_template=[
             "npa",
             "workbench",
             "vlm-eval",
             "loop",
+            "--model",
+            "{{config.vlm_model}}",
             "--input-path",
             "{{config.rollouts_uri}}",
             "--output-path",
@@ -525,12 +537,16 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
     ),
     "workbench.token_factory.reason": ToolEntry(
         name="workbench.token_factory.reason",
-        description="Run Cosmos reasoner over scene inputs.",
+        description="Run the selected hosted reasoner over scene inputs.",
+        config_defaults={"reason_model": ""},
+        omit_flags_when_empty=("--model",),
         argv_template=[
             "npa",
             "workbench",
             "token-factory",
             "reason",
+            "--model",
+            "{{config.reason_model}}",
             "--input-path",
             "{{config.scene_uri}}",
             "--output-path",

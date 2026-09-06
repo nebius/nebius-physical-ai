@@ -16,6 +16,7 @@ from npa.orchestration.skypilot.controller import (
     DEFAULT_K8S_CONTROLLER_CPUS,
     DEFAULT_K8S_CONTROLLER_MEMORY_GB,
 )
+from npa.workflows.sim2real.constants import DEFAULT_COSMOS3_MODEL
 
 
 Issue = tuple[str, str]
@@ -167,7 +168,23 @@ def static_prerequisites(
             )
     token_factory_key = str(secret_values.get("NEBIUS_TOKEN_FACTORY_KEY") or "").strip()
     if token_factory_key:
-        model = str(config.get("cosmos3_model") or "nvidia/Cosmos3-Super-Reasoner").strip()
+        from npa.workbench.cosmos.reason import (
+            CosmosReasonError,
+            hosted_rollout_model_family,
+        )
+
+        model = str(config.get("cosmos3_model") or DEFAULT_COSMOS3_MODEL).strip()
+        try:
+            hosted_rollout_model_family(model)
+        except CosmosReasonError as exc:
+            issues.append(
+                (
+                    str(exc),
+                    "select a supported hosted rollout evaluator with cosmos3_model "
+                    "before provisioning",
+                )
+            )
+            return issues
         result = token_factory_validator(token_factory_key, model)
         if not getattr(result, "ok", False):
             detail = str(getattr(result, "error", "") or "access not verified")

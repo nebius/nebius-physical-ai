@@ -35,7 +35,7 @@ config:
   capture_max_steps: "80"
   capture_max_frames: "6"
 
-  reason_model: nvidia/Cosmos3-Super-Reasoner
+  reason_model: MiniMaxAI/MiniMax-M3
   reason_task: >-
     These images are RGB frames from an Isaac Lab simulation of a Franka arm lifting a cube.
     Describe the scene, identify the robot and objects, and give a step-by-step manipulation

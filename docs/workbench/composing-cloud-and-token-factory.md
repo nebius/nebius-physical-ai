@@ -8,6 +8,12 @@ reports. The hosted stage runs on a CPU worker and calls the Token Factory API.
 GPU training / rollout → S3 artifacts → hosted inference → saved report
 ```
 
+Public defaults are `nvidia/Nemotron-3_5-Lightning` for text and
+`MiniMaxAI/MiniMax-M3` for vision and reasoning. Explicit model selections remain
+authoritative; verify access for your credential and endpoint. See the
+[migration verification](token-factory-deprecation-verification.md) for provider
+controls and strict hosted evaluation behavior.
+
 The artifact format matters as much as the URI: captioning expects images,
 text generation expects prompt records, and rollout scoring expects supported
 rollout inputs. Sending an arbitrary checkpoint prefix to `generate` does not
