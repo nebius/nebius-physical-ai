@@ -10,39 +10,45 @@ NPA's durable production composition contract.
 
 | Official guide | Actual journey and assumptions | Decision for this example |
 | --- | --- | --- |
-| [Ray Jobs quickstart](https://docs.ray.io/en/latest/cluster/running-applications/job-submission/quickstart.html), checked against [Ray 2.46.0 source](https://github.com/ray-project/ray/blob/ray-2.46.0/doc/source/cluster/running-applications/job-submission/quickstart.rst) | One inspectable Python file; `ray job submit --working-dir`; streamed output; status/logs/stop. A reachable cluster is assumed. Its small string-returning example does not prepare GPUs, secure a remote server or preserve model outputs. | Show ordinary application code, submit it directly and inspect useful output before fault testing. Keep real GPU preparation and access visible. |
-| [Ray Data GPU batch inference](https://docs.ray.io/en/latest/data/batch_inference.html), checked against [2.46.0 source](https://github.com/ray-project/ray/blob/ray-2.46.0/doc/source/data/batch_inference.rst) | Load data, define a predictor class, run GPU `map_batches`, show/save predictions. Model lifetime is the actor lifetime. Compatible GPU infrastructure is assumed. | Use the same visible model/batch structure with Ray Core around the existing Workbench UDF. No need to introduce Ray Data solely for the example. |
+| [Ray Jobs quickstart](https://docs.ray.io/en/latest/cluster/running-applications/job-submission/quickstart.html), checked against [Ray 2.58.0 source](https://github.com/ray-project/ray/blob/ray-2.58.0/doc/source/cluster/running-applications/job-submission/quickstart.rst) | One inspectable Python file; `ray job submit --working-dir`; streamed output; status/logs/stop. A reachable cluster is assumed. Its small string-returning example does not prepare GPUs, secure a remote server or preserve model outputs. | Show ordinary application code, submit it directly and inspect useful output before fault testing. Keep real GPU preparation and access visible. |
+| [Ray Data GPU batch inference](https://docs.ray.io/en/latest/data/batch_inference.html), checked against [2.58.0 source](https://github.com/ray-project/ray/blob/ray-2.58.0/doc/source/data/batch_inference.rst) | Load data, define a predictor class, run GPU `map_batches`, show/save predictions. Model lifetime is the actor lifetime. Compatible GPU infrastructure is assumed. | Use the same visible model/batch structure with Ray Core around the existing Workbench UDF. No need to introduce Ray Data solely for the example. |
 | [SkyPilot Ray example](https://docs.skypilot.ai/en/latest/examples/training/ray.html), checked against the [0.12.2 task](https://github.com/skypilot-org/skypilot/blob/v0.12.2/examples/distributed_ray_train/ray_train.yaml) | One task YAML and a Python trainer, `sky launch`, separate application Ray, visible metrics. A configured backend is assumed. Package pins, private Jobs access and durable download are not its main journey. | Use a development cluster, with visible preparation and Ray startup. Remove the managed production-job controller from the edit loop. |
 | [SkyPilot development clusters, 0.12.2](https://github.com/skypilot-org/skypilot/blob/v0.12.2/docs/source/examples/interactive-development.rst) | Named cluster, SSH alias, repeated `sky exec`, exact `sky down`. | Reuse SSH and infrastructure lifecycle. Retain Ray Jobs for source transfer and submission because that is the requested customer contract. |
 
-The moving Ray Jobs page reported 2.58.0 when accessed; newer features are not
-assumed to exist in the tested 2.46.0 runtime. Release-pinned sources determine
-compatibility. These guides are useful because they start with a recognizable
-application and visible result. Their omitted production responsibilities are
+The application and Jobs client are pinned to Ray 2.58.0, the current stable
+release when accessed. Release-pinned sources determine compatibility; the
+audit distinguishes completed execution evidence from earlier runtime results.
+These guides are useful because they start with a recognizable application and
+visible result. Their omitted production responsibilities are
 not evidence that those responsibilities disappear.
 
 ## What actually became simpler
 
-| Responsibility | Rejected recipe | Redesigned path |
+| Responsibility | Rejected recipe | Final owner and change |
 | --- | --- | --- |
-| Infrastructure identity | NPA run, managed job/controller, head pod | One owned Sky development cluster |
-| Sky API | Per-session Docker service, separate home/config and helper ownership repair | Reusable upstream API with an owned Compose lifecycle; fixed private backend, readonly credential mounts |
-| Application runtime | Ray head/workers plus S3 finish watcher | Ray head/workers; Jobs requires this service to stay alive |
-| Source delivery | Mandatory custom submitter copied files and performed all revisions | Visible source directory and `ray job submit --working-dir .` |
-| Private state | Provider, Kubernetes and S3 copies; several session/workflow/object URIs | Explicit backend access, scoped network boundary and local result directory |
-| Access handoff | Pod/IP discovery plus application address variables and forwarding | Sky-generated SSH alias and one loopback tunnel |
-| Result visibility | Qualification receipts followed by separate upload/finalize Job | RGB preview, vectors/table and retrieval after the first Job; ordinary `rsync` |
-| Completion | Upload Job, finish marker, durable-stage poll, controller/API cleanup | Stop active Ray Jobs, copy/check outputs, cancel the service and `sky down` |
-| Advanced validation | Every first run performed fault/cancel/revision sequences | Separate optional distributed/checkpoint checks |
+| API, backend and network policy | Repeated API/container/config/helper repair within the session | **Platform:** one upstream API/state volume, one fixed namespace/configuration and declared verification/cleanup contract, reused across clusters. Essential, retained. |
+| GPU infrastructure | NPA workflow identity plus managed-job controller | **SkyPilot:** one named development cluster and its one Ray service task. The interactive workflow/controller is removed. |
+| Application runtime | Separate Ray service plus completion watcher | **Ray:** separate head/workers; essential for Jobs. The external completion watcher is removed. |
+| Source and job control | Custom wrapper stages/rewrites revisions, drives Ray Jobs and collects receipts | **Ray Jobs:** visible UDF snapshot, `--working-dir`, submit/status/logs/stop. Custom submission protocol removed. |
+| Access | Pod/IP discovery, retained forwarding process and address settings | **OpenSSH:** one Sky-generated alias and one named loopback tunnel. Authentication and ownership remain essential. |
+| Useful outputs | S3 copies/profiles, separate upload/finalize Job and marker | **Application + rsync:** first Job writes images/vectors/table; download and hash into one durable local directory. Cloud-storage credentials and finish handshake removed from the developer path. |
+| Failure testing | Mandatory medium/complex/fault orchestration | **Optional application recipe:** basic reader reaches a useful result first; checkpoint/restart/cancel validation remains inspectable ordinary Python/Ray commands. |
 
-The removed submitter, finish uploader and marker-watching workflow are deleted,
-including their exclusively paired tests. Source/provenance, vectors, checkpoint
-integrity and runtime isolation tests remain. This removes coordinated services
-and state transitions; it is not the old procedure moved behind a helper.
-Authentication, a compatible environment, an application Ray service, artifact
-persistence and exact resource ownership remain necessary. The API service is
-not claimed removed: its setup is an explicit, implemented platform contract,
-reused across development clusters and source Jobs.
+The developer preserves four identity categories: the named Sky cluster, its
+service-task ID, Ray submission IDs and the SSH control socket, plus one durable
+results directory. These are responsibility categories, not OS-process counts.
+The reader chooses two basic session values (cluster name and result location);
+the platform supplies the matching private kubeconfig and API endpoint. Client
+binary and current Kubernetes context are derived by displayed commands; image,
+model, package and port defaults are declared in checked-in files. The operator
+still owns API/volume/configuration and namespace cleanup after all clusters are
+gone. Three former application-only mechanisms are removed: the bespoke
+submitter, upload/finalize Job and finish-marker watcher. Removing them also
+removes their state handoffs; a helper has not merely hidden the same protocol.
+The earlier wrapper already used the upstream Jobs SDK and
+`runtime_env.working_dir` for packaging/upload. The redesign removes its mandatory
+staging, automatic edits, sequencing and receipt orchestration; it does not
+replace a proprietary source transport with Ray.
 
 The follow-up readability correction also separates application code by domain:
 image preparation, model initialization, inference, output validation and
@@ -53,7 +59,7 @@ the more involved recovery implementation remains optional.
 
 ## Which APIs own the work
 
-Paths below identify the implementation lines. The [Ray 2.46 Core API](https://github.com/ray-project/ray/blob/ray-2.46.0/doc/source/ray-core/api/core.rst)
+Paths below identify the implementation lines. The [Ray 2.58 Core API](https://github.com/ray-project/ray/blob/ray-2.58.0/doc/source/ray-core/api/core.rst)
 defines tasks, actors, GPU resource requests and actor termination; the Jobs
 quickstart above defines source delivery and application control.
 
@@ -71,7 +77,7 @@ quickstart above defines source delivery and application control.
 
 ## Boundaries
 
-[Ray runtime environments](https://github.com/ray-project/ray/blob/ray-2.46.0/doc/source/ray-core/handling-dependencies.rst)
+[Ray runtime environments](https://github.com/ray-project/ray/blob/ray-2.58.0/doc/source/ray-core/handling-dependencies.rst)
 apply the Jobs environment to its driver and descendants. Local source packages
 have a 500 MiB limit and respect `.gitignore`; keep secrets, model caches and
 results outside the submitted directory. The canonical UDF copy is explicit and
@@ -86,15 +92,31 @@ re-preparation, and incompatible Python/CUDA/native ABI or system changes need
 a compatible image. New source Jobs reload models into new actors; repeated
 batches within an actor reuse its resident weights.
 
-[Ray 2.46 security guidance](https://github.com/ray-project/ray/blob/ray-2.46.0/doc/source/ray-security/index.md)
-requires trusted code and external isolation. This version has no Jobs token
-authentication. Loopback Jobs plus authenticated SSH protects the HTTP endpoint;
-network policy must also protect GCS/worker traffic. Application ports remain
-separate from SkyPilot's management Ray. No broad `ray stop` or process matching
-is used. The upstream [Sky startup](https://github.com/skypilot-org/skypilot/blob/v0.12.2/sky_templates/ray/start_cluster)
+[Ray 2.58 security guidance](https://github.com/ray-project/ray/blob/ray-2.58.0/doc/source/ray-security/index.md)
+requires trusted code and external isolation. Ray supports optional
+[token authentication](https://github.com/ray-project/ray/blob/ray-2.58.0/doc/source/ray-security/token-auth.md);
+this recipe leaves it unconfigured. Loopback Jobs plus authenticated SSH
+protects the HTTP endpoint, and network policy also protects GCS/worker traffic.
+Ray namespaces and a shared token do not isolate mutually untrusted Jobs.
+A live network probe allowed a trusted worker to reach its head GCS and blocked
+three attempts from a separate CPU-only namespace that could reach the Kubernetes
+API. This checks one endpoint and boundary, not comprehensive penetration testing.
+Application ports remain separate from SkyPilot's management Ray. No broad
+`ray stop` or process matching is used. The upstream [Sky startup](https://github.com/skypilot-org/skypilot/blob/v0.12.2/sky_templates/ray/start_cluster)
 and [shutdown](https://github.com/skypilot-org/skypilot/blob/v0.12.2/sky_templates/ray/stop_cluster)
 are references, not adopted unqualified: their dependency installation and
 process matching do not establish this example's isolation contract.
+
+The Ray pin was updated after reviewing the upstream
+[Jobs DNS-rebinding advisory](https://github.com/ray-project/ray/security/advisories/GHSA-q279-jhrf-cc6v)
+and the later [Dashboard DELETE advisory](https://github.com/ray-project/ray/security/advisories/GHSA-q5fh-2hc8-f6rq).
+These affect development/Jobs access, so using only Ray Core does not remove
+the need for the update. The selected [2.58.0 release](https://github.com/ray-project/ray/releases/tag/ray-2.58.0)
+updates the application and customer client; SkyPilot's isolated management
+runtime remains vendor-owned. Fresh one- and two-worker GPU checks now qualify
+Ray 2.58 through the literal native Jobs commands, including source changes,
+checkpoint replay and exact cancellation; the audit records their measurements.
+Earlier 2.46 GPU receipts remain historical.
 
 A finite application launched with `sky launch`, rerun with `sky exec`, and
 using `ray.init(address="local")` is a useful simpler alternative when customers
@@ -104,8 +126,8 @@ SkyPilot speed claim follows from the architecture comparison.
 
 ## A preflight that did not prove launch readiness
 
-The existing local SkyPilot 0.12.2 API answered short requests but had no working
-long-request executor. An accepted dry run remained pending and was cancelled
+During the initial redesign investigation, a local SkyPilot 0.12.2 API answered
+short requests but had no working long-request executor. An accepted dry run remained pending and was cancelled
 by its exact upstream request ID; no GPU allocation followed. Separately, the
 installed `/validate` path spawned threads that lost request-local `KUBECONFIG`
 and read the server's default backend. A credential check alone was therefore

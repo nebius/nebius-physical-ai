@@ -7,7 +7,10 @@ unset RAY_ADDRESS
 export RAY_JOB_ALLOW_DRIVER_ON_WORKER_NODES=0
 export RAY_USAGE_STATS_ENABLED=0
 read -r ephemeral_start _ < /proc/sys/net/ipv4/ip_local_port_range
-(( ephemeral_start > 10999 )) || { echo 'Application ports overlap OS ephemeral range' >&2; exit 1; }
+if (( ephemeral_start <= 10999 )); then
+    echo 'Application ports overlap OS ephemeral range' >&2
+    exit 1
+fi
 readarray -t node_ips <<< "$SKYPILOT_NODE_IPS"
 rank="${SKYPILOT_NODE_RANK:?SkyPilot node rank required}"
 args=(--block --node-ip-address="${node_ips[$rank]}" --num-cpus=8

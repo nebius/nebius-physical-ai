@@ -146,7 +146,7 @@ def _install_provenance_runtime(monkeypatch):
         get_node_id=lambda: "worker-node",
         get_accelerator_ids=lambda: {"GPU": ["0"]},
     )
-    ray = SimpleNamespace(__version__="2.46.0", get_runtime_context=lambda: context)
+    ray = SimpleNamespace(__version__="2.58.0", get_runtime_context=lambda: context)
     cuda = SimpleNamespace(
         is_available=lambda: True,
         synchronize=lambda: None,
@@ -166,6 +166,10 @@ def _record_model_loads(imported, monkeypatch):
     original_loader = imported.load_workbench_udf
     loads = []
 
+    def _record_clip_initialization(**arguments):
+        """Retain the requested model parameters without loading weights in this test."""
+        loads.append(arguments)
+
     def load_udf():
         """Record model loading while preserving the canonical UDF import.
 
@@ -177,7 +181,7 @@ def _record_model_loads(imported, monkeypatch):
             ImportError: A required example or canonical UDF module is unavailable.
         """
         module = original_loader()
-        module._clip_components = lambda **arguments: loads.append(arguments)
+        module._clip_components = _record_clip_initialization
         return module
 
     monkeypatch.setattr(imported, "load_workbench_udf", load_udf)
@@ -276,7 +280,13 @@ def test_checkpoint_replay_skips_actor_and_corruption_fails(recipe, tmp_path):
     data.write_bytes(b"checkpoint bytes")
     receipt = {"identity": identity, "parquet_sha256": recipe.validation.file_hash(data)}
     recipe.validation.atomic_json(tmp_path / "commit.json", receipt)
-    forbidden_actor = SimpleNamespace(infer=SimpleNamespace(remote=lambda *args: pytest.fail("replay dispatched GPU work")))
+
+    def _reject_duplicate_inference(*arguments):
+        """Fail if checkpoint replay schedules GPU work instead of reusing its output."""
+        pytest.fail("replay dispatched GPU work")
+
+    inference = SimpleNamespace(remote=_reject_duplicate_inference)
+    forbidden_actor = SimpleNamespace(infer=inference)
     cached, future = recipe.application.submit_shard(forbidden_actor, shard, tmp_path, "revision", "execution")
     assert cached["checkpoint_reused"] is True and future is None
     with pytest.raises(ValueError, match="identity differs"):
@@ -359,7 +369,12 @@ def test_cleanup_attempts_all_actors_and_shutdown_after_first_kill_failure(recip
         calls.append(actor)
         if actor == "first":
             raise RuntimeError("actor unavailable")
-    ray = SimpleNamespace(kill=kill, shutdown=lambda: calls.append("shutdown"))
+
+    def _record_shutdown():
+        """Make driver cleanup visible after the attempted actor shutdowns."""
+        calls.append("shutdown")
+
+    ray = SimpleNamespace(kill=kill, shutdown=_record_shutdown)
     errors = recipe.application.cleanup_actors(ray, ["first", "second"])
     assert calls == ["first", "second", "shutdown"]
     assert errors == [{"operation": "kill actor", "actor_index": 0, "error_type": "RuntimeError"}]
@@ -429,7 +444,7 @@ def _baseline_model_provenance():
         "precision": "float32",
         "gpu_capability": [10, 0],
         "python": "3.12",
-        "ray": "2.46.0",
+        "ray": "2.58.0",
         "torch": "2.7.0",
         "cuda": "12.8",
         "transformers": "4.49.0",

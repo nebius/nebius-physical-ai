@@ -51,12 +51,12 @@ npa/.venv/bin/npa skypilot bootstrap
 export NPA_SKYPILOT_BIN="$(npa/.venv/bin/npa skypilot status --bin-path)"
 
 python3.12 -m venv "$HOME/.venvs/ray-clip"
-"$HOME/.venvs/ray-clip/bin/pip" install 'ray[default]==2.46.0'
+"$HOME/.venvs/ray-clip/bin/pip" install 'ray[default]==2.58.0'
 source "$HOME/.venvs/ray-clip/bin/activate"
 ```
 
 SkyPilot is NPA's isolated **0.12.2** installation; the application and Jobs
-client use **Ray 2.46.0**. They are different runtimes. Do not install Ray into
+client use **Ray 2.58.0**. They are different runtimes. Do not install Ray into
 SkyPilot's environment.
 
 ## Start your development cluster
@@ -118,8 +118,9 @@ is the Jobs readiness check. If Ray is still starting, inspect the service with
 press Ctrl-C to leave log following, and repeat `ray job list`. Log following
 does not cancel the service. This uses SkyPilot's generated SSH alias and Kubernetes-authenticated forwarding;
 there is no public Jobs port. The namespace policy permits Ray traffic only
-between its trusted pods. Ray 2.46 itself has no Jobs authentication, and a Ray
-namespace is not a security boundary.
+between its trusted pods. Ray 2.58 offers optional token authentication; this
+recipe does not enable it. Access is protected by SSH and network policy, and a
+Ray namespace is not a security boundary.
 
 ## Embed images and see the result
 

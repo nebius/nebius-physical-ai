@@ -18,9 +18,21 @@ import yaml
 EXAMPLE = Path(__file__).parents[2] / "workflows/workbench/ray-clip-development"
 
 
-def _run_application_start(tmp_path, *, rank, gpus="1"):
-    """Execute the real startup shell with only its service executable replaced."""
+def _with_ephemeral_range(script, directory, first_port):
+    """Exercise unsafe port ranges without changing the host networking configuration."""
+    if first_port is None:
+        return script
+    port_range = directory / "ephemeral-range"
+    port_range.write_text(f"{first_port} 65535\n")
+    source = "/proc/sys/net/ipv4/ip_local_port_range"
+    assert script.count(source) == 1
+    return script.replace(source, shlex.quote(str(port_range)))
+
+
+def _run_application_start(tmp_path, *, rank, gpus="1", ephemeral_start=None):
+    """Execute startup with a recording Ray executable and optional port fixture."""
     script = (EXAMPLE / "cluster/start.sh").read_text()
+    script = _with_ephemeral_range(script, tmp_path, ephemeral_start)
     command = "exec /tmp/ray-clip-env/bin/ray"
     assert script.count(command) == 1
     recorder = tmp_path / "record.py"
@@ -100,6 +112,32 @@ def test_application_ports_and_rank_are_disjoint_from_management_runtime(tmp_pat
         assert "--head" not in arguments
     _assert_disjoint_service_ports(options, rank)
     assert "stop" not in arguments
+
+
+@pytest.mark.parametrize(("ephemeral_start", "expected_exit"), [(10999, 1), (11000, 0)])
+@pytest.mark.parametrize("rank", [0, 1])
+def test_ephemeral_range_boundary_prevents_application_port_overlap(tmp_path, rank, ephemeral_start, expected_exit):
+    """Reject an overlapping host range before starting either application Ray role.
+
+    Args:
+        tmp_path: Pytest-owned port fixture and executable recorder directory.
+        rank: SkyPilot head or worker index.
+        ephemeral_start: First ephemeral port presented to the startup shell.
+        expected_exit: Required process exit status for that boundary.
+    Returns:
+        None after the boundary and startup assertions pass.
+    Raises:
+        AssertionError: The port guard accepts overlap or rejects a disjoint range.
+    """
+    result = _run_application_start(tmp_path, rank=rank, ephemeral_start=ephemeral_start)
+    assert result.returncode == expected_exit
+    if expected_exit:
+        assert result.stderr == "Application ports overlap OS ephemeral range\n"
+        assert not result.stdout
+        return
+    observed = json.loads(result.stdout)
+    assert observed["argv"][0] == "start"
+    assert observed["address"] is None
 
 
 @pytest.mark.parametrize(("rank", "gpus"), [("", "1"), ("0", "")])

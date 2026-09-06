@@ -67,7 +67,7 @@ import sys
 import torch
 import ray
 assert torch.cuda.is_available(), 'Real CUDA GPU required'
-assert ray.__version__ == '2.46.0'
+assert ray.__version__ == '2.58.0'
 packages = ['ray', 'lancedb', 'pyarrow', 'numpy', 'pillow', 'transformers']
 versions = {}
 for package in packages:
