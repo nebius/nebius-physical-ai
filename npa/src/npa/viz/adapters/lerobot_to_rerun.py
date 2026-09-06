@@ -49,6 +49,12 @@ class LogicalRerunResult:
     entity_counts: dict[str, int]
 
 
+@dataclass(frozen=True)
+class _EpisodeVideo:
+    entity_path: str
+    from_timestamp: float
+
+
 def lerobot_to_rerun(
     dataset_path: str | Path,
     output_rrd_path: Path,
@@ -341,7 +347,7 @@ def _logical_entity_counts(
     input_episode_indices: list[int],
     rollout_episode_indices: list[int],
     feedback_by_episode: dict[int, dict[str, Any]],
-    video_entities: dict[int, dict[str, str]],
+    video_entities: dict[int, dict[str, _EpisodeVideo]],
 ) -> dict[str, int]:
     counts: dict[str, int] = {}
     for episode in input_episode_indices:
@@ -371,7 +377,7 @@ def _count_episode_rows(
     *,
     rows: list[dict[str, Any]],
     root: str,
-    video_entities: dict[str, str],
+    video_entities: dict[str, _EpisodeVideo],
 ) -> None:
     for row in rows:
         for camera_key in video_entities:
@@ -400,7 +406,7 @@ def _log_episode_rows(
     *,
     rows: list[dict[str, Any]],
     root: str,
-    video_entities: dict[int, dict[str, str]],
+    video_entities: dict[int, dict[str, _EpisodeVideo]],
     camera_keys: list[str],
     episode_index: int,
 ) -> None:
@@ -408,11 +414,16 @@ def _log_episode_rows(
         timestamp = float(row.get("timestamp", 0.0) or 0.0)
         _set_time_seconds(rr, recording, timestamp)
         for camera_key in camera_keys:
-            video_entity = video_entities.get(episode_index, {}).get(camera_key, "")
-            if video_entity:
+            video = video_entities.get(episode_index, {}).get(camera_key)
+            if video is not None:
                 rr.log(
                     f"{root}/camera/{_entity_key(camera_key)}",
-                    rr.VideoFrameReference(seconds=timestamp, video_reference=video_entity),
+                    # Media time includes the episode's start in a shared MP4;
+                    # the Rerun timeline remains aligned with state and actions.
+                    rr.VideoFrameReference(
+                        seconds=timestamp + video.from_timestamp,
+                        video_reference=video.entity_path,
+                    ),
                     recording=recording,
                 )
         for index, value in enumerate(_as_float_list(row.get("observation.state"))):
@@ -445,8 +456,8 @@ def _log_dataset_videos(
     camera_keys: list[str],
     *,
     episode_indices: list[int],
-) -> dict[int, dict[str, str]]:
-    video_entities: dict[int, dict[str, str]] = {}
+) -> dict[int, dict[str, _EpisodeVideo]]:
+    video_entities: dict[int, dict[str, _EpisodeVideo]] = {}
     video_path_pattern = str(metadata.get("video_path") or "videos/{video_key}/chunk-{chunk_index:03d}/file-{file_index:03d}.mp4")
     locations = _episode_video_locations(dataset_path)
     for episode_index in episode_indices:
@@ -482,7 +493,10 @@ def _log_dataset_videos(
                 )
                 video_entities.setdefault(int(episode_index), {})[
                     camera_key
-                ] = entity
+                ] = _EpisodeVideo(
+                    entity_path=entity,
+                    from_timestamp=float(location.get(f"videos/{camera_key}/from_timestamp", 0.0) or 0.0),
+                )
     return video_entities
 
 
