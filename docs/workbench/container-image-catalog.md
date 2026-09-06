@@ -36,9 +36,9 @@ for historical comparison and provenance, including superseded LeRobot and
 LanceDB releases; their availability does not establish current functional
 support. Resolve and retain the manifest digest for reproducibility.
 
-The build inventory has 34 packaging entries (33 redistribution-eligible and
-one restricted); the tool map has 35 entries (32 public-release members, one
-restricted tool, and two validation candidates). Foundation and derived
+The build inventory has 35 packaging entries (34 redistribution-eligible and
+one restricted); the tool map has 36 entries (32 public-release members, one
+restricted tool, and three validation candidates). Foundation and derived
 Dockerfiles are not independent public releases. In particular, `loop-eval`
 uses `sim2real-eval/Dockerfile`, and `reference-policy` is a derived EnvGen
 image. Build sources, eligibility, publication, and functional validation are
