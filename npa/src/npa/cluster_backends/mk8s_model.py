@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import re
 from typing import Any
 
@@ -17,7 +17,10 @@ from npa.cluster.gpu_health import (
     DEFAULT_GRAPHICS_SMOKE_IMAGE,
     DEFAULT_STABILIZATION_SECONDS,
 )
-from npa.cluster.gpu_workload_profile import resolve_gpu_workload_profile
+from npa.cluster.gpu_workload_profile import (
+    resolve_gpu_workload_profile,
+    validate_driver_package_repositories,
+)
 from npa.cluster_backends.mig import (
     MIG_KUBERNETES_VERSION,
     RTX_PRO_6000_BOOT_DISK_GIB,
@@ -106,8 +109,12 @@ class MK8sDesired:
     gpu_workload_profile: str = ""
     gpu_graphics_smoke: bool = False
     gpu_graphics_smoke_image: str = DEFAULT_GRAPHICS_SMOKE_IMAGE
+    gpu_driver_package_repositories: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        validate_driver_package_repositories(
+            self.gpu_driver_package_repositories, profile=self.gpu_workload_profile,
+        )
         gpu = self.gpu_nodes
         selection = resolve_gpu_workload_profile(
             profile=self.gpu_workload_profile,

@@ -483,8 +483,9 @@ def test_fleet_inventory_write_failure_is_not_warning_only(
         lifecycle._write_fleet_state(tmp_path, {"clusters": []})
 
 
+@pytest.mark.parametrize("object_storage_enabled", [False, True])
 def test_mixed_deploy_dispatches_soperator_adapter_without_cli_shellout(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, object_storage_enabled
 ) -> None:
     from npa.fleet import lifecycle
 
@@ -493,6 +494,8 @@ def test_mixed_deploy_dispatches_soperator_adapter_without_cli_shellout(
         {"name": "kube", "backend": "mk8s", "mk8s": {}},
         _soperator_envelope(),
     ]
+    if object_storage_enabled:
+        mapping["projects"][0]["object_storage"] = {"size_gibibytes": 1}
     spec = spec_from_mapping(mapping)
     seen: list[str] = []
 
@@ -541,6 +544,61 @@ def test_mixed_deploy_dispatches_soperator_adapter_without_cli_shellout(
         "soperator",
     ]
     assert result["backend_counts"] == {"mk8s": 1, "soperator": 1}
+
+
+@pytest.mark.parametrize("only_clusters", [None, ["slurm"]])
+def test_fleet_storage_rejects_soperator_only_selection_before_mutation(
+    tmp_path, monkeypatch, only_clusters
+) -> None:
+    from npa.fleet import lifecycle
+
+    mapping = _legacy_mk8s_mapping()
+    mapping["projects"][0]["object_storage"] = {"size_gibibytes": 1}
+    mapping["projects"][0]["clusters"] = [_soperator_envelope()]
+    if only_clusters:
+        mapping["projects"][0]["clusters"].append(
+            {"name": "kube", "backend": "mk8s", "mk8s": {}}
+        )
+    spec = spec_from_mapping(mapping)
+    monkeypatch.setattr(
+        lifecycle,
+        "_persist_target_backend_owner",
+        lambda *_args, **_kwargs: pytest.fail("mutated state before storage rejection"),
+    )
+
+    with pytest.raises(ValueError, match="object_storage requires.*selected mk8s"):
+        lifecycle.deploy_fleet(spec, work_root=tmp_path, only_clusters=only_clusters)
+    assert not (tmp_path / spec.name).exists()
+
+
+@pytest.mark.parametrize(
+    "selection", [{"only_projects": ["project-test"]}, {"only_clusters": ["kube"]}]
+)
+def test_fleet_storage_ignores_unselected_soperator_project(
+    tmp_path, monkeypatch, selection
+) -> None:
+    from npa.fleet import lifecycle
+
+    mapping = _legacy_mk8s_mapping()
+    mapping["projects"][0]["clusters"] = [{"name": "kube"}]
+    mapping["projects"].append(
+        {
+            "name": "other",
+            "object_storage": {"size_gibibytes": 1},
+            "clusters": [_soperator_envelope()],
+        }
+    )
+    spec = spec_from_mapping(mapping)
+
+    class Mk8sSelected(Exception):
+        pass
+
+    def dispatch(*_args, **_kwargs):
+        raise Mk8sSelected
+
+    monkeypatch.setattr(lifecycle, "_deploy_mk8s_fleet", dispatch)
+    with pytest.raises(Mk8sSelected):
+        lifecycle.deploy_fleet(spec, work_root=tmp_path, **selection)
 
 
 def test_pure_mk8s_production_route_uses_adapter_and_resolved_prefix(
