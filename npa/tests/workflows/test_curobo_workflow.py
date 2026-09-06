@@ -15,8 +15,8 @@ from npa.orchestration.npa_workflow.submit import prepare_npa_workflow_for_submi
 
 def test_complete_benchmark_and_factual_rrd_are_reachable():
     path = (
-        Path(__file__).resolve().parents[2]
-        / "workflows/workbench/npa-workflows/curobo-benchmark.yaml"
+        Path(__file__).resolve().parents[3]
+        / "workflows/testing/curobo-benchmark.yaml"
     )
     spec = yaml.safe_load(path.read_text())
     assert spec["config"]["curobo_mode"] == "both"
@@ -35,7 +35,7 @@ def test_complete_benchmark_and_factual_rrd_are_reachable():
 
 @pytest.mark.parametrize("source_matches", [True, False])
 def test_full_workflow_baked_setup_uses_real_import_and_image_identity(tmp_path, source_matches):
-    path = Path(__file__).resolve().parents[2] / "workflows/workbench/npa-workflows/curobo-benchmark.yaml"
+    path = Path(__file__).resolve().parents[3] / "workflows/testing/curobo-benchmark.yaml"
     sha = "a" * 40
     image = "ghcr.io/nebius/nebius-physical-ai/npa-curobo@sha256:" + "b" * 64
     prepared = prepare_npa_workflow_for_submit(
