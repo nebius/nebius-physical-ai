@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import fnmatch
 import json
 import os
 import subprocess
@@ -1709,18 +1710,10 @@ def test_dig_inference_toolref_consumes_the_finetune_result_without_step_overrid
 
 
 @pytest.mark.parametrize(
-    ("filtered_repository", "option", "patterns"),
-    [
-        ("Qwen/Qwen3-VL-8B-Instruct", "include", ("*.json", "*.txt")),
-        (
-            "nvidia/Cosmos3-Edge",
-            "exclude",
-            ("transformer/*", "vae/*", "vision_encoder/*"),
-        ),
-    ],
+    "runtime_repository", list(paidf_native.DIG_RUNTIME_CACHE_PROBES)
 )
 def test_dig_preparation_pins_real_converter_and_original_downloader(
-    tmp_path: Path, monkeypatch, filtered_repository, option, patterns
+    tmp_path: Path, monkeypatch, runtime_repository: str
 ) -> None:
     workspace = tmp_path / "workspace"
     script = workspace / "scripts/download_checkpoints.sh"
@@ -1738,19 +1731,112 @@ def test_dig_preparation_pins_real_converter_and_original_downloader(
         ),
     )
     calls = []
+    revisions = paidf_native._dig_model_revisions()
+    repository_files = {
+        repository: {probe, "README.md"}
+        for repository, probe in paidf_native.DIG_RUNTIME_CACHE_PROBES.items()
+    }
+    repository_files["Qwen/Qwen3-VL-8B-Instruct"].update(
+        {"config.json", "model-00001-of-00004.safetensors"}
+    )
+    repository_files["nvidia/Cosmos3-Edge"].update(
+        {
+            "transformer/diffusion_pytorch_model.safetensors",
+            "vae/diffusion_pytorch_model.safetensors",
+            "vision_encoder/model.safetensors",
+        }
+    )
+    # hf's repeatable options select files from a complete repository listing.
+    # Preserve that listing even when only a subset is downloaded, as hf does.
+    download_parser = click.Command(
+        "download",
+        params=[
+            click.Argument(["repo_id"]),
+            click.Argument(["filenames"], nargs=-1),
+            click.Option(["--revision"]),
+            click.Option(["--cache-dir"]),
+            click.Option(["--local-dir"]),
+            click.Option(["--include"], multiple=True),
+            click.Option(["--exclude"], multiple=True),
+        ],
+    )
+
+    def require_complete_snapshot(pretrained, repository, *, require_tree):
+        cache = pretrained / "hf" / f"models--{repository.replace('/', '--')}"
+        revision = revisions[repository]
+        assert (cache / "refs/main").read_text() == revision
+        snapshot = cache / "snapshots" / revision
+        # The real offline directory request uses include='*', even for a
+        # tokenizer/processor. A successful probe file alone is insufficient.
+        for name in repository_files[repository]:
+            assert (snapshot / name).is_file(), f"incomplete snapshot: {name}"
+        tree = cache / "trees" / f"{revision}.json"
+        if require_tree:
+            assert set(json.loads(tree.read_text())) == repository_files[repository]
+
+    token_names = (
+        "HF_TOKEN",
+        "HUGGING_FACE_HUB_TOKEN",
+        "HUGGINGFACE_HUB_TOKEN",
+        "HF_TOKEN_PATH",
+    )
+    for name in token_names:
+        monkeypatch.setenv(name, "synthetic-staging-credential")
 
     def component(argv, **kwargs):
         calls.append((argv, kwargs["env"]))
         if argv[0] == "uvx" and "--cache-dir" in argv:
-            _write_dig_runtime_cache(Path(argv[argv.index("--cache-dir") + 1]).parent)
+            with download_parser.make_context("download", argv[3:]) as context:
+                parsed = context.params
+            repository = parsed["repo_id"]
+            assert parsed["revision"] == revisions[repository]
+            cache = (
+                Path(parsed["cache_dir"]) / f"models--{repository.replace('/', '--')}"
+            )
+            snapshot = cache / "snapshots" / parsed["revision"]
+            for name in repository_files[repository]:
+                if parsed["filenames"]:
+                    selected = name in parsed["filenames"]
+                else:
+                    selected = any(
+                        fnmatch.fnmatchcase(name, pattern)
+                        for pattern in parsed["include"] or ("*",)
+                    ) and not any(
+                        fnmatch.fnmatchcase(name, pattern)
+                        for pattern in parsed["exclude"]
+                    )
+                if selected:
+                    target = snapshot / name
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_text("synthetic-fixture", encoding="utf-8")
+            _write_fixture_json(
+                cache / "trees" / f"{parsed['revision']}.json",
+                {name: {} for name in repository_files[repository]},
+            )
         elif argv[0] == "uvx":
             target = Path(argv[argv.index("--local-dir") + 1])
             target.mkdir(parents=True)
             _write_fixture_json(target / "config.json", {})
         elif argv[0] == "python":
+            env = kwargs["env"]
+            assert env["HF_HUB_OFFLINE"] == env["TRANSFORMERS_OFFLINE"] == "1"
+            assert not set(token_names) & env.keys()
+            assert env["HF_HUB_CACHE"] == env["HUGGINGFACE_HUB_CACHE"]
+            require_complete_snapshot(
+                Path(env["CKPT_DIR"]), runtime_repository, require_tree=True
+            )
             Path(argv[argv.index("-o") + 1]).mkdir(parents=True)
         elif argv[0] == "bash":
-            target = Path(kwargs["env"]["CKPT_DIR"]) / "wan2pt2/Wan2.2_VAE.pth"
+            pretrained = Path(kwargs["env"]["CKPT_DIR"])
+            # The unchanged pinned downloader removes only Edge tree metadata.
+            # Model payloads must still survive into the published handoff.
+            edge = "nvidia/Cosmos3-Edge"
+            (
+                pretrained
+                / "hf/models--nvidia--Cosmos3-Edge/trees"
+                / f"{revisions[edge]}.json"
+            ).unlink(missing_ok=True)
+            target = pretrained / "wan2pt2/Wan2.2_VAE.pth"
             target.parent.mkdir()
             target.write_text("synthetic-fixture", encoding="utf-8")
 
@@ -1764,7 +1850,6 @@ def test_dig_preparation_pins_real_converter_and_original_downloader(
     result = paidf_native.prepare_dig_pretrained(
         str(output), str(tmp_path / "result.json"), "unit-run"
     )
-    revisions = paidf_native._dig_model_revisions()
     downloads = [argv for argv, _env in calls if argv[0] == "uvx"]
     assert len(downloads) == 6
     assert calls
@@ -1780,30 +1865,13 @@ def test_dig_preparation_pins_real_converter_and_original_downloader(
     for argv in downloads:
         assert argv[1] == "hf==1.26.0"
         assert argv[argv.index("--revision") + 1] == revisions[argv[3]]
-    # hf 1.26's download signature uses variadic filenames and repeatable
-    # single-value Click options. Parse the generated argv at that boundary:
-    # an unflagged second glob becomes a filename and disables filtering.
-    download_parser = click.Command(
-        "download",
-        params=[
-            click.Argument(["repo_id"]),
-            click.Argument(["filenames"], nargs=-1),
-            click.Option(["--revision"]),
-            click.Option(["--cache-dir"]),
-            click.Option(["--local-dir"]),
-            click.Option(["--include"], multiple=True),
-            click.Option(["--exclude"], multiple=True),
-        ],
-    )
     for argv in downloads:
         with download_parser.make_context("download", argv[3:]) as context:
             parsed = context.params
             assert parsed["repo_id"] == argv[3]
             assert parsed["revision"] == revisions[argv[3]]
             assert bool(parsed["cache_dir"]) != bool(parsed["local_dir"])
-            if argv[3] == filtered_repository and parsed["cache_dir"]:
-                assert parsed["filenames"] == ()
-                assert parsed[option] == patterns
+            assert parsed["filenames"] == ()
     converters = [(argv, env) for argv, env in calls if argv[0] == "python"]
     assert len(converters) == 2
     for argv, env in converters:
@@ -1818,6 +1886,13 @@ def test_dig_preparation_pins_real_converter_and_original_downloader(
     assert upstream_env["GUARDRAIL_REV"] == revisions["nvidia/Cosmos-Guardrail1"]
     assert (output / "runtime-hf-snapshots.json").is_file()
     assert (output / paidf_native.DIG_PRETRAINED_CONTENT_MANIFEST).is_file()
+    # The final training/inference handoff retains the complete payload even
+    # after the original downloader's metadata cleanup; no online fallback.
+    require_complete_snapshot(output, runtime_repository, require_tree=False)
+    offline = paidf_native._dig_offline_environment(output, "unit-run")
+    assert offline["HF_HUB_OFFLINE"] == offline["TRANSFORMERS_OFFLINE"] == "1"
+    assert not set(token_names) & offline.keys()
+    paidf_native._dig_pretrained_content_manifest(output, "unit-run")
     assert len(result["content_manifest_sha256"]) == 64
     assert result["status"] == "completed"
 

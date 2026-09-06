@@ -2512,6 +2512,9 @@ def prepare_dig_pretrained(
             "HF_HUB_CACHE": str(output / "hf"),
             "HF_CLI_VERSION": "1.26.0",
         }
+        # The pinned framework requests complete snapshots during model
+        # construction, including the Qwen tokenizer and Edge processor paths.
+        # Stage all files before credential-free, offline conversion and use.
         for repository in DIG_RUNTIME_CACHE_PROBES:
             command = [
                 "uvx",
@@ -2523,24 +2526,8 @@ def prepare_dig_pretrained(
                 "--cache-dir",
                 str(output / "hf"),
             ]
-            if repository == "Qwen/Qwen3-VL-8B-Instruct":
-                command.extend(["--include", "*.json", "--include", "*.txt"])
-            elif repository == "nvidia/Cosmos3-Edge":
-                command.extend(
-                    [
-                        "--exclude",
-                        "transformer/*",
-                        "--exclude",
-                        "vae/*",
-                        "--exclude",
-                        "vision_encoder/*",
-                    ]
-                )
             _run_component(command, env=env)
         _dig_cache_manifest(output, run_id, initialize=True)
-        shutil.rmtree(
-            output / "hf/models--nvidia--Cosmos3-Edge/trees", ignore_errors=True
-        )
         # The pinned upstream converter's named models resolve revision=main.
         # Fetch approved revisions first and give that real converter local
         # snapshots; the original downloader then sees completed DCP outputs.
