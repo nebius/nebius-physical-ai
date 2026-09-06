@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import subprocess
+import sys
 import wave
 from pathlib import Path
 
@@ -1710,6 +1711,46 @@ def test_dig_inference_toolref_consumes_the_finetune_result_without_step_overrid
     assert "checkpoint_step" not in workflow["config"]
 
 
+@pytest.mark.parametrize("case", ["valid", "missing", "changed", "relative", "unavailable"])
+def test_dig_edge_converter_config_uses_vendor_package_and_refuses_drift(
+    tmp_path: Path, monkeypatch, case: str
+) -> None:
+    package = tmp_path / "cosmos_framework"
+    package.mkdir()
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    config = package / "inference/configs/model/Cosmos3-Edge.yaml"
+    config.parent.mkdir(parents=True)
+    authored_config = b"model: {config: {ema: {enabled: true}}}\n"
+    if case != "missing":
+        config.write_bytes(authored_config if case != "changed" else b"model: {}\n")
+    monkeypatch.setattr(
+        paidf_native,
+        "DIG_EDGE_CONVERTER_CONFIG_SHA256",
+        hashlib.sha256(authored_config).hexdigest(),
+    )
+    original_run = subprocess.run
+    environment = {"PYTHONPATH": str(tmp_path), "HF_HUB_OFFLINE": "1"}
+
+    def vendor_python(argv, **kwargs):
+        assert argv[0] == "/opt/venv/bin/python"
+        assert kwargs["env"] == environment
+        if case == "unavailable":
+            raise subprocess.CalledProcessError(1, argv)
+        if case == "relative":
+            return subprocess.CompletedProcess(argv, 0, stdout="Cosmos3-Edge.yaml\n")
+        # Execute the real stdlib package resolver against this authored package;
+        # the test environment has no vendor interpreter or model dependencies.
+        return original_run([sys.executable, *argv[1:]], **kwargs)
+
+    monkeypatch.setattr(paidf_native.subprocess, "run", vendor_python)
+    if case == "valid":
+        assert paidf_native._dig_edge_converter_config(environment) == str(config)
+        assert config.read_bytes() == authored_config
+    else:
+        with pytest.raises(paidf_native.PaidfNativeError, match="generator configuration"):
+            paidf_native._dig_edge_converter_config(environment)
+
+
 @pytest.mark.parametrize(
     "runtime_repository", list(paidf_native.DIG_RUNTIME_CACHE_PROBES)
 )
@@ -1732,6 +1773,32 @@ def test_dig_preparation_pins_real_converter_and_original_downloader(
         ),
     )
     calls = []
+    generator_config = {
+        "model": {
+            "_target_": "vendor.OmniMoTModel",
+            "config": {
+                "ema": {"enabled": True},
+                "activation_checkpointing": {"mode": "selective"},
+                "vision_gen": True,
+            },
+        }
+    }
+    edge_config = tmp_path / "vendor-package/Cosmos3-Edge.yaml"
+    edge_config.parent.mkdir()
+    edge_config.write_text(yaml.safe_dump(generator_config), encoding="utf-8")
+    monkeypatch.setattr(
+        paidf_native, "DIG_EDGE_CONVERTER_CONFIG_SHA256",
+        hashlib.sha256(edge_config.read_bytes()).hexdigest(),
+        raising=False,
+    )
+
+    def resolve_vendor_config(argv, **kwargs):
+        assert argv[0] == "/opt/venv/bin/python"
+        assert kwargs["env"]["HF_HUB_OFFLINE"] == "1"
+        assert not set(token_names) & kwargs["env"].keys()
+        return subprocess.CompletedProcess(argv, 0, stdout=str(edge_config) + "\n")
+
+    monkeypatch.setattr(paidf_native.subprocess, "run", resolve_vendor_config)
     revisions = paidf_native._dig_model_revisions()
     repository_files = {
         repository: {probe, "README.md"}
@@ -1824,7 +1891,11 @@ def test_dig_preparation_pins_real_converter_and_original_downloader(
         elif argv[0] == "uvx":
             target = Path(argv[argv.index("--local-dir") + 1])
             target.mkdir(parents=True)
-            _write_fixture_json(target / "config.json", {})
+            _write_fixture_json(
+                target / "config.json",
+                generator_config if argv[3] == "nvidia/Cosmos3-Nano"
+                else {"model_type": "nemotron3_dense_vl"},
+            )
         elif argv[0] == "python":
             env = kwargs["env"]
             assert env["HF_HUB_OFFLINE"] == env["TRANSFORMERS_OFFLINE"] == "1"
@@ -1845,6 +1916,23 @@ def test_dig_preparation_pins_real_converter_and_original_downloader(
             assert (wan_snapshot / wan_file).read_bytes() == b"synthetic-fixture"
             assert not (wan_snapshot / "unneeded-transformer.safetensors").exists()
             assert not (pretrained / "wan2pt2" / wan_file).exists()
+            source = Path(argv[argv.index("--checkpoint-path") + 1])
+            local_config = json.loads((source / "config.json").read_text())
+            if "--config-file" in argv:
+                selected = Path(argv[argv.index("--config-file") + 1])
+                assert selected == edge_config
+                model_config = yaml.safe_load(selected.read_text())
+                # Edge's published root is a reasoner config, not the generator.
+                assert "model" not in local_config
+            else:
+                model_config = local_config
+            model = model_config.get("model", {})
+            assert model.get("_target_") == "vendor.OmniMoTModel", (
+                "converter requires the full generator config, not a reasoner root"
+            )
+            assert model["config"]["ema"] == {"enabled": True}
+            assert model["config"]["activation_checkpointing"] == {"mode": "selective"}
+            assert json.loads((source / "config.json").read_text()) == local_config
             Path(argv[argv.index("-o") + 1]).mkdir(parents=True)
         elif argv[0] == "bash":
             pretrained = Path(kwargs["env"]["CKPT_DIR"])
@@ -1896,6 +1984,8 @@ def test_dig_preparation_pins_real_converter_and_original_downloader(
             )
     converters = [(argv, env) for argv, env in calls if argv[0] == "python"]
     assert len(converters) == 2
+    assert "--config-file" not in converters[0][0]
+    assert converters[1][0][-2:] == ["--config-file", str(edge_config)]
     for argv, env in converters:
         assert argv[2] == "cosmos_framework.scripts.convert_model_to_dcp"
         assert argv[argv.index("--checkpoint-path") + 1] not in {

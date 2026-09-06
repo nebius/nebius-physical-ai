@@ -54,6 +54,9 @@ DIG_RUNTIME_CACHE_PROBES = {
     "Wan-AI/Wan2.2-TI2V-5B": "Wan2.2_VAE.pth",
 }
 DIG_PRETRAINED_CONTENT_MANIFEST = "npa-pretrained-content.json"
+DIG_EDGE_CONVERTER_CONFIG_SHA256 = (
+    "3769529debceea27dd016cad333503ef5bef50a65e1fba11c4b23f1b896c2fb3"
+)
 _SERVICE_WORKFLOWS = {"image-edit": "iaa", "image2video": "evg"}
 _PAIDF_EXECUTOR_PATH = "modules/generation/executors/base.py"
 _PAIDF_EXECUTOR_SHA256 = (
@@ -2490,6 +2493,35 @@ def run_dig_train(
     return _write_json(payload, result_uri)
 
 
+def _dig_edge_converter_config(environment: dict[str, str]) -> str:
+    """Locate the pinned generator config in the converter's own environment."""
+
+    try:
+        result = subprocess.run(
+            [
+                "/opt/venv/bin/python",
+                "-c",
+                "from importlib.util import find_spec; from pathlib import Path; "
+                "print((Path(find_spec('cosmos_framework').origin).resolve().parent / "
+                "'inference/configs/model/Cosmos3-Edge.yaml').resolve())",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            env=environment,
+        )
+        config = Path(result.stdout.strip())
+        if (
+            not config.is_absolute()
+            or not config.is_file()
+            or _sha256(config) != DIG_EDGE_CONVERTER_CONFIG_SHA256
+        ):
+            raise PaidfNativeError("DIG Edge generator configuration is missing or changed")
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise PaidfNativeError("DIG Edge generator configuration could not be resolved") from exc
+    return str(config)
+
+
 def prepare_dig_pretrained(
     output_uri: str,
     result_uri: str,
@@ -2534,6 +2566,7 @@ def prepare_dig_pretrained(
                 command.insert(4, probe)
             _run_component(command, env=env)
         _dig_cache_manifest(output, run_id, initialize=True)
+        edge_config = _dig_edge_converter_config(_dig_offline_environment(output, run_id))
         # The pinned upstream converter's named models resolve revision=main.
         # Fetch approved revisions first and give that real converter local
         # snapshots; the original downloader then sees completed DCP outputs.
@@ -2557,16 +2590,22 @@ def prepare_dig_pretrained(
                 ],
                 env=env,
             )
+            converter = [
+                "python",
+                "-m",
+                "cosmos_framework.scripts.convert_model_to_dcp",
+                "-o",
+                str(output / model),
+                "--checkpoint-path",
+                str(source),
+            ]
+            if model == "Cosmos3-Edge":
+                # Edge's root config describes only its reasoner. Use the
+                # complete generator config selected by the upstream named
+                # checkpoint while retaining these approved local weights.
+                converter.extend(["--config-file", edge_config])
             _run_component(
-                [
-                    "python",
-                    "-m",
-                    "cosmos_framework.scripts.convert_model_to_dcp",
-                    "-o",
-                    str(output / model),
-                    "--checkpoint-path",
-                    str(source),
-                ],
+                converter,
                 cwd=workspace,
                 env=_dig_offline_environment(output, run_id),
             )
