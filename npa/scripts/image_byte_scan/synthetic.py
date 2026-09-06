@@ -98,4 +98,3 @@ def optional_gzip(raw, *, flags=0, extra=b"AB\x03\x00oneXY\x03\x00two", name=b"a
     compressor = zlib.compressobj(wbits=-15)
     body = compressor.compress(raw) + compressor.flush()
     return bytes(header) + body + struct.pack("<II", zlib.crc32(raw), len(raw) & 0xFFFFFFFF), bytes(header)
-
