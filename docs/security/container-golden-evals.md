@@ -1,8 +1,7 @@
 # Container safety review & golden evals
 
-This document is the safety + Physical AI usefulness review for every Workbench
-container image, and the contract for each container's **golden eval** — the
-minimal "does this container actually work" / "hello world" tested rerun.
+This page describes container safety requirements and golden evaluations:
+the repeatable checks defined for each Workbench image.
 
 The machine-readable source of truth is
 [`npa/src/npa/smoke/golden_evals.yaml`](../../npa/src/npa/smoke/golden_evals.yaml).
@@ -15,19 +14,19 @@ and enforced by `npa/docker/workbench/packaging-contract.yaml`.
 
 ## How it is enforced
 
-- **Completeness/consistency gate** —
+- **Manifest checks:**
   `npa/tests/smoke/test_golden_eval_manifest.py` runs in the standard unit suite
   and fails CI if any container in `npa.deploy.images.CONTAINER_IMAGE_NAMES` is
   missing an entry, references a missing Dockerfile, an unimportable smoke
   module, or omits a safety / Physical AI field.
-- **Nightly run** — the workflow at `docs/ci/golden-evals-nightly.yml` runs at
-  04:00 UTC once installed to `.github/workflows/` (it ships under `docs/ci/`
-  because the author credential lacked the GitHub `workflow` scope). The
-  `validate-manifest` and `cpu-evals` jobs run on GitHub-hosted runners; the GPU
-  golden evals run on a self-hosted GPU runner via `workflow_dispatch`
-  (`run_gpu_evals: true`).
-- **Image CVE / config scanning** — handled separately by the weekly
+- **Nightly template:** `docs/ci/golden-evals-nightly.yml` is staged documentation,
+  not an active GitHub Actions workflow. It defines scheduled CPU checks and
+  an optional GPU job. Its presence does not establish nightly GPU validation.
+- **Image CVE / config scanning:** handled separately by the weekly
   `image-security-scan.yml` (Trivy config scan + base-image CVE matrix).
+
+The active [GPU e2e preflight](../../.github/workflows/e2e.yml) collects tests
+and checks shell syntax. It does not execute GPU workloads.
 
 ## CLI
 
@@ -46,8 +45,9 @@ npa workbench golden-eval run genesis --serverless --gpu h100
 `--serverless` submits the golden eval as a **Nebius Serverless AI Job** that
 pulls the tool's real container image (resolved via
 `npa.deploy.images.container_image_for_tool`) and runs the eval command on a
-GPU, then waits for the PASS/FAIL result. This is the path the nightly GPU job
-uses — no self-hosted GPU runner required, only Nebius + storage credentials.
+GPU, then waits for the PASS/FAIL result. This CLI mode requires Nebius and
+storage credentials. It does not require a self-hosted GitHub runner or activate
+the staged nightly workflow.
 
 Each eval's GPU is taken from `golden_eval.serverless_gpu` in the manifest
 (falling back to `l40s`, since Nebius Jobs always require a GPU preset) and can
@@ -58,8 +58,11 @@ The same logic is available as a script for CI:
 
 ## Golden-eval capability chart
 
-Each container's golden eval proves specific **capabilities** (not just `--help` or
-import). Registry tags come from ``pyproject.toml`` → ``[tool.npa.supported-tools]``.
+The manifest defines tests with different scopes: import and CLI checks,
+service checks, and GPU capability tests. A definition is not a recorded pass.
+Use the [image and GPU matrix](../workbench/image-gpu-compatibility-matrix.md)
+for dated hardware results. Registry tags come from
+`pyproject.toml` under `[tool.npa.supported-tools]`.
 
 ```bash
 npa/.venv/bin/python npa/scripts/run_golden_evals.py list --capabilities
