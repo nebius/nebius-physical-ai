@@ -51,12 +51,12 @@ class StorageIdentity:
     evidence_json: str = field(default="", repr=False, compare=False)
 
 
-def resolve_storage_targets(
+def resolve_fleet_targets(
     spec: FleetSpec, *, only_projects: list[str] | None = None,
     only_clusters: list[str] | None = None, project_prefix: str | None = None,
     profile: str | None = None,
 ) -> list[tuple[ProjectSpec, ClusterSpec]]:
-    """Select exact Fleet targets, retaining explicitly disabled filesystems.
+    """Select exact declared Fleet targets.
 
     Args:
         spec: Desired Fleet declaration.
@@ -81,8 +81,32 @@ def resolve_storage_targets(
         targets = [(project, cluster) for project, cluster in targets
                    if cluster.name in only_clusters]
     if not targets:
-        raise StorageIdentityError("storage verification selected no Fleet targets")
+        raise StorageIdentityError("verification selected no Fleet targets")
     return targets
+
+
+def resolve_storage_targets(
+    spec: FleetSpec, *, only_projects: list[str] | None = None,
+    only_clusters: list[str] | None = None, project_prefix: str | None = None,
+    profile: str | None = None,
+) -> list[tuple[ProjectSpec, ClusterSpec]]:
+    """Select storage-verification targets, including disabled filesystems.
+
+    Args:
+        spec: Desired Fleet declaration.
+        only_projects: Project keys or display names to include.
+        only_clusters: Cluster names within the selected projects.
+        project_prefix: Override used when matching project display names.
+        profile: Authentication override accepted consistently by Fleet APIs.
+    Returns:
+        Selected project and cluster pairs in declaration order.
+    Raises:
+        StorageIdentityError: A selector does not match the selected scope.
+    """
+    return resolve_fleet_targets(
+        spec, only_projects=only_projects, only_clusters=only_clusters,
+        project_prefix=project_prefix, profile=profile,
+    )
 
 
 def _selected_projects(spec, only_projects, prefix):
@@ -96,16 +120,16 @@ def _selected_projects(spec, only_projects, prefix):
             or project.display_name(prefix) in only_projects]
 
 
-def resolve_storage_identity(
+def resolve_fleet_identity(
     spec: FleetSpec, project: ProjectSpec, cluster: ClusterSpec, *,
     profile: str | None = None, project_prefix: str | None = None,
 ) -> StorageIdentity:
-    """Bind a registered kubeconfig to a freshly verified provider target.
+    """Bind a registered kubeconfig to a freshly verified Fleet target.
 
     Args:
         spec: Desired Fleet declaration.
         project: Selected project declaration.
-        cluster: Selected filesystem-enabled Kubernetes declaration.
+        cluster: Selected Kubernetes declaration.
         profile: Authentication profile override.
         project_prefix: Override for provider project display-name verification.
     Returns:
@@ -115,10 +139,9 @@ def resolve_storage_identity(
     """
     _validate_spec(spec)
     if project not in spec.projects or cluster not in project.clusters:
-        raise StorageIdentityError("storage identity target is outside the Fleet declaration")
-    enabled = cluster.enable_filestore or bool(cluster.existing_filestore)
-    if cluster.backend_name() != "mk8s" or not enabled:
-        raise StorageIdentityError("storage identity requires an enabled mk8s filesystem")
+        raise StorageIdentityError("target identity is outside the Fleet declaration")
+    if cluster.backend_name() != "mk8s":
+        raise StorageIdentityError("target identity requires the mk8s backend")
     registered = _registered_target(spec, project, cluster)
     selected_profile, tenant = _profile_scope(spec, profile)
     region = project.region or spec.region or registered.region
@@ -133,6 +156,31 @@ def resolve_storage_identity(
     snapshot = _connection_snapshot(registered.name, connection)
     return StorageIdentity(kubeconfig, registered.project_id, registered.cluster_id,
                            tenant, region, selected_profile, digest, snapshot, evidence)
+
+
+def resolve_storage_identity(
+    spec: FleetSpec, project: ProjectSpec, cluster: ClusterSpec, *,
+    profile: str | None = None, project_prefix: str | None = None,
+) -> StorageIdentity:
+    """Bind a filesystem-enabled Fleet target to verified provider identity.
+
+    Args:
+        spec: Desired Fleet declaration.
+        project: Selected project declaration.
+        cluster: Selected filesystem-enabled Kubernetes declaration.
+        profile: Authentication profile override.
+        project_prefix: Override for provider project display-name verification.
+    Returns:
+        Private immutable identity plus a publication-safe evidence hash.
+    Raises:
+        StorageIdentityError: Storage or provider identity validation fails.
+    """
+    enabled = cluster.enable_filestore or bool(cluster.existing_filestore)
+    if not enabled:
+        raise StorageIdentityError("storage identity requires an enabled filesystem")
+    return resolve_fleet_identity(
+        spec, project, cluster, profile=profile, project_prefix=project_prefix,
+    )
 
 
 def _identity_evidence(project, cluster, connection):

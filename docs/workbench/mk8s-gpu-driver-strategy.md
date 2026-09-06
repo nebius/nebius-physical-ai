@@ -144,6 +144,33 @@ Direct equivalents are `--gpu-health-stabilization-seconds`,
 `--gpu-cuda-smoke-image`. Skipping validation is an explicit diagnostic choice,
 not the success default.
 
+## Qualifying an existing RTX Fleet
+
+Deployment runs the graphics gate before reporting a target as deployed. To
+repeat that gate after a driver, node, or runtime change, use the registered
+Fleet identity instead of a global Kubernetes context:
+
+```bash
+npa fleet verify-graphics \
+  --spec /path/to/private-fleet.yaml \
+  --concurrency 4 \
+  --evidence-dir /path/outside/the/repository \
+  --output json
+```
+
+The command accepts `--only-projects`, `--only-clusters`, `--project-prefix`,
+and `--profile`. Every selected cluster must declare `gpu_workload_profile:
+rtx-rendering`, use the operator driver path, and use 8-GPU RTX workers. NPA
+fresh-verifies the provider project, cluster, and registered kubeconfig before
+waiting for the declared stability interval. It then runs CUDA vectorAdd and
+the GLX/EGL/Vulkan probe on every RTX worker. Any missing worker or partial
+evidence fails the command.
+
+Exact node names and provider identity evidence are written with owner-only
+permissions outside Git. CLI output is publication-safe and contains target
+indices, counts, failure categories, and hashes. `npa.sdk.fleet.verify_graphics`
+uses the same implementation for automation.
+
 ## Migrating existing affected pools
 
 A code upgrade changes future rendered node-group configuration; it cannot

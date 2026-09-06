@@ -223,6 +223,15 @@ def test_disabled_target_selection_requires_no_registration():
     spec = _spec()
     spec.projects[0].clusters[0].enable_filestore = False
     assert identity.resolve_storage_targets(spec) == spec.cluster_targets()
+    assert identity.resolve_fleet_targets(spec) == spec.cluster_targets()
+
+
+def test_generic_fleet_identity_does_not_require_storage(prepared):
+    spec = prepared["spec"]
+    project, cluster = spec.cluster_targets()[0]
+    cluster.enable_filestore = False
+    verified = identity.resolve_fleet_identity(spec, project, cluster)
+    assert verified.kubeconfig == prepared["kubeconfig"]
 
 
 def test_target_selection_matches_keys_and_overridden_display_names():

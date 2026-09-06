@@ -18,7 +18,8 @@ For a single cluster, prefer `npa cluster up`. For Slurm-on-Kubernetes, use
 `npa soperator`.
 
 Three-tier contract:
-- **CLI**: `npa fleet plan|deploy|destroy|status --spec <fleet.yaml>`.
+- **CLI**: `npa fleet plan|deploy|destroy|status|verify-storage|verify-graphics
+  --spec <fleet.yaml>`.
 - **SDK**: `npa.sdk.fleet.deploy(spec)` / `destroy` / `plan` / `status` with
   `FleetSpec` / `ProjectSpec` / `ClusterSpec` / `NodePoolSpec`.
 - **YAML / agent**: `apiVersion: npa.fleet/v0.0.1` spec; workflow
@@ -51,6 +52,17 @@ receipts. Publication surfaces receive only sanitized counts, requested capacity
 categories, hashes, and cleanup counts. This operation does not redeploy,
 resize, change IAM, or alter customer workloads. See
 `docs/fleet-storage-verification.md` for prerequisites and the installed SDK.
+
+Run `npa fleet verify-graphics --spec <private-fleet.yaml> --output json` after
+an RTX driver, node, or runtime change. It uses the registered Fleet identity,
+waits for the declared health stability interval, and runs CUDA vectorAdd plus
+GLX, EGL, and Vulkan qualification on every selected 8-GPU RTX worker. All
+targets must declare `gpu_workload_profile: rtx-rendering`; a partial target or
+partial per-node result fails closed. Use `--concurrency` for independent
+clusters and the standard Fleet selectors to narrow scope. Exact provider and
+node evidence goes only to the owner-private `--evidence-dir` outside Git; CLI
+output remains safe to publish. The shared SDK entry point is
+`npa.sdk.fleet.verify_graphics`.
 
 The all-worker live regression is
 `npa/tests/e2e/test_fleet_storage_verification_live.py`. Supply
@@ -618,5 +630,6 @@ npa fleet plan --help
 npa fleet deploy --help
 npa fleet verify-mig --help
 npa fleet verify-storage --help
+npa fleet verify-graphics --help
 npa/.venv/bin/python -m pytest npa/tests/unit/test_fleet_cli.py -q
 ```

@@ -58,6 +58,13 @@ capacity, cross-node PVC reads and writes, and cleanup. The command and Python
 SDK share one implementation; see [Fleet storage verification](docs/fleet-storage-verification.md)
 for selectors, private evidence, and automation-safe JSON.
 
+For an existing 8-GPU RTX rendering Fleet, run
+`npa fleet verify-graphics --spec <fleet.yaml>`. It fresh-verifies each
+registered target, observes cluster stability, and then proves CUDA vectorAdd,
+GLX, EGL, and Vulkan on every RTX worker. Exact receipts stay owner-private;
+text and JSON output contain only counts, failure categories, and evidence
+hashes. See the [GPU driver strategy](docs/workbench/mk8s-gpu-driver-strategy.md#qualifying-an-existing-rtx-fleet).
+
 > Partners integrate independently. Teams assemble from open blueprints.
 > Nebius owns the infrastructure layer and compute substrate.
 
