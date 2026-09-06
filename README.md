@@ -4,9 +4,9 @@ Run data curation, simulation, model training, and evaluation workloads on
 Nebius AI Cloud. Workbench provides the `npa` CLI, Python interfaces, container
 images, and YAML workflows that exchange artifacts through object storage.
 
-Use your coding agent or terminal to configure a project, prepare a workload,
-submit it, and inspect its outputs. Each guide specifies the required inputs,
-credentials, compute, and model access.
+Use individual tools from your coding agent or terminal, or compose them into
+workflows. Choose the tools that fit your task, prepare their inputs, run them,
+and inspect the outputs. Requirements depend on the selected tools and runtime.
 
 **[Get started](docs/quickstart.md)** ·
 **[Use your coding agent](docs/workbench/agent-first-run.md)** ·
@@ -105,10 +105,16 @@ recovery, see [configuration](docs/configuration.md).
 
 ### 3. Run your first workload
 
-Start with [PAIDF + Cosmos 3](docs/workbench/guides/paidf-cosmos3.md): supply a
+Choose a task from the [workload guides](docs/workbench/guides/README.md), or
+explore the [tool reference](docs/cli/workbench.md) to compose your own workflow.
+Use the [coding-agent guide](docs/workbench/agent-first-run.md) to select tools
+and check the inputs, credentials, and resources your task needs.
+
+For a worked video-augmentation example, use
+[PAIDF + Cosmos 3](docs/workbench/guides/paidf-cosmos3.md): supply a
 local H.264 MP4 or private S3 MP4 URI, generate source-conditioned variants,
 evaluate them, and curate accepted outputs. Use the
-[setup and workflow prompts](docs/workbench/agent-first-run.md) with your coding
+[PAIDF workflow prompt](docs/workbench/agent-first-run.md#run-paidf-with-cosmos-3) with your coding
 agent for project storage, model access, GPU planning, image checks, submission,
 recovery, and output inspection. The PAIDF guide explains configuration and
 outputs; its command examples validate and plan the workflow without running it.

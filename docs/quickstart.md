@@ -130,9 +130,9 @@ Keep secret values in the private environment or `~/.npa/credentials.yaml`.
 Let NPA manage `~/.npa/config.yaml`. Use `npa configure --no-provision` for
 provider-free project and token setup with storage deliberately unselected.
 
-For an existing coding agent, use the [first-run prompts](workbench/agent-first-run.md).
-They cover private credentials, project IAM, model access, input preparation,
-and the first PAIDF + Cosmos 3 run.
+For an existing coding agent, use the [coding-agent guide](workbench/agent-first-run.md).
+Choose your task first, then configure the credentials and resources its tools
+need. The guide includes PAIDF + Cosmos 3 as a worked example.
 
 <a id="4a-nebius-account-authentication"></a>
 <a id="creating-a-project-from-the-cli-tenant-administrator"></a>
@@ -259,7 +259,19 @@ For your first workload, continue below.
 
 <a id="7-flagship-gpu-workload-nvidia-cosmos"></a>
 
-## 7. Run PAIDF with Cosmos 3
+## 7. Choose your workload
+
+Choose a [workload guide](workbench/guides/README.md) for simulation, training,
+video augmentation, or another supported task. You can also use individual
+tools from the [CLI reference](cli/workbench.md) or compose them with the
+[workflow guide](workbench/npa-workflow-guide.md).
+
+Follow the selected tools' requirements for input formats, model access,
+storage, and compute. A task may use GPU jobs, CPU tools, hosted inference, or
+a combination. The [coding-agent guide](workbench/agent-first-run.md) helps you
+choose and prepare a path for your task.
+
+### Worked example: PAIDF with Cosmos 3
 
 Use [PAIDF + Cosmos 3](workbench/guides/paidf-cosmos3.md) to generate video
 variants conditioned on your source clip, evaluate them, and curate accepted
@@ -310,8 +322,7 @@ are distinct from the Cosmos 3 generation workflow.
 
 ## 8. Do more with npa
 
-With install → `npa configure` → your first GPU workload on Nebius AI Cloud
-(Section 7) done, build outward:
+Use the guides below as your task requires:
 
 - **Run Workbench workloads:** PAIDF + Cosmos 3 (Section 7), VLM evaluation, Sim2Real,
   and more. See [Workbench Getting Started](workbench/getting-started.md) for

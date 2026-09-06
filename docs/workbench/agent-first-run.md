@@ -1,14 +1,28 @@
-# Run your first workflow with a coding agent
+# Use Workbench with a coding agent
 
 Use your existing coding agent with terminal access to this checkout. Install
-`npa` and the Nebius CLI using the [quickstart](../quickstart.md), then follow
-the setup and workflow prompts below. The [self-hosted browser agent](../agent.md)
+`npa` and the Nebius CLI using the [quickstart](../quickstart.md). Describe the
+task you want to complete, then select individual tools or compose a workflow.
+The [self-hosted browser agent](../agent.md)
 is optional and requires a separate deployment.
+
+## Choose tools for your task
+
+Start with the [workload guides](guides/README.md) or the
+[tool reference](../cli/workbench.md). Ask your agent to inspect the current
+`skills/index.yaml`, relevant guides, and command help before choosing a path.
+Existing examples are starting points; available tools and their contracts
+determine what you can run or combine. If the task needs an unsupported
+capability, have the agent explain the gap.
+
+The setup prompt below applies to the task you choose. The PAIDF + Cosmos 3
+prompt later in this guide is a worked video-augmentation example.
 
 ## Configure the project and model access
 
-If an agent is operating the checkout, attach these values to its **private
-environment** instead of pasting token values into chat:
+Supply the project values and any credentials needed by your selected tools
+through the agent's **private environment**. Keep token values out of chat.
+Supported names include:
 
 ```text
 NEBIUS_TENANT_ID=<your-tenant-id>
@@ -19,13 +33,14 @@ NGC_API_KEY=<your-ngc-api-key>
 NEBIUS_TOKEN_FACTORY_KEY=<your-token-factory-key>
 ```
 
-The Hugging Face account behind `HF_TOKEN` must already have access to the
-models used by the workflow. A fine-grained token must include those repos.
-Gated terms can only be accepted by you on Hugging Face; the access check below
-prints every exact page still requiring action. NGC is part of the general
-Workbench setup even though the PAIDF + Cosmos 3 path below currently obtains
-its model weights from Hugging Face. Token Factory is required by that path for
-captioning and evaluation.
+Credential requirements depend on the selected tools. For gated Hugging Face
+assets, the account behind `HF_TOKEN` needs access and a fine-grained token must
+include the required repositories. Accept gated terms yourself on Hugging Face.
+NGC credentials apply to tools that fetch entitlement-controlled NGC artifacts.
+Token Factory credentials apply to hosted inference, including the captioning
+and evaluation stages in the PAIDF example below. See
+[configuration](../configuration.md#required-credential-key-names) for the
+credential names and when each is needed.
 
 First-time storage setup needs **admin permission on the target project**.
 `npa configure` creates a project service account, access key, and project-scoped
@@ -35,42 +50,54 @@ permission and tenant-wide project listing are not required.
 Then give your agent this prompt:
 
 ```text
-Set up Nebius Physical AI Workbench in this checkout. Read AGENTS.md and
-skills/index.yaml first and follow the relevant first-run, credential-preflight,
-and GPU guidance.
+Set up Nebius Physical AI Workbench for the task I described. If I have not
+given you a task, ask what I want to accomplish before choosing tools. Read
+AGENTS.md and skills/index.yaml, then inspect the relevant guides and command
+help. Select tools or a workflow that fit my inputs and intended output. Explain
+their requirements and any unsupported parts of the task.
 
-Use NEBIUS_TENANT_ID, NEBIUS_PROJECT_ID, NEBIUS_REGION, HF_TOKEN, NGC_API_KEY,
-and NEBIUS_TOKEN_FACTORY_KEY from the private process environment. Never print
-secret values, put them in command arguments, or write them into the repository.
+Use project values and the credentials required by the selected tools from
+the private process environment. Never print secret values, put them in command
+arguments, or write them into the repository.
 Never run `env`, `printenv`, `set`, `export -p`, or another command that dumps
 the process environment; inspect only allowlisted names and report present or
 missing. Do not read credential files except through npa's credential APIs.
 Use NPA_PROJECT_ALIAS if it is set; otherwise use "workbench" as the local alias.
 
-Install or verify npa and its reported host prerequisites, including Terraform
-and, for SkyPilot Kubernetes on Debian/Ubuntu, socat. Verify the active Nebius
-CLI identity and configure the known tenant, project, and region
-non-interactively. Persist supported environment credentials with npa configure
---save-env-credentials and use explicit --provision to create or reuse writable
-project object storage. Without --provision, known-project setup must remain
-provider-free and leave storage unselected.
-Confirm the active identity can manage the project-scoped IAM objects that
-secure that storage. Then run npa configure --show,
-npa workbench health preflight --json,
-npa workbench health preflight --checks nebius --json, and
-npa workbench health access --capability paidf,cosmos3 --json.
+Install or verify npa and the host prerequisites for the selected runtime.
+Managed deployments need Terraform; SkyPilot Kubernetes on Debian/Ubuntu also
+needs socat. Configure the known tenant, project, and region non-interactively
+when the task uses a Nebius project. Persist supported environment credentials
+with npa configure --save-env-credentials. Use --no-provision for provider-free
+setup. If the task needs S3, explain the storage it needs before using explicit
+--provision to create or reuse writable project storage. First confirm that the
+active identity can manage the project-scoped IAM objects that secure it.
+
+Inspect npa configure --show. Run credential preflight checks for the selected
+services, including --checks nebius before cloud provisioning. Use npa workbench
+health access for the selected capabilities and their required model assets.
 
 Do not bypass a failed gate or provision GPU resources yet. If Hugging Face
 access is missing, give me the exact model-page links, wait for me to accept the
-terms, and rerun the check. Finish only when project storage, credentials, and
-the PAIDF/Cosmos 3 model access checks pass, then guide me straight into my first
-workflow.
+terms, and rerun the check. Finish setup when the selected task's prerequisites
+pass, then guide me into running it.
 ```
 
 For project creation, federation or SSO profiles, non-interactive setup, and
 credential recovery, see [configuration](../configuration.md).
 
-## Run PAIDF with Cosmos 3
+## Run the selected task
+
+Follow the relevant tool or workflow guide with your actual inputs. For a
+workflow, validate its specification and inspect the plan before provisioning
+compute, staging data, checking images, and submitting. For an individual tool,
+use its documented command and runtime requirements. Check the resulting
+artifacts against your intended output and follow the applicable recovery and
+cleanup instructions.
+
+<a id="run-paidf-with-cosmos-3"></a>
+
+## Worked example: PAIDF with Cosmos 3
 
 Use the same agent from input selection through output inspection. For the
 Physical AI Data Factory with real source-video-conditioned Cosmos 3, attach a
