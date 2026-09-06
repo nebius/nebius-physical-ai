@@ -60,6 +60,7 @@ dependencies = [
     "rerun-sdk==0.31.4",
     # Formerly the `server` extra: FastAPI policy/eval + agent backend server.
     "fastapi~=0.136.1",
+    "python-multipart>=0.0.20",
 ]
 
 [project.optional-dependencies]
@@ -173,6 +174,7 @@ cosmos3 = "1.2.2-cu130-r6"
 cosmos3-ray-serve = "ray1-cu130"
 cosmos3-serving = "0.2.0-oss"
 cosmos3-super-benchmark = "0.1.0"
+cosmos3-nano-video = "0.1.0"
 cosmos3-reason = "cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
 # Cosmos Curator: NVIDIA upstream checkout + GPU-free curation stage deps.
 cosmos-curate = "0.1.2-skypilot-v1-20260813T164700Z"

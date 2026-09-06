@@ -46,6 +46,7 @@ CONTAINER_IMAGE_NAMES = {
     "cosmos3-ray-serve": "npa-cosmos3-ray-serve",
     "cosmos3-serving": "npa-cosmos3-serving",
     "cosmos3-super-benchmark": "npa-cosmos3-super-benchmark",
+    "cosmos3-nano-video": "npa-cosmos3-nano-video",
     "cosmos3-reason": "npa-cosmos3-reason",
     "cosmos-curate": "npa-cosmos-curate",
     "cosmos-evaluator": "npa-cosmos-evaluator",
@@ -118,7 +119,7 @@ def requires_skypilot_bootstrap_runtime_probe(image: str) -> bool:
 # benchmark wrapper inherits the exact upstream vLLM-Omni runtime and therefore
 # remains build-your-own in an operator-controlled registry.
 RESTRICTED_PUBLICATION_TOOLS: frozenset[str] = frozenset(
-    {"cosmos3-super-benchmark"}
+    {"cosmos3-super-benchmark", "cosmos3-nano-video"}
 )
 RESTRICTED_DERIVED_IMAGES: frozenset[str] = frozenset()
 
@@ -216,6 +217,7 @@ SUPPORTED_TOOL_VERSIONS = {
     "cosmos3-ray-serve": "ray1-cu130",
     "cosmos3-serving": "0.2.0-oss",
     "cosmos3-super-benchmark": "0.1.0",
+    "cosmos3-nano-video": "0.1.0",
     "cosmos3-reason": "cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
     "cosmos-curate": "0.1.2-skypilot-v1-20260813T164700Z",
     "cosmos-evaluator": "0.1.2-skypilot-v1-20260813T164700Z-r2",

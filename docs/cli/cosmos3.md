@@ -10,6 +10,9 @@ Cosmos3 omni-model generation and reasoning workflow contracts.
 Options
 --help  Show this message and exit.
 Commands
+nano-video-augment  Augment every source interval with Cosmos3-Nano structural edge control.
+nano-video-augment-recover  Recover existing generation or retry publication without generating again.
+nano-video-batch  Run measured chunked video requests through the Nano vLLM-Omni Ray service.
 super-benchmark  Run a fixed Cosmos3-Super node benchmark or H200 single-GPU validation.
 ray-batch  Submit a durable SDG batch through Cosmos Framework's native Ray Serve path.
 ray-health  Check authenticated model readiness, not merely process liveness.
@@ -32,6 +35,9 @@ text-to-image  Generate an image from a prompt with the Cosmos3 framework, and p
 
 | Command | Description |
 | --- | --- |
+| `nano-video-augment` | Augment every source interval with Cosmos3-Nano structural edge control. |
+| `nano-video-augment-recover` | Recover existing generation or retry publication without generating again. |
+| `nano-video-batch` | Run measured chunked video requests through the Nano vLLM-Omni Ray service. |
 | `super-benchmark` | Run a fixed Cosmos3-Super node benchmark or H200 single-GPU validation. |
 | `ray-batch` | Submit a durable SDG batch through Cosmos Framework's native Ray Serve path. |
 | `ray-health` | Check authenticated model readiness, not merely process liveness. |
@@ -47,7 +53,7 @@ text-to-image  Generate an image from a prompt with the Cosmos3 framework, and p
 
 ```bash
 npa workbench cosmos3 --help
-npa workbench cosmos3 super-benchmark --help
+npa workbench cosmos3 nano-video-augment --help
 ```
 
 Regenerate this page with `bash scripts/build_docs.sh` after changing `cosmos3`.

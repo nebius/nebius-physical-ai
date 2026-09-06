@@ -42,6 +42,9 @@ MANUAL_GATES = {
     "NPA_E2E_SERVERLESS_PROJECT": "serverless suite is reachable through e2e-serverless",
     "NPA_E2E_FORCE_NER": "optional fallback knob inside the reachable serverless tier",
     "NPA_E2E_MK8S_GPU_HEALTH": "fresh reserved mk8s GPU validation requires explicit operator authorization",
+    "NPA_E2E_MK8S_MIXED_GPU_HEALTH": (
+        "targets an operator-selected fresh mixed GPU cluster with an explicit per-node capacity plan"
+    ),
     "NPA_E2E_MK8S_FRESH_CLUSTER": "prevents accidentally targeting an existing or production-adjacent cluster",
     "NPA_E2E_MK8S_RESERVED_CAPACITY": "prevents silent fallback from reviewed reserved GPU capacity",
     "NPA_E2E_MK8S_RTX_RENDERING": (

@@ -27,6 +27,46 @@ from npa.workbench.cosmos.super_benchmark import (
 from npa.workflows.cosmos_split import Cosmos3ReasonConfig, build_cosmos3_reason_manifest
 
 
+def nano_video_augment(
+    *, input_path: str, output_path: str, prompt: str, seed: int = 0,
+    negative_prompt: str = "", system_prompt: str = "", num_inference_steps: int = 35,
+    guidance_scale: float = 3.0, flow_shift: float = 10.0, control_guidance: float = 1.5,
+    edge_threshold: str = "medium", chunk_frames: int = 121, max_sequence_length: int = 4096,
+    endpoint: str = "", token_env: str = "NPA_COSMOS3_VIDEO_TOKEN",
+) -> dict[str, Any]:
+    """Structurally augment a complete S3 video and verify immutable publication."""
+    from npa.workbench.cosmos.nano_video_augment_client import submit_augmentation
+
+    return submit_augmentation(
+        input_path=input_path, output_path=output_path, prompt=prompt, seed=seed,
+        negative_prompt=negative_prompt, system_prompt=system_prompt,
+        num_inference_steps=num_inference_steps, guidance_scale=guidance_scale,
+        flow_shift=flow_shift, control_guidance=control_guidance,
+        edge_threshold=edge_threshold, chunk_frames=chunk_frames,
+        max_sequence_length=max_sequence_length, endpoint=endpoint, token_env=token_env,
+    )
+
+
+def nano_video_augment_recover(
+    *, output_path: str, endpoint: str = "", token_env: str = "NPA_COSMOS3_VIDEO_TOKEN",
+) -> dict[str, Any]:
+    """Recover existing artifacts and publication without submitting inference."""
+    from npa.workbench.cosmos.nano_video_augment_client import recover_augmentation
+
+    return recover_augmentation(output_path=output_path, endpoint=endpoint, token_env=token_env)
+
+
+def nano_video_batch(
+    *, output_path: str, concurrency: int, endpoint: str = "", input_path: str = "",
+    token_env: str = "NPA_COSMOS3_VIDEO_TOKEN",
+) -> dict[str, Any]:
+    """Generate complete 30-second videos concurrently and verify S3 artifacts."""
+    from npa.workbench.cosmos.nano_video import submit_batch as submit_nano_batch
+
+    return submit_nano_batch(output_path=output_path, concurrency=concurrency,
+                            endpoint=endpoint, input_path=input_path, token_env=token_env)
+
+
 def generate(
     *,
     prompt: str,
@@ -156,6 +196,9 @@ __all__ = [
     "Cosmos3ReasonConfig",
     "GENERATE_MODES",
     "generate",
+    "nano_video_augment",
+    "nano_video_augment_recover",
+    "nano_video_batch",
     "ray_batch",
     "ray_health",
     "reason",

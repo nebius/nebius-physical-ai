@@ -53,6 +53,28 @@
   },
   "images": [
     {
+      "name": "npa-cosmos3-nano-video",
+      "dockerfile": "cosmos3-nano-video/Dockerfile",
+      "verdict": "ready",
+      "validation": "validated",
+      "smoke": "Run the live Nano video acceptance: one 30-second 480p BF16 rollout followed by eight complete concurrent requests on B200, with frame decode, actual latency, device VRAM and fanout evidence.",
+      "notes": "Operator-private pinned vLLM-Omni diffusion runtime with Ray Serve. Validated on B200 only: sixteen BF16 TP=1 replicas and one 30-second 480p video followed by eight complete concurrent videos, with guardrails and audio off. B300 and other GPU families remain unvalidated. See npa/deploy/cosmos3-nano-video/README.md for measured timings and limitations.",
+      "redistribution": "restricted",
+      "torch": "2.11.0+cu130",
+      "measured_torch": "2.11.0+cu130",
+      "measured_arch_list": [
+        "sm_75",
+        "sm_80",
+        "sm_86",
+        "sm_90",
+        "sm_100",
+        "sm_120"
+      ],
+      "validated_tag": "dev-826b1730f64c1fae2fb6a4280c312f280b6648ad",
+      "validated_digest": "sha256:f78b7a0cc8d32b8a201eec8702510244d6996ae949bbc3373bde9daad7766e97",
+      "validated_registry_scope": "operator"
+    },
+    {
       "name": "npa-base",
       "dockerfile": "base/cuda13-b300/Dockerfile",
       "build_script": "base/cuda13-b300/build.sh",
@@ -1127,6 +1149,50 @@
         "RTX PRO 6000"
       ],
       "notes": "B200 path not re-validated on hardware but sm_100 SASS is in the cu130 torch wheel"
+    },
+    "npa-cosmos3-nano-video": {
+      "built": true,
+      "validated_date": "2026-09-06",
+      "validated_digest": "sha256:f78b7a0cc8d32b8a201eec8702510244d6996ae949bbc3373bde9daad7766e97",
+      "validated_registry_scope": "operator",
+      "image_source_commit": "826b1730f64c1fae2fb6a4280c312f280b6648ad",
+      "torch_version": "2.11.0+cu130",
+      "torch_cuda_version": "13.0",
+      "measured_arch_list": [
+        "sm_75",
+        "sm_80",
+        "sm_86",
+        "sm_90",
+        "sm_100",
+        "sm_120"
+      ],
+      "validated_gpus": {
+        "B200": {
+          "capability": "10.0",
+          "result": "REAL_NANO_VIDEO_ONE_THEN_EIGHT_PASSED"
+        }
+      },
+      "replicas": 16,
+      "gpus_per_replica": 1,
+      "tensor_parallel_size": 1,
+      "precision": "BF16",
+      "guardrails": false,
+      "audio": false,
+      "completed_30_second_480p_videos": 9,
+      "fully_decoded_mp4s": 36,
+      "frame_count_per_video": 720,
+      "fps": 24,
+      "concurrent_distinct_replicas": 8,
+      "peak_overlapping_rollouts": 8,
+      "peak_overlapping_diffusion_requests": 8,
+      "single_client_batch_seconds": 153.6131002559996,
+      "eight_client_batch_seconds": 163.03822257100546,
+      "peak_cuda_reserved_mib": 37408.0,
+      "sampled_device_peak_mib": 38316.0,
+      "artifact_integrity": "All generation artifacts immutably published with SHA-256 readback verification; private artifact locations remain outside Git.",
+      "payload_scan": "All 45 OCI layers assessed; extension adds no weights, task/customer media, credentials or acceptance state. Inherited public vendor fixtures remain present.",
+      "security_scan": "Zero fixable CRITICAL findings and zero detected secrets; 218 HIGH and six unfixed CRITICAL findings retained and disclosed. Baseline NIXL metadata conflict adds no new dependency conflict.",
+      "measurement_reference": "npa/deploy/cosmos3-nano-video/README.md"
     }
   },
   "known_gaps": {
