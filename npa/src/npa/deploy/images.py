@@ -177,6 +177,10 @@ GPU_ACCEPTED_PUBLIC_IMAGE_SOURCES: dict[str, dict[str, str]] = {
         "development_sha": "5b5b5e69e9e686f8d5f305fd735a02f402f6da4b",
         "oci_digest": "sha256:2388d9e97269afaa414966e83a27f676a3f44d4271e9828c57bc13fbdce80f57",
     },
+    "detection-training": {
+        "development_sha": "408700158b2e9cc9e9f6aad499e9d9c810bebeb1",
+        "oci_digest": "sha256:a09126491bd660f314b8f412df7238746dc2b063e5d5b7ca87bba7596dafcb0d",
+    },
 }
 GPU_ACCEPTED_PUBLIC_IMAGE_DIGESTS: dict[str, str] = {
     tool: source["oci_digest"]
@@ -236,7 +240,7 @@ SUPPORTED_TOOL_VERSIONS = {
     # Lichtblick (MPL-2.0): OSS, Foxglove-compatible static web viewer bundle.
     "lichtblick": "1.26.0",
     "lancedb": "cuda13-b300-0.30.3-sm80-sm90-sm100-sm103-sm120-20260803T031514Z",
-    "detection-training": "bdd100k-golden-eval-smoke-20260614T210000Z",
+    "detection-training": "runtime-v1-20260905",
     # Public-eligible Wan source/CPU base; CUDA torch is operator-gated runtime fetch.
     "wan2-2": "2.2-ti2v5b-rtfetch-cu130-20260817",
     # LTX source and weights remain operator-entitled runtime fetches. This tag

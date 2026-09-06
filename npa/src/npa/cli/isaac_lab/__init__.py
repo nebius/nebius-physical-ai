@@ -1396,10 +1396,15 @@ try:
         camera.set_world_poses_from_view(eyes=eye, targets=target)
     env = render_env
     # One trajectory row is captured per policy/control step, not physics step.
-    step_dt = float(render_env.unwrapped.step_dt)
+    try:
+        step_dt = float(render_env.unwrapped.step_dt)
+    except (AttributeError, TypeError, ValueError, OverflowError) as exc:
+        raise RuntimeError("Isaac control timestep must be finite and positive") from exc
     if not math.isfinite(step_dt) or step_dt <= 0:
         raise RuntimeError("Isaac control timestep must be finite and positive")
     trajectory_fps = 1.0 / step_dt
+    if not math.isfinite(trajectory_fps):
+        raise RuntimeError("Isaac control timestep must yield a finite frame rate")
 
     policy = None
     policy_loaded = False
@@ -1611,6 +1616,7 @@ try:
         "runtime_version": metadata.version("isaaclab"),
         "checkpoint_sha256": hashlib.sha256(checkpoint_path.read_bytes()).hexdigest(),
         "fps": trajectory_fps,
+        "control_dt": step_dt,
         "state_names": state_names,
         "action_names": action_names,
         "source_joint_names": joint_names,

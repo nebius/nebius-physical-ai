@@ -220,6 +220,16 @@ class ApiDaemonCwdProbe:
         }
 
 
+def _api_server_port(command: Sequence[str]) -> str:
+    for index, value in enumerate(command):
+        if value.startswith("--port="):
+            return value.split("=", 1)[1]
+        if value == "--port":
+            if index + 1 < len(command):
+                return command[index + 1]
+    return "46580"
+
+
 def _probe_local_api_daemon_cwd(
     sky_executable: str,
     *,
@@ -262,6 +272,10 @@ def _probe_local_api_daemon_cwd(
     # the system interpreter, while ``bin/sky`` is a script. Resolving both
     # would put them in different parent directories and miss the real daemon.
     sky_bin_dir = Path(sky_executable).expanduser().absolute().parent
+    try:
+        caller_network_namespace = os.readlink(proc_root / "self" / "ns" / "net")
+    except OSError:
+        caller_network_namespace = None
     records: dict[int, tuple[int, tuple[str, ...], Path]] = {}
     if sys.platform == "darwin" and proc_root == Path("/proc"):
         # macOS has no procfs, so the deleted-cwd poisoning this probe detects
@@ -316,24 +330,21 @@ def _probe_local_api_daemon_cwd(
         and "-m" in cmdline
         and "sky.server.server" in cmdline
     }
-    endpoint_roots = set()
-    for pid in daemon_roots:
-        cmdline = records[pid][1]
-        daemon_port = "46580"
-        for index, argument in enumerate(cmdline):
-            if argument.startswith("--port="):
-                daemon_port = argument.partition("=")[2]
-            elif argument == "--port" and index + 1 < len(cmdline):
-                daemon_port = cmdline[index + 1]
-        if daemon_port == str(port):
-            endpoint_roots.add(pid)
-    roots = endpoint_roots
-    if caller_mount_namespace is not None:
+    roots = {
+        pid
+        for pid in daemon_roots
+        if _api_server_port(records[pid][1]) == str(port)
+    }
+    if caller_network_namespace is not None or caller_mount_namespace is not None:
+        # Localhost is scoped by network namespace, not the interpreter or
+        # mount namespace. Retain mount fallback for restricted procfs fixtures.
+        namespace_kind = "net" if caller_network_namespace is not None else "mnt"
+        expected_namespace = caller_network_namespace or caller_mount_namespace
         scoped_roots = set()
         for pid in roots:
             try:
                 candidate_mount_namespace = os.readlink(
-                    records[pid][2] / "ns" / "mnt"
+                    records[pid][2] / "ns" / namespace_kind
                 )
             except (FileNotFoundError, ProcessLookupError, PermissionError):
                 continue
@@ -344,15 +355,27 @@ def _probe_local_api_daemon_cwd(
                     process_count=len(scoped_roots),
                     error=redact_text(str(exc)),
                 )
-            if candidate_mount_namespace == caller_mount_namespace:
+            if candidate_mount_namespace == expected_namespace:
                 scoped_roots.add(pid)
         roots = scoped_roots
     if not roots:
         return ApiDaemonCwdProbe(True, "absent")
-    if any(
-        Path(records[pid][1][0]).expanduser().absolute().parent != sky_bin_dir
+    foreign_roots = {
+        pid
         for pid in roots
-    ):
+        if Path(records[pid][1][0]).expanduser().absolute().parent != sky_bin_dir
+    }
+    if foreign_roots == roots:
+        return ApiDaemonCwdProbe(
+            False,
+            "foreign_api_daemon",
+            process_count=len(foreign_roots),
+            error=(
+                "the selected SkyPilot API endpoint belongs to another "
+                "executable; use an isolated runtime directory"
+            ),
+        )
+    if foreign_roots:
         return ApiDaemonCwdProbe(
             False,
             "runtime_ownership_conflict",
@@ -635,6 +658,13 @@ def _ensure_local_api_daemon_cwd_locked(
 ) -> ApiDaemonCwdProbe:
     """Run the daemon health/repair transaction under its runtime identity lock."""
 
+    isolated_api_dir = env.get("NPA_SKYPILOT_ISOLATED_API_DIR")
+    if isolated_api_dir:
+        return _ensure_isolated_api(
+            isolated_dir=Path(isolated_api_dir), sky_executable=sky_executable,
+            environment=env, cwd=cwd,
+        )
+
     # SkyPilot 0.12 exposes one local API server on a fixed loopback port per
     # executable, even when callers isolate HOME/SKY_RUNTIME_DIR.  Serialize
     # repairs at that real process-global boundary; a per-run lock can race two
@@ -651,6 +681,15 @@ def _ensure_local_api_daemon_cwd_locked(
             env=env,
             cwd=cwd,
         )
+
+
+def _ensure_isolated_api(**kwargs) -> ApiDaemonCwdProbe:
+    from npa.orchestration.skypilot.local_api import IsolatedApiError, ensure_isolated_api
+
+    try:
+        return ApiDaemonCwdProbe(**ensure_isolated_api(**kwargs))
+    except IsolatedApiError as exc:
+        raise SkyPilotSubmitError(str(exc)) from None
 
 
 def ensure_local_api_daemon_health(
@@ -671,6 +710,10 @@ def ensure_local_api_daemon_health(
     # daemon; an absent daemon is left for the regular pinned-version path.
     sky_executable = str(runtime_config.sky_bin)
     env = sky_environment(runtime_config.isolated_config_dir)
+    if runtime_config.isolated_config_dir is not None:
+        # Environment preparation validates any owned listener. Startup waits
+        # until the exact workload/project configuration has passed preflight.
+        return ApiDaemonCwdProbe(True, "isolated_api_pending")
     stable_cwd = _stable_sky_cwd(runtime_config.isolated_config_dir)
     runtime_dir = runtime_config.isolated_config_dir or Path(stable_cwd)
     return _ensure_local_api_daemon_cwd_locked(
@@ -773,6 +816,8 @@ def submit_workflow(
     transaction_sleeper: Callable[[float], None] = time.sleep,
     transaction_random: Callable[[], float] | None = None,
     launch_lock_root: Path | None = None,
+    project: str = "",
+    execution_target: Any | None = None,
 ) -> WorkflowResult:
     """Submit a SkyPilot YAML through NPA's controller convention."""
 
@@ -799,10 +844,9 @@ def submit_workflow(
         _chmod_owner_only(prepared_yaml)
         sky_executable = str(ensure_skypilot_version(runtime_config.sky_bin))
         controller_context = _controller_region_from_infra(infra, controller_backend)
-        global_config = apply_controller_override(
+        global_config = _controller_config_for_execution(
             _load_base_config(runtime_config.global_config_path),
-            controller_backend=controller_backend,
-            controller_region=controller_context,
+            controller_backend=controller_backend, infra=infra,
         )
         if controller_context:
             # ``--infra k8s/<context>`` is an exact target, not merely a
@@ -826,9 +870,32 @@ def submit_workflow(
         _chmod_owner_only(generated_config_path)
         env = sky_environment(runtime_config.isolated_config_dir)
         for key, value in (extra_env or {}).items():
-            if value:
+            if value or key in {"NPA_S3_BUCKET", "NPA_S3_PREFIX"}:
                 env[key] = value
         env["SKYPILOT_GLOBAL_CONFIG"] = str(generated_config_path)
+
+        # Both direct SDK callers and the CLI cross this gate. Resolve the
+        # actual rendered task environment before controller/job side effects.
+        from npa.execution_preflight import ExecutionPreflightError
+
+        try:
+            _target, _target_report, injected = _execution_preflight(
+                docs, project=project, infra=infra, extra_env=env,
+                target=execution_target, global_config=global_config,
+                sky_bin=sky_executable,
+                cwd=_stable_sky_cwd(runtime_config.isolated_config_dir),
+            )
+        except (ExecutionPreflightError, ValueError) as exc:
+            raise SkyPilotSubmitError(str(exc)) from exc
+        env.update(injected)
+        if _target is not None:
+            env["NPA_SKYPILOT_PROJECT"] = _target.project
+        # Native preflight pins the exact project/region in this per-submit
+        # configuration; persist the verified version before any controller.
+        generated_config_path.write_text(yaml.safe_dump(global_config, sort_keys=False), encoding="utf-8")
+        _chmod_owner_only(generated_config_path)
+        prepared_yaml.write_text(yaml.safe_dump_all(docs, sort_keys=False), encoding="utf-8")
+        _chmod_owner_only(prepared_yaml)
 
         cmd = [
             sky_executable,
@@ -2202,6 +2269,27 @@ def _load_yaml_documents(path: Path) -> list[dict[str, Any]]:
     if not all(isinstance(doc, dict) for doc in docs):
         raise ValueError("SkyPilot YAML documents must be mappings")
     return docs
+
+
+def _execution_preflight(*args, **kwargs):
+    """Provider boundary kept explicit for command-shape unit fixtures."""
+    from npa.execution_preflight import preflight_skypilot_submission
+
+    return preflight_skypilot_submission(*args, **kwargs)
+
+
+def _controller_config_for_execution(base_config, *, controller_backend, infra):
+    configured = ((base_config.get("jobs") or {}).get("controller") or {}).get("resources") or {}
+    config = apply_controller_override(
+        base_config, controller_backend=controller_backend,
+        controller_region=_controller_region_from_infra(infra, controller_backend),
+    )
+    if controller_backend == "nebius" and not configured.get("region"):
+        # apply_controller_override's legacy default region is not an explicit
+        # operator target. The native preflight pins the selected NPA project
+        # region; an explicitly configured different region remains an error.
+        config["jobs"]["controller"]["resources"].pop("region", None)
+    return config
 
 
 def _load_base_config(config_path: Path | None) -> dict[str, Any]:

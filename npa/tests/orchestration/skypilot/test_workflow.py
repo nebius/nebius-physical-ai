@@ -50,6 +50,22 @@ def _healthy_status(cmd: list[str]) -> subprocess.CompletedProcess[str]:
 
 @pytest.fixture(autouse=True)
 def _skip_version_check(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    # This module isolates launch transactions/argv. The actual SDK-to-provider
+    # execution gate is covered in unit/test_execution_preflight.py.
+    monkeypatch.setattr(workflow_module, "_execution_preflight", lambda *args, **kwargs: (None, {}, {}))
+    # Separate local_api tests exercise real owned-daemon/socket lifecycle.
+    # These transaction/argv fixtures use a fake Sky executable.
+    monkeypatch.setattr(workflow_module, "_ensure_isolated_api", lambda **kwargs: workflow_module.ApiDaemonCwdProbe(True, "test-owned-api"))
+    real_daemon_probe = workflow_module._probe_local_api_daemon_cwd
+
+    def fixture_daemon_probe(*args, **kwargs):
+        # Procfs regressions supply their own filesystem explicitly. Command
+        # shape tests must not inspect or adopt a daemon on the test host.
+        if "proc_root" in kwargs:
+            return real_daemon_probe(*args, **kwargs)
+        return workflow_module.ApiDaemonCwdProbe(True, "absent")
+
+    monkeypatch.setattr(workflow_module, "_probe_local_api_daemon_cwd", fixture_daemon_probe)
     monkeypatch.setattr(
         workflow_module, "ensure_skypilot_version", lambda sky_bin: Path(sky_bin)
     )
@@ -760,8 +776,8 @@ def test_api_daemon_probe_rejects_selected_endpoint_from_another_executable(tmp_
     result = workflow_module._probe_local_api_daemon_cwd(
         str(tmp_path / "bin" / "sky"), proc_root=proc_root, uid=1234,
     )
-    assert not result.healthy and result.outcome == "runtime_ownership_conflict"
-    assert "different SkyPilot executable" in result.error
+    assert not result.healthy and result.outcome == "foreign_api_daemon"
+    assert "another executable" in result.error
 
 
 def test_local_api_daemon_probe_rejects_other_user_id(tmp_path) -> None:

@@ -38,23 +38,12 @@ SIM2REAL_SPEC = (
 
 @pytest.fixture(autouse=True)
 def _no_ambient_src(monkeypatch: pytest.MonkeyPatch) -> None:
+    # These tests isolate prerequisite/image/provisioning ordering. Exact
+    # provider scope and prefix probes have independent CLI contract coverage.
+    monkeypatch.setattr(workflow_cli, "_execution_target_preflight", lambda *args, **kwargs: (None, {}))
     monkeypatch.delenv("NPA_SRC_S3_URI", raising=False)
     monkeypatch.delenv("NPA_E2E_NPA_SRC_S3_URI", raising=False)
     monkeypatch.delenv("NPA_SKYPILOT_BIN", raising=False)
-    from npa.clients import storage_validation
-    from npa.clients.storage_validation import StorageProbeResult
-
-    monkeypatch.setattr(
-        storage_validation,
-        "probe_storage_write",
-        lambda **_kwargs: StorageProbeResult(
-            True,
-            "ok",
-            "Writable S3 verified with a cleaned write/delete probe.",
-            cleanup_attempted=True,
-            cleanup_succeeded=True,
-        ),
-    )
 
 
 def _submit(*args: str):
@@ -819,7 +808,7 @@ def test_paidf_fixture_is_explicit_in_rendered_plan(
     assert "--condition-on-input" in result.output
 
 
-def test_skip_preflight_bypasses_the_checks(mocker) -> None:
+def test_skip_preflight_bypasses_static_prerequisites(mocker) -> None:
     mocker.patch(
         "npa.orchestration.skypilot.workflow.submit_workflow",
         side_effect=AssertionError("submit reached"),
@@ -827,71 +816,101 @@ def test_skip_preflight_bypasses_the_checks(mocker) -> None:
 
     result = _submit("--skip-preflight")
 
-    # Not the preflight error: the run got past it (and then failed later).
+    # Convenience checks are skipped; mandatory execution preflight is covered
+    # independently below and in test_execution_preflight.py.
     assert "missing prerequisites" not in result.output
 
 
-@pytest.mark.parametrize(
-    ("code", "summary"),
-    [
-        (
-            "missing_configuration",
-            "Writable S3 is not configured; missing AWS credentials.",
-        ),
-        ("bucket_unreachable", "S3 write probe could not find the configured bucket."),
-        ("forbidden", "S3 write probe was forbidden."),
-        ("cleanup_failed", "S3 probe cleanup failed; a temporary object remains."),
-    ],
-)
-def test_s3_workflow_requires_a_successful_cleaned_write_probe(
-    monkeypatch, code, summary
+@pytest.mark.parametrize("skip_preflight", [False, True])
+def test_submit_rechecks_execution_scope_before_persist_or_staging(
+    monkeypatch: pytest.MonkeyPatch, mocker, tmp_path: Path, skip_preflight: bool
 ) -> None:
-    from npa.cli.workbench.workflow import _submit_prerequisites
-    from npa.clients import storage_validation
-    from npa.clients.storage_validation import StorageProbeResult
+    from npa import execution_preflight
+    from npa.orchestration.npa_workflow import first_run_state
 
-    monkeypatch.setattr(
-        storage_validation,
-        "probe_storage_write",
-        lambda **_kwargs: StorageProbeResult(False, code, summary),
+    spec = tmp_path / "scope.yaml"
+    spec.write_text(
+        "apiVersion: npa.workflow/v0.0.1\n"
+        "kind: Workflow\n"
+        "metadata: {name: scope}\n"
+        "config: {bucket: unit-output}\n"
+        "resources: {cpu: {cloud: kubernetes, cpus: 1, memory: 1Gi}}\n"
+        "initial: execute\n"
+        "states:\n"
+        "  execute:\n"
+        "    resources: cpu\n"
+        "    run: {shell: 'true'}\n"
+        "    terminal: true\n",
+        encoding="utf-8",
     )
+    selected = execution_preflight.ExecutionTarget(
+        project="unit", project_id="project-unit", tenant_id="tenant-unit",
+        region="eu-west1", context="unit-context",
+        output_uris=("s3://unit-output/results/",),
+    )
+    events = []
+
+    def initial_preflight(*args, **kwargs):
+        events.append("execution-target")
+        return selected, {"execution_readiness": "pass"}
+
+    def images(*args, **kwargs):
+        events.append("images")
+        return {}
+
+    def missing_project(*args, **kwargs):
+        events.append("execution-scope")
+        return None
+
+    monkeypatch.setattr(workflow_cli, "_execution_target_preflight", initial_preflight)
+    monkeypatch.setattr(workflow_cli, "_preflight_submit_images", images)
+    monkeypatch.setattr(workflow_cli, "_available_kube_contexts", lambda: ["unit-context"])
+    monkeypatch.setattr(workflow_cli, "_adopt_npa_kubeconfig", lambda context: True)
+    monkeypatch.setattr(workflow_cli, "_verify_submit_controller_owner", lambda **kwargs: None)
+    monkeypatch.setattr("npa.clients.nebius.get_project_identity", missing_project)
+    scope = mocker.spy(execution_preflight, "verify_execution_scope")
+    prepare = mocker.spy(first_run_state, "prepare_run")
+    stage = mocker.patch("npa.cli.workbench.workflow._stage_npa_src_for_submit")
+    runtime = mocker.patch("npa.cli.workbench.workflow._run_npa_workflow_runtime")
+    launch = mocker.patch("npa.orchestration.skypilot.workflow.submit_workflow")
+    args = [
+        "workbench", "workflow", "submit", str(spec), "--project", "unit",
+        "--run-id", "scope-recheck", "--infra", "k8s/unit-context",
+        "--sky-bin", "/bin/true", "--image", "ghcr.io/example/unit:dev",
+        "--no-deploy-if-absent", "--no-stage-src",
+    ]
+    if skip_preflight:
+        args.append("--skip-preflight")
+
+    result = runner.invoke(app, args)
+
+    assert result.exit_code == 1, result.output
+    assert "execution preflight scope: selected project does not exist" in result.output
+    assert events == ["execution-target", "images", "execution-scope"]
+    scope.assert_called_once_with(selected)
+    prepare.assert_called_once()
+    assert prepare.call_args.kwargs["persist"] is False
+    stage.assert_not_called()
+    runtime.assert_not_called()
+    launch.assert_not_called()
+
+
+@pytest.mark.parametrize("requires_s3", [False, True])
+def test_static_submit_prerequisites_never_probe_storage(mocker, requires_s3) -> None:
+    from npa.cli.workbench.workflow import _submit_prerequisites
+
+    probe = mocker.patch("npa.clients.storage_validation.probe_storage_write")
 
     missing = _submit_prerequisites(
-        {"bucket": "real-bucket"},
+        {"bucket": "unit-output"} if requires_s3 else {},
         sky_bin="/bin/true",
         image="registry.example/npa-tool:v1",
         plan_only=False,
-        requires_s3=True,
-        s3_endpoint="https://storage.example",
-        s3_access_key_id="access",
-        s3_secret_access_key="secret",
-    )
-
-    assert any(summary in item for item, _remedy in missing)
-    assert any("provision-if-absent" in remedy for _item, remedy in missing)
-
-
-def test_non_s3_workflow_does_not_probe_or_require_storage(monkeypatch) -> None:
-    from npa.cli.workbench.workflow import _submit_prerequisites
-    from npa.clients import storage_validation
-
-    monkeypatch.setattr(
-        storage_validation,
-        "probe_storage_write",
-        lambda **_kwargs: (_ for _ in ()).throw(
-            AssertionError("a non-S3 workflow must not probe storage")
-        ),
-    )
-
-    missing = _submit_prerequisites(
-        {},
-        sky_bin="/bin/true",
-        image="registry.example/npa-tool:v1",
-        plan_only=False,
-        requires_s3=False,
+        requires_s3=requires_s3,
     )
 
     assert missing == []
+    probe.assert_not_called()
 
 
 def test_storage_requirement_is_derived_from_the_workflow_contract(tmp_path) -> None:
@@ -1258,9 +1277,9 @@ def test_deploy_if_absent_quota_blocker_precedes_all_submit_mutation(
             "compute.instance.count required=2 available=0 shortfall=2"
         ),
     )
-    storage = mocker.patch(
+    prerequisites = mocker.patch(
         "npa.cli.workbench.workflow._submit_prerequisites",
-        side_effect=AssertionError("storage preflight reached after quota blocker"),
+        side_effect=AssertionError("submit prerequisites reached after quota blocker"),
     )
     images = mocker.patch("npa.cli.workbench.workflow._preflight_submit_images")
     stage = mocker.patch("npa.cli.workbench.workflow._stage_npa_src_for_submit")
@@ -1287,7 +1306,7 @@ def test_deploy_if_absent_quota_blocker_precedes_all_submit_mutation(
     assert result.exit_code == 1
     assert "compute.instance.count" in result.output
     plan.assert_called_once()
-    storage.assert_not_called()
+    prerequisites.assert_not_called()
     images.assert_not_called()
     stage.assert_not_called()
     ensure.assert_not_called()

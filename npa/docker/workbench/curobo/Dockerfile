@@ -77,9 +77,8 @@ RUN curl --fail --location https://codeload.github.com/NVlabs/curobo/tar.gz/8e73
     && rm /tmp/curobo.tar.gz /tmp/robometrics.tar.gz
 
 COPY pyproject.toml README.md /opt/npa-src/
+# The build entrypoint stages the supported catalog into the archived package.
 COPY src/npa /opt/npa-src/src/npa
-COPY workflows/workbench/npa-workflows/sim2real.yaml /opt/npa-src/workflows/workbench/npa-workflows/sim2real.yaml
-COPY workflows/workbench/npa-workflows/physical-ai-data-factory.yaml /opt/npa-src/workflows/workbench/npa-workflows/physical-ai-data-factory.yaml
 RUN pip install --no-deps --no-build-isolation --no-cache-dir /opt/npa-src \
     && python -c 'import torch; assert {"sm_100", "sm_120"} <= set(torch._C._cuda_getArchFlags().split())' \
     && rm -rf /root/.cache /tmp/pip-*

@@ -43,6 +43,7 @@ class TransitionSpec:
 class ArtifactSpec:
     uri: str
     schema: str = ""
+    kind: str = ""
 
 
 @dataclass
@@ -274,11 +275,14 @@ def _parse_state(
     ]
     outputs = [
         ArtifactSpec(
-            uri=str(item.get("uri") or ""), schema=str(item.get("schema") or "")
+            uri=str(item.get("uri") or ""), schema=str(item.get("schema") or ""),
+            kind=str(item.get("kind") or ""),
         )
         for item in (entry.get("outputs") or [])
         if isinstance(item, dict)
     ]
+    if any(output.kind not in {"", "file", "directory"} for output in outputs):
+        raise NpaWorkflowError(f"state {name}: output kind must be file or directory")
 
     return StateSpec(
         name=name,

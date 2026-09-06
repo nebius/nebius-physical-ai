@@ -335,9 +335,10 @@ def _write_single_frame_recording(
     prediction_frame = None
     if predictions is not None and frame_idx < int(predictions.shape[0]):
         prediction_frame = predictions[frame_idx]
-    if layout == "side-by-side" and prediction_frame is not None:
+    if layout == "side-by-side":
         input_frame = input_frame + np.array([-side_by_side_offset / 2.0, 0.0, 0.0], dtype=np.float32)
-        prediction_frame = prediction_frame + np.array([side_by_side_offset / 2.0, 0.0, 0.0], dtype=np.float32)
+        if prediction_frame is not None:
+            prediction_frame = prediction_frame + np.array([side_by_side_offset / 2.0, 0.0, 0.0], dtype=np.float32)
 
     _log_skeleton(rr, recording, "world/input", input_frame, joint_connections, INPUT_COLOR)
     if prediction_frame is not None and layout in {"overlay", "side-by-side"}:

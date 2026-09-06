@@ -110,7 +110,7 @@ def spec_path(tmp_path: Path) -> Path:
 
 @pytest.fixture()
 def sky_bin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
-    from npa.orchestration.skypilot import workflow
+    from npa.orchestration.skypilot import workflow as workflow_runtime
 
     path = tmp_path / "sky"
     path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
@@ -120,13 +120,17 @@ def sky_bin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
     # the accelerator behavior these tests are intended to exercise.
     proc_root = tmp_path / "proc"
     proc_root.mkdir()
-    real_probe = workflow._probe_local_api_daemon_cwd
+    real_probe = workflow_runtime._probe_local_api_daemon_cwd
 
     def probe(sky_executable, **kwargs):
         kwargs.setdefault("proc_root", proc_root)
         return real_probe(sky_executable, **kwargs)
 
-    monkeypatch.setattr(workflow, "_probe_local_api_daemon_cwd", probe)
+    monkeypatch.setattr(
+        workflow_runtime,
+        "_probe_local_api_daemon_cwd",
+        probe,
+    )
     return str(path)
 
 

@@ -350,13 +350,19 @@ def test_vulkan_available_returns_bool() -> None:
     assert isinstance(_vulkan_available(), bool)
 
 
-def test_train_local_vulkan_fallback_when_entrypoint_resolves(tmp_path: Path) -> None:
+def test_train_local_vulkan_fallback_when_entrypoint_resolves(
+    tmp_path: Path, monkeypatch
+) -> None:
     """When an executable entrypoint exists but Vulkan is absent, the trainer
     falls back to the reference locomotion trainer and warns."""
 
     pytest.importorskip("torch")
 
-    from npa.workbench.sonic.train import _vulkan_available, train_local
+    from npa.workbench.sonic.train import train_local
+
+    monkeypatch.setattr(
+        "npa.workbench.sonic.train._vulkan_available", lambda: False
+    )
 
     script = tmp_path / "entrypoint.sh"
     script.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
@@ -377,20 +383,14 @@ def test_train_local_vulkan_fallback_when_entrypoint_resolves(tmp_path: Path) ->
     vulkan_warnings = [
         w for w in caught if "Vulkan is not available" in str(w.message)
     ]
-    if _vulkan_available():
-        # Vulkan is present on this host; the fallback should NOT fire.
-        assert len(vulkan_warnings) == 0, "Vulkan present but fallback fired"
-    else:
-        # Vulkan is absent; the fallback MUST fire with the expected warning.
-        assert len(vulkan_warnings) == 1, (
-            "Vulkan absent but no fallback warning emitted"
-        )
+    assert len(vulkan_warnings) == 1, (
+        "Vulkan absent but no fallback warning emitted"
+    )
 
 
 def test_train_local_entrypoint_used_when_vulkan_available(tmp_path: Path, monkeypatch) -> None:
     """When Vulkan is monkeypatched True, a real entrypoint is resolved and the
-    trainer follows the entrypoint codepath (which will fail cleanly because
-    it shells out to a fake script)."""
+    trainer rejects a successful no-op entrypoint that produces no checkpoint."""
 
     pytest.importorskip("torch")
 
@@ -400,7 +400,9 @@ def test_train_local_entrypoint_used_when_vulkan_available(tmp_path: Path, monke
 
     from npa.workbench.sonic.train import SonicTrainError, train_local
 
-    with pytest.raises(SonicTrainError, match="SONIC entrypoint trainer failed"):
+    with pytest.raises(
+        SonicTrainError, match=r"^SONIC trainer /bin/true produced no checkpoint under "
+    ):
         train_local(
             output_path=str(tmp_path / "training"),
             entrypoint="/bin/true",

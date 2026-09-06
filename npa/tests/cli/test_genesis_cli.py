@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import queue
+import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -212,9 +213,11 @@ def test_train_teacher_rejects_bad_n_envs() -> None:
 
 
 def _mock_genesis_serverless_env(mocker):
+    mocker.patch("npa.execution_preflight.verify_serverless_execution", return_value={"status": "ready"})
+    mocker.patch("npa.cli.genesis._pin_serverless_image", side_effect=lambda image: image)
     mocker.patch("npa.cli.genesis.resolve_environment", return_value=SimpleNamespace(project_id="project-1"))
     mocker.patch(
-        "npa.cli.genesis.resolve_project_storage",
+        "npa.orchestration.npa_workflow.submit_credentials.resolve_project_storage",
         return_value=SimpleNamespace(
             checkpoint_bucket="",
             endpoint_url="https://s3.example",
@@ -266,7 +269,21 @@ def test_genesis_serverless_uses_shared_env_builder(mocker) -> None:
     assert kwargs["env"]["HF_HOME"] == "/tmp/hf_home"
     assert kwargs["extra_env"]["AWS_ACCESS_KEY_ID"] == "AKIA"
     assert kwargs["extra_env"]["AWS_SECRET_ACCESS_KEY"] == "SECRET"
+    assert kwargs["durable"] is True
     resolver.assert_called_once_with(project_id="project-1", explicit_subnet_id="")
+
+
+def test_genesis_worker_environment_uses_the_effective_credential_pair(mocker, monkeypatch):
+    from npa.cli.genesis import _serverless_job_env
+
+    _mock_genesis_serverless_env(mocker)
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "unit-environment-access")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "unit-environment-secret")
+    monkeypatch.setenv("AWS_ENDPOINT_URL", "https://environment-storage.example")
+    env, secrets = _serverless_job_env("unit-project", "s3://unit-bucket/output/")
+    assert secrets["AWS_ACCESS_KEY_ID"] == "unit-environment-access"
+    assert secrets["AWS_SECRET_ACCESS_KEY"] == "unit-environment-secret"
+    assert env["AWS_ENDPOINT_URL"] == "https://environment-storage.example"
 
 
 def test_genesis_serverless_production_path_invokes_shared_supervisor(mocker) -> None:
@@ -320,6 +337,131 @@ def test_genesis_serverless_production_path_invokes_shared_supervisor(mocker) ->
     supervise.assert_called_once()
     assert supervise.call_args.kwargs["max_infrastructure_recoveries"] == 2
     client.poll_job.assert_not_called()
+
+
+def test_genesis_serverless_preflight_denial_prevents_create(mocker) -> None:
+    from npa.execution_preflight import ExecutionPreflightError
+
+    _mock_genesis_serverless_env(mocker)
+    client = mocker.Mock()
+    client.get_job.side_effect = EndpointNotFoundError("missing")
+    mocker.patch("npa.cli.genesis.ServerlessClient", return_value=client)
+    check = mocker.patch(
+        "npa.execution_preflight.verify_serverless_execution",
+        side_effect=ExecutionPreflightError("storage_access", "task prefix write denied"),
+    )
+    result = runner.invoke(app, [
+        "workbench", "genesis", "train-teacher", "--runtime", "serverless",
+        "--output-path", "s3://bucket/genesis/", "--submit-only", "--gpu-type", "h200",
+        "--job-name", "genesis-job", "--output-format", "json",
+    ])
+    assert result.exit_code == 1
+    assert "task prefix write denied" in result.output
+    assert check.call_args.kwargs["project_id"] == "project-1"
+    assert check.call_args.kwargs["output_uri"] == "s3://bucket/genesis/"
+    assert check.call_args.kwargs["extra_env"]["AWS_SECRET_ACCESS_KEY"] == "SECRET"
+    client.create_job.assert_not_called()
+
+
+def _genesis_reconnect_provider(mocker):
+    """Keep the actual CLI/client/journal; replace only external dependencies."""
+    from npa.clients.serverless import ServerlessClient
+
+    _mock_genesis_serverless_env(mocker)
+    mocker.patch("npa.cli.genesis._pin_serverless_image", side_effect=lambda image: image)
+    provider = {"id": "", "create_calls": 0}
+
+    def run(args, **_kwargs):
+        action = args[3]
+        if action == "create":
+            provider["create_calls"] += 1
+            provider["id"] = "provider-original"
+        else:
+            flag = "--id" if action == "get" else "--name"
+            requested = args[args.index(flag) + 1]
+            if not provider["id"] or requested not in {provider["id"], "genesis-job"}:
+                return subprocess.CompletedProcess(args, 1, "", "not found")
+        body = json.dumps({
+            "metadata": {"id": provider["id"], "name": "genesis-job", "parent_id": "project-1"},
+            "status": {"state": "RUNNING"},
+        })
+        return subprocess.CompletedProcess(args, 0, body, "")
+
+    mocker.patch("npa.cli.genesis.ServerlessClient", side_effect=lambda: ServerlessClient(subprocess_runner=run))
+    argv = [
+        "workbench", "genesis", "train-teacher", "--runtime", "serverless",
+        "--output-path", "s3://unit-bucket/genesis/", "--submit-only", "--gpu-type", "h200",
+        "--job-name", "genesis-job", "--output-format", "json",
+        "--image", "registry.example/genesis@sha256:" + "a" * 64,
+    ]
+    return provider, argv
+
+
+def test_genesis_actual_cli_reconnect_reuses_verified_journal_identity(mocker):
+    provider, argv = _genesis_reconnect_provider(mocker)
+    first = runner.invoke(app, argv)
+    assert first.exit_code == 0, first.output
+    second = runner.invoke(app, argv)
+    assert second.exit_code == 0, second.output
+    assert json.loads(second.stdout)["status"] == "existing"
+    assert json.loads(first.stdout)["job_id"] == json.loads(second.stdout)["job_id"]
+    assert provider["create_calls"] == 1
+
+
+def test_genesis_submit_only_pins_image_for_later_supervised_reconnect(mocker):
+    from npa.clients.serverless import JobInfo
+
+    provider, argv = _genesis_reconnect_provider(mocker)
+    pinned = "registry.example/genesis@sha256:" + "a" * 64
+    pin = mocker.patch("npa.cli.genesis._pin_serverless_image", return_value=pinned)
+    argv[argv.index("--image") + 1] = "registry.example/genesis:development"
+    first = runner.invoke(app, argv)
+    assert first.exit_code == 0, first.output
+    argv.remove("--submit-only")
+    supervisor = mocker.patch(
+        "npa.cli.genesis._supervise_genesis_serverless_job",
+        return_value=JobInfo(id="provider-original", name="genesis-job", project_id="project-1", status="succeeded"),
+    )
+    second = runner.invoke(app, argv)
+    assert second.exit_code == 0, second.output
+    assert json.loads(second.stdout)["job_status"] == "succeeded"
+    assert supervisor.call_args.kwargs["image"] == pinned
+    assert pin.call_count == 2
+    assert provider["create_calls"] == 1
+
+
+@pytest.mark.parametrize("change", ["command", "image", "output", "provider_id"])
+@pytest.mark.parametrize("submit_only", [True, False])
+def test_genesis_actual_cli_reconnect_refuses_changed_contract_or_identity(mocker, change, submit_only):
+    provider, argv = _genesis_reconnect_provider(mocker)
+    first = runner.invoke(app, argv)
+    assert first.exit_code == 0, first.output
+    if change == "command":
+        argv += ["--seed", "777"]
+    elif change == "image":
+        argv[argv.index("--image") + 1] = "registry.example/genesis@sha256:" + "b" * 64
+    elif change == "output":
+        argv[argv.index("--output-path") + 1] = "s3://unit-bucket/other-output/"
+    else:
+        provider["id"] = "provider-replacement"
+    if not submit_only:
+        argv.remove("--submit-only")
+    supervisor = mocker.patch("npa.cli.genesis._supervise_genesis_serverless_job")
+    second = runner.invoke(app, argv)
+    assert second.exit_code == 1, second.output
+    diagnostic = " ".join(second.output.split())
+    assert "different launch contract" in diagnostic or "not yet observable" in diagnostic
+    assert provider["create_calls"] == 1
+    supervisor.assert_not_called()
+
+
+def test_genesis_legacy_job_without_launch_evidence_refuses_adoption(mocker):
+    provider, argv = _genesis_reconnect_provider(mocker)
+    provider["id"] = "legacy-provider"
+    result = runner.invoke(app, argv)
+    assert result.exit_code == 1, result.output
+    assert "no durable launch contract" in result.output
+    assert provider["create_calls"] == 0
 
 
 def test_genesis_serverless_warns_non_hopper_gpu_type(mocker) -> None:
