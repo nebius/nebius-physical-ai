@@ -143,24 +143,36 @@ publish immutable S3 objects with read-after-write verification. Publication
 failure retains the local recovery copy; **do not repeat GPU generation to
 retry an upload**.
 
-## Required measured acceptance
+## Measured B200 acceptance
 
-Live validation is required before publication of this change. The acceptance
-test in `npa/tests/e2e/test_cosmos3_nano_video_live.py` runs one complete video
-through the SDK followed by eight complete concurrent videos through the CLI,
-including immutable S3 publication and read-after-write verification. Measurements will be recorded
-here after that real workload completes.
+The completed acceptance ran one full 30-second video through the SDK, then eight complete generation requests concurrently through the CLI. All nine clips passed full decoding at 832×480, 24 fps and 720 frames. The two batches published 13 and 97 immutable objects respectively, with read-after-write hash verification. Models were already initialized and BF16 weights prestaged before timing.
 
-Each chunk records client wall time, the engine's `X-Inference-Time-S` and
-`X-Peak-Memory-MB`, and stage durations. The CUDA allocator peak is distinct
-from total GPU residency: a second measurement samples the assigned B200's
-`nvidia-smi memory.used` every 0.5 seconds. Sampling may miss shorter spikes.
-The eight-way gate requires eight successful videos, eight distinct model
-replicas, eight overlapping server execution intervals, and eight overlapping
-diffusion chunk requests. Visual seam review
-is a separate observation; low pixel differences alone do not establish
-perceptual continuity.
+The single-request batch took **153.61 s**; the eight-request batch took **163.04 s**. These batch times include generation, downloads and local validation, and exclude S3 publication. The complete sequential acceptance test case, including both batches and their S3 publication/readback, took **323.61 s**; pytest reported **324.41 s** for the full invocation. Deployment, model initialization and prestaging are excluded.
 
-Exact resource identities, private endpoints, registry coordinates, artifacts
-and operational evidence remain in access-controlled runtime storage. This
-recipe publishes no such identifiers.
+| Request | Chunk 1 (s) | Chunk 2 (s) | Chunk 3 (s) | Server total (s) | Client total (s) | Peak allocator reserved (MiB) | Peak device used (MiB) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| S1 | 59.22 | 60.18 | 22.52 | 149.64 | 153.58 | 37408.00 | 38316.00 |
+| C1 | 59.36 | 60.45 | 22.57 | 150.26 | 156.37 | 37408.00 | 38316.00 |
+| C2 | 59.43 | 60.26 | 22.57 | 151.26 | 160.39 | 37408.00 | 38316.00 |
+| C3 | 59.94 | 60.54 | 22.85 | 151.81 | 160.07 | 37408.00 | 38316.00 |
+| C4 | 59.45 | 60.28 | 22.55 | 151.42 | 158.55 | 37408.00 | 38316.00 |
+| C5 | 60.86 | 61.10 | 22.87 | 154.05 | 162.15 | 37408.00 | 38316.00 |
+| C6 | 60.11 | 60.30 | 22.55 | 151.65 | 159.97 | 37408.00 | 38316.00 |
+| C7 | 60.12 | 60.65 | 22.95 | 152.80 | 162.24 | 37408.00 | 38316.00 |
+| C8 | 61.28 | 61.98 | 23.45 | 155.37 | 162.90 | 37408.00 | 38316.00 |
+
+S1 is the single request; C1–C8 belong to the concurrent batch. Chunk time is the synchronous diffusion HTTP round trip inside the replica. Server total includes generation, full decode, stitching, seam extraction and GPU sampler teardown. Client total additionally includes routing, artifact downloads and client validation; it excludes S3 publication.
+
+Both memory columns use MiB. Despite its name, the engine’s `X-Peak-Memory-MB` header divides bytes by `1024**2` and reports the peak CUDA allocator reserved pool. Device usage comes from the assigned B200’s `nvidia-smi memory.used` sampled every 0.5 seconds; this includes total device residency and can miss shorter spikes. These are separate measurements.
+
+The eight-request batch completed **8/8** videos on **eight distinct replicas**, with **eight overlapping rollout intervals** and **eight overlapping diffusion chunk requests**. These results cover one eight-request batch on the 16-replica deployment; sustained saturation throughput was not measured.
+
+After the timed acceptance, the exact deployed image separately passed the repository B200 checker with Torch 2.11.0+cu130 and native `sm_100` support. Its shipped golden-evaluation command also generated a complete three-chunk rollout, and all four MP4s independently decoded successfully. All 16 serving replicas and their pods remained unchanged. This separate check ran alongside the serving model; its timing and memory are excluded from the production measurements above.
+
+Across 75 successful CPU-head samples taken every 5 seconds, proxy RSS peaked at **214.68 MiB** (private USS **111.47 MiB**) and whole-head cgroup usage peaked at **1639.55 MiB**. The same proxy process and head pod remained present, with zero sampled OOM events. This observation window includes baseline and completion handoff; it is separate from generation latency, and five-second samples can miss brief spikes.
+
+Independent review of all 18 joins across the nine final clips found no obvious hard cuts or scene/vehicle identity resets in the eight-frame contact sheets. Small wheel, reflection and edge changes remain visible around some joins. Static contact sheets do not establish imperceptible motion continuity; the stitch uses direct concatenation without blending.
+
+The private image scan retained 218 HIGH and six unfixed CRITICAL findings, with zero fixable CRITICAL findings and zero detected secrets. The targeted dependency updates remove the base image’s fixable CRITICAL findings. One inherited package metadata mismatch remains: `nixl` requires `nixl-cu13==1.3.0`, while the vendor image installs 1.3.1; the selected TP=1 single-stage diffusion route does not configure NIXL transfer. No new dependency conflicts were introduced.
+
+Exact resource identities, private endpoints, registry coordinates and generated artifacts remain in access-controlled runtime storage. This README includes measurements and generic configuration only.

@@ -111,7 +111,7 @@ flowchart TB
 | `cosmos` | `cu128-torch27-sm100-1.0.9-20260803T002017Z` | container-smoke | version; model load; single inference (safety on) | required | gpu-gated |
 | `cosmos2-transfer` | `2.5.1-sim2real-coherent-20260904` | container-smoke | procedural input; four real diffusion steps; decoded, numerically validated output MP4; guardrails enabled | required | gpu-gated |
 | `cosmos3` | `1.2.2-cu130-r6` | container-smoke | real Cosmos 3 text2image generation; decodable image; guardrails on | required | gpu-gated |
-| `cosmos3-nano-video` | operator-controlled immutable image | container-smoke | real BF16 TP=1 diffusion; three V2V chunks; four fully decoded MP4s; 30-second 480p result and measured memory/latency | required | gpu-gated |
+| `cosmos3-nano-video` | operator-controlled immutable image | container-smoke | real BF16 TP=1 diffusion; three-chunk rollout with V2V continuations; four fully decoded MP4s; 30-second 480p result and measured memory/latency | required | gpu-gated |
 | `cosmos3-reason` | `cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z` | container-smoke | CUDA; real Reason VLM pass | optional | gpu-gated |
 | `sonic` | `0.1.2` | entrypoint-smoke | `/entrypoint.sh smoke`; GPU proofs; JSON artifact | required | gpu-gated |
 | `retargeting` | `0.1.1` | container-smoke | validate_motion_lib on synthetic motion | none | ready |
