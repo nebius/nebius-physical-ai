@@ -74,6 +74,9 @@ The Cosmos Transfer 2.5 Physical AI Data Factory blueprint remains available as
 [physical-ai-data-factory.yaml](testing/physical-ai-data-factory.yaml). Its
 [deploy guide](../docs/workbench/guides/physical-ai-data-factory-deploy.md)
 describes the real component and artifact contracts.
+The direct NVIDIA DIG, IAA, and EVG translations are also testing-tier specs;
+all five PAIDF YAMLs emit `reports/upstream.json` and execute through SkyPilot,
+not OSMO or Airflow.
 
 ## Spec catalog
 
@@ -105,6 +108,9 @@ describes the real component and artifact contracts.
 | [`cosmos3-reason.yaml`](testing/cosmos3-reason.yaml) | Cosmos3 reason |
 | [`cosmos3-checkpoint-eval.yaml`](testing/cosmos3-checkpoint-eval.yaml) | B200-only guarded Cosmos3 still-image checkpoint evaluation |
 | [`paidf-cosmos3.yaml`](main/paidf-cosmos3.yaml) | Independent dynamic PAIDF: generic LeRobot/video input → real Cosmos 3 video2video variants → evaluator gate/refinement → real Curator + FiftyOne Brain + Rerun |
+| [`paidf-defect-image-generation.yaml`](testing/paidf-defect-image-generation.yaml) | Direct DIG Day-1 manual-ROI translation → runtime base-checkpoint setup → real AnomalyGen fine-tune → inference and native labels; B200; operator-authorized data/weights only |
+| [`paidf-image-attribute-augmentation.yaml`](testing/paidf-image-attribute-augmentation.yaml) | Direct IAA DAG translation → Qwen Image Edit service → real paidf-augmentation verification → real Person Attribute Search → dataset |
+| [`paidf-event-video-generation.yaml`](testing/paidf-event-video-generation.yaml) | Direct EVG DAG translation → Cosmos3 Super image2video → real detection/captioning/two Visual-QA passes/PAS → anomaly dataset |
 | [`content-agents-rigid-object.yaml`](testing/content-agents-rigid-object.yaml) | Restricted operator-built NVIDIA Content Agents: source USD → real Material/Physics Agents + OVRTX → upstream validation → rigid Isaac object USDZ/adapter ([guide](../docs/workbench/content-agents.md)) |
 | [`byof.yaml`](testing/byof.yaml) | BYOF via `run_byof_repo.py` |
 | [`byof-maniskill.yaml`](testing/byof-maniskill.yaml) | OSS registry: ManiSkill pinned image + PickCube smoke |

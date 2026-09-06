@@ -4,6 +4,8 @@ import os
 import subprocess
 import sys
 
+import pytest
+
 
 def _run_light_import(code: str, *, tool: str = "") -> subprocess.CompletedProcess[str]:
     env = {**os.environ, "NPA_SKIP_EAGER_IMPORTS": "1"}
@@ -53,6 +55,27 @@ assert "--runtime" in result.output
     assert result.returncode == 0, result.stderr
 
 
+@pytest.mark.parametrize("tool", ["nurec", "rerun-viewer"])
+def test_nurec_viewer_light_workbench_exposes_only_nurec_parent(tool: str) -> None:
+    result = _run_light_import(
+        """
+import sys
+from typer.testing import CliRunner
+from npa.cli.workbench import app
+assert "npa.cli.nurec" in sys.modules
+assert "npa.cli.workbench.cosmos2" not in sys.modules
+assert "npa.cli.fiftyone" not in sys.modules
+assert "npa.cli.groot" not in sys.modules
+result = CliRunner().invoke(app, ["nurec", "visualize", "--help"])
+assert result.exit_code == 0, result.output
+assert "--input-uri" in result.output
+""",
+        tool=tool,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
 def test_cosmos3_ray_serve_light_workbench_exposes_cosmos3_only() -> None:
     """The cosmos3-ray-serve image gets the cosmos3 surface without Cosmos2 or
     other workbench tools."""
@@ -70,25 +93,6 @@ assert cli_result.exit_code == 0, cli_result.output
 assert "--endpoint" in cli_result.output
 """,
         tool="cosmos3-ray-serve",
-    )
-
-    assert result.returncode == 0, result.stderr
-
-
-def test_rerun_viewer_light_workbench_exposes_only_nurec_parent() -> None:
-    result = _run_light_import(
-        """
-import sys
-from typer.testing import CliRunner
-from npa.cli.workbench import app
-assert "npa.cli.nurec" in sys.modules
-assert "npa.cli.workbench.cosmos2" not in sys.modules
-assert "npa.cli.groot" not in sys.modules
-result = CliRunner().invoke(app, ["nurec", "visualize", "--help"])
-assert result.exit_code == 0, result.output
-assert "--input-uri" in result.output
-""",
-        tool="rerun-viewer",
     )
 
     assert result.returncode == 0, result.stderr

@@ -24,8 +24,8 @@ CUROBO_SOURCE_EPOCH="$(git -C "$REPO_ROOT" show -s --format=%ct "$SOURCE_SHA")"
 BUILD_INPUTS=(
   npa/src/npa npa/pyproject.toml npa/README.md npa/.dockerignore
   npa/docker/workbench/curobo
-  npa/workflows/workbench/npa-workflows/sim2real.yaml
-  npa/workflows/workbench/npa-workflows/physical-ai-data-factory.yaml
+  workflows/main/sim2real.yaml
+  workflows/testing/physical-ai-data-factory.yaml
 )
 # The immutable image identity must cover the actual bytes Docker receives.
 # Keep unrelated dirty files outside these inputs in relaxed dirty-tree mode.

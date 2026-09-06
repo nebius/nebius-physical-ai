@@ -132,31 +132,306 @@ _CONTENT_AGENTS_PIPELINE = [
     "npa.workflows.content_agents",
 ]
 
+_PAIDF_NATIVE_PIPELINE = ["python3", "-m", "npa.workflows.paidf_native"]
+
 TOOL_CATALOG: dict[str, ToolEntry] = {
+    "workflow.paidf.prepare_images": ToolEntry(
+        name="workflow.paidf.prepare_images",
+        description="Validate and stage canonical real-image inputs for native PAIDF workflows.",
+        argv_template=[
+            *_PAIDF_NATIVE_PIPELINE,
+            "prepare-images",
+            "--input-uri", "{{config.input_uri}}",
+            "--output-uri", "{{config.prepared_uri}}",
+            "--manifest-uri", "{{config.prepared_manifest_uri}}",
+            "--run-id", "{{run.id}}",
+        ],
+    ),
+    "workflow.paidf.build_configs": ToolEntry(
+        name="workflow.paidf.build_configs",
+        semantic_contract="paidf_direct_translation",
+        description=(
+            "Deterministically render NVIDIA paidf-augmentation protocol configs "
+            "for IAA or EVG without executing Airflow."
+        ),
+        argv_template=[
+            *_PAIDF_NATIVE_PIPELINE,
+            "build-configs",
+            "--workflow", "{{config.paidf_workflow}}",
+            "--prepared-manifest-uri", "{{config.prepared_manifest_uri}}",
+            "--output-uri", "{{config.run_root_uri}}",
+            "--config-manifest-uri", "{{config.config_manifest_uri}}",
+            "--num-augmentations", "{{config.num_augmentations}}",
+            "--seed", "{{config.seed}}",
+            "--vlm-url", "{{config.vlm_url}}",
+            "--vlm-model", "{{config.vlm_model}}",
+            "--llm-url", "{{config.llm_url}}",
+            "--llm-model", "{{config.llm_model}}",
+            "--generation-url", "{{config.generation_url}}",
+            "--generation-model", "{{config.generation_model}}",
+            "--run-id", "{{run.id}}",
+        ],
+    ),
+    "workflow.paidf.run_iaa_augmentation": ToolEntry(
+        name="workflow.paidf.run_iaa_augmentation",
+        access_capabilities=("paidf-iaa",),
+        description=(
+            "Start pinned Qwen Image Edit in vLLM-Omni and keep it alive while "
+            "the real paidf-augmentation IAA batch runs."
+        ),
+        argv_template=[
+            *_PAIDF_NATIVE_PIPELINE,
+            "run-local-augmentation",
+            "--config-manifest-uri", "{{config.config_manifest_uri}}",
+            "--result-uri", "{{config.augmentation_result_uri}}",
+            "--generation-model", "{{config.generation_model}}",
+            "--generation-revision", "{{config.generation_revision}}",
+            "--service-kind", "image-edit",
+            "--port", "{{config.service_port}}",
+            "--parallel-size", "1",
+            "--run-id", "{{run.id}}",
+        ],
+    ),
+    "workflow.paidf.run_evg_augmentation": ToolEntry(
+        name="workflow.paidf.run_evg_augmentation",
+        access_capabilities=("paidf-evg",),
+        description=(
+            "Start pinned Cosmos3 Super Image2Video in vLLM-Omni and keep it "
+            "alive while the real paidf-augmentation EVG batch runs."
+        ),
+        argv_template=[
+            *_PAIDF_NATIVE_PIPELINE,
+            "run-local-augmentation",
+            "--config-manifest-uri", "{{config.config_manifest_uri}}",
+            "--result-uri", "{{config.augmentation_result_uri}}",
+            "--generation-model", "{{config.generation_model}}",
+            "--generation-revision", "{{config.generation_revision}}",
+            "--service-kind", "image2video",
+            "--port", "{{config.service_port}}",
+            "--parallel-size", "{{config.service_parallel_size}}",
+            "--run-id", "{{run.id}}",
+        ],
+    ),
+    "workflow.paidf.validate_augmentation": ToolEntry(
+        name="workflow.paidf.validate_augmentation",
+        description="Decode and validate PAIDF media, captions, and metadata before dataset assembly.",
+        argv_template=[
+            *_PAIDF_NATIVE_PIPELINE,
+            "validate-augmentation",
+            "--config-manifest-uri", "{{config.config_manifest_uri}}",
+            "--augmentation-result-uri", "{{config.augmentation_result_uri}}",
+            "--validation-uri", "{{config.augmentation_validation_uri}}",
+            "--run-id", "{{run.id}}",
+        ],
+    ),
+    "workflow.paidf.postprocess_iaa": ToolEntry(
+        name="workflow.paidf.postprocess_iaa",
+        description=(
+            "Run paidf-augmentation's genuine IAA pane splitter, visual-attribute "
+            "extractor, and augmented-dataset writer."
+        ),
+        argv_template=[
+            *_PAIDF_NATIVE_PIPELINE,
+            "postprocess-iaa",
+            "--validation-uri", "{{config.augmentation_validation_uri}}",
+            "--prepared-manifest-uri", "{{config.prepared_manifest_uri}}",
+            "--output-root-uri", "{{config.postprocess_root_uri}}",
+            "--result-uri", "{{config.validation_uri}}",
+            "--vlm-url", "{{config.vlm_url}}",
+            "--vlm-model", "{{config.vlm_model}}",
+            "--run-id", "{{run.id}}",
+        ],
+    ),
+    "workflow.paidf.run_detection": ToolEntry(
+        name="workflow.paidf.run_detection",
+        access_capabilities=("paidf-label-detection",),
+        description="Invoke the pinned PAIDF detection-and-tracking service protocol.",
+        argv_template=[
+            *_PAIDF_NATIVE_PIPELINE, "run-auto-label",
+            "--workflow", "evg", "--stage", "detection",
+            "--validation-uri", "{{config.validation_uri}}",
+            "--auto-label-root-uri", "{{config.auto_label_root_uri}}",
+            "--result-uri", "{{config.auto_label_result_uri}}",
+            "--vlm-url", "{{config.vlm_url}}", "--vlm-model", "{{config.vlm_model}}",
+            "--llm-url", "{{config.llm_url}}", "--llm-model", "{{config.llm_model}}",
+            "--run-id", "{{run.id}}",
+        ],
+    ),
+    "workflow.paidf.run_captioning": ToolEntry(
+        name="workflow.paidf.run_captioning",
+        access_capabilities=("paidf-label-captioning",),
+        description="Invoke the pinned PAIDF captioning service protocol.",
+        argv_template=[
+            *_PAIDF_NATIVE_PIPELINE, "run-auto-label",
+            "--workflow", "evg", "--stage", "captioning",
+            "--validation-uri", "{{config.validation_uri}}",
+            "--previous-result-uri", "{{config.previous_label_result_uri}}",
+            "--auto-label-root-uri", "{{config.auto_label_root_uri}}",
+            "--result-uri", "{{config.auto_label_result_uri}}",
+            "--vlm-url", "{{config.vlm_url}}", "--vlm-model", "{{config.vlm_model}}",
+            "--llm-url", "{{config.llm_url}}", "--llm-model", "{{config.llm_model}}",
+            "--run-id", "{{run.id}}",
+        ],
+    ),
+    "workflow.paidf.run_visual_qa": ToolEntry(
+        name="workflow.paidf.run_visual_qa",
+        access_capabilities=("paidf-label-visual-qa",),
+        description="Invoke a pinned PAIDF visual-QA service protocol stage.",
+        argv_template=[
+            *_PAIDF_NATIVE_PIPELINE, "run-auto-label",
+            "--workflow", "evg", "--stage", "{{config.auto_label_stage}}",
+            "--validation-uri", "{{config.validation_uri}}",
+            "--previous-result-uri", "{{config.previous_label_result_uri}}",
+            "--auto-label-root-uri", "{{config.auto_label_root_uri}}",
+            "--result-uri", "{{config.auto_label_result_uri}}",
+            "--vlm-url", "{{config.vlm_url}}", "--vlm-model", "{{config.vlm_model}}",
+            "--llm-url", "{{config.llm_url}}", "--llm-model", "{{config.llm_model}}",
+            "--run-id", "{{run.id}}",
+        ],
+    ),
+    "workflow.paidf.run_attribute_search": ToolEntry(
+        name="workflow.paidf.run_attribute_search",
+        access_capabilities=("paidf-label-attribute-search",),
+        description="Invoke the pinned PAIDF event/person attribute-search protocol.",
+        argv_template=[
+            *_PAIDF_NATIVE_PIPELINE, "run-auto-label",
+            "--workflow", "{{config.paidf_workflow}}", "--stage", "person-attribute-search",
+            "--validation-uri", "{{config.validation_uri}}",
+            "--previous-result-uri", "{{config.previous_label_result_uri}}",
+            "--auto-label-root-uri", "{{config.auto_label_root_uri}}",
+            "--result-uri", "{{config.auto_label_result_uri}}",
+            "--vlm-url", "{{config.vlm_url}}", "--vlm-model", "{{config.vlm_model}}",
+            "--llm-url", "{{config.llm_url}}", "--llm-model", "{{config.llm_model}}",
+            "--run-id", "{{run.id}}",
+        ],
+    ),
+    "workflow.paidf.finalize_dataset": ToolEntry(
+        name="workflow.paidf.finalize_dataset",
+        description="Assemble a lineage-linked IAA or EVG dataset from validated real outputs.",
+        argv_template=[
+            *_PAIDF_NATIVE_PIPELINE,
+            "finalize-dataset",
+            "--workflow", "{{config.paidf_workflow}}",
+            "--validation-uri", "{{config.validation_uri}}",
+            "--upstream-uri", "{{config.upstream_contract_uri}}",
+            "--labels-uri", "{{config.labels_uri}}",
+            "--output-uri", "{{config.final_dataset_uri}}",
+            "--run-id", "{{run.id}}",
+        ],
+    ),
+    "workflow.paidf.validate_dataset": ToolEntry(
+        name="workflow.paidf.validate_dataset",
+        description=(
+            "Validate every final media, metadata, and annotation handoff and "
+            "publish a terminal PAIDF decision artifact."
+        ),
+        argv_template=[
+            *_PAIDF_NATIVE_PIPELINE,
+            "validate-dataset",
+            "--dataset-uri", "{{config.final_dataset_uri}}",
+            "--report-uri", "{{config.terminal_validation_uri}}",
+            "--run-id", "{{run.id}}",
+        ],
+    ),
+    "workflow.paidf.dig_infer": ToolEntry(
+        name="workflow.paidf.dig_infer",
+        access_capabilities=("paidf-dig",),
+        description=(
+            "Run genuine NVIDIA PAIDF AnomalyGen Day-1 manual-ROI inference "
+            "and require generated media plus native labels."
+        ),
+        argv_template=[
+            *_PAIDF_NATIVE_PIPELINE,
+            "dig-infer",
+            "--dataset-uri", "{{config.dataset_uri}}",
+            "--pretrained-uri", "{{config.pretrained_uri}}",
+            "--checkpoint-uri", "{{config.checkpoint_uri}}",
+            "--finetune-result-uri", "{{config.finetune_result_uri}}",
+            "--output-uri", "{{config.generated_uri}}",
+            "--result-uri", "{{config.dig_result_uri}}",
+            "--num-sdg", "{{config.num_sdg}}",
+            "--run-id", "{{run.id}}",
+        ],
+    ),
+    "workflow.paidf.dig_train": ToolEntry(
+        name="workflow.paidf.dig_train",
+        access_capabilities=("paidf-dig",),
+        description=(
+            "Run the genuine default PAIDF Day-1 manual-ROI AnomalyGen fine-tuning task."
+        ),
+        argv_template=[
+            *_PAIDF_NATIVE_PIPELINE,
+            "dig-train",
+            "--dataset-uri", "{{config.dataset_uri}}",
+            "--pretrained-uri", "{{config.pretrained_uri}}",
+            "--output-uri", "{{config.finetune_uri}}",
+            "--result-uri", "{{config.finetune_result_uri}}",
+            "--usecase", "{{config.usecase}}",
+            "--run-id", "{{run.id}}",
+        ],
+    ),
+    "workflow.paidf.dig_prepare_pretrained": ToolEntry(
+        name="workflow.paidf.dig_prepare_pretrained",
+        access_capabilities=("paidf-dig",),
+        description=(
+            "Runtime-fetch AnomalyGen's gated base checkpoint set under operator access."
+        ),
+        argv_template=[
+            *_PAIDF_NATIVE_PIPELINE,
+            "dig-prepare-pretrained",
+            "--output-uri", "{{config.pretrained_uri}}",
+            "--result-uri", "{{config.pretrained_result_uri}}",
+            "--run-id", "{{run.id}}",
+        ],
+    ),
     "workbench.curobo.prepare": ToolEntry(
         name="workbench.curobo.prepare",
         description="cuRobo V2 prepare with verified artifact handoffs.",
-        argv_template=['npa', 'workbench', 'curobo', 'prepare', '--output-path', '{{config.curobo_output_uri}}', '--mode', '{{config.curobo_mode}}'],
+        argv_template=[
+            "npa", "workbench", "curobo", "prepare",
+            "--output-path", "{{config.curobo_output_uri}}",
+            "--mode", "{{config.curobo_mode}}",
+        ],
     ),
     "workbench.curobo.benchmark": ToolEntry(
         name="workbench.curobo.benchmark",
         description="cuRobo V2 benchmark with verified artifact handoffs.",
-        argv_template=['npa', 'workbench', 'curobo', 'benchmark', '--input-path', '{{config.curobo_input_uri}}', '--output-path', '{{config.curobo_output_uri}}', '--run-id', '{{run.id}}'],
+        argv_template=[
+            "npa", "workbench", "curobo", "benchmark",
+            "--input-path", "{{config.curobo_input_uri}}",
+            "--output-path", "{{config.curobo_output_uri}}",
+            "--run-id", "{{run.id}}",
+        ],
     ),
     "workbench.curobo.plan": ToolEntry(
         name="workbench.curobo.plan",
         description="cuRobo V2 plan with verified artifact handoffs.",
-        argv_template=['npa', 'workbench', 'curobo', 'plan', '--input-path', '{{config.curobo_input_uri}}', '--output-path', '{{config.curobo_output_uri}}', '--run-id', '{{run.id}}'],
+        argv_template=[
+            "npa", "workbench", "curobo", "plan",
+            "--input-path", "{{config.curobo_input_uri}}",
+            "--output-path", "{{config.curobo_output_uri}}",
+            "--run-id", "{{run.id}}",
+        ],
     ),
     "workbench.curobo.validate": ToolEntry(
         name="workbench.curobo.validate",
         description="cuRobo V2 validate with verified artifact handoffs.",
-        argv_template=['npa', 'workbench', 'curobo', 'validate', '--input-path', '{{config.curobo_input_uri}}', '--output-path', '{{config.curobo_output_uri}}', '--run-id', '{{run.id}}'],
+        argv_template=[
+            "npa", "workbench", "curobo", "validate",
+            "--input-path", "{{config.curobo_input_uri}}",
+            "--output-path", "{{config.curobo_output_uri}}",
+            "--run-id", "{{run.id}}",
+        ],
     ),
     "workbench.curobo.visualize": ToolEntry(
         name="workbench.curobo.visualize",
         description="cuRobo V2 visualize with verified artifact handoffs.",
-        argv_template=['npa', 'workbench', 'curobo', 'visualize', '--input-path', '{{config.curobo_input_uri}}', '--output-path', '{{config.curobo_output_uri}}', '--run-id', '{{run.id}}'],
+        argv_template=[
+            "npa", "workbench", "curobo", "visualize",
+            "--input-path", "{{config.curobo_input_uri}}",
+            "--output-path", "{{config.curobo_output_uri}}",
+            "--run-id", "{{run.id}}",
+        ],
     ),
     "workbench.alpamayo2_super.infer": ToolEntry(
         name="workbench.alpamayo2_super.infer",

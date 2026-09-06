@@ -674,6 +674,21 @@ def test_vlm_rl_loop_is_reachable_when_explicitly_requested() -> None:
             "create_data_factory_workflow",
             "physical-ai-data-factory",
         ),
+        (
+            "create a PAIDF defect image generation manual ROI workflow",
+            "create_data_factory_workflow",
+            "paidf-defect-image-generation",
+        ),
+        (
+            "create a PAIDF image attribute augmentation workflow",
+            "create_data_factory_workflow",
+            "paidf-image-attribute-augmentation",
+        ),
+        (
+            "create a PAIDF event video generation workflow",
+            "create_data_factory_workflow",
+            "paidf-event-video-generation",
+        ),
         ("create VLM-RL loop workflow", "create_vlm_rl_workflow", "vlm-rl-loop"),
         ("create near sim realism yaml", "create_workflow", "two-step"),
     ],
@@ -916,6 +931,23 @@ def test_choose_template_selects_data_factory() -> None:
         intent="create_data_factory_workflow",
     )
     assert selection["template"] == "physical-ai-data-factory"
+
+
+@pytest.mark.parametrize(
+    ("alias", "workflow_name"),
+    [
+        ("dig", "paidf-defect-image-generation"),
+        ("iaa", "paidf-image-attribute-augmentation"),
+        ("evg", "paidf-event-video-generation"),
+    ],
+)
+def test_paidf_agent_aliases_render_shipped_native_specs(
+    alias: str, workflow_name: str
+) -> None:
+    rendered = yaml.safe_load(generate_workflow_yaml(alias, bucket="agent-bucket"))
+    assert rendered["metadata"]["name"] == workflow_name
+    assert rendered["config"]["bucket"] == "agent-bucket"
+    assert rendered["apiVersion"] == "npa.workflow/v0.0.1"
 
 
 def test_data_factory_draft_from_intent_and_text_is_runnable() -> None:

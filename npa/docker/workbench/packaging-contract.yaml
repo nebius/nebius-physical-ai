@@ -147,6 +147,136 @@ redistribution:
 
 # Relative to npa/docker/workbench/
 images:
+  paidf-detection-sky:
+    dockerfile: paidf-detection-sky/Dockerfile
+    skypilot_bootstrap_contract: skypilot-0.12.2-v1
+    final_user: ubuntu
+    restricted_parent_image: nvcr.io/nvidia/paidf-detection-and-tracking-rfdetr-service@sha256:6b35e63b95cab7cd772906bcb08be978de7526427f0d1925ab84439dd4a9561e
+    tier: interactive
+    redistribution: restricted
+    passwordless_root_exemption: >-
+      SkyPilot worker bootstrap only. Retains the non-root upstream runtime
+      user; password/root SSH login is disabled and host keys are generated
+      only at runtime. No SSH service is started by the image entrypoint.
+    notes: >-
+      Operator-built compatibility layer over the exact NVIDIA PAIDF
+      auto-labeling service digest. Preserves the vendor service environment
+      and CLI, adds proven missing worker prerequisites and pinned-source
+      checkout support, and forwards orchestrator arguments. A separate writable
+      /opt/npa-venv hosts NPA without modifying the pinned /app/.venv service.
+      Adds no model weights, data or credentials. Inherited NGC payload remains restricted;
+      complete built-layer licensing/security scans, exact-digest bootstrap
+      proof, and real native workflow acceptance are required before use.
+  paidf-captioning-sky:
+    dockerfile: paidf-captioning-sky/Dockerfile
+    skypilot_bootstrap_contract: skypilot-0.12.2-v1
+    final_user: appuser
+    restricted_parent_image: nvcr.io/nvidia/paidf-captioning-service@sha256:17e1e3f53cc66342183f7d0b6eed76907993bb325a13db90c46d9a8cf664d804
+    tier: interactive
+    redistribution: restricted
+    passwordless_root_exemption: >-
+      SkyPilot worker bootstrap only. Retains the non-root upstream runtime
+      user; password/root SSH login is disabled and host keys are generated
+      only at runtime. No SSH service is started by the image entrypoint.
+    notes: >-
+      Operator-built compatibility layer over the exact NVIDIA PAIDF
+      auto-labeling service digest. Preserves the vendor service environment
+      and CLI, adds proven missing worker prerequisites and pinned-source
+      checkout support, and forwards orchestrator arguments. A separate writable
+      /opt/npa-venv hosts NPA without modifying the pinned /app/.venv service.
+      Adds no model weights, data or credentials. Inherited NGC payload remains restricted;
+      complete built-layer licensing/security scans, exact-digest bootstrap
+      proof, and real native workflow acceptance are required before use.
+  paidf-visual-qa-sky:
+    dockerfile: paidf-visual-qa-sky/Dockerfile
+    skypilot_bootstrap_contract: skypilot-0.12.2-v1
+    final_user: appuser
+    restricted_parent_image: nvcr.io/nvidia/paidf-visual-qa-service@sha256:e681c8dee849c7ac9fc5b182f51e9efd0da460972b08850d40f00aa9d5e3c97c
+    tier: interactive
+    redistribution: restricted
+    passwordless_root_exemption: >-
+      SkyPilot worker bootstrap only. Retains the non-root upstream runtime
+      user; password/root SSH login is disabled and host keys are generated
+      only at runtime. No SSH service is started by the image entrypoint.
+    notes: >-
+      Operator-built compatibility layer over the exact NVIDIA PAIDF
+      auto-labeling service digest. Preserves the vendor service environment
+      and CLI, adds proven missing worker prerequisites and pinned-source
+      checkout support, and forwards orchestrator arguments. A separate writable
+      /opt/npa-venv hosts NPA without modifying the pinned /app/.venv service.
+      Adds no model weights, data or credentials. Inherited NGC payload remains restricted;
+      complete built-layer licensing/security scans, exact-digest bootstrap
+      proof, and real native workflow acceptance are required before use.
+  paidf-attribute-search-sky:
+    dockerfile: paidf-attribute-search-sky/Dockerfile
+    skypilot_bootstrap_contract: skypilot-0.12.2-v1
+    final_user: appuser
+    restricted_parent_image: nvcr.io/nvidia/paidf-event-and-person-attribute-search-service@sha256:0f581ff6d92efd391281e5787a8b1fda76556443ade47c1f5d59d4c345a01f6a
+    tier: interactive
+    redistribution: restricted
+    passwordless_root_exemption: >-
+      SkyPilot worker bootstrap only. Retains the non-root upstream runtime
+      user; password/root SSH login is disabled and host keys are generated
+      only at runtime. No SSH service is started by the image entrypoint.
+    notes: >-
+      Operator-built compatibility layer over the exact NVIDIA PAIDF
+      auto-labeling service digest. Preserves the vendor service environment
+      and CLI, adds proven missing worker prerequisites and pinned-source
+      checkout support, and forwards orchestrator arguments. A separate writable
+      /opt/npa-venv hosts NPA without modifying the pinned /app/.venv service.
+      Adds no model weights, data or credentials. Inherited NGC payload remains restricted;
+      complete built-layer licensing/security scans, exact-digest bootstrap
+      proof, and real native workflow acceptance are required before use.
+  paidf-image-edit-sky:
+    dockerfile: paidf-image-edit-sky/Dockerfile
+    skypilot_bootstrap_contract: skypilot-0.12.2-v1
+    tier: interactive
+    redistribution: restricted
+    passwordless_root_exemption: >-
+      SkyPilot worker bootstrap only. The final runtime user is non-root;
+      password/root SSH login is disabled and host keys are generated only at
+      runtime. No credentials or default SSH service are baked into the image.
+    notes: >-
+      Operator-built compatibility layer over the exact upstream vLLM/Omni
+      0.22.0 amd64 digest, replacing the blueprint's vulnerable 0.20 image
+      for CVE-2026-48746. Adds sshd, rsync, sudo, and argument forwarding while
+      preserving the upstream model runtime. An independent /opt/npa-venv
+      hosts NPA so dependency installation cannot replace the vendor stack.
+      No weights or operator inputs are added. Private-registry-only pending complete dependency redistribution
+      review, built-byte security scanning, and real GPU acceptance.
+  paidf-event-video-sky:
+    dockerfile: paidf-event-video-sky/Dockerfile
+    skypilot_bootstrap_contract: skypilot-0.12.2-v1
+    tier: interactive
+    redistribution: restricted
+    passwordless_root_exemption: >-
+      SkyPilot worker bootstrap only. The final runtime user is non-root;
+      password/root SSH login is disabled and host keys are generated only at
+      runtime. No credentials or default SSH service are baked into the image.
+    notes: >-
+      Operator-built compatibility layer over an exact upstream vLLM-Omni
+      image digest. Adds sshd, rsync, sudo, and argument forwarding while
+      preserving the upstream model runtime. Hash-pins the Apache-2.0 NLTK 3.10.3
+      wheel to fix inherited CVE-2026-79675 and updates distribution kernel headers. An independent /opt/npa-venv
+      hosts NPA so dependency installation cannot replace the vendor stack.
+      No weights or operator inputs are added. Private-registry-only pending complete dependency redistribution
+      review, built-byte security scanning, and real GPU acceptance.
+  paidf-anomalygen-sky:
+    dockerfile: paidf-anomalygen-sky/Dockerfile
+    skypilot_bootstrap_contract: skypilot-0.12.2-v1
+    tier: interactive
+    redistribution: restricted
+    notes: >-
+      Operator-built implementation from the exact Apache-2.0 NVIDIA PAIDF
+      AnomalyGen source revision and digest-pinned public CUDA bases. It compiles
+      upstream's wheel recipe and adds SkyPilot bootstrap prerequisites without
+      model weights or data. SSH host keys are removed in their installation
+      layer. Hash-pinned W&B 0.28.2 fixes CVE-2026-56854; a digest-checked patch
+      redirects two pinned Cosmos framework run-ID calls to W&B's unchanged
+      generator, preserving the NVIDIA OpenMDW-1.1 header. The installed
+      dependency requirements and source-patch provenance are checked at build
+      time. The resolved dependency closure remains
+      private-registry-only pending a separate redistribution review.
   openpi:
     dockerfile: openpi/Dockerfile
     tier: job

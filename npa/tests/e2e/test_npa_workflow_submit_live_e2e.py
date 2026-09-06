@@ -216,7 +216,11 @@ def _image_args(case: SubmitLiveCase, registry: str) -> list[str]:
         return args
     if case.image_tool:
         return ["--image", image_for(case.image_tool)]
-    if os.environ.get("NPA_E2E_CLEAR_WORKBENCH_IMAGES", "").strip() in {"1", "true", "yes"}:
+    if os.environ.get("NPA_E2E_CLEAR_WORKBENCH_IMAGES", "").strip() in {
+        "1",
+        "true",
+        "yes",
+    }:
         return ["--image", "none"]
     return []
 
@@ -306,7 +310,8 @@ def test_npa_workflow_submit_live_reaches_terminal(
     )
 
     if (
-        os.environ.get("NPA_E2E_CLEAR_WORKBENCH_IMAGES", "").strip() in {"1", "true", "yes"}
+        os.environ.get("NPA_E2E_CLEAR_WORKBENCH_IMAGES", "").strip()
+        in {"1", "true", "yes"}
         and not os.environ.get("NPA_SRC_S3_URI", "").strip()
     ):
         pytest.skip(
@@ -315,7 +320,12 @@ def test_npa_workflow_submit_live_reaches_terminal(
 
     submitted = RUNNER.invoke(app, submit_args)
     submit_payload = parse_json_payload(submitted, forbidden_markers)
-    assert submit_payload.get("status") in {"SUBMITTED", "RUNNING", "PENDING", "STARTING"}
+    assert submit_payload.get("status") in {
+        "SUBMITTED",
+        "RUNNING",
+        "PENDING",
+        "STARTING",
+    }
     job_id = str(submit_payload.get("job_id") or run_id)
 
     # A case may declare its own budget when it is much slower than the rest
@@ -338,8 +348,7 @@ def test_npa_workflow_submit_live_reaches_terminal(
                     (current.stderr or "")[-500:]
                     or (current.stdout or "")[-500:]
                     or getattr(current, "error", "")
-                    or "(no stderr/stdout; check: sky jobs logs "
-                    f"{job_id})"
+                    or f"(no stderr/stdout; check: sky jobs logs {job_id})"
                 )
                 pytest.fail(
                     f"{case.spec} reached terminal failure status={last_status} "
@@ -351,13 +360,17 @@ def test_npa_workflow_submit_live_reaches_terminal(
             f"last_status={last_status} job_id={job_id}"
         )
     finally:
-        if _cancel_on_timeout() and last_status not in TERMINAL_OK and not _is_terminal_fail(
-            last_status
+        if (
+            _cancel_on_timeout()
+            and last_status not in TERMINAL_OK
+            and not _is_terminal_fail(last_status)
         ):
             # Best-effort cancel via sky jobs cancel through workflow helper.
             try:
                 from npa.orchestration.skypilot._bin import resolve_config
-                from npa.orchestration.skypilot.workflow_state import cancel_workflow_job
+                from npa.orchestration.skypilot.workflow_state import (
+                    cancel_workflow_job,
+                )
 
                 runtime = resolve_config()
                 cancel_workflow_job(
@@ -499,6 +512,23 @@ def test_npa_workflow_runtime_live_reaches_terminal(
         )
 
     if case.spec in {
+        "paidf-defect-image-generation.yaml",
+        "paidf-image-attribute-augmentation.yaml",
+        "paidf-event-video-generation.yaml",
+    }:
+        _assert_paidf_native_live_artifacts(
+            spec=case.spec,
+            spec_path=path,
+            config_vars=case.config_vars,
+            image_args=_image_args(case, e2e_registry),
+            registry=e2e_registry,
+            waves=waves,
+            bucket=live_bucket(e2e_project),
+            run_id=run_id,
+            e2e_project=e2e_project,
+        )
+
+    if case.spec in {
         "physical-ai-data-factory.yaml",
         "token-factory-parallel-fanout.yaml",
     }:
@@ -525,12 +555,16 @@ def test_npa_workflow_runtime_live_reaches_terminal(
 
     if case.expected_parallel_tasks > 1:
         parallel_waves = [wave for wave in waves if wave["kind"] == "parallel"]
-        assert parallel_waves, f"{case.spec} declared a parallel group but ran none: {waves}"
+        assert parallel_waves, (
+            f"{case.spec} declared a parallel group but ran none: {waves}"
+        )
         launched = sum(len(wave["states"]) for wave in parallel_waves)
         assert launched == case.expected_parallel_tasks
         # Two independent concurrency signals: live RUNNING observations taken
         # while polling, and overlapping submitted/end intervals afterwards.
-        observed = max(wave.get("max_concurrent_observed", 0) for wave in parallel_waves)
+        observed = max(
+            wave.get("max_concurrent_observed", 0) for wave in parallel_waves
+        )
         overlaps = concurrency_overlaps(parallel_waves[0].get("tasks") or [])
         assert observed >= 2 or overlaps, (
             "parallel wave never showed concurrent tasks: "
@@ -572,10 +606,16 @@ def _assert_paidf_live_artifacts(
     """Prove real PAIDF waves, decision, component reports, and Rerun output."""
 
     from npa.clients.project_credentials import s3_client_for_project
+    from npa.workflows.paidf_upstream import (
+        PAIDF_ORCHESTRATION_REVISION,
+        PHYSICAL_AI_DATA_FACTORY_REVISION,
+        SCHEMA as PAIDF_UPSTREAM_SCHEMA,
+    )
 
     states = [str(state) for wave in waves for state in wave.get("states", [])]
     if spec == "paidf-cosmos3.yaml":
         required_states = {
+            "record-upstream",
             "prepare-input",
             "generate-configs",
             "annotate-original",
@@ -592,6 +632,7 @@ def _assert_paidf_live_artifacts(
         prefix = f"paidf-cosmos3/{run_id}/"
     else:
         required_states = {
+            "record-upstream",
             "generate-configs",
             "annotate-original",
             "augment",
@@ -610,6 +651,7 @@ def _assert_paidf_live_artifacts(
 
     client = s3_client_for_project(e2e_project, allow_host_creds=True)
     required = (
+        "reports/upstream.json",
         "configs/manifest.json",
         "cosmos_augmented/manifest.json",
         "grade/cosmos_evaluator.json",
@@ -629,6 +671,34 @@ def _assert_paidf_live_artifacts(
         payload = json.loads(body)
         assert isinstance(payload, dict), relative
         return payload
+
+    upstream = read_json("reports/upstream.json")
+    assert upstream["run_id"] == run_id
+    assert upstream.get("schema") == PAIDF_UPSTREAM_SCHEMA
+    sources = {
+        str(source.get("repository")): source
+        for source in upstream.get("sources", [])
+        if isinstance(source, dict)
+    }
+    assert (
+        sources["https://github.com/NVIDIA/physical-ai-data-factory"].get("revision")
+        == PHYSICAL_AI_DATA_FACTORY_REVISION
+    )
+    assert (
+        sources["https://github.com/NVIDIA/paidf-orchestration"].get("revision")
+        == PAIDF_ORCHESTRATION_REVISION
+    )
+    assert (
+        sources["https://github.com/NVIDIA/physical-ai-data-factory"].get(
+            "executed_by_npa"
+        )
+        is False
+    )
+    assert (
+        sources["https://github.com/NVIDIA/paidf-orchestration"].get("executed_by_npa")
+        is False
+    )
+    assert upstream.get("npa_integration", {}).get("orchestrator") == "SkyPilot"
 
     augment = read_json("cosmos_augmented/manifest.json")
     assert int(augment.get("variant_count") or 0) >= 1
@@ -667,6 +737,7 @@ def _assert_paidf_live_artifacts(
     curation = read_json("curation/report.json")
     assert curation.get("curation_engine") == "fiftyone-brain"
     final = read_json("reports/final.json")
+    assert final.get("upstream") == upstream
     if spec == "paidf-cosmos3.yaml":
         assert final.get("schema") == "npa.paidf.cosmos3.final.v1"
         assert final.get("engine") == "nvidia-cosmos/cosmos-framework"
@@ -676,6 +747,264 @@ def _assert_paidf_live_artifacts(
         assert final.get("fiftyone_engine") == "fiftyone-brain"
         assert final.get("has_rrd") is True
     assert int(final.get("artifact_count") or 0) > 0
+
+
+def _assert_paidf_stage_image_lineage(
+    *,
+    spec_path: Path,
+    config_vars: tuple[tuple[str, str], ...],
+    image_args: list[str],
+    registry: str,
+    run_id: str,
+    read_artifact,
+) -> int:
+    """Compare executed native reports with the submitted plan's actual image routes."""
+
+    import re
+
+    from npa.orchestration.npa_workflow import build_plan, load_spec
+    from npa.orchestration.npa_workflow.skypilot_render import (
+        SkypilotRenderOptions,
+        resolve_task_image,
+    )
+
+    submitted = load_spec(spec_path)
+    submitted.config.update(dict(config_vars))
+    overrides = {}
+    for flag, value in zip(image_args[::2], image_args[1::2], strict=True):
+        if flag == "--image":
+            overrides["*"] = value
+        elif flag == "--image-override":
+            tool_ref, image = value.split("=", 1)
+            overrides[tool_ref] = image
+        else:
+            raise AssertionError("unrecognized submitted image argument")
+    options = SkypilotRenderOptions(registry=registry, image_overrides=overrides)
+    checked = 0
+    for step in build_plan(submitted, run_id=run_id).steps:
+        expected = resolve_task_image(
+            step.tool_ref, step.resources_profile, options=options
+        ).removeprefix("docker:")
+        if expected.lower() in {"", "none", "null"}:
+            continue
+        for output in step.outputs:
+            if not str(output.get("schema") or "").startswith("npa.paidf.native."):
+                continue
+            if not re.fullmatch(r".+@sha256:[0-9a-f]{64}", expected):
+                raise AssertionError(
+                    f"{step.state}: native image evidence requires a submitted digest pin"
+                )
+            report = json.loads(read_artifact(output["uri"]))
+            if not isinstance(report, dict) or (
+                report.get("schema") != output["schema"]
+                or report.get("run_id") != run_id
+            ):
+                raise AssertionError(f"{step.state}: native report identity mismatch")
+            if report.get("runtime_image") != expected:
+                raise AssertionError(f"{step.state}: runtime image provenance mismatch")
+            checked += 1
+    return checked
+
+
+def _assert_paidf_native_live_artifacts(
+    *,
+    spec: str,
+    spec_path: Path,
+    config_vars: tuple[tuple[str, str], ...],
+    image_args: list[str],
+    registry: str,
+    waves: list[dict],
+    bucket: str,
+    run_id: str,
+    e2e_project: str | None,
+) -> None:
+    """Validate direct PAIDF translations through their final media contracts."""
+
+    import hashlib
+    from io import BytesIO
+    from urllib.parse import urlparse
+
+    from PIL import Image
+
+    from npa.clients.project_credentials import s3_client_for_project
+    from npa.workflows.paidf_upstream import (
+        PAIDF_ORCHESTRATION_REVISION,
+        PHYSICAL_AI_DATA_FACTORY_REVISION,
+    )
+
+    state_sets = {
+        "paidf-defect-image-generation.yaml": {
+            "record-upstream",
+            "prepare-base-checkpoints",
+            "finetune",
+            "anomaly-infer",
+        },
+        "paidf-image-attribute-augmentation.yaml": {
+            "record-upstream",
+            "prepare-input",
+            "generate-configs",
+            "image-edit-service-and-augmentation",
+            "validate-outputs",
+            "cosmos-post-processing",
+            "event-and-person-attribute-search",
+            "generate-augmented-dataset",
+            "validate-final-outputs",
+        },
+        "paidf-event-video-generation.yaml": {
+            "record-upstream",
+            "prepare-input",
+            "generate-configs",
+            "image2video-service-and-augmentation",
+            "validate-cosmos-outputs",
+            "detection-and-tracking",
+            "captioning",
+            "anomaly-visual-qa",
+            "person-attribute-visual-qa",
+            "person-attribute-search",
+            "generate-anomaly-dataset",
+            "validate-final-outputs",
+        },
+    }
+    states = {str(state) for wave in waves for state in wave.get("states", [])}
+    assert state_sets[spec] <= states
+    client = s3_client_for_project(e2e_project, allow_host_creds=True)
+    stem = spec.removesuffix(".yaml")
+    prefix = f"npa-workflow-e2e/{run_id}/{stem}/"
+
+    def read_json(relative: str) -> dict:
+        body = client.get_object(Bucket=bucket, Key=prefix + relative)["Body"].read()
+        payload = json.loads(body)
+        assert isinstance(payload, dict), relative
+        return payload
+
+    def read_artifact(uri: str) -> bytes:
+        parsed = urlparse(uri)
+        assert parsed.scheme == "s3" and parsed.netloc == bucket
+        assert parsed.path.lstrip("/").startswith(prefix)
+        return client.get_object(Bucket=bucket, Key=parsed.path.lstrip("/"))[
+            "Body"
+        ].read()
+
+    assert (
+        _assert_paidf_stage_image_lineage(
+            spec_path=spec_path,
+            config_vars=config_vars,
+            image_args=image_args,
+            registry=registry,
+            run_id=run_id,
+            read_artifact=read_artifact,
+        )
+        > 0
+    )
+
+    upstream = read_json("reports/upstream.json")
+    assert upstream["run_id"] == run_id
+    sources = {
+        str(source.get("repository")): source
+        for source in upstream.get("sources", [])
+        if isinstance(source, dict)
+    }
+    if spec == "paidf-defect-image-generation.yaml":
+        assert (
+            sources["https://github.com/NVIDIA/physical-ai-data-factory"]["revision"]
+            == PHYSICAL_AI_DATA_FACTORY_REVISION
+        )
+        from npa.orchestration.npa_workflow import load_spec
+        from tests.e2e.paidf_dig_acceptance import assert_dig_live_artifacts
+
+        submitted = load_spec(spec_path)
+        submitted.config.update(dict(config_vars))
+
+        def list_keys(relative):
+            keys = []
+            for page in client.get_paginator("list_objects_v2").paginate(
+                Bucket=bucket, Prefix=prefix + relative
+            ):
+                for item in page.get("Contents", []):
+                    assert item["Key"].startswith(prefix + relative)
+                    keys.append(item["Key"][len(prefix):])
+            return keys
+
+        def hash_file(relative):
+            # Checkpoints can be large; hash their actual bytes as a stream.
+            value = hashlib.sha256()
+            size = 0
+            body = client.get_object(Bucket=bucket, Key=prefix + relative)["Body"]
+            try:
+                for chunk in iter(lambda: body.read(4 * 1024 * 1024), b""):
+                    value.update(chunk)
+                    size += len(chunk)
+            finally:
+                body.close()
+            return value.hexdigest(), size
+
+        assert_dig_live_artifacts(
+            read_bytes=lambda relative: read_artifact(f"s3://{bucket}/{prefix}{relative}"),
+            list_keys=list_keys,
+            hash_file=hash_file,
+            run_id=run_id,
+            prefix_uri=f"s3://{bucket}/{prefix}",
+            num_sdg=int(submitted.config["num_sdg"]),
+            usecase=submitted.config["usecase"],
+        )
+        return
+
+    assert (
+        sources["https://github.com/NVIDIA/paidf-orchestration"]["revision"]
+        == PAIDF_ORCHESTRATION_REVISION
+    )
+    workflow = "iaa" if "attribute" in spec else "evg"
+    validation_relative = (
+        "postprocessing/result.json" if workflow == "iaa" else "cosmos/validation.json"
+    )
+    final_relative = (
+        "augmented_dataset/dataset.json"
+        if workflow == "iaa"
+        else "anomaly_dataset/dataset.json"
+    )
+    validation = read_json(validation_relative)
+    final = read_json(final_relative)
+    terminal = read_json("reports/terminal-validation.json")
+    assert terminal["status"] == "passed"
+    assert terminal["entry_count"] == final["entry_count"]
+    encoded = json.dumps(final, sort_keys=True, separators=(",", ":")).encode()
+    assert terminal["dataset_manifest_sha256"] == hashlib.sha256(encoded).hexdigest()
+    assert int(validation.get("accepted_count") or 0) > 0
+    assert int(final.get("entry_count") or 0) > 0
+    for entry in final["entries"]:
+        assert entry.get("labels")
+        assert len(str(entry.get("sha256") or "")) == 64
+        media = read_artifact(entry["media"])
+        assert len(media) == int(entry["size_bytes"])
+        assert hashlib.sha256(media).hexdigest() == entry["sha256"]
+        assert read_artifact(entry["caption"]).strip()
+        assert isinstance(json.loads(read_artifact(entry["metadata"])), dict)
+        if workflow == "iaa":
+            with Image.open(BytesIO(media)) as image:
+                image.load()
+                assert image.width > 0 and image.height > 0
+        else:
+            import av
+
+            with av.open(BytesIO(media)) as container:
+                frame_count = 0
+                for frame in container.decode(video=0):
+                    assert frame.width > 0 and frame.height > 0
+                    frame_count += 1
+                assert frame_count > 1
+
+    label_reports = ["auto_labeling/person-attribute-search.json"]
+    if workflow == "evg":
+        label_reports.extend(
+            [
+                "auto_labeling/detection.json",
+                "auto_labeling/captioning.json",
+                "auto_labeling/visual-qa-anomaly.json",
+                "auto_labeling/visual-qa-person.json",
+            ]
+        )
+    for relative in label_reports:
+        assert int(read_json(relative).get("count") or 0) > 0
 
 
 def _assert_status_and_zero_launch_resume(
@@ -747,9 +1076,7 @@ def _assert_status_and_zero_launch_resume(
         skypilot_config_args=_skypilot_config_args(),
         resume=True,
     )
-    resumed = parse_runtime_json(
-        RUNNER.invoke(app, resume_args), forbidden_markers
-    )
+    resumed = parse_runtime_json(RUNNER.invoke(app, resume_args), forbidden_markers)
     assert resumed["status"] == "succeeded", resumed
     assert resumed["waves"], resumed
     assert all(wave.get("replayed") is True for wave in resumed["waves"]), resumed

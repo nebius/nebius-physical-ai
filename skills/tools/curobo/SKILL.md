@@ -22,8 +22,8 @@ publication. Passing its source tests does not establish clean image bytes.
 Run the GPU workflow on Nebius through the ordinary workflow submit path:
 
 ```bash
-npa workbench workflow validate-spec npa/workflows/workbench/npa-workflows/curobo-benchmark.yaml
-npa workbench workflow submit npa/workflows/workbench/npa-workflows/curobo-benchmark.yaml --var bucket=<your-bucket>
+npa workbench workflow validate-spec workflows/testing/curobo-benchmark.yaml
+npa workbench workflow submit workflows/testing/curobo-benchmark.yaml --var bucket=<your-bucket>
 ```
 
 This is the complete benchmark: both pinned datasets, in kinematic and 3 kg

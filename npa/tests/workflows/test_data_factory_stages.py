@@ -1905,6 +1905,65 @@ def test_finalize_counts_only_latest_append_only_augmentation_iteration(
     assert report["variant_count"] == 2
 
 
+def test_finalize_publishes_latest_iteration_at_canonical_contract_paths(
+    monkeypatch,
+) -> None:
+    root = "s3://b/physical-ai-data-factory/run1/"
+    keys = [
+        "physical-ai-data-factory/run1/cosmos_augmented/iteration-2/manifest.json",
+        "physical-ai-data-factory/run1/cosmos_augmented/iteration-2/clip/augmented_video.mp4",
+        "physical-ai-data-factory/run1/grade/iteration-2/cosmos_evaluator.json",
+        "physical-ai-data-factory/run1/grade/iteration-2/decision.json",
+    ]
+    payloads = {
+        root + "cosmos_augmented/iteration-2/manifest.json": {
+            "schema": "npa.cosmos2.transfer.v1",
+            "mode": "cosmos_transfer2.5_gpu",
+            "status": "executed",
+            "node_count": 1,
+            "variant_count": 1,
+            "variants": [
+                {
+                    "clip": "clip",
+                    "augmented_video_uri": (
+                        root
+                        + "cosmos_augmented/iteration-2/clip/augmented_video.mp4"
+                    ),
+                }
+            ],
+        },
+        root + "grade/iteration-2/cosmos_evaluator.json": {
+            "schema": "npa.cosmos_evaluator.report.v1",
+            "status": "completed",
+        },
+        root + "grade/iteration-2/decision.json": {
+            "schema": "npa.sim2real.threshold_decision.v1",
+            "decision": "promote_checkpoint",
+        },
+    }
+    uploads: dict[str, dict] = {}
+    monkeypatch.setattr(dfs, "_list_keys", lambda _uri: list(keys))
+    monkeypatch.setattr(dfs, "_download_json", lambda uri: payloads.get(uri, {}))
+    monkeypatch.setattr(
+        dfs, "_upload_json", lambda payload, uri: uploads.setdefault(uri, payload) or uri
+    )
+    monkeypatch.setattr(
+        dfs,
+        "_read_json_key",
+        lambda _bucket, key: uploads[root + key.split("run1/", 1)[-1]],
+    )
+
+    report = dfs.finalize(root, root + "reports/final.json")
+
+    for relative, source_relative in {
+        "cosmos_augmented/manifest.json": "cosmos_augmented/iteration-2/manifest.json",
+        "grade/cosmos_evaluator.json": "grade/iteration-2/cosmos_evaluator.json",
+        "grade/decision.json": "grade/iteration-2/decision.json",
+    }.items():
+        assert uploads[root + relative] == payloads[root + source_relative]
+    assert report["augmentation_engine"] == "cosmos_transfer2.5_gpu"
+
+
 def test_all_augmentations_reads_every_combo(tmp_path: Path) -> None:
     from npa.cli.workbench.cosmos2 import _all_augmentations, _first_augmentation
 
@@ -1934,14 +1993,32 @@ def test_finalize_aggregates_stage_artifacts(tmp_path: Path, monkeypatch) -> Non
     ]
     monkeypatch.setattr(dfs, "_list_keys", lambda uri: keys)
     monkeypatch.setattr(dfs, "_upload_json", lambda payload, uri: uri)
+    upstream = {
+        "schema": "npa.paidf.upstream.v1",
+        "run_id": "run1",
+        "workflow_variant": "cosmos-transfer2.5",
+        "sources": ["official"],
+    }
+    monkeypatch.setattr(dfs, "_download_json", lambda _uri: upstream)
     report = dfs.finalize(
         "s3://b/physical-ai-data-factory/run1/",
         "s3://b/physical-ai-data-factory/run1/reports/final.json",
+        upstream_variant="cosmos-transfer2.5",
+        run_id="run1",
     )
     assert report["artifact_count"] == 3
     assert report["has_rrd"] is True
     assert report["stages"]["input"] == 1
     assert report["multiply_mode"] == "single-variant"
+    assert report["upstream"] == upstream
+    upstream["run_id"] = "foreign-run"
+    with pytest.raises(RuntimeError, match="does not match"):
+        dfs.finalize(
+            "s3://b/physical-ai-data-factory/run1/",
+            "s3://b/physical-ai-data-factory/run1/reports/final.json",
+            upstream_variant="cosmos-transfer2.5",
+            run_id="run1",
+        )
 
 
 def test_curation_and_final_reports_carry_input_provenance(

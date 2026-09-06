@@ -205,7 +205,7 @@ def access_command(
     offline: bool = typer.Option(
         False,
         "--offline",
-        help="Skip live Hugging Face probes; only check that a token is present.",
+        help="Skip live HF and NGC probes; only check credential presence.",
     ),
     save_env_credentials: bool = typer.Option(
         False,
@@ -290,9 +290,9 @@ def access_command(
 
     ngc_validator = None
     if not offline:
-        from npa.workbench.nurec.nurec import check_ngc_image_access
+        from npa.workbench.model_access import check_ngc_artifact_access
 
-        ngc_validator = check_ngc_image_access
+        ngc_validator = check_ngc_artifact_access
 
     if prepare:
         from npa.workbench.access_approval import (
@@ -326,12 +326,7 @@ def access_command(
         plan = approval_plan(evidence, resume_command=resume)
         if open_pages and output_json:
             raise typer.BadParameter("--open-pages cannot be combined with --json")
-        if (
-            not open_pages
-            and not output_json
-            and blocked(plan)
-            and sys.stdin.isatty()
-        ):
+        if not open_pages and not output_json and blocked(plan) and sys.stdin.isatty():
             counts = plan["counts"]
             open_pages = typer.confirm(
                 "This catalog needs approval for "

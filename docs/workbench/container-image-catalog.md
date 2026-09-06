@@ -180,6 +180,115 @@ published, and anonymously pullable status for this exact digest only.
 | Sim2Real Controller 0.1.2 | `npa-sim2real-control` | `0.1.2-sim2real-coherent-20260904` | 2026-09-04 | Non-root CPU controller containing the canonical 14-stage orchestration capability. The coherent release expanded and validated both the checkpoint-promotion and loop-back decision branches; it contains no model weights, datasets, credentials, or runtime caches. |
 | Sim2Real EnvGen 0.1.2 | `npa-envgen` | `0.1.2-sim2real-coherent-20260904` | 2026-09-04 | Generates randomized Sim2Real environments and scenes on the Genesis base. The coherent exact-source release bakes the snapshot-pinned non-root SkyPilot Kubernetes bootstrap closure (`sudo`, SSH, and rsync) and was validated through real environment generation plus a Genesis CUDA physics step. It is built from `sim2real-envgen/Dockerfile`. |
 
+## External PAIDF runtime images
+
+The direct translations require operator-built compatibility images for DIG,
+generation in IAA/EVG, and the four labeling services. The upstream generation
+images lack worker prerequisites; the labeling images invoke `main` instead of
+forwarding SkyPilot shell arguments. The wrappers supply missing prerequisites
+and argument forwarding while retaining their pinned upstream runtimes. DIG builds the
+pinned Apache-2.0 AnomalyGen source on public CUDA bases. Every
+workflow image reference is immutable, and submit must
+prove both registry pullability and the SkyPilot worker bootstrap contract for
+the exact digest before launch. NGC images require the operator's authorized NGC
+pull secret. Model and dataset access is a separate runtime preflight and never
+grants redistribution rights.
+
+| Workflow role | Immutable external image | NPA publication status |
+| --- | --- | --- |
+| DIG vendor reference (not executed) | `nvcr.io/nvidia/paidf-anomalygen@sha256:e62a87d1dc58b6de8b8a352dc8ec2a2e3e400288d66b2b8b19b92d97e7a0bc09` | Vendor-owned NGC image; pull verified, but not SkyPilot-compatible |
+| DIG setup, fine-tune, generation, and native labels | `<operator-registry>/npa-paidf-anomalygen-sky@sha256:<digest>` built from `paidf-anomalygen-sky/Dockerfile` | Restricted source build on public CUDA bases with isolated NPA installation, pinned NLTK/W&B security updates and an exact-source W&B compatibility patch; initial image rejected for historical SSH keys and the inherited W&B vulnerability, corrected built-byte and GPU acceptance pending; never NPA public GHCR |
+| IAA Qwen Image Edit blueprint reference | `docker.io/vllm/vllm-omni@sha256:5d8c7e742c98858f257d82307e378391f0e7d77065e141c733cc4778042128ab` | Not executed: failed bootstrap and contains vLLM 0.20 affected by CVE-2026-48746 |
+| IAA Qwen Image Edit selected parent | `docker.io/vllm/vllm-omni@sha256:8b0cc5438eb27b34cdfd22011b735da6a94835a09e9c56ddf9e8cb300d679919` | Aligned upstream vLLM/Omni 0.22.0 security update; wrapper publication/bootstrap and complete IAA GPU workflow verified |
+| EVG Cosmos3 Super Image2Video upstream parent | `docker.io/vllm/vllm-omni@sha256:970dee6658ea223f615b2438ce41e47f1d5322225482546e6e6bc5d8134f757c` | Exact wrapper parent; upstream worker bootstrap failed |
+| IAA generation and CPU postprocessing worker | `<operator-registry>/npa-paidf-image-edit-sky@sha256:ef7450cfc12efb92a0260f09df9a83f4b0590ccb4a9fc6157b819721adc56cd8` | Operator-private publication verified 2026-09-05; bootstrap and repository security policy passed; complete nine-state IAA acceptance passed |
+| EVG generation worker | `<operator-registry>/npa-paidf-event-video-sky@sha256:277a255e8bce7bd6e0e8561f2cc6cca2ecc86abdb791c57b33eca287d0d0d29a` | Operator-private publication verified 2026-09-05; bootstrap/security and complete EVG acceptance passed on B200 |
+| IAA/EVG attribute-search upstream parent | `nvcr.io/nvidia/paidf-event-and-person-attribute-search-service@sha256:0f581ff6d92efd391281e5787a8b1fda76556443ade47c1f5d59d4c345a01f6a` | Exact restricted NGC wrapper parent; original entrypoint does not forward worker argv |
+| EVG detection/tracking upstream parent | `nvcr.io/nvidia/paidf-detection-and-tracking-rfdetr-service@sha256:6b35e63b95cab7cd772906bcb08be978de7526427f0d1925ab84439dd4a9561e` | Exact restricted NGC wrapper parent; original entrypoint does not forward worker argv |
+| EVG captioning upstream parent | `nvcr.io/nvidia/paidf-captioning-service@sha256:17e1e3f53cc66342183f7d0b6eed76907993bb325a13db90c46d9a8cf664d804` | Exact restricted NGC wrapper parent; original entrypoint does not forward worker argv |
+| EVG Visual QA upstream parent | `nvcr.io/nvidia/paidf-visual-qa-service@sha256:e681c8dee849c7ac9fc5b182f51e9efd0da460972b08850d40f00aa9d5e3c97c` | Exact restricted NGC wrapper parent; original entrypoint does not forward worker argv |
+| IAA/EVG attribute-search worker | `<operator-registry>/npa-paidf-attribute-search-sky@sha256:d61d56ae69bf2971fbf5b03fe97a492a865c317906b1ec5c67a46133b5b97641` | Operator-private publication verified 2026-09-05; bootstrap/security and complete IAA/EVG acceptance passed |
+| EVG detection/tracking worker | `<operator-registry>/npa-paidf-detection-sky@sha256:6fa1c78eddad6f6d2bea732b246aa37b512008d8724a0e987291188d0e17b0b2` | Operator-private publication verified 2026-09-05; bootstrap/security, real CPU inference and complete EVG acceptance passed on B200 |
+| EVG captioning worker | `<operator-registry>/npa-paidf-captioning-sky@sha256:ce97a86413005dbf844ae454a47b6e0a41ce521bd0403237e133c26bfed63ff7` | Operator-private publication verified 2026-09-05; bootstrap/security and complete EVG acceptance passed with B200 CUVID decoding |
+| EVG Visual QA worker | `<operator-registry>/npa-paidf-visual-qa-sky@sha256:27f600a12ccfb71c6744394d7b41375c36eed2df53833fb883b9ec5fa73070e4` | Operator-private publication verified 2026-09-05; bootstrap/security and complete EVG protocol acceptance passed; person answers cover 29/33 questions |
+
+The three privately published labeling workers were built from
+`b7ae4f198b20f087afef46d31fffee367eb4fa2e` using immutable full-SHA
+development tags. The recorded digests select the runnable `linux/amd64` child
+of each OCI index. Authenticated manifest/config reads, local and remote layer
+identity, and the attached SLSA provenance were verified; both child and index
+returned HTTP 403 without credentials. Each passed the actual SkyPilot
+bootstrap, generic NPA installation with unchanged vendor files, complete
+layer/license/secret review, vulnerability policy, and SPDX SBOM generation.
+Each inventory contains zero HIGH/CRITICAL vulnerabilities, 74 MEDIUM and
+24 LOW; reviewed public cryptographic test vectors are retained as such. Exact
+private locations and receipts remain in access-controlled evidence. This proves
+image publication and bootstrap. Attribute search also passed the complete IAA
+workflow, and all three workers passed the complete EVG workflow. The person
+questionnaire produced 29 valid answers from 33 questions; successful protocol
+acceptance does not establish complete attribute coverage.
+EVG captioning and anomaly Visual QA require a scheduled GPU for the pinned
+H.264 CUVID decoder even though model inference uses a hosted VLM. Their
+profiles reserve one B200 each. Crop-only person QA shares the Visual QA
+profile; the attribute-search stage remains on CPU.
+
+The IAA generation worker was privately published from
+`a04508698d3813785263831741f02b8bb8040d6d`, with the same remote
+index/child/layer/provenance and authenticated-versus-anonymous pull checks.
+Both shell bootstrap modes, the installed Qwen service argv, authenticated
+middleware, and NPA installation preserving vendor files passed. Its complete
+inventory records six unfixed CRITICAL findings, 241 HIGH, 3,505 MEDIUM and
+460 LOW, with zero secret findings. It passes the repository's fixed-CRITICAL
+policy without new ignore entries; this does not mean its inventory is empty.
+The SPDX 2.3 SBOM contains 1,782 packages. Public auxiliary test/model tables
+inherited from the parent were reviewed against exact source bytes; actual
+workflow checkpoints are fetched at runtime. The complete nine-state IAA workflow
+subsequently passed on reserved B200 capacity with this exact generation digest
+and the recorded attribute-search digest: one evaluated JPEG, CPU postprocessing,
+structured attributes, nine grounded search queries, and independently verified
+terminal artifacts. The [workflow guide](guides/physical-ai-data-factory.md#native-live-validation-evidence)
+records source, hashes, timings, and observed quality limitations.
+
+The EVG generation worker was privately published from
+`b7ae4f198b20f087afef46d31fffee367eb4fa2e` and independently
+verified against its remote OCI index, runnable child, layers and provenance.
+Both shell bootstrap modes and NPA installation preserving vendor files passed.
+Its full inventory records six unfixed CRITICAL findings, 216 HIGH, 3,400 MEDIUM
+and 433 LOW, with zero secrets. The fixed-CRITICAL policy passed without new
+ignore entries, including clearance of the earlier NLTK finding. Its SPDX 2.3
+SBOM contains 1,831 packages. The exact worker subsequently passed real guarded
+generation and the complete EVG workflow on reserved B200 capacity. Independent
+terminal validation reopened the assembled video and its full labeling lineage;
+the [workflow guide](guides/physical-ai-data-factory.md#native-live-validation-evidence)
+records source revisions, media hashes, timings and output limitations.
+
+The RF-DETR worker was privately published from
+`ce010547321e8fee7b8783f684349a311ace63b2`, with remote OCI
+index/child/layer/provenance identity and authenticated pull verification;
+anonymous reads were denied. Both shell bootstrap modes, NPA installation
+preserving vendor files, the actual service CLI and real CPU checkpoint inference
+passed. Its full inventory contains zero CRITICAL findings, 22 HIGH, 340 MEDIUM
+and 91 LOW. All ten inherited public TLS fixture-key findings were matched to
+exact public source bytes, with no unresolved secret findings. The repository
+policy passed and the SPDX 2.3 SBOM contains 894 packages. Real B200 detection
+and tracking and the complete EVG workflow subsequently passed with this digest.
+
+Separate queries inside the accepted IAA generation, EVG generation and
+detection images measured B200 capability 10.0, advertised `sm_100`, and an
+exact float32 matrix-multiplication result. The
+[GPU matrix](image-gpu-compatibility-matrix.md) records the actual framework
+versions and architecture lists. These receipts promote only B200; advertised
+wheel architectures alone do not establish B300 or RTX PRO 6000 acceptance.
+
+The licensing and runtime-fetch boundary is recorded in
+`skills/NOTICE-NVIDIA-PAIDF`. The machine-readable packaging contract includes
+all seven restricted compatibility sources. The labeling wrappers preserve
+`/app/.venv/bin/main` and the vendor service packages. NPA installs into an
+independent `/opt/npa-venv`; the vendor environment remains untouched. Parent payloads
+remain subject to complete built-layer licensing and security review. No new
+compatibility image is claimed as built, published, or functionally accepted
+merely because a recipe exists.
+
 ## Candidates outside the supported public release plan
 
 `npa-openpi` is a zero-weight, zero-dataset public-image candidate for the

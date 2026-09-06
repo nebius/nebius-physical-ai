@@ -36,3 +36,27 @@ License boundaries
   npa/docker/workbench/cosmos2-transfer/REDISTRIBUTION.md.
 * A user-supplied local or S3 video remains the user's responsibility. NPA records
   it as "User-supplied input" and does not infer an authenticity or license claim.
+
+Native EVG live-test photograph
+------------------------------
+
+The EVG live-test harness fetches scikit-image's camera photograph at preparation
+time, verifies its SHA-256 before staging, and writes fixture-source.json beside
+the input directory. The image is not bundled in this repository or any image.
+
+Photographer: Lav Varshney
+Source: https://github.com/scikit-image/scikit-image
+Immutable revision: e8a42ba85aaf5fd9322ef9ca51bc21063b22fcae
+Asset: skimage/data/camera.png
+SHA-256: b0793d2adda0fa6ae899c03989482bff9a42d3d5690fc7e3648f2795d730c23a
+Size: 139512 bytes; 512 by 512 grayscale pixels
+License: Creative Commons CC0 1.0 Universal
+License text: https://creativecommons.org/publicdomain/zero/1.0/legalcode
+Asset-level attribution: https://github.com/scikit-image/scikit-image/blob/e8a42ba85aaf5fd9322ef9ca51bc21063b22fcae/skimage/data/_fetchers.py#L314-L333
+
+This is the replacement introduced in scikit-image 0.18, which upstream identifies
+as CC0 from the photographer. It is distinct from the older restricted camera
+image. It requires no access token or click-through acceptance. The harness
+stages the original bytes; NPA's normal input preparation records later image
+normalization, and the generated video and labels retain their run lineage.
+The IAA and DIG test inputs remain repository-authored synthetic fixtures.

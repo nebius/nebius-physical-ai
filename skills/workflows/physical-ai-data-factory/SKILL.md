@@ -1,18 +1,141 @@
 ---
 name: physical-ai-data-factory
-description: Use when authoring, running, submitting, or viewing the NVIDIA Physical AI Data Factory blueprint on Nebius + SkyPilot (no OSMO) — annotate → Cosmos Transfer augment → Cosmos Evaluator gate → re-label → Cosmos Curator + FiftyOne curate → Rerun visualize — implemented as an npa.workflow that composes existing workbench tools.
+description: Use when authoring, running, submitting, or validating native NVIDIA PAIDF workflows on Nebius + SkyPilot — VDA, scoped DIG, IAA, EVG, and the NPA-specific Cosmos3 VDA variant — with real components, exact model provenance, artifact handoffs, and runtime access checks.
 ---
 
 # Physical AI Data Factory (NPA-native, no OSMO)
 
 ## Source And Attribution
 
-NPA-native re-implementation of the NVIDIA Physical AI Data Factory / Video Data
-Augmentation workflow. Design adapted from NVIDIA agent skills
-(https://github.com/NVIDIA/skills), primarily `physical-ai-video-data-augmentation`.
-Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. Upstream licenses:
-Apache-2.0 and CC-BY-4.0. See `skills/NOTICE-NVIDIA-SKILLS`. NPA orchestrates on
-SkyPilot (not OSMO) and composes existing workbench tools.
+NPA translates NVIDIA's Physical AI Data Factory workflows into native SkyPilot
+graphs. The official ecosystem entry point is
+https://github.com/NVIDIA/physical-ai-data-factory: it publishes VDA and DIG
+agent workflows and links the PAIDF component repositories. The separate
+https://github.com/NVIDIA/paidf-orchestration repository is an Apache-2.0
+Airflow-on-Kubernetes scaler that publishes the Image Attribute Augmentation and
+Event Video Generation DAGs translated here. NPA runtime-fetches their pinned
+component/configuration contracts and executes the graphs through SkyPilot;
+it does not execute the Airflow controller. Exact revisions and license boundaries
+are recorded in `skills/NOTICE-NVIDIA-PAIDF`.
+
+Earlier design analysis was adapted from https://github.com/NVIDIA/skills,
+primarily `physical-ai-video-data-augmentation`. Copyright (c) 2025-2026 NVIDIA
+CORPORATION & AFFILIATES. Upstream licenses: Apache-2.0 and CC-BY-4.0. See
+`skills/NOTICE-NVIDIA-SKILLS`. NPA orchestrates on SkyPilot (not OSMO or Airflow)
+and composes existing workbench tools. Every new run writes the immutable
+`reports/upstream.json` source/execution-boundary artifact before data processing.
+
+## Workflow Inventory
+
+| YAML | Official source | Classification | Execution |
+| --- | --- | --- | --- |
+| `physical-ai-data-factory.yaml` | physical-ai-data-factory VDA | direct translation | SkyPilot + Transfer 2.5/Token Factory/Curator/FiftyOne |
+| `paidf-defect-image-generation.yaml` | physical-ai-data-factory DIG Day-1 manual-ROI | direct scoped translation | SkyPilot + restricted operator-built AnomalyGen compatibility image |
+| `paidf-image-attribute-augmentation.yaml` | paidf-orchestration IAA DAG | direct translation | SkyPilot + operator-built Qwen Edit wrapper + PAIDF protocols |
+| `paidf-event-video-generation.yaml` | paidf-orchestration EVG DAG | direct translation | SkyPilot + operator-built Cosmos3 Super wrapper + PAIDF protocols |
+| `paidf-cosmos3.yaml` | no corresponding Airflow IAA/EVG DAG | NPA-specific VDA alternative | SkyPilot + NPA Cosmos3/Curator/FiftyOne |
+
+The exact source/component revisions and licenses live in
+`skills/NOTICE-NVIDIA-PAIDF` and every run's `reports/upstream.json`. Do not call
+`paidf-cosmos3.yaml` an IAA or EVG translation.
+For native acceptance, supply exact scanned private digests through DIG's
+`anomalygen_image` and IAA/EVG's `generation_image` config values. Their shipped
+placeholders deliberately cannot run. The live matrix uses
+`NPA_E2E_PAIDF_ANOMALYGEN_IMAGE`, `NPA_E2E_PAIDF_IAA_IMAGE`, and
+`NPA_E2E_PAIDF_EVG_IMAGE`. The upstream generation images fail SkyPilot bootstrap;
+use the corresponding checked-in compatibility recipe and prove its built
+bytes, pullability, and full workload before claiming support.
+
+IAA additionally requires `attribute_search_image`; EVG requires that image plus
+`detection_image`, `captioning_image`, and `visual_qa_image`. These are restricted
+operator-built wrappers over the exact NGC service parents. The live matrix
+requires `NPA_E2E_PAIDF_ATTRIBUTE_SEARCH_IMAGE`, and for EVG also
+`NPA_E2E_PAIDF_DETECTION_IMAGE`, `NPA_E2E_PAIDF_CAPTIONING_IMAGE`, and
+`NPA_E2E_PAIDF_VISUAL_QA_IMAGE`. Every value must be an exact scanned digest.
+Supply the operator registry's pull secret through the resource configuration;
+an NGC pull secret authorizes the parent fetch during the operator's build.
+The original `main` entrypoints consume CLI arguments instead of forwarding
+SkyPilot's shell. The compatibility entrypoints preserve arbitrary argv and
+leave the genuine `/app/.venv/bin/main` service CLI available to NPA.
+
+The IAA and EVG service model snapshots are also immutable workflow config:
+Qwen Image Edit `6f3ccc0b56e431dc6a0c2b2039706d7d26f22cb9` and Cosmos3 Super
+Image2Video `4f847566f3d3388fbf0ac07b99dd1a6432db9ecd`, respectively.
+EVG also requires gated Cosmos-1.0-Guardrail at
+`cf03c0395fac8c4de386c0bdab12cc4fc8d66362` and Qwen3Guard-Gen-0.6B at
+`fada3b2f655b89601929198343c94cd2f64d93cc`. Its service stages exact model
+snapshots into an isolated cache and consumes them offline. The NLTK subtree is
+materialized as verified regular files so NLTK 3.10.3 can keep its symlink
+protection enabled; do not disable pathsec or Cosmos guardrails to work around
+Hugging Face snapshot links. The augmentation report's `generation_runtime`
+record carries the exact model and NLTK content evidence.
+NPA explicitly changes the upstream EVG template's request guardrails from false
+to true. A hash-bound private code overlay makes real Qwen guardrail inference
+fail closed on errors or missing, malformed, or duplicate safety verdicts.
+Published Safe and Controversial remain allowed and Unsafe remains rejected.
+The installed vendor package is unchanged; the runtime report records the source
+adaptation. Every executed request must retain explicit enabled guardrails.
+The accepted EVG vLLM-Omni/Transformers 5.13 pair also requires the exact-source
+tokenizer overlay: explicitly select the pinned model's Qwen2 tokenizer without
+changing its prompt or token IDs. Require `tokenizer_source_adaptation` in every
+generation-runtime handoff. Keep HF credentials in staging only; the verified
+offline EVG and DIG vendor children must not inherit token aliases or token paths.
+
+DIG uses a separate exact-source adaptation of the OpenMDW-1.1
+`cosmos-framework` Qwen guardrail, preserving real inference and the published
+Controversial allow policy while raising on inference errors or invalid
+verdicts. The private overlay retains installed package bytes. Require its
+`guardrail_runtime` source hashes, verified vendor-interpreter import, and
+completed upstream timing-summary hash before accepting generated images.
+Text screening must be enforcing; the upstream image preset performs face
+blurring with no content classifier and truthfully records image enforcement
+as false. Keep the existing regular-file checkpoint handoff and NLTK behavior.
+
+For the three native translations, use the generic workflow validate/plan/submit
+surface. Run `health access` for `paidf-dig`, `paidf-iaa`, `paidf-evg`, and the
+selected `paidf-label-*` capabilities before image preflight or GPU work. The
+toolRefs are deliberately stage-specific so IAA does not inherit EVG's NGC
+images and none of the three inherits the legacy Transfer checkpoint closure.
+Never treat a credential as EULA acceptance.
+
+IAA/EVG generation keeps the vLLM-Omni service and real paidf-augmentation
+consumer in one SkyPilot state. Preparation produces actual RGB JPEG and retains
+source and prepared hashes. The exact runtime-fetched augmentation client gets
+a hash-bound writer correction so PNG model responses become real JPEG before
+the upstream verifier reuses a `.jpg` output; video bytes are unchanged. Require
+the exact `source_adaptation` record through output and terminal lineage checks.
+Previously completed PNG preparation must use a fresh run identity rather than
+altering successful artifacts or silently reusing them with this contract.
+Component subprocesses preserve three retries
+and the upstream 30-second retry delay. Require each published auto-label
+sidecar after its service stage; assemble only accepted media; then run the
+separate `validate-final-outputs` state, which re-opens all terminal handoffs and
+writes `reports/terminal-validation.json`. A trackless EVG scene may omit only
+the track-dependent PAS artifacts. The optional upstream Airflow REST-derived
+HTML timing dashboard has no Airflow-free equivalent; use NPA/SkyPilot stage
+timings plus the terminal JSON counts and manifest digest, and state that
+orchestration-reporting substitution explicitly.
+EVG captioning and anomaly Visual QA need a visible scheduled GPU for the
+upstream H.264 CUVID decoder even when their VLM is hosted. Their profiles
+reserve one B200 each. Per-person Visual QA reads JPEG crops and shares the VQA
+profile; person attribute search stays on CPU. Preserve the pinned codec policy.
+The selected Token Factory VLM accepts at most ten images per request. EVG
+anomaly Visual QA therefore uses the published `--max-frames 10` control
+(upstream DAG: 16), and person Visual QA uses `--max-crops-per-track 10`
+(upstream DAG: 12). Keep the vendor's even subsampling, including the first and
+last candidates; these are candidate-sequence endpoints, not necessarily the
+first and last video frames. Prompts, models, resolution, sampling rate and
+retries remain unchanged. Require the exact `request_media_contract` in both
+VQA reports and every downstream producer/terminal check. This is a supported
+CLI configuration adaptation; it requires no image rebuild or vendor patch.
+Report VQA question coverage separately from protocol acceptance. In the
+completed native EVG workload, anomaly QA returned 21 valid answers from 21
+questions; person QA returned 29 valid answers from 33 questions. The upstream
+normalizer skipped two empty answers with warnings, and the model omitted two
+headwear-detail answers. Preserve those warnings and optional PAS fields; do not
+describe successful terminal validation as complete person-attribute coverage.
+The [Workbench guide](../../../docs/workbench/guides/physical-ai-data-factory.md#native-live-validation-evidence)
+records the accepted media, durable-resume source boundary and visual limitations.
 
 Three NVIDIA components in the pipeline are the real open-source projects, not
 NPA look-alikes: **Cosmos Transfer 2.5** augments, **Cosmos Evaluator**
@@ -23,9 +146,10 @@ runs and where NPA substitutes its own endpoint.
 
 ## When To Use
 
-Load this skill when the user wants to author, validate, submit, run, or view the
-`physical-ai-data-factory.yaml` blueprint, adapt it to a new dataset, run it on
-GPUs, or troubleshoot why a run's Rerun panel / augmented output looks wrong.
+Load this skill to author, validate, submit, run, or inspect any of the five
+PAIDF-related YAMLs in the inventory: VDA, scoped DIG, IAA, EVG, or the NPA
+Cosmos3 VDA alternative. It also covers dataset adaptation, GPU/runtime access,
+generated media and label validation, provenance, and viewer troubleshooting.
 
 Do NOT invent an `npa workbench data-factory` tool — there is none. The blueprint
 is pure composition of existing toolRefs; only add real tools with tests.
@@ -42,6 +166,7 @@ skill's Cosmos Transfer 2.5 blueprint.
 
 | NVIDIA stage | NPA state | Tool (all REAL — no stubs) | Runtime |
 | --- | --- | --- | --- |
+| Source boundary | `record-upstream` | `paidf_upstream.write_upstream_contract` | CPU |
 | Config Generation | `generate-configs` | `data_factory_stages.generate_configs` (run.shell) | CPU |
 | Understand & Annotate | `annotate-original` | `workbench.token_factory.caption` | Token Factory (zero-GPU) |
 | Augment & Multiply | `augment` | `workbench.cosmos2.transfer_execute` (real Cosmos Transfer 2.5 `--execute`; uploads video+frames to S3) | GPU |

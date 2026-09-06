@@ -691,7 +691,27 @@ def _validate_executable_resource_contracts(spec: NpaWorkflowSpec) -> None:
                     f"{entry.shard_output_config!r} to be a durable s3:// URI; "
                     "without it workers cannot publish and join fenced shards"
                 )
-        if entry.semantic_contract == "cosmos_transfer_control":
+        if entry.semantic_contract == "paidf_direct_translation":
+            from npa.workflows.paidf_upstream import (
+                validate_direct_generation_model,
+                validate_token_factory_endpoint,
+            )
+
+            try:
+                validate_token_factory_endpoint(
+                    str(effective_config.get("vlm_url") or ""), "VLM"
+                )
+                validate_token_factory_endpoint(
+                    str(effective_config.get("llm_url") or ""), "LLM"
+                )
+                validate_direct_generation_model(
+                    str(effective_config.get("paidf_workflow") or ""),
+                    str(effective_config.get("generation_model") or ""),
+                    str(effective_config.get("generation_revision") or ""),
+                )
+            except ValueError as exc:
+                raise NpaWorkflowError(f"state {state.name}: {exc}") from exc
+        elif entry.semantic_contract == "cosmos_transfer_control":
             from npa.workbench.cosmos.control_contract import (
                 ControlContractError,
                 validate_control_request,

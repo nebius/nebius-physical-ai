@@ -141,12 +141,91 @@ def test_lerobot_b300_uses_the_supported_python_and_cuda_stack() -> None:
     ), "build-time Linux headers must survive until evdev has compiled"
 
 
-def test_cpu_entries_need_no_arch_validation(entries: list[dict]) -> None:
+def test_gpu_agnostic_entries_need_no_arch_validation(entries: list[dict]) -> None:
     for entry in [item for item in entries if item["verdict"] == "not-applicable"]:
         assert entry["validation"] == "not-required", (
-            f"{entry['name']} is CPU-only but claims an arch validation state"
+            f"{entry['name']} is GPU-agnostic but claims an arch validation state"
         )
         assert "torch_cuda_arch_list" not in entry
+
+
+@pytest.mark.parametrize(
+    "role",
+    ["image-edit", "event-video", "detection", "captioning", "visual-qa", "attribute-search"],
+)
+def test_paidf_publication_stays_restricted_and_digest_bound(
+    manifest: dict, entries: list[dict], role: str
+) -> None:
+    name = f"npa-paidf-{role}-sky"
+    entry = next(item for item in entries if item["name"] == name)
+    proof = manifest["validation_evidence"][name]
+    contract = yaml.safe_load(CONTRACT_PATH.read_text())["images"][f"paidf-{role}-sky"]
+    catalog = (ROOT / "docs/workbench/container-image-catalog.md").read_text()
+
+    assert contract["redistribution"] == "restricted"
+    assert proof["built"] is True
+    assert proof["validated_registry_scope"] == "operator"
+    assert re.fullmatch(r"sha256:[0-9a-f]{64}", proof["validated_digest"])
+    assert f"{name}@{proof['validated_digest']}" in catalog
+    assert re.fullmatch(r"[0-9a-f]{40}", proof["source_commit"])
+    assert proof["skypilot_bootstrap_contract"] == contract["skypilot_bootstrap_contract"]
+    assert "published_tag" not in entry and "published_registries" not in entry
+    assert "published_registries" not in proof
+
+
+@pytest.mark.parametrize("role", ["image-edit", "event-video", "detection"])
+def test_paidf_hardware_validation_keeps_actual_b200_and_workflow_scopes_separate(
+    manifest: dict, entries: list[dict], role: str
+) -> None:
+    name = f"npa-paidf-{role}-sky"
+    entry = next(item for item in entries if item["name"] == name)
+    proof = manifest["validation_evidence"][name]
+
+    assert entry["verdict"] == "ready" and entry["validation"] == "validated"
+    assert entry["measured_arch_list"] == proof["measured_arch_list"]
+    assert "sm_100" in entry["measured_arch_list"]
+    assert entry["measured_torch"] == proof["measured_torch"]
+    assert set(proof["validated_gpus"]) == {"B200"}, (
+        "wheel flags must not promote unmeasured B300 or RTX hardware"
+    )
+    b200 = proof["validated_gpus"]["B200"]
+    assert b200["capability"] == "10.0" and b200["result"] == "passed"
+    assert b200["tensor_operation"] == "float32-4x4-matmul"
+    assert b200["tensor_correct"] is True and b200["tensor_sum"] == 3680.0
+    assert re.fullmatch(r"[0-9a-f]{64}", proof["diagnostic_receipt_sha256"])
+    assert re.fullmatch(r"[0-9a-f]{40}", proof["diagnostic_source_commit"])
+    assert re.fullmatch(r"[0-9a-f]{64}", proof["diagnostic_source_fingerprint"])
+    workflow = "IAA" if role == "image-edit" else "EVG"
+    # Complete workflow acceptance is recorded separately from device/tensor success.
+    assert proof["full_workflow_acceptance"] == {workflow: "passed"}
+    if workflow == "IAA":
+        assert "full nine-state native IAA workflow" in entry["notes"]
+    else:
+        assert "all 12 logical stages and independent final acceptance" in entry["notes"]
+
+
+@pytest.mark.parametrize("role", ["captioning", "visual-qa"])
+def test_paidf_gpu_agnostic_video_clients_still_require_scheduled_cuvid(
+    manifest: dict, entries: list[dict], role: str
+) -> None:
+    """A missing SASS requirement cannot silently turn GPU video decode into CPU work."""
+    name = f"npa-paidf-{role}-sky"
+    entry = next(item for item in entries if item["name"] == name)
+    proof = manifest["validation_evidence"][name]
+    workflow = yaml.safe_load(
+        (ROOT / "workflows/testing/paidf-event-video-generation.yaml")
+        .read_text()
+    )
+
+    assert entry["verdict"] == "not-applicable"
+    assert entry["validation"] == "not-required"
+    assert "CUVID" in entry["local_gpu_use"]
+    assert "CPU labeling client" not in entry["notes"]
+    assert "no local GPU is requested" not in entry["notes"]
+    assert proof["architecture_specific_cuda_distributions"] == 0
+    assert workflow["resources"][role]["accelerators"] == "B200:1"
+    assert "GPU scheduling" in manifest["validation_states"]["not-required"]
+    assert "accelerators" not in workflow["resources"]["attribute-search"]
 
 
 def test_manifest_classifies_every_packaged_image() -> None:
@@ -257,6 +336,15 @@ def test_names_match_the_real_container_image_names(entries: list[dict]) -> None
         "npa-cosmos3-serving",
         "npa-content-agents",
         "npa-sim2real-control",
+        # Restricted workflow-only compatibility runtime; selected explicitly
+        # by the DIG resource profile, with no standalone deploy service.
+        "npa-paidf-anomalygen-sky",
+        "npa-paidf-image-edit-sky",
+        "npa-paidf-event-video-sky",
+        "npa-paidf-detection-sky",
+        "npa-paidf-captioning-sky",
+        "npa-paidf-visual-qa-sky",
+        "npa-paidf-attribute-search-sky",
     }
     unknown = [
         entry["name"]

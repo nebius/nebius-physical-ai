@@ -19,8 +19,8 @@ INPUTS = {
     "npa/README.md",
     "npa/.dockerignore",
     "npa/docker/workbench/curobo",
-    "npa/workflows/workbench/npa-workflows/sim2real.yaml",
-    "npa/workflows/workbench/npa-workflows/physical-ai-data-factory.yaml",
+    "workflows/main/sim2real.yaml",
+    "workflows/testing/physical-ai-data-factory.yaml",
 }
 
 

@@ -8,6 +8,8 @@ metadata:
     or LeRobot v2/v3 episode/camera, understand it with a hosted VLM, generate
     real source-video-conditioned Cosmos 3 variants, evaluate and refine them,
     then run real Cosmos Curator, FiftyOne Brain, Rerun, and final aggregation.
+    The run records the official NVIDIA PAIDF ecosystem and Airflow scaler as
+    attributed design references; NPA executes the graph with SkyPilot.
 
 config:
   bucket: example-bucket
@@ -98,6 +100,7 @@ config:
   curation_report_uri: "s3://{{config.bucket}}/{{config.prefix}}/curation/report.json"
   rrd_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/sim2real.rrd"
   finalize_report_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/final.json"
+  upstream_contract_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/upstream.json"
 
 resources:
   gpu:
@@ -112,13 +115,34 @@ resources:
     cpus: 4
     memory: 16Gi
 
-initial: prepare-input
+initial: record-upstream
 
 states:
+  record-upstream:
+    description: >-
+      Record pinned official PAIDF ecosystem/orchestration references and the
+      explicit Airflow/OSMO versus NPA/SkyPilot execution boundary.
+    resources: cpu
+    run:
+      argv:
+        - python3
+        - -c
+        - >-
+          import sys; from npa.workflows.paidf_upstream import write_upstream_contract;
+          write_upstream_contract(*sys.argv[1:3], run_id=sys.argv[3])
+        - cosmos3-video2video
+        - "{{config.upstream_contract_uri}}"
+        - "{{run.id}}"
+    outputs:
+      - uri: "{{config.upstream_contract_uri}}"
+        schema: npa.paidf.upstream.v1
+    next: prepare-input
+
   prepare-input:
     description: >-
       Select exactly one generic MP4 or LeRobot v2/v3 episode and camera. Stage
       input/source.mp4 plus real decoded frames and truthful provenance.
+    needs: [record-upstream]
     toolRef: workbench.cosmos3.prepare_video_input
     resources: cpu
     outputs:
@@ -369,6 +393,7 @@ states:
           finalize(*sys.argv[1:])
         - "{{config.run_root_uri}}"
         - "{{config.finalize_report_uri}}"
+        - "{{run.id}}"
     outputs:
       - uri: "{{config.finalize_report_uri}}"
         schema: npa.paidf.cosmos3.final.v1

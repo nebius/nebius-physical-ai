@@ -37,7 +37,7 @@ def _public_asset():
 
 
 def test_catalog_matches_current_nvidia_hf_gating() -> None:
-    assert HF_GATING_LAST_VERIFIED == "2026-08-31"
+    assert HF_GATING_LAST_VERIFIED == "2026-09-04"
     repos = {a.repo for a in WORKBENCH_ASSETS}
     assert "nvidia/GR00T-N1.7-3B" in repos
     assert "nvidia/Alpamayo2-Super" in repos
@@ -74,15 +74,24 @@ def test_assets_for_filters_by_capability() -> None:
     assert assets_for([]) == WORKBENCH_ASSETS
 
 
-def test_paidf_access_is_scoped_to_the_gated_transfer_model() -> None:
+def test_paidf_access_covers_translation_models_and_transfer_checkpoints() -> None:
     from npa.workbench.cosmos.control_contract import COSMOS_TRANSFER_CHECKPOINTS
 
     assets = assets_for(["paidf"])
-    assert {asset.repo for asset in assets} == {"nvidia/Cosmos-Transfer2.5-2B"}
-    assert {asset.revision for asset in assets} == {
+    transfer_assets = [
+        asset for asset in assets if asset.repo == "nvidia/Cosmos-Transfer2.5-2B"
+    ]
+    assert {asset.revision for asset in transfer_assets} == {
         checkpoint.revision for checkpoint in COSMOS_TRANSFER_CHECKPOINTS.values()
     }
-    assert all(asset.gated for asset in assets)
+    by_repo = {asset.repo: asset for asset in assets}
+    assert by_repo["Qwen/Qwen-Image-Edit-2511"].revision == (
+        "6f3ccc0b56e431dc6a0c2b2039706d7d26f22cb9"
+    )
+    assert by_repo["nvidia/Cosmos3-Super-Image2Video"].revision == (
+        "4f847566f3d3388fbf0ac07b99dd1a6432db9ecd"
+    )
+    assert by_repo["nvidia/Cosmos-Guardrail1"].gated
 
 
 def test_sim2real_access_includes_cosmos_transfer_runtime_dependencies() -> None:
@@ -339,9 +348,7 @@ def test_check_workbench_access_flags_failure_on_gated_denial() -> None:
     results = check_workbench_access(
         hf_token="hf_x",
         ngc_key="nvapi-x",
-        hf_validator=lambda *args: _HFResult(
-            ok=False, status_code=403, error="denied"
-        ),
+        hf_validator=lambda *args: _HFResult(ok=False, status_code=403, error="denied"),
         capabilities=["groot"],
     )
     assert has_failure(results) is True
@@ -383,7 +390,7 @@ def test_access_note_all_ok_is_one_positive_line() -> None:
         hf_token="hf_x",
         ngc_key="nvapi-x",
         hf_validator=lambda *args: _HFResult(ok=True),
-        ngc_validator=lambda key: "reachable",
+        ngc_validator=lambda key, *, image: "reachable",
         gated_only=True,
     )
     note = access_note(results)
@@ -430,7 +437,7 @@ def test_access_note_distinguishes_ngc_credential_rejection() -> None:
         hf_token="hf_synthetic",
         ngc_key="nvapi-synthetic",
         hf_validator=lambda *args: _HFResult(ok=True),
-        ngc_validator=lambda key: "auth-401",
+        ngc_validator=lambda key, *, image: "auth-401",
         gated_only=True,
     )
 

@@ -25,6 +25,9 @@ licenses:
     applies_to:
       - physical-ai-data-factory
       - neural-reconstruction
+  - path: skills/NOTICE-NVIDIA-PAIDF
+    applies_to:
+      - physical-ai-data-factory
   - path: skills/NOTICE-PAIDF-STARTER-MEDIA
     applies_to:
       - physical-ai-data-factory
@@ -39,7 +42,7 @@ skills:
         contains: "input-path"
       - type: npa_workflow_yaml
         paths:
-          - npa/workflows/workbench/npa-workflows/curobo-benchmark.yaml
+          - workflows/testing/curobo-benchmark.yaml
   - name: access-approval
     category: atomic
     when_to_use: "Prepare, verify, or resume human-bound Hugging Face and NVIDIA NGC access approvals for exact catalog or workflow dependencies, including consent-gated opening of official approval pages."
@@ -1078,12 +1081,16 @@ skills:
           - workflows/testing/openpi-pi05-full-droid-finetune.yaml
   - name: physical-ai-data-factory
     category: workflows
-    when_to_use: "Author, run, submit, or view the NVIDIA Physical AI Data Factory blueprint on Nebius + SkyPilot (no OSMO): annotate -> Cosmos Transfer augment -> Cosmos Evaluator gate -> re-label -> Cosmos Curator + FiftyOne curate -> Rerun visualize."
+    when_to_use: "Author, run, submit, or view the native NVIDIA Physical AI Data Factory VDA, DIG, IAA, and EVG translations or the NPA-specific Cosmos3 VDA alternative on Nebius + SkyPilot."
     path: skills/workflows/physical-ai-data-factory/SKILL.md
     smoke:
       - type: npa_workflow_yaml
         paths:
           - workflows/testing/physical-ai-data-factory.yaml
+          - workflows/testing/paidf-defect-image-generation.yaml
+          - workflows/testing/paidf-image-attribute-augmentation.yaml
+          - workflows/testing/paidf-event-video-generation.yaml
+          - workflows/main/paidf-cosmos3.yaml
       - type: cli_help
         args: ["workbench", "cosmos-evaluator", "evaluate", "--help"]
         contains: "--configs-uri"
