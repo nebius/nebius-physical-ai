@@ -13,12 +13,21 @@ from npa.workbench.cosmos import nano_video_server
 
 @pytest.fixture
 def router_class(monkeypatch):
+    class FIFOMixin:
+        def _fulfill_next_pending_request(self, replica, request_metadata=None):
+            self.fifo_assignment = (replica, request_metadata)
+            return "assigned-through-public-fifo"
+
     class BaseRouter:
         def __init__(self, *args, **kwargs):
             self.base_args = args
             self.base_kwargs = kwargs
 
+        def _fulfill_next_pending_request(self, replica, request_metadata=None):
+            pytest.fail("The exact-ID-only base method can orphan a pending request")
+
     fake = ModuleType("ray.serve.request_router")
+    fake.FIFOMixin = FIFOMixin
     fake.RequestRouter = BaseRouter
     monkeypatch.setitem(sys.modules, "ray.serve.request_router", fake)
     path = Path(nano_video_server.__file__).with_name("nano_video_router.py")
@@ -60,3 +69,17 @@ def test_full_rank_retries_enable_base_backoff(router_class, initial_backoff):
 def test_idle_router_and_empty_replicas_preserve_base_contract(router_class):
     router = router_class()
     assert asyncio.run(router.choose_replicas([], None)) == [[]]
+
+
+@pytest.mark.parametrize("metadata", [None, "retired-scheduler-request"])
+def test_unmatched_assignment_delegates_to_public_fifo_fallback(router_class, metadata):
+    # The real pinned Ray FIFO/scheduler loops are also exercised in the image
+    # gate. Here a dependency stub proves the integration uses its public hook,
+    # including when a retired scheduler leaves no matching request metadata.
+    router = router_class()
+    replica = object()
+    assert (
+        router._fulfill_next_pending_request(replica, metadata)
+        == "assigned-through-public-fifo"
+    )
+    assert router.fifo_assignment == (replica, metadata)

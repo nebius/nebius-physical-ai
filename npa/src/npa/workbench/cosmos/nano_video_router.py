@@ -1,9 +1,12 @@
 """All-replica least-outstanding request routing for Ray Serve 2.56.0."""
 
-from ray.serve.request_router import RequestRouter
+from ray.serve.request_router import FIFOMixin, RequestRouter
 
 
-class LeastOutstandingRouter(RequestRouter):
+class LeastOutstandingRouter(FIFOMixin, RequestRouter):
+    # FIFO fallback retains pending requests when an out-of-order assignment
+    # retires the scheduler that previously claimed their routing metadata.
+    # This governs request order; every selection still compares all replicas.
     def __init__(self, *args, **kwargs):
         # Ray 2.56's cached-success path can keep a routing task alive after
         # out-of-order assignments and spawn probes without yielding. Await a

@@ -236,6 +236,7 @@ def test_router_considers_every_replica_in_one_rank(monkeypatch):
             pass
 
     fake = ModuleType("ray.serve.request_router")
+    fake.FIFOMixin = type("FIFOMixin", (), {})
     fake.RequestRouter = BaseRouter
     monkeypatch.setitem(sys.modules, "ray.serve.request_router", fake)
     path = Path(server.__file__).with_name("nano_video_router.py")

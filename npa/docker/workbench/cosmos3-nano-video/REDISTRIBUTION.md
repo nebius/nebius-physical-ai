@@ -9,6 +9,8 @@ image layers.
 The model is delivered directly to the operator at runtime from
 [NVIDIA's pinned Cosmos3-Nano release](https://huggingface.co/nvidia/Cosmos3-Nano/tree/7a312c868bcce8e40b3eb40861300a9d0ba3fde1),
 under its [OpenMDW 1.1 terms](https://openmdw.ai/license/1.1).
-No model weights, example media, credentials or populated caches are included
-in the image. The shared cache is runtime storage and must not enter a build
-context or be published as a derived image.
+The extension adds no model weights, task or customer media, credentials or
+populated caches. The inherited upstream image includes public vendor fixtures
+and example media; those bytes remain part of its restricted runtime. The shared
+model cache is runtime storage and must not enter a build context or be published
+as a derived image.

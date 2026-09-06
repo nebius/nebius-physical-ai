@@ -61,9 +61,10 @@ The Dockerfile extends `vllm/vllm-omni:cosmos3`, pinned to manifest digest
 `sha256:6d2630c7d637b699557573f2c3fee8df5d4d0cd718977aa22549ed6a6ef30587`.
 The Dockerfile pins that index's Linux AMD64 manifest,
 `sha256:970dee6658ea223f615b2438ce41e47f1d5322225482546e6e6bc5d8134f757c`.
-The extension supplies Ray Serve, FFmpeg and the NPA adapters. It does not
-replace the diffusion engine or bake weights, data, credentials or acceptance
-state. Its inherited vendor runtime makes this an **operator-private** image;
+The extension supplies Ray Serve, FFmpeg and the NPA adapters. It preserves the
+diffusion engine and adds no model weights, task or customer data, credentials
+or acceptance state. The inherited image contains public vendor test fixtures
+and example media. Its vendor runtime makes this an **operator-private** image;
 the NPA public publisher excludes it. Build and push only to the operator's own
 registry, then deploy the verified immutable image digest.
 
@@ -77,7 +78,10 @@ at a time; Ray's custom router considers all replicas at one rank and chooses
 the least outstanding queue, with capacity rejection protecting concurrent
 admission.
 
-The router takes fresh queue snapshots and follows Ray's normal retry backoff.
+The router uses Ray's public FIFO fulfillment mixin to keep pending requests
+reachable when another scheduler has already consumed their routing metadata.
+FIFO selects the pending request; fresh queue snapshots across all replicas
+select the least outstanding replica. The router follows Ray's normal retry backoff.
 It disables Ray 2.56's queue-length cache because the cached-success path can
 spin after out-of-order assignments and accumulate background probes in the
 head proxy. Every selection still compares the complete replica rank; strict

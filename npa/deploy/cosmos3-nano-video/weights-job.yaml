@@ -21,6 +21,7 @@ spec:
           image: ${NPA_COSMOS3_VIDEO_IMAGE}
           imagePullPolicy: IfNotPresent
           securityContext:
+            readOnlyRootFilesystem: true
             allowPrivilegeEscalation: false
             capabilities:
               drop: [ALL]
@@ -50,9 +51,13 @@ spec:
               cpu: "4"
               memory: 16Gi
           volumeMounts:
+            - name: runtime-tmp
+              mountPath: /tmp
             - name: shared
               mountPath: /shared
       volumes:
+        - name: runtime-tmp
+          emptyDir: {}
         - name: shared
           persistentVolumeClaim:
             claimName: ${NPA_COSMOS3_SHARED_PVC}
