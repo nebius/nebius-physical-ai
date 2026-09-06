@@ -19,8 +19,8 @@ from npa.orchestration.npa_workflow.submit import (
 )
 
 SHIPPED = (
-    Path(npa.__file__).resolve().parents[2]
-    / "workflows/workbench/npa-workflows/token-factory-trigger-watch.yaml"
+    Path(npa.__file__).resolve().parents[3]
+    / "workflows/testing/token-factory-trigger-watch.yaml"
 )
 
 
