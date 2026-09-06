@@ -76,20 +76,34 @@ The IAA generation wrapper also has a verified operator-private publication from
 bootstrap proof, SPDX package count and residual vulnerability counts are in
 the same catalog. The repository security gate rejects fixed CRITICAL findings;
 the full inventory separately records six unfixed CRITICAL findings, with no
-new ignore entries. Runtime GPU and workflow acceptance remain pending.
+new ignore entries. The complete nine-state IAA workflow subsequently passed
+on B200; the catalog links its sanitized acceptance evidence.
 
 The EVG generation wrapper is also privately published from
 `b7ae4f198b20f087afef46d31fffee367eb4fa2e`, with independently
 verified registry bytes, bootstrap, complete scans and SPDX evidence in the
 catalog. Its full inventory retains six unfixed CRITICAL findings; the
 repository's fixed-CRITICAL policy passed without new ignore entries. Native
-GPU/workflow acceptance remains separate and pending.
+GPU/workflow acceptance subsequently passed on B200, with the qualified
+Visual QA results recorded in the catalog.
 
 The AnomalyGen recipe keeps NPA installation in its own writable Python
 environment and selects the compiled upstream environment for DIG subprocesses.
 It applies the same hash-pinned NLTK security update as EVG after installing
-upstream requirements. Final built-byte and native workload acceptance remain
-pending; the CUDA wheel build is unchanged.
+upstream requirements. It also pins W&B 0.28.2 to fix the embedded
+`wandb-core` dependency affected by
+[CVE-2026-56854](https://pkg.go.dev/vuln/GO-2026-6303).
+Upstream AnomalyGen holds W&B at 0.28.1 because 0.28.2 removes
+`wandb.util.generate_id`. The build verifies the exact Cosmos framework
+revision and source hash, then redirects its two calls to the byte-identical
+`wandb.sdk.lib.runid.generate_id` implementation. This preserves fresh-run,
+retry and persisted run-ID behavior, keeps the NVIDIA OpenMDW-1.1 header,
+checks the installed dependency requirements, and records original, patched,
+generator, patcher and wheel hashes in the image's
+`/usr/local/share/npa/paidf-wandb-compatibility.json`.
+The recipe removes SSH host keys in the same layer that installs SSH.
+Final built-byte and native workload acceptance remain pending; the CUDA wheel
+build is unchanged.
 
 The RF-DETR compatibility worker supports inference. It removes inherited
 W&B/torchtitan training tools and their unused system development toolchain
@@ -100,8 +114,9 @@ invocations. The exact rebuilt image is privately published from
 `ce010547321e8fee7b8783f684349a311ace63b2`, with verified
 registry identity, complete scans and an 894-package SPDX SBOM recorded in the
 catalog. Its inventory has zero CRITICAL findings; all inherited public TLS
-fixture-key findings have exact source evidence. GPU workflow acceptance remains
-pending; the CPU check establishes dependency compatibility only.
+fixture-key findings have exact source evidence. Detection/tracking subsequently
+passed in the complete B200 EVG workflow; the earlier CPU check establishes
+dependency compatibility only.
 
 The AnomalyGen image keeps the exact CUDA 13.2 base image's
 `cuda-compat-13-2` libraries first on `LD_LIBRARY_PATH` while retaining the

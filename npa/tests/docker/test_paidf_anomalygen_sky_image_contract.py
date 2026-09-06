@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 
@@ -37,6 +38,22 @@ def test_paidf_anomalygen_sky_bootstrap_source_is_complete() -> None:
     assert "exec /bin/bash" in entrypoint
 
 
+def test_paidf_anomalygen_does_not_retain_ssh_host_keys_in_install_layer() -> None:
+    dockerfile = DOCKERFILE.read_text(encoding="utf-8")
+    instructions = re.split(r"(?m)^(?=[A-Z]+\s)", dockerfile)
+    install_layers = [
+        instruction
+        for instruction in instructions
+        if instruction.startswith("RUN ") and "openssh-server" in instruction
+    ]
+    assert install_layers
+    for instruction in install_layers:
+        assert "rm -f /etc/ssh/ssh_host_*" in instruction
+        assert instruction.index("openssh-server") < instruction.index(
+            "rm -f /etc/ssh/ssh_host_*"
+        )
+
+
 def test_paidf_anomalygen_sky_preserves_cuda_forward_compatibility() -> None:
     text = DOCKERFILE.read_text(encoding="utf-8")
     assert "CUDA_COMPAT_PATH=/usr/local/cuda/compat" in text
@@ -59,3 +76,24 @@ def test_paidf_anomalygen_security_patch_preserves_the_wheel_build() -> None:
     assert runtime.index("uv pip install -r /tmp/requirements-nodeps.txt") < runtime.index(
         "nltk-3.10.3-py3-none-any.whl#sha256="
     )
+
+
+def test_paidf_wandb_security_update_includes_the_framework_compatibility_patch() -> None:
+    text = DOCKERFILE.read_text(encoding="utf-8")
+    builder, runtime = text.split("FROM ${CUDA_RUNTIME_IMAGE} AS runtime", 1)
+    assert "wandb" not in builder
+    wheel = "wandb-0.28.2-py3-none-manylinux_2_28_x86_64.whl#sha256="
+    assert "1db698d107871c66b2dcbb0cf4dc2af1ddb159ba94e957e890158ec60ab2de54" in runtime
+    assert "COPY paidf-anomalygen-sky/patch_wandb_run_id.py " in runtime
+    patch = "python /usr/local/lib/npa/patch_wandb_run_id.py"
+    assert runtime.index("uv pip install -r /tmp/requirements-nodeps.txt") < runtime.index(wheel)
+    assert runtime.index(wheel) < runtime.index(patch)
+    assert runtime.index(patch) < runtime.index("uv pip install -e . --no-deps")
+    instructions = re.split(r"(?m)^(?=[A-Z]+\s)", runtime)
+    requirement_layers = [
+        instruction
+        for instruction in instructions
+        if instruction.startswith("RUN ") and "uv pip install -r /tmp/requirements.txt" in instruction
+    ]
+    assert len(requirement_layers) == 1
+    assert wheel in requirement_layers[0]

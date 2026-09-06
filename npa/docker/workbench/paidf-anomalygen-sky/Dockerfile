@@ -59,6 +59,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends \
          ca-certificates curl git gcc g++ jq libgomp1 libgl1 libglib2.0-0 \
          netcat-openbsd openssh-client openssh-server rsync sudo \
+    && rm -f /etc/ssh/ssh_host_* \
     && (id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu) \
     && rm -rf /var/lib/apt/lists/*
 
@@ -77,12 +78,16 @@ COPY --from=source /src/requirements.txt /tmp/requirements.txt
 COPY --from=source /src/requirements-nodeps.txt /tmp/requirements-nodeps.txt
 # Replace upstream NLTK 3.10.0 with its hash-pinned CVE-2026-79675 fix.
 # Version 3.10.3 keeps the same required dependency set.
+# Replace W&B in this same layer: 0.28.2 updates wandb-core's x/crypto
+# to fix CVE-2026-56854, without retaining the old binary in layer history.
 RUN uv pip install -r /tmp/requirements.txt \
     && (uv pip uninstall av opencv-python 2>/dev/null || true) \
     && uv pip install --no-deps --force-reinstall /tmp/cvwheel/*.whl \
     && uv pip install -r /tmp/requirements-nodeps.txt --no-deps \
     && uv pip install --no-deps \
          'nltk @ https://files.pythonhosted.org/packages/b6/6d/ebd2af4640b12168fdf0cb74b6118df2f32a2f62ec7e0c06fbfd80706639/nltk-3.10.3-py3-none-any.whl#sha256=ff9598a8e20518ee0d557745890cc4435b9578489e2dcbc69c4f81fa060caf7c' \
+    && uv pip install --no-deps --force-reinstall \
+         'wandb @ https://files.pythonhosted.org/packages/3c/7f/f3e23a2ff01848d7a5adab9f307992b92ef99c5e6bff2bd89cd46d651e3a/wandb-0.28.2-py3-none-manylinux_2_28_x86_64.whl#sha256=1db698d107871c66b2dcbb0cf4dc2af1ddb159ba94e957e890158ec60ab2de54' \
     && python -c 'import importlib.metadata as m; assert m.version("nltk") == "3.10.3"' \
     && rm -rf /tmp/cvwheel /tmp/requirements.txt /tmp/requirements-nodeps.txt \
     && python -c 'import cv2; cv2.connectedComponentsWithStats' \
@@ -99,8 +104,12 @@ RUN test "$(dpkg-query -W -f='${Version}' cuda-compat-13-2)" = "595.58.03-1ubunt
     && ldconfig
 
 COPY --from=source --chown=ubuntu:ubuntu /src /workspace/paidf-anomalygen
+COPY paidf-anomalygen-sky/patch_wandb_run_id.py /usr/local/lib/npa/patch_wandb_run_id.py
 WORKDIR /workspace/paidf-anomalygen
-RUN uv pip install -e assets/lerobot_stub --no-deps \
+# Upstream holds W&B at 0.28.1 for a removed alias. Patch exactly its two
+# framework callers to the identical generator, retaining the NVIDIA header.
+RUN python /usr/local/lib/npa/patch_wandb_run_id.py \
+    && uv pip install -e assets/lerobot_stub --no-deps \
     && uv pip install -e . --no-deps \
     && test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
     && test "$(python -c 'from pathlib import Path; print(Path("VERSION").read_text().strip())')" = "1.1.0" \

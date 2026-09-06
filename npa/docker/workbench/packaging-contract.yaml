@@ -269,7 +269,12 @@ images:
       Operator-built implementation from the exact Apache-2.0 NVIDIA PAIDF
       AnomalyGen source revision and digest-pinned public CUDA bases. It compiles
       upstream's wheel recipe and adds SkyPilot bootstrap prerequisites without
-      model weights or data. The resolved dependency closure remains
+      model weights or data. SSH host keys are removed in their installation
+      layer. Hash-pinned W&B 0.28.2 fixes CVE-2026-56854; a digest-checked patch
+      redirects two pinned Cosmos framework run-ID calls to W&B's unchanged
+      generator, preserving the NVIDIA OpenMDW-1.1 header. The installed
+      dependency requirements and source-patch provenance are checked at build
+      time. The resolved dependency closure remains
       private-registry-only pending a separate redistribution review.
   openpi:
     dockerfile: openpi/Dockerfile
