@@ -95,22 +95,27 @@ skills:
         path: npa/src/npa/deploy/images.py
   - name: cosmos3-codebase-nav
     category: atomic
-    when_to_use: "Navigate NPA Cosmos3 integration and upstream Cosmos framework files."
+    when_to_use: "Navigate NPA Cosmos3 integration, Nano vLLM-Omni diffusion, and upstream Cosmos framework files."
     path: skills/atomic/cosmos3-codebase-nav/SKILL.md
     smoke:
       - type: file_exists
         path: npa/src/npa/workbench/cosmos/cosmos3.py
+      - type: file_exists
+        path: npa/src/npa/workbench/cosmos/nano_video_augment.py
       - type: cli_help
         args: ["workbench", "cosmos", "check", "--help"]
         contains: "output"
   - name: cosmos3-env-troubleshoot
     category: atomic
-    when_to_use: "Troubleshoot Cosmos3 setup, fetch, inference, CUDA, Docker, and credential failures."
+    when_to_use: "Troubleshoot Cosmos3 setup, inference, Nano video artifact recovery, CUDA, Docker, and credential failures."
     path: skills/atomic/cosmos3-env-troubleshoot/SKILL.md
     smoke:
       - type: cli_help
         args: ["workbench", "cosmos", "fetch", "--help"]
         contains: "skip-checkpoint"
+      - type: cli_help
+        args: ["workbench", "cosmos3", "nano-video-augment-recover", "--help"]
+        contains: "output-path"
   - name: find-artifacts
     category: atomic
     when_to_use: "Discover, classify, and load artifacts in npa agent using artifact-first browse/pick/view flow."
@@ -764,7 +769,7 @@ skills:
         path: docs/quickstart.md
   - name: cosmos3-inference
     category: workflows
-    when_to_use: "Run or modify Cosmos3 inference: the containerized npa-cosmos3 generate path (image/video) or the public text-to-image SkyPilot workflow."
+    when_to_use: "Run or modify Cosmos3 inference: Nano diffusion video continuation/augmentation, containerized framework generation, or the text-to-image SkyPilot workflow."
     path: skills/workflows/cosmos3-inference/SKILL.md
     smoke:
       - type: npa_workflow_yaml
@@ -776,6 +781,12 @@ skills:
       - type: cli_help
         args: ["workbench", "cosmos3", "generate", "--help"]
         contains: "guardrails"
+      - type: cli_help
+        args: ["workbench", "cosmos3", "nano-video-augment", "--help"]
+        contains: "edge-threshold"
+      - type: cli_help
+        args: ["workbench", "cosmos3", "nano-video-batch", "--help"]
+        contains: "concurrency"
   - name: cosmos3-ray-serve
     category: tools
     when_to_use: "Operate, validate, or troubleshoot persistent batched Cosmos3-Nano inference through NVIDIA cosmos-framework's native Ray Serve path."

@@ -1,6 +1,6 @@
 ---
 name: cosmos3-inference
-description: Use when running or modifying Cosmos3 inference through NPA, especially the public text-to-image SkyPilot workflow, guardrails behavior, prompt/input handling, or upstream Cosmos inference arguments.
+description: Use when running or modifying Cosmos3 inference through NPA, including Nano diffusion continuation/augmentation, framework generation, prompt/input handling, and effective guardrail or sampling arguments.
 ---
 
 # Cosmos3 Inference
@@ -24,8 +24,38 @@ For environment errors, use
 
 ## Real NPA Workflows
 
-There are two real paths. Prefer the containerized one for anything beyond a
-one-off text-to-image smoke.
+Choose the implementation matching the deployment: persistent Nano vLLM-Omni
+diffusion, containerized framework generation, or the text-to-image smoke.
+
+### Persistent Nano diffusion video
+
+Read `npa/deploy/cosmos3-nano-video/README.md` for the CLI/SDK contracts, image,
+frame mapping, measured results and reusable commands. `nano-video-batch`
+generates a text-to-video segment followed by tail-conditioned continuations.
+`nano-video-augment` transforms a complete source MP4 using official Canny edge
+controls from every corresponding source interval. A continuation result alone
+does not demonstrate visual augmentation or full source-motion conditioning.
+
+The augmentation client accepts S3 input/output paths at 832×480 and 24 fps,
+validates the complete media and publishes immutable artifacts with readback.
+Use the supported sampling/control flags; there is no generic `strength` or
+unchecked extra-parameter bag. Later windows use the preceding augmented
+five-frame RGB tail for continuity and matching original-source edges for
+structure. Preserve exact effective prompts, control provenance and all joins.
+Keep actual source, augmented output and synchronized comparison clearly labeled.
+
+`nano-video-augment-recover` retrieves the same request or retries artifact
+publication without submitting generation. Preserve the original destination
+and submission marker after interrupted generation or artifact retrieval; a
+missing result is ambiguous. Never repeat GPU generation merely to retry an
+upload. Validate visual change, identity, source motion, contact and temporal
+joins separately from decode/hash checks, with a prior rubric and disclosed
+agent/VLM sampling limits. The README's selected settings are measured examples,
+not universal quality defaults.
+
+Changes to shared serving code require the FIFO/least-outstanding regression and
+affected real continuation acceptance as well as complete augmentation evidence.
+An eight-request continuation result does not establish eight-way augmentation.
 
 ### Containerized generate (preferred)
 
@@ -40,9 +70,8 @@ All four surfaces run one implementation,
 `npa/src/npa/workbench/cosmos/generate.py`, inside the `npa-cosmos3` image
 (`npa/docker/workbench/cosmos3/Dockerfile`). The image bakes the framework at a
 pinned commit plus its cu130 inference venv, so a run does not clone or resolve
-dependencies on the node. Modes: `text2image`, `text2video`, `image2video`,
-`video2video` (the last three need `--input-path` for `image2video` and
-`video2video`).
+dependencies on the node. Modes: `text2image`, `text2video`, `image2video` and
+`video2video`. The `image2video` and `video2video` modes require `--input-path`.
 
 No weights are baked. Public `nvidia/Cosmos3-Nano` downloads anonymously; when
 guardrails are enabled, their gated weights download at run time with the
@@ -56,6 +85,8 @@ host.
 
 ```text
 npa/workflows/workbench/npa-workflows/cosmos3-text-to-image.yaml
+npa workbench cosmos3 text-to-image
+workbench.cosmos3.text_to_image
 ```
 
 A real H100 text-to-image smoke that needs no prebuilt image: it clones the
@@ -64,27 +95,19 @@ text-to-image JSON input, runs `python -m cosmos_framework.scripts.inference`,
 validates the produced image, and optionally uploads the image plus success JSON
 to S3. Keep it for BYO-fork / un-baked-image cases.
 
-Do not replace either with a Cosmos skill-display subcommand; Cosmos3 skills are
+Do not replace these implementations with a skill-display subcommand; Cosmos3 skills are
 SKILL.md files for agents, not commands.
 
 ## Guardrails
 
-Guardrails are on by default in both paths.
-
-`npa workbench cosmos3 generate` passes `--no-guardrails` to upstream only when
-the operator asks for it, and the resulting manifest records `guardrails`
-explicitly so a run's posture is auditable.
-
-For the clone-at-job-time smoke workflow, `NPA_COSMOS3_NO_GUARDRAILS` defaults to
-an empty string, and the command expands `--no-guardrails` only when that
-variable is set. Only set it when the user explicitly requests an opt-out:
-
-```yaml
-NPA_COSMOS3_NO_GUARDRAILS: "1"
-```
-
-The agent should preserve this default in CLI, SDK, Docker image, and workflow
-changes.
+Defaults differ by implementation. `npa workbench cosmos3 generate` defaults
+to guardrails on and exposes `--no-guardrails`. The separate
+`npa workbench cosmos3 text-to-image` defaults to off and exposes `--guardrails`
+for opt-in; its shipped workflow explicitly describes disabled guardrails.
+The Nano diffusion recipe configures `--no-guardrails` at deployment time.
+Inspect the chosen route and effective manifest, preserve the operator's
+configuration, and check access to any newly selected gated guardrail payloads.
+Do not infer one route's posture from another route's defaults.
 
 ## Running The Workflow
 
@@ -94,19 +117,12 @@ Before launch, confirm credentials and access:
 npa/.venv/bin/npa workbench cosmos check --output json
 ```
 
-For the text-to-image smoke, review or override these environment fields in the
-workflow config:
-
-- `NPA_COSMOS3_SOURCE_REPO`
-- `NPA_COSMOS3_MODEL_ID`
-- `NPA_COSMOS3_CACHE`
-- `NPA_COSMOS3_HF_TOKEN_ENV`
-- `NPA_COSMOS3_INFER_PROMPT`
-- `NPA_COSMOS3_OUTPUT_DIR`
-- `NPA_COSMOS3_OUTPUT_IMAGE`
-- `NPA_COSMOS3_SUCCESS_JSON`
-- `NPA_COSMOS3_OUTPUT_S3_URI`
-- `NPA_COSMOS3_NO_GUARDRAILS`
+For the text-to-image smoke, review the actual workflow configuration keys:
+`cosmos_source_repo`, `cosmos_model_id`, `cosmos_cache_dir`, `t2i_prompt`,
+`t2i_checkpoint_name`, `t2i_uv_group`, `t2i_seed` and `t2i_output_uri`.
+The YAML calls `workbench.cosmos3.text_to_image`; the implementation lives in
+`npa/src/npa/workbench/cosmos/text_to_image.py`. Retired raw shell-template
+environment fields are not the current workflow contract.
 
 The workflow uses node-local temporary paths by default. Do not write model
 checkpoints or generated outputs into the repository.
@@ -143,13 +159,16 @@ npa/.venv/bin/python -m pytest \
 
 Expected checks include:
 
-- Guardrails stay on unless `--no-guardrails` is passed, and the credential
-  preflight refuses to run without the operator's Hugging Face token.
+- Route-specific guardrail defaults and explicit overrides remain intact;
+  credential preflight checks the actual selected gated dependencies without
+  demanding a token solely for anonymous public Nano weights.
 - The `npa-cosmos3` Dockerfile pins the framework commit and never fetches
   weights in a build layer.
-- The inference YAML name is `cosmos3-text-to-image-inference`.
+- The inference YAML name is `cosmos3-text-to-image` and its toolRef is
+  `workbench.cosmos3.text_to_image`.
 - `image_id` is not hard-coded in the resources.
 - The command invokes `python -m cosmos_framework.scripts.inference`.
-- `NPA_COSMOS3_NO_GUARDRAILS` defaults to empty.
-- `--no-guardrails` is not present by default.
 - S3 output remains optional.
+- Nano augmentation rejects unsupported fields, covers the entire original
+  source with structural controls and recovers immutable artifacts without
+  repeating generation; see its core/client/server and live acceptance tests.
