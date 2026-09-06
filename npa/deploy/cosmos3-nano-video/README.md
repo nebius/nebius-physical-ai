@@ -43,6 +43,12 @@ supply its exact group through owner-only runtime configuration and require
 `STRICT` reservation placement. Follow the [fleet instructions](../../../skills/tools/fleet/SKILL.md)
 and [driver strategy](../../../docs/workbench/mk8s-gpu-driver-strategy.md).
 
+The head explicitly advertises zero Ray GPUs and hides NVIDIA/CUDA devices.
+Its required affinity selects nodes without `nvidia.com/gpu.count`; verify that
+the NPA CPU pool has no such label and every validated GPU node has a positive
+count before applying the manifest. Worker device visibility stays under the
+Kubernetes device plugin and Ray's one-GPU assignment.
+
 For a mixed cluster, declare the planned per-node GPU counts through
 `GpuHealthConfig.expected_gpu_counts`. Its optional `nvswitch_gpu_counts` subset
 identifies node sizes that require fabric checks. Every multi-GPU SXM/NVL size
@@ -70,6 +76,12 @@ has no additional workload deadline. Each replica runs one complete rollout
 at a time; Ray's custom router considers all replicas at one rank and chooses
 the least outstanding queue, with capacity rejection protecting concurrent
 admission.
+
+The router takes fresh queue snapshots and follows Ray's normal retry backoff.
+It disables Ray 2.56's queue-length cache because the cached-success path can
+spin after out-of-order assignments and accumulate background probes in the
+head proxy. Every selection still compares the complete replica rank; strict
+admission prevents two requests from occupying the same replica.
 
 The adapter writes an explicit single diffusion stage configuration with
 `model_config.sound_gen: false`, BF16 and TP=1, then passes it through

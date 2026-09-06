@@ -231,8 +231,12 @@ def test_staging_verifies_all_shards_precision_and_file_hashes(tmp_path):
 
 def test_router_considers_every_replica_in_one_rank(monkeypatch):
     # Test the candidate policy independently of Ray's installed runtime.
+    class BaseRouter:
+        def __init__(self, **kwargs):
+            pass
+
     fake = ModuleType("ray.serve.request_router")
-    fake.RequestRouter = object
+    fake.RequestRouter = BaseRouter
     monkeypatch.setitem(sys.modules, "ray.serve.request_router", fake)
     path = Path(server.__file__).with_name("nano_video_router.py")
     spec = importlib.util.spec_from_file_location("test_nano_video_router", path)

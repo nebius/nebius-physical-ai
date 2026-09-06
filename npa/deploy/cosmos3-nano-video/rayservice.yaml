@@ -30,8 +30,16 @@ spec:
       rayStartParams:
         dashboard-host: "0.0.0.0"
         num-cpus: "0"
+        num-gpus: "0"
       template:
         spec:
+          affinity:
+            nodeAffinity:
+              requiredDuringSchedulingIgnoredDuringExecution:
+                nodeSelectorTerms:
+                  - matchExpressions:
+                      - key: nvidia.com/gpu.count
+                        operator: DoesNotExist
           imagePullSecrets:
             - name: cosmos3-nano-video-registry
           securityContext:
@@ -56,7 +64,11 @@ spec:
                 limits:
                   cpu: "4"
                   memory: 16Gi
-              env: &runtime-env
+              env:
+                - name: NVIDIA_VISIBLE_DEVICES
+                  value: void
+                - name: CUDA_VISIBLE_DEVICES
+                  value: "-1"
                 - name: NPA_COSMOS3_MODEL_PATH
                   value: /models/Cosmos3-Nano
                 - name: NPA_COSMOS3_VIDEO_OUTPUT_ROOT
@@ -137,7 +149,24 @@ spec:
                     cpu: "4"
                     memory: 64Gi
                     nvidia.com/gpu: "1"
-                env: *runtime-env
+                env:
+                  - name: NPA_COSMOS3_MODEL_PATH
+                    value: /models/Cosmos3-Nano
+                  - name: NPA_COSMOS3_VIDEO_OUTPUT_ROOT
+                    value: /outputs
+                  - name: NPA_COSMOS3_VIDEO_TOKEN
+                    valueFrom:
+                      secretKeyRef:
+                        name: cosmos3-nano-video-auth
+                        key: token
+                  - name: HF_HUB_OFFLINE
+                    value: "1"
+                  - name: TRANSFORMERS_OFFLINE
+                    value: "1"
+                  - name: VLLM_OMNI_VIDEO_SYNC_TIMEOUT
+                    value: inf
+                  - name: OMP_NUM_THREADS
+                    value: "2"
                 volumeMounts:
                   - name: shared
                     mountPath: /models
