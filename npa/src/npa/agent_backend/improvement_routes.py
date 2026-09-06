@@ -138,7 +138,8 @@ def register_improvement_routes(app: Any, deps: ImprovementDeps, http_error: Any
 
     @app.post("/agent/improvements/reconcile")
     def reconcile_improvements(payload: dict) -> dict:
-        return invoke(lambda store: store.observe_action(payload["result"], episode_id=payload["episode_id"]))
+        return invoke(lambda store: store.observe_action(payload["result"], episode_id=payload["episode_id"],
+                                                        session_id=payload.get("session_id", "")))
 
     @app.post("/agent/improvements/{item_id}/claim")
     def claim_improvement(item_id: str, payload: dict) -> dict:

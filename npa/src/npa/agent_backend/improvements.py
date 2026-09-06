@@ -161,7 +161,7 @@ def find_improvements(result: Mapping[str, Any]) -> list[dict[str, Any]]:
     for index, step in enumerate(steps):
         if not isinstance(step, dict):
             continue
-        component = step.get("tool") or "sim2real-drive"
+        component = step.get("tool") or ("sim2real-drive" if "iterations" in result else "action-loop")
         if "iterations" in result and (step.get("error") or step.get("adjust_error")):
             kind = "drive_adjust_error" if step.get("adjust_error") else "drive_error"
         elif ("iterations" in result and isinstance(step.get("diagnosis"), dict)

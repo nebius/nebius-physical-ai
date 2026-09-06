@@ -734,6 +734,33 @@ def purge_agent_iam(leftovers: dict[str, Any], *, on_status: StatusFn) -> list[s
     from npa.clients.agent_iam_binding import remove_created_agent_account
 
     project_id = str(leftovers.get("project_id", "") or "")
+    sa_id = str(leftovers.get("service_account_id", "") or "")
+
+    def verify_account_unused() -> None:
+        if not sa_id:
+            return
+        try:
+            dependents = _provider_agent_dependents(project_id, sa_id)
+        except NebiusError:
+            # Legacy accounts retain the existing exact terminal graph receipt
+            # fallback; project bindings require complete live inventory.
+            proof, _error = _receipt_proves_agent_graphs_absent(project_id, sa_id)
+            if not proof or any((leftovers.get("binding_resources") or {}).values()):
+                raise
+            dependents = []
+        if dependents:
+            raise NebiusError("agent account has dependent VMs")
+
+    # Storage keys are shared by every VM attached to this account. Recheck
+    # dependencies before the first destructive action, not only account removal.
+    try:
+        verify_account_unused()
+    except NebiusError as exc:
+        mark_agent_iam_status(project_id, "partial")
+        raise AgentIAMCleanupError(
+            "exact agent IAM dependency inventory remains unresolved"
+        ) from exc
+
     deleted = _purge_agent_bindings(leftovers, on_status)
     failures: list[str] = []
     for key in leftovers.get("access_keys") or []:
@@ -758,22 +785,9 @@ def purge_agent_iam(leftovers: dict[str, Any], *, on_status: StatusFn) -> list[s
             continue
         deleted.append(f"access key {key_id}")
         remove_agent_iam_resource(project_id, "access_key", key_id)
-    sa_id = str(leftovers.get("service_account_id", "") or "")
     if sa_id and not failures:
         try:
-            try:
-                dependents = _provider_agent_dependents(project_id, sa_id)
-            except NebiusError:
-                # Preserve the existing exact terminal graph receipt path for
-                # legacy accounts; project bindings require full live inventory.
-                proof, _error = _receipt_proves_agent_graphs_absent(project_id, sa_id)
-                if not proof or any(
-                    (leftovers.get("binding_resources") or {}).values()
-                ):
-                    raise
-                dependents = []
-            if dependents:
-                raise NebiusError("agent account has dependent VMs")
+            verify_account_unused()
             remove_created_agent_account(project_id, "", sa_id)
             clear_agent_iam_record(project_id, sa_id)
             if agent_iam_owned(project_id, sa_id) and _recorded_access_keys(project_id):
