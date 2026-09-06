@@ -103,10 +103,9 @@ def test_token_factory_setup_requires_the_api_key_and_serves_nothing(spec_name: 
 TEMPLATE_ONLY_FLAGS = {
     "token-factory-caption.yaml": ("--instruction",),
     "token-factory-generate.yaml": ("--system-prompt", "--max-prompts"),
-    "token-factory-cosmos-reason.yaml": ("--model", "--task", "--max-images"),
+    "token-factory-cosmos-reason.yaml": ("--task", "--max-images"),
     "vlm-eval-token-factory.yaml": (
         "--task",
-        "--model",
         "--api-key-env",
         "--frame-selection",
         "--max-frames",
@@ -135,15 +134,22 @@ def test_template_only_flags_are_still_absent_from_the_spec_surface(spec_name: s
     )
 
 
-def test_cosmos_reason_spec_reaches_the_hosted_reasoner_by_cli_default() -> None:
-    """`--model` is not in this toolRef's argv, so the CLI default must be the reasoner."""
+@pytest.mark.parametrize("model", [None, "MiniMaxAI/MiniMax-M3", "vendor/explicit-model"])
+def test_cosmos_reason_spec_preserves_default_and_explicit_model(model: str | None) -> None:
+    """An omitted model uses the new CLI default; an override reaches the command."""
 
     from npa.clients.token_factory import DEFAULT_REASONER_MODEL
 
-    _, step = _only_step("token-factory-cosmos-reason.yaml")
+    spec = load_spec(SPECS / "token-factory-cosmos-reason.yaml")
+    if model is not None:
+        spec.config["reason_model"] = model
+    step = build_plan(spec, run_id="probe").steps[0]
 
-    assert "--model" not in step.argv
-    assert DEFAULT_REASONER_MODEL == "nvidia/Cosmos3-Super-Reasoner"
+    if model is None:
+        assert "--model" not in step.argv
+        assert DEFAULT_REASONER_MODEL == "MiniMaxAI/MiniMax-M3"
+    else:
+        assert step.argv[step.argv.index("--model") + 1] == model
 
 
 def test_vlm_eval_token_factory_spec_uses_the_hosted_api_backend() -> None:

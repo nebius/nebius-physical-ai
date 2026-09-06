@@ -291,7 +291,7 @@ def reason_cmd(
 ) -> None:
     """Reason over scene images for physical understanding and a plan of action.
 
-    Defaults to nvidia/Cosmos3-Super-Reasoner: point it at images of a scene and
+    Defaults to MiniMaxAI/MiniMax-M3: point it at images of a scene and
     ask what a robot should do there.
     """
 

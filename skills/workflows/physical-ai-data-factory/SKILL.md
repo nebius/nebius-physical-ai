@@ -331,9 +331,9 @@ submits. All three Cosmos images install
 covers the entrypoint contract: a bare `ENTRYPOINT ["/bin/bash"]` swallows the args
 Kubernetes passes, so an entrypoint must exec its arguments.
 
-Verified Token Factory model roles: `Qwen/Qwen2.5-VL-72B-Instruct` (VLM),
-`meta-llama/Llama-3.3-70B-Instruct` (LLM), `nvidia/Cosmos3-Super-Reasoner`
-(Cosmos-family critic). Cosmos Transfer 2.5 is the GPU augment engine, not a
+Verified Token Factory model roles: `MiniMaxAI/MiniMax-M3` (VLM),
+`nvidia/Nemotron-3_5-Lightning` (LLM), `MiniMaxAI/MiniMax-M3`
+(hosted reasoning critic). Cosmos Transfer 2.5 is the GPU augment engine, not a
 Token Factory model.
 
 ## Commands

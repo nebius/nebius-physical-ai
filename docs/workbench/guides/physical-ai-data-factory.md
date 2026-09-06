@@ -71,9 +71,9 @@ where NPA substitutes its own endpoint.
 
 **Model roles** (verified available on Nebius Token Factory):
 
-- VLM captioning + the evaluator's attribute answering: `Qwen/Qwen2.5-VL-72B-Instruct`
-- Cosmos-family reasoning critic: `nvidia/Cosmos3-Super-Reasoner`
-- Prompt / MCQ LLM: `meta-llama/Llama-3.3-70B-Instruct`
+- VLM captioning + the evaluator's attribute answering: `MiniMaxAI/MiniMax-M3`
+- Hosted reasoning critic: `MiniMaxAI/MiniMax-M3`
+- Prompt / MCQ LLM: `nvidia/Nemotron-3_5-Lightning`
 
 > **Config → augment MULTIPLY.** The `augment` stage receives the Config-Gen
 > manifest via `--configs-uri` and runs **one Cosmos Transfer 2.5 inference per
