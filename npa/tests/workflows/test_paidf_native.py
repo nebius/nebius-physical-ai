@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import fnmatch
+import hashlib
 import json
 import os
 import subprocess
@@ -1399,7 +1400,7 @@ def test_dig_runtime_uses_only_verified_preflight_pinned_cache(
         "/tmp/npa-src-overlay/src:/workspace/paidf-anomalygen"
     )
     assert env["UV_PYTHON"] == "/opt/venv/bin/python"
-    assert len(manifest["models"]) == 4
+    assert len(manifest["models"]) == 5
     assert all(len(model["revision"]) == 40 for model in manifest["models"])
 
 
@@ -1746,6 +1747,9 @@ def test_dig_preparation_pins_real_converter_and_original_downloader(
             "vision_encoder/model.safetensors",
         }
     )
+    wan_repository = "Wan-AI/Wan2.2-TI2V-5B"
+    wan_file = "Wan2.2_VAE.pth"
+    repository_files[wan_repository] = {wan_file, "unneeded-transformer.safetensors"}
     # hf's repeatable options select files from a complete repository listing.
     # Preserve that listing even when only a subset is downloaded, as hf does.
     download_parser = click.Command(
@@ -1768,10 +1772,13 @@ def test_dig_preparation_pins_real_converter_and_original_downloader(
         snapshot = cache / "snapshots" / revision
         # The real offline directory request uses include='*', even for a
         # tokenizer/processor. A successful probe file alone is insufficient.
-        for name in repository_files[repository]:
+        required_files = (
+            {wan_file} if repository == wan_repository else repository_files[repository]
+        )
+        for name in required_files:
             assert (snapshot / name).is_file(), f"incomplete snapshot: {name}"
         tree = cache / "trees" / f"{revision}.json"
-        if require_tree:
+        if require_tree and repository != wan_repository:
             assert set(json.loads(tree.read_text())) == repository_files[repository]
 
     token_names = (
@@ -1809,10 +1816,11 @@ def test_dig_preparation_pins_real_converter_and_original_downloader(
                     target = snapshot / name
                     target.parent.mkdir(parents=True, exist_ok=True)
                     target.write_text("synthetic-fixture", encoding="utf-8")
-            _write_fixture_json(
-                cache / "trees" / f"{parsed['revision']}.json",
-                {name: {} for name in repository_files[repository]},
-            )
+            if not parsed["filenames"]:
+                _write_fixture_json(
+                    cache / "trees" / f"{parsed['revision']}.json",
+                    {name: {} for name in repository_files[repository]},
+                )
         elif argv[0] == "uvx":
             target = Path(argv[argv.index("--local-dir") + 1])
             target.mkdir(parents=True)
@@ -1825,6 +1833,18 @@ def test_dig_preparation_pins_real_converter_and_original_downloader(
             require_complete_snapshot(
                 Path(env["CKPT_DIR"]), runtime_repository, require_tree=True
             )
+            # The real Nano and Edge constructors resolve CheckpointFileHf
+            # while creating the vision tokenizer, before writing any DCP.
+            # A later original-downloader copy cannot satisfy that HF lookup.
+            pretrained = Path(env["CKPT_DIR"])
+            wan_snapshot = (
+                pretrained
+                / "hf/models--Wan-AI--Wan2.2-TI2V-5B/snapshots"
+                / revisions[wan_repository]
+            )
+            assert (wan_snapshot / wan_file).read_bytes() == b"synthetic-fixture"
+            assert not (wan_snapshot / "unneeded-transformer.safetensors").exists()
+            assert not (pretrained / "wan2pt2" / wan_file).exists()
             Path(argv[argv.index("-o") + 1]).mkdir(parents=True)
         elif argv[0] == "bash":
             pretrained = Path(kwargs["env"]["CKPT_DIR"])
@@ -1851,7 +1871,7 @@ def test_dig_preparation_pins_real_converter_and_original_downloader(
         str(output), str(tmp_path / "result.json"), "unit-run"
     )
     downloads = [argv for argv, _env in calls if argv[0] == "uvx"]
-    assert len(downloads) == 6
+    assert len(downloads) == 7
     assert calls
     for _argv, env in calls:
         assert env["VIRTUAL_ENV"] == "/opt/venv"
@@ -1871,7 +1891,9 @@ def test_dig_preparation_pins_real_converter_and_original_downloader(
             assert parsed["repo_id"] == argv[3]
             assert parsed["revision"] == revisions[argv[3]]
             assert bool(parsed["cache_dir"]) != bool(parsed["local_dir"])
-            assert parsed["filenames"] == ()
+            assert parsed["filenames"] == (
+                (wan_file,) if parsed["repo_id"] == wan_repository else ()
+            )
     converters = [(argv, env) for argv, env in calls if argv[0] == "python"]
     assert len(converters) == 2
     for argv, env in converters:
@@ -1884,6 +1906,7 @@ def test_dig_preparation_pins_real_converter_and_original_downloader(
     upstream_env = next(env for argv, env in calls if argv[0] == "bash")
     assert upstream_env["EDGE_VLM_REV"] == revisions["nvidia/Cosmos3-Edge"]
     assert upstream_env["GUARDRAIL_REV"] == revisions["nvidia/Cosmos-Guardrail1"]
+    assert upstream_env["WAN_VAE_REV"] == revisions[wan_repository]
     assert (output / "runtime-hf-snapshots.json").is_file()
     assert (output / paidf_native.DIG_PRETRAINED_CONTENT_MANIFEST).is_file()
     # The final training/inference handoff retains the complete payload even
@@ -1892,7 +1915,24 @@ def test_dig_preparation_pins_real_converter_and_original_downloader(
     offline = paidf_native._dig_offline_environment(output, "unit-run")
     assert offline["HF_HUB_OFFLINE"] == offline["TRANSFORMERS_OFFLINE"] == "1"
     assert not set(token_names) & offline.keys()
-    paidf_native._dig_pretrained_content_manifest(output, "unit-run")
+    content, _ = paidf_native._dig_pretrained_content_manifest(output, "unit-run")
+    wan_relative = (
+        "hf/models--Wan-AI--Wan2.2-TI2V-5B/snapshots/"
+        + revisions[wan_repository]
+        + "/"
+        + wan_file
+    )
+    records = {record["path"]: record for record in content["files"]}
+    assert (
+        records[wan_relative]["sha256"]
+        == hashlib.sha256(b"synthetic-fixture").hexdigest()
+    )
+    assert records["wan2pt2/" + wan_file]["sha256"] == records[wan_relative]["sha256"]
+    cache_manifest = json.loads((output / "runtime-hf-snapshots.json").read_text())
+    assert {
+        "repository": wan_repository,
+        "revision": revisions[wan_repository],
+    } in cache_manifest["models"]
     assert len(result["content_manifest_sha256"]) == 64
     assert result["status"] == "completed"
 

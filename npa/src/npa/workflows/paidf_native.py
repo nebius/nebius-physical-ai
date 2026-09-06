@@ -51,6 +51,7 @@ DIG_RUNTIME_CACHE_PROBES = {
     "Qwen/Qwen3Guard-Gen-0.6B": "model.safetensors",
     "Qwen/Qwen3-VL-8B-Instruct": "tokenizer.json",
     "nvidia/Cosmos3-Edge": "processor_config.json",
+    "Wan-AI/Wan2.2-TI2V-5B": "Wan2.2_VAE.pth",
 }
 DIG_PRETRAINED_CONTENT_MANIFEST = "npa-pretrained-content.json"
 _SERVICE_WORKFLOWS = {"image-edit": "iaa", "image2video": "evg"}
@@ -2515,7 +2516,7 @@ def prepare_dig_pretrained(
         # The pinned framework requests complete snapshots during model
         # construction, including the Qwen tokenizer and Edge processor paths.
         # Stage all files before credential-free, offline conversion and use.
-        for repository in DIG_RUNTIME_CACHE_PROBES:
+        for repository, probe in DIG_RUNTIME_CACHE_PROBES.items():
             command = [
                 "uvx",
                 "hf==1.26.0",
@@ -2526,6 +2527,11 @@ def prepare_dig_pretrained(
                 "--cache-dir",
                 str(output / "hf"),
             ]
+            # Both converters construct the vision tokenizer before the
+            # original downloader runs. Its pinned HF lookup needs this file
+            # in the shared cache, not only the later wan2pt2 handoff directory.
+            if repository == "Wan-AI/Wan2.2-TI2V-5B":
+                command.insert(4, probe)
             _run_component(command, env=env)
         _dig_cache_manifest(output, run_id, initialize=True)
         # The pinned upstream converter's named models resolve revision=main.
