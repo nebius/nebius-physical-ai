@@ -1,0 +1,78 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: curobo-benchmark
+  description: >-
+    Run the complete pinned MotionBenchMaker and MPiNets benchmarks with NVIDIA
+    cuRobo V2, both kinematic and 3 kg dynamics configurations. Preserve failed
+    and excluded inputs, real trajectory/pose/timing/dynamics metrics, verified
+    S3 artifacts, and factual Rerun joint timelines and FK tool paths.
+config:
+  bucket: example-bucket
+  prefix: "runs/{{run.id}}/curobo"
+  recipe_uri: "s3://{{config.bucket}}/{{config.prefix}}/recipe.json"
+  results_uri: "s3://{{config.bucket}}/{{config.prefix}}/results/"
+  validation_uri: "s3://{{config.bucket}}/{{config.prefix}}/validation.json"
+  reports_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/"
+  curobo_input_uri: "{{config.recipe_uri}}"
+  curobo_output_uri: "{{config.results_uri}}"
+  curobo_mode: both
+resources:
+  gpu:
+    cloud: kubernetes
+    accelerators: B200:1
+    cpus: 8
+    memory: 32Gi
+  cpu:
+    cloud: kubernetes
+    cpus: 4
+    memory: 16Gi
+initial: prepare
+states:
+  prepare:
+    toolRef: workbench.curobo.prepare
+    resources: cpu
+    params:
+      curobo_output_uri: "{{config.recipe_uri}}"
+    outputs:
+      - uri: "{{config.recipe_uri}}"
+        schema: npa.curobo.benchmark.v1
+    next: benchmark
+  benchmark:
+    toolRef: workbench.curobo.benchmark
+    resources: gpu
+    inputs:
+      - uri: "{{config.recipe_uri}}"
+    outputs:
+      - uri: "{{config.results_uri}}result.json"
+        schema: npa.curobo.result.v1
+      - uri: "{{config.results_uri}}problems.jsonl"
+        schema: application/jsonl
+    next: validate
+  validate:
+    toolRef: workbench.curobo.validate
+    resources: cpu
+    params:
+      curobo_input_uri: "{{config.results_uri}}"
+      curobo_output_uri: "{{config.validation_uri}}"
+    inputs:
+      - uri: "{{config.results_uri}}result.json"
+      - uri: "{{config.results_uri}}problems.jsonl"
+    outputs:
+      - uri: "{{config.validation_uri}}"
+        schema: npa.curobo.validation.v1
+    next: visualize
+  visualize:
+    toolRef: workbench.curobo.visualize
+    resources: cpu
+    params:
+      curobo_input_uri: "{{config.results_uri}}"
+      curobo_output_uri: "{{config.reports_uri}}"
+    inputs:
+      - uri: "{{config.results_uri}}problems.jsonl"
+    outputs:
+      - uri: "{{config.reports_uri}}planning.rrd"
+        schema: application/vnd.rerun.rrd
+      - uri: "{{config.reports_uri}}rrd-manifest.json"
+        schema: application/json
+    terminal: true

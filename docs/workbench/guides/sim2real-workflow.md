@@ -1,7 +1,7 @@
 # Compositional Sim2Real operator runbook
 
 This is the onboarding source of truth for the canonical 14-stage workflow:
-[`sim2real.yaml`](../../../npa/workflows/workbench/npa-workflows/sim2real.yaml).
+[`sim2real.yaml`](../../../workflows/main/sim2real.yaml).
 Complete the gates in order. A production submit repeats the decisive S3,
 model-access, cluster-object, immutable-image, and image-pull checks before it
 creates a run or launches work.
@@ -14,11 +14,18 @@ request/accept access:
 
 - [`nvidia/Cosmos-Transfer2.5-2B`](https://huggingface.co/nvidia/Cosmos-Transfer2.5-2B)
 
-Stage 8's second evaluator is the hosted `nvidia/Cosmos3-Super-Reasoner` through
-Nebius Token Factory. Its model classification is OpenMDW-1.1; retain NVIDIA
-Cosmos origin and attribution notices when distributing model materials. NPA
-does not distribute or cache those hosted model weights and does not add a
-second EULA boolean.
+Stage 8 uses a single hosted `MiniMaxAI/MiniMax-M3` evaluator through Nebius
+Token Factory. Review the [MiniMax-M3 model license](https://huggingface.co/MiniMaxAI/MiniMax-M3/blob/main/LICENSE)
+and the terms applicable to your hosted use. NPA does not distribute or cache
+these weights. The [August 2026 notice](https://docs.tokenfactory.nebius.com/august-2026-deprecation-notice)
+announced removal of the former public Cosmos3 model on August 31.
+
+The `cosmos3_model` config key, lane name, artifact filename, and schema remain
+for compatibility. Results record the actual model and `reason_family`; MiniMax
+results are not attributed to NVIDIA Cosmos. An explicit Cosmos3 model remains
+usable with an authorized endpoint serving it. Start a new run when changing
+models or upgrading this evaluator contract; Stage 9 verifies model identity,
+family, request accounting, and exact Stage 7 rollout coverage before PPO.
 
 Isaac runtime warming and execution additionally require the operator to review
 the [NVIDIA Omniverse terms](https://docs.omniverse.nvidia.com/usd/latest/common/NVIDIA_Omniverse_License_Agreement.html),
@@ -42,7 +49,7 @@ npa/.venv/bin/npa workbench token-factory models
 ```
 
 Expected: one Sim2Real `HF access ok` line, the exact
-`nvidia/Cosmos3-Super-Reasoner` model ID, and zero exit statuses. A `401` means the
+`MiniMaxAI/MiniMax-M3` model ID, and zero exit statuses. A `401` means the
 token is invalid or did not reach the check; a `403` means the account has not
 accepted access or a fine-grained token omits that repository. See
 [Hugging Face setup](../huggingface-token.md). `NGC_API_KEY` is not required by
@@ -147,7 +154,7 @@ Choose the digest-pinned Isaac image now, then warm a shared RWX cache. The
 template is the authoritative PVC/security/bootstrap contract:
 
 ```bash
-export NPA_ISAAC_IMAGE='ghcr.io/nebius/nebius-physical-ai/npa-isaac-lab@sha256:0a64ffb940a62c639c00a160a21081e7c7200f1d1d740c655616e2c9a967b544'
+export NPA_ISAAC_IMAGE='ghcr.io/nebius/nebius-physical-ai/npa-isaac-lab@sha256:e321e8631c7e318b5012dad210d9cd1001b7dc833cbff0369e420c5c12657ab6'
 sed "s|image: ghcr.io/nebius/nebius-physical-ai/npa-isaac-lab@sha256:<64-hex-digest>|image: ${NPA_ISAAC_IMAGE}|" \
   npa/docker/workbench/common/warm-isaac-cache.yaml | kubectl apply -f -
 kubectl wait --for=condition=complete job/npa-warm-isaac-cache --timeout=-1s
@@ -181,16 +188,18 @@ Relevant build entrypoints are
 `npa/docker/workbench/isaac-lab/build.sh`. Follow
 [build and push](../container-packaging.md) when images are absent.
 
-Put the six references in shell variables, then reproduce the actual manifest
+The five image digests below are the accepted coherent release set, built from
+`c164fd3480f8a9ea8f9df9ccb9509502fd527996` and verified anonymously on
+2026-09-05. Put them in shell variables, then reproduce the actual manifest
 pulls with the same config used by submit:
 
 ```bash
-export CONTROLLER_IMAGE='ghcr.io/nebius/nebius-physical-ai/npa-sim2real-control@sha256:7ee326f49cf1a52fc1007dccbac02db7862246ab688bf5ec35ef14a727e33136'
-export TRANSFER_IMAGE='ghcr.io/nebius/nebius-physical-ai/npa-cosmos2-transfer@sha256:47bfe492b6d56f4141f5a6da8accbbdec7cdf2d9b02311c802e3b3b5b1ba5caf'
-export ENVGEN_IMAGE='ghcr.io/nebius/nebius-physical-ai/npa-envgen@sha256:33d49af4703c479a3be71cae6f0a4735ea6f63629b870b946c43929037304f72'
+export CONTROLLER_IMAGE='ghcr.io/nebius/nebius-physical-ai/npa-sim2real-control@sha256:87fe8530710eea43364a21ad76dbe4b4c2d60e4b49705824fcdb62dc7d185af7'
+export TRANSFER_IMAGE='ghcr.io/nebius/nebius-physical-ai/npa-cosmos2-transfer@sha256:0caddf68ccac1b69bd9fe3fb089bcc325a111059065452d31fdf0576629895d3'
+export ENVGEN_IMAGE='ghcr.io/nebius/nebius-physical-ai/npa-envgen@sha256:08eb75118f5a04194d33a60308212db7706dd9c339d74afc5471a58608bf0422'
 export ISAAC_IMAGE="${NPA_ISAAC_IMAGE}"
-export VIEWER_IMAGE='ghcr.io/nebius/nebius-physical-ai/npa-rerun-viewer@sha256:8fc0a76f3df441fd6662e3eb5d893c9996ea66e6c61fcc815de79576f12b8160'
-export SPEC=npa/workflows/workbench/npa-workflows/sim2real.yaml
+export VIEWER_IMAGE='ghcr.io/nebius/nebius-physical-ai/npa-rerun-viewer@sha256:4c09c9cf3c14606db8e45c8ee564388888cd3261448f7c3f1304bfdfb1b9e5b2'
+export SPEC=workflows/main/sim2real.yaml
 export SOURCE_SHA=c164fd3480f8a9ea8f9df9ccb9509502fd527996
 
 npa/.venv/bin/npa workbench workflow preflight-images "${SPEC}" \
@@ -399,6 +408,15 @@ inner_iterations=1` and deliberately chosen smaller scenario/PPO values. Do not
 change the strict 5 cm metric or sealed gold contract. Do not add arbitrary run
 deadlines; `--max-wait-seconds 0` keeps durable status in
 `s3://<bucket>/sim2real/<run-id>/npa-workflow/runtime.json`.
+
+Keep every evaluation request within its sealed split. Submit computes the same
+bounded, stratified train/validation/gold allocation as EnvGen and checks
+`rollout_count` against training rows, `validation_count` against validation
+rows, and `gold_count` against gold rows before GPU work. For 64 requested rows
+at each boundary, `env_count=640` and
+`train_fraction=0.8` produce 512 training, 64 validation, and 64 gold scenarios.
+Smaller profiles are valid only when all three requested counts fit their
+respective split.
 
 ## Resume and verify
 

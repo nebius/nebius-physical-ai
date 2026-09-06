@@ -136,7 +136,7 @@ ordering, shapes, units when supplied, normalization stats when not baked,
 opset, axis mode, and control dt when available.
 
 The matching workflow is the `npa.workflow` spec
-`npa/workflows/workbench/npa-workflows/sonic-export.yaml` (`metadata.name:
+`workflows/testing/sonic-export.yaml` (`metadata.name:
 sonic-export`). It passes `--checkpoint {{config.checkpoint_uri}}` and
 `--output {{config.onnx_uri}}` to the same CLI, and both accept `s3://` URIs
 directly. The exporter's remaining knobs (`--opset`, `--axes`, `--normalize`,
@@ -147,7 +147,7 @@ until the toolRef argv carries them.
 
 ## Export Then Eval
 
-`npa/workflows/workbench/npa-workflows/sonic-export-eval.yaml` chains export and
+`workflows/testing/sonic-export-eval.yaml` chains export and
 eval as two stages of one spec. Its `config` block carries `checkpoint_uri`,
 `onnx_uri`, `eval_uri`, `episodes` and `env`; override any of them at submit time
 with `--var key=value`.

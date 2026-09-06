@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 
 from npa.orchestration.npa_workflow import build_plan, load_spec
+from npa.orchestration.npa_workflow.blueprints import resolve_npa_workflow_spec
 
 
 def main() -> int:
@@ -17,12 +18,12 @@ def main() -> int:
     if len(source_sha) != 40 or any(ch not in "0123456789abcdef" for ch in source_sha):
         raise RuntimeError("NPA_IMAGE_SOURCE_SHA must be an exact lowercase 40-hex commit")
 
-    workflow = Path(
-        os.environ.get(
-            "NPA_SIM2REAL_WORKFLOW",
-            "/opt/npa/workflows/workbench/npa-workflows/sim2real.yaml",
-        )
+    override = os.environ.get("NPA_SIM2REAL_WORKFLOW", "")
+    workflow = (
+        Path(override) if override else resolve_npa_workflow_spec("sim2real.yaml")
     )
+    if workflow is None:
+        raise RuntimeError("The canonical sim2real.yaml is missing from the image catalog")
     spec = load_spec(workflow)
     plans = {
         decision: build_plan(

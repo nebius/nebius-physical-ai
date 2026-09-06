@@ -21,7 +21,7 @@ from npa.workbench.model_cache import (
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
-NPA_SPECS = REPO_ROOT / "npa" / "workflows" / "workbench" / "npa-workflows"
+NPA_SPECS = REPO_ROOT / "workflows" / "testing"
 
 OPTIONS = SkypilotRenderOptions(
     registry="registry.example", materialize_registry_secrets=False

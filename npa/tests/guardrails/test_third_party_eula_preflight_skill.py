@@ -95,6 +95,7 @@ def test_retired_manual_gate_surfaces_do_not_return() -> None:
         REPO_ROOT / "npa/src",
         REPO_ROOT / "npa/scripts",
         REPO_ROOT / "npa/workflows",
+        REPO_ROOT / "workflows",
     )
     retired = (
         "--accept-nvidia-eula",
@@ -121,7 +122,7 @@ def test_openpi_product_policy_keeps_its_scoped_runtime_gate() -> None:
     assert "before any accepted checkpoint" in text
     assert "Forward it only as a runtime secret" in text
 
-    workflow = REPO_ROOT / "npa/workflows/workbench/npa-workflows/byof-openpi.yaml"
+    workflow = REPO_ROOT / "workflows/testing/byof-openpi.yaml"
     assert "NPA_OPENPI_ACCEPT_GEMMA_TERMS" in workflow.read_text(encoding="utf-8")
 
 

@@ -157,6 +157,8 @@ jobs:
       DOCKERFILE: ${{ matrix.dockerfile }}
       DEVELOPMENT_SHA: ${{ needs.resolve.outputs.development_sha }}
       NPA_PUBLIC_REGISTRY: ${{ needs.resolve.outputs.target }}
+      # Updated only after independent review of the exact public content proofs.
+      CUROBO_PUBLIC_NATIVE_POLICY_SHA256: eb4054769344ad598a717095be35d5a22d5b62a6e575c9d25af05442e5ef1fee
     steps:
       - uses: actions/checkout@v6
         with:
@@ -164,7 +166,8 @@ jobs:
 
       - uses: actions/setup-python@v6
         with:
-          python-version: "3.11"
+          # cuRobo's additional byte scanner uses a verified CPython 3.12 wheel.
+          python-version: ${{ matrix.tool == 'curobo' && '3.12' || '3.11' }}
 
       - name: Install NPA validation environment
         run: |
@@ -198,6 +201,34 @@ jobs:
           tar -xzf gitleaks.tar.gz gitleaks
           sudo install -m 0755 gitleaks /usr/local/bin/gitleaks
           gitleaks detect --source . --config .gitleaks.toml --redact --no-banner --log-opts="origin/main..HEAD"
+
+      - name: Validate required cuRobo confidentiality policy before building
+        if: matrix.tool == 'curobo'
+        env:
+          CUSTOMER_DENYLIST: ${{ secrets.CUSTOMER_DENYLIST }}
+          INFRA_DENYLIST: ${{ secrets.INFRA_DENYLIST }}
+        run: |
+          npa/.venv/bin/python npa/scripts/image_byte_scan/prepare.py check-policy \
+            --policy-mode ci-regex
+
+      - name: Prepare and test the cuRobo complete-byte scanner
+        if: matrix.tool == 'curobo'
+        run: |
+          set -euo pipefail
+          umask 077
+          scan_root="$(mktemp -d "$RUNNER_TEMP/curobo-byte-gate.XXXXXXXX")"
+          echo "CUROBO_BYTE_GATE_ROOT=$scan_root" >> "$GITHUB_ENV"
+          npa/.venv/bin/python npa/scripts/image_byte_scan/go_helper/build.py \
+            --analysis-root "$scan_root" --trusted-root "$GITHUB_WORKSPACE" \
+            --output-dir "$scan_root/tools"
+          npa/.venv/bin/python npa/scripts/image_byte_scan/prepare.py dependencies \
+            --analysis-root "$scan_root" --trusted-root "$GITHUB_WORKSPACE" \
+            --output-dir "$scan_root/native"
+          npa/.venv/bin/python npa/scripts/image_byte_scan/real_helper_checks.py \
+            --analysis-root "$scan_root" --trusted-root "$GITHUB_WORKSPACE" \
+            --tools-receipt "$scan_root/tools/dependency-receipt.json" \
+            --native-receipt "$scan_root/native/dependencies.json" \
+            --output-dir "$scan_root/integration-checks"
 
       - name: Prove destination cannot expose unvalidated tagged bytes
         env:
@@ -259,21 +290,35 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Stage supported workflow catalog in the package build context
+        run: npa/.venv/bin/python npa/src/npa/workflow_build.py --stage-catalog --package-root npa
+
       # Build locally first. Every gate below inspects these exact bytes; no registry write
       # occurs until the final explicit docker push.
       - name: Build immutable development image locally
         run: |
+          set -euo pipefail
+          build_args=(--build-arg "NPA_SOURCE_SHA=$DEVELOPMENT_SHA")
+          if [[ "$TOOL" == curobo ]]; then
+            curobo_source_epoch="$(git show -s --format=%ct "$DEVELOPMENT_SHA")"
+            [[ "$curobo_source_epoch" =~ ^[1-9][0-9]*$ ]] || { echo "Positive source commit epoch is required" >&2; exit 1; }
+            build_args+=(--build-arg "SOURCE_DATE_EPOCH=$curobo_source_epoch")
+          fi
           docker buildx build \
             --load \
             --file "$DOCKERFILE" \
-            --build-arg "NPA_SOURCE_SHA=$DEVELOPMENT_SHA" \
+            "${build_args[@]}" \
             --label "org.opencontainers.image.revision=$DEVELOPMENT_SHA" \
             --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
             --tag "$IMAGE" \
             npa
 
       - name: Enforce runtime, revision, bootstrap, config, and history contracts
+        env:
+          CUSTOMER_DENYLIST: ${{ matrix.tool == 'curobo' && secrets.CUSTOMER_DENYLIST || '' }}
+          INFRA_DENYLIST: ${{ matrix.tool == 'curobo' && secrets.INFRA_DENYLIST || '' }}
         run: |
+          set -euo pipefail
           npa/.venv/bin/python - <<'PY'
           import json
           import os
@@ -310,6 +355,33 @@ jobs:
           npa/.venv/bin/python npa/scripts/scan_image_omniverse_payload.py \
             --tarball "$RUNNER_TEMP/${TOOL}.tar" \
             --json "$RUNNER_TEMP/${TOOL}-payload.json"
+          if [ "$TOOL" = curobo ]; then
+            npa/.venv/bin/python npa/docker/workbench/curobo/verify_image.py \
+              --docker-save "$RUNNER_TEMP/${TOOL}.tar" \
+              --expected-image-id "$(docker image inspect --format '{{.Id}}' "$IMAGE")" \
+              --json "$RUNNER_TEMP/${TOOL}-curobo-payload.json"
+            umask 077
+            phase="$CUROBO_BYTE_GATE_ROOT/pre"
+            mkdir -m 0700 "$phase"
+            mv "$RUNNER_TEMP/${TOOL}.tar" "$phase/image.tar"
+            mv "$RUNNER_TEMP/${TOOL}-curobo-payload.json" "$phase/graph.json"
+            chmod 0600 "$phase/image.tar" "$phase/graph.json"
+            expected_image_id="$(jq -er '.expected_image_id' "$phase/graph.json")"
+            npa/.venv/bin/python npa/scripts/image_byte_scan/prepare.py authorize \
+              --analysis-root "$CUROBO_BYTE_GATE_ROOT" --trusted-root "$GITHUB_WORKSPACE" \
+              --tools-receipt "$CUROBO_BYTE_GATE_ROOT/tools/dependency-receipt.json" \
+              --native-receipt "$CUROBO_BYTE_GATE_ROOT/native/dependencies.json" \
+              --archive "$phase/image.tar" --verification-report "$phase/graph.json" \
+              --expected-image-id "$expected_image_id" \
+              --output-dir "$phase/authorization" --policy-mode ci-regex
+            npa/.venv/bin/python npa/scripts/scan_image_bytes.py \
+              --analysis-root "$CUROBO_BYTE_GATE_ROOT" --trusted-root "$GITHUB_WORKSPACE" \
+              --authorization "$phase/authorization/authorization.json" \
+              --output-dir "$phase/scan" \
+              --public-native-policy "$GITHUB_WORKSPACE/npa/scripts/image_byte_scan/public_policies/curobo-v2.json" \
+              --public-native-policy-sha256 "$CUROBO_PUBLIC_NATIVE_POLICY_SHA256"
+            rm -f "$phase/image.tar"
+          fi
           if [ "$TOOL" = ltx2 ]; then
             npa/.venv/bin/python npa/scripts/scan_image_ltx_payload.py \
               --docker-save "$RUNNER_TEMP/${TOOL}.tar" \
@@ -436,6 +508,8 @@ jobs:
         env:
           DIGEST: ${{ steps.push.outputs.digest }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CUSTOMER_DENYLIST: ${{ matrix.tool == 'curobo' && secrets.CUSTOMER_DENYLIST || '' }}
+          INFRA_DENYLIST: ${{ matrix.tool == 'curobo' && secrets.INFRA_DENYLIST || '' }}
         run: |
           set -euo pipefail
           repository="${IMAGE%:*}"
@@ -470,6 +544,33 @@ jobs:
             payload_attempt=$((payload_attempt + 1))
             sleep 5
           done
+          if [ "$TOOL" = curobo ]; then
+            npa/.venv/bin/python npa/docker/workbench/curobo/verify_image.py \
+              --docker-save "$RUNNER_TEMP/${TOOL}-pushed.tar" \
+              --expected-image-id "$(docker image inspect --format '{{.Id}}' "$exact")" \
+              --json "$RUNNER_TEMP/${TOOL}-pushed-curobo-payload.json"
+            umask 077
+            phase="$CUROBO_BYTE_GATE_ROOT/post"
+            mkdir -m 0700 "$phase"
+            mv "$RUNNER_TEMP/${TOOL}-pushed.tar" "$phase/image.tar"
+            mv "$RUNNER_TEMP/${TOOL}-pushed-curobo-payload.json" "$phase/graph.json"
+            chmod 0600 "$phase/image.tar" "$phase/graph.json"
+            expected_image_id="$(jq -er '.expected_image_id' "$phase/graph.json")"
+            npa/.venv/bin/python npa/scripts/image_byte_scan/prepare.py authorize \
+              --analysis-root "$CUROBO_BYTE_GATE_ROOT" --trusted-root "$GITHUB_WORKSPACE" \
+              --tools-receipt "$CUROBO_BYTE_GATE_ROOT/tools/dependency-receipt.json" \
+              --native-receipt "$CUROBO_BYTE_GATE_ROOT/native/dependencies.json" \
+              --archive "$phase/image.tar" --verification-report "$phase/graph.json" \
+              --expected-image-id "$expected_image_id" \
+              --output-dir "$phase/authorization" --policy-mode ci-regex
+            npa/.venv/bin/python npa/scripts/scan_image_bytes.py \
+              --analysis-root "$CUROBO_BYTE_GATE_ROOT" --trusted-root "$GITHUB_WORKSPACE" \
+              --authorization "$phase/authorization/authorization.json" \
+              --output-dir "$phase/scan" \
+              --public-native-policy "$GITHUB_WORKSPACE/npa/scripts/image_byte_scan/public_policies/curobo-v2.json" \
+              --public-native-policy-sha256 "$CUROBO_PUBLIC_NATIVE_POLICY_SHA256"
+            rm -f "$phase/image.tar"
+          fi
           if [ "$TOOL" = ltx2 ]; then
             npa/.venv/bin/python npa/scripts/scan_image_ltx_payload.py \
               --docker-save "$RUNNER_TEMP/${TOOL}-pushed.tar" \

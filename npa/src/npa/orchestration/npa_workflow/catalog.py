@@ -49,6 +49,7 @@ class ToolEntry:
 # even though no shipped reference spec consumes them today. Everything else in
 # TOOL_CATALOG must be reachable from at least one shipped spec.
 PUBLIC_REUSABLE_TOOLREFS: dict[str, str] = {
+    "workbench.curobo.plan": "Operator-provided Franka start/goal/scene manifests; benchmark workflow exercises the shared planner and artifact path.",
     "infra.fleet.deploy": "public npa.fleet deployment primitive",
     "infra.soperator.deploy": "public npa.soperator deployment primitive",
     "workbench.cosmos2.transfer": "public Cosmos Transfer composition primitive",
@@ -383,6 +384,55 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "--run-id", "{{run.id}}",
         ],
     ),
+    "workbench.curobo.prepare": ToolEntry(
+        name="workbench.curobo.prepare",
+        description="cuRobo V2 prepare with verified artifact handoffs.",
+        argv_template=[
+            "npa", "workbench", "curobo", "prepare",
+            "--output-path", "{{config.curobo_output_uri}}",
+            "--mode", "{{config.curobo_mode}}",
+        ],
+    ),
+    "workbench.curobo.benchmark": ToolEntry(
+        name="workbench.curobo.benchmark",
+        description="cuRobo V2 benchmark with verified artifact handoffs.",
+        argv_template=[
+            "npa", "workbench", "curobo", "benchmark",
+            "--input-path", "{{config.curobo_input_uri}}",
+            "--output-path", "{{config.curobo_output_uri}}",
+            "--run-id", "{{run.id}}",
+        ],
+    ),
+    "workbench.curobo.plan": ToolEntry(
+        name="workbench.curobo.plan",
+        description="cuRobo V2 plan with verified artifact handoffs.",
+        argv_template=[
+            "npa", "workbench", "curobo", "plan",
+            "--input-path", "{{config.curobo_input_uri}}",
+            "--output-path", "{{config.curobo_output_uri}}",
+            "--run-id", "{{run.id}}",
+        ],
+    ),
+    "workbench.curobo.validate": ToolEntry(
+        name="workbench.curobo.validate",
+        description="cuRobo V2 validate with verified artifact handoffs.",
+        argv_template=[
+            "npa", "workbench", "curobo", "validate",
+            "--input-path", "{{config.curobo_input_uri}}",
+            "--output-path", "{{config.curobo_output_uri}}",
+            "--run-id", "{{run.id}}",
+        ],
+    ),
+    "workbench.curobo.visualize": ToolEntry(
+        name="workbench.curobo.visualize",
+        description="cuRobo V2 visualize with verified artifact handoffs.",
+        argv_template=[
+            "npa", "workbench", "curobo", "visualize",
+            "--input-path", "{{config.curobo_input_uri}}",
+            "--output-path", "{{config.curobo_output_uri}}",
+            "--run-id", "{{run.id}}",
+        ],
+    ),
     "workbench.alpamayo2_super.infer": ToolEntry(
         name="workbench.alpamayo2_super.infer",
         description=(
@@ -705,11 +755,15 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
     "workbench.vlm_eval.run": ToolEntry(
         name="workbench.vlm_eval.run",
         description="Score rollout directories with the VLM eval workbench tool.",
+        config_defaults={"vlm_model": ""},
+        omit_flags_when_empty=("--model",),
         argv_template=[
             "npa",
             "workbench",
             "vlm-eval",
             "run",
+            "--model",
+            "{{config.vlm_model}}",
             "--input-path",
             "{{config.rollouts_uri}}",
             "--output-path",
@@ -723,11 +777,15 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
         description=(
             "Score a rollout against the plan an earlier reasoning stage produced."
         ),
+        config_defaults={"vlm_model": ""},
+        omit_flags_when_empty=("--model",),
         argv_template=[
             "npa",
             "workbench",
             "vlm-eval",
             "run",
+            "--model",
+            "{{config.vlm_model}}",
             "--input-path",
             "{{config.rollouts_uri}}",
             "--output-path",
@@ -753,11 +811,15 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
         description=(
             "Score every rollout under a prefix and write an aggregate task-success report."
         ),
+        config_defaults={"vlm_model": ""},
+        omit_flags_when_empty=("--model",),
         argv_template=[
             "npa",
             "workbench",
             "vlm-eval",
             "loop",
+            "--model",
+            "{{config.vlm_model}}",
             "--input-path",
             "{{config.rollouts_uri}}",
             "--output-path",
@@ -776,12 +838,16 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
     ),
     "workbench.token_factory.reason": ToolEntry(
         name="workbench.token_factory.reason",
-        description="Run Cosmos reasoner over scene inputs.",
+        description="Run the selected hosted reasoner over scene inputs.",
+        config_defaults={"reason_model": ""},
+        omit_flags_when_empty=("--model",),
         argv_template=[
             "npa",
             "workbench",
             "token-factory",
             "reason",
+            "--model",
+            "{{config.reason_model}}",
             "--input-path",
             "{{config.scene_uri}}",
             "--output-path",

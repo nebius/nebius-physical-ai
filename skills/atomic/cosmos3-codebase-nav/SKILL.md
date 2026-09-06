@@ -31,11 +31,11 @@ Primary NPA files:
 | Containerized runtime (framework pinned, no weights baked) | `npa/docker/workbench/cosmos3/Dockerfile` |
 | Build-time proof the generate deps resolve for every mode | `npa/docker/workbench/cosmos3/verify_env.py` |
 | Generate CLI / SDK | `npa/src/npa/cli/workbench/cosmos3.py`, `npa/src/npa/sdk/workbench/cosmos3.py` |
-| Generate workflow | `npa/workflows/workbench/npa-workflows/cosmos3-generate.yaml` |
+| Generate workflow | `workflows/testing/cosmos3-generate.yaml` |
 | Human CLI commands for real workflows | `npa/src/npa/cli/cosmos/__init__.py` |
 | SDK compatibility exports | `npa/src/npa/workbench/cosmos/__init__.py`, `npa/src/npa/sdk/workbench/cosmos.py` |
-| Fetch workflow | `npa/workflows/workbench/npa-workflows/cosmos-fetch.yaml` |
-| Text-to-image H100 smoke workflow | `npa/workflows/workbench/npa-workflows/cosmos3-text-to-image.yaml` |
+| Fetch workflow | `workflows/testing/cosmos-fetch.yaml` |
+| Text-to-image H100 smoke workflow | `workflows/testing/cosmos3-text-to-image.yaml` |
 | Unit tests for access, fetch, inference YAML, and skill artifacts | `npa/tests/workbench/test_cosmos3_access.py` |
 | CLI tests for `check` and `fetch` | `npa/tests/cli/test_cosmos3_cli.py` |
 
@@ -55,9 +55,9 @@ coding agents to read.
 
 The retained Cosmos3 workflow YAMLs are real executable specs:
 
-- `npa-workflows/cosmos-fetch.yaml`
-- `npa-workflows/cosmos3-generate.yaml`
-- `npa-workflows/cosmos3-text-to-image.yaml`
+- `workflows/testing/cosmos-fetch.yaml`
+- `workflows/testing/cosmos3-generate.yaml`
+- `workflows/testing/cosmos3-text-to-image.yaml`
 
 Do not restore `cosmos3-setup.yaml`, `cosmos3-codebase-nav.yaml`,
 `cosmos3-env-troubleshoot.yaml`, `cosmos3-post-training.yaml`, or retired raw

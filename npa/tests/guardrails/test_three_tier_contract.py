@@ -30,7 +30,7 @@ from npa.guardrails.three_tier import (
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-SPECS = Path("npa/workflows/workbench/npa-workflows")
+SPECS = Path("workflows/testing")
 SIM2REAL_DEMO = Path("npa/tests/fixtures/npa-workflows/sim2real-vlm-rl-demo.yaml")
 
 
@@ -129,7 +129,6 @@ SPEC_GAP_REASONS: dict[str, dict[str, str]] = {
     },
     "vlm-eval/run": {
         "task": "knob",
-        "model": "knob",
         "endpoint_url": "knob",
         "frame_selection": "knob",
         "max_frames": "knob",
@@ -154,6 +153,20 @@ VALID_GAP_CATEGORIES = frozenset({"boolean", "infra", "knob"})
 
 
 CONTRACTS: tuple[CapabilityContract, ...] = (
+    CapabilityContract(
+        name="curobo/benchmark",
+        cli_module="npa.cli.workbench.curobo",
+        cli_callback="benchmark_cmd",
+        sdk_module="npa.sdk.workbench.curobo",
+        sdk_attr="benchmark",
+        spec_path=SPECS / "curobo-benchmark.yaml",
+        tool_ref="workbench.curobo.benchmark",
+        params=(
+            _p("input_path", "input_path", "--input-path"),
+            _p("output_path", "output_path", "--output-path"),
+            _p("run_id", "run_id", "--run-id"),
+        ),
+    ),
     CapabilityContract(
         name="alpamayo2-super/infer",
         cli_module="npa.cli.workbench.alpamayo2_super",
@@ -289,7 +302,6 @@ CONTRACTS: tuple[CapabilityContract, ...] = (
         tool_ref="workbench.vlm_eval.run",
         spec_gap=(
             "task",
-            "model",
             "endpoint_url",
             "frame_selection",
             "max_frames",

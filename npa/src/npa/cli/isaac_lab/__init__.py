@@ -1395,6 +1395,11 @@ try:
         target = torch.tensor(camera_target, device=origins.device).unsqueeze(0) + origins
         camera.set_world_poses_from_view(eyes=eye, targets=target)
     env = render_env
+    # One trajectory row is captured per policy/control step, not physics step.
+    step_dt = float(render_env.unwrapped.step_dt)
+    if not math.isfinite(step_dt) or step_dt <= 0:
+        raise RuntimeError("Isaac control timestep must be finite and positive")
+    trajectory_fps = 1.0 / step_dt
 
     policy = None
     policy_loaded = False
@@ -1605,7 +1610,7 @@ try:
         "policy_loaded": policy_loaded,
         "runtime_version": metadata.version("isaaclab"),
         "checkpoint_sha256": hashlib.sha256(checkpoint_path.read_bytes()).hexdigest(),
-        "fps": 50,
+        "fps": trajectory_fps,
         "state_names": state_names,
         "action_names": action_names,
         "source_joint_names": joint_names,

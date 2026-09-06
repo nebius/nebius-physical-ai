@@ -256,9 +256,7 @@ def test_direct_translation_rejects_unsafe_overrides_before_render(
     from npa.orchestration.npa_workflow.submit import merge_config_overrides
 
     repo_root = Path(__file__).resolve().parents[3]
-    workflow = (
-        repo_root / "npa" / "workflows" / "workbench" / "npa-workflows" / filename
-    )
+    workflow = repo_root / "workflows" / "testing" / filename
     with pytest.raises(NpaWorkflowError, match=match):
         merge_config_overrides(load_spec(workflow), overrides)
 
@@ -289,10 +287,9 @@ def test_shipped_workflows_record_upstream_before_processing(
     filename: str, variant: str, successor: str
 ) -> None:
     repo_root = Path(__file__).resolve().parents[3]
+    tier = "main" if filename == "paidf-cosmos3.yaml" else "testing"
     workflow = yaml.safe_load(
-        (
-            repo_root / "npa" / "workflows" / "workbench" / "npa-workflows" / filename
-        ).read_text(encoding="utf-8")
+        (repo_root / "workflows" / tier / filename).read_text(encoding="utf-8")
     )
 
     assert workflow["initial"] == "record-upstream"
@@ -327,7 +324,7 @@ def test_native_iaa_preserves_postprocess_and_attribute_search_boundaries() -> N
     workflow = yaml.safe_load(
         (
             repo_root
-            / "npa/workflows/workbench/npa-workflows/paidf-image-attribute-augmentation.yaml"
+            / "workflows/testing/paidf-image-attribute-augmentation.yaml"
         ).read_text(encoding="utf-8")
     )
 
@@ -359,7 +356,7 @@ def test_native_evg_preserves_published_sequential_labeling_chain() -> None:
     workflow = yaml.safe_load(
         (
             repo_root
-            / "npa/workflows/workbench/npa-workflows/paidf-event-video-generation.yaml"
+            / "workflows/testing/paidf-event-video-generation.yaml"
         ).read_text(encoding="utf-8")
     )
 

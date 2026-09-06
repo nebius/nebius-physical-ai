@@ -1,0 +1,20 @@
+{
+  "schema_version": "npa.image-byte-scanner-dependency-pins.v1",
+  "use": "Scanning host only; never include downloaded wheels, native extensions or helper binaries in image contexts.",
+  "python": "CPython 3.12, Linux x86_64",
+  "pyahocorasick": {
+    "version": "2.3.1",
+    "wheel_url": "https://files.pythonhosted.org/packages/a1/f2/d13807476195e4ec5999a78f22db592a64da54229c9183438f3165105779/pyahocorasick-2.3.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl",
+    "wheel_sha256": "9ec1d3465f25a5063c7eaa85ecb106cbe256064669c754e0b13b2483cf613a98",
+    "native_sha256": "6c44b1b03f94319834b9294d9720053071ce3ecfab584f3c479407d77249680c",
+    "license": "BSD-3-Clause",
+    "license_sha256": "2a7f4000fcb22199112e682ae44400f8836b9ff2500c46a8bed7d0edc93b2185",
+    "license_file": "LICENSE-pyahocorasick",
+    "source": "https://github.com/WojciechMula/pyahocorasick/tree/2.3.1"
+  },
+  "gitleaks": {
+    "version": "8.28.0",
+    "runtime": "go_helper/go.mod and go_helper/go.sum",
+    "source": "https://github.com/gitleaks/gitleaks/tree/v8.28.0"
+  }
+}

@@ -1703,8 +1703,8 @@ def test_dig_inference_toolref_consumes_the_finetune_result_without_step_overrid
     assert "--checkpoint-step" not in argv
     workflow = yaml.safe_load(
         (
-            Path(__file__).resolve().parents[2]
-            / "workflows/workbench/npa-workflows/paidf-defect-image-generation.yaml"
+            Path(__file__).resolve().parents[3]
+            / "workflows/testing/paidf-defect-image-generation.yaml"
         ).read_text(encoding="utf-8")
     )
     assert "finetune_result_uri" in workflow["config"]

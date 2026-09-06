@@ -51,7 +51,7 @@ not add one-off top-level CLI commands. Before any GPU or image work, validate
 the exact spec and run its workflow-specific access checks:
 
 ```bash
-npa workbench workflow validate-spec npa/workflows/workbench/npa-workflows/paidf-defect-image-generation.yaml --json
+npa workbench workflow validate-spec workflows/testing/paidf-defect-image-generation.yaml --json
 npa workbench health access --capability paidf-dig
 npa workbench health access --capability paidf-iaa
 npa workbench health access --capability paidf-evg
@@ -334,9 +334,9 @@ where NPA substitutes its own endpoint.
 
 **Model roles** (verify against the current key-scoped Token Factory catalog):
 
-- VLM captioning, evaluator attribute answering, and Cosmos-family reasoning:
-  `nvidia/Cosmos3-Super-Reasoner`
-- Prompt / MCQ LLM: `meta-llama/Llama-3.3-70B-Instruct`
+- VLM captioning + the evaluator's attribute answering: `MiniMaxAI/MiniMax-M3`
+- Hosted reasoning critic: `MiniMaxAI/MiniMax-M3`
+- Prompt / MCQ LLM: `nvidia/Nemotron-3_5-Lightning`
 
 Model availability can change independently of the workflow. Run
 `npa workbench token-factory models` immediately before execution and override
@@ -658,7 +658,7 @@ models` reports which of the two is visible along with what is already on disk.
 ## Validate / plan / render
 
 ```bash
-SPEC=npa/workflows/workbench/npa-workflows/physical-ai-data-factory.yaml
+SPEC=workflows/testing/physical-ai-data-factory.yaml
 npa workbench workflow validate-spec "$SPEC" --json
 # --var bucket= is what ties the plan to your storage; without it the spec's
 # `example-bucket` placeholder is planned (plan-spec warns when that happens).
@@ -674,7 +674,7 @@ NPA_SRC_S3_URI=s3://<your-bucket>/npa-src/npa/ \
 ## Submit (real run)
 
 ```bash
-SPEC=npa/workflows/workbench/npa-workflows/physical-ai-data-factory.yaml
+SPEC=workflows/testing/physical-ai-data-factory.yaml
 npa workbench health access --capability paidf
 npa workbench workflow preflight-images "$SPEC" \
   --project <alias> --registry <registry>

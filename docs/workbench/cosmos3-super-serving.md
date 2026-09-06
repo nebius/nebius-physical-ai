@@ -10,9 +10,9 @@ an OpenAI-compatible endpoint against resident weights, on one 8-GPU node.
 
 For the fixed public B200 or H200 topology benchmark, use the corresponding
 production workflow:
-[`cosmos3-super-b200-benchmark.yaml`](../../npa/workflows/workbench/npa-workflows/cosmos3-super-b200-benchmark.yaml)
+[`cosmos3-super-b200-benchmark.yaml`](../../workflows/testing/cosmos3-super-b200-benchmark.yaml)
 or
-[`cosmos3-super-h200-benchmark.yaml`](../../npa/workflows/workbench/npa-workflows/cosmos3-super-h200-benchmark.yaml).
+[`cosmos3-super-h200-benchmark.yaml`](../../workflows/testing/cosmos3-super-h200-benchmark.yaml).
 That recipe intentionally runs the upstream `vllm/vllm-omni:cosmos3` image at
 its recorded digest, rather than this NPA bootstrap image, so a new measurement
 preserves the public benchmark's software boundary.
@@ -25,7 +25,7 @@ the exact upstream digest and adds only the reviewed worker-bootstrap packages.
 It is intentionally excluded from the public image catalog.
 
 For a one-H200 runtime/plumbing proof, use
-[`cosmos3-super-h200-single-gpu.yaml`](../../npa/workflows/workbench/npa-workflows/cosmos3-super-h200-single-gpu.yaml).
+[`cosmos3-super-h200-single-gpu.yaml`](../../workflows/testing/cosmos3-super-h200-single-gpu.yaml).
 It keeps the same immutable model, image, prompt, workload, timeout, and strict
 MP4 gates, but runs one TP-1 service with one warmup and 24 sequential measured
 requests. Its output reports video-seconds per GPU-hour and per service-hour; it
@@ -336,10 +336,10 @@ specific Cosmos3 serving entitlement:
 npa workbench health preflight --checks hf,s3 --json
 npa workbench health access --capability cosmos3-serving --json
 npa workbench workflow validate-spec \
-  npa/workflows/workbench/npa-workflows/cosmos3-super-b200-benchmark.yaml
+  workflows/testing/cosmos3-super-b200-benchmark.yaml
 # Or validate the H200 recipe:
 npa workbench workflow validate-spec \
-  npa/workflows/workbench/npa-workflows/cosmos3-super-h200-benchmark.yaml
+  workflows/testing/cosmos3-super-h200-benchmark.yaml
 ```
 
 After reviewing the runtime terms, submit with the run-scoped exact value

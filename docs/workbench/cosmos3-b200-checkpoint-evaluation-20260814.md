@@ -193,12 +193,12 @@ campaign config and runtime credentials:
 
 ```bash
 npa workbench workflow validate-spec \
-  npa/workflows/workbench/npa-workflows/cosmos3-checkpoint-eval.yaml
+  workflows/testing/cosmos3-checkpoint-eval.yaml
 npa workbench workflow plan-spec \
-  npa/workflows/workbench/npa-workflows/cosmos3-checkpoint-eval.yaml \
+  workflows/testing/cosmos3-checkpoint-eval.yaml \
   --run-id <run-id>
 npa workbench workflow submit \
-  npa/workflows/workbench/npa-workflows/cosmos3-checkpoint-eval.yaml \
+  workflows/testing/cosmos3-checkpoint-eval.yaml \
   --image "${NPA_COSMOS3_DIGEST_REF}" \
   --var "source_sha=${NPA_SOURCE_SHA}" \
   --var "campaign_config_uri=${NPA_CAMPAIGN_CONFIG_URI}" \
@@ -215,7 +215,7 @@ campaign config's `runtime_image_digest` must match the selected canonical image
 stage that config and all exact infrastructure values outside the repository.
 
 The workflow is
-[`cosmos3-checkpoint-eval.yaml`](../../npa/workflows/workbench/npa-workflows/cosmos3-checkpoint-eval.yaml).
+[`cosmos3-checkpoint-eval.yaml`](../../workflows/testing/cosmos3-checkpoint-eval.yaml).
 Use `eval_phase=primary` first. Select the top two checkpoints from the blind
 primary review, then use `eval_phase=consistency` with both top-checkpoint
 fields. The evaluator rejects a consistency run that repeats the primary seed.

@@ -13,11 +13,8 @@ from npa.workbench.model_access import GatedAsset, HF, NGC
 
 RUNNER = CliRunner()
 SPEC = (
-    Path(__file__).resolve().parents[2]
-    / "workflows"
-    / "workbench"
-    / "npa-workflows"
-    / "nurec-reconstruct.yaml"
+    Path(__file__).resolve().parents[3]
+    / "workflows" / "testing" / "nurec-reconstruct.yaml"
 )
 
 

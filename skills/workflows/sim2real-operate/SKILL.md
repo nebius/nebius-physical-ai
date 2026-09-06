@@ -7,7 +7,7 @@ description: Operate the compositional 14-stage Sim2Real npa.workflow on Kuberne
 
 Use the one canonical spec:
 
-`npa/workflows/workbench/npa-workflows/sim2real.yaml`
+`workflows/main/sim2real.yaml`
 
 It is `npa.workflow/v0.0.1`. Always use `npa workbench workflow ... --runtime`;
 there is no direct-Kubernetes Sim2Real submit path. The old materializer and

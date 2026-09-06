@@ -213,7 +213,7 @@ def test_paidf_gpu_agnostic_video_clients_still_require_scheduled_cuvid(
     entry = next(item for item in entries if item["name"] == name)
     proof = manifest["validation_evidence"][name]
     workflow = yaml.safe_load(
-        (ROOT / "npa/workflows/workbench/npa-workflows/paidf-event-video-generation.yaml")
+        (ROOT / "workflows/testing/paidf-event-video-generation.yaml")
         .read_text()
     )
 

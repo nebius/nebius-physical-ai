@@ -161,7 +161,7 @@ The independent `paidf-cosmos3.yaml` variant is documented at
 Cosmos 3 `video2video` generation and does not replace or silently change this
 skill's Cosmos Transfer 2.5 blueprint.
 
-`npa/workflows/workbench/npa-workflows/physical-ai-data-factory.yaml` — one
+`workflows/testing/physical-ai-data-factory.yaml` — one
 `npa.workflow/v0.0.1` spec. Blueprint → NPA stage mapping:
 
 | NVIDIA stage | NPA state | Tool (all REAL — no stubs) | Runtime |
@@ -456,16 +456,15 @@ submits. All three Cosmos images install
 covers the entrypoint contract: a bare `ENTRYPOINT ["/bin/bash"]` swallows the args
 Kubernetes passes, so an entrypoint must exec its arguments.
 
-Token Factory model roles: `nvidia/Cosmos3-Super-Reasoner` (multimodal VLM and
-Cosmos-family critic) and `meta-llama/Llama-3.3-70B-Instruct` (LLM). Availability
-is key-scoped and can change; query `npa workbench token-factory models`
-immediately before execution and override `caption_model` when necessary. Cosmos
-Transfer 2.5 is the GPU augment engine, not a Token Factory model.
+Verified Token Factory model roles: `MiniMaxAI/MiniMax-M3` (VLM),
+`nvidia/Nemotron-3_5-Lightning` (LLM), `MiniMaxAI/MiniMax-M3`
+(hosted reasoning critic). Cosmos Transfer 2.5 is the GPU augment engine, not a
+Token Factory model.
 
 ## Commands
 
 ```bash
-SPEC=npa/workflows/workbench/npa-workflows/physical-ai-data-factory.yaml
+SPEC=workflows/testing/physical-ai-data-factory.yaml
 npa workbench workflow validate-spec "$SPEC" --json
 # --var bucket= is required for a meaningful plan; without it the spec's
 # `example-bucket` placeholder is planned (plan-spec warns). The shipped

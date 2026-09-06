@@ -1,0 +1,25 @@
+# Tool-specific development cluster, not an alternative NPA workflow catalog.
+# SkyPilot owns infrastructure; application source is submitted later by Ray Jobs.
+name: clip-development
+resources:
+  cloud: kubernetes
+  accelerators: RTXPRO-6000-BLACKWELL-SERVER-EDITION:1
+  cpus: 12
+  memory: 48+
+  image_id: docker:docker.io/pytorch/pytorch@sha256:72f863fa1fe13d5d87a72d00db2c85fb2d43409ee08dd26bc469de4c8a28b427
+  use_spot: false
+num_nodes: 1
+config:
+  kubernetes:
+    networking: portforward
+    pod_config:
+      spec:
+        serviceAccountName: default
+        automountServiceAccountToken: false
+file_mounts:
+  /tmp/ray-clip-bootstrap: ./cluster
+setup: |
+  set -euo pipefail
+  /usr/bin/python3.12 /tmp/ray-clip-bootstrap/prepare.py
+run: |
+  bash /tmp/ray-clip-bootstrap/start.sh

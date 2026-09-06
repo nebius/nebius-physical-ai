@@ -108,6 +108,37 @@ def test_sim2real_access_includes_cosmos_transfer_runtime_dependencies() -> None
     assert guardrail.gated and tokenizer.gated
 
 
+@pytest.mark.parametrize(
+    "denied_repo", ["nvidia/Cosmos-Guardrail1", "nvidia/Cosmos-Predict2.5-2B"]
+)
+def test_cosmos2_access_checks_auxiliary_runtime_dependencies(denied_repo: str) -> None:
+    observed = {}
+
+    def validate(_token, repo, _repo_type, revision, probe_path):
+        observed[repo] = (revision, probe_path)
+        return _HFResult(
+            ok=repo != denied_repo, status_code=403 if repo == denied_repo else 200
+        )
+
+    results = check_workbench_access(
+        hf_token="synthetic-token",
+        ngc_key="",
+        hf_validator=validate,
+        capabilities=["cosmos2"],
+        gated_only=True,
+    )
+
+    assert observed["nvidia/Cosmos-Guardrail1"] == (
+        "d6d4bfa899a71454a700907664f3e88f503950cf",
+        "video_content_safety_filter/safety_filter.pt",
+    )
+    assert observed["nvidia/Cosmos-Predict2.5-2B"] == (
+        "85f8ae7bfe8f5525c8d103429524dcf12f98bf7b",
+        "tokenizer.pth",
+    )
+    assert {result.name for result in results if result.status == FAIL} == {denied_repo}
+
+
 def test_hf_gated_warns_without_token() -> None:
     result = check_hf_asset(_gated_asset(), "", hf_validator=None)
     assert result.status == WARN

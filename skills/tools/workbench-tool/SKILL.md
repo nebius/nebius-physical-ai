@@ -34,7 +34,11 @@ Workbench services should expose these standard surfaces unless a tool-specific 
 
 ## Deployment
 
-Always pass `--storage-endpoint storage.eu-north1.nebius.cloud` when deploying or configuring workbench tools. The CLI default `storage.uk-south1.nebius.cloud` is wrong for the primary cluster.
+Resolve the endpoint for the operator's explicitly selected artifact bucket
+through the supported private configuration. Pass that verified endpoint when
+deploying or configuring a tool; do not inherit another cluster's regional
+endpoint. Prove the selected bucket and credentials together with
+`health-preflight` before provisioning or submitting.
 
 Kubernetes namespace split:
 

@@ -32,7 +32,7 @@ gate has not been accepted for that credential.
 
 ## Run the workflow
 
-Copy `npa/workflows/workbench/npa-workflows/alpamayo2-super-inference.yaml`, set
+Copy `workflows/testing/alpamayo2-super-inference.yaml`, set
 the operator-owned bucket/prefix and approved image reference required by the
 deployment, then validate and plan before submission:
 

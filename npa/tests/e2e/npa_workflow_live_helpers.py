@@ -25,7 +25,7 @@ from npa.orchestration.npa_workflow.submit_matrix import (
 
 SONIC_MOTION_FIXTURE_PREFIX = "npa-workflow-e2e/fixtures/sonic-motion-soma-g1/"
 REPO_ROOT = Path(__file__).resolve().parents[3]
-SPECS_DIR = REPO_ROOT / "npa" / "workflows" / "workbench" / "npa-workflows"
+SPECS_DIR = REPO_ROOT / "workflows"
 # CC0 photograph by Lav Varshney; see skills/NOTICE-PAIDF-STARTER-MEDIA.
 _PAIDF_CAMERA_REVISION = "e8a42ba85aaf5fd9322ef9ca51bc21063b22fcae"
 _PAIDF_CAMERA_URL = (

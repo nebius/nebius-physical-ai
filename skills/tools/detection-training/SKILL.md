@@ -12,7 +12,7 @@ objects, or riders, then train and evaluate only on that slice.
 
 Upstream is `skills/tools/lancedb/SKILL.md` — create the view with
 `npa workbench lancedb create-mv` / `refresh-mv` before anything here. The end-to-end
-pipeline is `npa/workflows/workbench/npa-workflows/bdd100k-pipeline.yaml`, with a
+pipeline is `workflows/testing/bdd100k-pipeline.yaml`, with a
 walkthrough in `docs/workbench/cookbooks/bdd100k-pipeline.md`.
 
 ## Two execution modes

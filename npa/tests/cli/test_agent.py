@@ -2127,7 +2127,7 @@ def test_bootstrap_embeds_franka_rerun_ux() -> None:
     assert "allowfullscreen" in source
     assert "RERUN_RECORDING_PATH" in source
     assert "location.origin + RERUN_RECORDING_PATH" in source
-    assert "rrdUrl = await resolveRerunRecordingUrl();" in source
+    assert "rrdUrl = await resolveRerunRecordingUrl(isCurrent);" in source
     assert "rrdUrl.startsWith" in source
     assert "location.origin + rrdUrl" in source
     assert "_rerun_iframe_url" in source
@@ -2199,7 +2199,7 @@ def test_bootstrap_embeds_franka_rerun_ux() -> None:
     assert "_AGENT_RRD_PROXY_EMBED" in source
     assert "_STATE_LOCK" in source
     assert "Process-wide lock" in source
-    assert "rrdUrl = await resolveRerunRecordingUrl();" in source
+    assert "rrdUrl = await resolveRerunRecordingUrl(isCurrent);" in source
     assert "?run_id=" in source
     assert '"/api/sim-viz/status?run_id="' in source
     # Media preview uses authenticated blob URLs; Rerun still avoids parent blob URLs for wasm.
@@ -2441,6 +2441,9 @@ def test_artifact_inventory_autopaginates_before_global_preference_and_selection
     ) in block
     assert "has_recording: inventoryComplete ? hasRecording : null" in block
     assert "no_recording: inventoryComplete && !hasRecording" in block
+    assert "seededPage = cachedInventory" in block
+    assert "context.reuseInventory || context.completeInventory" in block
+    assert "inventory_page_count: paginationPageCount" in block
 
 
 def test_direct_run_load_does_not_wait_for_complete_large_inventory() -> None:
@@ -2452,6 +2455,11 @@ def test_direct_run_load_does_not_wait_for_complete_large_inventory() -> None:
     assert "deferInventoryCompletion: true" in load_run
     assert "activeArtifactInventoryComplete && activeArtifactInventory.some" in load_run
     assert "activeArtifactInventoryComplete && !hasRecording" in load_run
+
+    selected_run = source.split("async function _loadSelectedRun", 1)[1].split(
+        "function normalizeStageStatus", 1
+    )[0]
+    assert "deferInventoryCompletion: true" in selected_run
 
 
 def test_active_duplicate_run_source_remains_selectable_by_pasted_id() -> None:
@@ -2672,10 +2680,9 @@ def test_run_details_resolves_run_generically_by_id() -> None:
     assert '"/api/workflows/sim2real/runs/" + encodeURIComponent(target)' in ui
     assert "body: JSON.stringify({ run_id: targetRunId, run_ref: targetRunRef })" in ui
     assert 'entry.source_type === "artifact_storage"' in ui
-    assert (
-        "loadArtifactsForSelectedRun(chosen, null, entry, { pendingSelection: true })"
-        in ui
-    )
+    assert "loadArtifactsForSelectedRun(chosen, null, entry, {" in ui
+    assert "pendingSelection: true," in ui
+    assert "isCurrent," in ui
     assert "prefix: artifactPrefixValue()" not in ui
     assert 'params.set("resource_bucket", resourceBucket)' in ui
     assert 'params.set("resolved_prefix", resolvedPrefix)' in ui
@@ -2733,7 +2740,7 @@ def test_resolve_deploy_llm_credentials_reads_credentials(monkeypatch) -> None:
 
     key, model = _resolve_deploy_llm_credentials()
     assert key == "tf-test-key"
-    assert model == "nvidia/Cosmos3-Super-Reasoner"
+    assert model == "nvidia/Nemotron-3_5-Lightning"
 
 
 def test_normalize_llm_models_supports_repeated_and_csv_values() -> None:
@@ -2744,9 +2751,13 @@ def test_normalize_llm_models_supports_repeated_and_csv_values() -> None:
             "meta-llama/Llama-3.3-70B-Instruct",
         ]
     )
-    assert models[0] == "nvidia/Cosmos3-Super-Reasoner"
-    assert "meta-llama/Llama-3.3-70B-Instruct" in models
-    assert "Qwen/Qwen2.5-VL-72B-Instruct" in models
+    # Explicit legacy IDs remain usable with dedicated endpoints; public
+    # replacement defaults must not be silently injected into this allowlist.
+    assert models == [
+        "nvidia/Cosmos3-Super-Reasoner",
+        "meta-llama/Llama-3.3-70B-Instruct",
+        "Qwen/Qwen2.5-VL-72B-Instruct",
+    ]
 
 
 def test_agent_status_json(monkeypatch) -> None:
@@ -3938,7 +3949,7 @@ def test_bootstrap_embeds_cost_aware_routing() -> None:
     assert ".replace(_AGENT_ROUTING_EMBED, agent_routing_source)" in source
     assert "build_model_ladder(" in source
     assert "classify_tier(" in source
-    assert "chat_extra(tier)" in source
+    assert "chat_extra(tier, model)" in source
     assert "enforce_input_budget(" in source
     assert "usage_summary(data)" in source
     # The embedded routing source must actually be inlined (function defs present).
@@ -3952,10 +3963,8 @@ def test_default_llm_models_are_cost_ordered() -> None:
     from npa.cli import agent as agent_module
 
     models = list(agent_module.DEFAULT_LLM_MODELS)
-    # Cheap workhorse leads; branded reasoner is not first.
-    assert models[0] == "Qwen/Qwen3-32B"
-    assert models[0] != agent_module.DEFAULT_LLM_MODEL
-    assert agent_module.DEFAULT_LLM_MODEL in models
+    assert models == ["nvidia/Nemotron-3_5-Lightning", "MiniMaxAI/MiniMax-M3"]
+    assert models[0] == agent_module.DEFAULT_LLM_MODEL
 
 
 def test_deploy_seeds_cost_ordered_ladder_without_explicit_models(
@@ -4001,7 +4010,7 @@ def test_deploy_seeds_cost_ordered_ladder_without_explicit_models(
     )
     monkeypatch.setattr(
         "npa.cli.agent._resolve_deploy_llm_credentials",
-        lambda: ("tf-key", "nvidia/Cosmos3-Super-Reasoner"),
+        lambda: ("tf-key", "nvidia/Nemotron-3_5-Lightning"),
     )
     monkeypatch.setattr("npa.cli.agent._bootstrap_agent_stack", lambda **k: None)
     monkeypatch.setattr("npa.cli.agent.ensure_ingress", lambda **k: None)
@@ -4036,18 +4045,16 @@ def test_deploy_seeds_cost_ordered_ladder_without_explicit_models(
         agent_port=8088,
         backend_port=8787,
         rerun_port=9090,
-        llm_model="nvidia/Cosmos3-Super-Reasoner",
+        llm_model="nvidia/Nemotron-3_5-Lightning",
         llm_models=[],
         no_public_https=True,
     )
 
     configured = list(captured.get("llm", {}).get("models", []))  # type: ignore[union-attr]
-    # All four routing tiers are present without the operator listing them.
+    # The two supported models cover all four routing tiers.
     for expected in (
-        "Qwen/Qwen3-32B",
-        "meta-llama/Llama-3.3-70B-Instruct",
-        "nvidia/Cosmos3-Super-Reasoner",
-        "Qwen/Qwen2.5-VL-72B-Instruct",
+        "nvidia/Nemotron-3_5-Lightning",
+        "MiniMaxAI/MiniMax-M3",
     ):
         assert expected in configured, f"{expected} missing from {configured}"
 

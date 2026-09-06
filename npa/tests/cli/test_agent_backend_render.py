@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import ast
 import builtins
+import copy
 import hashlib
 import json
 import re
@@ -161,8 +162,8 @@ def _render_backend_body(monkeypatch) -> str:
         agent_port=8088,
         backend_port=8787,
         rerun_port=9090,
-        llm_model="nvidia/Cosmos3-Super-Reasoner",
-        llm_models=["nvidia/Cosmos3-Super-Reasoner"],
+        llm_model=agent_module.DEFAULT_LLM_MODEL,
+        llm_models=agent_module.DEFAULT_LLM_MODELS,
         tf_api_key="",
         nebius_ai_key="",
         public_https=True,
@@ -195,6 +196,86 @@ def test_rendered_backend_compiles(monkeypatch) -> None:
     )
     assert "POST /api/agent/gpu-allocation/attempt" in body
     assert "POST /api/agent/gpu-allocation/consent" in body
+
+
+def test_rendered_backend_routes_models_and_parameters_without_overriding_configuration(
+    monkeypatch, tmp_path
+) -> None:
+    # Source-archive packaging has separate coverage; this test executes the
+    # rendered backend and shipped helpers without building an unused upload.
+    monkeypatch.setattr("npa.cli.agent._stage_agent_npa_source", lambda *_args, **_kwargs: None)
+    module = _import_rendered_backend(
+        monkeypatch, tmp_path, module_name="npa_rendered_model_routing_backend"
+    )
+    monkeypatch.setattr(module, "LLM_MODELS_ENV", "")
+    monkeypatch.setattr(module, "_available_llm_models", lambda: [])
+    calls = []
+
+    def provider_chat(**kwargs):
+        calls.append(kwargs)
+        return {"choices": [{"message": {"content": "Generated answer"}}]}
+
+    monkeypatch.setattr(module, "_provider_chat", provider_chat)
+    for tier, expected_model, expected_extra in (
+        ("cheap", "nvidia/Nemotron-3_5-Lightning", {"chat_template_kwargs": {"enable_thinking": False}}),
+        ("standard", "nvidia/Nemotron-3_5-Lightning", {"chat_template_kwargs": {"enable_thinking": False}}),
+        ("reasoning", "MiniMaxAI/MiniMax-M3", {}),
+        ("vision", "MiniMaxAI/MiniMax-M3", {"chat_template_kwargs": {"thinking_mode": "disabled"}}),
+    ):
+        _, provider, selected = module._chat_with_resilience(
+            messages=[{"role": "user", "content": "A synthetic routing request"}], tier=tier
+        )
+        assert provider == "token_factory"
+        assert selected == expected_model
+        assert calls[-1]["extra"] == expected_extra
+
+    # Do not inject the new default into an explicit deployment allowlist.
+    monkeypatch.setattr(module, "LLM_MODELS_ENV", "dedicated/allowed")
+    monkeypatch.setattr(module, "LLM_MODEL", "nvidia/Nemotron-3_5-Lightning")
+    monkeypatch.setattr(module, "_available_llm_models", lambda: ["dedicated/allowed"])
+    assert module._configured_llm_models() == ["dedicated/allowed"]
+    module._chat_with_resilience(messages=[], tier="cheap")
+    assert calls[-1]["model"] == "dedicated/allowed"
+    assert calls[-1]["extra"] == {}
+    # Public model listings cannot suppress an explicit dedicated model choice.
+    module._chat_with_resilience(
+        messages=[], tier="vision", requested_model="Qwen/Qwen2.5-VL-72B-Instruct"
+    )
+    assert calls[-1]["model"] == "Qwen/Qwen2.5-VL-72B-Instruct"
+
+    # An empty eligible vision ladder must not restore text-only configured
+    # models after routing deliberately excludes them. Explicit choices still
+    # remain authoritative, including custom endpoints absent from /models.
+    monkeypatch.setattr(module, "LLM_MODELS_ENV", "nvidia/Nemotron-3_5-Lightning")
+    monkeypatch.setattr(module, "_available_llm_models", lambda: ["nvidia/Nemotron-3_5-Lightning"])
+    calls.clear()
+    with pytest.raises(module.HTTPException, match="No eligible model") as raised:
+        module._chat_with_resilience(messages=[], tier="vision")
+    assert raised.value.status_code == 503
+    assert "model allowlist" in raised.value.detail
+    assert calls == []
+    for requested in ("nvidia/Nemotron-3_5-Lightning", "custom/vision"):
+        _, _, selected = module._chat_with_resilience(
+            messages=[], tier="vision", requested_model=requested
+        )
+        assert selected == calls[-1]["model"] == requested
+
+    # Each fallback needs the selected model's own thinking parameter.
+    monkeypatch.setattr(module, "LLM_MODELS_ENV", "")
+    monkeypatch.setattr(module, "_available_llm_models", lambda: [])
+    calls.clear()
+
+    def fallback_chat(**kwargs):
+        calls.append(kwargs)
+        if len(calls) == 1:
+            raise RuntimeError("synthetic unavailable text model")
+        return {"choices": [{"message": {"content": "Fallback answer"}}]}
+
+    monkeypatch.setattr(module, "_provider_chat", fallback_chat)
+    _, _, model = module._chat_with_resilience(messages=[], tier="cheap")
+    assert model == "MiniMaxAI/MiniMax-M3"
+    assert calls[0]["extra"] == {"chat_template_kwargs": {"enable_thinking": False}}
+    assert calls[1]["extra"] == {"chat_template_kwargs": {"thinking_mode": "disabled"}}
 
 
 def test_rendered_gpu_fallback_route_is_zero_token_and_confirmation_bound(
@@ -1060,8 +1141,8 @@ def test_shipped_agent_backend_memory_module_compiles(monkeypatch) -> None:
         agent_port=8088,
         backend_port=8787,
         rerun_port=9090,
-        llm_model="nvidia/Cosmos3-Super-Reasoner",
-        llm_models=["nvidia/Cosmos3-Super-Reasoner"],
+        llm_model=agent_module.DEFAULT_LLM_MODEL,
+        llm_models=agent_module.DEFAULT_LLM_MODELS,
         tf_api_key="",
         nebius_ai_key="",
         public_https=True,
@@ -1127,8 +1208,8 @@ def _capture_setup_script(
         agent_port=8088,
         backend_port=8787,
         rerun_port=9090,
-        llm_model="nvidia/Cosmos3-Super-Reasoner",
-        llm_models=["nvidia/Cosmos3-Super-Reasoner"],
+        llm_model=agent_module.DEFAULT_LLM_MODEL,
+        llm_models=agent_module.DEFAULT_LLM_MODELS,
         tf_api_key="",
         nebius_ai_key="",
         public_https=True,
@@ -3615,3 +3696,305 @@ def test_rendered_backend_skips_unreadable_ssh_key_candidates(
         assert "TF_VAR_ssh_public_key" not in env
     finally:
         sys.modules.pop(module_name, None)
+
+
+@pytest.fixture
+def preload_backend_body(monkeypatch):
+    from npa.cli import agent as agent_module
+
+    monkeypatch.setattr(agent_module, "_stage_agent_npa_source", lambda *_args, **_kwargs: None)
+    return _render_backend_body(monkeypatch)
+
+
+
+def _preload_function(name: str, namespace: dict, source: str):
+    block = source.split("def " + name + "(", 1)[1]
+    block = re.split(r"\n(?:def |@app\.)", block, maxsplit=1)[0]
+    # Execute actual rendered function bodies without registering routes.
+    block = "def " + name + "(" + block
+    exec(compile(block, "embedded_backend_" + name, "exec"), namespace)
+    return namespace[name]
+
+
+def _preload_source(render="image"):
+    return {
+        "run_id": "public-shapes",
+        "artifact_run_ref": "npa1_selected_source",
+        "bucket": "example-artifacts",
+        "project_id": "example-project",
+        "resolved_prefix": "isolated/proof",
+        "artifact_uri": "s3://example-artifacts/isolated/proof/shapes.png",
+        "artifact_render": render,
+        "rrd_uri": "",
+    }
+
+
+def _startup(tmp_path, snapshot, body):
+    recording = tmp_path / "stock.rrd"
+    recording.write_bytes(b"RRF2-synthetic-startup-fixture")
+    ref = snapshot.get("artifact_run_ref") or snapshot.get("run_id") or "franka-demo"
+    state = {
+        "sim_viz": copy.deepcopy(snapshot),
+        "sim_viz_runs": {ref: copy.deepcopy(snapshot)},
+        "active_run_id": snapshot.get("run_id", ""),
+        "active_run_ref": snapshot.get("artifact_run_ref", ""),
+    }
+    observed = {"published": [], "saved": []}
+    namespace = {
+        "PRELOAD_STOCK_DEMO": True,
+        "RRD_PATH": recording,
+        "DEFAULT_SIM_VIZ": {"run_id": "franka-demo"},
+        "_load_state": lambda: state,
+        "_save_state": lambda value: observed["saved"].append(copy.deepcopy(value)),
+        "_publish_rrd_recording": lambda value: observed["published"].append(value) or "/recording.rrd",
+        "_served_recording_is_run_specific": lambda: False,
+        "_rerun_iframe_url": lambda *_args, **_kwargs: "/rerun/",
+        "_rerun_ready_state": lambda **_kwargs: True,
+        "_now_iso": lambda: "2026-01-01T00:00:00Z",
+        "resolve_run_source": lambda *_args: ("artifact_storage", "Artifacts"),
+    }
+    _preload_function("_record_sim_viz_run", namespace, body)
+    hook = _preload_function("_boot_preload_sim_viz", namespace, body)
+    return hook, state, observed, namespace
+
+
+@pytest.mark.parametrize(
+    "snapshot",
+    [
+        _preload_source("image"),
+        _preload_source("mcap"),
+        _preload_source("future-viewer-kind"),
+        _preload_source("rerun"),  # Selected source exists, but its recording is not ready.
+        {"run_id": "report-only", "preview_status": "no_previewable_recording"},
+        {"run_id": "legacy-media", "artifact_uri": "s3://example-artifacts/media.bin"},
+    ],
+)
+def test_stock_preload_preserves_explicit_artifact_selection(tmp_path, snapshot, preload_backend_body):
+    hook, state, observed, _namespace = _startup(tmp_path, snapshot, preload_backend_body)
+    before = copy.deepcopy(state)
+    hook()
+    assert state == before
+    assert observed == {"published": [], "saved": []}
+
+
+def test_stock_preload_initializes_an_empty_workspace(tmp_path, preload_backend_body):
+    hook, state, observed, _namespace = _startup(tmp_path, {}, preload_backend_body)
+    hook()
+    assert state["sim_viz"]["run_id"] == "franka-demo"
+    assert state["sim_viz"]["stage"] == "demo"
+    assert state["sim_viz"]["rrd_uri"].startswith("file://")
+    assert len(observed["published"]) == len(observed["saved"]) == 1
+
+
+@pytest.mark.parametrize("already_specific", [False, True])
+@pytest.mark.parametrize("render", ["rerun", "RERUN"])
+def test_stock_preload_retains_existing_rrd_preload_behavior(tmp_path, already_specific, render, preload_backend_body):
+    snapshot = dict(_preload_source(render), rrd_uri="file:///opt/npa-agent/recordings/selected.rrd")
+    hook, state, observed, namespace = _startup(tmp_path, snapshot, preload_backend_body)
+    namespace["_served_recording_is_run_specific"] = lambda: already_specific
+    hook()
+    for key, value in snapshot.items():
+        assert state["sim_viz"][key] == value
+    assert len(observed["published"]) == (0 if already_specific else 1)
+    assert state["active_run_ref"] == snapshot["artifact_run_ref"]
+
+
+def _lookup(body, state, requested=""):
+    namespace = {"DEFAULT_SIM_VIZ": {"run_id": "franka-demo"}}
+    return _preload_function("_sim_viz_for_run", namespace, body)(state, run_id=requested)
+
+
+def test_active_exact_source_outranks_a_polluted_basename_and_other_source(preload_backend_body):
+    selected = _preload_source()
+    other = dict(selected, artifact_run_ref="npa1_other_source", bucket="other-example-bucket")
+    state = {
+        "active_run_id": selected["run_id"],
+        "active_run_ref": selected["artifact_run_ref"],
+        "sim_viz_runs": {
+            selected["run_id"]: {"run_id": selected["run_id"], "stage": "demo"},
+            selected["artifact_run_ref"]: selected,
+            other["artifact_run_ref"]: other,
+        },
+    }
+    before = copy.deepcopy(state)
+    assert _lookup(preload_backend_body, state) == selected
+    assert _lookup(preload_backend_body, state, selected["run_id"]) == selected
+    assert _lookup(preload_backend_body, state, other["artifact_run_ref"]) == other
+    assert state == before
+
+
+def test_explicit_different_run_never_borrows_active_source(preload_backend_body):
+    selected = _preload_source()
+    other = {"run_id": "different-run", "stage": "running"}
+    state = {
+        "active_run_id": selected["run_id"],
+        "active_run_ref": selected["artifact_run_ref"],
+        "sim_viz_runs": {selected["artifact_run_ref"]: selected, "different-run": other},
+    }
+    assert _lookup(preload_backend_body, state, "different-run") == other
+
+
+@pytest.mark.parametrize("active_ref", ["", "missing-ref", "mismatched-ref"])
+def test_invalid_active_reference_keeps_existing_lookup_semantics(active_ref, preload_backend_body):
+    direct = {"run_id": "public-shapes", "stage": "running"}
+    state = {
+        "active_run_id": direct["run_id"],
+        "active_run_ref": active_ref,
+        "sim_viz_runs": {"public-shapes": direct, "mismatched-ref": {"run_id": "different-run"}},
+    }
+    assert _lookup(preload_backend_body, state) == direct
+
+
+def test_ambiguous_unselected_sources_remain_unresolved(preload_backend_body):
+    selected = _preload_source()
+    state = {
+        "active_run_id": "different-run",
+        "active_run_ref": "",
+        "sim_viz_runs": {"ref-a": selected, "ref-b": dict(selected, bucket="other-example-bucket")},
+    }
+    assert _lookup(preload_backend_body, state, "public-shapes") == {"run_id": "public-shapes"}
+
+
+def test_invalid_active_reference_with_empty_run_keeps_current_state(preload_backend_body):
+    current = {"run_id": "retained-context", "stage": "pending"}
+    state = {
+        "active_run_id": "",
+        "active_run_ref": "malformed-ref",
+        "sim_viz": current,
+        "sim_viz_runs": {"malformed-ref": {"run_id": "", "bucket": "wrong-example-bucket"}},
+    }
+    assert _lookup(preload_backend_body, state) == current
+
+
+@pytest.mark.parametrize("operation", ["validate", "plan"])
+def test_workflow_chat_operates_on_supplied_yaml_before_catalog_or_status(
+    monkeypatch, tmp_path, operation
+):
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name="workflow_operation_backend")
+    spec = """apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: supplied-workflow
+initial: record
+config:
+  metrics_input_uri: file:///tmp/public-metrics.json
+  insights_store_uri: file:///tmp/public-insights
+states:
+  record:
+    toolRef: workbench.insights.record
+    terminal: true
+"""
+    state = {"workflow_draft": {"yaml": "invalid saved draft"}}
+    monkeypatch.setattr(module, "_load_state", lambda: copy.deepcopy(state))
+    monkeypatch.setattr(module, "_save_state", lambda _: pytest.fail("read-only operation wrote state"))
+    question = f"{operation.title()} this workflow YAML and report its status and toolRefs.\n```yaml\n{spec}```"
+    response = module._agent_chat_with_tools(raw_messages=[{"role": "user", "content": question}], model="unused")
+    assert response["grounded"] is True
+    assert response["workflow_validation"]["ok"] is True
+    assert "supplied-workflow" in response["reply"]
+    assert "Sim2Real status" not in response["reply"]
+    assert "Workbench tool catalog" not in response["reply"]
+    if operation == "plan":
+        assert response["workflow_validation"]["plan"]["steps"][0]["tool_ref"] == "workbench.insights.record"
+        assert "Planning only" in response["reply"]
+    else:
+        assert response["apis_used"] == ["workflows/validate"]
+    missing = module._agent_chat_with_tools(
+        raw_messages=[{"role": "user", "content": f"{operation.title()} the saved workflow YAML"}], model="unused"
+    )
+    assert missing["workflow_validation"]["ok"] is False
+    assert "validation failed" in missing["reply"]
+
+
+def test_selected_run_artifact_chat_preserves_exact_source(monkeypatch, tmp_path):
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name="selected_artifact_chat_backend")
+    from npa.workflows.artifacts import encode_run_ref
+
+    ref = encode_run_ref("example-bucket", "synthetic/metrics", "metrics")
+    selected = {"run_id": "metrics", "run_ref": ref, "bucket": "example-bucket",
+                "project_id": "example-project", "resolved_prefix": "synthetic/metrics"}
+    state = {"active_run_id": "metrics", "active_run_ref": ref, "sim_viz_runs": {ref: selected}}
+    monkeypatch.setattr(module, "_load_state", lambda: copy.deepcopy(state))
+    monkeypatch.setattr(module, "artifacts_runs", lambda **_: pytest.fail("selected run widened to global discovery"))
+    calls = []
+
+    def list_selected(run_ref, **scope):
+        calls.append((run_ref, scope))
+        return {"ok": True, "count": 2, "preferred": {"key": "synthetic/metrics/report.json", "render": "json"}}
+
+    monkeypatch.setattr(module, "artifacts_for_run", list_selected)
+    result = module._agent_chat_with_tools(
+        raw_messages=[{"role": "user", "content": "What can I view for the selected task-owned run?"}], model="unused"
+    )
+    assert result["grounded"] is True
+    assert calls == [(ref, {"resource_bucket": "example-bucket", "project_id": "example-project",
+                            "resolved_prefix": "synthetic/metrics", "source_selected": True})]
+    assert "report.json" in result["reply"] and "`2`" in result["reply"]
+    assert "example-bucket" not in result["reply"] and "synthetic/metrics" not in result["reply"]
+
+def test_rendered_action_catalog_returns_every_registered_tool_ref(
+    monkeypatch, tmp_path
+):
+    from npa.agent_backend import actions
+    from npa.cli import agent as agent_module
+    from npa.cli.agent_payloads import tool_catalog_payload
+
+    # These are render/handler tests, so do not package or upload a source tree.
+    monkeypatch.setattr(
+        agent_module, "_stage_agent_npa_source", lambda *_args, **_kwargs: None
+    )
+
+    module = _import_rendered_backend(
+        monkeypatch, tmp_path, module_name="npa_rendered_full_action_catalog"
+    )
+    handlers = module._agent_act_tools()
+    expected = sorted(tool_catalog_payload())
+    assert expected
+    assert module.TOOL_REFS == expected
+    assert handlers["health"]({})["tool_refs"] == len(expected)
+    result = handlers["tools_catalog"]({})
+    assert result == {"tool_refs": expected}
+    result["tool_refs"].clear()
+    assert handlers["tools_catalog"]({}) == {"tool_refs": expected}
+    spec = actions.TOOL_ALLOWLIST["tools_catalog"]
+    assert spec.read_only is True
+    assert spec.requires_confirmation is False
+    assert spec.params == ()
+
+
+def test_rendered_catalog_action_reaches_factual_completion(monkeypatch, tmp_path):
+    from npa.cli import agent as agent_module
+    from npa.cli.agent_payloads import tool_catalog_payload
+
+    # These are render/handler tests, so do not package or upload a source tree.
+    monkeypatch.setattr(
+        agent_module, "_stage_agent_npa_source", lambda *_args, **_kwargs: None
+    )
+
+    module = _import_rendered_backend(
+        monkeypatch, tmp_path, module_name="npa_rendered_action_catalog_completion"
+    )
+    expected = sorted(tool_catalog_payload())
+    plans = iter(
+        [
+            {"tool": "tools_catalog", "args": {}},
+            {"final": "The catalog observation was retrieved."},
+        ]
+    )
+
+    def planner(_messages, *, tier):
+        return {"choices": [{"message": {"content": json.dumps(next(plans))}}]}
+
+    result = module.run_action_loop(
+        "Use tools_catalog to inspect the registered capabilities.",
+        tools=module._agent_act_tools(),
+        model_call=planner,
+    )
+    assert result["ok"] is True
+    assert result["stopped_reason"] == "done"
+    assert result["needs_confirmation"] is False
+    calls = [step for step in result["steps"] if step["phase"] == "call"]
+    assert len(calls) == 1
+    assert calls[0]["tool"] == "tools_catalog"
+    assert calls[0]["status"] == "ok"
+    assert calls[0]["observation"] == {"tool_refs": expected}

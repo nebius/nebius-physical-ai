@@ -22,10 +22,7 @@ from npa.orchestration.npa_workflow.submit import prepare_npa_workflow_for_submi
 
 WORKFLOW_DIR = (
     Path(__file__).resolve().parents[3]
-    / "npa"
     / "workflows"
-    / "workbench"
-    / "npa-workflows"
 )
 
 
@@ -104,7 +101,7 @@ def test_every_shipped_workflow_keeps_owned_images_on_public_ghcr(
     public_prefix = f"{DEFAULT_PUBLIC_CONTAINER_REGISTRY}/npa-"
 
     rendered_images: set[str] = set()
-    for spec_path in sorted(WORKFLOW_DIR.glob("*.yaml")):
+    for spec_path in sorted(WORKFLOW_DIR.glob("*/*.yaml")):
         spec = load_spec(spec_path)
         requires_baked_image = str(
             spec.config.get("require_baked_npa") or ""

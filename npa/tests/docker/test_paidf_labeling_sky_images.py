@@ -65,7 +65,7 @@ def test_labeling_wrapper_preserves_vendor_boundary(
     assert label in source
     assert image in RESTRICTED_PUBLICATION_TOOLS
     spec = yaml.safe_load(
-        (ROOT / "npa/workflows/workbench/npa-workflows/paidf-event-video-generation.yaml")
+        (ROOT / "workflows/testing/paidf-event-video-generation.yaml")
         .read_text()
     )
     assert spec["config"][config_key + "_image"] == (

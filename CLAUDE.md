@@ -20,9 +20,10 @@ making architecture, review, or domain judgments.
  user-facing docs, or answering "what should I run first?" — lead with the
  Nebius GPU path, describe hosted inference by what it does, and stay warm and
  genuinely helpful when someone asks about cost or has no cluster yet.
-- `skills/atomic/health-preflight/SKILL.md`: there is no `npa doctor` — prove
- HF/NGC/S3/Token Factory credentials and gated-model access with
- `npa workbench health preflight` / `access` before spending GPU time.
+- `skills/atomic/health-preflight/SKILL.md`: there is no `npa doctor`. Prove
+  service credentials with `npa workbench health preflight`, request
+  `--checks nebius` before provisioning, and verify gated-model access with
+  `npa workbench health access` before spending GPU time.
 - `skills/atomic/debug-failed-run/SKILL.md`: triage a run that failed, hung, or
  produced no artifacts — status and pod-level reason, stage logs, S3 evidence,
  image pullability, scheduling, and the resume-vs-cancel decision.
@@ -156,7 +157,7 @@ create a new split skill tree.
 
 ### Partner Capability Roadmap
 
-Onboarding NVIDIA Physical AI / Omniverse capabilities (CAD-to-SimReady, USD tooling, defect-image SDG, SDG infrastructure) is tracked in `docs/architecture/partner-skills-roadmap.md`; those are not yet implemented in the workbench. **NuRec/NRE has landed** (`skills/workflows/neural-reconstruction/SKILL.md`), as has video data augmentation (`skills/workflows/physical-ai-data-factory/SKILL.md`). Add each remaining capability as a real skill only when its solution lands on Nebius + SkyPilot, with tests.
+Onboarding NVIDIA Physical AI / Omniverse capabilities is tracked in `docs/architecture/partner-skills-roadmap.md`. **NuRec/NRE and video data augmentation have landed**, and the PAIDF skill now covers native DIG Day-1 manual-ROI, IAA, and EVG specs. Their Workbench guide distinguishes implementation from completed live acceptance. Remaining DIG Day-0/PCBA alignment, CAD-to-SimReady, USD tooling, and SDG infrastructure capabilities retain their documented roadmap scope. Add a remaining capability as a real skill only when its solution lands on Nebius + SkyPilot, with tests.
 
 ## Project Instructions
 

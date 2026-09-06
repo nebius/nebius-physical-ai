@@ -49,7 +49,7 @@ def test_generation_wrapper_preserves_reviewed_parent(image: str, variant: str) 
     label = 'org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"'
     assert label in source
     spec = yaml.safe_load(
-        (ROOT / "npa/workflows/workbench/npa-workflows" / f"paidf-{variant}.yaml")
+        (ROOT / "workflows/testing" / f"paidf-{variant}.yaml")
         .read_text()
     )
     assert spec["config"]["generation_image"].startswith(

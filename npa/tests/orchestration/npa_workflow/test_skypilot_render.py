@@ -34,7 +34,7 @@ from npa.orchestration.npa_workflow.submission_state import load_submission_stat
 from npa.orchestration.skypilot.workflow import WorkflowResult
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
-NPA_SPECS = REPO_ROOT / "npa" / "workflows" / "workbench" / "npa-workflows"
+NPA_SPECS = REPO_ROOT / "workflows" / "testing"
 PAIDF = NPA_SPECS / "physical-ai-data-factory.yaml"
 SKYPILOT_FIXTURES = REPO_ROOT / "npa" / "tests" / "fixtures" / "skypilot"
 RUNNER = CliRunner()
@@ -608,11 +608,7 @@ def test_render_transfer_forwards_explicit_runtime_tuning(
     monkeypatch.setenv("NPA_COSMOS_DISABLE_CONTENT_GUARDRAILS", "1")
     spec = load_spec(
         REPO_ROOT
-        / "npa"
-        / "workflows"
-        / "workbench"
-        / "npa-workflows"
-        / "physical-ai-data-factory.yaml"
+        / "workflows" / "testing" / "physical-ai-data-factory.yaml"
     )
     rendered = render_skypilot_yaml(
         spec,

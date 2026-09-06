@@ -23,12 +23,12 @@ ROOT = Path(__file__).resolve().parents[3]
 SKYPILOT_ROOT = ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot"
 SPEC_YAML = (
     Path(__file__).resolve().parents[3]
-    / "npa/workflows/workbench/npa-workflows/cosmos3-text-to-image.yaml"
+    / "workflows/testing/cosmos3-text-to-image.yaml"
 )
 # The raw template is retired; its spec is the surface (EVIDENCE.md §R43).
 SPEC_YAML = (
     Path(__file__).resolve().parents[3]
-    / "npa/workflows/workbench/npa-workflows/cosmos3-text-to-image.yaml"
+    / "workflows/testing/cosmos3-text-to-image.yaml"
 )
 SKILL_ROOT = ROOT / "skills"
 SKILL_INDEX = SKILL_ROOT / "index.yaml"

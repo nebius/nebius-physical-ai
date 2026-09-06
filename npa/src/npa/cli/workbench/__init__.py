@@ -79,6 +79,7 @@ def _full_app() -> typer.Typer:
     from npa.cli.workbench.cosmos3 import app as cosmos3_app
     from npa.cli.workbench.cosmos_curate import app as cosmos_curate_app
     from npa.cli.workbench.cosmos_evaluator import app as cosmos_evaluator_app
+    from npa.cli.workbench.curobo import app as curobo_app
     from npa.cli.workbench.data import app as data_app
     from npa.cli.workbench.dataset import app as dataset_app
     from npa.cli.workbench.detection_training import app as detection_training_app
@@ -134,6 +135,7 @@ def _full_app() -> typer.Typer:
     full.add_typer(lichtblick_app, name="lichtblick")
     full.add_typer(ltx2_app, name="ltx2")
     full.add_typer(alpamayo2_super_app, name="alpamayo2-super")
+    full.add_typer(curobo_app, name="curobo")
     full.add_typer(lancedb_app, name="lancedb")
     full.add_typer(detection_training_app, name="detection-training")
     full.add_typer(scenario_gen_app, name="scenario-gen")
@@ -192,7 +194,24 @@ if _LIGHT_IMPORT:
     # surface unless an image explicitly declares another narrow capability.
     if _LIGHT_TOOL == "groot":
         app = _groot_light_app()
-    elif _LIGHT_TOOL in {"nurec", "rerun-viewer"}:
+    elif _LIGHT_TOOL in ("cosmos3-ray-serve",):
+        from npa.cli.workbench.cosmos3 import app as cosmos3_app
+
+        light = typer.Typer(
+            name="workbench",
+            help="Physical AI workbench tools.",
+            no_args_is_help=True,
+        )
+
+        @light.callback()
+        def _light_cosmos3_main() -> None:
+            pass
+
+        light.add_typer(cosmos3_app, name="cosmos3")
+        app = light
+    elif _LIGHT_TOOL == "nurec":
+        app = _nurec_light_app()
+    elif _LIGHT_TOOL == "rerun-viewer":
         app = _rerun_viewer_light_app()
     else:
         from npa.cli.workbench.cosmos2 import app

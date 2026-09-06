@@ -60,7 +60,7 @@ selected through `NPA_COSMOS3_*_TOKEN_ENV`.
    npa/.venv/bin/python - <<'PY'
    import yaml
    from pathlib import Path
-   p = Path("npa/workflows/workbench/npa-workflows/cosmos3-text-to-image.yaml")
+   p = Path("workflows/testing/cosmos3-text-to-image.yaml")
    doc = yaml.safe_load(p.read_text())
    print(doc["metadata"]["name"])
    print(doc["states"][doc["initial"]]["toolRef"])

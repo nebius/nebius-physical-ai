@@ -21,6 +21,6 @@ under `/opt/groot-data`.
 
 The same environment supports real single-node training. The reference
 `npa.workflow` spec at
-`npa/workflows/workbench/npa-workflows/groot-1-7-finetune.yaml` runs the pinned
+`workflows/testing/groot-1-7-finetune.yaml` runs the pinned
 vendor launcher locally in the allocated image and uses `torchrun` when more
 than one GPU is selected.

@@ -18,6 +18,8 @@ SHIPPED_BACKEND_MODULES = (
     "retrieval",
     "trace",
     "trajectory",
+    "improvements",
+    "improvement_routes",
     "foxglove",
     "canonical_mcap",
     "foxglove_cloud",
