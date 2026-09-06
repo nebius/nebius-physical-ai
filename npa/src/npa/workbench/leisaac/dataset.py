@@ -806,6 +806,7 @@ def _load_records(path: Path) -> list[dict[str, Any]]:
 
 def _encode_frames(frame_dir: Path, destination: Path, fps: int = FPS) -> None:
     destination.parent.mkdir(parents=True, exist_ok=True)
+    # JPEG is full-range; convert samples as well as signaling limited-range H.264.
     command = [
         _ffmpeg_executable(),
         "-hide_banner",
@@ -817,10 +818,14 @@ def _encode_frames(frame_dir: Path, destination: Path, fps: int = FPS) -> None:
         "-i",
         str(frame_dir / "frame-%06d.jpg"),
         "-an",
+        "-vf",
+        "scale=in_range=pc:out_range=tv,format=yuv420p",
         "-c:v",
         "libx264",
         "-pix_fmt",
         "yuv420p",
+        "-color_range",
+        "tv",
         "-crf",
         "20",
         "-g",
