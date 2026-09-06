@@ -51,8 +51,14 @@ Configuration is explicit: `--world-size` sets GPUs per replica;
 `--parallelism-preset` is the Cosmos placement preset; and
 `--guardrails/--no-guardrails` is the explicit safety posture.
 
-Readiness is authenticated `GET /ready`. It becomes available only after the
-model deployment is ready; `GET /health` is not a model-readiness substitute.
+Use authenticated `GET /ready`, and verify that the exact image checks the native
+Serve application and model replicas. Earlier implementations returned HTTP 200
+while weights were still loading. Require the selected application to be
+`RUNNING`, its model deployment `HEALTHY`, and a running replica before inference.
+Retain checkpoint revision and payload verification separately; cache-resolution
+events or filenames alone do not prove that every required payload is complete.
+`GET /health` establishes liveness. Report configured guardrails separately from
+evidence that the selected model actually applied them.
 
 ## Submit a durable batch
 
@@ -80,6 +86,25 @@ them. It downloads each returned file, verifies bytes and SHA-256, and publishes
 `provenance.json` (`npa.cosmos3.ray-serve.provenance.v1`). Use
 `npa/workflows/workbench/npa-workflows/cosmos3-ray-batch.yaml` for the workflow
 client; the persistent service must already be ready.
+
+Preserve the pinned framework's sampling types. Its aspect ratios include
+comma-delimited strings such as `"1,1"`, and resolution is a string enum such as
+`"720"`; the latter does not specify a square image's measured pixel dimensions.
+Validate against the [upstream sampling definitions](https://github.com/NVIDIA/cosmos-framework/blob/5e67049cd94acb667786f1e6dd0dab821cb90c97/cosmos_framework/inference/args.py)
+and decode the actual media instead of inventing a numeric-string regex.
+
+Measure request coalescing and model inference batches separately. Native worker
+batch events can contain several requests while inference events remain size one.
+State whether throughput includes initialization, cache verification and artifact
+delivery; a client-request timing alone does not measure those phases.
+
+If client validation fails after inference, preserve its failed result and inspect
+the original native output directory before submitting again. Bind retained
+`sample_args.json`, `sample_outputs.json` and media to the original request,
+sample names, seeds and file hashes. Label any recovered qualification as derived
+from those files; do not invent a missing HTTP response or change the original
+client outcome. Generate a reviewable `.rrd` and contact sheet from qualified
+outputs, retaining provenance and visible prompt-fidelity defects.
 
 ## GPU validation
 
