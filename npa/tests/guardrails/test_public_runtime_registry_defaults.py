@@ -20,10 +20,9 @@ from npa.orchestration.npa_workflow.spec import load_spec
 from npa.orchestration.npa_workflow.submit import prepare_npa_workflow_for_submit
 
 
-WORKFLOW_DIR = (
-    Path(__file__).resolve().parents[3]
-    / "workflows"
-)
+REPO_ROOT = Path(__file__).resolve().parents[3]
+WORKFLOW_DIR = REPO_ROOT / "workflows"
+PACKAGING_CONTRACT = REPO_ROOT / "npa/docker/workbench/packaging-contract.yaml"
 
 
 def _is_restricted_operator_placeholder(image: str) -> bool:
@@ -35,9 +34,7 @@ def _is_restricted_operator_placeholder(image: str) -> bool:
     name, separator, digest = parsed.path.removeprefix("/npa-").partition("@sha256:")
     if not separator or digest != "0" * 64 or "/" in name:
         return False
-    contract = yaml.safe_load(
-        (WORKFLOW_DIR.parents[2] / "docker/workbench/packaging-contract.yaml").read_text()
-    )
+    contract = yaml.safe_load(PACKAGING_CONTRACT.read_text())
     return contract["images"].get(name, {}).get("redistribution") == "restricted"
 
 
