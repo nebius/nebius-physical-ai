@@ -5,6 +5,10 @@ reasoning. Use these capabilities to annotate inputs or interpret results from
 your Nebius GPU workloads. Direct CLI calls run from your machine; the
 checked-in NPA workflows run their calling stages on Kubernetes CPUs.
 
+The public defaults were migrated after the August 2026 model retirements. See
+[the verification report](token-factory-deprecation-verification.md) for exact
+IDs, observed provider differences, explicit override behavior, and vendor terms.
+
 ## Configure and verify the key
 
 Complete the [installation](../install.md), then create a key in the
@@ -25,9 +29,9 @@ catalog. The implementation defaults below are not guaranteed to be available:
 
 | Command | Default model |
 | --- | --- |
-| `generate` | `meta-llama/Llama-3.3-70B-Instruct` |
-| `caption` | `Qwen/Qwen2.5-VL-72B-Instruct` |
-| `reason` | `nvidia/Cosmos3-Super-Reasoner` |
+| `generate` | `nvidia/Nemotron-3_5-Lightning` |
+| `caption` | `MiniMaxAI/MiniMax-M3` |
+| `reason` | `MiniMaxAI/MiniMax-M3` |
 | `batch-generate` | `openai/gpt-oss-120b` |
 
 NPA reads `NEBIUS_TOKEN_FACTORY_KEY` from the environment or
@@ -105,6 +109,14 @@ Scene reasoning produces a proposed plan. To score observed rollout frames
 against a task, use `npa workbench vlm-eval run --backend api`; see the
 [rollout cookbook](cookbooks/tokenfactory-compute-combos.md). A generated plan
 does not establish task success.
+
+Hosted VLM judges require complete JSON, boolean `success`, a finite numeric
+score in `[0, 1]`, a nonempty rationale, and a completed provider response.
+MiniMax uses prompted JSON because its constrained JSON modes were malformed
+in the verified scope; invalid output is rejected without score repair. Results
+preserve the requested `model` and separately report the actual `served_model`.
+The public replacement IDs must match the provider response exactly; explicit
+custom aliases may resolve to another nonempty model identity.
 
 ## Batch generation
 
@@ -213,13 +225,19 @@ without creating an artifact.
 | S3 read/write fails | Check storage credentials, endpoint, bucket, and input objects; direct calls need AWS variables in their process environment. |
 | Batch remains pending | Inspect `batch-status` and provider status; acceptance alone does not prove execution. |
 
-With the real key already configured, run the live integration tests from the
-repository root:
+With the real key already configured in the process environment, run all three
+migration suites and provider contract checks from the repository root:
 
 ```bash
-npa/.venv/bin/python -m pytest npa/tests/e2e/test_token_factory_e2e.py -v
+npa/.venv/bin/python npa/scripts/token_factory_live_recheck.py \
+  --evidence-dir "$NPA_PRIVATE_EVIDENCE_DIR"
 ```
 
-These tests exercise real model requests. They skip without a key, and the
-reasoner test skips if that model is unavailable. Inspect pass/skip results;
-a skip is not proof that inference worked.
+Use a new private evidence directory for every invocation. The entrypoint
+requires the key and fails if any test fails or skips; a configured but
+unavailable default is an error. Ordinary pytest invocations remain able to
+skip without credentials, so their skipped tests are not provider proof.
+The [protected provider workflow](../testing/token-factory-live-contracts.md)
+uses this same entrypoint, verifies a missing key fails closed, and rechecks
+model availability, thinking controls, complete outputs, and MiniMax JSON
+behavior. Its daily schedule activates only after the workflow reaches `main`.

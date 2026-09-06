@@ -28,7 +28,7 @@ config:
   reason_task: >-
     Describe this scene and give a step-by-step plan a tabletop robot arm should follow to
     complete the most useful manipulation task here.
-  reason_model: nvidia/Cosmos3-Super-Reasoner
+  reason_model: MiniMaxAI/MiniMax-M3
 
   # See tokenfactory-rollout-judge-combo.yaml: LeRobot >= 0.6 needs the processor format, so the
   # live case seeds a checkpoint produced by 0.6 rather than an older public policy.

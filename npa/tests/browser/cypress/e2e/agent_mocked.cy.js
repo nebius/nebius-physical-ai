@@ -1260,8 +1260,11 @@ describe("NPA agent UI with mocked APIs", () => {
   });
 
   it("embeds the Lichtblick MCAP viewer as a Viewer render mode", () => {
+    // Boot and ordinary chat must not execute the optional viewer application.
+    cy.get("#lichtblickFrame").should("have.attr", "src", "about:blank");
     cy.get("#tabRerun").click();
     cy.get("#panelRerun").should("have.class", "is-active");
+    cy.get("#lichtblickFrame").should("have.attr", "src", "about:blank");
 
     // Lichtblick render-mode tab + dedicated iframe pane exist and activate.
     cy.get("#renderModeLichtblick").should("exist").click();
@@ -1363,6 +1366,169 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#chatSessionSelect").select("session-two");
     cy.wait("@selectChatSession");
     cy.get("#chatLog").should("contain.text", "show status");
+  });
+
+  for (const refreshMethod of ["refreshChatSessions", "refresh", "restoreSession", "prefetchedRestoreSession"]) {
+    it(`keeps a new chat and its reply when an older ${refreshMethod} completes`, () => {
+      let releaseRefresh;
+      let refreshDone;
+      let releaseChat;
+      const path = refreshMethod === "refreshChatSessions" ? "/api/chat/sessions" : "/api/session";
+      const stale = {
+        active_session_id: "default", active_chat_session_id: "default",
+        sessions: [{ id: "default", title: "Old chat" }],
+        chat_sessions: [{ id: "default", title: "Old chat" }],
+        chat_history: [{ role: "assistant", content: "Stale transcript" }],
+        sim_viz: SIM_VIZ,
+      };
+      cy.intercept({ method: "GET", url: path, times: 1 }, (request) =>
+        new Cypress.Promise((resolve) => {
+          releaseRefresh = () => { request.reply({ statusCode: 200, body: stale }); resolve(); };
+        }),
+      ).as("oldChatRefresh");
+      cy.window().then((win) => {
+        const api = win.__NPA_AGENT_TEST__;
+        refreshDone = refreshMethod === "prefetchedRestoreSession"
+          ? api.restoreSession().then((session) => api.refresh({ session }))
+          : api[refreshMethod]();
+      });
+      cy.wrap(null).should(() => expect(releaseRefresh).to.be.a("function"));
+      cy.get("#newChatSession").click();
+      cy.wait("@newChatSession");
+      cy.get("#chatSessionSelect").should("have.value", "new-session");
+      cy.intercept("POST", "/api/chat", (request) =>
+        new Cypress.Promise((resolve) => {
+          expect(request.body.session_id).to.eq("new-session");
+          expect(request.body.model).to.eq("mock/model");
+          releaseChat = () => {
+            request.reply({ statusCode: 200, body: {
+              ok: true, session_id: request.body.session_id,
+              model: "mock/model", reply: "A green boat floats under a silver moon.",
+            } });
+            resolve();
+          };
+        }),
+      ).as("newSessionChat");
+      cy.get("#chatModel").select("mock/model");
+      cy.get("#chatInput").type("Write about a green boat and a silver moon.");
+      cy.get("#chatSend").click();
+      cy.wrap(null).should(() => expect(releaseChat).to.be.a("function"));
+      cy.then(() => releaseRefresh());
+      cy.wait("@oldChatRefresh");
+      cy.then(() => refreshDone);
+      cy.get("#chatSessionSelect").should("have.value", "new-session");
+      cy.get("#chatLog").should("not.contain.text", "Stale transcript");
+      cy.then(() => releaseChat());
+      cy.wait("@newSessionChat");
+      cy.get("#chatLog .msg-row.assistant").should("contain.text", "A green boat floats under a silver moon.");
+    });
+  }
+
+  it("serializes overlapping chat mutations so fresh discovery keeps the newest session", () => {
+    let releaseFirst;
+    let serverActive = "default";
+    const writes = [];
+    cy.intercept({ method: "POST", url: /\/api\/chat\/sessions(?:\/[^/]+\/select)?$/ }, (request) => {
+      const id = request.url.endsWith("/select") ? "session-two" : "created-1";
+      writes.push(id);
+      const reply = () => {
+        serverActive = id;
+        request.reply({ statusCode: 200, body: {
+          active_session_id: id, session: { id, chat_history: [] },
+          sessions: writes.map((value) => ({ id: value, title: value })),
+        } });
+      };
+      if (writes.length === 1) {
+        return new Cypress.Promise((resolve) => {
+          releaseFirst = () => { reply(); resolve(); };
+        });
+      }
+      reply();
+    }).as("serializedChatMutation");
+    cy.intercept("GET", "/api/chat/sessions", (request) => request.reply({
+      statusCode: 200, body: { active_session_id: serverActive,
+        sessions: writes.map((id) => ({ id, title: id })) },
+    })).as("currentChatDiscovery");
+    cy.get("#newChatSession").click();
+    cy.wrap(null).should(() => expect(releaseFirst).to.be.a("function"));
+    // The New chat button is busy; the separate selector remains actionable.
+    cy.get("#chatSessionSelect").select("session-two");
+    cy.then(() => {
+      expect(writes, "second server write waits for the first").to.deep.eq(["created-1"]);
+      releaseFirst();
+    });
+    cy.wait("@serializedChatMutation");
+    cy.wait("@serializedChatMutation");
+    cy.get("#chatSessionSelect").should("have.value", "session-two");
+    cy.window().then((win) => win.__NPA_AGENT_TEST__.refreshChatSessions());
+    cy.wait("@currentChatDiscovery");
+    cy.get("#chatSessionSelect").should("have.value", "session-two");
+    cy.intercept("POST", "/api/chat", (request) => {
+      expect(request.body.session_id).to.eq("session-two");
+      request.reply({ statusCode: 200, body: {
+        ok: true, session_id: request.body.session_id, reply: "Newest session reply remains visible.",
+      } });
+    }).as("newestSessionReply");
+    cy.get("#chatInput").type("Reply in the newest session.");
+    cy.get("#chatSend").click();
+    cy.wait("@newestSessionReply");
+    cy.get("#chatLog .msg-row.assistant").should("contain.text", "Newest session reply remains visible.");
+  });
+
+  it("restores exact artifact status scope before discovery and preserves explicit overrides", () => {
+    const runId = "restored-synthetic-artifact";
+    let detailRequests = 0;
+    cy.intercept("GET", `/api/workflows/sim2real/runs/${runId}*`, (request) => {
+      detailRequests += 1;
+      const query = new URL(request.url).searchParams;
+      expect(query.get("source_selected")).to.eq("1");
+      expect(query.get("resource_bucket")).to.eq(detailRequests <= 3 ? "project-artifacts" : "explicit-artifacts");
+      expect(query.get("project_id")).to.eq(detailRequests <= 3 ? "project-a" : "project-b");
+      expect(query.get("resolved_prefix")).to.eq(detailRequests <= 3 ? "synthetic-results" : null);
+      request.reply({ statusCode: 200, body: { ok: true, run: { run_id: runId, stages: [] } } });
+    }).as("restoredArtifactStatus");
+    cy.window().then((win) => {
+      const hooks = win.__NPA_AGENT_TEST__;
+      hooks.setArtifactRunsForTest([], [], { run_id: runId });
+      hooks.updateRunSelector({
+        run_id: runId, active_run_id: runId, artifact_run_ref: "npa1_restored_source",
+        bucket: "project-artifacts", project_id: "project-a", resolved_prefix: "synthetic-results",
+        available_runs: [], available_run_ids: [],
+      });
+      return hooks.loadRunDetails(runId);
+    });
+    cy.wait("@restoredArtifactStatus");
+    cy.window().then((win) => {
+      const hooks = win.__NPA_AGENT_TEST__;
+      hooks.updateRunSelector({
+        run_id: runId, active_run_id: runId, artifact_run_ref: "npa1_stale_other_source",
+        bucket: "stale-artifacts", project_id: "project-stale", resolved_prefix: "stale-results",
+        available_runs: [], available_run_ids: [],
+      });
+      return hooks.loadRunDetails(runId);
+    });
+    cy.wait("@restoredArtifactStatus");
+    cy.window().then((win) => {
+      const hooks = win.__NPA_AGENT_TEST__;
+      hooks.updateRunSelector({
+        run_id: "different-artifact", active_run_id: runId, artifact_run_ref: "npa1_restored_source",
+        bucket: "mismatched-artifacts", project_id: "project-other", resolved_prefix: "other-results",
+        available_runs: [], available_run_ids: [],
+      });
+      return hooks.loadRunDetails(runId);
+    });
+    cy.wait("@restoredArtifactStatus");
+    cy.window().then((win) => win.__NPA_AGENT_TEST__.loadRunDetails(runId, {
+      resourceBucket: "explicit-artifacts", projectId: "project-b", resolvedPrefix: "", sourceSelected: true,
+    }));
+    cy.wait("@restoredArtifactStatus");
+    cy.intercept("GET", "/api/workflows/sim2real/runs/different-artifact*", (request) => {
+      const query = new URL(request.url).searchParams;
+      expect(query.has("resource_bucket"), "scope never crosses run identities").to.eq(false);
+      request.reply({ statusCode: 200, body: { ok: true, run: { run_id: "different-artifact", stages: [] } } });
+    }).as("differentArtifactStatus");
+    cy.window().then((win) => win.__NPA_AGENT_TEST__.loadRunDetails("different-artifact"));
+    cy.wait("@differentArtifactStatus");
   });
 
   it("covers workflow draft upload, validate, plan, and submit buttons", () => {
@@ -2161,6 +2327,7 @@ describe("NPA agent UI with mocked APIs", () => {
 
     cy.get("#runSummary").should("contain.text", "mock-run");
     cy.get("#stagesRunInput").clear().type(maintenanceId, { delay: 0 });
+    cy.wait("@artifactRuns");
     cy.get("#stagesLoadRun").click();
     cy.wait("@maintenanceNotFound");
     cy.get("#runSummary").should("contain.text", "currently loaded run");
@@ -2168,6 +2335,18 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#runSummary").should("not.contain.text", maintenanceId);
     cy.get("#stagesRunSearchResult").should("contain.text", "Codex maintenance job IDs");
     cy.get("#stagesRunSearchResult").should("contain.text", "Currently loaded run remains mock-run");
+
+    // A later discovery refresh must preserve the actionable exact-lookup
+    // failure, even though it rebuilds the run picker for the same query.
+    cy.get("#artifactRefreshRuns").click({ force: true });
+    cy.wait("@artifactRuns");
+    cy.get("#artifactRefreshRuns").should("not.be.disabled");
+    cy.get("#stagesRunSearchResult").should("contain.text", "Codex maintenance job IDs");
+    cy.get("#stagesRunSearchResult").should("contain.text", "Currently loaded run remains mock-run");
+    cy.get("#stagesRunInput").clear().type("another-missing-run", { delay: 0 });
+    cy.get("#stagesRunSearchResult")
+      .should("contain.text", "Search results are separate")
+      .and("not.contain.text", "Codex maintenance job IDs");
   });
 
   it("loads an artifact-backed training run without a Rerun recording", () => {
@@ -3130,22 +3309,24 @@ describe("NPA agent UI with mocked APIs", () => {
 
   it("keeps priming when Rerun replaces a decoded loading canvas", () => {
     cy.get("#tabRerun").click();
-    cy.window().then(async (win) => {
-      const api = win.__NPA_AGENT_TEST__;
+    cy.window().then((win) => {
       const iframe = win.document.getElementById("rerunFrame");
       iframe.hidden = false;
       iframe.srcdoc = `<!doctype html><html><body><script>
         const state = { initialCaptured: false, replacementCaptured: false };
+        let paintFrame;
         const paint = (canvas, color) => {
-          canvas.width = 320;
-          canvas.height = 180;
           const ctx = canvas.getContext("2d");
           ctx.fillStyle = color;
           ctx.fillRect(0, 0, canvas.width, canvas.height);
           ctx.fillStyle = "#5eead4";
           ctx.fillRect(170, 45, 110, 85);
+          paintFrame = window.requestAnimationFrame(() => paint(canvas, color));
         };
+        state.stop = () => window.cancelAnimationFrame(paintFrame);
         const initial = document.createElement("canvas");
+        initial.width = 320;
+        initial.height = 180;
         const initialCapture = initial.captureStream.bind(initial);
         initial.captureStream = (rate) => {
           state.initialCaptured = true;
@@ -3154,8 +3335,11 @@ describe("NPA agent UI with mocked APIs", () => {
         document.body.appendChild(initial);
         paint(initial, "#07111f");
         window.__NPA_CAPTURE_REPLACEMENT__ = state;
-        window.setTimeout(() => {
+        state.replace = () => {
+          state.stop();
           const replacement = document.createElement("canvas");
+          replacement.width = 320;
+          replacement.height = 180;
           const replacementCapture = replacement.captureStream.bind(replacement);
           replacement.captureStream = (rate) => {
             state.replacementCaptured = true;
@@ -3163,30 +3347,50 @@ describe("NPA agent UI with mocked APIs", () => {
           };
           initial.replaceWith(replacement);
           paint(replacement, "#ff8a1f");
-        }, 700);
+        };
       <\/script></body></html>`;
-
-      const documentDeadline = Date.now() + 1500;
-      while (
-        Date.now() < documentDeadline
-        && !iframe.contentWindow.__NPA_CAPTURE_REPLACEMENT__
-      ) {
-        await new Promise((resolve) => setTimeout(resolve, 20));
-      }
-      api.primeRerunCaptureBridge(iframe, 2200);
-      const replacementDeadline = Date.now() + 1800;
-      while (
-        Date.now() < replacementDeadline
-        && !(iframe.contentWindow.__NPA_CAPTURE_REPLACEMENT__ || {}).replacementCaptured
-      ) {
-        await new Promise((resolve) => setTimeout(resolve, 40));
-      }
-      const lifecycle = iframe.contentWindow.__NPA_CAPTURE_REPLACEMENT__;
+    });
+    cy.window().should((win) => {
+      const iframe = win.document.getElementById("rerunFrame");
+      expect(iframe.contentWindow.__NPA_CAPTURE_REPLACEMENT__, "replacement fixture loaded").to.exist;
+      const bridge = win.__NPA_AGENT_TEST__.ensureRerunCaptureBridge(iframe);
+      expect(bridge, "initial native stream").to.exist;
+      expect(bridge.video.readyState, "initial canvas has a decoded frame").to.be.at.least(2);
+      expect(bridge.video.videoWidth).to.eq(320);
+    });
+    cy.window().then((win) => {
+      const iframe = win.document.getElementById("rerunFrame");
+      // Replace only after the initial stream decoded. Continued real paints
+      // deliver frames after the primer attaches to the replacement canvas.
+      win.__NPA_AGENT_TEST__.primeRerunCaptureBridge(iframe, 2200);
+      iframe.contentWindow.__NPA_CAPTURE_REPLACEMENT__.replace();
+    });
+    cy.window().should((win) => {
+      const lifecycle = win.document.getElementById("rerunFrame").contentWindow.__NPA_CAPTURE_REPLACEMENT__;
       expect(lifecycle.initialCaptured, "loading canvas stream").to.eq(true);
       expect(lifecycle.replacementCaptured, "replacement canvas stream").to.eq(true);
-      const grabbed = await api.grabFromRerunCaptureBridge(3000, { forceRestart: false });
-      expect(grabbed).to.match(/^data:image\/jpeg;base64,/);
-      expect(grabbed.length).to.be.greaterThan(1000);
+    });
+    cy.window().then(async (win) => {
+      const lifecycle = win.document.getElementById("rerunFrame").contentWindow.__NPA_CAPTURE_REPLACEMENT__;
+      try {
+        const grabbed = await win.__NPA_AGENT_TEST__.grabFromRerunCaptureBridge(3000, { forceRestart: false });
+        expect(grabbed).to.match(/^data:image\/jpeg;base64,/);
+        expect(grabbed.length).to.be.greaterThan(1000);
+        const image = new win.Image();
+        image.src = grabbed;
+        await image.decode();
+        const sampled = win.document.createElement("canvas");
+        sampled.width = image.width;
+        sampled.height = image.height;
+        const context = sampled.getContext("2d");
+        context.drawImage(image, 0, 0);
+        const [red, green, blue] = context.getImageData(25, 25, 1, 1).data;
+        expect(red, "captured replacement orange, not the initial dark canvas").to.be.greaterThan(200);
+        expect(green).to.be.within(90, 180);
+        expect(blue).to.be.lessThan(80);
+      } finally {
+        lifecycle.stop();
+      }
     });
   });
 

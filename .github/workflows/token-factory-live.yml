@@ -1,0 +1,85 @@
+name: Token Factory live contracts
+
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+  # Trusted continuation branch only; fork/ordinary PR jobs receive no key.
+  push:
+    branches: [codex/token-factory-deprecation-20260904T234816Z-646044a7]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: token-factory-live-contracts
+  cancel-in-progress: false
+
+jobs:
+  token-factory-live:
+    if: >-
+      github.repository == 'nebius/nebius-physical-ai' &&
+      (github.ref == 'refs/heads/main' ||
+       github.ref == 'refs/heads/codex/token-factory-deprecation-20260904T234816Z-646044a7')
+    runs-on: ubuntu-latest
+    # Encrypted test key; selected-branch protection must permit only main and
+    # the explicitly reviewed continuation branch. No pull_request_target.
+    environment: token-factory-live
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install isolated test runtime
+        run: |
+          python -m venv npa/.venv
+          npa/.venv/bin/python -m pip install -e 'npa[dev,adapter]' uvicorn websockets
+      - name: Prove a missing key fails closed
+        env:
+          NEBIUS_TOKEN_FACTORY_KEY: ""
+        run: |
+          if npa/.venv/bin/python npa/scripts/token_factory_live_recheck.py --evidence-dir "$RUNNER_TEMP/token-factory-missing-key"; then
+            echo "::error::Credentialless designated live job unexpectedly succeeded."
+            exit 1
+          fi
+          npa/.venv/bin/python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          receipt = json.loads((Path(os.environ["RUNNER_TEMP"]) / "token-factory-missing-key/receipt.json").read_text())
+          assert receipt["required_live"] is True
+          assert receipt["credential_present"] is False
+          assert receipt["passed"] is False
+          assert receipt["pytest_exit_code"] == 2
+          assert all(value == 0 for value in receipt["counts"].values())
+          assert "refusing skipped verification" in receipt["failure"]
+          PY
+      - name: Run credentialed suites and provider contracts
+        env:
+          NEBIUS_TOKEN_FACTORY_KEY: ${{ secrets.NEBIUS_TOKEN_FACTORY_KEY }}
+          NEBIUS_TOKEN_FACTORY_BASE_URL: ${{ secrets.NEBIUS_TOKEN_FACTORY_BASE_URL }}
+          NPA_TF_RECHECK_SCOPE: ${{ vars.NPA_TF_RECHECK_SCOPE || 'authorized-account' }}
+          NPA_TF_RECHECK_REQUIRED_MODELS: ${{ vars.NPA_TF_RECHECK_REQUIRED_MODELS }}
+          NPA_TF_RECHECK_JSON_BASELINE: ${{ vars.NPA_TF_RECHECK_JSON_BASELINE || 'malformed_json' }}
+        run: npa/.venv/bin/python npa/scripts/token_factory_live_recheck.py --evidence-dir "$RUNNER_TEMP/token-factory-live"
+      - name: Publish sanitized result and failure visibility
+        if: always()
+        run: |
+          if [ -f "$RUNNER_TEMP/token-factory-live/receipt.json" ]; then
+            cat "$RUNNER_TEMP/token-factory-live/receipt.json" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Live provider job failed before receipt creation." >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+      - name: Upload sanitized machine-readable receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: token-factory-live-receipt
+          path: |
+            ${{ runner.temp }}/token-factory-live/receipt.json
+            ${{ runner.temp }}/token-factory-missing-key/receipt.json
+          if-no-files-found: error

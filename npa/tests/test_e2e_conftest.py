@@ -41,7 +41,9 @@ def test_pytest_configure_maps_aws_env_onto_npa_e2e_s3(monkeypatch) -> None:
     monkeypatch.setenv("S3_BUCKET", "bucket-from-aws")
 
     class _Config:
-        pass
+        def getoption(self, name: str) -> bool:
+            assert name == "--require-token-factory-live"
+            return False
 
     e2e_conftest.pytest_configure(_Config())
     assert e2e_conftest.os.environ["NPA_E2E_S3_ACCESS_KEY_ID"] == "AKIATEST"
@@ -59,7 +61,9 @@ def test_pytest_configure_ignores_hermetic_unit_bucket_for_live_e2e(
     monkeypatch.setenv("NPA_S3_BUCKET", "test-bucket-00000000")
 
     class _Config:
-        pass
+        def getoption(self, name: str) -> bool:
+            assert name == "--require-token-factory-live"
+            return False
 
     e2e_conftest.pytest_configure(_Config())
 

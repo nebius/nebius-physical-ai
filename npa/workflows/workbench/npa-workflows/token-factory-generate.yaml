@@ -8,7 +8,7 @@ metadata:
 config:
   bucket: example-bucket
   prefix: "runs/{{run.id}}/token-factory"
-  generate_model: "meta-llama/Llama-3.3-70B-Instruct"
+  generate_model: "nvidia/Nemotron-3_5-Lightning"
   max_tokens: "512"
 
   prompts_uri: "s3://{{config.bucket}}/{{config.prefix}}/prompts.jsonl"
