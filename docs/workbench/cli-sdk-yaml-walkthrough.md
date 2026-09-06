@@ -31,7 +31,7 @@ matching SDK function, HTTP endpoint, or catalog entry.
 
 Use an existing configured GPU cluster, a reachable authenticated
 detection-training service, and a prepared LanceDB view. The
-[BDD100K workflow](../../npa/workflows/workbench/npa-workflows/bdd100k-pipeline.yaml)
+[BDD100K workflow](../../workflows/testing/bdd100k-pipeline.yaml)
 shows the ingest, curation, train, and evaluation stages that produce and consume
 those views. Merely naming `bdd100k_rider_train` does not create it.
 
@@ -226,7 +226,7 @@ These return and error contracts do not generalize to every module:
 ## 3. YAML: compose registered tool operations
 
 Use the maintained
-[BDD100K npa.workflow specification](../../npa/workflows/workbench/npa-workflows/bdd100k-pipeline.yaml)
+[BDD100K npa.workflow specification](../../workflows/testing/bdd100k-pipeline.yaml)
 for the full ingest-to-evaluation journey. Its training stages reference
 `workbench.detection_training.train_rider`, `train_nighttime`, and
 `train_distant`; these invoke the real CLI service path and wait for training.
@@ -236,16 +236,16 @@ private inputs and submission parameters:
 
 ```bash
 npa workbench workflow validate-spec \
-  npa/workflows/workbench/npa-workflows/bdd100k-pipeline.yaml
+  workflows/testing/bdd100k-pipeline.yaml
 npa workbench workflow plan-spec \
-  npa/workflows/workbench/npa-workflows/bdd100k-pipeline.yaml
+  workflows/testing/bdd100k-pipeline.yaml
 npa workbench workflow submit --help
 ```
 
 Validation and planning do not run the tools or prove that data, model access,
 images, or GPU capacity are ready. Follow the
 [workflow guide](npa-workflow-guide.md) for submission and the
-[workflow catalog](../../npa/workflows/workbench/npa-workflows/README.md) for
+[workflow catalog](../../workflows/README.md) for
 workload-specific setup. NPA renders the workflow into SkyPilot tasks; the
 current BDD100K reference is an `npa.workflow` state machine, not a raw
 multi-document SkyPilot `curl` pipeline.

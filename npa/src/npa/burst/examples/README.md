@@ -22,7 +22,7 @@ relocated the BYOF resource profiles to `npa/src/npa/workflows/byof/profiles/` (
 
 - **One task per file.** `submit_yaml` rejects anything else, and a multi-stage pipeline is a
   workflow: author an `npa.workflow/v0.0.1` spec under
-  `npa/workflows/workbench/npa-workflows/` instead.
+  `workflows/` instead.
 - **Keep `${VAR}` placeholders.** They are the burst substitution surface; concrete registry
   ids, bucket names and run ids must never be committed here.
 - `npa/tests/guardrails/test_burst_examples.py` pins both rules.

@@ -43,11 +43,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 BYOF_RUNNER = REPO_ROOT / "npa" / "scripts" / "run_byof_repo.py"
 WAN_SPEC = (
     REPO_ROOT
-    / "npa"
-    / "workflows"
-    / "workbench"
-    / "npa-workflows"
-    / "byof-wan2.2-multigpu.yaml"
+    / "workflows" / "testing" / "byof-wan2.2-multigpu.yaml"
 )
 PROFILE_DIR = REPO_ROOT / "npa" / "src" / "npa" / "workflows" / "byof" / "profiles"
 EXPECTED_CAPABILITIES = {

@@ -29,7 +29,7 @@ SKIP = "SKIP"
 
 CLI_MODULE = "npa.cli.workbench.sim2real"
 CLI_CALLBACK = "run_command"
-RUNBOOK_YAML = Path("npa/workflows/workbench/npa-workflows/sim2real.yaml")
+RUNBOOK_YAML = Path("workflows/main/sim2real.yaml")
 
 
 @dataclass(frozen=True)

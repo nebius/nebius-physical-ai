@@ -32,7 +32,7 @@ from npa.orchestration.npa_workflow.spec import load_spec
 from npa.workbench.vlm_eval import DEFAULT_ENDPOINT_URL, DEFAULT_MODEL
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
-SPECS = REPO_ROOT / "npa" / "workflows" / "workbench" / "npa-workflows"
+SPECS = REPO_ROOT / "workflows" / "testing"
 
 
 def test_preamble_serves_the_model_the_tool_will_ask_for() -> None:

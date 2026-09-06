@@ -7,7 +7,7 @@ policy checkpoint -> npa workbench sonic export -> npa workbench sonic eval
 ```
 
 The blueprint is the `npa.workflow` spec
-`npa/workflows/workbench/npa-workflows/sonic-export-eval.yaml` (its raw SkyPilot
+`workflows/testing/sonic-export-eval.yaml` (its raw SkyPilot
 template is retired).
 
 ## Prerequisites
@@ -45,7 +45,7 @@ the workflow:
 
 ```bash
 npa workbench workflow submit \
-  npa/workflows/workbench/npa-workflows/sonic-export-eval.yaml \
+  workflows/testing/sonic-export-eval.yaml \
   --run-id sonic-export-eval-$(date -u +%Y%m%dT%H%M%SZ) \
   --var bucket=<bucket> \
   --secret-env AWS_ACCESS_KEY_ID \

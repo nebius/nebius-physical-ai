@@ -160,11 +160,7 @@ def test_stage2_materializes_content_addressed_urdf_contract(tmp_path: Path) -> 
 def test_committed_panda_example_is_a_complete_parseable_robot_spec() -> None:
     example = (
         ROOT
-        / "npa"
-        / "workflows"
-        / "workbench"
-        / "npa-workflows"
-        / "examples"
+        / "docs" / "workbench" / "examples"
         / "robot-spec-panda-urdf.json"
     )
     document = json.loads(example.read_text())
@@ -182,7 +178,7 @@ def test_committed_panda_example_is_a_complete_parseable_robot_spec() -> None:
 def test_canonical_yaml_exposes_robot_spec_uri_in_stage2_argv() -> None:
     workflow = yaml.safe_load(
         (
-            ROOT / "npa" / "workflows" / "workbench" / "npa-workflows" / "sim2real.yaml"
+            ROOT / "workflows" / "main" / "sim2real.yaml"
         ).read_text()
     )
     assert workflow["config"]["robot_spec_uri"] == ""

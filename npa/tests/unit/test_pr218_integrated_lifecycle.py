@@ -843,6 +843,10 @@ def test_agent_destroy_no_vm_id_continues_exact_owned_iam_cleanup(
     monkeypatch.setattr("npa.clients.nebius.delete_access_key", deleted.append)
     monkeypatch.setattr("npa.clients.nebius.delete_service_account", deleted.append)
     monkeypatch.setattr("npa.cli.agent_iam.clear_agent_iam_record", lambda *_a: True)
+    monkeypatch.setattr("npa.cli.agent_iam._provider_agent_dependents", lambda *_a: [])
+    monkeypatch.setattr("npa.cli.agent_iam._verify_access_key_absent", lambda *_a: None)
+    monkeypatch.setattr("npa.clients.agent_iam_binding.remove_created_agent_account",
+                        lambda project, tenant, account: __import__("npa.clients.nebius", fromlist=["delete_service_account"]).delete_service_account(account))
 
     result = CliRunner().invoke(
         app, ["agent", "destroy", "--project", "demo", "--purge-iam", "--yes", "--json"]
@@ -1784,6 +1788,10 @@ def test_incident_end_to_end_recovers_iam_then_deletes_owned_project_from_receip
     )
     monkeypatch.setattr("npa.cli.agent_iam.remove_agent_iam_resource", lambda *_a: True)
     monkeypatch.setattr("npa.cli.agent_iam.clear_agent_iam_record", lambda *_a: True)
+    monkeypatch.setattr("npa.cli.agent_iam._provider_agent_dependents", lambda *_a: [])
+    monkeypatch.setattr("npa.cli.agent_iam._verify_access_key_absent", lambda *_a: None)
+    monkeypatch.setattr("npa.clients.agent_iam_binding.remove_created_agent_account",
+                        lambda project, tenant, account: __import__("npa.clients.nebius", fromlist=["delete_service_account"]).delete_service_account(account))
     report_agent_iam(
         project_id="project-a",
         remaining_agents=0,

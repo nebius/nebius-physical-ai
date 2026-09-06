@@ -15,7 +15,7 @@ guide's input, access, and GPU requirements through to its output artifacts.
 | Run the compositional simulation-to-policy loop | [Sim2Real workflow](sim2real-workflow.md) |
 
 For an existing YAML spec, browse the
-[workflow catalog](../../../npa/workflows/workbench/npa-workflows/README.md).
+[workflow catalog](../../../workflows/README.md).
 For hosted captioning, generation, and reasoning stages, see
 [Token Factory](../token-factory.md).
 

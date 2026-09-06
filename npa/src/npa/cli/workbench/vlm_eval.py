@@ -42,7 +42,7 @@ app = typer.Typer(
 console = Console(stderr=True)
 # The `npa.workflow` specs this tool is driven by. Paths only: `vlm-eval workflow` /
 # `status` print them; `npa workbench workflow submit <path>` runs them.
-NPA_WORKFLOWS = Path("npa/workflows/workbench/npa-workflows")
+NPA_WORKFLOWS = Path("workflows/testing")
 WORKFLOW_PATH = NPA_WORKFLOWS / "vlm-eval-single.yaml"
 BENCHMARK_WORKFLOW_PATH = NPA_WORKFLOWS / "vlm-eval-benchmark.yaml"
 # Zero-GPU hosted alternative: the `api` backend needs no vLLM server.

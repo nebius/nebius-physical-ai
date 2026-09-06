@@ -6,8 +6,8 @@ description: Reproduce, operate, validate, or troubleshoot the fixed Cosmos3-Sup
 # Cosmos3-Super B200/H200 Benchmark
 
 Use this skill for the production benchmark in
-`npa/workflows/workbench/npa-workflows/cosmos3-super-b200-benchmark.yaml` or
-`npa/workflows/workbench/npa-workflows/cosmos3-super-h200-benchmark.yaml`.
+`workflows/testing/cosmos3-super-b200-benchmark.yaml` or
+`workflows/testing/cosmos3-super-h200-benchmark.yaml`.
 It is different from Cosmos Framework native Ray Serve (`cosmos3-ray-serve`):
 this workload runs the public vLLM-Omni synchronous video endpoint. The default
 `primary` suite measures four independent-service arrangements on one complete
@@ -57,7 +57,7 @@ Run the exact access gates before provisioning:
 npa/.venv/bin/npa workbench health preflight --checks hf,s3 --json
 npa/.venv/bin/npa workbench health access --capability cosmos3-serving --json
 npa/.venv/bin/npa workbench workflow validate-spec \
-  npa/workflows/workbench/npa-workflows/cosmos3-super-<gpu>-benchmark.yaml
+  workflows/testing/cosmos3-super-<gpu>-benchmark.yaml
 ```
 
 The operator must independently review the runtime terms and pass

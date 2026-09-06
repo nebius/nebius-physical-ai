@@ -204,6 +204,89 @@ def filter_available(ladder: Sequence[str], available: Iterable[str] | None) -> 
     return kept or ladder_list
 
 
+def parse_model_catalog(payload: Any) -> dict[str, list[str]] | None:
+    """Keep observed IDs separate from proven chat candidates.
+
+    Token Factory's verbose model response declares ``architecture.modality``.
+    Basic OpenAI-compatible listings have no capability metadata: only the
+    agent's known chat families are classified there, never arbitrary IDs.
+    ``None`` means discovery failed; an empty catalog is a successful observation.
+    """
+    if not isinstance(payload, dict) or "error" in payload:
+        return None
+    data = payload.get("data")
+    if not isinstance(data, list):
+        return None
+    known_chat = {model for models in TIER_MODELS.values() for model in models}
+    known_chat.update(f"{model}-fast" for model in FAST_CAPABLE)
+    models, chat, unknown = [], [], []
+    for item in data:
+        if not isinstance(item, dict):
+            return None
+        model = item.get("id")
+        if not isinstance(model, str) or not model.strip() or model != model.strip():
+            return None
+        if model in models:
+            return None  # Conflicting duplicate capability records are not proof.
+        models.append(model)
+        if item.get("status") not in (None, "active"):
+            continue
+        if "architecture" in item:
+            architecture = item["architecture"]
+            if not isinstance(architecture, dict):
+                return None
+            modality = architecture.get("modality")
+            if not isinstance(modality, str) or not modality.strip():
+                return None
+            inputs, separator, output = modality.lower().partition("->")
+            if separator and output.strip() == "text" and "text" in inputs.replace(" ", "").split("+"):
+                chat.append(model)
+            elif not separator:
+                unknown.append(model)
+        elif model in known_chat:
+            chat.append(model)
+        else:
+            unknown.append(model)
+    return {"models": models, "chat_models": chat, "unknown_chat_models": unknown}
+
+
+def model_availability(
+    configured_default: str,
+    configured: Iterable[str],
+    catalog: dict[str, list[str]] | None,
+    *,
+    allowed_models: Iterable[str] | None = None,
+) -> dict[str, Any]:
+    """Choose an observed configured chat default without changing routing policy.
+
+    The full actual catalog remains visible for explicit per-request selection.
+    Automatic defaults stay inside an explicit operator allowlist. No default
+    is invented when discovery fails, the catalog is empty, or chat suitability
+    is unknown. Listing a model does not prove a successful inference request.
+    """
+    candidates = list(dict.fromkeys([configured_default, *configured]))
+    candidates = [model for model in candidates if model]
+    if allowed_models is not None:
+        allowed = set(allowed_models)
+        candidates = [model for model in candidates if model in allowed]
+    observed = catalog["models"] if catalog is not None else []
+    chat = set(catalog["chat_models"]) if catalog is not None else set()
+    unknown = set(catalog["unknown_chat_models"]) if catalog is not None else set()
+    selected = next((model for model in candidates if model in chat), None)
+    status = "available" if selected else "unavailable"
+    if catalog is None or (selected is None and any(model in unknown for model in candidates)):
+        status = "unknown"
+    ordered = [model for model in candidates if model in observed]
+    ordered.extend(model for model in observed if model not in ordered)
+    return {
+        "default": selected,
+        "default_model": selected,
+        "models": ordered,
+        "availability_status": status,
+        "catalog_status": "available" if catalog is not None else "unknown",
+    }
+
+
 def thinking_enabled(tier: str) -> bool:
     """Only the reasoning tier keeps the (billed) hidden reasoning trace."""
     return tier == TIER_REASONING

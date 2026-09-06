@@ -92,11 +92,7 @@ def test_the_spec_declares_the_filename_the_tool_writes() -> None:
 
     spec_path = (
         Path(__file__).resolve().parents[3]
-        / "npa"
-        / "workflows"
-        / "workbench"
-        / "npa-workflows"
-        / "cosmos2-transfer.yaml"
+        / "workflows" / "testing" / "cosmos2-transfer.yaml"
     )
     spec = yaml.safe_load(spec_path.read_text(encoding="utf-8"))
     declared = spec["states"]["transfer"]["outputs"][0]["uri"]

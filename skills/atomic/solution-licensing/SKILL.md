@@ -125,12 +125,13 @@ A conclusion in a PR description is not a control. Encode it:
   fails loudly. Compatibility aliases retain the original Omniverse-named API,
   but new code must use the general inventory because any vendor runtime can be
   non-redistributable.
-- `npa/src/npa/deploy/images.py` — add tools that are licence-eligible but have
-  no built, byte-scanned artifact yet to `UNVALIDATED_PUBLICATION_TOOLS`.
+- `npa/src/npa/deploy/images.py` — add tools that are licence-eligible but lack
+  accepted built-image scans and real capability evidence on required hardware to
+  `UNVALIDATED_PUBLICATION_TOOLS`.
   "Restricted" and "unproven" are different answers to different questions, and
   conflating them is wrong in both directions: a tool here is not restricted,
-  it simply has no evidence yet, and it leaves the set in the same change that
-  records its accepted digest and scan.
+  it simply lacks the required evidence, and it leaves the set in the same change
+  that records its accepted digest, scans, and real capability result.
 - For a solution's weights/datasets, record the license and the runtime-fetch
   requirement in the capability table from the onboarding skill.
 - For an **output-layer** restriction, the record has to travel with the
@@ -141,6 +142,15 @@ A conclusion in a PR description is not a control. Encode it:
 The packaging-contract guards then fail the build if a Dockerfile bakes a
 restricted marker, or is built `FROM` a restricted image, while claiming
 `public`.
+
+Before publication, resolve current state from the packaging contract and the
+restriction/quarantine inventories in `npa/src/npa/deploy/images.py`; stop if
+they disagree. For supported release promotion, require the accepted source/digest
+evidence there and in the applicable image manifests. After promotion, verify
+the supported release against
+`npa/src/npa/deploy/public_release_manifest.json` and anonymous registry reads.
+Historical examples below explain packaging decisions; they do not replace
+current artifact scans, real capability validation, or release verification.
 
 ## Patterns That Keep Us Compliant
 
@@ -223,6 +233,22 @@ Document the selected asset license, immutable revision/digest, cache tier,
 storage wiring, population protocol, and consumer mount/URI in the workflow or
 capability record. If those are absent, describe the cache as ephemeral.
 
+## CUDA And cuDNN Are Separate Payload Boundaries
+
+A public CUDA base tag does not establish redistribution rights for every
+bundled SDK. During cuRobo packaging, the inspected `cudnn-devel` base layer
+contained cuDNN development headers. The current official cuDNN supplement
+identified runtime `.so` and `.dll` files as distributable, while the inspected
+wheel's older embedded supplement also allowed `.h` files. Record that difference;
+do not claim the embedded grant excludes headers. cuRobo selects runtime-only
+bytes that satisfy both grants. CUDA's Linux-specific grant is not a substitute
+for cuDNN's separate terms. Inspect both inherited image layers
+and the exact cuDNN wheel closure. Use an appropriate base and remove any
+non-distributable install payload before its layer commits; deletion from a
+later layer cannot remove bytes from an ancestor. Retain license notices and
+recheck the built layers before publication. Runtime use consent and permission
+to redistribute are separate decisions.
+
 ## Worked Precedent: Isaac Sim / Omniverse Kit
 
 The canonical case in this repo, and the best template for reasoning — because the
@@ -278,12 +304,15 @@ NVIDIA still delivers the runtime directly to each operator; we redistribute no 
 bytes, so the redistribution conclusion does not depend on the EULA UX default.
 The clean runtime-fetch `isaac-lab`, `sonic`, and `groot` images may therefore be
 classified `redistribution: public`. Historical SONIC L40S and inherited MuJoCo
-images remain restricted and quarantined because their built layers contain the
-old payload. The replacement MuJoCo architecture is built independently from a
-digest-pinned public Python base. Its accepted `0.2.0-runtime` digest passed
+artifacts contain restricted payload; replacing them does not make those old
+bytes redistributable.
+The replacement MuJoCo design used an independent digest-pinned public Python
+base to remove that inherited runtime. Its accepted `0.2.0-runtime` digest passed
 exact-layer scans and a real B200 Unitree G1 rollout, as recorded in
-`npa/src/npa/deploy/sonic_image_manifest.json`. That evidence applies only to
-the replacement digest; the historical variants remain quarantined.
+`npa/src/npa/deploy/sonic_image_manifest.json`. That evidence applies only to the
+replacement digest; historical variants remain quarantined. Every new digest
+must pass its own exact-layer scans and real GPU validation before release
+acceptance; use the current inventories and accepted manifests for its state.
 
 Three things made that verdict defensible rather than merely plausible, and a new
 solution should expect to produce all three:
@@ -408,13 +437,18 @@ fetch alone while the weight path stays guarded). Any time several controls
 share an exit code, assume they are hiding each other until a mutant proves
 otherwise.
 
-**Do not publish on the strength of the classification alone.** LTX-2.5's
-accepted `2.5-rtfetch-20260817` digest subsequently passed the payload,
+**Do not publish on the strength of the classification alone.** LTX initially
+remained in `UNVALIDATED_PUBLICATION_TOOLS` after its public classification and
+byte scan because real GPU evidence was still missing. Its accepted
+`2.5-rtfetch-20260817` digest subsequently passed the payload,
 entitlement-refusal, and real RTX PRO 6000 text-to-video/decoded-MP4 gates.
 `npa/src/npa/deploy/ltx2_image_manifest.json` binds those results to the exact
-bytes, which are now in the public release plan. Future bytes must earn fresh
-evidence. OpenPI remains in `UNVALIDATED_PUBLICATION_TOOLS`; redistribution
-eligibility alone does not qualify its pending full-DROID image for release.
+bytes, which are now in the public release plan. OpenPI remains in
+`UNVALIDATED_PUBLICATION_TOOLS`; eligibility alone does not qualify its pending
+full-DROID image for release. Resolve current quarantine and accepted-digest
+state from the current sources above. Every new digest must earn its own scans
+and real capability result before promotion; a previous release's evidence does
+not validate replacement bytes.
 
 ## Red Flags
 

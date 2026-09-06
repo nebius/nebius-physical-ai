@@ -9,7 +9,7 @@ cd "$ROOT"
 export NPA_SSH_KEY="${NPA_SSH_KEY:-$HOME/.ssh/id_ed25519}"
 export NPA_AGENT_PROJECT="${NPA_AGENT_PROJECT:-rtxpro}"
 LOG="/tmp/npa-workflow-yaml-loop.log"
-EXAMPLE_YAML="${ROOT}/npa/workflows/workbench/npa-workflows/sim2real-two-step-agent.yaml"
+EXAMPLE_YAML="${ROOT}/workflows/testing/sim2real-two-step-agent.yaml"
 ATTEMPT=0
 
 exec > >(tee -a "$LOG") 2>&1

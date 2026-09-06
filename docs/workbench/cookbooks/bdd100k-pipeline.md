@@ -1,6 +1,6 @@
 # BDD100K SkyPilot Pipeline
 
-**Workflow:** [bdd100k-pipeline.yaml](../../../npa/workflows/workbench/npa-workflows/bdd100k-pipeline.yaml)
+**Workflow:** [bdd100k-pipeline.yaml](../../../workflows/testing/bdd100k-pipeline.yaml)
 (`npa.workflow/v0.0.1`) — a readable stage graph of `toolRef`s. See
 [npa-workflow-guide.md](../npa-workflow-guide.md). `run_bdd100k_pipeline.py` renders that
 spec and submits it through SkyPilot. The raw `skypilot/bdd100k-pipeline.yaml` template it
@@ -155,7 +155,7 @@ submission time:
 
 ```bash
 python npa/scripts/run_bdd100k_pipeline.py \
-  --spec npa/workflows/workbench/npa-workflows/bdd100k-pipeline.yaml \
+  --spec workflows/testing/bdd100k-pipeline.yaml \
   --synthetic 5000 \
   --lancedb-endpoint http://<your-lancedb-endpoint>:8686 \
   --run-id <your-run-id>
@@ -196,7 +196,7 @@ summary in addition to stdout:
 
 ```bash
 npa/.venv/bin/python npa/scripts/run_bdd100k_pipeline.py \
-  --spec npa/workflows/workbench/npa-workflows/bdd100k-pipeline.yaml \
+  --spec workflows/testing/bdd100k-pipeline.yaml \
   --synthetic 5000 \
   --mock-endpoints \
   --run-id demo-validate \
@@ -227,7 +227,7 @@ suite) run it under `script(1)`:
 script -q -e -c '
   npa/.venv/bin/python -m pytest npa/tests/ --ignore=npa/tests/e2e --timeout=120 -q
   npa/.venv/bin/python npa/scripts/run_bdd100k_pipeline.py \
-    --spec npa/workflows/workbench/npa-workflows/bdd100k-pipeline.yaml \
+    --spec workflows/testing/bdd100k-pipeline.yaml \
     --synthetic 5000 --mock-endpoints --run-id demo-recording
 ' /tmp/bdd100k-demo-recording.log
 ```
@@ -253,7 +253,7 @@ Full submission requires a working SkyPilot 0.12.2 binary:
 ```bash
 export NPA_SKYPILOT_BIN=/opt/npa/skypilot/bin/sky
 python npa/scripts/run_bdd100k_pipeline.py \
-  --spec npa/workflows/workbench/npa-workflows/bdd100k-pipeline.yaml \
+  --spec workflows/testing/bdd100k-pipeline.yaml \
   --synthetic 5000 \
   --run-id bdd100k-pipeline-$(date -u +%Y%m%dT%H%M%SZ) \
   --cleanup

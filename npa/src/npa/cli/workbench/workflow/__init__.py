@@ -2829,12 +2829,12 @@ def _local_source_fingerprint() -> str:
 
     from npa.orchestration.npa_workflow.src_staging import (
         find_npa_package_root,
-        iter_source_files,
+        staged_source_files,
         source_fingerprint,
     )
 
     root = find_npa_package_root()
-    files = list(iter_source_files(root))
+    files = staged_source_files(root)
     if not files:
         raise RuntimeError(f"no source files found under {root}")
     return source_fingerprint(root, files)

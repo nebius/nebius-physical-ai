@@ -242,9 +242,9 @@ Validate the production spec locally:
 
 ```bash
 npa/.venv/bin/npa workbench workflow validate-spec \
-  npa/workflows/workbench/npa-workflows/openpi-pi05-full-droid-finetune.yaml
+  workflows/testing/openpi-pi05-full-droid-finetune.yaml
 npa/.venv/bin/npa workbench workflow plan-spec \
-  npa/workflows/workbench/npa-workflows/openpi-pi05-full-droid-finetune.yaml \
+  workflows/testing/openpi-pi05-full-droid-finetune.yaml \
   --run-id openpi-full-droid-plan \
   --var runtime_image=registry.example.invalid/operator/openpi@sha256:<digest> \
   --var durable_pvc=<run-owned-claim>
@@ -261,15 +261,15 @@ Validate and render both connected workflows:
 
 ```bash
 npa/.venv/bin/npa workbench workflow validate-spec \
-  npa/workflows/workbench/npa-workflows/byof-openpi.yaml
+  workflows/testing/byof-openpi.yaml
 npa/.venv/bin/npa workbench workflow plan-spec \
-  npa/workflows/workbench/npa-workflows/byof-openpi.yaml \
+  workflows/testing/byof-openpi.yaml \
   --run-id openpi-builder-plan
 
 npa/.venv/bin/npa workbench workflow validate-spec \
-  npa/workflows/workbench/npa-workflows/openpi-pi05-four-mode.yaml
+  workflows/testing/openpi-pi05-four-mode.yaml
 npa/.venv/bin/npa workbench workflow plan-spec \
-  npa/workflows/workbench/npa-workflows/openpi-pi05-four-mode.yaml \
+  workflows/testing/openpi-pi05-four-mode.yaml \
   --run-id openpi-four-mode-plan \
   --var runtime_image=registry.example.invalid/operator/openpi@sha256:<digest>
 ```
@@ -321,7 +321,7 @@ npa/.venv/bin/python -m npa.workflows.byof.openpi_service_rbac apply \
   --api-timeout-seconds 30
 
 npa/.venv/bin/npa workbench workflow submit \
-  npa/workflows/workbench/npa-workflows/openpi-pi05-four-mode.yaml \
+  workflows/testing/openpi-pi05-four-mode.yaml \
   --run-id "$OPENPI_RUN_ID" \
   --runtime \
   --max-wait-seconds 0 \

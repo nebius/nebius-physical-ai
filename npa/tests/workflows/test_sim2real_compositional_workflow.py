@@ -39,7 +39,7 @@ from npa.workflows.sim2real.workflow_stage import (
 
 
 ROOT = Path(__file__).resolve().parents[3]
-SPEC = ROOT / "npa" / "workflows" / "workbench" / "npa-workflows" / "sim2real.yaml"
+SPEC = ROOT / "workflows" / "main" / "sim2real.yaml"
 
 
 def test_canonical_is_one_standard_compositional_workflow() -> None:
@@ -50,11 +50,7 @@ def test_canonical_is_one_standard_compositional_workflow() -> None:
     assert not (ROOT / "npa" / "workflows" / "sim2real.yaml").exists()
     assert not (
         ROOT
-        / "npa"
-        / "workflows"
-        / "workbench"
-        / "npa-workflows"
-        / "sim2real-vlm-rl.yaml"
+        / "workflows" / "testing" / "sim2real-vlm-rl.yaml"
     ).exists()
 
     leaf_states = [state for state in payload["states"].values() if state.get("run")]

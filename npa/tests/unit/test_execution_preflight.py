@@ -315,7 +315,7 @@ def test_workflow_adapter_checks_planned_output_not_config_bucket_root(provider,
 
     # Use the real planner on an existing shipped spec. Only external provider
     # calls are replaced; all resolved output locations flow into actual probes.
-    path = Path(__file__).parents[2] / "workflows" / "workbench" / "npa-workflows" / "cosmos-fetch.yaml"
+    path = Path(__file__).parents[3] / "workflows" / "testing" / "cosmos-fetch.yaml"
     spec = load_spec_for_submit(path, config_overrides={"bucket": "unit-output", "prefix": "task"})
     selected, report = _execution_target_preflight(spec, project="unit", context="unit-context", region="eu-west1", run_id="unit-run", assume_decision="", credentials=target().credentials)
     assert report["destination_count"] >= 1
@@ -388,7 +388,7 @@ def test_bdd_planner_directory_roles_probe_exact_denied_training_child(provider)
     from npa.execution_preflight import workflow_output_destinations
     from npa.orchestration.npa_workflow.submit import load_spec_for_submit
 
-    spec = load_spec_for_submit(Path(__file__).parents[2] / "workflows/workbench/npa-workflows/bdd100k-pipeline.yaml",
+    spec = load_spec_for_submit(Path(__file__).parents[3] / "workflows/testing/bdd100k-pipeline.yaml",
                                 config_overrides={"bucket": "unit-output", "prefix": "task"})
     destinations = workflow_output_destinations(spec, run_id="unit-run")
     training = {uri: kind for uri, kind in destinations.items() if "/training/" in uri}
@@ -410,7 +410,7 @@ def test_render_preserves_directory_roles_for_sdk_gate(provider):
     from npa.orchestration.npa_workflow.skypilot_render import render_skypilot_steps_yaml, SkypilotRenderOptions
     import yaml
 
-    spec = load_spec_for_submit(Path(__file__).parents[2] / "workflows/workbench/npa-workflows/bdd100k-pipeline.yaml",
+    spec = load_spec_for_submit(Path(__file__).parents[3] / "workflows/testing/bdd100k-pipeline.yaml",
                                 config_overrides={"bucket": "unit-output", "prefix": "task"})
     steps = [step for step in plan_preview(spec, run_id="unit-run").steps if step.state == "train-rider"]
     rendered = render_skypilot_steps_yaml(spec, steps, run_id="unit-run",

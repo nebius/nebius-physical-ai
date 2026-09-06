@@ -11,7 +11,7 @@ from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
 
 
 ROOT = Path(__file__).resolve().parents[4]
-SPEC = ROOT / "npa" / "workflows" / "workbench" / "npa-workflows" / "paidf-cosmos3.yaml"
+SPEC = ROOT / "workflows" / "main" / "paidf-cosmos3.yaml"
 runner = CliRunner()
 
 

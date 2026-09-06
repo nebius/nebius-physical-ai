@@ -150,7 +150,7 @@ cancel your pending batch through the provider before switching to `generate`.
 
 ## Run a workflow on Nebius
 
-The files under `npa/workflows/workbench/npa-workflows/` are
+The files under `workflows/` are
 `npa.workflow/v0.0.1` specs. Submit them through NPA, which renders SkyPilot
 tasks. Passing these files directly to `sky jobs launch` does not work.
 
@@ -160,7 +160,7 @@ the prompt file to the S3 URI you supply below. Replace the placeholders and use
 the same config overrides for planning and execution:
 
 ```bash
-spec=npa/workflows/workbench/npa-workflows/token-factory-generate.yaml
+spec=workflows/testing/token-factory-generate.yaml
 bucket="<your-bucket>"
 run_id="<unique-run-id>"
 prompts_uri="s3://${bucket}/inputs/prompts.jsonl"

@@ -15,6 +15,7 @@ Nebius endpoint and is probed instead, which is a genuine answer.
 
 from __future__ import annotations
 
+import ipaddress
 import os
 import socket
 from pathlib import Path
@@ -43,6 +44,21 @@ _AGENT_INSTANCE_DESTROY_TARGETS = (
     "null_resource.wait_for_cloud_init",
     "nebius_compute_v1_instance.workbench",
 )
+
+
+def is_routable_public_ip(value: str) -> bool:
+    candidate = (value or "").strip()
+    if not candidate:
+        return False
+    if candidate == "localhost":
+        return False
+    try:
+        ip = ipaddress.ip_address(candidate)
+    except ValueError:
+        return False
+    if ip.is_loopback or ip.is_private or ip.is_unspecified or ip.is_link_local:
+        return False
+    return True
 
 
 def destroy_with_default_security_group_recovery(

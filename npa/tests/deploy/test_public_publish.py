@@ -301,7 +301,7 @@ def test_rebuilt_surfaces_including_detection_training_are_gpu_accepted() -> Non
     assert RESTRICTED_DERIVED_IMAGES == frozenset()
     for tool in ("isaac-lab", "sonic", "groot", "cosmos3-serving", "sonic-mujoco"):
         assert is_publicly_redistributable(tool), tool
-    assert UNVALIDATED_PUBLICATION_TOOLS == frozenset({"openpi"})
+    assert UNVALIDATED_PUBLICATION_TOOLS == frozenset({"openpi", "curobo"})
     assert set(images.GPU_ACCEPTED_PUBLIC_IMAGE_DIGESTS) == {
         "cosmos3-ray-serve",
         "cosmos3-serving",
@@ -360,6 +360,9 @@ def test_publish_plan_now_includes_the_isaac_images() -> None:
         assert image in names, image
     assert "npa-sonic-mujoco" in names
     assert "npa-cosmos3-serving" in names
+    assert "npa-curobo" not in names
+    assert "curobo" not in publicly_publishable_tools()
+    assert images.SUPPORTED_TOOL_VERSIONS["curobo"].endswith("-unbuilt")
     for item in plan:
         assert item.target_ref.startswith("ghcr.io/example/workbench/")
 

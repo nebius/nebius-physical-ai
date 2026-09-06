@@ -1442,7 +1442,7 @@ def test_parallel_job_name_fingerprints_exact_batch_membership(tmp_path: Path) -
 def _canonical_sim2real_1x1():
     root = Path(__file__).resolve().parents[4]
     spec = load_spec(
-        root / "npa" / "workflows" / "workbench" / "npa-workflows" / "sim2real.yaml"
+        root / "workflows" / "main" / "sim2real.yaml"
     )
     image = "cr.example/npa/runtime@sha256:" + "b" * 64
     spec.config.update(
@@ -2795,11 +2795,7 @@ def test_corrupt_decision_artifact_fails_the_run(tmp_path: Path) -> None:
 def test_paidf_cosmos3_runtime_rejection_visualizes_and_skips_downstream() -> None:
     spec_path = (
         Path(__file__).resolve().parents[4]
-        / "npa"
-        / "workflows"
-        / "workbench"
-        / "npa-workflows"
-        / "paidf-cosmos3.yaml"
+        / "workflows" / "main" / "paidf-cosmos3.yaml"
     )
     spec = load_spec(spec_path)
     submitter = FakeSubmitter()

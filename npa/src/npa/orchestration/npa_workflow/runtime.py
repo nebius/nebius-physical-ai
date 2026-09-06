@@ -160,16 +160,18 @@ def _workflow_identity(spec: NpaWorkflowSpec) -> str:
     """Recompute the current immutable workflow identity from the loaded spec."""
 
     payload = asdict(spec)
-    # Optional output roles must not invalidate resumable identities for an
-    # unchanged older spec that did not declare them.
-    for state in payload.get("states", {}).values():
+    for state in payload["states"].values():
+        # Optional output roles must not invalidate resumable identities for an
+        # unchanged older spec that did not declare them.
         for artifact in [*state.get("inputs", []), *state.get("outputs", [])]:
             if not artifact.get("kind"):
                 artifact.pop("kind", None)
+        if state["trigger"] is not None:
+            # Expressions only explain how the resolved trigger fields were parsed;
+            # preserve identities recorded before this metadata was retained.
+            state["trigger"].pop("config_expressions", None)
     return hashlib.sha256(
-        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode(
-            "utf-8"
-        )
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
 
 

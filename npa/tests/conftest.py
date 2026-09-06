@@ -56,6 +56,7 @@ _AMBIENT_CREDENTIAL_ENV_VARS = (
     "NPA_AGENT_DATASET_TENANT_ID",
     "NPA_AGENT_DATASET_URI",
     "NPA_AGENT_DATASET_OUTBOX",
+    "NPA_AGENT_DATASET_REDACTION_FILE",
     "NPA_REGISTRY",
     "HF_TOKEN",
     "HUGGING_FACE_HUB_TOKEN",
@@ -111,6 +112,11 @@ _AMBIENT_CREDENTIAL_ENV_VARS = (
 # they are unset. Non-live tests that need a value set them via monkeypatch after
 # this scrub runs; live-marked tests are exempt and keep the real context.
 _AMBIENT_INFRA_TARGET_ENV_VARS = (
+    # Operator configuration can select private runtime roots. Non-live tests must
+    # resolve their temporary HOME, never the operator's config or journals.
+    "NPA_CONFIG_DIR",
+    "NPA_OPERATION_JOURNAL_DIR",
+    "NPA_SKYPILOT_ISOLATED_CONFIG_DIR",
     "KUBECONFIG",
     "KUBECONTEXT",
     "NPA_K8S_CONTEXT",

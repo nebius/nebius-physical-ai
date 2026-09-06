@@ -11,13 +11,29 @@ refusal conditions; this skill records NPA-specific build and GPU details.
 
 ## Build Contract
 
+Before building with `npa/` as the Docker context, stage the top-level workflow
+catalog into the ignored package data from the repository root:
+
+```bash
+npa/.venv/bin/python npa/src/npa/workflow_build.py --stage-catalog --package-root npa
+```
+
+Repeat after catalog edits. The generated `main/` and `testing/` copies under
+`npa/src/npa/workflows/` belong only to the build context; edit `workflows/main/` and
+`workflows/testing/` as the source of truth.
+
 1. Build only a checked-in Dockerfile under `npa/docker/workbench/<tool>/`.
 2. Resolve the exact 40-character commit and use the one official namespace,
    `ghcr.io/nebius/nebius-physical-ai`. A pre-release tag is exactly
    `dev-<full-git-sha>` on the normal `npa-<tool>` package.
-3. Require `redistribution: public` before any official push. Build restricted
-   images, including `cosmos3-super-benchmark`, only into an operator-controlled
-   registry; neither a private package nor a development tag changes licensing.
+3. Require `redistribution: public` before any official push. Resolve the selected
+   image's current classification from `npa/docker/workbench/packaging-contract.yaml`
+   and the restriction inventories in `npa/src/npa/deploy/images.py`; stop if they
+   disagree. Build restricted images only into an operator-controlled registry;
+   neither a private package nor a development tag changes licensing. Historical
+   image classifications do not establish the eligibility of replacement bytes.
+   The current catalog, for example, records `cosmos3-super-benchmark` as
+   restricted; always re-read that classification before a build.
 4. Run every pre-publication security, packaging, payload, provenance, SBOM,
    vulnerability, secret, non-root, base-pin, and bootstrap-contract gate before
    pushing the public development tag.

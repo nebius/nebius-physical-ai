@@ -17,7 +17,7 @@ from npa.workflows.data_factory_stages import _persist_quality_disposition
 
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
-SPECS = REPO_ROOT / "npa" / "workflows" / "workbench" / "npa-workflows"
+SPECS = REPO_ROOT / "workflows" / "testing"
 SIM2REAL_DEMO = (
     REPO_ROOT
     / "npa"

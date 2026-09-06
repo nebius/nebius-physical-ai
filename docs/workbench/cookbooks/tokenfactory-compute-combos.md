@@ -34,7 +34,7 @@ The first state runs `workbench.lerobot.policy_rollout` and uploads videos; the
 second runs hosted `workbench.vlm_eval.run` on that same prefix.
 
 ```bash
-spec=npa/workflows/workbench/npa-workflows/tokenfactory-rollout-judge-combo.yaml
+spec=workflows/testing/tokenfactory-rollout-judge-combo.yaml
 bucket="<your-bucket>"
 run_id="<unique-run-id>"
 checkpoint="s3://${bucket}/inputs/policy/"
@@ -86,7 +86,7 @@ CLI's built-in task. Inspect the saved task and plan. For a chosen task, run
 [integration guide](../token-factory.md#generate-and-inspect-artifacts).
 
 ```bash
-spec=npa/workflows/workbench/npa-workflows/tokenfactory-scene-to-rollout-judge.yaml
+spec=workflows/testing/tokenfactory-scene-to-rollout-judge.yaml
 run_id="<another-unique-run-id>"
 scene_uri="s3://${bucket}/inputs/scene/"
 
@@ -112,7 +112,7 @@ through `--task-from`. Inspect that plan, generated videos in `rollouts/`, and
 
 ## Train, then triage
 
-[`tokenfactory-train-triage.yaml`](../../../npa/workflows/workbench/npa-workflows/tokenfactory-train-triage.yaml)
+[`tokenfactory-train-triage.yaml`](../../../workflows/testing/tokenfactory-train-triage.yaml)
 runs LeRobot training and publishes its checkpoint, config, logs, and metrics
 before a hosted text model produces a triage report. Use the same
 validate/plan/submit sequence above with this spec and your `bucket` override.

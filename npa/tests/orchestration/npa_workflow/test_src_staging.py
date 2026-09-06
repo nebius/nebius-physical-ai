@@ -24,11 +24,8 @@ from npa.orchestration.npa_workflow.src_staging import (
 
 runner = CliRunner()
 PAIDF_SPEC = (
-    Path(__file__).resolve().parents[3]
-    / "workflows"
-    / "workbench"
-    / "npa-workflows"
-    / "physical-ai-data-factory.yaml"
+    Path(__file__).resolve().parents[4]
+    / "workflows" / "testing" / "physical-ai-data-factory.yaml"
 )
 
 

@@ -70,7 +70,7 @@ that populates the LanceDB query index runs on H100 (general training class).
 ## SkyPilot + workflow
 
 - Declarative pipeline (ingest -> validate quality gate -> curate -> register
-  queryable version): `npa/workflows/workbench/npa-workflows/dataset-ingest-curate.yaml`.
+  queryable version): `workflows/testing/dataset-ingest-curate.yaml`.
   The raw SkyPilot twin is retired.
 - The `register` stage needs the LanceDB service reachable from a pod:
   `npa workbench lancedb deploy --runtime kubernetes --namespace workbench --storage-path s3://<bucket>/lancedb/`

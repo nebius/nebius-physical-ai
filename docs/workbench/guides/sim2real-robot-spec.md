@@ -19,7 +19,7 @@ git -C moveit_resources checkout c55b102711fc0aebe80c6952d2ce97c38110abba
 ```
 
 The complete example is
-[`robot-spec-panda-urdf.json`](../../../npa/workflows/workbench/npa-workflows/examples/robot-spec-panda-urdf.json).
+[`robot-spec-panda-urdf.json`](../../../docs/workbench/examples/robot-spec-panda-urdf.json).
 It pins the public MoveIt resources commit and records the package's bundled
 Apache-2.0 license (and the legacy BSD declaration in `package.xml`). Both source
 license records are preserved in the private consumed contract.
@@ -36,7 +36,7 @@ before GPU work begins.
 Use the standard runtime path and the same RobotSpec URI in each command:
 
 ```bash
-SPEC=npa/workflows/workbench/npa-workflows/sim2real.yaml
+SPEC=workflows/main/sim2real.yaml
 ROBOT_SPEC_URI=s3://YOUR_BUCKET/robots/panda/robot-spec.json
 RUN_ID=robot-spec-proof
 

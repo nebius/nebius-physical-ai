@@ -109,12 +109,22 @@ image (`public` | `restricted`), enforced by
 `npa/tests/docker/test_packaging_contract.py`.
 
 - **`public`** — OSS-redistributable. Code is under OSI-approved licenses
-  (Apache-2.0 / BSD-3 / MIT / MPL-2.0), the CUDA/PyTorch base images
-  (`nvidia/cuda`, `pytorch/pytorch` on Docker Hub) are freely redistributable,
+  (Apache-2.0 / BSD-3 / MIT / MPL-2.0), the exact CUDA/PyTorch base and wheel
+  payloads have applicable redistribution grants,
   and model weights are pulled at runtime. Public GR00T N1.7, GEAR-SONIC,
   Cosmos Reason1, and Cosmos3 Nano assets work anonymously; gated Cosmos assets require a token at
   **runtime** by the operator, never baked into the image. These may be published
   to a public/anonymous registry.
+
+  Public registry availability alone is not a grant for every component. For
+  example, the current cuDNN supplement identifies runtime `.so` and `.dll`
+  files as distributable; an inspected wheel's older embedded supplement also
+  names `.h` files. Preserve and compare these exact terms rather than treating
+  them as identical. cuRobo uses runtime-only cuDNN bytes, satisfying both grants.
+  Check inherited layers and installed wheels separately. Removing restricted bytes
+  in a later layer leaves them distributed in an ancestor; select a suitable
+  base and filter any non-distributable install payload before that layer is
+  committed. Keep the applicable licenses and verify the final image's layers.
 - **`restricted`** — bakes a runtime we are not licensed to redistribute. Such an
   image may be built and run by the operator who owns the registry (internal R&D,
   build-your-own), but hosting it **prebuilt on a public/anonymous registry** would
@@ -398,6 +408,20 @@ direct service-to-service file coupling.
 
 ## Build and tag
 
+For a Docker build whose context is `npa/`, stage the supported workflow catalog
+from the repository root before building:
+
+```bash
+npa/.venv/bin/python npa/src/npa/workflow_build.py --stage-catalog --package-root npa
+```
+
+This copies `workflows/main/*.yaml` and `workflows/testing/*.yaml` into ignored
+package data in `main/` and `testing/` under `npa/src/npa/workflows/`, where existing
+Docker `COPY src` instructions include them. Repeat staging after catalog edits;
+it also removes stale generated YAMLs. Edit the top-level catalog source files.
+Wheel and source-distribution builds stage the same catalog through the package
+build hook.
+
 1. Select the immutable public GHCR development namespace for an official build;
    use `npa.clients.config.resolve_container_registry` only for an explicit
    operator build/BYOF destination.
@@ -420,6 +444,9 @@ direct service-to-service file coupling.
 - [ ] Skill + `skills/index.yaml` smoke updated
 
 ## Related docs
+
+- [Complete-byte image checks](image-byte-scanning.md) — cuRobo's additional
+  pre-push and exact-digest archive scan, policy configuration, and coverage limits.
 
 - Cosmos Transfer 2.5 has an artifact-by-artifact redistribution record at
   `npa/docker/workbench/cosmos2-transfer/REDISTRIBUTION.md`; its `public`

@@ -118,6 +118,17 @@ the actual spec and ledger; `--s3-endpoint` binds both probe and worker endpoint
 S3 keys are selected as a pair from one source, with non-secret provenance;
 an incomplete explicit pair cannot borrow a saved principal's other key.
 
+The credential preflight resolves its bucket from `NPA_CHECKPOINT_BUCKET`, then
+`NEBIUS_S3_BUCKET`, then saved credentials. Setting only `NPA_S3_BUCKET` changes
+the workflow destination but does not select the credential preflight bucket.
+When checking an explicitly authorized workflow destination, set
+`NPA_CHECKPOINT_BUCKET` to an unsigned `s3://` URI for that same bucket in the
+private process environment and use the matching endpoint and credentials.
+The list probe requires a URI, so a bare bucket name fails before S3 access.
+Verify bucket ownership first;
+do not change shared configuration or provision storage to repair a stale
+default selection.
+
 ## Persisting credentials you already hold
 
 If the tokens are in your environment but not in `~/.npa/credentials.yaml`,

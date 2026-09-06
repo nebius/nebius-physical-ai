@@ -31,6 +31,18 @@ venv, then set `NPA_SKYPILOT_BIN="$(npa skypilot status --bin-path)"`.
 
 The Kubernetes controller is the default path (`W9-skypilot-k8s-controller`). The VM controller exists only as a fallback.
 
+For workflows that write S3 state or artifacts, supply `config.bucket` and a
+run-scoped `config.prefix`, even when their declared output URIs are absolute.
+`NPA_CONFIG_DIR` selects NPA configuration; set `KUBECONFIG` separately to the
+verified file containing the selected cluster context. An isolated configuration
+must also resolve the authorized S3 endpoint and credentials through supported
+private sources or the child process environment. Keep credential values out of
+arguments and logs. A successful structural render or `--plan-only` does not
+prove these live submission prerequisites.
+Preserve a failed submission intent and inspect the exact run state before
+recovering from a preflight failure; do not delete the intent or assume a failed
+CLI exit means no launch occurred.
+
 ## Known SkyPilot 0.12.2 Limits
 
 - Raw SkyPilot `envs` does not support self-referencing variable interpolation.
@@ -45,6 +57,11 @@ The Kubernetes controller is the default path (`W9-skypilot-k8s-controller`). Th
   Official public GHCR development and release tags need no registry secret.
   Operator-controlled private registries require explicit exact-host SkyPilot
   Docker credentials; NPA forwards them but never mints a provider token.
+- The standard Kubernetes template derives the provider namespace from the
+  selected kubeconfig context. In 0.12.2, native pod creation overwrites
+  `pod_config.metadata.namespace` with that provider namespace. Before using
+  existing PVCs or Secrets, configure a workload-specific context with their
+  namespace and verify the resulting pod namespace after submission.
 
 ## What the Renderer Emits
 
@@ -131,10 +148,15 @@ results after each source edit.
 - The `NPA_SRC_S3_URI` overlay has no embedded provenance. Re-stage it after a
   source change before diagnosing a renamed flag in a live pod.
 - An unresolved placeholder in rendered setup is rejected before submission.
+- With a remote SkyPilot API server, inspect its effective kubeconfig and selected
+  context namespace. A correct client-side context or rendered pod metadata does
+  not establish the server's namespace. Keep API health, namespace selection and
+  actual pod placement as separate checks; see the upstream
+  [API server configuration guide](https://docs.skypilot.ai/en/stable/reference/api-server/api-server-admin-deploy.html).
 
 ## Reference Pattern
 
-- Canonical spec: `npa/workflows/workbench/npa-workflows/bdd100k-pipeline.yaml`.
+- Canonical spec: `workflows/testing/bdd100k-pipeline.yaml`.
 - Runner script pattern: `npa/scripts/run_bdd100k_pipeline.py`, a thin wrapper around `npa.orchestration.skypilot.submit_workflow`.
 - Isaac Lab runners follow the same shape through `npa/scripts/run_isaac_lab_rl.py`.
 

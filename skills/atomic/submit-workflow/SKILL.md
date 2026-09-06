@@ -15,7 +15,7 @@ SkyPilot submission behavior.
 1. Read `skills/tools/skypilot-workflows/SKILL.md` for SkyPilot version and
    cleanup constraints.
 2. Prefer `npa.workflow/v0.0.1` specs under
-   `npa/workflows/workbench/npa-workflows/`. Parse / `validate-spec` locally
+   `workflows/`. Parse / `validate-spec` locally
    before launch.
 3. Use `NPA_SKYPILOT_BIN` or `npa skypilot status --bin-path`; do not assume
    `sky` from `PATH`.
@@ -30,7 +30,8 @@ SkyPilot submission behavior.
 - SDK: use shared workflow submission helpers rather than shelling out from
   application logic.
 - YAML: author shipped workflows as `npa.workflow/v0.0.1` specs under
-  `npa/workflows/workbench/npa-workflows/`. `npa workbench workflow submit`
+  `workflows/testing/`; `workflows/main/` is reserved for `sim2real.yaml` and
+  `paidf-cosmos3.yaml`. `npa workbench workflow submit`
   accepts those specs (plans, renders, then launches SkyPilot) and still accepts
   raw SkyPilot YAML supplied by an operator or by guarded single-task example
   directories.

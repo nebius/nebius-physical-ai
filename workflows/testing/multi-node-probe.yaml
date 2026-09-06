@@ -16,7 +16,7 @@ kind: Workflow
 # hold GPUs for it.
 #
 #   npa workbench workflow submit \
-#     npa/workflows/workbench/npa-workflows/multi-node-probe.yaml \
+#     workflows/testing/multi-node-probe.yaml \
 #     --run-id <run-id> \
 #     --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY
 
