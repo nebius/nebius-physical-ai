@@ -45,6 +45,11 @@ The Kubernetes controller is the default path (`W9-skypilot-k8s-controller`). Th
   Official public GHCR development and release tags need no registry secret.
   Operator-controlled private registries require explicit exact-host SkyPilot
   Docker credentials; NPA forwards them but never mints a provider token.
+- The standard Kubernetes template derives the provider namespace from the
+  selected kubeconfig context. In 0.12.2, native pod creation overwrites
+  `pod_config.metadata.namespace` with that provider namespace. Before using
+  existing PVCs or Secrets, configure a workload-specific context with their
+  namespace and verify the resulting pod namespace after submission.
 
 ## What the Renderer Emits
 
@@ -76,6 +81,11 @@ into SkyPilot documents:
 - The `NPA_SRC_S3_URI` overlay has no embedded provenance. Re-stage it after a
   source change before diagnosing a renamed flag in a live pod.
 - An unresolved placeholder in rendered setup is rejected before submission.
+- With a remote SkyPilot API server, inspect its effective kubeconfig and selected
+  context namespace. A correct client-side context or rendered pod metadata does
+  not establish the server's namespace. Keep API health, namespace selection and
+  actual pod placement as separate checks; see the upstream
+  [API server configuration guide](https://docs.skypilot.ai/en/stable/reference/api-server/api-server-admin-deploy.html).
 
 ## Reference Pattern
 
