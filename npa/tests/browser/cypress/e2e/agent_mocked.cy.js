@@ -263,6 +263,95 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#renderedDataSummary").should("contain.text", rrdKey);
   });
 
+  it("renders one page by default, resumes on List artifacts, and filters from cache", () => {
+    const runId = "lazy-inventory-run";
+    const runRef = "npa1_lazy_inventory";
+    const source = {
+      run_id: runId,
+      run_ref: runRef,
+      project_id: "project-a",
+      bucket: "project-artifacts",
+      resolved_prefix: "workflow-runs",
+      source_type: "artifact_storage",
+      source_selected: true,
+    };
+    let inventoryRequests = 0;
+    let workflowFallbackRequests = 0;
+    cy.intercept("GET", `/api/workflows/sim2real/runs/${runId}*`, (req) => {
+      req.reply({
+        delay: 1200,
+        body: { run: { run_id: runId, status: "running", stages: [], logs: [] } },
+      });
+    });
+    cy.intercept("POST", "/api/sim-viz/load-run", (req) => {
+      workflowFallbackRequests += 1;
+      req.reply({ statusCode: 500, body: { detail: "unexpected workflow fallback" } });
+    });
+    cy.intercept("GET", `/api/artifacts/run/${runRef}*`, (req) => {
+      inventoryRequests += 1;
+      const cursor = new URL(req.url).searchParams.get("cursor") || "";
+      const common = { ...source, ok: true };
+      if (!cursor) {
+        req.alias = "lazyInventoryFirstPage";
+        req.reply({
+          body: {
+            ...common,
+            artifacts: [{
+              key: "workflow-runs/lazy-inventory-run/preview.mp4",
+              render: "video",
+              role: "output",
+              size: 1024,
+            }],
+            truncated: true,
+            next_cursor: "lazy-page-two",
+            summary: { run_id: runId, has_recording: false },
+          },
+        });
+        return;
+      }
+      expect(cursor).to.eq("lazy-page-two");
+      req.alias = "lazyInventorySecondPage";
+      req.reply({
+        body: {
+          ...common,
+          artifacts: [{
+            key: "workflow-runs/lazy-inventory-run/reports/sim2real.rrd",
+            render: "rerun",
+            role: "output",
+            size: 4096,
+          }],
+          truncated: false,
+          next_cursor: "",
+        },
+      });
+    });
+
+    cy.window().then((win) => {
+      win.__NPA_AGENT_TEST__.setArtifactRunsForTest([], [source], {});
+      return win.__NPA_AGENT_TEST__.loadRunData({ run_id: runId, run_ref: runRef });
+    });
+    cy.wait("@lazyInventoryFirstPage");
+    cy.get("#artifactList")
+      .should("contain.text", "preview.mp4")
+      .and("not.contain.text", "sim2real.rrd");
+    cy.get("#artifactRunSummary .no-recording").should("not.exist");
+    cy.get("#tabRerun").click();
+    cy.get("#artifactTypeFilter").select("video");
+    cy.then(() => expect(inventoryRequests, "filter reuses partial cache").to.eq(1));
+
+    cy.get("#artifactLoadRunArtifacts").click();
+    cy.wait("@lazyInventorySecondPage");
+    cy.get("#artifactList")
+      .should("contain.text", "2 artifacts")
+      .and("contain.text", "2 inventory pages merged")
+      .and("not.contain.text", "sim2real.rrd");
+    cy.get("#artifactTypeFilter").select("");
+    cy.get("#artifactList").should("contain.text", "sim2real.rrd");
+    cy.get("#artifactSort").select("largest");
+    cy.then(() => expect(inventoryRequests, "filters reuse completed cache").to.eq(2));
+    cy.then(() => expect(workflowFallbackRequests, "superseded inventory does not fall back").to.eq(0));
+  });
+
   it("constructs fully scoped media URLs and rejects JSON before rendering video", () => {
     const item = {
       run_id: "scoped-video-run",
@@ -1480,8 +1569,11 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#artifactRefreshRuns").click();
     cy.wait("@pagedRuns");
     cy.get("#runIdSelect").select("npa1_paged_ui");
-    cy.wait(["@pagedArtifacts", "@pagedArtifacts"]);
+    cy.wait("@pagedArtifacts");
     cy.get("#artifactList").should("contain.text", `category/${runId}/a.json`);
+    cy.get("#artifactList").should("not.contain.text", `category/${runId}/b.json`);
+    cy.get("#artifactLoadRunArtifacts").click();
+    cy.wait("@pagedArtifacts");
     cy.get("#artifactList")
       .should("contain.text", `category/${runId}/a.json`)
       .and("contain.text", `category/${runId}/b.json`);
@@ -1504,7 +1596,7 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#artifactList").should("contain.text", "mock-run/preview.png");
 
     cy.get("#artifactLoadRunArtifacts").click();
-    cy.wait("@artifactList");
+    cy.get("@artifactList.all").should("have.length", 1);
     cy.get("#artifactList button[data-action='preview-artifact']").click();
     cy.wait("@artifactContentImage");
     // loadArtifact no longer spams chat; the viewer / preview host reflects the load.
@@ -1591,14 +1683,14 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#artifactList").should("contain.text", "View in Rerun");
     cy.get("#artifactList").should("contain.text", "View");
     cy.get("#artifactTypeFilter").select("video");
-    cy.wait("@nonStockArtifactList");
+    cy.get("@nonStockArtifactList.all").should("have.length", 1);
     cy.get("#artifactList").should("contain.text", `${NON_STOCK_RUN_ID}/rollouts/customer-camera.mp4`);
     cy.get("#artifactList").should("not.contain.text", `${NON_STOCK_RUN_ID}/reports/sim2real.rrd`);
     cy.get("#artifactSort").select("largest");
-    cy.wait("@nonStockArtifactList");
+    cy.get("@nonStockArtifactList.all").should("have.length", 1);
     cy.get("#artifactList").should("contain.text", "Showing 1 grouped rows from 1 selected");
     cy.get("#artifactTypeFilter").select("");
-    cy.wait("@nonStockArtifactList");
+    cy.get("@nonStockArtifactList.all").should("have.length", 1);
     cy.get("#simRunId").should("contain.text", NON_STOCK_RUN_ID);
     cy.get("#simStage").should("contain.text", "stage_14_rerun_viz");
     cy.get("#simCamera").should("contain.text", "customer-overhead");
@@ -1721,7 +1813,7 @@ describe("NPA agent UI with mocked APIs", () => {
 
     // Clicking the Augment stage row scopes the artifact list to that stage.
     cy.get('#artifactProvenance .prov-clickable[data-stage="cosmos_augmented"]').click();
-    cy.wait("@dfArtifactList");
+    cy.get("@dfArtifactList.all").should("have.length", 2);
     cy.get("#artifactStageFilter").should("have.value", "cosmos_augmented");
     cy.get("#artifactList").should("contain.text", "cosmos_augmented/aug0/augmented_video.mp4");
     cy.get("#artifactList").should("not.contain.text", "/input/video_0.mp4");
@@ -1736,7 +1828,7 @@ describe("NPA agent UI with mocked APIs", () => {
 
     // Click the "Source frames" (input) pipeline stage.
     cy.get('#artifactProvenance .prov-clickable[data-stage="input"]').should("contain.text", "Source frames").click();
-    cy.wait("@dfArtifactList");
+    cy.get("@dfArtifactList.all").should("have.length", 2);
 
     // The artifact list scopes to the input stage and shows the source frames...
     cy.get("#artifactStageFilter").should("have.value", "input");
@@ -1781,13 +1873,13 @@ describe("NPA agent UI with mocked APIs", () => {
 
     // Selecting a stage scopes the artifact list to that workflow-progress step.
     cy.get("#artifactStageFilter").select("rollouts");
-    cy.wait("@nonStockArtifactList");
+    cy.get("@nonStockArtifactList.all").should("have.length", 1);
     cy.get("#artifactList").should("contain.text", `${NON_STOCK_RUN_ID}/rollouts/customer-camera.mp4`);
     cy.get("#artifactList").should("not.contain.text", `${NON_STOCK_RUN_ID}/reports/sim2real.rrd`);
 
     // Clearing the stage filter restores the full listing.
     cy.get("#artifactStageFilter").select("");
-    cy.wait("@nonStockArtifactList");
+    cy.get("@nonStockArtifactList.all").should("have.length", 1);
     cy.get("#artifactList").should("contain.text", `${NON_STOCK_RUN_ID}/reports/sim2real.rrd`);
 
     // The artifact-derived timeline tags rows with a stage key so they are
