@@ -17,7 +17,7 @@ def test_paidf_anomalygen_sky_parent_and_runtime_are_fixed() -> None:
     assert "nvidia/cuda:13.2.1-base-ubuntu24.04@sha256:" in text
     assert "USER ubuntu" in text
     assert "ENTRYPOINT [\"/usr/local/bin/npa-sky-entrypoint\"]" in text
-    assert "org.nebius.npa.skypilot-bootstrap-contract" not in text
+    assert 'org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"' in text
     assert "git -C /src fetch -q --depth 1 origin" in text
     assert "bash /tmp/build_wheels.sh --in-container" in text
 

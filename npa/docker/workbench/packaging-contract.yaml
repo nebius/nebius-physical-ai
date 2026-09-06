@@ -263,6 +263,7 @@ images:
       review, built-byte security scanning, and real GPU acceptance.
   paidf-anomalygen-sky:
     dockerfile: paidf-anomalygen-sky/Dockerfile
+    skypilot_bootstrap_contract: skypilot-0.12.2-v1
     tier: interactive
     redistribution: restricted
     notes: >-

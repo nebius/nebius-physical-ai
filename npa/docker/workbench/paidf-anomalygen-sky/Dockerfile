@@ -143,3 +143,5 @@ ENV HOME=/home/ubuntu \
     PATH=/opt/npa-venv/bin:${PATH}
 ENTRYPOINT ["/usr/local/bin/npa-sky-entrypoint"]
 CMD ["/bin/bash"]
+
+LABEL org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"

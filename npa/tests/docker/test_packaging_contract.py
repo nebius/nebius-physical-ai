@@ -321,7 +321,18 @@ def test_declared_skypilot_images_enforce_the_versioned_build_contract() -> None
                 _normalize_dockerfile(dockerfile_text),
             )
             if copy_match:
-                script = ROOT / "npa" / copy_match.group("src")
+                source = Path(copy_match.group("src"))
+                assert not source.is_absolute() and ".." not in source.parts, name
+                # Workbench images use either npa/ or docker/workbench/ as
+                # their build context. Require one unambiguous source file.
+                candidates = [
+                    (context / source).resolve()
+                    for context in (ROOT / "npa", WORKBENCH_DOCKER)
+                    if (context / source).is_file()
+                ]
+                assert len(candidates) == 1, f"{name}: ambiguous or missing COPY source"
+                script = candidates[0]
+                assert script.is_relative_to(WORKBENCH_DOCKER.resolve()), name
         assert script.is_file(), f"{name}: entrypoint source not found: {script}"
         entrypoint_text = script.read_text(encoding="utf-8")
         assert (
