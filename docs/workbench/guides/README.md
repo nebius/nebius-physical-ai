@@ -117,6 +117,7 @@ tools.
 | --- | --- |
 | [physical-ai-data-factory-deploy.md](physical-ai-data-factory-deploy.md) | **Copy-paste runbook** — from zero to a running blueprint (includes a one-block Quick start that stages input frames and submits) |
 | [physical-ai-data-factory.md](physical-ai-data-factory.md) | Conceptual guide — blueprint→stage mapping, S3 layout, viewing results |
+| [paidf-image-evidence.md](paidf-image-evidence.md) | Audit the six completed per-image Rerun recordings; DIG remains pending |
 
 > **Fastest start:** the deploy runbook's [Quick start](physical-ai-data-factory-deploy.md#quick-start-copy-paste)
 > seeds captionable frames (no dataset needed) and submits an input-conditioned

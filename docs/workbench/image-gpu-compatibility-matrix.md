@@ -278,7 +278,9 @@ kubectl apply -f npa/scripts/blackwell-gpu-validation-job.yaml
 
 Six PAIDF compatibility images have verified operator-private publication,
 built-byte security/SBOM records, and actual SkyPilot bootstrap and NPA-install
-proofs. Exact immutable digests and source commits are recorded in the
+proofs. Their six distinct digest/run-bound recordings are documented in the
+[per-image Rerun evidence](guides/paidf-image-evidence.md). Exact immutable
+digests and source commits are recorded in the
 [container catalog](container-image-catalog.md#external-paidf-runtime-images).
 Their restricted publication does not make them NPA public GHCR images.
 

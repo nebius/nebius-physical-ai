@@ -212,6 +212,10 @@ not a model or data-path substitution.
 
 ### Native live validation evidence
 
+The [per-image Rerun evidence](paidf-image-evidence.md) binds six distinct IAA
+and EVG compatibility images to their completed runs and real visual outputs.
+The seventh AnomalyGen/DIG recording remains pending the full native workload.
+
 IAA completed all nine states on reserved B200 capacity from source
 `39120bc9b567d6400d4fe955988132ba1f6ce682`. The upstream attribute evaluator
 accepted one 896×1184 JPEG (81,149 bytes); CPU postprocessing and the real
