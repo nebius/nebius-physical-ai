@@ -1,8 +1,8 @@
 # OSS Physical AI Solution Candidates
 
 This catalog tracks open-source Physical AI projects that are being onboarded as
-Workbench registry candidates through BYOF. These entries are **not** first-class
-`npa workbench <tool>` commands yet. Promotion requires the pushed registry image
+Workbench registry candidates through BYOF, including entries subsequently
+promoted to native tools or public images as noted below. Promotion requires the pushed registry image
 to run in a real NPA/SkyPilot/Kubernetes E2E workflow and produce declared
 artifacts.
 
@@ -23,7 +23,7 @@ unique and must be tested with its own upstream-named capabilities.
 | DROID policy learning | `droid-dataset/droid_policy_learning` `9a29c832…` | `rlds_config_generator_contract` | `droid_rlds_config_generator.json` | `byof-droid-policy-learning.yaml` |
 | Open Dreamer (world model, **2-GPU min**) | `next-state/open-dreamer` `2b10640` | `dreamer4_tokenizer_train_two_gpu` | `open_dreamer_world_model_2gpu.json` | `byof-open-dreamer.yaml` |
 | Alibaba Wan 2.2 TI2V-5B | `Wan-Video/Wan2.2` `42bf4cf…` | `wan2.2_ti2v_5b_text_to_video` | capability JSON + runtime inventory + MP4 | `byof-wan2.2.yaml` |
-| Lightricks LTX-2.5 (**not built; licence-gated**) | `Lightricks/LTX-2` `fd4ded7f…` | `ltx2_5_text_to_video` | `ltx2_5_text_to_video.json` + provenance manifest + MP4 | `byof-ltx2.yaml` |
+| Lightricks LTX-2.5 (**accepted public image; entitled runtime fetch**) | `Lightricks/LTX-2` `fd4ded7f…` | `ltx2_5_text_to_video` | `ltx2_5_text_to_video.json` + provenance manifest + MP4 | `byof-ltx2.yaml` |
 | Alibaba Wan 2.2 TI2V-5B (**4-GPU distributed**) | same pinned source/checkpoint | `wan2.2_ti2v_5b_text_to_video_multigpu_fsdp_ulysses` | multi-GPU capability JSON + rank topology + runtime inventory + MP4 | `byof-wan2.2-multigpu.yaml` |
 
 ## Live capability results
@@ -215,9 +215,11 @@ contracts.
 
 Audio-video DiT foundation model, pinned to
 `Lightricks/LTX-2@fd4ded7f2d88d3da713abcdd4ad41ecc4a9314ca` with the gated
-`Lightricks/LTX-2.5` checkpoint set. **No status here is live**: the `npa-ltx2`
-image has not been built and nothing has run on a GPU. Every row below is
-therefore a declared contract awaiting evidence, not a result.
+`Lightricks/LTX-2.5` checkpoint set. The accepted public image is
+`npa-ltx2:2.5-rtfetch-20260817`; its exact digest and prior real RTX PRO 6000
+results are recorded in `npa/src/npa/deploy/ltx2_image_manifest.json`.
+The 2026-09-05 registry audit matched those released bytes anonymously; it did
+not rerun generation or establish additional capabilities.
 
 LTX-2.5 differs from every other candidate in this catalog in what it licenses.
 The LTX-2.x Community License Agreement (2026-08-11, not OSI) covers the
@@ -231,8 +233,8 @@ another machine learning model — is the operator's own responsibility.
 
 | Capability | Status | Upstream basis / NPA evidence |
 | --- | --- | --- |
-| `ltx2_5_text_to_video` | declared; no image built | `python -m ltx_pipelines.distilled` at the pinned ref, per upstream's own quick start |
-| `ltx2_5_decoded_mp4_validation` | declared; no image built | `npa/src/npa/workbench/ltx2/video_check.py`, unit-tested against real ffmpeg clips and copied into the image |
+| `ltx2_5_text_to_video` | accepted exact-digest evidence | pinned upstream distilled pipeline generated a real clip on one RTX PRO 6000; source and weights remained runtime fetches |
+| `ltx2_5_decoded_mp4_validation` | accepted exact-digest evidence | independently decoded H.264 MP4: 1536×1024, 121 frames, 1,994,625 bytes; digest and refusal evidence in the accepted image manifest |
 | `ltx2_5_image_to_video` | not claimed | upstream pipeline exists; no code path or evidence here |
 | `ltx2_5_audio_to_video` | not claimed | separate `A2VidPipelineTwoStage` inputs |
 | `ltx2_5_lora_fine_tuning` | not claimed | `ltx-trainer` is licensed material and training on Outputs is what Attachment A(18) restricts |
@@ -241,7 +243,7 @@ The primary JSON is `ltx2_5_text_to_video.json`. The run itself still proves the
 refusal first (`ltx-runtime assert-refusal`: exit 78 and empty caches before any
 fetch), but that is a property of the image rather than a graded capability. See
 [`ltx2.md`](ltx2.md) for the dev-VM runbook, the entitlement the run requires,
-and what has to happen before any of the above may be marked live.
+and the exact-digest validation record. A future image must earn fresh evidence.
 
 ## First-class Workbench tools (not BYOF)
 
@@ -250,10 +252,14 @@ package/image tags:
 
 | Version | Status | Notes |
 | --- | --- | --- |
-| `0.5.1` | default | `npa-lerobot:0.5.1` |
-| `0.6.0` | additional | `npa-lerobot:0.6.0`; lean extras + `env_eval_freq` |
+| `0.5.1` | default | Accepted CUDA 13 timestamped image pin in `lerobot_version_manifest.json`; plain `0.5.1` is historical |
+| `0.6.0` | additional package support | Requires a validated operator-built image for container execution; no accepted public tag/digest; lean extras + `env_eval_freq` |
 
-Select with `--lerobot-version`. Manifest:
+Select the package with `--lerobot-version`; serverless training accepts a
+custom container through `train --image`, while VM deployment installs the
+package. The 2026-09-05 anonymous audit returned `404 MANIFEST_UNKNOWN` for
+the official `npa-lerobot:0.6.0` tag; it is outside the public release plan.
+Manifest:
 `npa/src/npa/deploy/lerobot_version_manifest.json`. Upstream:
 https://huggingface.co/blog/lerobot-release-v060
 
