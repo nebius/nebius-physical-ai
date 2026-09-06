@@ -28,12 +28,12 @@ import re
 from typing import Any, Iterable, Sequence
 
 # ── Token Factory model tiers (cheapest-capable first) ───────────────────────
-# These are model *families*; the Fast flavor is applied separately by
-# ``flavor_variants`` / ``build_model_ladder``.
-CHEAP_MODEL = "Qwen/Qwen3-32B"
-STANDARD_MODEL = "meta-llama/Llama-3.3-70B-Instruct"
-REASONING_MODEL = "nvidia/Cosmos3-Super-Reasoner"
-VISION_MODEL = "Qwen/Qwen2.5-VL-72B-Instruct"
+# Public replacements for the August 31, 2026 Token Factory retirements.
+# https://docs.tokenfactory.nebius.com/august-2026-deprecation-notice
+CHEAP_MODEL = "nvidia/Nemotron-3_5-Lightning"
+STANDARD_MODEL = CHEAP_MODEL
+REASONING_MODEL = "MiniMaxAI/MiniMax-M3"
+VISION_MODEL = REASONING_MODEL
 
 TIER_CHEAP = "cheap"
 TIER_STANDARD = "standard"
@@ -41,18 +41,18 @@ TIER_REASONING = "reasoning"
 TIER_VISION = "vision"
 
 # Preferred concrete-model order per tier. The resilience ladder falls through
-# this list on transient/availability errors, so each tier ends in a broadly
-# available fallback.
+# this list on transient/availability errors. Vision must not fall through to
+# the text-only default; explicit custom model selections remain available.
 TIER_MODELS: dict[str, tuple[str, ...]] = {
-    TIER_CHEAP: (CHEAP_MODEL, STANDARD_MODEL),
-    TIER_STANDARD: (STANDARD_MODEL, CHEAP_MODEL),
+    TIER_CHEAP: (CHEAP_MODEL, REASONING_MODEL),
+    TIER_STANDARD: (STANDARD_MODEL, REASONING_MODEL),
     TIER_REASONING: (REASONING_MODEL, STANDARD_MODEL),
-    TIER_VISION: (VISION_MODEL, REASONING_MODEL),
+    TIER_VISION: (VISION_MODEL,),
 }
 
 # Models with a known Token Factory ``-fast`` flavor. Appending ``-fast`` to a
 # model without a fast flavor would 404, so only these are expanded.
-FAST_CAPABLE = frozenset({CHEAP_MODEL, STANDARD_MODEL})
+FAST_CAPABLE: frozenset[str] = frozenset()
 
 # Guardrail: cap raw user input so one oversized paste cannot dominate cost.
 MAX_INPUT_CHARS = 24000
@@ -154,6 +154,8 @@ def build_model_ladder(
 
     def _add(model: str) -> None:
         value = str(model or "").strip()
+        if tier == TIER_VISION and value == CHEAP_MODEL and value != requested_model:
+            return
         if value and value not in bases:
             bases.append(value)
 
@@ -290,15 +292,20 @@ def thinking_enabled(tier: str) -> bool:
     return tier == TIER_REASONING
 
 
-def chat_extra(tier: str) -> dict[str, Any]:
-    """Extra chat-completion payload fields for a tier.
+def chat_extra(tier: str, model: str) -> dict[str, Any]:
+    """Extra chat-completion fields supported by the selected model.
 
-    Non-reasoning tiers disable the model's hidden thinking so we do not pay
-    for a trace we discard. Token Factory / vLLM reads ``chat_template_kwargs``.
+    Non-reasoning tiers disable hidden thinking where the model documents a
+    switch. The public replacement models use different template parameters;
+    do not send either provider-specific parameter to an unknown custom model.
     """
     if thinking_enabled(tier):
         return {}
-    return {"chat_template_kwargs": {"thinking": False}}
+    if model == CHEAP_MODEL:
+        return {"chat_template_kwargs": {"enable_thinking": False}}
+    if model == REASONING_MODEL:
+        return {"chat_template_kwargs": {"thinking_mode": "disabled"}}
+    return {}
 
 
 def enforce_input_budget(text: str, *, max_chars: int = MAX_INPUT_CHARS) -> tuple[bool, str]:

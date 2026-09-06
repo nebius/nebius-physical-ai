@@ -129,7 +129,6 @@ SPEC_GAP_REASONS: dict[str, dict[str, str]] = {
     },
     "vlm-eval/run": {
         "task": "knob",
-        "model": "knob",
         "endpoint_url": "knob",
         "frame_selection": "knob",
         "max_frames": "knob",
@@ -303,7 +302,6 @@ CONTRACTS: tuple[CapabilityContract, ...] = (
         tool_ref="workbench.vlm_eval.run",
         spec_gap=(
             "task",
-            "model",
             "endpoint_url",
             "frame_selection",
             "max_frames",

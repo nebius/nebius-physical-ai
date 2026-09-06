@@ -37,13 +37,27 @@ availability is per-key, so a model in the docs may not be in your project.
 Defaults: base URL `https://api.tokenfactory.nebius.com/v1/`, overridable with
 `NEBIUS_TOKEN_FACTORY_BASE_URL`. Requests retry on 429 and 5xx.
 
+## August 2026 migration
+
+The [official notice](https://docs.tokenfactory.nebius.com/august-2026-deprecation-notice)
+retires the old public text, vision, and reasoning defaults. The replacements
+are Nemotron-3.5-Lightning for text and MiniMax-M3 for vision/reasoning.
+See `docs/workbench/token-factory-deprecation-verification.md` for exact IDs,
+live observations, API differences, vendor terms, and verification commands.
+MiniMax-M3 is under the MiniMax Community License; hosted API access does not
+establish the operator's commercial entitlement. No vendor weights are bundled.
+
+Direct-output client calls disable thinking with model-specific template keys:
+Lightning `enable_thinking=false`, MiniMax `thinking_mode=disabled`. Explicit
+client `extra` values win. Agent reasoning turns enable thinking deliberately.
+
 ## Commands
 
 Every command takes local paths or `s3://` URIs for both input and output, and
 supports `--dry-run` (compute without writing the artifact) and
 `--output text|json`.
 
-**Caption images** — default model `Qwen/Qwen2.5-VL-72B-Instruct`:
+**Caption images** — default model `MiniMaxAI/MiniMax-M3`:
 
 ```bash
 npa workbench token-factory caption \
@@ -54,7 +68,7 @@ npa workbench token-factory caption \
 ```
 
 **Batch text generation** over a JSONL/text prompt file — default model
-`meta-llama/Llama-3.3-70B-Instruct`:
+`nvidia/Nemotron-3_5-Lightning`:
 
 ```bash
 npa workbench token-factory generate \
@@ -86,7 +100,7 @@ answer, which is most bulk stages. Three properties are unique to it, and each
 one has already cost real debugging time:
 
 - **Batch routing is a per-model entitlement, unrelated to real-time chat.** Most
-  models that serve `generate` are rejected for batch. Measured live across eight
+  models that serve `generate` are rejected for batch. Historical measurements across eight
   text models on one key, exactly one — `openai/gpt-oss-120b` — was batch
   routable; `meta-llama/Llama-3.3-70B-Instruct`, `Qwen/Qwen3-32B`,
   `Qwen/Qwen3-30B-A3B-Instruct-2507`, `Qwen/Qwen3-235B-A22B-Instruct-2507`,
@@ -138,7 +152,7 @@ long history look artificially short) and count the non-terminal ones. All
 terminal plus a 403 with no `x-ratelimit-*` headers means availability, not quota.
 
 **Physical-AI reasoning over a scene** — default model
-`nvidia/Cosmos3-Super-Reasoner`. Point it at scene images and ask what a robot
+`MiniMaxAI/MiniMax-M3`. Point it at scene images and ask what a robot
 should do:
 
 ```bash
@@ -191,7 +205,7 @@ plan an earlier stage wrote rather than a hardcoded string.
 ## Gotchas
 
 - **Canonical Sim2Real is scoring, not planning.** Stage 8 uses
-  `nvidia/Cosmos3-Super-Reasoner` as its only Stage 8 evaluator, on CPU with no
+  `MiniMaxAI/MiniMax-M3` as its only Stage 8 evaluator, on CPU with no
   self-hosted evaluator image. It sends a bounded, deterministic rollout-wide
   frame sample and requires event-local structured scores. Stage 9 compares the
   single evaluator result with the authoritative Stage 7 rollout set and rejects

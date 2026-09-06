@@ -169,3 +169,9 @@ See `docs/workbench/npa-workflow-guide.md` for the full authoring guide.
 | --- | --- |
 | `promote_checkpoint` | Last decision is promote |
 | `loop_back` | Last decision is loop-back |
+
+Hosted model selection: `workbench.token_factory.reason` accepts optional
+`config.reason_model`; `workbench.vlm_eval.run`, `.loop`, and
+`.judge_against_plan` accept optional `config.vlm_model`. An omitted or empty
+value leaves model selection to the CLI default for the chosen backend; an
+explicit value is passed as `--model`, including legacy dedicated model IDs.

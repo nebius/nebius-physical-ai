@@ -1,5 +1,12 @@
 # Hackathon Quickstart — Cosmos3 Reasoner on Nebius Token Factory (serverless)
 
+> Historical Cosmos3 recipe: its public hosted model was retired under the
+> [August 2026 notice](https://docs.tokenfactory.nebius.com/august-2026-deprecation-notice).
+> Use the current [Token Factory guide](/docs/workbench/token-factory.md) and
+> [migration verification](/docs/workbench/token-factory-deprecation-verification.md)
+> for current defaults. Explicit legacy model IDs require a serving endpoint;
+> this page does not establish their current availability.
+
 This is the **foolproof, copy‑paste** path to call NVIDIA
 **`nvidia/Cosmos3-Super-Reasoner`** as a *serverless* backend for your hackathon
 project. Inference is hosted by **Nebius Token Factory** (an OpenAI‑compatible

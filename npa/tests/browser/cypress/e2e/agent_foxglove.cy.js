@@ -630,6 +630,23 @@ describe("NPA agent UI — embedded Foxglove viewer", () => {
     let releaseExport;
     let originalCard;
     const runRef = "npa1_mock_non_stock";
+    // This case requires one unchanged, fully qualified inventory source.
+    // The shared discovery fixture intentionally starts with unresolved/different
+    // provenance, which can legitimately require a new inventory lookup.
+    cy.intercept("GET", "/api/artifacts/runs*", {
+      statusCode: 200,
+      body: {
+        ok: true,
+        runs: [{
+          run_id: NON_STOCK_RUN_ID, run_ref: runRef,
+          source_type: "artifact_storage", source_label: "S3 artifacts",
+          bucket: "mock", project_id: "project-local", resolved_prefix: "",
+          has_viewable: true, last_modified: "2026-07-11T18:00:00Z",
+        }],
+        total_runs: 1, truncated: false,
+        access: { status: "available", scope: "selected_resource" },
+      },
+    }).as("artifactRuns");
     const key = `${NON_STOCK_RUN_ID}/reports/sim2real.mcap`;
     const s3Uri = `s3://mock/${key}`;
     const exported = exactArtifactExportResponse(
@@ -659,8 +676,14 @@ describe("NPA agent UI — embedded Foxglove viewer", () => {
     cy.wait("@foxgloveConfig");
     cy.get("#artifactRefreshRuns").click();
     cy.wait("@artifactRuns");
-    cy.get("#runIdSelect").select(NON_STOCK_RUN_ID);
-    cy.wait("@nonStockArtifactList");
+    cy.get("#runIdSelect").select(runRef);
+    cy.wait("@nonStockArtifactList").then(({ request }) => {
+      const url = new URL(request.url);
+      expect(url.pathname).to.eq(`/api/artifacts/run/${runRef}`);
+      expect(url.searchParams.get("resource_bucket")).to.eq("mock");
+      expect(url.searchParams.get("project_id")).to.eq("project-local");
+      expect(url.searchParams.get("source_selected")).to.eq("1");
+    });
     cy.get(`button[data-action="open-foxglove-artifact"][data-key="${key}"]`)
       .should("be.enabled")
       .then(($card) => { originalCard = $card[0]; })

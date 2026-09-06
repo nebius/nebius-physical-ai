@@ -37,7 +37,7 @@ initial: reason-scene
 
 states:
   reason-scene:
-    description: Cosmos reasoner over captured scene frames.
+    description: Hosted reasoner over captured scene frames.
     toolRef: workbench.token_factory.reason
     resources: gpu
     outputs:

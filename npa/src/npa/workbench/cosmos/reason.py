@@ -1,9 +1,10 @@
-"""Cosmos Reason2 and hosted Cosmos3 rollout evaluation."""
+"""Self-hosted Cosmos Reason and Token Factory rollout evaluation."""
 
 from __future__ import annotations
 
 import base64
 import json
+import math
 import mimetypes
 import os
 import re
@@ -50,6 +51,17 @@ def cosmos_reason_family(model_id: str) -> str:
     if "reason1" in mid or "cosmos-reason1" in mid:
         return "reason1"
     return "reason2"
+
+
+def hosted_rollout_model_family(model_id: str) -> str:
+    """Identify supported hosted evaluators without attributing them to Cosmos."""
+
+    model = str(model_id or "").strip()
+    if model == "MiniMaxAI/MiniMax-M3":
+        return "minimax_m3"
+    if model == DEFAULT_COSMOS3_MODEL:
+        return "cosmos3"
+    raise CosmosReasonError(f"unsupported hosted rollout evaluator: {model}")
 
 
 def default_reason_cache_dir(model_id: str) -> str:
@@ -496,24 +508,29 @@ def run_token_factory_rollout_vlm(
     client: Any | None = None,
     max_frames: int = DEFAULT_HOSTED_EVENT_FRAMES,
 ) -> dict[str, Any]:
-    """Score one real rollout with hosted Cosmos3 and retain request telemetry."""
+    """Score one rollout with a supported hosted VLM and retain its identity."""
 
-    from npa.clients.token_factory import TokenFactoryClient, TokenFactoryError, split_reasoning
+    from npa.clients.token_factory import (
+        DEFAULT_REASONER_MODEL,
+        TokenFactoryClient,
+        TokenFactoryError,
+        split_reasoning,
+    )
 
-    resolved_model = str(model_id or DEFAULT_COSMOS3_MODEL).strip()
-    if cosmos_reason_family(resolved_model) != "cosmos3":
-        raise CosmosReasonError("token_factory backend requires a Cosmos3 model")
+    resolved_model = str(model_id or DEFAULT_REASONER_MODEL).strip()
+    family = hosted_rollout_model_family(resolved_model)
     selected_paths = select_hosted_event_frames(image_paths, max_frames=max_frames)
     if not selected_paths:
-        raise CosmosReasonError("hosted Cosmos3 evaluation requires at least one frame")
+        raise CosmosReasonError("hosted rollout evaluation requires at least one frame")
     content: list[dict[str, Any]] = [
         {
             "type": "text",
             "text": _cosmos_reason_prompt(
-                family="cosmos3",
+                family=family,
                 task_description=task_description,
                 actions=actions,
                 frame_names=[path.name for path in selected_paths],
+                include_all_actions=True,
             ),
         }
     ]
@@ -533,18 +550,26 @@ def run_token_factory_rollout_vlm(
             temperature=0.0,
             max_tokens=DEFAULT_REASON_MAX_NEW_TOKENS,
         )
-        message = response["choices"][0]["message"]
+        if response.get("model") != resolved_model:
+            raise CosmosReasonError(
+                "hosted evaluator returned a missing or different model identity"
+            )
+        choice = response["choices"][0]
+        if choice.get("finish_reason") != "stop":
+            raise CosmosReasonError("hosted evaluator returned an incomplete completion")
+        message = choice["message"]
         model_text, _reasoning = split_reasoning(message)
     except (TokenFactoryError, KeyError, IndexError, TypeError) as exc:
-        raise CosmosReasonError(f"hosted Cosmos3 rollout evaluation failed: {exc}") from exc
+        raise CosmosReasonError(f"hosted rollout evaluation failed: {exc}") from exc
     if not model_text:
-        raise CosmosReasonError("hosted Cosmos3 returned no visible structured evaluation")
-    payload = _parse_cosmos_reason_output(
+        raise CosmosReasonError("hosted evaluator returned no visible structured evaluation")
+    payload = _parse_hosted_rollout_output(
         model_text,
         actions=actions,
         rollout_id=rollout_id,
         threshold=threshold,
-        family="cosmos3",
+        family=family,
+        frame_names=[path.name for path in selected_paths],
     )
     raw_usage = response.get("usage") if isinstance(response.get("usage"), dict) else {}
     transport = getattr(active, "last_request_metrics", {}) or {}
@@ -554,11 +579,11 @@ def run_token_factory_rollout_vlm(
     cost = float(cost_value) if isinstance(cost_value, (int, float)) else None
     payload.update(
         {
-            "component_source": "token_factory_cosmos3_rollout_vlm",
+            "component_source": "token_factory_rollout_vlm",
             "provider": "nebius",
             "backend": "token_factory",
             "model": resolved_model,
-            "reason_family": "cosmos3",
+            "reason_family": family,
             "frame_count": len(selected_paths),
             "action_count": len(actions),
             "selected_frames": [path.name for path in selected_paths],
@@ -575,6 +600,85 @@ def run_token_factory_rollout_vlm(
         }
     )
     return payload
+
+
+def _parse_hosted_rollout_output(
+    model_text: str,
+    *,
+    actions: list[dict[str, Any]],
+    rollout_id: str,
+    threshold: float,
+    family: str,
+    frame_names: list[str],
+) -> dict[str, Any]:
+    """Validate complete hosted JSON before applying the shared output shape.
+
+    The self-hosted Cosmos parser retains its legacy recovery policy. Hosted
+    evaluators must never repair a truncated response, clamp an invalid score,
+    or synthesize missing model-local events into an accepted Stage 8 artifact.
+    """
+
+    def invalid(reason: str) -> CosmosReasonError:
+        return CosmosReasonError(f"hosted evaluator contract rejected: {reason}")
+
+    def number_in_unit_interval(value: Any) -> bool:
+        return (isinstance(value, (int, float)) and not isinstance(value, bool)
+                and math.isfinite(value) and 0 <= value <= 1)
+
+    def unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        value: dict[str, Any] = {}
+        for key, item in pairs:
+            if key in value:
+                raise invalid("duplicate JSON field")
+            value[key] = item
+        return value
+
+    try:
+        decoded = json.loads(model_text, object_pairs_hook=unique_object)
+    except (TypeError, ValueError) as exc:
+        raise invalid("expected one complete JSON object without repaired prefixes") from exc
+    if not isinstance(decoded, dict):
+        raise invalid("expected one JSON object")
+    if not number_in_unit_interval(decoded.get("score")):
+        raise invalid("score must be a finite number from 0 to 1")
+    if not isinstance(decoded.get("success"), bool):
+        raise invalid("success must be a boolean")
+    if not isinstance(decoded.get("summary"), str) or not decoded["summary"].strip():
+        raise invalid("summary must contain a visible critique")
+    if decoded.get("rollout_id", rollout_id) != rollout_id:
+        raise invalid("rollout identity does not match the input")
+    expected = [action.get("step", index) for index, action in enumerate(actions)]
+    if (not expected or any(type(step) is not int for step in expected)
+            or len(set(expected)) != len(expected)):
+        raise invalid("input action indices must be nonempty unique integers")
+    events = decoded.get("per_step")
+    if not isinstance(events, list) or len(events) != len(expected):
+        raise invalid("per_step must cover every input action exactly once")
+    indices = []
+    allowed_tags = {"collision", "missed_target", "unstable", "late_grasp", "minor_alignment", "ok"}
+    for event in events:
+        if not isinstance(event, dict) or type(event.get("step")) is not int:
+            raise invalid("event step must be an integer")
+        indices.append(event["step"])
+        if not isinstance(event.get("critique_text"), str) or not event["critique_text"].strip():
+            raise invalid("every event requires a model-local critique")
+        if not number_in_unit_interval(event.get("confidence")):
+            raise invalid("event confidence must be a finite number from 0 to 1")
+        if event.get("camera_observation") not in frame_names:
+            raise invalid("event camera must identify a selected input frame")
+        tags = event.get("error_tags")
+        if (not isinstance(tags, list) or not tags
+                or any(not isinstance(tag, str) or tag not in allowed_tags for tag in tags)):
+            raise invalid("event error_tags must use the requested vocabulary")
+        if event.get("critique_source", "model_per_step") != "model_per_step":
+            raise invalid("event critique must come from the model")
+    if len(set(indices)) != len(indices) or set(indices) != set(expected):
+        raise invalid("event indices do not exactly match the input actions")
+    # All fields the common formatter would otherwise recover or clamp were
+    # validated above. Its simulator-ground-truth join remains authoritative.
+    return _parse_cosmos_reason_output(
+        model_text, actions=actions, rollout_id=rollout_id, threshold=threshold, family=family,
+    )
 
 
 def _reason_model_class(family: str, fallback: Any) -> Any:
@@ -620,11 +724,15 @@ def _cosmos_reason_prompt(
     task_description: str,
     actions: list[dict[str, Any]],
     frame_names: list[str],
+    include_all_actions: bool = False,
 ) -> str:
     # Simulator ground truth is deliberately excluded: Cosmos labels are
     # calibrated *against* those measurements after inference and must not see
     # the answer in their prompt. Only policy actions and temporal identifiers
     # are model inputs.
+    # Hosted validation requires every input action. Keep the historical
+    # preview only on the separately operated self-hosted inference path.
+    prompt_actions = actions if include_all_actions else actions[:64]
     action_excerpt = json.dumps(
         [
             {
@@ -632,21 +740,26 @@ def _cosmos_reason_prompt(
                 "sim_step": int(action.get("sim_step", action.get("step", index))),
                 "action": list(action.get("action") or []),
             }
-            for index, action in enumerate(actions[:64])
+            for index, action in enumerate(prompt_actions)
         ],
         sort_keys=True,
     )
     expected_steps = [
-        int(action.get("step", index)) for index, action in enumerate(actions[:64])
+        int(action.get("step", index)) for index, action in enumerate(prompt_actions)
     ]
     label = {
         "reason1": "Cosmos-Reason1",
         "reason2": "Cosmos-Reason2",
         "cosmos3": "Cosmos3-Super-Reasoner",
     }.get(family, "Cosmos Reason")
+    identity = (
+        "You are a vision-language evaluator of a physical robot rollout.\n"
+        if family == "minimax_m3"
+        else f"You are NVIDIA {label} evaluating a physical robot rollout.\n"
+    )
     return (
-        f"You are NVIDIA {label} evaluating a physical robot rollout.\n"
-        f"Task description: {task_description}\n"
+        identity
+        + f"Task description: {task_description}\n"
         f"Frame order: {frame_names}\n"
         f"Actions by step: {action_excerpt}\n"
         f"Required per_step indices: {expected_steps}\n"
@@ -784,7 +897,11 @@ def _parse_cosmos_reason_output(
             }
         )
     return {
-        "schema": VLM_EVAL_SCHEMA if family == "cosmos3" else LEGACY_TWO_EVALUATOR_SCHEMA,
+        "schema": (
+            VLM_EVAL_SCHEMA
+            if family in {"cosmos3", "minimax_m3"}
+            else LEGACY_TWO_EVALUATOR_SCHEMA
+        ),
         "rollout_id": str(payload.get("rollout_id") or rollout_id),
         "success": success,
         "score": round(score, 6),

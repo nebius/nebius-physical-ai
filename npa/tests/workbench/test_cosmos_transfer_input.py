@@ -743,6 +743,8 @@ def test_run_cosmos_transfer_names_gated_access_denial_without_leaking_prompt(
     (repo / "examples").mkdir(parents=True)
     monkeypatch.setattr(tx, "cosmos_transfer_repo", lambda: repo)
     monkeypatch.setattr(tx, "ensure_env", lambda _repo: Path("/usr/bin/python3"))
+    # Keep inference-denial setup hermetic when the optional Hub client is installed.
+    monkeypatch.setitem(sys.modules, "huggingface_hub", None)
     monkeypatch.setenv("HF_TOKEN", "unit-test-placeholder")
     secret_prompt = "a secret prompt that must never reach the raised message"
     reached: list[str] = []

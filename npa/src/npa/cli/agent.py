@@ -200,14 +200,12 @@ DEFAULT_AGENT_NAME = "agent"
 DEFAULT_AGENT_IMAGE_FAMILY = "ubuntu24.04-driverless"
 DEFAULT_AGENT_USER = "npa"
 DEFAULT_LLM_PROVIDER = "token_factory"
-DEFAULT_LLM_MODEL = "nvidia/Cosmos3-Super-Reasoner"
+DEFAULT_LLM_MODEL = "nvidia/Nemotron-3_5-Lightning"
 # Cost-ordered ladder; per-turn routing reorders it, while no-routing paths and
 # the model picker retain the cheap workhorse as their default.
 DEFAULT_LLM_MODELS = (
-    "Qwen/Qwen3-32B",
-    "meta-llama/Llama-3.3-70B-Instruct",
     DEFAULT_LLM_MODEL,
-    "Qwen/Qwen2.5-VL-72B-Instruct",
+    "MiniMaxAI/MiniMax-M3",
 )
 AGENT_UI_VERSION = "2026090501"
 ARTIFACT_DISCOVERY_CONTRACT = "s3-source-qualified-v1"
@@ -430,8 +428,6 @@ def _normalize_llm_models(models: list[str] | tuple[str, ...] | str) -> list[str
                 normalized.append(value)
     if not normalized:
         normalized = list(DEFAULT_LLM_MODELS)
-    if DEFAULT_LLM_MODEL not in normalized:
-        normalized.insert(0, DEFAULT_LLM_MODEL)
     return normalized
 
 
@@ -1723,7 +1719,18 @@ def _sim_viz_for_run(state: dict, run_id: str = "") -> dict:
     runs = state.get("sim_viz_runs")
     target = str(run_id or state.get("active_run_id") or "").strip()
     direct = runs.get(target) if isinstance(runs, dict) and target else None
-    if isinstance(direct, dict):
+    active_ref = str(state.get("active_run_ref") or "").strip()
+    selected = runs.get(active_ref) if isinstance(runs, dict) and active_ref else None
+    if (
+        target
+        and target == str(state.get("active_run_id") or "").strip()
+        and isinstance(selected, dict)
+        and str(selected.get("run_id") or "").strip() == target
+    ):
+        # A saved explicit source outranks an unqualified basename or another
+        # same-name history entry. Never borrow it for a different run.
+        payload.update(selected)
+    elif isinstance(direct, dict):
         payload.update(direct)
     elif isinstance(runs, dict) and target:
         matches = [
@@ -2836,8 +2843,9 @@ def _normalize_llm_models(raw: str) -> list[str]:
 
 def _configured_llm_models() -> list[str]:
     configured = _normalize_llm_models(LLM_MODELS_ENV)
-    if not configured:
-        configured = [str(item) for item in DEFAULT_LLM_MODELS if str(item).strip()]
+    if configured:
+        return configured
+    configured = [str(item) for item in DEFAULT_LLM_MODELS if str(item).strip()]
     if LLM_MODEL not in configured:
         configured.insert(0, LLM_MODEL)
     return configured
@@ -3089,13 +3097,24 @@ def _chat_with_resilience(
         ladder = filter_available(ladder, _available_llm_models())
     except Exception:
         pass
+    # An explicit selection may be served by a dedicated/custom endpoint even
+    # when the public model list omits it. Try the requested ID first.
+    if requested_model:
+        ladder = [requested_model, *[item for item in ladder if item != requested_model]]
     if not ladder:
-        ladder = list(configured) or [requested_model] if requested_model else list(configured)
-    extra = chat_extra(tier)
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                f"No eligible model is configured for the '{{tier}}' tier. "
+                "Update the deployment model allowlist to include a model that "
+                "supports this input, or select an explicit model."
+            ),
+        )
     errors: list[str] = []
     for provider in providers:
         for model in ladder:
             try:
+                extra = chat_extra(tier, model)
                 data = _provider_chat(provider=provider, messages=messages, model=model, extra=extra)
                 return data, provider, model
             except Exception as exc:
@@ -4183,6 +4202,12 @@ def _maybe_toolground_chat_reply(
     loaded_now = False
     rerun_ready = None
     default_cameras = list(DEFAULT_SCENE_SPEC.get("cameras", {{}}).values())
+    if intent in {{"validate_workflow", "plan_workflow"}}:
+        result = evaluate_workflow_chat_request(
+            user_text, state.get("workflow_draft") or {{}},
+            intent=intent, tool_refs=frozenset(TOOL_REFS),
+        )
+        return result["reply"], suggested_apis, [], None, result, intent
     if intent == "start_sim2real":
         submit = submit_sim2real({{}})
         apis_used.append("workflows/sim2real/submit")
@@ -4202,6 +4227,36 @@ def _maybe_toolground_chat_reply(
         if match:
             mentioned_run = match.group(1)
         try:
+            selected_request = not mentioned_run and re.search(
+                r"\\b(?:selected|current|this)\\b.{{0,40}}\\brun\\b", str(user_text or ""), re.IGNORECASE
+            )
+            if selected_request:
+                selected = _sim_viz_for_run(state)
+                run_id = str(selected.get("run_id") or "")
+                run_ref = str(selected.get("run_ref") or state.get("active_run_ref") or "")
+                if not run_id or not run_ref:
+                    return "Select a run in **Runs & artifacts** first.", [], suggested_apis, None, {{"ok": False}}, intent
+                listed = artifacts_for_run(
+                    run_ref,
+                    resource_bucket=str(selected.get("resource_bucket") or selected.get("bucket") or ""),
+                    project_id=str(selected.get("project_id") or ""),
+                    resolved_prefix=str(selected.get("resolved_prefix") or ""),
+                    source_selected=True,
+                )
+                payload = json.loads(listed.body.decode("utf-8")) if isinstance(listed, JSONResponse) else listed
+                apis_used.append("artifacts/run/{{run_id}}")
+                if payload.get("ok") is False:
+                    return "The selected run's artifacts could not be listed. Check its access and source selection.", apis_used, suggested_apis, None, payload, intent
+                preferred = payload.get("preferred") or {{}}
+                reply = (
+                    "**Selected run artifacts** (from its exact storage source):\\n"
+                    f"- **run_id**: `{{run_id}}`\\n"
+                    f"- **artifact_count**: `{{int(payload.get('count') or 0)}}`\\n"
+                    f"- **preferred file**: `{{str(preferred.get('key') or '').rsplit('/', 1)[-1] or 'none'}}`\\n"
+                    f"- **render**: `{{preferred.get('render') or 'none'}}`\\n"
+                    "Use **List artifacts** for the selected run to preview or download its outputs. Artifact presence alone does not establish execution success."
+                )
+                return reply, apis_used, suggested_apis, None, payload, intent
             if mentioned_run:
                 listed = artifacts_for_run(mentioned_run)
                 apis_used.append("artifacts/run/{{run_id}}")
@@ -8066,6 +8121,19 @@ def _boot_preload_sim_viz() -> None:
     sim_viz = state.get("sim_viz", {{}})
     if not isinstance(sim_viz, dict):
         sim_viz = {{}}
+    artifact_render = str(sim_viz.get("artifact_render") or "").strip().lower()
+    explicit_source = bool(
+        str(sim_viz.get("artifact_run_ref") or "").strip()
+        or str(sim_viz.get("artifact_uri") or "").strip()
+    )
+    if (
+        (artifact_render and artifact_render != "rerun")
+        or str(sim_viz.get("preview_status") or "").strip() == "no_previewable_recording"
+        or (explicit_source and not str(sim_viz.get("rrd_uri") or "").strip())
+    ):
+        # A stock recording must not replace the selected artifact, acquire its
+        # run ID, or discard its exact storage provenance during a restart.
+        return
     if str(sim_viz.get("rrd_uri") or "").strip() and _served_recording_is_run_specific():
         return
     capability_path = _publish_rrd_recording(RRD_PATH)

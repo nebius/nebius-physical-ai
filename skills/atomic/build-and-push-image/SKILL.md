@@ -21,6 +21,8 @@ refusal conditions; this skill records NPA-specific build and GPU details.
    disagree. Build restricted images only into an operator-controlled registry;
    neither a private package nor a development tag changes licensing. Historical
    image classifications do not establish the eligibility of replacement bytes.
+   The current catalog, for example, records `cosmos3-super-benchmark` as
+   restricted; always re-read that classification before a build.
 4. Run every pre-publication security, packaging, payload, provenance, SBOM,
    vulnerability, secret, non-root, base-pin, and bootstrap-contract gate before
    pushing the public development tag.

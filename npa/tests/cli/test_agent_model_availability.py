@@ -26,16 +26,17 @@ def rich(model, modality="text->text", **extra):
 
 
 def test_default_prefers_available_configured_model_then_ordered_fallback():
+    fallback_model = "example/fallback-chat"
     observed = routing.parse_model_catalog(catalog(
-        rich(routing.CHEAP_MODEL), rich(routing.REASONING_MODEL), rich(routing.STANDARD_MODEL)
+        rich(routing.CHEAP_MODEL), rich(routing.REASONING_MODEL), rich(fallback_model)
     ))
     selected = routing.model_availability(
-        routing.REASONING_MODEL, [routing.CHEAP_MODEL, routing.STANDARD_MODEL], observed
+        routing.REASONING_MODEL, [routing.CHEAP_MODEL, fallback_model], observed
     )
     assert selected["default_model"] == routing.REASONING_MODEL
-    observed = routing.parse_model_catalog(catalog(rich(routing.STANDARD_MODEL), rich(routing.CHEAP_MODEL)))
+    observed = routing.parse_model_catalog(catalog(rich(fallback_model), rich(routing.CHEAP_MODEL)))
     selected = routing.model_availability(
-        routing.REASONING_MODEL, [routing.CHEAP_MODEL, routing.STANDARD_MODEL], observed
+        routing.REASONING_MODEL, [routing.CHEAP_MODEL, fallback_model], observed
     )
     assert selected["default_model"] == routing.CHEAP_MODEL
     assert routing.REASONING_MODEL not in selected["models"]
@@ -52,9 +53,10 @@ def test_allowlist_limits_default_but_preserves_full_provider_catalog():
     )
     assert selected["default_model"] == routing.CHEAP_MODEL
     assert set(selected["models"]) == {routing.REASONING_MODEL, routing.CHEAP_MODEL, "BAAI/bge-en-icl"}
+    unavailable_model = "example/unavailable-chat"
     selected = routing.model_availability(
-        routing.REASONING_MODEL, [routing.STANDARD_MODEL], observed,
-        allowed_models=[routing.STANDARD_MODEL],
+        routing.REASONING_MODEL, [unavailable_model], observed,
+        allowed_models=[unavailable_model],
     )
     assert selected["default_model"] is None
     assert selected["availability_status"] == "unavailable"
@@ -214,9 +216,11 @@ def test_rendered_catalog_cache_is_bound_to_provider_key_and_refresh_recovers_un
     assert backend.models(refresh=True)["default"] == routing.CHEAP_MODEL
     assert len(calls) == 1
     monkeypatch.setattr(backend, "_provider_api_key", lambda _provider: "rotated-synthetic-value")
-    calls = transport(monkeypatch, backend, catalog(rich(routing.STANDARD_MODEL)))
+    rotated_model = "example/rotated-chat"
+    monkeypatch.setattr(backend, "DEFAULT_LLM_MODELS", [routing.CHEAP_MODEL, rotated_model])
+    calls = transport(monkeypatch, backend, catalog(rich(rotated_model)))
     result = backend.models()
-    assert result["default"] == routing.STANDARD_MODEL
+    assert result["default"] == rotated_model
     assert len(calls) == 1
     assert "rotated-synthetic-value" not in repr(backend._MODELS_CACHE)
     assert routing.CHEAP_MODEL not in result["models"]

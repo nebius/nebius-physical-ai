@@ -919,7 +919,7 @@ def reason_scene(
     """Reason over scene images with a hosted physical-AI reasoner.
 
     Sends the scene images plus the task to the reasoning model (default
-    ``nvidia/Cosmos3-Super-Reasoner``) in a single request and returns the
+    ``MiniMaxAI/MiniMax-M3``) in a single request and returns the
     model's scene understanding and plan of action. Built for the "walk the
     robot to a scene, ask what to do" physical-common-sense loop.
     """
