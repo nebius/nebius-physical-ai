@@ -1,7 +1,8 @@
 # NPA workflow specs (`apiVersion: npa.workflow/v0.0.1`)
 
-Customer-facing authoring DSL for chaining Workbench tools. Author and submit
-these specs; do not hand-edit scheduler YAML.
+YAML specifications for composing Workbench tools. Each `toolRef` names a
+catalog operation. Author, validate, and submit these specs; NPA renders the
+scheduler YAML.
 
 Agent skills: `skills/workflows/author-npa-workflow/SKILL.md` (edit) and
 `skills/workflows/generate-npa-workflow/SKILL.md` (design new pipelines).
@@ -97,7 +98,7 @@ below (see `npa/src/npa/orchestration/npa_workflow/blueprints.py`). Deploy guide
 | `cosmos3-reason.yaml` | Cosmos3 reason |
 | `cosmos3-checkpoint-eval.yaml` | B200-only guarded Cosmos3 still-image checkpoint evaluation |
 | `paidf-cosmos3.yaml` | Independent dynamic PAIDF: generic LeRobot/video input → real Cosmos 3 video2video variants → evaluator gate/refinement → real Curator + FiftyOne Brain + Rerun |
-| `content-agents-rigid-object.yaml` | Restricted operator-built NVIDIA Content Agents: source USD → real Material/Physics Agents + OVRTX → upstream validation → rigid Isaac object USDZ/adapter ([guide](../../../../docs/workbench/content-agents.md)) |
+| `content-agents-rigid-object.yaml` | NVIDIA Content Agents with a public image and runtime-fetched OVRTX: source USD → real Material/Physics Agents + OVRTX → upstream validation → rigid Isaac object USDZ/adapter ([guide](../../../../docs/workbench/content-agents.md)) |
 | `byof.yaml` | BYOF via `run_byof_repo.py` |
 | `byof-maniskill.yaml` | OSS registry: ManiSkill pinned image + PickCube smoke |
 | `byof-mujoco-playground.yaml` | OSS registry: MuJoCo Playground pinned image + Cartpole smoke |

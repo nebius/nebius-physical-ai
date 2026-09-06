@@ -6,6 +6,11 @@ Workbench is the primary solution in Nebius Physical AI. Use
 through object storage. Python wrappers and service APIs are available according
 to each tool's documented contract.
 
+
+For guided setup with an existing coding agent, use the
+[first-run prompts](agent-first-run.md). Detailed project and credential setup
+is in [configuration](../configuration.md).
+
 ## From a first run to an inspected result
 
 1. [Install and configure npa](../quickstart.md), including credentials and

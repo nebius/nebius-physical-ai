@@ -4,6 +4,11 @@
 primary solution: tools and declarative workflows for data curation, simulation,
 synthetic data, policy training, and evaluation on Nebius.
 
+
+[Configuration](configuration.md) covers credentials, project storage, and SSO.
+Use the [coding-agent first run](workbench/agent-first-run.md) for guided setup
+and PAIDF + Cosmos 3 execution.
+
 ## Start with your task
 
 | I want to… | Start here | Continue with |
