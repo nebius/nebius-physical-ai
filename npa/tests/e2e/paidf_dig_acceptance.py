@@ -279,6 +279,9 @@ def assert_dig_live_artifacts(
         sha256(read_bytes("pretrained/checkpoint_manifest_converted.sha256"))
         == pretrained["manifest_sha256"]
     )
+    assert pretrained["converted_file_count"] == 8
+    digest_string(pretrained["source_hub_manifest_sha256"])
+    digest_string(pretrained["source_converted_manifest_sha256"])
     for key in ("selected_checkpoint", "selected_checkpoint_sha256"):
         assert result[key] == finetune[key]
     selection, recipe = verify_checkpoint_selection(

@@ -136,6 +136,9 @@ def artifacts(acceptance, tmp_path):
         "content_manifest": DIG_PRETRAINED_CONTENT_MANIFEST,
         "content_manifest_sha256": content_hash,
         "manifest_sha256": acceptance.sha256(manifest_payload),
+        "converted_file_count": 8,
+        "source_hub_manifest_sha256": "d" * 64,
+        "source_converted_manifest_sha256": "e" * 64,
         "file_count": content["file_count"],
         "total_bytes": content["total_bytes"],
     }

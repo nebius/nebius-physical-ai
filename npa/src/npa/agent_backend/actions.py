@@ -646,6 +646,17 @@ def _summarize_records(observation: Mapping[str, Any], *, limit: int) -> dict[st
 
 def _observe(observation: Any, *, limit: int = 4000) -> Any:
     """Bound the size of a tool observation fed back into the planner."""
+    # ``tools_catalog`` is a controlled, factual observation whose entire value
+    # is the registered toolRef list. Truncating it removes real capabilities and
+    # can make the planner assert that a valid tool does not exist. Preserve only
+    # this exact shape; arbitrary mappings remain subject to the normal budget.
+    if (
+        isinstance(observation, Mapping)
+        and set(observation) == {"tool_refs"}
+        and isinstance(observation["tool_refs"], list)
+        and all(isinstance(item, str) for item in observation["tool_refs"])
+    ):
+        return observation
     try:
         text = json.dumps(observation, sort_keys=True)
     except (TypeError, ValueError):

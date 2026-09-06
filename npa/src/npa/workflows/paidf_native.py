@@ -54,6 +54,10 @@ DIG_RUNTIME_CACHE_PROBES = {
     "Wan-AI/Wan2.2-TI2V-5B": "Wan2.2_VAE.pth",
 }
 DIG_PRETRAINED_CONTENT_MANIFEST = "npa-pretrained-content.json"
+DIG_CONVERTED_CHECKPOINT_FILES = (
+    *(f"Cosmos3-Nano/model/__0_{index}.distcp" for index in range(6)),
+    *(f"Cosmos3-Edge/model/__0_{index}.distcp" for index in range(2)),
+)
 DIG_EDGE_CONVERTER_CONFIG_SHA256 = (
     "3769529debceea27dd016cad333503ef5bef50a65e1fba11c4b23f1b896c2fb3"
 )
@@ -2522,6 +2526,78 @@ def _dig_edge_converter_config(environment: dict[str, str]) -> str:
     return str(config)
 
 
+def _dig_downloader_copy(
+    workspace: Path, destination: Path
+) -> tuple[Path, str, str]:
+    """Copy the real downloader without its host-specific DCP byte record.
+
+    NVIDIA commits two different integrity manifests. The Hub manifest contains
+    upstream LFS object hashes and must continue to verify exactly. The converted
+    manifest contains locally serialized DCP shards and NVIDIA explicitly says
+    those bytes vary with Torch, Cosmos Framework, and machine shard layout. Run
+    the unchanged script from a minimal private copy so it atomically records the
+    current eight DCP shards without mutating the pinned image source tree.
+    """
+
+    script_source = workspace / "scripts/download_checkpoints.sh"
+    hub_source = workspace / "assets/checkpoint_manifest.sha256"
+    converted_source = workspace / "assets/checkpoint_manifest_converted.sha256"
+    sources = (script_source, hub_source, converted_source)
+    if any(not path.is_file() or path.is_symlink() for path in sources):
+        raise PaidfNativeError("the selected image lacks pinned checkpoint manifests")
+    script = destination / "scripts/download_checkpoints.sh"
+    assets = destination / "assets"
+    script.parent.mkdir(parents=True)
+    assets.mkdir(parents=True)
+    shutil.copy2(script_source, script)
+    shutil.copy2(hub_source, assets / hub_source.name)
+    # Retain the source checksum in the stage result, but do not give the
+    # machine-specific record to the unchanged downloader as an integrity oracle.
+    return script, _sha256(hub_source), _sha256(converted_source)
+
+
+def _verify_dig_converted_manifest(
+    pretrained: Path, manifest: Path
+) -> dict[str, Any]:
+    """Require an exact, complete sha256sum record for every generated DCP shard."""
+
+    if not manifest.is_file() or manifest.is_symlink():
+        raise PaidfNativeError("DIG runtime converted-checkpoint manifest is missing")
+    try:
+        lines = manifest.read_text(encoding="utf-8").splitlines()
+    except OSError as exc:
+        raise PaidfNativeError(
+            "DIG runtime converted-checkpoint manifest is unreadable"
+        ) from exc
+    records: dict[str, str] = {}
+    for line in lines:
+        match = re.fullmatch(r"([0-9a-f]{64})  ([A-Za-z0-9._/-]+)", line)
+        if match is None or match[2] in records:
+            raise PaidfNativeError(
+                "DIG runtime converted-checkpoint manifest has invalid entries"
+            )
+        relative = PurePosixPath(match[2])
+        if relative.is_absolute() or ".." in relative.parts:
+            raise PaidfNativeError(
+                "DIG runtime converted-checkpoint manifest has unsafe paths"
+            )
+        records[match[2]] = match[1]
+    if tuple(records) != DIG_CONVERTED_CHECKPOINT_FILES:
+        raise PaidfNativeError(
+            "DIG runtime converted-checkpoint manifest has incomplete shard coverage"
+        )
+    for relative, expected in records.items():
+        path = pretrained / Path(relative)
+        if not path.is_file() or path.is_symlink() or _sha256(path) != expected:
+            raise PaidfNativeError(
+                "DIG runtime converted-checkpoint content differs from its manifest"
+            )
+    return {
+        "file_count": len(records),
+        "manifest_sha256": _sha256(manifest),
+    }
+
+
 def prepare_dig_pretrained(
     output_uri: str,
     result_uri: str,
@@ -2534,8 +2610,16 @@ def prepare_dig_pretrained(
     if not script.is_file():
         raise PaidfNativeError("the selected image lacks AnomalyGen checkpoint setup")
     with tempfile.TemporaryDirectory(prefix="npa-paidf-dig-pretrained-") as tmp:
-        output = Path(tmp) / "pretrained"
-        converted_manifest = workspace / "assets/checkpoint_manifest_converted.sha256"
+        root = Path(tmp)
+        output = root / "pretrained"
+        (
+            downloader,
+            source_hub_manifest_sha256,
+            source_converted_manifest_sha256,
+        ) = _dig_downloader_copy(workspace, root / "paidf-anomalygen-downloader")
+        converted_manifest = (
+            downloader.parent.parent / "assets/checkpoint_manifest_converted.sha256"
+        )
         revisions = _dig_model_revisions()
         env = {
             **_dig_vendor_environment(),
@@ -2627,7 +2711,7 @@ def prepare_dig_pretrained(
             WAN_VAE_FILE="Wan2.2_VAE.pth",
             SAM2_FILE="sam2.1_hiera_large.pt",
         )
-        _run_component(["bash", str(script)], cwd=workspace, env=env)
+        _run_component(["bash", str(downloader)], cwd=downloader.parent.parent, env=env)
         required = [
             output / "Cosmos3-Nano",
             output / "Cosmos3-Edge",
@@ -2638,6 +2722,7 @@ def prepare_dig_pretrained(
             or not converted_manifest.is_file()
         ):
             raise PaidfNativeError("AnomalyGen base-checkpoint setup is incomplete")
+        converted = _verify_dig_converted_manifest(output, converted_manifest)
         shutil.copy2(converted_manifest, output / converted_manifest.name)
         _dig_cache_manifest(output, run_id, initialize=True)
         content, content_manifest_sha256 = _dig_pretrained_content_manifest(
@@ -2652,7 +2737,10 @@ def prepare_dig_pretrained(
             "component": "NVIDIA paidf-anomalygen 1.1.0 checkpoint setup",
             "file_count": content["file_count"],
             "total_bytes": content["total_bytes"],
-            "manifest_sha256": _sha256(output / converted_manifest.name),
+            "manifest_sha256": converted["manifest_sha256"],
+            "converted_file_count": converted["file_count"],
+            "source_hub_manifest_sha256": source_hub_manifest_sha256,
+            "source_converted_manifest_sha256": source_converted_manifest_sha256,
             "content_manifest_sha256": content_manifest_sha256,
             "content_manifest": DIG_PRETRAINED_CONTENT_MANIFEST,
             "output_uri": output_uri,

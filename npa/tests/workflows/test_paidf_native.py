@@ -1751,6 +1751,89 @@ def test_dig_edge_converter_config_uses_vendor_package_and_refuses_drift(
             paidf_native._dig_edge_converter_config(environment)
 
 
+def test_dig_downloader_copy_preserves_hub_manifest_and_omits_host_dcp_record(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    script = workspace / "scripts/download_checkpoints.sh"
+    hub = workspace / "assets/checkpoint_manifest.sha256"
+    converted = workspace / "assets/checkpoint_manifest_converted.sha256"
+    script.parent.mkdir(parents=True)
+    hub.parent.mkdir(parents=True)
+    script.write_bytes(b"#!/bin/bash\n")
+    hub.write_bytes(b"hub integrity\n")
+    converted.write_bytes(b"machine-specific\n")
+
+    copied, hub_hash, source_hash = paidf_native._dig_downloader_copy(
+        workspace, tmp_path / "copy"
+    )
+
+    assert copied.read_bytes() == script.read_bytes()
+    assert (copied.parent.parent / "assets/checkpoint_manifest.sha256").read_bytes() == hub.read_bytes()
+    assert not (copied.parent.parent / converted.relative_to(workspace)).exists()
+    assert hub_hash == hashlib.sha256(hub.read_bytes()).hexdigest()
+    assert source_hash == hashlib.sha256(converted.read_bytes()).hexdigest()
+    assert converted.read_bytes() == b"machine-specific\n"
+
+
+def test_dig_converted_manifest_requires_all_actual_shards(
+    tmp_path: Path,
+) -> None:
+    lines = []
+    for index, relative in enumerate(paidf_native.DIG_CONVERTED_CHECKPOINT_FILES):
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = f"shard-{index}".encode()
+        path.write_bytes(payload)
+        lines.append(f"{hashlib.sha256(payload).hexdigest()}  {relative}")
+    manifest = tmp_path / "checkpoint_manifest_converted.sha256"
+    manifest.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    result = paidf_native._verify_dig_converted_manifest(tmp_path, manifest)
+
+    assert result == {
+        "file_count": 8,
+        "manifest_sha256": hashlib.sha256(manifest.read_bytes()).hexdigest(),
+    }
+    (tmp_path / paidf_native.DIG_CONVERTED_CHECKPOINT_FILES[-1]).write_bytes(b"changed")
+    with pytest.raises(paidf_native.PaidfNativeError, match="differs"):
+        paidf_native._verify_dig_converted_manifest(tmp_path, manifest)
+
+
+@pytest.mark.parametrize(
+    ("mutation", "error"),
+    [
+        (lambda lines: [*lines, "not-a-record"], "invalid entries"),
+        (lambda lines: [*lines, lines[0]], "invalid entries"),
+        (lambda lines: lines[:-1], "incomplete shard coverage"),
+        (
+            lambda lines: [*lines, f"{'0' * 64}  Cosmos3-Nano/model/extra.distcp"],
+            "incomplete shard coverage",
+        ),
+        (lambda lines: [lines[1], lines[0], *lines[2:]], "incomplete shard coverage"),
+        (
+            lambda lines: [f"{'0' * 64}  ../escape", *lines[1:]],
+            "unsafe paths",
+        ),
+    ],
+)
+def test_dig_converted_manifest_rejects_invalid_records(
+    tmp_path: Path, mutation, error: str
+) -> None:
+    lines = []
+    for index, relative in enumerate(paidf_native.DIG_CONVERTED_CHECKPOINT_FILES):
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = f"shard-{index}".encode()
+        path.write_bytes(payload)
+        lines.append(f"{hashlib.sha256(payload).hexdigest()}  {relative}")
+    manifest = tmp_path / "checkpoint_manifest_converted.sha256"
+    manifest.write_text("\n".join(mutation(lines)) + "\n", encoding="utf-8")
+
+    with pytest.raises(paidf_native.PaidfNativeError, match=error):
+        paidf_native._verify_dig_converted_manifest(tmp_path, manifest)
+
+
 @pytest.mark.parametrize(
     "runtime_repository", list(paidf_native.DIG_RUNTIME_CACHE_PROBES)
 )
@@ -1764,6 +1847,9 @@ def test_dig_preparation_pins_real_converter_and_original_downloader(
     converted_manifest = workspace / "assets/checkpoint_manifest_converted.sha256"
     converted_manifest.parent.mkdir()
     converted_manifest.write_text("synthetic-fixture", encoding="utf-8")
+    (workspace / "assets/checkpoint_manifest.sha256").write_text(
+        "synthetic-fixture", encoding="utf-8"
+    )
     real_path = Path
     monkeypatch.setattr(
         paidf_native,
@@ -1935,6 +2021,16 @@ def test_dig_preparation_pins_real_converter_and_original_downloader(
             assert json.loads((source / "config.json").read_text()) == local_config
             Path(argv[argv.index("-o") + 1]).mkdir(parents=True)
         elif argv[0] == "bash":
+            downloader = Path(argv[1])
+            assert downloader != script
+            assert downloader.read_bytes() == script.read_bytes()
+            copied_root = downloader.parent.parent
+            assert (
+                copied_root / "assets/checkpoint_manifest.sha256"
+            ).read_bytes() == b"synthetic-fixture"
+            assert not (
+                copied_root / "assets/checkpoint_manifest_converted.sha256"
+            ).exists()
             pretrained = Path(kwargs["env"]["CKPT_DIR"])
             # The unchanged pinned downloader removes only Edge tree metadata.
             # Model payloads must still survive into the published handoff.
@@ -1947,6 +2043,17 @@ def test_dig_preparation_pins_real_converter_and_original_downloader(
             target = pretrained / "wan2pt2/Wan2.2_VAE.pth"
             target.parent.mkdir()
             target.write_text("synthetic-fixture", encoding="utf-8")
+            lines = []
+            for index, relative in enumerate(
+                paidf_native.DIG_CONVERTED_CHECKPOINT_FILES
+            ):
+                shard = pretrained / relative
+                shard.parent.mkdir(parents=True, exist_ok=True)
+                shard.write_bytes(f"converted-{index}".encode())
+                lines.append(f"{hashlib.sha256(shard.read_bytes()).hexdigest()}  {relative}")
+            (
+                copied_root / "assets/checkpoint_manifest_converted.sha256"
+            ).write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     monkeypatch.setattr(paidf_native, "_run_component", component)
     monkeypatch.setenv(
@@ -2024,6 +2131,13 @@ def test_dig_preparation_pins_real_converter_and_original_downloader(
         "revision": revisions[wan_repository],
     } in cache_manifest["models"]
     assert len(result["content_manifest_sha256"]) == 64
+    assert result["converted_file_count"] == 8
+    assert result["source_hub_manifest_sha256"] == hashlib.sha256(
+        b"synthetic-fixture"
+    ).hexdigest()
+    assert result["source_converted_manifest_sha256"] == hashlib.sha256(
+        b"synthetic-fixture"
+    ).hexdigest()
     assert result["status"] == "completed"
 
 
