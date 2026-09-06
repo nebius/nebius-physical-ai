@@ -2524,10 +2524,17 @@ def prepare_dig_pretrained(
                 str(output / "hf"),
             ]
             if repository == "Qwen/Qwen3-VL-8B-Instruct":
-                command.extend(["--include", "*.json", "*.txt"])
+                command.extend(["--include", "*.json", "--include", "*.txt"])
             elif repository == "nvidia/Cosmos3-Edge":
                 command.extend(
-                    ["--exclude", "transformer/*", "vae/*", "vision_encoder/*"]
+                    [
+                        "--exclude",
+                        "transformer/*",
+                        "--exclude",
+                        "vae/*",
+                        "--exclude",
+                        "vision_encoder/*",
+                    ]
                 )
             _run_component(command, env=env)
         _dig_cache_manifest(output, run_id, initialize=True)

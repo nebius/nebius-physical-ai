@@ -7,6 +7,7 @@ import wave
 from pathlib import Path
 
 import av
+import click
 import numpy as np
 import pytest
 import yaml
@@ -1707,8 +1708,19 @@ def test_dig_inference_toolref_consumes_the_finetune_result_without_step_overrid
     assert "checkpoint_step" not in workflow["config"]
 
 
+@pytest.mark.parametrize(
+    ("filtered_repository", "option", "patterns"),
+    [
+        ("Qwen/Qwen3-VL-8B-Instruct", "include", ("*.json", "*.txt")),
+        (
+            "nvidia/Cosmos3-Edge",
+            "exclude",
+            ("transformer/*", "vae/*", "vision_encoder/*"),
+        ),
+    ],
+)
 def test_dig_preparation_pins_real_converter_and_original_downloader(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, filtered_repository, option, patterns
 ) -> None:
     workspace = tmp_path / "workspace"
     script = workspace / "scripts/download_checkpoints.sh"
@@ -1768,6 +1780,30 @@ def test_dig_preparation_pins_real_converter_and_original_downloader(
     for argv in downloads:
         assert argv[1] == "hf==1.26.0"
         assert argv[argv.index("--revision") + 1] == revisions[argv[3]]
+    # hf 1.26's download signature uses variadic filenames and repeatable
+    # single-value Click options. Parse the generated argv at that boundary:
+    # an unflagged second glob becomes a filename and disables filtering.
+    download_parser = click.Command(
+        "download",
+        params=[
+            click.Argument(["repo_id"]),
+            click.Argument(["filenames"], nargs=-1),
+            click.Option(["--revision"]),
+            click.Option(["--cache-dir"]),
+            click.Option(["--local-dir"]),
+            click.Option(["--include"], multiple=True),
+            click.Option(["--exclude"], multiple=True),
+        ],
+    )
+    for argv in downloads:
+        with download_parser.make_context("download", argv[3:]) as context:
+            parsed = context.params
+            assert parsed["repo_id"] == argv[3]
+            assert parsed["revision"] == revisions[argv[3]]
+            assert bool(parsed["cache_dir"]) != bool(parsed["local_dir"])
+            if argv[3] == filtered_repository and parsed["cache_dir"]:
+                assert parsed["filenames"] == ()
+                assert parsed[option] == patterns
     converters = [(argv, env) for argv, env in calls if argv[0] == "python"]
     assert len(converters) == 2
     for argv, env in converters:
