@@ -163,7 +163,8 @@ def test_artifacts_require_manifest_membership_and_cannot_follow_symlinks(
 
 
 def test_pipeline_cli_preserves_the_requested_diffusion_contract():
-    args = server.server_argv(Path("/models/Cosmos3-Nano"), 18080)
+    config = Path("/tmp/synthetic-stage.json")
+    args = server.server_argv(Path("/models/Cosmos3-Nano"), 18080, config)
     assert args[:3] == ["vllm", "serve", "/models/Cosmos3-Nano"]
     assert "--omni" in args and "--no-guardrails" in args
     for option, expected in (
@@ -173,10 +174,23 @@ def test_pipeline_cli_preserves_the_requested_diffusion_contract():
     ):
         assert args[args.index(option) + 1] == expected
     assert args[args.index("--model-class-name") + 1] == server.PIPELINE
-    assert json.loads(args[args.index("--stage-overrides") + 1]) == {
-        "0": {"custom_pipeline_args": {"sound_gen": False}}
-    }
+    assert args[args.index("--stage-configs-path") + 1] == str(config)
+    assert "--stage-overrides" not in args
     assert "--enable-diffusion-pipeline-profiler" in args
+
+
+def test_explicit_stage_keeps_audio_off_without_custom_pipeline_override():
+    stages = server.diffusion_stage_config()["stage_args"]
+    assert len(stages) == 1
+    stage = stages[0]
+    assert stage["stage_id"] == 0 and stage["stage_type"] == "diffusion"
+    assert stage["runtime"] == {"process": True, "devices": "0"}
+    engine = stage["engine_args"]
+    assert engine["model_config"] == {"sound_gen": False, "guardrails": False}
+    assert engine["dtype"] == "bfloat16"
+    assert engine["parallel_config"] == {"tensor_parallel_size": 1}
+    assert engine["enable_diffusion_pipeline_profiler"] is True
+    assert "custom_pipeline_args" not in engine
 
 
 def test_checkpoint_mismatch_fails_before_launch(runtime):

@@ -71,6 +71,14 @@ at a time; Ray's custom router considers all replicas at one rank and chooses
 the least outstanding queue, with capacity rejection protecting concurrent
 admission.
 
+The adapter writes an explicit single diffusion stage configuration with
+`model_config.sound_gen: false`, BF16 and TP=1, then passes it through
+`--stage-configs-path`. This supported legacy flag is needed for the pinned
+engine: its single-stage diffusion fallback drops `--stage-overrides`, and the
+checkpoint's sound dimensions would otherwise enable an unstaged audio
+tokenizer. The image's CPU validation resolves the actual engine configuration
+and checks that sound remains disabled; CLI parsing alone is insufficient.
+
 ## Deploy and operate
 
 1. Verify provider credentials with `npa workbench health preflight --checks
@@ -91,6 +99,18 @@ admission.
    `NPA_COSMOS3_VIDEO_RECOVERY_DIR` outside Git. Configure the normal NPA S3
    endpoint and credentials in the client process. Use distinct artifact
    prefixes for each batch, separate from any agent trajectory dataset.
+
+For `proxy_location: HeadOnly`, route port 8000 through KubeRay's stable
+`cosmos3-nano-video-head-svc`, for example
+`http://cosmos3-nano-video-head-svc.workbench.svc.cluster.local:8000` inside the
+cluster, or a local port-forward to that Service. KubeRay updates this Service's
+head-only selector when the active cluster changes. The generated
+`cosmos3-nano-video-serve-svc` is unused: KubeRay 1.7 always labels worker pods
+as serving endpoints, while these workers have no HTTP proxy. The explicit
+worker readiness probe checks Ray's native health endpoint on port 52365;
+all 16 model replicas must separately pass application readiness. Custom
+`serveService.spec.selector` values are
+[overwritten by KubeRay](https://github.com/ray-project/kuberay/blob/v1.7.0/ray-operator/controllers/ray/common/service.go#L216).
 
 ```bash
 npa workbench cosmos3 nano-video-batch --concurrency 1 \

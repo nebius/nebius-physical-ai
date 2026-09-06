@@ -454,6 +454,7 @@ def test_existing_s3_output_prefix_fails_before_gpu_or_write(tmp_path, monkeypat
     called = []
     monkeypatch.setattr(video, "run_batch", lambda **kwargs: called.append(kwargs))
     monkeypatch.setenv("NPA_COSMOS3_VIDEO_RECOVERY_DIR", str(tmp_path / "recovery"))
+    monkeypatch.setenv("NPA_COSMOS3_VIDEO_TOKEN", "synthetic-test-token")
 
     class S3:
         def list_objects_v2(self, **kwargs):
@@ -469,6 +470,83 @@ def test_existing_s3_output_prefix_fails_before_gpu_or_write(tmp_path, monkeypat
         video.submit_batch(output_path="s3://synthetic-bucket/output", concurrency=8,
                            endpoint="http://localhost", storage_client=Storage())
     assert called == []
+
+
+@pytest.mark.parametrize("concurrency,token,error", [
+    (1, "", "serving API token"),
+    (0, "synthetic-test-token", "concurrency"),
+    (-1, "synthetic-test-token", "concurrency"),
+    (True, "synthetic-test-token", "concurrency"),
+    (1.5, "synthetic-test-token", "concurrency"),
+])
+def test_invalid_client_configuration_fails_before_storage_or_recovery(
+    tmp_path, monkeypatch, concurrency, token, error,
+):
+    from npa.clients.storage import StorageClient
+
+    def unexpected(*args, **kwargs):
+        pytest.fail("Invalid client configuration must not access storage or generate")
+
+    recovery = tmp_path / "recovery"
+    monkeypatch.setenv("NPA_COSMOS3_VIDEO_RECOVERY_DIR", str(recovery))
+    monkeypatch.setenv("NPA_COSMOS3_VIDEO_TOKEN", token)
+    monkeypatch.setattr(StorageClient, "from_environment", unexpected)
+    monkeypatch.setattr(video, "run_batch", unexpected)
+    with pytest.raises(ValueError, match=error):
+        video.submit_batch(
+            output_path="s3://synthetic-bucket/output", concurrency=concurrency,
+            endpoint="http://localhost",
+        )
+    assert not recovery.exists()
+
+
+@pytest.mark.parametrize("payload", [
+    {}, [], None, {"prompt": None}, {"prompt": 7}, {"prompt": ""}, {"prompt": "  "},
+])
+def test_invalid_prompt_payload_never_reserves_output_or_generates(
+    tmp_path, monkeypatch, payload,
+):
+    calls = []
+
+    class S3:
+        def list_objects_v2(self, **kwargs):
+            calls.append("list")
+            return {"KeyCount": 0}
+
+        def put_object(self, **kwargs):
+            pytest.fail("Invalid prompt must not reserve the immutable output prefix")
+
+    class Storage:
+        s3 = S3()
+
+        def download_file(self, source, destination):
+            calls.append("download")
+            Path(destination).write_text(json.dumps(payload))
+
+    def unexpected(**kwargs):
+        pytest.fail("Invalid prompt must not submit generation")
+
+    monkeypatch.setenv("NPA_COSMOS3_VIDEO_RECOVERY_DIR", str(tmp_path / "recovery"))
+    monkeypatch.setenv("NPA_COSMOS3_VIDEO_TOKEN", "synthetic-test-token")
+    monkeypatch.setattr(video, "run_batch", unexpected)
+    with pytest.raises(ValueError, match="prompt must be nonempty text"):
+        video.submit_batch(
+            output_path="s3://synthetic-bucket/output", concurrency=1,
+            input_path="s3://synthetic-bucket/input.json", endpoint="http://localhost",
+            storage_client=Storage(),
+        )
+    assert calls == ["list", "download"]
+
+
+@pytest.mark.parametrize("prompt", [None, "", "  ", 7])
+def test_direct_batch_invalid_prompt_does_not_create_output(tmp_path, prompt):
+    output = tmp_path / "batch"
+    with pytest.raises(ValueError, match="prompt must be nonempty text"):
+        video.run_batch(
+            endpoint="http://localhost", output_dir=output, concurrency=1,
+            token="synthetic-test-token", prompt=prompt,
+        )
+    assert not output.exists()
 
 
 def test_vram_sample_does_not_confuse_cuda_ordinal_with_nvml_index(monkeypatch):
@@ -535,3 +613,54 @@ def test_missing_chunk_mp4_manifest_fails_before_download(tmp_path, monkeypatch)
     batch = _run(tmp_path)
     assert batch["completed"] == 0
     assert not list((tmp_path / "batch").glob("*/*.mp4"))
+
+
+@pytest.mark.parametrize("token", [
+    " ", "unit token", "unit\ttoken", "unit\rtoken", "unit\ntoken",
+    "unit\x01token", "unit\x7ftoken", "unit\u00e9token", "unit\u00a0token",
+])
+def test_malformed_token_never_accesses_storage_or_reserves_prefix(
+    tmp_path, monkeypatch, token,
+):
+    from npa.clients.storage import StorageClient
+
+    def unexpected(*args, **kwargs):
+        pytest.fail("Malformed token must fail before storage or generation")
+
+    recovery = tmp_path / "recovery"
+    monkeypatch.setenv("NPA_COSMOS3_VIDEO_RECOVERY_DIR", str(recovery))
+    monkeypatch.setenv("NPA_COSMOS3_VIDEO_TOKEN", token)
+    monkeypatch.setattr(StorageClient, "from_environment", unexpected)
+    monkeypatch.setattr(video, "run_batch", unexpected)
+    with pytest.raises(ValueError) as exc:
+        video.submit_batch(
+            output_path="s3://synthetic-bucket/output", concurrency=1,
+            endpoint="http://localhost",
+        )
+    assert str(exc.value) == "serving API token must be nonempty visible ASCII text"
+    assert not recovery.exists()
+
+
+@pytest.mark.parametrize("token", [True, 7, b"unit-token", None, "unit\x00token"])
+def test_direct_batch_malformed_token_refuses_before_output_or_http(
+    tmp_path, monkeypatch, token,
+):
+    def unexpected(*args, **kwargs):
+        pytest.fail("Malformed token must fail before any HTTP client setup")
+
+    monkeypatch.setattr(video.httpx, "Client", unexpected)
+    output = tmp_path / "batch"
+    with pytest.raises(ValueError) as exc:
+        video.run_batch(
+            endpoint="http://localhost", output_dir=output, concurrency=1,
+            token=token, prompt="A synthetic robot moves.",
+        )
+    assert str(exc.value) == "serving API token must be nonempty visible ASCII text"
+    assert not output.exists()
+
+
+def test_visible_ascii_token_is_accepted_without_format_or_length_restrictions():
+    video._validate_batch_inputs(
+        concurrency=1, token="".join(chr(value) for value in range(33, 127)),
+        prompt="A synthetic robot moves.",
+    )

@@ -59,7 +59,27 @@ def validate_weights(model_path: Path) -> dict[str, Any]:
     return ready
 
 
-def server_argv(model_path: Path, port: int) -> list[str]:
+def diffusion_stage_config() -> dict[str, Any]:
+    """Use the pinned engine's explicit stage path; fallback drops stage overrides."""
+    return {"stage_args": [{
+        "stage_id": 0,
+        "stage_type": "diffusion",
+        "runtime": {"process": True, "devices": "0"},
+        "engine_args": {
+            "model_stage": "diffusion",
+            "model_class_name": PIPELINE,
+            "dtype": "bfloat16",
+            "parallel_config": {"tensor_parallel_size": 1},
+            "model_config": {"sound_gen": False, "guardrails": False},
+            "enable_diffusion_pipeline_profiler": True,
+        },
+        "default_sampling_params": {"num_inference_steps": 35},
+        "final_output": True,
+        "final_output_type": "image",
+    }]}
+
+
+def server_argv(model_path: Path, port: int, stage_config_path: Path) -> list[str]:
     return [
         "vllm",
         "serve",
@@ -75,8 +95,8 @@ def server_argv(model_path: Path, port: int) -> list[str]:
         "1",
         "--dtype",
         "bfloat16",
-        "--stage-overrides",
-        '{"0":{"custom_pipeline_args":{"sound_gen":false}}}',
+        "--stage-configs-path",
+        str(stage_config_path),
         "--enable-diffusion-pipeline-profiler",
         "--init-timeout",
         "1800",
@@ -127,9 +147,13 @@ class NanoVideoRuntime:
             environment.pop(name, None)
         logs = self.output_root / ".server-logs"
         logs.mkdir(exist_ok=True)
+        from .nano_video import write_json
+
+        stage_config_path = logs / f"{self.replica_id}.stage.json"
+        write_json(stage_config_path, diffusion_stage_config())
         self._log_stream = (logs / f"{self.replica_id}.log").open("ab", buffering=0)
         self.process = subprocess.Popen(
-            server_argv(self.model_path, port),
+            server_argv(self.model_path, port, stage_config_path),
             env=environment,
             stdout=self._log_stream,
             stderr=subprocess.STDOUT,

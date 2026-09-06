@@ -477,12 +477,19 @@ def _peak_overlap(intervals: list[tuple[datetime, datetime]]) -> int:
     return peak
 
 
+def _validate_batch_inputs(*, concurrency: int, token: str, prompt: Any) -> None:
+    """Reject deterministic input errors before reserving storage or starting work."""
+    if type(concurrency) is not int or concurrency < 1:
+        raise ValueError("concurrency must be positive")
+    if not isinstance(token, str) or re.fullmatch(r"[!-~]+", token) is None:
+        raise ValueError("serving API token must be nonempty visible ASCII text")
+    if not isinstance(prompt, str) or not prompt.strip():
+        raise ValueError("prompt must be nonempty text")
+
+
 def run_batch(*, endpoint: str, output_dir: Path, concurrency: int, token: str, prompt: str = DEFAULT_PROMPT) -> dict[str, Any]:
     """Barrier-start complete requests and verify downloaded generation evidence."""
-    if concurrency < 1:
-        raise ValueError("concurrency must be positive")
-    if not token:
-        raise ValueError("serving API token is required")
+    _validate_batch_inputs(concurrency=concurrency, token=token, prompt=prompt)
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=False)
     barrier = threading.Barrier(concurrency)
@@ -566,6 +573,8 @@ def submit_batch(*, output_path: str, concurrency: int, endpoint: str = "", inpu
         source = urlsplit(input_path)
         if source.scheme != "s3" or not source.netloc or not source.path.strip("/") or source.query or source.fragment:
             raise ValueError("input-path must name a bucket and exact S3 object")
+    token = os.environ.get(token_env, "")
+    _validate_batch_inputs(concurrency=concurrency, token=token, prompt=DEFAULT_PROMPT)
     from npa.clients.storage import StorageClient
 
     storage = storage_client or StorageClient.from_environment()
@@ -581,7 +590,9 @@ def submit_batch(*, output_path: str, concurrency: int, endpoint: str = "", inpu
     prompt = DEFAULT_PROMPT
     if input_path:
         storage.download_file(input_path, str(root / "input.json"))
-        prompt = json.loads((root / "input.json").read_text())["prompt"]
+        payload = json.loads((root / "input.json").read_text())
+        prompt = payload.get("prompt") if isinstance(payload, dict) else None
+        _validate_batch_inputs(concurrency=concurrency, token=token, prompt=prompt)
     # A retained conditional reservation verifies write/read access and prevents
     # simultaneous clients from generating into the same immutable batch prefix.
     reservation = json.dumps({"schema_version": "npa.cosmos3.nano-video.reservation.v1",
@@ -596,7 +607,7 @@ def submit_batch(*, output_path: str, concurrency: int, endpoint: str = "", inpu
     if not verified:
         raise NanoVideoError("S3 reservation read-after-write failed before GPU generation")
     batch = run_batch(endpoint=endpoint, output_dir=root / "batch", concurrency=concurrency,
-                      token=os.environ.get(token_env, ""), prompt=prompt)
+                      token=token, prompt=prompt)
     objects = []
     try:
         for path in sorted((root / "batch").rglob("*")):

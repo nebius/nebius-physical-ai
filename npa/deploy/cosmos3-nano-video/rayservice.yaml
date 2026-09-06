@@ -117,6 +117,17 @@ spec:
                 image: ${NPA_COSMOS3_VIDEO_IMAGE}
                 imagePullPolicy: IfNotPresent
                 securityContext: *container-security
+                # HeadOnly workers have raylets, but no local Serve proxy.
+                # Override KubeRay's wget + worker-proxy readiness default.
+                readinessProbe:
+                  httpGet:
+                    path: /api/healthz
+                    port: 52365
+                  initialDelaySeconds: 10
+                  periodSeconds: 5
+                  timeoutSeconds: 2
+                  successThreshold: 1
+                  failureThreshold: 1
                 resources:
                   requests:
                     cpu: "4"
