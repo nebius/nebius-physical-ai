@@ -1396,6 +1396,18 @@ try:
         camera.set_world_poses_from_view(eyes=eye, targets=target)
     env = render_env
 
+    # Each exported row precedes one control step, which can span several
+    # physics ticks and need not match the renderer's update interval.
+    try:
+        control_dt = float(env.unwrapped.step_dt)
+    except (AttributeError, TypeError, ValueError, OverflowError) as exc:
+        raise RuntimeError("Isaac control timestep must be finite and positive") from exc
+    if not math.isfinite(control_dt) or control_dt <= 0.0:
+        raise RuntimeError("Isaac control timestep must be finite and positive")
+    fps = 1.0 / control_dt
+    if not math.isfinite(fps):
+        raise RuntimeError("Isaac control timestep must yield a finite frame rate")
+
     policy = None
     policy_loaded = False
     try:
@@ -1605,7 +1617,8 @@ try:
         "policy_loaded": policy_loaded,
         "runtime_version": metadata.version("isaaclab"),
         "checkpoint_sha256": hashlib.sha256(checkpoint_path.read_bytes()).hexdigest(),
-        "fps": 50,
+        "fps": fps,
+        "control_dt": control_dt,
         "state_names": state_names,
         "action_names": action_names,
         "source_joint_names": joint_names,
