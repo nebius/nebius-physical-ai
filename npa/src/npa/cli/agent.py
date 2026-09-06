@@ -4204,6 +4204,12 @@ def _maybe_toolground_chat_reply(
     loaded_now = False
     rerun_ready = None
     default_cameras = list(DEFAULT_SCENE_SPEC.get("cameras", {{}}).values())
+    if intent in {{"validate_workflow", "plan_workflow"}}:
+        result = evaluate_workflow_chat_request(
+            user_text, state.get("workflow_draft") or {{}},
+            intent=intent, tool_refs=frozenset(TOOL_REFS),
+        )
+        return result["reply"], suggested_apis, [], None, result, intent
     if intent == "start_sim2real":
         submit = submit_sim2real({{}})
         apis_used.append("workflows/sim2real/submit")

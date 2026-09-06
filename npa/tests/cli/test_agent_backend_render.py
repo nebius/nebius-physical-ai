@@ -3864,3 +3864,43 @@ def test_invalid_active_reference_with_empty_run_keeps_current_state(preload_bac
         "sim_viz_runs": {"malformed-ref": {"run_id": "", "bucket": "wrong-example-bucket"}},
     }
     assert _lookup(preload_backend_body, state) == current
+
+
+@pytest.mark.parametrize("operation", ["validate", "plan"])
+def test_workflow_chat_operates_on_supplied_yaml_before_catalog_or_status(
+    monkeypatch, tmp_path, operation
+):
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name="workflow_operation_backend")
+    spec = """apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: supplied-workflow
+initial: record
+config:
+  metrics_input_uri: file:///tmp/public-metrics.json
+  insights_store_uri: file:///tmp/public-insights
+states:
+  record:
+    toolRef: workbench.insights.record
+    terminal: true
+"""
+    state = {"workflow_draft": {"yaml": "invalid saved draft"}}
+    monkeypatch.setattr(module, "_load_state", lambda: copy.deepcopy(state))
+    monkeypatch.setattr(module, "_save_state", lambda _: pytest.fail("read-only operation wrote state"))
+    question = f"{operation.title()} this workflow YAML and report its status and toolRefs.\n```yaml\n{spec}```"
+    response = module._agent_chat_with_tools(raw_messages=[{"role": "user", "content": question}], model="unused")
+    assert response["grounded"] is True
+    assert response["workflow_validation"]["ok"] is True
+    assert "supplied-workflow" in response["reply"]
+    assert "Sim2Real status" not in response["reply"]
+    assert "Workbench tool catalog" not in response["reply"]
+    if operation == "plan":
+        assert response["workflow_validation"]["plan"]["steps"][0]["tool_ref"] == "workbench.insights.record"
+        assert "Planning only" in response["reply"]
+    else:
+        assert response["apis_used"] == ["workflows/validate"]
+    missing = module._agent_chat_with_tools(
+        raw_messages=[{"role": "user", "content": f"{operation.title()} the saved workflow YAML"}], model="unused"
+    )
+    assert missing["workflow_validation"]["ok"] is False
+    assert "validation failed" in missing["reply"]

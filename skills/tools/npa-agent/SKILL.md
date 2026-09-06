@@ -239,7 +239,7 @@ Typed GPU placement failures and consented preemptible fallback use
 
 Intent router in `npa/src/npa/cli/agent_chat.py` (embedded in remote `backend.py` at bootstrap).
 
-All 35 routed intents are listed below with a trigger phrase verified to match
+Routed intents are listed below with trigger phrases verified to match
 (`npa/scripts/audit_agent_capabilities.py` exercises exactly these). Do not
 assume an unlisted capability is missing without re-running that audit, and do
 not add a rule for one of these without checking which existing intent already
@@ -272,6 +272,8 @@ is the common failure, so match the qualifier, not just the word "workflow":
 | `create_data_factory_workflow` | "create a PAIDF workflow yaml" | PAIDF / video augmentation / scenario fan-out |
 | `create_rl_policy_workflow` | "create an RL policy training workflow" | RL policy training |
 | `create_workflow` | "create a 2-step sim2real npa.workflow" | explicit two-step, or generic `npa.workflow` |
+| `validate_workflow` | "validate the saved workflow YAML" | validate fenced YAML, or the saved draft, without rewriting it |
+| `plan_workflow` | "plan the saved workflow YAML" | validate and plan that exact specification without submission |
 | `workflow_execute_guidance` | "how do I actually run this workflow" | validate/plan/submit + tools |
 
 `create_vlm_rl_workflow` is matched **before** `create_gate_workflow` and claims

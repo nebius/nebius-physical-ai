@@ -3789,6 +3789,45 @@ def plan_workflow_yaml_text(
         return _plan_lightweight(text, run_id=run_id, tool_refs=tool_refs)
 
 
+def evaluate_workflow_chat_request(
+    user_text: str,
+    draft: dict[str, Any],
+    *,
+    intent: str,
+    tool_refs: frozenset[str],
+) -> dict[str, Any]:
+    """Validate or plan the supplied/saved spec without regenerating or executing it."""
+    fenced = re.search(r"```(?:yaml|yml)\s*\n(.*?)```", user_text, re.DOTALL | re.IGNORECASE)
+    spec = fenced.group(1) if fenced else str(draft.get("yaml") or "")
+    if not spec.strip():
+        return {"ok": False, "reply": "Paste a YAML specification or draft one first."}
+    validation = validate_workflow_yaml_text(spec, tool_refs=tool_refs)
+    if not validation.get("ok"):
+        return {"ok": False, "validation": validation,
+                "reply": "**Workflow validation failed:** " + str(validation.get("error") or "invalid specification")}
+    name = str(validation.get("name") or "unnamed")
+    reply = f"**Workflow validation:** `valid`\n- **name**: `{name}`\n- **schema**: `{API_VERSION}`"
+    result: dict[str, Any] = {"ok": True, "validation": validation}
+    if intent == "plan_workflow":
+        plan = plan_workflow_yaml_text(spec, run_id="agent-chat-plan", tool_refs=tool_refs)
+        result["plan"] = plan
+        result["ok"] = bool(plan.get("ok"))
+        if plan.get("ok"):
+            steps = plan.get("steps") or []
+            reply += f"\n\n**Execution plan:** {len(steps)} step(s)\n"
+            reply += "\n".join(
+                f"{i}. `{step.get('state')}` — `{step.get('tool_ref') or step.get('toolRef') or 'run'}`"
+                for i, step in enumerate(steps, 1)
+            )
+            reply += "\n\nPlanning only; no workload was submitted or executed."
+        else:
+            reply += "\n\n**Planning failed:** " + str(plan.get("error") or "no executable plan")
+    else:
+        reply += "\n\nThe supplied specification was validated without changing the saved draft or executing a workload."
+    result["reply"] = reply
+    return result
+
+
 def format_workflow_chat_reply(
     yaml_text: str,
     validation: dict[str, Any],

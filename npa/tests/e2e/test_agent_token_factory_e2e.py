@@ -75,6 +75,31 @@ def test_live_rendered_agent_text_reasoning_and_vision(monkeypatch, tmp_path: Pa
     ]
     results = []
     with audit.serve_live(tmp_path) as client:
+        workflow = """apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: public-metrics-proof
+config:
+  metrics_input_uri: file:///tmp/public-metrics.json
+  insights_store_uri: file:///tmp/public-insights
+initial: record
+states:
+  record:
+    toolRef: workbench.insights.record
+    terminal: true
+"""
+        for operation in ("Validate", "Plan"):
+            response = client.post("/chat", json={"messages": [{
+                "role": "user",
+                "content": f"{operation} this workflow YAML and report its status and toolRefs.\n```yaml\n{workflow}```",
+            }]}, timeout=None)
+            response.raise_for_status()
+            operation_result = response.json()
+            assert operation_result["grounded"] is True
+            assert operation_result["workflow_validation"]["ok"] is True
+            assert "public-metrics-proof" in operation_result["reply"]
+            if operation == "Plan":
+                assert "workbench.insights.record" in operation_result["reply"]
         for tier, expected_model, messages, required_words in requests:
             response = client.post(
                 "/chat", json={"messages": messages, "session_id": f"model-test-{tier}"},
