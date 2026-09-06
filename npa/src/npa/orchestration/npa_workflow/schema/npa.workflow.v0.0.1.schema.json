@@ -93,7 +93,8 @@
         "required": ["uri"],
         "properties": {
           "uri": { "type": "string" },
-          "schema": { "type": "string" }
+          "schema": { "type": "string" },
+          "kind": { "enum": ["file", "directory"] }
         }
       }
     }

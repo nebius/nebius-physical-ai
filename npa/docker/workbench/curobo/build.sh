@@ -3,6 +3,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 NPA_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 REPO_ROOT="$(cd "$NPA_ROOT/.." && pwd)"
+CUROBO_PYTHON="${NPA_PYTHON_BIN:-$NPA_ROOT/.venv/bin/python}"
 REGISTRY=""
 PUSH=0
 while [[ $# -gt 0 ]]; do
@@ -24,8 +25,7 @@ CUROBO_SOURCE_EPOCH="$(git -C "$REPO_ROOT" show -s --format=%ct "$SOURCE_SHA")"
 BUILD_INPUTS=(
   npa/src/npa npa/pyproject.toml npa/README.md npa/.dockerignore
   npa/docker/workbench/curobo
-  npa/workflows/workbench/npa-workflows/sim2real.yaml
-  npa/workflows/workbench/npa-workflows/physical-ai-data-factory.yaml
+  workflows/main workflows/testing
 )
 # The immutable image identity must cover the actual bytes Docker receives.
 # Keep unrelated dirty files outside these inputs in relaxed dirty-tree mode.
@@ -44,10 +44,16 @@ if [[ -n "$UNTRACKED_INPUTS" ]]; then
 fi
 # Snapshot only the resolved commit, so ignored files and writes racing the
 # checks cannot enter the image. No checkout, branch or Git mutation is needed.
-BUILD_CONTEXT="$(mktemp -d "${TMPDIR:-/tmp}/npa-curobo-build.XXXXXXXX")"
-trap 'rm -rf -- "$BUILD_CONTEXT"' EXIT
+BUILD_SNAPSHOT="$(mktemp -d "${TMPDIR:-/tmp}/npa-curobo-build.XXXXXXXX")"
+trap 'rm -rf -- "$BUILD_SNAPSHOT"' EXIT
 git -C "$REPO_ROOT" archive "$SOURCE_SHA" -- "${BUILD_INPUTS[@]}" | \
-  tar -x --strip-components=1 -C "$BUILD_CONTEXT"
+  tar -x -C "$BUILD_SNAPSHOT"
+BUILD_CONTEXT="$BUILD_SNAPSHOT/npa"
+# Stage only the archived catalog, using the helper from that same immutable
+# commit. The mutable checkout and its generated package copies cannot enter.
+[[ -x "$CUROBO_PYTHON" ]] || { echo "Repository Python is required for catalog staging" >&2; exit 1; }
+"$CUROBO_PYTHON" "$BUILD_CONTEXT/src/npa/workflow_build.py" \
+  --stage-catalog --package-root "$BUILD_CONTEXT"
 IMAGE="${REGISTRY:+${REGISTRY%/}/}npa-curobo:dev-${SOURCE_SHA}"
 # Trusted publication builds this same Dockerfile after source review, SBOM,
 # secret/license/payload scans and bootstrap evidence; this helper only builds.

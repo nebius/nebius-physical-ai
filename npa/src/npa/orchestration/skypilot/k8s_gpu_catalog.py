@@ -781,6 +781,8 @@ def _normalize(name: str) -> str:
 
 
 _EXPLICIT_ACCELERATOR_ALIASES = (
+    frozenset({"b200", "nvidiab200"}),
+    frozenset({"b300", "nvidiab300"}),
     frozenset(
         {
             "rtx6000",

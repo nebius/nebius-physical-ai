@@ -42,7 +42,7 @@ def test_non_sonic_workbench_images_resolve_from_supported_tools() -> None:
     )
     assert container_image_for_tool("detection-training") == (
         "ghcr.io/nebius/nebius-physical-ai/"
-        "npa-detection-training:bdd100k-golden-eval-smoke-20260614T210000Z"
+        "npa-detection-training:runtime-v1-20260905"
     )
     assert (
         container_image_for_tool("groot")

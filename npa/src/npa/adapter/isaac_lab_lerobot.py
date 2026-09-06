@@ -190,12 +190,19 @@ def convert(
 
     Raw input is a directory containing ``episode_*`` subdirectories, each with
     ``state.npy`` and ``actions.npy`` arrays matching ``spec`` (default: the
-    canonical 43D Unitree G1 layout).
+    canonical 43D Unitree G1 layout). Input and output must resolve to disjoint
+    directories because conversion replaces the output directory.
     """
     if fps <= 0:
         raise IsaacLabLeRobotError(f"fps must be positive, got {fps}")
     input_dir = Path(input_dir)
     output_dir = Path(output_dir)
+    resolved_input = input_dir.resolve()
+    resolved_output = output_dir.resolve()
+    if resolved_input.is_relative_to(resolved_output) or resolved_output.is_relative_to(
+        resolved_input
+    ):
+        raise IsaacLabLeRobotError("Input and output directories must not overlap")
     episodes = discover_episodes(input_dir)
     top_meta = _load_optional_json(input_dir / "meta.json")
     rgb_episode_paths = [episode / RGB_FRAMES_FILENAME for episode in episodes]

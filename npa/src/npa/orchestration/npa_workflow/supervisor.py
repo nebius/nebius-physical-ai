@@ -722,16 +722,23 @@ class ServerlessRecoverySpec:
 class ServerlessSupervisorAdapter:
     runtime = "serverless"
 
-    def __init__(self, spec: ServerlessRecoverySpec, *, client: Any | None = None) -> None:
+    def __init__(
+        self, spec: ServerlessRecoverySpec, *, client: Any | None = None,
+        launch_preflight: Callable[[], Any] | None = None,
+    ) -> None:
         if client is None:
             from npa.clients.serverless import ServerlessClient
 
             client = ServerlessClient()
         self.spec = spec
         self.client = client
+        self.launch_preflight = launch_preflight
 
     def observe(self, identity: AttemptIdentity) -> BackendObservation:
-        from npa.clients.serverless import EndpointNotFoundError, ServerlessClientError
+        from npa.clients.serverless import (
+            AuthError, EndpointNotFoundError, JobIdentityError,
+            ServerlessClientError, TransientServerlessError,
+        )
 
         if not identity.provider_job_id:
             return BackendObservation(
@@ -747,21 +754,43 @@ class ServerlessSupervisorAdapter:
                 reason_code="PROVIDER_INTERRUPTION",
                 evidence={"lookup": "exact_absence"},
             )
+        except AuthError as exc:
+            return BackendObservation(
+                BackendState.UNKNOWN, reason_code="AUTHORIZATION",
+                message=sanitize_reason(exc), exact_identity=False,
+            )
+        except TransientServerlessError as exc:
+            return BackendObservation(
+                BackendState.UNKNOWN, reason_code="SERVERLESS_TRANSPORT",
+                message=sanitize_reason(exc), exact_identity=False,
+                evidence={"lookup": "transient_observation_failure"},
+            )
+        except JobIdentityError as exc:
+            return BackendObservation(
+                BackendState.AMBIGUOUS, reason_code="AMBIGUOUS_ATTEMPT_IDENTITY",
+                message=sanitize_reason(exc), exact_identity=False,
+            )
         except ServerlessClientError as exc:
             return BackendObservation(
                 BackendState.AMBIGUOUS,
-                reason_code="SERVERLESS_TRANSPORT",
+                reason_code="SERVERLESS_PROVIDER_ERROR",
                 message=sanitize_reason(exc),
                 exact_identity=False,
             )
-        exact = str(job.id or "") == identity.provider_job_id
+        exact = (
+            str(job.id or "") == identity.provider_job_id
+            and str(job.project_id or "") == self.spec.project_id
+            and str(job.name or "") == identity.provider_job_name
+        )
         state = _serverless_state(str(job.status or ""))
         reason = ""
         detail = (
             f"{job.scheduling_state} {job.pending_reason} {job.log_tail}"
         ).lower()
         if state is BackendState.QUEUED and any(
-            marker in detail for marker in ("capacity", "quota", "resource", "no gpu")
+            marker in detail for marker in (
+                "capacity", "quota", "insufficient resources", "not enough resources", "no gpu",
+            )
         ):
             reason = "SERVERLESS_CAPACITY"
         elif state is BackendState.FAILED:
@@ -778,6 +807,8 @@ class ServerlessSupervisorAdapter:
                 reason = "IMAGE_REFERENCE_INVALID"
             elif "preempt" in detail or "interrupted" in detail:
                 reason = "PROVIDER_INTERRUPTION"
+            elif str(getattr(job, "provider_state", "")).upper() == "ERROR":
+                reason = "SERVERLESS_PROVIDER_ERROR"
             else:
                 reason = "PAYLOAD_EXIT_NONZERO"
         return BackendObservation(
@@ -787,6 +818,7 @@ class ServerlessSupervisorAdapter:
             exact_identity=exact,
             evidence={
                 "status": job.status,
+                "provider_state": str(getattr(job, "provider_state", "")),
                 "scheduling_state": job.scheduling_state,
                 "queued_for_seconds": job.queued_for_seconds,
             },
@@ -811,6 +843,8 @@ class ServerlessSupervisorAdapter:
         try:
             job = self.client.get_job(name, self.spec.project_id)
         except EndpointNotFoundError:
+            if self.launch_preflight is not None:
+                self.launch_preflight()
             env = dict(self.spec.env)
             if checkpoint.requested:
                 env["NPA_CHECKPOINT_URI"] = checkpoint.uri
@@ -828,6 +862,7 @@ class ServerlessSupervisorAdapter:
                 preset=self.spec.preset,
                 timeout=self.spec.timeout,
                 subnet_id=self.spec.subnet_id,
+                durable=True,
             )
         return AttemptIdentity(
             runtime=self.runtime,
@@ -900,14 +935,16 @@ def _skypilot_state(status: str) -> BackendState:
 
 
 def _serverless_state(status: str) -> BackendState:
-    normalized = status.strip().lower()
+    from npa.clients.serverless import _job_status
+
+    normalized = _job_status(status)
     if normalized == "succeeded":
         return BackendState.SUCCEEDED
     if normalized == "failed":
         return BackendState.FAILED
     if normalized == "cancelled":
         return BackendState.CANCELLED
-    if normalized == "running":
+    if normalized in {"running", "cancelling"}:
         return BackendState.RUNNING
     if normalized == "queued":
         return BackendState.QUEUED
