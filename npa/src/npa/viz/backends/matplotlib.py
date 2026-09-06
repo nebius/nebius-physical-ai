@@ -54,66 +54,68 @@ def render(
     width, height = resolution
     dpi = 100
     fig = plt.figure(figsize=(width / dpi, height / dpi), dpi=dpi, facecolor=BACKGROUND)
-    fig.suptitle(title or "LeRobot trajectory", color=TEXT_COLOR, fontsize=18, y=0.98)
+    try:
+        fig.suptitle(title or "LeRobot trajectory", color=TEXT_COLOR, fontsize=18, y=0.98)
 
-    axes_3d, trace_ax = _build_layout(fig, layout)
-    bounds_data = [skeleton]
-    if predictions is not None:
-        bounds_data.append(predictions)
-    limits = _axis_limits(bounds_data)
+        axes_3d, trace_ax = _build_layout(fig, layout)
+        bounds_data = [skeleton]
+        if predictions is not None:
+            bounds_data.append(predictions)
+        limits = _axis_limits(bounds_data)
 
-    artists: list[_SkeletonArtists] = []
-    if layout == "side-by-side":
-        input_artists = _add_skeleton(axes_3d[0], skeleton[0], joint_connections, INPUT_COLOR, "Input")
-        pred_artists = _add_skeleton(axes_3d[1], predictions[0], joint_connections, PREDICTION_COLOR, "Predictions")
-        artists.extend([input_artists, pred_artists])
-        _style_3d_axis(axes_3d[0], "Isaac Lab input", limits)
-        _style_3d_axis(axes_3d[1], "GR00T predictions", limits)
-    else:
-        input_artists = _add_skeleton(axes_3d[0], skeleton[0], joint_connections, INPUT_COLOR, "Input")
-        artists.append(input_artists)
-        if layout == "overlay" and predictions is not None:
-            pred_artists = _add_skeleton(axes_3d[0], predictions[0], joint_connections, PREDICTION_COLOR, "Predictions")
-            artists.append(pred_artists)
-        _style_3d_axis(axes_3d[0], "Overlay" if layout == "overlay" else "Trajectory", limits)
-
-    time_marker = _add_motion_trace(trace_ax, skeleton, predictions, fps=fps, duration_s=duration_s)
-    fig.subplots_adjust(left=0.035, right=0.965, top=0.90, bottom=0.08, hspace=0.16, wspace=0.04)
-
-    def update(frame: int) -> list[object]:
-        _update_skeleton(artists[0], skeleton[frame], joint_connections)
+        artists: list[_SkeletonArtists] = []
         if layout == "side-by-side":
-            if frame < int(predictions.shape[0]):
-                _set_skeleton_visible(artists[1], True)
-                _update_skeleton(artists[1], predictions[frame], joint_connections)
-            else:
-                _set_skeleton_visible(artists[1], False)
-        elif layout == "overlay" and predictions is not None and len(artists) > 1:
-            if frame < int(predictions.shape[0]):
-                _set_skeleton_visible(artists[1], True)
-                _update_skeleton(artists[1], predictions[frame], joint_connections)
-            else:
-                _set_skeleton_visible(artists[1], False)
-        time_marker.set_xdata([frame / fps, frame / fps])
-        updated: list[object] = [time_marker]
-        for skeleton_artists in artists:
-            updated.extend(skeleton_artists.all)
-        return updated
+            input_artists = _add_skeleton(axes_3d[0], skeleton[0], joint_connections, INPUT_COLOR, "Input")
+            pred_artists = _add_skeleton(axes_3d[1], predictions[0], joint_connections, PREDICTION_COLOR, "Predictions")
+            artists.extend([input_artists, pred_artists])
+            _style_3d_axis(axes_3d[0], "Isaac Lab input", limits)
+            _style_3d_axis(axes_3d[1], "GR00T predictions", limits)
+        else:
+            input_artists = _add_skeleton(axes_3d[0], skeleton[0], joint_connections, INPUT_COLOR, "Input")
+            artists.append(input_artists)
+            if layout == "overlay" and predictions is not None:
+                pred_artists = _add_skeleton(axes_3d[0], predictions[0], joint_connections, PREDICTION_COLOR, "Predictions")
+                artists.append(pred_artists)
+            _style_3d_axis(axes_3d[0], "Overlay" if layout == "overlay" else "Trajectory", limits)
 
-    ani = animation.FuncAnimation(
-        fig,
-        update,
-        frames=skeleton.shape[0],
-        interval=1000 / fps,
-        blit=False,
-        repeat=False,
-    )
-    writer = animation.FFMpegWriter(fps=fps, bitrate=5000)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    ani.save(str(output_path), writer=writer, dpi=dpi)
-    if hasattr(ani, "_draw_was_started"):
-        ani._draw_was_started = True
-    plt.close(fig)
+        time_marker = _add_motion_trace(trace_ax, skeleton, predictions, fps=fps, duration_s=duration_s)
+        fig.subplots_adjust(left=0.035, right=0.965, top=0.90, bottom=0.08, hspace=0.16, wspace=0.04)
+
+        def update(frame: int) -> list[object]:
+            _update_skeleton(artists[0], skeleton[frame], joint_connections)
+            if layout == "side-by-side":
+                if frame < int(predictions.shape[0]):
+                    _set_skeleton_visible(artists[1], True)
+                    _update_skeleton(artists[1], predictions[frame], joint_connections)
+                else:
+                    _set_skeleton_visible(artists[1], False)
+            elif layout == "overlay" and predictions is not None and len(artists) > 1:
+                if frame < int(predictions.shape[0]):
+                    _set_skeleton_visible(artists[1], True)
+                    _update_skeleton(artists[1], predictions[frame], joint_connections)
+                else:
+                    _set_skeleton_visible(artists[1], False)
+            time_marker.set_xdata([frame / fps, frame / fps])
+            updated: list[object] = [time_marker]
+            for skeleton_artists in artists:
+                updated.extend(skeleton_artists.all)
+            return updated
+
+        ani = animation.FuncAnimation(
+            fig,
+            update,
+            frames=skeleton.shape[0],
+            interval=1000 / fps,
+            blit=False,
+            repeat=False,
+        )
+        writer = animation.FFMpegWriter(fps=fps, bitrate=5000)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        ani.save(str(output_path), writer=writer, dpi=dpi)
+        if hasattr(ani, "_draw_was_started"):
+            ani._draw_was_started = True
+    finally:
+        plt.close(fig)
 
 
 def _validate_inputs(
