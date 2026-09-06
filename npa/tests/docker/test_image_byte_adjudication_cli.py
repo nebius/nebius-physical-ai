@@ -103,7 +103,19 @@ def test_authorization_schema_failure_is_exercised_after_valid_outer_pins(
 
 @pytest.mark.parametrize(
     "role",
-    ["encoded-geometry-data", "public-package-reference", "encoded-gzip-payload"],
+    [
+        "encoded-geometry-data",
+        "public-package-reference",
+        "encoded-gzip-payload",
+        "public-documentation-text",
+        "public-protocol-field",
+        "numeric-debug-metadata",
+        "numeric-unwind-metadata",
+        "machine-instruction-bytes",
+        "encoded-archive-member-payload",
+        "encoded-bzip2-payload",
+        "encoded-video-payload",
+    ],
 )
 @pytest.mark.parametrize(
     "mutation", ["none", "changed_evidence", "unreviewed", "active_credential"]

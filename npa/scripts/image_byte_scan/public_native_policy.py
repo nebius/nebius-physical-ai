@@ -50,6 +50,50 @@ def native_multiset(findings):
     return result
 
 
+def validate_public_wheel_references(value):
+    """Validate typed wheel-reference syntax; public origin still needs review.
+
+    Other proof kinds retain their own schemas. This check grants no semantic
+    acceptance and never performs a network request or follows a supplied URL.
+    """
+    from urllib.parse import unquote, urlsplit
+
+    if isinstance(value, dict):
+        if value.get("kind") == "locked-public-wheel-member":
+            url = value.get("artifact_url")
+            W.require(
+                isinstance(url, str)
+                and bool(url)
+                and not any(
+                    character.isspace() or ord(character) < 32 for character in url
+                )
+                and "\\" not in url,
+                "public_policy_wheel_artifact_url",
+            )
+            try:
+                parsed = urlsplit(url)
+                valid = (
+                    parsed.scheme == "https"
+                    and bool(parsed.hostname)
+                    and parsed.username is None
+                    and parsed.password is None
+                    and parsed.port in {None, 443}
+                    and not parsed.query
+                    and not parsed.fragment
+                    and unquote(parsed.path).endswith(".whl")
+                    and ".." not in unquote(parsed.path).split("/")
+                )
+            except ValueError:
+                valid = False
+            W.require(valid, "public_policy_wheel_artifact_url")
+            A.digest(value.get("artifact_sha256"))
+        for child in value.values():
+            validate_public_wheel_references(child)
+    elif isinstance(value, list):
+        for child in value:
+            validate_public_wheel_references(child)
+
+
 def compile_catalog(catalog, detector_identity, proof_loader):
     A.fields(
         catalog,
@@ -207,7 +251,10 @@ class FreshPolicyReview:
             and ".." not in PurePosixPath(name).parts,
             "public_policy_proof_scope",
         )
-        return self._public_source(W._ROOTS.get()[1] / name, binding["sha256"])
+        data = self._public_source(W._ROOTS.get()[1] / name, binding["sha256"])
+        if PurePosixPath(name).suffix == ".json":
+            validate_public_wheel_references(A.decode(data))
+        return data
 
     def observe(self, emitted_bytes):
         # core.Ledger calls after the exact bytes are flushed to the ledger. Detection

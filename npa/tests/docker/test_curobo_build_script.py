@@ -141,6 +141,10 @@ def test_only_exact_commit_snapshot_reaches_docker(build_boundary, mode):
     assert f"npa-curobo:dev-{SOURCE_SHA}" in docker["args"]
     assert f"NPA_SOURCE_SHA={SOURCE_SHA}" in docker["args"]
     assert "SOURCE_DATE_EPOCH=1700000000" in docker["args"]
+    label_index = docker["args"].index("--label")
+    assert docker["args"][label_index + 1] == (
+        "org.opencontainers.image.source=https://github.com/nebius/nebius-physical-ai"
+    )
     assert ["show", "-s", "--format=%ct", SOURCE_SHA] in calls
     assert "--push" not in docker["args"]
     for call in calls:

@@ -1376,7 +1376,7 @@
         "python_version": "3.12.3 (main, Jul 15 2026, 23:46:41) [GCC 13.3.0]",
         "source": {
           "artifact_sha256": "e70e1b18881e6b3c1ce402d0a989da39f956a3a057526e03c354df23d704ce9b",
-          "artifact_url": null,
+          "artifact_url": "https://download-r2.pytorch.org/whl/cu130/torch-2.9.1%2Bcu130-cp312-cp312-manylinux_2_28_x86_64.whl",
           "kind": "locked-public-wheel-member",
           "member": "torch/nn/attention/flex_attention.py",
           "member_bytes": 70075,
@@ -1394,7 +1394,7 @@
     {
       "public_origin": {
         "artifact_sha256": "e70e1b18881e6b3c1ce402d0a989da39f956a3a057526e03c354df23d704ce9b",
-        "artifact_url": null,
+        "artifact_url": "https://download-r2.pytorch.org/whl/cu130/torch-2.9.1%2Bcu130-cp312-cp312-manylinux_2_28_x86_64.whl",
         "kind": "locked-public-wheel-member",
         "member": "torch/nn/attention/flex_attention.py",
         "member_bytes": 70075,
@@ -1409,7 +1409,7 @@
     {
       "public_origin": {
         "artifact_sha256": "e70e1b18881e6b3c1ce402d0a989da39f956a3a057526e03c354df23d704ce9b",
-        "artifact_url": null,
+        "artifact_url": "https://download-r2.pytorch.org/whl/cu130/torch-2.9.1%2Bcu130-cp312-cp312-manylinux_2_28_x86_64.whl",
         "kind": "locked-public-wheel-member",
         "member": "torch/testing/_internal/common_modules.py",
         "member_bytes": 215854,

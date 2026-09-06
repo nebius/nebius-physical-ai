@@ -215,3 +215,87 @@ def test_metadata_requires_its_exact_review_role():
     catalog["entries"][0]["record_kind"] = "logical_tar_path"
     with pytest.raises(W.ScanError, match="metadata_role"):
         compile_catalog(catalog)
+
+
+@pytest.mark.parametrize(
+    "role",
+    [
+        "public-documentation-text",
+        "public-protocol-field",
+        "numeric-debug-metadata",
+        "numeric-unwind-metadata",
+        "machine-instruction-bytes",
+        "encoded-archive-member-payload",
+        "encoded-bzip2-payload",
+        "encoded-video-payload",
+    ],
+)
+def test_local_adjudication_roles_do_not_extend_hosted_policy(role):
+    catalog, _report, _rows = fixture()
+    catalog["entries"][0]["semantic_role"] = role
+    with pytest.raises(W.ScanError, match="public_policy_unsafe_semantics"):
+        compile_catalog(catalog)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        None,
+        False,
+        "",
+        "http://example.com/package.whl",
+        "https://user@example.com/package.whl",
+        "https://example.com/package.whl?credential=fixture",
+        "https://example.com/package.whl#fragment",
+        "https://example.com/package.tar.gz",
+        "https://example.com:bad/package.whl",
+        "https:///package.whl",
+        "https://example.com/../package.whl",
+        "https://example.com/unsafe path.whl",
+    ],
+)
+def test_typed_public_wheel_requires_credential_free_reproducible_url(
+    tmp_path, monkeypatch, url
+):
+    tmp_path.chmod(0o700)
+    payload = {
+        "schema_version": "npa.public-native-source-proofs.v1",
+        "content": [
+            {
+                "public_origin": {
+                    "kind": "exact-checked-hash-bytecode",
+                    "source": {
+                        "kind": "locked-public-wheel-member",
+                        "artifact_sha256": "a" * 64,
+                        "artifact_url": url,
+                    },
+                }
+            }
+        ],
+    }
+    reviewer = object.__new__(P.FreshPolicyReview)
+    monkeypatch.setattr(
+        reviewer, "_public_source", lambda path, expected: W.canonical(payload)
+    )
+    with W.authorized_roots(tmp_path, ROOT):
+        with pytest.raises(W.ScanError, match="public_policy_wheel_artifact_url"):
+            reviewer._proof(
+                {"path": "synthetic-public-source.json", "sha256": "b" * 64}
+            )
+
+
+def test_missing_typed_wheel_url_refuses_but_other_proof_kinds_keep_their_schema():
+    P.validate_public_wheel_references(
+        {"kind": "signed-ubuntu-package-member", "artifact_url": None}
+    )
+    P.validate_public_wheel_references(
+        {
+            "kind": "locked-public-wheel-member",
+            "artifact_url": "https://example.com/package%2Bvariant.whl",
+            "artifact_sha256": "a" * 64,
+        }
+    )
+    with pytest.raises(W.ScanError, match="public_policy_wheel_artifact_url"):
+        P.validate_public_wheel_references(
+            {"kind": "locked-public-wheel-member", "artifact_sha256": "a" * 64}
+        )

@@ -30,6 +30,11 @@ SCHEMA = "npa.image-byte-adjudication.v1"
 MANIFEST_SCHEMA = "npa.image-byte-disposition-manifest.v1"
 REVIEW_SCHEMA = "npa.image-byte-independent-review.v1"
 PROOF_SCHEMA = "npa.image-byte-occurrence-provenance.v1"
+# Roles describe independently reviewed bytes; labels alone never prove safety.
+# Static prose excludes runtime values. Protocol identifiers require declared or
+# consumed fields. Debug/unwind numbers and instructions require typed decoding.
+# Archive members require decoded ZIP compressed bodies; bzip2 requires complete
+# consumption; video requires validated compressed packets. Metadata is excluded.
 ROLES = frozenset({"cryptographic-self-test", "parser-format-delimiter",
                    "package-integrity-metadata", "non-operational-source-example",
                    "public-source-symbol", "public-license-reference",
@@ -37,7 +42,11 @@ ROLES = frozenset({"cryptographic-self-test", "parser-format-delimiter",
                    "public-package-path-metadata", "linker-type-framing",
                    "encoded-image-pixel-data", "numeric-source-constant",
                    "encoded-geometry-data", "public-package-reference",
-                   "encoded-gzip-payload"})
+                   "encoded-gzip-payload", "public-documentation-text",
+                   "public-protocol-field", "numeric-debug-metadata",
+                   "numeric-unwind-metadata", "machine-instruction-bytes",
+                   "encoded-archive-member-payload", "encoded-bzip2-payload",
+                   "encoded-video-payload"})
 HEX = re.compile(r"[0-9a-f]{64}")
 
 

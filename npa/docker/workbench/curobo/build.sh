@@ -56,4 +56,5 @@ env -u HF_TOKEN -u NGC_API_KEY -u NVIDIA_API_KEY -u NEBIUS_IAM_TOKEN \
   docker buildx build --platform linux/amd64 --file "$BUILD_CONTEXT/docker/workbench/curobo/Dockerfile" \
     --tag "$IMAGE" --build-arg "NPA_SOURCE_SHA=$SOURCE_SHA" \
     --build-arg "SOURCE_DATE_EPOCH=$CUROBO_SOURCE_EPOCH" \
+    --label "org.opencontainers.image.source=https://github.com/nebius/nebius-physical-ai" \
     --load --provenance=false "$BUILD_CONTEXT"

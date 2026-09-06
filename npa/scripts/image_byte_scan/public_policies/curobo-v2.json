@@ -60,7 +60,7 @@
       "operational_credential": false,
       "public_provenance": {
         "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
-        "sha256": "ee9da03003f8983fb8c5e609792a443ffd3de1b68f49140b63e0e0d4b4a9745e"
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
       },
       "record_bytes": 2057632,
       "record_kind": "layer_regular_content",
@@ -82,7 +82,7 @@
       "operational_credential": false,
       "public_provenance": {
         "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
-        "sha256": "ee9da03003f8983fb8c5e609792a443ffd3de1b68f49140b63e0e0d4b4a9745e"
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
       },
       "record_bytes": 5136,
       "record_kind": "layer_regular_content",
@@ -104,7 +104,7 @@
       "operational_credential": false,
       "public_provenance": {
         "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
-        "sha256": "ee9da03003f8983fb8c5e609792a443ffd3de1b68f49140b63e0e0d4b4a9745e"
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
       },
       "record_bytes": 462360,
       "record_kind": "layer_regular_content",
@@ -126,7 +126,7 @@
       "operational_credential": false,
       "public_provenance": {
         "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
-        "sha256": "ee9da03003f8983fb8c5e609792a443ffd3de1b68f49140b63e0e0d4b4a9745e"
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
       },
       "record_bytes": 4391,
       "record_kind": "layer_regular_content",
@@ -148,7 +148,7 @@
       "operational_credential": false,
       "public_provenance": {
         "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
-        "sha256": "ee9da03003f8983fb8c5e609792a443ffd3de1b68f49140b63e0e0d4b4a9745e"
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
       },
       "record_bytes": 49,
       "record_kind": "logical_tar_path",
@@ -170,7 +170,7 @@
       "operational_credential": false,
       "public_provenance": {
         "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
-        "sha256": "ee9da03003f8983fb8c5e609792a443ffd3de1b68f49140b63e0e0d4b4a9745e"
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
       },
       "record_bytes": 45,
       "record_kind": "logical_tar_path",
@@ -247,7 +247,7 @@
       "operational_credential": false,
       "public_provenance": {
         "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
-        "sha256": "ee9da03003f8983fb8c5e609792a443ffd3de1b68f49140b63e0e0d4b4a9745e"
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
       },
       "record_bytes": 2416425,
       "record_kind": "layer_regular_content",
@@ -274,7 +274,7 @@
       "operational_credential": false,
       "public_provenance": {
         "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
-        "sha256": "ee9da03003f8983fb8c5e609792a443ffd3de1b68f49140b63e0e0d4b4a9745e"
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
       },
       "record_bytes": 54289,
       "record_kind": "layer_regular_content",
@@ -301,7 +301,7 @@
       "operational_credential": false,
       "public_provenance": {
         "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
-        "sha256": "ee9da03003f8983fb8c5e609792a443ffd3de1b68f49140b63e0e0d4b4a9745e"
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
       },
       "record_bytes": 109914,
       "record_kind": "layer_regular_content",
@@ -328,7 +328,7 @@
       "operational_credential": false,
       "public_provenance": {
         "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
-        "sha256": "ee9da03003f8983fb8c5e609792a443ffd3de1b68f49140b63e0e0d4b4a9745e"
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
       },
       "record_bytes": 110174,
       "record_kind": "layer_regular_content",
@@ -355,7 +355,7 @@
       "operational_credential": false,
       "public_provenance": {
         "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
-        "sha256": "ee9da03003f8983fb8c5e609792a443ffd3de1b68f49140b63e0e0d4b4a9745e"
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
       },
       "record_bytes": 147949,
       "record_kind": "layer_regular_content",
@@ -377,7 +377,7 @@
       "operational_credential": false,
       "public_provenance": {
         "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
-        "sha256": "ee9da03003f8983fb8c5e609792a443ffd3de1b68f49140b63e0e0d4b4a9745e"
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
       },
       "record_bytes": 32633,
       "record_kind": "layer_regular_content",
@@ -399,7 +399,7 @@
       "operational_credential": false,
       "public_provenance": {
         "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
-        "sha256": "ee9da03003f8983fb8c5e609792a443ffd3de1b68f49140b63e0e0d4b4a9745e"
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
       },
       "record_bytes": 5021,
       "record_kind": "layer_regular_content",
@@ -426,7 +426,7 @@
       "operational_credential": false,
       "public_provenance": {
         "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
-        "sha256": "ee9da03003f8983fb8c5e609792a443ffd3de1b68f49140b63e0e0d4b4a9745e"
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
       },
       "record_bytes": 14242,
       "record_kind": "layer_regular_content",
@@ -498,7 +498,7 @@
       "operational_credential": false,
       "public_provenance": {
         "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
-        "sha256": "ee9da03003f8983fb8c5e609792a443ffd3de1b68f49140b63e0e0d4b4a9745e"
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
       },
       "record_bytes": 77655,
       "record_kind": "layer_regular_content",
@@ -520,7 +520,7 @@
       "operational_credential": false,
       "public_provenance": {
         "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
-        "sha256": "ee9da03003f8983fb8c5e609792a443ffd3de1b68f49140b63e0e0d4b4a9745e"
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
       },
       "record_bytes": 6883,
       "record_kind": "layer_regular_content",
@@ -542,7 +542,7 @@
       "operational_credential": false,
       "public_provenance": {
         "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
-        "sha256": "ee9da03003f8983fb8c5e609792a443ffd3de1b68f49140b63e0e0d4b4a9745e"
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
       },
       "record_bytes": 57596,
       "record_kind": "layer_regular_content",
@@ -564,7 +564,7 @@
       "operational_credential": false,
       "public_provenance": {
         "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
-        "sha256": "ee9da03003f8983fb8c5e609792a443ffd3de1b68f49140b63e0e0d4b4a9745e"
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
       },
       "record_bytes": 22410,
       "record_kind": "layer_regular_content",
@@ -586,7 +586,7 @@
       "operational_credential": false,
       "public_provenance": {
         "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
-        "sha256": "ee9da03003f8983fb8c5e609792a443ffd3de1b68f49140b63e0e0d4b4a9745e"
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
       },
       "record_bytes": 49947,
       "record_kind": "layer_regular_content",
@@ -813,7 +813,7 @@
       "operational_credential": false,
       "public_provenance": {
         "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
-        "sha256": "ee9da03003f8983fb8c5e609792a443ffd3de1b68f49140b63e0e0d4b4a9745e"
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
       },
       "record_bytes": 29749,
       "record_kind": "layer_regular_content",
@@ -835,7 +835,7 @@
       "operational_credential": false,
       "public_provenance": {
         "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
-        "sha256": "ee9da03003f8983fb8c5e609792a443ffd3de1b68f49140b63e0e0d4b4a9745e"
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
       },
       "record_bytes": 69098,
       "record_kind": "layer_regular_content",
@@ -867,7 +867,7 @@
       "operational_credential": false,
       "public_provenance": {
         "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
-        "sha256": "ee9da03003f8983fb8c5e609792a443ffd3de1b68f49140b63e0e0d4b4a9745e"
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
       },
       "record_bytes": 233803,
       "record_kind": "layer_regular_content",
@@ -894,7 +894,7 @@
       "operational_credential": false,
       "public_provenance": {
         "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
-        "sha256": "ee9da03003f8983fb8c5e609792a443ffd3de1b68f49140b63e0e0d4b4a9745e"
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
       },
       "record_bytes": 2914,
       "record_kind": "layer_regular_content",
@@ -916,7 +916,7 @@
       "operational_credential": false,
       "public_provenance": {
         "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
-        "sha256": "ee9da03003f8983fb8c5e609792a443ffd3de1b68f49140b63e0e0d4b4a9745e"
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
       },
       "record_bytes": 8689,
       "record_kind": "layer_regular_content",
@@ -938,7 +938,7 @@
       "operational_credential": false,
       "public_provenance": {
         "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
-        "sha256": "ee9da03003f8983fb8c5e609792a443ffd3de1b68f49140b63e0e0d4b4a9745e"
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
       },
       "record_bytes": 6747,
       "record_kind": "layer_regular_content",
@@ -965,7 +965,7 @@
       "operational_credential": false,
       "public_provenance": {
         "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
-        "sha256": "ee9da03003f8983fb8c5e609792a443ffd3de1b68f49140b63e0e0d4b4a9745e"
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
       },
       "record_bytes": 32583,
       "record_kind": "layer_regular_content",
@@ -987,7 +987,7 @@
       "operational_credential": false,
       "public_provenance": {
         "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
-        "sha256": "ee9da03003f8983fb8c5e609792a443ffd3de1b68f49140b63e0e0d4b4a9745e"
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
       },
       "record_bytes": 120319200,
       "record_kind": "layer_regular_content",
@@ -1009,7 +1009,7 @@
       "operational_credential": false,
       "public_provenance": {
         "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
-        "sha256": "ee9da03003f8983fb8c5e609792a443ffd3de1b68f49140b63e0e0d4b4a9745e"
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
       },
       "record_bytes": 10347,
       "record_kind": "layer_regular_content",
@@ -1036,7 +1036,7 @@
       "operational_credential": false,
       "public_provenance": {
         "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
-        "sha256": "ee9da03003f8983fb8c5e609792a443ffd3de1b68f49140b63e0e0d4b4a9745e"
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
       },
       "record_bytes": 2675,
       "record_kind": "layer_regular_content",
@@ -1063,7 +1063,7 @@
       "operational_credential": false,
       "public_provenance": {
         "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
-        "sha256": "ee9da03003f8983fb8c5e609792a443ffd3de1b68f49140b63e0e0d4b4a9745e"
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
       },
       "record_bytes": 4405,
       "record_kind": "layer_regular_content",
@@ -1090,7 +1090,7 @@
       "operational_credential": false,
       "public_provenance": {
         "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
-        "sha256": "ee9da03003f8983fb8c5e609792a443ffd3de1b68f49140b63e0e0d4b4a9745e"
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
       },
       "record_bytes": 4434,
       "record_kind": "layer_regular_content",
@@ -1137,7 +1137,7 @@
       "operational_credential": false,
       "public_provenance": {
         "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
-        "sha256": "ee9da03003f8983fb8c5e609792a443ffd3de1b68f49140b63e0e0d4b4a9745e"
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
       },
       "record_bytes": 119035,
       "record_kind": "layer_regular_content",
@@ -1159,7 +1159,7 @@
       "operational_credential": false,
       "public_provenance": {
         "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
-        "sha256": "ee9da03003f8983fb8c5e609792a443ffd3de1b68f49140b63e0e0d4b4a9745e"
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
       },
       "record_bytes": 137006536,
       "record_kind": "layer_regular_content",
@@ -1186,7 +1186,7 @@
       "operational_credential": false,
       "public_provenance": {
         "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
-        "sha256": "ee9da03003f8983fb8c5e609792a443ffd3de1b68f49140b63e0e0d4b4a9745e"
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
       },
       "record_bytes": 156214040,
       "record_kind": "layer_regular_content",
@@ -1208,7 +1208,7 @@
       "operational_credential": false,
       "public_provenance": {
         "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
-        "sha256": "ee9da03003f8983fb8c5e609792a443ffd3de1b68f49140b63e0e0d4b4a9745e"
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
       },
       "record_bytes": 4037,
       "record_kind": "layer_regular_content",
@@ -1230,7 +1230,7 @@
       "operational_credential": false,
       "public_provenance": {
         "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
-        "sha256": "ee9da03003f8983fb8c5e609792a443ffd3de1b68f49140b63e0e0d4b4a9745e"
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
       },
       "record_bytes": 4802,
       "record_kind": "layer_regular_content",
@@ -1262,7 +1262,7 @@
       "operational_credential": false,
       "public_provenance": {
         "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
-        "sha256": "ee9da03003f8983fb8c5e609792a443ffd3de1b68f49140b63e0e0d4b4a9745e"
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
       },
       "record_bytes": 22144,
       "record_kind": "layer_regular_content",
@@ -1294,7 +1294,7 @@
       "operational_credential": false,
       "public_provenance": {
         "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
-        "sha256": "ee9da03003f8983fb8c5e609792a443ffd3de1b68f49140b63e0e0d4b4a9745e"
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
       },
       "record_bytes": 21355,
       "record_kind": "layer_regular_content",
@@ -1316,7 +1316,7 @@
       "operational_credential": false,
       "public_provenance": {
         "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
-        "sha256": "ee9da03003f8983fb8c5e609792a443ffd3de1b68f49140b63e0e0d4b4a9745e"
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
       },
       "record_bytes": 473168,
       "record_kind": "layer_regular_content",
@@ -1338,7 +1338,7 @@
       "operational_credential": false,
       "public_provenance": {
         "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
-        "sha256": "ee9da03003f8983fb8c5e609792a443ffd3de1b68f49140b63e0e0d4b4a9745e"
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
       },
       "record_bytes": 136016,
       "record_kind": "layer_regular_content",
@@ -1360,7 +1360,7 @@
       "operational_credential": false,
       "public_provenance": {
         "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
-        "sha256": "ee9da03003f8983fb8c5e609792a443ffd3de1b68f49140b63e0e0d4b4a9745e"
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
       },
       "record_bytes": 8688,
       "record_kind": "layer_regular_content",
@@ -1387,7 +1387,7 @@
       "operational_credential": false,
       "public_provenance": {
         "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
-        "sha256": "ee9da03003f8983fb8c5e609792a443ffd3de1b68f49140b63e0e0d4b4a9745e"
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
       },
       "record_bytes": 279426,
       "record_kind": "layer_regular_content",
@@ -1414,7 +1414,7 @@
       "operational_credential": false,
       "public_provenance": {
         "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
-        "sha256": "ee9da03003f8983fb8c5e609792a443ffd3de1b68f49140b63e0e0d4b4a9745e"
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
       },
       "record_bytes": 37403,
       "record_kind": "layer_regular_content",
@@ -1436,7 +1436,7 @@
       "operational_credential": false,
       "public_provenance": {
         "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
-        "sha256": "ee9da03003f8983fb8c5e609792a443ffd3de1b68f49140b63e0e0d4b4a9745e"
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
       },
       "record_bytes": 3401,
       "record_kind": "layer_regular_content",
@@ -1458,7 +1458,7 @@
       "operational_credential": false,
       "public_provenance": {
         "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
-        "sha256": "ee9da03003f8983fb8c5e609792a443ffd3de1b68f49140b63e0e0d4b4a9745e"
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
       },
       "record_bytes": 18921,
       "record_kind": "layer_regular_content",
@@ -1480,7 +1480,7 @@
       "operational_credential": false,
       "public_provenance": {
         "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
-        "sha256": "ee9da03003f8983fb8c5e609792a443ffd3de1b68f49140b63e0e0d4b4a9745e"
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
       },
       "record_bytes": 4178,
       "record_kind": "layer_regular_content",
@@ -1542,7 +1542,7 @@
       "operational_credential": false,
       "public_provenance": {
         "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
-        "sha256": "ee9da03003f8983fb8c5e609792a443ffd3de1b68f49140b63e0e0d4b4a9745e"
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
       },
       "record_bytes": 19971,
       "record_kind": "layer_regular_content",
@@ -1604,7 +1604,7 @@
       "operational_credential": false,
       "public_provenance": {
         "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
-        "sha256": "ee9da03003f8983fb8c5e609792a443ffd3de1b68f49140b63e0e0d4b4a9745e"
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
       },
       "record_bytes": 16942,
       "record_kind": "layer_regular_content",
@@ -1836,7 +1836,7 @@
       "operational_credential": false,
       "public_provenance": {
         "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
-        "sha256": "ee9da03003f8983fb8c5e609792a443ffd3de1b68f49140b63e0e0d4b4a9745e"
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
       },
       "record_bytes": 6755920,
       "record_kind": "layer_regular_content",
@@ -1858,7 +1858,7 @@
       "operational_credential": false,
       "public_provenance": {
         "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
-        "sha256": "ee9da03003f8983fb8c5e609792a443ffd3de1b68f49140b63e0e0d4b4a9745e"
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
       },
       "record_bytes": 71701,
       "record_kind": "layer_regular_content",
@@ -1880,7 +1880,7 @@
       "operational_credential": false,
       "public_provenance": {
         "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
-        "sha256": "ee9da03003f8983fb8c5e609792a443ffd3de1b68f49140b63e0e0d4b4a9745e"
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
       },
       "record_bytes": 70075,
       "record_kind": "layer_regular_content",
@@ -1907,7 +1907,7 @@
       "operational_credential": false,
       "public_provenance": {
         "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
-        "sha256": "ee9da03003f8983fb8c5e609792a443ffd3de1b68f49140b63e0e0d4b4a9745e"
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
       },
       "record_bytes": 215854,
       "record_kind": "layer_regular_content",
@@ -1929,7 +1929,7 @@
       "operational_credential": false,
       "public_provenance": {
         "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
-        "sha256": "ee9da03003f8983fb8c5e609792a443ffd3de1b68f49140b63e0e0d4b4a9745e"
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
       },
       "record_bytes": 15995,
       "record_kind": "layer_regular_content",
@@ -1956,7 +1956,7 @@
       "operational_credential": false,
       "public_provenance": {
         "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
-        "sha256": "ee9da03003f8983fb8c5e609792a443ffd3de1b68f49140b63e0e0d4b4a9745e"
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
       },
       "record_bytes": 32042,
       "record_kind": "layer_regular_content",
@@ -1978,7 +1978,7 @@
       "operational_credential": false,
       "public_provenance": {
         "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
-        "sha256": "ee9da03003f8983fb8c5e609792a443ffd3de1b68f49140b63e0e0d4b4a9745e"
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
       },
       "record_bytes": 61528,
       "record_kind": "layer_regular_content",
@@ -2000,7 +2000,7 @@
       "operational_credential": false,
       "public_provenance": {
         "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
-        "sha256": "ee9da03003f8983fb8c5e609792a443ffd3de1b68f49140b63e0e0d4b4a9745e"
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
       },
       "record_bytes": 164204,
       "record_kind": "layer_regular_content",
@@ -2022,7 +2022,7 @@
       "operational_credential": false,
       "public_provenance": {
         "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
-        "sha256": "ee9da03003f8983fb8c5e609792a443ffd3de1b68f49140b63e0e0d4b4a9745e"
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
       },
       "record_bytes": 162773,
       "record_kind": "layer_regular_content",
