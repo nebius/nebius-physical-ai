@@ -189,6 +189,6 @@ environment origin.
 ## Related docs
 
 - [hackathon-cosmos3-reasoner.md](hackathon-cosmos3-reasoner.md) — Token Factory only (no sim)
-- [composing-cloud-and-token-factory.md](../workbench/composing-cloud-and-token-factory.md) — general compute + TF composition
-- [tokenfactory-compute-combos.md](../workbench/cookbooks/tokenfactory-compute-combos.md) — LeRobot combo workflows
+- [Compose cloud and Token Factory workloads](workbench/composing-cloud-and-token-factory.md).
+- [Combine LeRobot and Token Factory](workbench/cookbooks/tokenfactory-compute-combos.md).
 - Isaac Lab tool skill: `skills/tools/isaac-lab/SKILL.md`

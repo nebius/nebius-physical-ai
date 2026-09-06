@@ -8,15 +8,19 @@ If you just want to launch something, start with
 [Physical AI Data Factory runbook](workbench/guides/physical-ai-data-factory-deploy.md).
 This page is the reference for what those paths are doing underneath.
 
-## Everything is verified before the run starts
+<a id="everything-is-verified-before-the-run-starts"></a>
 
-`submit` repeats its deterministic checks **before** input or source staging, so
-a missing image or an identity mismatch is caught locally rather than after the
-~1,225-file source tree has been uploaded and a cluster is waiting. It prints
-**everything** still missing in one list, each with the command that fixes it, so
-you are not discovering prerequisites one failed run at a time.
+## Checks before submission
 
-The read-only gates are meant to be run in this order:
+`submit` repeats prerequisite checks **before** input or source staging, so
+detected image and identity problems can be resolved before uploading the run's
+inputs and source. It reports
+detected prerequisites together with remediation commands. These checks do not
+prove that the workload will complete or produce usable artifacts.
+
+Run specification validation, planning, and image checks in this order.
+Validation and planning do not launch a workload. Image checks can create and
+delete a temporary Kubernetes probe pod when bootstrap evidence is absent:
 
 ```bash
 npa workbench workflow validate-spec    <spec.yaml>

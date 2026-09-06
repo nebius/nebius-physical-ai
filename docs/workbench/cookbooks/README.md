@@ -16,9 +16,9 @@ workflows with Nebius Physical AI Workbench.
   Kubernetes cluster, GPU node groups, and in-cluster LanceDB/detection-training
   services, then run the BDD100K ingest, UDF backfill, CLIP embedding,
   materialized-view, training, and evaluation pipeline.
-- [Sim-To-Real Pipeline](sim-to-real-pipeline.md): CLI, SDK, raw SkyPilot, BYO
-  policy image, BYO S3 endpoint, eval, feedback, artifact, and teardown details
-  behind the one-command H100 quickstart.
+- [PushT sim-to-real guide](../guides/pusht-sim-to-real.md): train and evaluate
+  a policy for the PushT task. For the canonical 14-stage workflow, see the
+  [Sim2Real guide](../guides/sim2real-workflow.md).
 - [VLM-Eval Loop Runbook](vlm-eval-loop-runbook.md): serve a VLM with vLLM,
   score rollout directories with `vlm-eval`, and write a task-success report.
 - [Token Factory + Nebius compute combos](tokenfactory-compute-combos.md): two

@@ -7,11 +7,10 @@ exact FiftyOne (Voxel51) UI steps and commands for technical viewers.
 - **Companion writeup (the full story):** [bdd100k-lancedb-demo.md](bdd100k-lancedb-demo.md)
 - **Pipeline + how to run/reproduce:** [../workbench/cookbooks/bdd100k-pipeline.md](../workbench/cookbooks/bdd100k-pipeline.md)
 - **Narrated slideshow video (built from live captures):** [assets/bdd100k/bdd100k-demo.mp4](assets/bdd100k/bdd100k-demo.mp4)
-- **Unedited live session recording (real FiftyOne UI):** [assets/bdd100k/bdd100k-live-session.mp4](assets/bdd100k/bdd100k-live-session.mp4)
 - **Architecture diagram:** [assets/bdd100k/architecture.png](assets/bdd100k/architecture.png)
 - **Reproduced from (LanceDB):** [Unifying the AV ML Stack blog](https://www.lancedb.com/blog/unifying-the-av-ml-stack-lancedb) · [lancedb/training object-detection](https://github.com/lancedb/training/tree/main/object-detection)
 
-> The `live-*.png` screenshots and `bdd100k-live-session.mp4` were captured from
+> The `live-*.png` screenshots were captured from
 > the deployed FiftyOne app (`bdd100k-real-data-demo`) running on the
 > `npa-workbench-eu-north1` cluster.
 
@@ -129,10 +128,9 @@ There are three options, in increasing order of "live":
    npa/.venv/bin/python docs/demos/build_bdd100k_demo_video.py
    ```
 
-2. **Unedited live session (committed):**
-   [assets/bdd100k/bdd100k-live-session.mp4](assets/bdd100k/bdd100k-live-session.mp4)
-   — a headless-browser recording of the real FiftyOne app cycling the three
-   saved views. Reproduce against a reachable FiftyOne endpoint with Playwright:
+2. **Record a live session:** no unedited session video is included in this
+   repository. To capture the three saved views, use Playwright against a
+   reachable FiftyOne endpoint you operate:
 
    ```bash
    npa/.venv/bin/pip install playwright

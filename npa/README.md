@@ -8,7 +8,7 @@ executed through SkyPilot.
 
 Start with the [Workbench guide](../docs/workbench/README.md), choose a workload,
 and follow [installation](../docs/install.md) and
-[project setup](../docs/quickstart.md) before provisioning its GPU resources.
+[project setup](../docs/configuration.md) before provisioning its GPU resources.
 The [command reference](../docs/cli/workbench.md) lists the installed tools;
 `npa workbench <tool> --help` exposes each tool's actual commands.
 
@@ -177,58 +177,13 @@ export NPA_TEST_BYOVM_S3_PREFIX=s3://my-bucket/test-artifacts/
 pytest tests/test_multi_gpu -m multi_gpu
 ```
 
-## Config
+<a id="config"></a>
 
-Remote workbench commands resolve config from:
+## Configuration
 
-1. CLI flags
-2. Environment variables
-3. `~/.npa/credentials.yaml` for user-level secrets
-4. `~/.npa/config.yaml` for projects and workbenches
-
-See [`src/npa/config/sample_config.yaml`](src/npa/config/sample_config.yaml) for the expected layout.
-
-`~/.npa/config.yaml` is machine-managed by deploy commands. Keep user tokens
-out of it and store those credentials in `~/.npa/credentials.yaml`:
-
-```yaml
-tokens:
-  HF_TOKEN: hf_REPLACE_ME
-ngc:
-  api_key: nvapi_REPLACE_ME
-  # org: optional-ngc-org
-  # team: optional-ngc-team
-```
-
-Standard environment variables override values in `credentials.yaml`, so this
-also works for one-off runs:
-
-```bash
-export HF_TOKEN=hf_REPLACE_ME
-export NGC_API_KEY=nvapi_REPLACE_ME
-npa workbench cosmos deploy ...
-```
-
-For compatibility, `NGC_API_KEY`, `NGC_ORG`, and `NGC_TEAM` are also accepted
-inside the legacy `tokens:` map.
-
-Recommended permissions:
-
-```bash
-chmod 600 ~/.npa/credentials.yaml
-```
-
-If the file is readable by other users, `npa workbench ...` prints a warning.
-Loaded tokens are forwarded to remote workbench SSH commands as environment
-variables.
-
-Token requirements by workbench:
-
-- Cosmos: requires `HF_TOKEN` during deploy to download gated Hugging Face Cosmos models.
-- GR00T: requires `HF_TOKEN` for gated Hugging Face GR00T models; optional `ngc.api_key` or `NGC_API_KEY` is written to the server env for NGC-backed model paths and readiness displays.
-- LeRobot: may need `HF_TOKEN` for gated Hugging Face datasets or models.
-- FiftyOne: may need `HF_TOKEN` for gated Hugging Face datasets.
-- Isaac Lab and Genesis: no token is required by default.
+See [configuration](../docs/configuration.md) for project setup, credential
+precedence, the credential-file layout, token access, and cross-project storage.
+Use the [first-run prompts](../docs/workbench/agent-first-run.md) with a coding agent.
 
 Terraform remote state for managed workbenches is stored in the Nebius S3
 bucket under:
@@ -311,3 +266,24 @@ from npa.clients.http import HTTPClient
 - `npa.orchestration.npa_workflow`: specification loading, planning, execution,
   durable state, and recovery
 - `npa.workflows`: workflow implementations and artifact discovery
+
+## Developing and testing npa
+
+To work on `npa` itself, install the dev extra into your activated venv and use
+the `make` targets from the repo root:
+
+```bash
+pip install -e "npa[dev]"   # pytest, pytest-mock, pytest-cov, pytest-timeout, ruff
+
+make test PYTHON="$(pwd)/.venv/bin/python"        # unit suite
+make test-smoke PYTHON="$(pwd)/.venv/bin/python"  # onboarding CLI checks
+make lint PYTHON="$(pwd)/.venv/bin/python"        # ruff
+```
+
+Use an **absolute** interpreter path: the recipes change into `npa/` before
+running. Without an override, Make prefers the contributor environment
+`npa/.venv/bin/python`, then `python3` on `PATH`. Live and GPU tests are
+deselected from `make test`; `make test-e2e` is the explicit live-infrastructure
+target and needs the relevant credentials and resources.
+See [CONTRIBUTING.md](../CONTRIBUTING.md) for the full test layout and PR
+conventions (branch → PR → squash, one approval, never self-approve).

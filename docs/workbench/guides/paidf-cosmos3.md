@@ -85,15 +85,20 @@ supported.
 
 ## Validate, plan, and render
 
+From the repository root, activate the virtual environment created during
+[installation](../../install.md). These examples check the spec and render plans
+with placeholder inputs; they do not launch the workflow. For execution, use the
+[coding-agent workflow prompt](../agent-first-run.md#run-paidf-with-cosmos-3),
+which covers real inputs, resource planning, image checks, submission, and output
+inspection.
+
 ```bash
 SPEC=npa/workflows/workbench/npa-workflows/paidf-cosmos3.yaml
-npa/.venv/bin/npa workbench workflow validate-spec "$SPEC" --json
-npa/.venv/bin/npa workbench workflow plan-spec "$SPEC" --run-id demo \
+npa workbench workflow validate-spec "$SPEC" --json
+npa workbench workflow plan-spec "$SPEC" --run-id demo \
   --assume-decision promote_checkpoint --var bucket=example-bucket --json
-npa/.venv/bin/npa workbench workflow plan-spec "$SPEC" --run-id demo \
+npa workbench workflow plan-spec "$SPEC" --run-id demo \
   --assume-decision loop_back --var bucket=example-bucket --json
-npa/.venv/bin/npa workbench workflow submit "$SPEC" --run-id demo --runtime \
-  --assume-decision promote_checkpoint --var bucket=example-bucket --plan-only
 ```
 
 For execution, pass only secret names to the generic workflow submit surface:
