@@ -115,6 +115,12 @@ def test_authorization_schema_failure_is_exercised_after_valid_outer_pins(
         "encoded-archive-member-payload",
         "encoded-bzip2-payload",
         "encoded-video-payload",
+        "public-service-endpoint-reference",
+        "public-provider-hardware-reference",
+        "public-provider-location-reference",
+        "product-installation-path",
+        "public-application-protocol-reference",
+        "bytecode-instruction-bytes",
     ],
 )
 @pytest.mark.parametrize(

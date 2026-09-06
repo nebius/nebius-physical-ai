@@ -33,6 +33,14 @@ PROOF_SCHEMA = "npa.image-byte-occurrence-provenance.v1"
 # Roles describe independently reviewed bytes; labels alone never prove safety.
 # Static prose excludes runtime values. Protocol identifiers require declared or
 # consumed fields. Debug/unwind numbers and instructions require typed decoding.
+# Public service, hardware and location references require exact authoritative
+# definitions and their actual categorical/API consumers. Installation paths
+# require concrete product producers/consumers; adjacent contents, credentials
+# and operator resource identities remain excluded from these local roles.
+# Application protocol identifiers require exact declarations plus wire/CLI
+# producers or consumers; this role does not cover operator resource names.
+# Bytecode instructions require exact VM opcode/operand decoding plus compiler
+# and source provenance; framing and literal constant values are excluded.
 # Archive members require decoded ZIP compressed bodies; bzip2 requires complete
 # consumption; video requires validated compressed packets. Metadata is excluded.
 ROLES = frozenset({"cryptographic-self-test", "parser-format-delimiter",
@@ -46,7 +54,13 @@ ROLES = frozenset({"cryptographic-self-test", "parser-format-delimiter",
                    "public-protocol-field", "numeric-debug-metadata",
                    "numeric-unwind-metadata", "machine-instruction-bytes",
                    "encoded-archive-member-payload", "encoded-bzip2-payload",
-                   "encoded-video-payload"})
+                   "encoded-video-payload",
+                   "public-service-endpoint-reference",
+                   "public-provider-hardware-reference",
+                   "public-provider-location-reference",
+                   "product-installation-path",
+                   "public-application-protocol-reference",
+                   "bytecode-instruction-bytes"})
 HEX = re.compile(r"[0-9a-f]{64}")
 
 

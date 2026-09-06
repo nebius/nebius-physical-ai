@@ -228,6 +228,12 @@ def test_metadata_requires_its_exact_review_role():
         "encoded-archive-member-payload",
         "encoded-bzip2-payload",
         "encoded-video-payload",
+        "public-service-endpoint-reference",
+        "public-provider-hardware-reference",
+        "public-provider-location-reference",
+        "product-installation-path",
+        "public-application-protocol-reference",
+        "bytecode-instruction-bytes",
     ],
 )
 def test_local_adjudication_roles_do_not_extend_hosted_policy(role):
