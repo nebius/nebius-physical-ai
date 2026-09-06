@@ -202,8 +202,9 @@ release membership.
 ## Intentionally not published as separate images
 
 - **`npa-cosmos3-nano-video`** extends the digest-pinned upstream
-  `vllm/vllm-omni:cosmos3` image with Ray Serve and a measured chunked video
-  rollout. Its inherited runtime is restricted to operator-private builds;
+  `vllm/vllm-omni:cosmos3` image with Ray Serve, measured chunked video rollouts,
+  and source-aligned edge-transfer augmentation with verified S3 recovery.
+  Its inherited runtime is restricted to operator-private builds;
   it is excluded from the public release plan. See the
   [deployment recipe](../../npa/deploy/cosmos3-nano-video/README.md).
 - **`npa-cosmos3-super-benchmark`** is a restricted, operator-private wrapper

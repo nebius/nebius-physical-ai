@@ -60,6 +60,7 @@ dependencies = [
     "rerun-sdk==0.31.4",
     # Formerly the `server` extra: FastAPI policy/eval + agent backend server.
     "fastapi~=0.136.1",
+    "python-multipart>=0.0.20",
 ]
 
 [project.optional-dependencies]

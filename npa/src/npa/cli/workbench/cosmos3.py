@@ -45,6 +45,74 @@ app = typer.Typer(
 )
 
 
+@app.command("nano-video-augment")
+@json_stdout_contract
+def nano_video_augment_cmd(
+    input_path: str = typer.Option(..., "--input-path", help="Exact S3 source MP4; 832x480 at 24fps."),
+    output_path: str = typer.Option(..., "--output-path", help="Immutable S3 prefix for source, augmentation and comparison."),
+    prompt: str = typer.Option(..., "--prompt", help="Detailed target appearance while preserving source motion."),
+    seed: int = typer.Option(0, "--seed"),
+    negative_prompt: str = typer.Option("", "--negative-prompt"),
+    system_prompt: str = typer.Option("", "--system-prompt", help="Empty uses the explicit structural-transfer default."),
+    num_inference_steps: int = typer.Option(35, "--num-inference-steps"),
+    guidance_scale: float = typer.Option(3.0, "--guidance-scale"),
+    flow_shift: float = typer.Option(10.0, "--flow-shift"),
+    control_guidance: float = typer.Option(1.5, "--control-guidance"),
+    edge_threshold: str = typer.Option("medium", "--edge-threshold"),
+    chunk_frames: int = typer.Option(121, "--chunk-frames"),
+    max_sequence_length: int = typer.Option(4096, "--max-sequence-length"),
+    endpoint: str = typer.Option("", "--endpoint", help="Defaults to NPA_COSMOS3_VIDEO_ENDPOINT."),
+    token_env: str = typer.Option("NPA_COSMOS3_VIDEO_TOKEN", "--token-env"),
+    output_format: str = typer.Option("json", "--output-format"),
+) -> None:
+    """Augment every source interval with Cosmos3-Nano structural edge control."""
+    from npa.workbench.cosmos.nano_video_augment_client import submit_augmentation
+
+    try:
+        if output_format != "json":
+            raise ValueError("output-format must be json")
+        validate_read_path(input_path, tool="cosmos3 nano-video-augment", allow_hf=False)
+        validate_write_path(output_path, tool="cosmos3 nano-video-augment", required=True)
+        result = submit_augmentation(
+            input_path=input_path, output_path=output_path, prompt=prompt, seed=seed,
+            negative_prompt=negative_prompt, system_prompt=system_prompt,
+            num_inference_steps=num_inference_steps, guidance_scale=guidance_scale,
+            flow_shift=flow_shift, control_guidance=control_guidance,
+            edge_threshold=edge_threshold, chunk_frames=chunk_frames,
+            max_sequence_length=max_sequence_length, endpoint=endpoint, token_env=token_env,
+        )
+    except Exception as exc:
+        typer.echo(json.dumps({"status": "failed", "error_type": type(exc).__name__}))
+        raise typer.Exit(1) from exc
+    typer.echo(json.dumps(result))
+    if result["status"] != "succeeded":
+        raise typer.Exit(1)
+
+
+@app.command("nano-video-augment-recover")
+@json_stdout_contract
+def nano_video_augment_recover_cmd(
+    output_path: str = typer.Option(..., "--output-path", help="Original augmentation S3 prefix."),
+    endpoint: str = typer.Option("", "--endpoint"),
+    token_env: str = typer.Option("NPA_COSMOS3_VIDEO_TOKEN", "--token-env"),
+    output_format: str = typer.Option("json", "--output-format"),
+) -> None:
+    """Recover existing generation or retry publication without generating again."""
+    from npa.workbench.cosmos.nano_video_augment_client import recover_augmentation
+
+    try:
+        if output_format != "json":
+            raise ValueError("output-format must be json")
+        validate_write_path(output_path, tool="cosmos3 nano-video-augment-recover", required=True)
+        result = recover_augmentation(output_path=output_path, endpoint=endpoint, token_env=token_env)
+    except Exception as exc:
+        typer.echo(json.dumps({"status": "failed", "error_type": type(exc).__name__}))
+        raise typer.Exit(1) from exc
+    typer.echo(json.dumps(result))
+    if result["status"] != "succeeded":
+        raise typer.Exit(1)
+
+
 @app.command("nano-video-batch")
 @json_stdout_contract
 def nano_video_batch_cmd(

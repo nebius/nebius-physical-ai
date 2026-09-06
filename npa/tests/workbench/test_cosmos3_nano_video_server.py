@@ -3,19 +3,23 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import importlib.util
 import json
 import struct
 import sys
+import threading
 from pathlib import Path
 from types import ModuleType
 
+import httpx
 import pytest
 from fastapi import HTTPException
 from starlette.requests import Request
 
 from npa.workbench.cosmos import (
     nano_video,
+    nano_video_augment as augment,
     nano_video_server as server,
     nano_video_stage as stage,
 )
@@ -247,3 +251,121 @@ def test_router_considers_every_replica_in_one_rank(monkeypatch):
     chosen = asyncio.run(module.LeastOutstandingRouter().choose_replicas(candidates))
     assert chosen == [candidates]
     assert candidates == list(range(16))
+
+
+def augmentation_payload(request_id="augment-1", **changes):
+    return {"mode": "augmentation", "request_id": request_id, "prompt": "Dim warehouse", "seed": 1,
+        "source_sha256": hashlib.sha256(b"synthetic source").hexdigest(), "source_bytes": 16, **changes}
+
+
+def multipart_request(body, data=b"synthetic source", token="test-only-token"):
+    outgoing = httpx.Request("POST", "http://test.invalid/run", headers={"Authorization": f"Bearer {token}"},
+        files={"request": (None, json.dumps(body)), "input_reference": ("ignored-name.mp4", data, "video/mp4")})
+    content = outgoing.read()
+
+    async def receive():
+        return {"type": "http.request", "body": content, "more_body": False}
+
+    return Request({"type": "http", "method": "POST", "path": "/run",
+        "headers": [(key.lower(), value) for key, value in outgoing.headers.raw]}, receive=receive)
+
+
+def test_multipart_forwards_complete_source_and_only_validated_parameters(runtime, monkeypatch):
+    calls = []
+
+    def generate(**kwargs):
+        assert kwargs["input_video"].read_bytes() == b"synthetic source"
+        assert kwargs["request"] == augment.validate_request(augmentation_payload())
+        kwargs["output_dir"].mkdir(exist_ok=False)
+        calls.append(kwargs)
+        return {"status": "succeeded", "request_id": kwargs["request"]["request_id"]}
+
+    monkeypatch.setattr(augment, "run_augmentation", generate)
+    response = asyncio.run(runtime.run(multipart_request(augmentation_payload())))
+    assert response["status"] == "succeeded" and len(calls) == 1
+    assert not calls[0]["input_video"].exists()
+    with pytest.raises(HTTPException) as caught:
+        asyncio.run(runtime.run(multipart_request(augmentation_payload())))
+    assert caught.value.status_code == 409 and len(calls) == 1
+
+
+@pytest.mark.parametrize("change,token,code", [({"strength": 0.3}, "test-only-token", 400),
+    ({"control_weight": 2}, "test-only-token", 400), ({}, "wrong", 401),
+    ({"source_bytes": 10}, "test-only-token", 422)])
+def test_multipart_invalid_auth_controls_or_bytes_never_reach_generation(runtime, monkeypatch, change, token, code):
+    monkeypatch.setattr(augment, "run_augmentation", lambda **kwargs: pytest.fail("Invalid source admitted"))
+    with pytest.raises(HTTPException) as caught:
+        asyncio.run(runtime.run(multipart_request(augmentation_payload(**change), token=token)))
+    assert caught.value.status_code == code
+    assert not (runtime.output_root / "augment-1").exists()
+
+
+@pytest.mark.parametrize("augmentation", [False, True])
+def test_repeated_cancellation_keeps_gpu_lock_and_source_until_accepted_work_finishes(runtime, monkeypatch, augmentation):
+    entered, release, second_entered = threading.Event(), threading.Event(), threading.Event()
+    inputs = []
+
+    def generate(**kwargs):
+        kwargs["output_dir"].mkdir(exist_ok=False)
+        if kwargs["output_dir"].name == "first":
+            if augmentation:
+                inputs.append(kwargs["input_video"])
+            entered.set()
+            assert release.wait(5), "Test failed to release mock generation"
+            if augmentation:
+                assert kwargs["input_video"].read_bytes() == b"synthetic source"
+        else:
+            second_entered.set()
+        return {"status": "succeeded"}
+
+    monkeypatch.setattr(augment if augmentation else nano_video, "run_augmentation" if augmentation else "run_rollout", generate)
+
+    def incoming(name):
+        return multipart_request(augmentation_payload(name)) if augmentation else request({"request_id": name, "prompt": "scene", "seed": 1})
+
+    async def exercise():
+        first = asyncio.create_task(runtime.run(incoming("first")))
+        assert await asyncio.to_thread(entered.wait, 5)
+        try:
+            first.cancel()
+            await asyncio.sleep(0)
+            first.cancel()
+            await asyncio.sleep(0)
+            assert runtime._generation_lock.locked()
+            assert all(path.exists() for path in inputs)
+            second = asyncio.create_task(runtime.run(incoming("second")))
+            await asyncio.sleep(0.02)
+            assert not second_entered.is_set()
+        finally:
+            release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await first
+        await second
+        assert second_entered.is_set()
+        assert not runtime._generation_lock.locked()
+        assert all(not path.exists() for path in inputs)
+
+    asyncio.run(exercise())
+
+
+def test_result_recovers_terminal_state_on_any_replica_without_generation(runtime, monkeypatch):
+    monkeypatch.setattr(augment, "run_augmentation", lambda **kwargs: pytest.fail("GET admitted generation"))
+    directory = runtime.output_root / "augment-1"
+    directory.mkdir()
+    assert runtime.result(request(), "augment-1").status_code == 202
+    payload = augment.validate_request(augmentation_payload())
+    report = {"schema_version": augment.SCHEMA, "request_id": "augment-1", "request": payload,
+        "request_sha256": augment.request_sha256(payload), "status": "failed", "error_type": "SyntheticFailure"}
+    (directory / "report.json").write_text(json.dumps(report))
+    result = runtime.result(request(), "augment-1")
+    assert result.status_code == 200 and json.loads(result.body)["status"] == "failed"
+    with pytest.raises(HTTPException) as caught:
+        runtime.result(request(token="wrong"), "augment-1")
+    assert caught.value.status_code == 401
+    (directory / "report.json").write_text('{"status":"succeeded"')
+    with pytest.raises(HTTPException) as caught:
+        runtime.result(request(), "augment-1")
+    assert caught.value.status_code == 503
+    with pytest.raises(HTTPException) as caught:
+        runtime.result(request(), "missing")
+    assert caught.value.status_code == 404

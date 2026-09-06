@@ -1,8 +1,9 @@
 # Cosmos3-Nano: 30-second diffusion video on NPA mk8s
 
 This deployment runs 16 Ray Serve replicas on 16 B200 GPUs, with one GPU and
-tensor parallelism 1 per replica. Each complete request generates a 30-second
-480p video through `vllm serve --omni` and `Cosmos3OmniDiffusersPipeline`.
+tensor parallelism 1 per replica. It supports 30-second text-to-video
+continuation and source-conditioned visual augmentation through `vllm serve
+--omni` and `Cosmos3OmniDiffusersPipeline`.
 Guardrails are **off**, explicitly selected with `--no-guardrails`. Audio is
 disabled. This is the diffusion generation route.
 
@@ -16,7 +17,7 @@ officially tested. This recipe deliberately retains a stricter **300-frame
 per-request ceiling**.
 
 The [baked diffusion pipeline](https://github.com/vllm-project/vllm-omni/blob/9c1b7504b178afcf541867c1a2d30db48c69cda8/vllm_omni/diffusion/models/cosmos3/pipeline_cosmos3.py)
-rounds requested frame counts upward to `4k+1`; 300 would become 301. At 24 fps
+rounds non-transfer frame counts upward to `4k+1`; 300 would become 301. At 24 fps
 and 832×480, the rollout requests **297, 297, and 137 frames**. The first request
 is text-to-video. Subsequent requests upload the previous segment as MP4 and
 set `condition_frame_indexes_vision: [0, 1]` and `condition_video_keep: last` in
@@ -30,6 +31,91 @@ retains the chunks and eight-frame contact sheets around joins at 12.375 and
 24.5417 seconds. Generation uses 35 steps, guidance 6, flow shift 10, and a
 4096-token sequence setting inside `extra_params` (the image's HTTP handler
 does not parse a top-level `max_sequence_length` form field).
+
+## Source-conditioned visual augmentation
+
+Continuation preserves a generated tail and extends time. Visual augmentation
+instead transforms an existing video's appearance while conditioning every
+output interval on the corresponding original frames. The earlier continuation
+benchmark is evidence for continuation and concurrency, not augmentation quality.
+
+`nano-video-augment` accepts a real S3 source MP4 at **832×480, 24 fps**, with at
+least six frames. It rejects invalid hashes, incomplete decoding, changing
+dimensions, incorrect timestamps and unsupported controls before GPU work. Output
+duration matches the complete source; no silent resampling or truncation occurs.
+The CLI and SDK share one client and the server's request/report contract.
+
+The installed upstream `make_edge_control` computes Canny edges from each
+original source interval. Controls are stored as lossless FFV1 videos and must
+round-trip pixel-exactly through the actual transfer loader. No extra learned
+preprocessor checkpoint is needed. The first interval uses zero RGB conditioning
+frames. Later intervals upload the preceding **augmented five-frame tail** for
+continuity while using edges from the matching **original** interval for motion.
+This is the image's structural transfer path, not continuation prefix conditioning.
+
+With the default 121-frame windows, a 720-frame source uses intervals starting
+at frames **0, 116, 232, 348, 464, 580 and 696**. Their lengths are six windows
+of 121 frames and one of 24. The final model window is 25 frames; native padding
+is trimmed back to 24. Removing the repeated five-frame prefixes yields
+`121 + 5×116 + 19 = 720` frames, without blending or interpolation. All seven
+requests run sequentially on one selected replica. The service retains the
+original 16-replica least-outstanding plus FIFO policy and holds its GPU lock
+until accepted generation finishes, including repeated client cancellations.
+
+The default transfer parameters are 35 steps, text guidance **3**, control
+guidance **1.5**, flow shift **10**, medium Canny thresholds **100/200**, BF16,
+TP=1, shared control/target temporal positions, and a 4096-token limit. These
+start from the installed single-edge transfer defaults; increasing guidance or
+steps is not inherently a quality improvement. Steps and text guidance also
+respect the actual video API's upper bounds of 200 and 20. There is no generic
+`strength`, `control_weight`, arbitrary server-side file path, or unchecked
+extra-parameter bag.
+
+Use a detailed scene description, preferably a structured JSON object covering
+subjects, setting, lighting, materials, camera motion and temporal continuity,
+following [NVIDIA's transfer guidance](https://github.com/NVIDIA/Cosmos/tree/main/cookbooks/cosmos3/generator/transfer).
+The exact submitted and effective positive, negative and system prompts are
+retained per interval. The installed formatter rewrites JSON duration to the
+integer local model-window duration even when metadata templates are disabled;
+the retained source-frame map supplies the exact global timestamps.
+
+```bash
+npa workbench cosmos3 nano-video-augment \
+  --input-path "$NPA_COSMOS3_AUGMENT_INPUT_URI" \
+  --output-path "$NPA_COSMOS3_AUGMENT_OUTPUT_URI" \
+  --prompt "$NPA_COSMOS3_AUGMENT_PROMPT" \
+  --negative-prompt "$NPA_COSMOS3_AUGMENT_NEGATIVE_PROMPT" \
+  --seed 42 --num-inference-steps 35 --guidance-scale 3 \
+  --control-guidance 1.5 --flow-shift 10 --edge-threshold medium \
+  --chunk-frames 121 --output-format json
+
+# Retrieve completed work or retry artifact publication; never generates again.
+npa workbench cosmos3 nano-video-augment-recover \
+  --output-path "$NPA_COSMOS3_AUGMENT_OUTPUT_URI" --output-format json
+```
+
+SDK entries are `npa.sdk.workbench.cosmos3.nano_video_augment` and
+`nano_video_augment_recover`. The authenticated API accepts multipart `/run`
+with exactly `request` (JSON) and `input_reference` (the complete MP4). Existing
+JSON continuation requests remain supported. `GET /result?request_id=...`
+retrieves durable state through any replica on the shared output filesystem.
+A missing result after an interrupted POST is ambiguous and never authorizes an
+automatic generation retry.
+
+Artifacts keep **`input.mp4`**, **`augmented.mp4`** and the synchronized, labeled
+**`comparison.mp4`** separate, alongside source controls, augmented RGB tails,
+chunk outputs, exact requests, hashes and measurements. The comparison places
+the actual source on the left. S3 reservation and publication use conditional
+immutable writes with hash-verified readback. Recovery accepts existing objects
+only when their bytes match and can finish publication without a serving token
+when the completed local result is already verified.
+
+Technical validity is separate from visual quality. A changed hash does not
+prove meaningful augmentation. Evaluate requested appearance change, lighting,
+materials/reflections, identity, source motion, wheel contact and all six joins
+against a rubric fixed before candidate scoring. Record agent/VLM judgments and
+their sampling limitations separately; do not present them as a standardized
+quality score or claim eight-way augmentation from the continuation benchmark.
 
 ## Infrastructure and image
 

@@ -13,6 +13,7 @@ RUN uv pip install --system --no-cache -r /opt/npa/requirements.txt \
     && mkdir -p /opt/npa/npa/workbench/cosmos /models /outputs /tmp/ray \
     && chown -R 10001:10001 /models /outputs /tmp/ray
 COPY src/npa/workbench/cosmos/nano_video.py \
+     src/npa/workbench/cosmos/nano_video_augment.py \
      src/npa/workbench/cosmos/nano_video_server.py \
      src/npa/workbench/cosmos/nano_video_router.py \
      src/npa/workbench/cosmos/nano_video_stage.py /opt/npa/npa/workbench/cosmos/

@@ -16,6 +16,7 @@ import re
 import socket
 import subprocess
 import sys
+import tempfile
 import uuid
 from pathlib import Path
 from typing import Any
@@ -23,12 +24,37 @@ from typing import Any
 import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
+from starlette.datastructures import UploadFile
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 MODEL_REVISION = "7a312c868bcce8e40b3eb40861300a9d0ba3fde1"
 MODEL_NAME = "nvidia/Cosmos3-Nano"
 PIPELINE = "Cosmos3OmniDiffusersPipeline"
 SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
 LOG = logging.getLogger(__name__)
+
+
+async def _await_accepted_generation(generation: asyncio.Task) -> Any:
+    """Drain accepted thread work despite repeated HTTP cancellation signals."""
+    cancelled = False
+    while not generation.done():
+        try:
+            await asyncio.shield(generation)
+        except asyncio.CancelledError:
+            cancelled = True
+        except Exception:
+            if not cancelled:
+                raise
+            # Retrieve the terminal exception below before propagating the
+            # caller's cancellation; never detach a still-running GPU thread.
+    if cancelled:
+        if not generation.cancelled():
+            try:
+                generation.result()
+            except Exception:
+                LOG.exception("Accepted generation failed while draining a disconnected request")
+        raise asyncio.CancelledError
+    return generation.result()
 
 
 def _request_id(value: Any) -> str:
@@ -186,6 +212,8 @@ class NanoVideoRuntime:
 
     async def run(self, request: Request) -> dict[str, Any]:
         self.authorize(request)
+        if request.headers.get("content-type", "").split(";")[0].strip() == "multipart/form-data":
+            return await self._run_augmentation(request)
         try:
             body = await request.json()
         except ValueError as exc:
@@ -214,13 +242,7 @@ class NanoVideoRuntime:
                         replica_id=self.replica_id,
                     )
                 )
-                try:
-                    report = await asyncio.shield(generation)
-                except asyncio.CancelledError:
-                    # Client disconnects cannot stop a running CPU thread. Keep
-                    # the GPU occupied until that already accepted rollout ends.
-                    await asyncio.shield(generation)
-                    raise
+                report = await _await_accepted_generation(generation)
             report["request_id"] = request_id
             return report
         except FileExistsError as exc:
@@ -233,6 +255,97 @@ class NanoVideoRuntime:
                 500, "Generation failed; inspect the private workload evidence"
             ) from exc
 
+    async def _run_augmentation(self, request: Request) -> dict[str, Any]:
+        from .nano_video_augment import (
+            AugmentationInputError,
+            run_augmentation,
+            validate_request,
+        )
+
+        temporary: Path | None = None
+        request_id = "unparsed"
+        try:
+            async with request.form(max_files=1, max_fields=1) as form:
+                if set(form) != {"request", "input_reference"} or any(len(form.getlist(key)) != 1 for key in form):
+                    raise HTTPException(400, "Expected request JSON and one input_reference video")
+                metadata, upload = form["request"], form["input_reference"]
+                if not isinstance(metadata, str) or not isinstance(upload, UploadFile):
+                    raise HTTPException(400, "Invalid augmentation multipart fields")
+                try:
+                    body = validate_request(json.loads(metadata))
+                except (ValueError, AugmentationInputError) as exc:
+                    raise HTTPException(400, "Invalid augmentation request or unsupported controls") from exc
+                request_id = _request_id(body["request_id"])
+                directory = self.output_root / request_id
+                if directory.exists():
+                    raise HTTPException(409, "request_id already exists; retrieve its result")
+                uploads = self.output_root / ".uploads"
+                uploads.mkdir(mode=0o700, exist_ok=True)
+                if uploads.is_symlink():
+                    raise RuntimeError("Upload directory cannot be a symlink")
+                with tempfile.NamedTemporaryFile(dir=uploads, suffix=".mp4", delete=False) as stream:
+                    temporary = Path(stream.name)
+                    received = 0
+                    while block := await upload.read(1024 * 1024):
+                        received += len(block)
+                        if received > body["source_bytes"]:
+                            raise AugmentationInputError("Uploaded source exceeds its declared byte count")
+                        stream.write(block)
+                    if received != body["source_bytes"]:
+                        raise AugmentationInputError("Uploaded source byte count differs from its declaration")
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                async with self._generation_lock:
+                    generation = asyncio.create_task(asyncio.to_thread(
+                        run_augmentation, endpoint=self.endpoint, output_dir=directory,
+                        input_video=temporary, request=body, replica_id=self.replica_id,
+                    ))
+                    return await _await_accepted_generation(generation)
+        except StarletteHTTPException:
+            raise
+        except AugmentationInputError as exc:
+            raise HTTPException(422, "Source video failed hash, decode, timestamp or 480p/24fps validation") from exc
+        except FileExistsError as exc:
+            raise HTTPException(409, "request_id already exists; retrieve its result") from exc
+        except Exception as exc:
+            LOG.exception("Cosmos3 augmentation failed for request %s", request_id)
+            raise HTTPException(500, "Augmentation failed; inspect the private workload evidence") from exc
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
+
+    def result(self, request: Request, request_id: str) -> JSONResponse:
+        """Recover durable results on any replica; never admit generation here."""
+        self.authorize(request)
+        request_id = _request_id(request_id)
+        directory = self.output_root / request_id
+        if not directory.exists():
+            raise HTTPException(404, "Unknown request; absence does not authorize a retry")
+        if directory.is_symlink() or not directory.is_dir():
+            raise HTTPException(503, "Request state unavailable")
+        path = directory / "report.json"
+        if not path.exists():
+            return JSONResponse({"request_id": request_id, "status": "initializing"}, status_code=202)
+        if path.is_symlink() or not path.is_file():
+            raise HTTPException(503, "Request state unavailable")
+        try:
+            report = json.loads(path.read_text())
+            if not isinstance(report, dict) or report.get("status") not in {"queued", "running", "succeeded", "failed"}:
+                raise ValueError("Invalid durable state")
+            from .nano_video_augment import SCHEMA, request_sha256, validate_report
+
+            if report.get("schema_version") == SCHEMA:
+                if report["request_id"] != request_id or report["request_sha256"] != request_sha256(report["request"]):
+                    raise ValueError("Request identity mismatch")
+                if report["status"] == "succeeded":
+                    validate_report(report, report["request"])
+            # Legacy continuation stored the ID in its directory, then added it
+            # only to the HTTP response. Preserve that established format.
+            report["request_id"] = request_id
+        except (ValueError, KeyError, TypeError, RuntimeError) as exc:
+            raise HTTPException(503, "Request state unavailable") from exc
+        return JSONResponse(report, status_code=200 if report["status"] in {"succeeded", "failed"} else 202)
+
     def status(self, request: Request, request_id: str) -> dict[str, Any]:
         self.authorize(request)
         path = self.output_root / _request_id(request_id) / "report.json"
@@ -243,7 +356,7 @@ class NanoVideoRuntime:
             "request_id": request_id,
             **{
                 key: report[key]
-                for key in ("status", "replica_id", "started_at", "finished_at")
+                for key in ("status", "replica_id", "started_at", "finished_at", "request_sha256", "schema_version")
                 if key in report
             },
         }
@@ -260,7 +373,7 @@ class NanoVideoRuntime:
             or path.is_symlink()
             or directory.is_symlink()
             or path.resolve().parent != directory.resolve()
-            or path.suffix not in {".mp4", ".png", ".json"}
+            or path.suffix not in {".mp4", ".mkv", ".png", ".json"}
         ):
             raise HTTPException(404, "Unknown artifact")
         report_path = directory / "report.json"
@@ -356,6 +469,10 @@ def app(args: dict[str, Any] | None = None) -> Any:
         @api.get("/status")
         async def status(self, request: Request, request_id: str):
             return self.runtime.status(request, request_id)
+
+        @api.get("/result")
+        async def result(self, request: Request, request_id: str):
+            return self.runtime.result(request, request_id)
 
         @api.get("/list")
         async def list_runs(self, request: Request):
