@@ -338,7 +338,7 @@ def test_actor_hashes_the_actually_imported_udf(example, tmp_path, monkeypatch):
         example.ClipModel("/unused-model")
 
 
-@pytest.mark.parametrize("content", [b"", b"source-bytes" * 100000])
+@pytest.mark.parametrize("content", [b"", b"source-bytes" * 100000], ids=["empty", "multi-chunk"])
 def test_file_hashing_supports_python310_without_file_digest(example, tmp_path, monkeypatch, content):
     """Hash empty and multi-chunk files without Python 3.11's convenience API.
 
