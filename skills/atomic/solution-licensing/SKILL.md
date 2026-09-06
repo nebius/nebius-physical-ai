@@ -280,8 +280,10 @@ The clean runtime-fetch `isaac-lab`, `sonic`, and `groot` images may therefore b
 classified `redistribution: public`. Historical SONIC L40S and inherited MuJoCo
 images remain restricted and quarantined because their built layers contain the
 old payload. The replacement MuJoCo architecture is built independently from a
-digest-pinned public Python base and must pass exact-layer scans plus real GPU
-validation before its digest can replace the quarantined variant.
+digest-pinned public Python base. Its accepted `0.2.0-runtime` digest passed
+exact-layer scans and a real B200 Unitree G1 rollout, as recorded in
+`npa/src/npa/deploy/sonic_image_manifest.json`. That evidence applies only to
+the replacement digest; the historical variants remain quarantined.
 
 Three things made that verdict defensible rather than merely plausible, and a new
 solution should expect to produce all three:
@@ -406,11 +408,13 @@ fetch alone while the weight path stays guarded). Any time several controls
 share an exit code, assume they are hiding each other until a mutant proves
 otherwise.
 
-**Do not publish on the strength of the classification alone.** The licence work
-concluded `redistribution: public`, and the pushed image has since been scanned
-by digest, but no GPU has run it — so `ltx2` sits in
-`UNVALIDATED_PUBLICATION_TOOLS` and `publish_public` refuses it by name.
-Eligible and proven are different claims.
+**Do not publish on the strength of the classification alone.** LTX-2.5's
+accepted `2.5-rtfetch-20260817` digest subsequently passed the payload,
+entitlement-refusal, and real RTX PRO 6000 text-to-video/decoded-MP4 gates.
+`npa/src/npa/deploy/ltx2_image_manifest.json` binds those results to the exact
+bytes, which are now in the public release plan. Future bytes must earn fresh
+evidence. OpenPI remains in `UNVALIDATED_PUBLICATION_TOOLS`; redistribution
+eligibility alone does not qualify its pending full-DROID image for release.
 
 ## Red Flags
 

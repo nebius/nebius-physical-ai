@@ -305,10 +305,12 @@ pipeline. Key safety notes are condensed below.
   standalone BYO Job builders preserve uid/gid 1000; neither may override
   `runAsUser: 0`. The LanceDB image also runs as `ubuntu`; its narrow
   passwordless-sudo exemption exists only for SkyPilot's in-pod bootstrap and
-  does not enable sshd by default. `sonic` and `detection-training` retain root
-  from their upstream bases. `foxglove-embed` runs as `nobody` on a digest-pinned
-  caddy base. The remaining root images are candidates for a separate non-root
-  hardening pass.
+  does not enable sshd by default. The 2026-09-05 anonymous OCI config audit
+  found the accepted `sonic` Kubernetes release still declares `root`; the
+  other 31 current releases, including `detection-training`, declare non-root
+  users. `foxglove-embed` runs as `nobody` on a digest-pinned Caddy base.
+  SONIC remains a candidate for a separate non-root hardening pass; its current
+  Dockerfile does not retroactively change historical released bytes.
 - **Network exposure** — services that open ports (`lerobot` :8080, `cosmos`
   :8080, `lancedb` :8686, `detection-training` :8790, `robocasa` :8791, `fiftyone` :5151,
   `foxglove-embed` :8099) must be
