@@ -32,7 +32,10 @@ For live validation also load `skills/atomic/gpu-selection/SKILL.md`,
    development tags.
 2. Require `redistribution: public` in
    `npa/docker/workbench/packaging-contract.yaml`. Hard-refuse `restricted`
-   images, including `cosmos3-serving`, from every official GHCR tag.
+   images, including `cosmos3-super-benchmark`, from every official GHCR tag.
+   The current supported `cosmos3-serving` release is bound to its accepted,
+   payload-scanned and GPU-validated digest; historical restricted bytes remain
+   prohibited. Future development builds must pass the sequence below.
 3. Before any public push, run the repository packaging/license guards and
    inspect the locally built artifact, including layers, history, and OCI config.
    Refuse credentials, secrets, customer data, live infrastructure identifiers,
