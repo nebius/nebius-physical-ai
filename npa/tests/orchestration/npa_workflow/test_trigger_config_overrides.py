@@ -5,7 +5,6 @@ import hashlib
 import json
 from pathlib import Path
 
-import npa
 import pytest
 import yaml
 
@@ -19,8 +18,8 @@ from npa.orchestration.npa_workflow.submit import (
 )
 
 SHIPPED = (
-    Path(npa.__file__).resolve().parents[2]
-    / "workflows/workbench/npa-workflows/token-factory-trigger-watch.yaml"
+    Path(__file__).resolve().parents[4]
+    / "workflows/testing/token-factory-trigger-watch.yaml"
 )
 
 
@@ -98,11 +97,50 @@ def test_invalid_templated_trigger_values_rejected(tmp_path, key, value):
 
 def test_unchanged_workflow_identity_keeps_legacy_value():
     spec = load_spec(SHIPPED)
+    state = spec.states["caption-inbox"]
+    assert state.inputs and state.outputs and state.trigger.config_expressions
     legacy_payload = asdict(spec)
     for state in legacy_payload["states"].values():
+        # Both fields were absent when the original workflow identity was stored.
+        for artifact in [*state["inputs"], *state["outputs"]]:
+            assert artifact.pop("kind") == ""
         if state.get("trigger"):
             state["trigger"].pop("config_expressions", None)
     legacy = hashlib.sha256(
         json.dumps(legacy_payload, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
     assert _workflow_identity(spec) == legacy
+
+
+def test_workflow_identity_ignores_trigger_parse_provenance_without_mutating_spec():
+    spec = load_spec(SHIPPED)
+    original = asdict(spec)
+    identity = _workflow_identity(spec)
+    assert asdict(spec) == original
+
+    spec.states["caption-inbox"].trigger.config_expressions.clear()
+
+    assert _workflow_identity(spec) == identity
+
+
+@pytest.mark.parametrize(
+    "target,field,value",
+    [
+        ("inputs", "kind", "directory"),
+        ("outputs", "kind", "file"),
+        ("trigger", "min_objects", 3),
+        ("trigger", "poll_seconds", 2),
+        ("trigger", "max_polls", 2),
+    ],
+)
+def test_workflow_identity_keeps_artifact_roles_and_resolved_trigger_values(
+    target, field, value
+):
+    spec = load_spec(SHIPPED)
+    identity = _workflow_identity(spec)
+    component = getattr(spec.states["caption-inbox"], target)
+    if isinstance(component, list):
+        component = component[0]
+    setattr(component, field, value)
+
+    assert _workflow_identity(spec) != identity

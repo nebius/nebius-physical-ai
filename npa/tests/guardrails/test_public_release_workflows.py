@@ -254,3 +254,61 @@ def test_public_health_is_anonymous_and_read_only() -> None:
     assert "GITHUB_REPOSITORY" not in run
     assert "auth login" not in run
     assert "--preflight" not in run
+
+
+def test_additive_release_inputs_are_scoped_to_promotion() -> None:
+    spec = _spec(PUBLISH)
+    inputs = (spec.get("on") or spec[True])["workflow_dispatch"]["inputs"]
+    assert inputs["release_tag"]["default"] == ""
+    assert inputs["expected_source_digest"]["default"] == ""
+    assert "inputs.release_tag || inputs.development_sha" in spec["concurrency"]["group"]
+    assert spec["concurrency"]["cancel-in-progress"] is False
+    assert "needs.resolve.result == 'success'" in spec["jobs"]["cleanup-requested"]["if"]
+    resolve = next(step for step in spec["jobs"]["resolve"]["steps"] if step.get("name") == "Validate additive release selection without changing defaults")
+    assert 'test "$BUILD_COUNT" = 0 && test "$CLEANUP_COUNT" = 0' in resolve["run"]
+    assert resolve["env"]["DEVELOPMENT_SHA"] == "${{ inputs.development_sha }}"
+    assert "--mode plan" in resolve["run"]
+    promote = spec["jobs"]["promote"]
+    assert promote["env"]["RELEASE_TAG"] == "${{ inputs.release_tag }}"
+    assert promote["env"]["EXPECTED_SOURCE_DIGEST"] == "${{ inputs.expected_source_digest }}"
+    for name in ("build-development", "cleanup-requested", "cleanup-failed-build"):
+        assert "--release-tag" not in "\n".join(step.get("run", "") for step in spec["jobs"][name]["steps"])
+
+
+def test_additive_workflow_forwards_exact_selector_and_digest_without_shell_expansion(tmp_path) -> None:
+    """Run the checked-in trusted shell adapter against an argv-recording executable."""
+    import json
+    import os
+    import subprocess
+    import sys
+
+    executable = tmp_path / "npa/.venv/bin/python"
+    executable.parent.mkdir(parents=True)
+    recorder = tmp_path / "argv.jsonl"
+    executable.write_text(
+        f"#!{sys.executable}\nimport json,os,sys\n"
+        "with open(os.environ['ARGV_RECORD'], 'a') as output:\n"
+        "    output.write(json.dumps(sys.argv[1:]) + '\\n')\n"
+    )
+    executable.chmod(0o700)
+    env = {**os.environ, "TARGET": "ghcr.io/nebius/nebius-physical-ai", "DEVELOPMENT_SHA": "b" * 40, "SELECTED_TOOLS": "detection-training", "RELEASE_TAG": "runtime-recovery-1", "EXPECTED_SOURCE_DIGEST": "sha256:" + "a" * 64, "ARGV_RECORD": str(recorder)}
+    steps = _spec(PUBLISH)["jobs"]["promote"]["steps"]
+    scripts = [step["run"] for step in steps if step.get("name") in {"Plan and preflight immutable public development digests", "Promote exact validated digests and verify public parity"}]
+    # These trusted steps have one harmless GitHub expression in the unselected
+    # all-image branch. Render that expression as Actions does before bash parses it.
+    for script in scripts:
+        script = script.replace("${{ inputs.skip_missing && '--skip-missing' || '' }}", "")
+        subprocess.run(["bash", "-euo", "pipefail", "-c", script], cwd=tmp_path, env={**env, "GITHUB_STEP_SUMMARY": str(tmp_path / "summary")}, check=True, capture_output=True)
+    records = [json.loads(line) for line in recorder.read_text().splitlines()]
+    assert [record[-1] for record in records] == ["plan", "preflight", "publish"]
+    for record in records:
+        assert record == [".github/scripts/publish_selected_public_image.py", "--target", env["TARGET"], "--development-sha", env["DEVELOPMENT_SHA"], "--release-tag", env["RELEASE_TAG"], "--expected-source-digest", env["EXPECTED_SOURCE_DIGEST"], "--tool", "detection-training", "--mode", record[-1]]
+    resolve = next(step for step in _spec(PUBLISH)["jobs"]["resolve"]["steps"] if step.get("name") == "Validate additive release selection without changing defaults")
+    for build_count, cleanup_count in [("1", "0"), ("0", "1"), ("1", "1")]:
+        result = subprocess.run(
+            ["bash", "-euo", "pipefail", "-c", resolve["run"]], cwd=tmp_path,
+            env={**env, "BUILD_COUNT": build_count, "CLEANUP_COUNT": cleanup_count},
+            capture_output=True,
+        )
+        assert result.returncode != 0
+    assert len(recorder.read_text().splitlines()) == 3

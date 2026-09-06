@@ -573,9 +573,10 @@ def test_default_skypilot_calls_preserve_explicit_runtime_isolation(
         "controller_backend": "kubernetes",
         "infra": "k8s/test-context",
         "secret_envs": [],
-        "extra_env": {},
+        "extra_env": {"NPA_S3_BUCKET": "example-bucket", "NPA_S3_PREFIX": "trigger/rt-isolated"},
         "timeout": 1800,
         "logical_launch_id": "",
+        "project": "default",
     }
     status.assert_called_once_with("1", **expected)
     timeline.assert_called_once_with("1", **expected)

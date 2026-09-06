@@ -33,14 +33,14 @@ def _mock_paidf_submit_boundaries(mocker) -> None:
     """Keep staging tests explicit about earlier Kubernetes/storage gates."""
 
     mocker.patch(
+        "npa.cli.workbench.workflow._execution_target_preflight", return_value=(None, {})
+    )
+    mocker.patch(
         "npa.cli.workbench.workflow._adopt_npa_kubeconfig", return_value=True
     )
     mocker.patch(
         "npa.cli.workbench.workflow._paidf_kubernetes_prerequisites_for_submit",
         return_value=[],
-    )
-    mocker.patch(
-        "npa.cli.workbench.workflow._submit_storage_prerequisites", return_value=[]
     )
     mocker.patch("npa.controller_ownership.verify_controller_owner")
 

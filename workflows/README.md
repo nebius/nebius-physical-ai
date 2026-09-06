@@ -80,6 +80,7 @@ describes the real component and artifact contracts.
 | Spec | Notes |
 | --- | --- |
 | [`alpamayo2-super-inference.yaml`](testing/alpamayo2-super-inference.yaml) | Real Alpamayo 2 Super 34B trajectory inference on `B200:1`; runtime-only OpenMDW weights and separately gated PhysicalAI-AV sample data ([guide](../docs/workbench/alpamayo2-super.md)) |
+| [`curobo-benchmark.yaml`](testing/curobo-benchmark.yaml) | Complete cuRobo V2 MotionBenchMaker and MPiNets benchmarks with verified result journals and factual Rerun trajectories; image remains unpublished pending exact-byte and GPU validation ([guide](../docs/workbench/curobo.md)) |
 | [`vlm-eval-single.yaml`](testing/vlm-eval-single.yaml) | Self-hosted VLM eval |
 | [`vlm-eval-benchmark.yaml`](testing/vlm-eval-benchmark.yaml) | VLM benchmark |
 | [`token-factory-caption.yaml`](testing/token-factory-caption.yaml) | Zero-GPU; needs `NPA_SRC_S3_URI` (or `--image`) + `--secret-env NEBIUS_TOKEN_FACTORY_KEY` |

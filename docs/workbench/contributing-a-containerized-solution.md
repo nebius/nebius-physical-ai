@@ -152,3 +152,14 @@ Related policy:
 - `skills/workflows/contribute-workbench-image/SKILL.md`
 - `skills/atomic/solution-licensing/SKILL.md`
 - `docs/workbench/container-packaging.md`
+
+For a new additive release tag, keep the current runtime defaults until the
+new alias is public. After the exact public development digest passes real GPU
+validation, dispatch `publish-public-images.yml` with one `tool`, the explicit
+`development_sha`, `release_tag`, and `expected_source_digest`. Use `dry_run=true`
+for the promotion preflight, then `dry_run=false` with the same values and no
+build or cleanup selector. This path checks the source revision and anonymous
+digest, refuses mutable tags and an existing tag with different bytes, and
+verifies anonymous digest parity after promotion. Once that succeeds, update the
+supported-tool pin, accepted release manifest, and catalog together. Retain the
+development tag that shares the accepted release digest.

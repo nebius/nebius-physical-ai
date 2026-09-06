@@ -19,8 +19,8 @@ INPUTS = {
     "npa/README.md",
     "npa/.dockerignore",
     "npa/docker/workbench/curobo",
-    "npa/workflows/workbench/npa-workflows/sim2real.yaml",
-    "npa/workflows/workbench/npa-workflows/physical-ai-data-factory.yaml",
+    "workflows/main",
+    "workflows/testing",
 }
 
 
@@ -56,17 +56,21 @@ elif args[0] == "show":
 elif args[0] == "cat-file":
     sys.exit(1 if mode == "missing-dockerfile" else 0)
 elif args[0] == "diff":
-    changed = mode in {"dirty-source", "staged-source", "dirty-unrelated"}
+    changed = mode in {"dirty-source", "staged-source", "dirty-catalog", "staged-catalog", "dirty-unrelated"}
     if changed:
-        path = "docs/unrelated.md" if mode == "dirty-unrelated" else "npa/src/npa/malicious.py"
+        path = "docs/unrelated.md" if mode == "dirty-unrelated" else (
+            "workflows/testing/curobo-benchmark.yaml" if mode.endswith("catalog") else "npa/src/npa/malicious.py"
+        )
         scopes = args[args.index("--") + 1:]
         applies = any(path == p or path.startswith(p + "/") for p in scopes)
         cached = "--cached" in args
-        sys.exit(int(applies and (cached == (mode == "staged-source"))))
+        sys.exit(int(applies and (cached == mode.startswith("staged-"))))
     sys.exit(1 if mode == "diff-read-failure" else 0)
 elif args[0] == "ls-files":
     if mode == "untracked-source":
         print("npa/src/npa/untracked_payload.py")
+    elif mode == "untracked-catalog":
+        print("workflows/testing/untracked.yaml")
     elif mode == "untracked-read-failure":
         sys.exit(1)
 elif args[0] == "archive":
@@ -77,7 +81,18 @@ elif args[0] == "archive":
         for name, payload in {
             "npa/docker/workbench/curobo/Dockerfile": b"FROM committed-base\\n",
             "npa/src/npa/committed.py": b"COMMITTED = True\\n",
+            "npa/pyproject.toml": b"[project]\\nname = 'synthetic'\\n",
+            "npa/src/npa/workflow_build.py": (
+                b"raise RuntimeError('staging failed')\\n" if mode == "staging-failure"
+                else Path(os.environ["TEST_WORKFLOW_BUILD"]).read_bytes()
+            ),
+            "workflows/main/sim2real.yaml": b"metadata: {name: committed-sim2real}\\n",
+            "workflows/main/paidf-cosmos3.yaml": b"metadata: {name: committed-paidf-cosmos3}\\n",
+            "workflows/testing/physical-ai-data-factory.yaml": b"metadata: {name: committed-paidf}\\n",
+            "workflows/testing/curobo-benchmark.yaml": b"metadata: {name: committed-curobo}\\n",
         }.items():
+            if mode == "missing-catalog" and name.startswith("workflows/"):
+                continue
             info = tarfile.TarInfo(name)
             info.size = len(payload)
             archive.addfile(info, io.BytesIO(payload))
@@ -103,22 +118,28 @@ Path(os.environ["TEST_DOCKER_CALL"]).write_text(json.dumps({
     "context": str(context),
     "dockerfile": dockerfile.read_text(),
     "files": sorted(str(p.relative_to(context)) for p in context.rglob("*") if p.is_file()),
+    "catalog": {str(p.relative_to(context)): p.read_text() for p in context.rglob("*.yaml")},
 }))
 """
     )
     docker.chmod(0o700)
+    workflow_build = tmp_path / "workflow_build.py"
+    workflow_build.write_bytes((ROOT / "npa/src/npa/workflow_build.py").read_bytes())
     environment = {
         **os.environ,
         "PATH": str(executable_dir) + os.pathsep + os.environ["PATH"],
         "TMPDIR": str(tmp_path),
         "TEST_GIT_CALLS": str(tmp_path / "git.jsonl"),
         "TEST_DOCKER_CALL": str(tmp_path / "docker.json"),
+        "TEST_WORKFLOW_BUILD": str(workflow_build),
+        "NPA_PYTHON_BIN": sys.executable,
     }
 
     def run(mode="clean", *args):
         result = subprocess.run(
             ["bash", str(BUILD), *args],
-            env={**environment, "TEST_GIT_MODE": mode},
+            env={**environment, "TEST_GIT_MODE": mode,
+                 "NPA_PYTHON_BIN": str(tmp_path / "missing-python") if mode == "missing-python" else sys.executable},
             capture_output=True,
             text=True,
             check=False,
@@ -135,7 +156,17 @@ def test_only_exact_commit_snapshot_reaches_docker(build_boundary, mode):
     result, calls, docker = build_boundary(mode)
     assert result.returncode == 0, result.stderr
     assert docker["dockerfile"] == "FROM committed-base\n"
-    assert docker["files"] == ["docker/workbench/curobo/Dockerfile", "src/npa/committed.py"]
+    catalog = {
+        "src/npa/workflows/main/sim2real.yaml": "metadata: {name: committed-sim2real}\n",
+        "src/npa/workflows/main/paidf-cosmos3.yaml": "metadata: {name: committed-paidf-cosmos3}\n",
+        "src/npa/workflows/testing/physical-ai-data-factory.yaml": "metadata: {name: committed-paidf}\n",
+        "src/npa/workflows/testing/curobo-benchmark.yaml": "metadata: {name: committed-curobo}\n",
+    }
+    assert docker["catalog"] == catalog
+    assert docker["files"] == sorted([
+        "docker/workbench/curobo/Dockerfile", "pyproject.toml",
+        "src/npa/committed.py", "src/npa/workflow_build.py", *catalog,
+    ])
     assert docker["context"] != str(ROOT / "npa")
     assert not Path(docker["context"]).exists(), "The run-owned build snapshot must be removed"
     assert f"npa-curobo:dev-{SOURCE_SHA}" in docker["args"]
@@ -167,17 +198,24 @@ def test_only_exact_commit_snapshot_reaches_docker(build_boundary, mode):
         ("missing-dockerfile", "Dockerfile must be checked in"),
         ("dirty-source", "Commit the cuRobo build input changes"),
         ("staged-source", "Commit the cuRobo build input changes"),
+        ("dirty-catalog", "Commit the cuRobo build input changes"),
+        ("staged-catalog", "Commit the cuRobo build input changes"),
         ("diff-read-failure", "Commit the cuRobo build input changes"),
         ("untracked-source", "Untracked cuRobo build inputs"),
+        ("untracked-catalog", "Untracked cuRobo build inputs"),
         ("untracked-read-failure", ""),
         ("archive-failure", ""),
+        ("staging-failure", "staging failed"),
+        ("missing-catalog", "catalog is missing"),
+        ("missing-python", "Repository Python is required"),
     ],
 )
-def test_unreviewed_or_unreadable_build_inputs_never_reach_docker(build_boundary, mode, message):
+def test_unreviewed_or_unreadable_build_inputs_never_reach_docker(build_boundary, mode, message, tmp_path):
     result, _, docker = build_boundary(mode)
     assert result.returncode != 0
     assert message in result.stderr
     assert docker is None
+    assert not list(tmp_path.glob("npa-curobo-build.*"))
 
 
 def test_public_push_refuses_before_docker(build_boundary):

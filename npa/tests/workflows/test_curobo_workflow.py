@@ -8,16 +8,21 @@ import pytest
 import yaml
 
 from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
+from npa.orchestration.npa_workflow.blueprints import (
+    iter_npa_workflow_specs,
+    resolve_npa_workflow_spec,
+)
 from npa.orchestration.npa_workflow.submit_matrix import SUBMIT_LIVE_MATRIX
 from npa.orchestration.npa_workflow.skypilot_render import SkypilotRenderOptions
 from npa.orchestration.npa_workflow.submit import prepare_npa_workflow_for_submit
 
+SPEC_PATH = Path(__file__).resolve().parents[3] / "workflows/testing/curobo-benchmark.yaml"
+
 
 def test_complete_benchmark_and_factual_rrd_are_reachable():
-    path = (
-        Path(__file__).resolve().parents[2]
-        / "workflows/workbench/npa-workflows/curobo-benchmark.yaml"
-    )
+    path = SPEC_PATH
+    assert resolve_npa_workflow_spec(path.name) == path
+    assert path in iter_npa_workflow_specs()
     spec = yaml.safe_load(path.read_text())
     assert spec["config"]["curobo_mode"] == "both"
     assert len(spec["states"]) == 4
@@ -35,7 +40,7 @@ def test_complete_benchmark_and_factual_rrd_are_reachable():
 
 @pytest.mark.parametrize("source_matches", [True, False])
 def test_full_workflow_baked_setup_uses_real_import_and_image_identity(tmp_path, source_matches):
-    path = Path(__file__).resolve().parents[2] / "workflows/workbench/npa-workflows/curobo-benchmark.yaml"
+    path = SPEC_PATH
     sha = "a" * 40
     image = "ghcr.io/nebius/nebius-physical-ai/npa-curobo@sha256:" + "b" * 64
     prepared = prepare_npa_workflow_for_submit(

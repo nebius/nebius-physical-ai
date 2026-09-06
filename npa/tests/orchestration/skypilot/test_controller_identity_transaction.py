@@ -160,6 +160,18 @@ def test_remote_absence_receipt_precedes_real_local_state_removal(
 def test_remote_delete_uses_cloned_state_then_verifies_then_mutates_real_state(
     monkeypatch, identity_fixture, tmp_path: Path
 ) -> None:  # noqa: ANN001
+    # The process/socket lifecycle is covered by test_local_api; this case
+    # exercises the receipt and independent cloud-absence ordering.
+    from npa.orchestration.skypilot import local_api
+
+    source_sky = tmp_path / "home/.sky"
+    source_sky.mkdir(parents=True)
+    (source_sky / "user_hash").write_text("fixture-controller-owner")
+    sky_bin = tmp_path / "sky"
+    sky_bin.touch()
+    sky_bin.chmod(0o700)
+    monkeypatch.setattr(controller, "ensure_skypilot_version", lambda value: value)
+    monkeypatch.setattr(local_api, "ensure_isolated_api", lambda **_: {"healthy": True})
     name = "sky-jobs-controller-demo"
     other = "sky-jobs-controller-unrelated"
     monkeypatch.setattr(
@@ -191,7 +203,7 @@ def test_remote_delete_uses_cloned_state_then_verifies_then_mutates_real_state(
     monkeypatch.setattr(controller, "_down_jobs_controller", down)
 
     result = controller.cleanup_jobs_controller(
-        project="demo", context="verified-context", isolated_config_dir=tmp_path
+        project="demo", context="verified-context", isolated_config_dir=tmp_path, sky_bin=sky_bin
     )
 
     assert result.ok

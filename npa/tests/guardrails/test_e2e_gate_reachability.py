@@ -16,6 +16,8 @@ RUNNER_FILES = (
 # These specialized suites intentionally remain operator-invoked. The reason is
 # machine-reviewed here instead of letting an environment gate silently rot.
 MANUAL_GATES = {
+    "NPA_DETECTION_RUNTIME_LIVE": "real detector training and service restart require an operator-selected deployment",
+    "NPA_EXECUTION_PREFLIGHT_LIVE_CONFIG": "exact-prefix write verification requires an operator-selected private execution target",
     "NPA_AGENT_IMPROVEMENT_LIVE": (
         "requires a dedicated operator-selected queue, protected actual-check receipts "
         "and independently obtained review evidence; shared-agent runners cannot synthesize these"

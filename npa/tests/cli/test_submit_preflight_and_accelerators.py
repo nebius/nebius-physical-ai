@@ -109,10 +109,22 @@ def spec_path(tmp_path: Path) -> Path:
 
 
 @pytest.fixture()
-def sky_bin(tmp_path: Path) -> str:
+def sky_bin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
+    from npa.orchestration.skypilot import workflow as workflow_runtime
+
     path = tmp_path / "sky"
     path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     path.chmod(0o755)
+    # The fake executable has no API daemon. Keep the real health gate, but
+    # inspect its empty process namespace instead of an operator's host API.
+    proc_root = tmp_path / "proc"
+    proc_root.mkdir()
+    probe = workflow_runtime._probe_local_api_daemon_cwd
+    monkeypatch.setattr(
+        workflow_runtime,
+        "_probe_local_api_daemon_cwd",
+        lambda executable, **kwargs: probe(executable, proc_root=proc_root, **kwargs),
+    )
     return str(path)
 
 

@@ -195,7 +195,7 @@ foxglove-embed = "0.58.0"
 # Lichtblick (MPL-2.0): OSS, Foxglove-compatible static web viewer bundle tag.
 lichtblick = "1.26.0"
 lancedb = "cuda13-b300-0.30.3-sm80-sm90-sm100-sm103-sm120-20260803T031514Z"
-detection-training = "bdd100k-golden-eval-smoke-20260614T210000Z"
+detection-training = "runtime-v1-20260905"
 wan2-2 = "2.2-ti2v5b-rtfetch-cu130-20260817"
 ltx2 = "2.5-rtfetch-20260817"
 alpamayo2-super = "0.1.0-cu128"
@@ -280,6 +280,7 @@ addopts = "-v --tb=short"
 markers = [
     "e2e: end-to-end tests requiring real Nebius infrastructure (gated on NPA_INTEGRATION_E2E env var).",
     "e2e_serverless: serverless endpoint e2e tests requiring real Nebius Serverless AI infrastructure.",
+    "public_inputs: live workload uses public/generated inputs and does not require a Hugging Face account entitlement.",
     "e2e_skypilot: SkyPilot e2e tests requiring Nebius, MK8s, and SkyPilot-managed jobs.",
     "e2e_pipeline: pipeline composition e2e tests that submit multiple real Nebius Serverless AI Jobs.",
     "smoke: smoke tests that exercise CLI subprocess paths with local fakes.",

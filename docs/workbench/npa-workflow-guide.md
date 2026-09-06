@@ -205,6 +205,82 @@ declared S3 output evidence
 is authoritative, and any live prior attempt is cancelled by exact provider ID
 with terminal verification.
 
+Submission binds those checks to one effective execution target. The selected
+NPA project must have saved project, tenant and region identities. The provider's
+exact project and bucket-owner responses must agree before any temporary storage
+write; the selected Kubernetes context must resolve to that same live project,
+including when SkyPilot uses isolated local state. The storage endpoint must be
+the selected region's Nebius endpoint. Ownership/authentication uncertainty
+blocks submission and never selects an alternative writable bucket.
+
+For `npa.workflow` specs, `--s3-bucket` and `--s3-prefix` override the corresponding
+`--var` values, followed by `NPA_S3_BUCKET` / `NPA_S3_PREFIX`, then the spec's
+`config`. These values control both the rendered workload and durable run ledger.
+`--s3-endpoint` takes precedence over endpoint environment variables and selected
+project storage settings. An S3 credential pair comes from one source: process
+environment, the submitted SkyPilot YAML's `envs`, selected
+project storage, then configured credentials. An incomplete higher-priority pair
+fails instead of combining keys from different principals. Each runtime wave
+uses the pair checked by that invocation; a new submit/resume resolves credentials
+again. Conflicting custom pod storage environment values are rejected.
+All supported S3 endpoint aliases are normalized to that endpoint, including
+`AWS_ENDPOINT_URL_S3`. Session-token overrides and unresolved pod secret
+references are rejected before access checks because they would change the
+executing principal.
+
+Declare a directory output with `kind: directory`, including when its URI has no
+trailing slash; use `kind: file` for an exact object. This role survives planning
+and rendering, so prefix checks and artifact discovery agree. Older declarations
+without a kind retain the trailing-slash directory convention.
+
+Raw SkyPilot YAML and the shared `submit_workflow` SDK use the same mandatory
+gate before creating a controller or job. Kubernetes tasks require one explicit
+context in `--infra k8s/<context>` or task resources, matching the selected NPA
+project. Native Nebius tasks and controllers must use that project's region;
+native submission verifies the executing SkyPilot principal and pins its project
+selection, preventing first-project fallback. Use `--controller-backend nebius`
+for a native controller, or declare an explicit Kubernetes controller context
+in the same project. Raw storage tasks declare `envs.NPA_EXECUTION_OUTPUTS` as a JSON list,
+for example `'[{"uri":"s3://example-bucket/run/checkpoints","kind":"directory"}]'`.
+The supported `NPA_OUTPUT_PATH`, `NPA_OUTPUT_URI`, `S3_OUTPUT_PATH`, and
+bucket-plus-prefix environment contracts also declare directories. An explicit
+`[]` means no durable outputs. Undeclared storage destinations and alternative
+resource targets require clarification in the YAML before submission.
+Explicit artifact declarations may use a sibling prefix or another bucket in
+the same project; each destination is checked separately. `config.prefix` is the
+default/ledger prefix and does not restrict explicitly declared artifact locations.
+Nebius storage mounts, including raw `--durable-s3` tasks, also verify the
+executing SkyPilot home's static `nebius` AWS profile against the selected
+storage credentials and endpoint. SkyPilot copies `~/.aws/credentials` and
+`~/.aws/config` to its controller, so both files must contain that matching
+profile. Missing or dynamic profiles, different principals, nondefault AWS
+file overrides, and task mounts replacing those files block submission before
+storage or compute creation. Writable mount prefixes receive the same ownership
+and write/readback checks as declared outputs.
+Use `--config-path` for SkyPilot configuration. Nonempty implicit `.sky.yaml`,
+`SKYPILOT_PROJECT_CONFIG`, and internal `SKYPILOT_CONFIG` overrides must be removed
+before submission so they cannot replace the checked configuration after the gate.
+
+`--isolated-config-dir` also owns a separate local SkyPilot API process, request
+queue, and persistent user identity. Its endpoint and process ownership are
+recorded before startup and verified again on reconnect. A conflicting endpoint,
+foreign listener, or changed executing identity blocks submission. Preserve this
+directory when reconnecting to existing jobs; an unrelated local SkyPilot API
+is never adopted or stopped as part of that isolated runtime.
+
+The actual resolved output directories, file-parent prefixes, run-ledger prefix,
+and any source-staging destination receive a unique write/readback probe using
+the executing credentials. Probe deletion is best effort and does not require
+wider IAM. GPU checks include a one-node request's actual product, free GPU/CPU/
+memory capacity and placement constraints. Serverless Genesis checks the current
+project's platform/preset offering and exact GPU count before creating a job.
+Provider-owned catalog products require a matching lookup through that same
+project, without treating shared catalog ownership as workload ownership.
+Catalog availability is separate from actual allocation or reservation evidence.
+Scope, destination access and GPU gates remain active with `--skip-preflight`.
+Generic `health preflight --offline` still proves only credential presence;
+generic online health/access checks do not themselves prove execution readiness.
+
 SkyPilot launch uses asynchronous API submission followed by exact-name/ID
 reconciliation inside the crash-safe launch transaction. This allows production
 supervision to observe genuinely Pending work instead of waiting inside the
