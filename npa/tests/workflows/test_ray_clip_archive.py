@@ -523,3 +523,42 @@ def test_live_cleanup_attempts_all_owned_objects_and_retains_failed_ledger(tmp_p
     assert result[first] == {"created": True, "cleanup_error_type": "OSError"}
     assert result[second]["deleted_and_absent"] is True
     assert "private-provider-detail" not in evidence.read_text()
+
+
+@pytest.mark.parametrize("vector_kind", ["variable", "boolean"])
+@pytest.mark.parametrize("operation", ["archive", "restore"])
+def test_lance_schema_must_support_the_validated_vectors(modules, source, store, tmp_path, vector_kind, operation):
+    import lancedb
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    archive, _ = modules
+    table = pq.read_table(source / "embeddings.parquet")
+    rows = table.to_pylist()
+    vector_type = pa.list_(pa.float32())
+    if vector_kind == "boolean":
+        vector_type = pa.list_(pa.bool_(), 512)
+        for row in rows:
+            row["vector"] = [bool(value) for value in row["vector"]]
+    schema = table.schema.set(3, pa.field("vector", vector_type))
+    malformed = pa.Table.from_pylist(rows, schema=schema)
+    # Python row equality alone hides both changes to the native Arrow schema.
+    assert malformed.to_pylist() == table.to_pylist()
+    shutil.rmtree(source / "lance")
+    persisted = lancedb.connect(str(source / "lance")).create_table("embeddings", data=malformed, schema=schema)
+    assert not persisted.schema.equals(table.schema, check_metadata=False)
+    assert persisted.to_arrow().to_pylist() == table.to_pylist()
+    _checksums(source)
+    if operation == "archive":
+        with pytest.raises(ValueError, match="schemas differ"):
+            archive.archive(source, PREFIX, store)
+        assert not store.objects
+        return
+    # A content-bound but malformed remote tree must also fail during restore.
+    files = {name: {"size": len(data), "sha256": _hash(data)} for name, data in _bytes(source).items()}
+    manifest = archive.canonical({"schema": archive.SCHEMA, "format": "basic", "files": files})
+    store.objects.update({f"{PREFIX}/files/{name}": data for name, data in _bytes(source).items()})
+    store.objects[f"{PREFIX}/complete.json"] = manifest
+    with pytest.raises(ValueError, match="schemas differ"):
+        archive.restore(PREFIX, tmp_path / "unusable", _hash(manifest), store)
+    assert not (tmp_path / "unusable").exists() and not list(tmp_path.glob(".clip-restore-*"))

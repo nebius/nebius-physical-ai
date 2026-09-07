@@ -113,6 +113,8 @@ def _lance_and_previews(root, table, files):
 
     database = lancedb.connect(str(root / "lance"))
     persisted = database.open_table("embeddings").to_arrow().sort_by("record_id")
+    if not persisted.schema.equals(table.schema, check_metadata=False):
+        raise ValueError("Lance and Parquet schemas differ")
     if persisted.to_pylist() != table.to_pylist():
         raise ValueError("Lance and Parquet rows differ")
     expected_images = set()

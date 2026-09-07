@@ -37,7 +37,8 @@ contains `manifest_sha256`, the format, file count and byte count. Keep that has
 with the archive location: restore requires this independently retained identity.
 The JSON does not disclose resource addresses or report contents.
 
-Create an owner-only parent and restore into a **new** child directory:
+Set `RESTORE_PARENT` to an absolute path, create that owner-only parent, and
+restore into a **new** child directory:
 
 ```bash
 mkdir -m 700 "$RESTORE_PARENT"
