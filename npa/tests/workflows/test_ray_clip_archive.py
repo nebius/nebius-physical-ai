@@ -12,6 +12,7 @@ from pathlib import Path
 import shutil
 import sys
 import threading
+from types import SimpleNamespace
 
 import pytest
 
@@ -291,7 +292,7 @@ def test_failed_restore_has_no_destination_or_staging(modules, source, store, tm
     assert not list(tmp_path.glob(".clip-restore-*"))
 
 
-@pytest.mark.parametrize("name", ["../escape", "/absolute", "a//b", "a/./b", "a\\b", "a\nline"])
+@pytest.mark.parametrize("name", ["../escape", "/absolute", "a//b", "a/./b", "a\\b", "a\nline", "a?query", "a#fragment"])
 def test_unsafe_manifest_is_rejected_before_payload_reads(modules, store, tmp_path, name):
     archive, _ = modules
     payload = archive.canonical({"schema": archive.SCHEMA, "format": "basic",
@@ -300,6 +301,80 @@ def test_unsafe_manifest_is_rejected_before_payload_reads(modules, store, tmp_pa
     with pytest.raises(ValueError):
         archive.restore(PREFIX, tmp_path / "result", _hash(payload), store)
     assert store.reads == [f"{PREFIX}/complete.json"]
+
+
+@pytest.mark.parametrize("suffix", ["?query", "#fragment"])
+def test_url_ambiguous_source_names_are_rejected_before_upload(modules, source, store, suffix):
+    from npa.clients.storage import _parse_bucket_uri
+
+    archive, _ = modules
+    assert _parse_bucket_uri(f"{PREFIX}/files/preview.png{suffix}") == _parse_bucket_uri(f"{PREFIX}/files/preview.png")
+    (source / ("preview.png" + suffix)).write_bytes((source / "preview.png").read_bytes())
+    _checksums(source)
+    with pytest.raises(ValueError, match="Unsafe"):
+        archive.archive(source, PREFIX, store)
+    assert not store.objects
+
+
+@pytest.mark.parametrize("actors,attempted", [(0, 0), (-1, -1), (True, True), ("all", "all"), (1, True), (2, 2)])
+def test_cleanup_counts_require_real_initialized_actors(modules, advanced, store, actors, attempted):
+    archive, _ = modules
+    report = json.loads((advanced / "report.json").read_text())
+    report["gpu_actors"] = actors
+    _json(advanced / "report.json", report)
+    _json(advanced / "actor-cleanup.json", {"errors": [], "attempted": attempted})
+    _checksums(advanced)
+    with pytest.raises(ValueError, match="cleanup"):
+        archive.archive(advanced, PREFIX, store)
+    assert not store.objects
+
+
+def test_completed_actor_recovery_retains_replacement_initialization(modules, advanced, store, tmp_path):
+    archive, _ = modules
+    report = json.loads((advanced / "report.json").read_text())
+    recovery = {"parquet_sha256": _hash((advanced / "shards/000000/embeddings.parquet").read_bytes())}
+    report["recovery"] = recovery
+    report["model_initializations"].append(dict(report["model_initializations"][0]))
+    _json(advanced / "report.json", report)
+    _json(advanced / "recovery.json", recovery)
+    _checksums(advanced)
+    receipt = archive.archive(advanced, PREFIX, store)
+    restored = tmp_path / "recovered"
+    assert archive.restore(PREFIX, restored, receipt["manifest_sha256"], store) == receipt
+    assert _bytes(restored) == _bytes(advanced)
+
+
+def test_overflowing_json_number_is_rejected_before_upload(modules, source, store):
+    archive, _ = modules
+    report = source / "report.json"
+    report.write_text(report.read_text().rstrip()[:-1] + ', "application_seconds": 1e999}')
+    _checksums(source)
+    with pytest.raises(ValueError, match="Nonfinite"):
+        archive.archive(source, PREFIX, store)
+    assert not store.objects
+
+
+@pytest.mark.parametrize("replacement", ["symlink", "directory"])
+def test_restore_parent_swap_cannot_report_success(modules, source, store, tmp_path, replacement):
+    archive, _ = modules
+    receipt = archive.archive(source, PREFIX, store)
+    parent = tmp_path / "publish"
+    parent.mkdir(mode=0o700)
+    moved = tmp_path / "moved"
+    read = store.read_bytes_with_etag
+    def race(uri):
+        parent.rename(moved)
+        if replacement == "symlink":
+            parent.symlink_to(moved, target_is_directory=True)
+        else:
+            parent.mkdir(mode=0o700)
+        store.read_bytes_with_etag = read
+        return read(uri)
+    store.read_bytes_with_etag = race
+    with pytest.raises((ValueError, OSError)):
+        archive.restore(PREFIX, parent / "result", receipt["manifest_sha256"], store)
+    assert not (parent / "result").exists() and not (moved / "result").exists()
+    assert not list(moved.iterdir())
 
 
 def test_empty_destination_created_at_publication_is_preserved(modules, source, store, tmp_path, monkeypatch):
@@ -423,3 +498,28 @@ def test_cli_uses_shared_functions_and_redacts_storage_errors(modules, monkeypat
     monkeypatch.setattr(archive.StorageClient, "from_environment", denied)
     assert archive.main(["archive", "--input-path", str(source), "--output-path", PREFIX]) == 1
     assert "sensitive-provider-address" not in capsys.readouterr().err
+
+
+def test_live_cleanup_attempts_all_owned_objects_and_retains_failed_ledger(tmp_path):
+    path = Path(__file__).parents[1] / "e2e/test_ray_clip_archive_live.py"
+    spec = importlib.util.spec_from_file_location("clip_archive_live_cleanup_test", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    attempted = []
+    def delete_object(*, Bucket, Key):
+        attempted.append(Key)
+        if Key.endswith("first"):
+            raise OSError("private-provider-detail")
+    client = SimpleNamespace(s3=SimpleNamespace(delete_object=delete_object),
+                             read_bytes_with_etag=lambda uri: None)
+    evidence = tmp_path / "objects.json"
+    storage = module._RecordedStorage(client, evidence)
+    first, second = f"{PREFIX}/first", f"{PREFIX}/second"
+    storage.owned = {first: {"created": True}, second: {"created": True}}
+    with pytest.raises(RuntimeError, match="cleanup incomplete"):
+        module._cleanup_created(storage)
+    assert attempted == ["clip-test/first", "clip-test/second"]
+    result = json.loads(evidence.read_text())
+    assert result[first] == {"created": True, "cleanup_error_type": "OSError"}
+    assert result[second]["deleted_and_absent"] is True
+    assert "private-provider-detail" not in evidence.read_text()

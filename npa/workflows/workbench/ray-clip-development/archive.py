@@ -271,6 +271,14 @@ def restore(input_uri: str, destination: Path, manifest_sha256: str, storage: St
             os.close(descriptor)
         if kind != manifest["format"] or observed != manifest["files"]:
             raise ValueError("Restored inventory differs")
+        current = _directory(destination.parent)
+        try:
+            current_info = os.fstat(current)
+            if ((current_info.st_dev, current_info.st_ino) != (info.st_dev, info.st_ino)
+                    or current_info.st_uid != os.getuid() or current_info.st_mode & 0o077):
+                raise ValueError("Restore parent changed before publication")
+        finally:
+            os.close(current)
         _expose(parent, staging.name, destination.name)
         staging = None
         return _receipt(manifest, payload)

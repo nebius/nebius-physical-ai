@@ -56,7 +56,8 @@ when the source checksum inventory includes it; no converter is required or run.
 
 The companion checks the complete `SHA256SUMS` inventory and, for basic results,
 the matching `sha256.json`. It rejects missing or unlisted files, duplicate
-names, traversal, symlinks, hard links and special files. It reopens Parquet and
+names, URL query/fragment delimiters (`?` and `#`), traversal, symlinks, hard
+links and special files. It reopens Parquet and
 Lance, checks every record and normalized 512-dimensional vector, compares
 preview input bytes and retrieval inventories, and verifies report hashes.
 Advanced results additionally require execution identity, complete committed
@@ -83,7 +84,9 @@ bytes and formats in a private sibling staging directory, then atomically
 publishes with Linux `renameat2(RENAME_NOREPLACE)`. Even a racing empty
 destination is preserved. A failed verification removes staging and leaves no
 successful destination. Unsupported atomic publication fails closed. Preserve
-the source until archive succeeds; retain your own backup/retention policy.
+the restore parent path and its ancestors throughout the command; a detected
+replacement fails before publication. Preserve the source until archive succeeds;
+retain your own backup/retention policy.
 
 The current StorageClient byte API buffers one object at a time. Local staging
 needs space for one complete tree; archive also retains the original. This is a

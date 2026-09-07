@@ -55,6 +55,24 @@ class _RecordedStorage:
         return self.client.read_bytes_with_etag(uri)
 
 
+def _cleanup_created(storage):
+    failed = False
+    for uri, record in storage.owned.items():
+        if record["created"]:
+            try:
+                parsed = urlsplit(uri)
+                storage.client.s3.delete_object(Bucket=parsed.netloc, Key=parsed.path[1:])
+                assert storage.client.read_bytes_with_etag(uri) is None
+                record["deleted_and_absent"] = True
+                record.pop("cleanup_error_type", None)
+            except Exception as error:
+                record["cleanup_error_type"] = type(error).__name__
+                failed = True
+            _write(storage.evidence, storage.owned)
+    if failed:
+        raise RuntimeError("Owned object cleanup incomplete; reconcile the private ledger")
+
+
 def test_actual_s3_archive_restore_and_corruption(monkeypatch):
     if not (config_path := os.environ.get("NPA_RAY_CLIP_ARCHIVE_LIVE_CONFIG")):
         pytest.skip("requires private source provenance and preflighted owned workload storage")
@@ -116,13 +134,9 @@ def test_actual_s3_archive_restore_and_corruption(monkeypatch):
                              "conflict_refused": True, "corruption_refused": True})
         _write(evidence / "result.json", {"receipts": receipts})
     finally:
-        for uri, record in storage.owned.items():
-            if record["created"]:
-                parsed = urlsplit(uri)
-                client.s3.delete_object(Bucket=parsed.netloc, Key=parsed.path[1:])
-                assert client.read_bytes_with_etag(uri) is None
-                record["deleted_and_absent"] = True
-                _write(storage.evidence, storage.owned)
-        for name in names:
-            sys.modules.pop(name, None)
-        sys.modules.update(saved)
+        try:
+            _cleanup_created(storage)
+        finally:
+            for name in names:
+                sys.modules.pop(name, None)
+            sys.modules.update(saved)

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from pathlib import Path, PurePosixPath
 import re
 
@@ -21,7 +22,7 @@ def canonical(value: object) -> bytes:
 
 def safe_name(name: str) -> str:
     """Reject ambiguous, nonportable or escaping relative file names."""
-    if (not isinstance(name, str) or not name or "\\" in name
+    if (not isinstance(name, str) or not name or any(char in name for char in "\\?#")
             or any(ord(char) < 32 or ord(char) == 127 for char in name)
             or PurePosixPath(name).is_absolute()
             or PurePosixPath(name).as_posix() != name
@@ -51,7 +52,14 @@ def read_json(content: bytes):
     def invalid_constant(_value):
         raise ValueError("Nonfinite JSON value")
 
-    return json.loads(content, object_pairs_hook=_unique_pairs, parse_constant=invalid_constant)
+    def finite_float(value):
+        number = float(value)
+        if not math.isfinite(number):
+            raise ValueError("Nonfinite JSON value")
+        return number
+
+    return json.loads(content, object_pairs_hook=_unique_pairs, parse_constant=invalid_constant,
+                      parse_float=finite_float)
 
 
 def _checksums(root, files):
@@ -169,7 +177,11 @@ def _advanced(root, report, table, files):
     if read_json((root / "execution.json").read_bytes()) != {"execution_fingerprint": fingerprint}:
         raise ValueError("Execution identity differs")
     cleanup = read_json((root / "actor-cleanup.json").read_bytes())
-    if cleanup["errors"] != [] or cleanup["attempted"] != report["gpu_actors"]:
+    actors = report["gpu_actors"]
+    if (type(actors) is not int or actors < 1
+            or type(cleanup["attempted"]) is not int
+            or cleanup["errors"] != [] or cleanup["attempted"] != actors
+            or len(report["model_initializations"]) != actors + int(report["recovery"] is not None)):
         raise ValueError("Advanced result has no successful actor cleanup")
     count, size = report["records"], report["batch_size"]
     if type(size) is not int or size < 1:
