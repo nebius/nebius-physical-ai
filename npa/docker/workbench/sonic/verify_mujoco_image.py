@@ -17,7 +17,7 @@ def main() -> int:
         raise SystemExit("FATAL: SONIC MuJoCo closure checksum drift")
     for module in ("gear_sonic", "torch", "mujoco", "boto3", "yaml"):
         importlib.import_module(module)
-    for package, wanted in {"torch": "2.9.0", "mujoco": "3.11.0"}.items():
+    for package, wanted in {"torch": "2.13.0", "mujoco": "3.11.0"}.items():
         found = metadata.version(package)
         if found != wanted:
             raise SystemExit(f"FATAL: {package} expected {wanted}, found {found}")

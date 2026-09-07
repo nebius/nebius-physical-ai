@@ -1,13 +1,14 @@
-# CUDA 13.0.1 is paired with the PyTorch 2.9.0 cu130 wheel index.
+# CUDA 13.0.1 uses the patched PyTorch 2.13.0 cu130 wheel family.
 # The Docker Hub tag uses "cudnn" rather than the non-existent "cudnn9" suffix.
 ARG CUDA_BASE_TAG=13.0.1-cudnn-devel-ubuntu22.04
 FROM nvidia/cuda:${CUDA_BASE_TAG}
 
 ARG CUDA_BASE_TAG=13.0.1-cudnn-devel-ubuntu22.04
 ARG BUILD_TS=unknown
-ARG TORCH_VERSION=2.9.0
-ARG TORCHVISION_VERSION=0.24.0
-ARG TORCHAUDIO_VERSION=2.9.0
+ARG TORCH_VERSION=2.13.0
+ARG TORCHVISION_VERSION=0.28.0
+# TorchAudio 2.11 is forward-compatible with later Torch releases.
+ARG TORCHAUDIO_VERSION=2.11.0
 ARG FLASH_ATTN_COMMIT=0409f9adcbdebff6cc19eb95f370d40e896980bc
 # flash-attn-4 requires nvidia-cutlass-dsl>=4.4.2 and quack-kernels>=0.4.0, both
 # unbounded, so pip resolves to whatever is newest. CUTLASS DSL 4.6.x dropped
@@ -39,7 +40,7 @@ LABEL npa.image="cuda13-b300" \
       npa.quack_kernels.version="${QUACK_KERNELS_VERSION}" \
       npa.cuda_arch_list="${TORCH_CUDA_ARCH_LIST}" \
       npa.build_ts="${BUILD_TS}" \
-      npa.build_info="cuda=${CUDA_BASE_TAG};torch=${TORCH_VERSION}+cu130;torchvision=${TORCHVISION_VERSION}+cu130;torchaudio=${TORCHAUDIO_VERSION}+cu130;flash_attn_4_commit=${FLASH_ATTN_COMMIT};cutlass_dsl=${CUTLASS_DSL_VERSION};quack_kernels=${QUACK_KERNELS_VERSION};torch_cuda_arch_list=${TORCH_CUDA_ARCH_LIST}"
+      npa.build_info="cuda=${CUDA_BASE_TAG};torch=${TORCH_VERSION}+cu130;torchvision=${TORCHVISION_VERSION}+cu130;torchaudio=${TORCHAUDIO_VERSION};flash_attn_4_commit=${FLASH_ATTN_COMMIT};cutlass_dsl=${CUTLASS_DSL_VERSION};quack_kernels=${QUACK_KERNELS_VERSION};torch_cuda_arch_list=${TORCH_CUDA_ARCH_LIST}"
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
@@ -172,7 +173,8 @@ COPY scripts/check_torch_gpu_arch.py /npa/check_torch_gpu_arch.py
 COPY scripts/gpu_capability_smoke.py /npa/gpu_capability_smoke.py
 
 ARG REQUIRE_TORCH_ARCHS
-RUN python /npa/check_torch_gpu_arch.py $(printf -- '--require-arch %s ' ${REQUIRE_TORCH_ARCHS}) \
+RUN python -m pip check \
+    && python /npa/check_torch_gpu_arch.py $(printf -- '--require-arch %s ' ${REQUIRE_TORCH_ARCHS}) \
     && python - <<'PY'
 import importlib.metadata as metadata
 

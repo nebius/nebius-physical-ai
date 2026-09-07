@@ -13,7 +13,7 @@ import pytest
 IMAGE = Path(__file__).resolve().parents[3] / "npa/docker/workbench/curobo"
 NOTICE_URL = "https://developer.download.nvidia.com/compute/nvshmem/redist/libnvshmem/LICENSE.txt"
 NOTICE_PATH = "/usr/share/doc/npa-curobo/NVSHMEM-LICENSE.txt"
-# NVIDIA's 3.3.24 CUDA13 archive and its linked product license have these bytes.
+# NVIDIA's 3.4.5 CUDA13 archive and its linked product license have these bytes.
 NOTICE_SHA256 = "43a87c0ff94ce3196011ff75e17fbee96933c9e1d511557659ece8a326f95e8f"
 
 

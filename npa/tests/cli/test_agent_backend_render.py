@@ -1220,6 +1220,16 @@ def _capture_setup_script(
     return captured["setup_script"]
 
 
+def test_bootstrap_installs_auth_with_protected_stdin(monkeypatch) -> None:
+    setup = _capture_setup_script(monkeypatch)
+    commands = [line for line in setup.splitlines() if "sudo htpasswd " in line]
+    assert len(commands) == 1
+    assert "| sudo htpasswd -iBc" in commands[0]
+    assert "password" not in commands[0].split("| sudo htpasswd", 1)[1]
+    assert 'sudo chown root:www-data "$stage/auth"' in setup
+    assert 'sudo mv -fT -- "$stage/auth" /etc/nginx/.npa-agent-htpasswd' in setup
+
+
 def test_bootstrap_stages_explicit_official_foxglove_backend(monkeypatch) -> None:
     setup_script = _capture_setup_script(
         monkeypatch,

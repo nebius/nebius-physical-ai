@@ -310,8 +310,17 @@ def test_locked_downloads_reject_invalid_input(raw):
 def test_repository_closure_is_exactly_payload_pinned():
     raw = (HELPER / "go.sum").read_bytes()
     values = B.locked_modules(raw)
-    assert len(values) == 77
+    # archives 0.1.5 supports the patched RAR decoder and changes its closure.
+    assert len(values) == 76
     assert f"github.com/zricethezav/gitleaks/v8@{B.GITLEAKS_VERSION}" in values
+    assert {
+        "github.com/mholt/archives@v0.1.5",
+        "github.com/nwaples/rardecode/v2@v2.2.0",
+        "github.com/ulikunitz/xz@v0.5.15",
+        "github.com/klauspost/compress@v1.18.7",
+        "golang.org/x/crypto@v0.56.0",
+        "golang.org/x/text@v0.41.0",
+    }.issubset(values)
     assert not any("/go.mod" in value for value in values)
 
 

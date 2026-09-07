@@ -32,6 +32,7 @@ from npa.cli.ingress import (
     world_open_ack_option,
 )
 from npa.cli.path_contract import PathContractError, validate_write_path
+from npa.clients.env import load_env_file_script
 from npa.clients.config import (
     APP_STATUS_HEALTHY,
     APP_STATUS_INSTALL_FAILED,
@@ -974,7 +975,7 @@ from diffusers.utils import export_to_video
 
 MODEL_DIR = Path(os.environ.get("COSMOS_MODEL_DIR", "{COSMOS_MODEL_DIR}"))
 OUTPUT_DIR = Path(os.environ.get("COSMOS_OUTPUT_DIR", "{COSMOS_HOME}/outputs"))
-DEFAULT_MODEL = "{default_model}"
+DEFAULT_MODEL = {default_model!r}
 DISABLE_SAFETY = os.environ.get("COSMOS_DISABLE_SAFETY", "0").strip().lower() in {{"1", "true", "yes", "on"}}
 if DISABLE_SAFETY:
     print(
@@ -1169,12 +1170,61 @@ def _run_inference(req: InferRequest) -> dict[str, Any]:
 '''
 
 
+def _build_service_env_script(model: str, port: int, *, no_guardrails: bool = False) -> str:
+    """Publish a systemd environment atomically without exposing token bytes."""
+    values = {
+        "COSMOS_MODEL_ID": model,
+        "COSMOS_MODEL_DIR": COSMOS_MODEL_DIR,
+        "COSMOS_OUTPUT_DIR": COSMOS_OUTPUT_DIR,
+        "COSMOS_SERVER_PORT": str(port),
+        "COSMOS_DISABLE_SAFETY": "1" if no_guardrails else "0",
+        "HF_HOME": COSMOS_HF_CACHE,
+        "HUGGINGFACE_HUB_CACHE": COSMOS_HF_CACHE,
+    }
+    if any(ord(char) < 32 or ord(char) == 127 for value in values.values() for char in value):
+        raise ValueError("Cosmos environment values must not contain control characters")
+    encoded = base64.b64encode(json.dumps(values).encode()).decode("ascii")
+    return f"""\
+(
+set -euo pipefail
+sudo install -d -m 0755 /etc/npa-cosmos-server
+stage="$(sudo mktemp -d /etc/npa-cosmos-server/.env.XXXXXXXX)"
+trap 'sudo rm -rf -- "$stage"' EXIT
+sudo install -m 0600 /dev/null "$stage/env"
+python3 - <<'COSMOS_ENV_PY' | sudo tee "$stage/env" >/dev/null
+import base64
+import json
+import os
+import sys
+
+values = json.loads(base64.b64decode({encoded!r}))
+if os.environ.get("HF_TOKEN"):
+    values["HF_TOKEN"] = os.environ["HF_TOKEN"]
+if any(ord(char) < 32 or ord(char) == 127 for value in values.values() for char in value):
+    raise ValueError("Cosmos environment values must not contain control characters")
+# systemd EnvironmentFile double quoting preserves literal dollars, spaces and
+# quotes. ensure_ascii=False avoids JSON-only Unicode escape sequences.
+sys.stdout.write("".join(key + "=" + json.dumps(value, ensure_ascii=False) + "\\n" for key, value in values.items()))
+COSMOS_ENV_PY
+sudo chmod 0600 "$stage/env"
+sudo mv -fT -- "$stage/env" /etc/npa-cosmos-server/env
+)
+"""
+
+
 def _build_install_command(model: str, port: int, *, no_guardrails: bool = False) -> str:
     server_py = _build_server_py(model)
     model_slug = _model_slug(model)
-    disable_safety = "1" if no_guardrails else "0"
+    service_env = _build_service_env_script(model, port, no_guardrails=no_guardrails)
     script = f"""\
 set -euo pipefail
+install_stage="$(mktemp -d /tmp/npa-cosmos-install.XXXXXXXX)"
+trap 'rm -rf -- "$install_stage"' EXIT
+cosmos_requirements="$install_stage/cosmos-predict2-noncuda-requirements.txt"
+cosmos_constraints="$install_stage/cosmos-cu128-constraints.txt"
+flash_attn_wheel="$install_stage/flash_attn-{COSMOS_FLASH_ATTN_VERSION}-cp310-cp310-linux_x86_64.whl"
+natten_wheel="$install_stage/natten-{COSMOS_NATTEN_VERSION}-cp310-cp310-linux_x86_64.whl"
+transformer_engine_wheel="$install_stage/transformer_engine-{COSMOS_TRANSFORMER_ENGINE_VERSION}-cp310-cp310-linux_x86_64.whl"
 export DEBIAN_FRONTEND=noninteractive
 sudo apt-get update
 sudo apt-get install -y software-properties-common git curl ffmpeg
@@ -1192,8 +1242,6 @@ python3.10 -m venv {COSMOS_VENV}
 {COSMOS_VENV}/bin/python -m pip install --upgrade pip setuptools wheel
 {COSMOS_VENV}/bin/python -m pip install "torch=={COSMOS_TORCH_VERSION}" "torchvision=={COSMOS_TORCHVISION_VERSION}" --extra-index-url {COSMOS_PIP_EXTRA_INDEX_URL}
 {COSMOS_VENV}/bin/python -m pip install --no-deps "cosmos-predict2=={COSMOS_VERSION}"
-cosmos_requirements="/tmp/cosmos-predict2-noncuda-requirements.txt"
-cosmos_constraints="/tmp/cosmos-cu128-constraints.txt"
 printf "%s\\n" "torch=={COSMOS_TORCH_VERSION}" "torchvision=={COSMOS_TORCHVISION_VERSION}" "triton=={COSMOS_TRITON_VERSION}" > "$cosmos_constraints"
 {COSMOS_VENV}/bin/python - <<'PY' > "$cosmos_requirements"
 from importlib import metadata
@@ -1207,13 +1255,10 @@ for raw in metadata.requires("cosmos-predict2") or ():
         print(raw)
 PY
 {COSMOS_VENV}/bin/python -m pip install -c "$cosmos_constraints" -r "$cosmos_requirements"
-flash_attn_wheel="/tmp/flash_attn-{COSMOS_FLASH_ATTN_VERSION}-cp310-cp310-linux_x86_64.whl"
 curl -L -o "$flash_attn_wheel" "{COSMOS_FLASH_ATTN_WHEEL_URL}"
 {COSMOS_VENV}/bin/python -m pip install --no-deps "$flash_attn_wheel"
-natten_wheel="/tmp/natten-{COSMOS_NATTEN_VERSION}-cp310-cp310-linux_x86_64.whl"
 curl -L -o "$natten_wheel" "{COSMOS_NATTEN_WHEEL_URL}"
 {COSMOS_VENV}/bin/python -m pip install --no-deps "$natten_wheel"
-transformer_engine_wheel="/tmp/transformer_engine-{COSMOS_TRANSFORMER_ENGINE_VERSION}-cp310-cp310-linux_x86_64.whl"
 curl -L -o "$transformer_engine_wheel" "{COSMOS_TRANSFORMER_ENGINE_WHEEL_URL}"
 {COSMOS_VENV}/bin/python -m pip install --no-deps "$transformer_engine_wheel"
 {COSMOS_VENV}/bin/python -m pip install -c "$cosmos_constraints" "diffusers>=0.38.0" "peft>={COSMOS_PEFT_MIN_VERSION}" transformers accelerate fastapi "uvicorn[standard]" huggingface_hub pillow "imageio[ffmpeg]" pydantic python-multipart
@@ -1221,31 +1266,11 @@ curl -L -o "$transformer_engine_wheel" "{COSMOS_TRANSFORMER_ENGINE_WHEEL_URL}"
 cat > {COSMOS_HOME}/server.py <<'PY'
 {server_py}
 PY
-if [ -f /opt/lerobot/.env ]; then
-  set -a
-  . /opt/lerobot/.env
-  set +a
-fi
+{load_env_file_script('/opt/lerobot/.env', required=False)}
 export HF_HOME={COSMOS_HF_CACHE}
 export HUGGINGFACE_HUB_CACHE={COSMOS_HF_CACHE}
-if [ -n "${{HF_TOKEN:-}}" ]; then
-  {COSMOS_VENV}/bin/huggingface-cli download {shlex.quote(model)} --local-dir {COSMOS_MODEL_DIR}/{model_slug} --token "$HF_TOKEN"
-else
-  {COSMOS_VENV}/bin/huggingface-cli download {shlex.quote(model)} --local-dir {COSMOS_MODEL_DIR}/{model_slug}
-fi
-sudo mkdir -p /etc/npa-cosmos-server
-sudo tee /etc/npa-cosmos-server/env >/dev/null <<'ENV'
-COSMOS_MODEL_ID={model}
-COSMOS_MODEL_DIR={COSMOS_MODEL_DIR}
-COSMOS_OUTPUT_DIR={COSMOS_OUTPUT_DIR}
-COSMOS_SERVER_PORT={port}
-COSMOS_DISABLE_SAFETY={disable_safety}
-HF_HOME={COSMOS_HF_CACHE}
-HUGGINGFACE_HUB_CACHE={COSMOS_HF_CACHE}
-ENV
-if [ -n "${{HF_TOKEN:-}}" ]; then
-  printf 'HF_TOKEN=%s\n' "$HF_TOKEN" | sudo tee -a /etc/npa-cosmos-server/env >/dev/null
-fi
+{COSMOS_VENV}/bin/huggingface-cli download {shlex.quote(model)} --local-dir {shlex.quote(f'{COSMOS_MODEL_DIR}/{model_slug}')}
+{service_env}
 sudo tee /etc/systemd/system/{COSMOS_SERVICE}.service >/dev/null <<'UNIT'
 [Unit]
 Description=NPA Cosmos model server
@@ -1280,25 +1305,13 @@ PY
 
 def _build_serve_command(model: str, port: int, *, no_guardrails: bool = False) -> str:
     server_py = _build_server_py(model)
-    disable_safety = "1" if no_guardrails else "0"
+    service_env = _build_service_env_script(model, port, no_guardrails=no_guardrails)
     script = f"""\
 set -euo pipefail
 cat > {COSMOS_HOME}/server.py <<'PY'
 {server_py}
 PY
-sudo mkdir -p /etc/npa-cosmos-server
-sudo tee /etc/npa-cosmos-server/env >/dev/null <<'ENV'
-COSMOS_MODEL_ID={model}
-COSMOS_MODEL_DIR={COSMOS_MODEL_DIR}
-COSMOS_OUTPUT_DIR={COSMOS_OUTPUT_DIR}
-COSMOS_SERVER_PORT={port}
-COSMOS_DISABLE_SAFETY={disable_safety}
-HF_HOME={COSMOS_HF_CACHE}
-HUGGINGFACE_HUB_CACHE={COSMOS_HF_CACHE}
-ENV
-if [ -n "${{HF_TOKEN:-}}" ]; then
-  printf 'HF_TOKEN=%s\n' "$HF_TOKEN" | sudo tee -a /etc/npa-cosmos-server/env >/dev/null
-fi
+{service_env}
 sudo systemctl daemon-reload
 sudo systemctl enable {COSMOS_SERVICE}
 sudo systemctl restart {COSMOS_SERVICE}
