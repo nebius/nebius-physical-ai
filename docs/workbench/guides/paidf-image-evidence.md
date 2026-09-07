@@ -80,7 +80,7 @@ The first six replacement recordings passed `rerun rrd verify` and
 `rerun rrd print -vv`. Conversion independently reopens the closed recording and
 compares provenance, complete scalar/event sequences, every source-frame index,
 and every RGB pixel hash. Publication read back all 251,224,912 RRD bytes and
-125,599 companion manifest bytes across twelve immutable objects. Before any
+122,732 companion manifest bytes across twelve immutable objects. Before any
 replacement write, all six original remote companion manifests matched their
 historically verified hashes.
 
