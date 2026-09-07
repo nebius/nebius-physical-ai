@@ -33,6 +33,7 @@ SONIC_IMAGE_MANIFEST_RESOURCE = "sonic_image_manifest.json"
 WAN_IMAGE_MANIFEST_RESOURCE = "wan2_2_image_manifest.json"
 LTX2_IMAGE_MANIFEST_RESOURCE = "ltx2_image_manifest.json"
 CONTENT_AGENTS_IMAGE_MANIFEST_RESOURCE = "content_agents_image_manifest.json"
+NCORE_IMAGE_MANIFEST_RESOURCE = "ncore_image_manifest.json"
 PUBLIC_RELEASE_MANIFEST_RESOURCE = "public_release_manifest.json"
 
 CONTAINER_IMAGE_NAMES = {
@@ -341,6 +342,177 @@ def content_agents_accepted_image_manifest() -> dict[str, Any]:
     return payload
 
 
+def validate_ncore_accepted_image_manifest(payload: Any) -> dict[str, Any]:
+    """Validate the reviewed NCore image/full-COLMAP/NRE acceptance tuple offline.
+
+    Hashes identify access-controlled evidence; this does not manufacture or run
+    that evidence. ``byte_scan.complete`` means the entire OCI graph, including
+    index, attestations, configs, history and every ancestor layer, was covered.
+    Publication additionally rechecks the exact registry artifact.
+    Keep the template unaccepted and quarantine intact until real results exist.
+    """
+
+    def require(ok: bool, field: str) -> None:
+        if not ok:
+            raise RuntimeError(f"NCore acceptance requires valid {field}")
+
+    def record(parent: dict[str, Any], key: str) -> dict[str, Any]:
+        value = parent.get(key)
+        require(isinstance(value, dict), key)
+        return value
+
+    def match(parent: dict[str, Any], key: str, pattern: str) -> None:
+        value = parent.get(key)
+        require(
+            isinstance(value, str) and re.fullmatch(pattern, value) is not None, key
+        )
+
+    def count(parent: dict[str, Any], key: str, minimum: int = 0) -> int:
+        value = parent.get(key)
+        require(type(value) is int and value >= minimum, key)
+        return value
+
+    def equal(parent: dict[str, Any], key: str, expected: Any) -> None:
+        value = parent.get(key)
+        require(type(value) is type(expected) and value == expected, key)
+
+    require(isinstance(payload, dict), "manifest object")
+    equal(payload, "format", "npa_ncore_accepted_image_manifest_v1")
+    equal(payload, "status", "accepted")
+    equal(payload, "tag", public_release_tag_for_tool("ncore"))
+    match(payload, "development_sha", r"[0-9a-f]{40}")
+    for field in ("oci_digest", "amd64_manifest", "config_digest"):
+        match(payload, field, r"sha256:[0-9a-f]{64}")
+    require(
+        len({payload[k] for k in ("oci_digest", "amd64_manifest", "config_digest")})
+        == 3,
+        "distinct index, platform and config digests",
+    )
+    source = record(payload, "source")
+    equal(source, "ncore_revision", "59c698d206da92b406a4f72619fce3b3a2c64bfd")
+    for field in ("lock_sha256", "post_patch_inventory_sha256"):
+        match(source, field, r"[0-9a-f]{64}")
+    for name in ("byte_scan", "payload_scan", "vulnerability_scan", "license_scan"):
+        scan = record(payload, name)
+        equal(scan, "status", "pass")
+        match(scan, "report_sha256", r"[0-9a-f]{64}")
+        equal(scan, "image_digest", payload["oci_digest"])
+    byte_scan = payload["byte_scan"]
+    equal(byte_scan, "complete", True)
+    equal(byte_scan, "config_digest", payload["config_digest"])
+    equal(byte_scan, "unresolved_findings", 0)
+    for field in ("archive_sha256", "policy_sha256"):
+        match(byte_scan, field, r"[0-9a-f]{64}")
+    for field in ("bytes_scanned", "files_scanned"):
+        count(byte_scan, field, 1)
+    equal(payload["license_scan"], "unresolved_findings", 0)
+    count(payload["payload_scan"], "entries_scanned", 1)
+    for field in ("payload_hits", "history_hits"):
+        equal(payload["payload_scan"], field, 0)
+    # The name scanner also reports harmless Python .pth files. Require reviewed
+    # byte evidence and exact count parity, not a filename-based licensing claim.
+    count(payload["payload_scan"], "weight_shaped_paths")
+    match(payload["payload_scan"], "weight_review_sha256", r"[0-9a-f]{64}")
+    vulnerability = payload["vulnerability_scan"]
+    for field in ("critical_with_fix", "secrets"):
+        equal(vulnerability, field, 0)
+    require(
+        count(vulnerability, "critical_total")
+        == count(vulnerability, "critical_unfixed"),
+        "critical vulnerability accounting",
+    )
+
+    conversion = record(payload, "conversion")
+    equal(conversion, "status", "pass")
+    equal(conversion, "exit_code", 0)
+    require(
+        conversion.get("observed_image_digest")
+        in (payload["oci_digest"], payload["amd64_manifest"]),
+        "conversion image digest",
+    )
+    for field in (
+        "report_sha256",
+        "source_archive_sha256",
+        "source_inventory_sha256",
+        "converted_inventory_sha256",
+    ):
+        match(conversion, field, r"[0-9a-f]{64}")
+    equal(conversion, "dataset_repository", "nvidia/PhysicalAI-NuRec-PPISP")
+    equal(conversion, "dataset_revision", "2521064a3af6ab1c1caa2ba1b01ddde7eecded69")
+    equal(conversion, "dataset_root", "struktur28")
+    equal(
+        conversion,
+        "source_archive_sha256",
+        "cf7ab7f100da66b2bf05b178ebcfa3a950e1bf2b1d7ff64a6c7a1e1f682afa8d",
+    )
+    source_counts = record(conversion, "source_counts")
+    converted_counts = record(conversion, "converted_counts")
+    for field, expected in (("images", 518), ("cameras", 3), ("points", 163453)):
+        equal(source_counts, field, expected)
+    for field in ("images", "cameras"):
+        equal(converted_counts, field, source_counts[field])
+    # Upstream removes near-origin SfM points; record that loss rather than
+    # requiring a fabricated equality with the unfiltered sparse source count.
+    points = count(converted_counts, "points", 1)
+    require(
+        points + count(conversion, "origin_points_filtered") == source_counts["points"],
+        "complete sparse-point accounting",
+    )
+    for field in (
+        "all_members_reopened",
+        "member_hashes_verified",
+        "calibration_verified",
+        "poses_verified",
+        "finite_geometry",
+    ):
+        equal(conversion, field, True)
+    equal(conversion, "rig_mode", "derive")
+    equal(conversion, "poses_component_group", "npa_rig")
+
+    proof = record(payload, "rtx_proof")
+    equal(proof, "status", "pass")
+    equal(proof, "conversion_report_sha256", conversion["report_sha256"])
+    equal(proof, "converted_inventory_sha256", conversion["converted_inventory_sha256"])
+    match(proof, "nre_image", r"nvcr\.io/nvidia/nre/nre-ga@sha256:[0-9a-f]{64}")
+    equal(proof, "observed_nre_digest", proof["nre_image"].split("@", 1)[1])
+    equal(proof, "gpu_model", "NVIDIA RTX PRO 6000 Blackwell Server Edition")
+    count(proof, "gpu_count", 1)
+    # Zero means NRE's full native recipe, not a zero-epoch training workload.
+    for field in ("max_epochs", "train_exit_code", "render_exit_code"):
+        equal(proof, field, 0)
+    for field in (
+        "training_steps",
+        "gaussian_count",
+        "usdz_bytes",
+        "render_bytes",
+        "decoded_frames",
+    ):
+        count(proof, field, 1)
+    for field in ("report_sha256", "usdz_sha256", "render_sha256"):
+        match(proof, field, r"[0-9a-f]{64}")
+    equal(proof, "rendered_usdz_sha256", proof["usdz_sha256"])
+    for field in ("trained_scene_reopened", "finite_pixels", "novel_view"):
+        equal(proof, field, True)
+    return payload
+
+
+@lru_cache(maxsize=1)
+def ncore_accepted_image_manifest() -> dict[str, Any]:
+    """Load NCore acceptance only after all required objective evidence exists."""
+
+    try:
+        payload = json.loads(
+            resources.files(__package__)
+            .joinpath(NCORE_IMAGE_MANIFEST_RESOURCE)
+            .read_text(encoding="utf-8")
+        )
+    except (OSError, ValueError) as exc:
+        raise RuntimeError(
+            "NCore accepted image manifest is unavailable or invalid"
+        ) from exc
+    return validate_ncore_accepted_image_manifest(payload)
+
+
 @lru_cache(maxsize=1)
 def public_release_manifest() -> dict[str, Any]:
     """Load exact anonymously verified release-digest claims."""
@@ -635,6 +807,12 @@ def container_image_for_tool(
             f"<your-registry> --push) and point NPA_REGISTRY at that registry; see "
             f"docs/workbench/container-packaging.md."
         )
+    if (
+        tool == "ncore"
+        and is_public_registry(resolved_registry)
+        and resolved_tag == public_release_tag_for_tool("ncore")
+    ):
+        ncore_accepted_image_manifest()
     return f"{resolved_registry.rstrip('/')}/{image_name}:{resolved_tag}"
 
 
@@ -886,6 +1064,18 @@ def accepted_publication_development_sha(tool: str) -> str | None:
     """Return a tool's exact accepted development SHA when one is recorded."""
 
     entry = (public_release_manifest().get("releases") or {}).get(tool) or {}
+    if tool == "ncore":
+        accepted = ncore_accepted_image_manifest()
+        for release_key, accepted_key in (
+            ("development_sha", "development_sha"),
+            ("published_digest", "oci_digest"),
+        ):
+            if entry and entry.get(release_key) != accepted[accepted_key]:
+                raise RuntimeError(
+                    f"NCore release and accepted-image {release_key} disagree"
+                )
+        # The first promotion has acceptance evidence before a published record.
+        return accepted["development_sha"]
     value = entry.get("development_sha")
     if value is None:
         return None
