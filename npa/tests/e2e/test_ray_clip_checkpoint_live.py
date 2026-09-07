@@ -122,8 +122,7 @@ def _verify_result(directory, records, retained, logs, source_hashes):
 
 def test_native_clip_stop_resume_sparse_and_invalid_checkpoints(tmp_path):
     """Stop after multiple commits, then prove full, sparse and zero-work resumes."""
-    config_path = os.environ.get("NPA_RAY_CLIP_CHECKPOINT_LIVE_CONFIG")
-    if not config_path:
+    if not (config_path := os.environ.get("NPA_RAY_CLIP_CHECKPOINT_LIVE_CONFIG")):
         pytest.skip("requires private preflighted native Ray Jobs configuration")
     from ray.job_submission import JobSubmissionClient
 
