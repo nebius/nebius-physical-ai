@@ -112,15 +112,18 @@ def test_native_launcher_preserves_argv_and_exit_status(
     launcher.write_text(
         (PACKAGING / "colmap-convert")
         .read_text()
-        .replace("/opt/ncore/converter-venv/bin/python", f'"{target}"')
+        .replace("/opt/venv/bin/python", f'"{target}"')
     )
     result = subprocess.run(
         ["bash", str(launcher), *argv], capture_output=True, check=False
     )
     assert result.returncode == 17
     assert result.stdout.decode().split("\0")[:-1] == [
+        "-I",
+        "-B",
         "-m",
-        "tools.data_converter.colmap.converter",
+        "npa.workflows.ncore_runtime",
+        "converter",
         *argv,
     ]
 
@@ -186,7 +189,7 @@ def test_pins_preserve_trueprice_reader_and_upstream_patch() -> None:
     assert lock["ncore"]["target"] == "//tools/data_converter/colmap:convert"
     assert lock["pycolmap"]["revision"] == "fe7a7c45df803b6c391777e349f0d8d65d39d777"
     assert lock["pycolmap"]["patch"] == "deps/pycolmap/fix-python3-map.patch"
-    for filename in ("converter-requirements.lock", "npa-requirements.lock"):
+    for filename in ("runtime-requirements.lock", "build-requirements.lock"):
         text = (PACKAGING / filename).read_text()
         assert (
             "pycolmap==" not in text and "torch==" not in text and "nvidia-" not in text
@@ -195,10 +198,10 @@ def test_pins_preserve_trueprice_reader_and_upstream_patch() -> None:
 
 def test_builder_exports_committed_context_without_publication() -> None:
     text = (PACKAGING / "build.sh").read_text()
-    assert 'archive "$SOURCE_SHA" npa workflows' in text
+    assert 'archive "$SOURCE_SHA" npa/src/npa npa/docker/workbench/ncore' in text
     assert '--build-arg "SOURCE_SHA=$SOURCE_SHA"' in text
     assert "--push" not in text
-    assert "--stage-catalog" in text
+    assert "--stage-catalog" not in text
 
 
 def test_reader_sentinel_keeps_unsigned_max_on_numpy2(tmp_path: Path) -> None:
@@ -223,6 +226,42 @@ DOWNSAMPLE_SOURCE = (
     "                        colmap_camera=self.scene_manager.cameras[imdata[k].camera_id],\n"
     "                        image_path=parent_dir / image_root,\n"
 )
+
+MASK_SOURCE = """                if mask_path is not None:
+                    mask_array = np.array(PILImage.open(str(mask_path)).convert("L"), dtype=np.uint8)
+                    generic_data["mask"] = mask_array
+                    masks_found += 1
+"""
+
+
+def test_mask_patch_is_narrow_and_asserts_source_drift(tmp_path):
+    source = tmp_path / "converter.py"
+    source.write_text(DOWNSAMPLE_SOURCE + MASK_SOURCE)
+    _stager().patch_downsample_masks(source)
+    assert source.read_text().startswith(DOWNSAMPLE_SOURCE)
+    assert "PILImage.Resampling.NEAREST" in source.read_text()
+    assert "source_image.size != source_size" in source.read_text()
+    for changed in (
+        source.read_text(),
+        MASK_SOURCE * 2,
+        MASK_SOURCE.replace('"L"', '"RGB"'),
+    ):
+        source.write_text(changed)
+        with pytest.raises(ValueError, match="downsample mask source changed"):
+            _stager().patch_downsample_masks(source)
+        assert source.read_text() == changed
+
+
+@pytest.mark.parametrize("count", [0, 1, 2])
+def test_text_reader_patch_rejects_source_drift_without_writing(tmp_path, count):
+    source = tmp_path / "scene_manager.py"
+    changed = (
+        "    def _load_cameras_txt(self, input_file):\n        pass\n\n    #-----\n"
+    ) * count
+    source.write_text(changed)
+    with pytest.raises(ValueError, match="text reader source changed"):
+        _stager().patch_colmap_text_readers(source)
+    assert source.read_text() == changed
 
 
 def test_downsample_patch_is_narrow_and_asserts_source_drift(tmp_path):
@@ -254,7 +293,7 @@ def test_staging_records_postpatch_converter_inventory(monkeypatch, tmp_path):
     }
     contents = {
         "ncore": {
-            "tools/data_converter/colmap/converter.py": DOWNSAMPLE_SOURCE,
+            "tools/data_converter/colmap/converter.py": DOWNSAMPLE_SOURCE + MASK_SOURCE,
             "deps/pycolmap/fix-python3-map.patch": "synthetic patch boundary",
         },
         "pycolmap": {"pycolmap/scene_manager.py": "INVALID_POINT3D = np.uint64(-1)\n"},
@@ -272,14 +311,29 @@ def test_staging_records_postpatch_converter_inventory(monkeypatch, tmp_path):
         (tmp_path / f"{component}.tar.gz").write_bytes(payload)
         lock[component]["sha256"] = hashlib.sha256(payload).hexdigest()
     monkeypatch.setattr(module.subprocess, "run", lambda *args, **kwargs: None)
+
+    # This synthetic archive isolates stage ordering/inventory from the separately
+    # exercised real reader patch (the archive has no complete reader methods).
+    def patch_text_reader(path):
+        assert "np.uint64(-1)" not in path.read_text()
+        path.write_text(path.read_text() + "# text reader patched\n")
+
+    monkeypatch.setattr(module, "patch_colmap_text_readers", patch_text_reader)
     output = tmp_path / "staged"
     module.stage(lock, output, tmp_path)
     relative = "ncore/tools/data_converter/colmap/converter.py"
     patched = (output / relative).read_bytes()
     assert b"colmap_camera=camera," in patched
+    assert b"PILImage.Resampling.NEAREST" in patched
     inventory = json.loads((output / "source-inventory.json").read_text())
     assert inventory["files"][relative] == hashlib.sha256(patched).hexdigest()
     assert (
         inventory["files"][relative]
-        != hashlib.sha256(DOWNSAMPLE_SOURCE.encode()).hexdigest()
+        != hashlib.sha256((DOWNSAMPLE_SOURCE + MASK_SOURCE).encode()).hexdigest()
+    )
+    reader = "pycolmap/pycolmap/scene_manager.py"
+    assert (output / reader).read_text().endswith("# text reader patched\n")
+    assert (
+        inventory["files"][reader]
+        == hashlib.sha256((output / reader).read_bytes()).hexdigest()
     )

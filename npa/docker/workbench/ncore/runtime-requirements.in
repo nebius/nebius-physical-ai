@@ -1,6 +1,6 @@
 # CPU closure of the official py_binary, aligned with upstream requirements_3_11.
 # torch is needed by ncore.sensors, not the COLMAP converter or V4 reader.
-# trueprice/pycolmap uses np.uint64(-1), which requires NumPy 1.x.
+# Converter and reader share the upstream NumPy 1.x numerical closure.
 numpy==1.26.4
 scipy==1.15.2
 click==8.1.8
@@ -13,4 +13,9 @@ numcodecs==0.15.1
 cbor2==5.9.0
 universal-pathlib==0.3.6
 fsspec==2025.10.0
-typing-extensions>=4.12.2
+typing-extensions==4.16.0
+
+# Existing NPA CLI/request/S3 modules, without installing the NPA distribution.
+boto3==1.43.89
+pydantic==2.13.5
+typer==0.27.2

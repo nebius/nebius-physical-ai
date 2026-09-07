@@ -42,6 +42,8 @@ def selected(name: str, component: str) -> bool:
     if component == "ncore":
         return name in NCORE_METADATA | NCORE_TOOLS or (
             path.parts[0] == "ncore"
+            and "sensors" not in path.parts
+            and path.name != "test.py"
             and (path.suffix == ".py" or path.name == "py.typed")
             and not path.name.endswith("_test.py")
             and "tests" not in path.parts
@@ -87,6 +89,106 @@ def patch_downsample_camera(path: Path) -> None:
     )
 
 
+def patch_colmap_text_readers(path: Path) -> None:
+    """Distinguish whitespace from EOF without replacing the real COLMAP reader.
+
+    Hash the complete methods after NVIDIA's Python-3 map patch so every edit
+    fails closed on drift, including changes outside the old sentinel loops.
+    """
+    expected = {
+        "_load_cameras_txt": "9f8d3c2fb96ff0c51ad4080e980ecbfc345149bdb341270486ce095ce798fdab",
+        "_load_images_txt": "3dde132bbf18620930e408e6f5f3332e0e54bdf1eb13e673836a07e7c7b77b1a",
+        "_load_points3D_txt": "c332de6334bc69c360e7873a7dd4b9ecbba97350bb29392ab35273d7a638eb12",
+    }
+    source = path.read_text()
+    for name, digest in expected.items():
+        signature = f"    def {name}(self, input_file):\n"
+        if source.count(signature) != 1:
+            raise ValueError("trueprice text reader source changed")
+        start = source.index(signature)
+        end = source.find("\n    #-----", start)
+        original = source[start:end]
+        if end == -1 or hashlib.sha256(original.encode()).hexdigest() != digest:
+            raise ValueError("trueprice text reader source changed")
+        if name != "_load_images_txt":
+            replacement = original.replace(
+                "for line in iter(lambda: f.readline().strip(), ''):",
+                "for line in f:\n                line = line.strip()",
+            )
+        else:
+            replacement = """    def _load_images_txt(self, input_file):
+        self.images = OrderedDict()
+
+        with open(input_file, 'r') as f:
+            for header in f:
+                header = header.strip()
+                if not header or header.startswith('#'):
+                    continue
+                data = header.split(maxsplit=9)
+                if len(data) != 10:
+                    raise ValueError('invalid COLMAP text image header')
+                image_id = int(data[0])
+                if image_id in self.images:
+                    raise ValueError('duplicate COLMAP text image ID')
+                image = Image(data[9], int(data[8]),
+                              Quaternion(np.array(list(map(float, data[1:5])))),
+                              np.array(list(map(float, data[5:8]))))
+
+                # A blank observation line is valid; only actual EOF is incomplete.
+                for observations in f:
+                    if not observations.lstrip().startswith('#'):
+                        break
+                else:
+                    raise ValueError('incomplete COLMAP text image record')
+                data = observations.split()
+                if len(data) % 3:
+                    raise ValueError('invalid COLMAP text image observations')
+                image.points2D = np.array(
+                    [list(map(float, data[::3])), list(map(float, data[1::3]))]).T
+                image.point3D_ids = np.array([
+                    SceneManager.INVALID_POINT3D if int(value) == -1 else int(value)
+                    for value in data[2::3]], dtype=np.uint64)
+
+                self.images[image_id] = image
+                self.name_to_image_id[image.name] = image_id
+                self.last_image_id = max(self.last_image_id, image_id)
+"""
+        source = source[:start] + replacement + source[end:]
+    path.write_text(source)
+
+
+def patch_downsample_masks(path: Path) -> None:
+    """Resize only verified original masks, to the actual per-frame image size."""
+    original = """                if mask_path is not None:
+                    mask_array = np.array(PILImage.open(str(mask_path)).convert("L"), dtype=np.uint8)
+                    generic_data["mask"] = mask_array
+                    masks_found += 1
+"""
+    replacement = """                if mask_path is not None:
+                    with PILImage.open(str(image_path)) as frame_image:
+                        target_size = frame_image.size
+                    with PILImage.open(str(mask_path)) as mask_image:
+                        mask_image = mask_image.convert("L")
+                        if mask_image.size != target_size:
+                            source_camera = colmap_camera.colmap_camera
+                            source_size = (source_camera.width, source_camera.height)
+                            if colmap_camera.downsample_factor == 1 or mask_image.size != source_size:
+                                raise ValueError("mask dimensions differ from source image")
+                            source_path = self.sequence_path / self.images_dir / image_name
+                            with PILImage.open(str(source_path)) as source_image:
+                                source_image.load()
+                                if source_image.size != source_size:
+                                    raise ValueError("original image dimensions differ from calibration")
+                            mask_image = mask_image.resize(target_size, resample=PILImage.Resampling.NEAREST)
+                        generic_data["mask"] = np.array(mask_image, dtype=np.uint8)
+                    masks_found += 1
+"""
+    source = path.read_text()
+    if source.count(original) != 1:
+        raise ValueError("NCore downsample mask source changed")
+    path.write_text(source.replace(original, replacement))
+
+
 def stage(lock: dict, output: Path, archives: Path | None = None) -> None:
     for component in ("ncore", "pycolmap"):
         pin = lock[component]
@@ -126,7 +228,9 @@ def stage(lock: dict, output: Path, archives: Path | None = None) -> None:
         check=True,
     )
     patch_numpy_sentinel(output / "pycolmap" / "pycolmap" / "scene_manager.py")
+    patch_colmap_text_readers(output / "pycolmap" / "pycolmap" / "scene_manager.py")
     patch_downsample_camera(output / "ncore/tools/data_converter/colmap/converter.py")
+    patch_downsample_masks(output / "ncore/tools/data_converter/colmap/converter.py")
     # Preserve the exact patched source identity; no .git database or test data.
     inventory = {
         str(path.relative_to(output)): hashlib.sha256(path.read_bytes()).hexdigest()

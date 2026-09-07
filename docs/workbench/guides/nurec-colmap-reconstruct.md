@@ -102,7 +102,11 @@ source, revision, CC-BY-4.0 attribution and any transformation description
 beside the run. Alternatively, the live matrix below performs pinned source
 staging and writes `source/attribution.json` automatically.
 
-With the converter runtime installed in its image, the standalone command is:
+The converter image fetches its immutable, hash-locked Python dependencies on
+first use. Downloads require no artificial credential gate. A writable cache
+uses a lock and an atomic ready state; it is ephemeral unless operator storage
+is explicitly mounted. No populated cache or application wheels enter the
+published layers. The standalone command is:
 
 ```bash
 npa workbench nurec convert-colmap \

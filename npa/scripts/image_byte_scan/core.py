@@ -791,6 +791,11 @@ def walk_tar(reader, sink, scope, file_handler):
 
 def graph(fd, length, verification, expected_id):
     """Rebind metadata to the accepted exact archive before scanning its layers."""
+    if verification.get("schema_version") == "npa.ncore.oci-verification.v1":
+        from . import ncore_verification as N
+        result = N.inspect(fd, length, expected_id)
+        N.bind(result, verification, expected_id)
+        return result["layers"]
     os.lseek(fd, 0, os.SEEK_SET)
     with os.fdopen(os.dup(fd), "rb") as file, tarfile.open(fileobj=file, mode="r:") as archive:
         members = {}
@@ -916,6 +921,14 @@ def recheck_snapshots(snapshots):
             require(current_path == path and stat_fingerprint(info) == before, "input_changed_during_scan")
 
 
+def verification_archive_digest(verification):
+    """Keep product verifier identities distinct; neither is a scanner bypass."""
+    require(verification.get("valid") is True, "verification_did_not_pass")
+    schema = verification.get("schema_version")
+    require(schema in ("npa.curobo.image-verification.v1", "npa.ncore.oci-verification.v1"), "verification_schema")
+    return verification["archive_sha256" if schema == "npa.ncore.oci-verification.v1" else "docker_save_sha256"]
+
+
 def _scan(authorization, directory, detector_type=Detector, *, record_observer=None):
     require(isinstance(authorization, dict) and authorization.get("schema_version") == "npa.image-byte-scan-authorization.v1", "authorization_schema")
     required = {"schema_version", "accepted_verification", "archive", "verification_report", "expected_image_id", "helper", "config", "sources", "tools_receipt"}
@@ -925,9 +938,7 @@ def _scan(authorization, directory, detector_type=Detector, *, record_observer=N
     require(helper == authorization["helper"] and config == authorization["config"], "tools_receipt_authorization_changed")
     snapshots = input_snapshots(authorization)
     verification = bound_json(authorization["verification_report"])
-    require(verification.get("valid") is True, "verification_did_not_pass")
-    require(verification.get("schema_version") == "npa.curobo.image-verification.v1", "verification_schema")
-    require(authorization["archive"]["sha256"] == verification["docker_save_sha256"], "archive_verification_binding")
+    require(authorization["archive"]["sha256"] == verification_archive_digest(verification), "archive_verification_binding")
     values, policy, literal_binding = [], "exact-substring-v1", authorization.get("literal_inventory")
     if literal_binding is not None:
         inventory = bound_json(literal_binding)
@@ -956,7 +967,14 @@ def _scan(authorization, directory, detector_type=Detector, *, record_observer=N
               "expected_image_id": authorization["expected_image_id"], "private_literals_configured": literal_binding is not None,
               "private_literal_count": len(values), "literal_matching_policy": policy, "layers": []}
     try:
-        layers = graph(fd, initial.st_size, verification, authorization["expected_image_id"])
+        if verification["schema_version"] == "npa.ncore.oci-verification.v1":
+            from . import ncore_verification as N
+            result = N.inspect(fd, initial.st_size, authorization["expected_image_id"])
+            N.bind(result, verification, authorization["expected_image_id"])
+            layers = result["layers"]
+            report["oci_graph"] = result["receipt"]
+        else:
+            layers = graph(fd, initial.st_size, verification, authorization["expected_image_id"])
         if authorization.get("literal_engine") is not None:
             literal_engine = AuthorizedAho(authorization["literal_engine"])
         detector = detector_type(authorization, directory / "helper-stderr.jsonl")
@@ -969,15 +987,19 @@ def _scan(authorization, directory, detector_type=Detector, *, record_observer=N
         def outer_file(reader, size, name, context):
             offset = reader.tell()
             if name in layer_names:
-                digest = hashlib.sha256()
-                remaining = size
-                while remaining:
-                    data = reader.read(min(CHUNK, remaining))
-                    require(data, "truncated_outer_blob")
-                    digest.update(data)
-                    remaining -= len(data)
-                locations[name] = {"offset": offset, "size": size, "sha256": digest.hexdigest()}
-                sink.write({"type": "encoded_layer_blob", "bytes": size, "sha256": digest.hexdigest(), **context})
+                if "oci_graph" in report:
+                    value = sink.send(reader, size, "outer_regular_content", context)
+                else:
+                    digest = hashlib.sha256()
+                    remaining = size
+                    while remaining:
+                        data = reader.read(min(CHUNK, remaining))
+                        require(data, "truncated_outer_blob")
+                        digest.update(data)
+                        remaining -= len(data)
+                    value = digest.hexdigest()
+                locations[name] = {"offset": offset, "size": size, "sha256": value}
+                sink.write({"type": "encoded_layer_blob", "bytes": size, "sha256": value, **context})
             else:
                 sink.send(reader, size, "outer_regular_content", context)
 

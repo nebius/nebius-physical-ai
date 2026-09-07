@@ -1552,8 +1552,8 @@ def render_setup_for_tool(
     if not options.default_setup:
         return ""
     if tool_ref == "workbench.nurec.convert_colmap":
-        # Conversion uses the committed CPU image and its two pinned interpreter
-        # closures. Do not run the NRE vendor-image dependency installer or overlay
+        # Conversion uses the committed CPU image and its hash-locked runtime
+        # bootstrap. Do not run the NRE vendor-image dependency installer or overlay
         # a floating PyPI nvidia-ncore onto the actual pinned source reader.
         return (
             "set -e\n"

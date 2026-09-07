@@ -351,7 +351,9 @@ def ncore_fixture(tmp_path, *, corruption=""):
             else buffer.getvalue(),
             image_format="png",
             frame_timestamps_us=np.array([index * 1_000_000] * 2, dtype=np.uint64),
-            generic_data={},
+            generic_data={"mask": np.zeros((6, 8), dtype=np.uint8)}
+            if corruption == "mask"
+            else {},
             generic_meta_data={},
         )
     points = writer.register_component_writer(
@@ -521,6 +523,275 @@ def test_trueprice_reader_rejects_unsafe_image_reference(tmp_path):
     )
     with pytest.raises(ValueError, match="relative path"):
         colmap.inspect_colmap_source(root, request)
+
+
+def complete_colmap_text_fixture(root):
+    """Non-contiguous raw IDs, whitespace and an empty observation record."""
+    from PIL import Image
+
+    colmap_text_fixture(root)
+    (root / "sparse/0/cameras.txt").write_text(
+        "# cameras\n1 PINHOLE 4 3 3 3 2 1.5\n \t\n5 PINHOLE 4 3 4 4 2 1.5\n\n"
+    )
+    (root / "sparse/0/images.txt").write_text(
+        "# images\n\n1 1 0 0 0 0 0 0 1 frame1.png\n0 0 1\n"
+        "2 1 0 0 0 -1 0 0 1 frame2.png\n0 0 2 1 1 -1\n\n"
+        "7 1 0 0 0 0 -1 0 5 frame7.png\n \t\n"
+        "# later image\n11 1 0 0 0 -1 -1 0 5 frame11.png\n0 0 9\n"
+    )
+    (root / "sparse/0/points3D.txt").write_text(
+        "# points\n1 1 2 3 20 30 40 0 1 0\n\n"
+        "2 4 5 6 50 60 70 0 2 0\n3 0 0 0 0 0 0 0 1 0\n \t\n"
+        "9 7 8 9 80 90 100 0 11 0\n"
+    )
+    for index in (7, 11):
+        Image.new("RGB", (4, 3), (index * 20, 40, 60)).save(
+            root / f"images/frame{index}.png"
+        )
+    return root
+
+
+@pytest.mark.parametrize("derive", [False, True])
+def test_official_text_roundtrip_preserves_blank_lines_and_empty_observations(
+    tmp_path, derive
+):
+    pycolmap = pytest.importorskip("pycolmap")
+    converter = pytest.importorskip("tools.data_converter.colmap.converter")
+    from click.testing import CliRunner
+
+    root = complete_colmap_text_fixture(tmp_path / "capture")
+    scene = pycolmap.SceneManager(str(root / "sparse/0"))
+    scene.load()
+    assert set(scene.cameras) == {1, 5}
+    assert set(scene.images) == {1, 2, 7, 11}
+    assert list(scene.point3D_ids) == [1, 2, 3, 9]
+    assert scene.points3D.shape == (4, 3)
+    assert scene.images[7].points2D.shape == (0, 2)
+    assert scene.images[7].point3D_ids.shape == (0,)
+    assert scene.images[7].point3D_ids.dtype.name == "uint64"
+    assert list(scene.images[2].point3D_ids) == [2, 2**64 - 1]
+    source = colmap.inspect_colmap_source(root, publication_request(tmp_path))
+    assert source["counts"] == {"cameras": 2, "images": 4, "poses": 4, "points": 3}
+    assert source["source_points"] == 4
+    assert source["origin_points_filtered"] == 1
+    assert [f["name"] for f in source["cameras"]["camera5"]["frames"]] == [
+        "frame7.png",
+        "frame11.png",
+    ]
+    out = tmp_path / "output"
+    result = CliRunner().invoke(
+        converter.cli,
+        ["--root-dir", str(root), "--output-dir", str(out), "colmap-v4"],
+    )
+    assert result.exit_code == 0, (result.output, result.exception)
+    meta = out / "capture/capture.json"
+    if derive:
+        colmap._derive_in_place(meta, "camera1")
+    assert (
+        colmap.validate_ncore_sequence(
+            meta, source, rig_mode="derive" if derive else "preserve"
+        )
+        == source["counts"]
+    )
+
+
+@pytest.mark.parametrize("component", ["cameras", "images", "points3D"])
+@pytest.mark.parametrize("mutation", ["drop", "replace"])
+def test_text_preflight_independently_checks_raw_ids_and_counts(
+    tmp_path, monkeypatch, component, mutation
+):
+    pycolmap = pytest.importorskip("pycolmap")
+    root = colmap_text_fixture(tmp_path / "capture")
+    load = pycolmap.SceneManager.load
+
+    def incomplete_load(scene):
+        load(scene)
+        if component == "points3D":
+            if mutation == "drop":
+                scene.point3D_ids = scene.point3D_ids[:-1]
+                scene.points3D = scene.points3D[:-1]
+            else:
+                scene.point3D_ids[-1] = 99
+        else:
+            records = getattr(scene, component)
+            value = records.pop(next(iter(records)))
+            if mutation == "replace":
+                records[99] = value
+
+    monkeypatch.setattr(pycolmap.SceneManager, "load", incomplete_load)
+    with pytest.raises(colmap.NcoreConversionError, match="raw.*" + component):
+        colmap.inspect_colmap_source(root, publication_request(tmp_path))
+
+
+@pytest.mark.parametrize(
+    "component,contents",
+    [
+        ("images", "1 1 0 0 0 0 0 0 1 frame.png\n"),
+        ("images", "1 1 0 0 0 0 0 0 1\n\n"),
+        ("images", "1 1 0 0 0 0 0 0 1 frame.png\n0 0\n"),
+        ("images", "1 1 0 0 0 0 0 0 1 frame.png\n0 0 bad\n"),
+        ("images", "1 1 0 0 0 0 0 0 1 frame.png\n\n" * 2),
+        ("cameras", "1 PINHOLE 4 3\n"),
+        ("cameras", "1 PINHOLE 4 3 3 3 2 1.5\n" * 2),
+        ("points3D", "1 1 2 3 20 30 40\n"),
+        ("points3D", "1 1 2 3 20 30 40 0 1\n"),
+        ("points3D", "1 1 2 3 20 30 40 0 1 0\n" * 2),
+    ],
+)
+def test_raw_text_preflight_rejects_incomplete_or_duplicate_records(
+    tmp_path, component, contents
+):
+    path = tmp_path / f"{component}.txt"
+    path.write_text(contents)
+    with pytest.raises(colmap.NcoreConversionError, match="COLMAP.*text"):
+        colmap._raw_text_model_ids(path, component)
+
+
+def test_raw_text_preflight_counts_empty_final_observations(tmp_path):
+    path = tmp_path / "images.txt"
+    path.write_text("# comment\n\n7 1 0 0 0 0 0 0 1 frame.png\n\n")
+    assert colmap._raw_text_model_ids(path, "images") == {7}
+
+
+@pytest.mark.parametrize("ending", ["", "\n", "\n# missing observations\n"])
+def test_text_preflight_and_official_converter_reject_incomplete_final_record(
+    tmp_path, monkeypatch, ending
+):
+    pycolmap = pytest.importorskip("pycolmap")
+    converter = pytest.importorskip("tools.data_converter.colmap.converter")
+    from click.testing import CliRunner
+
+    root = colmap_text_fixture(tmp_path / "capture")
+    with (root / "sparse/0/images.txt").open("a") as stream:
+        stream.write("7 1 0 0 0 0 -1 0 1 frame7.png" + ending)
+    result = CliRunner().invoke(
+        converter.cli,
+        ["--root-dir", str(root), "--output-dir", str(tmp_path / "out"), "colmap-v4"],
+    )
+    assert result.exit_code != 0
+    assert "incomplete COLMAP text image record" in str(result.exception)
+
+    def must_not_load(*args, **kwargs):
+        pytest.fail("incomplete raw text reached the shared upstream reader")
+
+    monkeypatch.setattr(pycolmap.SceneManager, "load", must_not_load)
+    with pytest.raises(colmap.NcoreConversionError, match="incomplete.*text.*image"):
+        colmap.inspect_colmap_source(root, publication_request(tmp_path))
+
+
+def masked_downsample_fixture(root, convention):
+    import numpy as np
+    from PIL import Image
+
+    colmap_text_fixture(root)
+    (root / "sparse/0/cameras.txt").write_text("1 PINHOLE 8 6 6 6 4 3\n")
+    (root / "images_2").mkdir()
+    masks = root / ("custom_masks" if convention == "explicit" else "masks")
+    masks.mkdir()
+    originals, downsampled = {}, {}
+    for index in (1, 2):
+        Image.new("RGB", (8, 6), (index * 100, 20, 50)).save(
+            root / f"images/frame{index}.png"
+        )
+        # Deliberately differs from rounded calibration / 2.
+        Image.new("RGB", (3, 2), (index * 100, 20, 50)).save(
+            root / f"images_2/frame{index}.png"
+        )
+        original = (np.arange(48).reshape(6, 8) * 5 + index).astype(np.uint8)
+        mask_path = masks / f"frame{index}.png"
+        Image.fromarray(original).save(mask_path)
+        originals[mask_path] = (mask_path.read_bytes(), original)
+        downsampled[index] = original[np.ix_([1, 4], [1, 4, 6])]
+        if convention == "per_camera":
+            downsampled[index] = np.full((2, 3), 100 + index, dtype=np.uint8)
+            Image.fromarray(downsampled[index]).save(
+                root / f"images_2/frame{index}_mask.png"
+            )
+    return originals, downsampled
+
+
+@pytest.mark.parametrize("convention", ["masks", "explicit", "per_camera"])
+def test_official_masked_downsampling_preserves_pixels_and_originals(
+    tmp_path, convention
+):
+    pytest.importorskip("pycolmap")
+    converter = pytest.importorskip("tools.data_converter.colmap.converter")
+    from click.testing import CliRunner
+    import numpy as np
+    from ncore.data.v4 import CameraSensorComponent, SequenceComponentGroupsReader
+    from upath import UPath
+
+    root = tmp_path / "capture"
+    originals, downsampled = masked_downsample_fixture(root, convention)
+    source = colmap.inspect_colmap_source(
+        root,
+        publication_request(tmp_path).model_copy(
+            update={"include_downsampled_images": True}
+        ),
+    )
+    out = tmp_path / "output"
+    result = CliRunner().invoke(
+        converter.cli,
+        [
+            "--root-dir",
+            str(root),
+            "--output-dir",
+            str(out),
+            "colmap-v4",
+            "--include-downsampled-images",
+        ]
+        + (["--masks-dir", "custom_masks"] if convention == "explicit" else []),
+    )
+    assert result.exit_code == 0, (result.output, result.exception)
+    meta = out / "capture/capture.json"
+    assert colmap.validate_ncore_sequence(meta, source) == source["counts"]
+    assert source["counts"] == {"cameras": 2, "images": 4, "poses": 4, "points": 2}
+    cameras = SequenceComponentGroupsReader([UPath(meta)]).open_component_readers(
+        CameraSensorComponent.Reader
+    )
+    for index, (path, (encoded, original)) in enumerate(originals.items(), 1):
+        assert path.read_bytes() == encoded
+        timestamp = (index - 1) * 1_000_000
+        np.testing.assert_array_equal(
+            cameras["camera1"].get_frame_generic_data(timestamp, "mask"), original
+        )
+        np.testing.assert_array_equal(
+            cameras["camera1_2"].get_frame_generic_data(timestamp, "mask"),
+            downsampled[index],
+        )
+
+
+@pytest.mark.parametrize("wrong", ["mask", "original_image"])
+def test_official_masked_downsampling_rejects_unverified_source_dimensions(
+    tmp_path, wrong
+):
+    converter = pytest.importorskip("tools.data_converter.colmap.converter")
+    from click.testing import CliRunner
+    from PIL import Image
+
+    root = tmp_path / "capture"
+    masked_downsample_fixture(root, "masks")
+    relative = "masks/frame1.png" if wrong == "mask" else "images/frame1.png"
+    Image.new("L" if wrong == "mask" else "RGB", (7, 6)).save(root / relative)
+    result = CliRunner().invoke(
+        converter.cli,
+        [
+            "--root-dir",
+            str(root),
+            "--output-dir",
+            str(tmp_path / "out"),
+            "colmap-v4",
+            "--include-downsampled-images",
+        ],
+    )
+    assert result.exit_code != 0
+    assert "dimensions" in str(result.exception)
+
+
+def test_real_v4_reader_still_rejects_wrong_mask_dimensions(tmp_path):
+    meta, source = ncore_fixture(tmp_path, corruption="mask")
+    with pytest.raises(colmap.NcoreConversionError, match="mask dimensions"):
+        colmap.validate_ncore_sequence(meta, source)
 
 
 def test_binary_image_preflight_rejects_truncation_before_vendor_reader(tmp_path):

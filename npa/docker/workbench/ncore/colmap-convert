@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# Same module and import roots as NVIDIA's //tools/data_converter/colmap:convert.
-# Exec preserves argv, exit status and signals, including all native Click flags.
+# Fetch/verify the narrow closure, then exec NVIDIA's official Python module.
 unset PYTHONHOME PYTHONPATH
-exec /opt/ncore/converter-venv/bin/python -m tools.data_converter.colmap.converter "$@"
+exec /opt/venv/bin/python -I -B -m npa.workflows.ncore_runtime converter "$@"

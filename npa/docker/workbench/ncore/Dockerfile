@@ -1,6 +1,5 @@
 # syntax=docker/dockerfile:1.7
-# CPU-only NVIDIA NCore COLMAP ingestion. Build context: npa/ from SOURCE_SHA.
-# Reuse the supported Python base and immutable Debian security snapshot pattern.
+# CPU NCore converter/V4 reader. Build context: committed npa/ from SOURCE_SHA.
 FROM python:3.12.12-slim-bookworm@sha256:593bd06efe90efa80dc4eee3948be7c0fde4134606dd40d8dd8dbcade98e669c AS runtime-base
 ARG DEBIAN_SNAPSHOT=20260906T183022Z
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -13,8 +12,7 @@ RUN sed -ri \
     && printf 'Acquire::Check-Valid-Until "false";\n' >/etc/apt/apt.conf.d/99snapshot \
     && apt-get update && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends \
-      ca-certificates curl netcat-openbsd openssh-server patch procps rsync sudo \
-      libblas3 liblapack3 libgfortran5 libquadmath0 libgomp1 \
+      ca-certificates netcat-openbsd openssh-server procps rsync sudo \
     && rm -rf /var/lib/apt/lists/* \
     && rm -f /etc/ssh/ssh_host_* \
     && useradd -m -s /bin/bash -u 1000 ubuntu \
@@ -26,117 +24,103 @@ RUN sed -ri \
       >/etc/ssh/sshd_config.d/npa.conf \
     && install -d -o ubuntu -g ubuntu /workspace /home/ubuntu/.cache
 
-# Optional read-only BuildKit named context for already verified source archives.
-# Default builds fetch the same hash-pinned public bytes.
-FROM scratch AS native-source-cache
-FROM scratch AS whole-source-cache
-FROM runtime-base AS native-builder
-RUN apt-get update && apt-get install -y --no-install-recommends \
-      g++ gfortran gpg make nasm ninja-build pkg-config libblas-dev liblapack-dev zlib1g-dev \
+# Build-only patch utility never enters the final layers.
+FROM runtime-base AS source-stage
+RUN apt-get update && apt-get install -y --no-install-recommends patch \
     && rm -rf /var/lib/apt/lists/*
-COPY docker/workbench/ncore/assemble_native_sources.py docker/workbench/ncore/native_build_support.py docker/workbench/ncore/build_ffmpeg.py \
-     docker/workbench/ncore/native-source-lock.json docker/workbench/ncore/native-*-build.lock /build/
-RUN --mount=type=bind,from=native-source-cache,target=/source-cache \
-    python /build/assemble_native_sources.py --lock /build/native-source-lock.json \
-      --cache /source-cache --output /opt/ncore/native-sources
-RUN gpg --dearmor </opt/ncore/native-sources/ffmpeg-devel.asc >/build/ffmpeg-release.gpg \
-    && gpgv --keyring /build/ffmpeg-release.gpg /opt/ncore/native-sources/ffmpeg-8.1.1.tar.xz.asc \
-      /opt/ncore/native-sources/ffmpeg-8.1.1.tar.xz \
-    && python /build/build_ffmpeg.py
-COPY docker/workbench/ncore/build_native.py /build/
-RUN python /build/build_native.py converter
-RUN python /build/build_native.py reader \
-    && cp /build/build_native.py /build/build_ffmpeg.py /build/native_build_support.py /build/assemble_native_sources.py /build/native-*-build.lock /opt/ncore/native-sources/
-
-FROM runtime-base AS assembled
-COPY --from=native-builder /opt/ncore /opt/ncore
-COPY --from=native-builder /build/ncore-native/wheels /build/native-wheels
-RUN printf '%s\n' /opt/ncore/ffmpeg/lib >/etc/ld.so.conf.d/ncore-ffmpeg.conf && ldconfig
 COPY docker/workbench/ncore/source-lock.json docker/workbench/ncore/stage_upstream.py /build/
 RUN python -B /build/stage_upstream.py --lock /build/source-lock.json --output /opt/ncore/src
 
-COPY docker/workbench/ncore/*requirements.lock /build/
-# Build tools are hash-locked too. asciitree's pure-Python sdist is built with
-# these installed tools, never an unconstrained isolated build environment.
-RUN python -m pip install --require-hashes -r /build/build-requirements.lock \
-    && python -m venv --without-pip /opt/ncore/converter-venv \
-    && python -m venv --without-pip /opt/venv \
-    && python -m pip --python /opt/ncore/converter-venv install --require-hashes -r /build/build-requirements.lock \
-    && python -m pip --python /opt/ncore/converter-venv install --no-deps --no-index /build/native-wheels/converter/*.whl \
-    && python -m pip --python /opt/ncore/converter-venv install --no-binary=numpy,scipy,av --no-build-isolation --require-hashes -r /build/converter-requirements.lock \
-    && python -m pip --python /opt/venv install --require-hashes -r /build/build-requirements.lock \
-    && python -m pip --python /opt/venv install --no-deps --no-index /build/native-wheels/reader/*.whl \
-    && python -m pip --python /opt/venv install --no-binary=numpy,scipy,av --no-build-isolation --require-hashes -r /build/npa-requirements.lock \
-    && printf '%s\n' /opt/ncore/src/ncore /opt/ncore/src/pycolmap /opt/ncore/src/pycolmap/pycolmap \
-      >/opt/ncore/converter-venv/lib/python3.12/site-packages/ncore-source.pth \
-    && printf '%s\n' /opt/ncore/src/ncore /opt/ncore/src/pycolmap /opt/ncore/src/pycolmap/pycolmap \
-      >/opt/venv/lib/python3.12/site-packages/ncore-source.pth
+# Deliver corresponding source only for selected covered base binaries.
+# Permissive components carry their exact notices in the assembled filesystem.
+FROM scratch AS base-source-cache
+FROM runtime-base AS base-source-delivery
+COPY docker/workbench/ncore/base-source-lock.json docker/workbench/ncore/base_sources.py \
+     docker/workbench/ncore/BASE-SOURCES.md /opt/ncore/base-sources/recipes/
+RUN --mount=type=bind,from=base-source-cache,target=/source-cache \
+    python /opt/ncore/base-sources/recipes/base_sources.py assemble \
+      --lock /opt/ncore/base-sources/recipes/base-source-lock.json \
+      --annex /opt/ncore/base-sources --native /opt/ncore/base-sources --cache /source-cache \
+    && python /opt/ncore/base-sources/recipes/base_sources.py verify \
+      --lock /opt/ncore/base-sources/recipes/base-source-lock.json \
+      --annex /opt/ncore/base-sources --native /opt/ncore/base-sources \
+    && chmod -R a+rX /opt/ncore/base-sources
 
-COPY pyproject.toml /opt/npa/pyproject.toml
-COPY src/npa /opt/npa/src/npa
-RUN /opt/venv/bin/python -m pip install --no-deps --no-build-isolation /opt/npa \
-    && /opt/venv/bin/python -m pip check \
-    && /opt/ncore/converter-venv/bin/python -m pip check
-
-# Accompany the binary image with complete source archives, including versions
-# superseded in its immutable base layers. Native archive identities are reused.
-FROM assembled AS source-delivery
-COPY docker/workbench/ncore/ /opt/ncore/whole-sources/recipes/
-RUN --mount=type=bind,from=whole-source-cache,target=/source-cache \
-    python /opt/ncore/whole-sources/recipes/whole_image_sources.py assemble \
-      --lock /opt/ncore/whole-sources/recipes/whole-source-lock.json \
-      --annex /opt/ncore/whole-sources --native /opt/ncore/native-sources --cache /source-cache \
-    && python /opt/ncore/whole-sources/recipes/whole_image_sources.py verify \
-      --lock /opt/ncore/whole-sources/recipes/whole-source-lock.json \
-      --annex /opt/ncore/whole-sources --native /opt/ncore/native-sources \
-    && chmod -R a+rX /opt/ncore/whole-sources
-
-FROM runtime-base
+FROM runtime-base AS assembled
 ARG NPA_SOURCE_SHA
 ARG SOURCE_SHA=${NPA_SOURCE_SHA}
 ENV PATH=/opt/venv/bin:/opt/ncore/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
-    HOME=/home/ubuntu \
+    HOME=/home/ubuntu XDG_CACHE_HOME=/home/ubuntu/.cache \
     NPA_NCORE_CONVERTER=/opt/ncore/bin/colmap-convert \
     NPA_NCORE_SOURCE_REVISION=59c698d206da92b406a4f72619fce3b3a2c64bfd \
     NPA_SOURCE_SHA=${SOURCE_SHA}
-COPY --from=assembled /opt/ncore /opt/ncore
-COPY --from=assembled /opt/venv /opt/venv
-COPY --from=assembled /opt/npa /opt/npa
-COPY --from=source-delivery /opt/ncore/whole-sources /opt/ncore/whole-sources
-COPY --from=assembled /etc/ld.so.conf.d/ncore-ffmpeg.conf /etc/ld.so.conf.d/ncore-ffmpeg.conf
-COPY --chmod=0644 docker/workbench/ncore/Dockerfile docker/workbench/ncore/debian-native-lock.json docker/workbench/ncore/NATIVE-SOURCES.md /opt/ncore/native-sources/
-RUN chmod -R a+rX /opt/ncore/native-sources && ldconfig
-COPY --from=assembled /build/*requirements.lock /usr/share/doc/npa-ncore/
-COPY --from=assembled /opt/ncore/src/ncore/LICENSE /usr/share/doc/npa-ncore/LICENSE-APACHE-2.0
-COPY docker/workbench/ncore/source-lock.json docker/workbench/ncore/REDISTRIBUTION.md /usr/share/doc/npa-ncore/
-COPY --chmod=0644 docker/workbench/ncore/WHOLE-IMAGE-SOURCES.md /usr/share/doc/npa-ncore/
+COPY --from=source-stage /opt/ncore/src /opt/ncore/src
+COPY --from=base-source-delivery /opt/ncore/base-sources /opt/ncore/base-sources
+# Explicit NPA import closure; no package install, CLI registry or SDK fanout.
+COPY src/npa/__init__.py src/npa/_sdk.py src/npa/errors.py src/npa/lifecycle_intent.py /opt/npa/src/npa/
+COPY src/npa/clients/__init__.py src/npa/clients/storage.py /opt/npa/src/npa/clients/
+COPY src/npa/cli/__init__.py src/npa/cli/path_contract.py /opt/npa/src/npa/cli/
+COPY src/npa/cli/nurec/__init__.py /opt/npa/src/npa/cli/nurec/__init__.py
+COPY src/npa/workbench/__init__.py /opt/npa/src/npa/workbench/__init__.py
+COPY src/npa/workbench/nurec/__init__.py src/npa/workbench/nurec/nurec.py \
+     src/npa/workbench/nurec/colmap.py src/npa/workbench/nurec/ncore_rig.py /opt/npa/src/npa/workbench/nurec/
+COPY src/npa/workflows/__init__.py src/npa/workflows/ncore.py src/npa/workflows/ncore_runtime.py /opt/npa/src/npa/workflows/
+# The existing renderer invokes npa.cli.entry.main; both aliases use the same
+# narrow adapter, while the public repository CLI/SDK remain unchanged.
+COPY src/npa/workflows/ncore.py /opt/npa/src/npa/cli/entry.py
+COPY src/npa/workflows/ncore.py /opt/npa/src/npa/__main__.py
+RUN python -m venv --without-pip /opt/venv \
+    && printf '%s\n' /opt/npa/src >/opt/venv/lib/python3.12/site-packages/npa-source.pth
+COPY docker/workbench/ncore/runtime-lock.json docker/workbench/ncore/*requirements.lock \
+     docker/workbench/ncore/source-lock.json docker/workbench/ncore/REDISTRIBUTION.md \
+     docker/workbench/ncore/BASE-SOURCES.md /usr/share/doc/npa-ncore/
+COPY docker/workbench/ncore/Dockerfile docker/workbench/ncore/stage_upstream.py /usr/share/doc/npa-ncore/recipes/
+COPY --from=source-stage /opt/ncore/src/ncore/LICENSE /usr/share/doc/npa-ncore/LICENSE-APACHE-2.0
 COPY --chmod=0644 docker/workbench/ncore/notices/* /usr/share/doc/npa-ncore/notices/
-COPY --chmod=0755 docker/workbench/ncore/colmap-convert /opt/ncore/bin/colmap-convert
-COPY --chmod=0755 docker/workbench/ncore/verify_native.py /opt/ncore/bin/verify_native.py
-COPY --chmod=0755 docker/workbench/ncore/verify-packaging.py /opt/ncore/bin/verify-packaging.py
-COPY --chmod=0755 docker/workbench/ncore/entrypoint.sh /opt/ncore/bin/entrypoint.sh
-# Tests run the actual SSH service lifecycle under the final uid, then remove
-# generated host keys in this same layer. The label attests this proven behavior.
+COPY --chmod=0755 docker/workbench/ncore/colmap-convert docker/workbench/ncore/verify-packaging.py \
+     docker/workbench/ncore/entrypoint.sh /opt/ncore/bin/
+COPY --chmod=0755 docker/workbench/ncore/npa-entrypoint /opt/venv/bin/npa
 RUN /opt/venv/bin/python -c 'import os,re; assert re.fullmatch("[0-9a-f]{40}", os.environ["NPA_SOURCE_SHA"])' \
     && printf '%s\n' "${SOURCE_SHA}" >/usr/share/doc/npa-ncore/npa-source-sha \
     && su ubuntu -s /bin/bash -c '/opt/ncore/bin/entrypoint.sh /bin/true && sudo -n /usr/sbin/sshd -t && sudo -n service ssh restart && sudo -n service ssh stop && rsync --version >/dev/null && test -w /tmp && test -w "$HOME"' \
     && rm -f /etc/ssh/ssh_host_* \
     && test -z "$(find /etc/ssh -name 'ssh_host_*' -print -quit)"
+# Copy the selected base files into an empty root; no builder ancestry survives.
+RUN python /opt/ncore/base-sources/recipes/base_sources.py assemble-root \
+      --lock /opt/ncore/base-sources/recipes/base-source-lock.json --root / --output /public-root \
+    && mkdir -p /public-root/opt \
+    && cp -a /opt/ncore /opt/npa /opt/venv /public-root/opt/ \
+    && cp -a /usr/share/doc/npa-ncore /public-root/usr/share/doc/npa-ncore \
+    && cp -a /dev/null /dev/urandom /public-root/dev/ \
+    && (trap 'if test -s /public-root/run/sshd.pid; then kill "$(cat /public-root/run/sshd.pid)" 2>/dev/null || true; fi' EXIT; \
+        chroot --userspec=1000:1000 /public-root /bin/bash -ec 'sudo -n ssh-keygen -A; sudo -n /usr/sbin/sshd -t; sudo -n service ssh restart; test -s /run/sshd.pid; sudo -n kill -0 "$(cat /run/sshd.pid)"; sudo -n service ssh stop; rsync --version >/dev/null; test -w /tmp; test -w "$HOME"; /opt/venv/bin/python /opt/ncore/bin/verify-packaging.py --image-only') \
+    && chroot --userspec=1000:1000 /public-root /opt/venv/bin/python -c 'import ssl; assert ssl.create_default_context().cert_store_stats()["x509_ca"] > 0' \
+    && rm -f /public-root/etc/ssh/ssh_host_* /public-root/run/sshd.pid /public-root/dev/null /public-root/dev/urandom \
+    && python /opt/ncore/base-sources/recipes/base_sources.py verify \
+      --lock /opt/ncore/base-sources/recipes/base-source-lock.json \
+      --annex /public-root/opt/ncore/base-sources --native /public-root/opt/ncore/base-sources --root /public-root
+
+FROM scratch AS public-image
+ARG NPA_SOURCE_SHA
+ARG SOURCE_SHA=${NPA_SOURCE_SHA}
+COPY --from=assembled /public-root/ /
+ENV PATH=/opt/venv/bin:/opt/ncore/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    HOME=/home/ubuntu XDG_CACHE_HOME=/home/ubuntu/.cache \
+    PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_NO_CACHE_DIR=1 \
+    NPA_NCORE_CONVERTER=/opt/ncore/bin/colmap-convert \
+    NPA_NCORE_SOURCE_REVISION=59c698d206da92b406a4f72619fce3b3a2c64bfd \
+    NPA_SOURCE_SHA=${SOURCE_SHA}
 USER ubuntu
 WORKDIR /workspace
-RUN /opt/venv/bin/python /opt/ncore/bin/verify-packaging.py \
-    && /opt/venv/bin/python /opt/ncore/bin/verify_native.py >/tmp/native-reader.json \
-    && /opt/ncore/converter-venv/bin/python /opt/ncore/bin/verify_native.py >/tmp/native-converter.json \
-    && sudo mv /tmp/native-reader.json /tmp/native-converter.json /opt/ncore/native-sources/ \
-    && /opt/venv/bin/python /opt/ncore/whole-sources/recipes/whole_image_sources.py verify \
-      --lock /opt/ncore/whole-sources/recipes/whole-source-lock.json \
-      --annex /opt/ncore/whole-sources --native /opt/ncore/native-sources --root /
 LABEL org.opencontainers.image.source="https://github.com/nebius/nebius-physical-ai" \
       org.opencontainers.image.revision="${SOURCE_SHA}" \
-      org.opencontainers.image.licenses="Apache-2.0 AND MIT" \
+      org.opencontainers.image.licenses="Apache-2.0 AND MIT AND LicenseRef-NCore-Base-Inventory" \
+      npa.base.license-inventory="/opt/ncore/base-sources/recipes/base-source-lock.json" \
       org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1" \
       npa.source_revision="${SOURCE_SHA}" \
       npa.tool="ncore" npa.runtime="cpu" \
+      npa.ncore.dependencies="hash-locked-runtime-fetch" \
       npa.ncore.revision="59c698d206da92b406a4f72619fce3b3a2c64bfd"
 ENTRYPOINT ["/opt/ncore/bin/entrypoint.sh"]
 CMD ["/opt/venv/bin/python", "/opt/ncore/bin/verify-packaging.py"]

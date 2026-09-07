@@ -237,6 +237,60 @@ def validate_binary_images(path: Path) -> None:
             raise NcoreConversionError("unexpected trailing COLMAP binary image data")
 
 
+def _raw_text_model_ids(path: Path, component: str) -> set[int]:
+    """Check text record boundaries independently of the shared vendor reader.
+
+    A blank images.txt observation line is a complete empty array; EOF is not.
+    Camera and point files have one record per nonblank, noncomment line.
+    """
+    ids: set[int] = set()
+    awaiting_observations = False
+    try:
+        with path.open(encoding="utf-8") as stream:
+            for line in stream:
+                line = line.strip()
+                if line.startswith("#"):
+                    continue
+                if awaiting_observations:
+                    observations = line.split()
+                    if len(observations) % 3:
+                        raise ValueError("incomplete observation triple")
+                    for offset in range(0, len(observations), 3):
+                        float(observations[offset])
+                        float(observations[offset + 1])
+                        int(observations[offset + 2])
+                    awaiting_observations = False
+                    continue
+                if not line:
+                    continue
+                fields = (
+                    line.split(maxsplit=9) if component == "images" else line.split()
+                )
+                if component == "images":
+                    if len(fields) != 10:
+                        raise ValueError("incomplete image header")
+                    for value in fields[1:8]:
+                        float(value)
+                    int(fields[8])
+                    awaiting_observations = True
+                elif component == "cameras":
+                    if len(fields) < 5:
+                        raise ValueError("incomplete camera record")
+                elif len(fields) < 8 or (len(fields) - 8) % 2:
+                    raise ValueError("incomplete point record")
+                record_id = int(fields[0])
+                if record_id in ids:
+                    raise ValueError("duplicate record ID")
+                ids.add(record_id)
+    except (ValueError, UnicodeError) as exc:
+        raise NcoreConversionError(
+            f"invalid COLMAP raw text {component} records"
+        ) from exc
+    if awaiting_observations:
+        raise NcoreConversionError("incomplete COLMAP text image record")
+    return ids
+
+
 def inspect_colmap_source(
     root: Path, request: ColmapConversionRequest
 ) -> dict[str, Any]:
@@ -244,6 +298,13 @@ def inspect_colmap_source(
     binary_images = root / request.colmap_dir / "images.bin"
     if binary_images.is_file():
         validate_binary_images(binary_images)
+    # Match each of SceneManager's binary-before-text selections independently.
+    model_dir = root / request.colmap_dir
+    raw_text_ids = {
+        component: _raw_text_model_ids(model_dir / f"{component}.txt", component)
+        for component in ("cameras", "images", "points3D")
+        if not (model_dir / f"{component}.bin").is_file()
+    }
     try:
         import pycolmap
     except ImportError as exc:
@@ -258,6 +319,23 @@ def inspect_colmap_source(
         str(root / request.colmap_dir), image_path=str(root / request.images_dir)
     )
     scene.load()
+    parsed_ids = {
+        "cameras": list(scene.cameras),
+        "images": list(scene.images),
+        "points3D": list(scene.point3D_ids),
+    }
+    for component, raw_ids in raw_text_ids.items():
+        actual_ids = parsed_ids[component]
+        if len(actual_ids) != len(raw_ids) or set(actual_ids) != raw_ids:
+            raise NcoreConversionError(
+                f"COLMAP raw text {component} IDs/counts differ from parsed model"
+            )
+    if "points3D" in raw_text_ids and len(scene.points3D) != len(
+        raw_text_ids["points3D"]
+    ):
+        raise NcoreConversionError(
+            "COLMAP raw text points3D count differs from parsed model"
+        )
     cameras: dict[str, dict[str, Any]] = {}
     for image in scene.images.values():
         relative = _relative(image.name)
