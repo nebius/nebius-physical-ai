@@ -33,6 +33,8 @@ USER root
 
 COPY docker/workbench/openpi/gcs-requirements.txt /tmp/gcs-requirements.txt
 COPY docker/workbench/openpi/security-upgrades-requirements.txt /tmp/openpi-security-upgrades.txt
+COPY docker/workbench/openpi/backport_protobuf_json.py /opt/npa-openpi-backport-protobuf.py
+COPY docker/workbench/openpi/verify_protobuf_json.py /opt/npa-openpi-verify-protobuf.py
 COPY src/npa/workflows/byof/openpi_gcs.py /opt/npa-openpi-gcs.py
 
 RUN rm -f /etc/apt/sources.list.d/*.list \
@@ -71,6 +73,8 @@ RUN python3 -m venv /opt/uv \
     && cd /opt/byof \
     && VIRTUAL_ENV=/opt/venv /opt/uv/bin/uv sync --active --frozen --group rlds --no-dev \
     && cd / \
+    && /opt/venv/bin/python /opt/npa-openpi-backport-protobuf.py \
+    && /opt/venv/bin/python /opt/npa-openpi-verify-protobuf.py \
     && /opt/uv/bin/uv pip install --python /opt/venv/bin/python --no-cache --no-deps \
       'jax==0.6.2' \
       'jaxlib==0.6.2' \
