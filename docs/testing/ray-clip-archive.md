@@ -101,6 +101,8 @@ retain your own backup/retention policy.
 The current StorageClient byte API buffers one object at a time. Local staging
 needs space for one complete tree; archive also retains the original. This is a
 CLIP recipe companion, not a general storage service or workload orchestrator.
+Expected validation, filesystem and storage failures exit with code 1; unexpected
+errors exit with code 2. Both messages omit private paths and provider details.
 
 ## Run the live CPU test
 

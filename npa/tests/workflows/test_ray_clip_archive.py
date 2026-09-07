@@ -501,6 +501,23 @@ def test_cli_uses_shared_functions_and_redacts_storage_errors(modules, monkeypat
     assert "sensitive-provider-address" not in capsys.readouterr().err
 
 
+@pytest.mark.parametrize("error, expected_code", [
+    (ValueError, 1), (OSError, 1), (StoragePreconditionFailed, 1), (RuntimeError, 2),
+])
+def test_cli_error_categories_remain_private(modules, monkeypatch, capsys, tmp_path, error, expected_code):
+    archive, _ = modules
+
+    def fail():
+        raise error("sensitive-provider-address")
+
+    monkeypatch.setattr(archive.StorageClient, "from_environment", fail)
+    assert archive.main(["archive", "--input-path", str(tmp_path), "--output-path", PREFIX]) == expected_code
+    output = capsys.readouterr()
+    assert output.out == ""
+    assert "sensitive-provider-address" not in output.err
+    assert ("unexpected error" in output.err) == (expected_code == 2)
+
+
 def test_live_cleanup_attempts_all_owned_objects_and_retains_failed_ledger(tmp_path):
     path = Path(__file__).parents[1] / "e2e/test_ray_clip_archive_live.py"
     spec = importlib.util.spec_from_file_location("clip_archive_live_cleanup_test", path)

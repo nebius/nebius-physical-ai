@@ -17,7 +17,7 @@ from urllib.parse import urlsplit
 
 from archive_inventory import canonical, digest, read_json, require_digest, safe_name, validate_result
 
-from npa.clients.storage import StorageClient, StoragePreconditionFailed
+from npa.clients.storage import StorageClient, StorageError, StoragePreconditionFailed
 
 SCHEMA = "npa.ray-clip-archive.v1"
 
@@ -247,6 +247,8 @@ def restore(input_uri: str, destination: Path, manifest_sha256: str, storage: St
             raise FileExistsError("Restore destination already exists")
         payload = _read(storage, f"{prefix}/complete.json")
         manifest = _manifest(payload, manifest_sha256)
+        # Anchor staging to the verified open parent, even if its pathname is
+        # replaced. Recheck that pathname before publishing through the same fd.
         staging = Path(tempfile.mkdtemp(prefix=".clip-restore-", dir=f"/proc/self/fd/{parent}"))
         for name, entry in manifest["files"].items():
             content = _read(storage, f"{prefix}/files/{name}")
@@ -312,9 +314,14 @@ def main(argv=None) -> int:
             result = archive(options.input_path, options.output_path, storage)
         else:
             result = restore(options.input_path, options.output_path, options.manifest_sha256, storage)
-    except Exception:
+    except (ValueError, OSError, StorageError):
         print("CLIP archive operation failed; verify source, destination, integrity and storage access.", file=sys.stderr)
         return 1
+    except Exception:
+        # Native format readers can include private paths in unexpected errors.
+        # Keep their details private while distinguishing a bug from bad input.
+        print("CLIP archive encountered an unexpected error; report it with private diagnostic evidence.", file=sys.stderr)
+        return 2
     print(canonical(result).decode())
     return 0
 
