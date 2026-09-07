@@ -37,7 +37,7 @@ def _run_server() -> None:
     import fastapi
     import ray
     import ray.serve
-    from fastapi import Header
+    from fastapi import Body, Header
     from fastapi.responses import FileResponse
 
     from cosmos_framework.inference.args import OmniSampleOverrides, OmniSetupOverrides
@@ -187,9 +187,13 @@ def _run_server() -> None:
 
         @api.post("/v1/batches")
         async def batches(
-            self, body: dict[str, Any], authorization: str = Header(default="")
+            self,
+            body: dict[str, Any] = Body(...),
+            authorization: str = Header(default=""),
         ) -> dict[str, Any]:
             self._authorize(authorization)
+            # Ray rewrites and freezes the class-based endpoint. Keep its JSON
+            # body explicit so FastAPI cannot reclassify it as a query field.
             # Keep Pydantic models outside FastAPI's route metadata.  Ray 2.46
             # cloudpickles that metadata when freezing an ingress app, and the
             # pinned Python 3.13/Pydantic combination recursively serializes a

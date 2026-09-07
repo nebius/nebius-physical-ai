@@ -179,6 +179,88 @@ def test_server_removes_management_credential_when_runtime_fails(monkeypatch, tm
     assert not credential.exists()
 
 
+def test_batch_ingress_keeps_json_body_after_ray_signature_rewrite(monkeypatch, tmp_path):
+    import inspect
+    import sys
+    from types import ModuleType, SimpleNamespace
+
+    from fastapi import Depends, FastAPI
+    from fastapi.testclient import TestClient
+
+    from npa.workbench.cosmos import ray_server
+
+    class CapturedIngress(Exception):
+        pass
+
+    captured = {}
+
+    def ingress(api):
+        def capture(cls):
+            captured["router"] = cls(None)
+            raise CapturedIngress
+
+        return capture
+
+    ray = ModuleType("ray")
+    serve = ModuleType("ray.serve")
+    serve.Deployment = object
+    serve.deployment = lambda **kwargs: lambda cls: cls
+    serve.ingress = ingress
+    ray.serve = serve
+    upstream_args = ModuleType("cosmos_framework.inference.args")
+    upstream_args.OmniSampleOverrides = Mock()
+    upstream_args.OmniSetupOverrides = SimpleNamespace(
+        model_validate=lambda value: SimpleNamespace(build_setup=lambda **kwargs: None)
+    )
+    upstream_serve = ModuleType("cosmos_framework.inference.ray.serve")
+    upstream_serve.OmniModelDeployment = Mock()
+    for name, module in {
+        "ray": ray,
+        "ray.serve": serve,
+        "cosmos_framework.inference.args": upstream_args,
+        "cosmos_framework.inference.ray.serve": upstream_serve,
+    }.items():
+        monkeypatch.setitem(sys.modules, name, module)
+    monkeypatch.setenv("NPA_IMAGE_SOURCE_SHA", "a" * 40)
+    monkeypatch.setenv("NPA_COSMOS3_RAY_TOKEN", "test-application-token")
+    monkeypatch.setenv("HF_TOKEN", "test-model-token")
+    monkeypatch.setenv("NPA_COSMOS3_RAY_OUTPUT_DIR", str(tmp_path))
+    with pytest.raises(CapturedIngress):
+        ray_server._run_server()
+
+    router = captured["router"]
+    endpoint = type(router).batches
+    signature = inspect.signature(endpoint)
+    parameters = list(signature.parameters.values())
+    # Ray's class-based ingress injects self and makes the remaining arguments
+    # keyword-only, then FastAPI analyzes the rewritten endpoint again.
+    endpoint.__signature__ = signature.replace(parameters=[
+        parameters[0].replace(default=Depends(lambda: router)),
+        *(parameter.replace(kind=inspect.Parameter.KEYWORD_ONLY)
+          for parameter in parameters[1:]),
+    ])
+    api = FastAPI()
+    api.post("/v1/batches")(endpoint)
+    schema = api.openapi()["paths"]["/v1/batches"]["post"]
+    assert "application/json" in schema["requestBody"]["content"]
+    assert all(parameter["name"] != "body" for parameter in schema.get("parameters", []))
+    payload = {"model": "not-loaded", "samples": [{"name": "one", "prompt": "cube"}]}
+    with TestClient(api) as client:
+        assert client.post("/v1/batches", json=payload).status_code == 401
+        response = client.post(
+            "/v1/batches", json=payload,
+            headers={"Authorization": "Bearer test-application-token"},
+        )
+        assert response.status_code == 404
+        assert response.json()["detail"] == "model 'not-loaded' is not loaded"
+        missing_body = client.post(
+            "/v1/batches", params={"body": json.dumps(payload)},
+            headers={"Authorization": "Bearer test-application-token"},
+        )
+        assert missing_body.status_code == 422
+        assert missing_body.json()["detail"][0]["loc"] == ["body"]
+
+
 def test_load_batch_accepts_list_shorthand(tmp_path: Path) -> None:
     path = tmp_path / "batch.json"
     path.write_text('[{"name":"one","prompt":"cube"}]', encoding="utf-8")
