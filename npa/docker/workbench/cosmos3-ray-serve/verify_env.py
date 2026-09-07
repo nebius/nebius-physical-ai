@@ -16,7 +16,39 @@ from npa.workbench.cosmos import ray_serve as npa_ray_contract
 from npa.workbench.cosmos import ray_server as npa_ray_server
 
 
+def verify_accelerator_dependencies() -> None:
+    # A successful Torch import alone does not prove the extension ABI matches.
+    for package, expected in {
+        "torch": "2.13.0+cu130",
+        "torchvision": "0.28.0+cu130",
+        "torchcodec": "0.14.0+cu130",
+        "natten": "0.21.6+cu130.torch213",
+    }.items():
+        if importlib.metadata.version(package) != expected:
+            raise RuntimeError(
+                f"{package} does not match the upstream Torch 2.13 group"
+            )
+    for package in ("flash-attn", "flash-attn-3-nv"):
+        try:
+            importlib.metadata.version(package)
+        except importlib.metadata.PackageNotFoundError:
+            continue
+        raise RuntimeError(
+            f"incompatible inherited attention extension remains: {package}"
+        )
+
+
 def main() -> None:
+    verify_accelerator_dependencies()
+    from natten.functional import attention
+
+    if not callable(attention):
+        raise RuntimeError("upstream NATTEN attention implementation is unavailable")
+    if torch.cuda.is_available():
+        from cosmos_framework.model.attention.natten import natten_supported
+
+        if not natten_supported():
+            raise RuntimeError("upstream NATTEN attention is unavailable on this GPU")
     # Upgrading the core wheel alone can leave a stale or incomplete serve
     # extra behind the parent lock. Check every active direct requirement.
     environment = {**default_environment(), "extra": "serve"}

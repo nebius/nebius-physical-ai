@@ -100,7 +100,7 @@ COPY --chmod=0644 docker/workbench/sonic/verify_mujoco_image.py /opt/npa/docker/
 
 RUN useradd -m -s /bin/bash -u 1000 ubuntu \
     && mkdir -p /isaac-sim /opt/isaac-cache /tmp/npa-sonic-output \
-    && chmod 0755 /opt/npa/manifest /opt/npa/docker \
+    && chmod 0755 /opt/npa /opt/npa/manifest /opt/npa/docker \
        /opt/npa/docker/workbench /opt/npa/docker/workbench/common \
        /opt/npa/docker/workbench/sonic \
     && chmod 0644 /opt/npa/manifest/mujoco-requirements.lock \

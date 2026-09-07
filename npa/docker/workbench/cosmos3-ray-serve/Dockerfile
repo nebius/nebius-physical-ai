@@ -55,8 +55,11 @@ USER ubuntu
 # Replace only NPA's thin control/client layer. The model implementation and
 # dependency lock remain the exact pinned upstream bytes in the parent. The
 # parent generation image intentionally omits upstream's `serve` extra, so sync
-# that extra from the already-pinned upstream uv.lock. After syncing the frozen
-# environment, replace the complete Ray Serve dependency closure and NLTK via
+# that extra and its supported Torch 2.13 group from the pinned upstream uv.lock.
+# The group's NATTEN wheel matches Torch 2.13; the inherited Flash Attention
+# wheels target Torch 2.10 and must be removed. Inexact sync preserves the
+# parent's required qwen-vl-utils and boto3 inference additions. After syncing,
+# replace the complete Ray Serve dependency closure and NLTK via
 # hash-verified packages. uv-managed environments
 # intentionally omit pip — use `uv pip install --python` instead of the
 # nonexistent `.venv/bin/pip`.  Do NOT use --frozen for the serve extra alone
@@ -71,7 +74,8 @@ COPY --chown=ubuntu:ubuntu docker/workbench/cosmos3-ray-serve/security-upgrades-
 
 RUN cd /opt/cosmos3/cosmos-framework \
     && UV_CACHE_DIR=/tmp/uv-cache uv sync --frozen --inexact \
-       --extra guardrail --extra serve --group cu130 \
+       --extra guardrail --extra serve --group cu130-torch213 \
+    && uv pip uninstall --python .venv/bin/python flash-attn flash-attn-3-nv \
     && uv pip install --python .venv/bin/python --no-deps --require-hashes \
        --requirement /tmp/cosmos3-ray-security-upgrades-requirements.txt \
     && uv pip check --python .venv/bin/python \

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import ast
+import importlib.metadata
 import importlib.util
 import io
 import json
@@ -11,6 +13,7 @@ import tarfile
 from pathlib import Path
 
 import yaml
+import pytest
 
 from npa.deploy.images import UNVALIDATED_PUBLICATION_TOOLS
 
@@ -67,11 +70,58 @@ def test_image_uses_exact_accepted_framework_parent_and_bakes_no_weights() -> No
     assert "dpkg-query -W -f'${Status}' linux-libc-dev" in text
     assert "rm -rf /opt/nvidia/nsight-compute" in text
     assert "uv sync --frozen --inexact" in text
-    assert "--extra guardrail --extra serve --group cu130" in text
+    assert "--extra guardrail --extra serve --group cu130-torch213" in text
+    assert (
+        "uv pip uninstall --python .venv/bin/python flash-attn flash-attn-3-nv" in text
+    )
     # Security upgrade path: must use uv pip install in RUN (not nonexistent .venv/bin/pip)
     assert "uv pip install --python .venv/bin/python --no-deps" in text
     assert "security-upgrades-requirements.txt" in text
     assert "uv pip install --python /opt/npa/.venv/bin/python" in text
+
+
+@pytest.mark.parametrize(
+    "stale_package", ["torch", "natten", "torchcodec", "flash-attn", None]
+)
+def test_accelerator_verifier_rejects_mixed_or_inherited_extension_abis(
+    monkeypatch, stale_package
+):
+    # Run the production dependency verifier without importing the GPU runtime
+    # into the repository test environment. The image build runs the full file.
+    tree = ast.parse((IMAGE / "verify_env.py").read_text())
+    function = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "verify_accelerator_dependencies"
+    )
+    namespace = {"importlib": importlib}
+    exec(
+        compile(ast.Module(body=[function], type_ignores=[]), "verify_env.py", "exec"),
+        namespace,
+    )
+    versions = {
+        "torch": "2.13.0+cu130",
+        "torchvision": "0.28.0+cu130",
+        "torchcodec": "0.14.0+cu130",
+        "natten": "0.21.6+cu130.torch213",
+    }
+    if stale_package:
+        versions[stale_package] = "2.10.0"
+
+    def version(package):
+        if package not in versions:
+            raise importlib.metadata.PackageNotFoundError(package)
+        return versions[package]
+
+    monkeypatch.setattr(importlib.metadata, "version", version)
+    if stale_package:
+        with pytest.raises(
+            RuntimeError, match="upstream Torch 2.13|incompatible inherited"
+        ):
+            namespace["verify_accelerator_dependencies"]()
+    else:
+        namespace["verify_accelerator_dependencies"]()
 
 
 def test_server_invokes_upstream_native_batching_component() -> None:

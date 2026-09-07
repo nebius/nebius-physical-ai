@@ -83,3 +83,34 @@ def test_invalid_authentication_cannot_disable_or_inject_password_file(user, pas
     with pytest.raises(RerunServeError):
         RerunServeConfig(run_id="recording", s3_bucket="bucket",
                         auth_user=user, auth_password=password)
+
+
+@pytest.mark.parametrize("service_type", ["LoadBalancer", "NodePort", "lb"])
+def test_direct_public_http_exposure_is_rejected_before_manifest(service_type):
+    from npa.workflows.rerun_serve import RerunServeConfig, RerunServeError, build_rerun_serve_manifest
+
+    config = RerunServeConfig(run_id="recording", s3_bucket="bucket",
+                             service_type=service_type, auth_user="viewer", auth_password="password")
+    with pytest.raises(RerunServeError, match="private ClusterIP"):
+        build_rerun_serve_manifest(config)
+
+
+def test_recording_has_same_auth_boundary_and_no_raw_service_port():
+    from npa.workflows.rerun_serve import RerunServeConfig, build_rerun_serve_manifest
+
+    config = RerunServeConfig(run_id="recording", s3_bucket="bucket",
+                             auth_user="viewer", auth_password="password")
+    items = build_rerun_serve_manifest(config)["items"]
+    service = next(item for item in items if item["kind"] == "Service")
+    assert service["spec"]["ports"] == [{"name": "http", "port": config.port, "targetPort": "http"}]
+    nginx_config = next(item for item in items if item["kind"] == "ConfigMap")["data"]["nginx.conf"]
+    recording_location = nginx_config.split("location = /recording.rrd {", 1)[1].split("}", 1)[0]
+    assert "alias /data/sim2real.rrd;" in recording_location
+    assert 'auth_basic "NPA Rerun";' in recording_location
+    pod = next(item for item in items if item["kind"] == "Deployment")["spec"]["template"]["spec"]
+    rerun = next(container for container in pod["containers"] if container["name"] == "rerun")
+    assert "--bind 127.0.0.1" in rerun["command"][-1]
+    assert "ports" not in rerun
+    assert "exec" in rerun["readinessProbe"]
+    nginx = next(container for container in pod["containers"] if container["name"] == "nginx")
+    assert {"name": "rrd-data", "mountPath": "/data", "readOnly": True} in nginx["volumeMounts"]
