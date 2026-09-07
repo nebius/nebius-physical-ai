@@ -28,6 +28,11 @@ On Kubernetes, proving distinct physical workers additionally requires mapping
 Ray node addresses to pod IPs and the pods' assigned Kubernetes nodes. The audit
 uses that separate platform evidence for its one-worker and two-worker claims.
 
+For optional private S3 retention after downloading a completed result, see
+[Archive completed Ray CLIP results](../../../../docs/testing/ray-clip-archive.md).
+The companion verifies immutable publication and restore on CPU; the local
+rsync workflow remains usable on its own.
+
 The pod preparation receipt separates dependency installation, model download
 and weight hashing, and `cuda_environment_inspection_seconds`. That last phase
 includes the CUDA/version probe and `pip freeze`; it is not model-download time.
