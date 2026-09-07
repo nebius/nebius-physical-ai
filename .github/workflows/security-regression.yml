@@ -1,0 +1,65 @@
+name: Security regression
+
+on:
+  pull_request:
+  merge_group:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  security-regression:
+    name: security-regression
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+      - name: Select target revision and trusted scanner policy
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
+        run: |
+          set -euo pipefail
+          umask 077
+          git rev-parse --verify "${BASE_SHA}^{commit}"
+          echo "SECURITY_BASE=$BASE_SHA" >> "$GITHUB_ENV"
+          policy_directory="$RUNNER_TEMP/security-policy"
+          mkdir -p "$policy_directory"
+          policy_revision="$BASE_SHA"
+          # The installing PR is the only revision whose target lacks this policy.
+          if ! git cat-file -e "$BASE_SHA:scripts/security_gate.py"; then
+            policy_revision="$GITHUB_SHA"
+          fi
+          for name in security_gate.py security_source.py security_dependencies.py security_regression_checks.py security_install.sh security-requirements.txt; do
+            git show "$policy_revision:scripts/$name" > "$policy_directory/$name"
+          done
+          echo "SECURITY_POLICY=$policy_directory" >> "$GITHUB_ENV"
+      - name: Install isolated pinned scanners
+        run: |
+          set -euo pipefail
+          test -d npa && test ! -L npa
+          test ! -e npa/.venv && test ! -L npa/.venv
+          scanner_environment="$(mktemp -d "$RUNNER_TEMP/security-environment.XXXXXXXX")"
+          python -I -m venv "$scanner_environment"
+          ln -s "$scanner_environment" npa/.venv
+          npa/.venv/bin/python -I -m pip install -r "$SECURITY_POLICY/security-requirements.txt"
+          bash "$SECURITY_POLICY/security_install.sh" "$RUNNER_TEMP/security-tools"
+          echo "$GITHUB_WORKSPACE/npa/.venv/bin" >> "$GITHUB_PATH"
+          echo "$RUNNER_TEMP/security-tools" >> "$GITHUB_PATH"
+      - name: Prove real scanners reject safe vulnerable fixtures
+        run: npa/.venv/bin/python "$SECURITY_POLICY/security_regression_checks.py" --output-dir "$RUNNER_TEMP/security-regressions"
+      - name: Reject source, workflow and dependency regressions
+        run: |
+          npa/.venv/bin/python "$SECURITY_POLICY/security_gate.py" \
+            --base "$SECURITY_BASE" --head "$GITHUB_SHA" \
+            --output-dir "$RUNNER_TEMP/security-report"

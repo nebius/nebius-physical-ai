@@ -20,6 +20,7 @@ MAKEFILE = REPO_ROOT / "Makefile"
 AUTOMATIC_PR_WORKFLOWS = (
     "confidentiality-scan.yml",
     "gitleaks.yml",
+    "security-regression.yml",
     "harness-guardrails.yml",
     "image-security-scan.yml",
     "lint.yml",

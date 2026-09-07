@@ -2,6 +2,7 @@ name: confidentiality scan
 
 on:
   pull_request:
+  merge_group:
   push:
     branches: [main]
 
@@ -37,12 +38,16 @@ jobs:
           npa/.venv/bin/python -m pip install -e npa
 
       - name: Run confidentiality scans
+        env:
+          MERGE_BASE: ${{ github.event.merge_group.base_sha }}
         run: |
           set -euo pipefail
 
           scan_range=""
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             scan_range="${{ github.event.pull_request.base.sha }}..HEAD"
+          elif [ "${{ github.event_name }}" = "merge_group" ]; then
+            scan_range="${MERGE_BASE}..HEAD"
           elif [ "${{ github.event_name }}" = "push" ] && [ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]; then
             scan_range="${{ github.event.before }}..HEAD"
           fi

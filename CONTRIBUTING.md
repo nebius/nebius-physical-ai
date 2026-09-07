@@ -1,4 +1,18 @@
 # Contributing Workbench Tools
+
+## Contribution quality
+
+Use the [contributions skill](skills/atomic/contributions/SKILL.md) when writing
+or reviewing changes. It defines the required readability, exported-symbol
+documentation, module headers, README updates, and anti-pattern rules for new
+and changed code. Existing violations outside the task's scope do not require
+unrelated rewrites.
+
+Coding agents discover this skill through `AGENTS.md` and `skills/index.yaml`.
+The workbench agent's existing repository corpus also includes the root
+`skills/` tree; refresh that corpus after updating a deployed checkout to make
+new guidance available through retrieval.
+
 ## Scope
 This document covers adding a new Workbench tool to Nebius Physical AI.
 
@@ -664,6 +678,11 @@ after adding one.
 
 Update `AGENTS.md` only if the skill list or root index changes.
 ## Commit And PR Conventions
+Every proposed merge runs the [security regression gate](docs/security/merge-security-gate.md).
+Run its real scanner regression checks and base comparison before changing the
+security policy. Fix new findings and scanner errors before requesting review;
+the guide describes coverage, local commands, and required-check enforcement.
+
 Keep commits small and logical.
 
 Commit messages use an imperative subject, subject length <=72 characters, and

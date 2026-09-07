@@ -78,6 +78,8 @@ Treat every failure here as blocking. Do not add an exemption to make one pass.
 | Guardrail | Fix when it fails |
 |---|---|
 | `test_confidentiality_scan` | The scanner, its built-in Nebius patterns, or the gitleaks wiring changed. Keep `.gitleaks.toml` and `npa/src/npa/guardrails/confidentiality.py` in sync. |
+| `test_security_source` | Source scanner output, inventory, ignore handling or stable finding identity is incomplete. Restore fail-closed scanning; run the real scanner workload in `docs/security/merge-security-gate.md`. |
+| `test_security_gate` | A regression comparison, snapshot boundary or dependency report check failed. Preserve duplicate detection and reject incomplete reports or source paths outside the snapshot. |
 | `test_agent_secret_guard` | A secret path became tracked, `.gitignore` stopped covering agent/cursor secrets, or a literal secret or live IP landed in agent files. Remove it and rotate. |
 | `test_agent_no_hardcoded_data` | Agent or insights source embeds run names, answers, or infra endpoints. Resolve them from live tool observations instead. |
 | `test_access_key_list_safety` | Docs or code request secret-bearing access-key list JSON. Use a `--format jsonpath=...` projection. |
