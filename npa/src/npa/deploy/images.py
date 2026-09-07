@@ -130,14 +130,14 @@ RESTRICTED_DERIVED_IMAGES: frozenset[str] = frozenset()
 OMNIVERSE_RESTRICTED_TOOLS = RESTRICTED_PUBLICATION_TOOLS
 OMNIVERSE_RESTRICTED_DERIVED_IMAGES = RESTRICTED_DERIVED_IMAGES
 
-# Tools that are licence-eligible for public redistribution but have no accepted
+# Candidates marked public in the packaging contract without an accepted
 # built/GPU-validated artifact yet.
 #
 # This is a different question from `RESTRICTED_PUBLICATION_TOOLS`, and conflating
-# them would be wrong in both directions: these are not restricted (the licensing
-# work is done and the answer was "public"), they are simply unproven. Publishing
-# an image whose payload scan and GPU smoke have never run would hand out a claim
-# we have not earned, so publish_public refuses them by name rather than relying
+# them would be wrong in both directions: candidate intent does not prove that
+# every inherited layer has completed redistribution review. Publishing
+# an image without passing payload scans and GPU qualification would hand out a
+# claim we have not earned, so publish_public refuses them by name rather than relying
 # on the push failing because the tag happens not to exist.
 #
 # Remove a tool from this set in the same change that records its accepted image

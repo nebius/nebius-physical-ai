@@ -1,6 +1,6 @@
 ---
 name: cosmos3-super-benchmark
-description: Reproduce, operate, validate, or troubleshoot the fixed Cosmos3-Super eight-GPU benchmark or isolated single-H200 TP-1 validation through the immutable public vLLM-Omni image.
+description: Reproduce, operate, validate, or troubleshoot the fixed Cosmos3-Super eight-GPU benchmark or isolated single-H200 TP-1 validation through an operator-private wrapper of the immutable upstream vLLM-Omni image.
 ---
 
 # Cosmos3-Super B200/H200 Benchmark
@@ -9,8 +9,9 @@ Use this skill for the production benchmark in
 `workflows/testing/cosmos3-super-b200-benchmark.yaml` or
 `workflows/testing/cosmos3-super-h200-benchmark.yaml`.
 It is different from Cosmos Framework native Ray Serve (`cosmos3-ray-serve`):
-this workload runs the public vLLM-Omni synchronous video endpoint. The default
-`primary` suite measures four independent-service arrangements on one complete
+this workload runs the upstream vLLM-Omni synchronous video endpoint through an
+operator-private SkyPilot wrapper. The default `primary` suite measures four
+independent-service arrangements on one complete
 B200 or H200 node. The `b200-full` suite reproduces the public machine-readable
 ten-cell B200 record and its 240 measured attempts.
 
@@ -23,7 +24,12 @@ independent one-GPU services on a complete node.
 
 ## Fixed contract
 
-- Image: `vllm/vllm-omni:cosmos3` at the digest in the workflow.
+- Upstream runtime: `vllm/vllm-omni:cosmos3` at index digest
+  `sha256:6d2630c7d637b699557573f2c3fee8df5d4d0cd718977aa22549ed6a6ef30587`.
+  The `cosmos3-super-benchmark` Dockerfile inherits that digest and adds the
+  SkyPilot bootstrap closure. The workflow selects the operator's immutable
+  wrapper through `runtime_image` and its registry pull Secret through
+  `image_pull_secret`; the checked-in image value is a placeholder.
 - Model: `nvidia/Cosmos3-Super` at revision
   `e0262be9d8f7586bc24c069a2aed2b665bdff266`.
 - Arrangements, in order: one 8-GPU hybrid service; two TP-4 services; four
@@ -70,9 +76,15 @@ clips, or runtime caches.
 Submit the shipped spec through `npa workbench workflow submit`, selecting the
 operator's exact Kubernetes context and bucket. Pass the acceptance value,
 `HF_TOKEN`, and S3 credentials through `--secret-env`; never render their values
-into YAML or logs. Use the recipe for the intended hardware. The resource profile
+into YAML or logs. Set `--var runtime_image=<operator-image@sha256:digest>` and
+`--var image_pull_secret=<pull-secret-name>` to the verified private wrapper and
+its existing registry pull Secret. The wrapper preserves the upstream runtime
+digest; its inherited component rights have not been established for NPA public
+redistribution, so it remains excluded from the public image plan. Runtime
+acceptance and a successful benchmark do not change that classification.
+Use the recipe for the intended hardware. The resource profile
 must remain `B200:8` or `H200:8`, must keep the 32-GiB `/dev/shm`, and must retain
-the exact external image digest. The H200 path sets PyTorch expandable segments
+the exact inherited runtime. The H200 path sets PyTorch expandable segments
 for the lower-memory one-GPU service cell; B200 behavior is unchanged.
 
 The command starts services sequentially and refuses to open a cell's measured

@@ -5,17 +5,26 @@ description: Use to run RoboCasa kitchen-task simulation as a first-class NPA wo
 
 # RoboCasa (kitchen-task simulation)
 
-RoboCasa is an Apache-2.0 kitchen-task simulation framework built on robosuite
-and MuJoCo. This tool promotes the accepted RoboCasa BYOF candidate into a
-first-class workbench tool: a dedicated `npa-robocasa` container with a FastAPI
-service, CLI, SDK, and workflow toolRefs that exercise the real upstream
-capabilities.
+RoboCasa v1.0 and the selected robosuite commit use MIT licenses, with separate
+MuJoCo Apache-2.0 notices. The first-class workbench integration provides a
+candidate `npa-robocasa` container with a FastAPI service, CLI, SDK, and workflow
+toolRefs that exercise the real upstream capabilities. Accepted RoboCasa BYOF
+results do not qualify this separate service image for public publication.
 
-The upstream repo is `robocasa/robocasa` at the pinned `v1.0` tag, with
-robosuite at a pinned commit and the exact MuJoCo 3.3.1 / Gymnasium 0.29.1 /
-CUDA 12.4 closure from the live-accepted BYOF evidence. Kitchen assets
+The upstream repo is `robocasa/robocasa` at the selected `v1.0` tag, with
+robosuite at a pinned commit and MuJoCo 3.3.1 / Gymnasium 0.29.1 on a CUDA 12.4
+base. The source tag, unpinned base digest, and floating Python dependencies do
+not establish an immutable copy of the earlier BYOF closure. Kitchen assets
 (textures, fixtures, objects) are NOT baked and download at run time under the
 operator's own network access.
+
+The image remains in `VALIDATION_CANDIDATE_TOOLS`. Its `redistribution: public`
+metadata does not establish rights for every inherited `cudnn-devel` SDK file;
+exact-layer licensing, security scans, and real GPU capability evidence are
+still required before promotion. See the
+[source license](https://github.com/robocasa/robocasa/blob/v1.0/LICENSE),
+[pinned robosuite license](https://github.com/ARISE-Initiative/robosuite/blob/85abee228d1c43ab1939bce33028099945d453b4/LICENSE),
+and [packaging boundaries](../../../docs/workbench/container-packaging.md#redistribution-who-may-pull-and-how-widely).
 
 ## Capabilities
 

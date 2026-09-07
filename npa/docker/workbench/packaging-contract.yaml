@@ -154,7 +154,9 @@ images:
     redistribution: public
     notes: >-
       Bakes pinned Apache-2.0 OpenPI source, its frozen RLDS/JAX dependency
-      environment, and an SM120 probe on the redistributable CUDA base. Gemma
+      environment, and an SM120 probe on a CUDA/cuDNN development base. Exact
+      inherited-layer and installed-wheel redistribution rights remain to be
+      established; public metadata does not waive publication quarantine. Gemma
       and pi0.5 weights, DROID records, terms acceptance, credentials, trained
       checkpoints, and populated caches are runtime-only. Built-image byte and
       layer scanning plus an eight-node RTX PRO 6000 qualification are required
@@ -191,9 +193,11 @@ images:
     ports: [8791]
     redistribution: public
     notes: >-
-      Bakes immutable Apache-2.0 RoboCasa source (pinned v1.0) and robosuite
-      (pinned commit) plus the exact MuJoCo 3.3.1 / Gymnasium 0.29.1 / CUDA 12.4
-      closure from the live-accepted BYOF evidence. Kitchen assets (textures,
+      Bakes MIT RoboCasa source (v1.0 tag) and robosuite (pinned commit), with
+      MuJoCo 3.3.1 / Gymnasium 0.29.1 on a CUDA 12.4/cuDNN development base.
+      The mutable base/source tags and floating dependencies do not establish an
+      immutable BYOF closure. Inherited-layer redistribution review and exact
+      service-image qualification remain outstanding. Kitchen assets (textures,
       fixtures, objects) are NOT baked and download at run time under the
       operator's own network access. No model weights, credentials, or accepted
       terms are baked. Built-image byte/layer scanning is mandatory before

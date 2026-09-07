@@ -3,12 +3,12 @@
 # Built independently on the CUDA 12.4 base that the live-accepted RoboCasa BYOF
 # evidence used (nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04), NOT on the
 # purpose-built SONIC MuJoCo application image. RoboCasa and robosuite are
-# Apache-2.0; the pinned versions below match the accepted BYOF capability runs.
+# MIT; accepted BYOF results do not qualify this first-class image's bytes.
 #
-# What IS baked, and is fine to redistribute:
-#   * CUDA 12.4 Ubuntu 22.04 base
-#   * RoboCasa source at the pinned v1.0 tag (Apache-2.0)
-#   * robosuite at the pinned commit (Apache-2.0)
+# What IS baked (inherited-layer redistribution review remains outstanding):
+#   * CUDA 12.4/cuDNN development Ubuntu 22.04 base
+#   * RoboCasa source at the v1.0 tag (MIT; tag is not an immutable commit pin)
+#   * robosuite at the pinned commit (MIT)
 #   * MuJoCo 3.3.1, Gymnasium 0.29.1, and the OSS Python closure
 #
 # What is NOT baked:
@@ -59,7 +59,7 @@ RUN apt-get update \
 
 WORKDIR /opt/robocasa
 
-# Pin the exact dependency closure from the live-accepted BYOF evidence.
+# Preserve selected BYOF version constraints; this is not a hash-locked closure.
 # RoboCasa requires Gymnasium 0.29.1. LeRobot's broad environment dependency
 # requests Gymnasium >=1.1.1, but exact-checkpoint ACT inference uses neither
 # LeRobot environment wrappers nor that newer API. Keep RoboCasa's known-good
@@ -83,7 +83,7 @@ RUN python -m pip install --no-cache-dir --upgrade pip "setuptools>=71,<81" whee
     && python -m pip install --no-cache-dir --upgrade \
         "torch==2.12.1" "torchvision==0.27.1"
 
-# Install RoboCasa source (no deps; the closure above is pinned).
+# Install source without resolving its dependencies a second time.
 RUN git clone --depth 1 --branch ${ROBOCASA_REPO_REF} \
       ${ROBOCASA_REPO_URL} /opt/robocasa/source \
     && python -m pip install --no-cache-dir --no-deps -e /opt/robocasa/source

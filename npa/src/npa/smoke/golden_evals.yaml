@@ -858,9 +858,10 @@ containers:
       network: FastAPI service on :8791 (/health, /system-info, /run, /status); kitchen assets download at run time
       external_fetch: [pypi, github, huggingface, s3]
       notes: >-
-        Bakes Apache-2.0 RoboCasa (v1.0) and robosuite (pinned commit) plus the
-        exact MuJoCo 3.3.1 / Gymnasium 0.29.1 / CUDA 12.4 closure from the
-        live-accepted BYOF evidence. Kitchen assets are NOT baked and download at
+        Bakes MIT RoboCasa (v1.0 tag) and robosuite (pinned commit), with
+        MuJoCo 3.3.1 / Gymnasium 0.29.1 on a CUDA 12.4/cuDNN development base.
+        The dependency closure is not hash-locked; inherited-layer rights and
+        exact-image qualification remain unresolved. Kitchen assets are NOT baked and download at
         run time. No model weights, credentials, or accepted terms are baked.
         The golden eval exercises health + system-info; real task registration,
         EGL reset, and rollout are exercised by the capability run path.

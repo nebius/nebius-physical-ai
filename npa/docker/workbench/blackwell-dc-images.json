@@ -782,12 +782,12 @@
       "build_script": "robocasa/build.sh",
       "verdict": "blocked",
       "validation": "pending-build",
-      "torch": "none baked (CUDA 12.4 base; robosuite/MuJoCo CPU/EGL)",
+      "torch": "Dockerfile requests torch 2.12.1 and torchvision 0.27.1 from PyPI; built CUDA/SM closure unverified",
       "source_compiled_extensions": [],
       "smoke": "Gymnasium task registration, kitchen asset availability, headless EGL reset, random rollout with video",
-      "notes": "Built on the CUDA 12.4 base from the live-accepted BYOF evidence. cu124 wheels stop at sm_90, so the image cannot run on datacenter Blackwell (sm_100/sm_103) without a CUDA 13 rebuild; RTX PRO 6000 (sm_120) also requires a cu130 rebuild. RoboCasa/robosuite are Apache-2.0 and kitchen assets are runtime downloads. Validation candidate: not yet built or GPU-validated.",
-      "blocked_reason": "CUDA 12.4 base wheels stop at sm_90; datacenter Blackwell (sm_100/sm_103) and RTX PRO 6000 (sm_120) need a CUDA 13 rebuild",
-      "upstream_tracking": "robosuite/MuJoCo CUDA 13 wheel availability and a cu130 rebuild of the npa-robocasa image"
+      "notes": "Candidate source uses a mutable CUDA 12.4/cuDNN development base and separately installs Torch from PyPI. The base tag alone does not establish the installed Torch CUDA runtime or SM support. RoboCasa/robosuite source is MIT; kitchen assets are runtime downloads. Inherited-layer redistribution review and exact-image GPU evidence remain outstanding. Prior BYOF results do not qualify these service bytes.",
+      "blocked_reason": "No accepted exact-image packaging, inherited-layer rights, or physical GPU qualification; service package COPY closure also omits imported npa packages",
+      "upstream_tracking": "Verify complete installed runtime and package closure, then qualify each intended GPU family"
     },
     {
       "name": "npa-curobo",

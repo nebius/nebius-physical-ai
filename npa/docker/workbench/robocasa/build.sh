@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build (and optionally push) npa-robocasa: the RoboCasa kitchen-task simulation
-# runtime. RoboCasa and robosuite are Apache-2.0; kitchen assets are never baked
+# runtime. RoboCasa and robosuite are MIT; kitchen assets are never baked
 # and download at runtime under the operator's own network access.
 set -euo pipefail
 

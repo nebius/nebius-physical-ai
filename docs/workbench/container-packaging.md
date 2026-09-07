@@ -108,25 +108,29 @@ has a license boundary that the contract encodes in a `redistribution` field per
 image (`public` | `restricted`), enforced by
 `npa/tests/docker/test_packaging_contract.py`.
 
-- **`public`** — OSS-redistributable. Code is under OSI-approved licenses
-  (Apache-2.0 / BSD-3 / MIT / MPL-2.0), the exact CUDA/PyTorch base and wheel
-  payloads have applicable redistribution grants,
-  and model weights are pulled at runtime. Public GR00T N1.7, GEAR-SONIC,
+- **`public`** — intended for redistribution under the applicable source and
+  component licenses. Accepted image bytes require applicable grants for their
+  exact base, installed wheels, and other inherited payloads; model weights are
+  pulled at runtime. Public GR00T N1.7, GEAR-SONIC,
   Cosmos Reason1, and Cosmos3 Nano assets work anonymously; gated Cosmos assets require a token at
-  **runtime** by the operator, never baked into the image. These may be published
-  to a public/anonymous registry.
+  **runtime** by the operator, never baked into the image. The metadata alone
+  does not qualify an image for publication: quarantine, exact-layer licensing,
+  security scans, and real capability evidence remain separate gates.
 
   Public registry availability alone is not a grant for every component. For
   example, the current cuDNN supplement identifies runtime `.so` and `.dll`
   files as distributable; an inspected wheel's older embedded supplement also
   names `.h` files. Preserve and compare these exact terms rather than treating
-  them as identical. cuRobo uses runtime-only cuDNN bytes, satisfying both grants.
+  them as identical. cuRobo's candidate recipe retains only runtime libraries
+  and notices to target the common boundary; built-layer verification is still required.
   Check inherited layers and installed wheels separately. Removing restricted bytes
   in a later layer leaves them distributed in an ancestor; select a suitable
   base and filter any non-distributable install payload before that layer is
   committed. Keep the applicable licenses and verify the final image's layers.
-- **`restricted`** — bakes a runtime we are not licensed to redistribute. Such an
-  image may be built and run by the operator who owns the registry (internal R&D,
+- **`restricted`** — public redistribution rights for the complete baked runtime
+  have not been established, or its applicable terms prohibit that distribution.
+  Such an image may be built and run under the operator's applicable terms in
+  their own registry (internal R&D,
   build-your-own), but hosting it **prebuilt on a public/anonymous registry** would
   make us the third-party redistributor.
 
@@ -139,6 +143,19 @@ image (`public` | `restricted`), enforced by
   expressly listed as redistributable by their included SDK terms. Both current
   releases are bound to exact public development digests with accepted real-GPU
   evidence.
+
+The quarantined OpenPI and RoboCasa candidates still inherit `cudnn-devel`
+bases. Their `public` metadata is publication intent, not proof that every
+inherited SDK file may be redistributed. Review the exact installed payload and
+its bundled terms against the [cuDNN supplement](https://docs.nvidia.com/deeplearning/cudnn/backend/latest/reference/eula.html)
+before promotion; runtime model acceptance does not resolve that image boundary.
+RoboCasa v1.0 and the selected robosuite commit use MIT licenses with separate
+MuJoCo Apache-2.0 notices, rather than the Apache-only description in older
+packaging records. Its Dockerfile selects a source tag, a base tag, and several
+floating dependencies, so accepted BYOF results do not establish an immutable
+dependency closure or qualify the separate first-class service image. See the
+[RoboCasa source license](https://github.com/robocasa/robocasa/blob/v1.0/LICENSE)
+and [pinned robosuite license](https://github.com/ARISE-Initiative/robosuite/blob/85abee228d1c43ab1939bce33028099945d453b4/LICENSE).
 
 ## Manual gate audit (2026-08-16)
 
@@ -326,7 +343,8 @@ crane manifest ghcr.io/nebius/nebius-physical-ai/npa-lerobot:dev-<full-git-sha> 
 
 ### Publication intent and registry state
 
-The packaging contract records build sources and redistribution eligibility.
+The packaging contract records build sources and redistribution intent, subject
+to the exact-image licensing and validation gates above.
 The public plan selects `publicly_publishable_tools()` and each resolved public
 release pin; restricted tools and validation candidates are excluded. A
 Dockerfile or `redistribution: public` alone does not put an image in that plan.
@@ -383,10 +401,10 @@ release-byte verdict.
 
 Never add a `restricted` image to official GHCR.
 `publish_public` and `development_image_for_tool` refuse every member of the
-general restricted-image inventory. Separately, license-eligible candidates
+general restricted-image inventory. Separately, candidates marked `public`
 remain in `UNVALIDATED_PUBLICATION_TOOLS` or `VALIDATION_CANDIDATE_TOOLS`
-until their required exact-digest evidence is recorded, so a classification
-change alone cannot create a supported release.
+until their required licensing and exact-digest evidence is recorded, so a
+classification change alone cannot create a supported release.
 
 > **Publishing is a business decision.** The engineering makes publication defensible —
 > the images contain no NVIDIA-proprietary bytes, and NVIDIA delivers Isaac to each

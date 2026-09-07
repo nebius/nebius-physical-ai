@@ -36,13 +36,21 @@ for historical comparison and provenance, including superseded LeRobot and
 LanceDB releases; their availability does not establish current functional
 support. Resolve and retain the manifest digest for reproducibility.
 
-The build inventory has 35 packaging entries (34 redistribution-eligible and
-one restricted); the tool map has 36 entries (32 public-release members, one
-restricted tool, and three validation candidates). Foundation and derived
+The build inventory has 36 packaging entries (34 marked `public` and
+two restricted); the tool map has 37 entries (32 public-release members, two
+restricted tools, and three validation candidates). A candidate's `public`
+classification does not establish completed review of its built layers.
+Foundation and derived
 Dockerfiles are not independent public releases. In particular, `loop-eval`
 uses `sim2real-eval/Dockerfile`, and `reference-policy` is a derived EnvGen
 image. Build sources, eligibility, publication, and functional validation are
 separate claims.
+
+The [September 7 publication audit](image-publication-audit-20260907.md)
+rechecked all 32 accepted release digests anonymously and explains each of the
+five exclusions, including unresolved inherited-runtime rights and the exact
+validation evidence still needed. Its registry check does not refresh the
+September 5 historical-alias/config inspection above.
 
 LeRobot 0.6.0 remains selectable package support without an accepted public
 image pin/digest. Its official `npa-lerobot:0.6.0` tag returned
@@ -219,7 +227,7 @@ The Cosmos3 serving bootstrap also uses a patched Python base and verified
 runtime installation tools. These source changes do not republish or qualify
 the existing supported image digests listed above.
 
-## Intentionally not published as separate images
+## Canonical images excluded from the public release plan
 
 - **`npa-cosmos3-nano-video`** extends the digest-pinned upstream
   `vllm/vllm-omni:cosmos3` image with Ray Serve, measured chunked video rollouts,
@@ -232,13 +240,22 @@ the existing supported image digests listed above.
   only the SkyPilot worker bootstrap closure and must be built into the
   operator's own registry; it is deliberately excluded from the public catalog.
 - **`npa-robocasa`** is a validation candidate, not yet in the public publishing
-  plan. It is licence-eligible for public redistribution (Apache-2.0 RoboCasa and
-  robosuite), but its built-image payload scan and real GPU capability validation
-  have not yet been recorded, so it is quarantined from `publicly_publishable_tools()`
+  plan. RoboCasa and robosuite source use MIT; this does not establish rights for
+  the inherited CUDA/cuDNN development image or every installed dependency.
+  Its built-image payload scan and real GPU capability validation
+  have not yet been accepted, so it is quarantined from `publicly_publishable_tools()`
   via `VALIDATION_CANDIDATE_TOOLS`. It will gain a public row only when its accepted
   digest and GPU evidence are recorded.
   It is a non-root service image with no passwordless-sudo grant; workflow
   toolRefs call the deployed service from the standard task image.
+- **`npa-curobo`** remains at `0.8.0-cuda13-b300-unbuilt`. Source controls filter
+  cuDNN to runtime libraries and notices, but publication still requires actual
+  layer scans and separate B200/RTX PRO 6000 qualification. Its complete benchmark
+  covers both pinned datasets in kinematic and payload-dynamics modes.
+- **`npa-openpi`** remains at `pi05-full-droid-rlds-cu128-unbuilt`. The full-DROID
+  candidate described above needs inherited cuDNN-layer rights review, exact-byte
+  checks, and the specified eight-node RTX PRO 6000 qualification. Gemma acceptance
+  authorizes runtime use under its terms; it does not complete these image gates.
 
 The historical SONIC L40S and inherited MuJoCo variants remain restricted and
 quarantined in `sonic_image_manifest.json`. The old SONIC `0.1.2` alias was
