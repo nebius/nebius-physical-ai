@@ -113,8 +113,9 @@ def test_explicit_project_and_context_take_precedence(
     assert client.calls == [("cluster-a", "project-a")]
 
 
+@pytest.mark.parametrize("exact_name", [None, "fleet-cluster", "unrelated-cluster"])
 def test_provider_name_may_differ_from_unique_local_context(
-    monkeypatch, tmp_path: Path
+    monkeypatch, tmp_path: Path, exact_name: str | None
 ) -> None:  # noqa: ANN001
     kubeconfig = tmp_path / "kubeconfig"
     _write_kubeconfig(kubeconfig)
@@ -125,6 +126,9 @@ def test_provider_name_may_differ_from_unique_local_context(
         config, "list_projects", lambda: {"selected": {"project_id": "project-a"}}
     )
     monkeypatch.setattr(config, "default_project_name", lambda: "selected")
+    monkeypatch.setattr(
+        config, "resolve_environment", lambda project: SimpleNamespace(project_id="project-a")
+    )
     monkeypatch.setattr(identity, "load_cluster_state", lambda context: state)
     monkeypatch.setattr(identity, "existing_kubeconfig", lambda context: kubeconfig)
     client = _Client(
@@ -136,8 +140,19 @@ def test_provider_name_may_differ_from_unique_local_context(
         )
     )
 
+    exact = (
+        {"project_id": "project-a", "cluster_id": "cluster-a", "cluster_name": exact_name}
+        if exact_name is not None else {}
+    )
+    if exact_name == "unrelated-cluster":
+        with pytest.raises(identity.ClusterIdentityError, match="conflict for cluster_name"):
+            identity.resolve_verified_cluster_identity(
+                project="selected", context="npa-cluster", client=client, **exact
+            )
+        assert client.calls == []
+        return
     verified = identity.resolve_verified_cluster_identity(
-        project="selected", context="npa-cluster", client=client
+        project="selected", context="npa-cluster", client=client, **exact
     )
 
     assert verified.context == "npa-cluster"
