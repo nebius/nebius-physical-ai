@@ -95,6 +95,7 @@ from npa.serverless_common import (
     split_serverless_env,
     validate_output_path,
 )
+from npa.workbench.isaac_lab import routing as isaac_lab_routing
 from npa.cli.isaac_lab.trajectory_export_script import TRAJECTORY_CAMERA_HELPERS
 from npa.workbench.training_config import (
     TrainingConfig,
@@ -262,8 +263,8 @@ ISAAC_LAB_RT_CORE_PLATFORMS = {"gpu-l40s-a", "gpu-l40s-d", "gpu-rtx6000"}
 def _isaac_lab_require_rt_gpu(platform: str) -> None:
     if platform not in ISAAC_LAB_RT_CORE_PLATFORMS:
         _fail(
-            "Isaac Lab requires RT-core GPUs. Use --gpu-type l40s or "
-            "--gpu-type gpu-rtx-pro-6000; do not use H100/H200."
+            "Isaac Lab rendering requires RT-core GPUs. Use --gpu-type l40s or "
+            "--gpu-type gpu-rtx-pro-6000; headless training may target H100/H200/B200."
         )
 
 
@@ -320,11 +321,11 @@ def _isaac_lab_serverless_train(
     try:
         validate_output_path(output_path)
         platform, preset, resolved_gpu_count = resolve_gpu_platform(gpu_type, gpu_count)
+        isaac_lab_routing.validate_train_gpu_target(platform, task=task)
     except ValueError as exc:
         _fail(str(exc))
     if gpu_preset:
         preset = gpu_preset
-    _isaac_lab_require_rt_gpu(platform)
 
     proj_alias = _project_alias or default_project_name()
     wb_name = _workbench_name or default_workbench_name()
@@ -696,7 +697,8 @@ def _gpu_selection_error() -> str:
         "  Suggested starting points:\n"
         "    Simulation workloads (L40S): --gpu-type gpu-l40s-a --gpu-preset 1gpu-40vcpu-160gb\n"
         "    RTX Pro 6000 fallback: --gpu-type gpu-rtx-pro-6000 --gpu-preset 1gpu-24vcpu-218gb\n"
-        "  Do not use H100/H200; Isaac Lab requires RT cores."
+        "  A deployed workbench is the render surface, so it needs RT cores; headless\n"
+        "  training may select H100/H200/B200 via `isaac-lab train --runtime serverless`."
     )
 
 
