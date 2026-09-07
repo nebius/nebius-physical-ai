@@ -78,6 +78,7 @@ from npa.soperator.lifecycle import (
 from npa.cluster_backends.quotas import preflight_region, shortfall_message
 from npa.fleet.spec import ClusterSpec, FleetSpec, ObjectStorageSpec, ProjectSpec
 from npa.cluster_backends.mk8s_render import (
+    validate_recipe_kuberay_compatibility,
     validate_recipe_mig_compatibility,
     validate_recipe_rtx_compatibility,
 )
@@ -1298,6 +1299,7 @@ def plan_fleet(
                 ],
                 "k8s_version": backend_plan["k8s_version"],
                 "mig": backend_plan["mig"],
+                **({"kuberay": backend_plan["kuberay"]} if cluster.kuberay else {}),
             }
             if cluster.backend_explicit:
                 planned_cluster["backend"] = "mk8s"
@@ -1769,6 +1771,9 @@ def _deploy_mk8s_fleet(
         for cluster in project.clusters:
             if only_clusters and cluster.name not in only_clusters:
                 continue
+            validate_recipe_kuberay_compatibility(
+                cluster, recipe_root / _K8S_TRAINING_SUBDIR
+            )
             validate_recipe_mig_compatibility(
                 cluster, recipe_root / _K8S_TRAINING_SUBDIR
             )

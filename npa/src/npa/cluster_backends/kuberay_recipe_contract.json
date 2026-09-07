@@ -1,0 +1,8 @@
+{
+  "k8s-training/applications.tf": "a44b47c754879d82ebf8105b18521cd18839d4eeeb76597b5033dade7dbe87f2",
+  "k8s-training/variables.tf": "524ccda92a577e74b6da2b9b8d8741fffb3e8fd5d7f35798e6803624d614fef0",
+  "modules/kuberay/main.tf": "6a10fa31a15cba4cc4d6d0b8645039d2f621ca31d1fb9ee382fe59b42144e0ea",
+  "modules/kuberay/variables.tf": "04ba59c0b5663f8509d4d30143ef0c3a2489f0d3cba1e05cff21196a12ed78e5",
+  "modules/kuberay/versions.tf": "85f474c8ea4adb3e4531c1d5f4517c2f40e4ca11d2d7795689d70755e1eb9c84",
+  "modules/kuberay/files/ray-values-cpu.yaml.tftpl": "2a34f0a5cce9501472bdae0f81b03d635ffc622a18b5e160c893edcbd8d0e2a4"
+}

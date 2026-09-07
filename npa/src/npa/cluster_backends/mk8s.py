@@ -18,6 +18,7 @@ from npa.cluster_backends.mk8s_model import (
     as_mk8s_desired,
 )
 from npa.cluster_backends.mk8s_render import render_tfvars
+from npa.cluster_backends.kuberay import validate_recipe_kuberay_compatibility
 
 
 @dataclass(frozen=True)
@@ -108,6 +109,7 @@ def desired_state(cluster: MK8sDesired) -> dict[str, Any]:
     )
     return {
         "backend": "mk8s",
+        **({"kuberay": cluster.kuberay.plan()} if cluster.kuberay else {}),
         "name": cluster.name,
         "cpu_nodes": cluster.cpu_count(),
         "cpu_platform": cluster.cpu_nodes.platform if cluster.cpu_nodes else "",
@@ -168,6 +170,13 @@ class MK8sBackend:
         self, desired: MK8sDesired, request: MK8sApplyRequest
     ) -> dict[str, Any]:
         desired = as_mk8s_desired(desired)
+        recipe = request.recipe_dir or (
+            request.recipe_root / "k8s-training" if request.recipe_root else None
+        )
+        if desired.kuberay and desired.kuberay.enabled:
+            if recipe is None:
+                raise ValueError("KubeRay preflight requires the selected recipe")
+            validate_recipe_kuberay_compatibility(desired, recipe)
         result: dict[str, Any] = {
             "backend": self.name,
             "required": True,
