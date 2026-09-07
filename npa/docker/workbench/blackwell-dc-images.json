@@ -53,6 +53,28 @@
   },
   "images": [
     {
+      "name": "npa-cosmos3-nano-video",
+      "dockerfile": "cosmos3-nano-video/Dockerfile",
+      "verdict": "ready",
+      "validation": "validated",
+      "smoke": "Run the live Nano video acceptance: one 30-second 480p BF16 rollout followed by eight complete concurrent requests on B200, with frame decode, actual latency, device VRAM and fanout evidence.",
+      "notes": "Operator-private pinned vLLM-Omni diffusion runtime with Ray Serve. Validated on B200 only: sixteen BF16 TP=1 replicas and one 30-second 480p video followed by eight complete concurrent videos, with guardrails and audio off. B300 and other GPU families remain unvalidated. See npa/deploy/cosmos3-nano-video/README.md for measured timings and limitations.",
+      "redistribution": "restricted",
+      "torch": "2.11.0+cu130",
+      "measured_torch": "2.11.0+cu130",
+      "measured_arch_list": [
+        "sm_75",
+        "sm_80",
+        "sm_86",
+        "sm_90",
+        "sm_100",
+        "sm_120"
+      ],
+      "validated_tag": "dev-826b1730f64c1fae2fb6a4280c312f280b6648ad",
+      "validated_digest": "sha256:f78b7a0cc8d32b8a201eec8702510244d6996ae949bbc3373bde9daad7766e97",
+      "validated_registry_scope": "operator"
+    },
+    {
       "name": "npa-base",
       "dockerfile": "base/cuda13-b300/Dockerfile",
       "build_script": "base/cuda13-b300/build.sh",
@@ -1474,6 +1496,50 @@
       "full_workflow_acceptance": {
         "EVG": "passed"
       }
+    },
+    "npa-cosmos3-nano-video": {
+      "built": true,
+      "validated_date": "2026-09-06",
+      "validated_digest": "sha256:f78b7a0cc8d32b8a201eec8702510244d6996ae949bbc3373bde9daad7766e97",
+      "validated_registry_scope": "operator",
+      "image_source_commit": "826b1730f64c1fae2fb6a4280c312f280b6648ad",
+      "torch_version": "2.11.0+cu130",
+      "torch_cuda_version": "13.0",
+      "measured_arch_list": [
+        "sm_75",
+        "sm_80",
+        "sm_86",
+        "sm_90",
+        "sm_100",
+        "sm_120"
+      ],
+      "validated_gpus": {
+        "B200": {
+          "capability": "10.0",
+          "result": "REAL_NANO_VIDEO_ONE_THEN_EIGHT_PASSED"
+        }
+      },
+      "replicas": 16,
+      "gpus_per_replica": 1,
+      "tensor_parallel_size": 1,
+      "precision": "BF16",
+      "guardrails": false,
+      "audio": false,
+      "completed_30_second_480p_videos": 9,
+      "fully_decoded_mp4s": 36,
+      "frame_count_per_video": 720,
+      "fps": 24,
+      "concurrent_distinct_replicas": 8,
+      "peak_overlapping_rollouts": 8,
+      "peak_overlapping_diffusion_requests": 8,
+      "single_client_batch_seconds": 153.6131002559996,
+      "eight_client_batch_seconds": 163.03822257100546,
+      "peak_cuda_reserved_mib": 37408.0,
+      "sampled_device_peak_mib": 38316.0,
+      "artifact_integrity": "All generation artifacts immutably published with SHA-256 readback verification; private artifact locations remain outside Git.",
+      "payload_scan": "All 45 OCI layers assessed; extension adds no weights, task/customer media, credentials or acceptance state. Inherited public vendor fixtures remain present.",
+      "security_scan": "Zero fixable CRITICAL findings and zero detected secrets; 218 HIGH and six unfixed CRITICAL findings retained and disclosed. Baseline NIXL metadata conflict adds no new dependency conflict.",
+      "measurement_reference": "npa/deploy/cosmos3-nano-video/README.md"
     }
   },
   "known_gaps": {
@@ -1495,10 +1561,14 @@
       "summary": "Cosmos Predict2 v1.0.9 rejects B300 capability 10.3 before kernel dispatch even though its cu128 torch wheel carries forward-compatible sm_100 SASS.",
       "evidence": "The exact upstream v1.0.9 source at commit 8112a684a3ab589eabd04ed62a2f20ec7df5b96a defines ALLOWED_COMPUTE_CAPS as [90, 100]. B200 custom-kernel validation passed; no B300 Predict2 capability result is claimed.",
       "affects": [
-        "npa-cosmos on sm_103"
+        "npa-cosmos on sm_89",
+        "npa-cosmos on sm_103",
+        "npa-cosmos on sm_120"
       ],
       "upstream_tracking": "https://github.com/nvidia-cosmos/cosmos-predict2",
-      "mitigation": "Route this pinned Predict2 release to B200 or H100. Retest B300 only after upstream admits compute capability 103 and run the same real NATTEN and flash-attn smokes."
+      "mitigation": "Route this pinned Predict2 release to B200 or H100. Retest B300, L40S, and RTX PRO 6000 only after upstream admits their compute capabilities, and then run a real NATTEN forward checked numerically against the base attention op - not an import. The unlisted-architecture path selects the capability-80 performance config, and natten 0.21.0 predates the 0.21.7 fix for an SM120/SM121 config bug in that frontend. Native sm_103 additionally needs a dependency release built from natten >= 0.21.1. Feasibility is evaluated in docs/workbench/blocked-image-gpu-feasibility.md.",
+      "enforcement_site": "cosmos_predict2/module/neighborhood_attn.py: ALLOWED_COMPUTE_CAPS is checked inside NeighborhoodAttention.forward, so the gate fires only when a sparse-attention model variant runs. The image's own text2world server smoke and its default self-hosted VLM role never construct that module.",
+      "measured_dependency_arches": "Not a missing-kernel gap. Read from the pinned release artifacts on 2026-08-22 with npa/scripts/measure_extension_arches.py: natten 0.21.0+cu128.torch27 carries SASS for sm_50 sm_60 sm_61 sm_70 sm_75 sm_80 sm_86 sm_89 sm_90 sm_100 sm_120, and flash_attn 2.7.3+cu128.torch27 carries sm_75 sm_80 sm_86 sm_90 sm_100 sm_120. Neither ships PTX, so nothing depends on driver JIT; sm_86 covers L40S and sm_100 covers B300 by same-major forward compatibility. Upstream NATTEN added SM120 in 0.21.0 and native SM103 in 0.21.1, which is what the upstream comment above the allowlist was waiting for."
     },
     "cosmos_transfer_b300_nvrtc": {
       "summary": "The cu128 Cosmos Transfer 2.5 image reaches B300 with forward-compatible sm_100 wheel SASS, but CUDA 12.8 NVRTC rejects a runtime-generated capability-10.3 kernel before inference.",
@@ -1507,7 +1577,7 @@
       "affects": [
         "npa-cosmos2-transfer on sm_103"
       ],
-      "mitigation": "Keep B200 supported. Rebuild the full locked environment on CUDA 13/cu130 and rerun the genuine Video2Video smoke on B300; an arch-only check is insufficient."
+      "mitigation": "Keep B200 supported. Rebuild the full locked environment on CUDA 13/cu130 and rerun the genuine Video2Video smoke on B300; an arch-only check is insufficient, because the failing run already reported capability (10, 3) and sm_100 wheel SASS before dying in NVRTC. No upstream ref bump is required: the pinned commit's pyproject already declares cu130 = [\"cosmos-oss[cu130_torch29]\"] alongside the cu128 extra the Dockerfile selects. Feasibility and the full rebuild surface are evaluated in docs/workbench/blocked-image-gpu-feasibility.md."
     }
   },
   "measurement_note": "measured_arch_list is torch._C._cuda_getArchFlags() read from the published image on 2026-08-02/03. It is the wheel's fixed fat-binary arch set, so it decides which GPUs the image can execute on regardless of TORCH_CUDA_ARCH_LIST. Reproduce with npa/scripts/validate_blackwell_image.sh <image> --target b200.",

@@ -1,4 +1,12 @@
-# B300 Validation Matrix
+# Historical B300 validation matrix
+
+> **Historical record from May 2026.** The findings below describe the images
+> and workloads tested then. Use the current
+> [image and GPU compatibility matrix](workbench/image-gpu-compatibility-matrix.md)
+> for hardware selection. Its August 3 Genesis record reports B300 kernel and
+> physics tests passing; that supersedes the upstream-blocked status below for
+> the tested image and scope. It does not establish every training or rendering
+> workload on B300.
 
 B300 is validated for the `cuda13-b300` base image and the LeRobot ACT smoke-training workload listed below. SONIC is not yet validated on B300 because its current Isaac Sim / Isaac Lab dependency path does not preserve the CUDA 13 / PyTorch 2.9 x86_64 base contract. Cosmos, GR00T, and Isaac Lab remain vendor-paced, while Genesis remains upstream-blocked on Taichi Blackwell support.
 
@@ -97,7 +105,7 @@ docker run --gpus all --rm \
 
 - CUDA 13 Blackwell support: <https://developer.nvidia.com/blog/whats-new-and-important-in-cuda-toolkit-13-0/>
 - TensorRT-LLM release notes: <https://nvidia.github.io/TensorRT-LLM/release-notes.html>
-- Cosmos prerequisites: <https://docs.nvidia.com/cosmos/latest/latest/prerequisites.html>
+- Cosmos prerequisites: <https://docs.nvidia.com/cosmos/latest/prerequisites.html>
 - Cosmos Reason2: <https://github.com/nvidia-cosmos/cosmos-reason2>
 - Cosmos Predict2.5: <https://github.com/nvidia-cosmos/cosmos-predict2.5>
 - Cosmos Transfer2.5: <https://github.com/nvidia-cosmos/cosmos-transfer2.5>

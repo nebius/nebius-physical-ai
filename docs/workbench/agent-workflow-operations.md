@@ -26,10 +26,14 @@ using subprocesses must invoke only the fixed `npa ...` operations below. It
 must not invoke an execution backend, a cluster client, a terminal multiplexer,
 or an arbitrary shell command.
 
-## Read-only preparation
+<a id="read-only-preparation"></a>
+
+## Validate, plan, and check images
 
 Run these checks in order. Keep the same YAML file and config overrides for the
-plan and eventual submission.
+plan and eventual submission. `preflight-images` may create and delete a
+temporary Kubernetes probe pod when image bootstrap evidence is absent.
+Authorize that probe before running the image check.
 
 ```console
 npa workbench workflow validate-spec <workflow.yaml> --json

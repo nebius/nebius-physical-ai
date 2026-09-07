@@ -843,6 +843,17 @@ def submit_cmd(
         _fail(str(exc))
         return
     is_npa_spec = is_npa_workflow_spec(yaml_path)
+    if is_npa_spec:
+        # These flags must select the same destinations as config tokens and
+        # the runtime ledger, not only a later materializer's environment.
+        if s3_bucket:
+            substitutions["bucket"] = s3_bucket
+        elif "bucket" not in substitutions and os.environ.get("NPA_S3_BUCKET"):
+            substitutions["bucket"] = os.environ["NPA_S3_BUCKET"]
+        if s3_prefix:
+            substitutions["prefix"] = s3_prefix
+        elif "prefix" not in substitutions and os.environ.get("NPA_S3_PREFIX"):
+            substitutions["prefix"] = os.environ["NPA_S3_PREFIX"]
     if preset and not is_npa_spec:
         _fail("--preset is supported only for npa.workflow/v0.0.1 specs")
         return
@@ -1017,6 +1028,7 @@ def submit_cmd(
         )
         return
     from npa.orchestration.npa_workflow.submit_credentials import (
+        STORAGE_ENDPOINT_ENV_NAMES,
         resolve_submit_credentials,
     )
 
@@ -1050,6 +1062,10 @@ def submit_cmd(
             project=project,
             explicit_endpoint=s3_endpoint,
             requested=required_secret_env,
+            workflow_env=(
+                _raw_workflow_environment(yaml_path, substitutions)
+                if not is_npa_spec and not materializer else None
+            ),
         )
         secret_env[:] = list(dict.fromkeys(required_secret_env))
     except Exception as exc:
@@ -1057,6 +1073,8 @@ def submit_cmd(
         return
     s3_endpoint = submit_credentials.endpoint_url
     extra_env: dict[str, str] = dict(submit_credentials.secret_values)
+    if s3_endpoint:
+        extra_env.update(dict.fromkeys(STORAGE_ENDPOINT_ENV_NAMES, s3_endpoint))
     # Storage is an intrinsic runtime dependency for npa.workflow specs, not an
     # optional user-requested secret.  The writable-storage preflight already
     # uses these project-scoped values; keep the local ledger and every runtime
@@ -1120,6 +1138,8 @@ def submit_cmd(
         return
 
     prepared_npa = None
+    execution_target = None
+    execution_preflight_report: dict[str, Any] = {}
     deploy_targets = []
     resolved_deploy_plans: dict[str, Any] = {}
     paidf_placement_prechecked = False
@@ -1324,15 +1344,9 @@ def submit_cmd(
                 infra=infra,
                 self_provisions=deploy_if_absent and _spec_self_provisions(yaml_path),
                 requires_s3=_spec_requires_s3(yaml_path),
-                s3_endpoint=submit_credentials.endpoint_url,
-                s3_access_key_id=getattr(submit_credentials, "access_key_id", ""),
-                s3_secret_access_key=getattr(
-                    submit_credentials, "secret_access_key", ""
-                ),
                 requires_npa_source=requires_npa_source,
                 source_staging_planned=stage_source_planned,
                 checkpoint_access_error=checkpoint_access_error,
-                probe_storage=False,
             )
             if not plan_only and is_paidf_spec:
                 from npa.orchestration.npa_workflow.paidf_preflight import (
@@ -1384,6 +1398,27 @@ def submit_cmd(
                 )
             if missing:
                 _fail_missing_prerequisites(yaml_path, missing)
+                return
+
+        if not plan_only:
+            # Scope and denied output-prefix access must fail before image
+            # bootstrap or deployIfAbsent creates compute. This identity gate
+            # remains mandatory even when convenience preflights are skipped.
+            try:
+                execution_target, execution_preflight_report = _execution_target_preflight(
+                    merged_npa_spec, project=project, context=infra_context,
+                    region=region, run_id=resolved_run_id,
+                    assume_decision=assume_decision, credentials=submit_credentials,
+                    source_uri=planned_source_uri if stage_source_planned else "",
+                    verify_cluster=not deploy_if_absent,
+                    gpu_check=(lambda: _preflight_submit_gang_capacity(
+                        merged_npa_spec, context=infra_context, allowed_nodes=None,
+                        sky_bin=sky_bin, config_path=config_path,
+                        isolated_config_dir=isolated_config_dir,
+                    )) if infra_context and not deploy_if_absent else None,
+                )
+            except (RuntimeError, ValueError) as exc:
+                _fail(str(exc))
                 return
 
         # An existing target can prove that PAIDF has nowhere schedulable to run
@@ -1565,17 +1600,13 @@ def submit_cmd(
             if post_infra_missing:
                 _fail_missing_prerequisites(yaml_path, post_infra_missing)
                 return
-            storage_missing = _submit_storage_prerequisites(
-                spec_config,
-                requires_s3=_spec_requires_s3(yaml_path),
-                s3_endpoint=submit_credentials.endpoint_url,
-                s3_access_key_id=getattr(submit_credentials, "access_key_id", ""),
-                s3_secret_access_key=getattr(
-                    submit_credentials, "secret_access_key", ""
-                ),
-            )
-            if storage_missing:
-                _fail_missing_prerequisites(yaml_path, storage_missing)
+        if not plan_only and execution_target is not None:
+            from npa.execution_preflight import verify_execution_scope
+
+            try:
+                verify_execution_scope(execution_target)
+            except RuntimeError as exc:
+                _fail(str(exc))
                 return
 
         if not plan_only:
@@ -1786,7 +1817,7 @@ def submit_cmd(
                 readiness_poll_interval=gpu_readiness_poll_interval,
             ),
         )
-        if not plan_only and not skip_preflight and merged_npa_spec is not None:
+        if not plan_only and merged_npa_spec is not None:
             try:
                 _preflight_submit_gang_capacity(
                     merged_npa_spec,
@@ -1804,6 +1835,13 @@ def submit_cmd(
         if runtime and not plan_only:
             def refresh_runtime_preflight(_wave_yaml: Path) -> None:
                 """Re-establish mutable launch facts before every runtime wave."""
+
+                if execution_target is not None:
+                    import yaml
+                    from npa.execution_preflight import verify_execution_target, verify_worker_environment
+
+                    verify_worker_environment(execution_target, list(yaml.safe_load_all(_wave_yaml.read_text())))
+                    verify_execution_target(execution_target)
 
                 refreshed_pins = _preflight_submit_images(
                     yaml_path,
@@ -1840,7 +1878,7 @@ def submit_cmd(
                     raise RuntimeError(
                         "accelerator resolution changed after initial preflight"
                     )
-                if not skip_preflight:
+                if merged_npa_spec is not None:
                     _preflight_submit_gang_capacity(
                         merged_npa_spec,
                         context=infra_context,
@@ -1881,13 +1919,14 @@ def submit_cmd(
                         "pass" if preflight_images else "unknown"
                     ),
                     "credentials_access": "pass",
+                    "execution_target": "pass" if execution_preflight_report else "unknown",
                     "accelerator_resolution": (
                         "pass" if resolve_accelerators else "unknown"
                     ),
                     "per_node_gpu_shape": (
                         "pass" if resolve_accelerators else "unknown"
                     ),
-                    "gang_capacity": "pass" if not skip_preflight else "unknown",
+                    "gang_capacity": "pass",
                 },
                 pre_submit_hook=refresh_runtime_preflight,
                 output_format=output_format,
@@ -2104,7 +2143,50 @@ def submit_cmd(
         else:
             _warn_unresolved_placeholders(yaml_path.read_text(encoding="utf-8"))
 
+        if not is_npa_spec and not plan_only:
+            import yaml
+            from npa.execution_preflight import ExecutionPreflightError, skypilot_task_documents
+
+            actual_path = submitted_yaml_path if submitted_yaml_path.exists() else source_yaml_path
+            documents = list(yaml.safe_load_all(actual_path.read_text()))
+            original_documents = json.dumps(documents, sort_keys=True)
+            if s3_bucket:
+                extra_env["NPA_S3_BUCKET"] = s3_bucket
+            if s3_prefix:
+                extra_env["NPA_S3_PREFIX"] = s3_prefix
+            for document in skypilot_task_documents(documents):
+                if not s3_bucket and not s3_prefix:
+                    continue
+                envs = document.setdefault("envs", {})
+                if s3_bucket:
+                    envs["NPA_S3_BUCKET"] = s3_bucket
+                    if "S3_BUCKET" in envs:
+                        envs["S3_BUCKET"] = s3_bucket
+                if s3_prefix:
+                    envs["NPA_S3_PREFIX"] = s3_prefix
+                    if "SONIC_OUTPUT_PREFIX" in envs and str(envs["SONIC_OUTPUT_PREFIX"]).strip("/") != s3_prefix.strip("/"):
+                        envs["SONIC_OUTPUT_PREFIX"] = s3_prefix
+            try:
+                execution_target, execution_preflight_report, injected = _raw_execution_preflight(
+                    documents, project=project, infra=infra, extra_env=extra_env,
+                    sky_bin=sky_bin, config_path=config_path,
+                    isolated_config_dir=isolated_config_dir,
+                    controller_backend=controller_backend.value,
+                )
+            except (ExecutionPreflightError, ValueError, RuntimeError) as exc:
+                _fail(str(exc))
+                return
+            extra_env.update(injected)
+            if json.dumps(documents, sort_keys=True) != original_documents:
+                if submitted_yaml_context is None:
+                    submitted_yaml_context = tempfile.TemporaryDirectory(prefix="npa-workflow-")
+                    submitted_yaml_path = Path(submitted_yaml_context.name) / yaml_path.name
+                submitted_yaml_path.write_text(yaml.safe_dump_all(documents, sort_keys=False))
+                submitted_yaml_path.chmod(0o600)
+
         if durable_s3:
+            from npa.execution_preflight import ExecutionPreflightError
+
             try:
                 workflow_state = resolve_workflow_s3_config(
                     run_id=resolved_run_id,
@@ -2113,6 +2195,7 @@ def submit_cmd(
                     workflow_s3_prefix=workflow_s3_prefix,
                     s3_bucket=s3_bucket,
                     s3_endpoint=s3_endpoint,
+                    credentials=submit_credentials,
                 )
                 instrumented = instrument_workflow_yaml(
                     submitted_yaml_path
@@ -2122,12 +2205,17 @@ def submit_cmd(
                     state=workflow_state,
                 )
                 submitted_yaml_path.write_text(instrumented.yaml_text, encoding="utf-8")
+                if execution_target is not None:
+                    from npa.execution_preflight import replace_execution_outputs, verify_execution_target
+
+                    execution_target = replace_execution_outputs(execution_target, {workflow_state.uri: "directory"})
+                    verify_execution_target(execution_target)
                 write_manifest(instrumented.manifest, workflow_state)
                 extra_env.update(workflow_state.secret_env())
                 for name in SECRET_ENV_NAMES:
                     if name not in secret_env:
                         secret_env.append(name)
-            except WorkflowStateError as exc:
+            except (WorkflowStateError, ExecutionPreflightError) as exc:
                 _fail(str(exc))
                 return
 
@@ -2181,6 +2269,8 @@ def submit_cmd(
                     timeout=submit_timeout,
                     logical_launch_id=launch_identity,
                     transaction_recorder=_record_transaction,
+                    project=project,
+                    execution_target=execution_target,
                 )
 
             if current_operation() is not None:
@@ -2534,18 +2624,24 @@ def _run_npa_workflow_runtime(
         adopt_absent_in_flight_outputs=adopt_absent_in_flight_outputs,
         project=project or "default",
         sky_bin=sky_bin,
-        credential_resolver=lambda: _resolve_runtime_secret_values(
-            project=project,
-            requested=list(resolved_secret_envs),
-        ),
+        # The preflight and every wave use the same selected principal. A new
+        # submit/resume invocation resolves rotated credentials again.
+        credential_resolver=lambda: dict(secret_env_values),
         preflight_evidence=dict(preflight_evidence or {}),
         pre_submit_hook=pre_submit_hook,
     )
     runtime_env = dict(secret_env_values)
+    from npa.orchestration.npa_workflow.interpreter import _make_context
+
+    resolved_config = _make_context(spec, run_id=run_id).config
+    for key in ("bucket", "prefix"):
+        if key in resolved_config:
+            runtime_env[f"NPA_S3_{key.upper()}"] = str(resolved_config[key] or "")
     endpoint = str(getattr(render_options, "aws_endpoint_url", "") or "").strip()
     if endpoint:
-        runtime_env.setdefault("AWS_ENDPOINT_URL", endpoint)
-        runtime_env.setdefault("NEBIUS_S3_ENDPOINT", endpoint)
+        from npa.orchestration.npa_workflow.submit_credentials import STORAGE_ENDPOINT_ENV_NAMES
+
+        runtime_env.update(dict.fromkeys(STORAGE_ENDPOINT_ENV_NAMES, endpoint))
     previous_env = {name: os.environ.get(name) for name in runtime_env}
     try:
         os.environ.update(runtime_env)
@@ -3281,7 +3377,7 @@ def _preflight_submit_gang_capacity(
         )
         nodes = profile_num_nodes(resolved, name=state.resources)
         accelerator = str(resolved.get("accelerators") or "").strip()
-        if nodes <= 1 or not accelerator:
+        if not accelerator:
             continue
         if not context:
             raise RuntimeError(
@@ -3762,20 +3858,17 @@ def _submit_prerequisites(
     infra: str = "",
     self_provisions: bool = False,
     requires_s3: bool = False,
-    s3_endpoint: str = "",
-    s3_access_key_id: str = "",
-    s3_secret_access_key: str = "",
     requires_npa_source: bool = True,
     source_staging_planned: bool = False,
     checkpoint_access_error: str = "",
-    probe_storage: bool = True,
 ) -> list[tuple[str, str]]:
-    """Return ``[(missing, remedy)]`` for an npa.workflow submit.
+    """Return static ``[(missing, remedy)]`` for an npa.workflow submit.
 
     A first submit used to fail one prerequisite at a time — no npa source, then
     no SkyPilot CLI, then a placeholder bucket, then an unresolvable kube context
     — each as a separate run. Collect them so the operator sees the whole list
-    once.
+    once. The shared execution-target preflight verifies storage scope and
+    exact output-prefix access separately.
     """
     # Same resolver the renderer uses, so a prefix persisted with
     # `npa configure --src-s3-uri` satisfies the check without re-exporting it.
@@ -3838,17 +3931,6 @@ def _submit_prerequisites(
             )
         )
 
-    if probe_storage and not plan_only:
-        missing.extend(
-            _submit_storage_prerequisites(
-                spec_config,
-                requires_s3=requires_s3,
-                s3_endpoint=s3_endpoint,
-                s3_access_key_id=s3_access_key_id,
-                s3_secret_access_key=s3_secret_access_key,
-            )
-        )
-
     # Catch an `--infra k8s/<context>` that names a context the kubeconfig does
     # not define, up front. Otherwise `sky jobs launch` fails late with a long
     # SkyPilot stack ("Context <name> not found ... Available contexts: []") —
@@ -3874,41 +3956,55 @@ def _submit_prerequisites(
     return missing
 
 
-def _submit_storage_prerequisites(
-    spec_config: Mapping[str, Any],
-    *,
-    requires_s3: bool,
-    s3_endpoint: str,
-    s3_access_key_id: str,
-    s3_secret_access_key: str,
-) -> list[tuple[str, str]]:
-    """Run the cleaned writable-storage probe at its explicit mutation boundary."""
-
-    bucket = str((spec_config or {}).get("bucket", "") or "")
-    if not requires_s3 or _is_placeholder_bucket(bucket):
-        return []
-    from npa.clients.storage_validation import (
-        StorageCapabilityProfile,
-        probe_storage_write,
+def _execution_target_preflight(
+    spec, *, project: str, context: str, region: str, run_id: str,
+    assume_decision: str, credentials, source_uri: str = "",
+    verify_cluster: bool = True,
+    gpu_check: Callable[[], Any] | None = None,
+):
+    """Bind the actual resolved plan to the shared CLI/SDK execution gate."""
+    from npa.execution_preflight import (
+        resolve_execution_target, verify_execution_target, workflow_output_destinations,
     )
 
-    probe = probe_storage_write(
-        bucket=bucket,
-        endpoint_url=s3_endpoint,
-        access_key_id=s3_access_key_id,
-        secret_access_key=s3_secret_access_key,
-        profile=StorageCapabilityProfile.WORKFLOW_SUBMISSION,
+    destinations = workflow_output_destinations(spec, run_id=run_id, assume_decision=assume_decision)
+    if source_uri:
+        destinations[source_uri.rstrip("/") + "/"] = "directory"
+    target = resolve_execution_target(
+        project=project, context=context, region=region, output_uris=list(destinations), output_kinds=destinations,
+        credentials=credentials,
     )
-    if probe.ok:
-        return []
-    return [
-        (
-            f"writable S3 for this workflow ({probe.summary})",
-            "run `npa provision-if-absent --project <alias> --skip-k8s`, then "
-            "retry; this append-only preflight uses a unique object and does not "
-            "require DeleteObject",
-        )
-    ]
+    report = verify_execution_target(target, verify_cluster=verify_cluster, gpu_check=gpu_check)
+    return target, report
+
+
+def _raw_workflow_environment(yaml_path: Path, substitutions: Mapping[str, str]):
+    import yaml
+    from npa.execution_preflight import skypilot_workflow_environment
+
+    content = _substitute_workflow_vars(yaml_path, substitutions) if substitutions else yaml_path.read_text()
+    return skypilot_workflow_environment(list(yaml.safe_load_all(content)))
+
+
+def _raw_execution_preflight(
+    documents, *, sky_bin="", config_path=None, isolated_config_dir=None,
+    controller_backend="kubernetes", **kwargs,
+):
+    from npa.execution_preflight import preflight_skypilot_submission
+    from npa.orchestration.skypilot._bin import resolve_config, ensure_skypilot_version
+    from npa.orchestration.skypilot.workflow import _load_base_config, _controller_config_for_execution, _stable_sky_cwd, sky_environment
+
+    runtime = resolve_config(sky_bin=sky_bin or None, global_config_path=config_path,
+                             isolated_config_dir=isolated_config_dir)
+    config = _controller_config_for_execution(
+        _load_base_config(runtime.global_config_path), controller_backend=controller_backend,
+        infra=kwargs.get("infra", ""),
+    )
+    env = sky_environment(runtime.isolated_config_dir)
+    env.update(kwargs.pop("extra_env", None) or {})
+    return preflight_skypilot_submission(documents, **kwargs, global_config=config,
+        extra_env=env, cwd=_stable_sky_cwd(runtime.isolated_config_dir),
+        sky_bin=str(ensure_skypilot_version(runtime.sky_bin)))
 
 
 def _fail_missing_prerequisites(

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator, model_validator
 
 from npa.workbench.training_config import TrainingConfigError, overrides_to_mapping
 
@@ -15,7 +15,23 @@ DEFAULT_BATCH_SIZE = 8
 DEFAULT_LEARNING_RATE = 0.005
 DEFAULT_PORT = 8790
 DEFAULT_TOKEN_ENV = "DETECTION_TRAINING_TOKEN"
-RunStatus = Literal["queued", "running", "completed", "failed"]
+RunStatus = Literal["queued", "running", "completed", "failed", "interrupted"]
+
+
+class ArtifactRecord(BaseModel):
+    """A stored object with integrity metadata from its written or read bytes."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    role: Literal["checkpoint", "training_metrics", "evaluation_metrics"]
+    uri: str = Field(..., min_length=1)
+    media_type: str
+    schema_version: str
+    sha256: str = Field(..., pattern=r"^[0-9a-f]{64}$")
+    size_bytes: int = Field(..., gt=0)
+    exists: bool = True
+    integrity_verified: bool = True
+    epoch: int | None = None
 
 
 class WandbSettings(BaseModel):
@@ -72,10 +88,16 @@ class TrainRequest(BaseModel):
     def _strip_data_path(cls, value: str) -> str:
         return value.strip()
 
-    @model_validator(mode="after")
-    def _apply_overrides(self) -> "TrainRequest":
+    @model_validator(mode="before")
+    @classmethod
+    def _apply_overrides(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        payload = dict(value)
+        overrides = TypeAdapter(list[str]).validate_python(payload.get("overrides", []))
+        payload["overrides"] = overrides
         try:
-            parsed = overrides_to_mapping(self.overrides)
+            parsed = overrides_to_mapping(overrides)
         except TrainingConfigError as exc:
             raise ValueError(str(exc)) from exc
         supported = {
@@ -103,9 +125,20 @@ class TrainRequest(BaseModel):
             key = aliases.get(raw_key, raw_key)
             if key not in supported:
                 raise ValueError(f"unsupported detection-training override: {raw_key}")
-            setattr(self, key, value)
+            payload[key] = value
+        # Run every overridden value through the normal field constraints and
+        # normalization instead of bypassing validation with raw assignment.
+        return payload
+
+    @model_validator(mode="after")
+    def _resolve_training_fields(self) -> "TrainRequest":
         if self.data_path:
             self.lance_uri = self.data_path
+        from .labels import detector_label_map
+
+        mapped = detector_label_map(self.label_map)
+        if mapped and self.num_classes is not None and self.num_classes <= max(mapped.values()):
+            raise ValueError("num_classes must include background and every mapped detector category")
         return self
 
     @field_validator("validation_filter_sql")
@@ -132,6 +165,8 @@ class TrainRequest(BaseModel):
             resolved[name] = label_id
         if not resolved:
             raise ValueError("label_map must not be empty when provided")
+        if len(set(resolved.values())) != len(resolved):
+            raise ValueError("label_map values must identify distinct categories")
         return resolved
 
 
@@ -148,6 +183,7 @@ class TrainResponse(BaseModel):
     manifest_sha256: str
     data_path: str = ""
     training_config: dict[str, Any] = Field(default_factory=dict)
+    artifacts: list[ArtifactRecord] = Field(default_factory=list)
 
 
 class EvalRequest(BaseModel):
@@ -185,6 +221,8 @@ class EvalRequest(BaseModel):
             resolved[name] = label_id
         if not resolved:
             raise ValueError("label_map must not be empty when provided")
+        if len(set(resolved.values())) != len(resolved):
+            raise ValueError("label_map values must identify distinct categories")
         return resolved
 
 
@@ -199,6 +237,7 @@ class EvalResponse(BaseModel):
     per_category_AP: dict[str, float] = Field(default_factory=dict)
     eval_run_id: str
     manifest_sha256: str
+    artifacts: list[ArtifactRecord] = Field(default_factory=list)
 
 
 class StatusResponse(BaseModel):
@@ -207,6 +246,7 @@ class StatusResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     run_id: str
+    kind: Literal["train", "eval"] = "train"
     status: RunStatus
     epochs_completed: int = 0
     total_epochs: int = 0
@@ -215,6 +255,11 @@ class StatusResponse(BaseModel):
     manifest_sha256: str = ""
     last_metrics: dict[str, Any] = Field(default_factory=dict)
     error: str | None = None
+    artifacts: list[ArtifactRecord] = Field(default_factory=list)
+    created_at: str = ""
+    updated_at: str = ""
+    revision: int = 0
+    evaluation: EvalResponse | None = None
 
 
 class RunListResponse(BaseModel):

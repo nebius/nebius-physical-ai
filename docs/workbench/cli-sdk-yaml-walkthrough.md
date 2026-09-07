@@ -60,13 +60,23 @@ The S3 health check proves listing access to the configured bucket. Confirm
 that its configuration matches the input/output bucket and that the service
 credentials also permit writing the output prefix.
 
-**Current deployment limitation:** `detection-training deploy` defaults to token
-authentication, but its generated readiness probe requests `/health` without
-authentication. The service rejects that probe with HTTP 401, preventing the
-default deployment from becoming Ready. The probe needs an implementation fix;
-do not disable service authentication to work around it. The examples below
-assume an already reachable authenticated service and do not establish that a
-fresh deployment works.
+`detection-training deploy` uses a minimal public `/readyz` probe. `/health`,
+training, evaluation, run status, and artifacts require the service token. The
+workload manifest contains a Kubernetes Secret reference; secret values are
+provisioned separately through private files and stdin. The service becomes
+Ready only after it opens its persistent run store. Deployment creates a retained
+state PVC by default; use `--state-pvc` to supply an existing claim. Before
+creating the Secret or applying the deployment, the CLI verifies the selected
+project and exact saved cluster context, node selector/GPU product, output
+prefix ownership, and write/read access using the same storage credential pair
+that the service receives. `--project` selects project-scoped storage settings;
+`--cluster-name` selects its exact saved context. Without that flag, the project
+must identify one saved cluster. An explicit kubeconfig must match it.
+GPU checks use currently free capacity. A `Recreate` replacement may also use
+its existing allocation only when pod and ReplicaSet controller references
+lead to the exact Deployment UID; matching labels alone grant no credit.
+Unbound GPU requests or unreadable allocation ownership block submission.
+`--dry-run` only renders the manifest and does not certify execution readiness.
 
 The deployed service endpoint is cluster-internal. Clients inside that cluster
 can use it directly. For a local notebook or shell, forward the service in
@@ -84,7 +94,8 @@ npa workbench detection-training system-info --service
 ```
 
 The service exposes `GET /health`, `GET /system-info`, `GET /runs`,
-`POST /train`, `GET /status?run_id=...`, and `POST /eval`. Its FastAPI schema is
+`POST /train`, `GET /status?run_id=...`, `GET /artifacts?run_id=...`,
+`GET /artifacts/content?run_id=...&sha256=...`, and `POST /eval`. Its FastAPI schema is
 available at `/openapi.json` on the same reachable endpoint. Consult the
 [request schemas](../../npa/src/npa/workbench/detection_training/schemas.py)
 for field definitions; these endpoints are specific to this service.
@@ -103,13 +114,20 @@ npa workbench detection-training train \
 ```
 
 For string labels, pass the dataset's category-to-index mapping with
-`--label-map` on **both** train and eval. Real BDD100K categories differ from
-some synthetic fixtures; use the mapping matching your prepared view.
+`--label-map` on training. Checkpoints retain both the source category IDs and
+the detector IDs: when a source map includes zero, all its IDs shift by one to
+reserve detector zero for background. Numeric and string annotations use the
+same mapping. Class count is inferred unless `--num-classes` is explicit; an
+explicit count must include background and all mapped IDs. Evaluation reads the
+checkpoint mapping by default and rejects a conflicting explicit map. Older
+checkpoints keep the mapping with which their weights were trained.
 
-Service training returns a `run_id` and an initial `running` status unless
+Service training returns a `run_id` and an initial `queued` status unless
 `--wait` is supplied. With `--wait`, the CLI polls until completion or failure
-and verifies the reported epoch count and checkpoint pattern. Retain the JSON
-response, including `run_id`, `checkpoint_uri_pattern`, and `metrics_uri`.
+and verifies the reported epoch count and checkpoint pattern. A completed service
+record requires verified checkpoint and metrics artifacts. Retain the JSON
+response, including `run_id` and `artifacts`; each artifact records its role,
+exact URI, media type, schema, size, and SHA-256.
 If you submitted without waiting, monitor it with:
 
 ```bash
@@ -130,23 +148,34 @@ npa workbench detection-training eval \
 ```
 
 `--discover-checkpoint` searches the latest completed service run under the
-training prefix and resolves its final epoch checkpoint. It requires the
-service's in-memory `/runs` record, which does not survive a service restart.
-Retain the exact checkpoint URI for later evaluation. Checkpoints use
-`<output-prefix>/<run-id>/checkpoints/epoch_<epoch>.pt`; do not assume a
-`model_final.pt` filename. Evaluation writes the canonical `metrics.json` when
+training prefix and selects its verified final checkpoint artifact. Run status
+and artifact records survive service restarts on the retained state PVC.
+Authenticated clients can read artifact bytes through `/artifacts/content`; the
+service checks their hash and rejects missing or modified objects. The configured
+output prefix bounds both retrieval and service writes. Deploy one worker per
+state volume: a process lock prevents concurrent service owners, and SQLite
+transactions serialize run updates. After a crash, unfinished records become
+`interrupted` and retain their progress and identity. They do not automatically
+resume. `deploy --destroy` retains the PVC; remove it explicitly only when its
+run history is no longer needed. Evaluation runs also persist their typed result
+and metric artifacts under `eval_run_id`; `/status` and `/artifacts` accept either
+training or evaluation IDs. An identical completed evaluation request returns
+its stored result. Active, failed, or interrupted evaluations retain their
+identity and require inspection before a new request. Evaluation writes the canonical `metrics.json` when
 `--write-canonical-metrics` is set and validates numeric evaluation metrics.
-Evaluating the training view checks the journey; use a held-out view to measure
+Missing evaluation dependencies fail explicitly; undefined COCO metrics retain
+their `-1` sentinel rather than becoming zero. A low measured score does not
+mean the workload infrastructure failed. Evaluating the training view checks the journey; use a held-out view to measure
 generalization.
 
 For this tool, `--input-path` aliases `--lance-uri` and `--output-path` aliases
 `--output-uri`. Train and eval emit JSON by default. Other tools can use
 `--json`, `--output`, or `--output-format`; inspect the relevant command help.
 
-The current local CLI training path fails before training with
-`TypeError: train() got an unexpected keyword argument 'label_map'`: it forwards
-a schema field that the SDK does not accept. The service commands above avoid
-that path. This is an implementation limitation, not a missing GPU dependency.
+Omit `--service` to train synchronously in the current GPU runtime. The local
+CLI, SDK, and API preserve an absent or explicit label map through the same
+request schema and training implementation. Direct execution returns the
+verified artifact manifest; persistent `/status` records belong to service runs.
 
 ## 2. SDK: inspect the concrete Python contract
 
@@ -174,8 +203,7 @@ print(status.status, status.epochs_completed)
 
 A successful service-mode `train()` response acknowledges submission. Poll
 `status()` to a terminal state before consuming checkpoints. The SDK has no
-`wait` argument, and its current `train()` signature does not expose
-`label_map`; use the CLI service path for explicit label mappings. Local SDK
+`wait` argument. Both `train()` and `eval()` accept an optional `label_map`. Local SDK
 execution calls the shared training function synchronously and requires its
 engine dependencies and accessible data in the calling environment.
 

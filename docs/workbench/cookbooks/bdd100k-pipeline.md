@@ -279,10 +279,11 @@ configured S3 credentials to list and read this prefix.
 
 ## Images
 
-The committed YAML pins the first-party LanceDB and detection-training images:
+The workflow's tool references resolve these first-party image pins; an explicit
+registry override selects the equivalent images in your namespace:
 
-- `<your-registry>/<namespace>/npa-lancedb:cuda13-b300-0.30.3-sm80-sm90-sm100-sm103-sm120-20260803T031514Z`
-- `<your-registry>/<namespace>/npa-detection-training:bdd100k-golden-eval-smoke-20260614T210000Z`
+- `ghcr.io/nebius/nebius-physical-ai/npa-lancedb:cuda13-b300-0.30.3-sm80-sm90-sm100-sm103-sm120-20260803T031514Z`
+- `ghcr.io/nebius/nebius-physical-ai/npa-detection-training:runtime-v1-20260905`
 
 The optional final FiftyOne app can still be replaced with a BYO registry image:
 

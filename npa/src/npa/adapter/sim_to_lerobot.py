@@ -248,11 +248,16 @@ def convert(
         actions = np.load(ep_dir / "actions.npy")
 
         ep_len = state.shape[0]
-        if obs_workspace.shape[0] != ep_len:
-            raise AdapterError(
-                f"Episode {ep_idx}: obs_workspace has {obs_workspace.shape[0]} "
-                f"frames but state has {ep_len}"
-            )
+        for stream_name, stream in [
+            ("obs_workspace", obs_workspace),
+            ("obs_wrist", obs_wrist),
+            ("actions", actions),
+        ]:
+            if stream.shape[0] != ep_len:
+                raise AdapterError(
+                    f"Episode {ep_idx}: {stream_name} has {stream.shape[0]} "
+                    f"frames but state has {ep_len}"
+                )
 
         # ── Encode videos ───────────────────────────────────────────
         for cam_key, cam_frames in [

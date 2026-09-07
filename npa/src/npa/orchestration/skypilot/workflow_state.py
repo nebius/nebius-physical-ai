@@ -119,6 +119,7 @@ def resolve_workflow_s3_config(
     workflow_s3_prefix: str = DEFAULT_WORKFLOW_STATE_PREFIX,
     s3_bucket: str = "",
     s3_endpoint: str = "",
+    credentials: Any | None = None,
 ) -> WorkflowS3Config:
     """Resolve an exact S3 run prefix from CLI args, env, and NPA config."""
 
@@ -126,6 +127,7 @@ def resolve_workflow_s3_config(
         raise WorkflowStateError("run_id or workflow_s3_uri is required")
 
     storage = resolve_project_storage(project)
+    selected_credentials = credentials
     credentials = load_credentials()
     endpoint = storage_endpoint_url(
         s3_endpoint
@@ -144,11 +146,15 @@ def resolve_workflow_s3_config(
         or credentials.s3_secret_access_key
         or os.environ.get("AWS_SECRET_ACCESS_KEY", "")
     )
+    if selected_credentials is not None:
+        endpoint = str(selected_credentials.endpoint_url)
+        access_key = str(selected_credentials.access_key_id)
+        secret_key = str(selected_credentials.secret_access_key)
 
     if workflow_s3_uri:
         bucket, prefix = parse_s3_uri(workflow_s3_uri)
     else:
-        bucket_source = s3_bucket or storage.checkpoint_bucket or credentials.s3_bucket
+        bucket_source = s3_bucket or (selected_credentials.bucket if selected_credentials is not None else "") or storage.checkpoint_bucket or credentials.s3_bucket
         if not bucket_source:
             raise WorkflowStateError(
                 "S3 bucket is not configured. Pass --s3-bucket, --workflow-s3-uri, "

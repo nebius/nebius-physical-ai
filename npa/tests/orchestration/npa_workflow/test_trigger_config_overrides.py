@@ -1,12 +1,13 @@
 """Trigger config must reach the real watcher after submit --var overrides."""
 
+from dataclasses import asdict
 import hashlib
 import json
-from dataclasses import asdict
 from pathlib import Path
 
 import pytest
 import yaml
+
 from npa.orchestration.npa_workflow.errors import NpaWorkflowError
 from npa.orchestration.npa_workflow.interpreter import _make_context, wait_for_trigger
 from npa.orchestration.npa_workflow.runtime import _workflow_identity, s3_trigger_waiter
@@ -96,11 +97,100 @@ def test_invalid_templated_trigger_values_rejected(tmp_path, key, value):
 
 def test_unchanged_workflow_identity_keeps_legacy_value():
     spec = load_spec(SHIPPED)
+    state = spec.states["caption-inbox"]
+    assert state.inputs and state.outputs and state.trigger.config_expressions
     legacy_payload = asdict(spec)
     for state in legacy_payload["states"].values():
+        # Both fields were absent when the original workflow identity was stored.
+        for artifact in [*state["inputs"], *state["outputs"]]:
+            assert artifact.pop("kind") == ""
         if state.get("trigger"):
             state["trigger"].pop("config_expressions", None)
     legacy = hashlib.sha256(
         json.dumps(legacy_payload, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
     assert _workflow_identity(spec) == legacy
+
+
+def test_workflow_identity_ignores_trigger_parse_provenance_without_mutating_spec():
+    spec = load_spec(SHIPPED)
+    original = asdict(spec)
+    identity = _workflow_identity(spec)
+    assert asdict(spec) == original
+
+    spec.states["caption-inbox"].trigger.config_expressions.clear()
+
+    assert _workflow_identity(spec) == identity
+
+
+@pytest.mark.parametrize(
+    "target,field,value",
+    [
+        ("inputs", "kind", "directory"),
+        ("outputs", "kind", "file"),
+        ("trigger", "min_objects", 3),
+        ("trigger", "poll_seconds", 2),
+        ("trigger", "max_polls", 2),
+    ],
+)
+def test_workflow_identity_keeps_artifact_roles_and_resolved_trigger_values(
+    target, field, value
+):
+    spec = load_spec(SHIPPED)
+    identity = _workflow_identity(spec)
+    component = getattr(spec.states["caption-inbox"], target)
+    if isinstance(component, list):
+        component = component[0]
+    setattr(component, field, value)
+
+    assert _workflow_identity(spec) != identity
+
+
+def test_zero_max_polls_override_keeps_watcher_unbounded():
+    spec = load_spec_for_submit(SHIPPED, config_overrides={"inbox_max_polls": "0"})
+    # Readiness arrives after the shipped limit of 40 polls has elapsed.
+    listing_sizes = iter([0] * 41 + [1])
+    sleeps = []
+    result = wait_for_trigger(
+        spec.states["caption-inbox"],
+        _make_context(spec, run_id="trigger-test"),
+        waiter=s3_trigger_waiter(
+            lister=lambda bucket, prefix: ["frame"] * next(listing_sizes),
+            sleeper=sleeps.append,
+            max_wait_seconds=0,
+        ),
+    )
+    assert result["objects"] == 1
+    assert result["polls"] == 42
+    assert sleeps == [15] * 41
+
+
+def test_literal_trigger_fields_ignore_unrelated_config_overrides(tmp_path):
+    document = yaml.safe_load(SHIPPED.read_text())
+    document["states"]["caption-inbox"]["trigger"].update(
+        pollSeconds=15, maxPolls=40, minObjects=1
+    )
+    path = tmp_path / "literal-trigger.yaml"
+    path.write_text(yaml.safe_dump(document))
+    original = load_spec(path)
+    overrides = {
+        "inbox_poll_seconds": "2",
+        "inbox_max_polls": "4",
+        "inbox_min_objects": "9",
+    }
+    changed = merge_config_overrides(original, overrides)
+    assert {key: changed.config[key] for key in overrides} == overrides
+    assert changed.states["caption-inbox"].trigger == original.states["caption-inbox"].trigger
+    listing_sizes = iter([0] * 4 + [1])
+    sleeps = []
+    result = wait_for_trigger(
+        changed.states["caption-inbox"],
+        _make_context(changed, run_id="trigger-test"),
+        waiter=s3_trigger_waiter(
+            lister=lambda bucket, prefix: ["frame"] * next(listing_sizes),
+            sleeper=sleeps.append,
+        ),
+    )
+    assert result["objects"] == 1
+    assert result["polls"] == 5
+    assert sleeps == [15] * 4

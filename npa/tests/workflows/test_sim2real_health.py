@@ -273,7 +273,7 @@ def test_cluster_fails_without_pod_permission() -> None:
     assert result.status == health.FAIL
 
 
-def test_cluster_fails_when_controller_service_account_cannot_patch_jobs() -> None:
+def test_cluster_fails_when_selected_identity_cannot_patch_jobs() -> None:
     calls: list[list[str]] = []
 
     def runner(args):
@@ -289,7 +289,26 @@ def test_cluster_fails_when_controller_service_account_cannot_patch_jobs() -> No
     result = check_cluster(_config(), probes=DoctorProbes(kube_runner=runner))
     assert result.status == health.FAIL
     assert "cannot patch Jobs" in result.summary
-    assert any("--as=system:serviceaccount:default:agent-sa" in call for call in calls)
+    assert ["auth", "can-i", "patch", "jobs.batch", "-n", "default"] in calls
+    assert not any(arg.startswith("--as=") for call in calls for arg in call)
+
+
+def test_cluster_checks_workflow_identity_without_legacy_account_impersonation() -> None:
+    def runner(args):
+        if any(arg.startswith("--as=") for arg in args):
+            return KubeResult(1, "no", "legacy service account does not exist")
+        if args[:2] == ["config", "current-context"]:
+            return KubeResult(0, "fleet-context")
+        if args[:2] == ["auth", "can-i"]:
+            return KubeResult(0, "yes")
+        if args[:2] == ["get", "pvc"]:
+            return KubeResult(0, _bound_rwx_pvc())
+        if args[:2] == ["get", "nodes"]:
+            return KubeResult(0, _kube_nodes(8, nodes=2))
+        return KubeResult(1, "", "unexpected")
+
+    result = check_cluster(_config(), probes=DoctorProbes(kube_runner=runner))
+    assert result.status == health.PASS
 
 
 @pytest.mark.parametrize(

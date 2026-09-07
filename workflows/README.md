@@ -1,7 +1,8 @@
 # NPA workflow specs (`apiVersion: npa.workflow/v0.0.1`)
 
-Customer-facing authoring DSL for chaining Workbench tools. Author and submit
-these specs; do not hand-edit scheduler YAML.
+YAML specifications for composing Workbench tools. Each `toolRef` names a
+catalog operation. Author, validate, and submit these specs; NPA renders the
+scheduler YAML.
 
 Agent skills: `skills/workflows/author-npa-workflow/SKILL.md` (edit) and
 `skills/workflows/generate-npa-workflow/SKILL.md` (design new pipelines).
@@ -83,6 +84,7 @@ not OSMO or Airflow.
 | Spec | Notes |
 | --- | --- |
 | [`alpamayo2-super-inference.yaml`](testing/alpamayo2-super-inference.yaml) | Real Alpamayo 2 Super 34B trajectory inference on `B200:1`; runtime-only OpenMDW weights and separately gated PhysicalAI-AV sample data ([guide](../docs/workbench/alpamayo2-super.md)) |
+| [`curobo-benchmark.yaml`](testing/curobo-benchmark.yaml) | Complete cuRobo V2 MotionBenchMaker and MPiNets benchmarks with verified result journals and factual Rerun trajectories; image remains unpublished pending exact-byte and GPU validation ([guide](../docs/workbench/curobo.md)) |
 | [`vlm-eval-single.yaml`](testing/vlm-eval-single.yaml) | Self-hosted VLM eval |
 | [`vlm-eval-benchmark.yaml`](testing/vlm-eval-benchmark.yaml) | VLM benchmark |
 | [`token-factory-caption.yaml`](testing/token-factory-caption.yaml) | Zero-GPU; needs `NPA_SRC_S3_URI` (or `--image`) + `--secret-env NEBIUS_TOKEN_FACTORY_KEY` |
@@ -111,7 +113,8 @@ not OSMO or Airflow.
 | [`paidf-defect-image-generation.yaml`](testing/paidf-defect-image-generation.yaml) | Direct DIG Day-1 manual-ROI translation → runtime base-checkpoint setup → real AnomalyGen fine-tune → inference and native labels; B200; operator-authorized data/weights only |
 | [`paidf-image-attribute-augmentation.yaml`](testing/paidf-image-attribute-augmentation.yaml) | Direct IAA DAG translation → Qwen Image Edit service → real paidf-augmentation verification → real Person Attribute Search → dataset |
 | [`paidf-event-video-generation.yaml`](testing/paidf-event-video-generation.yaml) | Direct EVG DAG translation → Cosmos3 Super image2video → real detection/captioning/two Visual-QA passes/PAS → anomaly dataset |
-| [`content-agents-rigid-object.yaml`](testing/content-agents-rigid-object.yaml) | Restricted operator-built NVIDIA Content Agents: source USD → real Material/Physics Agents + OVRTX → upstream validation → rigid Isaac object USDZ/adapter ([guide](../docs/workbench/content-agents.md)) |
+| [`content-agents-rigid-object.yaml`](testing/content-agents-rigid-object.yaml) | NVIDIA Content Agents with a public image and runtime-fetched OVRTX: source USD → real Material/Physics Agents + OVRTX → upstream validation → rigid Isaac object USDZ/adapter ([guide](../docs/workbench/content-agents.md)) |
+| [`curobo-benchmark.yaml`](testing/curobo-benchmark.yaml) | Complete pinned MotionBenchMaker and MPiNets benchmark in cuRobo V2 kinematic and payload-dynamics modes ([guide](../docs/workbench/curobo.md)) |
 | [`byof.yaml`](testing/byof.yaml) | BYOF via `run_byof_repo.py` |
 | [`byof-maniskill.yaml`](testing/byof-maniskill.yaml) | OSS registry: ManiSkill pinned image + PickCube smoke |
 | [`byof-mujoco-playground.yaml`](testing/byof-mujoco-playground.yaml) | OSS registry: MuJoCo Playground pinned image + Cartpole smoke |

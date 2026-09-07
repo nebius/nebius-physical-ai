@@ -18,6 +18,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping, Sequence
+from urllib.parse import urlsplit
 
 import yaml
 
@@ -219,6 +220,16 @@ class ApiDaemonCwdProbe:
         }
 
 
+def _api_server_port(command: Sequence[str]) -> str:
+    for index, value in enumerate(command):
+        if value.startswith("--port="):
+            return value.split("=", 1)[1]
+        if value == "--port":
+            if index + 1 < len(command):
+                return command[index + 1]
+    return "46580"
+
+
 def _probe_local_api_daemon_cwd(
     sky_executable: str,
     *,
@@ -227,6 +238,8 @@ def _probe_local_api_daemon_cwd(
     expected_home: str = "",
     expected_user_id: str = "",
     expected_kubeconfig: str = "",
+    expected_endpoint: str = "",
+    expected_runtime_dir: str = "",
 ) -> ApiDaemonCwdProbe:
     """Inspect the actual local API daemon and descendants through procfs.
 
@@ -235,6 +248,18 @@ def _probe_local_api_daemon_cwd(
     deleted.  Those executor processes perform controller provisioning and
     rsync, so every cwd in the local server process tree must remain resolvable.
     """
+
+    try:
+        endpoint = urlsplit(expected_endpoint or "http://127.0.0.1:46580")
+        if endpoint.scheme not in {"http", "https"} or not endpoint.hostname:
+            raise ValueError("invalid API endpoint")
+        port = endpoint.port or (443 if endpoint.scheme == "https" else 80)
+    except ValueError:
+        return ApiDaemonCwdProbe(False, "invalid_api_endpoint")
+    if endpoint.hostname not in {"localhost", "127.0.0.1", "::1", "0.0.0.0"}:
+        # A remote API server has no inspectable local process tree. SkyPilot's
+        # authenticated API and controller checks still run during submission.
+        return ApiDaemonCwdProbe(True, "remote_api_endpoint")
 
     expected_uid = os.getuid() if uid is None else uid
     try:
@@ -247,6 +272,10 @@ def _probe_local_api_daemon_cwd(
     # the system interpreter, while ``bin/sky`` is a script. Resolving both
     # would put them in different parent directories and miss the real daemon.
     sky_bin_dir = Path(sky_executable).expanduser().absolute().parent
+    try:
+        caller_network_namespace = os.readlink(proc_root / "self" / "ns" / "net")
+    except OSError:
+        caller_network_namespace = None
     records: dict[int, tuple[int, tuple[str, ...], Path]] = {}
     if sys.platform == "darwin" and proc_root == Path("/proc"):
         # macOS has no procfs, so the deleted-cwd poisoning this probe detects
@@ -294,20 +323,28 @@ def _probe_local_api_daemon_cwd(
             )
         records[int(candidate.name)] = (ppid, cmdline, candidate)
 
-    roots = {
+    daemon_roots = {
         pid
         for pid, (_ppid, cmdline, _process) in records.items()
         if cmdline
-        and Path(cmdline[0]).expanduser().absolute().parent == sky_bin_dir
         and "-m" in cmdline
         and "sky.server.server" in cmdline
     }
-    if caller_mount_namespace is not None:
+    roots = {
+        pid
+        for pid in daemon_roots
+        if _api_server_port(records[pid][1]) == str(port)
+    }
+    if caller_network_namespace is not None or caller_mount_namespace is not None:
+        # Localhost is scoped by network namespace, not the interpreter or
+        # mount namespace. Retain mount fallback for restricted procfs fixtures.
+        namespace_kind = "net" if caller_network_namespace is not None else "mnt"
+        expected_namespace = caller_network_namespace or caller_mount_namespace
         scoped_roots = set()
         for pid in roots:
             try:
                 candidate_mount_namespace = os.readlink(
-                    records[pid][2] / "ns" / "mnt"
+                    records[pid][2] / "ns" / namespace_kind
                 )
             except (FileNotFoundError, ProcessLookupError, PermissionError):
                 continue
@@ -318,13 +355,58 @@ def _probe_local_api_daemon_cwd(
                     process_count=len(scoped_roots),
                     error=redact_text(str(exc)),
                 )
-            if candidate_mount_namespace == caller_mount_namespace:
+            if candidate_mount_namespace == expected_namespace:
                 scoped_roots.add(pid)
         roots = scoped_roots
     if not roots:
         return ApiDaemonCwdProbe(True, "absent")
+    foreign_roots = {
+        pid
+        for pid in roots
+        if Path(records[pid][1][0]).expanduser().absolute().parent != sky_bin_dir
+    }
+    if foreign_roots == roots:
+        return ApiDaemonCwdProbe(
+            False,
+            "foreign_api_daemon",
+            process_count=len(foreign_roots),
+            error=(
+                "the selected SkyPilot API endpoint belongs to another "
+                "executable; use an isolated runtime directory"
+            ),
+        )
+    if foreign_roots:
+        return ApiDaemonCwdProbe(
+            False,
+            "runtime_ownership_conflict",
+            process_count=len(roots),
+            error=(
+                "the selected local SkyPilot API endpoint is served by "
+                "a different SkyPilot executable"
+            ),
+        )
 
-    runtime_roots: set[int] = set()
+    def unhealthy_runtime(
+        outcome: str, *, process_count: int, error: str
+    ) -> ApiDaemonCwdProbe:
+        # SkyPilot 0.12.2's api stop kills the first matching server process,
+        # without filtering its endpoint or executable. A healthy selected
+        # daemon can coexist with peers, but repairing it could stop a peer.
+        if daemon_roots - roots:
+            return ApiDaemonCwdProbe(
+                False,
+                "runtime_ownership_conflict",
+                process_count=process_count,
+                error=(
+                    "another local SkyPilot API server exists outside the "
+                    "selected endpoint/runtime; api stop is not endpoint-scoped"
+                ),
+            )
+        return ApiDaemonCwdProbe(
+            False, outcome, process_count=process_count, error=error
+        )
+
+    environments: dict[int, dict[str, str]] = {}
     for pid in roots:
         try:
             raw_environment = (records[pid][2] / "environ").read_bytes()
@@ -344,12 +426,34 @@ def _probe_local_api_daemon_cwd(
             for item in raw_environment.split(b"\0")
             if b"=" in item
         }
+        daemon_runtime_dir = environment.get("SKY_RUNTIME_DIR", "").strip()
+        if (
+            expected_runtime_dir
+            and daemon_runtime_dir
+            and Path(daemon_runtime_dir).expanduser().resolve()
+            != Path(expected_runtime_dir).expanduser().resolve()
+        ):
+            return ApiDaemonCwdProbe(
+                False,
+                "runtime_ownership_conflict",
+                process_count=len(roots),
+                error=(
+                    "local SkyPilot API server at the selected endpoint declares "
+                    "a different SKY_RUNTIME_DIR than this submission"
+                ),
+            )
+        environments[pid] = environment
+
+    # Check every selected daemon's explicit runtime ownership before any
+    # recoverable staleness. HOME, user ID, and kubeconfig mismatches alone are
+    # legacy local-environment drift, not proof of another runtime's ownership.
+    runtime_roots: set[int] = set()
+    for pid, environment in environments.items():
         daemon_home = environment.get("HOME", "").strip()
         if expected_home and Path(daemon_home).expanduser().absolute() != Path(
             expected_home
         ).expanduser().absolute():
-            return ApiDaemonCwdProbe(
-                False,
+            return unhealthy_runtime(
                 "stale_runtime_environment",
                 process_count=len(runtime_roots) + 1,
                 error=(
@@ -359,8 +463,7 @@ def _probe_local_api_daemon_cwd(
             )
         daemon_user_id = environment.get("SKYPILOT_USER_ID", "").strip()
         if expected_user_id and daemon_user_id != expected_user_id:
-            return ApiDaemonCwdProbe(
-                False,
+            return unhealthy_runtime(
                 "stale_runtime_environment",
                 process_count=len(runtime_roots) + 1,
                 error=(
@@ -371,8 +474,7 @@ def _probe_local_api_daemon_cwd(
         runtime_roots.add(pid)
         daemon_kubeconfig = environment.get("KUBECONFIG", "").strip()
         if expected_kubeconfig and daemon_kubeconfig != expected_kubeconfig:
-            return ApiDaemonCwdProbe(
-                False,
+            return unhealthy_runtime(
                 "stale_runtime_environment",
                 process_count=len(runtime_roots),
                 error=(
@@ -382,8 +484,7 @@ def _probe_local_api_daemon_cwd(
             )
         inherited_config = environment.get("SKYPILOT_GLOBAL_CONFIG", "").strip()
         if inherited_config and not Path(inherited_config).is_file():
-            return ApiDaemonCwdProbe(
-                False,
+            return unhealthy_runtime(
                 "stale_global_config",
                 process_count=len(runtime_roots),
                 error=(
@@ -420,8 +521,7 @@ def _probe_local_api_daemon_cwd(
         if cwd.endswith(" (deleted)") or not Path(cwd).is_dir():
             unusable.append(pid)
     if unusable:
-        return ApiDaemonCwdProbe(
-            False,
+        return unhealthy_runtime(
             "cwd_deleted",
             process_count=len(process_tree),
             error=(
@@ -450,11 +550,19 @@ def _ensure_local_api_daemon_cwd(
             expected_home=str(env.get("HOME") or ""),
             expected_user_id=str(env.get("SKYPILOT_USER_ID") or ""),
             expected_kubeconfig=str(env.get("KUBECONFIG") or ""),
+            expected_endpoint=str(env.get("SKYPILOT_API_SERVER_ENDPOINT") or ""),
+            expected_runtime_dir=str(env.get("SKY_RUNTIME_DIR") or ""),
         )
     )
     before = inspect()
     if before.healthy:
         return before
+    if before.outcome == "runtime_ownership_conflict":
+        raise SkyPilotSubmitError(
+            "SkyPilot local API server repair could affect a different endpoint "
+            f"or runtime: {before.error}; "
+            "no API server was stopped and no submission was attempted."
+        )
     if before.outcome not in {
         "cwd_deleted",
         "stale_global_config",
@@ -550,6 +658,13 @@ def _ensure_local_api_daemon_cwd_locked(
 ) -> ApiDaemonCwdProbe:
     """Run the daemon health/repair transaction under its runtime identity lock."""
 
+    isolated_api_dir = env.get("NPA_SKYPILOT_ISOLATED_API_DIR")
+    if isolated_api_dir:
+        return _ensure_isolated_api(
+            isolated_dir=Path(isolated_api_dir), sky_executable=sky_executable,
+            environment=env, cwd=cwd,
+        )
+
     # SkyPilot 0.12 exposes one local API server on a fixed loopback port per
     # executable, even when callers isolate HOME/SKY_RUNTIME_DIR.  Serialize
     # repairs at that real process-global boundary; a per-run lock can race two
@@ -566,6 +681,15 @@ def _ensure_local_api_daemon_cwd_locked(
             env=env,
             cwd=cwd,
         )
+
+
+def _ensure_isolated_api(**kwargs) -> ApiDaemonCwdProbe:
+    from npa.orchestration.skypilot.local_api import IsolatedApiError, ensure_isolated_api
+
+    try:
+        return ApiDaemonCwdProbe(**ensure_isolated_api(**kwargs))
+    except IsolatedApiError as exc:
+        raise SkyPilotSubmitError(str(exc)) from None
 
 
 def ensure_local_api_daemon_health(
@@ -586,6 +710,10 @@ def ensure_local_api_daemon_health(
     # daemon; an absent daemon is left for the regular pinned-version path.
     sky_executable = str(runtime_config.sky_bin)
     env = sky_environment(runtime_config.isolated_config_dir)
+    if runtime_config.isolated_config_dir is not None:
+        # Environment preparation validates any owned listener. Startup waits
+        # until the exact workload/project configuration has passed preflight.
+        return ApiDaemonCwdProbe(True, "isolated_api_pending")
     stable_cwd = _stable_sky_cwd(runtime_config.isolated_config_dir)
     runtime_dir = runtime_config.isolated_config_dir or Path(stable_cwd)
     return _ensure_local_api_daemon_cwd_locked(
@@ -688,6 +816,8 @@ def submit_workflow(
     transaction_sleeper: Callable[[float], None] = time.sleep,
     transaction_random: Callable[[], float] | None = None,
     launch_lock_root: Path | None = None,
+    project: str = "",
+    execution_target: Any | None = None,
 ) -> WorkflowResult:
     """Submit a SkyPilot YAML through NPA's controller convention."""
 
@@ -714,10 +844,9 @@ def submit_workflow(
         _chmod_owner_only(prepared_yaml)
         sky_executable = str(ensure_skypilot_version(runtime_config.sky_bin))
         controller_context = _controller_region_from_infra(infra, controller_backend)
-        global_config = apply_controller_override(
+        global_config = _controller_config_for_execution(
             _load_base_config(runtime_config.global_config_path),
-            controller_backend=controller_backend,
-            controller_region=controller_context,
+            controller_backend=controller_backend, infra=infra,
         )
         if controller_context:
             # ``--infra k8s/<context>`` is an exact target, not merely a
@@ -741,9 +870,32 @@ def submit_workflow(
         _chmod_owner_only(generated_config_path)
         env = sky_environment(runtime_config.isolated_config_dir)
         for key, value in (extra_env or {}).items():
-            if value:
+            if value or key in {"NPA_S3_BUCKET", "NPA_S3_PREFIX"}:
                 env[key] = value
         env["SKYPILOT_GLOBAL_CONFIG"] = str(generated_config_path)
+
+        # Both direct SDK callers and the CLI cross this gate. Resolve the
+        # actual rendered task environment before controller/job side effects.
+        from npa.execution_preflight import ExecutionPreflightError
+
+        try:
+            _target, _target_report, injected = _execution_preflight(
+                docs, project=project, infra=infra, extra_env=env,
+                target=execution_target, global_config=global_config,
+                sky_bin=sky_executable,
+                cwd=_stable_sky_cwd(runtime_config.isolated_config_dir),
+            )
+        except (ExecutionPreflightError, ValueError) as exc:
+            raise SkyPilotSubmitError(str(exc)) from exc
+        env.update(injected)
+        if _target is not None:
+            env["NPA_SKYPILOT_PROJECT"] = _target.project
+        # Native preflight pins the exact project/region in this per-submit
+        # configuration; persist the verified version before any controller.
+        generated_config_path.write_text(yaml.safe_dump(global_config, sort_keys=False), encoding="utf-8")
+        _chmod_owner_only(generated_config_path)
+        prepared_yaml.write_text(yaml.safe_dump_all(docs, sort_keys=False), encoding="utf-8")
+        _chmod_owner_only(prepared_yaml)
 
         cmd = [
             sky_executable,
@@ -751,7 +903,9 @@ def submit_workflow(
             "launch",
             "--name",
             run_id,
-            "--async",
+            # Wait for the API launch result so failed prechecks surface as
+            # errors. --async acknowledges only the request, before a managed
+            # job exists; --detach-run still leaves the workload asynchronous.
             "--detach-run",
             "--yes",
             str(prepared_yaml),
@@ -2115,6 +2269,27 @@ def _load_yaml_documents(path: Path) -> list[dict[str, Any]]:
     if not all(isinstance(doc, dict) for doc in docs):
         raise ValueError("SkyPilot YAML documents must be mappings")
     return docs
+
+
+def _execution_preflight(*args, **kwargs):
+    """Provider boundary kept explicit for command-shape unit fixtures."""
+    from npa.execution_preflight import preflight_skypilot_submission
+
+    return preflight_skypilot_submission(*args, **kwargs)
+
+
+def _controller_config_for_execution(base_config, *, controller_backend, infra):
+    configured = ((base_config.get("jobs") or {}).get("controller") or {}).get("resources") or {}
+    config = apply_controller_override(
+        base_config, controller_backend=controller_backend,
+        controller_region=_controller_region_from_infra(infra, controller_backend),
+    )
+    if controller_backend == "nebius" and not configured.get("region"):
+        # apply_controller_override's legacy default region is not an explicit
+        # operator target. The native preflight pins the selected NPA project
+        # region; an explicitly configured different region remains an error.
+        config["jobs"]["controller"]["resources"].pop("region", None)
+    return config
 
 
 def _load_base_config(config_path: Path | None) -> dict[str, Any]:
