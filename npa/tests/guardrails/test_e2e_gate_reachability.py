@@ -16,6 +16,9 @@ RUNNER_FILES = (
 # These specialized suites intentionally remain operator-invoked. The reason is
 # machine-reviewed here instead of letting an environment gate silently rot.
 MANUAL_GATES = {
+    "NPA_RAY_CLIP_CHECKPOINT_LIVE_CONFIG": (
+        "native Ray Jobs stop/resume requires two preflighted owned GPUs and private SSH/evidence configuration"
+    ),
     "NPA_VM_SECURITY_LIVE": (
         "mutates credentials and services on an operator-selected dedicated VM or UID-verified isolated CPU Pod"
     ),
