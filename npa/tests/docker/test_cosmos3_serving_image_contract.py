@@ -52,6 +52,26 @@ def _instructions() -> str:
     )
 
 
+@pytest.mark.parametrize("tamper", [False, True])
+def test_real_bootstrap_verifier_matches_current_lock_and_rejects_changed_bytes(tmp_path, monkeypatch, tamper):
+    module = _module("serving_bootstrap_verifier", IMAGE_DIR / "verify_env.py")
+    lock = tmp_path / "requirements.lock"
+    lock.write_bytes(LOCK.read_bytes() + (b"\n# changed bytes\n" if tamper else b""))
+    monkeypatch.setenv("NPA_COSMOS3_CLOSURE_SHA256", hashlib.sha256(LOCK.read_bytes()).hexdigest())
+    monkeypatch.setattr(module, "Path", lambda name: lock if name.endswith("requirements.lock") else tmp_path / "absent")
+
+    def unavailable(package):
+        raise module.metadata.PackageNotFoundError(package)
+
+    monkeypatch.setattr(module.metadata, "version", unavailable)
+    monkeypatch.setattr(module.importlib.util, "find_spec", lambda name: None)
+    if tamper:
+        with pytest.raises(SystemExit, match="closure bytes do not match"):
+            module.main()
+    else:
+        assert module.main() == 0
+
+
 def test_source_base_and_dependency_closure_are_immutable() -> None:
     text = _instructions()
     assert re.search(r"ARG BASE_IMAGE=python:[^\s]+@sha256:[0-9a-f]{64}", text)

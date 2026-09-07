@@ -21,7 +21,7 @@ from npa.clients.scoped_credentials import bucket_from_s3_uri
 DEFAULT_RERUN_BOOTSTRAP_IMAGE = "python:3.11-slim-bookworm"
 DEFAULT_RERUN_IMAGE = DEFAULT_RERUN_BOOTSTRAP_IMAGE
 DEFAULT_RERUN_VIEWER_TOOL = "rerun-viewer"
-DEFAULT_AWS_CLI_IMAGE = "amazon/aws-cli:2.22.12"
+DEFAULT_AWS_CLI_IMAGE = "amazon/aws-cli@sha256:b6aeb95d19d7f5a8cae4eb814cb16739b6b2a4f2f46f427ada6a8c9a20d9881d"
 DEFAULT_NAMESPACE = "default"
 DEFAULT_PORT = 9090
 # Rerun web viewer binds here; nginx sidecar exposes DEFAULT_PORT with cache headers.
@@ -29,7 +29,7 @@ RERUN_INTERNAL_WEB_PORT = 9091
 DEFAULT_GRPC_PORT = 9876
 # Browser gRPC origin for kubectl port-forward (must match forwarded local ports).
 DEFAULT_LOCAL_VIEWER_HOST = "127.0.0.1"
-DEFAULT_NGINX_IMAGE = "nginx:1.27-alpine"
+DEFAULT_NGINX_IMAGE = "nginx:1.30.4-alpine-slim@sha256:77da26c31397bf6694b4bf93275f5b40b0b120ba1b8f114264b603e592c561d6"
 # Browser-cache static wasm/js (~40 MiB) so refresh does not re-download the app bundle.
 RERUN_STATIC_CACHE_CONTROL = "public, max-age=604800, immutable"
 # 0.31.x embeds localhost gRPC URLs and lacks --cors-allow-origin; remote LoadBalancer

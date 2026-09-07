@@ -21,3 +21,8 @@ boundary. Raw Rerun web and gRPC listeners bind only to pod loopback and are
 absent from the Service. The viewer opens the recording over the same HTTP
 origin, so only the web port needs forwarding. Destroy removes both storage
 and authentication secrets, even when the caller no longer supplies a password.
+
+The maintained viewer and bootstrap images include Python for the internal
+readiness check. Custom viewer images must provide `python` with its standard
+library as well as the Rerun CLI. The nginx proxy uses the pinned slim image,
+which omits unused image-processing modules and their dependency packages.
