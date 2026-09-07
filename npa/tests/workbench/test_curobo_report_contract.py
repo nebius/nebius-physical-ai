@@ -117,7 +117,7 @@ def solved_row(monkeypatch):
             return self.data.item()
 
     joint_state = SimpleNamespace(
-        from_position=lambda data, **kwargs: SimpleNamespace(position=data)
+        from_position=lambda data, **kwargs: SimpleNamespace(position=data, **kwargs)
     )
     monkeypatch.setitem(
         sys.modules,
@@ -130,12 +130,33 @@ def solved_row(monkeypatch):
         SimpleNamespace(cuda=SimpleNamespace(synchronize=lambda: None)),
     )
     path = SimpleNamespace(
+        joint_names=[f"joint{i}" for i in range(7)],
         position=Tensor([[0.0] * 7, [0.1] * 7]),
         velocity=Tensor([[0.0] * 7, [0.1] * 7]),
         acceleration=Tensor([[0.0] * 7, [0.0] * 7]),
         jerk=Tensor([[0.0] * 7, [0.0] * 7]),
         dt=Tensor(0.1),
     )
+
+    def reorder(names):
+        indices = [path.joint_names.index(name) for name in names]
+        return SimpleNamespace(
+            joint_names=list(names),
+            position=Tensor(path.position.data[:, indices]),
+        )
+
+    path.reorder = reorder
+
+    def forward_kinematics(state):
+        assert state.joint_names == [f"joint{i}" for i in range(7)]
+        np.testing.assert_allclose(state.position.data, [[0.0] * 7, [0.1] * 7])
+        return SimpleNamespace(
+            tool_poses=SimpleNamespace(
+                get_link_pose=lambda _name: SimpleNamespace(
+                    position=Tensor([[0.0, 0.0, 0.0], [0.1, 0.0, 0.0]])
+                )
+            )
+        )
     result = SimpleNamespace(
         success=Tensor(True),
         get_interpolated_plan=lambda: path,
@@ -151,15 +172,7 @@ def solved_row(monkeypatch):
         tool_frames=["tool"],
         reset_seed=lambda: None,
         plan_pose=lambda *_args, **_kwargs: result,
-        kinematics=SimpleNamespace(
-            compute_kinematics=lambda *_args: SimpleNamespace(
-                tool_poses=SimpleNamespace(
-                    get_link_pose=lambda _name: SimpleNamespace(
-                        position=Tensor([[0.0, 0.0, 0.0], [0.1, 0.0, 0.0]])
-                    )
-                )
-            )
-        ),
+        kinematics=SimpleNamespace(compute_kinematics=forward_kinematics),
     )
     problem = {
         "start": [0.0] * 7,
@@ -169,7 +182,24 @@ def solved_row(monkeypatch):
         },
     }
 
-    def solve(benchmark=False, success=True):
+    def solve(benchmark=False, success=True, include_fingers=False):
+        if include_fingers:
+            # Locked/mimic fingers are returned in the full interpolation. Put
+            # them between active joints so slicing the first seven is invalid.
+            names = [
+                "left_finger", "joint6", "joint2", "joint0", "right_finger",
+                "joint5", "joint1", "joint4", "joint3",
+            ]
+            for field in ("position", "velocity", "acceleration", "jerk"):
+                source = getattr(path, field).data
+                columns = [
+                    source[:, path.joint_names.index(name)]
+                    if name in path.joint_names
+                    else np.full(2, 0.04 if field == "position" else 0.0)
+                    for name in names
+                ]
+                setattr(path, field, Tensor(np.stack(columns, axis=-1)))
+            path.joint_names = names
         result.success = Tensor(success)
         upstream = (
             SimpleNamespace(
@@ -204,6 +234,19 @@ def test_actual_runner_benchmark_record_matches_strict_metrics_contract(solved_r
     rows = benchmark_rows()
     rows[0].update(solved_row(benchmark=True))
     validate_report(report_for(rows), rows, run_id="report-test")
+
+
+def test_full_interpolation_retains_fingers_and_orders_active_joints_for_fk(solved_row):
+    row = solved_row(include_fingers=True)
+    trajectory = row["trajectory"]
+    assert trajectory["joint_names"] == [
+        "left_finger", "joint6", "joint2", "joint0", "right_finger",
+        "joint5", "joint1", "joint4", "joint3",
+    ]
+    for field in ("position", "velocity", "acceleration", "jerk"):
+        assert np.asarray(trajectory[field]).shape == (2, 9)
+    np.testing.assert_array_equal(np.asarray(trajectory["position"])[:, [0, 4]], 0.04)
+    assert trajectory["tool_position"] == [[0.0, 0.0, 0.0], [0.1, 0.0, 0.0]]
 
 
 @pytest.mark.parametrize(

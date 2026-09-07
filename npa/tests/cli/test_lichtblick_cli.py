@@ -101,6 +101,8 @@ def test_serve_plans_viewer_for_s3_mcap() -> None:
         "ghcr.io/nebius/nebius-physical-ai/npa-lichtblick:1.26.0"
     )
     assert payload["port"] == DEFAULT_PORT
+    assert payload["host"] == "127.0.0.1"
+    assert "-p 127.0.0.1:8080:8080" in payload["docker_command"]
     assert payload["served_artifact_path"] == "/srv/data/recording.mcap"
     assert "ds=remote-file" in payload["viewer_url"]
     # The deep link targets the app root `/` with the data source as a query
@@ -145,19 +147,27 @@ def test_build_launch_plan_local_path() -> None:
 
 def test_launch_viewer_uses_injected_runner() -> None:
     plan = build_launch_plan(input_path="s3://b/k/x.mcap", image="npa-lichtblick:test")
-    # Wildcard bind stays 0.0.0.0 for the container port mapping...
-    assert plan.host == "0.0.0.0"
-    # ...but the browser deep link uses a navigable loopback host.
+    # Private artifacts stay on loopback in both the plan and real Docker argv.
+    assert plan.host == "127.0.0.1"
     assert plan.viewer_url.startswith("http://127.0.0.1:8080/?")
     captured: list[list[str]] = []
     result = launch_viewer(plan, local_artifact="/tmp/x.mcap", runner=captured.append)
     assert result.status == "launched"
     assert captured, "runner was not invoked"
-    assert "0.0.0.0:8080:8080" in captured[0]
+    assert "127.0.0.1:8080:8080" in captured[0]
     argv = captured[0]
     assert argv[0] == "docker"
     assert "/tmp/x.mcap:/srv/data/x.mcap:ro" in argv
     assert "npa-lichtblick:test" in argv
+
+
+def test_lichtblick_network_publication_requires_explicit_host() -> None:
+    plan = build_launch_plan(
+        input_path="s3://b/k/x.mcap", image="npa-lichtblick:test", host="0.0.0.0"
+    )
+    captured = []
+    launch_viewer(plan, local_artifact="/tmp/x.mcap", runner=captured.append)
+    assert "0.0.0.0:8080:8080" in captured[0]
 
 
 def test_launch_viewer_requires_local_artifact() -> None:

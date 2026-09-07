@@ -9,10 +9,7 @@ defense fails CI. Emits ``_artifacts/adversarial_scorecard.json``.
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
-
-import pytest
 
 from agent_eval.adversarial import (
     INJECTION_ATTACKS,
@@ -93,17 +90,6 @@ def test_validator_catches_secret_and_prompt_leaks():
 def test_scorecard_scenarios_are_persona_crossed():
     scenarios = build_adversarial_scenarios(STATIC_PERSONAS, INJECTION_ATTACKS)
     assert len(scenarios) == len(STATIC_PERSONAS) * len(INJECTION_ATTACKS)
-
-
-@pytest.mark.skipif(
-    os.environ.get("NPA_AGENT_CHAT_LIVE") != "1",
-    reason="guardrails-ai validator tier gated behind NPA_AGENT_CHAT_LIVE=1",
-)
-def test_guardrails_validator_available():  # pragma: no cover - opt-in extra
-    guardrails = pytest.importorskip("guardrails")
-    assert guardrails is not None
-    result = validate_output("clean output", use_guardrails=True)
-    assert result["guardrails"] is True
 
 
 if __name__ == "__main__":  # pragma: no cover

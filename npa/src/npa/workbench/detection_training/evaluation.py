@@ -130,7 +130,7 @@ def _load_checkpoint(uri: str) -> dict[str, Any]:
     except ImportError as exc:
         raise DetectionEvaluationError("torch is required to load checkpoints") from exc
     data = read_bytes_uri(uri)
-    loaded = torch.load(io.BytesIO(data), map_location="cpu")
+    loaded = torch.load(io.BytesIO(data), map_location="cpu", weights_only=True)
     if not isinstance(loaded, dict):
         raise DetectionEvaluationError("checkpoint did not contain a dictionary")
     return loaded

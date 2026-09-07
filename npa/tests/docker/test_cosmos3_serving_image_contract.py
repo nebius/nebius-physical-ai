@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
 import json
 import re
 import subprocess
@@ -26,8 +27,8 @@ SERVING_SMOKE = IMAGE_DIR / "smoke_serving.sh"
 GUARDRAIL_PREP = IMAGE_DIR / "prepare_guardrail_runtime.py"
 HF_SNAPSHOT_PIN = IMAGE_DIR / "hf_snapshot_pin.py"
 CONTRACT = NPA_ROOT / "docker/workbench/packaging-contract.yaml"
-SOURCE_REVISION = "a4ea67a21b20054dacc6e83952f9bd407e8ee4e7"
-SOURCE_SHA256 = "2a4ca4d3d83417a88717767fcdfdc5cb214200c6957d26d70625f17f58954800"
+SOURCE_REVISION = "eb11446b7f2e30ca582f8aff3afe12e9a2e66f6c"
+SOURCE_SHA256 = "a0380c02b403f3c71ba4360fd23fc2461ea8a84c28d5543b8ac4c08a31a97a3f"
 
 
 def _module(name: str, path: Path):
@@ -51,15 +52,36 @@ def _instructions() -> str:
     )
 
 
+@pytest.mark.parametrize("tamper", [False, True])
+def test_real_bootstrap_verifier_matches_current_lock_and_rejects_changed_bytes(tmp_path, monkeypatch, tamper):
+    module = _module("serving_bootstrap_verifier", IMAGE_DIR / "verify_env.py")
+    lock = tmp_path / "requirements.lock"
+    lock.write_bytes(LOCK.read_bytes() + (b"\n# changed bytes\n" if tamper else b""))
+    monkeypatch.setenv("NPA_COSMOS3_CLOSURE_SHA256", hashlib.sha256(LOCK.read_bytes()).hexdigest())
+    monkeypatch.setattr(module, "Path", lambda name: lock if name.endswith("requirements.lock") else tmp_path / "absent")
+
+    def unavailable(package):
+        raise module.metadata.PackageNotFoundError(package)
+
+    monkeypatch.setattr(module.metadata, "version", unavailable)
+    monkeypatch.setattr(module.importlib.util, "find_spec", lambda name: None)
+    if tamper:
+        with pytest.raises(SystemExit, match="closure bytes do not match"):
+            module.main()
+    else:
+        assert module.main() == 0
+
+
 def test_source_base_and_dependency_closure_are_immutable() -> None:
     text = _instructions()
     assert re.search(r"ARG BASE_IMAGE=python:[^\s]+@sha256:[0-9a-f]{64}", text)
-    assert "ARG DEBIAN_SNAPSHOT=20260817T000000Z" in text
+    assert "ARG DEBIAN_SNAPSHOT=20260907T000000Z" in text
     assert "gcc g++ libgl1" in text
     assert "libgnutls30 libssl3 openssl" in text
     assert "snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}" in text
     assert SOURCE_REVISION in text
     assert SOURCE_SHA256 in text
+    assert f"ARG COSMOS3_CLOSURE_SHA256={hashlib.sha256(LOCK.read_bytes()).hexdigest()}" in text
     assert "e0262be9d8f7586bc24c069a2aed2b665bdff266" in text
     assert "cf03c0395fac8c4de386c0bdab12cc4fc8d66362" in text
     bootstrap = RUNTIME_BOOTSTRAP.read_text(encoding="utf-8")
@@ -71,8 +93,8 @@ def test_source_base_and_dependency_closure_are_immutable() -> None:
     assert "sitecustomize.py" in bootstrap
     assert "vllm/vllm-omni" not in text
     assert "nvcr.io" not in text
-    assert "vllm==0.26.0" in LOCK.read_text(encoding="utf-8")
-    assert "torch==2.11.0" in LOCK.read_text(encoding="utf-8")
+    assert "vllm==0.28.0" in LOCK.read_text(encoding="utf-8")
+    assert "torch==2.13.0" in LOCK.read_text(encoding="utf-8")
     assert "COPY --chmod=0644" in text
     assert "su -s /bin/sh -c 'test -r" in text
 

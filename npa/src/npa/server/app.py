@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import base64
+import errno
 import gc
+import hashlib
 import json
 import logging
 import os
 import threading
+import tempfile
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -17,6 +20,8 @@ import numpy as np
 import torch
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
+
+from npa.clients.storage import safe_s3_download_target
 
 logger = logging.getLogger("npa-lerobot-server")
 
@@ -200,7 +205,7 @@ def _pull_from_s3(uri: str) -> str:
     # Use bucket + full path as cache key to avoid collisions between URIs
     # that share the same basename (e.g. .../job-a/pretrained_model vs
     # .../job-b/pretrained_model).
-    cache_key = f"{bucket}_{prefix.replace('/', '_')}"
+    cache_key = hashlib.sha256(f"{bucket}/{prefix}".encode()).hexdigest()
     local_dir = Path(CHECKPOINT_DIR) / "s3_cache" / cache_key
 
     if local_dir.exists() and any(local_dir.iterdir()):
@@ -208,7 +213,7 @@ def _pull_from_s3(uri: str) -> str:
         return str(local_dir)
 
     logger.info("Pulling checkpoint from %s to %s", uri, local_dir)
-    local_dir.mkdir(parents=True, exist_ok=True)
+    local_dir.parent.mkdir(parents=True, exist_ok=True)
 
     import boto3
 
@@ -221,15 +226,29 @@ def _pull_from_s3(uri: str) -> str:
     paginator = s3.get_paginator("list_objects_v2")
     prefix_with_slash = prefix + "/" if not prefix.endswith("/") else prefix
 
-    for page in paginator.paginate(Bucket=bucket, Prefix=prefix_with_slash):
-        for obj in page.get("Contents", []):
-            key = obj["Key"]
-            rel = key[len(prefix_with_slash):]
-            if not rel:
-                continue
-            dest = local_dir / rel
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            s3.download_file(bucket, key, str(dest))
+    # Only publish a complete tree. Failed or malicious downloads must never
+    # become cache hits on the next request.
+    with tempfile.TemporaryDirectory(dir=local_dir.parent) as staging:
+        for page in paginator.paginate(Bucket=bucket, Prefix=prefix_with_slash):
+            for obj in page.get("Contents", []):
+                key = obj["Key"]
+                if key == prefix_with_slash or key.endswith("/"):
+                    continue
+                dest = safe_s3_download_target(staging, key, prefix_with_slash)
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                s3.download_file(bucket, key, str(dest))
+        try:
+            Path(staging).rename(local_dir)
+        except OSError as exc:
+            # Another worker may publish this URI while we download. Reuse its
+            # complete tree; never merge snapshots or suppress unrelated errors.
+            if not (
+                exc.errno in {errno.EEXIST, errno.ENOTEMPTY}
+                and not local_dir.is_symlink()
+                and local_dir.is_dir()
+                and any(local_dir.iterdir())
+            ):
+                raise
 
     return str(local_dir)
 

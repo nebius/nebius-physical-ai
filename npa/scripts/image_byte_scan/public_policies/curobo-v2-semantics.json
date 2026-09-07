@@ -75,22 +75,6 @@
     {
       "lexical_source_context": [],
       "modeled_source_context": [],
-      "reason": "The scanner input is the exact logical path of an installed public shared library. The private-key pattern is a substring of the public package/library basename and architecture directory. Public base descriptors and layer bytes establish its origin; there is no content credential in this path record.",
-      "record_kind": "logical_tar_path",
-      "record_sha256": "fb46c104e3ef44f1353c323c847b2ed7e224eb3d23b1e7df90ec0253f10f9270",
-      "semantic_role": "public-package-path-metadata"
-    },
-    {
-      "lexical_source_context": [],
-      "modeled_source_context": [],
-      "reason": "The scanner input is the exact logical path of an installed public shared library. The private-key pattern is a substring of the public package/library basename and architecture directory. Public base descriptors and layer bytes establish its origin; there is no content credential in this path record.",
-      "record_kind": "logical_tar_path",
-      "record_sha256": "e03287709e8e16898a6834541beaf96414631cae385a54a63fcfb55826381725",
-      "semantic_role": "public-package-path-metadata"
-    },
-    {
-      "lexical_source_context": [],
-      "modeled_source_context": [],
       "reason": "Exact static translation-unit key constants exercise temporary GnuTLS self-test objects against fixed signatures and deliberately invalid inputs, then deinitialize those objects. The checked local caller closure does not install these keys as runtime credentials or trust roots. The acceptance is limited to the exact reviewed constants and record hashes.",
       "record_kind": "layer_regular_content",
       "record_sha256": "aabbf4bb6fe30585ac0c704d4b505ab29a1b4b8dfb30ab2bf8928dc58ac63d66",

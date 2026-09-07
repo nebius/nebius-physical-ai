@@ -36,7 +36,7 @@ from pathlib import PurePosixPath
 from typing import Any, Callable
 from urllib.parse import quote
 
-DEFAULT_HOST = "0.0.0.0"
+DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8080
 # Container-internal port the caddy static server binds (see the Dockerfile).
 CONTAINER_PORT = 8080

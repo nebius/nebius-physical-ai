@@ -12,8 +12,6 @@ import secrets
 import shlex
 import shutil
 import subprocess
-import tarfile
-import tempfile
 from pathlib import Path
 from typing import Any, NoReturn
 
@@ -745,50 +743,10 @@ def _store_project_environment(
 
 
 def _create_agent_source_archive() -> str:
-    """Package the NPA source tree needed for agent-side workflow execution."""
-    repo_root = Path(__file__).resolve().parents[4]
-    include_roots = [
-        repo_root / "npa",
-        repo_root / "deploy/cluster",
-        repo_root / "workflows",
-    ]
-    for path in include_roots:
-        if not path.exists():
-            raise ConfigError(f"Required agent source path is missing: {path}")
+    """Package only inventoried source needed for agent-side execution."""
+    from npa.cli.agent_source_archive import create_agent_source_archive
 
-    exclude_names = {
-        ".git",
-        ".mypy_cache",
-        ".pytest_cache",
-        ".ruff_cache",
-        ".terraform",
-        ".venv",
-        "__pycache__",
-        "node_modules",
-    }
-
-    tmp = tempfile.NamedTemporaryFile(suffix=".tar.gz", delete=False)
-    tmp.close()
-
-    def _filter(info: tarfile.TarInfo) -> tarfile.TarInfo | None:
-        parts = set(Path(info.name).parts)
-        if parts & exclude_names:
-            return None
-        if info.name.endswith((".pyc", ".pyo")):
-            return None
-        return info
-
-    with tarfile.open(tmp.name, "w:gz") as archive:
-        for path in include_roots:
-            archive.add(path, arcname=path.relative_to(repo_root).as_posix(), filter=_filter)
-        # Stage the repo-root docs/ + skills/ trees so the agent's retrieval
-        # corpus (Blueprint Phase H) can ground on them at
-        # /opt/npa-agent/npa-src/{docs,skills}. Text-only; excluded via _filter.
-        for extra in ("docs", "skills"):
-            extra_path = repo_root / extra
-            if extra_path.exists():
-                archive.add(extra_path, arcname=extra, filter=_filter)
-    return tmp.name
+    return create_agent_source_archive(Path(__file__).resolve().parents[4])
 
 
 def _stage_agent_npa_source(ssh: SSHClient) -> None:
@@ -839,6 +797,32 @@ def _agent_mobile_login_help_html() -> str:
         <li>Username is prefilled; password is in your operator <code>auth.env</code> file.</li>
       </ol>
     </details>"""
+
+
+def _agent_auth_setup_script(auth_user: str, auth_password: str) -> str:
+    """Install nginx's password hash privately, with no password in process argv."""
+    if (
+        not auth_user or auth_user.startswith("-") or ":" in auth_user
+        or any(ord(char) < 32 or ord(char) == 127 for char in auth_user)
+    ):
+        raise ValueError("Invalid agent authentication username")
+    if (
+        not auth_password or len(auth_password.encode("utf-8")) > 72
+        or any(char in auth_password for char in "\r\n\0")
+    ):
+        raise ValueError("Agent password must contain 1..72 UTF-8 bytes without CR, LF or NUL")
+    return f"""\
+(
+set -euo pipefail
+stage="$(sudo mktemp -d /etc/nginx/.npa-auth.XXXXXXXX)"
+trap 'sudo rm -rf -- "$stage"' EXIT
+sudo install -m 0600 /dev/null "$stage/auth"
+builtin printf '%s\\n' {shlex.quote(auth_password)} | sudo htpasswd -iBc -C 12 "$stage/auth" {shlex.quote(auth_user)}
+sudo chown root:www-data "$stage/auth"
+sudo chmod 0640 "$stage/auth"
+sudo mv -fT -- "$stage/auth" /etc/nginx/.npa-agent-htpasswd
+)
+"""
 
 
 def _bootstrap_agent_stack(
@@ -9103,7 +9087,7 @@ StartLimitIntervalSec=0
 [Install]
 WantedBy=multi-user.target
 UNIT
-sudo htpasswd -bc /etc/nginx/.npa-agent-htpasswd {shlex.quote(auth_user)} {shlex.quote(auth_password)}
+{_agent_auth_setup_script(auth_user, auth_password)}
 {https_ssl_setup}
 cat <<'NGINXLOG' | sudo tee /etc/nginx/conf.d/npa-agent-safe-log.conf >/dev/null
 # Deliberately use $uri, never $request or $request_uri: those include the
