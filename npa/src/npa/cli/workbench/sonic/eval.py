@@ -8,6 +8,7 @@ import typer
 
 from npa.cli.workbench.sonic.helpers import OutputFormat, fail, output
 from npa.deploy.images import container_image_for_tool
+from npa.workbench.sonic.routing import ISAAC_RENDER
 from npa.workbench.sonic.eval import (
     CONTAINER_BACKEND,
     DEFAULT_CONTAINER_DRIVER_CAPABILITIES,
@@ -150,6 +151,7 @@ def eval_cmd(
                 "sonic",
                 gpu_target=container_gpu_target or None,
                 image_variant=container_image_variant or None,
+                workload=ISAAC_RENDER,
             )
         except ValueError as exc:
             fail(str(exc))

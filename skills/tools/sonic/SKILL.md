@@ -64,6 +64,14 @@ workflow composition with retargeting or MJLab.
   that JIT boundary as B300 training evidence.
 - SONIC render validation requires RT-capable GPUs. Use RTX PRO 6000 Blackwell;
   do not silently fall back to the quarantined H100/L40S images.
+- `sonic eval --backend container` consumes ONNX plus its metadata sidecar and
+  resolves `isaac-render`, including explicit manifest variants. The separate
+  `mujoco-eval` container entrypoint consumes a checkpoint through
+  `SONIC_EVAL_CHECKPOINT_PATH`; it is not a substitute for the ONNX contract.
+  Image resolution must use the workload at every caller that knows its stage.
+- Generic Blackwell labels containing B200/B300 remain datacenter targets.
+  Custom workflow `--image` overrides may select an unpublished runtime without
+  being attributed to a first-party variant; callers must validate those bytes.
 - The built-in serverless compute-only default is intentionally unavailable:
   its L40S/H100/H200 images are quarantined, while the active image requires
   Kubernetes GPU Operator driver mounts. A serverless run must supply an

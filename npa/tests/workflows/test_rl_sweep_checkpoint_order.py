@@ -30,3 +30,61 @@ def test_latest_run_directory_still_takes_precedence(tmp_path):
     (recent / 'model_9.pt').write_bytes(b'current-run')
     output = rl_sweep._publish_checkpoint(str(tmp_path / 'published'), str(tmp_path / 'logs'))
     assert Path(output).read_bytes() == b'current-run'
+
+
+def test_sparse_checkpoints_use_steps_not_write_order(tmp_path: Path) -> None:
+    run = tmp_path / "logs" / "run"
+    run.mkdir(parents=True)
+    for step in (100, 99, 12, 8):
+        (run / f"model_{step}.pt").write_bytes(str(step).encode())
+
+    published = rl_sweep._publish_checkpoint(
+        str(tmp_path / "published"), str(tmp_path / "logs")
+    )
+
+    assert Path(published).read_bytes() == b"100"
+
+
+def test_nested_directory_does_not_change_selected_run(tmp_path: Path) -> None:
+    logs = tmp_path / "logs"
+    nested = logs / "run" / "earlier-run"
+    nested.mkdir(parents=True)
+    (nested / "model_999.pt").write_bytes(b"nested run")
+    (logs / "run" / "model_9.pt").write_bytes(b"selected run")
+
+    published = rl_sweep._publish_checkpoint(str(tmp_path / "published"), str(logs))
+
+    assert Path(published).read_bytes() == b"selected run"
+
+
+@pytest.mark.parametrize(
+    ("names", "expected"),
+    [
+        (("model_0009.pt", "model_0049.pt"), "model_0049.pt"),
+        (("model_best.pt", "model_latest.pt"), "model_latest.pt"),
+    ],
+)
+def test_existing_checkpoint_filename_formats(
+    tmp_path: Path, names: tuple[str, ...], expected: str
+) -> None:
+    run = tmp_path / "logs" / "run"
+    run.mkdir(parents=True)
+    for name in names:
+        (run / name).write_bytes(name.encode())
+
+    published = rl_sweep._publish_checkpoint(
+        str(tmp_path / "published"), str(tmp_path / "logs")
+    )
+
+    assert Path(published).read_bytes() == expected.encode()
+
+
+@pytest.mark.parametrize("create_root", [False, True])
+def test_no_checkpoint_does_not_create_output(tmp_path: Path, create_root: bool) -> None:
+    logs = tmp_path / "logs"
+    if create_root:
+        logs.mkdir()
+    output = tmp_path / "published"
+
+    assert rl_sweep._publish_checkpoint(str(output), str(logs)) == ""
+    assert not output.exists()
