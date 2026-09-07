@@ -86,3 +86,28 @@ def test_no_source_inventory_is_not_a_recursive_fallback(inventory, monkeypatch)
     with pytest.raises(ConfigError, match="Git source inventory"):
         subject.create_agent_source_archive(root)
     assert not list(root.glob("*.tar.gz"))
+
+
+def test_legacy_distill_deploy_uses_the_same_inventory(tmp_path, mocker, monkeypatch):
+    monkeypatch.setenv("NPA_S3_BUCKET", "fixture-bucket")
+    monkeypatch.setenv("NPA_PROJECT_ID", "project-fixture")
+    from npa.workflows import distill_two_vm
+
+    archive = tmp_path / "source.tar.gz"
+    archive.write_bytes(b"fixture archive")
+    package = mocker.patch.object(
+        distill_two_vm, "create_agent_source_archive", return_value=str(archive)
+    )
+    upload = mocker.patch.object(distill_two_vm, "_sftp_upload")
+    ssh = mocker.MagicMock()
+    ssh._config.user = "ubuntu"
+    ssh.run.return_value = (0, "NPA_CLI_OK", "")
+    distill_two_vm._setup_vm_in_directory(
+        ssh, distill_two_vm.SIM_VM, "simulation", "/tmp/private-fixture"
+    )
+    package.assert_called_once_with(distill_two_vm._NPA_PACKAGE_ROOT.parent)
+    upload.assert_any_call(ssh, str(archive), "/tmp/private-fixture/npa-src.tgz")
+    assert not archive.exists()
+    commands = [call.args[0] for call in ssh.run_or_raise.call_args_list]
+    assert any("tar -xzf /tmp/private-fixture/npa-src.tgz -C /opt/npa/repo &&" in command for command in commands)
+    assert "test -f /opt/npa/repo/npa/pyproject.toml" in commands

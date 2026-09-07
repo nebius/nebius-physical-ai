@@ -27,9 +27,7 @@ import json
 import logging
 import os
 import shlex
-import subprocess
 import sys
-import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -41,7 +39,7 @@ from npa.deploy.configurator import write_remote_env_file, write_remote_text_fil
 from npa.clients.nebius import NebiusError, bootstrap_environment
 from npa.clients.ssh import SSHClient, SSHError, SSHHostKeyError
 from npa.deploy.provisioner import ProvisionerError
-from npa.workflow_build import stage_catalog
+from npa.cli.agent_source_archive import create_agent_source_archive
 from npa.workflows.distill import generate_run_id
 
 logger = logging.getLogger(__name__)
@@ -73,19 +71,6 @@ _SETUP_DIR = Path(__file__).resolve().parent.parent / "setup"
 # non-interactive shell where ~/.bashrc is NOT sourced.
 _CONDA_PREFIX = "/opt/conda"
 _CONDA_BIN = f"{_CONDA_PREFIX}/bin/conda"
-
-# Tar exclusion patterns to keep the uploaded archive small (<1 MB).
-# Without these, .venv/ alone adds ~250 MB of irrelevant data.
-_TAR_EXCLUDES = [
-    "--exclude=.venv",
-    "--exclude=__pycache__",
-    "--exclude=*.pyc",
-    "--exclude=.git",
-    "--exclude=.mypy_cache",
-    "--exclude=.pytest_cache",
-    "--exclude=*.egg-info",
-]
-
 
 @dataclass
 class VMSpec:
@@ -322,10 +307,8 @@ def _setup_vm(ssh: SSHClient, spec: VMSpec, label: str) -> None:
 def _setup_vm_in_directory(ssh: SSHClient, spec: VMSpec, label: str, directory: str) -> None:
     """Install conda env, framework, and npa CLI on a freshly provisioned VM.
 
-    1. Tar only the pip-installable parts of the npa package (src/,
-       pyproject.toml, deploy/, setup/ — excludes .venv, __pycache__,
-       .git), upload via SFTP.
-    2. Extract to ``/opt/npa/repo/npa/`` on the VM so that the setup
+    1. Package only tracked source files and upload via private SFTP staging.
+    2. Extract to ``/opt/npa/repo/`` on the VM so that the setup
        scripts' ``pip install -e /opt/npa/repo/npa[...]`` path works.
     3. Install Miniforge to ``/opt/conda`` via sudo if conda is not
        present, using absolute paths so it works in non-login shells.
@@ -338,18 +321,8 @@ def _setup_vm_in_directory(ssh: SSHClient, spec: VMSpec, label: str, directory: 
 
     logger.info("[%s] Uploading npa package ...", label)
 
-    # Package only the pip-installable parts of the npa source tree.
-    stage_catalog(_NPA_PACKAGE_ROOT)
-    with tempfile.NamedTemporaryFile(suffix=".tgz", delete=False) as tmp:
-        archive_path = tmp.name
+    archive_path = create_agent_source_archive(_NPA_PACKAGE_ROOT.parent)
     try:
-        subprocess.run(
-            ["tar", "-czf", archive_path]
-            + _TAR_EXCLUDES
-            + ["-C", str(_NPA_PACKAGE_ROOT), "."],
-            check=True,
-            capture_output=True,
-        )
         try:
             ssh.run_or_raise(
                 f"sudo mkdir -p /opt/npa && sudo chown {user}:{user} /opt/npa"
@@ -368,8 +341,8 @@ def _setup_vm_in_directory(ssh: SSHClient, spec: VMSpec, label: str, directory: 
     logger.info("[%s] Extracting npa package on VM ...", label)
     try:
         ssh.run_or_raise(
-            "rm -rf /opt/npa/repo/npa && mkdir -p /opt/npa/repo/npa && "
-            f"tar -xzf {shlex.quote(directory + '/npa-src.tgz')} -C /opt/npa/repo/npa && "
+            "rm -rf /opt/npa/repo && mkdir -p /opt/npa/repo && "
+            f"tar -xzf {shlex.quote(directory + '/npa-src.tgz')} -C /opt/npa/repo && "
             f"rm -f -- {shlex.quote(directory + '/npa-src.tgz')}"
         )
     except SSHError as exc:

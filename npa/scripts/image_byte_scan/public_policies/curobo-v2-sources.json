@@ -273,52 +273,6 @@
     },
     {
       "public_origin": {
-        "compressed_layer_digests": [
-          "sha256:4b3ffd8ccb5201a0fc03585952effb4ed2d1ea5e704d2e7330212fb8b16c86a3",
-          "sha256:c567a87f21d2f8e46feb4f6c427eb5559d45a1a222f73d601352403d13af1ada",
-          "sha256:0b3b5bd928240da4156c41fcfb400c1f4f8674acd2faee0413ab5a032dfb5f76",
-          "sha256:70f87b6ed43e1cbbe67ce74c7877fb771bf352b25d602a82ee4f840f2e265155",
-          "sha256:526d5438c009ab7178af1646fed10ff6f47a73f5a1ae7b9f49e63e4ade7e3ae6"
-        ],
-        "config_digest": "sha256:c04d5b77a27ff92cdd123bb52bf4b4a5fb4ce7a3d4279c1c5acca425967b2766",
-        "index_digest": "sha256:2ab6381d970b211fb93853796dc6707eb8a72575a375c422b17cf4d8b2641701",
-        "kind": "exact-public-base-layer-logical-path",
-        "metadata_file_type": "triggers",
-        "metadata_role": "dpkg metadata pathname naming the public Kerberos GSS-API package and architecture; no credential value",
-        "path_input_sha256": "fb46c104e3ef44f1353c323c847b2ed7e224eb3d23b1e7df90ec0253f10f9270",
-        "platform_manifest_digest": "sha256:605fb0c8acf8674e164d822da8a8521f3a655056e569f0899e72ae940e1fe7dc",
-        "public_repository": "docker.io/nvidia/cuda",
-        "reproduction": "Hash the raw UTF-8 logical member names in the five pinned public base layers. Locate the exact path_input_sha256 and inspect the package/architecture metadata basename. No name pattern authorizes another record."
-      },
-      "record_kind": "logical_tar_path",
-      "record_sha256": "fb46c104e3ef44f1353c323c847b2ed7e224eb3d23b1e7df90ec0253f10f9270",
-      "semantic_source": {}
-    },
-    {
-      "public_origin": {
-        "compressed_layer_digests": [
-          "sha256:4b3ffd8ccb5201a0fc03585952effb4ed2d1ea5e704d2e7330212fb8b16c86a3",
-          "sha256:c567a87f21d2f8e46feb4f6c427eb5559d45a1a222f73d601352403d13af1ada",
-          "sha256:0b3b5bd928240da4156c41fcfb400c1f4f8674acd2faee0413ab5a032dfb5f76",
-          "sha256:70f87b6ed43e1cbbe67ce74c7877fb771bf352b25d602a82ee4f840f2e265155",
-          "sha256:526d5438c009ab7178af1646fed10ff6f47a73f5a1ae7b9f49e63e4ade7e3ae6"
-        ],
-        "config_digest": "sha256:c04d5b77a27ff92cdd123bb52bf4b4a5fb4ce7a3d4279c1c5acca425967b2766",
-        "index_digest": "sha256:2ab6381d970b211fb93853796dc6707eb8a72575a375c422b17cf4d8b2641701",
-        "kind": "exact-public-base-layer-logical-path",
-        "metadata_file_type": "triggers",
-        "metadata_role": "dpkg metadata pathname naming the public Kerberos GSS-API package and architecture; no credential value",
-        "path_input_sha256": "e03287709e8e16898a6834541beaf96414631cae385a54a63fcfb55826381725",
-        "platform_manifest_digest": "sha256:605fb0c8acf8674e164d822da8a8521f3a655056e569f0899e72ae940e1fe7dc",
-        "public_repository": "docker.io/nvidia/cuda",
-        "reproduction": "Hash the raw UTF-8 logical member names in the five pinned public base layers. Locate the exact path_input_sha256 and inspect the package/architecture metadata basename. No name pattern authorizes another record."
-      },
-      "record_kind": "logical_tar_path",
-      "record_sha256": "e03287709e8e16898a6834541beaf96414631cae385a54a63fcfb55826381725",
-      "semantic_source": {}
-    },
-    {
-      "public_origin": {
         "artifact_sha256": "f9a65d1f48b818323fb411e80358f89d77dec340b01d27c6b2dfbb9cbf4b779f",
         "artifact_url": "https://files.pythonhosted.org/packages/77/43/96b35170bf2e64e00a41748c6400ff73232dc0fc62ded283679fb07c7fe0/av-17.1.0-cp311-abi3-manylinux_2_28_x86_64.whl",
         "kind": "locked-public-wheel-member",
