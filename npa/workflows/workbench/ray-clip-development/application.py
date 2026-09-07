@@ -236,9 +236,14 @@ class ClipActor:
             ray.get(barrier.finish.remote(self.info["instance_id"]))
         _verify_vectors(vectors, len(shard["rows"]))
         self.inference_calls += 1
-        return vectors, {"instance_id": self.info["instance_id"],
-                         "start_monotonic_ns": started, "end_monotonic_ns": finished,
-                         "inference_seconds": (finished - started) / 1e9}
+        measurement = {"instance_id": self.info["instance_id"],
+                       "start_monotonic_ns": started, "end_monotonic_ns": finished,
+                       "inference_seconds": (finished - started) / 1e9}
+        print("RAY_CLIP_INFERENCE " + json.dumps({
+            "record_ids": [row["record_id"] for row in shard["rows"]],
+            "inference": measurement,
+        }), flush=True)
+        return vectors, measurement
 
 
 class InferenceBarrier:
@@ -390,6 +395,13 @@ def commit_shard(path: Path, shard: dict, vectors, measurement: dict,
     return receipt
 
 
+def _reusable_checkpoint(shard, directory, model_revision, execution_fingerprint):
+    """Keep identity/hash validation identical for direct and batched submission."""
+    identity = validation.checkpoint_identity(shard, model_revision, execution_fingerprint)
+    cached = validation.read_checkpoint(directory, identity)
+    return {**cached, "checkpoint_reused": True} if cached is not None else None
+
+
 def submit_shard(actor, shard: dict, directory: Path, model_revision: str,
                  execution_fingerprint: str, barrier=None):
     """Reuse a committed shard before scheduling another GPU inference call.
@@ -407,10 +419,9 @@ def submit_shard(actor, shard: dict, directory: Path, model_revision: str,
         ValueError: A committed checkpoint does not match this execution.
         OSError: Checkpoint data cannot be read.
     """
-    identity = validation.checkpoint_identity(shard, model_revision, execution_fingerprint)
-    cached = validation.read_checkpoint(directory, identity)
+    cached = _reusable_checkpoint(shard, directory, model_revision, execution_fingerprint)
     if cached is not None:
-        return {**cached, "checkpoint_reused": True}, None
+        return cached, None
     return None, actor.infer.remote(shard, barrier)
 
 
@@ -681,36 +692,51 @@ class _InferenceSession:
             self.ray.get(self.actors[0].infer.remote(self.first_shard))
 
     def _schedule_batches(self, prepared):
-        """Schedule concurrent GPU batches and observe the first inference wave."""
-        self.barrier = self.inference_barrier.remote(self.arguments.actors)
-        pending = []
+        """Validate all checkpoints before assigning uncached work to distinct actors."""
+        submissions = []
         for index, shard in enumerate(prepared, 1):
-            actor = self.actors[index % self.arguments.actors]
-            observation = None
-            if index <= self.arguments.actors:
-                observation = self.barrier
-            pending.append(actor.infer.remote(shard, observation))
-        return pending
+            directory = self.output / "shards" / f"{index:06d}"
+            receipt = _reusable_checkpoint(shard, directory, self.arguments.model_revision, self.fingerprint)
+            submissions.append((receipt, None))
+        missing = [index for index, (receipt, _) in enumerate(submissions) if receipt is None]
+        participants = min(self.arguments.actors, len(missing))
+        if participants:
+            self.barrier = self.inference_barrier.remote(participants)
+        for ordinal, index in enumerate(missing):
+            # Sparse shard indices can repeat an actor. The uncached ordinal
+            # gives each first-wave task a distinct serial actor queue.
+            actor = self.actors[(ordinal + 1) % self.arguments.actors]
+            observation = self.barrier if ordinal < participants else None
+            submissions[index] = (None, actor.infer.remote(prepared[index], observation))
+        return submissions
 
     def _infer_remaining_shards(self):
         """Preprocess partitions, run concurrent inference and commit all outputs."""
         prepared = self.ray.get([self.prepare_shard.remote(shard) for shard in self.shards[1:]])
-        pending = self._schedule_batches(prepared)
-        for index, (shard, future) in enumerate(zip(prepared, pending, strict=True), 1):
-            vectors, measurement = self.ray.get(future)
-            directory = self.output / "shards" / f"{index:06d}"
-            receipt = commit_shard(directory, shard, vectors, measurement,
-                                   self.arguments.model_revision, self.fingerprint)
+        self.preprocessing_seconds = self.first_shard["preprocess_seconds"] + sum(
+            shard["preprocess_seconds"] for shard in prepared)
+        submissions = self._schedule_batches(prepared)
+        for index, (shard, (receipt, future)) in enumerate(zip(prepared, submissions, strict=True), 1):
+            if receipt is None:
+                vectors, measurement = self.ray.get(future)
+                directory = self.output / "shards" / f"{index:06d}"
+                receipt = commit_shard(directory, shard, vectors, measurement,
+                                       self.arguments.model_revision, self.fingerprint)
             self.receipts.append(receipt)
+            print("RAY_CLIP_CHECKPOINT " + json.dumps({
+                "shard_index": index, "checkpoint_reused": receipt["checkpoint_reused"],
+            }), flush=True)
         self.work_done = time.perf_counter()
         self.final_actors = self.ray.get([actor.status.remote() for actor in self.actors])
 
     def _check_concurrency(self):
         """Require actual observed overlap instead of inferring it from SPREAD."""
+        if self.barrier is None:
+            return {"participants": 0, "overlap": False, "events": []}
         observation = self.ray.get(self.barrier.status.remote())
         self.ray.kill(self.barrier, no_restart=True)
         self.barrier = None
-        if self.arguments.actors > 1 and not observation["overlap"]:
+        if observation["participants"] > 1 and not observation["overlap"]:
             raise ValueError("Multi-GPU inference intervals never overlapped")
         return observation
 
@@ -743,8 +769,13 @@ class _InferenceSession:
             "concurrency_timing_boundary": "coordinator receives start before CUDA inference and finish after CUDA synchronize; includes RPC edges",
             "cluster_connect_and_actor_ready_seconds": self.model_ready - self.started,
             "preprocessing_and_inference_wall_seconds": self.work_done - self.model_ready,
-            "preprocessing_task_seconds_sum": sum(receipt["preprocess_seconds"] for receipt in self.receipts),
-            "inference_actor_seconds_sum": sum(receipt["inference"]["inference_seconds"] for receipt in self.receipts),
+            "preprocessing_task_seconds_sum": self.preprocessing_seconds,
+            "inference_actor_seconds_sum": sum(receipt["inference"]["inference_seconds"]
+                                               for receipt in self.receipts if not receipt["checkpoint_reused"]),
+            "retained_checkpoint_inference_actor_seconds_sum": sum(receipt["inference"]["inference_seconds"]
+                                                                   for receipt in self.receipts if receipt["checkpoint_reused"]),
+            "inferred_shards": [index for index, receipt in enumerate(self.receipts) if not receipt["checkpoint_reused"]],
+            "reused_checkpoint_shards": [index for index, receipt in enumerate(self.receipts) if receipt["checkpoint_reused"]],
             "application_seconds": time.perf_counter() - self.started,
         }
 
@@ -806,8 +837,8 @@ def main(argv: list[str] | None = None) -> int:
     """
     arguments = _arguments(argv)
     shards = validation.partitions(arguments.records, arguments.batch_size)
-    if arguments.actors < 1 or len(shards) < arguments.actors + 1:
-        raise ValueError("Need positive actors and a first checkpoint plus one batch per actor")
+    if arguments.actors < 1:
+        raise ValueError("Need positive actors")
     session = _InferenceSession(arguments, shards)
     try:
         session._connect()

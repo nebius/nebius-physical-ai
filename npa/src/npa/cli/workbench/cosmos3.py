@@ -390,8 +390,8 @@ def generate_variants_cmd(
         0.0,
         "--source-motion-weight",
         help=(
-            "Blend this source-video weight into the published variant while "
-            "preserving the unmodified Cosmos output; zero disables compositing."
+            "Compatibility option; must be zero. Source/model blending creates "
+            "ghosting, so variants publish unmodified model output."
         ),
     ),
 ) -> None:
