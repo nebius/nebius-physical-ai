@@ -453,7 +453,23 @@ def _inspect(path, data, run_id):
         chunks.setdefault(entity, []).append(chunk.to_record_batch())
 
     def values(entity, column):
-        return [value for batch in chunks.get("/" + entity, []) for value in batch.column(column).to_pylist()]
+        # Physical chunk iteration is not timeline ordered. Keep every payload paired
+        # with its index; log_tick preserves source logging order for equal times.
+        indexed, static = [], []
+        for batch in chunks.get("/" + entity, []):
+            timeline = next((name for name in ("record_id", "shard_index", "coordinator_elapsed")
+                             if name in batch.schema.names), None)
+            payload = batch.column(column).to_pylist()
+            if timeline is None:
+                static.extend(payload)
+                continue
+            indices = batch.column(timeline).to_pylist()
+            if timeline == "coordinator_elapsed":
+                indices = [value.value for value in indices]
+            ticks = batch.column("log_tick").to_pylist() if "log_tick" in batch.schema.names else [0] * len(payload)
+            indexed.extend(zip(indices, ticks, payload, strict=True))
+        _require(not (indexed and static), "Decoded RRD mixes static and temporal rows: " + entity)
+        return [row[2] for row in sorted(indexed, key=lambda row: row[:2])] if indexed else static
 
     def documents(entity):
         return [json.loads(row[0]) for row in values(entity, "TextDocument:text")]

@@ -11,6 +11,7 @@ import struct
 import subprocess
 from pathlib import Path
 import sys
+from types import SimpleNamespace
 import zlib
 
 import numpy as np
@@ -316,6 +317,46 @@ def test_model_identity_cannot_be_invented(modules, advanced, tmp_path, damage):
     app._write_cleanup_artifacts(advanced, [], 1)
     with pytest.raises(ValueError):
         converter.convert(advanced, tmp_path / "invalid.rrd", run_id="test")
+
+
+@pytest.mark.parametrize("producer", ["result", "advanced"])
+@pytest.mark.parametrize("damage", [None, "duplicate", "missing"])
+def test_decoded_physical_chunks_preserve_timeline_coverage(modules, request, tmp_path, monkeypatch, producer, damage):
+    """Physical chunks need not arrive in timeline order, including within one entity."""
+    import rerun.recording
+
+    root = request.getfixturevalue(producer)
+    if producer == "advanced":
+        report = json.loads((root / "report.json").read_text())
+        events = report["concurrency_observation"]["events"]
+        events[1]["monotonic_ns"] = events[0]["monotonic_ns"]
+        _dump(root / "report.json", report)
+        modules[2]._write_cleanup_artifacts(root, [], 1)
+    original = rerun.recording.load_recording
+
+    def shuffled(path):
+        recording = original(path)
+        rows = [(chunk.entity_path, chunk.to_record_batch().slice(index, 1))
+                for chunk in recording.chunks() for index in range(chunk.num_rows)]
+        index = next(i for i, (entity, _) in enumerate(rows) if str(entity) == "/vectors/embedding")
+        if damage == "duplicate":
+            rows.append(rows[index])
+        elif damage == "missing":
+            rows.pop(index)
+        chunks = [SimpleNamespace(entity_path=entity, num_rows=batch.num_rows,
+                                  to_record_batch=lambda batch=batch: batch)
+                  for entity, batch in reversed(rows)]
+        return SimpleNamespace(application_id=recording.application_id, recording_id=recording.recording_id,
+                               chunks=lambda: iter(chunks))
+
+    monkeypatch.setattr(rerun.recording, "load_recording", shuffled)
+    output = tmp_path / "shuffled.rrd"
+    if damage:
+        with pytest.raises(ValueError, match="Decoded RRD vectors differ"):
+            modules[0].convert(root, output, run_id="shuffled-test")
+        assert not output.exists()
+    else:
+        assert modules[0].convert(root, output, run_id="shuffled-test")["records"] == 6
 
 
 @pytest.mark.parametrize("damage", ["vector", "image", "event", "recovery", "identity"])

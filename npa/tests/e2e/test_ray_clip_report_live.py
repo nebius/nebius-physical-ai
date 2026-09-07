@@ -50,7 +50,8 @@ def test_real_cuda_results_convert_and_decode(tmp_path):
         entities.add(entity)
         if entity == "/vectors/norm":
             indices.extend(chunk.to_record_batch().column("record_id").to_pylist())
-    assert indices == list(range(report["records"]))
+    # Physical RRD chunks can arrive out of timeline order; preserve exact coverage.
+    assert sorted(indices) == list(range(report["records"]))
     assert {"/images/original", "/images/crop", "/vectors/embedding", "/provenance/run"} <= entities
     if "model_initializations" in report:
         assert "/checkpoints/materialized" in entities
