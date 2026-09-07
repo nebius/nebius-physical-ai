@@ -4,7 +4,9 @@ ray[serve]==2.58.0
 nltk==3.10.3
 # The framework's serve extra includes Gradio. Its old Starlette upper bound
 # conflicts with patched Ray; upgrade both sides of that interface together.
-gradio==6.26.0
+gradio==6.16.0
+# The pinned framework Transformers requires the final 0.x Hub API.
+huggingface-hub==0.36.2
 # Preserve the framework's numerical and model-validation ABI constraints.
 numpy==2.2.6
 pandas==2.2.3

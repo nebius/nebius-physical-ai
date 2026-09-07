@@ -600,7 +600,6 @@ click==8.5.0 \
     --hash=sha256:255bc9599cf7748b4b1a446ccc735421bd08a2ae529a8b88597d3de5664ee360 \
     --hash=sha256:ba0d2089de75ea0310e2dde03160e6ca10009947fb95a182f9b54021bb272e34
     # via
-    #   huggingface-hub
     #   nltk
     #   ray
     #   uvicorn
@@ -834,13 +833,13 @@ googleapis-common-protos==1.75.3 \
     --hash=sha256:57c435ac2c68b108999b6db075d9053e4d7a936ba57b4a3d45667b1346f1738a \
     --hash=sha256:a018d2bf098ca9fb6faa08d5bb780e2a2c2f73c566f069761331386c9596d3f2
     # via google-api-core
-gradio==6.26.0 \
-    --hash=sha256:54c5c4bfe7782e1773c2b7d7be128036df8b0dd6ca303c186ad6443280e1063b \
-    --hash=sha256:f2a6a65580ce480ed51c0caacf79f159da000a954c54b1518716826f78bfb558
+gradio==6.16.0 \
+    --hash=sha256:a48d03ffb436644265e4386388ad8a50ec183c8e1fdd3bae0548f7f229c474da \
+    --hash=sha256:a5de01bf17336bf421d52af4b5dbd9fdbd530762c485067748456ccb797700bb
     # via -r npa/docker/workbench/cosmos3-ray-serve/security-upgrades-requirements.in
-gradio-client==2.6.1 \
-    --hash=sha256:0e605bf8683a27583868b933a083e84706b974404815d9795370ef8a62584f4e \
-    --hash=sha256:df3752925fbaaa56f7bfeeb0064ae23591ec3976432443748dd663a9729ef23b
+gradio-client==2.5.0 \
+    --hash=sha256:4cde99bad62149595c30c90876ca2e405e3a13687ecf895474f3412cb476673d \
+    --hash=sha256:d43e2179c29076292a76485ad7ed2e6eaa19d14ac58283bd7f5beabfe4ca958c
     # via
     #   gradio
     #   hf-gradio
@@ -992,12 +991,12 @@ httpx==0.28.1 \
     # via
     #   gradio
     #   gradio-client
-    #   huggingface-hub
     #   safehttpx
-huggingface-hub==1.30.0 \
-    --hash=sha256:96ae0a8e99a234374a6fe43e989ebd21c04640b91ab2927e7e5773ba1131ca59 \
-    --hash=sha256:e6a6120bc8c8e2723d03648434ee247088cceb55ba7067e7d34d692cad5fdb57
+huggingface-hub==0.36.2 \
+    --hash=sha256:1934304d2fb224f8afa3b87007d58501acfda9215b334eed53072dd5e815ff7a \
+    --hash=sha256:48f0c8eac16145dfce371e9d2d7772854a4f591bcb56c9cf548accf531d54270
     # via
+    #   -r npa/docker/workbench/cosmos3-ray-serve/security-upgrades-requirements.in
     #   gradio
     #   gradio-client
 idna==3.19 \
@@ -2404,6 +2403,7 @@ requests==2.34.2 \
     --hash=sha256:f288924cae4e29463698d6d60bc6a4da69c89185ad1e0bcc4104f584e960b9ed
     # via
     #   google-api-core
+    #   huggingface-hub
     #   ray
 rich==15.0.0 \
     --hash=sha256:33bd4ef74232fb73fe9279a257718407f169c09b78a87ad3d296f548e27de0bb \

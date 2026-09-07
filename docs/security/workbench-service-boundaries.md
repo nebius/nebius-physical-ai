@@ -167,5 +167,7 @@ erase provider-retained user-data from an existing instance.
 Deployment source bundles use the Git index as their inventory and read the
 current bytes of those tracked files. Stage new source files before deploying.
 Ignored and untracked local files are excluded; missing files, symlinks, and
-special files fail packaging. The remote installer stages bundles and
+special files fail packaging. Deployed bundles carry an inventory of their
+archived bytes so an agent can forward its source without Git metadata; every
+file must still match its recorded hash. The remote installer stages bundles and
 credentials in private directories before atomic installation.

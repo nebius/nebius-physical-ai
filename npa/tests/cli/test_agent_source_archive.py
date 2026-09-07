@@ -15,6 +15,7 @@ from npa.clients.config import ConfigError
 
 @pytest.fixture
 def inventory(tmp_path, monkeypatch):
+    (tmp_path / ".git").mkdir()
     names = ["npa/src/app.py", "deploy/cluster/main.tf", "workflows/example.yaml"]
     for name in names:
         path = tmp_path / name
@@ -42,7 +43,7 @@ def test_only_indexed_working_tree_bytes_are_archived(inventory):
     try:
         assert stat.S_IMODE(archive_path.stat().st_mode) == 0o600
         with tarfile.open(archive_path) as archive:
-            assert set(archive.getnames()) == set(names)
+            assert set(archive.getnames()) == set(names) | {subject._MANIFEST}
             assert archive.extractfile(names[0]).read() == b"modified tracked source\n"
             assert archive.getmember(names[0]).mode == 0o755
             assert all(member.uid == member.gid == 0 for member in archive.getmembers())
@@ -111,3 +112,31 @@ def test_legacy_distill_deploy_uses_the_same_inventory(tmp_path, mocker, monkeyp
     commands = [call.args[0] for call in ssh.run_or_raise.call_args_list]
     assert any("tar -xzf /tmp/private-fixture/npa-src.tgz -C /opt/npa/repo &&" in command for command in commands)
     assert "test -f /opt/npa/repo/npa/pyproject.toml" in commands
+
+
+def test_deployed_inventory_can_be_forwarded_without_git(inventory, tmp_path):
+    root, names = inventory
+    first = Path(subject.create_agent_source_archive(root))
+    deployed = tmp_path / "deployed"
+    deployed.mkdir()
+    with tarfile.open(first) as archive:
+        archive.extractall(deployed, filter="data")
+    (deployed / "npa/.env").write_text("private runtime fixture\n")
+    second = Path(subject.create_agent_source_archive(deployed))
+    try:
+        with tarfile.open(second) as archive:
+            assert set(archive.getnames()) == set(names) | {subject._MANIFEST}
+            assert archive.extractfile(names[0]).read() == b"tracked source\n"
+        (deployed / names[0]).write_text("modified after deployment\n")
+        with pytest.raises(ConfigError, match="safely package"):
+            subject.create_agent_source_archive(deployed)
+    finally:
+        first.unlink()
+        second.unlink()
+
+
+def test_uninventoried_directory_is_not_packaged(tmp_path):
+    (tmp_path / "npa").mkdir()
+    (tmp_path / "npa/.env").write_text("private runtime fixture\n")
+    with pytest.raises(ConfigError, match="Git source inventory or verified source bundle"):
+        subject.create_agent_source_archive(tmp_path)
