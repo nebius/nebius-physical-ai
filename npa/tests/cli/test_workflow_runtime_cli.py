@@ -20,7 +20,7 @@ from npa.orchestration.npa_workflow.run_resolution import RunResolution
 from npa.orchestration.skypilot.workflow import WorkflowResult
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-SPECS = REPO_ROOT / "npa" / "workflows" / "workbench" / "npa-workflows"
+SPECS = REPO_ROOT / "workflows" / "testing"
 FANOUT = SPECS / "token-factory-parallel-fanout.yaml"
 GATE_LOOP = SPECS / "token-factory-gate-loop.yaml"
 RUNNER = CliRunner()
@@ -176,6 +176,8 @@ def satisfied_preflight(mocker, monkeypatch):
     import npa.orchestration.skypilot._bin as skybin
     from npa.clients import storage_validation
     from npa.clients.storage_validation import StorageProbeResult
+
+    mocker.patch("npa.cli.workbench.workflow._execution_target_preflight", return_value=(None, {}))
 
     mocker.patch.object(skybin, "resolve_sky_bin", lambda _bin: "/usr/bin/sky")
     monkeypatch.setenv("NPA_SRC_S3_URI", "s3://rt-bucket/npa-src/npa")

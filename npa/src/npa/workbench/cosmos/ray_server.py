@@ -110,6 +110,35 @@ def main() -> None:
             self, authorization: str = Header(default="")
         ) -> dict[str, Any]:
             self._authorize(authorization)
+            try:
+                # Ingress can accept requests while its model replica is still
+                # initializing. Query the controller through Ray's public API.
+                status = await asyncio.to_thread(ray.serve.status)
+                application = status.applications.get("npa_cosmos3_ray_serve")
+                deployment = (
+                    application.deployments.get(model_name)
+                    if application is not None
+                    else None
+                )
+                running = (
+                    deployment.replica_states.get("RUNNING", 0)
+                    if deployment is not None
+                    else 0
+                )
+                model_ready = (
+                    application is not None
+                    and application.status == "RUNNING"
+                    and deployment is not None
+                    and deployment.status == "HEALTHY"
+                    and type(running) is int
+                    and running > 0
+                )
+            except Exception:
+                model_ready = False
+            if not model_ready:
+                raise fastapi.HTTPException(
+                    status_code=503, detail="model deployment is not ready"
+                )
             return {
                 "status": "ready",
                 "backend": "cosmos-framework-native-ray-serve",

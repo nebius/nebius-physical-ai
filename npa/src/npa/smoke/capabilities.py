@@ -9,6 +9,11 @@ from __future__ import annotations
 
 # Each value is an ordered list of concrete checks the golden eval runs.
 GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
+    "curobo": [
+        "real NVIDIA cuRobo V2 Franka pose optimization on CUDA",
+        "finite interpolated joint trajectories and actual FK tool path",
+        "factual RRD artifact passes decoder verification",
+    ],
     "openpi": [
         "pinned upstream full-DROID config remains batch 256 and 100,000 steps",
         "eight JAX processes form one global (1, 8) FSDP mesh",
@@ -86,6 +91,15 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
         "real text2image generation with the Cosmos 3 omni model",
         "decodable image artifact produced (capability, not a CUDA probe)",
         "no baked weights: checkpoint fetched with the operator's HF token",
+    ],
+    "cosmos3-nano-video": [
+        "pinned BF16 Cosmos3-Nano weights prestaged once and their immutable manifest verified",
+        "real Cosmos3OmniDiffusersPipeline initializes on one B200 with TP=1 and init-timeout=1800",
+        "three real 297/297/137-frame chunks reuse the generated tail as clean V2V conditioning",
+        "all three chunks and the stitched 720-frame 832x480 video fully decode at 24 fps",
+        "positive finite chunk latency, engine peak memory and sampled device VRAM are required",
+        "run reports and video hashes are retained; each rerun has a separate output directory",
+        "separate deployment acceptance requires 16 Ray replicas and eight concurrent complete requests",
     ],
     "cosmos3-ray-serve": [
         "native cosmos-framework OmniModelDeployment loads Cosmos3-Nano once",

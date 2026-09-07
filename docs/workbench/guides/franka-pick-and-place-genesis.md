@@ -117,12 +117,32 @@ with held-out seed 7777 produced **zero successful episodes**. The components
 completed; this checkpoint does not solve pick-and-place. Evaluate quality before
 using a checkpoint to generate successful demonstrations.
 
-**Cold-start recovery:** the current CLI create call can time out after 300
-seconds while the provider job continues pulling its image. `IMAGE_PULLING` is
-then mapped to `unknown`, and the supervisor can exit 1 even though the exact job
-continues. Preserve its identity and inspect that same provider job and output
-prefix before retrying; do not submit another training job solely because the
-CLI exited.
+**Cold-start recovery:** `PROVISIONING`, `STARTING`, and `IMAGE_PULLING` remain
+active startup states. A create response timeout triggers lookup of the existing
+job. Genesis records the launch before submitting, then saves the exact provider
+ID; transient observation failures keep polling that ID without creating another
+job. Unknown phases and authentication failures remain explicit errors.
+
+After a disconnect, repeat the command with the same job name, image, output
+prefix, and NPA configuration directory (`NPA_CONFIG_DIR`). Completed jobs reuse
+their verified declared outputs. The owner-only local submission journal lives
+under `runtime/serverless-submissions/` in that directory; subsequent supervisor
+decisions also persist in S3 under the run output prefix. If a create response
+and lookup are both inconclusive, the journal blocks another create even when
+the job is temporarily invisible. Preserve that journal until the provider
+identity is reconciled. Local journal recovery requires the original
+configuration directory; it does not coordinate independent operator machines.
+An existing job name must also match the saved command, immutable image, output
+prefix, and provider ID. A changed request or a legacy job without its original
+journal is refused without another create; its status, logs and artifacts remain
+available for inspection. `--submit-only` also pins the image before launch so a
+later supervised reconnect uses the same image identity.
+
+Before a new submission, Genesis verifies one configured project, tenant and
+region, the selected GPU platform/preset, and write/read access to the exact
+output prefix using the credentials sent to the workload. Fix failed preflight
+settings before launching. A low evaluation score still describes policy quality,
+not infrastructure failure.
 
 ## Use the real Franka data too
 

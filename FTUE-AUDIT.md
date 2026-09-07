@@ -69,7 +69,7 @@ a "non-default S3-compatible endpoint."
   renders the runbook to a Kubernetes Job. Out of scope for this pass.~~
   **Superseded:** the direct-controller runbook and materializer were removed.
   `npa workbench sim2real materialize` now exits with a migration to
-  `npa workbench workflow submit npa/workflows/workbench/npa-workflows/sim2real.yaml --runtime`.
+  `npa workbench workflow submit workflows/main/sim2real.yaml --runtime`.
 - **SDK seam discoverability.** `sim2real.run(**overrides)` forwards seams by
   keyword into `build_config_from_env`, so the seams are real and coherent but
   not discoverable from the function signature (and cannot use the inspect-based

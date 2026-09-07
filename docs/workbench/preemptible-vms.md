@@ -59,7 +59,7 @@ For workflow stages that materialize a Nebius GPU VM through SkyPilot, pass
 spot/preemptible at submit time:
 
 ```bash
-npa workbench workflow submit npa/workflows/workbench/npa-workflows/sonic-eval.yaml \
+npa workbench workflow submit workflows/testing/sonic-eval.yaml \
   --run-id sonic-spot \
   --use-spot
 ```

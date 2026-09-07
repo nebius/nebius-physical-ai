@@ -28,8 +28,8 @@ from npa.workbench.cosmos.generate import (
 )
 
 SPEC_YAML = (
-    Path(__file__).resolve().parents[2]
-    / "workflows/workbench/npa-workflows/cosmos3-generate.yaml"
+    Path(__file__).resolve().parents[3]
+    / "workflows/testing/cosmos3-generate.yaml"
 )
 
 

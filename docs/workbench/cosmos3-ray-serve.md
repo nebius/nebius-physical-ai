@@ -77,7 +77,7 @@ The submitted samples become concurrent deployment-handle calls; upstream Ray
 Serve performs the actual batching. NPA publishes the original request,
 structured `SampleOutputs`, generated media, hashes, and `provenance.json`. The
 equivalent declarative client is
-`npa/workflows/workbench/npa-workflows/cosmos3-ray-batch.yaml`.
+`workflows/testing/cosmos3-ray-batch.yaml`.
 
 ## GPU compatibility and evidence
 

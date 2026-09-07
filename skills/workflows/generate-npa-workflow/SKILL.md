@@ -47,13 +47,13 @@ SkyPilot-to-spec conversions.
 
 ## Creative Example (reference)
 
-`npa/workflows/workbench/npa-workflows/tokenfactory-cosmos-gate.yaml` — Token Factory
+`workflows/testing/tokenfactory-cosmos-gate.yaml` — Token Factory
 reason → Cosmos augment → VLM critique loop with promote / re-augment gate.
 
 ## Generate + Verify
 
 ```bash
-# 1. Write YAML under npa/workflows/workbench/npa-workflows/
+# 1. Write YAML under workflows/testing/
 # 2. Validate structure + tokens + cycles
 npa/.venv/bin/npa workbench workflow validate-spec <new.yaml> --json
 

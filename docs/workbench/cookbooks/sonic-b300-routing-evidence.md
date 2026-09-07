@@ -7,12 +7,12 @@ comparison routes.
 
 ```bash
 npa workbench workflow validate-spec \
-  npa/workflows/workbench/npa-workflows/sonic-b300-routing-evidence.yaml --json
+  workflows/testing/sonic-b300-routing-evidence.yaml --json
 npa workbench workflow plan-spec \
-  npa/workflows/workbench/npa-workflows/sonic-b300-routing-evidence.yaml \
+  workflows/testing/sonic-b300-routing-evidence.yaml \
   --run-id sonic-b300-routing-preview --json
 npa workbench workflow submit \
-  npa/workflows/workbench/npa-workflows/sonic-b300-routing-evidence.yaml \
+  workflows/testing/sonic-b300-routing-evidence.yaml \
   --run-id <new-run-id> --var bucket=<configured-bucket> \
   --var tested_commit_sha=<git-sha>
 ```

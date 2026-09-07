@@ -376,7 +376,7 @@ def status_cmd(
         "cli": "npa workbench byof",
         "sdk": "npa.sdk.workbench.byof",
         "tool_refs": ["workbench.byof.repo", "workbench.isaac_lab.byof_repo"],
-        "workflow": "npa/workflows/workbench/npa-workflows/byof.yaml",
+        "workflow": "workflows/testing/byof.yaml",
         "script": "npa/scripts/run_byof_repo.py",
         "packaging": "docs/workbench/container-packaging.md",
         "ladder": _LADDER_DOC,

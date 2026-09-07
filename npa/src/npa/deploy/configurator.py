@@ -16,6 +16,7 @@ from jinja2 import Environment, FileSystemLoader
 
 from npa.clients.env import render_docker_env_file, render_shell_env_file
 from npa.clients.ssh import SSHClient
+from npa.workflow_build import stage_catalog
 from npa.workbench.model_cache import (
     RUNTIME_DOCKER,
     docker_model_cache_volumes,
@@ -290,6 +291,7 @@ def deploy_server(
 ) -> None:
     """Copy the npa package to the VM, render server config, install systemd unit."""
     # 1. Package and upload the npa source
+    stage_catalog(_NPA_PACKAGE_ROOT)
     with tempfile.NamedTemporaryFile(suffix=".tgz", delete=False) as tmp:
         archive_path = tmp.name
 

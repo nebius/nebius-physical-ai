@@ -180,6 +180,7 @@ def _mentions_local_cuda(node: ast.AST, source: str) -> bool:
 def test_shipped_examples_do_not_depend_on_nebius_container_registry() -> None:
     """Runnable examples use GHCR releases or generic operator registries."""
     example_roots = [
+        REPO_ROOT / "workflows",
         REPO_ROOT / "npa" / "workflows",
         REPO_ROOT / "docs" / "workbench" / "cookbooks",
         REPO_ROOT / "docs" / "demos",

@@ -101,7 +101,7 @@ The user warned "there will be some discrepancy." Apply these rules and leave a
 ## Sim2real worked example (13 steps → spec)
 
 The provided write-up + diagram map to the canonical
-`npa/workflows/workbench/npa-workflows/sim2real.yaml`:
+`workflows/main/sim2real.yaml`:
 
 | Step (write-up) | Diagram box | State | `toolRef` |
 | --- | --- | --- | --- |

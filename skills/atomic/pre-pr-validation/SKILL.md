@@ -65,6 +65,7 @@ after every meaningful edit; save 5 and 6 for before you push.
 | An `npa.workflow` spec | `npa workbench workflow validate-spec <path>`, plus live-matrix registration per the testing conventions |
 | A workbench tool's surface | `test_three_tier_contract`, and the tool's CLI and workbench tests |
 | A Dockerfile or image tag | `npa/.venv/bin/python npa/docker/workbench/check_tag_consistency.py`, plus `npa/tests/docker/` |
+| The complete-byte scanner, its dependencies, or publication wiring | `npa/tests/docker/test_image_byte*.py`, plus the actual native integration sequence in `.github/workflows/image-security-scan.yml`; hermetic protocol tests do not replace that native gate |
 | A `SKILL.md` or `skills/index.yaml` | `test_skills_index` and `test_develop_skills` |
 | Terraform or the agent deploy path | `test_terraform_provisioner_shell`, plus a real destroy/deploy cycle |
 | Docs only | Lint and `pytest --collect-only` as a smoke check |
@@ -74,6 +75,20 @@ after every meaningful edit; save 5 and 6 for before you push.
 **`make test` is not identical to CI.** It deselects live and GPU markers and
 sets a 180s timeout; CI runs with coverage and enforces `--cov-fail-under=60`.
 A local pass is a strong signal, not proof of the CI result.
+
+Run the coverage gate from the package directory, matching CI:
+
+```bash
+cd npa
+.venv/bin/python -m pytest tests/ -v --tb=short --cov=npa --cov-report=term-missing --cov-fail-under=60
+```
+
+From the repository root, `--cov=npa` can select the enclosing directory and
+include tests and scripts in the coverage total. That percentage does not prove
+package coverage. Check the report's file population, including package modules
+that no test executed. If correcting a report from retained traces, preserve the
+original data, add no executed lines, and distinguish the report correction from
+a new test run.
 
 **Some local failures are missing host tools, not broken code.** The suite shells
 out to real binaries that CI has and a bare workstation or container may not.

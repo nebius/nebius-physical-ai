@@ -172,7 +172,7 @@ train/eval rather than wrapping LeRobot inside a BYOF image.
 
 1. **Contract** — register `workbench.byof.repo` (already in catalog); draft `byof` workflow via chat or:
    ```bash
-   npa/.venv/bin/npa workbench workflow validate-spec npa/workflows/workbench/npa-workflows/byof.yaml --json
+   npa/.venv/bin/npa workbench workflow validate-spec workflows/testing/byof.yaml --json
    ```
 2. **Containerize** — `run_byof_repo.py` with `--base-profile ubuntu` and `--skip-run` for build-only.
 3. **Deploy + test** — `--workload container-verify` (Ubuntu) or `--workload rl-train` / `datagen` (Isaac).
@@ -225,7 +225,7 @@ npa/.venv/bin/python -m pytest npa/tests/e2e/test_byof_onboarding_live_e2e.py -q
 | --- | --- |
 | `npa/scripts/run_byof_repo.py` | Build/push + workload dispatch |
 | `npa/src/npa/workflows/byof/live.py` | Project/kubeconfig/YAML resolution |
-| `npa/workflows/workbench/npa-workflows/byof.yaml` | Golden workflow spec |
+| `workflows/testing/byof.yaml` | Golden workflow spec |
 | `npa/src/npa/cli/agent_chat.py` | `onboard_solution` intent |
 | `skills/tools/npa-agent/SKILL.md` | Agent VM bootstrap + API reference |
 

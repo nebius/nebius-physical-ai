@@ -15,11 +15,8 @@ from npa.workflows.sonic_routing_evidence import (
 )
 
 SPEC = (
-    Path(__file__).parents[2]
-    / "workflows"
-    / "workbench"
-    / "npa-workflows"
-    / "sonic-b300-routing-evidence.yaml"
+    Path(__file__).parents[3]
+    / "workflows" / "testing" / "sonic-b300-routing-evidence.yaml"
 )
 
 

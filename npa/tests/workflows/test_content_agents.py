@@ -283,11 +283,7 @@ def test_upstream_failure_remains_primary_when_log_upload_fails(
 ROOT = Path(__file__).resolve().parents[3]
 SPEC = (
     ROOT
-    / "npa"
-    / "workflows"
-    / "workbench"
-    / "npa-workflows"
-    / "content-agents-rigid-object.yaml"
+    / "workflows" / "testing" / "content-agents-rigid-object.yaml"
 )
 
 

@@ -239,8 +239,13 @@ def nebius_cli_env(base: "Mapping[str, str] | None" = None) -> dict[str, str]:
 def _run(args: list[str], *, check: bool = True) -> str:
     """Run a nebius CLI command, return stdout."""
     nebius = _require_nebius()
+    from npa.clients.nebius_auth import nebius_profile
+
+    profile = nebius_profile()
+    explicit_profile = any(arg == "--profile" or arg.startswith("--profile=") for arg in args)
+    profile_args = ["--profile", profile] if profile and not explicit_profile else []
     result = subprocess.run(
-        [nebius] + args,
+        [nebius, *profile_args, *args],
         capture_output=True,
         text=True,
         env=nebius_cli_env(),
@@ -2880,8 +2885,9 @@ def bootstrap_agent_environment(
 ) -> dict[str, str]:
     """Bootstrap a long-lived ``npa-agent`` service account for agent VMs.
 
-    When IAM provisioning is blocked, reuse saved or configured object-storage
-    credentials instead of failing bootstrap.
+    Configured object-storage credentials are reused independently of the
+    VM identity. That identity receives a verified grant on the exact project.
+    The legacy storage-bootstrap route retains its saved-credential fallback.
     """
     from npa.lifecycle_intent import forbid_destructive_provisioning
 
@@ -2895,41 +2901,87 @@ def bootstrap_agent_environment(
     if sa_id and on_status:
         on_status(f"Reusing existing service account {AGENT_SERVICE_ACCOUNT_NAME!r}.")
     created_this_attempt: list[tuple[str, dict[str, str]]] = []
+    from npa.cli.agent_iam import preflight_agent_iam_journal
+
+    preflight_agent_iam_journal()
+    if reuse_storage_credentials is not None:
+        from npa.clients.agent_iam_binding import verify_agent_project_scope
+
+        verify_agent_project_scope(project_id, tenant_id)
 
     def _record_agent_resource(kind: str, metadata: dict[str, str]) -> None:
         from npa.cli.agent_iam import record_agent_iam_resource
 
         created_this_attempt.append((kind, dict(metadata)))
-        record_agent_iam_resource(project_id, kind, metadata)
-        if external_created:
-            external_created(kind, metadata)
+        try:
+            record_agent_iam_resource(project_id, kind, metadata)
+        finally:
+            # The operation journal also receives the immutable provider ID if
+            # the credential store fails after its successful preflight.
+            if external_created:
+                external_created(kind, metadata)
 
     def _rollback_agent_resources() -> None:
         """Roll back this invocation's exact resources and preserve failures."""
+        from npa.cli.agent_iam import (
+            _verify_access_key_absent,
+            mark_agent_iam_status,
+            remove_agent_iam_resource,
+        )
+        from npa.clients.agent_iam_binding import (
+            BINDING_KINDS,
+            cleanup_agent_project_binding,
+            remove_created_agent_account,
+        )
 
         rollback_failed = False
         journal_resources_remain = False
-        from npa.cli.agent_iam import mark_agent_iam_status, remove_agent_iam_resource
-
+        bindings = {kind: {} for kind in BINDING_KINDS}
+        for kind, metadata in created_this_attempt:
+            if kind in bindings:
+                bindings[kind][metadata["id"]] = metadata
+        if any(bindings.values()):
+            try:
+                cleanup_agent_project_binding(
+                    project_id,
+                    bindings,
+                    on_removed=lambda kind, identity: remove_agent_iam_resource(
+                        project_id, kind, identity
+                    ),
+                )
+            except Exception:  # noqa: BLE001 - retain exact creation journal on rollback failure
+                rollback_failed = True
         for kind, metadata in reversed(created_this_attempt):
+            if kind in BINDING_KINDS:
+                continue
+            # Retain the newly created identity if a permission object could
+            # not be reconciled. A later teardown can verify both together.
+            if kind == "service_account" and rollback_failed:
+                continue
             try:
                 if kind == "access_key":
-                    delete_access_key(metadata.get("id", ""))
+                    try:
+                        delete_access_key(metadata.get("id", ""))
+                    except NebiusError as key_error:
+                        if not _is_not_found(str(key_error)) or _is_permission_denied(
+                            str(key_error)
+                        ):
+                            raise
+                    _verify_access_key_absent(metadata.get("id", ""))
                 elif kind == "service_account":
-                    delete_service_account(metadata.get("id", ""))
-            except NebiusError as rollback_exc:
-                if not _is_not_found(str(rollback_exc)):
-                    rollback_failed = True
-                    continue
+                    remove_created_agent_account(
+                        project_id, tenant_id, metadata.get("id", "")
+                    )
+            except NebiusError:
+                rollback_failed = True
+                continue
             try:
                 journal_resources_remain = remove_agent_iam_resource(
                     project_id, kind, metadata.get("id", "")
                 )
             except Exception:  # noqa: BLE001 - provider rollback succeeded; retain journal
                 rollback_failed = True
-        if not created_this_attempt:
-            return
-        if rollback_failed or journal_resources_remain:
+        if created_this_attempt and (rollback_failed or journal_resources_remain):
             mark_agent_iam_status(project_id, "partial")
 
     try:
@@ -2957,15 +3009,16 @@ def bootstrap_agent_environment(
                 on_created=_record_created_agent_account,
                 allow_saved_fallback=False,
             )
-            try:
-                ensure_editors_membership(tenant_id, sa_id)
-            except NebiusError as exc:
-                raise NebiusError(
-                    "Required agent IAM grant failed before deploy: service account "
-                    f"{sa_id} must be a member of tenant {tenant_id}'s 'editors' "
-                    "group, or the provider must prove an equivalent role."
-                ) from exc
+            from npa.clients.agent_iam_binding import ensure_agent_project_binding
+
+            binding = ensure_agent_project_binding(
+                project_id=project_id,
+                tenant_id=tenant_id,
+                service_account_id=sa_id,
+                on_resource_created=_record_agent_resource,
+            )
             result = dict(reuse_storage_credentials)
+            result.update(binding)
             result.update(
                 {
                     "iam_token": get_iam_token(),
@@ -2991,20 +3044,20 @@ def bootstrap_agent_environment(
 
         mark_agent_iam_status(project_id, "complete")
         return result
-    except NebiusError as exc:
-        if not _is_permission_denied(str(exc)):
+    except Exception as exc:  # noqa: BLE001 - every provider creation needs rollback on local failure
+        if (
+            reuse_storage_credentials is not None
+            or not isinstance(exc, NebiusError)
+            or not _is_permission_denied(str(exc))
+        ):
             _rollback_agent_resources()
             raise
-        fallback = (
-            dict(reuse_storage_credentials)
-            if reuse_storage_credentials is not None
-            else _saved_storage_credentials(
-                project_id=project_id,
-                tenant_id=tenant_id,
-                region=region,
-                bucket_name=bucket_name,
-                service_account_id=sa_id or resolve_service_account_id(project_id),
-            )
+        fallback = _saved_storage_credentials(
+            project_id=project_id,
+            tenant_id=tenant_id,
+            region=region,
+            bucket_name=bucket_name,
+            service_account_id=sa_id or resolve_service_account_id(project_id),
         )
         if fallback is None:
             _rollback_agent_resources()

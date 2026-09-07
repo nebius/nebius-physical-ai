@@ -5,6 +5,11 @@ on:
     paths:
       - "npa/docker/workbench/**"
       - "npa/scripts/scan_image_omniverse_payload.py"
+      - "npa/scripts/scan_image_bytes.py"
+      - "npa/scripts/image_byte_scan/**"
+      - "npa/tests/docker/test_image_byte*.py"
+      - ".gitleaks.toml"
+      - ".github/workflows/publish-public-images.yml"
       - "**/Dockerfile*"
       - ".trivyignore"
       - "trivy.yaml"
@@ -84,6 +89,43 @@ jobs:
             npa/tests/docker/test_packaging_contract.py \
             npa/tests/docker/test_isaac_bootstrap.py \
             -q
+
+  complete-byte-native-integration:
+    name: Complete-byte scanner (native integration)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install NPA validation environment
+        run: |
+          python -m venv npa/.venv
+          npa/.venv/bin/pip install -e "npa[dev]"
+
+      # These checks use synthetic archives and policies with the actual pinned
+      # Go detector and native literal engine. Missing native tools are failures.
+      # Ordinary pytest remains offline and does not bootstrap these dependencies.
+      - name: Build and exercise the exact native scanner dependencies
+        run: |
+          set -euo pipefail
+          umask 077
+          scan_root="$(mktemp -d "$RUNNER_TEMP/image-byte-native.XXXXXXXX")"
+          npa/.venv/bin/python npa/scripts/image_byte_scan/go_helper/build.py \
+            --analysis-root "$scan_root" --trusted-root "$GITHUB_WORKSPACE" \
+            --output-dir "$scan_root/tools"
+          npa/.venv/bin/python npa/scripts/image_byte_scan/prepare.py dependencies \
+            --analysis-root "$scan_root" --trusted-root "$GITHUB_WORKSPACE" \
+            --output-dir "$scan_root/native"
+          npa/.venv/bin/python npa/scripts/image_byte_scan/real_helper_checks.py \
+            --analysis-root "$scan_root" --trusted-root "$GITHUB_WORKSPACE" \
+            --tools-receipt "$scan_root/tools/dependency-receipt.json" \
+            --native-receipt "$scan_root/native/dependencies.json" \
+            --output-dir "$scan_root/integration-checks"
 
   omniverse-payload-scan:
     name: Omniverse payload scan (built image)
@@ -172,6 +214,9 @@ jobs:
           - name: nvidia-cuda-13-0-2-cudnn-devel-ubuntu24-04
             image: nvidia/cuda:13.0.2-cudnn-devel-ubuntu24.04@sha256:e071e85c52ad91fc9ea24158ff5330876b2d1a5c4ac83ccc6066976835873c01
             purge_linux_libc_dev: true
+          - name: nvidia-cuda-13-0-2-base-ubuntu24-04
+            image: nvidia/cuda:13.0.2-base-ubuntu24.04@sha256:2ab6381d970b211fb93853796dc6707eb8a72575a375c422b17cf4d8b2641701
+            purge_linux_libc_dev: false
           - name: python-3-11-slim-trixie
             image: python:3.11-slim-trixie@sha256:a3ab0b966bc4e91546a033e22093cb840908979487a9fc0e6e38295747e49ac0
             purge_linux_libc_dev: false

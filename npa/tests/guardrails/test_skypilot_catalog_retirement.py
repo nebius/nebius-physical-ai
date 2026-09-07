@@ -19,7 +19,7 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SKYPILOT_DIR = REPO_ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot"
-NPA_WORKFLOW_ROOT = REPO_ROOT / "npa" / "workflows"
+NPA_WORKFLOW_ROOT = REPO_ROOT / "workflows"
 
 
 def _npa_workflow_documents() -> list[tuple[Path, dict]]:
@@ -36,7 +36,7 @@ def _npa_workflow_documents() -> list[tuple[Path, dict]]:
 def test_retired_skypilot_catalog_directory_does_not_exist() -> None:
     assert not SKYPILOT_DIR.exists(), (
         "npa/src/npa/workflows/skypilot/ is retired. Author workflow YAML under "
-        "npa/workflows/workbench/npa-workflows/ as npa.workflow/v0.0.1 specs; use "
+        "workflows/testing/ as npa.workflow/v0.0.1 specs; use "
         "npa/tests/fixtures/skypilot/ for raw SkyPilot submit-wrapper tests."
     )
 

@@ -31,7 +31,7 @@ from npa.workbench.vlm_eval import (
 )
 
 ROOT = Path(__file__).resolve().parents[3]
-SPECS = ROOT / "npa" / "workflows" / "workbench" / "npa-workflows"
+SPECS = ROOT / "workflows" / "testing"
 
 
 def _only_step(spec_name: str):

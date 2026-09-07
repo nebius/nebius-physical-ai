@@ -1082,3 +1082,138 @@ def test_expired_access_cache_is_served_while_single_refresh_runs(monkeypatch) -
             timeout=2,
         )
     assert runtime._agent_access_report() is fresh
+
+
+@pytest.mark.parametrize(
+    "owner_source", ["project_inventory", "configured_artifact_source"]
+)
+@pytest.mark.parametrize("owner_available", [True, False])
+def test_owned_bucket_shadows_deployment_fallback_before_probing(
+    owner_source: str,
+    owner_available: bool,
+) -> None:
+    from npa.cli import agent_access_runtime as runtime
+
+    calls: list[str] = []
+
+    def list_buckets(project_id: str):
+        if project_id == "project-b" and owner_source == "project_inventory":
+            return [_bucket("bucket-resource-owner", "bucket-shared")]
+        raise AccessProbeError("denied", "list project object storage resources")
+
+    def probe(bucket_name: str) -> BucketProbe:
+        calls.append(bucket_name)
+        if bucket_name == "bucket-shared" and not owner_available:
+            return BucketProbe("denied", "denied", "Owner bucket probe denied.")
+        return _available_probe(bucket_name)
+
+    report = _discover(
+        list_buckets=list_buckets,
+        fallback_buckets=["bucket-shared", "bucket-unrelated"],
+        configured_sources=(
+            [{"project_id": "project-b", "bucket": "bucket-shared"}]
+            if owner_source == "configured_artifact_source"
+            else []
+        ),
+        probe_bucket=probe,
+    )
+    payload = report.to_dict()
+    projects = {item["id"]: item for item in payload["projects"]}
+    fallback = next(
+        item
+        for item in projects["project-a"]["resources"]
+        if item["name"] == "bucket-shared"
+    )
+    owner = projects["project-b"]["resources"][0]
+
+    assert fallback["source"] == "agent_configuration"
+    for capability in ("artifact_discovery", "artifact_read", "artifact_write"):
+        assert fallback["capabilities"][capability]["status"] == "unavailable"
+        assert (
+            "ownership is recorded in another project"
+            in fallback["capabilities"][capability]["reason"]
+        )
+    assert fallback["capabilities"]["artifact_delete"]["status"] == "unavailable"
+    assert owner["source"] == owner_source
+    assert owner["capabilities"]["artifact_discovery"]["status"] == (
+        "available" if owner_available else "denied"
+    )
+    # Only the authoritative owner is probed. A separate successful fallback
+    # probe must not revive the wrong project if the owner probe is denied.
+    assert sorted(calls) == ["bucket-shared", "bucket-unrelated"]
+    assert projects["project-a"]["deployment_project"] is True
+    assert (
+        projects["project-a"]["capabilities"]["project_metadata"]["status"]
+        == "available"
+    )
+    assert (
+        projects["project-a"]["capabilities"]["storage_resource_discovery"]["status"]
+        == "denied"
+    )
+    assert len(payload["errors"]) == (1 if owner_source == "project_inventory" else 2)
+    assert payload["scope"] == "partial_tenant"
+    assert scoped_artifact_buckets(report, project_id="project-a") == [
+        "bucket-unrelated"
+    ]
+    expected = {"bucket-unrelated": "project-a"}
+    if owner_available:
+        expected["bucket-shared"] = "project-b"
+        assert runtime._agent_artifact_list_scope(
+            report, "bucket-shared", "project-b"
+        ) == (["bucket-shared"], {"project_id": "project-b", "bucket": "bucket-shared"})
+    else:
+        with pytest.raises(HTTPException) as owner_error:
+            runtime._agent_artifact_list_scope(report, "bucket-shared", "project-b")
+        assert owner_error.value.status_code == 403
+    assert artifact_bucket_projects(report) == expected
+    assert set(accessible_artifact_buckets(report)) == set(expected)
+    with pytest.raises(HTTPException) as wrong_owner:
+        runtime._agent_artifact_list_scope(report, "bucket-shared", "project-a")
+    assert wrong_owner.value.status_code == 403
+
+
+@pytest.mark.parametrize("same_project_source", [False, True])
+def test_unshadowed_deployment_fallback_keeps_its_existing_capabilities(
+    same_project_source: bool,
+) -> None:
+    calls: list[str] = []
+
+    def probe(bucket_name: str) -> BucketProbe:
+        calls.append(bucket_name)
+        return _available_probe(bucket_name)
+
+    report = _discover(
+        list_projects=lambda _tenant: [_project("project-a", "Alpha")],
+        list_buckets=lambda _project: [],
+        configured_sources=(
+            [{"project_id": "project-a", "bucket": "bucket-a"}]
+            if same_project_source
+            else []
+        ),
+        probe_bucket=probe,
+    )
+    resource = report.to_dict()["projects"][0]["resources"][0]
+    assert resource["source"] == "agent_configuration"
+    assert resource["capabilities"]["artifact_discovery"]["status"] == "available"
+    assert resource["capabilities"]["artifact_read"]["status"] == "available"
+    assert resource["capabilities"]["artifact_write"]["status"] == "unverified"
+    assert calls == ["bucket-a"]
+    assert scoped_artifact_buckets(
+        report, project_id="project-a", resource_bucket="bucket-a"
+    ) == ["bucket-a"]
+
+
+def test_deployment_inventory_is_not_downgraded_as_a_fallback() -> None:
+    report = _discover(
+        list_buckets=lambda project_id: (
+            [_bucket("bucket-resource-a", "bucket-a")]
+            if project_id == "project-a"
+            else []
+        ),
+        configured_sources=[{"project_id": "project-b", "bucket": "bucket-a"}],
+    )
+    resource = report.to_dict()["projects"][0]["resources"][0]
+    assert resource["source"] == "project_inventory"
+    assert resource["capabilities"]["artifact_discovery"]["status"] == "available"
+    assert resource["capabilities"]["artifact_read"]["status"] == "available"
+    assert resource["capabilities"]["artifact_write"]["status"] == "unverified"

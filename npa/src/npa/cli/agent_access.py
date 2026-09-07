@@ -405,6 +405,18 @@ def discover_agent_access(
         if inventory["error"] is not None:
             errors.append(inventory["error"])
 
+    # A deployment bucket fallback does not establish ownership. Keep its row
+    # visible, but do not probe it as a second project when inventory or an
+    # explicit artifact source records the bucket in another project. Resolve
+    # this before probing so an owner probe denial cannot revive the fallback.
+    bucket_owners: dict[str, set[str]] = {}
+    for inventory in inventories:
+        for _resource_id, bucket_name, source in inventory["bucket_items"]:
+            if source != "agent_configuration":
+                bucket_owners.setdefault(bucket_name, set()).add(
+                    inventory["project_id"]
+                )
+
     probe_jobs = [
         (inventory["project_id"], resource_id, bucket_name, source)
         for inventory in inventories
@@ -416,9 +428,20 @@ def discover_agent_access(
     ) -> tuple[str, StorageResourceAccess, dict[str, str] | None]:
         project_id, resource_id, bucket_name, source = job
         is_deployment = bool(deployment_id and project_id == deployment_id)
+        shadowed_fallback = source == "agent_configuration" and bool(
+            bucket_owners.get(bucket_name, set()) - {project_id}
+        )
+        shadowed_reason = (
+            "Bucket ownership is recorded in another project; "
+            "the deployment fallback does not authorize access."
+        )
         error: dict[str, str] | None = None
         try:
-            probe = _normalize_probe(probe_bucket(bucket_name))
+            probe = (
+                BucketProbe("unavailable", "unavailable", shadowed_reason)
+                if shadowed_fallback
+                else _normalize_probe(probe_bucket(bucket_name))
+            )
             list_reason = probe.reason or (
                 "The running agent can list objects in this bucket."
                 if probe.list_status == "available"
@@ -455,9 +478,13 @@ def discover_agent_access(
                         probe.read_status, read_reason, "read_only"
                     ),
                     "artifact_write": CapabilityAccess(
-                        "unverified" if is_deployment else "unavailable",
+                        "unverified"
+                        if is_deployment and not shadowed_fallback
+                        else "unavailable",
                         (
-                            "Writes remain scoped to the deployment project's configured workflow paths."
+                            shadowed_reason
+                            if shadowed_fallback
+                            else "Writes remain scoped to the deployment project's configured workflow paths."
                             if is_deployment
                             else "Cross-project artifact writes are not enabled by tenant-wide discovery."
                         ),

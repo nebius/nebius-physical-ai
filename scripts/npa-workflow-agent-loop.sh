@@ -49,7 +49,7 @@ while true; do
       npa/src/npa/cli/workbench/workflow/__init__.py \
       npa/tests/orchestration/npa_workflow/ \
       npa/tests/e2e/ \
-      npa/workflows/workbench/npa-workflows/ \
+      workflows/ \
       docs/workbench/npa-workflow-guide.md \
       docs/workbench/npa-workflow-tool-catalog.md \
       skills/workflows/author-npa-workflow/ \

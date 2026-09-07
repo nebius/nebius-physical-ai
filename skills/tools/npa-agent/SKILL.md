@@ -106,10 +106,13 @@ Routes that need a staged dependency say so instead of returning empty success:
 this agent" when no bucket/credentials are staged. Treat that as the honest
 answer it is, not as a broken route — and never report it as "no runs found".
 
-`npa agent deploy` provisions a dedicated long-lived **`npa-agent`** service account when
-IAM allows it; otherwise bootstrap reuses existing terraform_state / saved credentials.
-Persists `ssh_key_path` and non-secret deployment identity on the agent record;
-storage credentials remain only in the owner-only project credential store.
+With verified configured storage, `npa agent deploy` creates or reuses a dedicated
+long-lived **`npa-agent`** service account and verifies an `editor` grant on the
+exact deployment project. The VM identity and configured S3 credentials are
+resolved separately; a failed project grant stops this path before deployment.
+The legacy storage-bootstrap path retains its saved-credential fallback.
+Deploy persists `ssh_key_path` and non-secret deployment identity on the agent
+record; storage credentials remain in the owner-only project credential store.
 Bootstrap stages `llm.env`, `s3.env`, and `nebius.env` on the VM and resolves SSH
 from the agent record (or `--ssh-key` / `NPA_SSH_KEY`) — not from workbench SSH config.
 
@@ -139,9 +142,9 @@ For human no-browser profile setup or recovery on a remote operator/dev VM, load
 `skills/atomic/vm-nebius-auth/SKILL.md`. Do not use that flow to replace the
 agent VM's attached-service-account metadata profile.
 
-### Credential fallback (when `npa-agent` cannot be created)
+### Legacy storage-bootstrap credential fallback
 
-Bootstrap tries in order:
+When bootstrap must provision storage, its legacy fallback tries in order:
 
 1. **`npa-agent` SA** — create or reuse if IAM allows
 2. **Saved operator credentials** — `~/.npa/credentials.yaml` S3 keys + optional `nebius.service_account_id`
@@ -239,7 +242,7 @@ Typed GPU placement failures and consented preemptible fallback use
 
 Intent router in `npa/src/npa/cli/agent_chat.py` (embedded in remote `backend.py` at bootstrap).
 
-All 35 routed intents are listed below with a trigger phrase verified to match
+Routed intents are listed below with trigger phrases verified to match
 (`npa/scripts/audit_agent_capabilities.py` exercises exactly these). Do not
 assume an unlisted capability is missing without re-running that audit, and do
 not add a rule for one of these without checking which existing intent already
@@ -272,6 +275,8 @@ is the common failure, so match the qualifier, not just the word "workflow":
 | `create_data_factory_workflow` | "create a PAIDF workflow yaml" | PAIDF / video augmentation / scenario fan-out |
 | `create_rl_policy_workflow` | "create an RL policy training workflow" | RL policy training |
 | `create_workflow` | "create a 2-step sim2real npa.workflow" | explicit two-step, or generic `npa.workflow` |
+| `validate_workflow` | "validate the saved workflow YAML" | validate fenced YAML, or the saved draft, without rewriting it |
+| `plan_workflow` | "plan the saved workflow YAML" | validate and plan that exact specification without submission |
 | `workflow_execute_guidance` | "how do I actually run this workflow" | validate/plan/submit + tools |
 
 `create_vlm_rl_workflow` is matched **before** `create_gate_workflow` and claims
@@ -437,7 +442,7 @@ Grounded response:
 ```json
 {
   "ok": true,
-  "model": "nvidia/Cosmos3-Super-Reasoner",
+  "model": "nvidia/Nemotron-3_5-Lightning",
   "reply": "**Sim2Real status** … **run_id**: `franka-demo` …",
   "grounded": true,
   "apis_used": ["sim-viz/status", "workflows/sim2real/status"]
@@ -585,15 +590,17 @@ bootstrapped VM.
 
 The VM service account therefore needs tenant project-list visibility,
 per-project `storage bucket list`, and S3 `ListBucket`/`GetObject` for projects
-that should be searchable. `npa agent deploy` continues to request the existing
-tenant editors-group membership when the operator can manage IAM; when that is
-not possible, bootstrap reuses available credentials and the access report shows
-their actual narrower reach.
+that should be searchable. With configured storage, `npa agent deploy` verifies
+an editor permit in a custom group on the exact deployment project. It does not
+add tenant editors-group membership. Existing broader grants remain in place;
+the access report describes the identity's actual reach, including partial tenant
+visibility when only the deployment project is accessible.
 
 Bootstrap creates and verifies the root `cursor-sa` profile against the exact
 attached service-account ID, scrubs ambient/static IAM-token variables for
-inventory commands, and verifies tenant project listing before calling a
-tenant-configured deployment successful. Short-lived bootstrap IAM tokens are
+inventory commands, and verifies tenant project listing or access to the exact
+deployment project before calling bootstrap successful. The exact-project fallback
+does not establish tenant-wide discovery. Short-lived bootstrap IAM tokens are
 not staged into the backend systemd environment.
 
 Tenant-wide access is read-only at the agent product boundary. This is enforced

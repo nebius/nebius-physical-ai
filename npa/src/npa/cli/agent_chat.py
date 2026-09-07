@@ -99,7 +99,19 @@ _NON_STOCK_ARTIFACT_DISCOVERY_RE = re.compile(
     re.IGNORECASE,
 )
 
+_WORKFLOW_OPERATION_RULES = [
+    (
+        f"{operation}_workflow",
+        re.compile(
+            rf"^(?:please\s+)?{operation}\b[^\n]{{0,120}}\b(?:workflow|yaml|spec(?:ification)?)\b",
+            re.IGNORECASE,
+        ),
+    )
+    for operation in ("validate", "plan")
+]
+
 _INTENT_RULES: list[tuple[str, re.Pattern[str]]] = [
+    *_WORKFLOW_OPERATION_RULES,
     (
         # Embedded Foxglove viewer (MCAP / bag recordings). Kept ahead of the
         # rerun-oriented watch rules so "open foxglove" never routes to Rerun.
@@ -517,6 +529,8 @@ _INTENT_RULES: list[tuple[str, re.Pattern[str]]] = [
 ]
 
 INTENT_APIS: dict[str, list[str]] = {
+    "validate_workflow": ["workflows/validate"],
+    "plan_workflow": ["workflows/validate", "workflows/plan"],
     "tenant_resources": ["resources"],
     "drive_sim2real": [
         "agent/sim2real/drive",
@@ -739,6 +753,10 @@ def match_chat_intent(user_text: str) -> str | None:
     text = str(user_text or "").strip()
     if not text:
         return None
+    # Check the requested operation before inspecting words inside supplied YAML.
+    for intent, pattern in _WORKFLOW_OPERATION_RULES:
+        if pattern.search(text):
+            return intent
     lowered = _normalize_intent_text(text)
     metric_qualified = has_metric_resource_qualifier(lowered)
     if re.search(r"\b(soperator|slurm(?:[- ]on[- ]k(?:ubernetes|8s))?|slurm cluster|deploy\s+slurm|slurm\s+deploy)\b", text, re.IGNORECASE):

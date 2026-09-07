@@ -63,7 +63,7 @@ def _repo_root() -> Path:
     # Walk up to the repo root that contains the workflow tree.
     here = Path(__file__).resolve()
     for parent in here.parents:
-        if (parent / "npa" / "workflows" / "workbench").is_dir():
+        if (parent / "workflows" / "main" / "sim2real.yaml").is_file():
             return parent
     return Path.cwd()
 

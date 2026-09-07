@@ -33,7 +33,7 @@ from npa.orchestration.npa_workflow.submission_state import load_submission_stat
 from npa.orchestration.skypilot.workflow import WorkflowResult
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
-NPA_SPECS = REPO_ROOT / "npa" / "workflows" / "workbench" / "npa-workflows"
+NPA_SPECS = REPO_ROOT / "workflows" / "testing"
 PAIDF = NPA_SPECS / "physical-ai-data-factory.yaml"
 SKYPILOT_FIXTURES = REPO_ROOT / "npa" / "tests" / "fixtures" / "skypilot"
 RUNNER = CliRunner()
@@ -592,11 +592,7 @@ def test_render_transfer_forwards_explicit_runtime_tuning(
     monkeypatch.setenv("NPA_COSMOS_DISABLE_CONTENT_GUARDRAILS", "1")
     spec = load_spec(
         REPO_ROOT
-        / "npa"
-        / "workflows"
-        / "workbench"
-        / "npa-workflows"
-        / "physical-ai-data-factory.yaml"
+        / "workflows" / "testing" / "physical-ai-data-factory.yaml"
     )
     rendered = render_skypilot_yaml(
         spec,
@@ -1148,6 +1144,10 @@ def test_prepare_requires_assume_decision_for_dynamic_specs() -> None:
 
 
 def test_workbench_workflow_submit_npa_workflow_renders_and_submits(mocker) -> None:
+    # This test replaces the runtime; provider boundary coverage lives in
+    # test_execution_preflight and must not be bypassed by --skip-preflight.
+    mocker.patch("npa.cli.workbench.workflow._execution_target_preflight", return_value=(None, {}))
+    mocker.patch("npa.cli.workbench.workflow._preflight_submit_gang_capacity")
     captured: dict[str, object] = {}
 
     def fake_submit(path, run_id, **kwargs):
@@ -1289,6 +1289,7 @@ def test_e2e_clear_workbench_images_env_is_not_global_cli_override(
 def test_workbench_workflow_submit_npa_var_merges_config(
     mocker, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    mocker.patch("npa.cli.workbench.workflow._execution_target_preflight", return_value=(None, {}))
     monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/npa-src/npa")
     captured: dict[str, object] = {}
 

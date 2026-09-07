@@ -35,14 +35,14 @@ Native `--runtime vm` installation is intentionally unsupported for generation
 contract. `--runtime byovm` still uses the same container on an existing host.
 
 The reference hardened pipeline is
-`npa/workflows/workbench/npa-workflows/isaac-lab-rl-sweep.yaml`. Its four
+`workflows/testing/isaac-lab-rl-sweep.yaml`. Its four
 parallel stages invoke the pinned upstream RSL-RL trainer, require successful
 numeric reward and checkpoint evidence, and join at a fail-closed ranking
 barrier:
 
 ```bash
 npa workbench workflow submit \
-  npa/workflows/workbench/npa-workflows/isaac-lab-rl-sweep.yaml \
+  workflows/testing/isaac-lab-rl-sweep.yaml \
   --run-id <unique-run-id> \
   --runtime \
   --var bucket=<configured-bucket> \

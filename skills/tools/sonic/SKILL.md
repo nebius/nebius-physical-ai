@@ -33,7 +33,7 @@ workflow composition with retargeting or MJLab.
 - CLI: `deploy`, `train`, `export`, `eval`, `serve`, `status`, and `list`.
 - SDK/API: keep train/eval/export/serve request construction shared with service
   payloads and tests where possible.
-- Workflow: SONIC specs live under `npa/workflows/workbench/npa-workflows/`
+- Workflow: SONIC specs live under `workflows/testing/`
   (`sonic-train.yaml`, `sonic-export.yaml`, `sonic-eval.yaml`,
   `sonic-export-eval.yaml`, `sonic-locomotion-finetuning.yaml`). Submit them with
   `npa workbench workflow submit`. `sonic export` / `sonic eval` accept `s3://`

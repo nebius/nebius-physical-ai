@@ -149,13 +149,14 @@ def _redact_backend_secrets(message: str, context: TerraformBackendContext | Non
 
 
 _BUNDLED_TF_DIR = Path(__file__).parent / "terraform"
-_WORKBENCH_BASE = Path.home() / ".npa" / "workbenches"
+_NPA_CONFIG_DIR = Path(os.environ.get("NPA_CONFIG_DIR", "").strip() or Path.home() / ".npa")
+_WORKBENCH_BASE = _NPA_CONFIG_DIR / "workbenches"
 # Shared Terraform plugin cache so every fresh per-deploy work dir reuses
 # already-downloaded providers instead of re-fetching them from
 # registry.terraform.io. This makes `terraform init` faster and resilient to
 # transient registry outages (a warm cache needs no network at all). Overridable
 # via the standard TF_PLUGIN_CACHE_DIR env var.
-_TF_PLUGIN_CACHE_DIR = Path.home() / ".npa" / "terraform-plugin-cache"
+_TF_PLUGIN_CACHE_DIR = _NPA_CONFIG_DIR / "terraform-plugin-cache"
 # Substrings that identify a transient `terraform init` failure worth retrying
 # (registry/network hiccups) rather than a real configuration error.
 _TRANSIENT_INIT_MARKERS = (

@@ -12,8 +12,8 @@ cd "$REPO"
 PY="${REPO}/npa/.venv/bin/python"
 NPA="${REPO}/npa/.venv/bin/npa"
 export NPA_INTEGRATION_E2E=1
-SPECS="${REPO}/npa/workflows/workbench/npa-workflows"
-CREATIVE="${SPECS}/tokenfactory-cosmos-gate.yaml"
+SPECS="${REPO}/workflows"
+CREATIVE="${SPECS}/testing/tokenfactory-cosmos-gate.yaml"
 
 LOG="/tmp/npa-workflow-creative-$(date -u +%Y%m%dT%H%M%SZ).log"
 exec > >(tee -a "$LOG") 2>&1
@@ -35,7 +35,7 @@ while true; do
   fi
 
   echo "--- [2/8] validate all golden npa.workflow YAMLs ---"
-  for spec in "${SPECS}"/*.yaml; do
+  for spec in "${SPECS}/main"/*.yaml "${SPECS}/testing"/*.yaml; do
     base=$(basename "$spec")
     echo "validate: ${base}"
     if ! "${NPA}" workbench workflow validate-spec "${spec}"; then
@@ -55,7 +55,7 @@ while true; do
   fi
 
   echo "--- [4/8] plan dynamic specs (sim2real + creative) ---"
-  for spec in "${SPECS}/sim2real.yaml" "${CREATIVE}"; do
+  for spec in "${SPECS}/main/sim2real.yaml" "${CREATIVE}"; do
     base=$(basename "$spec")
     echo "plan: ${base}"
     if ! "${NPA}" workbench workflow plan-spec "${spec}" \

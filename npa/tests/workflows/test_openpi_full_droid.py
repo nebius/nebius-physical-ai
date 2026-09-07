@@ -21,11 +21,7 @@ from npa.workflows.byof import openpi_pipeline
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SPEC = (
     REPO_ROOT
-    / "npa"
-    / "workflows"
-    / "workbench"
-    / "npa-workflows"
-    / "openpi-pi05-full-droid-finetune.yaml"
+    / "workflows" / "testing" / "openpi-pi05-full-droid-finetune.yaml"
 )
 
 

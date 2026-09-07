@@ -15,7 +15,7 @@ guide's input, access, and GPU requirements through to its output artifacts.
 | Run the compositional simulation-to-policy loop | [Sim2Real workflow](sim2real-workflow.md) |
 
 For an existing YAML spec, browse the
-[workflow catalog](../../../npa/workflows/workbench/npa-workflows/README.md).
+[workflow catalog](../../../workflows/README.md).
 For hosted captioning, generation, and reasoning stages, see
 [Token Factory](../token-factory.md).
 
@@ -93,18 +93,21 @@ managed-K8s + BYOF; for a serverless capacity retry use `--gpu-type gpu-l40s-d`.
 
 SONIC G1 (MuJoCo) is documented from its cookbook and not yet re-run here.
 
-## Bring your own everything
+<a id="bring-your-own-everything"></a>
 
-These guides use public datasets and the shipped robots so you can reproduce
-them, but the workbench is built to be swapped:
+## Use your own data, policy, or robot
 
-- **Bring your own dataset** — point any guide at an S3 `LeRobotDataset` URI.
-- **Bring your own policy image** — swap the container, keep the contract.
-- **Bring your own robot** — Franka, Reachy 2, Unitree G1, quadrupeds, and more
-  are all just configs over the same train / eval / serve / infer commands.
+Check the selected tool's contract before substituting inputs:
 
-When you're ready for the production recipes, head to the
-[cookbooks](../cookbooks/README.md).
+- Datasets must match the required format and observation/action schemas.
+  LeRobotDataset is supported by the LeRobot paths; other guides use video,
+  motion, scene, or tool-specific inputs.
+- A custom policy image must implement the selected tool's input, output,
+  and runtime contract.
+- A different robot may need assets, simulator support, observation and action
+  mappings, and training configuration. Available commands vary by tool.
+
+See the [cookbooks](../cookbooks/README.md) for detailed recipes.
 
 ## Physical AI Data Factory (video data augmentation)
 
@@ -117,6 +120,7 @@ tools.
 | --- | --- |
 | [physical-ai-data-factory-deploy.md](physical-ai-data-factory-deploy.md) | **Copy-paste runbook** — from zero to a running blueprint (includes a one-block Quick start that stages input frames and submits) |
 | [physical-ai-data-factory.md](physical-ai-data-factory.md) | Conceptual guide — blueprint→stage mapping, S3 layout, viewing results |
+| [paidf-campaign-reuse.md](paidf-campaign-reuse.md) | Reuse one immutable source, generation, and evaluation campaign across provider workshops |
 
 > **Fastest start:** the deploy runbook's [Quick start](physical-ai-data-factory-deploy.md#quick-start-copy-paste)
 > seeds captionable frames (no dataset needed) and submits an input-conditioned

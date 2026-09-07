@@ -27,7 +27,7 @@ explicitly when useful:
 
 ```bash
 npa workbench workflow submit \
-  npa/workflows/workbench/npa-workflows/sonic-train.yaml \
+  workflows/testing/sonic-train.yaml \
   --gpu-target gpu-rtx6000 \
   --image-variant sonic-k8s-host-mounted \
   --accelerators RTXPRO-6000-BLACKWELL-SERVER-EDITION:1
@@ -66,7 +66,7 @@ or mesh-fidelity validation claim.
 
 ```python
 sonic.submit_workflow(
-    Path("npa/workflows/workbench/npa-workflows/sonic-train.yaml"),
+    Path("workflows/testing/sonic-train.yaml"),
     run_id="sonic-smoke",
     registry="<your-registry>/<namespace>",
     gpu_target="gpu-rtx6000",

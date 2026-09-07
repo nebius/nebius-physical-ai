@@ -18,11 +18,8 @@ from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
 from npa.workflows import living_lab
 
 SPEC_PATH = (
-    Path(__file__).resolve().parents[2]
-    / "workflows"
-    / "workbench"
-    / "npa-workflows"
-    / "living-lab-nurec-fanout.yaml"
+    Path(__file__).resolve().parents[3]
+    / "workflows" / "testing" / "living-lab-nurec-fanout.yaml"
 )
 
 

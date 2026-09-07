@@ -46,6 +46,7 @@ CONTAINER_IMAGE_NAMES = {
     "cosmos3-ray-serve": "npa-cosmos3-ray-serve",
     "cosmos3-serving": "npa-cosmos3-serving",
     "cosmos3-super-benchmark": "npa-cosmos3-super-benchmark",
+    "cosmos3-nano-video": "npa-cosmos3-nano-video",
     "cosmos3-reason": "npa-cosmos3-reason",
     "cosmos-curate": "npa-cosmos-curate",
     "cosmos-evaluator": "npa-cosmos-evaluator",
@@ -67,6 +68,7 @@ CONTAINER_IMAGE_NAMES = {
     "wan2-2": "npa-wan2-2",
     "ltx2": "npa-ltx2",
     "alpamayo2-super": "npa-alpamayo2-super",
+    "curobo": "npa-curobo",
     "content-agents": "npa-content-agents",
 }
 
@@ -118,7 +120,7 @@ def requires_skypilot_bootstrap_runtime_probe(image: str) -> bool:
 # benchmark wrapper inherits the exact upstream vLLM-Omni runtime and therefore
 # remains build-your-own in an operator-controlled registry.
 RESTRICTED_PUBLICATION_TOOLS: frozenset[str] = frozenset(
-    {"cosmos3-super-benchmark"}
+    {"cosmos3-super-benchmark", "cosmos3-nano-video"}
 )
 RESTRICTED_DERIVED_IMAGES: frozenset[str] = frozenset()
 
@@ -138,7 +140,7 @@ OMNIVERSE_RESTRICTED_DERIVED_IMAGES = RESTRICTED_DERIVED_IMAGES
 #
 # Remove a tool from this set in the same change that records its accepted image
 # digest and its payload-scan/GPU evidence — not before.
-UNVALIDATED_PUBLICATION_TOOLS: frozenset[str] = frozenset({"openpi"})
+UNVALIDATED_PUBLICATION_TOOLS: frozenset[str] = frozenset({"openpi", "curobo"})
 VALIDATION_CANDIDATE_TOOLS: frozenset[str] = frozenset({"robocasa"})
 # Compatibility view used by publication callers and public imports. Derive it
 # from the two canonical validation-state inventories; never maintain it
@@ -175,6 +177,10 @@ GPU_ACCEPTED_PUBLIC_IMAGE_SOURCES: dict[str, dict[str, str]] = {
     "sonic-mujoco": {
         "development_sha": "5b5b5e69e9e686f8d5f305fd735a02f402f6da4b",
         "oci_digest": "sha256:2388d9e97269afaa414966e83a27f676a3f44d4271e9828c57bc13fbdce80f57",
+    },
+    "detection-training": {
+        "development_sha": "408700158b2e9cc9e9f6aad499e9d9c810bebeb1",
+        "oci_digest": "sha256:a09126491bd660f314b8f412df7238746dc2b063e5d5b7ca87bba7596dafcb0d",
     },
 }
 GPU_ACCEPTED_PUBLIC_IMAGE_DIGESTS: dict[str, str] = {
@@ -216,6 +222,7 @@ SUPPORTED_TOOL_VERSIONS = {
     "cosmos3-ray-serve": "ray1-cu130",
     "cosmos3-serving": "0.2.0-oss",
     "cosmos3-super-benchmark": "0.1.0",
+    "cosmos3-nano-video": "0.1.0",
     "cosmos3-reason": "cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
     "cosmos-curate": "0.1.2-skypilot-v1-20260813T164700Z",
     "cosmos-evaluator": "0.1.2-skypilot-v1-20260813T164700Z-r2",
@@ -235,13 +242,14 @@ SUPPORTED_TOOL_VERSIONS = {
     # Lichtblick (MPL-2.0): OSS, Foxglove-compatible static web viewer bundle.
     "lichtblick": "1.26.0",
     "lancedb": "cuda13-b300-0.30.3-sm80-sm90-sm100-sm103-sm120-20260803T031514Z",
-    "detection-training": "bdd100k-golden-eval-smoke-20260614T210000Z",
+    "detection-training": "runtime-v1-20260905",
     # Public-eligible Wan source/CPU base; CUDA torch is operator-gated runtime fetch.
     "wan2-2": "2.2-ti2v5b-rtfetch-cu130-20260817",
     # LTX source and weights remain operator-entitled runtime fetches. This tag
     # resolves only to the zero-payload digest recorded in ltx2_image_manifest.json.
     "ltx2": "2.5-rtfetch-20260817",
     "alpamayo2-super": "0.1.0-cu128",
+    "curobo": "0.8.0-cuda13-b300-unbuilt",
     "content-agents": "0.5.2-npa2",
     "nebius-cli": "0.12.254",
     "terraform": "~> 0.5.201",
@@ -565,6 +573,8 @@ def build_and_push_command(image: str) -> str:
     registry = ref.rsplit("/", 1)[0]
     tag = supported_tool_version(tool)
     return (
+        "npa/.venv/bin/python npa/src/npa/workflow_build.py "
+        "--stage-catalog --package-root npa && "
         f"docker buildx build --push -f {dockerfile} "
         f"-t {registry}/{image_name}:{tag} npa"
     )

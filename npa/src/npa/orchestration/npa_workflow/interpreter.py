@@ -508,6 +508,7 @@ def build_step(
                 loop_iterations=ctx.loop_iterations,
             ),
             "schema": artifact.schema,
+            **({"kind": artifact.kind} if artifact.kind else {}),
         }
         for artifact in state.outputs
         if artifact.uri

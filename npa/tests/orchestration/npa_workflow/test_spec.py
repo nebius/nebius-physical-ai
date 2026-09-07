@@ -15,7 +15,7 @@ from npa.orchestration.npa_workflow.predicates import evaluate_predicate
 from npa.orchestration.npa_workflow.tokens import TokenError, resolve_tokens
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
-SPECS = REPO_ROOT / "npa" / "workflows" / "workbench" / "npa-workflows"
+SPECS = REPO_ROOT / "workflows" / "testing"
 
 
 @pytest.mark.parametrize(
@@ -32,7 +32,8 @@ SPECS = REPO_ROOT / "npa" / "workflows" / "workbench" / "npa-workflows"
     ],
 )
 def test_example_specs_validate(name: str) -> None:
-    spec = load_spec(SPECS / name)
+    tier = "main" if name in {"sim2real.yaml", "paidf-cosmos3.yaml"} else "testing"
+    spec = load_spec(SPECS.parent / tier / name)
     validate_spec(spec)
     assert spec.api_version == "npa.workflow/v0.0.1"
 
@@ -154,7 +155,7 @@ def test_named_loop_token_supports_safe_transform() -> None:
 
 
 def test_sim2real_plan_expands_loops() -> None:
-    spec = load_spec(SPECS / "sim2real.yaml")
+    spec = load_spec(SPECS.parent / "main" / "sim2real.yaml")
     plan = build_plan(spec, run_id="test-run", assume_decision="loop_back")
     states = [step.state for step in plan.steps]
     expected = int(spec.config["inner_iterations"]) * int(
@@ -173,7 +174,7 @@ def test_sim2real_plan_expands_loops() -> None:
 
 
 def test_sim2real_plan_promote_early_exit() -> None:
-    spec = load_spec(SPECS / "sim2real.yaml")
+    spec = load_spec(SPECS.parent / "main" / "sim2real.yaml")
     plan = build_plan(spec, run_id="test-run", assume_decision="promote_checkpoint")
     states = [step.state for step in plan.steps]
     assert states.count("stage-07-rollouts") == int(spec.config["inner_iterations"])
@@ -237,7 +238,7 @@ def test_tokenfactory_cosmos_gate_plan_expands_refinement_loop() -> None:
 def test_invalid_api_version() -> None:
     path = SPECS / "vlm-eval-single.yaml"
     text = path.read_text().replace("v0.0.1", "v9.9.9")
-    broken = SPECS.parent / "_tmp-broken.yaml"
+    broken = REPO_ROOT / "npa" / "workflows" / "workbench" / "_tmp-broken.yaml"
     broken.write_text(text)
     try:
         with pytest.raises(NpaWorkflowError, match="apiVersion"):

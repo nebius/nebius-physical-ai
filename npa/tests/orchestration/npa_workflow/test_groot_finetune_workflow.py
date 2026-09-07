@@ -17,7 +17,7 @@ from npa.orchestration.skypilot.image_bootstrap_contract import is_trusted_npa_i
 
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
-SPEC_PATH = REPO_ROOT / "npa/workflows/workbench/npa-workflows/groot-1-7-finetune.yaml"
+SPEC_PATH = REPO_ROOT / "workflows/testing/groot-1-7-finetune.yaml"
 
 STATES = [
     "access_capacity_preflight",

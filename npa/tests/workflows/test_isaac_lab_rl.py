@@ -17,11 +17,7 @@ SINGLE_YAML = (
 # (live-verified on four GPUs in two batches plus a barrier — EVIDENCE §R3).
 SWEEP_SPEC = (
     ROOT
-    / "npa"
-    / "workflows"
-    / "workbench"
-    / "npa-workflows"
-    / "isaac-lab-rl-sweep.yaml"
+    / "workflows" / "testing" / "isaac-lab-rl-sweep.yaml"
 )
 WRAPPER_PATH = ROOT / "npa" / "scripts" / "run_isaac_lab_rl.py"
 FUNCTIONAL_SMOKE = ROOT / "npa" / "docker" / "workbench" / "isaac-lab" / "smoke_functional.py"

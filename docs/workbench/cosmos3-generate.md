@@ -11,7 +11,7 @@ declarative `npa.workflow` spec that all share one implementation.
 | Runner (single source of truth) | `npa/src/npa/workbench/cosmos/generate.py` |
 | CLI | `npa workbench cosmos3 generate` |
 | SDK | `npa.sdk.workbench.cosmos3.generate(...)` |
-| Workflow | `npa/workflows/workbench/npa-workflows/cosmos3-generate.yaml` |
+| Workflow | `workflows/testing/cosmos3-generate.yaml` |
 | `npa.workflow` toolRef | `workbench.cosmos3.generate` |
 | Golden eval | `npa.smoke.test_cosmos3_generate_functional` (`gpu-gated`) |
 
@@ -150,7 +150,7 @@ print(result["output_kind"], result["artifact_uri"])
 
 ### Workflow
 
-`npa/workflows/workbench/npa-workflows/cosmos3-generate.yaml` runs the same stage
+`workflows/testing/cosmos3-generate.yaml` runs the same stage
 through the `workbench.cosmos3.generate` toolRef, which resolves to the
 supported public `npa-cosmos3` image automatically. Complete
 [Workbench Getting Started](getting-started.md), including access checks,
@@ -158,7 +158,7 @@ planning, exact-cluster verification, and image preflight. Submit with the same
 project, cluster, bucket, and config overrides:
 
 ```bash
-npa workbench workflow submit npa/workflows/workbench/npa-workflows/cosmos3-generate.yaml \
+npa workbench workflow submit workflows/testing/cosmos3-generate.yaml \
   --project '<project-alias>' --infra 'k8s/<context>' \
   --var 'bucket=<bucket>' --runtime \
   --secret-env HF_TOKEN --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY
@@ -242,7 +242,7 @@ before generation starts.
 
 For access checks before a run (`gh`/HF/NGC reachability) see
 `npa workbench cosmos check`. For the un-baked, clone-at-job-time text-to-image
-smoke, use `npa/workflows/workbench/npa-workflows/cosmos3-text-to-image.yaml`.
+smoke, use `workflows/testing/cosmos3-text-to-image.yaml`.
 
 ## Measured timing: Cosmos3-Super text2video on H200 and B200
 

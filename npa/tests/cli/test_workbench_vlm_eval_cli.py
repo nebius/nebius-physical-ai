@@ -184,7 +184,7 @@ def test_workbench_vlm_eval_workflow_path() -> None:
     assert result.exit_code == 0
     payload = json.loads(result.output)
     # The advertised path is the npa.workflow spec, not the SkyPilot template.
-    assert payload["workflow"] == "npa/workflows/workbench/npa-workflows/vlm-eval-single.yaml"
+    assert payload["workflow"] == "workflows/testing/vlm-eval-single.yaml"
 
 
 def test_workbench_vlm_eval_benchmark_writes_report(tmp_path) -> None:

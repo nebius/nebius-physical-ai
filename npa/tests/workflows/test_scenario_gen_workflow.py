@@ -6,8 +6,8 @@ from npa.orchestration.npa_workflow import build_plan, load_spec, validate_spec
 from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG, argv_for_tool
 
 ROOT = Path(__file__).resolve().parents[3]
-WORKFLOW = ROOT / "npa" / "workflows" / "workbench" / "npa-workflows" / "adversarial-scenario-hardening.yaml"
-SMOKE = ROOT / "npa" / "workflows" / "workbench" / "npa-workflows" / "scenario-gen-smoke.yaml"
+WORKFLOW = ROOT / "workflows" / "testing" / "adversarial-scenario-hardening.yaml"
+SMOKE = ROOT / "workflows" / "testing" / "scenario-gen-smoke.yaml"
 #: Retired in favour of SMOKE; asserted absent below.
 SKYPILOT = ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot" / "scenario-gen-adversarial.yaml"
 

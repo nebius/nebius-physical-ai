@@ -67,7 +67,7 @@ pytestmark = [
 REPO_ROOT = Path(__file__).resolve().parents[3]
 BYOF_RUNNER = REPO_ROOT / "npa" / "scripts" / "run_byof_repo.py"
 OPEN_DREAMER_SPEC = (
-    REPO_ROOT / "npa" / "workflows" / "workbench" / "npa-workflows" / "byof-open-dreamer.yaml"
+    REPO_ROOT / "workflows" / "testing" / "byof-open-dreamer.yaml"
 )
 
 # Capability contract for the accepted Open Dreamer smoke. Keep in sync with

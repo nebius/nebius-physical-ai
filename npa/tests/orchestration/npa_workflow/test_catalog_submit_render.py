@@ -12,8 +12,8 @@ from npa.orchestration.npa_workflow.submit import prepare_npa_workflow_for_submi
 
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
-WORKFLOW_DIR = REPO_ROOT / "npa" / "workflows" / "workbench" / "npa-workflows"
-SHIPPED_SPECS = sorted(WORKFLOW_DIR.glob("*.yaml"))
+WORKFLOW_DIR = REPO_ROOT / "workflows"
+SHIPPED_SPECS = sorted(WORKFLOW_DIR.glob("*/*.yaml"))
 TEST_REGISTRY = "cr.ci.invalid/workbench"
 TEST_BAKED_IMAGE = f"{TEST_REGISTRY}/npa-runtime@sha256:{'0' * 64}"
 

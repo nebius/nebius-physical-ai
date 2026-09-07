@@ -12,7 +12,6 @@ import secrets
 import shlex
 import shutil
 import subprocess
-import ipaddress
 import tarfile
 import tempfile
 from pathlib import Path
@@ -75,6 +74,7 @@ from npa.cli.agent_records import (  # noqa: F401 - compatibility re-exports
     store_agent_record as _store_agent_record,
 )
 from npa.cli.agent_network import (
+    is_routable_public_ip as _is_routable_public_ip,
     _agent_ssh_egress_result,
 )
 from npa.cli.agent_payloads import (
@@ -200,14 +200,12 @@ DEFAULT_AGENT_NAME = "agent"
 DEFAULT_AGENT_IMAGE_FAMILY = "ubuntu24.04-driverless"
 DEFAULT_AGENT_USER = "npa"
 DEFAULT_LLM_PROVIDER = "token_factory"
-DEFAULT_LLM_MODEL = "nvidia/Cosmos3-Super-Reasoner"
+DEFAULT_LLM_MODEL = "nvidia/Nemotron-3_5-Lightning"
 # Cost-ordered ladder; per-turn routing reorders it, while no-routing paths and
 # the model picker retain the cheap workhorse as their default.
 DEFAULT_LLM_MODELS = (
-    "Qwen/Qwen3-32B",
-    "meta-llama/Llama-3.3-70B-Instruct",
     DEFAULT_LLM_MODEL,
-    "Qwen/Qwen2.5-VL-72B-Instruct",
+    "MiniMaxAI/MiniMax-M3",
 )
 AGENT_UI_VERSION = "2026090501"
 ARTIFACT_DISCOVERY_CONTRACT = "s3-source-qualified-v1"
@@ -346,7 +344,8 @@ def _cleanup_agent_ingress(instance_id: str) -> None:
 
 
 def _auth_secret_path(project_alias: str, name: str) -> Path:
-    return Path.home() / ".npa" / "agents" / project_alias / name / "auth.env"
+    root = Path(os.environ.get("NPA_CONFIG_DIR", "").strip() or Path.home() / ".npa")
+    return root / "agents" / project_alias / name / "auth.env"
 
 
 def _cleanup_agent_local_files(project_alias: str, name: str) -> None:
@@ -359,7 +358,7 @@ def _cleanup_agent_local_files(project_alias: str, name: str) -> None:
     already destroyed the VM by the time this runs, so both are safe to remove;
     leaving the workdir behind was the teardown-report leftover.
     """
-    agent_dir = Path.home() / ".npa" / "agents" / project_alias / name
+    agent_dir = _auth_secret_path(project_alias, name).parent
     shutil.rmtree(agent_dir, ignore_errors=True)
 
     from npa.deploy import provisioner
@@ -429,8 +428,6 @@ def _normalize_llm_models(models: list[str] | tuple[str, ...] | str) -> list[str
                 normalized.append(value)
     if not normalized:
         normalized = list(DEFAULT_LLM_MODELS)
-    if DEFAULT_LLM_MODEL not in normalized:
-        normalized.insert(0, DEFAULT_LLM_MODEL)
     return normalized
 
 
@@ -752,7 +749,8 @@ def _create_agent_source_archive() -> str:
     repo_root = Path(__file__).resolve().parents[4]
     include_roots = [
         repo_root / "npa",
-        repo_root / "deploy" / "cluster",
+        repo_root / "deploy/cluster",
+        repo_root / "workflows",
     ]
     for path in include_roots:
         if not path.exists():
@@ -781,10 +779,8 @@ def _create_agent_source_archive() -> str:
         return info
 
     with tarfile.open(tmp.name, "w:gz") as archive:
-        archive.add(repo_root / "npa", arcname="npa", filter=_filter)
-        archive.add(
-            repo_root / "deploy" / "cluster", arcname="deploy/cluster", filter=_filter
-        )
+        for path in include_roots:
+            archive.add(path, arcname=path.relative_to(repo_root).as_posix(), filter=_filter)
         # Stage the repo-root docs/ + skills/ trees so the agent's retrieval
         # corpus (Blueprint Phase H) can ground on them at
         # /opt/npa-agent/npa-src/{docs,skills}. Text-only; excluded via _filter.
@@ -816,21 +812,6 @@ def _stage_agent_npa_source(ssh: SSHClient) -> None:
     finally:
         Path(archive_path).unlink(missing_ok=True)
         ssh.run(f"rm -f {shlex.quote(remote_archive)}")
-
-
-def _is_routable_public_ip(value: str) -> bool:
-    candidate = (value or "").strip()
-    if not candidate:
-        return False
-    if candidate == "localhost":
-        return False
-    try:
-        ip = ipaddress.ip_address(candidate)
-    except ValueError:
-        return False
-    if ip.is_loopback or ip.is_private or ip.is_unspecified or ip.is_link_local:
-        return False
-    return True
 
 
 def _agent_strip_url_credentials_js() -> str:
@@ -1737,7 +1718,18 @@ def _sim_viz_for_run(state: dict, run_id: str = "") -> dict:
     runs = state.get("sim_viz_runs")
     target = str(run_id or state.get("active_run_id") or "").strip()
     direct = runs.get(target) if isinstance(runs, dict) and target else None
-    if isinstance(direct, dict):
+    active_ref = str(state.get("active_run_ref") or "").strip()
+    selected = runs.get(active_ref) if isinstance(runs, dict) and active_ref else None
+    if (
+        target
+        and target == str(state.get("active_run_id") or "").strip()
+        and isinstance(selected, dict)
+        and str(selected.get("run_id") or "").strip() == target
+    ):
+        # A saved explicit source outranks an unqualified basename or another
+        # same-name history entry. Never borrow it for a different run.
+        payload.update(selected)
+    elif isinstance(direct, dict):
         payload.update(direct)
     elif isinstance(runs, dict) and target:
         matches = [
@@ -2838,7 +2830,7 @@ TF_BASE_URL = os.environ.get(
 _THINK_RE = re.compile(
     r"\\A\\s*<think>(?P<reasoning>.*?)</think>\\s*", re.DOTALL
 )
-_MODELS_CACHE = {{"expires_at": 0.0, "models": []}}
+_MODELS_CACHE = {{"expires_at": 0.0, "catalog": None}}
 
 def _normalize_llm_models(raw: str) -> list[str]:
     models: list[str] = []
@@ -2850,8 +2842,9 @@ def _normalize_llm_models(raw: str) -> list[str]:
 
 def _configured_llm_models() -> list[str]:
     configured = _normalize_llm_models(LLM_MODELS_ENV)
-    if not configured:
-        configured = [str(item) for item in DEFAULT_LLM_MODELS if str(item).strip()]
+    if configured:
+        return configured
+    configured = [str(item) for item in DEFAULT_LLM_MODELS if str(item).strip()]
     if LLM_MODEL not in configured:
         configured.insert(0, LLM_MODEL)
     return configured
@@ -2886,17 +2879,18 @@ def _provider_api_key(provider: str) -> str:
             return value
     return ""
 
-def _fetch_token_factory_models() -> list[str]:
+def _fetch_token_factory_catalog() -> dict | None:
     api_key = _provider_api_key(LLM_PROVIDER)
     if not api_key:
-        return []
+        return None
     base_url = _provider_base_url(LLM_PROVIDER)
     if not base_url:
-        return []
+        return None
     url = f"{{base_url}}/models"
     try:
         response = httpx.get(
             url,
+            params={{"verbose": "true"}},
             headers={{
                 "Authorization": f"Bearer {{api_key}}",
                 "Content-Type": "application/json",
@@ -2905,38 +2899,44 @@ def _fetch_token_factory_models() -> list[str]:
         )
         response.raise_for_status()
         payload = response.json()
-    except Exception:
-        return []
-    data = payload.get("data") if isinstance(payload, dict) else None
-    if not isinstance(data, list):
-        return []
-    models: list[str] = []
-    for item in data:
-        if not isinstance(item, dict):
-            continue
-        value = str(item.get("id") or "").strip()
-        if value and value not in models:
-            models.append(value)
-    return models
+    except (httpx.HTTPError, ValueError):
+        return None
+    return parse_model_catalog(payload)
 
-def _available_llm_models(*, refresh: bool = False) -> list[str]:
-    configured = _configured_llm_models()
+def _fetch_token_factory_models() -> list[str]:
+    # Embedding discovery still needs the raw catalog, including non-chat IDs.
+    catalog = _fetch_token_factory_catalog()
+    return list(catalog["models"]) if catalog is not None else []
+
+def _available_llm_catalog(*, refresh: bool = False) -> dict | None:
     now = time.monotonic()
     cache = _MODELS_CACHE
-    if not refresh and cache.get("expires_at", 0.0) > now:
-        cached = cache.get("models", [])
-        if isinstance(cached, list) and cached:
-            return cached
-    live = _fetch_token_factory_models()
-    if live:
-        allowed = [model for model in configured if model in live]
-        extras = [model for model in live if model not in allowed]
-        resolved = (allowed + extras)[:32]
-    else:
-        resolved = configured
-    cache["models"] = resolved
+    identity = (
+        LLM_PROVIDER,
+        _provider_base_url(LLM_PROVIDER),
+        hashlib.sha256(_provider_api_key(LLM_PROVIDER).encode()).hexdigest(),
+    )
+    if not refresh and cache.get("identity") == identity and cache.get("expires_at", 0.0) > now:
+        return cache.get("catalog")
+    catalog = _fetch_token_factory_catalog()
+    cache["identity"] = identity
+    cache["catalog"] = catalog
     cache["expires_at"] = now + 300.0
-    return resolved
+    return catalog
+
+def _llm_model_info(*, refresh: bool = False) -> dict:
+    info = model_availability(
+        LLM_MODEL,
+        _configured_llm_models(),
+        _available_llm_catalog(refresh=refresh),
+        allowed_models=_normalize_llm_models(LLM_MODELS_ENV) or None,
+    )
+    info["default_provider"] = LLM_PROVIDER
+    info["providers"] = _configured_llm_providers()
+    return info
+
+def _available_llm_models(*, refresh: bool = False) -> list[str]:
+    return _llm_model_info(refresh=refresh)["models"]
 
 def _agent_system_prompt() -> str:
     lines = [
@@ -3096,13 +3096,24 @@ def _chat_with_resilience(
         ladder = filter_available(ladder, _available_llm_models())
     except Exception:
         pass
+    # An explicit selection may be served by a dedicated/custom endpoint even
+    # when the public model list omits it. Try the requested ID first.
+    if requested_model:
+        ladder = [requested_model, *[item for item in ladder if item != requested_model]]
     if not ladder:
-        ladder = list(configured) or [requested_model] if requested_model else list(configured)
-    extra = chat_extra(tier)
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                f"No eligible model is configured for the '{{tier}}' tier. "
+                "Update the deployment model allowlist to include a model that "
+                "supports this input, or select an explicit model."
+            ),
+        )
     errors: list[str] = []
     for provider in providers:
         for model in ladder:
             try:
+                extra = chat_extra(tier, model)
                 data = _provider_chat(provider=provider, messages=messages, model=model, extra=extra)
                 return data, provider, model
             except Exception as exc:
@@ -3229,7 +3240,8 @@ def _agent_npa_ready() -> tuple[bool, str]:
 
 
 def _load_agent_config_yaml() -> dict:
-    path = Path.home() / ".npa" / "config.yaml"
+    root = Path(os.environ.get("NPA_CONFIG_DIR", "").strip() or Path.home() / ".npa")
+    path = root / "config.yaml"
     if not path.is_file():
         return {{}}
     try:
@@ -3258,7 +3270,8 @@ def _agent_k8s_backends(project: str = "") -> dict:
     ready, reason = _agent_npa_ready()
     cloud_clusters = _agent_cloud_mk8s_clusters(alias)
     inventory = assemble_k8s_backend_inventory(
-        config=config, alias=alias, clusters_root=Path.home() / ".npa" / "clusters",
+        config=config, alias=alias,
+        clusters_root=Path(os.environ.get("NPA_CONFIG_DIR", "").strip() or Path.home() / ".npa") / "clusters",
         cloud_clusters=cloud_clusters, npa_ready=ready,
         npa_error=reason, terraform_dir=NPA_CLUSTER_TERRAFORM_DIR,
     )
@@ -4156,6 +4169,9 @@ def _resolve_skill_context(*, user_text: str, intent: str | None) -> tuple[list[
         excerpt = _skill_excerpt(name)
         if excerpt:
             snippets.append(f"[skill:{{name}}]\\n{{excerpt}}")
+    lessons = _agent_improvements.context(_agent_improvements.targets(names, user_text))
+    if lessons:
+        snippets.append(lessons)
     if not snippets:
         return names, ""
     return names, "Relevant NPA skill excerpts:\\n\\n" + "\\n\\n".join(snippets)
@@ -4185,6 +4201,12 @@ def _maybe_toolground_chat_reply(
     loaded_now = False
     rerun_ready = None
     default_cameras = list(DEFAULT_SCENE_SPEC.get("cameras", {{}}).values())
+    if intent in {{"validate_workflow", "plan_workflow"}}:
+        result = evaluate_workflow_chat_request(
+            user_text, state.get("workflow_draft") or {{}},
+            intent=intent, tool_refs=frozenset(TOOL_REFS),
+        )
+        return result["reply"], suggested_apis, [], None, result, intent
     if intent == "start_sim2real":
         submit = submit_sim2real({{}})
         apis_used.append("workflows/sim2real/submit")
@@ -4204,6 +4226,36 @@ def _maybe_toolground_chat_reply(
         if match:
             mentioned_run = match.group(1)
         try:
+            selected_request = not mentioned_run and re.search(
+                r"\\b(?:selected|current|this)\\b.{{0,40}}\\brun\\b", str(user_text or ""), re.IGNORECASE
+            )
+            if selected_request:
+                selected = _sim_viz_for_run(state)
+                run_id = str(selected.get("run_id") or "")
+                run_ref = str(selected.get("run_ref") or state.get("active_run_ref") or "")
+                if not run_id or not run_ref:
+                    return "Select a run in **Runs & artifacts** first.", [], suggested_apis, None, {{"ok": False}}, intent
+                listed = artifacts_for_run(
+                    run_ref,
+                    resource_bucket=str(selected.get("resource_bucket") or selected.get("bucket") or ""),
+                    project_id=str(selected.get("project_id") or ""),
+                    resolved_prefix=str(selected.get("resolved_prefix") or ""),
+                    source_selected=True,
+                )
+                payload = json.loads(listed.body.decode("utf-8")) if isinstance(listed, JSONResponse) else listed
+                apis_used.append("artifacts/run/{{run_id}}")
+                if payload.get("ok") is False:
+                    return "The selected run's artifacts could not be listed. Check its access and source selection.", apis_used, suggested_apis, None, payload, intent
+                preferred = payload.get("preferred") or {{}}
+                reply = (
+                    "**Selected run artifacts** (from its exact storage source):\\n"
+                    f"- **run_id**: `{{run_id}}`\\n"
+                    f"- **artifact_count**: `{{int(payload.get('count') or 0)}}`\\n"
+                    f"- **preferred file**: `{{str(preferred.get('key') or '').rsplit('/', 1)[-1] or 'none'}}`\\n"
+                    f"- **render**: `{{preferred.get('render') or 'none'}}`\\n"
+                    "Use **List artifacts** for the selected run to preview or download its outputs. Artifact presence alone does not establish execution success."
+                )
+                return reply, apis_used, suggested_apis, None, payload, intent
             if mentioned_run:
                 listed = artifacts_for_run(mentioned_run)
                 apis_used.append("artifacts/run/{{run_id}}")
@@ -4899,6 +4951,7 @@ def chat(payload: dict):
                 chat_session_token, chat_confirm_digest, _chat_pending = _consume_agent_confirm_token()
             else:
                 chat_session_token, chat_confirm_digest = "", ""
+            feedback = _agent_improvements.prepare(_agent_improvements.targets(_resolve_skill_context(user_text=last_user, intent=intent)[0], last_user))
             action_result = run_chat_action_loop(
                 last_user,
                 tools=_agent_act_tools(),
@@ -4907,8 +4960,9 @@ def chat(payload: dict):
                 confirm_token=chat_confirm_token,
                 session_token=chat_session_token,
                 confirm_digest=chat_confirm_digest,
-                live_context=format_live_context_block(_load_state()),
+                live_context=format_live_context_block(_load_state()) + "\\n" + feedback["context"],
             )
+            _record_agent_trace(action_result, feedback=feedback)
             # Preserve the safety contract: a state-changing tool proposed from a
             # chat turn never auto-runs without a token — it stops here and we mint
             # a gate token bound to the exact action digest (same as /api/agent/act);
@@ -4948,6 +5002,7 @@ def chat(payload: dict):
                 "apis_used": ["agent/act"],
                 "session_id": session["id"],
                 "session": public_chat_session_payload(session),
+                "improvements": action_result.get("improvements"),
             }}
             if action_result.get("confirm_token"):
                 response["confirm_token"] = action_result["confirm_token"]
@@ -5192,6 +5247,9 @@ def _agent_act_tools():
     def _tool_health(args):
         return {{"ok": True, "tool_refs": len(TOOL_REFS)}}
 
+    def _tool_tools_catalog(args):
+        return {{"tool_refs": list(TOOL_REFS)}}
+
     def _tool_sim_viz_status(args):
         return _act_response_to_dict(sim_viz_status())
 
@@ -5410,6 +5468,7 @@ def _agent_act_tools():
 
     return {{
         "health": _tool_health,
+        "tools_catalog": _tool_tools_catalog,
         "sim_viz_status": _tool_sim_viz_status,
         "sim2real_status": _tool_sim2real_status,
         "artifacts_runs": _tool_artifacts_runs,
@@ -5427,6 +5486,10 @@ def _agent_act_tools():
     }}
 
 @app.post("/agent/act")
+@goal_episode_boundary(
+    active_tenant_id=lambda: str(DEPLOYMENT.get("tenant_id") or os.environ.get("NEBIUS_TENANT_ID", "")),
+    active_bucket=lambda: str(os.environ.get("NPA_AGENT_S3_BUCKET") or os.environ.get("NEBIUS_S3_BUCKET", "")),
+)
 def agent_act(payload: dict):
     body = payload if isinstance(payload, dict) else {{}}
     raw_messages = body.get("messages", [])
@@ -5457,7 +5520,8 @@ def agent_act(payload: dict):
         return data
 
     tier = classify_tier(goal)
-    live_ctx = format_live_context_block(_load_state())
+    feedback = _agent_improvements.prepare(_agent_improvements.targets(_resolve_skill_context(user_text=goal, intent=None)[0], goal))
+    live_ctx = format_live_context_block(_load_state()) + "\\n" + feedback["context"]
     result = run_action_loop(
         goal,
         tools=_agent_act_tools(),
@@ -5479,7 +5543,7 @@ def agent_act(payload: dict):
     result["allowlist"] = allowlist_specs()
     result["input_budget_ok"] = _budget_ok
     # Phase I: record structured spans for the offline analyzer / injected tracer.
-    _record_agent_trace(result)
+    _record_agent_trace(result, feedback=feedback)
     return result
 
 
@@ -5496,6 +5560,15 @@ register_gpu_allocation_routes(
     ),
     HTTPException,
 )
+
+from agent_backend.improvement_routes import (
+    ImprovementDeps,
+    ImprovementRuntime,
+    register_improvement_routes,
+)
+
+_agent_improvements = ImprovementRuntime()
+register_improvement_routes(app, ImprovementDeps(store=_agent_improvements.store), HTTPException)
 
 def _sim2real_gate_metrics(run_id: str, iteration: int) -> dict:
     # Read gate metrics only from real run artifacts; never fabricate a score.
@@ -5534,6 +5607,10 @@ def _sim2real_gate_metrics(run_id: str, iteration: int) -> dict:
     return metrics
 
 @app.post("/agent/sim2real/drive")
+@goal_episode_boundary(
+    active_tenant_id=lambda: str(DEPLOYMENT.get("tenant_id") or os.environ.get("NEBIUS_TENANT_ID", "")),
+    active_bucket=lambda: str(os.environ.get("NPA_AGENT_S3_BUCKET") or os.environ.get("NEBIUS_S3_BUCKET", "")),
+)
 def agent_sim2real_drive(payload: dict):
     body = payload if isinstance(payload, dict) else {{}}
     config = body.get("config") if isinstance(body.get("config"), dict) else {{}}
@@ -5565,6 +5642,7 @@ def agent_sim2real_drive(payload: dict):
     except (TypeError, ValueError):
         max_iterations = 3
     max_iterations = max(1, min(max_iterations, 5))
+    feedback = _agent_improvements.prepare(["sim2real-drive", "sim2real-operate"])
 
     def _launch(loop_cfg):
         return _act_response_to_dict(
@@ -5588,6 +5666,8 @@ def agent_sim2real_drive(payload: dict):
             "signals": signals,
             "notes": "; ".join(signals.get("notes", [])),
         }}
+        if feedback["lessons"]:
+            diagnosis["verified_lessons"] = feedback["lessons"]
         baseline_run = str(cfg.get("baseline_run_id") or cfg.get("baseline_run") or "").strip()
         current_run = str(
             (run_status or {{}}).get("run_id") if isinstance(run_status, dict) else ""
@@ -5645,7 +5725,7 @@ def agent_sim2real_drive(payload: dict):
         except Exception:
             pass
     # Phase I: record structured spans for the offline analyzer / injected tracer.
-    _record_agent_trace(result)
+    _record_agent_trace(result, feedback=feedback)
     return result
 
 def _agent_run_memory():
@@ -5916,9 +5996,10 @@ def _spans_for_trace(trace):
         return _agent_tracing.spans_from_action_loop(trace)
     return _agent_tracing.spans_from_drive(trace)
 
-def _record_agent_trace(result):
+def _record_agent_trace(result, feedback=None):
     if not isinstance(result, dict):
         return
+    result["improvements"] = _agent_improvements.record(result, feedback)
     try:
         TRACE_DIR.mkdir(parents=True, exist_ok=True)
         path = TRACE_DIR / "recent.json"
@@ -6000,15 +6081,12 @@ def agent_access(refresh: bool = False):
 def models(refresh: bool = False):
     return {{
         "ok": True,
-        "default": LLM_MODEL,
-        "default_model": LLM_MODEL,
-        "default_provider": LLM_PROVIDER,
-        "providers": _configured_llm_providers(),
-        "models": _available_llm_models(refresh=bool(refresh)),
+        **_llm_model_info(refresh=bool(refresh)),
     }}
 
 @app.get("/session")
 def session_bootstrap():
+    llm_info = _llm_model_info()
     state = _load_state()
     active_session = _get_chat_session(state, str(state.get("active_chat_session_id") or "default"))
     sim_viz = _sim_viz_for_run(state)
@@ -6041,13 +6119,9 @@ def session_bootstrap():
             "prefix": _chat_memory_prefix(),
         }},
         "llm": {{
-            "default": LLM_MODEL,
-            "default_model": LLM_MODEL,
-            "default_provider": LLM_PROVIDER,
+            **llm_info,
             "provider": LLM_PROVIDER,
-            "providers": _configured_llm_providers(),
-            "model": LLM_MODEL,
-            "models": _available_llm_models(),
+            "model": llm_info["default_model"],
         }},
     }}
 
@@ -8050,6 +8124,19 @@ def _boot_preload_sim_viz() -> None:
     sim_viz = state.get("sim_viz", {{}})
     if not isinstance(sim_viz, dict):
         sim_viz = {{}}
+    artifact_render = str(sim_viz.get("artifact_render") or "").strip().lower()
+    explicit_source = bool(
+        str(sim_viz.get("artifact_run_ref") or "").strip()
+        or str(sim_viz.get("artifact_uri") or "").strip()
+    )
+    if (
+        (artifact_render and artifact_render != "rerun")
+        or str(sim_viz.get("preview_status") or "").strip() == "no_previewable_recording"
+        or (explicit_source and not str(sim_viz.get("rrd_uri") or "").strip())
+    ):
+        # A stock recording must not replace the selected artifact, acquire its
+        # run ID, or discard its exact storage provenance during a restart.
+        return
     if str(sim_viz.get("rrd_uri") or "").strip() and _served_recording_is_run_specific():
         return
     capability_path = _publish_rrd_recording(RRD_PATH)
@@ -9702,9 +9789,8 @@ def deploy_cmd(
     # the raw var also lands in outputs consumed downstream, where an unexpanded
     # ``~`` breaks non-shell consumers.
     ssh_public_key_path = str(Path(ssh_public_key_path).expanduser())
-    profile = os.environ.get("NPA_NEBIUS_PROFILE", "").strip()
-    if profile and shutil.which("nebius"):
-        subprocess.run(["nebius", "profile", "activate", profile], check=False)
+    # Provider calls resolve the selected profile per subprocess. Activating it
+    # here would change another concurrent operator's shared CLI configuration.
     saved_env = resolve_environment(
         project,
         project_id=project_id or None,
@@ -9849,11 +9935,12 @@ def deploy_cmd(
                     ),
                 }
             )
-            operation.record_resource(
-                resource_type="storage_bucket",
-                requested_name=str(configured_storage.get("s3_bucket", "")),
-                ownership="adopted",
-                ownership_source="configured-project-storage-write-probe",
+            from npa.cli.agent_terraform import _record_configured_backend
+
+            _record_configured_backend(
+                operation, project_alias=project,
+                bucket=str(configured_storage.get("s3_bucket", "")),
+                endpoint=str(configured_storage.get("s3_endpoint", "")),
                 project_id=env_project_id,
             )
 
@@ -9861,7 +9948,7 @@ def deploy_cmd(
             if operation is None:
                 return
             operation.record_resource(
-                resource_type=f"agent_{kind}",
+                resource_type=kind if kind.startswith("agent_") else f"agent_{kind}",
                 requested_name=str(metadata.get("name") or metadata.get("id") or kind),
                 provider_id=str(metadata.get("id") or ""),
                 ownership="created_by_this_operation",
@@ -10469,12 +10556,12 @@ def setup_cmd(
     instead of re-typing ids — and deploys.
 
     How the agent VM gets Nebius AI Cloud credentials: deploy provisions (or
-    reuses) an ``npa-agent`` service account in the project, grants it the tenant
-    ``editors`` role, and **attaches it to the VM**. Code on the VM then mints
+    reuses) an ``npa-agent`` service account in the project, grants it ``editor``
+    access to that project, and **attaches it to the VM**. Code on the VM then mints
     short-lived IAM access tokens from the Nebius VM metadata endpoint
     (``http://metadata.nebius.internal/v1/iam/sa/token/access_token``) on demand —
     an auto-rotating, key-less credential. No static "AI Cloud key" is stored on
-    the VM. The same service account's access key provides S3 access.
+    the VM. S3 uses the separately verified configured storage credentials.
     """
     from npa.clients.config import default_project_name, list_projects
 

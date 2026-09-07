@@ -17,6 +17,7 @@ Generated from `npa --help`. Run `bash scripts/build_docs.sh` after CLI changes.
 - [npa workbench cosmos](cosmos.md)
 - [npa workbench cosmos2](cosmos2.md)
 - [npa workbench cosmos3](cosmos3.md)
+- [npa workbench curobo](curobo.md)
 - [npa workbench dataset](dataset.md)
 - [npa workbench fiftyone datasets](datasets.md)
 - [npa demo](demo.md)

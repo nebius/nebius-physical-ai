@@ -1,7 +1,7 @@
 """Real stage implementations for the Isaac Lab RL sweep blueprint.
 
 These back the ``run.shell`` stages of
-``npa/workflows/workbench/npa-workflows/isaac-lab-rl-sweep.yaml`` — the
+``workflows/testing/isaac-lab-rl-sweep.yaml`` — the
 ``npa.workflow`` port of the one ``execution: parallel`` SkyPilot template, which is
 now retired (the spec is live-verified on four GPUs; see ``EVIDENCE.md`` §R3):
 
@@ -274,7 +274,14 @@ def _publish_checkpoint(base_uri: str, search_root: str = "logs/rsl_rl") -> str:
     root = Path(search_root)
     if not root.exists():
         return ""
-    checkpoints = sorted(root.rglob("model_*.pt"))
+    checkpoints = sorted(
+        root.rglob("model_*.pt"),
+        key=lambda path: (
+            path.parent,
+            int(path.stem[6:]) if path.stem[6:].isdigit() else -1,
+            path.name,
+        ),
+    )
     if not checkpoints:
         return ""
     return _upload_file(checkpoints[-1], f"{base_uri}/checkpoint.pt")
