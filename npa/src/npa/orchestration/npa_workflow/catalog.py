@@ -6,6 +6,10 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 from npa.orchestration.npa_workflow.errors import NpaWorkflowError
+from npa.workbench.ncore_staging import (
+    DEFAULT_COLMAP_CACHE_DIR,
+    DEFAULT_COLMAP_SCRATCH_DIR,
+)
 
 
 @dataclass(frozen=True)
@@ -314,8 +318,8 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
         name="workbench.nurec.convert_colmap",
         description="Convert COLMAP with Apache-2.0 NVIDIA NCore, decode and verify all V4 data, and publish a self-contained sequence for separate proprietary NRE reconstruction.",
         config_defaults={
-            "cache_dir": "/tmp/npa-ncore-cache",
-            "scratch_dir": "/tmp/npa-ncore-scratch",
+            "cache_dir": str(DEFAULT_COLMAP_CACHE_DIR),
+            "scratch_dir": str(DEFAULT_COLMAP_SCRATCH_DIR),
             "dataset_root": ".",
             "colmap_dir": "sparse/0",
             "images_dir": "images",

@@ -14,7 +14,14 @@ import json
 from pathlib import Path, PurePosixPath
 import subprocess
 import tarfile
-import urllib.request
+
+try:
+    from npa._public_https import download_public_https
+except ModuleNotFoundError as error:
+    if error.name != "npa":
+        raise
+    # Docker copies the same stdlib-only helper beside this bootstrap recipe.
+    from _public_https import download_public_https
 
 
 NCORE_METADATA = {
@@ -193,8 +200,13 @@ def stage(lock: dict, output: Path, archives: Path | None = None) -> None:
     for component in ("ncore", "pycolmap"):
         pin = lock[component]
         if archives is None:
-            with urllib.request.urlopen(pin["url"]) as response:
-                data = response.read()
+            with io.BytesIO() as response:
+                download_public_https(
+                    pin["url"],
+                    response,
+                    allowed_hosts=frozenset({"codeload.github.com"}),
+                )
+                data = response.getvalue()
         else:
             data = (archives / f"{component}.tar.gz").read_bytes()
         if hashlib.sha256(data).hexdigest() != pin["sha256"]:

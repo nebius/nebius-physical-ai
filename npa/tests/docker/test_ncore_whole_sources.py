@@ -111,7 +111,7 @@ def test_unsafe_archive_paths_fail(source_module, path):
 
 def test_offline_assembly_never_fetches(source_module, tmp_path, monkeypatch):
     monkeypatch.setattr(
-        source_module.urllib.request, "urlopen", lambda *_: pytest.fail("network")
+        source_module, "download_public_https", lambda *_, **__: pytest.fail("network")
     )
     lock = {
         "artifacts": [
@@ -297,9 +297,7 @@ def test_published_filesystem_has_no_inherited_layers_or_base_pip():
     assert len({p["name"] for p in lock["debian_binaries"]}) == len(
         lock["debian_binaries"]
     )
-    assert not {"passwd", "gnupg2"} & {
-        p["name"] for p in lock["debian_binaries"]
-    }
+    assert not {"passwd", "gnupg2"} & {p["name"] for p in lock["debian_binaries"]}
 
 
 def test_notice_only_components_do_not_deliver_full_sources():

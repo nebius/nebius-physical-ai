@@ -28,6 +28,11 @@ from pydantic import BaseModel, ConfigDict, field_validator
 
 from npa.cli.path_contract import validate_read_path, validate_write_path
 from npa.errors import NpaError
+from npa.workbench.ncore_staging import (
+    DEFAULT_COLMAP_CACHE_DIR,
+    DEFAULT_COLMAP_SCRATCH_DIR,
+    private_staging_directory,
+)
 from npa.workbench.nurec.nurec import NurecError
 
 NCORE_REVISION = "59c698d206da92b406a4f72619fce3b3a2c64bfd"
@@ -63,8 +68,8 @@ class ColmapConversionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     input_path: str
     output_path: str
-    cache_dir: Path = Path("/tmp/npa-ncore-cache")
-    scratch_dir: Path = Path("/tmp/npa-ncore-scratch")
+    cache_dir: Path = DEFAULT_COLMAP_CACHE_DIR
+    scratch_dir: Path = DEFAULT_COLMAP_SCRATCH_DIR
     dataset_root: str = "."
     colmap_dir: str = "sparse/0"
     images_dir: str = "images"
@@ -846,16 +851,14 @@ def convert_colmap(
     phase = "staging"
     try:
         client = storage_client or StorageClient.from_environment()
-        request.cache_dir.mkdir(parents=True, exist_ok=True)
-        request.scratch_dir.mkdir(parents=True, exist_ok=True)
         # Fresh directories avoid stale source bytes and racing invocations. The
         # caller chooses scratch/cache placement; no input files are deleted.
         with (
-            tempfile.TemporaryDirectory(
-                prefix="colmap-", dir=request.cache_dir
+            private_staging_directory(
+                request.cache_dir, prefix="colmap-"
             ) as cache,
-            tempfile.TemporaryDirectory(
-                prefix="ncore-", dir=request.scratch_dir
+            private_staging_directory(
+                request.scratch_dir, prefix="ncore-"
             ) as scratch,
         ):
             staged = Path(cache) / "dataset"

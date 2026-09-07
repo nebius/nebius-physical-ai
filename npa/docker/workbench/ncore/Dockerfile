@@ -29,6 +29,7 @@ FROM runtime-base AS source-stage
 RUN apt-get update && apt-get install -y --no-install-recommends patch \
     && rm -rf /var/lib/apt/lists/*
 COPY docker/workbench/ncore/source-lock.json docker/workbench/ncore/stage_upstream.py /build/
+COPY src/npa/_public_https.py /build/_public_https.py
 RUN python -B /build/stage_upstream.py --lock /build/source-lock.json --output /opt/ncore/src
 
 # Deliver corresponding source only for selected covered base binaries.
@@ -37,6 +38,7 @@ FROM scratch AS base-source-cache
 FROM runtime-base AS base-source-delivery
 COPY docker/workbench/ncore/base-source-lock.json docker/workbench/ncore/base_sources.py \
      docker/workbench/ncore/BASE-SOURCES.md /opt/ncore/base-sources/recipes/
+COPY src/npa/_public_https.py /opt/ncore/base-sources/recipes/_public_https.py
 RUN --mount=type=bind,from=base-source-cache,target=/source-cache \
     python /opt/ncore/base-sources/recipes/base_sources.py assemble \
       --lock /opt/ncore/base-sources/recipes/base-source-lock.json \
@@ -58,10 +60,12 @@ COPY --from=source-stage /opt/ncore/src /opt/ncore/src
 COPY --from=base-source-delivery /opt/ncore/base-sources /opt/ncore/base-sources
 # Explicit NPA import closure; no package install, CLI registry or SDK fanout.
 COPY src/npa/__init__.py src/npa/_sdk.py src/npa/errors.py src/npa/lifecycle_intent.py /opt/npa/src/npa/
+COPY src/npa/_public_https.py /opt/npa/src/npa/_public_https.py
 COPY src/npa/clients/__init__.py src/npa/clients/storage.py /opt/npa/src/npa/clients/
 COPY src/npa/cli/__init__.py src/npa/cli/path_contract.py /opt/npa/src/npa/cli/
 COPY src/npa/cli/nurec/__init__.py /opt/npa/src/npa/cli/nurec/__init__.py
 COPY src/npa/workbench/__init__.py /opt/npa/src/npa/workbench/__init__.py
+COPY src/npa/workbench/ncore_staging.py /opt/npa/src/npa/workbench/ncore_staging.py
 COPY src/npa/workbench/nurec/__init__.py src/npa/workbench/nurec/nurec.py \
      src/npa/workbench/nurec/colmap.py src/npa/workbench/nurec/ncore_rig.py /opt/npa/src/npa/workbench/nurec/
 COPY src/npa/workflows/__init__.py src/npa/workflows/ncore.py src/npa/workflows/ncore_runtime.py /opt/npa/src/npa/workflows/
@@ -75,11 +79,17 @@ COPY docker/workbench/ncore/runtime-lock.json docker/workbench/ncore/*requiremen
      docker/workbench/ncore/source-lock.json docker/workbench/ncore/REDISTRIBUTION.md \
      docker/workbench/ncore/BASE-SOURCES.md /usr/share/doc/npa-ncore/
 COPY docker/workbench/ncore/Dockerfile docker/workbench/ncore/stage_upstream.py /usr/share/doc/npa-ncore/recipes/
+COPY src/npa/_public_https.py /usr/share/doc/npa-ncore/recipes/_public_https.py
 COPY --from=source-stage /opt/ncore/src/ncore/LICENSE /usr/share/doc/npa-ncore/LICENSE-APACHE-2.0
-COPY --chmod=0644 docker/workbench/ncore/notices/* /usr/share/doc/npa-ncore/notices/
+COPY --chmod=0644 docker/workbench/ncore/notices/NPA-LICENSE \
+     docker/workbench/ncore/notices/NOTICE-NVIDIA-NCORE-COLMAP \
+     docker/workbench/ncore/notices/NOTICE-NVIDIA-SKILLS /usr/share/doc/npa-ncore/notices/
 COPY --chmod=0755 docker/workbench/ncore/colmap-convert docker/workbench/ncore/verify-packaging.py \
      docker/workbench/ncore/entrypoint.sh /opt/ncore/bin/
 COPY --chmod=0755 docker/workbench/ncore/npa-entrypoint /opt/venv/bin/npa
+# TEST: exercise non-root SkyPilot sudo/SSH bootstrap, as required by ncore's
+# passwordless_root_exemption in packaging-contract.yaml; remove test host keys.
+# trivy:ignore:AVD-DS-0010
 RUN /opt/venv/bin/python -c 'import os,re; assert re.fullmatch("[0-9a-f]{40}", os.environ["NPA_SOURCE_SHA"])' \
     && printf '%s\n' "${SOURCE_SHA}" >/usr/share/doc/npa-ncore/npa-source-sha \
     && su ubuntu -s /bin/bash -c '/opt/ncore/bin/entrypoint.sh /bin/true && sudo -n /usr/sbin/sshd -t && sudo -n service ssh restart && sudo -n service ssh stop && rsync --version >/dev/null && test -w /tmp && test -w "$HOME"' \

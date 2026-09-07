@@ -26,6 +26,10 @@ from typing import Any
 import typer
 
 from npa.lifecycle_intent import json_stdout_contract
+from npa.workbench.ncore_staging import (
+    DEFAULT_COLMAP_CACHE_DIR,
+    DEFAULT_COLMAP_SCRATCH_DIR,
+)
 
 from npa.workbench.nurec.nurec import (
     DEFAULT_CONFIG_NAME,
@@ -210,14 +214,14 @@ def convert_colmap_cmd(
         help="Exact S3 destination for the self-contained NCore V4 sequence.",
     ),
     cache_dir: Path = typer.Option(
-        Path("/tmp/npa-ncore-cache"),
+        DEFAULT_COLMAP_CACHE_DIR,
         "--cache-dir",
-        help="Local source staging directory.",
+        help="Private source staging parent (current user, mode 0700, no symlinks); tilde expands at runtime.",
     ),
     scratch_dir: Path = typer.Option(
-        Path("/tmp/npa-ncore-scratch"),
+        DEFAULT_COLMAP_SCRATCH_DIR,
         "--scratch-dir",
-        help="Local converter scratch directory.",
+        help="Private converter scratch parent (current user, mode 0700, no symlinks); each invocation gets fresh space.",
     ),
     dataset_root: str = typer.Option(
         ".",

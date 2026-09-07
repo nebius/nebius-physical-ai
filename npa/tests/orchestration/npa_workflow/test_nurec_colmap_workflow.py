@@ -71,6 +71,13 @@ def test_conversion_hands_exact_portable_sequence_to_existing_nre():
         "finalize",
     ]
     convert, reconstruct, render, visualize, finalize = plan.steps
+    from npa.workbench.ncore_staging import (
+        DEFAULT_COLMAP_CACHE_DIR,
+        DEFAULT_COLMAP_SCRATCH_DIR,
+    )
+
+    assert _flag(convert.argv, "--cache-dir") == str(DEFAULT_COLMAP_CACHE_DIR)
+    assert _flag(convert.argv, "--scratch-dir") == str(DEFAULT_COLMAP_SCRATCH_DIR)
     assert convert.argv[:4] == ["npa", "workbench", "nurec", "convert-colmap"]
     output = _flag(convert.argv, "--output-path")
     assert output.endswith("/ncore/sequence/")
@@ -218,11 +225,13 @@ def test_wrong_source_hash_fails_before_any_upload(helpers, monkeypatch, tmp_pat
 def test_download_uses_immutable_public_colmap_object(helpers, monkeypatch, tmp_path):
     urls = []
 
-    def open_url(url):
+    def download(url, output, *, allowed_hosts, redirect_hosts):
         urls.append(url)
-        return io.BytesIO(b"entire public object")
+        assert allowed_hosts == frozenset({"huggingface.co"})
+        assert "cas-bridge.xethub.hf.co" in redirect_hosts
+        output.write(b"entire public object")
 
-    monkeypatch.setattr("urllib.request.urlopen", open_url)
+    monkeypatch.setattr("npa._public_https.download_public_https", download)
     output = tmp_path / "source.zip"
     helpers._download_nurec_colmap_archive(output)
     assert urls == [

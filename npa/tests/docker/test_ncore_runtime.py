@@ -158,10 +158,8 @@ def test_runtime_cache_follows_operator_storage(monkeypatch, tmp_path):
 
 def test_download_hash_mismatch_never_reaches_installer(tmp_path, monkeypatch):
     module = runtime()
-    import io
-
     monkeypatch.setattr(
-        module.urllib.request, "urlopen", lambda _: io.BytesIO(b"wrong")
+        module, "download_public_https", lambda _, output, **__: output.write(b"wrong")
     )
     item = {
         "filename": "sample.whl",

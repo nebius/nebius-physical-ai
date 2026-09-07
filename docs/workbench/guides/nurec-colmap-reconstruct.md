@@ -117,7 +117,17 @@ npa workbench nurec convert-colmap \
 ```
 
 `--input-path` also accepts an S3 dataset prefix. `--cache-dir` and
-`--scratch-dir` select disposable local staging space. `--masks-dir` selects a
+`--scratch-dir` select private local staging parents, defaulting to
+`~/.cache/npa/ncore/colmap/cache` and `~/.cache/npa/ncore/colmap/scratch`.
+Tilde expands for the executing user, including inside workflow pods. Missing
+directories are created with mode `0700`; existing selected directories must
+belong to the current user with mode `0700`. Ancestors must belong to the current
+user or root. Symlinks and ancestors writable by other users are rejected
+(root-owned sticky ancestors are allowed).
+Each invocation allocates fresh private children and removes only those children
+on completion or failure. Concurrent invocations can share these parents; source
+bytes are never reused, and existing permissions are never changed automatically.
+Explicit overrides follow the same checks. `--masks-dir` selects a
 relative masks directory; an empty value keeps upstream mask discovery.
 `--reference-camera` pins the trajectory used for rig derivation. Use
 `--rig-mode preserve` only for conversion-only consumers that do not require

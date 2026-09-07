@@ -92,6 +92,13 @@ reviewing the fetched artifacts.
 | NPA adapter and shared modules | Exact committed `SOURCE_SHA`, readable `/opt/npa/src/npa`, root Apache license and retained adaptation notices under `/usr/share/doc/npa-ncore/notices` |
 | Retained base binaries | Explicit file selection from digest-pinned Python 3.12.12 slim Bookworm and immutable Debian snapshot, copied into one `FROM scratch` filesystem layer. Original notices for permissive files and actual corresponding source/build scripts for covered binaries accompany the image; superseded ancestry is absent. See `base-source-lock.json` and `/opt/ncore/base-sources`. |
 
+The image retains `NOTICE-NVIDIA-NCORE-COLMAP`, `NPA-LICENSE` and
+`NOTICE-NVIDIA-SKILLS`; the latter covers the adapted NuRec modules in the NPA
+import closure. `NOTICE-NVIDIA-COSMOS-OSS` applies to the separate Cosmos
+Evaluator/Curator implementations, which this image does not contain, so it is
+not copied into the image. Upstream NCore/pycolmap licenses, source headers and
+required base-component notices remain included.
+
 `source-lock.json` binds the upstream archive hashes. The stager retains source
 and build/licensing metadata, applies NVIDIA's original
 `deps/pycolmap/fix-python3-map.patch`, and marks two narrowly checked NPA changes:
@@ -156,6 +163,13 @@ assembled root, then removes generated host keys and temporary test devices
 before the single scratch copy and `skypilot-0.12.2-v1` attestation. The entrypoint creates per-container
 keys and executes the orchestrator's argv unchanged. No SSH service starts by
 default. The cache also works when SkyPilot replaces the image entrypoint.
+
+The bootstrap test `RUN` that invokes `su ubuntu` has an adjacent
+`trivy:ignore:AVD-DS-0010` annotation. It tests the non-root sudo contract
+recorded in `packaging-contract.yaml`; removing sudo would stop proving that
+contract. The annotation uses Trivy's supported per-instruction scope and does
+not exempt installation/assembly instructions or other Dockerfiles. Generated
+host keys are removed in the same test instruction.
 
 Before any publication the parent must inventory **every actual final/ancestor
 layer**, verify all retained binary/source correspondence and licenses, and run

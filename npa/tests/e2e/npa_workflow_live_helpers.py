@@ -925,16 +925,32 @@ def _seed_vlm_benchmark_dataset(client, *, bucket: str, marker: str) -> None:
 
 def _download_nurec_colmap_archive(destination: Path) -> None:
     """Fetch the complete public source at an immutable dataset revision."""
-    import shutil
-    from urllib.request import urlopen
+    from npa._public_https import download_public_https
 
     url = (
         f"https://huggingface.co/datasets/{NUREC_COLMAP_DATASET}/resolve/"
         f"{NUREC_COLMAP_REVISION}/{NUREC_COLMAP_MEMBER}"
     )
     # This dataset is public; no operator token is forwarded to the download.
-    with urlopen(url) as source, destination.open("wb") as output:
-        shutil.copyfileobj(source, output)
+    with destination.open("wb") as output:
+        download_public_https(
+            url,
+            output,
+            allowed_hosts=frozenset({"huggingface.co"}),
+            # Explicit public LFS/Xet bridge and CDN download endpoints:
+            # https://huggingface.co/docs/hub/models-downloading
+            # https://huggingface.co/blog/migrating-the-hub-to-xet
+            redirect_hosts=frozenset(
+                {
+                    "cdn-lfs.huggingface.co",
+                    "cdn-lfs-us-1.hf.co",
+                    "cdn-lfs-eu-1.hf.co",
+                    "cas-bridge.xethub.hf.co",
+                    "us.aws.cdn.hf.co",
+                    "us.gcp.cdn.hf.co",
+                }
+            ),
+        )
 
 
 def _seed_nurec_colmap_source(client: Any, *, bucket: str, prefix: str) -> None:

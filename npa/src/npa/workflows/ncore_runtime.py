@@ -21,11 +21,12 @@ import subprocess
 import sys
 import tempfile
 import urllib.parse
-import urllib.request
+
+from npa._public_https import download_public_https
 
 
 RUNTIME_LOCK = Path("/usr/share/doc/npa-ncore/runtime-lock.json")
-RUNTIME_LOCK_SHA256 = "5c5ab90a15e59dab24bfaca541ba50ba2a0cf08a8976a1f69d778169d5a2de63"
+RUNTIME_LOCK_SHA256 = "e5385557190c68c7425c96d535d6759b6a66257559d024be67f8c14a0951af7b"
 READY_MARKER = ".npa-ncore-ready.json"
 SOURCE_ROOTS = (
     "/opt/npa/src",
@@ -95,11 +96,10 @@ def cache_directory() -> Path:
 
 def download_artifact(item: dict, destination: Path) -> None:
     try:
-        with (
-            urllib.request.urlopen(item["url"]) as response,
-            destination.open("xb") as output,
-        ):
-            shutil.copyfileobj(response, output)
+        with destination.open("xb") as output:
+            download_public_https(
+                item["url"], output, allowed_hosts=frozenset({"files.pythonhosted.org"})
+            )
         if sha256(destination) != item["sha256"]:
             raise NcoreRuntimeError("NCore runtime artifact SHA256 mismatch")
     except Exception:
@@ -215,19 +215,20 @@ def verify_runtime(destination: Path) -> None:
             "--help",
         ]
     )
-    _run(
-        [
-            executable,
-            "-I",
-            "-B",
-            "-m",
-            "tools.data_converter.colmap.converter",
-            "--output-dir",
-            "/tmp/ncore-schema-unused",
-            "colmap-v4",
-            "--help",
-        ]
-    )
+    with tempfile.TemporaryDirectory(prefix="ncore-schema-") as help_output:
+        _run(
+            [
+                executable,
+                "-I",
+                "-B",
+                "-m",
+                "tools.data_converter.colmap.converter",
+                "--output-dir",
+                help_output,
+                "colmap-v4",
+                "--help",
+            ]
+        )
 
 
 def _files(root: Path) -> dict:

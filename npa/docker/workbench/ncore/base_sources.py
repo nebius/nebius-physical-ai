@@ -22,7 +22,19 @@ import shutil
 import subprocess
 import tarfile
 import tempfile
-import urllib.request
+
+try:
+    from npa._public_https import download_public_https
+except ModuleNotFoundError as error:
+    if error.name != "npa":
+        raise
+    # Docker copies the same stdlib-only helper beside this bootstrap recipe.
+    from _public_https import download_public_https
+
+
+SOURCE_DOWNLOAD_HOSTS = frozenset(
+    {"archive.ubuntu.com", "raw.githubusercontent.com", "snapshot.debian.org"}
+)
 
 
 def digest(value: bytes) -> str:
@@ -635,13 +647,10 @@ def assemble(
             if cached:
                 shutil.copyfile(cached, temporary)
             else:
-                if not item["url"].startswith("https://"):
-                    raise ValueError("source URL must use HTTPS")
-                with (
-                    urllib.request.urlopen(item["url"]) as source,
-                    temporary.open("wb") as destination,
-                ):
-                    shutil.copyfileobj(source, destination)
+                with temporary.open("wb") as destination:
+                    download_public_https(
+                        item["url"], destination, allowed_hosts=SOURCE_DOWNLOAD_HOSTS
+                    )
             expected = item.get("transformation", {}).get(
                 "input_sha256", item["sha256"]
             )

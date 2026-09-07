@@ -7,6 +7,7 @@ import importlib.util
 import io
 import json
 from pathlib import Path
+import shlex
 import subprocess
 import tarfile
 
@@ -16,6 +17,7 @@ from npa.deploy import images
 from npa.orchestration.npa_workflow.skypilot_render import (
     SkypilotRenderOptions,
     render_setup_for_tool,
+    render_task_run_script,
     resolve_task_image,
     tool_image_key,
 )
@@ -59,7 +61,18 @@ def test_conversion_has_pinned_cpu_setup_without_vendor_reinstallation() -> None
         "workbench.nurec.convert_colmap", config={}, options=SkypilotRenderOptions()
     )
     assert "/opt/venv/bin/python /opt/ncore/bin/verify-packaging.py" in setup
-    assert "/tmp/npa-python" in setup
+    # Setup must record the pinned interpreter at the path the run shell reads.
+    # Read the actual writer/consumer contract instead of assuming a temp path.
+    writes = [
+        argv
+        for line in setup.splitlines()
+        if (argv := shlex.split(line))[:3] == ["printf", "%s", "/opt/venv/bin/python"]
+    ]
+    assert len(writes) == 1
+    assert len(writes[0]) == 5 and writes[0][3] == ">"
+    interpreter_record = writes[0][4]
+    run = render_task_run_script(["npa", "--version"])
+    assert f'npa_python="$(cat {interpreter_record})"' in run
     for floating_install in (
         "pip install",
         "nvidia-ncore",
@@ -212,9 +225,10 @@ def test_reader_sentinel_keeps_unsigned_max_on_numpy2(tmp_path: Path) -> None:
         "import numpy as np\nclass SceneManager:\n    INVALID_POINT3D = np.uint64(-1)\n"
     )
     _stager().patch_numpy_sentinel(source)
-    namespace = {}
-    exec(compile(source.read_text(), str(source), "exec"), namespace)
-    assert namespace["SceneManager"].INVALID_POINT3D == np.iinfo(np.uint64).max
+    spec = importlib.util.spec_from_file_location("patched_scene_manager", source)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert module.SceneManager.INVALID_POINT3D == np.iinfo(np.uint64).max
     assert "np.uint64(-1)" not in source.read_text()
     with pytest.raises(ValueError, match="sentinel source changed"):
         _stager().patch_numpy_sentinel(source)

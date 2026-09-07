@@ -268,11 +268,84 @@ def test_converter_failure_is_private(monkeypatch, tmp_path):
     assert not storage.uploads
 
 
+@pytest.mark.parametrize("field", ["cache_dir", "scratch_dir"])
+def test_unsafe_staging_fails_before_download_or_conversion(monkeypatch, tmp_path, field):
+    storage, events = fake_conversion(monkeypatch, tmp_path)
+    outside = tmp_path / "private-name"
+    outside.mkdir(mode=0o700)
+    (outside / "keep").write_bytes(b"unchanged")
+    link = tmp_path / "unsafe"
+    link.symlink_to(outside, target_is_directory=True)
+
+    def unexpected_download(*args, **kwargs):
+        pytest.fail("download must not start with unsafe staging")
+
+    monkeypatch.setattr(storage, "download_directory", unexpected_download)
+    options = {"cache_dir": tmp_path / "cache", "scratch_dir": tmp_path / "scratch"}
+    options[field] = link
+    request = colmap.ColmapConversionRequest(
+        input_path="s3://test-bucket/input/",
+        output_path="s3://test-bucket/output/",
+        **options,
+    )
+    with pytest.raises(colmap.NcoreConversionError, match="during staging") as error:
+        colmap.convert_colmap(request, storage_client=storage)
+    assert "private-name" not in str(error.value)
+    assert not events and not storage.uploads
+    assert list(outside.iterdir()) == [outside / "keep"]
+    assert (outside / "keep").read_bytes() == b"unchanged"
+    if field == "scratch_dir":
+        assert not list(options["cache_dir"].iterdir())
+
+
+def test_default_staging_conversion_uses_fresh_private_children(monkeypatch, tmp_path):
+    from npa.workbench import ncore_staging as staging
+
+    storage, events = fake_conversion(monkeypatch, tmp_path)
+    defaults = {
+        staging.DEFAULT_COLMAP_CACHE_DIR: tmp_path / "home" / "cache",
+        staging.DEFAULT_COLMAP_SCRATCH_DIR: tmp_path / "home" / "scratch",
+    }
+    original_expanduser = Path.expanduser
+    monkeypatch.setattr(
+        Path,
+        "expanduser",
+        lambda path: defaults[path] if path in defaults else original_expanduser(path),
+    )
+    original_download = storage.download_directory
+    downloaded = []
+
+    def download(uri, destination):
+        parent = Path(destination).parent
+        assert parent.parent == defaults[staging.DEFAULT_COLMAP_CACHE_DIR]
+        assert stat.S_IMODE(parent.stat().st_mode) == 0o700
+        downloaded.append(parent)
+        original_download(uri, destination)
+
+    monkeypatch.setattr(storage, "download_directory", download)
+    for generation in ("first", "second"):
+        result = colmap.convert_colmap(
+            colmap.ColmapConversionRequest(
+                input_path="s3://test-bucket/input/",
+                output_path=f"s3://test-bucket/{generation}/",
+                rig_mode="preserve",
+                include_downsampled_images=False,
+            ),
+            storage_client=storage,
+        )
+        assert result["status"] == "ok"
+        for parent in defaults.values():
+            assert stat.S_IMODE(parent.stat().st_mode) == 0o700
+            assert not list(parent.iterdir())
+    assert events == ["converter", "validated", "converter", "validated"]
+    assert len(set(downloaded)) == 2
+
+
 @pytest.mark.parametrize(
     "field,value",
     [
-        ("input_path", "/tmp/local"),
-        ("output_path", "file:///tmp/out"),
+        ("input_path", "/local/input"),
+        ("output_path", "file:///local/out"),
         ("dataset_root", "../escape"),
         ("colmap_dir", "/etc"),
         ("images_dir", "s3://foreign"),

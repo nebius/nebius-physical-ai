@@ -13,14 +13,18 @@ from pathlib import Path
 from typing import Any, Literal
 
 from npa._sdk import make_cli_wrapper
+from npa.workbench.ncore_staging import (
+    DEFAULT_COLMAP_CACHE_DIR,
+    DEFAULT_COLMAP_SCRATCH_DIR,
+)
 
 
 def convert_colmap(
     input_path: str,
     output_path: str,
     *,
-    cache_dir: Path | str = "/tmp/npa-ncore-cache",
-    scratch_dir: Path | str = "/tmp/npa-ncore-scratch",
+    cache_dir: Path | str = DEFAULT_COLMAP_CACHE_DIR,
+    scratch_dir: Path | str = DEFAULT_COLMAP_SCRATCH_DIR,
     dataset_root: str = ".",
     colmap_dir: str = "sparse/0",
     images_dir: str = "images",

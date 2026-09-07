@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
@@ -141,3 +142,56 @@ def test_toolref_is_real_configurable_cli_without_nre_gate():
     assert "{{config.ncore_sequence_uri}}" in entry.argv_template
     assert "{{config.rig_mode}}" in entry.argv_template
     assert not entry.access_capabilities
+
+
+@pytest.mark.parametrize("override", [False, True])
+def test_model_cli_sdk_and_rendered_workflow_agree_on_staging(
+    monkeypatch, tmp_path, override
+):
+    from npa.orchestration.npa_workflow.interpreter import build_plan
+    from npa.orchestration.npa_workflow.spec import load_spec
+    from npa.sdk.workbench.nurec import convert_colmap
+
+    seen = []
+    monkeypatch.setattr(
+        colmap,
+        "convert_colmap",
+        lambda request: seen.append(request) or {"status": "ok"},
+    )
+    paths = (
+        {
+            "cache_dir": tmp_path / "custom cache",
+            "scratch_dir": tmp_path / "custom scratch",
+        }
+        if override
+        else {}
+    )
+    inputs = {
+        "input_path": "s3://test-bucket/input/",
+        "output_path": "s3://test-bucket/output/",
+    }
+    model = colmap.ColmapConversionRequest(**inputs, **paths)
+    convert_colmap(**inputs, **paths)
+    cli = ["workbench", "nurec", "convert-colmap"]
+    for name, value in {**inputs, **paths}.items():
+        cli.extend(["--" + name.replace("_", "-"), str(value)])
+    result = CliRunner().invoke(app, cli + ["--output-format", "json"])
+    assert result.exit_code == 0, result.output
+
+    # Remove shipped overrides to also exercise the toolRef's own defaults.
+    spec = load_spec(
+        Path(__file__).resolve().parents[3]
+        / "workflows/testing/nurec-colmap-reconstruct.yaml"
+    )
+    for name in ("cache_dir", "scratch_dir"):
+        spec.config.pop(name)
+    spec.config.update({name: str(value) for name, value in paths.items()})
+    convert = build_plan(spec, run_id="staging-contract").steps[0]
+    result = CliRunner().invoke(app, convert.argv[1:])
+    assert result.exit_code == 0, result.output
+    assert len(seen) == 3
+    for request in seen:
+        assert request.cache_dir == model.cache_dir
+        assert request.scratch_dir == model.scratch_dir
+    if not override:
+        assert model.cache_dir.parts[0] == model.scratch_dir.parts[0] == "~"

@@ -46,8 +46,10 @@ config:
   render_image_scale: "0.5"
   renderer: "default"
 
-  cache_dir: "/tmp/npa-nurec-cache"
-  scratch_dir: "/tmp/npa-ncore-scratch"
+  # Expanded by the executing CLI, never by the workflow renderer. Conversion
+  # creates private mode-0700 parents and fresh disposable children per run.
+  cache_dir: "~/.cache/npa/ncore/colmap/cache"
+  scratch_dir: "~/.cache/npa/ncore/colmap/scratch"
   out_dir: "/tmp/npa-nurec-out"
   render_dir: "/tmp/npa-nurec-out/novel_views"
 
