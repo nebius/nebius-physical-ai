@@ -6,15 +6,55 @@ import copy
 import re
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from npa.clients.storage import StorageClient
-from npa.workbench.storage_scope import StorageAuthorizationError, StorageScope
+from npa.workbench.storage_scope import (
+    AuthorizedUri,
+    StorageAuthorizationError,
+    StorageScope,
+    authorize_uri,
+)
 
 _INPUT_FIELDS = {
     ("vision_path",), ("sound_path",), ("action_path",), ("prompt_path",),
     ("negative_prompt_file",),
     *((kind, "control_path") for kind in ("edge", "blur", "depth", "seg", "wsm")),
 }
+
+
+def _download_uri(target: AuthorizedUri) -> str:
+    """Refuse decoded keys that the storage URI parser would reinterpret."""
+    uri = f"s3://{target.bucket}/{target.key}"
+    parsed = urlparse(uri)
+    if (
+        parsed.netloc != target.bucket
+        or parsed.path.lstrip("/") != target.key
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise StorageAuthorizationError("conditioning S3 key cannot be downloaded exactly")
+    return uri
+
+
+def validate_sample_s3_keys(raw: dict[str, Any]) -> None:
+    """Check the shared staging key contract before a client submits inference.
+
+    Args:
+        raw: Native sample overrides whose supported conditioning fields are checked.
+
+    Returns:
+        None.
+
+    Raises:
+        StorageAuthorizationError: An S3 URI cannot identify its exact download key.
+    """
+    for field in _INPUT_FIELDS:
+        value: Any = raw
+        for part in field:
+            value = value.get(part) if isinstance(value, dict) else None
+        if isinstance(value, str) and value.startswith("s3://"):
+            _download_uri(authorize_uri(value, operation="read"))
 
 
 def stage_sample_inputs(
@@ -27,6 +67,19 @@ def stage_sample_inputs(
     stage media into the service's allowed S3 roots; only those exact objects
     are downloaded into a fresh request directory. Defaults files are refused
     because upstream merges their contents into the sample after validation.
+
+    Args:
+        raw: Native sample overrides containing conditioning inputs.
+        destination: New private directory for authorized downloads.
+        scope: Explicit S3 roots the service permits reading.
+        storage_client: Optional storage transport; defaults to configured storage.
+
+    Returns:
+        A copied sample with authorized inputs replaced by staged local paths.
+
+    Raises:
+        StorageAuthorizationError: A sample requests an unsupported or unowned input.
+        OSError: The private destination cannot be created or written.
     """
     staged = copy.deepcopy(raw)
     inputs: list[tuple[dict[str, Any], str, Any]] = []
@@ -43,6 +96,7 @@ def stage_sample_inputs(
                     target = scope.authorize(child, operation="read")
                     if not target.key or child.endswith("/"):
                         raise StorageAuthorizationError("sample inputs must identify a single S3 object")
+                    _download_uri(target)
                     inputs.append((value, key, target))
                 elif key.endswith(("_path", "_file", "_dir", "_url")) and child is not None:
                     raise StorageAuthorizationError("unsupported sample file input")
@@ -62,6 +116,6 @@ def stage_sample_inputs(
         if not re.fullmatch(r"\.[A-Za-z0-9]{1,16}", suffix):
             suffix = ".bin"
         local = destination / f"{ordinal}{suffix}"
-        client.download_file(f"s3://{target.bucket}/{target.key}", str(local))
+        client.download_file(_download_uri(target), str(local))
         container[key] = str(local)
     return staged

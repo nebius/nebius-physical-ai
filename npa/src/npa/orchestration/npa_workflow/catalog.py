@@ -2856,7 +2856,7 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
     ),
     "workbench.cosmos3.ray_batch": ToolEntry(
         name="workbench.cosmos3.ray_batch",
-        access_capabilities=("cosmos3-serving",),
+        access_capabilities=("cosmos3",),
         description=(
             "Submit a durable SDG batch to a persistent Cosmos Framework native "
             "Ray Serve endpoint and publish inputs, structured outputs, media, "
