@@ -1,4 +1,3 @@
-# Prove immutable archive and verified restore against explicitly selected real S3 storage.
 """Manual CPU live test using completed public/synthetic native CLIP result trees.
 
 The operator preflights the exact workload bucket and supplies an owner-private
@@ -73,7 +72,67 @@ def _cleanup_created(storage):
         raise RuntimeError("Owned object cleanup incomplete; reconcile the private ledger")
 
 
+def _refuse_conflicting_tree(module, storage, source, prefix, conflict):
+    # A different complete tree must conflict at the same immutable prefix.
+    shutil.copytree(source, conflict)
+    report = conflict / "report.json"
+    value = json.loads(report.read_text())
+    value["archive_conflict_probe"] = True
+    _write(report, value)
+    files = {str(p.relative_to(conflict)): hashlib.sha256(p.read_bytes()).hexdigest()
+             for p in conflict.rglob("*") if p.is_file() and p.name not in {"SHA256SUMS", "sha256.json"}}
+    if (conflict / "sha256.json").exists():
+        _write(conflict / "sha256.json", files)
+        files["sha256.json"] = hashlib.sha256((conflict / "sha256.json").read_bytes()).hexdigest()
+    (conflict / "SHA256SUMS").write_text("".join(f"{v}  {k}\n" for k, v in sorted(files.items())))
+    with pytest.raises(ValueError, match="conflicting"):
+        module.archive(conflict, prefix, storage)
+
+
+def _refuse_corrupt_payload(module, storage, client, source, prefix, receipt, evidence, index):
+    # Deliberately corrupt only a proven test-owned object, with its current ETag.
+    uri = prefix + "/files/preview.png"
+    assert storage.owned[uri]["created"]
+    _, token = client.read_bytes_with_etag(uri)
+    client.put_bytes_conditional(b"deliberate test corruption", uri, if_match=token)
+    failed = evidence / f"corrupt-{index}"
+    with pytest.raises(ValueError, match="corrupt"):
+        module.restore(prefix, failed, receipt["manifest_sha256"], storage)
+    assert not failed.exists() and not list(evidence.glob(".clip-restore-*"))
+    with pytest.raises(ValueError, match="conflicting"):
+        module.archive(source, prefix, storage)
+
+
+def _exercise_source(module, storage, client, source_path, evidence, config, index):
+    source = Path(source_path)
+    original = {str(p.relative_to(source)): hashlib.sha256(p.read_bytes()).hexdigest()
+                for p in source.rglob("*") if p.is_file()}
+    prefix = config["archive_prefix"].rstrip("/") + "/" + uuid.uuid4().hex
+    receipt = module.archive(source, prefix, storage)
+    assert module.archive(source, prefix, storage) == receipt
+    for repetition in range(2):
+        restored = evidence / f"restored-{index}-{repetition}"
+        assert module.restore(prefix, restored, receipt["manifest_sha256"], storage) == receipt
+        observed = {str(p.relative_to(restored)): hashlib.sha256(p.read_bytes()).hexdigest()
+                    for p in restored.rglob("*") if p.is_file()}
+        assert observed == original
+    _refuse_conflicting_tree(module, storage, source, prefix, evidence / f"conflict-{index}")
+    _refuse_corrupt_payload(module, storage, client, source, prefix, receipt, evidence, index)
+    return {**receipt, "identical_retry": True, "verified_restores": 2,
+            "conflict_refused": True, "corruption_refused": True}
+
+
 def test_actual_s3_archive_restore_and_corruption(monkeypatch):
+    """Exercise immutable publication and verified restore using owned real storage.
+
+    Args:
+        monkeypatch: Pytest fixture for the companion module search path.
+    Returns:
+        None.
+    Raises:
+        AssertionError: A capability assertion fails.
+        Exception: Source, storage or cleanup operations fail.
+    """
     if not (config_path := os.environ.get("NPA_RAY_CLIP_ARCHIVE_LIVE_CONFIG")):
         pytest.skip("requires private source provenance and preflighted owned workload storage")
     path = Path(config_path)
@@ -92,46 +151,7 @@ def test_actual_s3_archive_restore_and_corruption(monkeypatch):
     receipts = []
     try:
         for index, source_path in enumerate(config["source_paths"]):
-            source = Path(source_path)
-            original = {str(p.relative_to(source)): hashlib.sha256(p.read_bytes()).hexdigest()
-                        for p in source.rglob("*") if p.is_file()}
-            prefix = config["archive_prefix"].rstrip("/") + "/" + uuid.uuid4().hex
-            receipt = module.archive(source, prefix, storage)
-            assert module.archive(source, prefix, storage) == receipt
-            for repetition in range(2):
-                restored = evidence / f"restored-{index}-{repetition}"
-                assert module.restore(prefix, restored, receipt["manifest_sha256"], storage) == receipt
-                observed = {str(p.relative_to(restored)): hashlib.sha256(p.read_bytes()).hexdigest()
-                            for p in restored.rglob("*") if p.is_file()}
-                assert observed == original
-            # A different complete tree must conflict at the same immutable prefix.
-            conflict = evidence / f"conflict-{index}"
-            shutil.copytree(source, conflict)
-            report = conflict / "report.json"
-            value = json.loads(report.read_text())
-            value["archive_conflict_probe"] = True
-            _write(report, value)
-            files = {str(p.relative_to(conflict)): hashlib.sha256(p.read_bytes()).hexdigest()
-                     for p in conflict.rglob("*") if p.is_file() and p.name not in {"SHA256SUMS", "sha256.json"}}
-            if (conflict / "sha256.json").exists():
-                _write(conflict / "sha256.json", files)
-                files["sha256.json"] = hashlib.sha256((conflict / "sha256.json").read_bytes()).hexdigest()
-            (conflict / "SHA256SUMS").write_text("".join(f"{v}  {k}\n" for k, v in sorted(files.items())))
-            with pytest.raises(ValueError, match="conflicting"):
-                module.archive(conflict, prefix, storage)
-            # Deliberately corrupt only a proven test-owned object, with its current ETag.
-            uri = prefix + "/files/preview.png"
-            assert storage.owned[uri]["created"]
-            _, token = client.read_bytes_with_etag(uri)
-            client.put_bytes_conditional(b"deliberate test corruption", uri, if_match=token)
-            failed = evidence / f"corrupt-{index}"
-            with pytest.raises(ValueError, match="corrupt"):
-                module.restore(prefix, failed, receipt["manifest_sha256"], storage)
-            assert not failed.exists() and not list(evidence.glob(".clip-restore-*"))
-            with pytest.raises(ValueError, match="conflicting"):
-                module.archive(source, prefix, storage)
-            receipts.append({**receipt, "identical_retry": True, "verified_restores": 2,
-                             "conflict_refused": True, "corruption_refused": True})
+            receipts.append(_exercise_source(module, storage, client, source_path, evidence, config, index))
         _write(evidence / "result.json", {"receipts": receipts})
     finally:
         try:

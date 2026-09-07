@@ -1,4 +1,3 @@
-# Validate completed native CLIP result bytes without importing the GPU application.
 """Local format checks shared by CLIP archive and verified restore."""
 
 from __future__ import annotations
@@ -11,17 +10,42 @@ import re
 
 
 def digest(content: bytes) -> str:
-    """Return the SHA-256 identity of exact bytes."""
+    """Return the SHA-256 identity of exact bytes.
+
+    Args:
+        content: Bytes whose identity is needed.
+    Returns:
+        Lowercase hexadecimal SHA-256 digest.
+    Raises:
+        None.
+    """
     return hashlib.sha256(content).hexdigest()
 
 
 def canonical(value: object) -> bytes:
-    """Encode deterministic, finite JSON metadata."""
+    """Encode deterministic, finite JSON metadata.
+
+    Args:
+        value: JSON-compatible metadata.
+    Returns:
+        Canonical UTF-8 JSON bytes.
+    Raises:
+        TypeError: An object is not JSON-compatible.
+        ValueError: A value is nonfinite or contains a circular reference.
+    """
     return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
 
 
 def safe_name(name: str) -> str:
-    """Reject ambiguous, nonportable or escaping relative file names."""
+    """Reject ambiguous, nonportable or escaping relative file names.
+
+    Args:
+        name: Relative POSIX file name.
+    Returns:
+        The validated unchanged name.
+    Raises:
+        ValueError: The name is unsafe or ambiguous.
+    """
     if (not isinstance(name, str) or not name or any(char in name for char in "\\?#")
             or any(ord(char) < 32 or ord(char) == 127 for char in name)
             or PurePosixPath(name).is_absolute()
@@ -32,7 +56,15 @@ def safe_name(name: str) -> str:
 
 
 def require_digest(value: str) -> str:
-    """Require one canonical SHA-256 digest."""
+    """Require one canonical SHA-256 digest.
+
+    Args:
+        value: Digest to validate.
+    Returns:
+        The validated unchanged digest.
+    Raises:
+        ValueError: The value is not a lowercase SHA-256 digest.
+    """
     if not isinstance(value, str) or re.fullmatch("[0-9a-f]{64}", value) is None:
         raise ValueError("Invalid SHA-256 digest")
     return value
@@ -48,7 +80,16 @@ def _unique_pairs(pairs):
 
 
 def read_json(content: bytes):
-    """Decode JSON without silently accepting duplicate names or nonfinite data."""
+    """Decode JSON without silently accepting duplicate names or nonfinite data.
+
+    Args:
+        content: Encoded JSON document.
+    Returns:
+        The decoded JSON value.
+    Raises:
+        ValueError: JSON is invalid, contains duplicate names or nonfinite values.
+        UnicodeDecodeError: Input encoding is invalid.
+    """
     def invalid_constant(_value):
         raise ValueError("Nonfinite JSON value")
 
@@ -107,6 +148,18 @@ def _table(root, report):
     return table
 
 
+def _paste_preview(path, suffix, contact, position):
+    from PIL import Image
+
+    with Image.open(path) as image:
+        image.load()
+        if image.mode != "RGB":
+            raise ValueError("Preview input is not RGB")
+        if image.size != ((256, 256) if suffix == "original" else (224, 224)):
+            raise ValueError("Preview input dimensions differ")
+        contact.paste(image.resize((224, 224)), position)
+
+
 def _lance_and_previews(root, table, files):
     import lancedb
     from PIL import Image
@@ -128,13 +181,7 @@ def _lance_and_previews(root, table, files):
             expected_images.add(name)
             if files[name]["sha256"] != row[field]:
                 raise ValueError("Preview input bytes differ from embedded images")
-            with Image.open(root / name) as image:
-                image.load()
-                if image.mode != "RGB":
-                    raise ValueError("Preview input is not RGB")
-                if image.size != ((256, 256) if suffix == "original" else (224, 224)):
-                    raise ValueError("Preview input dimensions differ")
-                contact.paste(image.resize((224, 224)), (224 * column, 224 * index))
+            _paste_preview(root / name, suffix, contact, (224 * column, 224 * index))
     if {name for name in files if name.startswith("images/")} != expected_images:
         raise ValueError("Preview inventory differs")
     with Image.open(root / "preview.png") as image:
@@ -174,10 +221,7 @@ def _provenance(root, report, files, advanced):
             raise ValueError("Basic actor inventory differs")
 
 
-def _advanced(root, report, table, files):
-    import pyarrow as pa
-    import pyarrow.parquet as pq
-
+def _validate_advanced_completion(root, report):
     fingerprint = require_digest(report["execution_fingerprint"])
     if read_json((root / "execution.json").read_bytes()) != {"execution_fingerprint": fingerprint}:
         raise ValueError("Execution identity differs")
@@ -188,6 +232,14 @@ def _advanced(root, report, table, files):
             or cleanup["errors"] != [] or cleanup["attempted"] != actors
             or len(report["model_initializations"]) != actors + int(report["recovery"] is not None)):
         raise ValueError("Advanced result has no successful actor cleanup")
+    return fingerprint
+
+
+def _advanced(root, report, table, files):
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    fingerprint = _validate_advanced_completion(root, report)
     count, size = report["records"], report["batch_size"]
     if type(size) is not int or size < 1:
         raise ValueError("Invalid shard size")

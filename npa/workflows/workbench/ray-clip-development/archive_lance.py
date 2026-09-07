@@ -1,4 +1,3 @@
-# Inspect local metadata before Lance can follow any storage references.
 """Restricted Lance 4.0.0 profile written by the completed CLIP recipe.
 
 Field numbers and framing follow the versioned upstream format specifications:
@@ -111,21 +110,7 @@ def _initial_transaction_fragments(entries, committed):
         _require(pending == assigned)
 
 
-def validate_local_lance(root, files, rows):
-    """Require the recipe's single-version local table before invoking Lance.
-
-    Args:
-        root: Frozen private result tree.
-        files: Complete regular-file inventory with exact byte sizes.
-        rows: Number of independently validated Parquet records.
-    """
-    prefix = "lance/embeddings.lance/"
-    names = {name for name in files if name.startswith("lance/")}
-    manifests = {name for name in names if name.startswith(prefix + "_versions/")}
-    _require(len(manifests) == 1)
-    manifest_name = next(iter(manifests))
-    _require(manifest_name in {prefix + "_versions/1.manifest",
-                              prefix + "_versions/18446744073709551614.manifest"})
+def _read_manifest(root, manifest_name):
     content = (root / manifest_name).read_bytes()
     _require(len(content) >= 20)
     offset, major, minor, magic = struct.unpack("<QHH4s", content[-16:])
@@ -145,8 +130,10 @@ def validate_local_lance(root, files, rows):
     except ValueError as error:
         raise ValueError("Lance and Parquet schemas differ") from error
     _config(manifest.get(16, []))
-    paths, maximum = _fragments(manifest.get(2, []), files, prefix, rows)
-    _require(_one(manifest, 11) == maximum)
+    return content, offset, manifest
+
+
+def _validate_data_versions(root, files, paths):
     for path in paths:
         _require(files[path]["size"] >= 8)
         with (root / path).open("rb") as data:
@@ -154,6 +141,33 @@ def validate_local_lance(root, files, rows):
             major, minor, magic = struct.unpack("<HH4s", data.read())
             # Lance 4.0.0 reader.rs maps both physical versions to logical V2_0.
             _require(magic == b"LANC" and (major, minor) in {(0, 3), (2, 0)})
+
+
+
+def validate_local_lance(root, files, rows):
+    """Require the recipe's single-version local table before invoking Lance.
+
+    Args:
+        root: Frozen private result tree.
+        files: Complete regular-file inventory with exact byte sizes.
+        rows: Number of independently validated Parquet records.
+    Returns:
+        None.
+    Raises:
+        ValueError: Metadata is unsupported or refers outside the completed table.
+        OSError: A required local file cannot be read.
+    """
+    prefix = "lance/embeddings.lance/"
+    names = {name for name in files if name.startswith("lance/")}
+    manifests = {name for name in names if name.startswith(prefix + "_versions/")}
+    _require(len(manifests) == 1)
+    manifest_name = next(iter(manifests))
+    _require(manifest_name in {prefix + "_versions/1.manifest",
+                              prefix + "_versions/18446744073709551614.manifest"})
+    content, offset, manifest = _read_manifest(root, manifest_name)
+    paths, maximum = _fragments(manifest.get(2, []), files, prefix, rows)
+    _require(_one(manifest, 11) == maximum)
+    _validate_data_versions(root, files, paths)
 
     transaction_name = _one(manifest, 12, b"")
     _require(re.fullmatch(rb"0-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\.txn", transaction_name) is not None)
