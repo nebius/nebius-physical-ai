@@ -91,6 +91,8 @@ RUN python /opt/ncore/base-sources/recipes/base_sources.py assemble-root \
     && mkdir -p /public-root/opt \
     && cp -a /opt/ncore /opt/npa /opt/venv /public-root/opt/ \
     && cp -a /usr/share/doc/npa-ncore /public-root/usr/share/doc/npa-ncore \
+    && printf '%s\n' '/usr/local/lib' >/public-root/etc/ld.so.conf \
+    && ldconfig -r /public-root \
     && cp -a /dev/null /dev/urandom /public-root/dev/ \
     && (trap 'if test -s /public-root/run/sshd.pid; then kill "$(cat /public-root/run/sshd.pid)" 2>/dev/null || true; fi' EXIT; \
         chroot --userspec=1000:1000 /public-root /bin/bash -ec 'sudo -n ssh-keygen -A; sudo -n /usr/sbin/sshd -t; sudo -n service ssh restart; test -s /run/sshd.pid; sudo -n kill -0 "$(cat /run/sshd.pid)"; sudo -n service ssh stop; rsync --version >/dev/null; test -w /tmp; test -w "$HOME"; /opt/venv/bin/python /opt/ncore/bin/verify-packaging.py --image-only') \

@@ -9,6 +9,15 @@ import subprocess
 ROOT = Path(__file__).resolve().parents[3]
 
 
+def test_scratch_root_registers_retained_cpython_shared_library():
+    dockerfile = (ROOT / "npa/docker/workbench/ncore/Dockerfile").read_text()
+    configure = dockerfile.index("/public-root/etc/ld.so.conf")
+    refresh = dockerfile.index("ldconfig -r /public-root")
+    probe = dockerfile.index("chroot --userspec=1000:1000")
+    assert configure < refresh < probe
+    assert "'/usr/local/lib'" in dockerfile[configure - 80:configure]
+
+
 def test_oci_export_preserves_attestations_without_pushing(tmp_path):
     tools = tmp_path / "bin"
     tools.mkdir()
