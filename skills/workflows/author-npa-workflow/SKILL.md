@@ -72,6 +72,18 @@ intended input, perform the requested operation, and produce the stated output?
 Valid syntax alone cannot establish this. Report a mismatch as incomplete work,
 not success, even when validation and planning commands pass.
 
+Preserve failures in authoring and validation commands as well as workflow steps.
+Run checks separately, or stop the command group at the first failure and return
+that exit code. A later successful command must not hide an earlier failure.
+If a search tool is unavailable, report its failure before using an available
+alternative in a separate command.
+
+Check input content with the consuming tool's local reader when available, not
+just file existence or YAML validation. For a step that creates its own input,
+check the generated format and prompt content without executing inference.
+Keep an unchecked input unverified in the readiness record; do not claim task
+fidelity from the workflow hash or planned command alone.
+
 When saving a workflow, read [the readiness template](references/readiness-record.md)
 and save `<workflow-stem>.readiness.json` beside it, within the authorized write
 scope. Bind the record to the final workflow bytes. Record planning results and

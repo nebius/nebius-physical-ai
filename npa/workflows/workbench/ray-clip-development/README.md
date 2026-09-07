@@ -71,6 +71,12 @@ shards continue normally. `recovery.json` reports a new actor instance, model
 reload and zero inference calls for the reused checkpoint. This is explicit
 application checkpointing; Ray does not promise exactly-once external writes.
 
+For an interrupted driver Job, see [resume a partial checkpoint tree](../../../../docs/testing/ray-clip-checkpoint-resume.md).
+The manual live gate requires `NPA_RAY_CLIP_CHECKPOINT_LIVE_CONFIG` to name an
+owner-only JSON configuration for a preflighted native Ray Jobs cluster, as
+described in that guide. Without this variable the live gate is skipped.
+It covers validated reuse of later shards and current versus retained timings.
+
 Change the visible line to `CROP_POLICY = "right"` and rerun:
 
 ```bash

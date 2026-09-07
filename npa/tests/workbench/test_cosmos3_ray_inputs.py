@@ -84,3 +84,49 @@ def test_existing_input_directory_cannot_redirect_staging(tmp_path):
             storage_client=object(),
             scope=StorageScope.from_config(s3_roots=["s3://test-bucket/media"]),
         )
+
+
+@pytest.mark.parametrize("encoded", ["%3F", "%23", "%09", "%0D", "%0A"])
+def test_reinterpreted_decoded_key_is_rejected_before_any_download(tmp_path, encoded):
+    from unittest.mock import Mock
+
+    from npa.clients.storage import StorageClient
+
+    storage = object.__new__(StorageClient)
+    storage._s3 = Mock()
+    with pytest.raises(StorageAuthorizationError, match="downloaded exactly"):
+        stage_sample_inputs(
+            {"vision_path": "s3://test-bucket/media/good.png",
+             "edge": {"control_path": f"s3://test-bucket/media/input{encoded}variant.png"}},
+            tmp_path / "input", storage_client=storage,
+            scope=StorageScope.from_config(s3_roots=["s3://test-bucket/media"]),
+        )
+    storage._s3.get_object.assert_not_called()
+    assert not (tmp_path / "input").exists()
+
+
+@pytest.mark.parametrize(("encoded", "expected"), [
+    ("input%2Epng", "input.png"),
+    ("input.%70ng", "input.png"),
+    ("input%20variant.png", "input variant.png"),
+])
+def test_authorized_key_reaches_real_storage_parser_unchanged(tmp_path, encoded, expected):
+    import io
+    from unittest.mock import Mock
+
+    from botocore.response import StreamingBody
+
+    from npa.clients.storage import StorageClient
+
+    data = b"exact conditioning object"
+    storage = object.__new__(StorageClient)
+    storage._s3 = Mock()
+    storage._s3.get_object.return_value = {"Body": StreamingBody(io.BytesIO(data), len(data))}
+    sample = {"vision_path": f"s3://test-bucket/media/{encoded}"}
+    result = stage_sample_inputs(
+        sample, tmp_path / "input", storage_client=storage,
+        scope=StorageScope.from_config(s3_roots=["s3://test-bucket/media"]),
+    )
+    storage._s3.get_object.assert_called_once_with(Bucket="test-bucket", Key=f"media/{expected}")
+    assert Path(result["vision_path"]).read_bytes() == data
+    assert sample["vision_path"].endswith(encoded)

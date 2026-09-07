@@ -19,6 +19,9 @@ MANUAL_GATES = {
     "NPA_RAY_CLIP_ARCHIVE_LIVE_CONFIG": (
         "completed public CLIP result provenance and exact owned workload storage require private operator selection"
     ),
+    "NPA_RAY_CLIP_CHECKPOINT_LIVE_CONFIG": (
+        "native Ray Jobs stop/resume requires two preflighted owned GPUs and private SSH/evidence configuration"
+    ),
     "NPA_VM_SECURITY_LIVE": (
         "mutates credentials and services on an operator-selected dedicated VM or UID-verified isolated CPU Pod"
     ),

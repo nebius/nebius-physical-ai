@@ -47,11 +47,14 @@ def _benchmark_module():
         )
     for filename, expected in DATASET_FILES.values():
         path = dataset / "robometrics/content/dataset" / filename
+        digest = hashlib.sha256()
         with path.open("rb") as stream:
-            if hashlib.file_digest(stream, "sha256").hexdigest() != expected:
-                raise CuroboError(
-                    "benchmark YAML bytes do not match the pinned inventory"
-                )
+            while chunk := stream.read(1024 * 1024):
+                digest.update(chunk)
+        if digest.hexdigest() != expected:
+            raise CuroboError(
+                "benchmark YAML bytes do not match the pinned inventory"
+            )
     _activate_dataset_imports(dataset)
     spec = importlib.util.spec_from_file_location(
         "npa_curobo_upstream_benchmark", source / "benchmark/motion_plan_benchmark.py"
