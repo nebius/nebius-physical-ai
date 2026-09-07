@@ -96,7 +96,7 @@ private JSON config through `NPA_RAY_CLIP_CHECKPOINT_LIVE_CONFIG`:
 - `evidence_dir`: owner-only local directory outside the checkout.
 
 ```bash
-npa/.venv/bin/python -m pytest \
+NPA_INTEGRATION_E2E=1 npa/.venv/bin/python -m pytest \
   npa/tests/e2e/test_ray_clip_checkpoint_live.py -q
 ```
 
