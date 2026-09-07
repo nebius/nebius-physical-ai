@@ -202,18 +202,34 @@ and checks that sound remains disabled; CLI parsing alone is insufficient.
    enabling a guardrail-dependent route.
 2. Provision the NPA mk8s cluster and shared filesystem. Install KubeRay operator
    **1.7.0** with its namespace watch restricted to `workbench`. Resolve all
-   manifest placeholders from owner-only configuration.
+   manifest placeholders from owner-only configuration. Keep the operator's
+   standard namespace-scoped Secret permissions: `rayClusterConfig.authOptions`
+   enables token authentication, and KubeRay creates a separate management Secret,
+   injects it into the head and workers, and authenticates its dashboard requests.
+   Do not override `RAY_AUTH_*` in the pod templates or reuse the inference token.
 3. Apply [shared-pvc.yaml](shared-pvc.yaml) after NPA installs its shared-filesystem
    CSI driver. Create the API token Secret and operator-private registry pull
    Secret, then run the weight staging
    Job to completion. Run the RayService only after the immutable cache is ready.
 4. Require all 16 model replicas to be healthy, confirm B200 placement, and
-   verify the API rejects unauthenticated requests. Expose access through an
+   verify both the API and Ray dashboard reject unauthenticated requests. Expose access through an
    authenticated private route or a local port-forward.
 5. Set `NPA_COSMOS3_VIDEO_ENDPOINT`, `NPA_COSMOS3_VIDEO_TOKEN` and
    `NPA_COSMOS3_VIDEO_RECOVERY_DIR` outside Git. Configure the normal NPA S3
    endpoint and credentials in the client process. Use distinct artifact
    prefixes for each batch, separate from any agent trajectory dataset.
+
+Ray management credentials grant code execution and are for administrators only.
+KubeRay's [token authentication integration](https://docs.ray.io/en/latest/cluster/kubernetes/user-guides/kuberay-auth.html)
+uses its existing namespace-scoped RBAC; inference clients need only the separate
+API token. Management authentication does not encrypt cluster traffic. Keep Ray
+ports on the trusted private cluster network and use an authenticated encrypted
+administrative tunnel when accessing the dashboard remotely. The application
+builder refuses a cluster without explicit token authentication. For standalone
+containers, the default `--serve` launcher creates a fresh owner-only management
+credential before starting local Ray, disables the dashboard and removes the
+credential on shutdown. Docker health checks use the authenticated inference
+endpoint and do not need access to the management credential.
 
 The payload preflight reads one byte from a diffusion shard at the exact model
 revision. It uses no Hugging Face token and does not stage the checkpoint:

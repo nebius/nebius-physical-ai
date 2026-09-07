@@ -239,8 +239,15 @@ def test_loopback_readiness_ignores_ambient_proxy_configuration(runtime, monkeyp
 def test_subprocess_spawn_failure_closes_log_and_preserves_original_error(runtime, monkeypatch):
     streams = []
     failure = OSError("synthetic spawn failure")
+    secret_names = (
+        "HF_TOKEN", "HUGGING_FACE_HUB_TOKEN", "NPA_COSMOS3_VIDEO_TOKEN",
+        "RAY_AUTH_TOKEN", "RAY_AUTH_TOKEN_PATH", "RAY_AUTH_MODE",
+    )
+    for name in secret_names:
+        monkeypatch.setenv(name, "synthetic-private-value")
 
     def spawn(*args, **kwargs):
+        assert not any(name in kwargs["env"] for name in secret_names)
         streams.append(kwargs["stdout"])
         raise failure
 

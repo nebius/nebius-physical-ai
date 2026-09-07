@@ -3,10 +3,27 @@
 from __future__ import annotations
 
 import difflib
+from pathlib import Path
 import re
+import shlex
 from typing import Any, Mapping
 
 ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def load_env_file_script(path: str, *, required: bool = True) -> str:
+    """Read Docker-format environment data without sourcing or evaluating it.
+
+    This exact loader is also installed by Terraform for native VM login hooks.
+    Shell-quoted legacy files must be rewritten as literal KEY=value data.
+    """
+    loader = Path(__file__).resolve().parents[1] / "deploy/terraform/load_env.sh"
+    command = f"npa_load_env_file {shlex.quote(path)}"
+    if not required:
+        command = f"if [ -f {shlex.quote(path)} ]; then {command}; fi"
+    # One compound command preserves surrounding &&/|| preconditions; a
+    # subshell would lose the environment values needed by the next command.
+    return "{\n" + loader.read_text(encoding="utf-8") + "\n" + command + "\n}"
 
 
 def validate_env_name(name: str) -> str:
@@ -41,8 +58,8 @@ def render_docker_env_file(env: Mapping[str, Any]) -> str:
             continue
         name = validate_env_name(str(key))
         text = str(value)
-        if "\n" in text or "\r" in text:
-            raise ValueError(f"Environment variable {name!r} contains a newline")
+        if "\n" in text or "\r" in text or "\0" in text:
+            raise ValueError(f"Environment variable {name!r} contains a newline or NUL")
         lines.append(f"{name}={text}")
     return "\n".join(lines) + ("\n" if lines else "")
 

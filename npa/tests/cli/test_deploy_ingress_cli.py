@@ -157,8 +157,23 @@ def _deploy_args(case: DeployIngressCase, tmp_path: Path) -> list[str]:
     return args
 
 
+def _assert_private_fiftyone_deploy(result, ensure) -> None:
+    from npa.cli import fiftyone
+
+    ensure.assert_not_called()
+    assert "Network ingress confirmed" not in result.output
+    assert "npa workbench fiftyone -p proj -n demo open" in result.output
+    configurations = [
+        call.args[0].get("projects", {}).get("proj", {}).get("workbenches", {}).get("demo", {})
+        for call in fiftyone.write_config.call_args_list
+    ]
+    saved = next(config for config in configurations if "endpoint_strategy" in config)
+    assert saved["endpoint_strategy"] == "ssh_fallback"
+    assert saved["app_address"] == "127.0.0.1"
+
+
 @pytest.mark.parametrize("case", TOOL_CASES, ids=lambda case: case.tool)
-def test_deploy_success_ensures_ingress_for_tool_port(
+def test_deploy_success_respects_tool_access_policy(
     tmp_path: Path,
     mocker,
     case: DeployIngressCase,
@@ -172,6 +187,9 @@ def test_deploy_success_ensures_ingress_for_tool_port(
 
     assert result.exit_code == 0
     assert "Deploy complete" in result.output
+    if case.tool == "fiftyone":
+        _assert_private_fiftyone_deploy(result, ensure)
+        return
     assert f"Network ingress confirmed for port {case.port}" in result.output
     ensure.assert_called_once_with(
         vm_id="computeinstance-test",
@@ -206,7 +224,7 @@ def test_deploy_ingress_failure_warns_and_still_succeeds(
     case: DeployIngressCase,
 ) -> None:
     _patch_successful_deploy(mocker, case, instance_id="computeinstance-test")
-    mocker.patch(
+    ensure = mocker.patch(
         "npa.cli.ingress.ensure_ingress",
         side_effect=NetworkIngressError("permission denied"),
     )
@@ -215,6 +233,9 @@ def test_deploy_ingress_failure_warns_and_still_succeeds(
 
     assert result.exit_code == 0
     assert "Deploy complete" in result.output
+    if case.tool == "fiftyone":
+        _assert_private_fiftyone_deploy(result, ensure)
+        return
     assert (
         f"Warning: could not ensure network ingress for port {case.port}: permission denied."
         in result.output
@@ -235,6 +256,9 @@ def test_deploy_skips_ingress_when_instance_id_unavailable(
 
     assert result.exit_code == 0
     assert "Deploy complete" in result.output
+    if case.tool == "fiftyone":
+        _assert_private_fiftyone_deploy(result, ensure)
+        return
     assert (
         f"Debug: skipping network ingress for port {case.port}: instance_id unavailable."
         in result.output

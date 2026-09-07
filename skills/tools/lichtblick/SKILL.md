@@ -104,7 +104,10 @@ pipeline):
 - The deep link always targets the app root `/` (data source in the query
   string), never a client-routed sub-path, so `caddy file-server` needs no SPA
   fallback: `GET /` always returns `index.html`.
-- `--host` / `--port` control the bind (default `0.0.0.0:8080`).
+- `--host` / `--port` control the bind (default `127.0.0.1:8080`). The standalone
+  viewer has no authentication and co-serves the selected artifact. Use a verified
+  SSH forward or authenticated proxy for remote viewing; an explicit non-loopback
+  `--host` publishes the artifact to everyone who can reach that interface.
 - The CLI resolves the `npa-lichtblick` image via
   `npa.deploy.images.container_image_for_tool` (the supported default is public
   GHCR; a custom image must be explicit) and emits the

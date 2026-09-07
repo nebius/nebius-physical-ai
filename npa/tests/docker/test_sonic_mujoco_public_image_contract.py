@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -20,7 +21,7 @@ def test_independent_public_base_source_and_hashed_closure() -> None:
     text = DOCKERFILE.read_text(encoding="utf-8")
     lock = LOCK.read_text(encoding="utf-8")
     assert re.search(r"ARG BASE_IMAGE=python:[^\s]+@sha256:[0-9a-f]{64}", text)
-    assert "ARG DEBIAN_SNAPSHOT=20260817T000000Z" in text
+    assert "ARG DEBIAN_SNAPSHOT=20260906T000000Z" in text
     assert "libgnutls30 libssl3 openssl" in text
     assert "snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}" in text
     assert "FROM npa-sonic" not in text
@@ -29,8 +30,9 @@ def test_independent_public_base_source_and_hashed_closure() -> None:
     assert "0a87181c9106d0e49293400714b157676e0ec664" in text
     assert "--require-hashes" in text
     assert "--hash=sha256:" in lock
-    assert "torch==2.9.0" in lock
+    assert "torch==2.13.0" in lock
     assert "mujoco==3.11.0" in lock
+    assert f"ARG SONIC_MUJOCO_CLOSURE_SHA256={hashlib.sha256(LOCK.read_bytes()).hexdigest()}" in text
     assert "su -s /bin/sh -c 'test -r" in text
 
 

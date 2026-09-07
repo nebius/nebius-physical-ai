@@ -383,3 +383,41 @@ def test_public_workbench_raw_shard_retains_legacy_prefix_behavior(
     assert [record["scene"]["augmented_frame_uri"] for record in records] == [
         f"{prefix}frame-{index:05d}.png" for index in range(3)
     ]
+
+
+@pytest.mark.parametrize("download_fails", [False, True])
+def test_scene_spec_s3_uses_private_staging_and_preserves_precreated_symlink(tmp_path, monkeypatch, download_fails):
+    from dataclasses import asdict
+    import stat
+    import tempfile
+
+    victim = tmp_path / "victim"
+    victim.write_text("original")
+    legacy = tmp_path / "npa-scene-spec.json"
+    legacy.symlink_to(victim)
+    original_path = Path
+    # Redirect only the unsafe historical fixed path into the test sandbox.
+    monkeypatch.setattr(envgen, "Path", lambda value: legacy if value == "/tmp/npa-scene-spec.json" else original_path(value))
+    temporary_directory = tempfile.TemporaryDirectory
+    monkeypatch.setattr(envgen.tempfile, "TemporaryDirectory", lambda **kwargs: temporary_directory(dir=tmp_path, **kwargs))
+    observed = []
+
+    class Storage:
+        def download_path(self, _uri, destination):
+            path = original_path(destination)
+            observed.append(path)
+            assert stat.S_IMODE(path.parent.stat().st_mode) == 0o700
+            path.write_text(json.dumps(asdict(envgen.build_scene_spec())))
+            if download_fails:
+                raise OSError("synthetic interrupted download")
+
+    monkeypatch.setattr(envgen.StorageClient, "from_environment", lambda: Storage())
+    if download_fails:
+        with pytest.raises(OSError, match="interrupted"):
+            envgen.scene_spec_from_uri("s3://bucket-fixture/scene.json")
+    else:
+        scene = envgen.scene_spec_from_uri("s3://bucket-fixture/scene.json")
+        assert scene.schema == "npa.sim2real.scene_spec.v1"
+    assert victim.read_text() == "original"
+    assert legacy.is_symlink()
+    assert observed and all(not path.parent.exists() for path in observed)

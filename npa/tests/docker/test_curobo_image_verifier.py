@@ -154,7 +154,7 @@ def test_rejects_runtime_copies_outside_reviewed_locations(tmp_path, payload, na
     assert "unexpected_cudnn_runtime_copy" in codes(report)
 
 
-@pytest.mark.parametrize("suffix", ["nvidia/cudnn/unrecorded.txt", "nvidia_cudnn_cu13-9.13.0.50.dist-info/secret", "nvidia_cudnn_cu13-9.12.dist-info/METADATA"])
+@pytest.mark.parametrize("suffix", ["nvidia/cudnn/unrecorded.txt", "nvidia_cudnn_cu13-9.20.0.48.dist-info/secret", "nvidia_cudnn_cu13-9.12.dist-info/METADATA"])
 def test_rejects_unreviewed_wheel_payload_and_versions(tmp_path, payload, suffix):
     name = payload[0]["cudnn"]["install_root"] + "/" + suffix
     report = verify(tmp_path, payload, [[*payload[1], entry(name, b"unreviewed")]])
@@ -281,7 +281,7 @@ def test_production_contract_matches_locked_artifacts_and_notice():
     lock = (IMAGE / "requirements.lock").read_text()
     assert f"{cudnn['name']}=={cudnn['version']}" in lock
     assert f"--hash=sha256:{cudnn['wheel_sha256']}" in lock
-    assert cudnn["wheel_sha256"] == "2150b4850725d30653ec3e365f0732e3e2e3eb8633cf3bd2d3117628dea8b4f9"
+    assert cudnn["wheel_sha256"] == "0c45dd8eeb50b603f07995b1b300c62ffe6a1980482b82b3bcf94a4ca9d49304"
     assert len(cudnn["retained"]) == 9
     assert sum(row["kind"] == "runtime" for row in cudnn["retained"]) == 8
     assert len(cudnn["excluded_sdk"]) == 14
@@ -503,7 +503,7 @@ def adapter_payload(payload):
     contract, entries, excluded = copy.deepcopy(payload)
     adapters = copy.deepcopy(json.loads((IMAGE / "runtime-payload.json").read_text())["torch_cudnn_adapters"])
     root = contract["cudnn"]["install_root"]
-    for index, row in enumerate([*adapters["headers"], adapters["license"]]):
+    for index, row in enumerate([*adapters["headers"], adapters["license"], *adapters["third_party_notices"]]):
         data = f"Synthetic independently reviewed PyTorch BSD adapter or full notice {index}.".encode()
         row.update(sha256=digest(data), size=len(data))
         entries.append(entry(f"{root}/{row['path']}", data))
@@ -515,11 +515,11 @@ def test_reviewed_torch_adapter_bytes_and_complete_license_pass(tmp_path, adapte
     report = verify(tmp_path, adapter_payload)
     assert report["valid"]
     assert report["verified_torch_adapter_count"] == 52
-    assert report["required_payload_count"] == 63
-    assert report["regular_files_read"] == 63
+    assert report["required_payload_count"] == 160
+    assert report["regular_files_read"] == 160
 
 
-@pytest.mark.parametrize("change", ["modified", "missing", "relocated", "sdk_bytes", "symlink", "missing_license", "modified_license"])
+@pytest.mark.parametrize("change", ["modified", "missing", "relocated", "sdk_bytes", "symlink", "missing_license", "modified_license", "missing_primary_license"])
 def test_adapter_exception_never_trusts_path_alone(tmp_path, adapter_payload, change):
     contract, entries, excluded = adapter_payload
     first_adapter = 10
@@ -537,6 +537,8 @@ def test_adapter_exception_never_trusts_path_alone(tmp_path, adapter_payload, ch
         entries.pop()
     elif change == "modified_license":
         entries[-1] = entry(entries[-1][0], b"truncated notice")
+    elif change == "missing_primary_license":
+        del entries[first_adapter + 52]
     report = verify(tmp_path, (contract, entries, excluded))
     assert not report["valid"]
     if change == "sdk_bytes":
@@ -567,16 +569,18 @@ def test_adapter_whiteout_cannot_keep_prior_proof(tmp_path, adapter_payload):
 
 def test_adapter_inventory_is_bound_to_locked_official_wheel_and_full_notice():
     adapters = json.loads((IMAGE / "runtime-payload.json").read_text())["torch_cudnn_adapters"]
-    assert adapters["name"] == "torch" and adapters["version"] == "2.9.1+cu130"
-    assert adapters["wheel_sha256"] == "e70e1b18881e6b3c1ce402d0a989da39f956a3a057526e03c354df23d704ce9b"
+    assert adapters["name"] == "torch" and adapters["version"] == "2.13.0+cu130"
+    assert adapters["wheel_sha256"] == "8db7338e6895c3d4bd89a02ff4209507d1f0cf2ffeb3b898538b5a07d1ea8c1e"
     assert "--hash=sha256:" + adapters["wheel_sha256"] in (IMAGE / "requirements.lock").read_text()
-    assert adapters["wheel_url"] == "https://download.pytorch.org/whl/cu130/torch-2.9.1%2Bcu130-cp312-cp312-manylinux_2_28_x86_64.whl"
+    assert adapters["wheel_url"] == "https://download.pytorch.org/whl/cu130/torch-2.13.0%2Bcu130-cp312-cp312-manylinux_2_28_x86_64.whl"
     assert len(adapters["headers"]) == 52
     assert len({row["path"] for row in adapters["headers"]}) == 52
     assert all(row["path"].startswith("torch/include/ATen/ops/cudnn_") for row in adapters["headers"])
-    assert adapters["license"]["sha256"] == "776e43288ab54330aa1d942737754b0edef0e7a07b62b736b595136ca5ccae88"
-    assert adapters["license"]["size"] == 499846
-    assert adapters["source_license_sha256"] == "a8a2c6b67cf8a597ffaa5c82380a6bd1b82629c0417e00673d8013d662eb500a"
+    assert adapters["license"]["sha256"] == "bd018feef8825e88181c84eb7e3aa4eafb8f08a20d9fd6ef948569610c4a3e43"
+    assert adapters["license"]["size"] == 3464
+    assert len(adapters["third_party_notices"]) == 97
+    assert len({row["path"] for row in adapters["third_party_notices"]}) == 97
+    assert adapters["source_license_sha256"] == "bd018feef8825e88181c84eb7e3aa4eafb8f08a20d9fd6ef948569610c4a3e43"
 
 
 @pytest.mark.parametrize("compress", [bz2.compress, lzma.compress])

@@ -19,6 +19,9 @@ MANUAL_GATES = {
     "NPA_FLEET_KUBERAY_LIVE_CONFIG": (
         "native Ray worker execution requires an operator-selected CPU Fleet, exact kubeconfig and private evidence"
     ),
+    "NPA_VM_SECURITY_LIVE": (
+        "mutates credentials and services on an operator-selected dedicated VM or UID-verified isolated CPU Pod"
+    ),
     "NPA_SONIC_IMAGE_WORKLOAD_LIVE": (
         "real checkpoint dynamics requires an operator-preflighted owned GPU container and private evidence directory"
     ),

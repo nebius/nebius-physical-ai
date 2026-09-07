@@ -105,6 +105,8 @@ def build_inference_argv(
 
 def _runtime_env(request: Alpamayo2SuperRequest) -> dict[str, str]:
     env = dict(os.environ)
+    # Model subprocesses need model/storage credentials, not HTTP admission keys.
+    env.pop("NPA_ALPAMAYO2_SUPER_TOKEN", None)
     cache = env.get("HF_HOME", "/workspace/.cache/huggingface")
     env.update(
         {

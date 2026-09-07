@@ -12,7 +12,7 @@ from importlib import metadata
 from typing import Callable
 
 
-EXPECTED_FIFTYONE_VERSION = os.environ.get("FIFTYONE_VERSION", "1.15.0")
+EXPECTED_FIFTYONE_VERSION = os.environ.get("FIFTYONE_VERSION", "1.21.0")
 
 
 @dataclass
