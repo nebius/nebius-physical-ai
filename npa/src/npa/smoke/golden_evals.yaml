@@ -516,6 +516,40 @@ containers:
       timeout_seconds: 10800
       status: gpu-gated
 
+  cosmos3-nano-video:
+    image: npa-cosmos3-nano-video
+    dockerfile: npa/docker/workbench/cosmos3-nano-video/Dockerfile
+    physical_ai:
+      useful: true
+      role: >-
+        Generates 30-second 480p synthetic video through Cosmos3-Nano diffusion
+        and clean-prefix chunked video-to-video rollout.
+    safety:
+      runs_as: "10001:10001"
+      base_image: digest-pinned vllm/vllm-omni Cosmos3 vendor runtime
+      network: loopback diffusion API; offline verified model cache
+      external_fetch: []
+      notes: >-
+        Restricted image for an operator-controlled registry. Model weights and
+        credentials remain runtime-only. Guardrails are explicitly off; use
+        requires authorized model/software access. This eval starts one B200
+        diffusion runtime, generates all three chunks, fully decodes all four
+        MP4s, and records measured latency, memory and artifact hashes. The
+        separate deployment acceptance requires 16 Ray replicas and eight
+        concurrent complete requests. Run inside the image on NPA mk8s with a
+        verified BF16 model cache mounted read-only; stage it separately before
+        GPU execution. Serving never downloads weights. The explicit unlimited
+        runtime has no generation deadline; server initialization preserves 1800s.
+    golden_eval:
+      kind: container-smoke
+      module: npa.workbench.cosmos.nano_video_golden
+      command: python -m npa.workbench.cosmos.nano_video_golden
+      artifact: /tmp/cosmos3-nano-video-golden/result.json
+      serverless_gpu: b200
+      gpu: required
+      timeout_seconds: unlimited
+      status: gpu-gated
+
   cosmos3-ray-serve:
     image: npa-cosmos3-ray-serve
     dockerfile: npa/docker/workbench/cosmos3-ray-serve/Dockerfile

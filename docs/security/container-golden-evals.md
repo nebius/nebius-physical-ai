@@ -1,8 +1,7 @@
 # Container safety review & golden evals
 
-This document is the safety + Physical AI usefulness review for every Workbench
-container image, and the contract for each container's **golden eval** — the
-minimal "does this container actually work" / "hello world" tested rerun.
+This page describes container safety requirements and golden evaluations:
+the repeatable checks defined for each Workbench image.
 
 The machine-readable source of truth is
 [`npa/src/npa/smoke/golden_evals.yaml`](../../npa/src/npa/smoke/golden_evals.yaml).
@@ -15,19 +14,19 @@ and enforced by `npa/docker/workbench/packaging-contract.yaml`.
 
 ## How it is enforced
 
-- **Completeness/consistency gate** —
+- **Manifest checks:**
   `npa/tests/smoke/test_golden_eval_manifest.py` runs in the standard unit suite
   and fails CI if any container in `npa.deploy.images.CONTAINER_IMAGE_NAMES` is
   missing an entry, references a missing Dockerfile, an unimportable smoke
   module, or omits a safety / Physical AI field.
-- **Nightly run** — the workflow at `docs/ci/golden-evals-nightly.yml` runs at
-  04:00 UTC once installed to `.github/workflows/` (it ships under `docs/ci/`
-  because the author credential lacked the GitHub `workflow` scope). The
-  `validate-manifest` and `cpu-evals` jobs run on GitHub-hosted runners; the GPU
-  golden evals run on a self-hosted GPU runner via `workflow_dispatch`
-  (`run_gpu_evals: true`).
-- **Image CVE / config scanning** — handled separately by the weekly
+- **Nightly template:** `docs/ci/golden-evals-nightly.yml` is staged documentation,
+  not an active GitHub Actions workflow. It defines scheduled CPU checks and
+  an optional GPU job. Its presence does not establish nightly GPU validation.
+- **Image CVE / config scanning:** handled separately by the weekly
   `image-security-scan.yml` (Trivy config scan + base-image CVE matrix).
+
+The active [GPU e2e preflight](../../.github/workflows/e2e.yml) collects tests
+and checks shell syntax. It does not execute GPU workloads.
 
 ## CLI
 
@@ -46,8 +45,9 @@ npa workbench golden-eval run genesis --serverless --gpu h100
 `--serverless` submits the golden eval as a **Nebius Serverless AI Job** that
 pulls the tool's real container image (resolved via
 `npa.deploy.images.container_image_for_tool`) and runs the eval command on a
-GPU, then waits for the PASS/FAIL result. This is the path the nightly GPU job
-uses — no self-hosted GPU runner required, only Nebius + storage credentials.
+GPU, then waits for the PASS/FAIL result. This CLI mode requires Nebius and
+storage credentials. It does not require a self-hosted GitHub runner or activate
+the staged nightly workflow.
 
 Each eval's GPU is taken from `golden_eval.serverless_gpu` in the manifest
 (falling back to `l40s`, since Nebius Jobs always require a GPU preset) and can
@@ -58,8 +58,11 @@ The same logic is available as a script for CI:
 
 ## Golden-eval capability chart
 
-Each container's golden eval proves specific **capabilities** (not just `--help` or
-import). Registry tags come from ``pyproject.toml`` → ``[tool.npa.supported-tools]``.
+The manifest defines tests with different scopes: import and CLI checks,
+service checks, and GPU capability tests. A definition is not a recorded pass.
+Use the [image and GPU matrix](../workbench/image-gpu-compatibility-matrix.md)
+for dated hardware results. Registry tags come from
+`pyproject.toml` under `[tool.npa.supported-tools]`.
 
 ```bash
 npa/.venv/bin/python npa/scripts/run_golden_evals.py list --capabilities
@@ -111,6 +114,7 @@ flowchart TB
 | `cosmos` | `cu128-torch27-sm100-1.0.9-20260803T002017Z` | container-smoke | version; model load; single inference (safety on) | required | gpu-gated |
 | `cosmos2-transfer` | `2.5.1-sim2real-coherent-20260904` | container-smoke | procedural input; four real diffusion steps; decoded, numerically validated output MP4; guardrails enabled | required | gpu-gated |
 | `cosmos3` | `1.2.2-cu130-r6` | container-smoke | real Cosmos 3 text2image generation; decodable image; guardrails on | required | gpu-gated |
+| `cosmos3-nano-video` | operator-controlled immutable image | container-smoke | real BF16 TP=1 diffusion; three-chunk rollout with V2V continuations; four fully decoded MP4s; 30-second 480p result and measured memory/latency | required | gpu-gated |
 | `cosmos3-reason` | `cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z` | container-smoke | CUDA; real Reason VLM pass | optional | gpu-gated |
 | `sonic` | `0.1.2` | entrypoint-smoke | `/entrypoint.sh smoke`; GPU proofs; JSON artifact | required | gpu-gated |
 | `retargeting` | `0.1.1` | container-smoke | validate_motion_lib on synthetic motion | none | ready |
@@ -257,6 +261,7 @@ pipeline. Key safety notes are condensed below.
 | `cosmos` | Cosmos world-model serving (text2world) | `container-smoke` | required | gpu-gated |
 | `cosmos2-transfer` | Cosmos-Transfer2 video-to-video for synthetic data | `container-smoke` | required | gpu-gated |
 | `cosmos3` | Cosmos 3 omni-model generation (image/video) | `container-smoke` | required | gpu-gated |
+| `cosmos3-nano-video` | Chunked Cosmos3-Nano diffusion video generation | `container-smoke` | required | gpu-gated |
 | `cosmos3-reason` | Cosmos-Reason1 VLM reasoning stage | `workflow-smoke` | optional | blocked-on-upstream |
 | `sonic` | SONIC whole-body humanoid locomotion | `entrypoint-smoke` | required | gpu-gated |
 | `retargeting` | CPU motion retargeting for SONIC locomotion | `build-import` | none | ready |
@@ -346,6 +351,21 @@ Run these inside the corresponding built image (or via
 - `cosmos3` — `npa workbench cosmos3 generate --help` (job entrypoint; the eval
   itself runs a real text2image generation and needs an operator HF token, since
   the image bakes no weights)
+- `cosmos3-nano-video` — `python -m npa.workbench.cosmos.nano_video_golden` inside its
+  restricted image on an NPA mk8s B200. It requires the pinned BF16 weights and
+  verified `READY.json` on a read-only model-cache mount selected by
+  `NPA_COSMOS3_MODEL_PATH`, starts the real
+  diffusion runtime with guardrails off, generates
+  three chunks, and fully decodes all four MP4s. The default result index is
+  `/tmp/cosmos3-nano-video-golden/result.json`; set
+  `NPA_COSMOS3_GOLDEN_OUTPUT_ROOT` to retain it on mounted storage. Reruns keep
+  separate artifact directories. Stage the cache separately before GPU execution;
+  this golden command never downloads weights. `timeout_seconds: unlimited` removes the local
+  golden-eval deadline while preserving the server's `--init-timeout 1800`.
+  This entry requires local execution because the serverless runner imposes job
+  deadlines. The deployment acceptance additionally requires 16 Ray replicas
+  and eight concurrent complete generation requests; this catalog entry does
+  not claim that fanout has passed.
 - `cosmos3-reason` — `python -m npa.workflows.sim2real_loop inner-loop --help`
 - `sonic` — `/entrypoint.sh smoke` (artifact: `sonic_smoke_result.json`)
 - `retargeting` — `python -c "import npa.workbench.retargeting"`
