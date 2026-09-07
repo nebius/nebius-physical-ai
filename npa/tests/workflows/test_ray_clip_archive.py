@@ -24,7 +24,7 @@ PREFIX = "s3://test-bucket/clip-test"
 def modules(monkeypatch):
     directory = Path(__file__).parents[2] / "workflows/workbench/ray-clip-development"
     monkeypatch.syspath_prepend(str(directory))
-    names = ("archive", "archive_inventory", "embed", "worker")
+    names = ("archive", "archive_inventory", "embed", "worker", "validation")
     saved = {name: sys.modules.pop(name) for name in names if name in sys.modules}
     yield importlib.import_module("archive"), importlib.import_module("embed")
     for name in names:
@@ -58,8 +58,9 @@ def source(modules, tmp_path):
     for index, row in enumerate(rows):
         row["vector"] = [float(position == index) for position in range(512)]
     report = embed.save_results(root, rows, 6)
-    report["source_sha256"] = {"embed.py": "a" * 64}
-    report["actors"] = [{"node_id": "synthetic-node"}]
+    report["source_sha256"] = {name: "a" * 64 for name in embed.SOURCE_FILES}
+    report["actors"] = [{"node_id": "synthetic-node", "source_sha256": report["source_sha256"]}]
+    report["ray_nodes"] = 1
     _json(root / "report.json", report)
     embed.write_hashes(root)
     return root
@@ -74,6 +75,10 @@ def advanced(source):
                   execution_fingerprint="e" * 64, model_revision="b" * 40,
                   source_sha256="c" * 64, gpu_actors=1, retrieval_queries=5,
                   embedding_sha256=report.pop("parquet_sha256"))
+    report.update(application_sha256="a" * 64, validation_sha256="b" * 64, udf_sha256="d" * 64)
+    report["model_initializations"] = [{field: report[field] for field in (
+        "application_sha256", "validation_sha256", "udf_sha256", "source_sha256", "model_revision", "execution_fingerprint")}]
+    report["recovery"] = None
     table = pq.read_table(source / "embeddings.parquet")
     for column, field in (("input_sha256", "input_hash"), ("processed_sha256", "processed_hash")):
         report[field] = _hash(json.dumps(table[column].to_pylist(), separators=(",", ":")).encode())
@@ -90,7 +95,8 @@ def advanced(source):
         _json(directory / "commit.json", {"identity": identity, "rows": len(shard),
                                          "parquet_sha256": _hash((directory / "embeddings.parquet").read_bytes())})
     _json(source / "report.json", report)
-    _json(source / "retrieval.json", [{"query_id": value, "top_ids": [value]} for value in [0, 1, 3, 4, 5]])
+    _json(source / "retrieval.json", [{"query_id": value, "top_ids": [value, *[other for other in range(6) if other != value]][:5]}
+                                      for value in [0, 1, 3, 4, 5]])
     _json(source / "execution.json", {"execution_fingerprint": report["execution_fingerprint"]})
     _json(source / "actor-cleanup.json", {"errors": [], "attempted": 1})
     (source / "sha256.json").unlink()
@@ -332,6 +338,79 @@ def test_existing_completion_does_not_hide_corruption(modules, source, store):
     with pytest.raises(ValueError, match="conflicting"):
         archive.archive(source, PREFIX, store)
     assert store.objects[f"{PREFIX}/files/preview.png"] == b"corrupt"
+
+
+@pytest.mark.parametrize("damage", ["duplicate-retrieval", "missing-sources", "actor-sources", "preview"])
+def test_rehashed_inconsistent_basic_artifacts_are_rejected(modules, source, store, damage):
+    archive, _ = modules
+    report = json.loads((source / "report.json").read_text())
+    if damage == "duplicate-retrieval":
+        retrieval = json.loads((source / "retrieval.json").read_text())
+        retrieval[0]["top_ids"] = [0] * 5
+        report["retrieval"] = retrieval
+        _json(source / "retrieval.json", retrieval)
+    elif damage == "missing-sources":
+        del report["source_sha256"]
+    elif damage == "actor-sources":
+        report["actors"][0]["source_sha256"]["embed.py"] = "b" * 64
+    else:
+        from PIL import Image
+
+        Image.new("RGB", (448, 1344), color="black").save(source / "preview.png")
+    _json(source / "report.json", report)
+    _checksums(source)
+    with pytest.raises(ValueError):
+        archive.archive(source, PREFIX, store)
+    assert not store.objects
+
+
+@pytest.mark.parametrize("damage", ["missing", "different", "wrong-shard", "unreported"])
+def test_advanced_recovery_artifact_must_match_report_and_first_shard(modules, advanced, store, damage):
+    archive, _ = modules
+    report = json.loads((advanced / "report.json").read_text())
+    recovery = {"parquet_sha256": _hash((advanced / "shards/000000/embeddings.parquet").read_bytes())}
+    report["recovery"] = recovery
+    if damage == "wrong-shard":
+        recovery["parquet_sha256"] = "f" * 64
+    if damage != "missing":
+        _json(advanced / "recovery.json", {**recovery, **({"extra": True} if damage == "different" else {})})
+    if damage == "unreported":
+        report["recovery"] = None
+    _json(advanced / "report.json", report)
+    _checksums(advanced)
+    with pytest.raises(ValueError, match="recovery|Recovery"):
+        archive.archive(advanced, PREFIX, store)
+    assert not store.objects
+
+
+def test_payload_corrupted_after_its_first_readback_prevents_completion(modules, source, store):
+    archive, _ = modules
+    first = None
+    def corrupt_previous(uri):
+        nonlocal first
+        if first is None:
+            first = uri
+        else:
+            store.objects[first] = b"corrupted after initial readback"
+            store.hook = None
+    store.hook = corrupt_previous
+    with pytest.raises(ValueError, match="changed before completion"):
+        archive.archive(source, PREFIX, store)
+    assert f"{PREFIX}/complete.json" not in store.objects
+
+
+def test_manifest_rejects_duplicate_keys_and_file_directory_collisions(modules, store, tmp_path):
+    archive, _ = modules
+    payload = b'{"schema":"npa.ray-clip-archive.v1","schema":"npa.ray-clip-archive.v1","files":{},"format":"basic"}'
+    store.objects[f"{PREFIX}/complete.json"] = payload
+    with pytest.raises(ValueError, match="Duplicate"):
+        archive.restore(PREFIX, tmp_path / "result", _hash(payload), store)
+    entry = {"sha256": _hash(b""), "size": 0}
+    payload = archive.canonical({"schema": archive.SCHEMA, "format": "basic", "files": {"a": entry, "a/b": entry}})
+    store.objects[f"{PREFIX}/complete.json"] = payload
+    with pytest.raises(ValueError, match="conflicts with a directory"):
+        archive.restore(PREFIX, tmp_path / "result", _hash(payload), store)
+    assert not (tmp_path / "result").exists()
 
 
 def test_cli_uses_shared_functions_and_redacts_storage_errors(modules, monkeypatch, capsys, source, store):

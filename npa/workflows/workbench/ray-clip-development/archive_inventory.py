@@ -74,9 +74,15 @@ def _checksums(root, files):
 
 def _table(root, report):
     import numpy as np
+    import pyarrow as pa
     import pyarrow.parquet as pq
 
     table = pq.read_table(root / "embeddings.parquet").sort_by("record_id")
+    expected_schema = pa.schema([("record_id", pa.int64()), ("input_sha256", pa.string()),
+                                 ("processed_sha256", pa.string()),
+                                 ("vector", pa.list_(pa.float32(), 512))])
+    if not table.schema.equals(expected_schema, check_metadata=False):
+        raise ValueError("Unexpected CLIP table schema")
     count = report["records"]
     if (type(count) is not int or count < 1 or report["lance_rows"] != count
             or table["record_id"].to_pylist() != list(range(count))):
@@ -102,8 +108,9 @@ def _lance_and_previews(root, table, files):
     if persisted.to_pylist() != table.to_pylist():
         raise ValueError("Lance and Parquet rows differ")
     expected_images = set()
-    for row in table.slice(0, 8).to_pylist():
-        for suffix, field in (("original", "input_sha256"), ("crop", "processed_sha256")):
+    contact = Image.new("RGB", (448, 224 * min(8, len(table))))
+    for index, row in enumerate(table.slice(0, 8).to_pylist()):
+        for column, (suffix, field) in enumerate((("original", "input_sha256"), ("crop", "processed_sha256"))):
             name = f"images/{row['record_id']:06d}-{suffix}.png"
             expected_images.add(name)
             if files[name]["sha256"] != row[field]:
@@ -112,12 +119,46 @@ def _lance_and_previews(root, table, files):
                 image.load()
                 if image.mode != "RGB":
                     raise ValueError("Preview input is not RGB")
+                if image.size != ((256, 256) if suffix == "original" else (224, 224)):
+                    raise ValueError("Preview input dimensions differ")
+                contact.paste(image.resize((224, 224)), (224 * column, 224 * index))
     if {name for name in files if name.startswith("images/")} != expected_images:
         raise ValueError("Preview inventory differs")
     with Image.open(root / "preview.png") as image:
         image.load()
-        if image.mode != "RGB" or image.size != (448, 224 * min(8, len(table))):
+        if image.mode != "RGB" or image.size != contact.size or image.tobytes() != contact.tobytes():
             raise ValueError("Invalid contact sheet")
+
+
+def _provenance(root, report, files, advanced):
+    if advanced:
+        import validation
+
+        sources = {name: require_digest(report[field]) for name, field in validation.SOURCE_HASH_FIELDS.items()}
+        validation.verify_submitted_sources(report, sources)
+        for actor in report["model_initializations"]:
+            if (actor["execution_fingerprint"] != report["execution_fingerprint"]
+                    or actor["model_revision"] != report["model_revision"]):
+                raise ValueError("Actor execution provenance differs")
+        recovery = report["recovery"]
+        if recovery is None:
+            if "recovery.json" in files:
+                raise ValueError("Unexpected recovery artifact")
+        elif (not isinstance(recovery, dict) or "recovery.json" not in files
+              or read_json((root / "recovery.json").read_bytes()) != recovery
+              or recovery["parquet_sha256"] != files["shards/000000/embeddings.parquet"]["sha256"]):
+            raise ValueError("Recovery artifact is missing or inconsistent")
+    else:
+        sources = report["source_sha256"]
+        if not isinstance(sources, dict) or set(sources) != {"embed.py", "worker.py", "npa_lancedb_bdd100k_udfs.py"}:
+            raise ValueError("Basic source provenance is incomplete")
+        for value in sources.values():
+            require_digest(value)
+        actors = report["actors"]
+        if not isinstance(actors, list) or not actors or any(actor["source_sha256"] != sources for actor in actors):
+            raise ValueError("Basic actor source provenance differs")
+        if report["ray_nodes"] != len({actor["node_id"] for actor in actors}):
+            raise ValueError("Basic actor inventory differs")
 
 
 def _advanced(root, report, table, files):
@@ -163,23 +204,13 @@ def _advanced(root, report, table, files):
             raise ValueError("Report input identity differs")
 
 
-def validate_result(root: Path, files: dict) -> str:
-    """Validate a private frozen tree against the existing basic/advanced formats.
-
-    Args:
-        root: Private staging tree whose files were safely copied and hashed.
-        files: Complete relative file names mapped to size and SHA-256.
-    Returns:
-        The recognized basic or advanced result format.
-    Raises:
-        ValueError: Inventories, completion evidence or actual formats disagree.
-        OSError: A required file cannot be read.
-    """
+def _validate_result(root, files):
     _checksums(root, files)
     report = read_json((root / "report.json").read_bytes())
     advanced = report.get("schema_version") == "npa.ray-clip-development.v1"
     if not advanced and ("schema_version" in report or "sha256.json" not in files):
         raise ValueError("Unknown completed CLIP result format")
+    _provenance(root, report, files, advanced)
     table = _table(root, report)
     hash_field = "embedding_sha256" if advanced else "parquet_sha256"
     if report[hash_field] != files["embeddings.parquet"]["sha256"]:
@@ -192,7 +223,9 @@ def validate_result(root: Path, files: dict) -> str:
     if [row["query_id"] for row in retrieval] != ids:
         raise ValueError("Incomplete retrieval inventory")
     for row in retrieval:
-        if (row["query_id"] not in row["top_ids"]
+        if (type(row["query_id"]) is not int or row["query_id"] not in row["top_ids"]
+                or len(row["top_ids"]) != min(count, 5)
+                or len(set(row["top_ids"])) != len(row["top_ids"])
                 or any(type(value) is not int or value not in range(len(table)) for value in row["top_ids"])):
             raise ValueError("Invalid retrieval result")
     if advanced:
@@ -203,3 +236,21 @@ def validate_result(root: Path, files: dict) -> str:
         raise ValueError("Basic result metadata differs")
     _lance_and_previews(root, table, files)
     return "advanced" if advanced else "basic"
+
+
+def validate_result(root: Path, files: dict) -> str:
+    """Validate a private frozen tree against the existing basic/advanced formats.
+
+    Args:
+        root: Private staging tree whose files were safely copied and hashed.
+        files: Complete relative file names mapped to size and SHA-256.
+    Returns:
+        The recognized basic or advanced result format.
+    Raises:
+        ValueError: Inventories, completion evidence or actual formats disagree.
+        OSError: A required file cannot be read.
+    """
+    try:
+        return _validate_result(root, files)
+    except (KeyError, TypeError, AttributeError, IndexError) as error:
+        raise ValueError("Incomplete or malformed CLIP result metadata") from error

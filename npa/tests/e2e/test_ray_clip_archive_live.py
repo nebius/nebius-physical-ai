@@ -67,7 +67,7 @@ def test_actual_s3_archive_restore_and_corruption(monkeypatch):
     assert evidence.stat().st_mode & 0o077 == 0
     directory = Path(__file__).parents[2] / "workflows/workbench/ray-clip-development"
     monkeypatch.syspath_prepend(str(directory))
-    names = ("archive", "archive_inventory")
+    names = ("archive", "archive_inventory", "validation")
     saved = {name: sys.modules.pop(name) for name in names if name in sys.modules}
     module = importlib.import_module("archive")
     client = StorageClient.from_environment()
