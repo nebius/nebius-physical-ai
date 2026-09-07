@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+import ast
+import importlib.metadata
 import importlib.util
 import io
 import json
+import re
 import sys
 import tarfile
 from pathlib import Path
 
 import yaml
+import pytest
 
 from npa.deploy.images import UNVALIDATED_PUBLICATION_TOOLS
 
@@ -55,7 +59,7 @@ def test_image_uses_exact_accepted_framework_parent_and_bakes_no_weights() -> No
     assert "vllm" not in text.lower()
     assert "*.safetensors" in text
     assert "NPA_COSMOS3_RAY_GUARDRAILS=true" in text
-    assert "ARG COSMOS3_RAY_VERSION=2.52.0" in text
+    assert "ARG COSMOS3_RAY_VERSION=2.58.0" in text
     # Stale linux-libc-dev version pin must not be present (it ages out of
     # Ubuntu repos). The purge is now conditional: check the package is
     # installed first, then purge if present.
@@ -66,11 +70,58 @@ def test_image_uses_exact_accepted_framework_parent_and_bakes_no_weights() -> No
     assert "dpkg-query -W -f'${Status}' linux-libc-dev" in text
     assert "rm -rf /opt/nvidia/nsight-compute" in text
     assert "uv sync --frozen --inexact" in text
-    assert "--extra guardrail --extra serve --group cu130" in text
+    assert "--extra guardrail --extra serve --group cu130-torch213" in text
+    assert (
+        "uv pip uninstall --python .venv/bin/python flash-attn flash-attn-3-nv" in text
+    )
     # Security upgrade path: must use uv pip install in RUN (not nonexistent .venv/bin/pip)
     assert "uv pip install --python .venv/bin/python --no-deps" in text
     assert "security-upgrades-requirements.txt" in text
     assert "uv pip install --python /opt/npa/.venv/bin/python" in text
+
+
+@pytest.mark.parametrize(
+    "stale_package", ["torch", "natten", "torchcodec", "flash-attn", None]
+)
+def test_accelerator_verifier_rejects_mixed_or_inherited_extension_abis(
+    monkeypatch, stale_package
+):
+    # Run the production dependency verifier without importing the GPU runtime
+    # into the repository test environment. The image build runs the full file.
+    tree = ast.parse((IMAGE / "verify_env.py").read_text())
+    function = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "verify_accelerator_dependencies"
+    )
+    namespace = {"importlib": importlib}
+    exec(
+        compile(ast.Module(body=[function], type_ignores=[]), "verify_env.py", "exec"),
+        namespace,
+    )
+    versions = {
+        "torch": "2.13.0+cu130",
+        "torchvision": "0.28.0+cu130",
+        "torchcodec": "0.14.0+cu130",
+        "natten": "0.21.6+cu130.torch213",
+    }
+    if stale_package:
+        versions[stale_package] = "2.10.0"
+
+    def version(package):
+        if package not in versions:
+            raise importlib.metadata.PackageNotFoundError(package)
+        return versions[package]
+
+    monkeypatch.setattr(importlib.metadata, "version", version)
+    if stale_package:
+        with pytest.raises(
+            RuntimeError, match="upstream Torch 2.13|incompatible inherited"
+        ):
+            namespace["verify_accelerator_dependencies"]()
+    else:
+        namespace["verify_accelerator_dependencies"]()
 
 
 def test_server_invokes_upstream_native_batching_component() -> None:
@@ -103,11 +154,15 @@ def test_security_upgrades_requirements_file_has_hash_pinned_cves() -> None:
     req_file = IMAGE / "security-upgrades-requirements.txt"
     assert req_file.is_file(), "security-upgrades-requirements.txt must exist"
     content = req_file.read_text(encoding="utf-8")
-    assert "CVE-2025-62593" in content
-    assert "CVE-2026-79675" in content
-    assert "ray-2.52.0-cp313-cp313-manylinux2014_x86_64.whl#sha256=" in content
-    assert "nltk-3.10.3-py3-none-any.whl#sha256=" in content
-    assert "--no-deps" in content
+    assert "ray==2.58.0" in content
+    assert "ray[serve]==2.58.0" in req_file.with_suffix(".in").read_text()
+    assert "nltk==3.10.3" in content
+    assert "ray-haproxy==2.8.25" in content
+    # Every dependency is exact and hash-bound, including the new serve extra.
+    requirements = re.split(r"\n(?=[a-zA-Z])", content)
+    for requirement in requirements[1:]:
+        assert re.match(r"[\w.\[\]-]+==[\w.+-]+", requirement)
+        assert "--hash=sha256:" in requirement
 
 
 def test_dockerfile_copies_security_requirements_and_verifies_versions() -> None:
@@ -122,6 +177,7 @@ def test_dockerfile_copies_security_requirements_and_verifies_versions() -> None
     ) in text
     assert 'assert importlib.metadata.version("nltk") == "3.10.3"' in text
     assert "${COSMOS3_RAY_VERSION}" in text
+    assert "--no-deps --require-hashes" in text
     # Must verify the Ray version matches the ARG value post-install
     assert (
         'test "$(.venv/bin/python -c \'import ray; print(ray.__version__)\')"'

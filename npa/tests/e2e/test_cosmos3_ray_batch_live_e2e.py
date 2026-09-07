@@ -15,7 +15,7 @@ import os
 from pathlib import Path
 import uuid
 
-from PIL import Image
+from PIL import Image, ImageDraw
 import pytest
 
 from npa.clients.storage import StorageClient
@@ -40,6 +40,15 @@ def test_guarded_batch_publishes_two_decodable_samples_and_rejects_incomplete_re
     storage = StorageClient.from_environment()
     request_id = uuid.uuid4().hex
     root = prefix + "/" + request_id
+    # Exercise the real server's S3 staging and the client's implicit media
+    # inference with an encoded extension, using only synthetic input pixels.
+    conditioning = tmp_path / "conditioning.jpg"
+    frame = Image.new("RGB", (256, 256), "gray")
+    ImageDraw.Draw(frame).rectangle((64, 64, 192, 192), fill="blue")
+    frame.save(conditioning)
+    conditioning_uri = storage.upload_file(str(conditioning), root + "/conditioning.jpg")
+    assert conditioning_uri.endswith(".jpg")
+    encoded_conditioning_uri = conditioning_uri[:-4] + "%2Ejpg"
     request = {
         "model": "Cosmos3-Nano",
         "request_id": request_id,
@@ -53,7 +62,8 @@ def test_guarded_batch_publishes_two_decodable_samples_and_rejects_incomplete_re
             },
             {
                 "name": "blue-cube",
-                "model_mode": "text2image",
+                "vision_path": encoded_conditioning_uri,
+                "num_frames": 1,
                 "num_steps": 4,
                 "prompt": "a blue cube on a robotics workbench",
                 "seed": 23,
@@ -80,6 +90,9 @@ def test_guarded_batch_publishes_two_decodable_samples_and_rejects_incomplete_re
     assert records["request"] == request
     assert records["provenance"] == result
     assert records["response"]["outputs"] == result["structured_outputs"]
+    modes = {item["args"]["name"]: item["args"]["model_mode"]
+             for item in result["structured_outputs"]}
+    assert modes == {"red-cube": "text2image", "blue-cube": "image2image"}
     for index, artifact in enumerate(result["artifacts"]):
         path = tmp_path / f"sample-{index}.jpg"
         storage.download_file(

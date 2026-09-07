@@ -129,6 +129,56 @@ def test_batch_requires_unique_named_samples() -> None:
         RayBatchRequest(samples=[{"name": "../../escape"}])
 
 
+@pytest.mark.parametrize("mode", ["", "none", "disabled", "false"])
+def test_server_rejects_disabled_management_auth_before_runtime_import(
+    monkeypatch: pytest.MonkeyPatch, mode: str
+) -> None:
+    from npa.workbench.cosmos.ray_server import main
+
+    monkeypatch.setenv("RAY_AUTH_MODE", mode)
+    with pytest.raises(RuntimeError, match="requires RAY_AUTH_MODE=token"):
+        main()
+
+
+def test_server_enables_management_auth_without_reusing_application_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import os
+
+    from npa.workbench.cosmos.ray_server import _require_ray_authentication
+
+    monkeypatch.delenv("RAY_AUTH_MODE", raising=False)
+    monkeypatch.delenv("RAY_AUTH_TOKEN", raising=False)
+    monkeypatch.setenv("RAY_AUTH_TOKEN_PATH", "operator-token-file")
+    monkeypatch.setenv("NPA_COSMOS3_RAY_TOKEN", "application-test-credential")
+    token_file = _require_ray_authentication()
+    try:
+        assert os.environ["RAY_AUTH_MODE"] == "token"
+        assert "RAY_AUTH_TOKEN" not in os.environ
+        assert os.environ["RAY_AUTH_TOKEN_PATH"] == str(token_file)
+        assert token_file.stat().st_mode & 0o777 == 0o600
+        assert len(token_file.read_bytes()) >= 32
+        assert token_file.read_text() != "application-test-credential"
+    finally:
+        token_file.unlink()
+
+
+def test_server_removes_management_credential_when_runtime_fails(monkeypatch, tmp_path):
+    from npa.workbench.cosmos import ray_server
+
+    credential = tmp_path / "credential"
+    credential.write_text("private test credential")
+    monkeypatch.setattr(ray_server, "_require_ray_authentication", lambda: credential)
+
+    def fail():
+        raise RuntimeError("runtime failed")
+
+    monkeypatch.setattr(ray_server, "_run_server", fail)
+    with pytest.raises(RuntimeError, match="runtime failed"):
+        ray_server.main()
+    assert not credential.exists()
+
+
 def test_load_batch_accepts_list_shorthand(tmp_path: Path) -> None:
     path = tmp_path / "batch.json"
     path.write_text('[{"name":"one","prompt":"cube"}]', encoding="utf-8")
@@ -483,6 +533,22 @@ def test_unsupported_request_fails_before_inference(
             "video2video",
             9,
         ),
+        (
+            {"name": "one", "vision_path": "s3://test-bucket/input%2Epng"},
+            "image2video",
+            9,
+        ),
+        (
+            {"name": "one", "vision_path": "s3://test-bucket/input.%6dp4"},
+            "video2video",
+            9,
+        ),
+        (
+            {"name": "one", "vision_path": "s3://test-bucket/input.%70ng",
+             "num_frames": 1},
+            "image2image",
+            1,
+        ),
     ],
 )
 def test_implicit_native_mode_is_bound_before_sample_defaults(
@@ -490,7 +556,7 @@ def test_implicit_native_mode_is_bound_before_sample_defaults(
 ):
     source = tmp_path / "batch.json"
     _batch(source, samples=[sample])
-    payload, _, get = transport
+    payload, post, get = transport
     payload["batch_size"] = 1
     payload["outputs"] = payload["outputs"][:1]
     args = payload["outputs"][0]["args"]
@@ -500,6 +566,7 @@ def test_implicit_native_mode_is_bound_before_sample_defaults(
     payload["outputs"][0]["outputs"][0]["files"] = [path]
     payload["artifacts"] = [_artifact(path, "one")]
     assert _submit(source, str(tmp_path / "valid"))["status"] == "completed"
+    assert post.call_args.kwargs["json"]["samples"] == [sample]
     get.reset_mock()
     args["model_mode"] = "reasoner"
     payload["outputs"][0]["outputs"][0]["files"] = [
@@ -509,6 +576,39 @@ def test_implicit_native_mode_is_bound_before_sample_defaults(
     with pytest.raises(Cosmos3RayServeError, match="different model_mode"):
         _submit(source, str(tmp_path / "invalid"))
     get.assert_not_called()
+
+
+@pytest.mark.parametrize("key", ["input%2Epng", "input.%70ng", "input.JPG", "input.mp4"])
+def test_implicit_mode_matches_authorized_server_staging(tmp_path: Path, key: str):
+    from npa.workbench.cosmos.ray_inputs import stage_sample_inputs
+    from npa.workbench.cosmos.ray_serve import _requested_mode
+    from npa.workbench.storage_scope import StorageScope
+
+    sample = {"name": "one", "vision_path": "s3://test-bucket/inputs/" + key}
+    storage = Mock()
+    storage.download_file.side_effect = lambda uri, path: Path(path).write_bytes(MEDIA)
+    staged = stage_sample_inputs(
+        sample, tmp_path / "staged",
+        scope=StorageScope.from_config(s3_roots=["s3://test-bucket/inputs/"]),
+        storage_client=storage,
+    )
+    assert _requested_mode(sample) == _requested_mode(staged)
+    storage.download_file.assert_called_once()
+
+
+@pytest.mark.parametrize("key", [
+    "input%252Epng", "input.png?query=1", "input.png#fragment",
+    "%2E%2E/input.png", "input%5C.png", "input.gif",
+])
+def test_unbindable_implicit_s3_mode_fails_before_inference(tmp_path: Path, transport, key):
+    source = tmp_path / "batch.json"
+    _batch(source, samples=[{"name": "one", "vision_path": "s3://test-bucket/" + key}])
+    _, post, get = transport
+    with pytest.raises(Cosmos3RayServeError):
+        _submit(source, str(tmp_path / "out"))
+    post.assert_not_called()
+    get.assert_not_called()
+    assert not (tmp_path / "out").exists()
 
 
 @pytest.mark.parametrize(("requested", "returned"), [(9, 1), (1, 9)])

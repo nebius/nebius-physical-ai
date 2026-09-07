@@ -27,7 +27,9 @@ USER root
 RUN [[ "$NPA_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] \
     && [[ "$SOURCE_DATE_EPOCH" =~ ^[1-9][0-9]*$ ]]
 RUN rm -f /etc/apt/sources.list.d/*.list \
-    && apt-get update && apt-get install -y --no-install-recommends \
+    && apt-get update \
+    && apt-get upgrade -y --no-install-recommends \
+    && apt-get install -y --no-install-recommends \
        ca-certificates curl python3.12 python3.12-venv \
        openssh-server rsync sudo \
     && rm -f /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub \
@@ -35,7 +37,8 @@ RUN rm -f /etc/apt/sources.list.d/*.list \
     && (id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu) \
     && printf '%s\n' 'ubuntu ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/npa-runtime \
     && chmod 0440 /etc/sudoers.d/npa-runtime \
-    && python3.12 -m venv /opt/npa-venv
+    && python3.12 -m venv /opt/npa-venv \
+    && /opt/npa-venv/bin/python -m pip install --no-cache-dir --upgrade 'pip==26.2.1'
 
 COPY docker/workbench/curobo/requirements.lock /opt/curobo-requirements.lock
 COPY docker/workbench/curobo/filter_cudnn_runtime.py /opt/filter_cudnn_runtime.py

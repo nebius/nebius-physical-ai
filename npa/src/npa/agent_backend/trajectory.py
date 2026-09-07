@@ -262,7 +262,15 @@ def _redact_string(value: str) -> str:
             return match.group(0)
         return "<address-ref>"
 
-    return _IP_RE.sub(redact_ip, text)
+    # Replacing an IPv4 host can expose a previously ineligible IPv6 boundary
+    # in Docker's host::port syntax. Reach the same result before serialization
+    # and during the upload privacy check. Each replacement consumes address
+    # punctuation and inserts a marker containing neither dots nor colons.
+    while True:
+        redacted = _IP_RE.sub(redact_ip, text)
+        if redacted == text:
+            return text
+        text = redacted
 
 
 def redact(value: Any) -> Any:

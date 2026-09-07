@@ -21,6 +21,7 @@ import httpx
 from pydantic import BaseModel, Field, PositiveInt, field_validator
 
 from npa.clients.storage import StorageClient
+from npa.workbench.storage_scope import StorageAuthorizationError, authorize_uri
 
 RAY_BATCH_SCHEMA = "npa.cosmos3.ray-serve.batch.v1"
 RAY_PROVENANCE_SCHEMA = "npa.cosmos3.ray-serve.provenance.v1"
@@ -296,6 +297,8 @@ def _prepare_client_request(request: RayBatchRequest) -> RayBatchRequest:
             raise Cosmos3RayServeError(
                 "custom defaults_file cannot be bound by this client; inline sample overrides"
             )
+        # Reject an unresolvable implicit mode before spending inference work.
+        _requested_mode(normalized)
         samples.append(normalized)
     return request.model_copy(update={"samples": samples})
 
@@ -474,6 +477,14 @@ def _requested_mode(sample: dict[str, Any]) -> Any:
     if vision is None:
         source = "text"
     elif isinstance(vision, str):
+        # The service stages S3 inputs using StorageScope's decoded object key.
+        # Use that same parser so an encoded suffix cannot change the inferred
+        # mode between the client and the upstream validator's local file.
+        if vision.startswith("s3://"):
+            try:
+                vision = authorize_uri(vision, operation="read").key
+            except StorageAuthorizationError as exc:
+                raise Cosmos3RayServeError("invalid conditioning S3 URI") from exc
         suffix = Path(vision).suffix.lower()
         source = {
             ".png": "image",

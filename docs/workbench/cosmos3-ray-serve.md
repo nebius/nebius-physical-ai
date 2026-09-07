@@ -82,8 +82,11 @@ catalog image is the accepted service image, which still bundles the older
 client, and the example does not enable a source overlay. The integrity checks
 below apply to the updated installed client shown above; the unchanged workflow
 default does not provide them. Updating a host's NPA installation does not update
-the client inside that image. The resident service can continue using its
-accepted digest.
+the client inside that image. The accepted service digest remains wire-compatible
+with the updated client. It does not acquire the current source's Ray management
+authentication, scoped S3 input staging, or Ray 2.58/Torch 2.13 runtime changes.
+Those require validation of the actual service runtime; the retained two-image
+proof applies only to its original immutable image.
 
 The client assigns a request ID before submission when the input omits one and
 persists that ID in `request.json`. It requires the supported response schema,
@@ -92,6 +95,14 @@ result for every requested sample name. It also binds the sampling mode, supplie
 seed and requested image/video frame category. Failed, skipped, duplicate,
 foreign or incomplete results fail before any artifact download or publication.
 Frame category includes the pinned mode defaults and single-WSM transfer default.
+For implicit modes, S3 conditioning filenames use the same decoded object-key
+parser as server input staging; the original URI remains in the submitted request.
+Unrecognized implicit conditioning extensions fail before submission.
+The CPU client mirrors only the pinned framework's mode and frame-category
+defaults without importing its GPU runtime. Custom service defaults at the same
+framework revision are outside this contract; provide explicit `model_mode` and
+`num_frames` instead. A different framework revision is rejected until its
+contract has been reviewed and validated.
 Inline sample overrides instead of using `defaults_file`: server-local defaults
 can introduce output-affecting settings that the client cannot independently bind.
 Each declared file must have exactly one
@@ -110,8 +121,9 @@ requires `num_outputs=1` per named sample; request several named samples for
 several outputs. Use a new request ID for new inference; the service reserves
 each request directory once.
 
-Run the committed live client check against an already started, guarded service
-with an operator-owned S3 output prefix:
+Run the committed live client check against the current guarded service source
+with an operator-owned S3 output prefix. Configure the service's
+`NPA_COSMOS3_RAY_ALLOWED_S3_ROOTS` and storage credentials to read that prefix:
 
 ```bash
 NPA_INTEGRATION_E2E=1 \
@@ -120,8 +132,9 @@ NPA_COSMOS3_RAY_LIVE_OUTPUT_URI=s3://<bucket>/<prefix>/ \
   npa/tests/e2e/test_cosmos3_ray_batch_live_e2e.py -q
 ```
 
-It uses the configured endpoint and token, submits two synthetic prompts,
-reads back the published records, decodes both images, and rejects a copy of
+It uses the configured endpoint and token, generates one image from text and
+one from synthetic conditioning pixels with an encoded S3 filename, reads back
+the published records, decodes both images, and rejects a copy of
 the real response with a missing artifact. The operator owns service and
 storage cleanup after retaining the validation outputs.
 

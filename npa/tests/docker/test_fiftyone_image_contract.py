@@ -37,5 +37,5 @@ def test_fiftyone_keeps_bundled_database_and_brain_smoke() -> None:
     text = DOCKERFILE.read_text(encoding="utf-8")
 
     assert "MONGODB_VERSION=" in text
-    assert 'cp "mongodb-linux-x86_64-ubuntu2204-${MONGODB_VERSION}/bin/mongod"' in text
+    assert 'cp "/tmp/mongodb-linux-x86_64-ubuntu2204-${MONGODB_VERSION}/bin/mongod"' in text
     assert "smoke_functional.py" in text

@@ -13,7 +13,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[3]
 IMAGE = ROOT / "npa/docker/workbench/curobo"
-DIST_INFO = "nvidia_cudnn_cu13-9.13.0.50.dist-info"
+DIST_INFO = "nvidia_cudnn_cu13-9.20.0.48.dist-info"
 HEADER = "nvidia/cudnn/include/cudnn.h"
 LIBRARY = "nvidia/cudnn/lib/libcudnn.so.9"
 LICENSE = f"{DIST_INFO}/licenses/License.txt"
@@ -29,7 +29,7 @@ def package(tmp_path):
         LIBRARY: b"\x7fELFsynthetic test library",
         "nvidia/cudnn/lib/libcudnn_static.a": b"synthetic SDK archive",
         LICENSE: b"synthetic notice must remain byte-identical\n",
-        f"{DIST_INFO}/METADATA": b"Name: nvidia-cudnn-cu13\nVersion: 9.13.0.50\n",
+        f"{DIST_INFO}/METADATA": b"Name: nvidia-cudnn-cu13\nVersion: 9.20.0.48\n",
     }
     for name, payload in files.items():
         path = tmp_path / name

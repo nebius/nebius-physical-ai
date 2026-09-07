@@ -24,6 +24,7 @@ from typing import Any
 
 import typer
 from rich.console import Console
+from npa.clients.env import load_env_file_script
 from npa.clients.config import (
     default_project_name,
     default_workbench_name,
@@ -955,12 +956,12 @@ def _forward_remote(project: str, name: str) -> None:
 
         full_cmd = docker_exec_cmd(
             "npa-genesis",
-            "set -a; test -f /opt/lerobot/.env && . /opt/lerobot/.env; set +a; "
+            f"{load_env_file_script('/opt/lerobot/.env', required=False)} && "
             f"{remote_cmd}",
         )
     else:
         activate = (
-            "set -a && test -f /opt/lerobot/.env && . /opt/lerobot/.env; set +a && "
+            f"{load_env_file_script('/opt/lerobot/.env', required=False)} && "
             f'eval "$({_CONDA_BIN} shell.bash hook)" && '
             f"conda activate {_DEFAULT_CONDA_ENV} && "
         )

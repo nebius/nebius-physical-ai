@@ -643,7 +643,7 @@ def validate_lerobot_checkpoint(
             raise PolicyContainerError(
                 "torch is required to validate pytorch_model.bin"
             ) from exc
-        payload = torch.load(str(weight_file), map_location="cpu")
+        payload = torch.load(str(weight_file), map_location="cpu", weights_only=True)
         tensors = payload if isinstance(payload, dict) else {}
     tensor_count = 0
     parameter_count = 0
