@@ -58,6 +58,50 @@ def test_real_listener_owned_and_same_process_adopted_on_retry(local_runtime):
     assert (local_runtime["isolated_dir"] / "local-api" / "daemon.json").stat().st_mode & 0o777 == 0o600
 
 
+@pytest.mark.parametrize("resolver", ["resolve_project_storage", "resolve_terraform_state"])
+def test_project_resolution_preserves_verified_api_but_rotation_is_rejected(
+    local_runtime, tmp_path, monkeypatch, resolver,
+):
+    from npa.clients import config, credentials, project_credential_store as store
+
+    directory = tmp_path / "credentials"
+    path = directory / "credentials.yaml"
+    monkeypatch.setattr(credentials, "CREDENTIALS_PATH", path)
+    monkeypatch.setattr(store, "_now", lambda: "2025-01-01T00:00:00+00:00")
+    store.write_project_credentials(
+        "project-fixture",
+        {"storage": {"bucket": "fixture-bucket", "aws_access_key_id": "fixture-access",
+                     "aws_secret_access_key": "fixture-secret"}},
+        alias="fixture",
+    )
+    # A valid operator-formatted store must retain its exact verified bytes.
+    path.write_text("# Operator credential store\n" + path.read_text())
+    path.chmod(0o644)
+    config_path = tmp_path / "npa-config.yaml"
+    config_path.write_text("projects:\n  fixture:\n    project_id: project-fixture\n")
+    monkeypatch.setattr(config, "CONFIG_PATH", config_path)
+    local_runtime["environment"]["NPA_CONFIG_DIR"] = str(directory)
+    api.ensure_isolated_api(**local_runtime)
+    original = _record(local_runtime)
+    verified_bytes = path.read_bytes()
+    monkeypatch.setattr(store, "_now", lambda: "2025-01-02T00:00:00+00:00")
+
+    for _ in range(2):
+        getattr(config, resolver)("fixture")
+        assert path.read_bytes() == verified_bytes
+        assert path.stat().st_mode & 0o777 == 0o600
+        api.ensure_isolated_api(**local_runtime)
+        assert _record(local_runtime)["pid"] == original["pid"]
+
+    store.write_project_credentials(
+        "project-fixture", {"storage": {"aws_secret_access_key": "rotated-fixture-secret"}},
+        alias="fixture",
+    )
+    with pytest.raises(api.IsolatedApiError, match="credential configuration changed"):
+        api.ensure_isolated_api(**local_runtime)
+    assert api._process(original, verify_files=False)["pid"] == original["pid"]
+
+
 def test_create_response_crash_recovers_exact_existing_process(local_runtime):
     api.ensure_isolated_api(**local_runtime)
     record = _record(local_runtime)
