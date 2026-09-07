@@ -66,6 +66,8 @@ def test_native_train_cuda_recovery_artifacts_and_cancel():
     endpoint = urlsplit(config["address"])
     assert endpoint.hostname in {"127.0.0.1", "localhost"} and endpoint.scheme == "http"
     assert not endpoint.username and not endpoint.password and not endpoint.query
+    if any(os.environ.get(name) for name in ("RAY_ADDRESS", "RAY_API_SERVER_ADDRESS")):
+        raise ValueError("Unset RAY_ADDRESS and RAY_API_SERVER_ADDRESS before using the selected Jobs endpoint")
     evidence = Path(config["evidence_dir"])
     evidence.mkdir(parents=True, exist_ok=True, mode=0o700)
     assert evidence.stat().st_mode & 0o077 == 0, "Evidence directory must be owner-only"

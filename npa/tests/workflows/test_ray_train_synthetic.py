@@ -366,6 +366,33 @@ def test_documented_tunnel_fails_when_its_forward_cannot_bind():
     guide = (EXAMPLE / "README.md").read_text()
     tunnel = guide.split('ssh -M -S "$TRAIN_SOCKET"', 1)[1].split('export RAY_API=', 1)[0]
     assert "-o ExitOnForwardFailure=yes" in tunnel
+    assert "unset RAY_ADDRESS RAY_API_SERVER_ADDRESS" in tunnel
+
+
+@pytest.mark.parametrize("override", ["RAY_ADDRESS", "RAY_API_SERVER_ADDRESS"])
+def test_live_endpoint_override_is_rejected_before_any_native_client_contact(tmp_path, monkeypatch, override):
+    """Run the live entrypoint with an unrelated inherited endpoint and forbid Ray contact."""
+    import builtins
+
+    path = Path(__file__).parents[1] / "e2e/test_ray_train_synthetic_live.py"
+    spec = importlib.util.spec_from_file_location("train_live_endpoint_override", path)
+    live = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(live)
+    config = tmp_path / "config.json"
+    config.write_text(json.dumps({"address": "http://127.0.0.1:18265", "evidence_dir": str(tmp_path / "evidence")}))
+    config.chmod(0o600)
+    monkeypatch.setenv("NPA_RAY_TRAIN_LIVE_CONFIG", str(config))
+    monkeypatch.setenv(override, "http://127.0.0.1:18266")
+    original_import = builtins.__import__
+
+    def forbid_ray_contact(name, *args, **kwargs):
+        assert not name.startswith("ray"), "Conflicting endpoint must fail before any native client import"
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", forbid_ray_contact)
+    with pytest.raises(ValueError, match="Unset RAY_ADDRESS and RAY_API_SERVER_ADDRESS"):
+        live.test_native_train_cuda_recovery_artifacts_and_cancel()
+    assert not (tmp_path / "evidence").exists()
 
 
 @pytest.mark.parametrize("damage", ["missing_buffer", "missing_parameter", "wrong_shape", "nonfinite", "learning_rate", "momentum"])

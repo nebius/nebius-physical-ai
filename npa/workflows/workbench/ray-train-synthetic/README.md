@@ -73,12 +73,17 @@ Use the SkyPilot-generated SSH alias to reach Jobs through one owned tunnel:
 export TRAIN_SOCKET="$HOME/.ssh/${TRAIN_CLUSTER}-jobs.sock"
 ssh -M -S "$TRAIN_SOCKET" -fNT -o ExitOnForwardFailure=yes \
   -L 18265:127.0.0.1:8265 "$TRAIN_CLUSTER"
+unset RAY_ADDRESS RAY_API_SERVER_ADDRESS
 export RAY_API=http://127.0.0.1:18265
 # Install ray[default,train]==2.58.0 in your own client environment.
 ray job list --address "$RAY_API"
 ```
 
 Wait for Jobs readiness; SkyPilot launch completion alone does not establish it.
+Ray's native Jobs client gives those two environment variables precedence over
+an explicit address. Keep them unset in the operator shell; the live suite
+rejects them before client contact. Each submitted driver receives its separate
+application GCS address from the native Jobs service.
 Check both hosts joined the application GCS on port 6381, with two total GPUs.
 Application ports are separate from SkyPilot's management Ray; never use
 ambient discovery or a broad `ray stop`.
