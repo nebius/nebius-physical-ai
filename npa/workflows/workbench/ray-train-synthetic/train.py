@@ -100,6 +100,15 @@ def validate_torch_runtime() -> None:
         raise RuntimeError("This training runtime requires Torch 2.13.0+cu130")
 
 
+def runtime_versions() -> dict[str, str]:
+    """Keep checkpoint provenance weights-only compatible, including TorchVersion."""
+    import ray
+    import torch
+
+    return {"torch_version": str(torch.__version__), "cuda_version": str(torch.version.cuda),
+            "ray_version": str(ray.__version__)}
+
+
 def train_loop(recipe: dict) -> None:
     """Train each CUDA rank and report synchronized checkpoints through Ray Train."""
     validate_torch_runtime()
@@ -109,6 +118,7 @@ def train_loop(recipe: dict) -> None:
     from ray import train
     from ray.train.torch import get_device, prepare_model
 
+    versions = runtime_versions()
     context = train.get_context()
     rank, world = context.get_world_rank(), context.get_world_size()
     device = get_device()
@@ -156,8 +166,7 @@ def train_loop(recipe: dict) -> None:
         rank_evidence = {
             "rank": rank, "local_rank": context.get_local_rank(), "world_size": world,
             "device_type": device.type, "device_name": properties.name,
-            "torch_version": torch.__version__, "cuda_version": torch.version.cuda,
-            "ray_version": ray.__version__,
+            **versions,
             "node_fingerprint": hashlib.sha256(ray.get_runtime_context().get_node_id().encode()).hexdigest(),
             "device_fingerprint": fingerprint,
             "parameter_sha256": hashlib.sha256(parameters.cpu().numpy().tobytes()).hexdigest(),

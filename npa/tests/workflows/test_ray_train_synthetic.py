@@ -128,6 +128,16 @@ def test_worker_rejects_torch_drift_before_training(version, monkeypatch, recipe
         load("train").train_loop(recipe)
 
 
+def test_runtime_provenance_survives_weights_only_checkpoint_reload(tmp_path, monkeypatch):
+    """TorchVersion is a str subclass that the safe unpickler does not allow."""
+    torch = pytest.importorskip("torch")
+    monkeypatch.setitem(sys.modules, "ray", SimpleNamespace(__version__="2.58.0"))
+    versions = load("train").runtime_versions()
+    checkpoint = tmp_path / "state.pt"
+    torch.save({"runtime": versions}, checkpoint)
+    assert torch.load(checkpoint, weights_only=True)["runtime"] == versions
+
+
 @pytest.fixture
 def exported(tmp_path, journal, recipe):
     """Write real RRD from explicit fixture values, with a clearly fake checkpoint."""
