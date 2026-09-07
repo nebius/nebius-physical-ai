@@ -8,7 +8,7 @@ import pytest
 from npa.clients import config as config_module
 from npa.clients import credentials as credentials_module
 from npa.clients.config import SSHConfig, StorageConfig, WorkbenchConfig
-from npa.clients.endpoint import service_endpoint
+from npa.clients.endpoint import EndpointError, service_endpoint
 
 
 def _cfg(
@@ -34,6 +34,77 @@ def test_service_endpoint_defaults_to_public() -> None:
     with service_endpoint(_cfg()) as active:
         assert active.url == "http://vm:8080"
         assert active.strategy == "public"
+
+
+@pytest.mark.parametrize("endpoint", ["http://vm:8080", "http://127.0.0.1:8080"])
+@pytest.mark.parametrize("strategy", ["public", "ssh_fallback"])
+def test_required_ssh_always_creates_fresh_forward(endpoint, strategy, mocker):
+    cfg = _cfg(endpoint=endpoint, strategy=strategy)
+    process = mocker.MagicMock()
+    process.poll.return_value = None
+    forward = mocker.patch("npa.clients.endpoint._open_ssh_forward", return_value=process)
+    mocker.patch("npa.clients.endpoint._free_local_port", return_value=19090)
+    tcp = mocker.patch("npa.clients.endpoint._tcp_open", return_value=True)
+    mocker.patch("npa.clients.endpoint._wait_for_ssh_forward")
+    mocker.patch("npa.clients.endpoint.time.sleep")
+    public = mocker.patch("npa.clients.endpoint._public_endpoint_open", return_value=True)
+    with service_endpoint(cfg, require_ssh=True) as active:
+        assert active.url == "http://127.0.0.1:19090"
+    forward.assert_called_once_with(cfg, 19090, 8080)
+    tcp.assert_not_called()
+    public.assert_not_called()
+    process.terminate.assert_called_once()
+
+
+@pytest.mark.parametrize("known_hosts_source", ["operator", "provider", "standard"])
+def test_ssh_forward_requires_verified_host_keys(known_hosts_source, tmp_path, monkeypatch, mocker):
+    from npa.clients.endpoint import _open_ssh_forward
+
+    operator = tmp_path / "operator-known-hosts"
+    provider = tmp_path / "provider-known-hosts"
+    monkeypatch.delenv("NPA_SSH_KNOWN_HOSTS", raising=False)
+    if known_hosts_source == "operator":
+        operator.touch()
+        monkeypatch.setenv("NPA_SSH_KNOWN_HOSTS", str(operator))
+    if known_hosts_source in {"operator", "provider"}:
+        provider.touch()
+    mocker.patch("npa.deploy.ssh_trust.known_hosts_path", return_value=provider)
+    popen = mocker.patch("npa.clients.endpoint.subprocess.Popen")
+    process = _open_ssh_forward(_cfg(), 19090, 8080)
+    from npa.clients.endpoint import _close_process
+    _close_process(process)
+    argv = popen.call_args.args[0]
+    assert "StrictHostKeyChecking=yes" in argv
+    assert "StrictHostKeyChecking=accept-new" not in argv
+    assert "ExitOnForwardFailure=yes" in argv
+    assert "-M" in argv
+    assert "-S" in argv
+    selected = [arg for arg in argv if arg.startswith("UserKnownHostsFile=")]
+    if known_hosts_source == "standard":
+        assert selected == []
+    else:
+        expected = operator if known_hosts_source == "operator" else provider
+        assert selected == [f"UserKnownHostsFile={expected}"]
+
+
+def test_required_ssh_failure_does_not_yield_endpoint(mocker):
+    process = mocker.MagicMock()
+    process.poll.return_value = 255
+    process.stderr.read.return_value = "Host key verification failed"
+    mocker.patch("npa.clients.endpoint._open_ssh_forward", return_value=process)
+    mocker.patch("npa.clients.endpoint.time.sleep")
+    mocker.patch("npa.clients.endpoint.os.path.exists", return_value=False)
+    with pytest.raises(EndpointError, match="host verification failed"):
+        with service_endpoint(_cfg(), require_ssh=True):
+            pytest.fail("Failed SSH must not produce an active route")
+
+
+def test_required_ssh_needs_credentials_even_for_loopback_endpoint():
+    cfg = _cfg(endpoint="http://127.0.0.1:8080")
+    cfg.ssh.host = ""
+    with pytest.raises(EndpointError, match="requires ssh host"):
+        with service_endpoint(cfg, require_ssh=True):
+            pytest.fail("An existing local address is not a verified SSH route")
 
 
 def test_service_endpoint_serverless_uses_saved_public_url(mocker) -> None:
@@ -67,16 +138,16 @@ def test_service_endpoint_opens_transient_ssh_forward(mocker) -> None:
     popen.return_value = process
     mocker.patch("npa.clients.endpoint._free_local_port", return_value=19090)
     mocker.patch("npa.clients.endpoint._tcp_open", return_value=False)
-    wait = mocker.patch("npa.clients.endpoint._wait_for_local_port")
+    wait = mocker.patch("npa.clients.endpoint._wait_for_ssh_forward")
 
     with service_endpoint(cfg) as active:
         assert active.url == "http://127.0.0.1:19090"
         assert active.local_port == 19090
 
-    wait.assert_called_once_with(19090)
+    wait.assert_called_once_with(process, 19090, 8080)
     process.terminate.assert_called_once()
     popen.assert_called_once()
-    assert "127.0.0.1:19090:127.0.0.1:8080" in popen.call_args.args[0]
+    assert "-M" in popen.call_args.args[0]
 
 
 def test_service_endpoint_accepts_legacy_ssh_strategy_name(mocker) -> None:
@@ -114,7 +185,7 @@ def test_service_endpoint_self_heals_blocked_byovm_public_alias_to_ssh(
     popen.return_value = process
     mocker.patch("npa.clients.endpoint._tcp_open", return_value=False)
     mocker.patch("npa.clients.endpoint._free_local_port", return_value=15151)
-    mocker.patch("npa.clients.endpoint._wait_for_local_port")
+    ready = mocker.patch("npa.clients.endpoint._wait_for_ssh_forward")
     persist = mocker.patch("npa.clients.endpoint.update_workbench_endpoint_strategy")
 
     with service_endpoint(cfg, default_port=5151) as active:
@@ -124,7 +195,7 @@ def test_service_endpoint_self_heals_blocked_byovm_public_alias_to_ssh(
     persist.assert_called_once_with("proj", "fiftyone", "ssh_fallback", 5151)
     assert cfg.endpoint_strategy == "ssh_fallback"
     assert cfg.service_port == 5151
-    assert "127.0.0.1:15151:127.0.0.1:5151" in popen.call_args.args[0]
+    ready.assert_called_once_with(process, 15151, 5151)
 
 
 def test_service_endpoint_persists_self_healed_strategy_to_config(
@@ -167,7 +238,7 @@ def test_service_endpoint_persists_self_healed_strategy_to_config(
     mocker.patch("npa.clients.endpoint.subprocess.Popen", return_value=process)
     mocker.patch("npa.clients.endpoint._tcp_open", return_value=False)
     mocker.patch("npa.clients.endpoint._free_local_port", return_value=15151)
-    mocker.patch("npa.clients.endpoint._wait_for_local_port")
+    mocker.patch("npa.clients.endpoint._wait_for_ssh_forward")
 
     with service_endpoint(cfg, default_port=5151):
         pass

@@ -469,9 +469,9 @@ def _load_policy_from_checkpoint(
         # ``--config`` wins, then the checkpoint's own description of its policy
         # class (what `sonic train --runtime local` records), so a state-dict
         # checkpoint is self-describing instead of needing a matching --config.
-        policy = _instantiate_policy_from_config(config) or _instantiate_policy_from_config(
-            payload
-        )
+        policy = _instantiate_policy_from_config(config)
+        if policy is None:
+            policy = _instantiate_policy_from_config(payload, checkpoint_metadata=True)
         if policy is not None:
             state_dict, state_key = _state_dict_from_checkpoint(payload)
             if state_dict is None:
@@ -483,26 +483,22 @@ def _load_policy_from_checkpoint(
             _apply_checkpoint_metadata(policy, payload)
             return policy
     raise SonicExportError(
-        "checkpoint does not contain a loadable torch.nn.Module policy. "
-        "Provide an SDK `policy=` object, a checkpoint that stores `policy`, "
-        "`actor`, or `model` as a module, or --config with policy.class and "
-        "policy.kwargs for state-dict checkpoints."
+        "checkpoint does not contain a supported policy state dict. "
+        "Provide an SDK `policy=` object or a tensor state-dict checkpoint "
+        "with trusted --config policy.class and policy.kwargs."
     )
 
 
 def _load_checkpoint_payload(path: Path, torch: Any) -> Any:
-    """Read a checkpoint, preferring torch's restricted unpickler.
-
-    ``weights_only=True`` reads tensors and plain data without executing what
-    the file says, which covers every checkpoint `sonic train` writes. Older
-    checkpoints that pickle the module itself cannot be read that way, so they
-    fall back to the full unpickler — only trust those from your own storage.
-    """
+    """Read tensors and plain data; never execute checkpoint pickle globals."""
 
     try:
         return torch.load(str(path), map_location="cpu", weights_only=True)
-    except Exception:  # noqa: BLE001 - a module-pickling checkpoint needs the full loader
-        return torch.load(str(path), map_location="cpu", weights_only=False)
+    except Exception as exc:
+        raise SonicExportError(
+            "checkpoint could not be loaded safely; supply a tensor state-dict "
+            "checkpoint, not a pickled module"
+        ) from exc
 
 
 def _apply_checkpoint_metadata(policy: Any, payload: dict[str, Any]) -> None:
@@ -519,7 +515,9 @@ def _apply_checkpoint_metadata(policy: Any, payload: dict[str, Any]) -> None:
             setattr(policy, key, value)
 
 
-def _instantiate_policy_from_config(config: dict[str, Any]) -> Any | None:
+def _instantiate_policy_from_config(
+    config: dict[str, Any], *, checkpoint_metadata: bool = False
+) -> Any | None:
     policy_cfg = config.get("policy") if isinstance(config.get("policy"), dict) else {}
     target = (
         policy_cfg.get("class")
@@ -541,6 +539,13 @@ def _instantiate_policy_from_config(config: dict[str, Any]) -> Any | None:
             policy_cfg = {"kwargs": actor_cfg.get("kwargs", {})}
     if not target:
         return None
+    if checkpoint_metadata and str(target).replace(":", ".") != (
+        "npa.workbench.sonic.reference_policy.ReferenceLocomotionPolicy"
+    ):
+        raise SonicExportError(
+            "checkpoint policy class is not a supported built-in architecture; "
+            "provide the architecture through trusted --config"
+        )
     kwargs = policy_cfg.get("kwargs") or config.get("policy_kwargs") or {}
     if not isinstance(kwargs, dict):
         raise SonicExportError("policy kwargs in --config must be a mapping")

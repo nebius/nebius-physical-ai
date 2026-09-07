@@ -4260,6 +4260,8 @@ def test_agent_cloud_init_quotes_public_key_comments_before_yaml_parse() -> None
     payload = yaml.safe_load(rendered)
 
     assert payload["users"][0]["ssh_authorized_keys"] == [public_key]
+    assert "# NPA_SSH_HOST_KEY_NONCE=" + "0" * 64 in rendered
+    assert "${" not in rendered
 
 
 def test_legacy_agent_cloud_init_reproduces_multiline_private_key_yaml_failure() -> (

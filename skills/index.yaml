@@ -362,7 +362,7 @@ skills:
         path: npa/tests/guardrails/test_three_tier_contract.py
   - name: pre-pr-validation
     category: atomic
-    when_to_use: "Before pushing an npa change: which of the six PR gates apply, and the exact local command for each, in cheapest-first order."
+    when_to_use: "Before pushing an npa change: which PR gates apply, and the exact local command for each, in cheapest-first order."
     path: skills/atomic/pre-pr-validation/SKILL.md
     smoke:
       - type: file_exists

@@ -23,6 +23,7 @@ AUTOMATIC_PR_WORKFLOWS = (
     "harness-guardrails.yml",
     "image-security-scan.yml",
     "lint.yml",
+    "security-regression.yml",
     "test.yml",
 )
 

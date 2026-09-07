@@ -8,9 +8,8 @@ SONIC twins (``sonic-export``, ``sonic-eval``, ``sonic-export-eval``) need a
 vendor NVIDIA's public ``nvidia/GEAR-SONIC`` weights. Without a fixture those twins
 can only ever be covered plan-only, which is not evidence.
 
-``npa workbench sonic export`` accepts a checkpoint that stores a ``torch.nn.Module``
-under ``policy`` / ``actor`` / ``model`` (see ``_load_policy_from_checkpoint`` in
-``npa/src/npa/workbench/sonic/__init__.py``). This module builds exactly that: a small
+``npa workbench sonic export`` accepts tensor state dictionaries with a supported
+built-in architecture description. This module builds exactly that: a small
 deterministic MLP with the observation/action dimensions of a locomotion policy. The
 export it produces is a *real* ONNX graph run through the shipped exporter, not a
 stub — the point is to exercise the tool, not to imitate its output.
@@ -86,9 +85,7 @@ def build_policy_module(
     # --obs-spec or a policy with one of: ..." (SkyPilot job 188). Real SONIC policies
     # carry these, so the fixture must too.
     #
-    # Plain ints land in the module's __dict__ (not _parameters/_modules), so they
-    # survive torch.save/torch.load without making the checkpoint depend on any npa
-    # class being importable at load time.
+    # These are also written as plain metadata in the tensor-only checkpoint.
     policy.obs_dim = obs_dim
     policy.action_dim = act_dim
     return policy
@@ -102,7 +99,7 @@ def build_checkpoint(
     hidden: int = DEFAULT_HIDDEN,
     seed: int = 0,
 ) -> dict[str, Any]:
-    """Write a ``{"policy": <nn.Module>}`` checkpoint and return its metadata."""
+    """Write a weights-only-loadable checkpoint and return its metadata."""
 
     torch = _import_torch()
     policy = build_policy_module(obs_dim=obs_dim, act_dim=act_dim, hidden=hidden, seed=seed)
@@ -117,7 +114,24 @@ def build_checkpoint(
         "seed": seed,
         "torch_version": str(torch.__version__),
     }
-    torch.save({"policy": policy, "npa_fixture": metadata}, str(path))
+    torch.save(
+        {
+            "actor_model_state_dict": {
+                f"net.{key}": value for key, value in policy.state_dict().items()
+            },
+            "policy": {
+                "class": "npa.workbench.sonic.reference_policy.ReferenceLocomotionPolicy",
+                "kwargs": {
+                    "observation_dim": obs_dim, "action_dim": act_dim,
+                    "hidden_sizes": [hidden, hidden],
+                },
+            },
+            "obs_spec": {"name": "obs", "dim": obs_dim},
+            "action_spec": {"name": "action", "dim": act_dim},
+            "npa_fixture": metadata,
+        },
+        str(path),
+    )
     return {**metadata, "checkpoint_path": str(path), "bytes": path.stat().st_size}
 
 
