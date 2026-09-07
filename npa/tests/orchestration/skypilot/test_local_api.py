@@ -290,34 +290,46 @@ def test_invalid_credential_yaml_diagnostic_does_not_include_source_secret():
 
 
 @pytest.mark.parametrize("fail_transaction", [False, True])
+@pytest.mark.parametrize("runtime_location", ["unset", "absolute", "home_relative"])
 def test_cleanup_clone_owns_api_preserves_identity_and_snapshots_live_wal(
-    local_runtime, monkeypatch, fail_transaction
+    local_runtime, monkeypatch, fail_transaction, runtime_location
 ):
     import shutil
     import sqlite3
     from npa.orchestration.skypilot import cleanup
 
+    source_home = Path(local_runtime["environment"]["HOME"])
+    source_runtime = source_home
+    local_runtime["environment"].pop("SKY_RUNTIME_DIR", None)
+    if runtime_location == "absolute":
+        source_runtime = source_home.parent / "server-runtime"
+        local_runtime["environment"]["SKY_RUNTIME_DIR"] = str(source_runtime)
+    elif runtime_location == "home_relative":
+        source_runtime = source_home / "server-runtime"
+        local_runtime["environment"]["SKY_RUNTIME_DIR"] = "~/server-runtime"
     api.ensure_isolated_api(**local_runtime)
     original = _record(local_runtime)
-    source_home = Path(local_runtime["environment"]["HOME"])
-    source_state = source_home / ".sky"
-    source_state.mkdir()
-    (source_state / "user_hash").write_text("fixture-isolated")
+    home_state = source_home / ".sky"
+    home_state.mkdir(exist_ok=True)
+    (home_state / "user_hash").write_text("fixture-isolated")
+    source_state = source_runtime / ".sky"
+    source_state.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(source_state / "state.db")
     connection.execute("PRAGMA journal_mode=WAL")
     connection.execute("CREATE TABLE controllers (name TEXT)")
     connection.execute("INSERT INTO controllers VALUES ('controller-fixture')")
     connection.commit()
     assert (source_state / "state.db-wal").stat().st_size
-    (source_state / "api_server").mkdir()
-    with sqlite3.connect(source_state / "api_server/requests.db") as requests:
-        requests.execute("CREATE TABLE requests (operation TEXT)")
-        requests.execute("INSERT INTO requests VALUES ('pending_launch')")
+    for state in {home_state, source_state}:
+        (state / "api_server").mkdir()
+        with sqlite3.connect(state / "api_server/requests.db") as requests:
+            requests.execute("CREATE TABLE requests (operation TEXT)")
+            requests.execute("INSERT INTO requests VALUES ('pending_launch')")
     sky_bin = Path(local_runtime["sky_executable"])
     sky_bin.write_text(
         f"#!{sys.executable}\nimport json,os,sys\n"
         "print(json.dumps({key:os.environ[key] for key in "
-        "['HOME','SKYPILOT_USER_ID','SKYPILOT_API_SERVER_ENDPOINT','SKYPILOT_GLOBAL_CONFIG']}))\n"
+        "['HOME','SKY_RUNTIME_DIR','SKYPILOT_USER_ID','SKYPILOT_API_SERVER_ENDPOINT','SKYPILOT_GLOBAL_CONFIG']}))\n"
     )
     sky_bin.chmod(0o700)
     monkeypatch.setattr(cleanup, "ensure_skypilot_version", lambda value: Path(value))
@@ -340,7 +352,14 @@ def test_cleanup_clone_owns_api_preserves_identity_and_snapshots_live_wal(
                 assert selected["SKYPILOT_GLOBAL_CONFIG"] == str(clone / "transaction-config.yaml")
                 assert "fixture-secret-value" not in json.dumps(clone_record)
                 assert not (clone / "home/.sky/api_server/requests.db").exists()
-                with sqlite3.connect(clone / "home/.sky/state.db") as db:
+                assert (clone / "home/.sky/user_hash").read_text() == "fixture-isolated"
+                # The pinned Sky database manager selects SKY_RUNTIME_DIR,
+                # independently of the client identity stored under HOME.
+                cloned_state = Path(selected["SKY_RUNTIME_DIR"]) / ".sky"
+                assert cloned_state.is_relative_to(clone)
+                assert not (cloned_state / "api_server/requests.db").exists()
+                assert (cloned_state / "state.db").is_file()
+                with sqlite3.connect(cloned_state / "state.db") as db:
                     assert db.execute("SELECT name FROM controllers").fetchall() == [("controller-fixture",)]
                     db.execute("DELETE FROM controllers")
                 assert connection.execute("SELECT name FROM controllers").fetchall() == [("controller-fixture",)]
@@ -356,6 +375,104 @@ def test_cleanup_clone_owns_api_preserves_identity_and_snapshots_live_wal(
         if clone and clone.exists():
             api.stop_isolated_api(clone)
             shutil.rmtree(clone)
+
+
+@pytest.mark.parametrize("runtime_value", ["", "relative-runtime", "~other-user/runtime"])
+def test_cleanup_clone_refuses_ambiguous_runtime_before_transaction(
+    local_runtime, monkeypatch, runtime_value,
+):
+    from npa.orchestration.skypilot import cleanup
+
+    local_runtime["environment"]["SKY_RUNTIME_DIR"] = runtime_value
+    api.ensure_isolated_api(**local_runtime)
+    monkeypatch.setattr(cleanup, "ensure_skypilot_version", lambda value: Path(value))
+    with pytest.raises(api.IsolatedApiError, match="absolute source runtime"):
+        with cleanup._cloned_skypilot_state(
+            local_runtime["isolated_dir"], sky_bin=local_runtime["sky_executable"],
+        ):
+            pytest.fail("ambiguous runtime must not start a transaction")
+    assert not (local_runtime["isolated_dir"] / "controller-transactions").exists()
+
+
+@pytest.mark.parametrize("helper_failure", [False, True])
+def test_controller_metadata_verified_before_clone_api_starts(
+    local_runtime, monkeypatch, helper_failure,
+):
+    import subprocess
+    from npa.orchestration.skypilot import cleanup
+
+    api.ensure_isolated_api(**local_runtime)
+    original = _record(local_runtime)
+    monkeypatch.setattr(cleanup, "ensure_skypilot_version", lambda value: Path(value))
+    actual_run = subprocess.run
+    prepared = []
+
+    def run(argv, **kwargs):
+        if len(argv) < 2 or not str(argv[1]).endswith("controller_clone.py"):
+            return actual_run(argv, **kwargs)
+        path = Path(argv[2])
+        data = json.loads(path.read_text())
+        root = Path(data["clone_root"])
+        assert path.stat().st_mode & 0o777 == 0o600
+        assert data["source_home"] == local_runtime["environment"]["HOME"]
+        assert data["controller_names"] == ["sky-jobs-controller-fixture"]
+        assert data["context"] == "fixture-context"
+        assert kwargs["env"]["HOME"] == str(root / "home")
+        assert kwargs["env"]["SKY_RUNTIME_DIR"] == str(root / "sky-runtime")
+        assert not json.loads((root / "local-api/daemon.json").read_text()).get("pid")
+        prepared.append(root)
+        return subprocess.CompletedProcess(argv, int(helper_failure), b"", b"private diagnostic")
+
+    monkeypatch.setattr(subprocess, "run", run)
+    try:
+        with cleanup._cloned_skypilot_state(
+            local_runtime["isolated_dir"], sky_bin=local_runtime["sky_executable"],
+            controller_names=["sky-jobs-controller-fixture"], context="fixture-context",
+        ) as root:
+            assert not helper_failure
+            assert prepared == [root]
+            assert json.loads((root / "local-api/daemon.json").read_text())["pid"]
+    except api.IsolatedApiError as exc:
+        assert helper_failure
+        assert str(exc) == "controller transaction could not verify its copied controller metadata"
+    assert len(prepared) == 1 and not prepared[0].exists()
+    assert api._process(original)["pid"] == original["pid"]
+
+
+@pytest.mark.parametrize("linked_component", ["runtime_root", "parent", "metadata"])
+def test_cleanup_clone_refuses_linked_runtime_metadata(
+    local_runtime, monkeypatch, tmp_path, linked_component,
+):
+    from npa.orchestration.skypilot import cleanup
+
+    original_runtime = tmp_path / "original-runtime"
+    original_runtime.mkdir()
+    original_state = original_runtime / ".sky"
+    original_state.mkdir()
+    sentinel = original_state / "sentinel"
+    sentinel.write_text("original-controller-state")
+    if linked_component == "runtime_root":
+        selected = tmp_path / "runtime-link"
+        selected.symlink_to(original_runtime, target_is_directory=True)
+    elif linked_component == "parent":
+        parent = tmp_path / "parent-link"
+        parent.symlink_to(tmp_path, target_is_directory=True)
+        selected = parent / original_runtime.name
+    else:
+        selected = tmp_path / "selected-runtime"
+        selected.mkdir()
+        (selected / ".sky").symlink_to(original_state, target_is_directory=True)
+    local_runtime["environment"]["SKY_RUNTIME_DIR"] = str(selected)
+    api.ensure_isolated_api(**local_runtime)
+    monkeypatch.setattr(cleanup, "ensure_skypilot_version", lambda value: Path(value))
+    with pytest.raises(api.IsolatedApiError, match="linked source runtime"):
+        with cleanup._cloned_skypilot_state(
+            local_runtime["isolated_dir"], sky_bin=local_runtime["sky_executable"],
+        ):
+            pytest.fail("linked runtime metadata must not start a transaction")
+    assert sentinel.read_text() == "original-controller-state"
+    transactions = local_runtime["isolated_dir"] / "controller-transactions"
+    assert not transactions.exists() or not list(transactions.iterdir())
 
 
 def test_cleanup_clone_preserves_ownership_files_when_owned_stop_fails(local_runtime, monkeypatch):

@@ -488,6 +488,8 @@ def cleanup_jobs_controller(
         with _cloned_skypilot_state(
             isolated_config_dir, config_path=config_path, sky_bin=sky_bin,
             env_extra={"KUBECONFIG": str(identity.kubeconfig)},
+            controller_names=[_cluster_name(item) for item in controller_clusters],
+            context=identity.context,
         ) as remote_state:
             for controller_cluster in controller_clusters:
                 controller_name = _cluster_name(controller_cluster)
@@ -1469,6 +1471,7 @@ def _controller_belongs_to_context(cluster: dict[str, Any], context: str) -> boo
 def _cloned_skypilot_state(
     source_root: Path | None, *, config_path: Path | None = None,
     sky_bin: SkyBin = None, env_extra: dict[str, str] | None = None,
+    controller_names: Sequence[str] = (), context: str = "",
 ) -> Iterator[Path]:
     """Use a separate owned API with the original controller identity and state."""
 
@@ -1488,6 +1491,20 @@ def _cloned_skypilot_state(
         source_env = sky_environment(source_root)
         config_path = runtime.global_config_path
     source_home = Path(source_env.get("HOME") or Path.home())
+    # Sky 0.12.2 stores server databases under SKY_RUNTIME_DIR, while HOME
+    # still holds client identity and SSH metadata. Resolve tilde using the
+    # source daemon's home, never this caller's unrelated ambient home.
+    runtime_value = source_env.get("SKY_RUNTIME_DIR", "~")
+    if runtime_value == "~":
+        source_runtime = source_home
+    elif runtime_value.startswith("~/"):
+        source_runtime = source_home / runtime_value[2:]
+    else:
+        source_runtime = Path(runtime_value)
+    if not runtime_value or not source_runtime.is_absolute():
+        raise local_api.IsolatedApiError("controller transaction requires an absolute source runtime directory")
+    if source_runtime.resolve() != source_runtime:
+        raise local_api.IsolatedApiError("controller transaction cannot isolate linked source runtime metadata")
     user_file = source_home / ".sky" / "user_hash"
     # Before owned APIs existed, Sky stored its stable identity in this file;
     # a new root-derived default must not replace that legacy controller owner.
@@ -1523,6 +1540,13 @@ def _cloned_skypilot_state(
             raise local_api.IsolatedApiError("controller transaction cannot isolate linked source metadata")
         if source_sky.is_dir():
             _snapshot_skypilot_state(source_sky, clone_home / ".sky")
+        clone_runtime = clone_root / "sky-runtime"
+        clone_runtime.mkdir(mode=0o700)
+        runtime_sky = source_runtime / ".sky"
+        if runtime_sky.is_symlink():
+            raise local_api.IsolatedApiError("controller transaction cannot isolate linked source runtime metadata")
+        if runtime_sky.is_dir():
+            _snapshot_skypilot_state(runtime_sky, clone_runtime / ".sky")
         for name in (".aws", ".nebius", ".kube"):
             path = source_home / name
             if path.exists():
@@ -1531,10 +1555,12 @@ def _cloned_skypilot_state(
         for key in ("SKYPILOT_API_SERVER_ENDPOINT", "SKYPILOT_SERVER_PLUGINS_CONFIG",
                     "NPA_OWNED_SKYPILOT_API_ID", "IS_SKYPILOT_SERVER", "NPA_SKYPILOT_ISOLATED_API_DIR"):
             environment.pop(key, None)
-        environment.update(HOME=str(clone_home), SKY_RUNTIME_DIR=str(clone_root / "sky-runtime"),
+        environment.update(HOME=str(clone_home), SKY_RUNTIME_DIR=str(clone_runtime),
                            SKYPILOT_USER_ID=user_id)
         environment = local_api.isolated_api_environment(clone_root, environment)
         config = local_api._yaml_document(config_path.read_bytes()) if config_path and config_path.is_file() else {}
+        if config.get("db") or environment.get("SKYPILOT_DB_CONNECTION_URI"):
+            raise local_api.IsolatedApiError("controller transaction cannot use a shared external database")
         if (config.get("api_server") or {}).get("endpoint"):
             config["api_server"]["endpoint"] = environment["SKYPILOT_API_SERVER_ENDPOINT"]
         import yaml
@@ -1543,6 +1569,18 @@ def _cloned_skypilot_state(
         temporary_config.write_text(yaml.safe_dump(config))
         temporary_config.chmod(0o600)
         environment["SKYPILOT_GLOBAL_CONFIG"] = str(temporary_config)
+        if controller_names:
+            manifest_path = clone_root / "controller-clone.json"
+            with open(manifest_path, "w", opener=lambda p, flags: os.open(p, flags, 0o600)) as manifest:
+                json.dump({"clone_root": str(clone_root), "source_home": str(source_home),
+                           "controller_names": list(controller_names), "context": context}, manifest)
+            prepared = subprocess.run(
+                [str(Path(executable).absolute().parent / "python"),
+                 str(Path(__file__).with_name("controller_clone.py")), str(manifest_path)],
+                env=environment, cwd=clone_root, capture_output=True, check=False,
+            )
+            if prepared.returncode:
+                raise local_api.IsolatedApiError("controller transaction could not verify its copied controller metadata")
         local_api.ensure_isolated_api(isolated_dir=clone_root, sky_executable=executable,
                                       environment=environment, cwd=str(clone_root))
         restored_user = clone_home / ".sky" / "user_hash"
