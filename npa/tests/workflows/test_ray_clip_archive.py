@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+import errno
 import hashlib
 import importlib
 import json
@@ -161,6 +162,46 @@ def test_complete_formats_retry_and_restore(modules, store, request, kind, tmp_p
     assert result.stat().st_mode & 0o777 == 0o700
     assert all(path.stat().st_mode & 0o077 == 0 for path in result.rglob("*") if path.is_file())
     assert f"{PREFIX}/unlisted" not in store.reads
+
+
+def test_restore_closes_parent_when_staging_cleanup_fails(modules, source, store, tmp_path, monkeypatch):
+    archive, _ = modules
+    receipt = archive.archive(source, PREFIX, store)
+    store.objects[f"{PREFIX}/files/preview.png"] = b"corrupt"
+    destination = tmp_path / "restored"
+    opened = []
+    directory = archive._directory
+
+    def capture_parent(path):
+        descriptor = directory(path)
+        opened.append(descriptor)
+        return descriptor
+
+    def refuse_cleanup(path):
+        raise OSError("staging cleanup refused")
+
+    monkeypatch.setattr(archive, "_directory", capture_parent)
+    monkeypatch.setattr(archive.shutil, "rmtree", refuse_cleanup)
+    try:
+        with pytest.raises(OSError, match="staging cleanup refused") as failure:
+            archive.restore(PREFIX, destination, receipt["manifest_sha256"], store)
+        assert isinstance(failure.value.__context__, ValueError)
+        assert len(opened) == 1
+        assert not destination.exists()
+        with pytest.raises(OSError) as closed:
+            os.fstat(opened[0])
+        assert closed.value.errno == errno.EBADF
+    finally:
+        # The failing baseline must not leak its descriptor into later tests.
+        for descriptor in opened:
+            try:
+                info = os.fstat(descriptor)
+            except OSError as error:
+                assert error.errno == errno.EBADF
+            else:
+                parent = tmp_path.stat()
+                if (info.st_dev, info.st_ino) == (parent.st_dev, parent.st_ino):
+                    os.close(descriptor)
 
 
 def test_concurrent_identical_publishers(modules, source, store):

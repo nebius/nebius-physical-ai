@@ -287,9 +287,11 @@ def restore(input_uri: str, destination: Path, manifest_sha256: str, storage: St
         staging = None
         return _receipt(manifest, payload)
     finally:
-        if staging is not None:
-            shutil.rmtree(staging)
-        os.close(parent)
+        try:
+            if staging is not None:
+                shutil.rmtree(staging)
+        finally:
+            os.close(parent)
 
 
 def _receipt(manifest, payload):
