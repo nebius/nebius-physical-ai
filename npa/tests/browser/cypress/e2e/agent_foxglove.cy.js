@@ -649,6 +649,21 @@ describe("NPA agent UI — embedded Foxglove viewer", () => {
     }).as("artifactRuns");
     const key = `${NON_STOCK_RUN_ID}/reports/sim2real.mcap`;
     const s3Uri = `s3://mock/${key}`;
+    // Keep discovery and inventory bound to the same source so List artifacts
+    // exercises a cache-backed rerender rather than a source reconciliation.
+    cy.intercept("GET", "/api/artifacts/runs*", {
+      runs: [{
+        run_id: NON_STOCK_RUN_ID,
+        run_ref: runRef,
+        source_type: "artifact_storage",
+        bucket: "mock",
+        project_id: "project-local",
+        resolved_prefix: "",
+        has_viewable: true,
+      }],
+      total_runs: 1,
+      truncated: false,
+    }).as("rerenderArtifactRuns");
     const exported = exactArtifactExportResponse(
       NON_STOCK_RUN_ID,
       runRef,
