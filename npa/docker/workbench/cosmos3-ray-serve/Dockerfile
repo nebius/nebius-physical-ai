@@ -75,8 +75,9 @@ COPY --chown=ubuntu:ubuntu --chmod=755 docker/workbench/cosmos3-ray-serve/smoke_
 COPY --chown=ubuntu:ubuntu docker/workbench/cosmos3-ray-serve/security-upgrades-requirements.txt /tmp/cosmos3-ray-security-upgrades-requirements.txt
 COPY --chown=ubuntu:ubuntu docker/workbench/sonic/packaging-requirements.txt /tmp/cosmos3-packaging-requirements.txt
 
-RUN cd /opt/cosmos3/cosmos-framework \
-    && UV_CACHE_DIR=/tmp/uv-cache uv sync --frozen --inexact \
+RUN export UV_CACHE_DIR=/tmp/uv-cache \
+    && cd /opt/cosmos3/cosmos-framework \
+    && uv sync --frozen --inexact \
        --extra guardrail --extra serve --group cu130-torch213 \
     && uv pip uninstall --python .venv/bin/python flash-attn flash-attn-3-nv \
     && uv pip install --python .venv/bin/python --no-deps --require-hashes \
@@ -87,8 +88,9 @@ RUN cd /opt/cosmos3/cosmos-framework \
     && rm -f /tmp/cosmos3-packaging-requirements.txt \
     && test "$(.venv/bin/python -c 'import ray; print(ray.__version__)')" = "${COSMOS3_RAY_VERSION}" \
     && .venv/bin/python -c 'import importlib.metadata; assert importlib.metadata.version("nltk") == "3.10.3"' \
-    && rm -rf /tmp/uv-cache \
     && uv pip install --python /opt/npa/.venv/bin/python --no-deps -e /opt/npa \
+    && rm -rf /tmp/uv-cache /home/ubuntu/.cache/uv \
+    && test ! -e /tmp/uv-cache && test ! -e /home/ubuntu/.cache/uv \
     && /opt/cosmos3/cosmos-framework/.venv/bin/python /opt/cosmos3-ray-serve/verify_env.py \
     && test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
     && test -w /outputs \
