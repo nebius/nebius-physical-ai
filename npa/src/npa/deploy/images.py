@@ -1061,7 +1061,20 @@ def publicly_publishable_tools() -> list[str]:
 
 
 def accepted_publication_development_sha(tool: str) -> str | None:
-    """Return a tool's exact accepted development SHA when one is recorded."""
+    """Return the recorded development SHA, requiring complete NCore acceptance.
+
+    NCore's first promotion requires acceptance before a release record exists.
+    Missing or inconsistent evidence therefore raises instead of allowing the
+    publisher to fall back to an arbitrary development SHA.
+
+    Args:
+        tool: Canonical workbench tool name.
+    Returns:
+        The accepted source SHA, or None for other tools without a record.
+    Raises:
+        RuntimeError: Required acceptance is missing or disagrees with release evidence.
+        ValueError: A recorded development SHA is malformed.
+    """
 
     entry = (public_release_manifest().get("releases") or {}).get(tool) or {}
     if tool == "ncore":
