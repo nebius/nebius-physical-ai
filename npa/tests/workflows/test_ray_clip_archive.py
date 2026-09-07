@@ -648,6 +648,66 @@ def test_lance_logical_v2_footer_aliases_are_readable(modules, source, physical_
     assert len(lancedb.connect(str(source / "lance")).open_table("embeddings").to_arrow()) == 6
 
 
+def test_native_initial_transaction_uses_provisional_fragment_ids(modules, tmp_path):
+    import lancedb
+    import numpy as np
+    import pyarrow as pa
+    from archive_lance import _initial_transaction_fragments, _message, _one
+
+    # Cross the default writer's fragment boundary with a small int64 column.
+    # Fragment commit semantics are independent of the CLIP vector payload.
+    count = 1024 * 1024 + 1
+    table = lancedb.connect(str(tmp_path / "native")).create_table(
+        "ids", pa.table({"record_id": np.arange(count, dtype=np.int64)}))
+    assert table.count_rows() == count
+    content = next((tmp_path / "native/ids.lance/_versions").glob("*.manifest")).read_bytes()
+    offset = struct.unpack("<Q", content[-16:-8])[0]
+    manifest = _message(content[offset + 4:-16], {
+        1: 2, 2: 2, 3: 0, 7: 2, 10: 0, 11: 0, 12: 2, 13: 2, 15: 2, 16: 2, 21: 0,
+    }, repeated=(1, 2, 16))
+    operation = _message(content[4:offset], {2: 2, 102: 2})
+    overwrite = _message(_one(operation, 102), {1: 2, 2: 2, 4: 2}, repeated=(1, 2, 4))
+    pending, committed = overwrite[1], manifest[2]
+    def identifiers(entries):
+        return [_one(_message(item, {1: 0, 2: 2, 4: 0}, (2,)), 1, 0) for item in entries]
+
+    assert identifiers(pending) == [0, 0]
+    assert identifiers(committed) == [0, 1]
+    assert pending != committed
+    _initial_transaction_fragments(pending, committed)
+
+
+@pytest.mark.parametrize("mutation", [
+    "assigned_id", "overflow_id", "duplicate_id", "missing", "reordered",
+    "row_count", "path", "unknown_field",
+])
+def test_transaction_comparison_preserves_every_other_fragment_field(modules, mutation):
+    from archive_lance import _initial_transaction_fragments
+
+    # Independent wire fixtures: two data-file records and their row counts.
+    first, second = b"\x12\x03\x0a\x01a\x20\x03", b"\x12\x03\x0a\x01b\x20\x03"
+    pending, committed = [first, second], [first, b"\x08\x01" + second]
+    _initial_transaction_fragments(pending, committed)
+    if mutation == "assigned_id":
+        pending[1] = b"\x08\x01" + second
+    elif mutation == "overflow_id":
+        pending[1] = b"\x08" + b"\xff" * 9 + b"\x01" + second
+    elif mutation == "duplicate_id":
+        pending[1] = b"\x08\x00\x08\x00" + second
+    elif mutation == "missing":
+        pending.pop()
+    elif mutation == "reordered":
+        pending.reverse()
+    elif mutation == "row_count":
+        pending[1] = second[:-1] + b"\x04"
+    elif mutation == "path":
+        pending[1] = second.replace(b"b", b"c")
+    else:
+        pending[1] += b"\x18\x00"
+    with pytest.raises(ValueError, match="Lance metadata"):
+        _initial_transaction_fragments(pending, committed)
+
+
 @pytest.mark.parametrize("operation", ["archive", "restore"])
 @pytest.mark.parametrize("mutation", [
     "base_paths", "index", "reader_flags", "schema_metadata", "branch", "duplicate_version",

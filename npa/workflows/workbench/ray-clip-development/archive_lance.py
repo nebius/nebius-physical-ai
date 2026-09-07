@@ -99,6 +99,18 @@ def _fragments(entries, files, prefix, rows):
     return paths, max(ids)
 
 
+def _initial_transaction_fragments(entries, committed):
+    # Overwrite records the writer's provisional zero IDs. Commit assigns the
+    # manifest's sequential IDs without updating those transaction records.
+    _require(len(entries) == len(committed))
+    for pending, assigned in zip(entries, committed):
+        pending = _message(pending, {1: 0, 2: 2, 4: 0}, repeated=(2,))
+        assigned = _message(assigned, {1: 0, 2: 2, 4: 0}, repeated=(2,))
+        _require(pending.pop(1, [0]) == [0])
+        assigned.pop(1, None)
+        _require(pending == assigned)
+
+
 def validate_local_lance(root, files, rows):
     """Require the recipe's single-version local table before invoking Lance.
 
@@ -154,5 +166,6 @@ def validate_local_lance(root, files, rows):
     operation = _message(transaction, {2: 2, 102: 2})
     _require(_one(operation, 2) == transaction_name[2:-4])
     overwrite = _message(_one(operation, 102, b""), {1: 2, 2: 2, 4: 2}, repeated=(1, 2, 4))
-    _require(overwrite.get(1) == manifest.get(2) and overwrite.get(2) == manifest.get(1))
+    _initial_transaction_fragments(overwrite.get(1, []), manifest.get(2, []))
+    _require(overwrite.get(2) == manifest.get(1))
     _config(overwrite.get(4, []))
