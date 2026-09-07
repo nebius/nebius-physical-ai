@@ -30,10 +30,54 @@ def isolate_example_imports(monkeypatch):
 
 def load(name):
     """Load a standalone application file without importing Ray or Torch."""
-    spec = importlib.util.spec_from_file_location(f"ray_train_example_{name}", EXAMPLE / f"{name}.py")
+    module_name = "ray_train_example_" + name.replace("/", "_")
+    spec = importlib.util.spec_from_file_location(module_name, EXAMPLE / f"{name}.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def test_runtime_preparation_creates_private_directories_and_preserves_prior_attempt(tmp_path):
+    prepare = load("cluster/prepare")
+    root = tmp_path / "runtime"
+    prepare._create_runtime_root(root)
+    assert root.stat().st_mode & 0o777 == 0o700
+    assert (root / "exports").stat().st_mode & 0o777 == 0o700
+    (root / "prior-evidence").write_text("preserve")
+    with pytest.raises(FileExistsError):
+        prepare._create_runtime_root(root)
+    assert (root / "prior-evidence").read_text() == "preserve"
+
+
+def test_runtime_preparation_rejects_shared_parent_without_creating_files(tmp_path):
+    parent = tmp_path / "shared"
+    parent.mkdir(mode=0o777)
+    parent.chmod(0o777)
+    with pytest.raises(ValueError, match="without shared write access"):
+        load("cluster/prepare")._create_runtime_root(parent / "runtime")
+    assert list(parent.iterdir()) == []
+
+
+@pytest.mark.parametrize("symlink_location", ["parent", "runtime"])
+def test_runtime_preparation_cannot_follow_preexisting_symlinks(tmp_path, symlink_location):
+    target = tmp_path / "target"
+    target.mkdir()
+    link = tmp_path / "link"
+    link.symlink_to(target, target_is_directory=True)
+    root = link / "runtime" if symlink_location == "parent" else link
+    expected = ValueError if symlink_location == "parent" else FileExistsError
+    with pytest.raises(expected):
+        load("cluster/prepare")._create_runtime_root(root)
+    assert list(target.iterdir()) == []
+    assert link.is_symlink()
+
+
+def test_runtime_preparation_rejects_another_owners_parent(tmp_path, monkeypatch):
+    prepare = load("cluster/prepare")
+    monkeypatch.setattr(prepare.os, "getuid", lambda: tmp_path.stat().st_uid + 1)
+    with pytest.raises(ValueError, match="owned directory"):
+        prepare._create_runtime_root(tmp_path / "runtime")
+    assert list(tmp_path.iterdir()) == []
 
 
 @pytest.mark.parametrize("content", [b"", b"a\x00b\xff" * (1024 * 1024 + 1)], ids=["empty", "multi_chunk"])
@@ -226,7 +270,7 @@ def test_manifest_cannot_escape_export_directory(exported):
 
 
 def test_cli_rejects_local_storage_before_ray(tmp_path):
-    result = subprocess.run([sys.executable, str(EXAMPLE / "train.py"), "--storage-path", "/tmp/checkpoints",
+    result = subprocess.run([sys.executable, str(EXAMPLE / "train.py"), "--storage-path", str(tmp_path / "checkpoints"),
                              "--output-dir", str(tmp_path / "out"), "--run-name", "test"],
                             capture_output=True, text=True)
     assert result.returncode != 0
@@ -239,13 +283,13 @@ def test_cluster_is_guarded_native_train_resource_profile():
     assert profile["num_nodes"] == 2
     assert profile["resources"]["accelerators"] == "B200:1"
     assert "@sha256:" in profile["resources"]["image_id"]
-    assert profile["run"].strip() == "bash /tmp/ray-train-bootstrap/start.sh"
+    assert profile["run"].strip() == "bash /opt/npa-ray-train-bootstrap/start.sh"
     assert "TorchTrainer(" in (EXAMPLE / "train.py").read_text()
     assert "JobSubmissionClient" not in (EXAMPLE / "train.py").read_text()
     assert "ray stop" not in (EXAMPLE / "cluster/start.sh").read_text()
 
 
-@pytest.mark.parametrize("uri", ["/tmp/local", "s3://bucket", "s3://bucket/a/../b",
+@pytest.mark.parametrize("uri", ["local/checkpoints", "s3://bucket", "s3://bucket/a/../b",
                                  "s3://bucket/a?signature=secret", "s3://user:pass@bucket/a"])
 def test_storage_rejects_ambiguous_or_unsigned_destination(uri):
     with pytest.raises(ValueError, match="unsigned"):

@@ -71,6 +71,15 @@ The Jobs driver and every new or restarted training worker also check the exact
 Torch version before training, so environment drift after preparation fails closed.
 Every rank records its imported Torch, CUDA and Ray versions alongside its metrics.
 
+The pinned image runs preparation as root. Preparation requires an owned `/opt`
+without shared write access and creates a fresh mode-0700 `/opt/npa-ray-train`.
+Its `env`, `exports`, and Ray temporary directories stay inside that private
+application directory; `preparation.json` records the verified versions and
+dependency freeze. An existing directory fails preparation without changing its
+contents. Preserve a failed attempt's evidence and use fresh hosting pods for a
+new attempt. The service checks the directory's owner and permissions before
+starting, and sets `RAY_TMPDIR` to this directory for its application processes.
+
 Use the SkyPilot-generated SSH alias to reach Jobs through one owned tunnel:
 
 ```bash
@@ -99,9 +108,9 @@ actor's State API on the application service when management Ray is present.
 
 ```bash
 ray job submit --address "$RAY_API" --submission-id train-baseline \
-  --working-dir . -- /tmp/ray-train-env/bin/python train.py \
+  --working-dir . -- /opt/npa-ray-train/env/bin/python train.py \
   --storage-path "$TRAIN_STORAGE_URI" --run-name baseline \
-  --output-dir /tmp/train-baseline
+  --output-dir /opt/npa-ray-train/exports/train-baseline
 ray job status --address "$RAY_API" train-baseline
 ray job logs --address "$RAY_API" train-baseline
 ```
@@ -122,9 +131,9 @@ match exactly. Run the worker-failure exercise under a separate name:
 
 ```bash
 ray job submit --address "$RAY_API" --submission-id train-recovery \
-  --working-dir . -- /tmp/ray-train-env/bin/python train.py \
+  --working-dir . -- /opt/npa-ray-train/env/bin/python train.py \
   --storage-path "$TRAIN_STORAGE_URI" --run-name recovery \
-  --output-dir /tmp/train-recovery --fail-after-step 8
+  --output-dir /opt/npa-ray-train/exports/train-recovery --fail-after-step 8
 ```
 
 Rank one raises after native Train confirms checkpoint 8 is committed. Native
@@ -145,8 +154,8 @@ Retry those exact bytes without retraining or regenerating the RRD:
 
 ```bash
 ray job submit --address "$RAY_API" --submission-id train-export-retry \
-  --working-dir . -- /tmp/ray-train-env/bin/python inspect_results.py \
-  /tmp/train-baseline --publish "$TRAIN_STORAGE_URI/baseline/exports"
+  --working-dir . -- /opt/npa-ray-train/env/bin/python inspect_results.py \
+  /opt/npa-ray-train/exports/train-baseline --publish "$TRAIN_STORAGE_URI/baseline/exports"
 ```
 
 An interrupted upload is safe to retry with the same export; differing bytes

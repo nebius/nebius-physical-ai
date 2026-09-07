@@ -12,7 +12,15 @@ EXPORT_FILES = frozenset({"state.pt", "metrics.json", "metrics.rrd", "result.jso
 
 
 def file_sha256(path: Path) -> str:
-    """Hash artifact bytes with bounded memory on every supported Python version."""
+    """Hash artifact bytes with bounded memory on supported Python versions.
+
+    Args:
+        path: Artifact to read.
+    Returns:
+        Hexadecimal SHA-256 digest of the complete file.
+    Raises:
+        OSError: The artifact cannot be opened or read.
+    """
     digest = hashlib.sha256()
     with path.open("rb") as stream:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
@@ -21,7 +29,16 @@ def file_sha256(path: Path) -> str:
 
 
 def storage(uri: str):
-    """Resolve an explicit unsigned destination using each process's AWS environment."""
+    """Resolve an unsigned destination using each process's AWS environment.
+
+    Args:
+        uri: Authorized run-scoped S3 destination.
+    Returns:
+        Arrow filesystem and bucket-prefixed object path.
+    Raises:
+        ValueError: Destination, HTTPS endpoint, or credential environment is invalid.
+        OSError: Arrow cannot initialize the selected storage backend.
+    """
     target = urlsplit(uri)
     if (target.scheme != "s3" or not target.netloc or target.username or target.password
             or target.query or target.fragment or not target.path.strip("/")
@@ -42,34 +59,61 @@ def storage(uri: str):
     return filesystem, target.netloc + target.path.rstrip("/")
 
 
-def publish(filesystem, destination: str, directory: Path) -> None:
-    """Write exports with the checksum manifest last and verify every remote byte."""
+def _publish_file(filesystem, destination, path):
+    """Preserve existing remote bytes and verify a newly written object immediately."""
     from pyarrow import fs
 
+    if path.is_symlink() or not path.is_file():
+        raise ValueError("Only regular exported artifact files may be published")
+    remote = destination + "/" + path.name
+    content = path.read_bytes()
+    if filesystem.get_file_info(remote).type != fs.FileType.NotFound:
+        with filesystem.open_input_file(remote) as stream:
+            if stream.read() != content:
+                raise ValueError("Existing export differs; preserve it and use a fresh run name")
+    else:
+        with filesystem.open_output_stream(remote) as stream:
+            stream.write(content)
+    with filesystem.open_input_file(remote) as stream:
+        if hashlib.sha256(stream.read()).digest() != hashlib.sha256(content).digest():
+            raise ValueError("S3 export read-after-write verification failed")
+
+
+def publish(filesystem, destination: str, directory: Path) -> None:
+    """Publish verified exports with their checksum manifest last.
+
+    Args:
+        filesystem: Authorized Arrow filesystem for the workload.
+        destination: Bucket-prefixed export path.
+        directory: Local directory containing exactly the exported artifacts.
+    Returns:
+        None.
+    Raises:
+        ValueError: Files are invalid, existing bytes differ, or readback differs.
+        OSError: Local reads or remote transfers fail.
+    """
     if {path.name for path in directory.iterdir()} != EXPORT_FILES:
         raise ValueError("Export contains unexpected or missing files")
     if any(path.is_symlink() or not path.is_file() for path in directory.iterdir()):
         raise ValueError("Only regular exported artifact files may be published")
-    paths = sorted(directory.iterdir(), key=lambda p: (p.name == "SHA256SUMS", p.name))
+    paths = sorted(directory.iterdir(), key=lambda path: (path.name == "SHA256SUMS", path.name))
     for path in paths:
-        if path.is_symlink() or not path.is_file():
-            raise ValueError("Only regular exported artifact files may be published")
-        remote = destination + "/" + path.name
-        content = path.read_bytes()
-        if filesystem.get_file_info(remote).type != fs.FileType.NotFound:
-            with filesystem.open_input_file(remote) as stream:
-                if stream.read() != content:
-                    raise ValueError("Existing export differs; preserve it and use a fresh run name")
-        else:
-            with filesystem.open_output_stream(remote) as stream:
-                stream.write(content)
-        with filesystem.open_input_file(remote) as stream:
-            if hashlib.sha256(stream.read()).digest() != hashlib.sha256(content).digest():
-                raise ValueError("S3 export read-after-write verification failed")
+        _publish_file(filesystem, destination, path)
 
 
 def download(filesystem, source: str, directory: Path) -> None:
-    """Retrieve only manifest-listed export basenames into a fresh local directory."""
+    """Retrieve manifest-listed export basenames into a fresh private directory.
+
+    Args:
+        filesystem: Authorized Arrow filesystem for the workload.
+        source: Bucket-prefixed path of the published export.
+        directory: Fresh local destination.
+    Returns:
+        None.
+    Raises:
+        ValueError: Manifest names or downloaded hashes are invalid.
+        OSError: Private directory creation or artifact transfer fails.
+    """
     with filesystem.open_input_file(source + "/SHA256SUMS") as stream:
         manifest = stream.read()
     entries = [line.split("  ", 1) for line in manifest.decode().splitlines()]

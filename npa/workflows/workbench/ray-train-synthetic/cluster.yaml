@@ -16,9 +16,9 @@ config:
         serviceAccountName: default
         automountServiceAccountToken: false
 file_mounts:
-  /tmp/ray-train-bootstrap: ./cluster
+  /opt/npa-ray-train-bootstrap: ./cluster
 setup: |
   set -euo pipefail
-  /usr/bin/python3.12 /tmp/ray-train-bootstrap/prepare.py
+  /usr/bin/python3.12 /opt/npa-ray-train-bootstrap/prepare.py
 run: |
-  bash /tmp/ray-train-bootstrap/start.sh
+  bash /opt/npa-ray-train-bootstrap/start.sh

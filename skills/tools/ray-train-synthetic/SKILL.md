@@ -23,6 +23,14 @@ separate from SkyPilot's management environment and reserved ports. Pure Python
 source changes use native Jobs `--working-dir`; native ABI changes require a
 compatible prepared environment. There is no model or external dataset download.
 
+Preparation uses the pinned image's root account and requires a fresh owned
+mode-0700 `/opt/npa-ray-train` below an `/opt` without shared write access.
+Keep its environment, exports, preparation receipt, and application Ray temporary
+files inside that directory. Existing directories and symlinks fail closed;
+preserve failed-attempt evidence and use fresh hosting pods rather than clearing
+or adopting an unknown runtime. The service validates ownership and permissions
+before it starts and scopes `RAY_TMPDIR` to this application directory.
+
 Use two B200 hosts with one GPU each for the shipped profile. Require actual
 rank/world-size, CUDA device and physical-host evidence before calling a result
 multi-node. `SPREAD` and a requested GPU count alone are not placement evidence.

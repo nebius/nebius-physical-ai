@@ -2,7 +2,13 @@
 # One application Ray service per SkyPilot worker. `sky cancel` owns this task;
 # `sky down` removes its pods. Never stop SkyPilot's management Ray processes.
 set -euo pipefail
-export PATH="/tmp/ray-train-env/bin:$PATH"
+umask 077
+runtime_root=/opt/npa-ray-train
+test -d "$runtime_root" && test ! -L "$runtime_root"
+test "$(stat -c %u "$runtime_root")" -eq "$(id -u)"
+test "$(stat -c %a "$runtime_root")" = 700
+export PATH="$runtime_root/env/bin:$PATH"
+export RAY_TMPDIR="$runtime_root"
 unset RAY_ADDRESS
 export RAY_JOB_ALLOW_DRIVER_ON_WORKER_NODES=0
 export RAY_USAGE_STATS_ENABLED=0
@@ -26,8 +32,8 @@ args=(--block --node-ip-address="${node_ips[$rank]}" --num-cpus=8
       --metrics-export-port=8270 --disable-usage-stats)
 if (( rank == 0 )); then
     args+=(--head --port=6381 --dashboard-host=127.0.0.1 --dashboard-port=8265
-           --include-dashboard=true --temp-dir=/tmp/ray-train-runtime)
+           --include-dashboard=true --temp-dir="$runtime_root/runtime")
 else
     args+=(--address="${node_ips[0]}:6381")
 fi
-exec /tmp/ray-train-env/bin/ray start "${args[@]}"
+exec "$runtime_root/env/bin/ray" start "${args[@]}"
