@@ -1,0 +1,4 @@
+ray[default,train]==2.58.0
+rerun-sdk==0.31.4
+pyarrow==23.0.1
+numpy==2.4.6
