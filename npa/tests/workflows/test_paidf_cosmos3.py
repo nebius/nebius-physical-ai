@@ -180,8 +180,9 @@ def _generation_inputs(tmp_path: Path) -> dict[str, Path]:
 
 
 @requires_ffmpeg
+@pytest.mark.parametrize("prior_status", ["completed", "degraded"])
 def test_generate_variants_runs_real_runner_contract_and_changes_retry(
-    tmp_path: Path,
+    tmp_path: Path, prior_status: str,
 ) -> None:
     paths = _generation_inputs(tmp_path)
     storage = _MemoryStorage()
@@ -244,7 +245,7 @@ def test_generate_variants_runs_real_runner_contract_and_changes_retry(
     assert metadata["motion_preservation"] is None
 
     (paths["scores"] / "cosmos_evaluator.json").write_text(
-        json.dumps({"status": "completed", "passed": False, "score": 0.4}),
+        json.dumps({"status": prior_status, "passed": False, "score": 0.4}),
         encoding="utf-8",
     )
     calls.clear()

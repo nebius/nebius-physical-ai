@@ -538,7 +538,10 @@ def prepare_input(
 def _complete_evaluator_report(report: Any) -> dict[str, Any]:
     if not isinstance(report, dict):
         raise PaidfCosmos3Error("prior evaluator report is not a JSON object")
-    if report.get("status") != "completed" or not isinstance(
+    # ``degraded`` is a terminal fail-closed evaluator result.  It must never
+    # promote, but its explicit boolean decision and score are valid inputs to
+    # the next refinement attempt.
+    if report.get("status") not in {"completed", "degraded"} or not isinstance(
         report.get("passed"), bool
     ):
         raise PaidfCosmos3Error(
