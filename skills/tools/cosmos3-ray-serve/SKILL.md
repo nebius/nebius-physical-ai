@@ -87,6 +87,22 @@ them. It downloads each returned file, verifies bytes and SHA-256, and publishes
 `workflows/testing/cosmos3-ray-batch.yaml` for the workflow
 client; the persistent service must already be ready.
 
+The client binds the supported schema, model, request ID and every requested
+sample name before downloading. An omitted request ID is generated before POST
+and retained in `request.json`. Require one successful native `SampleOutputs`
+per name and exact, unique artifact coverage of its declared files within
+`request_id/sample/`. Ordinary samples require `vision.jpg` or `vision.mp4`
+according to resolved frame count; reasoner samples require `reasoner_text.txt`.
+Control/debug files remain part of the verified file set. Failed/skipped samples,
+unsafe paths and incomplete manifests must never become completed publications.
+Use `num_outputs=1` and distinct named samples on this native Serve path.
+
+Run `npa/tests/e2e/test_cosmos3_ray_batch_live_e2e.py` with
+`NPA_INTEGRATION_E2E=1`, the configured service endpoint/token, and
+`NPA_COSMOS3_RAY_LIVE_OUTPUT_URI` set to an owned S3 prefix. The test reads back
+the request/response/provenance, decodes both generated images and rejects a
+malformed copy of the real response before download/publication.
+
 Preserve the pinned framework's sampling types. Its aspect ratios include
 comma-delimited strings such as `"1,1"`, and resolution is a string enum such as
 `"720"`; the latter does not specify a square image's measured pixel dimensions.

@@ -79,6 +79,40 @@ structured `SampleOutputs`, generated media, hashes, and `provenance.json`. The
 equivalent declarative client is
 `workflows/testing/cosmos3-ray-batch.yaml`.
 
+The client assigns a request ID before submission when the input omits one and
+persists that ID in `request.json`. It requires the supported response schema,
+the supported framework revision, the requested model and ID, and one successful
+result for every requested sample name. It also binds the sampling mode, supplied
+seed and requested image/video frame category. Failed, skipped, duplicate,
+foreign or incomplete results fail before any
+artifact download or publication. Each declared file must have exactly one
+matching artifact entry under that request and sample's directory; downloaded
+bytes must then match its size and SHA-256.
+
+File coverage follows the pinned framework's
+[output writer](https://github.com/NVIDIA/cosmos-framework/blob/5e67049cd94acb667786f1e6dd0dab821cb90c97/cosmos_framework/inference/inference.py):
+ordinary samples require `vision.jpg` for one resolved frame or `vision.mp4` for
+multiple frames, while reasoner samples require `reasoner_text.txt`. Declared
+control and debug files are preserved and verified too. The native Serve path
+requires `num_outputs=1` per named sample; request several named samples for
+several outputs. Use a new request ID for new inference; the service reserves
+each request directory once.
+
+Run the committed live client check against an already started, guarded service
+with an operator-owned S3 output prefix:
+
+```bash
+NPA_INTEGRATION_E2E=1 \
+NPA_COSMOS3_RAY_LIVE_OUTPUT_URI=s3://<bucket>/<prefix>/ \
+  npa/.venv/bin/python -m pytest \
+  npa/tests/e2e/test_cosmos3_ray_batch_live_e2e.py -q
+```
+
+It uses the configured endpoint and token, submits two synthetic prompts,
+reads back the published records, decodes both images, and rejects a copy of
+the real response with a missing artifact. The operator owns service and
+storage cleanup after retaining the validation outputs.
+
 ## GPU compatibility and evidence
 
 B200 (`sm_100`) and RTX PRO 6000 Blackwell (`sm_120`) are separate targets. A
