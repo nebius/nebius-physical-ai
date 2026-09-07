@@ -321,6 +321,12 @@ def _advanced(root, report, table, actors):
                          "model_reloaded": True, "parquet_sha256": commits[0]["parquet_sha256"]}
     else:
         _require(not (root / "recovery.json").exists() and len(actors) == participants, "Unexpected recovery evidence")
+    remaining = commits[1:] if recovery is not None else commits
+    _require(all(instances[c["actor_index"]] in final_instances for c in remaining),
+             "Checkpoint references an actor after its recorded replacement")
+    for actor in final:
+        observed_calls = sum(instances[c["actor_index"]] == actor["instance_id"] for c in commits)
+        _require(actor["inference_calls"] == observed_calls, "Final inference calls disagree with committed shards")
     return commits, events, safe_recovery
 
 

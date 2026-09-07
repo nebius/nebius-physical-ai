@@ -384,3 +384,20 @@ def test_lance_payload_is_required_even_after_manifest_refresh(modules, request,
     with pytest.raises(ValueError, match="Lance"):
         converter.convert(root, tmp_path / "invalid.rrd", run_id="test")
     assert not (tmp_path / "invalid.rrd").exists()
+
+
+@pytest.mark.parametrize("damage", ["killed_actor", "inference_calls"])
+def test_recovery_cannot_attribute_later_work_to_killed_actor(modules, advanced, tmp_path, damage):
+    converter, _, app, *_ = modules
+    report = json.loads((advanced / "report.json").read_text())
+    if damage == "killed_actor":
+        path = advanced / "shards/000001/commit.json"
+        commit = json.loads(path.read_text())
+        commit["inference"]["instance_id"] = report["recovery"]["old_instance"]
+        _dump(path, commit)
+    else:
+        report["final_actors"][0]["inference_calls"] += 1
+        _dump(advanced / "report.json", report)
+    app._write_cleanup_artifacts(advanced, [], 1)
+    with pytest.raises(ValueError, match="replacement|inference calls"):
+        converter.convert(advanced, tmp_path / "invalid.rrd", run_id="test")
