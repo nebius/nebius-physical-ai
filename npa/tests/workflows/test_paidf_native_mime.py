@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 import hashlib
 import io
+import runpy
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -36,7 +37,7 @@ def _png_bytes() -> bytes:
     return buffer.getvalue()
 
 
-def _patched_encoder(source: bytes):
+def _patched_encoder(source: bytes, tmp_path: Path):
     tree = ast.parse(native._paidf_image_output_patch_bytes(source))
     function = next(
         node
@@ -66,12 +67,14 @@ def _patched_encoder(source: bytes):
         "np": np,
         "os": __import__("os"),
     }
-    exec(compile(ast.Module(body=[function], type_ignores=[]), "<patch>", "exec"), namespace)
-    return namespace["_media_bytes_for_output"]
+    module_path = tmp_path / "patched_paidf_encoder.py"
+    module_path.write_text(ast.unparse(function), encoding="utf-8")
+    loaded = runpy.run_path(str(module_path), init_globals=namespace)
+    return loaded["_media_bytes_for_output"]
 
 
-def test_paidf_executor_patch_encodes_png_bytes_for_jpeg_output() -> None:
-    encoder = _patched_encoder(_executor_fixture())
+def test_paidf_executor_patch_encodes_png_bytes_for_jpeg_output(tmp_path: Path) -> None:
+    encoder = _patched_encoder(_executor_fixture(), tmp_path)
     png = _png_bytes()
 
     jpeg = encoder(png, "output.jpg")
@@ -85,8 +88,10 @@ def test_paidf_executor_patch_encodes_png_bytes_for_jpeg_output() -> None:
 
 
 @pytest.mark.parametrize("payload", [b"", b"not an image"])
-def test_paidf_executor_patch_rejects_invalid_jpeg_output_bytes(payload: bytes) -> None:
-    encoder = _patched_encoder(_executor_fixture())
+def test_paidf_executor_patch_rejects_invalid_jpeg_output_bytes(
+    tmp_path: Path, payload: bytes
+) -> None:
+    encoder = _patched_encoder(_executor_fixture(), tmp_path)
 
     with pytest.raises(ValueError, match="undecodable image bytes"):
         encoder(payload, "output.jpg")

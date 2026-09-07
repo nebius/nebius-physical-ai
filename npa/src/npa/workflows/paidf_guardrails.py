@@ -11,9 +11,10 @@ import shutil
 import stat
 import subprocess
 import tempfile
-import urllib.request
 from pathlib import Path, PurePosixPath
 from typing import Any
+
+import httpx
 
 from npa.clients.huggingface import validate_hf_access
 from npa.workbench.cosmos.transfer import (
@@ -196,19 +197,28 @@ def _load_snapshot_manifest(
     repository: str, revision: str, patterns: tuple[str, ...]
 ) -> dict:
     """Read the official exact-revision path/hash/size map without credentials."""
-    url = (
-        f"https://huggingface.co/api/models/{repository}/revision/{revision}?blobs=true"
+    if re.fullmatch(
+        r"[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*",
+        repository,
+    ) is None or re.fullmatch(r"[0-9a-f]{40}", revision) is None:
+        raise PaidfGuardrailError("model metadata identity is not an exact revision")
+    url = httpx.URL(
+        scheme="https",
+        host="huggingface.co",
+        path=f"/api/models/{repository}/revision/{revision}",
+        params={"blobs": "true"},
     )
     try:
         # These public model manifests need no token. Access to actual gated
         # payloads is checked separately before any snapshot download.
-        with urllib.request.urlopen(url) as response:  # noqa: S310 - fixed official HTTPS origin
-            if response.geturl() != url:
-                raise PaidfGuardrailError(
-                    "exact model metadata redirected to another identity"
-                )
-            document = json.load(response)
-    except (OSError, ValueError) as exc:
+        response = httpx.get(url, timeout=30.0, follow_redirects=False)
+        response.raise_for_status()
+        if response.url != url:
+            raise PaidfGuardrailError(
+                "exact model metadata redirected to another identity"
+            )
+        document = response.json()
+    except (httpx.HTTPError, ValueError) as exc:
         raise PaidfGuardrailError(
             "exact model file metadata could not be verified"
         ) from exc

@@ -20,11 +20,11 @@ import subprocess
 import sys
 import tempfile
 import time
-import urllib.request
 from pathlib import Path, PurePosixPath
 from typing import Any
 from urllib.parse import urlparse
 
+import httpx
 import yaml
 
 from npa.clients.storage import StorageClient
@@ -82,6 +82,14 @@ _EVG_VQA_HOSTED_MAX_IMAGES = 10
 
 class PaidfNativeError(RuntimeError):
     """A PAIDF protocol or artifact contract failed closed."""
+
+
+def _local_health_url(port: int) -> httpx.URL:
+    """Return the only transport and authority valid for the local service probe."""
+
+    if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535:
+        raise PaidfNativeError("generation service port must be between 1 and 65535")
+    return httpx.URL(scheme="http", host="127.0.0.1", port=port, path="/health")
 
 
 def _evg_vqa_request_media_contract(stage: str) -> dict[str, Any]:
@@ -1143,6 +1151,22 @@ def run_local_augmentation(
 
     SkyPilot task setup cannot own a long-lived child process, so the service and
     its consuming PAIDF batch intentionally share one state/run boundary.
+
+    Args:
+        config_manifest_uri: S3 URI of the validated augmentation manifest.
+        result_uri: S3 URI for the terminal augmentation result.
+        generation_model: Exact hosted generation model identifier.
+        generation_revision: Exact hosted generation model revision.
+        service_kind: Image-edit or image-to-video service selector.
+        port: Loopback port for the local service.
+        parallel_size: Tensor/shard parallelism for the service process.
+        run_id: Exact workflow run identity.
+
+    Returns:
+        Validated native augmentation result payload.
+
+    Raises:
+        PaidfNativeError: If identity, service startup, or augmentation fails.
     """
 
     workflow = _SERVICE_WORKFLOWS.get(service_kind)
@@ -1217,17 +1241,18 @@ def run_local_augmentation(
         service_options["env"] = environment
     service = subprocess.Popen(command, **service_options)  # noqa: S603 - fixed executable contract
     try:
-        health = f"http://127.0.0.1:{port}/health"
+        health = _local_health_url(port)
         while True:
             if service.poll() is not None:
                 raise PaidfNativeError(
                     f"vLLM-Omni exited before readiness ({service.returncode})"
                 )
             try:
-                with urllib.request.urlopen(health, timeout=5) as response:  # noqa: S310 - loopback only
-                    if 200 <= response.status < 300:
-                        break
-            except OSError:
+                response = httpx.get(health, timeout=5, follow_redirects=False)
+                if 200 <= response.status_code < 300:
+                    break
+                time.sleep(5)
+            except (httpx.HTTPError, OSError):
                 time.sleep(5)
         batch_options: dict[str, Any] = {"generation_port": port}
         if generation_runtime is not None:
@@ -2406,7 +2431,10 @@ def _dig_vendor_environment() -> dict[str, str]:
     """Run AnomalyGen children in its pinned environment, outside NPA's venv."""
 
     env = dict(os.environ)
-    excluded = {"/tmp/npa-shim", "/opt/npa-venv/bin"}
+    excluded = {
+        str(Path(tempfile.gettempdir()) / "npa-shim"),
+        "/opt/npa-venv/bin",
+    }
     inherited = [
         entry
         for entry in env.get("PATH", "").split(os.pathsep)

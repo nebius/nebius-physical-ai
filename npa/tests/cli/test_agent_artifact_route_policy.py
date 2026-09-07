@@ -349,7 +349,7 @@ def test_rendered_backend_imports_and_calls_the_shipped_policy(
     agent_module._bootstrap_agent_stack(
         host="203.0.113.50",
         ssh_user="operator",
-        ssh_key_path="/tmp/synthetic-key",
+        ssh_key_path=str(tmp_path / "synthetic-key"),
         project_alias="synthetic",
         project_id="project-synthetic",
         tenant_id="tenant-synthetic",

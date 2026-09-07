@@ -6,6 +6,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import wave
 from pathlib import Path
 
@@ -26,6 +27,7 @@ from npa.workflows.paidf_upstream import (
 
 
 TOKEN_FACTORY_ENDPOINT = "https://api.tokenfactory.nebius.com/v1"
+_TEST_TEMP_ROOT = Path(tempfile.gettempdir())
 
 
 def _generation_endpoint(workflow: str) -> dict:
@@ -37,9 +39,21 @@ def _generation_endpoint(workflow: str) -> dict:
     }
 
 
+def test_local_health_url_is_fixed_to_loopback_http() -> None:
+    assert str(paidf_native._local_health_url(8000)) == "http://127.0.0.1:8000/health"
+
+
+@pytest.mark.parametrize("port", [True, 0, -1, 65536])
+def test_local_health_url_rejects_invalid_ports(port) -> None:
+    with pytest.raises(paidf_native.PaidfNativeError, match="between 1 and 65535"):
+        paidf_native._local_health_url(port)
+
+
 @pytest.mark.parametrize("configured", [None, "", paidf_native.RFDETR_BASE_SHA256])
-def test_detection_custom_cache_cannot_skip_published_hash(monkeypatch, configured):
-    monkeypatch.setenv("RFDETR_MODEL_PATH", "/tmp/custom-checkpoint.pth")
+def test_detection_custom_cache_cannot_skip_published_hash(
+    monkeypatch, configured, tmp_path: Path
+):
+    monkeypatch.setenv("RFDETR_MODEL_PATH", str(tmp_path / "custom-checkpoint.pth"))
     if configured is None:
         monkeypatch.delenv("RFDETR_MODEL_SHA256", raising=False)
     else:
@@ -202,13 +216,7 @@ def test_evg_local_service_preserves_upstream_two_way_hsdp(
             return 0
 
     class Response:
-        status = 200
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            return None
+        status_code = 200
 
     def popen(argv, **_kwargs):
         assert _kwargs["env"] == runtime_environment
@@ -217,7 +225,7 @@ def test_evg_local_service_preserves_upstream_two_way_hsdp(
 
     monkeypatch.setattr(paidf_native.subprocess, "Popen", popen)
     monkeypatch.setattr(
-        paidf_native.urllib.request, "urlopen", lambda *_a, **_k: Response()
+        paidf_native.httpx, "get", lambda *_a, **_k: Response()
     )
     def augmentation(*_args, **kwargs):
         assert kwargs["generation_runtime"] == runtime_manifest
@@ -1379,10 +1387,24 @@ def test_dig_runtime_uses_only_verified_preflight_pinned_cache(
     monkeypatch.setenv("CKPT_DIR", "/unrelated/checkpoints")
     monkeypatch.setenv(
         "PATH",
-        "/tmp/npa-shim:/opt/npa-venv/bin:/usr/local/bin:/opt/venv/bin:/usr/bin",
+        os.pathsep.join(
+            (
+                str(_TEST_TEMP_ROOT / "npa-shim"),
+                "/opt/npa-venv/bin",
+                "/usr/local/bin",
+                "/opt/venv/bin",
+                "/usr/bin",
+            )
+        ),
     )
     monkeypatch.setenv(
-        "PYTHONPATH", "/tmp/npa-src-overlay/src:/workspace/paidf-anomalygen"
+        "PYTHONPATH",
+        os.pathsep.join(
+            (
+                str(_TEST_TEMP_ROOT / "npa-src-overlay" / "src"),
+                "/workspace/paidf-anomalygen",
+            )
+        ),
     )
     env = paidf_native._dig_offline_environment(tmp_path, "unit-run")
     assert env["HF_HUB_OFFLINE"] == "1"
@@ -1397,8 +1419,11 @@ def test_dig_runtime_uses_only_verified_preflight_pinned_cache(
         "/usr/local/bin",
         "/usr/bin",
     ]
-    assert env["PYTHONPATH"] == (
-        "/tmp/npa-src-overlay/src:/workspace/paidf-anomalygen"
+    assert env["PYTHONPATH"] == os.pathsep.join(
+        (
+            str(_TEST_TEMP_ROOT / "npa-src-overlay" / "src"),
+            "/workspace/paidf-anomalygen",
+        )
     )
     assert env["UV_PYTHON"] == "/opt/venv/bin/python"
     assert len(manifest["models"]) == 5
@@ -1492,7 +1517,15 @@ def test_dig_training_and_inference_children_use_the_vendor_environment(
     )
     monkeypatch.setenv(
         "PATH",
-        "/tmp/npa-shim:/opt/npa-venv/bin:/usr/local/bin:/opt/venv/bin:/usr/bin",
+        os.pathsep.join(
+            (
+                str(_TEST_TEMP_ROOT / "npa-shim"),
+                "/opt/npa-venv/bin",
+                "/usr/local/bin",
+                "/opt/venv/bin",
+                "/usr/bin",
+            )
+        ),
     )
     monkeypatch.setenv("PYTHONPATH", "/workspace/paidf-anomalygen")
     monkeypatch.setenv("PYTHON", "/opt/npa-venv/bin/python")
@@ -2058,7 +2091,15 @@ def test_dig_preparation_pins_real_converter_and_original_downloader(
     monkeypatch.setattr(paidf_native, "_run_component", component)
     monkeypatch.setenv(
         "PATH",
-        "/tmp/npa-shim:/opt/npa-venv/bin:/usr/local/bin:/opt/venv/bin:/usr/bin",
+        os.pathsep.join(
+            (
+                str(_TEST_TEMP_ROOT / "npa-shim"),
+                "/opt/npa-venv/bin",
+                "/usr/local/bin",
+                "/opt/venv/bin",
+                "/usr/bin",
+            )
+        ),
     )
     monkeypatch.setenv("PYTHONPATH", "/workspace/paidf-anomalygen")
     output = tmp_path / "published"

@@ -1378,6 +1378,17 @@ def format_load_franka_status(state: dict[str, Any], *, rerun_ready: bool, loade
 
 
 def format_find_artifacts() -> str:
+    """Describe the generic artifact discovery and exact-source load contract.
+
+    Args:
+        None.
+
+    Returns:
+        Grounded Markdown guidance for artifact discovery and loading.
+
+    Raises:
+        None.
+    """
     return "\n".join(
         [
             "**Artifact finder (generic, no workflow allowlist):**",
@@ -1567,6 +1578,15 @@ def format_foxglove_status(state: dict[str, Any]) -> str:
 
     Everything comes from the live ``/api/foxglove/config`` + ``/status`` payloads
     the backend attached to the session state; nothing is assumed.
+
+    Args:
+        state: Live Agent state containing Foxglove and visualization evidence.
+
+    Returns:
+        Grounded Markdown describing viewer availability and the selected source.
+
+    Raises:
+        None.
     """
     foxglove = state.get("foxglove")
     foxglove = foxglove if isinstance(foxglove, dict) else {}

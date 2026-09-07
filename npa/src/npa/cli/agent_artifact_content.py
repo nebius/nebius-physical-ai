@@ -310,9 +310,7 @@ def _artifact_content_response(
         _end_agent_artifact_access()
 
 
-def _artifact_content_response_with_access(
-    request: Request,
-    *,
+def _authorized_artifact_content(
     run_id: str,
     run_ref: str,
     key: str,
@@ -320,10 +318,9 @@ def _artifact_content_response_with_access(
     resource_bucket: str,
     resolved_prefix: str | None,
     source_selected: bool,
-    download: bool = False,
 ):
     s3, settings = _agent_artifact_s3_client()
-    normalized_run, run_bucket, artifact = _exact_artifact_source(
+    selected = _exact_artifact_source(
         s3=s3,
         settings=settings,
         run_id=run_id,
@@ -334,14 +331,39 @@ def _artifact_content_response_with_access(
         resolved_prefix=resolved_prefix,
         source_selected=source_selected,
     )
+    return (s3, *selected)
+
+
+class _ArtifactContentResponseContext:
+    """Keep response metadata together without requiring module registration."""
+
+    __slots__ = ("render", "category", "total", "content_type", "headers")
+
+    def __init__(
+        self,
+        render: str,
+        category: str,
+        total: int,
+        content_type: str,
+        headers: dict[str, str],
+    ) -> None:
+        self.render = render
+        self.category = category
+        self.total = total
+        self.content_type = content_type
+        self.headers = headers
+
+
+def _artifact_content_response_context(
+    normalized_run: str, run_ref: str, artifact, download: bool
+) -> _ArtifactContentResponseContext:
     render = str(artifact.render or "download")
     category = artifact_category_for_relative_key(
         str(artifact.relative_key or ""), role=str(artifact.role or "output")
     )
     total = int(artifact.size or 0)
-    inline_media = render in {"image", "video"}
-    attachment = bool(download or not inline_media)
     content_type = artifact_media_type(str(artifact.key))
+    attachment = bool(download or render not in {"image", "video"})
     headers = {
         "Accept-Ranges": "bytes",
         "Cache-Control": "private, no-store",
@@ -355,115 +377,197 @@ def _artifact_content_response_with_access(
         "X-NPA-Run-Ref": str(run_ref or "").strip(),
         "X-NPA-Source-Selected": "true",
     }
-    if request.method == "HEAD":
-        head = s3.head_object(Bucket=run_bucket, Key=str(artifact.key))
-        total = int(head.get("ContentLength") or 0)
-        headers["Content-Length"] = str(total)
-        return Response(status_code=200, media_type=content_type, headers=headers)
+    return _ArtifactContentResponseContext(
+        render=render,
+        category=category,
+        total=total,
+        content_type=content_type,
+        headers=headers,
+    )
 
-    # A caller-supplied Range header always requests raw object bytes, including
-    # for JSON/text artifacts. Inline structured previews remain the default for
-    # ordinary GETs, while standards-compliant range/download clients receive
-    # 206 + Content-Range from the common streaming path below.
-    if render in {"json", "text"} and not download and not request.headers.get("range"):
-        if total:
-            end = min(total - 1, INLINE_TEXT_MAX_BYTES)
-            obj = s3.get_object(
-                Bucket=run_bucket,
-                Key=str(artifact.key),
-                Range=f"bytes=0-{end}",
-            )
-            raw = obj["Body"].read(INLINE_TEXT_MAX_BYTES + 1)
-            content_range = str(obj.get("ContentRange") or "")
-            range_match = re.fullmatch(r"bytes \d+-\d+/(\d+)", content_range)
-            actual_total = (
-                int(range_match.group(1))
-                if range_match
-                else int(obj.get("ContentLength") or len(raw))
-            )
-            if actual_total != total:
-                raise HTTPException(
-                    status_code=409,
-                    detail="artifact changed since inventory discovery; list the run again",
-                )
-        else:
-            raw = b""
-        preview = build_text_preview(
-            raw,
-            total_bytes=total,
-            render=render,
-            max_bytes=INLINE_TEXT_MAX_BYTES,
-        )
-        preview.update(
-            {
-                "ok": True,
-                "run_id": normalized_run,
-                "key": str(artifact.key),
-                "category": category,
-                "content_type": content_type,
-            }
-        )
-        headers["Content-Disposition"] = safe_content_disposition(
-            str(artifact.key), attachment=False
-        )
-        headers["X-NPA-Preview-Truncated"] = "true" if preview["truncated"] else "false"
-        headers["X-NPA-Preview-Redacted"] = "true" if preview["redacted"] else "false"
-        return JSONResponse(content=preview, headers=headers)
 
-    range_value = str(request.headers.get("range") or "").strip()
+def _artifact_head_response(
+    s3, run_bucket: str, artifact, context: _ArtifactContentResponseContext
+):
+    head = s3.head_object(Bucket=run_bucket, Key=str(artifact.key))
+    total = int(head.get("ContentLength") or 0)
+    context.headers["Content-Length"] = str(total)
+    return Response(
+        status_code=200,
+        media_type=context.content_type,
+        headers=context.headers,
+    )
+
+
+def _read_artifact_text_preview(s3, run_bucket: str, artifact, total: int) -> bytes:
+    if not total:
+        return b""
+    end = min(total - 1, INLINE_TEXT_MAX_BYTES)
+    obj = s3.get_object(
+        Bucket=run_bucket,
+        Key=str(artifact.key),
+        Range=f"bytes=0-{end}",
+    )
+    raw = obj["Body"].read(INLINE_TEXT_MAX_BYTES + 1)
+    content_range = str(obj.get("ContentRange") or "")
+    range_match = re.fullmatch(r"bytes \d+-\d+/(\d+)", content_range)
+    actual_total = (
+        int(range_match.group(1))
+        if range_match
+        else int(obj.get("ContentLength") or len(raw))
+    )
+    if actual_total != total:
+        raise HTTPException(
+            status_code=409,
+            detail="artifact changed since inventory discovery; list the run again",
+        )
+    return raw
+
+
+def _artifact_text_preview_response(
+    s3,
+    run_bucket: str,
+    artifact,
+    normalized_run: str,
+    context: _ArtifactContentResponseContext,
+):
+    raw = _read_artifact_text_preview(s3, run_bucket, artifact, context.total)
+    preview = build_text_preview(
+        raw,
+        total_bytes=context.total,
+        render=context.render,
+        max_bytes=INLINE_TEXT_MAX_BYTES,
+    )
+    preview.update(
+        {
+            "ok": True,
+            "run_id": normalized_run,
+            "key": str(artifact.key),
+            "category": context.category,
+            "content_type": context.content_type,
+        }
+    )
+    context.headers["Content-Disposition"] = safe_content_disposition(
+        str(artifact.key), attachment=False
+    )
+    context.headers["X-NPA-Preview-Truncated"] = (
+        "true" if preview["truncated"] else "false"
+    )
+    context.headers["X-NPA-Preview-Redacted"] = (
+        "true" if preview["redacted"] else "false"
+    )
+    return JSONResponse(content=preview, headers=context.headers)
+
+
+def _artifact_requested_range(range_value: str, total: int):
     try:
-        selected_range = parse_http_byte_range(range_value, total)
+        return parse_http_byte_range(range_value, total)
     except ArtifactDiscoveryError as exc:
         raise HTTPException(
             status_code=416,
             detail=str(exc),
             headers={"Content-Range": f"bytes */{total}", "Accept-Ranges": "bytes"},
         ) from exc
+
+
+def _artifact_stream_request(
+    run_bucket: str, artifact, selected_range, total: int, headers
+):
     get_kwargs = {"Bucket": run_bucket, "Key": str(artifact.key)}
     status_code = 200
-    content_length = total
     if selected_range is not None:
         start, end = selected_range
         get_kwargs["Range"] = f"bytes={start}-{end}"
         status_code = 206
-        content_length = end - start + 1
         headers["Content-Range"] = f"bytes {start}-{end}/{total}"
-    obj = s3.get_object(**get_kwargs)
+    return get_kwargs, status_code
+
+
+def _validated_artifact_stream_length(obj, selected_range, total: int, headers) -> int:
     actual_length = int(obj.get("ContentLength") or 0)
     actual_range = str(obj.get("ContentRange") or "")
-    if selected_range is not None:
-        match = re.fullmatch(r"bytes (\d+)-(\d+)/(\d+)", actual_range)
-        if match is None:
-            obj["Body"].close()
-            raise HTTPException(
-                status_code=502, detail="S3 range response omitted Content-Range"
-            )
-        actual_start, actual_end, actual_total = (
-            int(value) for value in match.groups()
-        )
-        if actual_total != total or (actual_start, actual_end) != selected_range:
-            obj["Body"].close()
-            raise HTTPException(
-                status_code=409,
-                detail="artifact changed since inventory discovery; list the run again",
-            )
-        headers["Content-Range"] = actual_range
-        content_length = actual_end - actual_start + 1
-    else:
+    if selected_range is None:
         if actual_length != total:
             obj["Body"].close()
             raise HTTPException(
                 status_code=409,
                 detail="artifact changed since inventory discovery; list the run again",
             )
-        content_length = actual_length
-    headers["Content-Length"] = str(content_length)
+        return actual_length
+    match = re.fullmatch(r"bytes (\d+)-(\d+)/(\d+)", actual_range)
+    if match is None:
+        obj["Body"].close()
+        raise HTTPException(
+            status_code=502, detail="S3 range response omitted Content-Range"
+        )
+    actual_start, actual_end, actual_total = (int(value) for value in match.groups())
+    if actual_total != total or (actual_start, actual_end) != selected_range:
+        obj["Body"].close()
+        raise HTTPException(
+            status_code=409,
+            detail="artifact changed since inventory discovery; list the run again",
+        )
+    headers["Content-Range"] = actual_range
+    return actual_end - actual_start + 1
+
+
+def _artifact_stream_response(
+    s3,
+    request: Request,
+    run_bucket: str,
+    artifact,
+    context: _ArtifactContentResponseContext,
+):
+    range_value = str(request.headers.get("range") or "").strip()
+    selected_range = _artifact_requested_range(range_value, context.total)
+    get_kwargs, status_code = _artifact_stream_request(
+        run_bucket, artifact, selected_range, context.total, context.headers
+    )
+    obj = s3.get_object(**get_kwargs)
+    content_length = _validated_artifact_stream_length(
+        obj, selected_range, context.total, context.headers
+    )
+    context.headers["Content-Length"] = str(content_length)
     return StreamingResponse(
         _artifact_stream(obj["Body"]),
         status_code=status_code,
-        media_type=content_type,
-        headers=headers,
+        media_type=context.content_type,
+        headers=context.headers,
     )
+
+
+def _artifact_content_response_with_access(
+    request: Request,
+    *,
+    run_id: str,
+    run_ref: str,
+    key: str,
+    project_id: str,
+    resource_bucket: str,
+    resolved_prefix: str | None,
+    source_selected: bool,
+    download: bool = False,
+):
+    s3, normalized_run, run_bucket, artifact = _authorized_artifact_content(
+        run_id,
+        run_ref,
+        key,
+        project_id,
+        resource_bucket,
+        resolved_prefix,
+        source_selected,
+    )
+    context = _artifact_content_response_context(
+        normalized_run, run_ref, artifact, download
+    )
+    if request.method == "HEAD":
+        return _artifact_head_response(s3, run_bucket, artifact, context)
+    render = context.render
+    if render in {"json", "text"} and not download and not request.headers.get("range"):
+        return _artifact_text_preview_response(
+            s3, run_bucket, artifact, normalized_run, context
+        )
+    return _artifact_stream_response(s3, request, run_bucket, artifact, context)
 
 
 @app.api_route("/artifacts/content", methods=["GET", "HEAD"])
@@ -557,40 +661,55 @@ def artifact_file(filename: str):
     )
 
 
-@app.api_route("/artifacts/download", methods=["GET", "HEAD"])
-def artifacts_download(
-    request: Request,
-    run_id: str = "",
-    run_ref: str = "",
-    key: str = "",
-    s3_uri: str = "",
-    project_id: str = "",
-    resource_bucket: str = "",
-    resolved_prefix: str | None = None,
-    source_selected: bool = False,
-):
-    requested_uri = str(s3_uri or "").strip()
-    requested_key = str(key or "").strip()
-    requested_bucket = str(resource_bucket or "").strip()
-    try:
-        if requested_uri:
-            raise HTTPException(
-                status_code=400,
-                detail=_raw_artifact_uri_migration_detail("s3_uri"),
-            )
-        if not requested_key:
-            raise HTTPException(status_code=400, detail="key is required")
-        return _artifact_content_response(
-            request,
-            run_id=run_id,
-            run_ref=run_ref,
-            key=requested_key,
-            project_id=project_id,
-            resource_bucket=requested_bucket,
-            resolved_prefix=resolved_prefix,
-            source_selected=source_selected,
-            download=True,
+class _ArtifactDownloadSelection:
+    """Carry one download request through the contained route boundary."""
+
+    __slots__ = (
+        "run_id", "run_ref", "key", "s3_uri", "project_id",
+        "resource_bucket", "resolved_prefix", "source_selected",
+    )
+
+    def __init__(
+        self, run_id: str, run_ref: str, key: str, s3_uri: str,
+        project_id: str, resource_bucket: str, resolved_prefix: str | None,
+        source_selected: bool,
+    ) -> None:
+        self.run_id = run_id
+        self.run_ref = run_ref
+        self.key = key
+        self.s3_uri = s3_uri
+        self.project_id = project_id
+        self.resource_bucket = resource_bucket
+        self.resolved_prefix = resolved_prefix
+        self.source_selected = source_selected
+
+
+def _authorized_artifact_download(request: Request, selected: _ArtifactDownloadSelection):
+    requested_uri = str(selected.s3_uri or "").strip()
+    if requested_uri:
+        raise HTTPException(
+            status_code=400,
+            detail=_raw_artifact_uri_migration_detail("s3_uri"),
         )
+    requested_key = str(selected.key or "").strip()
+    if not requested_key:
+        raise HTTPException(status_code=400, detail="key is required")
+    return _artifact_content_response(
+        request,
+        run_id=selected.run_id,
+        run_ref=selected.run_ref,
+        key=requested_key,
+        project_id=selected.project_id,
+        resource_bucket=str(selected.resource_bucket or "").strip(),
+        resolved_prefix=selected.resolved_prefix,
+        source_selected=selected.source_selected,
+        download=True,
+    )
+
+
+def _artifact_download_response(request: Request, selected: _ArtifactDownloadSelection):
+    try:
+        return _authorized_artifact_download(request, selected)
     except HTTPException:
         raise
     except Exception:  # contained route boundary; preserve traceback in server logs
@@ -604,3 +723,41 @@ def artifacts_download(
                 "source": "s3",
             },
         )
+
+
+@app.api_route("/artifacts/download", methods=["GET", "HEAD"])
+def artifacts_download(
+    request: Request,
+    run_id: str = "",
+    run_ref: str = "",
+    key: str = "",
+    s3_uri: str = "",
+    project_id: str = "",
+    resource_bucket: str = "",
+    resolved_prefix: str | None = None,
+    source_selected: bool = False,
+):
+    """Download one artifact from an exact server-selected run source.
+
+    Args:
+        request: The authenticated HTTP request, including any Range header.
+        run_id: The validated workflow run identifier.
+        run_ref: The opaque run reference issued by discovery.
+        key: The exact object key issued by the selected run inventory.
+        s3_uri: Deprecated raw URI selector, which is always rejected.
+        project_id: The project from the server-issued source tuple.
+        resource_bucket: The bucket from the server-issued source tuple.
+        resolved_prefix: The run-parent prefix from the source tuple.
+        source_selected: Whether the caller explicitly selected that source.
+
+    Returns:
+        An authorized download response or a sanitized storage-error response.
+
+    Raises:
+        HTTPException: If request fields or source authorization are invalid.
+    """
+    selected = _ArtifactDownloadSelection(
+        run_id, run_ref, key, s3_uri, project_id, resource_bucket,
+        resolved_prefix, source_selected,
+    )
+    return _artifact_download_response(request, selected)

@@ -1824,7 +1824,7 @@ def test_explicit_prefix_discovery_searches_all_accessible_project_buckets() -> 
 
 
 def test_cold_direct_source_discovers_timestamp_less_run_and_native_artifacts() -> None:
-    run_id = "paidf-iaa-efeb0a24d86a"
+    run_id = "workflow-cold-start-001"
     parent = "durable/workflow-runs"
     s3 = _PrefixAwareS3(
         [
@@ -1866,7 +1866,7 @@ def test_cold_direct_source_discovers_timestamp_less_run_and_native_artifacts() 
 
 
 def test_direct_source_exact_query_preserves_complete_source_tuple() -> None:
-    run_id = "paidf-dig-15395d41fe18"
+    run_id = "workflow-exact-source-002"
     parent = "published/runs"
     source = ArtifactSource("project-a", "bucket-a", parent)
     s3 = _PrefixAwareS3(
@@ -1911,7 +1911,7 @@ def test_direct_source_discovery_is_bounded_and_empty_query_is_incomplete() -> N
 
 
 def test_direct_sources_do_not_collapse_equal_bucket_prefix_across_projects() -> None:
-    run_id = "paidf-evg-e5938e6d2c96"
+    run_id = "workflow-ambiguous-source-003"
     parent = "published/runs"
     s3 = _PrefixAwareS3(
         [(f"{parent}/{run_id}/reports/event-video.rrd", "2026-09-03T00:00:00Z")]
@@ -1977,7 +1977,7 @@ def test_direct_source_sync_refresh_replaces_fresh_empty_cache() -> None:
     import npa.workflows.artifacts as A
 
     A._run_list_cache_clear()
-    run_id = "paidf-iaa-efeb0a24d86a"
+    run_id = "workflow-stale-cache-004"
     parent = "published/runs"
     source = ArtifactSource("project-a", "bucket-a", parent)
     s3 = _PrefixAwareS3([])
@@ -2009,7 +2009,7 @@ def test_direct_source_sync_refresh_waits_for_inflight_refresh(monkeypatch) -> N
     fresh = A.RunListPage(
         [
             A.RunSummary(
-                "paidf-dig-15395d41fe18",
+                "workflow-refresh-race-005",
                 "2026-09-03T00:00:00Z",
                 1,
                 True,

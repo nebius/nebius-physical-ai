@@ -119,6 +119,24 @@ server-issued tuple. Later bootstraps reuse the persisted source without
 requiring the file again. Passing a new source file explicitly replaces the
 saved default after a successful bootstrap.
 
+Bootstrap writes the source selectors and their isolated read identity to the
+owner-only `/opt/npa-agent/artifact-sources.env`; operators should use
+`--artifact-source-file` instead of setting that generated file by hand. Its
+runtime keys are:
+
+| Key | Meaning and default |
+| --- | --- |
+| `NPA_AGENT_ARTIFACT_SOURCES_B64` | URL-safe base64 JSON for the validated source tuples; omitted when no owner source is configured. |
+| `NPA_AGENT_ARTIFACT_S3_BUCKET` | Bucket whose isolated read credentials follow; required together with both credential keys. |
+| `NPA_AGENT_ARTIFACT_S3_ENDPOINT` | S3-compatible endpoint for those credentials; empty uses the storage client's configured default. |
+| `NPA_AGENT_ARTIFACT_S3_ACCESS_KEY_ID` | Isolated read access-key id; never print or persist it outside the owner-only environment file. |
+| `NPA_AGENT_ARTIFACT_S3_SECRET_ACCESS_KEY` | Matching isolated read secret; required with the bucket and access-key id. |
+| `NPA_AGENT_ARTIFACT_S3_REGION` | Storage region; defaults to `eu-north1` when omitted. |
+
+If the isolated bucket/credential triple is absent or incomplete, the backend
+uses the Agent's normal S3 identity. Source tuples still act only as selectors:
+they never grant access and cannot authorize an arbitrary S3 URI.
+
 The `whole_path_capacity` check first reads the tenant quota aggregate. A
 project-scoped administrator may be forbidden from that tenant-wide read even
 though they can manage the deployment project. In that specific case, preflight

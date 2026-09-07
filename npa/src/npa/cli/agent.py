@@ -10908,7 +10908,34 @@ def bootstrap_cmd(
         help="Disable HTTPS on port 443 (customer access uses http://IP:agent-port only).",
     ),
 ) -> None:
-    """Re-bootstrap agent UI/backend/nginx on an existing VM (refresh without Terraform)."""
+    """Re-bootstrap agent UI/backend/nginx without replacing its VM.
+
+    Args:
+        project: Configured project alias containing the Agent record.
+        name: Existing Agent deployment name.
+        ssh_user: Remote operating-system user.
+        ssh_key: Private key path, or empty to use the saved/default key.
+        agent_port: Public Agent UI port.
+        backend_port: Internal backend port.
+        rerun_port: Rerun web service port.
+        llm_model: Optional replacement default model.
+        llm_models: Optional replacement model list.
+        refresh_credentials: Whether to refresh the existing service identity.
+        artifact_source_file: Optional owner-only exact-source JSON file.
+        llm_config_file: Optional owner-only custom-provider configuration.
+        foxglove_embed_src: Optional Foxglove application URL.
+        foxglove_viewer_backend: Requested Foxglove viewer backend.
+        foxglove_org_slug: Optional Foxglove organization slug.
+        foxglove_live_url: Optional live Foxglove data URL.
+        no_public_https: Whether to retain HTTP-only public access.
+
+    Returns:
+        None.
+
+    Raises:
+        typer.Exit: If ownership, configuration, credentials, transport, or
+            post-bootstrap verification fails.
+    """
     project = _resolve_project_alias(project)
     record = _agent_record(project, name)
     if not record:

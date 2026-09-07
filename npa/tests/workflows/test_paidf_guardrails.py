@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import hashlib
-import io
 import json
 import os
 import re
+import runpy
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -46,16 +46,23 @@ _QWEN_PROTOCOL_FIXTURE = """class Guard:
 """
 
 
+def _patched_qwen_guard(tmp_path: Path):
+    module_path = tmp_path / "patched_qwen_guard.py"
+    module_path.write_bytes(
+        guardrails._qwen_guardrail_patch_bytes(_QWEN_PROTOCOL_FIXTURE.encode())
+    )
+    namespace = runpy.run_path(str(module_path), init_globals={"re": re})
+    return namespace["Guard"]()
+
+
 @pytest.mark.parametrize(
     "verdict,allowed", [("Safe", True), ("Unsafe", False), ("Controversial", True)]
 )
-def test_qwen_adaptation_preserves_published_verdict_policy(verdict, allowed):
-    namespace = {"re": re}
-    exec(
-        guardrails._qwen_guardrail_patch_bytes(_QWEN_PROTOCOL_FIXTURE.encode()),
-        namespace,
-    )
-    assert namespace["Guard"]().is_safe(f"Safety: {verdict}\nCategories: None") == (
+def test_qwen_adaptation_preserves_published_verdict_policy(
+    tmp_path: Path, verdict, allowed
+):
+    guard = _patched_qwen_guard(tmp_path)
+    assert guard.is_safe(f"Safety: {verdict}\nCategories: None") == (
         allowed,
         verdict,
     )
@@ -72,14 +79,12 @@ def test_qwen_adaptation_preserves_published_verdict_policy(verdict, allowed):
         RuntimeError("inference unavailable"),
     ],
 )
-def test_qwen_adaptation_rejects_missing_malformed_duplicate_or_failed_verdicts(output):
-    namespace = {"re": re}
-    exec(
-        guardrails._qwen_guardrail_patch_bytes(_QWEN_PROTOCOL_FIXTURE.encode()),
-        namespace,
-    )
+def test_qwen_adaptation_rejects_missing_malformed_duplicate_or_failed_verdicts(
+    tmp_path: Path, output
+):
+    guard = _patched_qwen_guard(tmp_path)
     with pytest.raises(RuntimeError, match="failed closed"):
-        namespace["Guard"]().is_safe(output)
+        guard.is_safe(output)
 
 
 def test_qwen_adaptation_refuses_unreviewed_installed_source():
@@ -320,16 +325,20 @@ def test_official_revision_manifest_requires_precise_identity(
     elif mutation == "escape":
         document["siblings"][0]["rfilename"] = "../outside"
 
-    def request(url):
-        assert (
-            url
-            == f"https://huggingface.co/api/models/{repository}/revision/{revision}?blobs=true"
+    def request(url, *, timeout, follow_redirects):
+        assert url == guardrails.httpx.URL(
+            f"https://huggingface.co/api/models/{repository}/revision/"
+            f"{revision}?blobs=true"
         )
-        response = io.StringIO(json.dumps(document))
-        response.geturl = lambda: url
-        return response
+        assert timeout == 30.0
+        assert follow_redirects is False
+        return guardrails.httpx.Response(
+            200,
+            json=document,
+            request=guardrails.httpx.Request("GET", url),
+        )
 
-    monkeypatch.setattr(guardrails.urllib.request, "urlopen", request)
+    monkeypatch.setattr(guardrails.httpx, "get", request)
     if mutation != "none":
         with pytest.raises(guardrails.PaidfGuardrailError):
             guardrails._load_snapshot_manifest(repository, revision, ("blocklist/**",))
@@ -343,6 +352,28 @@ def test_official_revision_manifest_requires_precise_identity(
                 "size_bytes": 3,
             }
         }
+
+
+@pytest.mark.parametrize(
+    ("repository", "revision"),
+    [
+        ("https://foreign.invalid/model", "a" * 40),
+        ("example/model", "main"),
+        ("example/model?redirect=https://foreign.invalid", "a" * 40),
+    ],
+)
+def test_snapshot_manifest_rejects_non_exact_transport_identity(
+    monkeypatch, repository, revision
+):
+    monkeypatch.setattr(
+        guardrails.httpx,
+        "get",
+        lambda *_args, **_kwargs: pytest.fail("network reached"),
+    )
+    with pytest.raises(
+        guardrails.PaidfGuardrailError, match="not an exact revision"
+    ):
+        guardrails._load_snapshot_manifest(repository, revision, ())
 
 
 def test_default_reference_is_exact_and_drift_fails(tmp_path):

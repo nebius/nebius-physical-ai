@@ -7,11 +7,11 @@ import hashlib
 import json
 import os
 import re
-import urllib.request
 from pathlib import Path
 from typing import Any, Iterable
 from urllib.parse import urlparse
 
+import httpx
 import pytest
 from typer.testing import Result
 
@@ -126,6 +126,34 @@ _CONDITIONED_COSMOS_MP4_B64 = (
 )
 
 
+def _fetch_paidf_camera_fixture() -> bytes:
+    """Fetch only the reviewed, revision-pinned public HTTPS fixture."""
+
+    parsed = urlparse(_PAIDF_CAMERA_URL)
+    expected_path = (
+        f"/scikit-image/scikit-image/{_PAIDF_CAMERA_REVISION}"
+        "/skimage/data/camera.png"
+    )
+    if (
+        parsed.scheme != "https"
+        or parsed.netloc != "raw.githubusercontent.com"
+        or parsed.path != expected_path
+        or parsed.params
+        or parsed.query
+        or parsed.fragment
+    ):
+        pytest.fail("PAIDF EVG camera fixture is not the pinned HTTPS source")
+    source_url = httpx.URL(_PAIDF_CAMERA_URL)
+    try:
+        response = httpx.get(source_url, timeout=30.0, follow_redirects=False)
+        response.raise_for_status()
+    except httpx.HTTPError:
+        pytest.fail("PAIDF EVG camera fixture could not be fetched")
+    if response.url != source_url:
+        pytest.fail("PAIDF EVG camera fixture source identity changed")
+    return response.content
+
+
 def resolve_spec_path(name: str) -> Path:
     """Resolve a live-submit spec by name across every blueprint root."""
 
@@ -233,8 +261,7 @@ def seed_live_workflow_inputs(
     if spec_name == "paidf-event-video-generation.yaml":
         # Fetch public source bytes without model/registry credentials. A real
         # photograph exercises the detector and per-person label stages.
-        with urllib.request.urlopen(_PAIDF_CAMERA_URL) as response:
-            image_bytes = response.read()
+        image_bytes = _fetch_paidf_camera_fixture()
         if hashlib.sha256(image_bytes).hexdigest() != _PAIDF_CAMERA_SHA256:
             pytest.fail("PAIDF EVG camera fixture SHA-256 mismatch")
         client.put_object(

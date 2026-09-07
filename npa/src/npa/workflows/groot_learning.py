@@ -3474,6 +3474,22 @@ def verify_agent_ui_handoff(
     the required artifacts, load both native viewers, or serve byte ranges.
     Authentication is read only from ``NPA_AGENT_BASIC_AUTH`` and is never
     persisted or printed.
+
+    Args:
+        agent_url: Authenticated Agent HTTP or HTTPS origin.
+        report_uri: Expected learning-report artifact URI.
+        rrd_uri: Expected Rerun recording artifact URI.
+        mcap_uri: Expected MCAP recording artifact URI.
+        output_uri: S3 destination for the sanitized verification result.
+        run_id: Exact workflow run identity to discover.
+        s3_client: Optional storage client used for result publication.
+
+    Returns:
+        Verified discovery, viewer readiness, and byte-range evidence.
+
+    Raises:
+        GrootVisualizationError: If authentication, discovery, loading, or
+            readback does not satisfy the exact-source contract.
     """
 
     client = _s3_client(s3_client)

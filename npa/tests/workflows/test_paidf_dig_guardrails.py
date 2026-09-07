@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import re
+import runpy
 import subprocess
 import sys
 
@@ -82,15 +83,19 @@ def _summary():
     }
 
 
+def _patched_dig_guard(tmp_path, reviewed_fixture):
+    module_path = tmp_path / "patched_dig_qwen_guard.py"
+    module_path.write_bytes(dig.patch_dig_qwen_source(reviewed_fixture))
+    namespace = runpy.run_path(str(module_path), init_globals={"re": re})
+    return namespace["Qwen3Guard"]()
+
+
 @pytest.mark.parametrize(
     "verdict,allowed", [("Safe", True), ("Unsafe", False), ("Controversial", True)]
 )
-def test_dig_preserves_published_verdicts(reviewed_fixture, verdict, allowed):
-    namespace = {"re": re}
-    exec(dig.patch_dig_qwen_source(reviewed_fixture), namespace)
-    assert namespace["Qwen3Guard"]().is_safe(
-        f"Safety: {verdict}\nCategories: None"
-    ) == (allowed, verdict)
+def test_dig_preserves_published_verdicts(tmp_path, reviewed_fixture, verdict, allowed):
+    guard = _patched_dig_guard(tmp_path, reviewed_fixture)
+    assert guard.is_safe(f"Safety: {verdict}\nCategories: None") == (allowed, verdict)
 
 
 @pytest.mark.parametrize(
@@ -106,12 +111,11 @@ def test_dig_preserves_published_verdicts(reviewed_fixture, verdict, allowed):
     ],
 )
 def test_dig_verdict_and_inference_failures_cannot_reach_generation(
-    reviewed_fixture, verdict
+    tmp_path, reviewed_fixture, verdict
 ):
-    namespace = {"re": re}
-    exec(dig.patch_dig_qwen_source(reviewed_fixture), namespace)
+    guard = _patched_dig_guard(tmp_path, reviewed_fixture)
     with pytest.raises(RuntimeError, match="failed closed"):
-        namespace["Qwen3Guard"]().is_safe(verdict)
+        guard.is_safe(verdict)
 
 
 def test_dig_does_not_accept_evg_or_unknown_source():

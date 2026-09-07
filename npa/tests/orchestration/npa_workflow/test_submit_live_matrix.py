@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import importlib.util
 import hashlib
-import io
 import json
 from pathlib import Path
 
@@ -427,11 +426,23 @@ def test_paidf_evg_seed_verifies_source_before_writing(monkeypatch) -> None:
         def put_object(self, **kwargs):
             writes.append(kwargs)
 
-    def open_source(url):
-        requests.append(url)
-        return io.BytesIO(source)
+    class SourceResponse:
+        status_code = 200
+        content = source
 
-    monkeypatch.setattr(helpers.urllib.request, "urlopen", open_source)
+        def __init__(self, url):
+            self.url = url
+
+        def raise_for_status(self):
+            return None
+
+    def open_source(url, *, timeout, follow_redirects):
+        requests.append(url)
+        assert timeout == 30.0
+        assert follow_redirects is False
+        return SourceResponse(url)
+
+    monkeypatch.setattr(helpers.httpx, "get", open_source)
     monkeypatch.setattr(helpers, "_PAIDF_CAMERA_SHA256", source_hash)
     monkeypatch.setattr(
         "npa.clients.project_credentials.s3_client_for_project",
@@ -441,7 +452,7 @@ def test_paidf_evg_seed_verifies_source_before_writing(monkeypatch) -> None:
         spec_name="paidf-event-video-generation.yaml",
         bucket="unit-bucket", run_id="seed-run",
     )
-    assert requests == [helpers._PAIDF_CAMERA_URL]
+    assert requests == [helpers.httpx.URL(helpers._PAIDF_CAMERA_URL)]
     assert writes[0]["Body"] == source
     assert writes[0]["ContentType"] == "image/png"
     assert writes[0]["Key"].endswith("/fixture/seed.png")
@@ -462,12 +473,22 @@ def test_paidf_evg_seed_never_uploads_unverified_input(monkeypatch, failure) -> 
         def put_object(self, **kwargs):
             writes.append(kwargs)
 
-    def open_source(url):
+    class SourceResponse:
+        status_code = 200
+        content = b"corrupt source bytes"
+
+        def __init__(self, url):
+            self.url = url
+
+        def raise_for_status(self):
+            return None
+
+    def open_source(url, **_kwargs):
         if failure == "unavailable":
             raise OSError("source unavailable")
-        return io.BytesIO(b"corrupt source bytes")
+        return SourceResponse(url)
 
-    monkeypatch.setattr(helpers.urllib.request, "urlopen", open_source)
+    monkeypatch.setattr(helpers.httpx, "get", open_source)
     monkeypatch.setattr(
         "npa.clients.project_credentials.s3_client_for_project",
         lambda *_args, **_kwargs: S3(),
@@ -476,6 +497,38 @@ def test_paidf_evg_seed_never_uploads_unverified_input(monkeypatch, failure) -> 
         helpers.seed_live_workflow_inputs(
             spec_name="paidf-event-video-generation.yaml",
             bucket="unit-bucket", run_id="seed-run",
+        )
+    assert writes == []
+
+
+def test_paidf_evg_seed_rejects_non_https_fixture_transport(monkeypatch) -> None:
+    helpers = _load_live_helpers()
+    writes = []
+
+    class S3:
+        def put_object(self, **kwargs):
+            writes.append(kwargs)
+
+    monkeypatch.setattr(
+        helpers,
+        "_PAIDF_CAMERA_URL",
+        helpers._PAIDF_CAMERA_URL.replace("https://", "ftp://", 1),
+    )
+    monkeypatch.setattr(
+        helpers.httpx,
+        "get",
+        lambda *_args, **_kwargs: pytest.fail("network reached"),
+    )
+    monkeypatch.setattr(
+        "npa.clients.project_credentials.s3_client_for_project",
+        lambda *_args, **_kwargs: S3(),
+    )
+
+    with pytest.raises(pytest.fail.Exception, match="pinned HTTPS source"):
+        helpers.seed_live_workflow_inputs(
+            spec_name="paidf-event-video-generation.yaml",
+            bucket="unit-bucket",
+            run_id="seed-run",
         )
     assert writes == []
 
