@@ -25,6 +25,7 @@ SOURCE_SHA="${NPA_VLLM_OMNI_SOURCE_SHA256:?missing pinned source checksum}"
 mkdir -p "${ROOT}"
 [ -w "${ROOT}" ] || fail "runtime root ${ROOT} is not writable by uid $(id -u)"
 if [ -f "${MARKER}" ] && [ -x "${VENV}/bin/vllm" ]; then
+  "${VENV}/bin/python" /opt/npa-cosmos3-serving/backport_setuptools_manifest.py
   export PATH="${VENV}/bin:${PATH}"
   exec "$@"
 fi
@@ -53,6 +54,7 @@ mkdir "${work}/source"
 tar -xzf "${work}/vllm-omni.tar.gz" --strip-components=1 -C "${work}/source"
 VLLM_OMNI_TARGET_DEVICE=cuda VLLM_OMNI_VERSION_OVERRIDE=0.28.0 \
   "${VENV}/bin/python" -m pip install --no-cache-dir --no-deps "${work}/source"
+"${VENV}/bin/python" /opt/npa-cosmos3-serving/backport_setuptools_manifest.py
 "${VENV}/bin/python" -m pip check
 touch "${MARKER}"
 export PATH="${VENV}/bin:${PATH}"
