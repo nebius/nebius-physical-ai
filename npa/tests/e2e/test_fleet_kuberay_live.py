@@ -50,7 +50,7 @@ def _job_cleanup(run, execute, directory, identity):
         raise RuntimeError("Native proof and cleanup failures", errors) from errors[0]
 
 
-def test_fleet_kuberay_resources_and_native_worker_job():
+def _configured_target():
     config_path = os.environ.get("NPA_FLEET_KUBERAY_LIVE_CONFIG")
     if not os.environ.get("NPA_FLEET_KUBERAY_LIVE_CONFIG"):
         pytest.skip("requires an owner-private spec, exact kubeconfig and evidence directory")
@@ -66,11 +66,10 @@ def test_fleet_kuberay_resources_and_native_worker_job():
     assert evidence.stat().st_mode & 0o077 == 0
     kubeconfig = Path(config["kubeconfig"])
     assert kubeconfig.is_file()
-    prefix = ["kubectl", "--kubeconfig", str(kubeconfig), "-n", "ray-cluster"]
+    return cluster, evidence, kubeconfig
 
-    def run(name, args, stdin=None):
-        return _record_command(evidence, name, prefix + args, stdin)
 
+def _verify_cluster_resource(run, policy):
     ray = json.loads(run("raycluster", ["get", "rayclusters", "-o", "json"]))["items"]
     assert len(ray) == 1
     resource = ray[0]
@@ -88,6 +87,11 @@ def test_fleet_kuberay_resources_and_native_worker_job():
     assert group["template"]["spec"]["containers"][0]["resources"] == {
         "requests": expected_resources, "limits": expected_resources,
     }
+    return resource, expected_resources
+
+
+def _verify_runtime_pods(run, cluster, resource, expected_resources):
+    policy = cluster.kuberay
     pods = json.loads(run("pods", ["get", "pods", "-o", "json"]))["items"]
     ray_pods = [p for p in pods if p["metadata"]["labels"].get("ray.io/cluster") == resource["metadata"]["name"]]
     assert len(ray_pods) == policy.worker_replicas + 1
@@ -107,6 +111,10 @@ def test_fleet_kuberay_resources_and_native_worker_job():
         assert runtime["resources"] == {"requests": resources, "limits": resources}
         assert all(s["ready"] for s in pod["status"]["containerStatuses"])
         assert RAY_IMAGE.split("@", 1)[1] in pod["status"]["containerStatuses"][0]["imageID"]
+    return head_pod
+
+
+def _verify_network_resources(run):
     policies = json.loads(run("networkpolicy", ["get", "networkpolicy", "ray-cluster-ingress", "-o", "json"]))
     assert policies["spec"]["ingress"] == [{"from": [{"podSelector": {}}]}]
     assert policies["spec"]["podSelector"] == {}
@@ -114,6 +122,9 @@ def test_fleet_kuberay_resources_and_native_worker_job():
     services = json.loads(run("services", ["get", "services", "-o", "json"]))["items"]
     assert all(s["spec"]["type"] == "ClusterIP" for s in services)
     assert json.loads(run("pvcs", ["get", "pvc", "-o", "json"]))["items"] == []
+
+
+def _verify_native_worker_job(run, head_pod, policy):
     pod_name = head_pod["metadata"]["name"]
     execute = ["exec", pod_name, "-c", "ray-head", "--"]
     run("ray-status", execute + ["ray", "status"])
@@ -135,3 +146,26 @@ def test_fleet_kuberay_resources_and_native_worker_job():
         assert all(r["node_id"] != result["head_node_id"] for r in result["results"])
         for index, shard in enumerate(result["results"]):
             assert shard["sum"] == sum(i * i for i in range(index * 10000, (index + 1) * 10000))
+
+
+def test_fleet_kuberay_resources_and_native_worker_job():
+    """Verify actual fleet resources and native work on every fixed CPU worker.
+
+    Args:
+        None. NPA_FLEET_KUBERAY_LIVE_CONFIG selects the private validation inputs.
+    Returns:
+        None.
+    Raises:
+        AssertionError: Deployed resources or native job results violate the contract.
+        Exception: Private inputs, native commands or job cleanup fail.
+    """
+    cluster, evidence, kubeconfig = _configured_target()
+    prefix = ["kubectl", "--kubeconfig", str(kubeconfig), "-n", "ray-cluster"]
+
+    def run(name, arguments, stdin=None):
+        return _record_command(evidence, name, prefix + arguments, stdin)
+
+    resource, worker_resources = _verify_cluster_resource(run, cluster.kuberay)
+    head_pod = _verify_runtime_pods(run, cluster, resource, worker_resources)
+    _verify_network_resources(run)
+    _verify_native_worker_job(run, head_pod, cluster.kuberay)

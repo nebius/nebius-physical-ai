@@ -550,6 +550,19 @@ def validate_kuberay_installation(
     cluster: MK8sDesired, install_dir: Path, *, recipe_dir: Path | None = None,
     environ: dict[str, str] | None = None,
 ) -> MK8sDesired:
+    """Validate installation inputs while retaining historical KubeRay protection.
+
+    Args:
+        cluster: Desired cluster, which may now omit or disable KubeRay.
+        install_dir: Owned installation containing deployment provenance.
+        recipe_dir: Optional source recipe to verify before materialization.
+        environ: Explicit execution environment, or None for the current process.
+    Returns:
+        Desired cluster with KubeRay protection enabled when provenance requires it.
+    Raises:
+        ValueError: Provenance, execution inputs or recipe violate the contract.
+        OSError: Installation or recipe entries cannot be inspected or read.
+    """
     guarded = _kuberay_execution_cluster(cluster, install_dir)
     validate_kuberay_execution_inputs(
         guarded, workdir=install_dir / _K8S_TRAINING_SUBDIR, environ=environ,
