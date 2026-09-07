@@ -48,6 +48,12 @@ def test_cluster_sky_readiness_and_ambient_api_refusal(monkeypatch) -> None:
     assert health["status"].lower() == "healthy"
     catalog = discover_kubernetes_gpu_catalog(context=context, kubeconfig=kubeconfig, sky_bin=sky)
     assert not catalog.is_empty
+    accelerator = terraform_lifecycle._detect_skypilot_gpu(
+        sky, f"k8s/{context}", environment, config_override=_override,
+        cwd=kubeconfig.parent,
+    )
+    name, quantity = accelerator.rsplit(":", 1)
+    assert quantity == "1" and 1 in catalog.quantities_by_accelerator[name]
     terraform_lifecycle._wait_for_sky_down(
         sky, completed_validation, environment, config_override=_override,
         cwd=kubeconfig.parent,

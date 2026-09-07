@@ -210,14 +210,19 @@ def test_skypilot_smoke_scopes_check_and_uses_explicit_binary(
     assert streams[2][2] == kubeconfig.parent
 
 
+@pytest.mark.parametrize("gpu", ["RTXPRO-6000-BLACKWELL-SERVER-EDITION", "B200", "H200"])
 def test_skypilot_auto_detection_uses_exact_context_config(
     monkeypatch: pytest.MonkeyPatch,
+    gpu: str,
 ) -> None:
     seen: list[tuple[list[str], Path | None]] = []
 
     def capture(cmd, **kwargs):  # noqa: ANN001
         seen.append((cmd, kwargs.get("cwd")))
-        return _completed("RTXPRO-6000-BLACKWELL-SERVER-EDITION  1  1 of 1 free\n")
+        return _completed(
+            "Context: other-cluster\nGPU  REQUESTABLE_QTY_PER_NODE\nOTHER-GPU  1\n\n"
+            f"Context: fleet-exact\nGPU  REQUESTABLE_QTY_PER_NODE\n{gpu}  1, 2, 4\n"
+        )
 
     monkeypatch.setattr(tf_mod, "_run_capture", capture)
     accelerator = tf_mod._detect_skypilot_gpu(
@@ -228,7 +233,7 @@ def test_skypilot_auto_detection_uses_exact_context_config(
         cwd=Path("/durable/sky"),
     )
 
-    assert accelerator == "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"
+    assert accelerator == f"{gpu}:1"
     assert seen == [
         (
             [
@@ -238,11 +243,30 @@ def test_skypilot_auto_detection_uses_exact_context_config(
                 'kubernetes.allowed_contexts=["fleet-exact"]',
                 "--infra",
                 "k8s/fleet-exact",
-                "--all",
             ],
             Path("/durable/sky"),
         )
     ]
+
+
+@pytest.mark.parametrize("output", [
+    "",
+    "B200  1  1 of 1 free\n",
+    "GPU  REQUESTABLE_QTY_PER_NODE\nB200  1\n",
+    "Context: other-cluster\nGPU  REQUESTABLE_QTY_PER_NODE\nB200  1\n",
+    "Context: fleet-exact\nGPU  REQUESTABLE_QTY_PER_NODE\nB200  0\n",
+    "Context: fleet-exact\nGPU  REQUESTABLE_QTY_PER_NODE\nB200  2, 4\n",
+])
+def test_skypilot_auto_detection_requires_exact_requestable_inventory(monkeypatch, output):
+    monkeypatch.setattr(tf_mod, "_run_capture", lambda *_args, **_kwargs: _completed(output))
+    with pytest.raises(typer.BadParameter, match="Unable to auto-detect"):
+        tf_mod._detect_skypilot_gpu("sky", "k8s/fleet-exact", {})
+
+
+def test_skypilot_auto_detection_requires_explicit_context(monkeypatch):
+    monkeypatch.setattr(tf_mod, "_run_capture", lambda *_args, **_kwargs: pytest.fail("ambient lookup"))
+    with pytest.raises(typer.BadParameter, match="exact Kubernetes context"):
+        tf_mod._detect_skypilot_gpu("sky", "k8s", {})
 
 
 def test_cluster_validation_uses_owned_api_and_selected_kubeconfig(

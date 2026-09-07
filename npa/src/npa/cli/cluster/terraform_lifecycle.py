@@ -4134,16 +4134,22 @@ def _detect_skypilot_gpu(
     config_override: str = "",
     cwd: Path | None = None,
 ) -> str:
-    cmd = [sky, "show-gpus", "--infra", infra, "--all"]
+    from npa.orchestration.skypilot.k8s_gpu_catalog import (
+        context_from_infra,
+        parse_kubernetes_gpu_catalog,
+    )
+
+    context = context_from_infra(infra)
+    if not context:
+        raise typer.BadParameter("GPU validation requires an exact Kubernetes context")
+    cmd = [sky, "show-gpus", "--infra", infra]
     if config_override:
         cmd[2:2] = ["--config", config_override]
     result = _run_capture(cmd, cwd=cwd, env=env, timeout=300)
-    for line in result.stdout.splitlines():
-        if "RTX" not in line.upper() or "6000" not in line:
-            continue
-        columns = [column for column in re.split(r"\s{2,}", line.strip()) if column]
-        if columns:
-            return f"{columns[0]}:1"
+    catalog = parse_kubernetes_gpu_catalog(result.stdout, context=context)
+    for name in sorted(catalog.quantities_by_accelerator, key=str.casefold):
+        if 1 in catalog.quantities_by_accelerator[name]:
+            return f"{name}:1"
     raise typer.BadParameter(
         "Unable to auto-detect a Kubernetes GPU for SkyPilot; pass --sky-gpus"
     )

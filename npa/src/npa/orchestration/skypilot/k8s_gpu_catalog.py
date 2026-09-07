@@ -893,7 +893,7 @@ def parse_kubernetes_gpu_catalog(
             continue
         if not in_table:
             continue
-        if wanted and current_context and current_context != wanted:
+        if wanted and current_context != wanted:
             continue
         columns = re.split(r"\s{2,}", line)
         if len(columns) < 2:
