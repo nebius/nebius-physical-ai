@@ -63,12 +63,14 @@ environment; `build_native.py` installs our source-built NumPy before SciPy.
 Update the exact build-tool source entries in `native-source-lock.json` together
 with any intentional build-tool lock change.
 
-This is a **native-component annex**, not an attestation of whole-image source
-completeness, publication, or GPU acceptance. Shipping this directory with the
-binary image accompanies these native components with their source bytes.
-Downloading it privately does not deliver source to recipients. The publisher
-must still reconcile the exact final digest and all ancestor layers with the
-whole-image source distribution (other Debian packages, Python copyleft and
-vendored components, the Python base and NPA), provide the chosen license-permitted
-recipient delivery method, and complete every publication and workload gate.
-An older image's source audit is not coverage of new or superseded layer bytes.
+This remains a **native-component annex**. The companion
+`/opt/ncore/whole-sources/` annex reuses its archive identities and supplies the
+remaining locked source distribution, including superseded Debian/base bytes,
+Python copyleft, CPython and complete image recipes. See
+[whole-image source delivery](WHOLE-IMAGE-SOURCES.md) for license boundaries,
+recipient extraction/rebuilding and the offline layer verifier. Both directories
+accompany the image; private downloads alone are not recipient delivery.
+The publisher must still verify its exact integrated final digest and every
+ancestor layer and complete all publication and workload gates. Neither annex
+attests publication or GPU acceptance, and an older artifact's audit does not
+clear a newly built image.

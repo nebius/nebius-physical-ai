@@ -29,6 +29,7 @@ RUN sed -ri \
 # Optional read-only BuildKit named context for already verified source archives.
 # Default builds fetch the same hash-pinned public bytes.
 FROM scratch AS native-source-cache
+FROM scratch AS whole-source-cache
 FROM runtime-base AS native-builder
 RUN apt-get update && apt-get install -y --no-install-recommends \
       g++ gfortran gpg make nasm ninja-build pkg-config libblas-dev liblapack-dev zlib1g-dev \
@@ -77,6 +78,19 @@ RUN /opt/venv/bin/python -m pip install --no-deps --no-build-isolation /opt/npa 
     && /opt/venv/bin/python -m pip check \
     && /opt/ncore/converter-venv/bin/python -m pip check
 
+# Accompany the binary image with complete source archives, including versions
+# superseded in its immutable base layers. Native archive identities are reused.
+FROM assembled AS source-delivery
+COPY docker/workbench/ncore/ /opt/ncore/whole-sources/recipes/
+RUN --mount=type=bind,from=whole-source-cache,target=/source-cache \
+    python /opt/ncore/whole-sources/recipes/whole_image_sources.py assemble \
+      --lock /opt/ncore/whole-sources/recipes/whole-source-lock.json \
+      --annex /opt/ncore/whole-sources --native /opt/ncore/native-sources --cache /source-cache \
+    && python /opt/ncore/whole-sources/recipes/whole_image_sources.py verify \
+      --lock /opt/ncore/whole-sources/recipes/whole-source-lock.json \
+      --annex /opt/ncore/whole-sources --native /opt/ncore/native-sources \
+    && chmod -R a+rX /opt/ncore/whole-sources
+
 FROM runtime-base
 ARG NPA_SOURCE_SHA
 ARG SOURCE_SHA=${NPA_SOURCE_SHA}
@@ -88,12 +102,15 @@ ENV PATH=/opt/venv/bin:/opt/ncore/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/
 COPY --from=assembled /opt/ncore /opt/ncore
 COPY --from=assembled /opt/venv /opt/venv
 COPY --from=assembled /opt/npa /opt/npa
+COPY --from=source-delivery /opt/ncore/whole-sources /opt/ncore/whole-sources
 COPY --from=assembled /etc/ld.so.conf.d/ncore-ffmpeg.conf /etc/ld.so.conf.d/ncore-ffmpeg.conf
 COPY --chmod=0644 docker/workbench/ncore/Dockerfile docker/workbench/ncore/debian-native-lock.json docker/workbench/ncore/NATIVE-SOURCES.md /opt/ncore/native-sources/
 RUN chmod -R a+rX /opt/ncore/native-sources && ldconfig
 COPY --from=assembled /build/*requirements.lock /usr/share/doc/npa-ncore/
 COPY --from=assembled /opt/ncore/src/ncore/LICENSE /usr/share/doc/npa-ncore/LICENSE-APACHE-2.0
 COPY docker/workbench/ncore/source-lock.json docker/workbench/ncore/REDISTRIBUTION.md /usr/share/doc/npa-ncore/
+COPY --chmod=0644 docker/workbench/ncore/WHOLE-IMAGE-SOURCES.md /usr/share/doc/npa-ncore/
+COPY --chmod=0644 docker/workbench/ncore/notices/* /usr/share/doc/npa-ncore/notices/
 COPY --chmod=0755 docker/workbench/ncore/colmap-convert /opt/ncore/bin/colmap-convert
 COPY --chmod=0755 docker/workbench/ncore/verify_native.py /opt/ncore/bin/verify_native.py
 COPY --chmod=0755 docker/workbench/ncore/verify-packaging.py /opt/ncore/bin/verify-packaging.py
@@ -110,7 +127,10 @@ WORKDIR /workspace
 RUN /opt/venv/bin/python /opt/ncore/bin/verify-packaging.py \
     && /opt/venv/bin/python /opt/ncore/bin/verify_native.py >/tmp/native-reader.json \
     && /opt/ncore/converter-venv/bin/python /opt/ncore/bin/verify_native.py >/tmp/native-converter.json \
-    && sudo mv /tmp/native-reader.json /tmp/native-converter.json /opt/ncore/native-sources/
+    && sudo mv /tmp/native-reader.json /tmp/native-converter.json /opt/ncore/native-sources/ \
+    && /opt/venv/bin/python /opt/ncore/whole-sources/recipes/whole_image_sources.py verify \
+      --lock /opt/ncore/whole-sources/recipes/whole-source-lock.json \
+      --annex /opt/ncore/whole-sources --native /opt/ncore/native-sources --root /
 LABEL org.opencontainers.image.source="https://github.com/nebius/nebius-physical-ai" \
       org.opencontainers.image.revision="${SOURCE_SHA}" \
       org.opencontainers.image.licenses="Apache-2.0 AND MIT" \

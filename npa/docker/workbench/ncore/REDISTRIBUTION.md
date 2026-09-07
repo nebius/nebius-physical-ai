@@ -11,8 +11,8 @@ NRE reconstruction and rendering remain separate proprietary downstream operatio
 | --- | --- | --- |
 | NCore converter and V4 reader | NVIDIA/ncore `59c698d206da92b406a4f72619fce3b3a2c64bfd` | Apache-2.0; `/opt/ncore/src/ncore/LICENSE`, source SPDX headers, upstream NOTICE if present |
 | COLMAP model reader | trueprice/pycolmap `fe7a7c45df803b6c391777e349f0d8d65d39d777` | MIT; `/opt/ncore/src/pycolmap/LICENSE.txt`, copyright True Price / UNC Chapel Hill |
-| NPA | Exact committed `SOURCE_SHA` exported by `build.sh` | Apache-2.0; `/usr/share/doc/npa-ncore/LICENSE-APACHE-2.0` and package provenance |
-| CPython / Debian base | Python 3.12.12 slim Bookworm, digest in Dockerfile | PSF-2.0 and Debian component licenses in `/usr/share/doc/*/copyright`; base distro sources remain available from Debian snapshot archives |
+| NPA | Exact committed `SOURCE_SHA` exported by `build.sh` | Apache-2.0; `/usr/share/doc/npa-ncore/notices/NPA-LICENSE`, retained third-party adaptation notices and installed `/opt/npa` source |
+| CPython / Debian base | Python 3.12.12 slim Bookworm, digest in Dockerfile | PSF-2.0 and Debian component licenses in `/usr/share/doc/*/copyright`; exact source bytes, including superseded layer versions, accompany the image in the source annexes |
 
 `source-lock.json` pins archive bytes. `stage_upstream.py` extracts source files
 and licensing/build metadata only. It applies NVIDIA's unmodified
@@ -64,10 +64,13 @@ are source built. FFmpeg disables GPL/nonfree code and external autodetection;
 its shared libraries remain replaceable. The readable
 `/opt/ncore/native-sources/` annex accompanies these components with exact source
 archives, original notices, recipes, locks, configuration and verification
-receipts. See [native source provenance](NATIVE-SOURCES.md). This scoped annex
-does not establish source completeness for all other Python/OS components or
-superseded ancestor-layer bytes; whole-image source and recipient-delivery
-verification remain mandatory before publication.
+receipts. See [native source provenance](NATIVE-SOURCES.md). The companion
+`/opt/ncore/whole-sources/` annex supplies the remaining locked Debian and Python
+sources, CPython archive and base recipe, signed metadata and full image recipes.
+[Whole-image source delivery](WHOLE-IMAGE-SOURCES.md) explains the applicable
+license routes, installed preferred-form source, notices, extraction, rebuilding
+and offline verification against every final and ancestor layer. The final
+publisher must run that verification on its exact integrated artifact.
 
 No model weights, runtime capture photographs or datasets,
 NRE/Kit/Isaac payloads, CUDA, Torch, credentials, `.git`, or acceptance records
