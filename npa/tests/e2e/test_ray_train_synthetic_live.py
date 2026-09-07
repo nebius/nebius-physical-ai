@@ -72,6 +72,7 @@ def test_native_train_cuda_recovery_artifacts_and_cancel():
     evidence.mkdir(parents=True, exist_ok=True, mode=0o700)
     assert evidence.stat().st_mode & 0o077 == 0, "Evidence directory must be owner-only"
     from ray.job_submission import JobSubmissionClient, JobStatus
+    from ray.util.state import get_actor, get_placement_group, list_actors, list_placement_groups
 
     client = JobSubmissionClient(config["address"])
     suffix = uuid.uuid4().hex[:12]
@@ -93,8 +94,10 @@ def test_native_train_cuda_recovery_artifacts_and_cancel():
 
     def preserve(job):
         log = evidence / f"{job}.log"
-        _write_private(log, client.get_job_logs(job))
+        content = client.get_job_logs(job)
+        _write_private(log, content)
         _write_private(evidence / f"{job}-native-status.json", client.get_job_info(job).json())
+        assert "Exception in thread PlacementGroupCleanerMonitor" not in content
 
     try:
         for kind, extra in (("baseline", []), ("recovery", ["--fail-after-step", "8"])):
@@ -142,11 +145,48 @@ def test_native_train_cuda_recovery_artifacts_and_cancel():
         while "optimizer_step=4 checkpoint_uploaded" not in client.get_job_logs(job):
             assert not client.get_job_status(job).is_terminal(), "Training ended before cancellation exercise"
             time.sleep(1)
+        info = client.get_job_info(job)
+        assert info.submission_id == job
+        driver_id = info.job_id
+        assert driver_id, "Native driver identity required for cleanup evidence"
+        groups = list_placement_groups(address=config["address"], detail=True,
+                                       filters=[("creator_job_id", "=", driver_id)],
+                                       raise_on_missing_output=True)
+        cleaners = list_actors(address=config["address"], detail=True,
+                               filters=[("job_id", "=", driver_id),
+                                        ("class_name", "=", "PlacementGroupCleaner")],
+                               raise_on_missing_output=True)
+        assert len(groups) == 1 and groups[0].state == "CREATED"
+        assert len(cleaners) == 1 and cleaners[0].state == "ALIVE"
+        _write_private(evidence / "cancel-resources-before.json", json.dumps({
+            "groups": [group.asdict() for group in groups],
+            "cleaners": [actor.asdict() for actor in cleaners],
+        }))
         assert client.stop_job(job)
         while not client.get_job_status(job).is_terminal():
             time.sleep(1)
         preserve(job)
         assert client.get_job_status(job) == JobStatus.STOPPED
+        for group in groups:
+            while True:
+                current = get_placement_group(group.placement_group_id, address=config["address"])
+                assert current is not None, "Captured placement group state unavailable"
+                assert current.placement_group_id == group.placement_group_id
+                assert current.creator_job_id == driver_id
+                if current.state == "REMOVED":
+                    break
+                time.sleep(1)
+        for actor in cleaners:
+            while True:
+                current = get_actor(actor.actor_id, address=config["address"])
+                assert current is not None, "Captured cleanup actor state unavailable"
+                assert current.actor_id == actor.actor_id and current.job_id == driver_id
+                if current.state == "DEAD":
+                    break
+                time.sleep(1)
+        _write_private(evidence / "cancel-resources-after.json", json.dumps({
+            "placement_groups_removed": len(groups), "cleanup_actors_dead": len(cleaners),
+        }))
     finally:
         # Stop only this test's IDs, including when an assertion fails mid-training.
         errors = _cancel_owned_jobs(client, owned, evidence)
@@ -154,4 +194,5 @@ def test_native_train_cuda_recovery_artifacts_and_cancel():
     _write_private(evidence / "validation.json", json.dumps({
         "success": True, "jobs": len(owned), "optimizer_steps": 64, "cuda_ranks": 2,
         "native_worker_recovery": True, "cancel_status": "STOPPED",
+        "cancel_placement_group_removed": True, "cancel_cleanup_actor_dead": True,
     }))

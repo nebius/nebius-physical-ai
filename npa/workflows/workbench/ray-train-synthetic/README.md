@@ -87,6 +87,9 @@ application GCS address from the native Jobs service.
 Check both hosts joined the application GCS on port 6381, with two total GPUs.
 Application ports are separate from SkyPilot's management Ray; never use
 ambient discovery or a broad `ray stop`.
+The driver propagates its selected GCS address through the native runtime
+environment to Train's actors. This also keeps the head-pinned placement cleanup
+actor's State API on the application service when management Ray is present.
 
 ## Train, inspect, recover
 
@@ -185,6 +188,8 @@ distinct B200 hosts, decodes every RRD step and checks that recovered parameters
 match uninterrupted training. It records intent before each native submission
 and attempts cleanup for every owned ID even after a transport or assertion
 failure. The hosting task, platform and provider teardown remain operator-owned.
+Cancellation also verifies that the captured placement groups are removed and
+the detached Train cleanup actor exits; terminal Jobs status alone is insufficient.
 
 ## Stop only this application
 

@@ -292,7 +292,11 @@ def main(argv: list[str] | None = None) -> None:
 
     if ray.__version__ != "2.58.0":
         raise RuntimeError("This reference requires Ray 2.58.0 and Train V2")
-    ray.init(address=address)
+    # Train's detached cleanup actor uses the State API without an address.
+    # Propagate the selected application GCS so it cannot discover management Ray.
+    ray.init(address=address, runtime_env={"env_vars": {
+        "RAY_ADDRESS": address, "RAY_API_SERVER_ADDRESS": "",
+    }})
     try:
         live = [node for node in ray.nodes() if node["Alive"]]
         if sum(node["Resources"].get("GPU", 0) for node in live) < args.workers:

@@ -395,6 +395,38 @@ def test_live_endpoint_override_is_rejected_before_any_native_client_contact(tmp
     assert not (tmp_path / "evidence").exists()
 
 
+def test_driver_binds_descendant_state_clients_to_application_ray(tmp_path, monkeypatch):
+    """A Jobs driver must override inherited discovery settings for Train's actors."""
+    import os
+
+    selected = "127.0.0.1:6381"
+    monkeypatch.setenv("RAY_ADDRESS", selected)
+    monkeypatch.setenv("RAY_API_SERVER_ADDRESS", "http://127.0.0.1:18266")
+    monkeypatch.setenv("RAY_TRAIN_V2_ENABLED", "1")
+    connected = []
+
+    class ConnectionBoundary(Exception):
+        pass
+
+    def initialize(**kwargs):
+        # Model a descendant inheriting the service environment plus native
+        # runtime overrides, including the State API's higher-priority setting.
+        child = {**os.environ, **kwargs.get("runtime_env", {}).get("env_vars", {})}
+        connected.append((kwargs["address"], child.get("RAY_API_SERVER_ADDRESS") or child.get("RAY_ADDRESS")))
+        raise ConnectionBoundary
+
+    monkeypatch.setitem(sys.modules, "ray", SimpleNamespace(__version__="2.58.0", init=initialize))
+    monkeypatch.setitem(sys.modules, "ray.train", SimpleNamespace(
+        **{name: object for name in ("CheckpointConfig", "FailureConfig", "RunConfig", "ScalingConfig")}))
+    monkeypatch.setitem(sys.modules, "ray.train.torch", SimpleNamespace(TorchConfig=object, TorchTrainer=object))
+    monkeypatch.setitem(sys.modules, "artifacts", SimpleNamespace(
+        storage=lambda _: (None, "synthetic/checkpoints"), publish=lambda *args: None))
+    with pytest.raises(ConnectionBoundary):
+        load("train").main(["--storage-path", "s3://synthetic/checkpoints", "--run-name", "regression",
+                            "--output-dir", str(tmp_path / "export")])
+    assert connected == [(selected, selected)]
+
+
 @pytest.mark.parametrize("damage", ["missing_buffer", "missing_parameter", "wrong_shape", "nonfinite", "learning_rate", "momentum"])
 def test_damaged_sgd_checkpoint_cannot_claim_momentum_restoration(damage):
     """Exercise real CPU SGD state; optional Torch is installed for reference validation."""
