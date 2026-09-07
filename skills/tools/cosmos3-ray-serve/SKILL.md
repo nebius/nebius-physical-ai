@@ -87,7 +87,13 @@ them. It downloads each returned file, verifies bytes and SHA-256, and publishes
 `workflows/testing/cosmos3-ray-batch.yaml` for the workflow
 client; the persistent service must already be ready.
 
-The client binds the supported schema, model, request ID and every requested
+The checks in this paragraph require the updated installed client (for example,
+the checkout's editable `npa/.venv` installation). The reference workflow's
+default accepted service image bundles the older client and does not enable a
+source overlay, so its default client path does not provide these checks.
+Updating NPA on the submission host does not update that packaged client.
+
+The updated client binds the supported schema, model, request ID and every requested
 sample name before downloading. An omitted request ID is generated before POST
 and retained in `request.json`. Require one successful native `SampleOutputs`
 per name and exact, unique artifact coverage of its declared files within

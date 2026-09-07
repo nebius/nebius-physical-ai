@@ -64,10 +64,10 @@ Prepare an exact JSON object in S3:
 ]}
 ```
 
-Then call:
+Run the updated client from an editable installation of this checkout:
 
 ```bash
-npa workbench cosmos3 ray-batch \
+npa/.venv/bin/python -m npa workbench cosmos3 ray-batch \
   --input-path s3://<bucket>/<prefix>/batch.json \
   --output-path s3://<bucket>/<prefix>/outputs/ \
   --endpoint http://<service>:8000
@@ -75,9 +75,15 @@ npa workbench cosmos3 ray-batch \
 
 The submitted samples become concurrent deployment-handle calls; upstream Ray
 Serve performs the actual batching. NPA publishes the original request,
-structured `SampleOutputs`, generated media, hashes, and `provenance.json`. The
-equivalent declarative client is
-`workflows/testing/cosmos3-ray-batch.yaml`.
+structured `SampleOutputs`, generated media, hashes, and `provenance.json`.
+
+The declarative example is `workflows/testing/cosmos3-ray-batch.yaml`. Its default
+catalog image is the accepted service image, which still bundles the older
+client, and the example does not enable a source overlay. The integrity checks
+below apply to the updated installed client shown above; the unchanged workflow
+default does not provide them. Updating a host's NPA installation does not update
+the client inside that image. The resident service can continue using its
+accepted digest.
 
 The client assigns a request ID before submission when the input omits one and
 persists that ID in `request.json`. It requires the supported response schema,
