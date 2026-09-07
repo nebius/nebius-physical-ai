@@ -42,11 +42,13 @@ The service exposes authenticated `GET /health`, model-backed `GET /ready`,
 ### Trusted batch callers and conditioning downloads
 
 Treat the bearer token as a credential for trusted workflow pods, not as a
-general multi-tenant API key. Each authenticated `/v1/batches` request is passed
-to upstream `OmniSampleOverrides.download()`, which can fetch client-selected
-conditioning inputs from HTTP(S) or S3 and can use files already mounted in the
-container. NPA does not restrict those network destinations or claim an SSRF
-defense at this API boundary.
+general multi-tenant API key. Current source authorizes every conditioning input
+against `NPA_COSMOS3_RAY_ALLOWED_S3_ROOTS` before staging it into a fresh request
+directory. HTTP(S), server-local paths, custom defaults files, and decoded S3
+keys that the storage parser would reinterpret (such as encoded query/fragment
+characters or tabs/newlines) are rejected. The updated client checks that same
+S3 key contract before submitting inference. These protections require the
+current server source; the retained accepted image alone predates them.
 
 Do not expose the endpoint to untrusted clients. Limit token distribution to the
 workflow pods that own the generation queue, isolate the service from unrelated

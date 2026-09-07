@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field, PositiveInt, field_validator
 
 from npa.clients.storage import StorageClient
 from npa.workbench.storage_scope import StorageAuthorizationError, authorize_uri
+from npa.workbench.cosmos.ray_inputs import validate_sample_s3_keys
 
 RAY_BATCH_SCHEMA = "npa.cosmos3.ray-serve.batch.v1"
 RAY_PROVENANCE_SCHEMA = "npa.cosmos3.ray-serve.provenance.v1"
@@ -293,6 +294,10 @@ def _prepare_client_request(request: RayBatchRequest) -> RayBatchRequest:
                 "native Ray batches require num_outputs=1 per sample"
             )
         normalized = {**sample, **binding.model_dump(exclude_unset=True)}
+        try:
+            validate_sample_s3_keys(normalized)
+        except StorageAuthorizationError as exc:
+            raise Cosmos3RayServeError("invalid conditioning S3 URI") from exc
         if sample.get("defaults_file") is not None:
             raise Cosmos3RayServeError(
                 "custom defaults_file cannot be bound by this client; inline sample overrides"

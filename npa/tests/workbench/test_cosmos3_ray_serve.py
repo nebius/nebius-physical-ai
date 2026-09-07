@@ -932,3 +932,21 @@ def test_transfer_dispatch_precedes_reasoner_file_contract(tmp_path: Path, trans
     payload["outputs"][0]["outputs"][0]["files"] = files
     payload["artifacts"] = [_artifact(path, "one") for path in files]
     assert _submit(source, str(tmp_path / "out"))["status"] == "completed"
+
+
+@pytest.mark.parametrize("encoded", ["%3F", "%23", "%09", "%0D", "%0A"])
+@pytest.mark.parametrize("mode", [None, "image2image"])
+@pytest.mark.parametrize("field", ["vision_path", "prompt_path", "edge"])
+def test_reinterpreted_conditioning_key_fails_before_post(tmp_path, transport, encoded, mode, field):
+    source = tmp_path / "batch.json"
+    value = f"s3://test-bucket/media/input{encoded}variant.png"
+    sample = {"name": "one", field: {"control_path": value} if field == "edge" else value}
+    if mode is not None:
+        sample["model_mode"] = mode
+    _batch(source, samples=[sample])
+    _, post, get = transport
+    with pytest.raises(Cosmos3RayServeError, match="conditioning S3 URI"):
+        _submit(source, str(tmp_path / "out"))
+    post.assert_not_called()
+    get.assert_not_called()
+    assert not (tmp_path / "out").exists()
