@@ -15,6 +15,8 @@ import sys
 import tempfile
 from urllib.parse import urlsplit
 
+from botocore.exceptions import BotoCoreError, ClientError
+
 from archive_inventory import canonical, digest, read_json, require_digest, safe_name, validate_result
 
 from npa.clients.storage import StorageClient, StorageError, StoragePreconditionFailed
@@ -314,7 +316,7 @@ def main(argv=None) -> int:
             result = archive(options.input_path, options.output_path, storage)
         else:
             result = restore(options.input_path, options.output_path, options.manifest_sha256, storage)
-    except (ValueError, OSError, StorageError):
+    except (ValueError, OSError, StorageError, BotoCoreError, ClientError):
         print("CLIP archive operation failed; verify source, destination, integrity and storage access.", file=sys.stderr)
         return 1
     except Exception:

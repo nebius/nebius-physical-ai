@@ -15,6 +15,7 @@ import sys
 import threading
 from types import SimpleNamespace
 
+from botocore.exceptions import ClientError, EndpointConnectionError
 import pytest
 
 from npa.clients.storage import StoragePreconditionFailed
@@ -516,6 +517,31 @@ def test_cli_error_categories_remain_private(modules, monkeypatch, capsys, tmp_p
     assert output.out == ""
     assert "sensitive-provider-address" not in output.err
     assert ("unexpected error" in output.err) == (expected_code == 2)
+
+
+@pytest.mark.parametrize("error", [
+    ClientError({"Error": {"Code": "AccessDenied", "Message": "sensitive-provider-address"}}, "PutObject"),
+    EndpointConnectionError(endpoint_url="https://sensitive-provider-address"),
+])
+def test_cli_classifies_actual_storage_transport_failures(modules, monkeypatch, capsys, source, error):
+    archive, _ = modules
+    calls = []
+
+    def fail(**kwargs):
+        calls.append(kwargs)
+        raise error
+
+    # Exercise StorageClient's real conditional-write/error path with only
+    # the SDK transport replaced. These errors are not StorageError subclasses.
+    storage = object.__new__(archive.StorageClient)
+    storage._s3 = SimpleNamespace(put_object=fail)
+    monkeypatch.setattr(archive.StorageClient, "from_environment", lambda: storage)
+    assert archive.main(["archive", "--input-path", str(source), "--output-path", PREFIX]) == 1
+    assert len(calls) == 1 and calls[0]["IfNoneMatch"] == "*"
+    output = capsys.readouterr()
+    assert output.out == ""
+    assert "sensitive-provider-address" not in output.err
+    assert "storage access" in output.err
 
 
 def test_live_cleanup_attempts_all_owned_objects_and_retains_failed_ledger(tmp_path):
