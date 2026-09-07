@@ -15,6 +15,7 @@ from npa.cluster_backends.kuberay import (
     KubeRaySpec, RAY_IMAGE, RAY_VERSION, validate_recipe_kuberay_compatibility,
 )
 from npa.cluster_backends.mk8s import MK8sApplyRequest, MK8sBackend
+from npa.cluster_backends import mk8s_execution as E
 from npa.cluster_backends.mk8s_model import as_mk8s_desired
 from npa.cluster_backends.mk8s_render import render_tfvars
 from npa.fleet import lifecycle as L
@@ -180,6 +181,204 @@ def test_materialization_validates_pristine_recipe_and_preserves_owned_state(rec
     domain = "api.eu.nebius.cloud:443" if region.startswith("eu") else "api.nebius.cloud:443"
     assert domain in (work / "provider.tf").read_text()
     validate_recipe_kuberay_compatibility(cluster(KubeRaySpec(True)), recipe / "k8s-training")
+
+
+def _isolated_deploy(recipe, tmp_path, monkeypatch):
+    desired = cluster(KubeRaySpec(True))
+    project = ProjectSpec(project_id="project-test", clusters=[desired])
+    declaration = FleetSpec(name="ray", tenant_id="tenant-test", region="us-central1",
+                            ssh_public_key="ssh-test", projects=[project])
+    monkeypatch.setattr(L, "_require_bin", lambda name: name)
+    monkeypatch.setattr(L, "_assert_terraform_version", lambda _: "1.13.3")
+    monkeypatch.setattr(L, "_resolve_recipe_root", lambda *a, **kw: recipe)
+    monkeypatch.setattr(L, "resolve_project_id", lambda *a, **kw: pytest.fail("project mutation"))
+    monkeypatch.setattr(L, "preflight_region", lambda *a, **kw: pytest.fail("quota preflight"))
+    root = tmp_path / "state"
+    destination = root / declaration.name / project.key() / desired.name
+    return desired, destination, lambda: L.deploy_fleet(declaration, work_root=root)
+
+
+@pytest.mark.parametrize("name,content", [
+    ("terraform.tfstate_override.tf", 'module "kuberay" { cpu_cluster = null }'),
+    ("terraform.tfstate.auto.tfvars", "enable_kuberay_cluster = false"),
+    ("terraform.tfstate.auto.tfvars.json", '{"kuberay_cpu_cluster":null}'),
+    ("override.tf", 'module "kuberay" { cpu_cluster = null }'),
+    ("extra_override.tf.json", '{"module":{"kuberay":{"cpu_cluster":null}}}'),
+    ("extra.auto.tfvars", "kuberay_cpu_cluster = null"),
+    ("terraform.tfvars.json", '{"kuberay_cpu_cluster":null}'),
+])
+def test_retained_inputs_fail_before_cloud_and_preserve_state(recipe, tmp_path, monkeypatch, name, content):
+    desired, destination, deploy = _isolated_deploy(recipe, tmp_path, monkeypatch)
+    work = destination / "k8s-training"
+    work.mkdir(parents=True)
+    state = work / "terraform.tfstate"
+    state.write_text('{"serial":123}')
+    extra = work / name
+    extra.write_text(content)
+    with pytest.raises(ValueError, match="KubeRay"):
+        deploy()
+    with pytest.raises(ValueError, match="KubeRay"):
+        L._prepare_install_dir(destination, recipe_root=recipe, region="us-central1",
+                               cluster=desired, ssh_public_key="ssh-test")
+    assert state.read_text() == '{"serial":123}'
+    assert extra.read_text() == content
+    assert not (work / "main.tf").exists()
+
+
+@pytest.mark.parametrize("key,value", [
+    ("TF_CLI_ARGS", "-var-file=unreviewed.tfvars"),
+    ("TF_CLI_ARGS_apply", "-var=kuberay_cpu_cluster=null"),
+    ("TF_CLI_ARGS_plan", "-var=enable_kuberay_cluster=false"),
+    ("TF_CLI_ARGS_init", "-backend-config=unreviewed.hcl"),
+    ("TF_WORKSPACE", "unreviewed"),
+    ("TF_WORKSPACE", " default "),
+    ("TF_DATA_DIR", "unreviewed-data"),
+    ("TF_DATA_DIR", " "),
+])
+def test_ambient_overrides_fail_before_provisioning(recipe, tmp_path, monkeypatch, key, value):
+    _, destination, deploy = _isolated_deploy(recipe, tmp_path, monkeypatch)
+    monkeypatch.setenv(key, value)
+    with pytest.raises(ValueError, match="KubeRay"):
+        deploy()
+    assert not destination.exists()
+
+
+def test_backend_reapply_rejects_retained_override_before_unchanged_target_shortcut(recipe, tmp_path, monkeypatch):
+    desired = as_mk8s_desired(cluster(KubeRaySpec(True)))
+    project = E.MK8sProjectIdentity(project_key="example")
+    root = tmp_path / "state"
+    work = root / project.key() / desired.name / "k8s-training"
+    work.mkdir(parents=True)
+    (work / "terraform.tfstate_override.tf").write_text('module "kuberay" { cpu_cluster = null }')
+    monkeypatch.setattr(E, "is_verified_unchanged_target", lambda **kw: pytest.fail("unchanged-target shortcut"))
+    request = MK8sApplyRequest(
+        recipe_root=recipe, fleet_root=root, project=project,
+        scope=E.MK8sExecutionScope(fleet_name="ray"), provider_preflight=True,
+        nebius_bin="nebius", tenant_id="tenant-test", region="us-central1", provider_env={},
+    )
+    with pytest.raises(ValueError, match="KubeRay"):
+        MK8sBackend().preflight(desired, request)
+
+
+def test_actual_execution_environment_is_checked_before_state_or_terraform(recipe, tmp_path, monkeypatch):
+    desired = as_mk8s_desired(cluster(KubeRaySpec(True)))
+    monkeypatch.setattr(E, "_cluster_tf_env", lambda *a, **kw: {"TF_CLI_ARGS_apply": "-var=kuberay_cpu_cluster=null"})
+    monkeypatch.setattr(E, "_write_env_sidecar", lambda *a, **kw: pytest.fail("sidecar mutation"))
+    monkeypatch.setattr(E, "_tf_run", lambda *a, **kw: pytest.fail("Terraform mutation"))
+    result = E._deploy_one_cluster(
+        spec=E.MK8sExecutionScope(fleet_name="ray"),
+        project=E.MK8sProjectIdentity(project_key="example"), cluster=desired,
+        project_id="project-test", project_created=False, subnet_id="subnet-test",
+        region="us-central1", tenant_id="tenant-test", ssh_public_key="ssh-test",
+        fleet_root=tmp_path / "state", recipe_root=recipe, terraform_bin="terraform",
+        nebius_bin="nebius", timeout_minutes=120, on_status=None,
+    )
+    assert result["status"] == "error"
+    assert "TF_CLI_ARGS" in result["error"]
+
+
+@pytest.mark.parametrize("relative", [
+    "k8s-training", "modules", "k8s-training/filesystem-csi-validation",
+    "k8s-training/terraform.tfstate", "k8s-training/terraform.tfstate.backup",
+    "k8s-training/.terraform", "k8s-training/.terraform/environment",
+    "k8s-training/.terraform/modules",
+    "k8s-training/.terraform/terraform.tfstate",
+])
+def test_destination_symlinks_fail_before_copy_even_when_dangling(recipe, tmp_path, relative):
+    destination = tmp_path / "installation"
+    path = destination / relative
+    path.parent.mkdir(parents=True)
+    path.symlink_to(tmp_path / "absent-target")
+    with pytest.raises(ValueError, match="KubeRay"):
+        L._prepare_install_dir(destination, recipe_root=recipe, region="us-central1",
+                               cluster=cluster(KubeRaySpec(True)), ssh_public_key="ssh-test")
+    assert path.is_symlink()
+    assert not (tmp_path / "absent-target").exists()
+
+
+@pytest.mark.parametrize("name,kind", [
+    ("terraform.tfstate", "directory"), ("terraform.tfstate.backup", "directory"),
+    ("terraform.tfstate.d", "directory"), (".terraform", "file"),
+    (".terraform/environment", "directory"),
+    (".terraform/modules", "file"),
+])
+def test_invalid_retained_state_types_are_rejected(recipe, tmp_path, name, kind):
+    destination = tmp_path / "installation"
+    path = destination / "k8s-training" / name
+    path.parent.mkdir(parents=True)
+    path.mkdir() if kind == "directory" else path.write_text("invalid")
+    with pytest.raises(ValueError, match="KubeRay"):
+        L._prepare_install_dir(destination, recipe_root=recipe, region="us-central1",
+                               cluster=cluster(KubeRaySpec(True)), ssh_public_key="ssh-test")
+    assert path.exists()
+
+
+def test_default_workspace_and_provider_cache_links_remain_supported(recipe, tmp_path, monkeypatch):
+    destination = tmp_path / "installation"
+    work = destination / "k8s-training"
+    data = work / ".terraform"
+    (data / "providers").mkdir(parents=True)
+    cache = tmp_path / "provider-cache"
+    cache.mkdir()
+    (data / "providers/cached").symlink_to(cache, target_is_directory=True)
+    (data / "environment").write_text("default")
+    (work / "terraform.tfstate.backup").write_text('{"serial":122}')
+    monkeypatch.setenv("TF_WORKSPACE", "default")
+    L._prepare_install_dir(destination, recipe_root=recipe, region="us-central1",
+                           cluster=cluster(KubeRaySpec(True)), ssh_public_key="ssh-test")
+    assert (work / "terraform.tfstate.backup").read_text() == '{"serial":122}'
+    assert (data / "providers/cached").is_symlink()
+    (data / "environment").write_text("unreviewed")
+    with pytest.raises(ValueError, match="default retained Terraform workspace"):
+        L._prepare_install_dir(destination, recipe_root=recipe, region="us-central1",
+                               cluster=cluster(KubeRaySpec(True)), ssh_public_key="ssh-test")
+
+
+def test_disabled_materialization_retains_existing_behavior(recipe, tmp_path, monkeypatch):
+    destination = tmp_path / "installation"
+    extra = destination / "k8s-training/terraform.tfstate_override.tf"
+    extra.parent.mkdir(parents=True)
+    extra.write_text("# existing operator override")
+    monkeypatch.setenv("TF_CLI_ARGS_apply", "-var-file=operator.tfvars")
+    monkeypatch.setenv("TF_WORKSPACE", "operator")
+    monkeypatch.setenv("TF_DATA_DIR", "operator-data")
+    work = L._prepare_install_dir(destination, recipe_root=recipe, region="us-central1",
+                                  cluster=cluster(), ssh_public_key="ssh-test")
+    assert extra.read_text() == "# existing operator override"
+    assert "enable_kuberay_cluster   = false" in (work / "terraform.tfvars").read_text()
+
+
+def test_reapply_rebuilds_module_manifest_without_touching_redirected_directory(recipe, tmp_path):
+    destination = tmp_path / "installation"
+    work = destination / "k8s-training"
+    cache = work / ".terraform/modules"
+    cache.mkdir(parents=True)
+    external = tmp_path / "unreviewed-module"
+    external.mkdir()
+    source = external / "main.tf"
+    source.write_text('output "unexpected" { value = true }')
+    (cache / "modules.json").write_text(json.dumps({"Modules": [{
+        "Key": "kuberay", "Source": "../modules/kuberay", "Dir": str(external),
+    }]}))
+    (cache / "external-link").symlink_to(external, target_is_directory=True)
+    L._prepare_install_dir(destination, recipe_root=recipe, region="us-central1",
+                           cluster=cluster(KubeRaySpec(True)), ssh_public_key="ssh-test")
+    assert not cache.exists()
+    assert source.read_text() == 'output "unexpected" { value = true }'
+    assert (destination / "modules/kuberay/main.tf").read_bytes() == (recipe / "modules/kuberay/main.tf").read_bytes()
+
+
+@pytest.mark.parametrize("backend", [{"type": "cloud"}, {"type": "local", "config": {"path": "outside.tfstate"}}, {}])
+def test_retained_backend_metadata_is_preserved_and_rejected(recipe, tmp_path, backend):
+    destination = tmp_path / "installation"
+    metadata = destination / "k8s-training/.terraform/terraform.tfstate"
+    metadata.parent.mkdir(parents=True)
+    content = json.dumps({"backend": backend})
+    metadata.write_text(content)
+    with pytest.raises(ValueError, match="implicit local Terraform state"):
+        L._prepare_install_dir(destination, recipe_root=recipe, region="us-central1",
+                               cluster=cluster(KubeRaySpec(True)), ssh_public_key="ssh-test")
+    assert metadata.read_text() == content
 
 
 @pytest.fixture

@@ -46,6 +46,16 @@ values are rejected. A GPU pool may coexist, but these Ray pods select only the
 CPU platform. The legacy standalone Terraform wrapper stays disabled; use a
 one-entry fleet for this opt-in policy.
 
+Enabled KubeRay deployments use the default Terraform workspace and the local
+`.terraform` data directory. Unset `TF_CLI_ARGS`, command-specific
+`TF_CLI_ARGS_*` and `TF_DATA_DIR`; inherited argument overrides and nondefault
+workspaces are rejected before provisioning. Retained custom-backend metadata
+is unsupported; deployment requires managed implicit local state. Reapply preserves exact state and
+backup files plus the provider cache, and rebuilds Terraform's module manifest
+from the reviewed recipe. Additional effective Terraform inputs,
+unsupported state paths and destination symlinks are rejected before refreshing
+the installation. Keep custom overrides outside the managed installation.
+
 The runtime is Ray 2.58.0 / Python 3.12, pinned to the upstream amd64 image
 `docker.io/rayproject/ray@sha256:507464fe56b3d24cec2e812a25850db91b97d52752d63119fecf6914f7b0a37a`.
 Head and worker use identical bytes. This consumes an upstream public image

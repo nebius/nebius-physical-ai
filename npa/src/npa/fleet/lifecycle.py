@@ -76,6 +76,7 @@ from npa.soperator.lifecycle import (
     SoperatorStateCaptureError,
 )
 from npa.cluster_backends.quotas import preflight_region, shortfall_message
+from npa.cluster_backends.kuberay import validate_kuberay_execution_inputs
 from npa.fleet.spec import ClusterSpec, FleetSpec, ObjectStorageSpec, ProjectSpec
 from npa.cluster_backends.mk8s_render import (
     validate_recipe_kuberay_compatibility,
@@ -1454,6 +1455,15 @@ def deploy_fleet(
             continue
         if selected_clusters and cluster.name not in selected_clusters:
             continue
+        validate_kuberay_execution_inputs(
+            cluster,
+            workdir=fleet_root / project.key() / cluster.name / _K8S_TRAINING_SUBDIR,
+        )
+    for project, cluster in spec.cluster_targets():
+        if not _project_in_scope(project, selected_projects, selected_prefix):
+            continue
+        if selected_clusters and cluster.name not in selected_clusters:
+            continue
         saved = prior.get((project.key(), cluster.name))
         if saved is not None:
             require_backend_ownership(saved, cluster.backend_name())
@@ -1773,6 +1783,10 @@ def _deploy_mk8s_fleet(
                 continue
             validate_recipe_kuberay_compatibility(
                 cluster, recipe_root / _K8S_TRAINING_SUBDIR
+            )
+            validate_kuberay_execution_inputs(
+                cluster,
+                workdir=fleet_root / project.key() / cluster.name / _K8S_TRAINING_SUBDIR,
             )
             validate_recipe_mig_compatibility(
                 cluster, recipe_root / _K8S_TRAINING_SUBDIR

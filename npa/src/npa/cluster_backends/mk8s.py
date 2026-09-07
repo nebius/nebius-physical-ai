@@ -18,7 +18,7 @@ from npa.cluster_backends.mk8s_model import (
     as_mk8s_desired,
 )
 from npa.cluster_backends.mk8s_render import render_tfvars
-from npa.cluster_backends.kuberay import validate_recipe_kuberay_compatibility
+from npa.cluster_backends.kuberay import validate_kuberay_execution_inputs, validate_recipe_kuberay_compatibility
 
 
 @dataclass(frozen=True)
@@ -177,6 +177,11 @@ class MK8sBackend:
             if recipe is None:
                 raise ValueError("KubeRay preflight requires the selected recipe")
             validate_recipe_kuberay_compatibility(desired, recipe)
+            if request.fleet_root is not None and request.project is not None:
+                validate_kuberay_execution_inputs(
+                    desired,
+                    workdir=request.fleet_root / request.project.key() / desired.name / "k8s-training",
+                )
         result: dict[str, Any] = {
             "backend": self.name,
             "required": True,

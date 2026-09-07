@@ -32,6 +32,11 @@ worker_memory_gib: 4}` in a cluster/default profile for a fixed CPU worker group
 The shared backend validates strict types, explicit CPU placement and the exact
 reviewed recipe before provisioning. `KubeRaySpec` is exported by `npa.sdk.fleet`.
 A disabled block replaces enabled defaults atomically. Omitted policy remains off.
+Enabled deployments require the default local Terraform workspace without
+`TF_CLI_ARGS*` or `TF_DATA_DIR` overrides. Reapply rejects extra effective inputs
+and destination symlinks while preserving exact state/backup and provider caches.
+Retained backend metadata is unsupported; require managed implicit local state.
+The module manifest is rebuilt from the reviewed recipe before Terraform init.
 See `docs/fleet-kuberay.md` and
 `npa/examples/fleet/kuberay/cpu-raycluster.yaml` for the one-entry fleet and native
 Ray Jobs journey. The separate CPU template pins Ray 2.58, disables autoscaling

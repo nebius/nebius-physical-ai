@@ -21,6 +21,7 @@ from npa.cluster.gpu_driver import (
     resolve_gpu_driver_strategy,
 )
 from npa.cluster.gpu_health import GpuHealthConfig, validate_gpu_health
+from npa.cluster_backends.kuberay import KUBERAY_STATE_FILES, validate_kuberay_execution_inputs
 from npa.cluster_backends.process import (
     _redact as _redact_output,
     isolate_terraform_providers,
@@ -551,13 +552,23 @@ def _prepare_install_dir(
         )
         if cluster.kuberay and cluster.kuberay.enabled else None
     )
-    install_dir.mkdir(parents=True, exist_ok=True)
     workdir = install_dir / _K8S_TRAINING_SUBDIR
+    validate_kuberay_execution_inputs(cluster, workdir=workdir)
+    install_dir.mkdir(parents=True, exist_ok=True)
+    # Terraform trusts cached source-to-directory mappings. Rebuild those from
+    # the reviewed recipe; keep initialized provider caches and state intact.
+    modules_cache = workdir / ".terraform/modules"
+    if kuberay_tfvars is not None and modules_cache.exists():
+        shutil.rmtree(modules_cache)
     modules_dst = install_dir / _MODULES_SUBDIR
     # Refresh recipe files but preserve any existing terraform state/plugins.
     if workdir.exists():
         for item in workdir.iterdir():
-            if item.name.startswith("terraform.tfstate") or item.name == ".terraform":
+            preserve_state = (
+                item.name in KUBERAY_STATE_FILES
+                if kuberay_tfvars is not None else item.name.startswith("terraform.tfstate")
+            )
+            if preserve_state or item.name == ".terraform":
                 continue
             if item.is_dir():
                 shutil.rmtree(item, ignore_errors=True)
@@ -2247,6 +2258,7 @@ def _deploy_one_cluster(
             profile=profile,
             recipe_dir=workdir,
         )
+        validate_kuberay_execution_inputs(cluster, workdir=workdir, environ=env)
         # Written before apply so ``destroy`` can reconstruct TF_VAR_* even if
         # apply fails midway. Project network ownership is recorded separately.
         # ``status`` starts as "provisioning" and becomes "deployed" only after
