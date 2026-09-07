@@ -13,16 +13,20 @@ import json
 import os
 import re
 import tempfile
+import uuid
 from pathlib import Path
 from typing import Any
 
 import httpx
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, PositiveInt, field_validator
 
 from npa.clients.storage import StorageClient
+from npa.workbench.storage_scope import StorageAuthorizationError, authorize_uri
+from npa.workbench.cosmos.ray_inputs import validate_sample_s3_keys
 
 RAY_BATCH_SCHEMA = "npa.cosmos3.ray-serve.batch.v1"
 RAY_PROVENANCE_SCHEMA = "npa.cosmos3.ray-serve.provenance.v1"
+RAY_FRAMEWORK_REVISION = "5e67049cd94acb667786f1e6dd0dab821cb90c97"
 DEFAULT_ENDPOINT_ENV = "NPA_COSMOS3_RAY_ENDPOINT"
 DEFAULT_TOKEN_ENV = "NPA_COSMOS3_RAY_TOKEN"
 SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
@@ -91,6 +95,14 @@ class RayBatchResponse(BaseModel):
     server_source_revision: str = Field(pattern=r"^[0-9a-f]{40}$")
 
 
+class _SampleBinding(BaseModel):
+    """The numeric fields used for binding, with native Pydantic coercion."""
+
+    seed: int | None = None
+    num_frames: PositiveInt | None = None
+    num_outputs: PositiveInt | None = None
+
+
 def load_batch_request(
     input_path: str, *, storage_client: Any = None
 ) -> RayBatchRequest:
@@ -148,9 +160,28 @@ def submit_batch(
     The client issues one ``/v1/batches`` request.  The service fans its samples
     into concurrent deployment-handle calls, which are coalesced by NVIDIA's
     ``@ray.serve.batch`` implementation before ``OmniInference.generate_batch``.
+
+    Args:
+        input_path: Local batch JSON path or exact S3 object URI.
+        output_path: Absolute local directory or S3 prefix for verified results.
+        endpoint: Service URL; defaults to the configured endpoint environment variable.
+        token_env: Environment variable containing the service authentication token.
+        timeout: HTTP request timeout in seconds.
+        run_id: Optional caller identifier recorded in provenance.
+        dry_run: Return the validated plan without contacting the service.
+        storage_client: Optional storage transport; defaults to configured storage.
+
+    Returns:
+        The validated plan or completed result manifest and provenance.
+
+    Raises:
+        Cosmos3RayServeError: The request, response, or downloaded artifacts fail validation.
+        OSError: Local input or output files cannot be read or written.
+        ValueError: Input JSON cannot be decoded.
     """
 
     request = load_batch_request(input_path, storage_client=storage_client)
+    request = _prepare_client_request(request)
     resolved_endpoint = (
         (endpoint or os.environ.get(DEFAULT_ENDPOINT_ENV, "")).strip().rstrip("/")
     )
@@ -179,6 +210,10 @@ def submit_batch(
     if dry_run:
         return plan
 
+    # Choose the identity before submitting so even requests without an explicit
+    # ID can reject a stale or foreign response. The server already honors it.
+    if not request.request_id:
+        request = request.model_copy(update={"request_id": uuid.uuid4().hex})
     response_payload = _request_json(
         "POST",
         resolved_endpoint,
@@ -187,16 +222,7 @@ def submit_batch(
         timeout=timeout,
         payload=request.model_dump(mode="json"),
     )
-    response = RayBatchResponse.model_validate(response_payload)
-    if response.batch_size != len(request.samples):
-        raise Cosmos3RayServeError(
-            f"service returned batch_size={response.batch_size}, expected {len(request.samples)}"
-        )
-    if len(response.outputs) != len(request.samples):
-        raise Cosmos3RayServeError(
-            f"service returned {len(response.outputs)} structured outputs, "
-            f"expected {len(request.samples)}"
-        )
+    response = _validate_batch_response(request, response_payload)
 
     with tempfile.TemporaryDirectory(prefix="npa-cosmos3-ray-output-") as tmp:
         root = Path(tmp)
@@ -263,6 +289,303 @@ def submit_batch(
                     target.parent.mkdir(parents=True, exist_ok=True)
                     target.write_bytes(path.read_bytes())
     return manifest
+
+
+def _prepare_client_request(request: RayBatchRequest) -> RayBatchRequest:
+    """Reject identities the pinned native single-result Serve path cannot bind."""
+
+    if request.model != "Cosmos3-Nano":
+        raise Cosmos3RayServeError("unsupported Cosmos3 Ray model")
+    samples = []
+    for sample in request.samples:
+        name = sample["name"]
+        if not isinstance(name, str) or not SAFE_NAME.fullmatch(name):
+            raise Cosmos3RayServeError("sample name must be a canonical safe string")
+        try:
+            binding = _SampleBinding.model_validate(sample)
+        except ValueError as exc:
+            raise Cosmos3RayServeError(
+                "invalid numeric Cosmos3 sample overrides"
+            ) from exc
+        if binding.num_outputs not in (None, 1):
+            raise Cosmos3RayServeError(
+                "native Ray batches require num_outputs=1 per sample"
+            )
+        normalized = {**sample, **binding.model_dump(exclude_unset=True)}
+        try:
+            validate_sample_s3_keys(normalized)
+        except StorageAuthorizationError as exc:
+            raise Cosmos3RayServeError("invalid conditioning S3 URI") from exc
+        if sample.get("defaults_file") is not None:
+            raise Cosmos3RayServeError(
+                "custom defaults_file cannot be bound by this client; inline sample overrides"
+            )
+        # Reject an unresolvable implicit mode before spending inference work.
+        _requested_mode(normalized)
+        samples.append(normalized)
+    return request.model_copy(update={"samples": samples})
+
+
+def _validate_batch_response(
+    request: RayBatchRequest, payload: dict[str, Any]
+) -> RayBatchResponse:
+    """Bind native SampleOutputs and the complete file manifest before any I/O.
+
+    cosmos-framework 5e67049's inference.py saves vision.jpg/vision.mp4 for
+    ordinary samples and reasoner_text.txt for reasoner samples. Additional
+    control/debug files are legal; all files are named by SampleOutputs.outputs.
+    Keep this client-only check separate from the server's wire models.
+    """
+    response = _parse_batch_response(request, payload)
+    requested = {sample["name"]: sample for sample in request.samples}
+    seen_samples: set[str] = set()
+    expected: dict[str, str] = {}
+    for result in response.outputs:
+        name, args = _bind_sample_arguments(result, requested, seen_samples)
+        frames, hints, text_output = _bind_sample_media(requested[name], args, name)
+        sample_files = _declared_sample_files(request.request_id, name, result, expected)
+        _require_sample_files(
+            request.request_id, name, frames, hints, text_output, sample_files
+        )
+    _validate_artifact_manifest(request.request_id, response.artifacts, expected)
+    return response
+
+
+def _parse_batch_response(
+    request: RayBatchRequest, payload: dict[str, Any]
+) -> RayBatchResponse:
+    """Reject foreign envelopes before interpreting any sample result."""
+    if payload.get("schema_version") != RAY_BATCH_SCHEMA:
+        raise Cosmos3RayServeError("unsupported Cosmos3 Ray response schema")
+    try:
+        response = RayBatchResponse.model_validate(payload, strict=True)
+    except ValueError as exc:
+        raise Cosmos3RayServeError("invalid Cosmos3 Ray response structure") from exc
+    if response.model != request.model:
+        raise Cosmos3RayServeError("service returned a different model")
+    if response.request_id != request.request_id:
+        raise Cosmos3RayServeError("service returned a different request identity")
+    if response.framework_revision != RAY_FRAMEWORK_REVISION:
+        raise Cosmos3RayServeError("unsupported Cosmos3 Ray framework revision")
+    if response.batch_size != len(request.samples):
+        raise Cosmos3RayServeError(
+            f"service returned batch_size={response.batch_size}, expected {len(request.samples)}"
+        )
+    if len(response.outputs) != len(request.samples):
+        raise Cosmos3RayServeError(
+            f"service returned {len(response.outputs)} structured outputs, "
+            f"expected {len(request.samples)}"
+        )
+    return response
+
+
+def _bind_sample_arguments(
+    result: dict[str, Any], requested: dict[str, dict[str, Any]], seen_samples: set[str]
+) -> tuple[str, dict[str, Any]]:
+    """Bind each successful native result to one requested sample identity."""
+    args = result.get("args")
+    name = args.get("name") if isinstance(args, dict) else None
+    if not isinstance(name, str) or name not in requested or name in seen_samples:
+        raise Cosmos3RayServeError(
+            "service returned duplicate, foreign, or missing sample identity"
+        )
+    seen_samples.add(name)
+    if result.get("status") != "success":
+        raise Cosmos3RayServeError(f"sample {name} did not succeed")
+    sample = requested[name]
+    for key, value in (
+        ("model_mode", _requested_mode(sample)),
+        ("seed", sample.get("seed")),
+    ):
+        if value is not None and (
+            args.get(key) != value or type(args.get(key)) is not type(value)
+        ):
+            raise Cosmos3RayServeError(f"sample {name} returned a different {key}")
+    return name, args
+
+
+def _resolved_sample_mode(args: dict[str, Any], name: str) -> tuple[str, int]:
+    """Require a supported native mode and a valid resolved frame count."""
+    mode = args.get("model_mode")
+    if not isinstance(mode, str) or mode not in {
+        "text2image",
+        "text2video",
+        "image2image",
+        "image2video",
+        "video2video",
+        "audio_image2video",
+        "forward_dynamics",
+        "inverse_dynamics",
+        "wam",
+        "reasoner",
+    }:
+        raise Cosmos3RayServeError(
+            f"sample {name} returned an unsupported model_mode"
+        )
+    frames = args.get("num_frames")
+    if type(frames) is not int or frames < 1:
+        raise Cosmos3RayServeError(f"sample {name} returned invalid num_frames")
+    return mode, frames
+
+
+def _bind_sample_media(
+    sample: dict[str, Any], args: dict[str, Any], name: str
+) -> tuple[int, set[str], bool]:
+    """Bind output categories to requested controls and pinned frame defaults."""
+    mode, frames = _resolved_sample_mode(args, name)
+    # Native temporal compression can round a requested video length up.
+    # Bind the category even when the caller uses native frame defaults.
+    hints = _active_hints(sample)
+    if _active_hints(args) != hints:
+        raise Cosmos3RayServeError(
+            f"sample {name} returned different transfer hints"
+        )
+    # Native generation dispatches transfer before reasoner when hints exist.
+    text_output = mode == "reasoner" and not hints
+    if not text_output and _requested_image(sample, mode) != (frames == 1):
+        raise Cosmos3RayServeError(
+            f"sample {name} returned a different frame category"
+        )
+    return frames, hints, text_output
+
+
+def _declared_sample_files(
+    request_id: str, name: str, result: dict[str, Any], expected: dict[str, str]
+) -> set[str]:
+    """Collect each declared file exactly once under its request and sample."""
+    outputs = result.get("outputs")
+    if not isinstance(outputs, list) or not outputs:
+        raise Cosmos3RayServeError(f"sample {name} has no structured output files")
+    sample_files: set[str] = set()
+    for output in outputs:
+        if not isinstance(output, dict) or not isinstance(
+            output.get("content"), dict
+        ):
+            raise Cosmos3RayServeError(
+                f"sample {name} returned invalid output content"
+            )
+        files = output.get("files")
+        if not isinstance(files, list) or not files:
+            raise Cosmos3RayServeError(
+                f"sample {name} has no structured output files"
+            )
+        for path in files:
+            _validate_output_path(path, request_id, name)
+            if path in expected:
+                raise Cosmos3RayServeError(
+                    "service declared a duplicate output file"
+                )
+            expected[path] = name
+            sample_files.add(path)
+    return sample_files
+
+
+def _require_sample_files(
+    request_id: str, name: str, frames: int, hints: set[str],
+    text_output: bool, sample_files: set[str],
+) -> None:
+    """Require the pinned primary and requested transfer outputs to be declared."""
+    primary = (
+        "reasoner_text.txt"
+        if text_output
+        else ("vision.jpg" if frames == 1 else "vision.mp4")
+    )
+    if f"{request_id}/{name}/{primary}" not in sample_files:
+        raise Cosmos3RayServeError(
+            f"sample {name} is missing its primary output file"
+        )
+    extension = ".jpg" if frames == 1 else ".mp4"
+    for hint in hints:
+        if f"{request_id}/{name}/control_{hint}{extension}" not in sample_files:
+            raise Cosmos3RayServeError(
+                f"sample {name} is missing a requested control output file"
+            )
+
+
+def _validate_artifact_manifest(
+    request_id: str, artifacts: list[RayArtifact], expected: dict[str, str]
+) -> None:
+    """Require a unique artifact for every declared file and reject extras."""
+    actual: dict[str, str] = {}
+    for artifact in artifacts:
+        _validate_output_path(artifact.path, request_id, artifact.sample)
+        if artifact.path in actual:
+            raise Cosmos3RayServeError("service returned a duplicate artifact path")
+        actual[artifact.path] = artifact.sample
+    if actual != expected:
+        raise Cosmos3RayServeError(
+            "artifact manifest does not exactly cover the requested sample outputs"
+        )
+
+
+def _active_hints(sample: dict[str, Any]) -> set[str]:
+    return {
+        key
+        for key in ("edge", "blur", "depth", "seg", "wsm")
+        if sample.get(key) is not None
+    }
+
+
+def _requested_image(sample: dict[str, Any], mode: str) -> bool:
+    """Resolve the pinned defaults' frame category without trusting the response."""
+
+    if sample.get("num_frames") is not None:
+        return sample["num_frames"] == 1
+    # args.py applies the single-WSM transfer default (101 frames) after mode
+    # defaults, unless num_frames was explicitly supplied. Null hints are inactive.
+    if _active_hints(sample) == {"wsm"}:
+        return False
+    # Image defaults resolve to one frame; all ordinary video/action defaults
+    # resolve to multiple frames. Reasoner starts at one before transfer defaults.
+    return mode in {"text2image", "image2image", "reasoner"}
+
+
+def _requested_mode(sample: dict[str, Any]) -> Any:
+    """Match pinned OmniSampleOverrides.resolved_model_mode before defaults."""
+
+    if sample.get("model_mode") is not None:
+        return sample["model_mode"]
+    vision = sample.get("vision_path")
+    if vision is None:
+        source = "text"
+    elif isinstance(vision, str):
+        # The service stages S3 inputs using StorageScope's decoded object key.
+        # Use that same parser so an encoded suffix cannot change the inferred
+        # mode between the client and the upstream validator's local file.
+        if vision.startswith("s3://"):
+            try:
+                vision = authorize_uri(vision, operation="read").key
+            except StorageAuthorizationError as exc:
+                raise Cosmos3RayServeError("invalid conditioning S3 URI") from exc
+        suffix = Path(vision).suffix.lower()
+        source = {
+            ".png": "image",
+            ".jpg": "image",
+            ".jpeg": "image",
+            ".webp": "image",
+            ".mp4": "video",
+        }.get(suffix)
+        if source is None:
+            raise Cosmos3RayServeError("unsupported conditioning file extension")
+    else:
+        raise Cosmos3RayServeError("invalid conditioning file path")
+    target = "image" if sample.get("num_frames") == 1 else "video"
+    return f"{source}2{target}"
+
+
+def _validate_output_path(path: Any, request_id: str, sample: str) -> None:
+    # A file path is also used as an HTTP URL suffix. Reject URL metacharacters,
+    # backslashes and noncanonical spellings rather than letting either client
+    # normalize an alias, traversal, query, or fragment into a different file.
+    parts = path.split("/") if isinstance(path, str) else []
+    if (
+        len(parts) < 3
+        or parts[:2] != [request_id, sample]
+        or any(not SAFE_NAME.fullmatch(part) or part in {".", ".."} for part in parts)
+    ):
+        raise Cosmos3RayServeError(
+            "artifact path must be canonical and inside its request/sample namespace"
+        )
 
 
 def _headers(token_env: str) -> dict[str, str]:

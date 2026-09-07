@@ -23,13 +23,52 @@ from npa.workbench.storage_scope import StorageAuthorizationError, StorageScope
 
 
 def main() -> None:
-    """Load Cosmos3-Nano once and serve real dynamically batched generation."""
+    """Load Cosmos3-Nano once and serve real dynamically batched generation.
+
+    Args:
+        None; service configuration comes from environment variables.
+
+    Returns:
+        None; serves until the runtime stops.
+
+    Raises:
+        RuntimeError: Authentication, guarded startup, or service setup fails.
+        OSError: Private credential or tokenizer files cannot be created.
+    """
 
     token_file = _require_ray_authentication()
     try:
+        _prepare_guardrail_tokenizer()
         _run_server()
     finally:
         token_file.unlink(missing_ok=True)
+
+
+def _prepare_guardrail_tokenizer() -> None:
+    """Reuse the pinned regular-file tokenizer cache before importing NLTK.
+
+    NLTK's enforced path checks reject Hub snapshot symlinks. The shared Cosmos
+    materializer preserves that boundary and verifies cached bytes on reuse.
+    Setting NLTK_DATA before Ray starts also configures its model workers.
+    """
+    if not _env_bool("NPA_COSMOS3_RAY_GUARDRAILS", True):
+        return
+    if not os.environ.get("HF_TOKEN", "").strip():
+        raise RuntimeError(
+            "HF_TOKEN is required when Cosmos guardrails are enabled; "
+            "no tokenizer download was attempted"
+        )
+    from npa.workbench.cosmos.transfer import (
+        _guardrail_nltk_data_path,
+        prepare_guardrail_nltk_data,
+    )
+
+    hf_home = os.environ.get("HF_HOME", str(Path.home() / ".cache" / "huggingface"))
+    prepare_guardrail_nltk_data(hf_home=hf_home)
+    safe_data = str(_guardrail_nltk_data_path(hf_home))
+    os.environ["NLTK_DATA"] = os.pathsep.join(
+        part for part in (safe_data, os.environ.get("NLTK_DATA", "")) if part
+    )
 
 
 def _run_server() -> None:
@@ -37,7 +76,7 @@ def _run_server() -> None:
     import fastapi
     import ray
     import ray.serve
-    from fastapi import Header
+    from fastapi import Body, Header
     from fastapi.responses import FileResponse
 
     from cosmos_framework.inference.args import OmniSampleOverrides, OmniSetupOverrides
@@ -187,9 +226,13 @@ def _run_server() -> None:
 
         @api.post("/v1/batches")
         async def batches(
-            self, body: dict[str, Any], authorization: str = Header(default="")
+            self,
+            body: dict[str, Any] = Body(...),
+            authorization: str = Header(default=""),
         ) -> dict[str, Any]:
             self._authorize(authorization)
+            # Ray rewrites and freezes the class-based endpoint. Keep its JSON
+            # body explicit so FastAPI cannot reclassify it as a query field.
             # Keep Pydantic models outside FastAPI's route metadata.  Ray 2.46
             # cloudpickles that metadata when freezing an ingress app, and the
             # pinned Python 3.13/Pydantic combination recursively serializes a
