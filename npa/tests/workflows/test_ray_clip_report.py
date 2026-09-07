@@ -7,9 +7,11 @@ import copy
 import importlib
 import json
 import shutil
+import struct
 import subprocess
 from pathlib import Path
 import sys
+import zlib
 
 import numpy as np
 import pyarrow as pa
@@ -49,6 +51,7 @@ def result(modules, tmp_path):
              "model_load_seconds": 0.2, "node_id": "private-node-do-not-export",
              "imported_paths": {"private": "/private/source"}}
     report.update({"source_sha256": sources, "actors": [actor], "crop_policy": "left",
+                   "preprocessors": [{"source_sha256": sources["worker.py"], "pid": "private-process"}],
                    "timings_seconds": {name: 0.5 for name in converter._BASIC_TIMINGS}})
     _dump(root / "report.json", report)
     embed.write_hashes(root)
@@ -83,6 +86,7 @@ def advanced(modules, result):
                     "processed_hash": validation.canonical_hash(shard["processed_sha256"].to_pylist()),
                     "source_sha256": "a" * 64, "model_revision": "b" * 40, "execution_fingerprint": fingerprint},
                   "rows": 2, "parquet_sha256": embed.sha256(path / "embeddings.parquet"),
+                  "preprocessor": {"source_sha256": "a" * 64, "source_path": "/private/worker.py"},
                   "preprocess_seconds": 0.1, "inference": {"instance_id": actor["instance_id"] if index == 0 else replacement["instance_id"],
                     "start_monotonic_ns": 1000000000, "end_monotonic_ns": 1200000000, "inference_seconds": 0.2}}
         _dump(path / "commit.json", commit)
@@ -401,3 +405,53 @@ def test_recovery_cannot_attribute_later_work_to_killed_actor(modules, advanced,
     app._write_cleanup_artifacts(advanced, [], 1)
     with pytest.raises(ValueError, match="replacement|inference calls"):
         converter.convert(advanced, tmp_path / "invalid.rrd", run_id="test")
+
+
+@pytest.mark.parametrize("damage", ["oversized_png", "duration_overflow"])
+def test_cli_normalizes_malformed_image_and_duration(modules, advanced, tmp_path, damage):
+    converter, _, app, *_ = modules
+    if damage == "oversized_png":
+        path = advanced / "preview.png"
+        png = bytearray(path.read_bytes())
+        png[16:24] = struct.pack(">II", 20000000, 10)
+        png[29:33] = struct.pack(">I", zlib.crc32(png[12:29]))
+        path.write_bytes(png)
+    else:
+        report = json.loads((advanced / "report.json").read_text())
+        events = report["concurrency_observation"]["events"]
+        events[-1]["monotonic_ns"] = events[0]["monotonic_ns"] + 2**63
+        _dump(advanced / "report.json", report)
+    app._write_cleanup_artifacts(advanced, [], 1)
+    output = tmp_path / "invalid.rrd"
+    run = subprocess.run([sys.executable, converter.__file__, "--input-path", str(advanced),
+                          "--output-path", str(output), "--run-id", "test"], capture_output=True, text=True)
+    assert run.returncode == 1
+    assert not run.stdout
+    assert "CLIP report conversion failed" in run.stderr
+    assert "Traceback" not in run.stderr
+    assert str(advanced) not in run.stderr
+    assert not output.exists()
+    assert not list(tmp_path.glob(".clip-*.rrd"))
+
+
+@pytest.mark.parametrize("fixture_name", ["result", "advanced"])
+@pytest.mark.parametrize("damage", ["missing", "contradictory"])
+def test_preprocessor_identity_must_match_inference_source(modules, request, fixture_name, damage, tmp_path):
+    converter, embed, app, *_ = modules
+    root = request.getfixturevalue(fixture_name)
+    path = root / ("report.json" if fixture_name == "result" else "shards/000001/commit.json")
+    value = json.loads(path.read_text())
+    field = "preprocessors" if fixture_name == "result" else "preprocessor"
+    if damage == "missing":
+        value.pop(field)
+    else:
+        preprocessor = value[field][0] if fixture_name == "result" else value[field]
+        preprocessor["source_sha256"] = "f" * 64
+    _dump(path, value)
+    if fixture_name == "result":
+        embed.write_hashes(root)
+    else:
+        app._write_cleanup_artifacts(root, [], 1)
+    with pytest.raises(ValueError, match="[Pp]reprocessor|malformed"):
+        converter.convert(root, tmp_path / "invalid.rrd", run_id="test")
+    assert not (tmp_path / "invalid.rrd").exists()

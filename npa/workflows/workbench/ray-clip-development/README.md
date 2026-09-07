@@ -183,6 +183,8 @@ recorded coordinator observation and covers only its observed inference wave,
 including RPC edges. Worker clocks are never combined. Model loads and aggregate
 timings are static measurements; their intervals overlap and must not be added.
 Recovery lineage is static because the source records no recovery timestamp.
+Rerun's built-in `log_time` and `log_tick` describe converter logging; select the
+custom timelines above to inspect persisted workload facts.
 Application/converter source hashes and model byte identities are retained; host, node, process,
 allocation and imported-file identifiers are omitted.
 

@@ -263,6 +263,8 @@ def _advanced(root, report, table, actors):
                     "source_sha256": report["source_sha256"], "model_revision": report["model_revision"],
                     "execution_fingerprint": fingerprint}
         _require(commit["identity"] == identity and commit["rows"] == len(shard), "Checkpoint identity disagrees")
+        _require(commit["preprocessor"]["source_sha256"] == report["source_sha256"],
+                 "Checkpoint preprocessor source identity disagrees")
         _require(commit["parquet_sha256"] == _sha(path / "embeddings.parquet"), "Checkpoint hash disagrees")
         measurement = commit["inference"]
         _require(measurement["instance_id"] in instances, "Checkpoint references unknown actor")
@@ -289,6 +291,8 @@ def _advanced(root, report, table, actors):
         previous = timestamp
         if origin is None:
             origin = timestamp
+        _require(timestamp - origin <= np.iinfo(np.int64).max,
+                 "Coordinator duration cannot be represented in Rerun nanoseconds")
         if kind == "start":
             _require(instance not in started, "Duplicate coordinator start")
             active.add(instance)
@@ -350,6 +354,11 @@ def _load(root):
     _require(report["vector_bytes_sha256"] == hashlib.sha256(matrix.tobytes()).hexdigest(), "Vector byte hash disagrees")
     _require(report["crop_policy"] in ("left", "right"), "Unsupported crop policy")
     sources = _sources(report, advanced)
+    if not advanced:
+        preprocessors = report["preprocessors"]
+        _require(isinstance(preprocessors, list) and preprocessors
+                 and all(p["source_sha256"] == sources["worker.py"] for p in preprocessors),
+                 "Preprocessor source identity disagrees")
     actors, safe_actors = _actors(report, advanced, sources)
     timings = ({k: _number(report[k]) for k in _ADVANCED_TIMINGS} if advanced
                else {k: _number(report["timings_seconds"][k]) for k in _BASIC_TIMINGS})
@@ -373,6 +382,7 @@ def _load(root):
                            "vector_bytes_sha256": report["vector_bytes_sha256"],
                            "crop_policy": report["crop_policy"], "records": count,
                            "limitations": "Procedural images; no semantic accuracy claim. Dataset and shard indices are not time. "
+                           "Rerun log_time/log_tick are converter logging metadata. "
                            "Timing totals overlap and are not additive. Coordinator time covers one observed wave with RPC edges; "
                            "worker clocks are not aligned. Recovery has no timestamp. The supplied run label is not Jobs status proof. "
                            "Lance files are checksum verified; this converter reads Parquet and saved retrieval results."}}
@@ -526,7 +536,8 @@ def convert(input_path: Path, output_path: Path, *, run_id: str) -> dict:
         data = _load(root)
     except _InvalidResult:
         raise
-    except (ValueError, KeyError, TypeError, IndexError, OSError, AttributeError, OverflowError) as error:
+    except (ValueError, KeyError, TypeError, IndexError, OSError, AttributeError, OverflowError,
+            Image.DecompressionBombError) as error:
         raise _InvalidResult("Incomplete or malformed persisted CLIP result") from error
     output.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary = tempfile.mkstemp(prefix=".clip-", suffix=".rrd", dir=output.parent)
@@ -568,7 +579,7 @@ def main(argv: list[str] | None = None) -> int:
         result = convert(args.input_path, args.output_path, run_id=args.run_id)
     except _InvalidResult as error:
         parser.exit(1, f"CLIP report conversion failed: {error}\n")
-    except (ValueError, OSError, RuntimeError):
+    except (ValueError, OSError, RuntimeError, OverflowError):
         parser.exit(1, "CLIP report conversion failed: recording could not be written or verified\n")
     print(json.dumps(result, sort_keys=True))
     return 0
