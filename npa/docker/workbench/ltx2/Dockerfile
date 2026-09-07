@@ -21,7 +21,7 @@ ARG LTX_SOURCE_URL=https://github.com/Lightricks/LTX-2.git
 ARG LTX_SOURCE_REF=fd4ded7f2d88d3da713abcdd4ad41ecc4a9314ca
 ARG NPA_SOURCE_COMMIT=unknown
 ARG NPA_RUNTIME_USER=ubuntu
-ARG UV_VERSION=0.9.8
+ARG UV_VERSION=0.11.15
 
 LABEL npa.tool="ltx2" \
       npa.version="2.5-rtfetch" \

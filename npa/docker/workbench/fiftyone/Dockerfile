@@ -7,7 +7,7 @@ ARG BOTO3_VERSION=1.43.6
 ARG DATASETS_VERSION=4.8.5
 ARG HUGGINGFACE_HUB_VERSION=1.14.0
 ARG PYARROW_VERSION=24.0.0
-ARG PILLOW_VERSION=12.2.0
+ARG PILLOW_VERSION=12.3.0
 # MongoDB server for FiftyOne's metadata DB. The prebuilt fiftyone_db wheel does
 # NOT ship a mongod binary for this platform (trixie), so real curation
 # (compute_uniqueness / compute_similarity / compute_visualization, which all need

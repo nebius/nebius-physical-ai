@@ -5,13 +5,13 @@ acceptance, and digest promotion gates.
 
 ## Artifact classification
 
-- Source: vLLM-Omni 0.26.0 at commit
-  `a4ea67a21b20054dacc6e83952f9bd407e8ee4e7`, Apache-2.0, fetched from
+- Source: vLLM-Omni 0.28.0 at commit
+  `eb11446b7f2e30ca582f8aff3afe12e9a2e66f6c`, Apache-2.0, fetched from
   upstream and verified by SHA-256 at runtime.
 - Base: digest-pinned official Python 3.12 slim image. It is not an NVIDIA Deep
   Learning Container and contains no `NGC-DL-CONTAINER-LICENSE` payload.
-- Serving closure: exact versions in `requirements.lock`, including vLLM 0.26.0,
-  CUDA-enabled PyTorch 2.11.0, and Cosmos Guardrail 0.3.1. CUDA Python packages
+- Serving closure: exact versions in `requirements.lock`, including vLLM 0.28.0,
+  CUDA-enabled PyTorch 2.13.0, and Cosmos Guardrail 0.3.1. CUDA Python packages
   carry the NVIDIA Software License (v. May 12, 2021), whose downstream-terms
   requirements are not satisfied by anonymous GHCR. Therefore none of this
   closure is baked: the operator must explicitly set

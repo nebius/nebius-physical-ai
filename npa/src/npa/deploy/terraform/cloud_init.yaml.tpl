@@ -1,4 +1,5 @@
 #cloud-config
+# NPA_SSH_HOST_KEY_NONCE=${ssh_host_key_nonce}
 
 users:
   - name: ${jsonencode(ssh_user)}
@@ -110,6 +111,9 @@ write_files:
 runcmd:
   - |
     set -e
+    # Only the public key reaches the provider-owned serial log. No SSH or
+    # application credentials are staged before this identity is verified.
+    printf 'NPA_SSH_HOST_KEY %s %s\n' '${ssh_host_key_nonce}' "$(cat /etc/ssh/ssh_host_ed25519_key.pub)" > /dev/ttyS0
     # runcmd string items are interpreted by /bin/sh, so keep this block POSIX-safe.
 %{ if workbench_type == "cosmos" ~}
     COSMOS_DATA_DEVICE="/dev/disk/by-id/virtio-npa-cosmos-data"

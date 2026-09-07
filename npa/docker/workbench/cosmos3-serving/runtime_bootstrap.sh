@@ -49,7 +49,7 @@ curl -fL --retry 3 --proto '=https' --tlsv1.2 \
 echo "${SOURCE_SHA}  ${work}/vllm-omni.tar.gz" | sha256sum -c -
 mkdir "${work}/source"
 tar -xzf "${work}/vllm-omni.tar.gz" --strip-components=1 -C "${work}/source"
-VLLM_OMNI_TARGET_DEVICE=cuda VLLM_OMNI_VERSION_OVERRIDE=0.26.0 \
+VLLM_OMNI_TARGET_DEVICE=cuda VLLM_OMNI_VERSION_OVERRIDE=0.28.0 \
   "${VENV}/bin/python" -m pip install --no-cache-dir --no-deps "${work}/source"
 "${VENV}/bin/python" -m pip check
 touch "${MARKER}"

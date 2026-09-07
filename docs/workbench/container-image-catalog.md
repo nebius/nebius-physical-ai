@@ -192,6 +192,12 @@ immutable `dev-<full-git-sha>` channel; the supported tag remains explicitly
 `-unbuilt` until byte scans, anonymous pull, and the eight-node RTX PRO 6000
 qualification are recorded together.
 
+The OpenPI candidate source also isolates its hash-locked public GCS reader
+from the training environment. It replaces the legacy gsutil dependency
+closure with the maintained Google Cloud Storage SDK and verifies object
+generations, checksums and destination paths during dataset preparation.
+This source change does not qualify or republish an existing image digest.
+
 FiftyOne is the remaining public-release tag override for an unpromoted worker
 candidate: public execution selects the verified `1.15.0.post1`, while an
 explicit custom registry can select the newer supported worker pin. Cosmos

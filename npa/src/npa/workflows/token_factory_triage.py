@@ -61,7 +61,7 @@ def download_textual_artifacts(artifacts_uri: str, dest: Path, *, storage_client
                 fetched.append(str(path.relative_to(source)))
         return fetched
 
-    from npa.clients.storage import StorageClient
+    from npa.clients.storage import StorageClient, StorageError, safe_s3_download_target
 
     client = storage_client or StorageClient.from_environment()
     parsed = urlparse(artifacts_uri)
@@ -76,7 +76,9 @@ def download_textual_artifacts(artifacts_uri: str, dest: Path, *, storage_client
             relative = key[len(prefix) :].lstrip("/")
             if not relative:
                 continue
-            target = dest / relative
+            if not key.startswith(prefix):
+                raise StorageError("Object storage returned a key outside the requested prefix")
+            target = safe_s3_download_target(dest, relative, "")
             target.parent.mkdir(parents=True, exist_ok=True)
             client.s3.download_file(bucket, key, str(target))
             fetched.append(relative)

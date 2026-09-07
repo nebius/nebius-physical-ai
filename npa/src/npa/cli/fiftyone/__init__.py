@@ -1679,7 +1679,12 @@ def download_s3(uri: str) -> Path:
             rel = key[len(prefix):].lstrip("/") if prefix else key
             if not rel:
                 rel = Path(key).name
-            dest = target_root / rel
+            relative = Path(rel)
+            if not key.startswith(prefix) or relative.is_absolute() or ".." in relative.parts or "\\\\" in rel:
+                raise ValueError("Unsafe object key in dataset source")
+            dest = (target_root / relative).resolve()
+            if not dest.is_relative_to(target_root.resolve()):
+                raise ValueError("Dataset object escapes its destination")
             dest.parent.mkdir(parents=True, exist_ok=True)
             s3.download_file(bucket, key, str(dest))
             count += 1
@@ -1911,7 +1916,12 @@ def download_s3(uri: str) -> Path:
             rel = key[len(prefix):].lstrip("/") if prefix else key
             if not rel:
                 rel = Path(key).name
-            dest = target_root / rel
+            relative = Path(rel)
+            if not key.startswith(prefix) or relative.is_absolute() or ".." in relative.parts or "\\\\" in rel:
+                raise ValueError("Unsafe object key in dataset source")
+            dest = (target_root / relative).resolve()
+            if not dest.is_relative_to(target_root.resolve()):
+                raise ValueError("Dataset object escapes its destination")
             dest.parent.mkdir(parents=True, exist_ok=True)
             s3.download_file(bucket, key, str(dest))
             count += 1

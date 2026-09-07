@@ -86,7 +86,7 @@ Rerun viewer, and the local eval/agent server). There is no separate
 pip install -e "npa[genesis]"   # Genesis + distillation stages (GPU, local)
 pip install -e "npa[groot]"     # GR00T SDK (GPU, local)
 pip install -e "npa[sonic]"     # SONIC ONNX export/runtime (GPU, local)
-pip install -e "npa[agent-eval]"  # guardrails-ai output validators (optional)
+pip install -e "npa[agent-eval]"  # compatibility alias; eval validators are built in
 pip install -e "npa[agent-trace]" # Langfuse/OpenTelemetry tracing (optional)
 pip install -e "npa[dev]"       # tests, lint (pytest, ruff)
 ```

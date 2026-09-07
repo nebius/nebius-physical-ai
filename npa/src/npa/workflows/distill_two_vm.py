@@ -26,6 +26,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -35,8 +36,10 @@ from pathlib import Path
 from typing import Any
 
 from npa.clients.config import SSHConfig, write_config
+from npa.clients.env import render_shell_env_file
+from npa.deploy.configurator import write_remote_env_file, write_remote_text_file
 from npa.clients.nebius import NebiusError, bootstrap_environment
-from npa.clients.ssh import SSHClient, SSHError
+from npa.clients.ssh import SSHClient, SSHError, SSHHostKeyError
 from npa.deploy.provisioner import ProvisionerError
 from npa.workflow_build import stage_catalog
 from npa.workflows.distill import generate_run_id
@@ -281,6 +284,8 @@ def _wait_for_ssh(
             code, _, _ = ssh.run("true")
             if code == 0:
                 break
+        except SSHHostKeyError as exc:
+            raise TwoVMDistillError("SSH host identity verification failed") from exc
         except SSHError:
             pass
         if attempt == retries:
@@ -305,28 +310,16 @@ def _wait_for_ssh(
 
 
 def _sftp_upload(ssh: SSHClient, local_path: str, remote_path: str) -> None:
-    """Upload a file via SFTP using paramiko."""
-    import paramiko
-
-    client = paramiko.SSHClient()
-    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    key_path = os.path.expanduser(ssh._config.key_path)
-    try:
-        client.connect(
-            hostname=ssh._config.host,
-            username=ssh._config.user,
-            key_filename=key_path,
-            timeout=15,
-            look_for_keys=False,
-        )
-        sftp = client.open_sftp()
-        sftp.put(local_path, remote_path)
-        sftp.close()
-    finally:
-        client.close()
+    """Upload using shared private staging and atomic publication."""
+    ssh.upload_file(local_path, remote_path)
 
 
 def _setup_vm(ssh: SSHClient, spec: VMSpec, label: str) -> None:
+    with ssh.temporary_directory() as directory:
+        _setup_vm_in_directory(ssh, spec, label, directory)
+
+
+def _setup_vm_in_directory(ssh: SSHClient, spec: VMSpec, label: str, directory: str) -> None:
     """Install conda env, framework, and npa CLI on a freshly provisioned VM.
 
     1. Tar only the pip-installable parts of the npa package (src/,
@@ -364,7 +357,7 @@ def _setup_vm(ssh: SSHClient, spec: VMSpec, label: str) -> None:
         except SSHError as exc:
             raise TwoVMDistillError(f"[{label}] Failed to create /opt/npa: {exc}") from exc
 
-        _sftp_upload(ssh, archive_path, "/tmp/npa-src.tgz")
+        _sftp_upload(ssh, archive_path, f"{directory}/npa-src.tgz")
     finally:
         os.unlink(archive_path)
 
@@ -376,8 +369,8 @@ def _setup_vm(ssh: SSHClient, spec: VMSpec, label: str) -> None:
     try:
         ssh.run_or_raise(
             "rm -rf /opt/npa/repo/npa && mkdir -p /opt/npa/repo/npa && "
-            "tar -xzf /tmp/npa-src.tgz -C /opt/npa/repo/npa 2>/dev/null && "
-            "rm -f /tmp/npa-src.tgz"
+            f"tar -xzf {shlex.quote(directory + '/npa-src.tgz')} -C /opt/npa/repo/npa && "
+            f"rm -f -- {shlex.quote(directory + '/npa-src.tgz')}"
         )
     except SSHError as exc:
         raise TwoVMDistillError(f"[{label}] Failed to extract npa package: {exc}") from exc
@@ -404,10 +397,10 @@ def _setup_vm(ssh: SSHClient, spec: VMSpec, label: str) -> None:
         logger.info("[%s] Installing Miniforge to %s ...", label, _CONDA_PREFIX)
         try:
             ssh.run_or_raise(
-                "curl -fsSL -o /tmp/miniforge.sh "
+                f"curl -fsSL -o {shlex.quote(directory + '/miniforge.sh')} "
                 "https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh && "
-                f"sudo bash /tmp/miniforge.sh -b -p {_CONDA_PREFIX} && "
-                "rm -f /tmp/miniforge.sh && "
+                f"sudo bash {shlex.quote(directory + '/miniforge.sh')} -b -p {_CONDA_PREFIX} && "
+                f"rm -f -- {shlex.quote(directory + '/miniforge.sh')} && "
                 f"sudo chown -R {user}:{user} {_CONDA_PREFIX}"
             )
         except SSHError as exc:
@@ -431,13 +424,13 @@ def _setup_vm(ssh: SSHClient, spec: VMSpec, label: str) -> None:
         )
 
     logger.info("[%s] Uploading setup script %s ...", label, spec.setup_script)
-    _sftp_upload(ssh, str(setup_script), f"/tmp/{spec.setup_script}")
+    _sftp_upload(ssh, str(setup_script), f"{directory}/{spec.setup_script}")
 
     logger.info("[%s] Running setup script (this may take several minutes) ...", label)
     try:
         code, stdout, stderr = ssh.run(
             f'export PATH="{_CONDA_PREFIX}/bin:$PATH" && '
-            f'bash /tmp/{spec.setup_script}',
+            f"bash {shlex.quote(directory + '/' + spec.setup_script)}",
             stream=True,
         )
     except SSHError as exc:
@@ -495,24 +488,15 @@ def _write_s3_env(
     try:
         # Read existing env file (may not exist on a fresh VM).
         code, existing_content, _ = ssh.run("cat /opt/lerobot/.env 2>/dev/null")
-        existing_vars: dict[str, str] = {}
-        if code == 0 and existing_content.strip():
-            for line in existing_content.splitlines():
-                line = line.strip()
-                if line and not line.startswith("#") and "=" in line:
-                    key, _, value = line.partition("=")
-                    existing_vars[key.strip()] = value.strip()
-
-        # Merge: S3 vars override, everything else is preserved.
-        merged = {**existing_vars, **s3_vars}
-        env_content = "".join(f"{k}={v}\n" for k, v in merged.items())
-
-        ssh.run_or_raise(
-            f"sudo mkdir -p /opt/lerobot && "
-            f"cat > /tmp/lerobot-env << 'ENVEOF'\n{env_content}ENVEOF\n"
-            f"sudo mv /tmp/lerobot-env /opt/lerobot/.env && "
-            f"sudo chown {ssh._config.user}:{ssh._config.user} /opt/lerobot/.env && "
-            f"sudo chmod 600 /opt/lerobot/.env"
+        # Preserve existing shell syntax, replacing only the credential keys.
+        retained = [
+            line for line in existing_content.splitlines()
+            if line.partition("=")[0].strip() not in s3_vars
+        ] if code == 0 else []
+        env_content = "\n".join(retained) + "\n" + render_shell_env_file(s3_vars)
+        write_remote_text_file(
+            ssh, "/opt/lerobot/.env", env_content,
+            owner=ssh._config.user, mode="0600",
         )
     except SSHError as exc:
         raise TwoVMDistillError(
@@ -566,22 +550,20 @@ def _deploy_http_server(
     # 3. Write env file for the systemd service.
     s3_endpoint = nebius_creds.get("s3_endpoint", "")
     s3_bucket = nebius_creds.get("s3_bucket", "")
-    env_content = (
-        f"NPA_SERVER_HOST=0.0.0.0\n"
-        f"NPA_SERVER_PORT={server_port}\n"
-        f"NPA_CHECKPOINT_DIR=/opt/lerobot/checkpoints\n"
-        f"NPA_CHECKPOINT_BUCKET=s3://{s3_bucket}/checkpoints/\n"
-        f"NPA_JOB_STATUS_DIR=/opt/lerobot/job_status\n"
-        f"NPA_LOG_DIR=/var/log/npa-lerobot\n"
-        f"AWS_ENDPOINT_URL={s3_endpoint}\n"
-        f"AWS_ACCESS_KEY_ID={nebius_creds.get('nebius_api_key', '')}\n"
-        f"AWS_SECRET_ACCESS_KEY={nebius_creds.get('nebius_secret_key', '')}\n"
-    )
+    env_vars = {
+        "NPA_SERVER_HOST": "0.0.0.0",
+        "NPA_SERVER_PORT": server_port,
+        "NPA_CHECKPOINT_DIR": "/opt/lerobot/checkpoints",
+        "NPA_CHECKPOINT_BUCKET": f"s3://{s3_bucket}/checkpoints/",
+        "NPA_JOB_STATUS_DIR": "/opt/lerobot/job_status",
+        "NPA_LOG_DIR": "/var/log/npa-lerobot",
+        "AWS_ENDPOINT_URL": s3_endpoint,
+        "AWS_ACCESS_KEY_ID": nebius_creds.get("nebius_api_key", ""),
+        "AWS_SECRET_ACCESS_KEY": nebius_creds.get("nebius_secret_key", ""),
+    }
     try:
-        ssh.run_or_raise(
-            f"cat > /tmp/npa-server.env << 'ENVEOF'\n{env_content}ENVEOF\n"
-            f"sudo mv /tmp/npa-server.env /etc/npa-lerobot-server/env && "
-            f"sudo chmod 600 /etc/npa-lerobot-server/env"
+        write_remote_env_file(
+            ssh, "/etc/npa-lerobot-server/env", env_vars, owner="root"
         )
     except SSHError as exc:
         raise TwoVMDistillError(
@@ -611,12 +593,13 @@ def _deploy_http_server(
         "WantedBy=multi-user.target\n"
     )
     try:
+        write_remote_text_file(
+            ssh, "/etc/systemd/system/npa-lerobot-server.service", unit, owner="root"
+        )
         ssh.run_or_raise(
-            f"cat > /tmp/npa-lerobot-server.service << 'UNITEOF'\n{unit}UNITEOF\n"
-            f"sudo mv /tmp/npa-lerobot-server.service /etc/systemd/system/ && "
-            f"sudo systemctl daemon-reload && "
-            f"sudo systemctl enable npa-lerobot-server && "
-            f"sudo systemctl restart npa-lerobot-server"
+            "sudo systemctl daemon-reload && "
+            "sudo systemctl enable npa-lerobot-server && "
+            "sudo systemctl restart npa-lerobot-server"
         )
     except SSHError as exc:
         raise TwoVMDistillError(
@@ -707,6 +690,8 @@ def _s3_download(
 
     Raises TwoVMDistillError if no objects are found under the S3 prefix.
     """
+    import shlex
+
     activate = _conda_activate(conda_env)
     script = (
         f"import boto3, os, pathlib; "
@@ -715,22 +700,27 @@ def _s3_download(
         f"aws_access_key_id=os.environ.get('AWS_ACCESS_KEY_ID', ''), "
         f"aws_secret_access_key=os.environ.get('AWS_SECRET_ACCESS_KEY', '')); "
         f"pag = s3.get_paginator('list_objects_v2'); "
-        f"dest = pathlib.Path('{local_path}'); "
-        f"keys = ["
-        f"o['Key'] "
-        f"for page in pag.paginate(Bucket='{s3_bucket}', Prefix='{s3_prefix}') "
-        f"for o in page.get('Contents', []) "
-        f"if o['Key'][len('{s3_prefix}'):]"
-        f"]; "
-        f"[("
-        f"os.makedirs(str((dest / k[len('{s3_prefix}'):]).parent), exist_ok=True), "
-        f"s3.download_file('{s3_bucket}', k, str(dest / k[len('{s3_prefix}'):]))) "
-        f"for k in keys"
-        f"]; "
-        f"print(f's3_download_count={{len(keys)}}'); "
+        f"dest = pathlib.Path({local_path!r}).resolve(); "
+        f"prefix = {s3_prefix!r}; count = 0\n"
+        f"for page in pag.paginate(Bucket={s3_bucket!r}, Prefix=prefix):\n"
+        "    for obj in page.get('Contents', []):\n"
+        "        key = obj['Key']\n"
+        "        rel = key[len(prefix):]\n"
+        "        if not rel or key.endswith('/'):\n"
+        "            continue\n"
+        "        relative = pathlib.PurePosixPath(rel)\n"
+        "        if not key.startswith(prefix) or relative.is_absolute() or '..' in relative.parts or '\\\\' in rel:\n"
+        "            raise ValueError('Unsafe object key in download prefix')\n"
+        "        target = (dest / relative).resolve()\n"
+        "        if not target.is_relative_to(dest):\n"
+        "            raise ValueError('Object escapes its destination')\n"
+        "        target.parent.mkdir(parents=True, exist_ok=True)\n"
+        f"        s3.download_file({s3_bucket!r}, key, str(target))\n"
+        "        count += 1\n"
+        "print(f's3_download_count={count}'); "
         f"print('s3_download_done')"
     )
-    cmd = f'mkdir -p {local_path} && {activate}python3 -c "{script}"'
+    cmd = f"mkdir -p {shlex.quote(local_path)} && {activate}python3 -c {shlex.quote(script)}"
 
     try:
         code, stdout, stderr = ssh.run(cmd, stream=True)

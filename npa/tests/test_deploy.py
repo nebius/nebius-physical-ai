@@ -127,6 +127,14 @@ def test_prepare_working_dir_copies_tf_files_and_writes_backend(
     assert 'bucket = "state-bucket"' in backend
     assert 'key    = "npa/terraform-state/project/name/terraform.tfstate"' in backend
     assert 's3 = "https://storage"' in backend
+    nonce_path = work_dir / "ssh-trust.auto.tfvars.json"
+    nonce = json.loads(nonce_path.read_text())["ssh_host_key_nonce"]
+    assert len(nonce) == 64 and set(nonce) <= set("0123456789abcdef")
+    assert nonce_path.stat().st_mode & 0o777 == 0o600
+    provisioner.prepare_working_dir(
+        "project", "name", bucket="state-bucket", region="eu-north1", endpoint="https://storage",
+    )
+    assert json.loads(nonce_path.read_text())["ssh_host_key_nonce"] == nonce
 
 
 def test_state_resource_id_reads_only_the_named_network_resource(
@@ -222,6 +230,7 @@ def test_agent_cloud_init_renders_without_s3_secrets(tmp_path: Path) -> None:
   rendered = templatefile({json.dumps(str(template))}, {{
     ssh_user = "ubuntu"
     ssh_public_key = "ssh-ed25519 AAAA operator: recovery # fixture"
+    ssh_host_key_nonce = "{'a' * 64}"
     workbench_type = "agent"
     server_port = 8088
     lerobot_version = "0.6.0"
@@ -283,6 +292,7 @@ def test_every_cloud_init_variant_omits_storage_secrets(
   rendered = templatefile({json.dumps(str(template))}, {{
     ssh_user = "ubuntu"
     ssh_public_key = "ssh-ed25519 AAAA fixture"
+    ssh_host_key_nonce = "{'a' * 64}"
     workbench_type = {json.dumps(workbench_type)}
     server_port = 8088
     lerobot_version = "0.6.0"
@@ -968,13 +978,9 @@ def test_write_manifest_writes_json_command(mocker) -> None:
 
 def test_write_remote_env_file_renders_shell_safe_values(mocker) -> None:
     ssh = mocker.MagicMock()
+    ssh.temporary_directory.return_value.__enter__.return_value = "/tmp/private-fixture"
     uploads: list[str] = []
-    mocker.patch(
-        "npa.deploy.configurator._sftp_upload",
-        side_effect=lambda _ssh, local, _remote: uploads.append(
-            Path(local).read_text()
-        ),
-    )
+    ssh.upload_private_text.side_effect = lambda content, _remote: uploads.append(content)
 
     configurator.write_remote_env_file(
         ssh,
@@ -1211,16 +1217,20 @@ def test_deploy_lerobot_container_persists_the_hugging_face_cache(mocker) -> Non
     assert "-v /opt/lerobot/hf_cache:/opt/lerobot/hf_cache" in run_cmd
 
 
-def test_deploy_server_runs_expected_remote_steps(mocker) -> None:
+def test_deploy_server_runs_expected_remote_steps(mocker, tmp_path) -> None:
     ssh = mocker.MagicMock()
     ssh._config = SSHConfig(host="vm", user="ubuntu", key_path="key")
-    run = mocker.patch("subprocess.run")
-    mocker.patch("npa.deploy.configurator.stage_catalog")
+    archive = tmp_path / "source.tar.gz"
+    archive.write_bytes(b"fixture archive")
+    package = mocker.patch("npa.deploy.configurator.create_agent_source_archive", return_value=str(archive))
+    ssh.temporary_directory.return_value.__enter__.return_value = "/tmp/private-fixture"
     uploads: list[tuple[str, str]] = []
     mocker.patch(
         "npa.deploy.configurator._sftp_upload",
         side_effect=lambda _ssh, local, remote: uploads.append((local, remote)),
     )
+    write_text = mocker.patch("npa.deploy.configurator.write_remote_text_file")
+    write_env = mocker.patch("npa.deploy.configurator.write_remote_env_file")
 
     configurator.deploy_server(
         ssh,
@@ -1231,26 +1241,21 @@ def test_deploy_server_runs_expected_remote_steps(mocker) -> None:
         },
     )
 
-    run.assert_called_once()
+    package.assert_called_once_with(configurator._NPA_PACKAGE_ROOT.parent)
+    assert not archive.exists()
+    assert any("/source/npa[server]" in call.args[0] for call in ssh.run_or_raise.call_args_list)
     remote_paths = [remote for _local, remote in uploads]
-    assert "/tmp/npa-deploy/npa.tgz" in remote_paths
-    assert "/tmp/npa-server.yaml" in remote_paths
-    assert "/tmp/npa-server.env" in remote_paths
+    assert "/tmp/private-fixture/npa.tgz" in remote_paths
+    assert any(call.args[1] == "/etc/npa/server.yaml" for call in write_text.call_args_list)
+    write_env.assert_called_once()
+    assert write_env.call_args.args[1] == "/etc/npa-lerobot-server/env"
     assert any(
         "systemctl restart npa-lerobot-server" in call.args[0]
         for call in ssh.run_or_raise.call_args_list
     )
 
 
-def test_sftp_upload_uses_paramiko(mocker) -> None:
-    ssh = SSHClient(SSHConfig(host="vm", user="ubuntu", key_path="~/key"))
-    sftp = mocker.MagicMock()
-    client = mocker.MagicMock()
-    client.open_sftp.return_value = sftp
-    mocker.patch("paramiko.SSHClient", return_value=client)
-
+def test_sftp_upload_uses_shared_private_implementation(mocker) -> None:
+    ssh = mocker.MagicMock(spec=SSHClient)
     configurator._sftp_upload(ssh, "/local/file", "/remote/file")
-
-    client.connect.assert_called_once()
-    sftp.put.assert_called_once_with("/local/file", "/remote/file")
-    client.close.assert_called_once()
+    ssh.upload_file.assert_called_once_with("/local/file", "/remote/file")

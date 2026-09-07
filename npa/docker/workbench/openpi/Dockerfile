@@ -26,12 +26,13 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
     UV_CACHE_DIR=/tmp/uv-cache \
     WANDB_MODE=disabled \
-    PATH=/opt/venv/bin:/opt/gsutil-venv/bin:${PATH}
+    PATH=/opt/venv/bin:/opt/gcs-venv/bin:${PATH}
 
 SHELL ["/bin/bash", "-lc"]
 USER root
 
-COPY docker/workbench/openpi/gsutil-requirements.txt /tmp/gsutil-requirements.txt
+COPY docker/workbench/openpi/gcs-requirements.txt /tmp/gcs-requirements.txt
+COPY src/npa/workflows/byof/openpi_gcs.py /opt/npa-openpi-gcs.py
 
 RUN rm -f /etc/apt/sources.list.d/*.list \
     && apt-get update \
@@ -61,9 +62,9 @@ RUN git clone --filter=blob:none --no-checkout "${OPENPI_SOURCE_URL}" /opt/byof 
 # Upstream's frozen lock is authoritative except for the exact JAX/NCCL SM120
 # compatibility overlay below. The upstream JAX 0.5.3 / NCCL 2.26.2 pair faults
 # on the first cross-node collective; the replacement wheels were qualified on
-# eight one-GPU RTX PRO 6000 nodes. Keep gsutil isolated from this environment.
+# eight one-GPU RTX PRO 6000 nodes. Keep the public GCS reader isolated from this environment.
 RUN python3 -m venv /opt/uv \
-    && /opt/uv/bin/pip install --no-cache-dir 'uv==0.9.7' \
+    && /opt/uv/bin/pip install --no-cache-dir 'uv==0.11.15' \
     && /opt/uv/bin/uv python install 3.11 \
     && /opt/uv/bin/uv venv --python 3.11 /opt/venv \
     && cd /opt/byof \
@@ -100,10 +101,10 @@ RUN python3 -m venv /opt/uv \
       'six==1.17.0' \
       'urllib3==2.7.0' \
     && /opt/uv/bin/uv pip install --python /opt/venv/bin/python --no-cache \
-      'deepdiff==8.6.1' 'numpy==1.26.4' \
+      'deepdiff==8.6.2' 'numpy==1.26.4' \
     && rm -f /opt/venv/lib/python3.11/site-packages/wandb/bin/wandb-core \
     && /opt/venv/bin/python -c \
-      'import boto3, importlib.metadata as m, numpy, os, tensorflow, torch, transformers, wandb; from transformers import GemmaForCausalLM; expected={"boto3":"1.42.91","botocore":"1.42.91","jmespath":"1.1.0","python-dateutil":"2.9.0.post0","s3transfer":"0.16.0","six":"1.17.0","urllib3":"2.7.0"}; assert all(m.version(k)==v for k,v in expected.items()), {k:m.version(k) for k in expected}; assert boto3.session.Session() is not None and m.version("deepdiff") == "8.6.1" and m.version("numpy") == "1.26.4" and m.version("tensorflow") == "2.15.0" and m.version("transformers") == "4.53.2"; assert os.environ["WANDB_MODE"] == "disabled" and GemmaForCausalLM and numpy is not None and tensorflow is not None and torch is not None and wandb is not None' \
+      'import boto3, importlib.metadata as m, numpy, os, tensorflow, torch, transformers, wandb; from transformers import GemmaForCausalLM; expected={"boto3":"1.42.91","botocore":"1.42.91","jmespath":"1.1.0","python-dateutil":"2.9.0.post0","s3transfer":"0.16.0","six":"1.17.0","urllib3":"2.7.0"}; assert all(m.version(k)==v for k,v in expected.items()), {k:m.version(k) for k in expected}; assert boto3.session.Session() is not None and m.version("deepdiff") == "8.6.2" and m.version("numpy") == "1.26.4" and m.version("tensorflow") == "2.15.0" and m.version("transformers") == "4.53.2"; assert os.environ["WANDB_MODE"] == "disabled" and GemmaForCausalLM and numpy is not None and tensorflow is not None and torch is not None and wandb is not None' \
     && /opt/venv/bin/python -c \
       'import subprocess; expected={"The package `tensorflow-cpu` requires `ml-dtypes~=0.2.0`, but `0.5.1` is installed","The package `torch` requires `nvidia-cudnn-cu12==9.5.1.17 ; platform_machine == x86_64 and sys_platform == linux`, but `9.10.2.21` is installed","The package `torch` requires `nvidia-nccl-cu12==2.26.2 ; platform_machine == x86_64 and sys_platform == linux`, but `2.27.5` is installed","The package `tensorflow` requires `ml-dtypes~=0.2.0`, but `0.5.1` is installed","The package `openpi` requires `jax[cuda12]==0.5.3`, but `0.6.2` is installed"}; result=subprocess.run(["/opt/uv/bin/uv","pip","check","--python","/opt/venv/bin/python"],capture_output=True,text=True); actual={line.replace(chr(39),"") for line in (result.stdout+result.stderr).splitlines() if line.startswith("The package `")}; assert result.returncode == 1 and actual == expected, {"returncode":result.returncode,"unexpected":sorted(actual-expected),"missing":sorted(expected-actual)}' \
     && /opt/uv/bin/uv venv --python 3.11 /opt/rerun-venv \
@@ -114,15 +115,19 @@ RUN python3 -m venv /opt/uv \
     && /opt/uv/bin/uv pip check --python /opt/rerun-venv/bin/python \
     && /opt/rerun-venv/bin/rerun rrd --help >/dev/null \
     && test ! -e /opt/venv/lib/python3.11/site-packages/wandb/bin/wandb-core \
-    && /opt/uv/bin/uv venv --python 3.11 /opt/gsutil-venv \
-    && /opt/uv/bin/uv pip install --python /opt/gsutil-venv/bin/python --no-cache \
-      --no-deps --require-hashes -r /tmp/gsutil-requirements.txt \
-    && /opt/uv/bin/uv pip check --python /opt/gsutil-venv/bin/python \
-    && /opt/gsutil-venv/bin/gsutil version -l | grep -Fx 'gsutil version: 5.37' \
+    && /opt/uv/bin/uv venv --python 3.11 /opt/gcs-venv \
+    && /opt/uv/bin/uv pip install --python /opt/gcs-venv/bin/python --no-cache \
+      --no-deps --require-hashes -r /tmp/gcs-requirements.txt \
+    && /opt/uv/bin/uv pip check --python /opt/gcs-venv/bin/python \
+    && printf '%s\n' '#!/bin/sh' \
+      'exec /opt/gcs-venv/bin/python /opt/npa-openpi-gcs.py "$@"' \
+      > /usr/local/bin/npa-openpi-gcs \
+    && chmod 0755 /usr/local/bin/npa-openpi-gcs \
+    && /usr/local/bin/npa-openpi-gcs --version | grep -Fx 'npa-openpi-gcs google-cloud-storage=3.13.1' \
     && build_hash="$(sha256sum /opt/byof/uv.lock | cut -d' ' -f1)" \
     && printf '{"schema":"npa.byof.build.v1","build_command_executed":true,"build_command_sha256":"%s"}\n' \
       "$build_hash" > /opt/byof/npa_build_metadata.json \
-    && rm -rf /tmp/uv-cache /tmp/gsutil-requirements.txt
+    && rm -rf /tmp/uv-cache /tmp/gcs-requirements.txt
 
 RUN printf '%s\n' \
       '#include <cuda_runtime.h>' \

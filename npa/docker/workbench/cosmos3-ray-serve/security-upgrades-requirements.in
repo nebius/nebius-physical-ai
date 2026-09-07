@@ -1,0 +1,11 @@
+# Replace the serving dependency closure above the immutable framework lock.
+# GPU/model dependencies are not part of this overlay.
+ray[serve]==2.58.0
+nltk==3.10.3
+# The framework's serve extra includes Gradio. Its old Starlette upper bound
+# conflicts with patched Ray; upgrade both sides of that interface together.
+gradio==6.26.0
+# Preserve the framework's numerical and model-validation ABI constraints.
+numpy==2.2.6
+pandas==2.2.3
+pydantic==2.12.5

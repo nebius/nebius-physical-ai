@@ -12,7 +12,7 @@ import subprocess
 import tempfile
 import threading
 import time
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -1804,10 +1804,14 @@ def _run(
         progress.finish(outcome, "attempt=1")
 
 
-def sky_environment(isolated_config_dir: Path | None = None) -> dict[str, str]:
+def sky_environment(
+    isolated_config_dir: Path | None = None,
+    *,
+    environment: Mapping[str, str] | None = None,
+) -> dict[str, str]:
     """Return an environment that keeps SkyPilot state inside a run directory."""
 
-    env = os.environ.copy()
+    env = dict(os.environ if environment is None else environment)
     if isolated_config_dir is None:
         return env
     transaction = _TRANSACTION_ENVIRONMENTS.get().get(str(Path(isolated_config_dir).resolve()))

@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 import os
+import importlib.metadata
 from pathlib import Path
+
+from packaging.markers import default_environment
+from packaging.requirements import Requirement
 
 import ray
 import torch
@@ -13,6 +17,17 @@ from npa.workbench.cosmos import ray_server as npa_ray_server
 
 
 def main() -> None:
+    # Upgrading the core wheel alone can leave a stale or incomplete serve
+    # extra behind the parent lock. Check every active direct requirement.
+    environment = {**default_environment(), "extra": "serve"}
+    for package in ("ray", "gradio"):
+        for raw in importlib.metadata.requires(package) or ():
+            requirement = Requirement(raw)
+            if requirement.marker and not requirement.marker.evaluate(environment):
+                continue
+            installed = importlib.metadata.version(requirement.name)
+            if installed not in requirement.specifier:
+                raise RuntimeError(f"{package} dependency does not satisfy {requirement}")
     # Ray decorators replace the Python classes with Deployment/ActorClass
     # wrappers at import time. Prove the pinned implementation from its source
     # module, then separately prove that importing produced real Ray objects.

@@ -4017,6 +4017,11 @@ def _skypilot_context(
     )
 
     config_override = exact_kubernetes_context_config(context)
+    from npa.orchestration.skypilot.k8s_gpu_catalog import kubernetes_sky_environment
+
+    env = kubernetes_sky_environment(
+        context=context, kubeconfig=kubeconfig_path, sky_executable=sky
+    )
     return sky, env, config_override
 
 
@@ -4158,11 +4163,35 @@ def _wait_for_sky_down(
     cwd: Path | None = None,
 ) -> None:
     for _ in range(30):
-        cmd = [sky, "status", "--refresh"]
+        cmd = [sky, "status", "--refresh", "--output", "json"]
         if config_override:
             cmd[2:2] = ["--config", config_override]
         result = _run_capture(cmd, cwd=cwd, env=env, timeout=120, check=False)
-        if cluster_name not in result.stdout:
+        if result.returncode != 0 or (result.stderr or "").strip():
+            raise typer.BadParameter(
+                "SkyPilot cleanup status failed; remote absence is unverified"
+            )
+        try:
+            rows = json.loads(result.stdout)
+        except (ValueError, TypeError):
+            raise typer.BadParameter(
+                "SkyPilot cleanup returned malformed status; remote absence is unverified"
+            ) from None
+        if not isinstance(rows, list) or any(
+            not isinstance(row, dict)
+            or not isinstance(row.get("name"), str)
+            or not row["name"].strip()
+            or not isinstance(row.get("status"), str)
+            or row.get("status") not in {"INIT", "UP", "STOPPED"}
+            for row in rows
+        ):
+            raise typer.BadParameter(
+                "SkyPilot cleanup returned an unexpected status schema"
+            )
+        names = [row["name"] for row in rows]
+        if len(set(names)) != len(names):
+            raise typer.BadParameter("SkyPilot cleanup status contains ambiguous identities")
+        if cluster_name not in names:
             return
         time.sleep(10)
     raise typer.BadParameter(

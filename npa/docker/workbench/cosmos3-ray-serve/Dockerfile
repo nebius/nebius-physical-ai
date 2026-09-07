@@ -8,7 +8,7 @@ FROM ${BASE_IMAGE}
 ARG NPA_SOURCE_SHA
 ARG COSMOS3_RAY_SERVE_VERSION=ray1-cu130
 ARG COSMOS3_REF=5e67049cd94acb667786f1e6dd0dab821cb90c97
-ARG COSMOS3_RAY_VERSION=2.52.0
+ARG COSMOS3_RAY_VERSION=2.58.0
 
 LABEL npa.tool="cosmos3-ray-serve" \
       npa.version="${COSMOS3_RAY_SERVE_VERSION}" \
@@ -54,8 +54,8 @@ USER ubuntu
 # dependency lock remain the exact pinned upstream bytes in the parent. The
 # parent generation image intentionally omits upstream's `serve` extra, so sync
 # that extra from the already-pinned upstream uv.lock. After syncing the frozen
-# environment (preserving all other pins), upgrade Ray and NLTK to the
-# security-fixed versions via hash-verified wheel URLs. uv-managed environments
+# environment, replace the complete Ray Serve dependency closure and NLTK via
+# hash-verified packages. uv-managed environments
 # intentionally omit pip — use `uv pip install --python` instead of the
 # nonexistent `.venv/bin/pip`.  Do NOT use --frozen for the serve extra alone
 # — that would silently keep the vulnerable pins.
@@ -70,8 +70,9 @@ COPY --chown=ubuntu:ubuntu docker/workbench/cosmos3-ray-serve/security-upgrades-
 RUN cd /opt/cosmos3/cosmos-framework \
     && UV_CACHE_DIR=/tmp/uv-cache uv sync --frozen --inexact \
        --extra guardrail --extra serve --group cu130 \
-    && uv pip install --python .venv/bin/python --no-deps \
+    && uv pip install --python .venv/bin/python --no-deps --require-hashes \
        --requirement /tmp/cosmos3-ray-security-upgrades-requirements.txt \
+    && uv pip check --python .venv/bin/python \
     && test "$(.venv/bin/python -c 'import ray; print(ray.__version__)')" = "${COSMOS3_RAY_VERSION}" \
     && .venv/bin/python -c 'import importlib.metadata; assert importlib.metadata.version("nltk") == "3.10.3"' \
     && rm -rf /tmp/uv-cache \

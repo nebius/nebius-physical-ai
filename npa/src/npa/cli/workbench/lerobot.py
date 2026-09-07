@@ -345,7 +345,12 @@ for page in s3.get_paginator("list_objects_v2").paginate(Bucket={bucket!r}, Pref
         rel = key[len({prefix_with_slash!r}):]
         if not rel:
             continue
-        target = dest / rel
+        relative = pathlib.PurePosixPath(rel)
+        if not key.startswith({prefix_with_slash!r}) or relative.is_absolute() or ".." in relative.parts or "\\\\" in rel:
+            raise ValueError("Unsafe object key in checkpoint prefix")
+        target = (dest / relative).resolve()
+        if not target.is_relative_to(dest.resolve()):
+            raise ValueError("Checkpoint object escapes its destination")
         target.parent.mkdir(parents=True, exist_ok=True)
         s3.download_file({bucket!r}, key, str(target))
 print("npa_s3_download_done")

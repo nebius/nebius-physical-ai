@@ -1,4 +1,6 @@
 from npa.workflows.rerun_serve import build_rerun_nginx_config, RERUN_HTPASSWD_PATH
+import bcrypt
+import pytest
 
 
 def test_nginx_config_no_auth_by_default():
@@ -31,7 +33,7 @@ def test_manifest_basic_auth_secret_volume_mount_when_enabled():
     cfg = RerunServeConfig(run_id="sim2real-staged-20260620t010101z", s3_bucket="b",
                            name="npa-rerun", auth_user="demo", auth_password="s3cret-pw")
     assert cfg.auth_enabled
-    assert cfg.htpasswd_line.startswith("demo:{SHA}")
+    assert cfg.htpasswd_line.startswith("demo:$2b$12$")
     m = build_rerun_serve_manifest(cfg)
     names = [(i["kind"], i["metadata"]["name"]) for i in _items(m)]
     assert ("Secret", "npa-rerun-auth") in names
@@ -56,3 +58,28 @@ def test_nginx_healthz_unauthed_and_probe_uses_it():
     dep = next(i for i in m["items"] if i["kind"] == "Deployment")
     nginx = next(x for x in dep["spec"]["template"]["spec"]["containers"] if x["name"] == "nginx")
     assert nginx["readinessProbe"]["httpGet"]["path"] == "/healthz"
+
+
+def test_password_hash_uses_unique_salts_and_rejects_wrong_password():
+    from npa.workflows.rerun_serve import RerunServeConfig
+
+    cfg = RerunServeConfig(run_id="recording", s3_bucket="bucket",
+                          auth_user="viewer", auth_password="correct password")
+    first = cfg.htpasswd_line.partition(":")[2].strip().encode()
+    second = cfg.htpasswd_line.partition(":")[2].strip().encode()
+    assert first != second
+    assert bcrypt.checkpw(b"correct password", first)
+    assert not bcrypt.checkpw(b"incorrect password", first)
+
+
+@pytest.mark.parametrize("user,password", [
+    ("viewer", ""), ("", "password"), ("viewer\nother", "password"),
+    ("viewer:injected", "password"), ("viewer", "x" * 73),
+    ("viewer", "nul\x00suffix"), ("viewer", "\N{SNOWMAN}" * 25),
+])
+def test_invalid_authentication_cannot_disable_or_inject_password_file(user, password):
+    from npa.workflows.rerun_serve import RerunServeConfig, RerunServeError
+
+    with pytest.raises(RerunServeError):
+        RerunServeConfig(run_id="recording", s3_bucket="bucket",
+                        auth_user=user, auth_password=password)

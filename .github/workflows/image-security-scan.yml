@@ -144,9 +144,11 @@ jobs:
         uses: imjasonh/setup-crane@v0.4
 
       - name: Scan the public development image for a baked Omniverse Kit payload
+        env:
+          SCAN_IMAGE: ${{ inputs.omniverse_payload_scan_image }}
         run: |
           python npa/scripts/scan_image_omniverse_payload.py \
-            "${{ inputs.omniverse_payload_scan_image }}" \
+            "$SCAN_IMAGE" \
             --json omniverse-payload-report.json
 
       - name: Upload the report

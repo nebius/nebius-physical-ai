@@ -51,7 +51,7 @@ RUN git clone --filter=blob:none --no-checkout "${ALPAMAYO2_SOURCE_URL}" /opt/al
 # flash-attn compile against the locked Torch 2.8/CUDA 12.8 environment for the
 # H100, B200, and RTX PRO 6000 architecture paths selected above.
 RUN python3.12 -m venv /opt/uv \
-    && /opt/uv/bin/pip install --no-cache-dir 'uv==0.9.7' \
+    && /opt/uv/bin/pip install --no-cache-dir 'uv==0.11.15' \
     && cd /opt/alpamayo2 \
     && /opt/uv/bin/uv sync --locked --no-dev \
     && /opt/alpamayo2/.venv/bin/python - <<'PY'

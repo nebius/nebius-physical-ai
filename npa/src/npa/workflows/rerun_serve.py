@@ -81,6 +81,20 @@ class RerunServeConfig:
     auth_user: str = ""
     auth_password: str = ""
 
+    def __post_init__(self) -> None:
+        if bool(self.auth_user) != bool(self.auth_password):
+            raise RerunServeError("Rerun authentication requires both username and password")
+        if self.auth_user and (
+            ":" in self.auth_user
+            or any(ord(c) < 32 or ord(c) == 127 for c in self.auth_user)
+        ):
+            raise RerunServeError("Rerun authentication username contains invalid characters")
+        if self.auth_password and (
+            "\x00" in self.auth_password
+            or len(self.auth_password.encode("utf-8")) > 72
+        ):
+            raise RerunServeError("Rerun password must contain no NUL and at most 72 UTF-8 bytes")
+
     @property
     def auth_enabled(self) -> bool:
         return bool(self.auth_password and self.auth_user)
@@ -91,13 +105,13 @@ class RerunServeConfig:
 
     @property
     def htpasswd_line(self) -> str:
-        """nginx basic-auth line using the {SHA} scheme (pure-Python, no apache2-utils)."""
-        import hashlib
+        """nginx basic-auth entry with a fresh bcrypt salt and work factor 12."""
+        import bcrypt
 
-        digest = base64.b64encode(
-            hashlib.sha1(self.auth_password.encode()).digest()
-        ).decode()
-        return f"{self.auth_user}:{{SHA}}{digest}\n"
+        if not self.auth_enabled:
+            raise RerunServeError("Cannot hash an empty Rerun authentication password")
+        digest = bcrypt.hashpw(self.auth_password.encode(), bcrypt.gensalt(rounds=12))
+        return f"{self.auth_user}:{digest.decode('ascii')}\n"
 
     @property
     def deployment_name(self) -> str:

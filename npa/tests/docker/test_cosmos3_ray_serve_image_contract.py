@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import io
 import json
+import re
 import sys
 import tarfile
 from pathlib import Path
@@ -55,7 +56,7 @@ def test_image_uses_exact_accepted_framework_parent_and_bakes_no_weights() -> No
     assert "vllm" not in text.lower()
     assert "*.safetensors" in text
     assert "NPA_COSMOS3_RAY_GUARDRAILS=true" in text
-    assert "ARG COSMOS3_RAY_VERSION=2.52.0" in text
+    assert "ARG COSMOS3_RAY_VERSION=2.58.0" in text
     # Stale linux-libc-dev version pin must not be present (it ages out of
     # Ubuntu repos). The purge is now conditional: check the package is
     # installed first, then purge if present.
@@ -103,11 +104,15 @@ def test_security_upgrades_requirements_file_has_hash_pinned_cves() -> None:
     req_file = IMAGE / "security-upgrades-requirements.txt"
     assert req_file.is_file(), "security-upgrades-requirements.txt must exist"
     content = req_file.read_text(encoding="utf-8")
-    assert "CVE-2025-62593" in content
-    assert "CVE-2026-79675" in content
-    assert "ray-2.52.0-cp313-cp313-manylinux2014_x86_64.whl#sha256=" in content
-    assert "nltk-3.10.3-py3-none-any.whl#sha256=" in content
-    assert "--no-deps" in content
+    assert "ray==2.58.0" in content
+    assert "ray[serve]==2.58.0" in req_file.with_suffix(".in").read_text()
+    assert "nltk==3.10.3" in content
+    assert "ray-haproxy==2.8.25" in content
+    # Every dependency is exact and hash-bound, including the new serve extra.
+    requirements = re.split(r"\n(?=[a-zA-Z])", content)
+    for requirement in requirements[1:]:
+        assert re.match(r"[\w.\[\]-]+==[\w.+-]+", requirement)
+        assert "--hash=sha256:" in requirement
 
 
 def test_dockerfile_copies_security_requirements_and_verifies_versions() -> None:
@@ -122,6 +127,7 @@ def test_dockerfile_copies_security_requirements_and_verifies_versions() -> None
     ) in text
     assert 'assert importlib.metadata.version("nltk") == "3.10.3"' in text
     assert "${COSMOS3_RAY_VERSION}" in text
+    assert "--no-deps --require-hashes" in text
     # Must verify the Ray version matches the ARG value post-install
     assert (
         'test "$(.venv/bin/python -c \'import ray; print(ray.__version__)\')"'

@@ -32,7 +32,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from npa.clients.storage import StorageClient
+from npa.clients.storage import StorageClient, safe_s3_download_target
 from npa.workflows.sim2real.camera_views import camera_metadata, camera_views_json
 from npa.workflows.sim2real.capture import capture_settings
 from npa.workflows.sim2real.isaac_job_payload import (
@@ -1519,7 +1519,8 @@ def run_isaac_eval_job(
                 for view_names in (ep.get("camera_views") or {}).values():
                     names.extend(view_names or [])
                 for name in dict.fromkeys(names):
-                    dst = Path(_RENDERS_LOCAL_DIR) / eid / name
+                    episode_dir = safe_s3_download_target(_RENDERS_LOCAL_DIR, eid, "")
+                    dst = safe_s3_download_target(episode_dir, name, "")
                     dst.parent.mkdir(parents=True, exist_ok=True)
                     s3.download_file(u.netloc, f"{base}/{eid}/{name}", str(dst))
             pointcloud_count = 0
@@ -1532,8 +1533,7 @@ def run_isaac_eval_job(
                         pointcloud_prefix
                     ):
                         continue
-                    relative = key[len(base) + 1 :]
-                    dst = Path(_RENDERS_LOCAL_DIR) / relative
+                    dst = safe_s3_download_target(_RENDERS_LOCAL_DIR, key, base + "/")
                     dst.parent.mkdir(parents=True, exist_ok=True)
                     s3.download_file(u.netloc, key, str(dst))
                     pointcloud_count += 1
