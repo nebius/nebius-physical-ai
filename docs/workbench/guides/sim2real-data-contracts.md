@@ -12,6 +12,7 @@ loop. Other guides link here instead of duplicating tables.
 | **[sim2real-workflow.md](./sim2real-workflow.md)** | Run the loop: quickstart, CLI, local smoke |
 | **This file** | What each artifact *is* (LeRobot vs NPA JSON vs media) |
 | **[sim2real-customer-assets.md](./sim2real-customer-assets.md)** | What the customer uploads (robot, scene, trigger) |
+| **[sim2real-robot-spec.md](./sim2real-robot-spec.md)** | Canonical RobotSpec contract, runnable URDF example, and proof artifacts |
 | **[sim2real-architecture.md](./sim2real-architecture.md)** | Standard-runtime control flow, parallel waves, loops, and resume |
 | **[sim2real-demo-script-10min.md](./sim2real-demo-script-10min.md)** | Presentation walkthrough |
 
@@ -45,7 +46,7 @@ policy rollouts.
 | --- | --- | --- | --- |
 | `NPA_SIM2REAL_TRIGGER_DATASET_URI` | Customer/operator | Task-aligned Isaac seed dataset plus `task-dataset-manifest.json`; PushT is incompatible with the default Franka lift task | 1 |
 | `ASSETS_URI`, `SCENE_SPEC_URI` | Customer (optional) | Meshes + optional `npa.sim2real.scene_spec.v1` | 2 |
-| `ROBOT_SPEC_URI`, `ROBOT_PRESET` | Customer (optional) | `npa.sim2real.robot_spec.v1` or preset name | 2 |
+| `config.robot_spec_uri` | Customer (optional) | Exact S3 object containing `npa.sim2real.robot_spec.v1`; empty is stock Franka | 2 |
 | `train_envs_uri` / `validation_envs_uri` / `gold_heldout_envs_uri` | **Workflow** | Curated, disjoint, stratified NPA scenario JSONL with task/config digests | 4–6 |
 | `actions/train/…` | Workflow / policy job | Rollout dirs + `npa.sim2real.action_rollout.v1` | 7 |
 | `vlm_eval/…` | Workflow / hosted Cosmos3 evaluator | `npa.sim2real.vlm_eval.v3` | 8 |
@@ -79,7 +80,7 @@ Every JSON artifact should include a top-level `"schema"` string. Constants live
 | `npa.sim2real.trigger.v1` | `stage_01_trigger/trigger.json` | 1 | Points at the task-aligned trigger URI and its verified seed provenance |
 | `npa.sim2real.task_contract.v1` | `stage_02_assets/task-contract.json` | 2 | Normalized task/data/embodiment/physics/camera/success contract and digest |
 | `npa.sim2real.consumed_scene_spec.v1` | `stage_02_assets/consumed_scene_spec.json` | 2 | Stock or BYO scene after materialization |
-| `npa.sim2real.consumed_robot_spec.v1` | `stage_02_assets/consumed_robot_spec.json` | 2 | Stock Franka or BYO / preset metadata |
+| `npa.sim2real.robot_contract.v1` | `stage_02_assets/consumed_robot_spec.json` | 2 | Stock marker or immutable BYO contract with embodiment/content digests and resolved-USD target |
 | `npa.sim2real.stock_scene_spec.v1` | (embedded in consumed scene) | 2 | Stock-only wrapper |
 | `npa.sim2real.stock_robot_spec.v1` | (embedded in consumed robot) | 2 | Stock-only wrapper |
 | `npa.sim2real.scene_spec.v1` | envgen / BYO input | 2–6 | Scene composition for envgen |

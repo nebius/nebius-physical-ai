@@ -74,14 +74,14 @@ existing `workbench.rl.policy_train` on the same RT-core class or H100.
 
 ## SkyPilot + workflow
 
-- Generate + rank (CPU, live-verified): `npa/workflows/workbench/npa-workflows/scenario-gen-smoke.yaml`.
+- Generate + rank (CPU, live-verified): `workflows/testing/scenario-gen-smoke.yaml`.
   Pass the production scale with `--var num_scenarios=16 --var adversary_steps=200000
   --var rank_top_k=4`. CPU is correct here: the shipped CLI has **no** flag to select an
   adversary backend, so `generate` always runs `simulate_adversary`, a deterministic
   heuristic stand-in that is not RL and needs no GPU. Route to RT-core-capable GPUs only
   once a real backend is selectable.
 - Declarative hardening pipeline (generate -> rank -> retrain/evaluate/gate loop
-  -> publish): `npa/workflows/workbench/npa-workflows/adversarial-scenario-hardening.yaml`
+  -> publish): `workflows/testing/adversarial-scenario-hardening.yaml`
 
 toolRefs: `workbench.scenario_gen.generate`, `workbench.scenario_gen.rank`,
 `workbench.scenario_gen.write_hardening_decision`.

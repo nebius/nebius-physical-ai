@@ -122,6 +122,164 @@ def test_leisaac_dockerfile_removes_parent_imageio_ffmpeg_payload() -> None:
     assert 'test ! -e /home/"${NPA_RUNTIME_USER}"/.cache' in dockerfile
 
 
+def test_shared_isaac_runtime_uses_system_ffmpeg_without_bundled_payload() -> None:
+    installer = (
+        REPO_ROOT
+        / "npa"
+        / "docker"
+        / "workbench"
+        / "common"
+        / "install_isaac_runtime_base.sh"
+    ).read_text(encoding="utf-8")
+
+    assert "  ffmpeg \\\n" in installer
+    assert "*/imageio_ffmpeg/binaries/ffmpeg*" in installer
+    assert "imageio_ffmpeg.get_ffmpeg_exe()" in installer
+    assert "--no-binary imageio-ffmpeg" in installer
+    assert "IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg" in installer
+    assert '!= "/usr/bin/ffmpeg"' in installer
+
+
+def test_blackwell_envgen_chain_uses_system_ffmpeg_without_bundled_payload() -> None:
+    paths = (
+        REPO_ROOT / "npa" / "docker" / "workbench" / "base" / "cuda13-b300" / "Dockerfile",
+        REPO_ROOT / "npa" / "docker" / "workbench" / "genesis" / "Dockerfile.sm120",
+        REPO_ROOT / "npa" / "docker" / "workbench" / "sim2real-envgen" / "Dockerfile",
+    )
+    for path in paths:
+        dockerfile = path.read_text(encoding="utf-8")
+        assert "IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg" in dockerfile
+        assert "*/imageio_ffmpeg/binaries/ffmpeg*" in dockerfile
+        assert "get_ffmpeg_exe()" in dockerfile
+        assert '== "/usr/bin/ffmpeg"' in dockerfile
+    envgen = paths[-1].read_text(encoding="utf-8")
+    assert "python -m pip uninstall -y npa" in envgen
+    assert "pip install --no-deps -e /opt/npa" not in envgen
+
+
+def test_openpi_uses_system_ffmpeg_without_bundled_payload() -> None:
+    openpi_dir = REPO_ROOT / "npa" / "docker" / "workbench" / "openpi"
+    dockerfile = (openpi_dir / "Dockerfile").read_text(encoding="utf-8")
+    gsutil_lock = (openpi_dir / "gsutil-requirements.txt").read_text(
+        encoding="utf-8"
+    )
+
+    assert "IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg" in dockerfile
+    assert "      ca-certificates ffmpeg git" in dockerfile
+    assert "*/imageio_ffmpeg/binaries/ffmpeg*" in dockerfile
+    assert "-delete" in dockerfile
+    assert "imageio_ffmpeg.get_ffmpeg_exe()" in dockerfile
+    assert "= /usr/bin/ffmpeg" in dockerfile
+    assert "imageio_ffmpeg.write_frames" in dockerfile
+    assert "imageio_ffmpeg.read_frames" in dockerfile
+    assert 'm["size"] == (2,2) and len(f) == 12' in dockerfile
+    assert "linux-libc-dev" in dockerfile
+    assert "'boto3==1.42.91'" in dockerfile
+    for pin in (
+        "'botocore==1.42.91'",
+        "'jmespath==1.1.0'",
+        "'python-dateutil==2.9.0.post0'",
+        "'s3transfer==0.16.0'",
+        "'six==1.17.0'",
+        "'urllib3==2.7.0'",
+    ):
+        assert pin in dockerfile
+    assert '"boto3":"1.42.91"' in dockerfile
+    assert "boto3.session.Session()" in dockerfile
+    assert "'deepdiff==8.6.1'" in dockerfile
+    assert "WANDB_MODE=disabled" in dockerfile
+    assert 'org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"' in dockerfile
+    assert "rm -f /opt/venv/lib/python3.11/site-packages/wandb/bin/wandb-core" in dockerfile
+    assert "import boto3, importlib.metadata as m, numpy, os, tensorflow" in dockerfile
+    assert "import importlib.metadata as m, numpy, rerun" in dockerfile
+    assert "rm -rf /opt/nvidia/nsight-compute" in dockerfile
+    assert "test ! -e /opt/nvidia/nsight-compute" in dockerfile
+    for pin in (
+        "'jax==0.6.2'",
+        "'jaxlib==0.6.2'",
+        "'jax-cuda12-plugin==0.6.2'",
+        "'jax-cuda12-pjrt==0.6.2'",
+        "'ml-dtypes==0.5.1'",
+        "'nvidia-cudnn-cu12==9.10.2.21'",
+        "'nvidia-nccl-cu12==2.27.5'",
+        "'nvidia-nvshmem-cu12==3.2.5'",
+    ):
+        assert pin in dockerfile
+    assert "pi05-full-droid-rlds-cu128-jax062-nccl2275-rerun0314" in dockerfile
+    assert "'rerun-sdk==0.31.4'" in dockerfile
+    assert "'numpy==1.26.4'" in dockerfile
+    assert "from transformers import GemmaForCausalLM" in dockerfile
+    assert "NPA_OPENPI_RERUN_PYTHON=/opt/rerun-venv/bin/python" in dockerfile
+    assert "/opt/rerun-venv/bin/rerun rrd --help" in dockerfile
+    assert '"pip","check","--python","/opt/venv/bin/python"' in dockerfile
+    assert "actual == expected" in dockerfile
+    assert "unexpected" in dockerfile and "missing" in dockerfile
+    assert "pip check --python /opt/rerun-venv/bin/python" in dockerfile
+    assert 'config.get_config("pi05_droid")' in dockerfile
+    assert "multihost_utils.broadcast_one_to_all" in dockerfile
+    assert "JAX_PLATFORMS=cpu /opt/venv/bin/python -c" in dockerfile
+    assert "    JAX_PLATFORMS=" not in dockerfile
+    assert "nccl/lib/libnccl.so.2" in dockerfile
+    assert "nvshmem/lib/libnvshmem_host.so.3" in dockerfile
+    dependency_layer = dockerfile.split("RUN python3 -m venv /opt/uv", 1)[1].split(
+        "\n\nRUN printf", 1
+    )[0]
+    trainer_addons, rerun_addons = dependency_layer.split(
+        "&& /opt/uv/bin/uv venv --python 3.11 /opt/rerun-venv", 1
+    )
+    assert "'numpy==1.26.4'" in trainer_addons
+    assert "rerun-sdk" not in trainer_addons
+    assert "'pyyaml==6.0.3'" in rerun_addons
+    assert "'rerun-sdk==0.31.4'" in rerun_addons
+    assert "pip check --python /opt/rerun-venv/bin/python" in rerun_addons
+    assert "gsutil==5.37" in gsutil_lock
+    assert "--hash=sha256:" in gsutil_lock
+    assert "--no-deps --require-hashes -r /tmp/gsutil-requirements.txt" in rerun_addons
+    assert "pip check --python /opt/gsutil-venv/bin/python" in rerun_addons
+    assert "/opt/gsutil-venv/bin/gsutil version -l" in rerun_addons
+    assert dependency_layer.index("uv sync --active") < dependency_layer.index(
+        "&& cd / \\"
+    )
+    assert dependency_layer.index("&& cd / \\") < dependency_layer.index(
+        "'jax==0.6.2'"
+    )
+    assert dependency_layer.index("'jax==0.6.2'") < dependency_layer.index(
+        "*/imageio_ffmpeg/binaries/ffmpeg*"
+    )
+    assert "imageio_ffmpeg.write_frames" in dependency_layer
+    assert "rm -rf /tmp/uv-cache" in dependency_layer
+
+
+def test_openpi_bakes_skypilot_core_bootstrap_closure() -> None:
+    dockerfile = (
+        REPO_ROOT / "npa" / "docker" / "workbench" / "openpi" / "Dockerfile"
+    ).read_text(encoding="utf-8")
+    install_layer = dockerfile.split("apt-get install -y --no-install-recommends", 1)[
+        1
+    ].split("&& rm -f /etc/ssh/ssh_host_", 1)[0]
+
+    # SkyPilot 0.12.2 treats these as mandatory Kubernetes bootstrap packages.
+    # If any are absent it runs apt concurrently in every GPU pod; a mirror
+    # failure then terminates the container before the JAX rendezvous starts.
+    for package in (
+        "curl",
+        "fuse",
+        "gcc",
+        "netcat-openbsd",
+        "openssh-server",
+        "patch",
+        "pciutils",
+        "rsync",
+        "wget",
+    ):
+        assert package in install_layer
+
+    # The build runs uv as root while HOME points at the eventual runtime
+    # user's home. SkyPilot installs its own uv there during bootstrap, so all
+    # build-created state under that home must be handed back before USER.
+    assert "chown -R ubuntu:ubuntu /home/ubuntu /workspace /opt/byof" in dockerfile
+
+
 def test_isaac_lab_dockerfile_excludes_bundled_imageio_ffmpeg_payload() -> None:
     dockerfile = (
         REPO_ROOT / "npa" / "docker" / "workbench" / "isaac-lab" / "Dockerfile"
@@ -280,6 +438,66 @@ def test_oci_layout_tarball_scans_root_level_blob_layers(tmp_path: Path) -> None
 
     assert "isaac-sim/kit/libcarb.so" in paths
     assert scanner.classify_path(paths[0])
+
+
+def test_streamed_docker_save_scans_nested_layers_without_seek() -> None:
+    layer_stream = io.BytesIO()
+    with tarfile.open(fileobj=layer_stream, mode="w") as layer:
+        member = tarfile.TarInfo("isaac-sim/kit/libcarb.so")
+        member.size = 3
+        layer.addfile(member, io.BytesIO(b"kit"))
+    image_stream = io.BytesIO()
+    with tarfile.open(fileobj=image_stream, mode="w") as outer:
+        payload = layer_stream.getvalue()
+        member = tarfile.TarInfo("blobs/sha256/exact-layer")
+        member.size = len(payload)
+        outer.addfile(member, io.BytesIO(payload))
+    image_stream.seek(0)
+
+    paths = list(scanner._iter_saved_image(image_stream, mode="r|*"))
+
+    assert "isaac-sim/kit/libcarb.so" in paths
+
+
+def test_local_docker_scan_combines_streamed_layers_and_history(monkeypatch) -> None:
+    monkeypatch.setattr(
+        scanner,
+        "_iter_docker_save",
+        lambda image: iter(["isaac-sim/kit/libcarb.so"]),
+    )
+    monkeypatch.setattr(
+        scanner,
+        "_local_image_history",
+        lambda image: ["RUN pip install isaacsim==6.0.1.0"],
+    )
+
+    report = scanner.scan(None, None, docker_image="local:test")
+
+    assert report.source == "local-docker-stream"
+    assert report.entries_scanned == 1
+    assert report.payload_hits
+    assert report.history_hits
+
+
+def test_local_docker_history_only_skips_filesystem_export(monkeypatch) -> None:
+    monkeypatch.setattr(
+        scanner,
+        "_iter_docker_save",
+        lambda image: pytest.fail("history-only must not run docker save"),
+    )
+    monkeypatch.setattr(
+        scanner,
+        "_local_image_history",
+        lambda image: ["RUN pip install isaacsim==6.0.1.0"],
+    )
+
+    report = scanner.scan(None, None, docker_image="local:test", history_only=True)
+
+    assert report.source == "local-docker-stream"
+    assert report.history_only is True
+    assert report.entries_scanned == 0
+    assert report.history_hits
+    assert not report.clean
 
 
 # --------------------------------------------------------------------------------------
@@ -554,19 +772,61 @@ def test_registry_export_failure_is_fatal_after_a_valid_partial_tar(
     """A truncated export must never become a clean redistribution report."""
 
     class FailedExport:
-        stdout = _empty_tar_stream()
+        def __init__(self) -> None:
+            self.stdout = _empty_tar_stream()
 
         @staticmethod
         def wait() -> int:
             return 17
 
     monkeypatch.setattr(scanner, "_require", lambda _tool: "/usr/bin/crane")
+    calls = 0
+
+    def failed_export(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        return FailedExport()
+
     monkeypatch.setattr(
-        scanner.subprocess, "Popen", lambda *_args, **_kwargs: FailedExport()
+        scanner.subprocess, "Popen", failed_export
     )
+    monkeypatch.setattr(scanner.time, "sleep", lambda _seconds: None)
 
     with pytest.raises(subprocess.CalledProcessError, match="exit status 17"):
         list(scanner._iter_crane_export("registry.example/image:tag"))
+    assert calls == 4
+
+
+def test_registry_export_retry_deduplicates_partial_paths(monkeypatch) -> None:
+    partial = io.BytesIO()
+    with tarfile.open(fileobj=partial, mode="w") as archive:
+        member = tarfile.TarInfo("opt/shared")
+        member.size = 0
+        archive.addfile(member)
+    partial.seek(0)
+
+    complete = io.BytesIO()
+    with tarfile.open(fileobj=complete, mode="w") as archive:
+        for name in ("opt/shared", "opt/final"):
+            member = tarfile.TarInfo(name)
+            member.size = 0
+            archive.addfile(member)
+    complete.seek(0)
+
+    processes = iter(
+        (
+            SimpleNamespace(stdout=partial, wait=lambda: 17),
+            SimpleNamespace(stdout=complete, wait=lambda: 0),
+        )
+    )
+    monkeypatch.setattr(scanner, "_require", lambda _tool: "/usr/bin/crane")
+    monkeypatch.setattr(scanner.subprocess, "Popen", lambda *_args, **_kwargs: next(processes))
+    monkeypatch.setattr(scanner.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(scanner, "_image_history", lambda _image: ([], "sha256:" + "a" * 64))
+
+    report = scanner.scan("registry.example/image:tag", None)
+
+    assert report.entries_scanned == 2
 
 
 def test_registry_config_failure_is_fatal(monkeypatch) -> None:

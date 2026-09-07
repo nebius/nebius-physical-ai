@@ -108,6 +108,16 @@ def test_parse_splits_registry_repository_and_tag() -> None:
     assert reference.pull_scope == f"repository:{REPOSITORY}:pull"
 
 
+def test_docker_hub_uses_distinct_registry_api_host() -> None:
+    reference = parse_image_reference("docker.io/vllm/vllm-omni:cosmos3")
+
+    assert reference.registry == "docker.io"
+    assert reference.api_registry == "registry-1.docker.io"
+    assert reference.manifest_url == (
+        "https://registry-1.docker.io/v2/vllm/vllm-omni/manifests/cosmos3"
+    )
+
+
 def test_parse_handles_a_docker_prefix_and_a_digest() -> None:
     reference = parse_image_reference(f"docker:{REGISTRY}/{REPOSITORY}@sha256:abc123")
 
@@ -361,6 +371,23 @@ def test_public_registry_never_receives_foreign_nebius_credentials(
         ["ghcr.io/nebius/nebius-physical-ai/npa-cosmos-curate:0.1.2"],
         fetcher=registry,
     )
+
+    assert checks[0].ok
+    assert registry.token_auth_headers == {}
+
+
+def test_official_public_image_ignores_matching_stale_ghcr_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NPA_REGISTRY", "ghcr.io/operator/private")
+    monkeypatch.setenv("NPA_REGISTRY_USERNAME", "stale-user")
+    monkeypatch.setenv("NPA_REGISTRY_PASSWORD", "stale-token")
+    registry = AnonymousRegistry()
+    public_image = (
+        "ghcr.io/nebius/nebius-physical-ai/npa-cosmos-curate:0.1.2"
+    )
+
+    checks = check_image_pulls_with_credentials([public_image], fetcher=registry)
 
     assert checks[0].ok
     assert registry.token_auth_headers == {}

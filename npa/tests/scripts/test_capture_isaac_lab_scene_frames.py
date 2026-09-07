@@ -17,11 +17,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 CAPTURE_SCRIPT = REPO_ROOT / "npa" / "scripts" / "capture_isaac_lab_scene_frames.py"
 SPEC = (
     REPO_ROOT
-    / "npa"
-    / "workflows"
-    / "workbench"
-    / "npa-workflows"
-    / "isaac-franka-capture-reason.yaml"
+    / "workflows" / "testing" / "isaac-franka-capture-reason.yaml"
 )
 RETIRED_TEMPLATE = (
     REPO_ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot" / "isaac-franka-capture-reason.yaml"

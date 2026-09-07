@@ -76,6 +76,24 @@ def test_root_claude_skill_index_names_leisaac() -> None:
     assert "`skills/tools/leisaac/SKILL.md`" in root_index
 
 
+def test_emit_reviewable_rrd_skill_is_fail_closed_and_run_derived() -> None:
+    text = (
+        SKILLS_ROOT / "workflows" / "emit-reviewable-rrd" / "SKILL.md"
+    ).read_text(encoding="utf-8")
+    required = (
+        "optimizer_step",
+        "application/vnd.rerun.rrd",
+        "rerun rrd verify",
+        "rerun rrd print -vv",
+        "workflow artifacts",
+        "stock example",
+        "Creating and privately storing",
+    )
+    assert all(value in text for value in required)
+    assert "Fail the artifact stage" in text
+    assert "Sharing" in text and "is optional and separate" in text
+
+
 def test_skill_smoke_examples_run(
     skills_index: dict, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

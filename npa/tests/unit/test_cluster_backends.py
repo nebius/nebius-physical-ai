@@ -139,6 +139,10 @@ def test_standalone_and_one_target_fleet_share_complete_mig_contract(
 ) -> None:
     from npa.cluster_backends import mk8s_execution
 
+    def reject_host_resolution(_name):
+        raise AssertionError("mocked verification must not resolve a host executable")
+
+    monkeypatch.setattr(mk8s_execution, "_require_bin", reject_host_resolution)
     mapping = _legacy_mk8s_mapping()
     mapping["projects"][0]["clusters"] = [
         {
@@ -209,6 +213,7 @@ def test_standalone_and_one_target_fleet_share_complete_mig_contract(
 
     status_request = MK8sStatusRequest(
         kubeconfig=tmp_path / "kubeconfig",
+        kubectl_bin="mock-kubectl",
         mig_verifier=lambda **kwargs: calls.append(kwargs) or Report(),
     )
     assert backend.verify(standalone_desired, status_request) == backend.verify(
@@ -1222,16 +1227,23 @@ def test_preemptible_pool_requires_explicit_provider_true() -> None:
     assert mk8s_execution._provider_node_group_matches_pool(payload, pool) is True
 
 
-def test_full_cpu_validation_checks_exact_nodes_and_default_storage(tmp_path) -> None:
+def test_full_cpu_validation_checks_exact_nodes_and_default_storage(
+    tmp_path, monkeypatch
+) -> None:
     from types import SimpleNamespace
     from npa.cluster_backends import mk8s_execution
 
+    def reject_host_resolution(_name):
+        raise AssertionError("mocked verification must not resolve a host executable")
+
+    monkeypatch.setattr(mk8s_execution, "_require_bin", reject_host_resolution)
     desired = MK8sDesired(
         name="cpu",
         cpu_nodes=MK8sNodePool(count=1, platform="cpu-d3", preset="8vcpu-32gb"),
     )
 
     def capture(command, **_kwargs):
+        assert command[0] == "mock-kubectl"
         if command[2] == "nodes":
             return SimpleNamespace(
                 returncode=0,
@@ -1268,6 +1280,7 @@ def test_full_cpu_validation_checks_exact_nodes_and_default_storage(tmp_path) ->
     result = mk8s_execution.verify_cluster(
         cluster=desired,
         kubeconfig=tmp_path / "kubeconfig",
+        kubectl_bin="mock-kubectl",
         run_capture=capture,
         validation_policy="standalone-full",
         basic_validation_timeout_seconds=1,

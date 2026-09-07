@@ -40,6 +40,7 @@ if __name__ == "npa.cli.agent_access_runtime":
         accessible_artifact_buckets,
         artifact_bucket_projects,
         discover_agent_access,
+        normalize_configured_artifact_sources,
         scoped_artifact_buckets,
     )
     from npa.cli.agent_s3_guard import (
@@ -47,6 +48,7 @@ if __name__ == "npa.cli.agent_access_runtime":
         s3_uri_in_configured_buckets,
     )
     from npa.workflows.artifacts import (
+        RunListPage,
         decode_run_ref,
         find_run_sources_across_buckets,
         list_artifacts,
@@ -289,6 +291,7 @@ def _discover_agent_access_report() -> "AgentAccessReport":
             os.environ.get("NPA_AGENT_PROJECT_ALIAS") or NPA_PROJECT_ALIAS
         ).strip(),
         fallback_buckets=configured,
+        configured_sources=_configured_agent_artifact_sources(),
         list_projects=_agent_list_tenant_projects,
         list_buckets=_agent_list_project_buckets,
         probe_bucket=lambda bucket: _agent_probe_bucket(s3, bucket),
@@ -298,6 +301,90 @@ def _discover_agent_access_report() -> "AgentAccessReport":
         credential_source=credential_source,
         credential_profile=inventory_profile,
         credential_config=inventory_config,
+    )
+
+
+def _configured_agent_artifact_sources() -> tuple[dict[str, str], ...]:
+    """Decode the owner-staged exact read sources from the service environment."""
+    encoded = str(os.environ.get("NPA_AGENT_ARTIFACT_SOURCES_B64") or "").strip()
+    if not encoded:
+        return ()
+    try:
+        padded = encoded + ("=" * (-len(encoded) % 4))
+        payload = json.loads(base64.urlsafe_b64decode(padded.encode("ascii")))
+    except Exception as exc:
+        raise ValueError("configured artifact sources are invalid") from exc
+    return normalize_configured_artifact_sources(payload)
+
+
+def _configured_agent_artifact_source_matches(
+    *, project_id: str, bucket: str, resolved_prefix: str
+) -> bool:
+    identity = (
+        str(project_id or "").strip(),
+        str(bucket or "").strip(),
+        _validated_resolved_prefix(resolved_prefix),
+    )
+    return any(
+        identity == (source["project_id"], source["bucket"], source["resolved_prefix"])
+        for source in _configured_agent_artifact_sources()
+    )
+
+
+def _find_configured_exact_run_sources(s3, run_id: str):
+    """Probe only durable exact sources for one validated run identifier."""
+    normalized_run = validate_run_id(run_id)
+    matches = []
+    source_errors: list[dict[str, str]] = []
+    complete = True
+    for source in _configured_agent_artifact_sources():
+        bucket = source["bucket"]
+        project = source["project_id"]
+        found, errors, source_complete = find_run_sources_across_buckets(
+            [bucket],
+            base_prefix="",
+            run_id=normalized_run,
+            exact_prefix=source["resolved_prefix"],
+            bucket_projects={bucket: project},
+            s3=s3,
+        )
+        matches.extend(
+            item
+            for item in found
+            if (
+                item.run_id == normalized_run
+                and item.bucket == bucket
+                and item.project_id == project
+                and item.resolved_prefix == source["resolved_prefix"]
+            )
+        )
+        source_errors.extend(dict(item) for item in errors)
+        complete = complete and bool(source_complete) and not bool(errors)
+    unique = {
+        (item.project_id, item.bucket, item.resolved_prefix, item.run_id): item
+        for item in matches
+    }
+    return list(unique.values()), tuple(source_errors), complete
+
+
+def _configured_exact_run_page(s3, query: str, *, discovery_limit: int):
+    """Return the fail-closed durable-default page for an exact UI query."""
+    if len(str(query or "").strip()) < 20:
+        return None
+    try:
+        exact_run = validate_run_id(query)
+    except Exception:
+        return None
+    if not _configured_agent_artifact_sources():
+        return None
+    runs, errors, complete = _find_configured_exact_run_sources(s3, exact_run)
+    return RunListPage(
+        runs=runs,
+        truncated=not complete,
+        total_runs=len(runs),
+        limit=discovery_limit,
+        discovery_complete=complete,
+        source_errors=errors,
     )
 
 
@@ -632,6 +719,41 @@ def _authorize_exact_run_ref_source(
         for stale_key, stale_expiry in list(_AGENT_EXACT_SOURCE_ACCESS_CACHE.items()):
             if stale_expiry <= now_mono:
                 _AGENT_EXACT_SOURCE_ACCESS_CACHE.pop(stale_key, None)
+
+    # A durable owner-configured tuple is the narrow fallback when tenant or
+    # project inventory is unavailable. It is a selector, never a capability:
+    # re-probe the exact bucket with the service's existing S3 credentials
+    # before authorizing any run inventory or object load.
+    if _configured_agent_artifact_source_matches(
+        project_id=requested_project,
+        bucket=requested_bucket,
+        resolved_prefix=requested_prefix,
+    ):
+        try:
+            configured_probe = _agent_probe_bucket(s3, requested_bucket)
+        except Exception as exc:
+            status = getattr(exc, "status", "unavailable")
+            raise HTTPException(
+                status_code=403 if status == "denied" else 503,
+                detail="configured artifact source access could not be verified",
+            ) from exc
+        if str(getattr(configured_probe, "list_status", "unavailable")) != "available":
+            raise HTTPException(
+                status_code=(
+                    403
+                    if str(getattr(configured_probe, "list_status", "")) == "denied"
+                    else 503
+                ),
+                detail="configured artifact source is not currently searchable",
+            )
+        _remember_exact_run_ref_source_authorization(
+            run_id=requested_run,
+            run_ref=run_ref,
+            resource_bucket=requested_bucket,
+            project_id=requested_project,
+            resolved_prefix=requested_prefix,
+        )
+        return requested_bucket, requested_project, requested_prefix
 
     deployment_project = str(os.environ.get("NEBIUS_PROJECT_ID") or "").strip()
     tenant_id = str(os.environ.get("NEBIUS_TENANT_ID") or "").strip()

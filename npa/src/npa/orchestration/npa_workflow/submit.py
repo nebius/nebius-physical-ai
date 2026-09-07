@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Mapping
 
@@ -18,6 +18,7 @@ from npa.orchestration.npa_workflow.skypilot_render import (
 from npa.orchestration.npa_workflow.spec import (
     NpaWorkflowSpec,
     load_spec,
+    resolve_trigger_config,
     validate_spec,
 )
 
@@ -56,7 +57,14 @@ def merge_config_overrides(
         run_defaults=dict(spec.run_defaults),
         resources=dict(spec.resources),
         initial=spec.initial,
-        states=dict(spec.states),
+        states={
+            name: replace(
+                state, trigger=resolve_trigger_config(name, state.trigger, merged)
+            )
+            if state.trigger is not None and state.trigger.config_expressions
+            else state
+            for name, state in spec.states.items()
+        },
     )
     # Overrides can change loop bounds, parallel cardinality assertions, and other
     # values that validation resolves. Revalidate here so plan/run/submit all reject

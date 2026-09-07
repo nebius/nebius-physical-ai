@@ -120,7 +120,13 @@ def _fallback_grounded_rewards(steps: list[dict[str, Any]]) -> list[float]:
         truth = dict(step.get("simulator_ground_truth") or {})
         distance = float(truth.get("object_goal_distance_m", 0.5))
         ee_distance = float(truth.get("end_effector_object_distance_m", 0.5))
-        action = step.get("action") or []
+        # ``convert_evaluation`` preserves the source action in ``action_credit``
+        # before invoking this fallback.  Reading only the raw evaluation shape
+        # silently discarded that action here, so a stationary simulator trace
+        # stayed degenerate even when the policy actions varied measurably.
+        action = step.get("action") or (
+            (step.get("action_credit") or {}).get("source_action") or []
+        )
         action_l2 = math.sqrt(
             sum(float(value) ** 2 for value in action if isinstance(value, int | float))
         )

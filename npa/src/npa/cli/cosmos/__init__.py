@@ -26,8 +26,10 @@ from npa.cli.ingress import (
     ensure_alias_ingress,
     ensure_deploy_ingress,
     ingress_summary,
+    ingress_source_option,
     register_byovm_alias,
     resolve_deploy_instance_id,
+    world_open_ack_option,
 )
 from npa.cli.path_contract import PathContractError, validate_write_path
 from npa.clients.config import (
@@ -43,7 +45,6 @@ from npa.clients.config import (
     list_projects,
     remove_workbench_config,
     resolve_config,
-    resolve_container_registry,
     resolve_credentials,
     resolve_environment,
     resolve_project_storage,
@@ -881,11 +882,8 @@ def ensure_ingress_cmd(
         "-n",
         help="Workbench alias to repair. Defaults to the active workbench alias.",
     ),
-    source: str = typer.Option(
-        "0.0.0.0/0",
-        "--source",
-        help="Source CIDR allowed to reach the Cosmos server.",
-    ),
+    source: str = ingress_source_option("Source CIDR allowed to reach the Cosmos server."),
+    allow_world_open: bool = world_open_ack_option(),
 ) -> None:
     """Ensure public ingress for the saved Cosmos BYOVM alias."""
     try:
@@ -895,6 +893,7 @@ def ensure_ingress_cmd(
             project_alias=_project_alias or None,
             name=name or _workbench_name or None,
             source=source,
+            allow_world_open=allow_world_open,
         )
     except (ConfigError, NetworkIngressError) as exc:
         _fail(str(exc))
@@ -910,6 +909,8 @@ def register_byovm_cmd(
         ..., "--instance-id", help="Nebius compute instance ID."
     ),
     port: int = typer.Option(8081, "--port", help="Cosmos HTTP service port."),
+    source: str = ingress_source_option("Source CIDR allowed to reach Cosmos."),
+    allow_world_open: bool = world_open_ack_option(),
 ) -> None:
     """Register an existing VM as a Cosmos BYOVM alias and ensure ingress."""
     try:
@@ -919,6 +920,8 @@ def register_byovm_cmd(
             instance_id=instance_id,
             port=port,
             project_alias=_project_alias or None,
+            source=source,
+            allow_world_open=allow_world_open,
             warn=console.print,
         )
     except (ConfigError, NetworkIngressError) as exc:
@@ -1574,9 +1577,7 @@ def _deploy_serverless_endpoint(
         _validate_gpu_selection(platform, preset)
 
     endpoint_name = _serverless_endpoint_name(proj_alias, wb_name)
-    image_ref = image or container_image_for_tool(
-        "cosmos", registry=resolve_container_registry(proj_alias)
-    )
+    image_ref = image or container_image_for_tool("cosmos")
     serverless_env = {
         "COSMOS_MODEL_ID": model,
         "COSMOS_SERVER_PORT": str(container_port),
@@ -2692,10 +2693,7 @@ def deploy_cmd(
                         service_env,
                         owner=ssh_user,
                     )
-                    image_ref = container_image_for_tool(
-                        "cosmos",
-                        registry=resolve_container_registry(proj_alias),
-                    )
+                    image_ref = container_image_for_tool("cosmos")
                     ssh.run(
                         "sudo systemctl stop npa-cosmos-server >/dev/null 2>&1 || true"
                     )
@@ -2852,6 +2850,8 @@ def deploy_cmd(
                     project_alias=proj_alias,
                     name=wb_name,
                 ),
+                source=str(merged_vars.get("application_cidr_block", "")),
+                allow_world_open=str(merged_vars.get("allow_world_open_application", "false")).lower() == "true",
                 warn=console.print,
             )
 
@@ -3207,7 +3207,7 @@ def train_cmd(
         info = client.create_job(
             project_id=resolved_project_id,
             name=name,
-            image=image or container_image_for_tool("cosmos", registry=resolve_container_registry(proj_alias)),
+            image=image or container_image_for_tool("cosmos"),
             command=_cosmos_train_smoke_command(smoke_seconds),
             gpu_type=resolved_gpu_type,
             gpu_count=resolved_gpu_count,

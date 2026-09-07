@@ -10,6 +10,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from contextlib import ExitStack
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -26,6 +27,12 @@ from npa.workflows.byof.postprocess import (
     PostprocessContext,
     has_registered_postprocess,
     run_registered_postprocess,
+)
+from npa.workflows.byof.source_auth import (
+    RepositoryAuthenticationError,
+    RepositorySecretFiles,
+    private_repository_secrets,
+    validate_repository_url,
 )
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -64,6 +71,13 @@ WAN_POSTPROCESS_CONTRACTS = {
         "wan2_2_ti2v_5b_multigpu.json",
     ),
 }
+
+
+def _redact_text(value: str, redactions: tuple[str, ...]) -> str:
+    result = value
+    for secret in sorted((item for item in redactions if item), key=len, reverse=True):
+        result = result.replace(secret, "<redacted>")
+    return result
 
 
 def _utc_stamp() -> str:
@@ -164,6 +178,7 @@ def _run(
     stdin: str | None = None,
     capture: bool = False,
     env: dict[str, str] | None = None,
+    redactions: tuple[str, ...] = (),
 ) -> subprocess.CompletedProcess[str]:
     runtime_env = dict(os.environ)
     # Avoid stale operator tokens overriding profile-based auth on shared VMs.
@@ -178,16 +193,18 @@ def _run(
         kwargs["stdout"] = subprocess.PIPE
         kwargs["stderr"] = subprocess.PIPE
     kwargs["env"] = runtime_env
-    print("+", " ".join(cmd))
+    print("+", _redact_text(" ".join(cmd), redactions))
     proc = subprocess.run(cmd, **kwargs)
     if proc.returncode != 0:
         if capture:
             raise RuntimeError(
-                f"command failed ({proc.returncode}): {' '.join(cmd)}\n"
-                f"stdout:\n{proc.stdout}\n"
-                f"stderr:\n{proc.stderr}"
+                f"command failed ({proc.returncode}): {_redact_text(' '.join(cmd), redactions)}\n"
+                f"stdout:\n{_redact_text(proc.stdout or '', redactions)}\n"
+                f"stderr:\n{_redact_text(proc.stderr or '', redactions)}"
             )
-        raise RuntimeError(f"command failed ({proc.returncode}): {' '.join(cmd)}")
+        raise RuntimeError(
+            f"command failed ({proc.returncode}): {_redact_text(' '.join(cmd), redactions)}"
+        )
     return proc
 
 
@@ -294,10 +311,15 @@ def _registry_path(image_ref: str) -> str:
 
 def _dockerfile_text() -> str:
     return (
+        "# syntax=docker/dockerfile:1.7\n"
         "ARG BYOF_BASE_IMAGE\n"
         "FROM ${BYOF_BASE_IMAGE}\n"
-        "ARG OSS_REPO_URL\n"
-        "ARG OSS_REPO_REF\n"
+        'ARG OSS_REPO_URL=""\n'
+        'ARG OSS_REPO_REF=""\n'
+        "ARG BYOF_SOURCE_VISIBILITY=public\n"
+        "ARG BYOF_SOURCE_CACHE_KEY=public\n"
+        "ARG BYOF_SOURCE_LABEL_REPO\n"
+        "ARG BYOF_SOURCE_LABEL_REF\n"
         "ARG BYOF_BUILD_COMMAND\n"
         "USER root\n"
         "RUN apt-get update && apt-get install -y --no-install-recommends \\\n"
@@ -315,22 +337,48 @@ def _dockerfile_text() -> str:
         "  && echo 'ubuntu ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/ubuntu \\\n"
         "  && chmod 440 /etc/sudoers.d/ubuntu\n"
         "RUN mkdir -p /workspace && chown ubuntu:ubuntu /workspace\n"
-        f'RUN git clone --depth 1 --branch "${{OSS_REPO_REF}}" "${{OSS_REPO_URL}}" {BYOF_REPO_MOUNT} \\\n'
-        f"  || (rm -rf {BYOF_REPO_MOUNT} \\\n"
-        f'    && git clone "${{OSS_REPO_URL}}" {BYOF_REPO_MOUNT} \\\n'
-        f"    && cd {BYOF_REPO_MOUNT} \\\n"
-        '    && git checkout "${OSS_REPO_REF}") \\\n'
-        f"  && chown -R ubuntu:ubuntu {BYOF_REPO_MOUNT}\n"
+        "RUN --mount=type=secret,id=npa_byof_repo_token \\\n"
+        "    --mount=type=secret,id=npa_byof_repo_url \\\n"
+        "    --mount=type=secret,id=npa_byof_repo_ref \\\n"
+        "    set -eu; \\\n"
+        '    test -n "${BYOF_SOURCE_CACHE_KEY}"; \\\n'
+        '    repo_url="${OSS_REPO_URL}"; repo_ref="${OSS_REPO_REF}"; \\\n'
+        "    if [ -s /run/secrets/npa_byof_repo_url ]; then repo_url=\"$(cat /run/secrets/npa_byof_repo_url)\"; fi; \\\n"
+        "    if [ -s /run/secrets/npa_byof_repo_ref ]; then repo_ref=\"$(cat /run/secrets/npa_byof_repo_ref)\"; fi; \\\n"
+        "    export GIT_TERMINAL_PROMPT=0; \\\n"
+        "    git_with_auth() { git \"$@\"; }; \\\n"
+        "    if [ -s /run/secrets/npa_byof_repo_token ]; then \\\n"
+        "      printf '%s\\n' '#!/bin/sh' \\\n"
+        "        '[ \"$1\" = get ] || exit 0' \\\n"
+        "        'printf \"username=x-access-token\\\\npassword=\"' \\\n"
+        "        'cat /run/secrets/npa_byof_repo_token' \\\n"
+        "        'printf \"\\\\n\\\\n\"' \\\n"
+        "        > /tmp/npa-byof-git-credential; \\\n"
+        "      chmod 700 /tmp/npa-byof-git-credential; \\\n"
+        "      git_with_auth() { git -c credential.useHttpPath=true -c credential.helper=/tmp/npa-byof-git-credential \"$@\"; }; \\\n"
+        "    fi; \\\n"
+        f'    git_with_auth clone --depth 1 --branch "$repo_ref" "$repo_url" {BYOF_REPO_MOUNT} \\\n'
+        f"    || (rm -rf {BYOF_REPO_MOUNT}; \\\n"
+        f'      git_with_auth clone "$repo_url" {BYOF_REPO_MOUNT}; \\\n'
+        f"      cd {BYOF_REPO_MOUNT}; git checkout \"$repo_ref\"); \\\n"
+        f"    if [ \"${{BYOF_SOURCE_VISIBILITY}}\" = private ]; then \\\n"
+        "      repo_sha=\"$(printf '%s' \"$repo_url\" | sha256sum | cut -d' ' -f1)\"; \\\n"
+        "      ref_sha=\"$(printf '%s' \"$repo_ref\" | sha256sum | cut -d' ' -f1)\"; \\\n"
+        f"      printf '{{\"source\":\"private-byof\",\"repository_sha256\":\"%s\",\"ref_sha256\":\"%s\"}}\\n' \"$repo_sha\" \"$ref_sha\" > {BYOF_REPO_MOUNT}/npa_source_metadata.json; \\\n"
+        f"      rm -rf {BYOF_REPO_MOUNT}/.git; \\\n"
+        "    else \\\n"
+        f"      printf '{{\\n  \"source\": \"oss-byof\",\\n  \"repo\": \"%s\",\\n  \"ref\": \"%s\"\\n}}\\n' \"$repo_url\" \"$repo_ref\" > {BYOF_REPO_MOUNT}/npa_source_metadata.json; \\\n"
+        "    fi; \\\n"
+        "    rm -f /tmp/npa-byof-git-credential; \\\n"
+        f"    chown -R ubuntu:ubuntu {BYOF_REPO_MOUNT}\n"
         f"WORKDIR {BYOF_REPO_MOUNT}\n"
         'RUN if [ -n "${BYOF_BUILD_COMMAND}" ]; then /bin/sh -lc "${BYOF_BUILD_COMMAND}"; fi\n'
         "RUN build_command_sha256=\"$(printf '%s' \"${BYOF_BUILD_COMMAND}\" | sha256sum | cut -d' ' -f1)\" \\\n"
         '  && if [ -n "${BYOF_BUILD_COMMAND}" ]; then build_command_executed=true; else build_command_executed=false; fi \\\n'
         f'  && printf \'{{"schema":"npa.byof.build.v1","build_command_executed":%s,"build_command_sha256":"%s"}}\\n\' \\\n'
         f'    "$build_command_executed" "$build_command_sha256" > {BYOF_REPO_MOUNT}/npa_build_metadata.json\n'
-        f'RUN printf \'{{\\n  "source": "oss-byof",\\n  "repo": "%s",\\n  "ref": "%s"\\n}}\\n\' \\\n'
-        f'  "${{OSS_REPO_URL}}" "${{OSS_REPO_REF}}" > {BYOF_REPO_MOUNT}/npa_source_metadata.json \\\n'
-        f"  && chown ubuntu:ubuntu {BYOF_REPO_MOUNT}/npa_source_metadata.json {BYOF_REPO_MOUNT}/npa_build_metadata.json\n"
-        'LABEL npa.byof.repo="${OSS_REPO_URL}" npa.byof.ref="${OSS_REPO_REF}" '
+        f"RUN chown ubuntu:ubuntu {BYOF_REPO_MOUNT}/npa_source_metadata.json {BYOF_REPO_MOUNT}/npa_build_metadata.json\n"
+        'LABEL npa.byof.repo="${BYOF_SOURCE_LABEL_REPO}" npa.byof.ref="${BYOF_SOURCE_LABEL_REF}" '
         'npa.packaging.tier="interactive" '
         'org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"\n'
         "USER ubuntu\n"
@@ -422,6 +470,20 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo-url", default=DEFAULT_REPO_URL)
     parser.add_argument("--repo-ref", default=DEFAULT_REPO_REF)
+    parser.add_argument(
+        "--repo-auth",
+        choices=("none", "github"),
+        default="none",
+        help="Source authentication mode; github uses a BuildKit secret mount.",
+    )
+    parser.add_argument(
+        "--repo-token-env",
+        default="",
+        help=(
+            "Environment variable holding a GitHub token. When omitted, github "
+            "auth uses GH_TOKEN, GITHUB_TOKEN, then the existing gh login."
+        ),
+    )
     parser.add_argument(
         "--project",
         default="",
@@ -515,6 +577,21 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
+    private_source = args.repo_auth == "github"
+    try:
+        validate_repository_url(args.repo_url, private=private_source)
+    except RepositoryAuthenticationError as exc:
+        print(
+            json.dumps(
+                {
+                    "status": "failed",
+                    "repo_auth": args.repo_auth,
+                    "error": str(exc),
+                },
+                indent=2,
+            )
+        )
+        return 1
     if is_openpi_request(
         solution_name=args.solution_name,
         repo_url=args.repo_url,
@@ -558,8 +635,9 @@ def main(argv: list[str] | None = None) -> int:
     base_registry = _registry_path(base_image) or (_registry_path(image) or registry)
 
     summary: dict[str, Any] = {
-        "repo_url": args.repo_url,
-        "repo_ref": args.repo_ref,
+        "repo_url": "<private-repository>" if private_source else args.repo_url,
+        "repo_ref": "<private-ref>" if private_source else args.repo_ref,
+        "repo_auth": args.repo_auth,
         "registry": registry,
         "base_profile": base_profile,
         "base_registry": base_registry,
@@ -579,6 +657,84 @@ def main(argv: list[str] | None = None) -> int:
     # must already exist in the caller's Docker config; NPA never mints provider IAM
     # registry tokens or creates a hidden registry-specific credential directory.
     docker_env: dict[str, str] = {}
+    redactions: tuple[str, ...] = ()
+    try:
+        with ExitStack() as secret_stack:
+            source_secrets: RepositorySecretFiles | None = None
+            if private_source:
+                source_secrets = secret_stack.enter_context(
+                    private_repository_secrets(
+                        args.repo_url,
+                        args.repo_ref,
+                        token_env=args.repo_token_env,
+                    )
+                )
+                summary["source_identity"] = {
+                    "repository_sha256": source_secrets.repository_sha256,
+                    "ref_sha256": source_secrets.ref_sha256,
+                }
+            redactions = (
+                source_secrets.redaction_values if source_secrets is not None else ()
+            )
+            return _run_byof(
+                args,
+                summary=summary,
+                source_secrets=source_secrets,
+                redactions=redactions,
+                docker_env=docker_env,
+                base_candidates=base_candidates,
+                base_image=base_image,
+                base_profile=base_profile,
+                image=image,
+                registry=registry,
+                skip_build=skip_build,
+                skip_push=skip_push,
+            )
+    except Exception as exc:
+        message = _redact_text(str(exc), redactions)
+        summary["status"] = "failed"
+        summary["error"] = message
+        if isinstance(exc, RepositoryAuthenticationError):
+            summary["hint"] = (
+                "Provide a fine-grained GitHub token with repository read access via "
+                "--repo-token-env, or refresh the existing GitHub CLI login."
+            )
+        elif "403 Forbidden" in message and (
+            "BYOF_BASE_IMAGE" in message or "ISAAC_BASE_IMAGE" in message
+        ):
+            summary["hint"] = (
+                "Registry pull for the base image was denied. "
+                "Pass --base-image from an accessible registry (e.g. ubuntu:22.04), "
+                "or use --base-profile isaac-lab with registry access to the sim image."
+            )
+        elif "docker push" in message and "403 Forbidden" in message:
+            summary["hint"] = (
+                "Registry push was denied for the target image. "
+                "Grant write access to the target repository, or use --skip-push "
+                "with an already-published image."
+            )
+        print(json.dumps(summary, indent=2, sort_keys=True))
+        hint = str(summary.get("hint") or "").strip()
+        if hint:
+            print(f"HINT: {hint}", file=sys.stderr)
+        return 1
+
+
+def _run_byof(
+    args: argparse.Namespace,
+    *,
+    summary: dict[str, Any],
+    source_secrets: RepositorySecretFiles | None,
+    redactions: tuple[str, ...],
+    docker_env: dict[str, str],
+    base_candidates: list[str],
+    base_image: str,
+    base_profile: str,
+    image: str,
+    registry: str,
+    skip_build: bool,
+    skip_push: bool,
+) -> int:
     try:
         postprocess_key = _required_postprocess_key(
             args, base_image=base_image, base_profile=base_profile
@@ -607,8 +763,7 @@ def main(argv: list[str] | None = None) -> int:
                         _registry_path(image) or registry
                     )
                     try:
-                        _run(
-                            [
+                        build_cmd = [
                                 "docker",
                                 "build",
                                 "--platform",
@@ -616,18 +771,50 @@ def main(argv: list[str] | None = None) -> int:
                                 "--build-arg",
                                 f"BYOF_BASE_IMAGE={base_image}",
                                 "--build-arg",
-                                f"OSS_REPO_URL={args.repo_url}",
+                                f"BYOF_SOURCE_VISIBILITY={'private' if source_secrets else 'public'}",
                                 "--build-arg",
-                                f"OSS_REPO_REF={args.repo_ref}",
+                                (
+                                    "BYOF_SOURCE_CACHE_KEY="
+                                    + (
+                                        source_secrets.repository_sha256
+                                        + source_secrets.ref_sha256
+                                        if source_secrets
+                                        else "public"
+                                    )
+                                ),
+                                "--build-arg",
+                                f"BYOF_SOURCE_LABEL_REPO={'<private-repository>' if source_secrets else args.repo_url}",
+                                "--build-arg",
+                                f"BYOF_SOURCE_LABEL_REF={'<private-ref>' if source_secrets else args.repo_ref}",
                                 "--build-arg",
                                 f"BYOF_BUILD_COMMAND={args.build_command}",
                                 "-t",
                                 image,
                                 str(context),
-                            ],
-                            env=docker_env or None,
-                            capture=True,
-                        )
+                            ]
+                        if source_secrets is None:
+                            build_cmd[8:8] = [
+                                "--build-arg",
+                                f"OSS_REPO_URL={args.repo_url}",
+                                "--build-arg",
+                                f"OSS_REPO_REF={args.repo_ref}",
+                            ]
+                        else:
+                            build_cmd[8:8] = [
+                                "--secret",
+                                f"id=npa_byof_repo_token,src={source_secrets.token}",
+                                "--secret",
+                                f"id=npa_byof_repo_url,src={source_secrets.repo_url}",
+                                "--secret",
+                                f"id=npa_byof_repo_ref,src={source_secrets.repo_ref}",
+                            ]
+                        run_kwargs: dict[str, Any] = {
+                            "env": docker_env or None,
+                            "capture": True,
+                        }
+                        if redactions:
+                            run_kwargs["redactions"] = redactions
+                        _run(build_cmd, **run_kwargs)
                         break
                     except Exception as exc:
                         last_build_error = exc
@@ -771,28 +958,9 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(summary, indent=2, sort_keys=True))
         return 0
     except Exception as exc:
-        message = str(exc)
-        summary["status"] = "failed"
-        summary["error"] = message
-        if "403 Forbidden" in message and (
-            "BYOF_BASE_IMAGE" in message or "ISAAC_BASE_IMAGE" in message
-        ):
-            summary["hint"] = (
-                "Registry pull for the base image was denied. "
-                "Pass --base-image from an accessible registry (e.g. ubuntu:22.04), "
-                "or use --base-profile isaac-lab with registry access to the sim image."
-            )
-        elif "docker push" in message and "403 Forbidden" in message:
-            summary["hint"] = (
-                "Registry push was denied for the target image. "
-                "Grant write access to the target repository, or use --skip-push "
-                "with an already-published image."
-            )
-        print(json.dumps(summary, indent=2, sort_keys=True))
-        hint = str(summary.get("hint") or "").strip()
-        if hint:
-            print(f"HINT: {hint}", file=sys.stderr)
-        return 1
+        # Do not retain an unsanitized exception as ``__cause__``: callers may
+        # serialize the exception chain even though the top-level message is safe.
+        raise RuntimeError(_redact_text(str(exc), redactions)) from None
 
 
 if __name__ == "__main__":

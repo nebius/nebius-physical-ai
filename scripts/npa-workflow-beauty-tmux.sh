@@ -12,7 +12,7 @@ cd "$REPO"
 PY="${REPO}/npa/.venv/bin/python"
 NPA="${REPO}/npa/.venv/bin/npa"
 export NPA_INTEGRATION_E2E=1
-SPECS="${REPO}/npa/workflows/workbench/npa-workflows"
+SPECS="${REPO}/workflows"
 
 LOG="/tmp/npa-workflow-beauty-$(date -u +%Y%m%dT%H%M%SZ).log"
 exec > >(tee -a "$LOG") 2>&1
@@ -27,7 +27,7 @@ while true; do
   FAILED=0
 
   echo "--- golden YAML validate (all specs) ---"
-  for spec in "${SPECS}"/*.yaml; do
+  for spec in "${SPECS}/main"/*.yaml "${SPECS}/testing"/*.yaml; do
     base=$(basename "$spec")
     echo "spec: ${base}"
     if ! "${NPA}" workbench workflow validate-spec "${spec}"; then

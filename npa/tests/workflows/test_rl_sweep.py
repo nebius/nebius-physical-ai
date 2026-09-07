@@ -67,7 +67,9 @@ def _runner(stdout: str = "", returncode: int = 0):
 
 
 def test_parse_overrides_splits_hydra_string() -> None:
-    assert rl_sweep.parse_overrides("agent.save_interval=1 agent.algorithm.lr=1.0e-3") == [
+    assert rl_sweep.parse_overrides(
+        "agent.save_interval=1 agent.algorithm.lr=1.0e-3"
+    ) == [
         "agent.save_interval=1",
         "agent.algorithm.lr=1.0e-3",
     ]
@@ -75,7 +77,26 @@ def test_parse_overrides_splits_hydra_string() -> None:
     assert rl_sweep.parse_overrides("") == []
 
 
-def test_train_variant_passes_overrides_and_publishes_metrics(local_storage, tmp_path) -> None:
+def test_cold_runtime_bootstraps_before_source_check(tmp_path: Path) -> None:
+    script = tmp_path / "isaaclab" / "scripts" / "train.py"
+    calls = []
+
+    def bootstrap(argv, **kwargs):
+        calls.append((argv, kwargs))
+        script.parent.mkdir(parents=True)
+        script.write_text("# real pinned source entrypoint\n", encoding="utf-8")
+        return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+
+    rl_sweep.ensure_training_entrypoint(
+        "/isaac-sim/python.sh", str(script), executor=bootstrap
+    )
+    assert calls[0][0] == ["/isaac-sim/python.sh", "-c", "pass"]
+    assert script.is_file()
+
+
+def test_train_variant_passes_overrides_and_publishes_metrics(
+    local_storage, tmp_path
+) -> None:
     runner = _runner(stdout="Mean reward: 12.5\nMean reward: 41.25\n")
     metrics = rl_sweep.train_variant(
         variant="lr-1e-3",
@@ -95,7 +116,7 @@ def test_train_variant_passes_overrides_and_publishes_metrics(local_storage, tmp
     assert "--task" in argv and "Isaac-Cartpole-v0" in argv
     assert "--max_iterations" in argv and "10" in argv
     assert "agent.algorithm.learning_rate=1.0e-3" in argv
-    assert "--headless" in argv
+    assert argv[argv.index("--visualizer") + 1] == "none"
 
     assert metrics["status"] == "success"
     assert metrics["variant"] == "lr-1e-3"
@@ -131,6 +152,7 @@ def test_select_best_ranks_variants(local_storage) -> None:
                 "variant": variant,
                 "status": "success",
                 "mean_reward": reward,
+                "checkpoint_uri": f"s3://bucket/sweep/{variant}/checkpoint.pt",
             },
             f"s3://bucket/sweep/{variant}/{rl_sweep.METRICS_FILENAME}",
         )
@@ -139,20 +161,30 @@ def test_select_best_ranks_variants(local_storage) -> None:
         sweep_uri="s3://bucket/sweep/",
         report_uri="s3://bucket/report/best.json",
         run_id="run-1",
+        expected_variants="a b c",
     )
 
     assert report["variant_count"] == 3
     assert report["succeeded"] == 3
     assert report["best_variant"] == "b"
     assert report["best_value"] == 7.5
-    assert json.loads((local_storage / "bucket/report/best.json").read_text())["best_variant"] == "b"
-
-
-def test_select_best_handles_missing_metrics(local_storage) -> None:
-    report = rl_sweep.select_best(
-        sweep_uri="s3://bucket/empty/", report_uri="s3://bucket/report/empty.json"
+    assert (
+        json.loads((local_storage / "bucket/report/best.json").read_text())[
+            "best_variant"
+        ]
+        == "b"
     )
-    assert report["variant_count"] == 0
+
+
+def test_select_best_rejects_missing_metrics(local_storage) -> None:
+    with pytest.raises(RuntimeError, match="incomplete Isaac Lab sweep"):
+        rl_sweep.select_best(
+            sweep_uri="s3://bucket/empty/",
+            report_uri="s3://bucket/report/empty.json",
+            expected_variants="a b c",
+        )
+    report = json.loads((local_storage / "bucket/report/empty.json").read_text())
+    assert report["status"] == "failed"
     assert report["best_variant"] == ""
 
 

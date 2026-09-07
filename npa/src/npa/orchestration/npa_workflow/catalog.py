@@ -38,12 +38,18 @@ class ToolEntry:
     # Additive defaults keep an existing external spec renderable when a public
     # toolRef gains optional CLI flags. Explicit spec config always wins.
     config_defaults: dict[str, str] = field(default_factory=dict)
+    # Capability names whose exact HF/NGC requirements must be probed before a
+    # selected workflow can provision, download, or submit.  The requirements
+    # themselves remain in npa.workbench.model_access; this metadata defines the
+    # dependency edge from a real toolRef to that provider-neutral catalog.
+    access_capabilities: tuple[str, ...] = ()
 
 
 # Public composable entries intentionally available to customer-authored specs,
 # even though no shipped reference spec consumes them today. Everything else in
 # TOOL_CATALOG must be reachable from at least one shipped spec.
 PUBLIC_REUSABLE_TOOLREFS: dict[str, str] = {
+    "workbench.curobo.plan": "Operator-provided Franka start/goal/scene manifests; benchmark workflow exercises the shared planner and artifact path.",
     "infra.fleet.deploy": "public npa.fleet deployment primitive",
     "infra.soperator.deploy": "public npa.soperator deployment primitive",
     "workbench.cosmos2.transfer": "public Cosmos Transfer composition primitive",
@@ -63,6 +69,10 @@ _BYOF_REPO_ARGV = [
     "{{config.repo_url}}",
     "--repo-ref",
     "{{config.repo_ref}}",
+    "--repo-auth",
+    "{{config.repo_auth}}",
+    "--repo-token-env",
+    "{{config.repo_token_env}}",
     "--base-profile",
     "{{config.base_profile}}",
     "--base-image",
@@ -99,12 +109,21 @@ _BYOF_REPO_ARGV = [
     "{{config.poll_interval}}",
     "--cleanup",
 ]
+_BYOF_REPO_CONFIG_DEFAULTS = {
+    "repo_auth": "none",
+    "repo_token_env": "",
+}
 
 _OPENPI_PIPELINE = ["python3", "-m", "npa.workflows.byof.openpi_pipeline"]
 _OPENPI_VENDOR_PIPELINE = [
     "/opt/venv/bin/python",
     "-m",
     "npa.workflows.byof.openpi_pipeline",
+]
+_OPENPI_FULL_DROID_PIPELINE = [
+    "/opt/venv/bin/python",
+    "-m",
+    "npa.workflows.byof.openpi_full_droid",
 ]
 
 _CONTENT_AGENTS_PIPELINE = [
@@ -114,6 +133,31 @@ _CONTENT_AGENTS_PIPELINE = [
 ]
 
 TOOL_CATALOG: dict[str, ToolEntry] = {
+    "workbench.curobo.prepare": ToolEntry(
+        name="workbench.curobo.prepare",
+        description="cuRobo V2 prepare with verified artifact handoffs.",
+        argv_template=['npa', 'workbench', 'curobo', 'prepare', '--output-path', '{{config.curobo_output_uri}}', '--mode', '{{config.curobo_mode}}'],
+    ),
+    "workbench.curobo.benchmark": ToolEntry(
+        name="workbench.curobo.benchmark",
+        description="cuRobo V2 benchmark with verified artifact handoffs.",
+        argv_template=['npa', 'workbench', 'curobo', 'benchmark', '--input-path', '{{config.curobo_input_uri}}', '--output-path', '{{config.curobo_output_uri}}', '--run-id', '{{run.id}}'],
+    ),
+    "workbench.curobo.plan": ToolEntry(
+        name="workbench.curobo.plan",
+        description="cuRobo V2 plan with verified artifact handoffs.",
+        argv_template=['npa', 'workbench', 'curobo', 'plan', '--input-path', '{{config.curobo_input_uri}}', '--output-path', '{{config.curobo_output_uri}}', '--run-id', '{{run.id}}'],
+    ),
+    "workbench.curobo.validate": ToolEntry(
+        name="workbench.curobo.validate",
+        description="cuRobo V2 validate with verified artifact handoffs.",
+        argv_template=['npa', 'workbench', 'curobo', 'validate', '--input-path', '{{config.curobo_input_uri}}', '--output-path', '{{config.curobo_output_uri}}', '--run-id', '{{run.id}}'],
+    ),
+    "workbench.curobo.visualize": ToolEntry(
+        name="workbench.curobo.visualize",
+        description="cuRobo V2 visualize with verified artifact handoffs.",
+        argv_template=['npa', 'workbench', 'curobo', 'visualize', '--input-path', '{{config.curobo_input_uri}}', '--output-path', '{{config.curobo_output_uri}}', '--run-id', '{{run.id}}'],
+    ),
     "workbench.alpamayo2_super.infer": ToolEntry(
         name="workbench.alpamayo2_super.infer",
         description=(
@@ -121,6 +165,7 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "trajectory inference. Model weights and gated PhysicalAI-AV data "
             "are fetched at runtime under the operator's Hugging Face identity."
         ),
+        access_capabilities=("alpamayo2-super",),
         argv_template=[
             "npa",
             "workbench",
@@ -193,6 +238,7 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "Verify NRE container pullability, real Hugging Face download "
             "authorization, and that the GPU has RT cores, before any GPU work."
         ),
+        access_capabilities=("nurec",),
         argv_template=[
             "npa",
             "workbench",
@@ -247,6 +293,7 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
     ),
     "workbench.nurec.reconstruct": ToolEntry(
         name="workbench.nurec.reconstruct",
+        access_capabilities=("nurec",),
         description=(
             "Train a 3DGUT Gaussian reconstruction with NRE into a renderable "
             "USDZ, with real val metrics and exported ground-truth frames."
@@ -285,6 +332,7 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
     ),
     "workbench.nurec.render": ToolEntry(
         name="workbench.nurec.render",
+        access_capabilities=("nurec",),
         description=(
             "Render novel views from a trained reconstruction with `nre render` "
             "using a rig offset (not the training views)."
@@ -432,11 +480,15 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
     "workbench.vlm_eval.run": ToolEntry(
         name="workbench.vlm_eval.run",
         description="Score rollout directories with the VLM eval workbench tool.",
+        config_defaults={"vlm_model": ""},
+        omit_flags_when_empty=("--model",),
         argv_template=[
             "npa",
             "workbench",
             "vlm-eval",
             "run",
+            "--model",
+            "{{config.vlm_model}}",
             "--input-path",
             "{{config.rollouts_uri}}",
             "--output-path",
@@ -450,11 +502,15 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
         description=(
             "Score a rollout against the plan an earlier reasoning stage produced."
         ),
+        config_defaults={"vlm_model": ""},
+        omit_flags_when_empty=("--model",),
         argv_template=[
             "npa",
             "workbench",
             "vlm-eval",
             "run",
+            "--model",
+            "{{config.vlm_model}}",
             "--input-path",
             "{{config.rollouts_uri}}",
             "--output-path",
@@ -480,11 +536,15 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
         description=(
             "Score every rollout under a prefix and write an aggregate task-success report."
         ),
+        config_defaults={"vlm_model": ""},
+        omit_flags_when_empty=("--model",),
         argv_template=[
             "npa",
             "workbench",
             "vlm-eval",
             "loop",
+            "--model",
+            "{{config.vlm_model}}",
             "--input-path",
             "{{config.rollouts_uri}}",
             "--output-path",
@@ -503,12 +563,16 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
     ),
     "workbench.token_factory.reason": ToolEntry(
         name="workbench.token_factory.reason",
-        description="Run Cosmos reasoner over scene inputs.",
+        description="Run the selected hosted reasoner over scene inputs.",
+        config_defaults={"reason_model": ""},
+        omit_flags_when_empty=("--model",),
         argv_template=[
             "npa",
             "workbench",
             "token-factory",
             "reason",
+            "--model",
+            "{{config.reason_model}}",
             "--input-path",
             "{{config.scene_uri}}",
             "--output-path",
@@ -518,6 +582,7 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
     "workbench.cosmos2.transfer": ToolEntry(
         name="workbench.cosmos2.transfer",
         description="Cosmos Transfer augment stage.",
+        access_capabilities=("cosmos2",),
         argv_template=[
             "npa",
             "workbench",
@@ -533,6 +598,7 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
     ),
     "workbench.cosmos2.transfer_execute": ToolEntry(
         name="workbench.cosmos2.transfer_execute",
+        access_capabilities=("cosmos2",),
         description=(
             "Run the REAL Cosmos-Transfer2.5 model (GPU) and upload augmented video "
             "+ frames to S3, conditioned on the chosen control modality (edge, vis, "
@@ -637,6 +703,7 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
     ),
     "workbench.cosmos2.transfer_conditioned_execute": ToolEntry(
         name="workbench.cosmos2.transfer_conditioned_execute",
+        access_capabilities=("cosmos2",),
         description=(
             "Run the REAL Cosmos-Transfer2.5 model conditioned on the input video "
             "and upload its video, exact frame list, and manifest to S3."
@@ -658,6 +725,7 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
     ),
     "workbench.cosmos3.text_to_image": ToolEntry(
         name="workbench.cosmos3.text_to_image",
+        access_capabilities=("cosmos3",),
         description="Generate an image from a prompt with the Cosmos3 framework and publish it.",
         argv_template=[
             "npa",
@@ -949,6 +1017,7 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "RL, datagen, container-verify, or solution smoke."
         ),
         argv_template=_BYOF_REPO_ARGV,
+        config_defaults=dict(_BYOF_REPO_CONFIG_DEFAULTS),
     ),
     "workbench.openpi.prepare_data": ToolEntry(
         name="workbench.openpi.prepare_data",
@@ -1115,6 +1184,103 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.expected_compute_capability}}",
         ],
     ),
+    "workbench.openpi.full_droid_prepare": ToolEntry(
+        name="workbench.openpi.full_droid_prepare",
+        description=(
+            "Checksum-stage DROID 1.0.1 and compute the upstream-prescribed "
+            "normalization statistics on durable shared storage."
+        ),
+        argv_template=[
+            *_OPENPI_FULL_DROID_PIPELINE,
+            "prepare",
+            "--output-uri",
+            "{{config.prepare_uri}}",
+            "--rrd-uri",
+            "{{config.prepare_rrd_uri}}",
+            "--milestone-manifest-uri",
+            "{{config.prepare_rrd_manifest_uri}}",
+            "--run-id",
+            "{{run.id}}",
+            "--runtime-image",
+            "{{config.runtime_image}}",
+            "--work-root",
+            "{{config.work_root}}",
+            "--data-root",
+            "{{config.data_root}}",
+            "--experiment",
+            "{{run.id}}",
+        ],
+    ),
+    "workbench.openpi.full_droid_qualification": ToolEntry(
+        name="workbench.openpi.full_droid_qualification",
+        description=(
+            "Run a fixed 100-step distributed pi0.5 optimizer qualification "
+            "across eight one-RTX-PRO-6000 nodes and publish its factual RRD."
+        ),
+        argv_template=[
+            *_OPENPI_FULL_DROID_PIPELINE,
+            "qualify",
+            "--prepare-uri",
+            "{{config.prepare_uri}}",
+            "--output-uri",
+            "{{config.qualification_uri}}",
+            "--checkpoint-uri",
+            "{{config.qualification_checkpoint_uri}}",
+            "--telemetry-uri",
+            "{{config.qualification_telemetry_uri}}",
+            "--rrd-root-uri",
+            "{{config.rrd_root_uri}}",
+            "--run-id",
+            "{{run.id}}",
+            "--runtime-image",
+            "{{config.runtime_image}}",
+            "--work-root",
+            "{{config.work_root}}",
+            "--data-root",
+            "{{config.data_root}}",
+            "--experiment",
+            "{{run.id}}-qualification",
+        ],
+        multi_node_mode="sharded",
+        shard_activation_config="multi_host_enabled",
+        shard_output_config="qualification_checkpoint_uri",
+    ),
+    "workbench.openpi.full_droid_finetune": ToolEntry(
+        name="workbench.openpi.full_droid_finetune",
+        description=(
+            "Run the pinned upstream 100,000-step pi0.5 full-DROID recipe across "
+            "eight one-RTX-PRO-6000 nodes and publish the immutable checkpoint."
+        ),
+        argv_template=[
+            *_OPENPI_FULL_DROID_PIPELINE,
+            "train",
+            "--prepare-uri",
+            "{{config.prepare_uri}}",
+            "--output-uri",
+            "{{config.training_uri}}",
+            "--checkpoint-uri",
+            "{{config.trained_checkpoint_uri}}",
+            "--telemetry-uri",
+            "{{config.telemetry_uri}}",
+            "--rrd-root-uri",
+            "{{config.rrd_root_uri}}",
+            "--run-id",
+            "{{run.id}}",
+            "--pause-after-updates",
+            "{{config.pause_after_updates}}",
+            "--runtime-image",
+            "{{config.runtime_image}}",
+            "--work-root",
+            "{{config.work_root}}",
+            "--data-root",
+            "{{config.data_root}}",
+            "--experiment",
+            "{{run.id}}",
+        ],
+        multi_node_mode="sharded",
+        shard_activation_config="multi_host_enabled",
+        shard_output_config="trained_checkpoint_uri",
+    ),
     "workbench.openpi.evaluate": ToolEntry(
         name="workbench.openpi.evaluate",
         description=(
@@ -1158,6 +1324,7 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
         name="workbench.isaac_lab.byof_repo",
         description="Compatibility alias for workbench.byof.repo.",
         argv_template=_BYOF_REPO_ARGV,
+        config_defaults=dict(_BYOF_REPO_CONFIG_DEFAULTS),
     ),
     "workbench.rl.policy_train": ToolEntry(
         name="workbench.rl.policy_train",
@@ -1930,6 +2097,30 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "json",
         ],
     ),
+    "workbench.token_factory.batch_generate": ToolEntry(
+        name="workbench.token_factory.batch_generate",
+        description="Generate text completions through Token Factory batch inference (zero-GPU).",
+        argv_template=[
+            "npa",
+            "workbench",
+            "token-factory",
+            "batch-generate",
+            "--input-path",
+            "{{config.prompts_uri}}",
+            "--output-path",
+            "{{config.generations_uri}}",
+            "--model",
+            "{{config.batch_model}}",
+            "--max-tokens",
+            "{{config.max_tokens}}",
+            "--completion-window",
+            "{{config.completion_window}}",
+            "--timeout",
+            "{{config.batch_timeout_s}}",
+            "--output",
+            "json",
+        ],
+    ),
     "workbench.vlm_eval.benchmark": ToolEntry(
         name="workbench.vlm_eval.benchmark",
         description="Benchmark VLM backends against a fixture or rollout set.",
@@ -2122,6 +2313,7 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
     ),
     "workbench.groot.finetune": ToolEntry(
         name="workbench.groot.finetune",
+        access_capabilities=("groot",),
         description=(
             "Fine-tune NVIDIA GR00T N1.7 in the stage's own GPU container and "
             "publish the vendor checkpoints plus an NPA provenance manifest."
@@ -2293,6 +2485,7 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
     ),
     "workbench.groot.baseline_eval": ToolEntry(
         name="workbench.groot.baseline_eval",
+        access_capabilities=("groot",),
         description=(
             "Initialize the custom embodiment from the pinned base checkpoint with "
             "train-only statistics and run real held-out Gr00tPolicy forwards."
@@ -2312,6 +2505,8 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.baseline_checkpoint_uri}}",
             "--base-model",
             "{{config.base_model}}",
+            "--robot-embodiment",
+            "{{config.robot_embodiment}}",
             "--run-id",
             "{{run.id}}",
             "--action-horizon",
@@ -2322,6 +2517,7 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
     ),
     "workbench.groot.posttrain_eval": ToolEntry(
         name="workbench.groot.posttrain_eval",
+        access_capabilities=("groot",),
         description="Run the identical real held-out evaluation on the trained checkpoint.",
         argv_template=[
             "python3",
@@ -2336,6 +2532,8 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.offline_candidate_eval_uri}}",
             "--arrays-uri",
             "{{config.offline_candidate_arrays_uri}}",
+            "--robot-embodiment",
+            "{{config.robot_embodiment}}",
             "--run-id",
             "{{run.id}}",
             "--action-horizon",
@@ -2500,6 +2698,7 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
     ),
     "workbench.cosmos3.generate": ToolEntry(
         name="workbench.cosmos3.generate",
+        access_capabilities=("cosmos3",),
         description=(
             "Generate an image or video with the Cosmos 3 omni model (real "
             "inference in the npa-cosmos3 image; public Cosmos3-Nano downloads "
@@ -2526,6 +2725,62 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.cosmos3_guidance}}",
             "--num-steps",
             "{{config.cosmos3_steps}}",
+            "--run-id",
+            "{{run.id}}",
+        ],
+    ),
+    "workbench.cosmos3.super_benchmark": ToolEntry(
+        name="workbench.cosmos3.super_benchmark",
+        access_capabilities=("cosmos3-serving",),
+        description=(
+            "Run the real fixed Cosmos3-Super eight-GPU benchmark or the isolated "
+            "one-H200 TP-1 validation, validate every MP4, and publish per-attempt "
+            "records."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "cosmos3",
+            "super-benchmark",
+            "--output-path",
+            "{{config.output_uri}}",
+            "--topologies",
+            "{{config.topologies}}",
+            "--attempts",
+            "{{config.attempts}}",
+            "--suite",
+            "{{config.suite}}",
+            "--gpu-family",
+            "{{config.gpu_family}}",
+            "--base-port",
+            "{{config.base_port}}",
+            "--run-id",
+            "{{run.id}}",
+        ],
+    ),
+    "workbench.cosmos3.ray_batch": ToolEntry(
+        name="workbench.cosmos3.ray_batch",
+        access_capabilities=("cosmos3-serving",),
+        description=(
+            "Submit a durable SDG batch to a persistent Cosmos Framework native "
+            "Ray Serve endpoint and publish inputs, structured outputs, media, "
+            "integrity hashes, and provenance through S3."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "cosmos3",
+            "ray-batch",
+            "--input-path",
+            "{{config.input_uri}}",
+            "--output-path",
+            "{{config.output_uri}}",
+            "--endpoint",
+            "{{config.ray_endpoint}}",
+            "--token-env",
+            "{{config.ray_token_env}}",
+            "--timeout",
+            "{{config.request_timeout}}",
             "--run-id",
             "{{run.id}}",
         ],
@@ -2561,6 +2816,7 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
     ),
     "workbench.cosmos3.generate_variants": ToolEntry(
         name="workbench.cosmos3.generate_variants",
+        access_capabilities=("cosmos3",),
         description=(
             "Run real Cosmos 3 video2video inference once per PAIDF variant, "
             "with source-video conditioning and bounded adaptive refinement."
@@ -2619,6 +2875,7 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
     ),
     "workbench.cosmos3.checkpoint_eval": ToolEntry(
         name="workbench.cosmos3.checkpoint_eval",
+        access_capabilities=("cosmos3",),
         description=(
             "Run a guarded Cosmos 3 still-image checkpoint evaluation phase in "
             "the npa-cosmos3 image. Checkpoints and guardrails download at runtime."
@@ -2662,8 +2919,176 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{run.id}}",
         ],
     ),
-}
 
+    "workbench.robocasa.task_registration": ToolEntry(
+        name="workbench.robocasa.task_registration",
+        description="Verify RoboCasa Gymnasium task registration.",
+        argv_template=[
+            "npa",
+            "workbench",
+            "robocasa",
+            "run",
+            "--capability",
+            "kitchen_task_registration",
+            "--env-id",
+            "{{config.env_id}}",
+            "--output-path",
+            "{{config.output_uri}}",
+            "--service",
+            "--endpoint",
+            "{{config.robocasa_endpoint}}",
+            "--wait",
+            "--poll-seconds",
+            "{{config.poll_seconds}}",
+            "--timeout-seconds",
+            "{{config.timeout_seconds}}",
+        ],
+    ),
+    "workbench.robocasa.asset_availability": ToolEntry(
+        name="workbench.robocasa.asset_availability",
+        description="Verify RoboCasa kitchen asset availability.",
+        argv_template=[
+            "npa",
+            "workbench",
+            "robocasa",
+            "run",
+            "--capability",
+            "kitchen_asset_availability",
+            "--env-id",
+            "{{config.env_id}}",
+            "--output-path",
+            "{{config.output_uri}}",
+            "--service",
+            "--endpoint",
+            "{{config.robocasa_endpoint}}",
+            "--wait",
+            "--poll-seconds",
+            "{{config.poll_seconds}}",
+            "--timeout-seconds",
+            "{{config.timeout_seconds}}",
+        ],
+    ),
+    "workbench.robocasa.egl_env_reset": ToolEntry(
+        name="workbench.robocasa.egl_env_reset",
+        description="Create and reset a headless EGL RoboCasa environment.",
+        argv_template=[
+            "npa",
+            "workbench",
+            "robocasa",
+            "run",
+            "--capability",
+            "kitchen_egl_env_reset",
+            "--env-id",
+            "{{config.env_id}}",
+            "--output-path",
+            "{{config.output_uri}}",
+            "--service",
+            "--endpoint",
+            "{{config.robocasa_endpoint}}",
+            "--wait",
+            "--poll-seconds",
+            "{{config.poll_seconds}}",
+            "--timeout-seconds",
+            "{{config.timeout_seconds}}",
+        ],
+    ),
+    "workbench.robocasa.random_rollout": ToolEntry(
+        name="workbench.robocasa.random_rollout",
+        description="Run a real RoboCasa random rollout with a video artifact.",
+        argv_template=[
+            "npa",
+            "workbench",
+            "robocasa",
+            "run",
+            "--capability",
+            "kitchen_random_rollout",
+            "--env-id",
+            "{{config.env_id}}",
+            "--output-path",
+            "{{config.output_uri}}",
+            "--iterations",
+            "{{config.iterations}}",
+            "--num-envs",
+            "{{config.num_envs}}",
+            "--service",
+            "--endpoint",
+            "{{config.robocasa_endpoint}}",
+            "--wait",
+            "--poll-seconds",
+            "{{config.poll_seconds}}",
+            "--timeout-seconds",
+            "{{config.timeout_seconds}}",
+        ],
+    ),
+    "workbench.robocasa.trajectory_export": ToolEntry(
+        name="workbench.robocasa.trajectory_export",
+        description=(
+            "Run a batch of real RoboCasa kitchen rollouts across task/env "
+            "configs and export per-episode trajectories (workspace/wrist "
+            "images, robot state, actions) plus metadata, metrics, and MP4 "
+            "video to S3 for LeRobotDataset materialization."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "robocasa",
+            "run",
+            "--capability",
+            "kitchen_trajectory_export",
+            "--env-id",
+            "{{config.env_id}}",
+            "--output-path",
+            "{{config.output_uri}}",
+            "--iterations",
+            "{{config.iterations}}",
+            "--num-envs",
+            "{{config.num_envs}}",
+            "--service",
+            "--endpoint",
+            "{{config.robocasa_endpoint}}",
+            "--wait",
+            "--poll-seconds",
+            "{{config.poll_seconds}}",
+            "--timeout-seconds",
+            "{{config.timeout_seconds}}",
+        ],
+    ),
+    "workbench.robocasa.policy_eval": ToolEntry(
+        name="workbench.robocasa.policy_eval",
+        description=(
+            "Load the exact produced ACT checkpoint and evaluate it on explicitly "
+            "disjoint held-out RoboCasa tasks and episodes with videos and hashes."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "robocasa",
+            "run",
+            "--capability",
+            "kitchen_policy_eval",
+            "--checkpoint-uri",
+            "{{config.artifacts_uri}}",
+            "--train-env-ids",
+            "{{config.train_env_ids}}",
+            "--heldout-env-ids",
+            "{{config.heldout_env_ids}}",
+            "--output-path",
+            "{{config.rollouts_uri}}",
+            "--iterations",
+            "{{config.eval_iterations}}",
+            "--num-envs",
+            "{{config.rollout_episodes}}",
+            "--service",
+            "--endpoint",
+            "{{config.robocasa_endpoint}}",
+            "--wait",
+            "--poll-seconds",
+            "{{config.poll_seconds}}",
+            "--timeout-seconds",
+            "{{config.timeout_seconds}}",
+        ],
+    ),
+}
 
 def validate_tool_ref(tool_ref: str) -> ToolEntry:
     entry = TOOL_CATALOG.get(tool_ref)

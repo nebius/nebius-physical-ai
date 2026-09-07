@@ -84,7 +84,12 @@ def reconcile_agent_setup(
     evidence["credential_fingerprint"] = str(
         payload.get("credential_fingerprint") or ""
     )
-    required_credentials = {"llm.env", "s3.env", "nebius.env"}
+    required_credentials = {
+        "llm.env",
+        "s3.env",
+        "artifact-sources.env",
+        "nebius.env",
+    }
     credential_files = set(payload.get("credential_fingerprint_files") or [])
     if not evidence["service_fingerprint"] or not required_credentials.issubset(
         credential_files

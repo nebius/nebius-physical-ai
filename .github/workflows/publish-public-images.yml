@@ -27,10 +27,22 @@ on:
         description: "Comma/space-separated tools to preflight or promote"
         required: false
         default: ""
+      release_tag:
+        description: "Optional new immutable release tag; requires exactly one tool and accepted digest"
+        required: false
+        default: ""
+      expected_source_digest:
+        description: "Exact public dev digest already accepted on a real GPU; required with release_tag"
+        required: false
+        default: ""
       build_development_tools:
         description: "Comma/space-separated public tools to build and push as dev-<sha>"
         required: false
         default: ""
+      build_runner_label:
+        description: "Runner label for public development image builds"
+        required: false
+        default: "ubuntu-latest"
       cleanup_development_tools:
         description: "Exact failed/superseded dev tags to delete without promotion"
         required: false
@@ -43,7 +55,8 @@ permissions:
   id-token: write
 
 concurrency:
-  group: public-image-${{ inputs.target || 'ghcr.io/nebius/nebius-physical-ai' }}-${{ inputs.development_sha || github.sha }}
+  # Serialize additive aliases even when two reviewed development SHAs differ.
+  group: public-image-${{ inputs.target || 'ghcr.io/nebius/nebius-physical-ai' }}-${{ inputs.release_tag || inputs.development_sha || github.sha }}
   cancel-in-progress: false
 
 jobs:
@@ -139,6 +152,28 @@ jobs:
           print(f"cleanup_count={len(cleanup)}")
           PY
 
+      - name: Validate additive release selection without changing defaults
+        env:
+          TARGET: ${{ steps.plan.outputs.target }}
+          DEVELOPMENT_SHA: ${{ inputs.development_sha }}
+          SELECTED_TOOLS: ${{ inputs.tool }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          EXPECTED_SOURCE_DIGEST: ${{ inputs.expected_source_digest }}
+          BUILD_COUNT: ${{ steps.plan.outputs.build_count }}
+          CLEANUP_COUNT: ${{ steps.plan.outputs.cleanup_count }}
+        run: |
+          set -euo pipefail
+          if [ -n "$RELEASE_TAG" ] || [ -n "$EXPECTED_SOURCE_DIGEST" ]; then
+            test "$BUILD_COUNT" = 0 && test "$CLEANUP_COUNT" = 0 || {
+              echo "::error::Additive release selection cannot build or clean development images"
+              exit 1
+            }
+            npa/.venv/bin/python .github/scripts/publish_selected_public_image.py \
+              --target "$TARGET" --development-sha "$DEVELOPMENT_SHA" \
+              --tool "$SELECTED_TOOLS" --release-tag "$RELEASE_TAG" \
+              --expected-source-digest "$EXPECTED_SOURCE_DIGEST" --mode plan
+          fi
+
   build-development:
     needs: resolve
     if: ${{ needs.resolve.outputs.build_count != '0' }}
@@ -146,13 +181,15 @@ jobs:
       fail-fast: false
       matrix:
         include: ${{ fromJSON(needs.resolve.outputs.build_matrix) }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.build_runner_label || 'ubuntu-latest' }}
     env:
       IMAGE: ${{ matrix.image }}
       TOOL: ${{ matrix.tool }}
       DOCKERFILE: ${{ matrix.dockerfile }}
       DEVELOPMENT_SHA: ${{ needs.resolve.outputs.development_sha }}
       NPA_PUBLIC_REGISTRY: ${{ needs.resolve.outputs.target }}
+      # Updated only after independent review of the exact public content proofs.
+      CUROBO_PUBLIC_NATIVE_POLICY_SHA256: eb4054769344ad598a717095be35d5a22d5b62a6e575c9d25af05442e5ef1fee
     steps:
       - uses: actions/checkout@v6
         with:
@@ -160,7 +197,8 @@ jobs:
 
       - uses: actions/setup-python@v6
         with:
-          python-version: "3.11"
+          # cuRobo's additional byte scanner uses a verified CPython 3.12 wheel.
+          python-version: ${{ matrix.tool == 'curobo' && '3.12' || '3.11' }}
 
       - name: Install NPA validation environment
         run: |
@@ -177,6 +215,7 @@ jobs:
             npa/tests/docker/test_ltx_runtime_bootstrap.py \
             npa/tests/docker/test_ltx_image_payload_scan.py \
             npa/tests/docker/test_cosmos3_serving_image_contract.py \
+            npa/tests/docker/test_cosmos3_ray_serve_image_contract.py \
             npa/tests/docker/test_sonic_mujoco_public_image_contract.py \
             npa/tests/deploy/test_public_publish.py \
             npa/tests/guardrails/test_secure_image_build_skill.py \
@@ -194,7 +233,35 @@ jobs:
           sudo install -m 0755 gitleaks /usr/local/bin/gitleaks
           gitleaks detect --source . --config .gitleaks.toml --redact --no-banner --log-opts="origin/main..HEAD"
 
-      - name: Prove an existing destination package is public
+      - name: Validate required cuRobo confidentiality policy before building
+        if: matrix.tool == 'curobo'
+        env:
+          CUSTOMER_DENYLIST: ${{ secrets.CUSTOMER_DENYLIST }}
+          INFRA_DENYLIST: ${{ secrets.INFRA_DENYLIST }}
+        run: |
+          npa/.venv/bin/python npa/scripts/image_byte_scan/prepare.py check-policy \
+            --policy-mode ci-regex
+
+      - name: Prepare and test the cuRobo complete-byte scanner
+        if: matrix.tool == 'curobo'
+        run: |
+          set -euo pipefail
+          umask 077
+          scan_root="$(mktemp -d "$RUNNER_TEMP/curobo-byte-gate.XXXXXXXX")"
+          echo "CUROBO_BYTE_GATE_ROOT=$scan_root" >> "$GITHUB_ENV"
+          npa/.venv/bin/python npa/scripts/image_byte_scan/go_helper/build.py \
+            --analysis-root "$scan_root" --trusted-root "$GITHUB_WORKSPACE" \
+            --output-dir "$scan_root/tools"
+          npa/.venv/bin/python npa/scripts/image_byte_scan/prepare.py dependencies \
+            --analysis-root "$scan_root" --trusted-root "$GITHUB_WORKSPACE" \
+            --output-dir "$scan_root/native"
+          npa/.venv/bin/python npa/scripts/image_byte_scan/real_helper_checks.py \
+            --analysis-root "$scan_root" --trusted-root "$GITHUB_WORKSPACE" \
+            --tools-receipt "$scan_root/tools/dependency-receipt.json" \
+            --native-receipt "$scan_root/native/dependencies.json" \
+            --output-dir "$scan_root/integration-checks"
+
+      - name: Prove destination cannot expose unvalidated tagged bytes
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -206,14 +273,34 @@ jobs:
           encoded="${package//\//%2F}"
           response="$(mktemp)"
           status="$(gh api --silent --include "/orgs/${owner}/packages/container/${encoded}" >"$response" 2>/dev/null; printf '%s' "$?")"
+          package_api="/orgs/${owner}/packages/container/${encoded}"
           if [ "$status" = 0 ]; then
-            test "$(gh api "/orgs/${owner}/packages/container/${encoded}" --jq .visibility)" = public
+            visibility="$(gh api "$package_api" --jq .visibility)"
+            if [ "$visibility" = public ]; then
+              echo "Existing package is already public." >> "$GITHUB_STEP_SUMMARY"
+            elif [ "$visibility" = private ]; then
+              # A failed first publication can leave private, untagged OCI
+              # attestations behind after its exact tagged image version is deleted.
+              # Those referrers must not prevent a clean retry, but a private package
+              # containing any tagged image could expose unvalidated bytes when the
+              # successful retry switches the package to public below.
+              versions="$(mktemp)"
+              gh api --paginate --slurp "${package_api}/versions?per_page=100" | jq 'add' > "$versions"
+              tagged_count="$(jq '[.[] | select((.metadata.container.tags // []) | length > 0)] | length' "$versions")"
+              if [ "$tagged_count" != 0 ]; then
+                echo "::error::Private destination contains tagged versions; refusing a visibility change"
+                exit 1
+              fi
+              echo "Private destination contains no tagged image versions; exact pushed-byte gates and visibility verification apply." >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "::error::Unsupported destination visibility: $visibility"
+              exit 1
+            fi
           elif grep -q '^HTTP/.* 404 ' "$response"; then
-            # The organisation policy forbids private package creation. A new package
-            # can therefore be created only after every byte-level gate below passes;
-            # the post-push anonymous check remains mandatory and failure triggers the
-            # exact run-owned version cleanup job.
-            echo "New package; organisation policy and post-push anonymous verification apply." >> "$GITHUB_STEP_SUMMARY"
+            # A new package is created only after every local byte-level gate below
+            # passes. The pushed digest is scanned again before the package visibility
+            # changes, and any failure triggers exact run-owned version cleanup.
+            echo "New package; exact pushed-byte gates and post-push anonymous verification apply." >> "$GITHUB_STEP_SUMMARY"
           else
             echo "::error::Could not prove destination package state"
             exit 1
@@ -223,21 +310,46 @@ jobs:
 
       - uses: imjasonh/setup-crane@v0.4
 
+      # Some public workbench Dockerfiles inherit other immutable public NPA
+      # packages. Authenticate pulls here because setup-crane installs an
+      # intentionally invalid placeholder credential; no registry write occurs
+      # until the separately gated push step below.
+      - name: Authenticate immutable public base pulls
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Stage supported workflow catalog in the package build context
+        run: npa/.venv/bin/python npa/src/npa/workflow_build.py --stage-catalog --package-root npa
+
       # Build locally first. Every gate below inspects these exact bytes; no registry write
       # occurs until the final explicit docker push.
       - name: Build immutable development image locally
         run: |
+          set -euo pipefail
+          build_args=(--build-arg "NPA_SOURCE_SHA=$DEVELOPMENT_SHA")
+          if [[ "$TOOL" == curobo ]]; then
+            curobo_source_epoch="$(git show -s --format=%ct "$DEVELOPMENT_SHA")"
+            [[ "$curobo_source_epoch" =~ ^[1-9][0-9]*$ ]] || { echo "Positive source commit epoch is required" >&2; exit 1; }
+            build_args+=(--build-arg "SOURCE_DATE_EPOCH=$curobo_source_epoch")
+          fi
           docker buildx build \
             --load \
             --file "$DOCKERFILE" \
-            --build-arg "NPA_SOURCE_SHA=$DEVELOPMENT_SHA" \
+            "${build_args[@]}" \
             --label "org.opencontainers.image.revision=$DEVELOPMENT_SHA" \
             --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
             --tag "$IMAGE" \
             npa
 
       - name: Enforce runtime, revision, bootstrap, config, and history contracts
+        env:
+          CUSTOMER_DENYLIST: ${{ matrix.tool == 'curobo' && secrets.CUSTOMER_DENYLIST || '' }}
+          INFRA_DENYLIST: ${{ matrix.tool == 'curobo' && secrets.INFRA_DENYLIST || '' }}
         run: |
+          set -euo pipefail
           npa/.venv/bin/python - <<'PY'
           import json
           import os
@@ -265,10 +377,42 @@ jobs:
           if any(value in history for value in forbidden):
               raise SystemExit("cached EULA acceptance found in layer history")
           PY
+          # The loaded runtime image remains in Docker's image store. BuildKit's
+          # disposable construction cache can be larger than the image itself and
+          # otherwise leaves insufficient space to serialize large GPU images for
+          # the mandatory layer-by-layer payload scan.
+          docker buildx prune --all --force
           docker save --output "$RUNNER_TEMP/${TOOL}.tar" "$IMAGE"
           npa/.venv/bin/python npa/scripts/scan_image_omniverse_payload.py \
             --tarball "$RUNNER_TEMP/${TOOL}.tar" \
             --json "$RUNNER_TEMP/${TOOL}-payload.json"
+          if [ "$TOOL" = curobo ]; then
+            npa/.venv/bin/python npa/docker/workbench/curobo/verify_image.py \
+              --docker-save "$RUNNER_TEMP/${TOOL}.tar" \
+              --expected-image-id "$(docker image inspect --format '{{.Id}}' "$IMAGE")" \
+              --json "$RUNNER_TEMP/${TOOL}-curobo-payload.json"
+            umask 077
+            phase="$CUROBO_BYTE_GATE_ROOT/pre"
+            mkdir -m 0700 "$phase"
+            mv "$RUNNER_TEMP/${TOOL}.tar" "$phase/image.tar"
+            mv "$RUNNER_TEMP/${TOOL}-curobo-payload.json" "$phase/graph.json"
+            chmod 0600 "$phase/image.tar" "$phase/graph.json"
+            expected_image_id="$(jq -er '.expected_image_id' "$phase/graph.json")"
+            npa/.venv/bin/python npa/scripts/image_byte_scan/prepare.py authorize \
+              --analysis-root "$CUROBO_BYTE_GATE_ROOT" --trusted-root "$GITHUB_WORKSPACE" \
+              --tools-receipt "$CUROBO_BYTE_GATE_ROOT/tools/dependency-receipt.json" \
+              --native-receipt "$CUROBO_BYTE_GATE_ROOT/native/dependencies.json" \
+              --archive "$phase/image.tar" --verification-report "$phase/graph.json" \
+              --expected-image-id "$expected_image_id" \
+              --output-dir "$phase/authorization" --policy-mode ci-regex
+            npa/.venv/bin/python npa/scripts/scan_image_bytes.py \
+              --analysis-root "$CUROBO_BYTE_GATE_ROOT" --trusted-root "$GITHUB_WORKSPACE" \
+              --authorization "$phase/authorization/authorization.json" \
+              --output-dir "$phase/scan" \
+              --public-native-policy "$GITHUB_WORKSPACE/npa/scripts/image_byte_scan/public_policies/curobo-v2.json" \
+              --public-native-policy-sha256 "$CUROBO_PUBLIC_NATIVE_POLICY_SHA256"
+            rm -f "$phase/image.tar"
+          fi
           if [ "$TOOL" = ltx2 ]; then
             npa/.venv/bin/python npa/scripts/scan_image_ltx_payload.py \
               --docker-save "$RUNNER_TEMP/${TOOL}.tar" \
@@ -284,28 +428,69 @@ jobs:
               --tarball "$RUNNER_TEMP/${TOOL}.tar" \
               --json "$RUNNER_TEMP/${TOOL}-cosmos3-serving-payload.json"
           fi
+          if [ "$TOOL" = cosmos3-ray-serve ]; then
+            npa/.venv/bin/python npa/scripts/scan_image_cosmos3_ray_serve_payload.py \
+              --tarball "$RUNNER_TEMP/${TOOL}.tar" \
+              --json "$RUNNER_TEMP/${TOOL}-cosmos3-ray-serve-payload.json"
+          fi
           if [ "$TOOL" = sonic-mujoco ]; then
             docker run --rm --entrypoint /opt/npa/venv/bin/python "$IMAGE" \
               /opt/npa/docker/workbench/sonic/verify_mujoco_image.py
           fi
+          rm -f "$RUNNER_TEMP/${TOOL}.tar"
+
+      # CUDA/AI images can exceed 25 GB. Once the exact loaded image passes its
+      # contract, BuildKit's duplicate cache is no longer evidence and can be
+      # discarded. Trivy's export goes on the hosted runner's large temp disk so
+      # the unchanged vulnerability/secret/license gates inspect every layer.
+      - name: Prepare capacity for full-image security scans
+        run: |
+          docker buildx prune --all --force
+          sudo install -d -m 0777 /mnt/npa-trivy
 
       - name: Pre-publication vulnerability, secret, and license scan
-        uses: aquasecurity/trivy-action@v0.36.0
-        with:
-          image-ref: ${{ matrix.image }}
-          scanners: vuln,secret,license
-          severity: CRITICAL
-          exit-code: "1"
-          ignore-unfixed: true
-          format: table
+        env:
+          TRIVY_TEMP_DIR: /mnt/npa-trivy
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Trivy 0.70 always wraps scans in context.WithTimeout and a zero
+          # duration expires immediately. Go's largest whole-second duration
+          # gives this mandatory gate no practical analysis deadline.
+          docker run --rm \
+            -e TMPDIR=/tmp/trivy \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "$TRIVY_TEMP_DIR:/tmp/trivy" \
+            -v "$GITHUB_WORKSPACE/.trivyignore:/.trivyignore:ro" \
+            aquasec/trivy:0.70.0@sha256:be1190afcb28352bfddc4ddeb71470835d16462af68d310f9f4bca710961a41e image \
+              --cache-dir /tmp/trivy/cache \
+              --timeout 2562047h47m16s \
+              --scanners vuln,secret,license \
+              --severity CRITICAL \
+              --exit-code 1 \
+              --ignore-unfixed \
+              --ignorefile /.trivyignore \
+              --format table \
+              "$IMAGE"
 
       - name: Generate pre-publication SBOM
-        uses: aquasecurity/trivy-action@v0.36.0
-        with:
-          image-ref: ${{ matrix.image }}
-          scanners: vuln
-          format: spdx-json
-          output: ${{ runner.temp }}/${{ matrix.tool }}-sbom.spdx.json
+        env:
+          TRIVY_TEMP_DIR: /mnt/npa-trivy
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -e TMPDIR=/tmp/trivy \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "$TRIVY_TEMP_DIR:/tmp/trivy" \
+            -v "$RUNNER_TEMP:/output" \
+            aquasec/trivy:0.70.0@sha256:be1190afcb28352bfddc4ddeb71470835d16462af68d310f9f4bca710961a41e image \
+              --cache-dir /tmp/trivy/cache \
+              --timeout 2562047h47m16s \
+              --scanners vuln \
+              --format spdx-json \
+              --output "/output/${TOOL}-sbom.spdx.json" \
+              "$IMAGE"
 
       - uses: docker/login-action@v3
         with:
@@ -350,45 +535,131 @@ jobs:
           test -n "$PROVENANCE_URL" && test -s "$PROVENANCE_BUNDLE"
           test -n "$SBOM_URL" && test -s "$SBOM_BUNDLE"
 
-      - name: Verify pushed bytes, revision, payload, and anonymous pull
+      - name: Verify pushed bytes, revision, payload, visibility, and anonymous pull
         env:
           DIGEST: ${{ steps.push.outputs.digest }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CUSTOMER_DENYLIST: ${{ matrix.tool == 'curobo' && secrets.CUSTOMER_DENYLIST || '' }}
+          INFRA_DENYLIST: ${{ matrix.tool == 'curobo' && secrets.INFRA_DENYLIST || '' }}
         run: |
           set -euo pipefail
           repository="${IMAGE%:*}"
           exact="${repository}@${DIGEST}"
           test "$(crane digest "$IMAGE")" = "$DIGEST"
           test "$(crane config "$exact" | jq -r '.config.Labels["org.opencontainers.image.revision"] // ""')" = "$DEVELOPMENT_SHA"
-          npa/.venv/bin/python npa/scripts/scan_image_omniverse_payload.py \
-            "$exact" --json "$RUNNER_TEMP/${TOOL}-pushed-payload.json"
+          # Bind the remote digest back to the exact local image whose complete
+          # filesystem tar was scanned before publication. Pulling immediately after
+          # push reuses local layers and avoids a second multi-GB `crane export`, which
+          # GHCR can rate-limit even for authenticated callers. Matching image IDs binds
+          # the remote manifest's config/rootfs diff IDs to that scanned tar.
+          payload_attempt=1
+          while true; do
+            payload_log="$RUNNER_TEMP/${TOOL}-pushed-payload-attempt-${payload_attempt}.log"
+            if {
+              docker pull "$exact" &&
+              test "$(docker image inspect --format '{{.Id}}' "$exact")" = \
+                "$(docker image inspect --format '{{.Id}}' "$IMAGE")" &&
+              docker save --output "$RUNNER_TEMP/${TOOL}-pushed.tar" "$exact" &&
+              npa/.venv/bin/python npa/scripts/scan_image_omniverse_payload.py \
+                --tarball "$RUNNER_TEMP/${TOOL}-pushed.tar" \
+                --json "$RUNNER_TEMP/${TOOL}-pushed-payload.json"
+            } >"$payload_log" 2>&1; then
+              cat "$payload_log"
+              break
+            fi
+            cat "$payload_log" >&2
+            if ! grep -Eq 'TOOMANYREQUESTS|429 Too Many Requests' "$payload_log"; then
+              exit 1
+            fi
+            echo "GHCR throttled pushed-byte payload scan attempt ${payload_attempt}; retrying" >&2
+            payload_attempt=$((payload_attempt + 1))
+            sleep 5
+          done
+          if [ "$TOOL" = curobo ]; then
+            npa/.venv/bin/python npa/docker/workbench/curobo/verify_image.py \
+              --docker-save "$RUNNER_TEMP/${TOOL}-pushed.tar" \
+              --expected-image-id "$(docker image inspect --format '{{.Id}}' "$exact")" \
+              --json "$RUNNER_TEMP/${TOOL}-pushed-curobo-payload.json"
+            umask 077
+            phase="$CUROBO_BYTE_GATE_ROOT/post"
+            mkdir -m 0700 "$phase"
+            mv "$RUNNER_TEMP/${TOOL}-pushed.tar" "$phase/image.tar"
+            mv "$RUNNER_TEMP/${TOOL}-pushed-curobo-payload.json" "$phase/graph.json"
+            chmod 0600 "$phase/image.tar" "$phase/graph.json"
+            expected_image_id="$(jq -er '.expected_image_id' "$phase/graph.json")"
+            npa/.venv/bin/python npa/scripts/image_byte_scan/prepare.py authorize \
+              --analysis-root "$CUROBO_BYTE_GATE_ROOT" --trusted-root "$GITHUB_WORKSPACE" \
+              --tools-receipt "$CUROBO_BYTE_GATE_ROOT/tools/dependency-receipt.json" \
+              --native-receipt "$CUROBO_BYTE_GATE_ROOT/native/dependencies.json" \
+              --archive "$phase/image.tar" --verification-report "$phase/graph.json" \
+              --expected-image-id "$expected_image_id" \
+              --output-dir "$phase/authorization" --policy-mode ci-regex
+            npa/.venv/bin/python npa/scripts/scan_image_bytes.py \
+              --analysis-root "$CUROBO_BYTE_GATE_ROOT" --trusted-root "$GITHUB_WORKSPACE" \
+              --authorization "$phase/authorization/authorization.json" \
+              --output-dir "$phase/scan" \
+              --public-native-policy "$GITHUB_WORKSPACE/npa/scripts/image_byte_scan/public_policies/curobo-v2.json" \
+              --public-native-policy-sha256 "$CUROBO_PUBLIC_NATIVE_POLICY_SHA256"
+            rm -f "$phase/image.tar"
+          fi
           if [ "$TOOL" = ltx2 ]; then
             npa/.venv/bin/python npa/scripts/scan_image_ltx_payload.py \
-              "$exact" --output "$RUNNER_TEMP/${TOOL}-pushed-ltx-payload.json"
+              --docker-save "$RUNNER_TEMP/${TOOL}-pushed.tar" \
+              --output "$RUNNER_TEMP/${TOOL}-pushed-ltx-payload.json"
           fi
           if [ "$TOOL" = wan2-2 ]; then
             npa/.venv/bin/python npa/scripts/scan_image_wan_payload.py \
-              "$exact" --output "$RUNNER_TEMP/${TOOL}-pushed-wan-payload.json"
+              --docker-save "$RUNNER_TEMP/${TOOL}-pushed.tar" \
+              --output "$RUNNER_TEMP/${TOOL}-pushed-wan-payload.json"
           fi
           if [ "$TOOL" = cosmos3-serving ]; then
-            docker pull "$exact"
-            docker save --output "$RUNNER_TEMP/${TOOL}-pushed.tar" "$exact"
             npa/.venv/bin/python npa/scripts/scan_image_cosmos3_serving_payload.py \
               --tarball "$RUNNER_TEMP/${TOOL}-pushed.tar" \
               --json "$RUNNER_TEMP/${TOOL}-pushed-cosmos3-serving-payload.json"
+          fi
+          if [ "$TOOL" = cosmos3-ray-serve ]; then
+            npa/.venv/bin/python npa/scripts/scan_image_cosmos3_ray_serve_payload.py \
+              --tarball "$RUNNER_TEMP/${TOOL}-pushed.tar" \
+              --json "$RUNNER_TEMP/${TOOL}-pushed-cosmos3-ray-serve-payload.json"
           fi
           if [ "$TOOL" = sonic-mujoco ]; then
             docker pull "$exact"
             docker run --rm --entrypoint /opt/npa/venv/bin/python "$exact" \
               /opt/npa/docker/workbench/sonic/verify_mujoco_image.py
           fi
+          path="${IMAGE#ghcr.io/}"
+          owner="${path%%/*}"
+          package_and_tag="${path#*/}"
+          package="${package_and_tag%:*}"
+          encoded="${package//\//%2F}"
+          package_api="/orgs/${owner}/packages/container/${encoded}"
+          if [ "$(gh api "$package_api" --jq .visibility)" != public ]; then
+            gh api --method PATCH "$package_api" -f visibility=public >/dev/null
+          fi
+          test "$(gh api "$package_api" --jq .visibility)" = public
           anonymous_config="$(mktemp -d)"
-          DOCKER_CONFIG="$anonymous_config" crane manifest "$IMAGE" >/dev/null
+          anonymous_attempt=1
+          while true; do
+            anonymous_log="$RUNNER_TEMP/${TOOL}-anonymous-manifest-attempt-${anonymous_attempt}.log"
+            if DOCKER_CONFIG="$anonymous_config" crane manifest "$IMAGE" \
+              >/dev/null 2>"$anonymous_log"; then
+              break
+            fi
+            cat "$anonymous_log" >&2
+            if ! grep -Eq 'TOOMANYREQUESTS|429 Too Many Requests' "$anonymous_log"; then
+              exit 1
+            fi
+            echo "GHCR throttled anonymous manifest attempt ${anonymous_attempt}; retrying" >&2
+            anonymous_attempt=$((anonymous_attempt + 1))
+            sleep 5
+          done
+          rm -f "$RUNNER_TEMP/${TOOL}-pushed.tar"
           echo "Validated public development digest: $DIGEST" >> "$GITHUB_STEP_SUMMARY"
           echo "The dev tag is public; later deletion cannot revoke prior downloads." >> "$GITHUB_STEP_SUMMARY"
 
   cleanup-requested:
     needs: resolve
-    if: ${{ always() && needs.resolve.outputs.cleanup_count != '0' }}
+    if: ${{ always() && needs.resolve.result == 'success' && needs.resolve.outputs.cleanup_count != '0' }}
     strategy:
       fail-fast: false
       matrix:
@@ -396,6 +667,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: imjasonh/setup-crane@v0.4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Delete only the exact unpromoted development version
         env:
@@ -452,6 +729,12 @@ jobs:
     steps:
       - uses: imjasonh/setup-crane@v0.4
 
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Remove an exact run-owned dev tag after a failed build batch
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -507,6 +790,8 @@ jobs:
       TARGET: ${{ needs.resolve.outputs.target }}
       DEVELOPMENT_SHA: ${{ needs.resolve.outputs.development_sha }}
       SELECTED_TOOLS: ${{ inputs.tool }}
+      RELEASE_TAG: ${{ inputs.release_tag }}
+      EXPECTED_SOURCE_DIGEST: ${{ inputs.expected_source_digest }}
       NPA_PUBLIC_REGISTRY: ${{ needs.resolve.outputs.target }}
     steps:
       - uses: actions/checkout@v6
@@ -534,6 +819,7 @@ jobs:
         run: |
           args=(--target "$TARGET" --development-sha "$DEVELOPMENT_SHA")
           if [ -n "$SELECTED_TOOLS" ]; then
+            args+=(--release-tag "$RELEASE_TAG" --expected-source-digest "$EXPECTED_SOURCE_DIGEST")
             npa/.venv/bin/python .github/scripts/publish_selected_public_image.py \
               "${args[@]}" --tool "$SELECTED_TOOLS" --mode plan
             npa/.venv/bin/python .github/scripts/publish_selected_public_image.py \
@@ -549,6 +835,7 @@ jobs:
         run: |
           args=(--target "$TARGET" --development-sha "$DEVELOPMENT_SHA")
           if [ -n "$SELECTED_TOOLS" ]; then
+            args+=(--release-tag "$RELEASE_TAG" --expected-source-digest "$EXPECTED_SOURCE_DIGEST")
             npa/.venv/bin/python .github/scripts/publish_selected_public_image.py \
               "${args[@]}" --tool "$SELECTED_TOOLS" --mode publish
           else

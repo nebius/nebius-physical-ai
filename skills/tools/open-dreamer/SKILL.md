@@ -42,7 +42,7 @@ solution-specific facts.
 
 | Item | Path |
 | --- | --- |
-| Workflow spec | `npa/workflows/workbench/npa-workflows/byof-open-dreamer.yaml` |
+| Workflow spec | `workflows/testing/byof-open-dreamer.yaml` |
 | 2-GPU resource profile | `npa/src/npa/workflows/byof/profiles/byof-solution-smoke-rtxpro-2gpu.yaml` |
 | BYOF toolRef | `workbench.byof.repo` (`--workload solution-smoke`) |
 | Catalog entry | `docs/workbench/oss-solution-catalog.md` |
@@ -151,7 +151,7 @@ selected with `--yaml`).
 
 ```bash
 npa/.venv/bin/npa workbench workflow validate-spec \
-  npa/workflows/workbench/npa-workflows/byof-open-dreamer.yaml --json
+  workflows/testing/byof-open-dreamer.yaml --json
 npa/.venv/bin/python -m pytest npa/tests/workflows/test_byof_solution_smokes.py -q
 ```
 

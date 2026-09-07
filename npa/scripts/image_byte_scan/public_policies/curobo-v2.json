@@ -1,0 +1,2038 @@
+{
+  "detector_identity": {
+    "config_sha256": "4ae31a02bb25f4f1c94b024a5163f45f461692260d0656556635c98e663b9e4e",
+    "helper_sha256": "61038224b65d6884729e87e43df72e6ed7ad6dfacd1c896a562d5867f25963cf"
+  },
+  "entries": [
+    {
+      "native_findings": [
+        {
+          "end_line": 4746,
+          "rule_id": "private-key",
+          "start_line": 4742
+        },
+        {
+          "end_line": 4750,
+          "rule_id": "private-key",
+          "start_line": 4747
+        },
+        {
+          "end_line": 4754,
+          "rule_id": "private-key",
+          "start_line": 4751
+        },
+        {
+          "end_line": 4755,
+          "rule_id": "private-key",
+          "start_line": 4755
+        },
+        {
+          "end_line": 4755,
+          "rule_id": "private-key",
+          "start_line": 4755
+        },
+        {
+          "end_line": 4759,
+          "rule_id": "private-key",
+          "start_line": 4755
+        },
+        {
+          "end_line": 4760,
+          "rule_id": "private-key",
+          "start_line": 4760
+        },
+        {
+          "end_line": 4760,
+          "rule_id": "private-key",
+          "start_line": 4760
+        },
+        {
+          "end_line": 4779,
+          "rule_id": "private-key",
+          "start_line": 4760
+        },
+        {
+          "end_line": 4806,
+          "rule_id": "private-key",
+          "start_line": 4780
+        }
+      ],
+      "operational_credential": false,
+      "public_provenance": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
+      },
+      "record_bytes": 2057632,
+      "record_kind": "layer_regular_content",
+      "record_sha256": "96137275400f39510c9a533c6ad8a921e94266e664e7e09c9ad6ea9f23277c23",
+      "semantic_proof": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-semantics.json",
+        "sha256": "e7d0d55bad2bd06f51540a37cc1275d06eb4c008668bbd398636d3cff564ff35"
+      },
+      "semantic_role": "cryptographic-self-test"
+    },
+    {
+      "native_findings": [
+        {
+          "end_line": 81,
+          "rule_id": "generic-api-key",
+          "start_line": 80
+        }
+      ],
+      "operational_credential": false,
+      "public_provenance": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
+      },
+      "record_bytes": 5136,
+      "record_kind": "layer_regular_content",
+      "record_sha256": "b25e002f448246d7271adb0d9e72281e33aa822b07afff4c96c476d79fe1fc80",
+      "semantic_proof": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-semantics.json",
+        "sha256": "e7d0d55bad2bd06f51540a37cc1275d06eb4c008668bbd398636d3cff564ff35"
+      },
+      "semantic_role": "public-source-symbol"
+    },
+    {
+      "native_findings": [
+        {
+          "end_line": 487,
+          "rule_id": "private-key",
+          "start_line": 487
+        }
+      ],
+      "operational_credential": false,
+      "public_provenance": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
+      },
+      "record_bytes": 462360,
+      "record_kind": "layer_regular_content",
+      "record_sha256": "b82bd54edb908605b8142be1a6d242df65501af0e9bb7581cc36ebf4d8a5ecfd",
+      "semantic_proof": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-semantics.json",
+        "sha256": "e7d0d55bad2bd06f51540a37cc1275d06eb4c008668bbd398636d3cff564ff35"
+      },
+      "semantic_role": "parser-format-delimiter"
+    },
+    {
+      "native_findings": [
+        {
+          "end_line": 40,
+          "rule_id": "nebius-generic-id",
+          "start_line": 40
+        }
+      ],
+      "operational_credential": false,
+      "public_provenance": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
+      },
+      "record_bytes": 4391,
+      "record_kind": "layer_regular_content",
+      "record_sha256": "b3869b19414dd941a47282e42d504de302dce0b5ac91dbaad8c299328b088958",
+      "semantic_proof": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-semantics.json",
+        "sha256": "e7d0d55bad2bd06f51540a37cc1275d06eb4c008668bbd398636d3cff564ff35"
+      },
+      "semantic_role": "package-integrity-metadata"
+    },
+    {
+      "native_findings": [
+        {
+          "end_line": 0,
+          "rule_id": "generic-api-key",
+          "start_line": 0
+        }
+      ],
+      "operational_credential": false,
+      "public_provenance": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
+      },
+      "record_bytes": 49,
+      "record_kind": "logical_tar_path",
+      "record_sha256": "fb46c104e3ef44f1353c323c847b2ed7e224eb3d23b1e7df90ec0253f10f9270",
+      "semantic_proof": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-semantics.json",
+        "sha256": "e7d0d55bad2bd06f51540a37cc1275d06eb4c008668bbd398636d3cff564ff35"
+      },
+      "semantic_role": "public-package-path-metadata"
+    },
+    {
+      "native_findings": [
+        {
+          "end_line": 0,
+          "rule_id": "generic-api-key",
+          "start_line": 0
+        }
+      ],
+      "operational_credential": false,
+      "public_provenance": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
+      },
+      "record_bytes": 45,
+      "record_kind": "logical_tar_path",
+      "record_sha256": "e03287709e8e16898a6834541beaf96414631cae385a54a63fcfb55826381725",
+      "semantic_proof": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-semantics.json",
+        "sha256": "e7d0d55bad2bd06f51540a37cc1275d06eb4c008668bbd398636d3cff564ff35"
+      },
+      "semantic_role": "public-package-path-metadata"
+    },
+    {
+      "native_findings": [
+        {
+          "end_line": 4031,
+          "rule_id": "private-key",
+          "start_line": 4028
+        },
+        {
+          "end_line": 4034,
+          "rule_id": "private-key",
+          "start_line": 4032
+        },
+        {
+          "end_line": 4039,
+          "rule_id": "private-key",
+          "start_line": 4035
+        },
+        {
+          "end_line": 4043,
+          "rule_id": "private-key",
+          "start_line": 4040
+        },
+        {
+          "end_line": 4047,
+          "rule_id": "private-key",
+          "start_line": 4044
+        },
+        {
+          "end_line": 4048,
+          "rule_id": "private-key",
+          "start_line": 4048
+        },
+        {
+          "end_line": 4049,
+          "rule_id": "private-key",
+          "start_line": 4049
+        },
+        {
+          "end_line": 4049,
+          "rule_id": "private-key",
+          "start_line": 4049
+        },
+        {
+          "end_line": 4049,
+          "rule_id": "private-key",
+          "start_line": 4049
+        },
+        {
+          "end_line": 4053,
+          "rule_id": "private-key",
+          "start_line": 4049
+        },
+        {
+          "end_line": 4073,
+          "rule_id": "private-key",
+          "start_line": 4054
+        },
+        {
+          "end_line": 4101,
+          "rule_id": "private-key",
+          "start_line": 4075
+        }
+      ],
+      "operational_credential": false,
+      "public_provenance": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
+      },
+      "record_bytes": 2416425,
+      "record_kind": "layer_regular_content",
+      "record_sha256": "aabbf4bb6fe30585ac0c704d4b505ab29a1b4b8dfb30ab2bf8928dc58ac63d66",
+      "semantic_proof": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-semantics.json",
+        "sha256": "e7d0d55bad2bd06f51540a37cc1275d06eb4c008668bbd398636d3cff564ff35"
+      },
+      "semantic_role": "cryptographic-self-test"
+    },
+    {
+      "native_findings": [
+        {
+          "end_line": 107,
+          "rule_id": "generic-api-key",
+          "start_line": 107
+        },
+        {
+          "end_line": 1494,
+          "rule_id": "generic-api-key",
+          "start_line": 1494
+        }
+      ],
+      "operational_credential": false,
+      "public_provenance": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
+      },
+      "record_bytes": 54289,
+      "record_kind": "layer_regular_content",
+      "record_sha256": "f952e2b7d8f63270a98790240de8f1cacfc8aaddc9694c1e1240b5074ff7ee3e",
+      "semantic_proof": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-semantics.json",
+        "sha256": "e7d0d55bad2bd06f51540a37cc1275d06eb4c008668bbd398636d3cff564ff35"
+      },
+      "semantic_role": "non-operational-source-example"
+    },
+    {
+      "native_findings": [
+        {
+          "end_line": 2049,
+          "rule_id": "generic-api-key",
+          "start_line": 2049
+        },
+        {
+          "end_line": 3222,
+          "rule_id": "generic-api-key",
+          "start_line": 3222
+        }
+      ],
+      "operational_credential": false,
+      "public_provenance": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
+      },
+      "record_bytes": 109914,
+      "record_kind": "layer_regular_content",
+      "record_sha256": "d31754a0d5735cd9f964c980fda88fc22402ebc69dad78c124f870dc0cd00bc3",
+      "semantic_proof": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-semantics.json",
+        "sha256": "e7d0d55bad2bd06f51540a37cc1275d06eb4c008668bbd398636d3cff564ff35"
+      },
+      "semantic_role": "non-operational-source-example"
+    },
+    {
+      "native_findings": [
+        {
+          "end_line": 2057,
+          "rule_id": "generic-api-key",
+          "start_line": 2057
+        },
+        {
+          "end_line": 3233,
+          "rule_id": "generic-api-key",
+          "start_line": 3233
+        }
+      ],
+      "operational_credential": false,
+      "public_provenance": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
+      },
+      "record_bytes": 110174,
+      "record_kind": "layer_regular_content",
+      "record_sha256": "0efd7c425f1f68e78131095e9c2ec7073960acd41735ea24bcbb3215fe90ff26",
+      "semantic_proof": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-semantics.json",
+        "sha256": "e7d0d55bad2bd06f51540a37cc1275d06eb4c008668bbd398636d3cff564ff35"
+      },
+      "semantic_role": "non-operational-source-example"
+    },
+    {
+      "native_findings": [
+        {
+          "end_line": 2800,
+          "rule_id": "generic-api-key",
+          "start_line": 2800
+        },
+        {
+          "end_line": 4277,
+          "rule_id": "generic-api-key",
+          "start_line": 4277
+        }
+      ],
+      "operational_credential": false,
+      "public_provenance": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
+      },
+      "record_bytes": 147949,
+      "record_kind": "layer_regular_content",
+      "record_sha256": "801f3e32e31297d37889cd680580afd3607f62997139d9cab1f4bb839a58ee19",
+      "semantic_proof": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-semantics.json",
+        "sha256": "e7d0d55bad2bd06f51540a37cc1275d06eb4c008668bbd398636d3cff564ff35"
+      },
+      "semantic_role": "non-operational-source-example"
+    },
+    {
+      "native_findings": [
+        {
+          "end_line": 440,
+          "rule_id": "generic-api-key",
+          "start_line": 440
+        }
+      ],
+      "operational_credential": false,
+      "public_provenance": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
+      },
+      "record_bytes": 32633,
+      "record_kind": "layer_regular_content",
+      "record_sha256": "15f4c2922398001137688d4230856ff8d89a2e9a1076fc4db85aece38955549f",
+      "semantic_proof": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-semantics.json",
+        "sha256": "e7d0d55bad2bd06f51540a37cc1275d06eb4c008668bbd398636d3cff564ff35"
+      },
+      "semantic_role": "public-source-symbol"
+    },
+    {
+      "native_findings": [
+        {
+          "end_line": 8,
+          "rule_id": "generic-api-key",
+          "start_line": 8
+        }
+      ],
+      "operational_credential": false,
+      "public_provenance": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
+      },
+      "record_bytes": 5021,
+      "record_kind": "layer_regular_content",
+      "record_sha256": "bc24f730507b0f7b4dcea68877177c9f20dbb7b85ebec02f0c4e1141341c10a8",
+      "semantic_proof": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-semantics.json",
+        "sha256": "e7d0d55bad2bd06f51540a37cc1275d06eb4c008668bbd398636d3cff564ff35"
+      },
+      "semantic_role": "non-operational-source-example"
+    },
+    {
+      "native_findings": [
+        {
+          "end_line": 94,
+          "rule_id": "generic-api-key",
+          "start_line": 94
+        },
+        {
+          "end_line": 169,
+          "rule_id": "generic-api-key",
+          "start_line": 169
+        }
+      ],
+      "operational_credential": false,
+      "public_provenance": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
+      },
+      "record_bytes": 14242,
+      "record_kind": "layer_regular_content",
+      "record_sha256": "62ce0f4b819cadf5771792e0e2191a660c9e98680d28d2d84a6fae7a92c3911e",
+      "semantic_proof": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-semantics.json",
+        "sha256": "e7d0d55bad2bd06f51540a37cc1275d06eb4c008668bbd398636d3cff564ff35"
+      },
+      "semantic_role": "non-operational-source-example"
+    },
+    {
+      "native_findings": [
+        {
+          "end_line": 27,
+          "rule_id": "generic-api-key",
+          "start_line": 27
+        },
+        {
+          "end_line": 69,
+          "rule_id": "generic-api-key",
+          "start_line": 69
+        },
+        {
+          "end_line": 314,
+          "rule_id": "generic-api-key",
+          "start_line": 314
+        },
+        {
+          "end_line": 323,
+          "rule_id": "generic-api-key",
+          "start_line": 323
+        },
+        {
+          "end_line": 434,
+          "rule_id": "generic-api-key",
+          "start_line": 434
+        },
+        {
+          "end_line": 495,
+          "rule_id": "generic-api-key",
+          "start_line": 495
+        },
+        {
+          "end_line": 717,
+          "rule_id": "generic-api-key",
+          "start_line": 717
+        },
+        {
+          "end_line": 1611,
+          "rule_id": "generic-api-key",
+          "start_line": 1611
+        },
+        {
+          "end_line": 1630,
+          "rule_id": "generic-api-key",
+          "start_line": 1630
+        },
+        {
+          "end_line": 1650,
+          "rule_id": "generic-api-key",
+          "start_line": 1650
+        },
+        {
+          "end_line": 1612,
+          "rule_id": "hashicorp-tf-password",
+          "start_line": 1612
+        }
+      ],
+      "operational_credential": false,
+      "public_provenance": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
+      },
+      "record_bytes": 77655,
+      "record_kind": "layer_regular_content",
+      "record_sha256": "4e06a14e5d6e058887231bfade6c7268273ee5cf7140aa1b5873e10e2a38c777",
+      "semantic_proof": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-semantics.json",
+        "sha256": "e7d0d55bad2bd06f51540a37cc1275d06eb4c008668bbd398636d3cff564ff35"
+      },
+      "semantic_role": "non-operational-source-example"
+    },
+    {
+      "native_findings": [
+        {
+          "end_line": 228,
+          "rule_id": "generic-api-key",
+          "start_line": 228
+        }
+      ],
+      "operational_credential": false,
+      "public_provenance": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
+      },
+      "record_bytes": 6883,
+      "record_kind": "layer_regular_content",
+      "record_sha256": "c490f229809ec417cad69e56c45ad576965dca547fd052743beef83519e320ab",
+      "semantic_proof": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-semantics.json",
+        "sha256": "e7d0d55bad2bd06f51540a37cc1275d06eb4c008668bbd398636d3cff564ff35"
+      },
+      "semantic_role": "public-source-symbol"
+    },
+    {
+      "native_findings": [
+        {
+          "end_line": 1177,
+          "rule_id": "generic-api-key",
+          "start_line": 1177
+        }
+      ],
+      "operational_credential": false,
+      "public_provenance": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
+      },
+      "record_bytes": 57596,
+      "record_kind": "layer_regular_content",
+      "record_sha256": "6c6c3d32b6e6c074444bfc3b9305be1ebdf5f89b3b2463ffa31a04e13c36d5be",
+      "semantic_proof": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-semantics.json",
+        "sha256": "e7d0d55bad2bd06f51540a37cc1275d06eb4c008668bbd398636d3cff564ff35"
+      },
+      "semantic_role": "non-operational-source-example"
+    },
+    {
+      "native_findings": [
+        {
+          "end_line": 147,
+          "rule_id": "hashicorp-tf-password",
+          "start_line": 147
+        }
+      ],
+      "operational_credential": false,
+      "public_provenance": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
+      },
+      "record_bytes": 22410,
+      "record_kind": "layer_regular_content",
+      "record_sha256": "dcb298c7fb9ce3ca970c5c7b9bc714da5f17072ab5c2edbc8797ce820ae60c22",
+      "semantic_proof": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-semantics.json",
+        "sha256": "e7d0d55bad2bd06f51540a37cc1275d06eb4c008668bbd398636d3cff564ff35"
+      },
+      "semantic_role": "non-operational-source-example"
+    },
+    {
+      "native_findings": [
+        {
+          "end_line": 6,
+          "rule_id": "generic-api-key",
+          "start_line": 6
+        }
+      ],
+      "operational_credential": false,
+      "public_provenance": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
+      },
+      "record_bytes": 49947,
+      "record_kind": "layer_regular_content",
+      "record_sha256": "dbe9813c9a9b485bf67f7b7a2aa76dad4e5d5b4678f73ca506f1469a8404024f",
+      "semantic_proof": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-semantics.json",
+        "sha256": "e7d0d55bad2bd06f51540a37cc1275d06eb4c008668bbd398636d3cff564ff35"
+      },
+      "semantic_role": "non-operational-source-example"
+    },
+    {
+      "native_findings": [
+        {
+          "end_line": 6,
+          "rule_id": "generic-api-key",
+          "start_line": 6
+        },
+        {
+          "end_line": 10,
+          "rule_id": "generic-api-key",
+          "start_line": 10
+        },
+        {
+          "end_line": 36,
+          "rule_id": "generic-api-key",
+          "start_line": 36
+        },
+        {
+          "end_line": 41,
+          "rule_id": "generic-api-key",
+          "start_line": 41
+        },
+        {
+          "end_line": 69,
+          "rule_id": "generic-api-key",
+          "start_line": 69
+        },
+        {
+          "end_line": 73,
+          "rule_id": "generic-api-key",
+          "start_line": 73
+        },
+        {
+          "end_line": 103,
+          "rule_id": "generic-api-key",
+          "start_line": 103
+        },
+        {
+          "end_line": 107,
+          "rule_id": "generic-api-key",
+          "start_line": 107
+        },
+        {
+          "end_line": 135,
+          "rule_id": "generic-api-key",
+          "start_line": 135
+        },
+        {
+          "end_line": 143,
+          "rule_id": "generic-api-key",
+          "start_line": 143
+        },
+        {
+          "end_line": 176,
+          "rule_id": "generic-api-key",
+          "start_line": 176
+        },
+        {
+          "end_line": 180,
+          "rule_id": "generic-api-key",
+          "start_line": 180
+        },
+        {
+          "end_line": 209,
+          "rule_id": "generic-api-key",
+          "start_line": 209
+        },
+        {
+          "end_line": 212,
+          "rule_id": "generic-api-key",
+          "start_line": 212
+        },
+        {
+          "end_line": 228,
+          "rule_id": "generic-api-key",
+          "start_line": 228
+        },
+        {
+          "end_line": 232,
+          "rule_id": "generic-api-key",
+          "start_line": 232
+        },
+        {
+          "end_line": 248,
+          "rule_id": "generic-api-key",
+          "start_line": 248
+        },
+        {
+          "end_line": 252,
+          "rule_id": "generic-api-key",
+          "start_line": 252
+        },
+        {
+          "end_line": 268,
+          "rule_id": "generic-api-key",
+          "start_line": 268
+        },
+        {
+          "end_line": 272,
+          "rule_id": "generic-api-key",
+          "start_line": 272
+        },
+        {
+          "end_line": 288,
+          "rule_id": "generic-api-key",
+          "start_line": 288
+        },
+        {
+          "end_line": 292,
+          "rule_id": "generic-api-key",
+          "start_line": 292
+        },
+        {
+          "end_line": 308,
+          "rule_id": "generic-api-key",
+          "start_line": 308
+        },
+        {
+          "end_line": 312,
+          "rule_id": "generic-api-key",
+          "start_line": 312
+        },
+        {
+          "end_line": 328,
+          "rule_id": "generic-api-key",
+          "start_line": 328
+        },
+        {
+          "end_line": 332,
+          "rule_id": "generic-api-key",
+          "start_line": 332
+        },
+        {
+          "end_line": 383,
+          "rule_id": "generic-api-key",
+          "start_line": 383
+        },
+        {
+          "end_line": 399,
+          "rule_id": "generic-api-key",
+          "start_line": 399
+        },
+        {
+          "end_line": 796,
+          "rule_id": "generic-api-key",
+          "start_line": 796
+        },
+        {
+          "end_line": 813,
+          "rule_id": "generic-api-key",
+          "start_line": 813
+        },
+        {
+          "end_line": 829,
+          "rule_id": "generic-api-key",
+          "start_line": 829
+        },
+        {
+          "end_line": 842,
+          "rule_id": "generic-api-key",
+          "start_line": 842
+        },
+        {
+          "end_line": 858,
+          "rule_id": "generic-api-key",
+          "start_line": 858
+        },
+        {
+          "end_line": 872,
+          "rule_id": "generic-api-key",
+          "start_line": 872
+        },
+        {
+          "end_line": 888,
+          "rule_id": "generic-api-key",
+          "start_line": 888
+        },
+        {
+          "end_line": 905,
+          "rule_id": "generic-api-key",
+          "start_line": 905
+        },
+        {
+          "end_line": 921,
+          "rule_id": "generic-api-key",
+          "start_line": 921
+        },
+        {
+          "end_line": 936,
+          "rule_id": "generic-api-key",
+          "start_line": 936
+        },
+        {
+          "end_line": 952,
+          "rule_id": "generic-api-key",
+          "start_line": 952
+        },
+        {
+          "end_line": 971,
+          "rule_id": "generic-api-key",
+          "start_line": 971
+        },
+        {
+          "end_line": 987,
+          "rule_id": "generic-api-key",
+          "start_line": 987
+        },
+        {
+          "end_line": 1002,
+          "rule_id": "generic-api-key",
+          "start_line": 1002
+        }
+      ],
+      "operational_credential": false,
+      "public_provenance": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
+      },
+      "record_bytes": 29749,
+      "record_kind": "layer_regular_content",
+      "record_sha256": "e8e3ee0a72f29c921f18ef95c616fd65957d92d10a869072bdfda34b0020f836",
+      "semantic_proof": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-semantics.json",
+        "sha256": "e7d0d55bad2bd06f51540a37cc1275d06eb4c008668bbd398636d3cff564ff35"
+      },
+      "semantic_role": "non-operational-source-example"
+    },
+    {
+      "native_findings": [
+        {
+          "end_line": 213,
+          "rule_id": "generic-api-key",
+          "start_line": 213
+        }
+      ],
+      "operational_credential": false,
+      "public_provenance": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
+      },
+      "record_bytes": 69098,
+      "record_kind": "layer_regular_content",
+      "record_sha256": "fc8b9772647e89c4fd575ff1c793da6ac34171344cab96148ccf62af09496cf7",
+      "semantic_proof": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-semantics.json",
+        "sha256": "e7d0d55bad2bd06f51540a37cc1275d06eb4c008668bbd398636d3cff564ff35"
+      },
+      "semantic_role": "public-source-symbol"
+    },
+    {
+      "native_findings": [
+        {
+          "end_line": 98,
+          "rule_id": "nebius-generic-id",
+          "start_line": 98
+        },
+        {
+          "end_line": 122,
+          "rule_id": "nebius-generic-id",
+          "start_line": 122
+        },
+        {
+          "end_line": 157,
+          "rule_id": "nebius-generic-id",
+          "start_line": 157
+        }
+      ],
+      "operational_credential": false,
+      "public_provenance": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
+      },
+      "record_bytes": 233803,
+      "record_kind": "layer_regular_content",
+      "record_sha256": "dccb4e515c5b2e3f2fc1535bd81b54628adf5cf2516e5a499bc4bfa80cf6e54e",
+      "semantic_proof": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-semantics.json",
+        "sha256": "e7d0d55bad2bd06f51540a37cc1275d06eb4c008668bbd398636d3cff564ff35"
+      },
+      "semantic_role": "numeric-source-constant"
+    },
+    {
+      "native_findings": [
+        {
+          "end_line": 76,
+          "rule_id": "generic-api-key",
+          "start_line": 76
+        },
+        {
+          "end_line": 100,
+          "rule_id": "generic-api-key",
+          "start_line": 100
+        }
+      ],
+      "operational_credential": false,
+      "public_provenance": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
+      },
+      "record_bytes": 2914,
+      "record_kind": "layer_regular_content",
+      "record_sha256": "a7f8462e7e981fe11aac91755796d4b14b638a9be2100a5c4793b4b141c92ed7",
+      "semantic_proof": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-semantics.json",
+        "sha256": "e7d0d55bad2bd06f51540a37cc1275d06eb4c008668bbd398636d3cff564ff35"
+      },
+      "semantic_role": "public-source-symbol"
+    },
+    {
+      "native_findings": [
+        {
+          "end_line": 10,
+          "rule_id": "private-key",
+          "start_line": 10
+        }
+      ],
+      "operational_credential": false,
+      "public_provenance": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
+      },
+      "record_bytes": 8689,
+      "record_kind": "layer_regular_content",
+      "record_sha256": "aaafb8417982bb401041d78380f4cbf7911eb840b9f3ae3ccd5b6638f9aff1de",
+      "semantic_proof": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-semantics.json",
+        "sha256": "e7d0d55bad2bd06f51540a37cc1275d06eb4c008668bbd398636d3cff564ff35"
+      },
+      "semantic_role": "parser-format-delimiter"
+    },
+    {
+      "native_findings": [
+        {
+          "end_line": 39,
+          "rule_id": "private-key",
+          "start_line": 38
+        }
+      ],
+      "operational_credential": false,
+      "public_provenance": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
+      },
+      "record_bytes": 6747,
+      "record_kind": "layer_regular_content",
+      "record_sha256": "131ab3f4e8039bedc91c777adfa82701d5dd707ea98c3581349cf6d6e0d19d41",
+      "semantic_proof": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-semantics.json",
+        "sha256": "e7d0d55bad2bd06f51540a37cc1275d06eb4c008668bbd398636d3cff564ff35"
+      },
+      "semantic_role": "parser-format-delimiter"
+    },
+    {
+      "native_findings": [
+        {
+          "end_line": 45,
+          "rule_id": "private-key",
+          "start_line": 43
+        },
+        {
+          "end_line": 48,
+          "rule_id": "private-key",
+          "start_line": 46
+        }
+      ],
+      "operational_credential": false,
+      "public_provenance": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
+      },
+      "record_bytes": 32583,
+      "record_kind": "layer_regular_content",
+      "record_sha256": "5c01786fd61b0ccfc074becdca3233a9c83404de080b8ce96692a7355a554e88",
+      "semantic_proof": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-semantics.json",
+        "sha256": "e7d0d55bad2bd06f51540a37cc1275d06eb4c008668bbd398636d3cff564ff35"
+      },
+      "semantic_role": "parser-format-delimiter"
+    },
+    {
+      "native_findings": [
+        {
+          "end_line": 76106,
+          "rule_id": "generic-api-key",
+          "start_line": 76106
+        }
+      ],
+      "operational_credential": false,
+      "public_provenance": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
+      },
+      "record_bytes": 120319200,
+      "record_kind": "layer_regular_content",
+      "record_sha256": "7cff674e8604491032df35cdf047741bf00e5195149a4b05823d44fdcecbb7d8",
+      "semantic_proof": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-semantics.json",
+        "sha256": "e7d0d55bad2bd06f51540a37cc1275d06eb4c008668bbd398636d3cff564ff35"
+      },
+      "semantic_role": "public-source-symbol"
+    },
+    {
+      "native_findings": [
+        {
+          "end_line": 149,
+          "rule_id": "generic-api-key",
+          "start_line": 149
+        }
+      ],
+      "operational_credential": false,
+      "public_provenance": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
+      },
+      "record_bytes": 10347,
+      "record_kind": "layer_regular_content",
+      "record_sha256": "3f948b91f440ab9963e452db03506e06b283c305b45e30caff1a67f091386aa2",
+      "semantic_proof": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-semantics.json",
+        "sha256": "e7d0d55bad2bd06f51540a37cc1275d06eb4c008668bbd398636d3cff564ff35"
+      },
+      "semantic_role": "public-source-symbol"
+    },
+    {
+      "native_findings": [
+        {
+          "end_line": 26,
+          "rule_id": "generic-api-key",
+          "start_line": 26
+        },
+        {
+          "end_line": 27,
+          "rule_id": "generic-api-key",
+          "start_line": 27
+        }
+      ],
+      "operational_credential": false,
+      "public_provenance": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
+      },
+      "record_bytes": 2675,
+      "record_kind": "layer_regular_content",
+      "record_sha256": "5d20d777bc101cd2c41e5d269077d56f994542ca7aca01e485e9fbd7c8740523",
+      "semantic_proof": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-semantics.json",
+        "sha256": "e7d0d55bad2bd06f51540a37cc1275d06eb4c008668bbd398636d3cff564ff35"
+      },
+      "semantic_role": "public-source-symbol"
+    },
+    {
+      "native_findings": [
+        {
+          "end_line": 24,
+          "rule_id": "generic-api-key",
+          "start_line": 24
+        },
+        {
+          "end_line": 25,
+          "rule_id": "generic-api-key",
+          "start_line": 25
+        }
+      ],
+      "operational_credential": false,
+      "public_provenance": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
+      },
+      "record_bytes": 4405,
+      "record_kind": "layer_regular_content",
+      "record_sha256": "208bc8b8ef6c88a52ee7e5a9cf44868a5b4b42fec3bbf9a2f41504f083512bfe",
+      "semantic_proof": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-semantics.json",
+        "sha256": "e7d0d55bad2bd06f51540a37cc1275d06eb4c008668bbd398636d3cff564ff35"
+      },
+      "semantic_role": "public-source-symbol"
+    },
+    {
+      "native_findings": [
+        {
+          "end_line": 24,
+          "rule_id": "generic-api-key",
+          "start_line": 24
+        },
+        {
+          "end_line": 25,
+          "rule_id": "generic-api-key",
+          "start_line": 25
+        }
+      ],
+      "operational_credential": false,
+      "public_provenance": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
+      },
+      "record_bytes": 4434,
+      "record_kind": "layer_regular_content",
+      "record_sha256": "7994c345cccdd479049f07281df8120bd979d2758b574a206be06c04e59c06f0",
+      "semantic_proof": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-semantics.json",
+        "sha256": "e7d0d55bad2bd06f51540a37cc1275d06eb4c008668bbd398636d3cff564ff35"
+      },
+      "semantic_role": "public-source-symbol"
+    },
+    {
+      "native_findings": [
+        {
+          "end_line": 29,
+          "rule_id": "generic-api-key",
+          "start_line": 29
+        },
+        {
+          "end_line": 30,
+          "rule_id": "generic-api-key",
+          "start_line": 30
+        },
+        {
+          "end_line": 35,
+          "rule_id": "generic-api-key",
+          "start_line": 35
+        },
+        {
+          "end_line": 36,
+          "rule_id": "generic-api-key",
+          "start_line": 36
+        },
+        {
+          "end_line": 41,
+          "rule_id": "generic-api-key",
+          "start_line": 41
+        },
+        {
+          "end_line": 42,
+          "rule_id": "generic-api-key",
+          "start_line": 42
+        }
+      ],
+      "operational_credential": false,
+      "public_provenance": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
+      },
+      "record_bytes": 119035,
+      "record_kind": "layer_regular_content",
+      "record_sha256": "853efa839354a0358e2d157c953e23e19ca4d4a452730b644c9d38ccad2f9931",
+      "semantic_proof": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-semantics.json",
+        "sha256": "e7d0d55bad2bd06f51540a37cc1275d06eb4c008668bbd398636d3cff564ff35"
+      },
+      "semantic_role": "non-operational-source-example"
+    },
+    {
+      "native_findings": [
+        {
+          "end_line": 318813,
+          "rule_id": "nebius-generic-id",
+          "start_line": 318813
+        }
+      ],
+      "operational_credential": false,
+      "public_provenance": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
+      },
+      "record_bytes": 137006536,
+      "record_kind": "layer_regular_content",
+      "record_sha256": "eb49632264066a1497bc09aecacb900929550a5baaaf4f1351d9b555fdc6a180",
+      "semantic_proof": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-semantics.json",
+        "sha256": "e7d0d55bad2bd06f51540a37cc1275d06eb4c008668bbd398636d3cff564ff35"
+      },
+      "semantic_role": "encoded-device-payload"
+    },
+    {
+      "native_findings": [
+        {
+          "end_line": 266293,
+          "rule_id": "nebius-generic-id",
+          "start_line": 266293
+        },
+        {
+          "end_line": 325470,
+          "rule_id": "nebius-generic-id",
+          "start_line": 325470
+        }
+      ],
+      "operational_credential": false,
+      "public_provenance": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
+      },
+      "record_bytes": 156214040,
+      "record_kind": "layer_regular_content",
+      "record_sha256": "faf92a21d4c2805b7da99e7b0dc1af55272522504c1fd768f3ac330b54ec73e5",
+      "semantic_proof": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-semantics.json",
+        "sha256": "e7d0d55bad2bd06f51540a37cc1275d06eb4c008668bbd398636d3cff564ff35"
+      },
+      "semantic_role": "encoded-device-payload"
+    },
+    {
+      "native_findings": [
+        {
+          "end_line": 23,
+          "rule_id": "generic-api-key",
+          "start_line": 23
+        }
+      ],
+      "operational_credential": false,
+      "public_provenance": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
+      },
+      "record_bytes": 4037,
+      "record_kind": "layer_regular_content",
+      "record_sha256": "8cc2ca175e61f67ea93967dc6b4211be6dfafc380301869559d1715d235c9435",
+      "semantic_proof": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-semantics.json",
+        "sha256": "e7d0d55bad2bd06f51540a37cc1275d06eb4c008668bbd398636d3cff564ff35"
+      },
+      "semantic_role": "non-operational-source-example"
+    },
+    {
+      "native_findings": [
+        {
+          "end_line": 29,
+          "rule_id": "generic-api-key",
+          "start_line": 29
+        }
+      ],
+      "operational_credential": false,
+      "public_provenance": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
+      },
+      "record_bytes": 4802,
+      "record_kind": "layer_regular_content",
+      "record_sha256": "01b9f1a62c7f632ecfdc0def6e4ad5d9b905c6d9d1e534534ca74ebbd30ac9da",
+      "semantic_proof": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-semantics.json",
+        "sha256": "e7d0d55bad2bd06f51540a37cc1275d06eb4c008668bbd398636d3cff564ff35"
+      },
+      "semantic_role": "non-operational-source-example"
+    },
+    {
+      "native_findings": [
+        {
+          "end_line": 229,
+          "rule_id": "generic-api-key",
+          "start_line": 229
+        },
+        {
+          "end_line": 288,
+          "rule_id": "generic-api-key",
+          "start_line": 288
+        },
+        {
+          "end_line": 291,
+          "rule_id": "generic-api-key",
+          "start_line": 291
+        }
+      ],
+      "operational_credential": false,
+      "public_provenance": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
+      },
+      "record_bytes": 22144,
+      "record_kind": "layer_regular_content",
+      "record_sha256": "908f9708d611fb7479e62d156231c17d42639f40a6825e78c1b821bfa8f3632b",
+      "semantic_proof": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-semantics.json",
+        "sha256": "e7d0d55bad2bd06f51540a37cc1275d06eb4c008668bbd398636d3cff564ff35"
+      },
+      "semantic_role": "non-operational-source-example"
+    },
+    {
+      "native_findings": [
+        {
+          "end_line": 329,
+          "rule_id": "generic-api-key",
+          "start_line": 329
+        },
+        {
+          "end_line": 407,
+          "rule_id": "generic-api-key",
+          "start_line": 407
+        },
+        {
+          "end_line": 410,
+          "rule_id": "generic-api-key",
+          "start_line": 410
+        }
+      ],
+      "operational_credential": false,
+      "public_provenance": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
+      },
+      "record_bytes": 21355,
+      "record_kind": "layer_regular_content",
+      "record_sha256": "82d64e886e9f4f62b70a8cbc4479dcbbd2b8d5aa3a01dc00863bc378b037ac1c",
+      "semantic_proof": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-semantics.json",
+        "sha256": "e7d0d55bad2bd06f51540a37cc1275d06eb4c008668bbd398636d3cff564ff35"
+      },
+      "semantic_role": "non-operational-source-example"
+    },
+    {
+      "native_findings": [
+        {
+          "end_line": 1361,
+          "rule_id": "generic-api-key",
+          "start_line": 1361
+        }
+      ],
+      "operational_credential": false,
+      "public_provenance": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
+      },
+      "record_bytes": 473168,
+      "record_kind": "layer_regular_content",
+      "record_sha256": "df4906b2f6e68e8f8b418e8c68e86e8a374966b74eb77d0db0c137a2f86ed7f2",
+      "semantic_proof": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-semantics.json",
+        "sha256": "e7d0d55bad2bd06f51540a37cc1275d06eb4c008668bbd398636d3cff564ff35"
+      },
+      "semantic_role": "non-operational-source-example"
+    },
+    {
+      "native_findings": [
+        {
+          "end_line": 162,
+          "rule_id": "generic-api-key",
+          "start_line": 162
+        }
+      ],
+      "operational_credential": false,
+      "public_provenance": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
+      },
+      "record_bytes": 136016,
+      "record_kind": "layer_regular_content",
+      "record_sha256": "30260e683424409e8d57f0503f57ef7aeb6eb8ed569e4f9d1b030a919de90c6d",
+      "semantic_proof": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-semantics.json",
+        "sha256": "e7d0d55bad2bd06f51540a37cc1275d06eb4c008668bbd398636d3cff564ff35"
+      },
+      "semantic_role": "non-operational-source-example"
+    },
+    {
+      "native_findings": [
+        {
+          "end_line": 94,
+          "rule_id": "generic-api-key",
+          "start_line": 94
+        }
+      ],
+      "operational_credential": false,
+      "public_provenance": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
+      },
+      "record_bytes": 8688,
+      "record_kind": "layer_regular_content",
+      "record_sha256": "c6b898d8ec521127f29b72bf747ab26c2e80668bebb2e6bacb1763117cf6124f",
+      "semantic_proof": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-semantics.json",
+        "sha256": "e7d0d55bad2bd06f51540a37cc1275d06eb4c008668bbd398636d3cff564ff35"
+      },
+      "semantic_role": "non-operational-source-example"
+    },
+    {
+      "native_findings": [
+        {
+          "end_line": 5011,
+          "rule_id": "generic-api-key",
+          "start_line": 5011
+        },
+        {
+          "end_line": 5060,
+          "rule_id": "generic-api-key",
+          "start_line": 5060
+        }
+      ],
+      "operational_credential": false,
+      "public_provenance": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
+      },
+      "record_bytes": 279426,
+      "record_kind": "layer_regular_content",
+      "record_sha256": "3c31621e634be2e978034c2248b0e963d252ac34bbdd132e96bd56f5a3445bcb",
+      "semantic_proof": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-semantics.json",
+        "sha256": "e7d0d55bad2bd06f51540a37cc1275d06eb4c008668bbd398636d3cff564ff35"
+      },
+      "semantic_role": "public-source-symbol"
+    },
+    {
+      "native_findings": [
+        {
+          "end_line": 936,
+          "rule_id": "generic-api-key",
+          "start_line": 936
+        },
+        {
+          "end_line": 939,
+          "rule_id": "generic-api-key",
+          "start_line": 939
+        }
+      ],
+      "operational_credential": false,
+      "public_provenance": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
+      },
+      "record_bytes": 37403,
+      "record_kind": "layer_regular_content",
+      "record_sha256": "fa5b24a8f943228bdd7d6f0ff7360aa5a291f37ab674fe85f965877314100f2b",
+      "semantic_proof": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-semantics.json",
+        "sha256": "e7d0d55bad2bd06f51540a37cc1275d06eb4c008668bbd398636d3cff564ff35"
+      },
+      "semantic_role": "non-operational-source-example"
+    },
+    {
+      "native_findings": [
+        {
+          "end_line": 32,
+          "rule_id": "generic-api-key",
+          "start_line": 32
+        }
+      ],
+      "operational_credential": false,
+      "public_provenance": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
+      },
+      "record_bytes": 3401,
+      "record_kind": "layer_regular_content",
+      "record_sha256": "67d9e49ed49273d9e958706357d73ce90196fe2b6f1984389798c93b46b61820",
+      "semantic_proof": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-semantics.json",
+        "sha256": "e7d0d55bad2bd06f51540a37cc1275d06eb4c008668bbd398636d3cff564ff35"
+      },
+      "semantic_role": "public-source-symbol"
+    },
+    {
+      "native_findings": [
+        {
+          "end_line": 118,
+          "rule_id": "generic-api-key",
+          "start_line": 118
+        }
+      ],
+      "operational_credential": false,
+      "public_provenance": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
+      },
+      "record_bytes": 18921,
+      "record_kind": "layer_regular_content",
+      "record_sha256": "9837f5a56c1536509c1107ecc1486d4034ad027c12fb9c5b66d8cc95f9d62dd2",
+      "semantic_proof": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-semantics.json",
+        "sha256": "e7d0d55bad2bd06f51540a37cc1275d06eb4c008668bbd398636d3cff564ff35"
+      },
+      "semantic_role": "public-source-symbol"
+    },
+    {
+      "native_findings": [
+        {
+          "end_line": 109,
+          "rule_id": "generic-api-key",
+          "start_line": 109
+        }
+      ],
+      "operational_credential": false,
+      "public_provenance": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
+      },
+      "record_bytes": 4178,
+      "record_kind": "layer_regular_content",
+      "record_sha256": "a703d149c86f32d5ee6ad7022d42c7baf48bf2400f12a902e1a2098dde6f100a",
+      "semantic_proof": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-semantics.json",
+        "sha256": "e7d0d55bad2bd06f51540a37cc1275d06eb4c008668bbd398636d3cff564ff35"
+      },
+      "semantic_role": "public-source-symbol"
+    },
+    {
+      "native_findings": [
+        {
+          "end_line": 38,
+          "rule_id": "generic-api-key",
+          "start_line": 38
+        },
+        {
+          "end_line": 50,
+          "rule_id": "generic-api-key",
+          "start_line": 50
+        },
+        {
+          "end_line": 56,
+          "rule_id": "generic-api-key",
+          "start_line": 56
+        },
+        {
+          "end_line": 137,
+          "rule_id": "generic-api-key",
+          "start_line": 137
+        },
+        {
+          "end_line": 152,
+          "rule_id": "generic-api-key",
+          "start_line": 152
+        },
+        {
+          "end_line": 179,
+          "rule_id": "generic-api-key",
+          "start_line": 179
+        },
+        {
+          "end_line": 198,
+          "rule_id": "generic-api-key",
+          "start_line": 198
+        },
+        {
+          "end_line": 204,
+          "rule_id": "generic-api-key",
+          "start_line": 204
+        },
+        {
+          "end_line": 218,
+          "rule_id": "generic-api-key",
+          "start_line": 218
+        }
+      ],
+      "operational_credential": false,
+      "public_provenance": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
+      },
+      "record_bytes": 19971,
+      "record_kind": "layer_regular_content",
+      "record_sha256": "7558a5078563cc0675c8f902f5e42cba5cfad20698bfd69328448dc7217d5953",
+      "semantic_proof": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-semantics.json",
+        "sha256": "e7d0d55bad2bd06f51540a37cc1275d06eb4c008668bbd398636d3cff564ff35"
+      },
+      "semantic_role": "non-operational-source-example"
+    },
+    {
+      "native_findings": [
+        {
+          "end_line": 74,
+          "rule_id": "generic-api-key",
+          "start_line": 74
+        },
+        {
+          "end_line": 86,
+          "rule_id": "generic-api-key",
+          "start_line": 86
+        },
+        {
+          "end_line": 92,
+          "rule_id": "generic-api-key",
+          "start_line": 92
+        },
+        {
+          "end_line": 230,
+          "rule_id": "generic-api-key",
+          "start_line": 230
+        },
+        {
+          "end_line": 245,
+          "rule_id": "generic-api-key",
+          "start_line": 245
+        },
+        {
+          "end_line": 277,
+          "rule_id": "generic-api-key",
+          "start_line": 277
+        },
+        {
+          "end_line": 304,
+          "rule_id": "generic-api-key",
+          "start_line": 304
+        },
+        {
+          "end_line": 310,
+          "rule_id": "generic-api-key",
+          "start_line": 310
+        },
+        {
+          "end_line": 334,
+          "rule_id": "generic-api-key",
+          "start_line": 334
+        }
+      ],
+      "operational_credential": false,
+      "public_provenance": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
+      },
+      "record_bytes": 16942,
+      "record_kind": "layer_regular_content",
+      "record_sha256": "03a8fb0a043c9f622be009fef14d09f65c9435e63c1f959f7f92393d61f39477",
+      "semantic_proof": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-semantics.json",
+        "sha256": "e7d0d55bad2bd06f51540a37cc1275d06eb4c008668bbd398636d3cff564ff35"
+      },
+      "semantic_role": "non-operational-source-example"
+    },
+    {
+      "native_findings": [
+        {
+          "end_line": 7558,
+          "rule_id": "github-app-token",
+          "start_line": 7558
+        },
+        {
+          "end_line": 15236,
+          "rule_id": "github-app-token",
+          "start_line": 15236
+        },
+        {
+          "end_line": 15236,
+          "rule_id": "github-app-token",
+          "start_line": 15236
+        },
+        {
+          "end_line": 15236,
+          "rule_id": "github-app-token",
+          "start_line": 15236
+        },
+        {
+          "end_line": 15236,
+          "rule_id": "github-app-token",
+          "start_line": 15236
+        },
+        {
+          "end_line": 15236,
+          "rule_id": "github-app-token",
+          "start_line": 15236
+        },
+        {
+          "end_line": 15236,
+          "rule_id": "github-app-token",
+          "start_line": 15236
+        },
+        {
+          "end_line": 15236,
+          "rule_id": "github-app-token",
+          "start_line": 15236
+        },
+        {
+          "end_line": 15236,
+          "rule_id": "github-app-token",
+          "start_line": 15236
+        },
+        {
+          "end_line": 15236,
+          "rule_id": "github-app-token",
+          "start_line": 15236
+        },
+        {
+          "end_line": 15236,
+          "rule_id": "github-app-token",
+          "start_line": 15236
+        },
+        {
+          "end_line": 15236,
+          "rule_id": "github-app-token",
+          "start_line": 15236
+        },
+        {
+          "end_line": 15236,
+          "rule_id": "github-app-token",
+          "start_line": 15236
+        },
+        {
+          "end_line": 15236,
+          "rule_id": "github-app-token",
+          "start_line": 15236
+        },
+        {
+          "end_line": 15236,
+          "rule_id": "github-app-token",
+          "start_line": 15236
+        },
+        {
+          "end_line": 15236,
+          "rule_id": "github-app-token",
+          "start_line": 15236
+        },
+        {
+          "end_line": 15236,
+          "rule_id": "github-app-token",
+          "start_line": 15236
+        },
+        {
+          "end_line": 15236,
+          "rule_id": "github-app-token",
+          "start_line": 15236
+        },
+        {
+          "end_line": 15236,
+          "rule_id": "github-app-token",
+          "start_line": 15236
+        },
+        {
+          "end_line": 15236,
+          "rule_id": "github-app-token",
+          "start_line": 15236
+        },
+        {
+          "end_line": 15236,
+          "rule_id": "github-app-token",
+          "start_line": 15236
+        },
+        {
+          "end_line": 15236,
+          "rule_id": "github-app-token",
+          "start_line": 15236
+        },
+        {
+          "end_line": 15236,
+          "rule_id": "github-app-token",
+          "start_line": 15236
+        },
+        {
+          "end_line": 15236,
+          "rule_id": "github-app-token",
+          "start_line": 15236
+        },
+        {
+          "end_line": 15236,
+          "rule_id": "github-app-token",
+          "start_line": 15236
+        },
+        {
+          "end_line": 15236,
+          "rule_id": "github-app-token",
+          "start_line": 15236
+        },
+        {
+          "end_line": 15236,
+          "rule_id": "github-app-token",
+          "start_line": 15236
+        },
+        {
+          "end_line": 15236,
+          "rule_id": "github-app-token",
+          "start_line": 15236
+        },
+        {
+          "end_line": 15236,
+          "rule_id": "github-app-token",
+          "start_line": 15236
+        },
+        {
+          "end_line": 15236,
+          "rule_id": "github-app-token",
+          "start_line": 15236
+        },
+        {
+          "end_line": 15236,
+          "rule_id": "github-app-token",
+          "start_line": 15236
+        },
+        {
+          "end_line": 15236,
+          "rule_id": "github-app-token",
+          "start_line": 15236
+        },
+        {
+          "end_line": 15236,
+          "rule_id": "github-app-token",
+          "start_line": 15236
+        },
+        {
+          "end_line": 15236,
+          "rule_id": "github-app-token",
+          "start_line": 15236
+        },
+        {
+          "end_line": 15236,
+          "rule_id": "github-app-token",
+          "start_line": 15236
+        },
+        {
+          "end_line": 15236,
+          "rule_id": "github-app-token",
+          "start_line": 15236
+        },
+        {
+          "end_line": 15236,
+          "rule_id": "github-app-token",
+          "start_line": 15236
+        },
+        {
+          "end_line": 15236,
+          "rule_id": "github-app-token",
+          "start_line": 15236
+        },
+        {
+          "end_line": 15236,
+          "rule_id": "github-app-token",
+          "start_line": 15236
+        },
+        {
+          "end_line": 15236,
+          "rule_id": "github-app-token",
+          "start_line": 15236
+        },
+        {
+          "end_line": 15236,
+          "rule_id": "github-app-token",
+          "start_line": 15236
+        },
+        {
+          "end_line": 15236,
+          "rule_id": "github-app-token",
+          "start_line": 15236
+        },
+        {
+          "end_line": 15236,
+          "rule_id": "github-app-token",
+          "start_line": 15236
+        }
+      ],
+      "operational_credential": false,
+      "public_provenance": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
+      },
+      "record_bytes": 6755920,
+      "record_kind": "layer_regular_content",
+      "record_sha256": "33fb5a6a86b8fb914b26e69f8f046274b0b043d202511109365d3fde180c540d",
+      "semantic_proof": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-semantics.json",
+        "sha256": "e7d0d55bad2bd06f51540a37cc1275d06eb4c008668bbd398636d3cff564ff35"
+      },
+      "semantic_role": "linker-type-framing"
+    },
+    {
+      "native_findings": [
+        {
+          "end_line": 570,
+          "rule_id": "generic-api-key",
+          "start_line": 570
+        }
+      ],
+      "operational_credential": false,
+      "public_provenance": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
+      },
+      "record_bytes": 71701,
+      "record_kind": "layer_regular_content",
+      "record_sha256": "100bc58669e744505277dab8d955fe3764d67ba6e26640c6e567acdf209a7145",
+      "semantic_proof": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-semantics.json",
+        "sha256": "e7d0d55bad2bd06f51540a37cc1275d06eb4c008668bbd398636d3cff564ff35"
+      },
+      "semantic_role": "public-source-symbol"
+    },
+    {
+      "native_findings": [
+        {
+          "end_line": 1270,
+          "rule_id": "generic-api-key",
+          "start_line": 1270
+        }
+      ],
+      "operational_credential": false,
+      "public_provenance": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
+      },
+      "record_bytes": 70075,
+      "record_kind": "layer_regular_content",
+      "record_sha256": "1e1753a4571f1ad5e1598a5b48920432a33fd102dc88bc5fd378e1ee5e403e7a",
+      "semantic_proof": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-semantics.json",
+        "sha256": "e7d0d55bad2bd06f51540a37cc1275d06eb4c008668bbd398636d3cff564ff35"
+      },
+      "semantic_role": "public-source-symbol"
+    },
+    {
+      "native_findings": [
+        {
+          "end_line": 2588,
+          "rule_id": "generic-api-key",
+          "start_line": 2588
+        },
+        {
+          "end_line": 2610,
+          "rule_id": "generic-api-key",
+          "start_line": 2610
+        }
+      ],
+      "operational_credential": false,
+      "public_provenance": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
+      },
+      "record_bytes": 215854,
+      "record_kind": "layer_regular_content",
+      "record_sha256": "36d942303fe76156a3d4f3f0626df7cdb9aced1ed844358b075752f1ec9723ea",
+      "semantic_proof": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-semantics.json",
+        "sha256": "e7d0d55bad2bd06f51540a37cc1275d06eb4c008668bbd398636d3cff564ff35"
+      },
+      "semantic_role": "public-source-symbol"
+    },
+    {
+      "native_findings": [
+        {
+          "end_line": 68,
+          "rule_id": "generic-api-key",
+          "start_line": 68
+        }
+      ],
+      "operational_credential": false,
+      "public_provenance": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
+      },
+      "record_bytes": 15995,
+      "record_kind": "layer_regular_content",
+      "record_sha256": "cd5db27ed5c04b909d05d278f6a62c692bb4e11edb1fc156ac1a223a3fb3368a",
+      "semantic_proof": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-semantics.json",
+        "sha256": "e7d0d55bad2bd06f51540a37cc1275d06eb4c008668bbd398636d3cff564ff35"
+      },
+      "semantic_role": "public-source-symbol"
+    },
+    {
+      "native_findings": [
+        {
+          "end_line": 123,
+          "rule_id": "generic-api-key",
+          "start_line": 123
+        },
+        {
+          "end_line": 547,
+          "rule_id": "generic-api-key",
+          "start_line": 547
+        }
+      ],
+      "operational_credential": false,
+      "public_provenance": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
+      },
+      "record_bytes": 32042,
+      "record_kind": "layer_regular_content",
+      "record_sha256": "d4fb7d8e1d0f221cbb04a75b1a07e7e48d26db7a3fc35ae29e09fdd4c017a217",
+      "semantic_proof": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-semantics.json",
+        "sha256": "e7d0d55bad2bd06f51540a37cc1275d06eb4c008668bbd398636d3cff564ff35"
+      },
+      "semantic_role": "non-operational-source-example"
+    },
+    {
+      "native_findings": [
+        {
+          "end_line": 175,
+          "rule_id": "github-app-token",
+          "start_line": 175
+        }
+      ],
+      "operational_credential": false,
+      "public_provenance": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
+      },
+      "record_bytes": 61528,
+      "record_kind": "layer_regular_content",
+      "record_sha256": "502f6385f256e013f72510c7a8dea2b23a9feff678b9aa13c758398cbb40ef32",
+      "semantic_proof": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-semantics.json",
+        "sha256": "e7d0d55bad2bd06f51540a37cc1275d06eb4c008668bbd398636d3cff564ff35"
+      },
+      "semantic_role": "bytecode-framing"
+    },
+    {
+      "native_findings": [
+        {
+          "end_line": 1678,
+          "rule_id": "generic-api-key",
+          "start_line": 1678
+        }
+      ],
+      "operational_credential": false,
+      "public_provenance": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
+      },
+      "record_bytes": 164204,
+      "record_kind": "layer_regular_content",
+      "record_sha256": "cefdfee3294b6aa5d9001985a3bce19b45e795dcfbbdd87980f5ef9b84c86e94",
+      "semantic_proof": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-semantics.json",
+        "sha256": "e7d0d55bad2bd06f51540a37cc1275d06eb4c008668bbd398636d3cff564ff35"
+      },
+      "semantic_role": "public-source-symbol"
+    },
+    {
+      "native_findings": [
+        {
+          "end_line": 225,
+          "rule_id": "generic-api-key",
+          "start_line": 225
+        }
+      ],
+      "operational_credential": false,
+      "public_provenance": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json",
+        "sha256": "c4d9a15fda2c3cb21ed5e182e0b51a3ba5088a0d963b8e6cd4b8e5bdcb0d068d"
+      },
+      "record_bytes": 162773,
+      "record_kind": "layer_regular_content",
+      "record_sha256": "e743775cbd6ff9caf3d705479110c09a5e3423fea55ab4b156532e412bbffd63",
+      "semantic_proof": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-semantics.json",
+        "sha256": "e7d0d55bad2bd06f51540a37cc1275d06eb4c008668bbd398636d3cff564ff35"
+      },
+      "semantic_role": "public-source-symbol"
+    }
+  ],
+  "schema_version": "npa.image-native-content-policy.v1"
+}

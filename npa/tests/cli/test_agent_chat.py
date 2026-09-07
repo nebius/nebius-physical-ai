@@ -9,10 +9,18 @@ import yaml
 from npa.cli import agent as agent_module
 from npa.cli import agent_actions
 from npa.cli.agent_chat import (
+    _image_for_tool,
     build_grounded_reply,
     format_sim2real_status,
     match_chat_intent,
 )
+from npa.deploy.images import supported_tool_version
+
+
+def test_agent_isaac_image_guidance_matches_canonical_pin() -> None:
+    assert _image_for_tool("isaac-lab").endswith(
+        f"/npa-isaac-lab:{supported_tool_version('isaac-lab')}"
+    )
 
 
 def _planner(script):
@@ -84,6 +92,70 @@ def test_match_sim2real_status_intent() -> None:
     assert match_chat_intent("run on live infra in tmux loop with gpu compatibility checks") == "live_infra_loop"
     assert match_chat_intent("show my tenant resources") == "tenant_resources"
     assert match_chat_intent("what resources can I access in this project?") == "tenant_resources"
+
+
+def test_every_intent_declares_its_apis() -> None:
+    """Each routed intent needs an `INTENT_APIS` entry, not just a regex.
+
+    `INTENT_APIS` is not only reply metadata: `_semantic_route` derives the
+    semantic fallthrough's `known_intents` from its keys, so an intent missing
+    here can never be reached by a paraphrase the regex misses, and its grounded
+    replies report an empty `apis_used`. `foxglove_viewer` was in that state.
+    """
+    from npa.cli.agent_chat import _INTENT_RULES, INTENT_APIS
+
+    routed = [intent for intent, _pattern in _INTENT_RULES]
+    missing = sorted(set(routed) - set(INTENT_APIS))
+    assert not missing, f"intents missing an INTENT_APIS entry: {missing}"
+    orphaned = sorted(set(INTENT_APIS) - set(routed))
+    assert not orphaned, f"INTENT_APIS entries with no routing rule: {orphaned}"
+
+
+def test_foxglove_viewer_reports_its_grounded_apis() -> None:
+    from npa.cli.agent_chat import apis_for_intent, match_chat_intent
+
+    assert match_chat_intent("open foxglove") == "foxglove_viewer"
+    assert "foxglove/status" in apis_for_intent("foxglove_viewer")
+
+
+def test_tool_capability_questions_route_consistently() -> None:
+    """"what can <tool> do" reaches the tool's own grounded reply.
+
+    Regression: every sibling tool rule accepted this phrasing except LanceDB,
+    so the LanceDB turn silently degraded to the generic component overview
+    while the identical Sonic/LeRobot/Genesis wording stayed tool-specific.
+    """
+    from npa.cli.agent_chat import match_chat_intent
+
+    for tool, intent in (
+        ("lancedb", "lancedb_capabilities"),
+        ("sonic", "sonic_capabilities"),
+        ("lerobot", "lerobot_capabilities"),
+        ("genesis", "genesis_capabilities"),
+        ("mjlab", "mjlab_capabilities"),
+    ):
+        assert match_chat_intent(f"what can {tool} do") == intent, tool
+    # The narrower LanceDB verbs stay routed to LanceDB.
+    assert match_chat_intent("what does lancedb expose") == "lancedb_capabilities"
+
+
+def test_component_inventory_questions_stay_grounded() -> None:
+    """A component-inventory turn is answered from state, not a paid model call.
+
+    Regression: "what components are available" matched no intent and fell
+    through to the LLM even though `component_capabilities` can answer it for
+    zero tokens. Tool-catalog phrasing must keep its own intent.
+    """
+    from npa.cli.agent_chat import match_chat_intent
+
+    for prompt in (
+        "what components are available",
+        "which components do you have",
+        "list the components",
+    ):
+        assert match_chat_intent(prompt) == "component_capabilities", prompt
+    assert match_chat_intent("list the available tools") == "tools_catalog"
+    assert match_chat_intent("what toolRefs are there") == "tools_catalog"
 
 
 def test_public_chat_session_payload_never_exposes_memory_locator() -> None:
@@ -680,4 +752,23 @@ def test_keyword_skill_rules_lead_with_the_npa_workflow_skill() -> None:
 
     # Unrelated or too-generic turns must not pull the skill in.
     for text in ("write me a workflow yaml", "what is cosmos3", "run cosmos2 transfer"):
+        assert skill_names_for_keywords(text) == [], text
+
+
+def test_keyword_skill_rules_select_access_approval_without_catching_unrelated_access() -> None:
+    from npa.cli.agent_chat import skill_names_for_keywords
+
+    for text in (
+        "prepare full catalog access",
+        "check HF model approval",
+        "approve the NGC artifact",
+        "audit Hugging Face dataset access",
+    ):
+        assert skill_names_for_keywords(text) == ["access-approval"], text
+
+    for text in (
+        "show cluster access",
+        "prepare a public dataset",
+        "open the dashboard",
+    ):
         assert skill_names_for_keywords(text) == [], text

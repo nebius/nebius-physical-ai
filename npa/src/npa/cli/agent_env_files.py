@@ -7,16 +7,20 @@ them there keep working.
 
 from __future__ import annotations
 
+import base64
 import json
-from pathlib import Path
+import os
 import re
 import shlex
 import uuid
+from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from npa.clients.config import CONFIG_PATH, _load_yaml_file
 from npa.clients.project_credential_store import merge_project_credentials_document
 from npa.clients.ssh import SSHClient
+from npa.cli.agent_access import normalize_configured_artifact_sources
 
 
 _REMOTE_KUBERNETES_KEYS = (
@@ -25,6 +29,10 @@ _REMOTE_KUBERNETES_KEYS = (
     "gpu_profile",
     "gpu_accelerator",
 )
+
+_LLM_PROVIDER_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,62}\Z")
+_CUSTOM_LLM_MIN_TIMEOUT_SECONDS = 180.0
+_CUSTOM_LLM_MAX_CONCURRENCY = 8
 
 
 def _remote_kubernetes_config(project_alias: str) -> tuple[dict[str, str], str]:
@@ -86,6 +94,101 @@ def _stage_private_text(
         ssh.run(f"rm -f {shlex.quote(remote_source)} {shlex.quote(remote_target)}")
 
 
+def _load_agent_llm_config_file(path: str) -> dict[str, Any]:
+    """Load one owner-only OpenAI-compatible provider configuration.
+
+    The API key itself remains in a separate owner-only file so neither the
+    command line nor the durable agent record contains secret material.
+    """
+
+    source = Path(str(path or "")).expanduser()
+    if not source.is_file():
+        raise ValueError("LLM config file does not exist")
+    if source.stat().st_mode & 0o077:
+        raise ValueError("LLM config file must not be readable by group or others")
+    try:
+        payload = json.loads(source.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise ValueError("LLM config file is not valid JSON") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("LLM config file must contain a JSON object")
+    allowed = {
+        "provider",
+        "base_url",
+        "api_key_file",
+        "model",
+        "models",
+        "timeout_seconds",
+        "max_concurrency",
+    }
+    unknown = sorted(set(payload) - allowed)
+    if unknown:
+        raise ValueError("LLM config file contains unsupported fields")
+    provider = str(payload.get("provider") or "").strip().lower().replace("-", "_")
+    if not _LLM_PROVIDER_RE.fullmatch(provider):
+        raise ValueError("LLM provider name is invalid")
+    base_url = str(payload.get("base_url") or "").strip().rstrip("/")
+    parsed = urlparse(base_url)
+    if (
+        parsed.scheme != "https"
+        or not parsed.hostname
+        or parsed.username
+        or parsed.password
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ValueError(
+            "LLM base URL must be credential-free HTTPS without query or fragment"
+        )
+    model = str(payload.get("model") or "").strip()
+    if not model or any(char in model for char in "\r\n"):
+        raise ValueError("LLM model is invalid")
+    raw_models = payload.get("models") or [model]
+    if not isinstance(raw_models, list):
+        raise ValueError("LLM models must be a JSON array")
+    models: list[str] = []
+    for item in [model, *raw_models]:
+        value = str(item or "").strip()
+        if not value or any(char in value for char in "\r\n"):
+            raise ValueError("LLM models contain an invalid entry")
+        if value not in models:
+            models.append(value)
+    key_path = Path(str(payload.get("api_key_file") or "")).expanduser()
+    if not key_path.is_file():
+        raise ValueError("LLM API key file does not exist")
+    if key_path.stat().st_mode & 0o077:
+        raise ValueError("LLM API key file must not be readable by group or others")
+    try:
+        api_key = key_path.read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        raise ValueError("LLM API key file is unreadable") from exc
+    if not api_key or "\n" in api_key or "\r" in api_key:
+        raise ValueError("LLM API key file must contain exactly one non-empty value")
+    try:
+        timeout_seconds = float(payload.get("timeout_seconds", 180))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("LLM timeout_seconds must be numeric") from exc
+    if timeout_seconds < _CUSTOM_LLM_MIN_TIMEOUT_SECONDS:
+        raise ValueError("custom LLM timeout_seconds must be at least 180")
+    try:
+        max_concurrency = int(payload.get("max_concurrency", 8))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("LLM max_concurrency must be an integer") from exc
+    if not 1 <= max_concurrency <= _CUSTOM_LLM_MAX_CONCURRENCY:
+        raise ValueError("LLM max_concurrency must be between 1 and 8")
+    return {
+        "provider": provider,
+        "base_url": base_url,
+        "api_key_file": str(key_path),
+        "api_key": api_key,
+        "model": model,
+        "models": models,
+        "timeout_seconds": timeout_seconds,
+        "max_concurrency": max_concurrency,
+        "config_file": str(source),
+    }
+
+
 def _write_agent_s3_env(
     ssh: SSHClient,
     *,
@@ -106,13 +209,50 @@ def _write_agent_s3_env(
         f"AWS_ACCESS_KEY_ID={access_key.strip()}",
         f"AWS_SECRET_ACCESS_KEY={secret_key.strip()}",
         f"AWS_REGION={region.strip() or 'eu-north1'}",
-        "",
     ]
+    env_lines.append("")
     _stage_private_text(
         ssh,
         content="\n".join(env_lines),
         target="/opt/npa-agent/s3.env",
     )
+
+
+def _write_agent_artifact_sources_env(
+    ssh: SSHClient,
+    *,
+    artifact_sources: tuple[dict[str, str], ...] | list[dict[str, str]] = (),
+) -> None:
+    """Stage durable read selectors independently of S3 credentials."""
+    normalized_sources = normalize_configured_artifact_sources(artifact_sources)
+    env_lines: list[str] = []
+    if normalized_sources:
+        encoded_sources = base64.urlsafe_b64encode(
+            json.dumps(
+                list(normalized_sources), separators=(",", ":"), sort_keys=True
+            ).encode("utf-8")
+        ).decode("ascii")
+        env_lines.append(f"NPA_AGENT_ARTIFACT_SOURCES_B64={encoded_sources}")
+    env_lines.append("")
+    _stage_private_text(
+        ssh,
+        content="\n".join(env_lines),
+        target="/opt/npa-agent/artifact-sources.env",
+    )
+
+
+def _load_agent_artifact_sources_file(path: str) -> tuple[dict[str, str], ...]:
+    """Load an owner-only JSON array used by ``npa agent bootstrap``."""
+    source = Path(str(path or "")).expanduser()
+    if not source.is_file():
+        raise ValueError("artifact source file does not exist")
+    if source.stat().st_mode & 0o077:
+        raise ValueError("artifact source file must not be readable by group or others")
+    try:
+        payload = json.loads(source.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise ValueError("artifact source file is not valid JSON") from exc
+    return normalize_configured_artifact_sources(payload)
 
 
 def _write_agent_operator_profile(
@@ -266,6 +406,25 @@ def _write_agent_nebius_env(
     del iam_token
     if not (project_id.strip() and access_key.strip() and secret_key.strip()):
         return
+    dataset_tenant = os.environ.get("NPA_AGENT_DATASET_TENANT_ID", "").strip()
+    dataset_uri = os.environ.get("NPA_AGENT_DATASET_URI", "").strip()
+    if bool(dataset_tenant) != bool(dataset_uri):
+        raise ValueError("agent dataset tenant and URI must be configured together")
+    if dataset_tenant:
+        parsed_dataset = urlparse(dataset_uri)
+        if dataset_tenant != tenant_id.strip():
+            raise ValueError(
+                "agent dataset tenant does not match the deployment tenant"
+            )
+        if (
+            parsed_dataset.scheme != "s3"
+            or parsed_dataset.netloc != bucket.strip()
+            or parsed_dataset.query
+            or parsed_dataset.fragment
+        ):
+            raise ValueError(
+                "agent dataset URI must use the deployment's unsigned S3 bucket"
+            )
     env_lines = [
         f"NPA_AGENT_PROJECT_ALIAS={project_alias.strip()}",
         f"NPA_AGENT_NAME={agent_name.strip()}",
@@ -282,8 +441,15 @@ def _write_agent_nebius_env(
         f"AWS_ACCESS_KEY_ID={access_key.strip()}",
         f"AWS_SECRET_ACCESS_KEY={secret_key.strip()}",
         f"AWS_REGION={region.strip() or 'eu-north1'}",
-        "",
     ]
+    if dataset_tenant:
+        env_lines.extend(
+            [
+                f"NPA_AGENT_DATASET_TENANT_ID={dataset_tenant}",
+                f"NPA_AGENT_DATASET_URI={dataset_uri}",
+            ]
+        )
+    env_lines.append("")
     _stage_private_text(
         ssh,
         content="\n".join(env_lines),

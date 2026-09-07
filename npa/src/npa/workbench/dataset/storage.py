@@ -4,16 +4,9 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
 
-
-@dataclass(frozen=True)
-class S3Uri:
-    bucket: str
-    key: str
+from npa.workbench.storage_scope import authorize_uri
 
 
 def uri_join(base: str, *parts: str) -> str:
@@ -23,33 +16,24 @@ def uri_join(base: str, *parts: str) -> str:
     return f"{prefix}/{suffix}" if suffix else prefix
 
 
-def parse_s3_uri(uri: str) -> S3Uri:
-    parsed = urlparse(uri)
-    if parsed.scheme != "s3" or not parsed.netloc:
-        raise ValueError(f"not an S3 URI: {uri}")
-    return S3Uri(bucket=parsed.netloc, key=parsed.path.lstrip("/"))
-
-
-def is_s3_uri(uri: str) -> bool:
-    return uri.startswith("s3://")
-
-
 def write_bytes_uri(uri: str, payload: bytes) -> None:
-    if is_s3_uri(uri):
-        target = parse_s3_uri(uri)
+    target = authorize_uri(uri, operation="write")
+    if target.kind == "s3":
         _s3_client().put_object(Bucket=target.bucket, Key=target.key, Body=payload)
         return
-    path = _local_path(uri)
+    assert target.local_path is not None
+    path = target.local_path
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(payload)
 
 
 def read_bytes_uri(uri: str) -> bytes:
-    if is_s3_uri(uri):
-        target = parse_s3_uri(uri)
+    target = authorize_uri(uri, operation="read")
+    if target.kind == "s3":
         response = _s3_client().get_object(Bucket=target.bucket, Key=target.key)
         return response["Body"].read()
-    return _local_path(uri).read_bytes()
+    assert target.local_path is not None
+    return target.local_path.read_bytes()
 
 
 def write_json_uri(uri: str, payload: dict[str, Any]) -> None:
@@ -59,12 +43,6 @@ def write_json_uri(uri: str, payload: dict[str, Any]) -> None:
 
 def read_json_uri(uri: str) -> dict[str, Any]:
     return json.loads(read_bytes_uri(uri).decode("utf-8"))
-
-
-def _local_path(uri: str) -> Path:
-    if uri.startswith("file://"):
-        return Path(urlparse(uri).path)
-    return Path(uri)
 
 
 def _s3_client():

@@ -15,6 +15,10 @@ The W10 validation exercised both override surfaces:
 The reference workflow remains `npa/src/npa/workflows/byof/profiles/isaac-lab-rl-train.yaml`;
 the reference runner remains `npa/scripts/run_isaac_lab_rl.py`.
 
+The current base is Isaac Lab 3 beta / Isaac Sim 6 and uses `--visualizer none`.
+The W10 transcripts retained below are generation 2 historical evidence; their
+`--headless` field is not the generation 3 invocation contract.
+
 ## What This Cookbook Covers
 
 Use this guide when you want to:
@@ -41,9 +45,8 @@ canonical setup path for the local NPA install, Nebius credentials, AWS profile,
 S3 endpoint, workbench environment variables, Kubernetes context, registry pull
 secret, and isolated SkyPilot runtime.
 
-Isaac Lab requires RT cores. Use L40S for this eu-north1 workflow validation.
-RTX Pro 6000 is the expected US Central target when capacity is available.
-Do not route Isaac Lab training to H100 or H200.
+Isaac Lab requires RT cores. Use L40S or RTX PRO 6000. Do not route its
+graphics/PhysX workloads to B200, H100, or H200.
 
 Before you start, verify the three live dependencies:
 
@@ -73,7 +76,7 @@ training command:
 --task Isaac-Cartpole-v0 \
 --num_envs 64 \
 --max_iterations 1 \
---headless \
+--visualizer none \
 --experiment_name npa_byof \
 --run_name "${RUN_ID}" \
 agent.save_interval=1
@@ -106,9 +109,11 @@ docker build \
 ```
 
 The example base image digest is
-`sha256:dc1dd94e64c1e970ec74dccf152180f739cfd457125996100069f688b7911fca`,
-the validated `npa-isaac-lab:2.3.2.post1` Workbench image used by W10. Refresh
-it only when the platform base image is intentionally rebuilt.
+`sha256:bb735577809f9b427493fda78efebc543dcf02e3deac2ec8a36ac019bff8ee46`,
+the validated `npa-isaac-lab:3.0.0b2.post1` Workbench image. W10 used the
+historical generation 2 base; the digest above is the current generation 3
+contract. Refresh it only after a new platform base passes exact-digest GPU
+validation and guarded publication.
 
 Common customizations:
 
@@ -202,7 +207,7 @@ still resolve to this shape:
   --task "${ISAAC_LAB_TASK}" \
   --num_envs "${ISAAC_LAB_NUM_ENVS}" \
   --max_iterations "${ISAAC_LAB_ITERATIONS}" \
-  --headless \
+  --visualizer none \
   --experiment_name "${ISAAC_LAB_EXPERIMENT_NAME}" \
   --run_name "${ISAAC_LAB_RUN_NAME}" \
   agent.save_interval=1
@@ -275,11 +280,13 @@ Your image must provide:
 - the upstream training script if your wrapper delegates to it;
 - `boto3` availability or installability during setup;
 - write access to `/workspace/isaaclab/npa-runs`;
-- headless Isaac Lab behavior;
+- non-rendering Isaac Lab behavior (`--visualizer none` for generation 3);
 - any custom assets or packages your fork requires.
 
 Your custom command must preserve `--task`, `--num_envs`, `--max_iterations`,
-`--headless`, `--experiment_name`, `--run_name`, and Hydra override passthrough.
+`--visualizer`, `--experiment_name`, `--run_name`, and Hydra override
+passthrough. The wrapper retains `--headless` only for generation 2 custom
+images.
 
 ## Verifying Your Run
 
@@ -338,7 +345,8 @@ successful `--cleanup` run. The shared jobs controller may remain up.
 ## Known Constraints
 
 - Isaac Lab requires RT-core GPUs.
-- Batch jobs must run headless.
+- Batch jobs must disable visualization (`--visualizer none` for generation 3;
+  `--headless` only for generation 2 compatibility images).
 - The current path does not run Omniverse interactive rendering.
 - Omniverse rendering support is roadmap work, not part of this BYOF smoke.
 - The runner exposes image override directly but command override through YAML.

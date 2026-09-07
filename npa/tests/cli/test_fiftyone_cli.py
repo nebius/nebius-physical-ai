@@ -1074,9 +1074,6 @@ def _mock_fiftyone_serverless_env(mocker):
         ),
     )
     mocker.patch(
-        "npa.cli.fiftyone.resolve_container_registry", return_value="registry.example"
-    )
-    mocker.patch(
         "npa.cli.fiftyone.container_image_for_tool",
         return_value="registry.example/npa-fiftyone:smoke",
     )

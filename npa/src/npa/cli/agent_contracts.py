@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from npa.cli.agent_source_embed import embedded_module_source
+from npa.orchestration.npa_workflow.blueprints import resolve_npa_workflow_spec
 
 
 LEISAAC_CONTROL_READINESS_CONTRACT = "LEISAAC_CONTROL_READINESS_CONTRACT"
@@ -44,6 +45,9 @@ AGENT_MEDIA_PREVIEW_CONTRACT = (
     'id="artifactPreviewHost"',
     'id="viewerPaneMedia"',
     "URL.createObjectURL(blob)",
+    # Single braces: both routes live in agent_artifact_content.py, which is real
+    # Python embedded into the backend, not the brace-escaped f-string template.
+    # Pinning the doubled form tracked a copy in agent.py that never served.
     '@app.api_route("/artifacts/file/{filename}", methods=["GET", "HEAD"])',
     '@app.api_route("/artifacts/content", methods=["GET", "HEAD"])',
     "parse_http_byte_range",
@@ -155,13 +159,10 @@ def _embedded_source(path: Path) -> str:
 
 def _embedded_agent_workflow_source() -> str:
     source = _embedded_source(Path(__file__).with_name("agent_workflow.py"))
-    canonical = (
-        Path(__file__).resolve().parents[3]
-        / "workflows"
-        / "workbench"
-        / "npa-workflows"
-        / "sim2real.yaml"
-    ).read_text(encoding="utf-8")
+    canonical_path = resolve_npa_workflow_spec("sim2real.yaml")
+    if canonical_path is None:
+        raise FileNotFoundError("canonical packaged sim2real.yaml is missing")
+    canonical = canonical_path.read_text(encoding="utf-8")
     marker = '_EMBEDDED_CANONICAL_SIM2REAL_YAML = ""'
     if marker not in source:
         raise RuntimeError(
@@ -222,11 +223,20 @@ def _embedded_agent_provenance_source() -> str:
     )
 
 
-def rendered_agent_ui_html() -> str:
-    """Render the standalone UI template with agent bootstrap constants."""
+def rendered_agent_ui_from_record(record: object) -> str:
+    """Resolve the selected operator record before rendering the deployed UI."""
+    from npa.cli.agent_records import leisaac_ui_enabled
+
+    return rendered_agent_ui_html(leisaac_enabled=leisaac_ui_enabled(record))
+
+
+def rendered_agent_ui_html(*, leisaac_enabled: bool = False) -> str:
+    """Render the UI with bootstrap settings; optional features fail closed."""
     from npa.cli.agent import AGENT_UI_VERSION, DEFAULT_AGENT_USER
 
     raw = Path(__file__).with_name("agent_ui.html").read_text(encoding="utf-8")
-    return raw.replace("{AGENT_UI_VERSION}", AGENT_UI_VERSION).replace(
-        "{DEFAULT_AGENT_USER}", DEFAULT_AGENT_USER
+    return (
+        raw.replace("{AGENT_UI_VERSION}", AGENT_UI_VERSION)
+        .replace("{DEFAULT_AGENT_USER}", DEFAULT_AGENT_USER)
+        .replace("{LEISAAC_UI_ENABLED}", "true" if leisaac_enabled is True else "false")
     )

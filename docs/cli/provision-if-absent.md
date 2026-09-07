@@ -24,6 +24,8 @@ Options
 --gpu-platform  <str>  GPU node platform, matching `npa cluster up`.
 --gpu-preset  <str>  GPU node preset, matching `npa cluster up`.
 --gpu-driver-mode  <str>  GPU driver strategy (auto, managed-image, or operator), matching `npa cluster up`.
+--gpu-workload-profile  <str>  Explicit GPU workload contract. 'rtx-rendering' selects RTX PRO 6000, GPU Operator drivers, and mandatory
+    GLX/EGL/Vulkan readiness.
 --managed-driver-preset  <str>  Nebius managed driver preset, matching `npa cluster up`.
 --allow-unsafe-nvswitch-operator  --deny-unsafe-nvswitch-operator  Explicit diagnostic acknowledgement for operator mode on NVSwitch systems.
 --gpu-health-stabilization-seconds  <int>  Required stable GPU-health interval, matching `npa cluster up`. [default: 120]
@@ -35,6 +37,7 @@ Options
 --mig-strategy  <str>  [default: mixed]
 --mig-config  <str>  [default: all-balanced]
 --capacity-block-group  <str>  Runtime-only strict GPU capacity block selector.
+--infiniband-fabric  <str>  InfiniBand fabric required by NVSwitch GPU clusters, matching `npa cluster up`.
 --preemptible  --on-demand  Run the GPU node group as preemptible, matching `npa cluster up`. This changes the capacity pool but not hard
     instance/disk/IP quotas; a reclaim stops the node mid-run.
 --dry-run  Resolve settings and print intended actions only.
@@ -67,6 +70,7 @@ Options
 | `--gpu-platform` | <str>  GPU node platform, matching `npa cluster up`. |
 | `--gpu-preset` | <str>  GPU node preset, matching `npa cluster up`. |
 | `--gpu-driver-mode` | <str>  GPU driver strategy (auto, managed-image, or operator), matching `npa cluster up`. |
+| `--gpu-workload-profile` | <str>  Explicit GPU workload contract. 'rtx-rendering' selects RTX PRO 6000, GPU Operator drivers, and mandatory GLX/EGL/Vulkan readiness. |
 | `--managed-driver-preset` | <str>  Nebius managed driver preset, matching `npa cluster up`. |
 | `--allow-unsafe-nvswitch-operator` | --deny-unsafe-nvswitch-operator  Explicit diagnostic acknowledgement for operator mode on NVSwitch systems. |
 | `--gpu-health-stabilization-seconds` | <int>  Required stable GPU-health interval, matching `npa cluster up`. [default: 120] |
@@ -77,6 +81,7 @@ Options
 | `--mig-strategy` | <str>  [default: mixed] |
 | `--mig-config` | <str>  [default: all-balanced] |
 | `--capacity-block-group` | <str>  Runtime-only strict GPU capacity block selector. |
+| `--infiniband-fabric` | <str>  InfiniBand fabric required by NVSwitch GPU clusters, matching `npa cluster up`. |
 | `--preemptible` | --on-demand  Run the GPU node group as preemptible, matching `npa cluster up`. This changes the capacity pool but not hard instance/disk/IP quotas; a reclaim stops the node mid-run. |
 | `--dry-run` | Resolve settings and print intended actions only. |
 | `--timeout` | <int>  Terraform apply timeout in minutes. [default: 120] |

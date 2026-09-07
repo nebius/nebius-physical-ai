@@ -109,3 +109,7 @@ semgrep-*.json
 # Its cleanup trap removes these; a hard kill cannot, so keep them uncommittable.
 docs/.cli-stage-*/
 docs/.cli-prev-*/
+
+# Generated catalog copies for narrow Python/container build contexts.
+/npa/src/npa/workflows/main/
+/npa/src/npa/workflows/testing/

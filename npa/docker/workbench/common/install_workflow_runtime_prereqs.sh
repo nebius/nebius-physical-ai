@@ -44,9 +44,15 @@ apt-get update
 # graph is broken.  Repair it from the same immutable snapshot first; this is
 # deliberately fail-closed and never falls back to a moving mirror.
 apt-get --fix-broken install -y --no-install-recommends
+# Genesis' Jammy base retains an older linux-libc-dev build. These are
+# userspace development headers rather than the cluster's kernel, but the
+# fixed build is available in this immutable snapshot, so do not publish the
+# avoidable critical CVEs inherited from the parent filesystem.
 apt-get install -y --no-install-recommends \
   ca-certificates \
   curl \
+  ffmpeg \
+  linux-libc-dev=5.15.0-190.200 \
   netcat-openbsd \
   openssh-client \
   openssh-server \
@@ -56,6 +62,8 @@ apt-get install -y --no-install-recommends \
   sudo \
   wget
 rm -rf /var/lib/apt/lists/*
+rm -f /etc/ssh/ssh_host_*
+test -z "$(find /etc/ssh -maxdepth 1 -type f -name 'ssh_host_*' -print -quit)"
 
 id -u ubuntu >/dev/null 2>&1
 printf '%s\n' 'ubuntu ALL=(ALL) NOPASSWD:ALL' \

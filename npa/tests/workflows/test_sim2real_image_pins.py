@@ -28,6 +28,7 @@ _EXACT_SOURCE_DOCKERFILES = (
     "sim2real-envgen/Dockerfile",
     "sim2real-eval/Dockerfile",
     "sim2real-control/Dockerfile",
+    "rerun-viewer/Dockerfile",
 )
 
 _STANDARD_WORKFLOW_PASSTHROUGH_DOCKERFILES = (
@@ -39,6 +40,21 @@ _STANDARD_WORKFLOW_PASSTHROUGH_DOCKERFILES = (
 )
 
 
+def test_rerun_viewer_bakes_exact_stage14_runtime() -> None:
+    dockerfile = (
+        Path(__file__).resolve().parents[2]
+        / "docker"
+        / "workbench"
+        / "rerun-viewer"
+        / "Dockerfile"
+    ).read_text(encoding="utf-8")
+    assert "NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA}" in dockerfile
+    assert "NPA_BAKED_PYTHON=/opt/rerun/venv/bin/python" in dockerfile
+    assert "sim2real-controller-requirements.txt" in dockerfile
+    assert "sim2real-control-requirements.txt" in dockerfile
+    assert "env -u PYTHONPATH python -c" in dockerfile
+
+
 @pytest.mark.parametrize(
     ("constant_name", "tool"),
     [
@@ -46,6 +62,7 @@ _STANDARD_WORKFLOW_PASSTHROUGH_DOCKERFILES = (
         ("DEFAULT_REFERENCE_POLICY_TAG", "reference-policy"),
         ("DEFAULT_TRAINER_TAG", "lerobot-vlm-rl"),
         ("DEFAULT_EVAL_TAG", "loop-eval"),
+        ("DEFAULT_ISAAC_TAG", "isaac-lab"),
     ],
 )
 def test_sim2real_constant_matches_supported_tool_version(
@@ -62,11 +79,8 @@ def test_canonical_sim2real_workflow_requires_operator_pinned_images() -> None:
     """The standard workflow must not supply mutable image-tag fallbacks."""
 
     path = (
-        Path(__file__).resolve().parents[2]
-        / "workflows"
-        / "workbench"
-        / "npa-workflows"
-        / "sim2real.yaml"
+        Path(__file__).resolve().parents[3]
+        / "workflows" / "main" / "sim2real.yaml"
     )
     runbook = yaml.safe_load(path.read_text(encoding="utf-8"))
     config = runbook["config"]
@@ -78,6 +92,7 @@ def test_canonical_sim2real_workflow_requires_operator_pinned_images() -> None:
         "viewer_image",
     )
     assert config["require_baked_npa"] == "1"
+    assert config["baked_npa_import"] == "npa.workflows.sim2real.workflow_stage"
     assert all(config[name] == "" for name in image_inputs)
     resources = runbook["resources"]
     assert all(
@@ -100,8 +115,8 @@ def test_exact_source_images_copy_forced_workflow_package_data(
     assert "pyproject.toml /opt/npa/pyproject.toml" in dockerfile
 
 
-def test_isaac_exact_source_image_uses_light_package_imports() -> None:
-    """Isaac's purpose-built venv must not require unrelated NPA SDK extras."""
+def test_isaac_exact_source_image_imports_the_runtime_stage() -> None:
+    """Isaac's purpose-built venv must satisfy the exact SkyPilot stage probe."""
 
     dockerfile = (
         Path(__file__).resolve().parents[2]
@@ -115,7 +130,9 @@ def test_isaac_exact_source_image_uses_light_package_imports() -> None:
     assert "npa-exact-source.pth" in dockerfile
     assert "env -u PYTHONPATH /opt/npa/sim/venv/bin/python -c" in dockerfile
     assert (
-        "import boto3, kubernetes, mcap, npa.workflows.sim2real.runtime_attestation"
+        "import boto3, kubernetes, mcap, "
+        "npa.workflows.sim2real.runtime_attestation, "
+        "npa.workflows.sim2real.workflow_stage"
         in (dockerfile)
     )
 
@@ -129,6 +146,11 @@ def test_cpu_controller_is_small_pinned_and_resolver_closed() -> None:
     assert "CUDA" not in dockerfile
     assert "--no-deps" in dockerfile
     assert "pip check" in dockerfile
+    assert "sim2real-controller-requirements.txt" in dockerfile
+    assert "sim2real-control-requirements.txt" in dockerfile
+    assert "from npa.clients.token_factory import TokenFactoryClient" in dockerfile
+    assert "from npa.workbench.cosmos.reason import run_token_factory_rollout_vlm" in dockerfile
+    assert "from npa.workflows.sim2real.stage8_cosmos3 import run" in dockerfile
     assert "NPA_SOURCE_SHA" in dockerfile
     assert "NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA}" in dockerfile
     assert "NPA_SKIP_EAGER_IMPORTS=1" in dockerfile
@@ -142,6 +164,9 @@ def test_cpu_controller_is_small_pinned_and_resolver_closed() -> None:
         "sudo",
         "netcat-openbsd",
         "NOPASSWD",
+        "rm -f /etc/ssh/ssh_host_*",
+        "PasswordAuthentication no",
+        "PermitRootLogin no",
     ):
         assert prerequisite in dockerfile
 
@@ -161,6 +186,29 @@ def test_cpu_controller_is_small_pinned_and_resolver_closed() -> None:
     ]
     assert lines
     assert all(line.count("==") == 1 for line in lines)
+    assert "httpx==0.28.1" in lines
+    assert "PyYAML==6.0.3" in lines
+    assert "from npa.clients.token_factory import TokenFactoryClient" in dockerfile
+    assert "NEBIUS_TOKEN_FACTORY_KEY" in dockerfile
+    assert "build-smoke" in dockerfile
+    assert "TokenFactoryClient()" in dockerfile
+
+    control_requirements = (
+        root / "common" / "sim2real-control-requirements.txt"
+    ).read_text()
+    control_lines = {
+        line.strip()
+        for line in control_requirements.splitlines()
+        if line.strip() and not line.startswith("#")
+    }
+    for dependency in (
+        "anyio==4.14.2",
+        "h11==0.16.0",
+        "httpcore==1.0.9",
+        "httpx==0.28.1",
+        "typing-extensions==4.16.0",
+    ):
+        assert dependency in control_lines
 
 
 def test_isaac_cache_warmer_is_nonroot_and_uses_fs_group() -> None:
@@ -328,6 +376,22 @@ def test_cosmos3_baked_runtime_survives_skypilot_pythonpath_scrubbing() -> None:
     assert "from npa.workflows.sim2real.workflow_stage import main" in dockerfile
 
 
+def test_envgen_baked_runtime_survives_skypilot_pythonpath_scrubbing() -> None:
+    """EnvGen's exact source remains importable when Sky clears PYTHONPATH."""
+
+    dockerfile = (
+        Path(__file__).resolve().parents[2]
+        / "docker"
+        / "workbench"
+        / "sim2real-envgen"
+        / "Dockerfile"
+    ).read_text(encoding="utf-8")
+    assert "NPA_BAKED_PYTHON=/opt/npa/venv/bin/python" in dockerfile
+    assert "npa-exact-source.pth" in dockerfile
+    assert "env -u PYTHONPATH /opt/npa/venv/bin/python -c" in dockerfile
+    assert "from npa.workflows.sim2real.workflow_stage import main" in dockerfile
+
+
 def test_cosmos3_reason_has_complete_skypilot_bootstrap_runtime() -> None:
     dockerfile = (
         Path(__file__).resolve().parents[2]
@@ -386,6 +450,7 @@ def test_sim2real_control_plane_requirement_closure_is_exact() -> None:
     )
     assert "chmod -R" not in isaac_dockerfile
     assert "PYTHONPATH=/opt/npa/src" in isaac_dockerfile
+    assert "npa.workflows.sim2real.workflow_stage" in isaac_dockerfile
 
     genesis_requirements = (
         root / "common" / "sim2real-genesis-requirements.txt"

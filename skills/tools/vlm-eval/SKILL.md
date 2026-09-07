@@ -100,7 +100,7 @@ them when present.
 ## In workflows
 
 toolRefs: `workbench.vlm_eval.run`, `.loop`, `.judge_against_plan`, `.benchmark`.
-Specs under `npa/workflows/workbench/npa-workflows/`: `vlm-eval-single.yaml`,
+Specs under `workflows/testing/`: `vlm-eval-single.yaml`,
 `vlm-eval-loop.yaml`, `vlm-eval-benchmark.yaml`, `vlm-eval-token-factory.yaml`
 (the zero-GPU judge), plus the rollout-judge combinations listed in
 `skills/tools/token-factory/SKILL.md`.

@@ -61,6 +61,8 @@ from pathlib import Path
 FATBIN_MAGIC = struct.pack("<I", 0xBA55ED50)
 FATBIN_HEADER_SIZE = 16
 ENTRY_KIND_PTX = 1
+ENTRY_KIND_SASS = 2
+MIN_ENTRY_HEADER = 32
 # A container header larger than this is a false positive on the magic bytes
 # rather than a real entry, so stop walking instead of trusting the offsets.
 MAX_ENTRY_HEADER = 4096
@@ -76,9 +78,12 @@ def scan(blob: bytes) -> tuple[Counter, Counter]:
         offset = blob.find(FATBIN_MAGIC, offset)
         if offset < 0:
             return sass, ptx
+        if offset + FATBIN_HEADER_SIZE > len(blob):
+            return sass, ptx
+        version, = struct.unpack_from("<H", blob, offset + 4)
         header_size, = struct.unpack_from("<H", blob, offset + 6)
         fat_size, = struct.unpack_from("<Q", blob, offset + 8)
-        if header_size != FATBIN_HEADER_SIZE or fat_size <= 0:
+        if version != 1 or header_size != FATBIN_HEADER_SIZE or fat_size <= 0:
             offset += 4
             continue
         if offset + FATBIN_HEADER_SIZE + fat_size > len(blob):
@@ -86,15 +91,29 @@ def scan(blob: bytes) -> tuple[Counter, Counter]:
             continue
         cursor = offset + header_size
         end = cursor + fat_size
-        while cursor + 64 <= end:
+        container_sass: Counter = Counter()
+        container_ptx: Counter = Counter()
+        while cursor + MIN_ENTRY_HEADER <= end:
             kind, = struct.unpack_from("<H", blob, cursor)
             entry_header, = struct.unpack_from("<I", blob, cursor + 4)
             payload, = struct.unpack_from("<Q", blob, cursor + 8)
             arch, = struct.unpack_from("<I", blob, cursor + 28)
-            if entry_header == 0 or entry_header > MAX_ENTRY_HEADER:
+            if (
+                kind not in (ENTRY_KIND_PTX, ENTRY_KIND_SASS)
+                or not MIN_ENTRY_HEADER <= entry_header <= MAX_ENTRY_HEADER
+                or payload <= 0
+                or cursor + entry_header + payload > end
+                or arch == 0
+            ):
                 break
-            (ptx if kind == ENTRY_KIND_PTX else sass)[arch] += 1
+            (container_ptx if kind == ENTRY_KIND_PTX else container_sass)[arch] += 1
             cursor += entry_header + payload
+        # A malformed/truncated container is not architecture evidence, even
+        # when its first entry looked valid. Independent valid containers remain
+        # measurable, including compressed payloads.
+        if cursor == end:
+            sass.update(container_sass)
+            ptx.update(container_ptx)
         offset = end
 
 

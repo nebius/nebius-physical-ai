@@ -20,9 +20,10 @@ making architecture, review, or domain judgments.
  user-facing docs, or answering "what should I run first?" — lead with the
  Nebius GPU path, describe hosted inference by what it does, and stay warm and
  genuinely helpful when someone asks about cost or has no cluster yet.
-- `skills/atomic/health-preflight/SKILL.md`: there is no `npa doctor` — prove
- HF/NGC/S3/Token Factory credentials and gated-model access with
- `npa workbench health preflight` / `access` before spending GPU time.
+- `skills/atomic/health-preflight/SKILL.md`: there is no `npa doctor`. Prove
+  service credentials with `npa workbench health preflight`, request
+  `--checks nebius` before provisioning, and verify gated-model access with
+  `npa workbench health access` before spending GPU time.
 - `skills/atomic/debug-failed-run/SKILL.md`: triage a run that failed, hung, or
  produced no artifacts — status and pod-level reason, stage logs, S3 evidence,
  image pullability, scheduling, and the resume-vs-cancel decision.
@@ -83,6 +84,13 @@ making architecture, review, or domain judgments.
 - `skills/tools/golden-eval/SKILL.md`: prove a container image actually works —
  per-container hello-world manifest, dry-run/local/serverless tiers, batch runs,
  and the offline manifest validation that gates CI.
+- `skills/tools/cosmos3-ray-serve/SKILL.md`: deploy and operate persistent
+ Cosmos3-Nano generation through NVIDIA Cosmos Framework's native dynamically
+ batched Ray Serve path, with guarded runtime weight fetch and S3 provenance.
+- `skills/tools/cosmos3-super-benchmark/SKILL.md`: reproduce the fixed
+ Cosmos3-Super vLLM-Omni primary sweep on one eight-GPU B200 or H200 node across the
+ 1x8, 2x4, 4x2, and 8x1 arrangements with strict MP4 validity and shared-window
+ throughput accounting.
 - `skills/tools/burst/SKILL.md`: one gang-scheduled multi-node GPU job with
  torchrun rendezvous, deliberately not a workflow surface.
 - `skills/tools/gpu-cluster-provisioning/SKILL.md`: managed-image vs GPU-Operator

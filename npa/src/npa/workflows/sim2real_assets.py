@@ -39,6 +39,12 @@ def robot_spec_doc_from_consumed(doc: dict[str, Any]) -> dict[str, Any] | None:
         nested = doc.get("robot_spec")
         if isinstance(nested, dict):
             return nested
+    if doc.get("schema") == "npa.sim2real.robot_contract.v1":
+        if doc.get("status") == "stock_franka":
+            return None
+        nested = doc.get("robot_spec")
+        if isinstance(nested, dict):
+            return nested
     return doc
 
 

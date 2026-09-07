@@ -25,6 +25,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     NPA_GENESIS_HOME=/opt/genesis \
     NVIDIA_DRIVER_CAPABILITIES=compute,graphics,utility \
     EGL_PLATFORM=device \
+    IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg \
     PATH=/opt/npa/venv/bin:$PATH \
     PYTHONPATH=/opt/npa/src
 
@@ -61,7 +62,12 @@ RUN python -m pip install --upgrade pip setuptools wheel \
       "rich==15.0.0" \
       "boto3==1.42.91" \
       "jinja2==3.1.6" \
-      "pyarrow==22.0.0"
+      "pyarrow==22.0.0" \
+    && find /opt/npa/venv -type f \
+      -path '*/imageio_ffmpeg/binaries/ffmpeg*' -delete \
+    && test -z "$(find /opt/npa/venv -type f \
+      -path '*/imageio_ffmpeg/binaries/ffmpeg*' -print -quit)" \
+    && python -c 'import imageio_ffmpeg; assert imageio_ffmpeg.get_ffmpeg_exe() == "/usr/bin/ffmpeg"'
 
 COPY --chown=ubuntu:ubuntu pyproject.toml /opt/npa/pyproject.toml
 COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa

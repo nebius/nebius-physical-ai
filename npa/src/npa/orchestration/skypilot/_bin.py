@@ -20,7 +20,7 @@ from npa.config_schema import (
 SkyBin = str | os.PathLike[str] | None
 
 _SETUP_DOC = "docs/orchestration/skypilot-setup.md"
-CONFIG_PATH = Path.home() / ".npa" / "config.yaml"
+CONFIG_PATH = Path(os.environ.get("NPA_CONFIG_DIR", "").strip() or Path.home() / ".npa") / "config.yaml"
 REQUIRED_SKYPILOT_VERSION = "0.12.2"
 _VERSION_CHECK_CACHE: set[tuple[str, int, int]] = set()
 
@@ -97,6 +97,35 @@ def resolve_sky_bin(sky_bin: SkyBin = None) -> Path:
     """Resolve the SkyPilot CLI executable for subprocess calls."""
 
     return resolve_config(sky_bin=sky_bin).sky_bin
+
+
+def resolve_isolated_config_dir(
+    isolated_config_dir: str | os.PathLike[str] | None = None,
+    *,
+    npa_config_path: str | os.PathLike[str] | None = None,
+) -> Path | None:
+    """Resolve isolated SkyPilot state without requiring a SkyPilot binary.
+
+    Ownership checks need to distinguish shared from task-scoped controller
+    state before launch prerequisites are validated.  Keep the same explicit,
+    environment, and saved-config precedence as :func:`resolve_config` without
+    making those checks depend on an installed SkyPilot CLI.
+    """
+
+    config_path = Path(npa_config_path) if npa_config_path is not None else CONFIG_PATH
+    file_config = _load_skypilot_file_config(config_path)
+    isolated_value, _ = _first_config_value(
+        (isolated_config_dir, "explicit isolated_config_dir"),
+        (
+            os.environ.get("NPA_SKYPILOT_ISOLATED_CONFIG_DIR", "").strip(),
+            "NPA_SKYPILOT_ISOLATED_CONFIG_DIR",
+        ),
+        (
+            file_config.get("isolated_config_dir"),
+            f"{config_path}: skypilot.isolated_config_dir",
+        ),
+    )
+    return _optional_path(isolated_value)
 
 
 def ensure_skypilot_version(sky_bin: SkyBin = None) -> Path:
@@ -240,4 +269,7 @@ def _optional_path(value: Any | None) -> Path | None:
     text = os.fspath(value).strip()
     if not text:
         return None
-    return Path(text).expanduser()
+    # SkyPilot subprocesses deliberately execute from a durable cwd. Resolve
+    # operator-supplied relative paths while we still have the caller's cwd so a
+    # later status poll addresses the same config file as the original launch.
+    return Path(text).expanduser().resolve()

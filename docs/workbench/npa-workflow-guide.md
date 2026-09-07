@@ -7,24 +7,24 @@ three ways: YAML file, CLI, and Python SDK.
 
 ```bash
 # Validate structure and closed toolRef / predicate registries
-npa workbench workflow validate-spec npa/workflows/workbench/npa-workflows/vlm-eval-single.yaml
+npa workbench workflow validate-spec workflows/testing/vlm-eval-single.yaml
 
 # Expand loops/branches in the demo-only Sim2Real DSL fixture (dry-run)
-npa workbench workflow plan-spec npa/workflows/workbench/npa-workflows/sim2real.yaml \
+npa workbench workflow plan-spec workflows/main/sim2real.yaml \
   --run-id demo --assume-decision loop_back
 
 # Plan + optional scheduler hints + S3 run manifest
-npa workbench workflow run-spec npa/workflows/workbench/npa-workflows/vlm-eval-single.yaml \
+npa workbench workflow run-spec workflows/testing/vlm-eval-single.yaml \
   --plan-only --scheduler-plan --persist-state --json
 
 # Submit an npa.workflow spec
-npa workbench workflow submit npa/workflows/workbench/npa-workflows/vlm-eval-single.yaml \
+npa workbench workflow submit workflows/testing/vlm-eval-single.yaml \
   --run-id demo --registry <your-registry>/<namespace>
 
 # Plan only (no submit) — inspect planned steps
 # Token Factory (and other no-image tools) need NPA_SRC_S3_URI or --image
 NPA_SRC_S3_URI=s3://<bucket>/npa-src/npa \
-  npa workbench workflow submit npa/workflows/workbench/npa-workflows/token-factory-caption.yaml \
+  npa workbench workflow submit workflows/testing/token-factory-caption.yaml \
   --plan-only --run-id demo
 ```
 
@@ -38,9 +38,10 @@ npa workbench workflow list \
   --s3-bucket <bucket> --workflow-s3-prefix <parent-prefix> --json
 ```
 
-Author and submit `npa.workflow/v0.0.1` specs under
-[`npa-workflows/`](../../npa/workflows/workbench/npa-workflows/). See that
-README for the full catalog.
+Author and submit `npa.workflow/v0.0.1` specs from the
+[`workflow catalog`](../../workflows/README.md). `workflows/main/` contains only
+`sim2real.yaml` and `paidf-cosmos3.yaml`; all other catalog specs, including new
+workflows, belong in `workflows/testing/`.
 
 **No-image tools** (Token Factory specs): set
 `NPA_SRC_S3_URI=s3://bucket/prefix/npa` so the job can sync and install `npa`,
@@ -179,15 +180,155 @@ npa workbench workflow submit <spec.yaml> --run-id <id> --runtime \
 | Real early-exit | After each loop iteration the driver re-reads `config.decision_uri` from S3; a promoting gate ends the loop instead of running the remaining budget |
 | Data-dependent branching | `transitions` outside a loop body are resolved from the real decision artifact (`goto`) |
 | Trigger / watch | A state's `trigger:` prefix is polled by the driver before its wave is submitted |
-| Retry / resume | Every wave attempt is written to `<config.prefix>/npa-workflow/runtime.json` (`npa.workflow.runtime.v1`); `--resume` replays succeeded waves instead of resubmitting them |
+| Retry / resume | Every wave attempt is written to `<config.prefix>/npa-workflow/runtime.json` (`npa.workflow.runtime.v1`); `--retries` is the payload/terminal-wave retry count, while `--max-infrastructure-recoveries` is the separate finite typed-infrastructure recovery count (default 1, 0 disables it); `--resume` reconciles the exact durable history |
+| Automated supervision | The CPU-side runtime observes the exact recorded SkyPilot job and Kubernetes pods, classifies stalls, cancels only an exact actionable configuration attempt, and recovers only a proven transient incomplete wave |
 | Timeout | A positive `--max-wait-seconds` bounds each wave; `0` waits indefinitely. `--no-cancel-on-timeout` preserves a timed-out job as in-flight so `--resume` adopts it instead of submitting a duplicate |
 
 Design notes: [`DESIGN.md`](../../DESIGN.md). Live evidence:
 [`EVIDENCE.md`](../../EVIDENCE.md).
 
+#### Durable run supervision and recovery
+
+The supervisor is part of the standard workflow runtime, runs outside ephemeral
+payload pods, and needs no GPU. SkyPilot remains the sole Kubernetes
+orchestrator. The durable runtime ledger and content-addressed events under
+`npa-workflow/supervisor/attempts/` are the source of truth; restarting the
+driver with the same explicit run ID reconciles those records instead of relying
+on process memory.
+
+Before any initial or recovered launch, submit reuses the normal exact-image,
+credential/access, accelerator-resolution, per-node GPU-shape, and gang-capacity
+preflights. A recovered attempt is permitted only after all of those checks pass
+again, the prior attempt's recorded workflow/source/image identity matches values
+independently recomputed from the current spec, source selection, and digest pins,
+declared S3 output evidence
+is authoritative, and any live prior attempt is cancelled by exact provider ID
+with terminal verification.
+
+Submission binds those checks to one effective execution target. The selected
+NPA project must have saved project, tenant and region identities. The provider's
+exact project and bucket-owner responses must agree before any temporary storage
+write; the selected Kubernetes context must resolve to that same live project,
+including when SkyPilot uses isolated local state. The storage endpoint must be
+the selected region's Nebius endpoint. Ownership/authentication uncertainty
+blocks submission and never selects an alternative writable bucket.
+
+For `npa.workflow` specs, `--s3-bucket` and `--s3-prefix` override the corresponding
+`--var` values, followed by `NPA_S3_BUCKET` / `NPA_S3_PREFIX`, then the spec's
+`config`. These values control both the rendered workload and durable run ledger.
+`--s3-endpoint` takes precedence over endpoint environment variables and selected
+project storage settings. An S3 credential pair comes from one source: process
+environment, the submitted SkyPilot YAML's `envs`, selected
+project storage, then configured credentials. An incomplete higher-priority pair
+fails instead of combining keys from different principals. Each runtime wave
+uses the pair checked by that invocation; a new submit/resume resolves credentials
+again. Conflicting custom pod storage environment values are rejected.
+All supported S3 endpoint aliases are normalized to that endpoint, including
+`AWS_ENDPOINT_URL_S3`. Session-token overrides and unresolved pod secret
+references are rejected before access checks because they would change the
+executing principal.
+
+Declare a directory output with `kind: directory`, including when its URI has no
+trailing slash; use `kind: file` for an exact object. This role survives planning
+and rendering, so prefix checks and artifact discovery agree. Older declarations
+without a kind retain the trailing-slash directory convention.
+
+Raw SkyPilot YAML and the shared `submit_workflow` SDK use the same mandatory
+gate before creating a controller or job. Kubernetes tasks require one explicit
+context in `--infra k8s/<context>` or task resources, matching the selected NPA
+project. Native Nebius tasks and controllers must use that project's region;
+native submission verifies the executing SkyPilot principal and pins its project
+selection, preventing first-project fallback. Use `--controller-backend nebius`
+for a native controller, or declare an explicit Kubernetes controller context
+in the same project. Raw storage tasks declare `envs.NPA_EXECUTION_OUTPUTS` as a JSON list,
+for example `'[{"uri":"s3://example-bucket/run/checkpoints","kind":"directory"}]'`.
+The supported `NPA_OUTPUT_PATH`, `NPA_OUTPUT_URI`, `S3_OUTPUT_PATH`, and
+bucket-plus-prefix environment contracts also declare directories. An explicit
+`[]` means no durable outputs. Undeclared storage destinations and alternative
+resource targets require clarification in the YAML before submission.
+Explicit artifact declarations may use a sibling prefix or another bucket in
+the same project; each destination is checked separately. `config.prefix` is the
+default/ledger prefix and does not restrict explicitly declared artifact locations.
+Nebius storage mounts, including raw `--durable-s3` tasks, also verify the
+executing SkyPilot home's static `nebius` AWS profile against the selected
+storage credentials and endpoint. SkyPilot copies `~/.aws/credentials` and
+`~/.aws/config` to its controller, so both files must contain that matching
+profile. Missing or dynamic profiles, different principals, nondefault AWS
+file overrides, and task mounts replacing those files block submission before
+storage or compute creation. Writable mount prefixes receive the same ownership
+and write/readback checks as declared outputs.
+Use `--config-path` for SkyPilot configuration. Nonempty implicit `.sky.yaml`,
+`SKYPILOT_PROJECT_CONFIG`, and internal `SKYPILOT_CONFIG` overrides must be removed
+before submission so they cannot replace the checked configuration after the gate.
+
+`--isolated-config-dir` also owns a separate local SkyPilot API process, request
+queue, and persistent user identity. Its endpoint and process ownership are
+recorded before startup and verified again on reconnect. A conflicting endpoint,
+foreign listener, or changed executing identity blocks submission. Preserve this
+directory when reconnecting to existing jobs; an unrelated local SkyPilot API
+is never adopted or stopped as part of that isolated runtime.
+
+The actual resolved output directories, file-parent prefixes, run-ledger prefix,
+and any source-staging destination receive a unique write/readback probe using
+the executing credentials. Probe deletion is best effort and does not require
+wider IAM. GPU checks include a one-node request's actual product, free GPU/CPU/
+memory capacity and placement constraints. Serverless Genesis checks the current
+project's platform/preset offering and exact GPU count before creating a job.
+Provider-owned catalog products require a matching lookup through that same
+project, without treating shared catalog ownership as workload ownership.
+Catalog availability is separate from actual allocation or reservation evidence.
+Scope, destination access and GPU gates remain active with `--skip-preflight`.
+Generic `health preflight --offline` still proves only credential presence;
+generic online health/access checks do not themselves prove execution readiness.
+
+SkyPilot launch uses asynchronous API submission followed by exact-name/ID
+reconciliation inside the crash-safe launch transaction. This allows production
+supervision to observe genuinely Pending work instead of waiting inside the
+submit command. Exact cancellation is also observed until terminal before a
+recovery attempt may cross the provider boundary.
+
+Machine-readable evidence distinguishes:
+
+- `actionable_configuration`: image pull/auth/reference errors, missing
+  Secrets/ConfigMaps, malformed pod configuration, and impossible accelerator or
+  per-node GPU placement. Retry stops immediately and the exact attempt is
+  terminalized with remediation.
+- `transient_infrastructure`: provider interruption/preemption, node loss,
+  capacity, Kubernetes transport/rate-limit/server failures. Recovery adopts an
+  exact live attempt or records a new provider attempt for only the incomplete
+  wave under the same NPA run ID. `--max-infrastructure-recoveries` bounds this
+  path independently of `--retries`; exhaustion is a durable terminal decision.
+- `payload`: the workload ran and failed, or claimed success without its declared
+  outputs. Infrastructure retry is disabled.
+- `unknown`: missing, conflicting, or ambiguous backend identity/evidence.
+  Relaunch and fuzzy cancellation are blocked to prevent duplicates.
+
+`npa workbench workflow status <run-id> --json` includes the latest supervisor
+classification, recovery action, exact attempt identity, output/checkpoint
+validation, preflight evidence, and remediation. Evidence is credential-redacted.
+The shared Python contract also drives the existing production
+`npa workbench genesis train-teacher --runtime serverless` Jobs path. That command
+uses exact provider observation/cancellation, digest-resolved image identity,
+content-addressed S3 supervisor history, declared-output validation, and the same
+finite `--max-infrastructure-recoveries` policy. A recovery creates or adopts a
+deterministically named provider attempt under the same logical run and verified
+output/checkpoint prefix after process restart.
+
+This does **not** enable per-stage mixed Kubernetes/Serverless routing in an
+`npa.workflow/v0.0.1` graph. Workflow runtime waves remain SkyPilot/Kubernetes in
+this change; the Serverless adapter is wired through the Genesis workbench command.
+
+Checkpoint semantics are deliberately narrow. A completed wave may be reused
+only when every declared non-empty S3 output validates. An incomplete wave is
+restarted from its boundary by default. Mid-stage recovery is allowed only when
+the tool explicitly supplies a compatible checkpoint loader and the checkpoint
+is validated; tools without that implementation are reported as unsupported,
+not checkpoint-resumable.
+
 ### Live submit E2E
 
-On an operator VM with Nebius credentials and `NPA_REGISTRY`:
+On an operator VM with Nebius credentials (supported workload images resolve
+from public GHCR automatically):
 
 ```bash
 # Cheap first: Token Factory CPU twins
@@ -205,7 +346,7 @@ Matrix: `npa/src/npa/orchestration/npa_workflow/submit_matrix.py`
 ```python
 from npa.orchestration.npa_workflow import build_plan, load_spec, run_workflow
 
-spec = load_spec("npa/workflows/workbench/npa-workflows/vlm-eval-single.yaml")
+spec = load_spec("workflows/testing/vlm-eval-single.yaml")
 plan = build_plan(spec, run_id="sdk-demo")
 report = run_workflow(spec, run_id="sdk-demo", persist_state=True)
 ```
@@ -252,9 +393,9 @@ NPA_INTEGRATION_E2E=1 npa/.venv/bin/python -m pytest npa/tests/e2e/test_npa_work
 - Gang scheduling and runtime manifest-driven `foreach`
 - Multi-step branches inside a `parallel:` group (members are leaf states)
 - JSON Schema validation of artifact payloads
-- A detached/daemonized `--runtime` driver, and a unified `workflow status` for
-  npa.workflow runs (the runtime ledger JSON is the source of truth today; the
-  sim2real path is separate)
+- A detached/daemonized `--runtime` service. The lightweight supervisor runs in
+  the CPU-side runtime process and resumes durably through `--resume-run`; it is
+  not deployed into ephemeral GPU payloads.
 
 Parallel fan-out **is** supported as of the `parallel:` / `maxConcurrency` fields
 above — the explicit-field direction this section originally deferred to v0.0.2.

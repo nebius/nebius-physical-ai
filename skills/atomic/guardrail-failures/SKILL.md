@@ -68,6 +68,7 @@ change hits most.
 | `test_third_party_eula_preflight_skill` | The EULA preflight skill is not discoverable from the operational skills that need it. Add the link. |
 | `test_nebius_cli_compatibility` | The `nebius-cli` version drifted between packaging, `images.py`, and docs. Bump all of them together. |
 | `test_paidf_image_tags_match_code` | The PAIDF guide builds tags that differ from what submit pulls. Regenerate the guide's build commands from `npa/src/npa/deploy/images.py`. |
+| `test_public_runtime_registry_defaults` | A supported workload inherited a generic build/private registry, emitted an unqualified first-party image, or attached credentials to the official public release. Keep repository-owned defaults on `ghcr.io/nebius/nebius-physical-ai`; require an explicit scoped override for custom bytes. |
 | `test_default_cluster_fits_quickstart` | The default cluster can no longer schedule the documented quickstart. Raise the preset or lower the spec's requests. |
 
 ## Secrets, Confidentiality, And Consent

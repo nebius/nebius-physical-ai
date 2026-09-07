@@ -5,6 +5,7 @@ from __future__ import annotations
 __all__ = [
     "alpamayo2_super",
     "cosmos",
+    "curobo",
     "data",
     "dataset",
     "detection_training",
@@ -17,6 +18,7 @@ __all__ = [
     "lerobot",
     "mjlab",
     "retargeting",
+    "robocasa",
     "scenario_gen",
     "sonic",
     "training_config",

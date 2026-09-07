@@ -77,7 +77,9 @@ A command belongs at top level when it:
 `npa rerun host`, `share`, `list-shares`, and `revoke` are stateless actions for
 ad-hoc recording sharing via `app.rerun.io` and presigned URLs. They are at top
 level because there is no Nebius service to manage: the viewer runs in the
-user's browser, and the recording sits in S3.
+user's browser, and the recording sits in S3. The separate
+`npa storage bucket cors` command is a bucket-admin control-plane operation; it
+does not expand the object-only credential boundary of the stateless commands.
 
 A future Tier 2 capability, such as a managed Rerun service on a Nebius VM,
 would correctly live under `npa workbench rerun deploy/status/serve/...`.
@@ -147,7 +149,7 @@ Public top-level SDK namespaces are:
 
 - `npa.convert` - `lerobot_to_mp4`, `lerobot_to_rrd`
 - `npa.demo` - `stage`, `verify`
-- `npa.rerun` - `host`, `share`, `list_shares`, `revoke`
+- `npa.rerun` - `configure_browser_cors`, `host`, `share`, `list_shares`, `revoke`
 - `npa.network` - `ensure_ingress`
 - `npa.workflow` - `run`, `status`, `logs`, `teardown`, `distill`
 - `npa.workbench` - `cosmos`, `fiftyone`, `genesis`, `groot`, `isaac_lab`,

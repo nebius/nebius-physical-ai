@@ -7,7 +7,7 @@ description: Operate the compositional 14-stage Sim2Real npa.workflow on Kuberne
 
 Use the one canonical spec:
 
-`npa/workflows/workbench/npa-workflows/sim2real.yaml`
+`workflows/main/sim2real.yaml`
 
 It is `npa.workflow/v0.0.1`. Always use `npa workbench workflow ... --runtime`;
 there is no direct-Kubernetes Sim2Real submit path. The old materializer and
@@ -16,13 +16,24 @@ with an actionable migration to this canonical spec.
 
 ## Preflight
 
-1. Validate tenant/project/region, bucket, registry, Kubernetes context, Kueue
-   admission, Ready RT-core nodes, and the read-only Isaac cache PVC.
+1. Validate tenant/project/region, bucket, registry, Kubernetes context, Ready
+   RT-core nodes, bounded GPU concurrency, and the read-only Isaac cache PVC.
 2. Require registry-qualified immutable digests for controller, Transfer,
    EnvGen, Reason, Isaac, and viewer images. Confirm each image attests the exact
    source SHA; never use source overlays or best-effort bootstrap.
 3. Validate the task-aligned seed manifest, HF/NGC access, S3 read/write, image
    pulls, and primary/side/overhead capture before a full run.
+   Transfer seed frames must use one strict numbered family: canonical
+   `camera-<N>.png`, or the seeder-compatible fallback `frame-<N>.png` when no
+   camera family exists. Unrelated PNG objects are never admitted as frames.
+   Isaac vector-environment resets consume curated training scenarios through
+   one monotonic round-robin cursor. Partial reset batches must cover the split
+   tail before wrapping; per-environment reset counters can silently strand
+   scenarios when the split is larger than the vector-environment count.
+   Large cold images may need `--image-bootstrap-timeout-seconds 0`; this removes
+   only the observation deadline and still requires immutable digest, registry
+   authorization, source attestation, runtime capabilities, and verified probe
+   cleanup. Repeat-safe runs reuse only digest-bound compatible evidence.
 4. Run `validate-spec`, `plan-spec --waves`, scheduler-plan, and submit plan-only
    on the same canonical file.
 

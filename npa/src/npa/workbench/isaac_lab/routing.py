@@ -1,16 +1,14 @@
 """Isaac Lab GPU-routing guardrails.
 
-Isaac Lab has two workloads with different physical requirements, and treating
-them as one is how a headless training job gets refused on a GPU that would run
-it perfectly well:
+Isaac Lab has two workload classes with different routing requirements:
 
 * :data:`RENDER` rasterizes frames - camera sensors, tiled rendering, recorded
   video, frame capture. It needs RT cores, so it is restricted to L40S and
   RTX PRO 6000 and must never be routed to H100/H200/A100 or datacenter
   Blackwell (B200/B300).
 * :data:`HEADLESS_TRAIN` is state-based reinforcement learning against
-  proprioceptive observations. Nothing in it rasterizes, so it runs on
-  datacenter-headless parts as well as on RT-core parts.
+  proprioceptive observations. It may select datacenter-headless or RT-core
+  parts; the selected image, PhysX runtime, and driver still need validation.
 
 A task can pull rendering in by itself: Isaac Lab ships camera variants such as
 ``Isaac-Cartpole-RGB-Camera-Direct-v0``, and NVIDIA's own reports of Isaac Lab on
@@ -102,9 +100,9 @@ def validate_render_gpu_target(
 def validate_train_gpu_target(gpu_target: str | None, *, task: str) -> str:
     """Validate a training submit's GPU against the workload its task implies.
 
-    Headless state-based RL has no rasterization step, so refusing it on
-    H100/H200/B200 is a routing bug rather than a physical limit. A task that
-    declares camera or rendered observations still has to land on an RT-core part.
+    State-based RL may select a datacenter GPU; this does not certify the chosen
+    image, PhysX runtime, or driver on that GPU. A task that declares camera or
+    rendered observations still has to land on an RT-core part.
     """
 
     return validate_gpu_routing(

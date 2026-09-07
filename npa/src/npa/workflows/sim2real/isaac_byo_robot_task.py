@@ -1,11 +1,8 @@
 """Route a customer robot_spec into a registered Isaac-Lab Lift task variant.
 
-The BYO Isaac trainer/eval run the stock ``Isaac-Lift-Cube-Franka-v0`` task, so a
-customer ``robot_spec`` (USD/URDF + joints + ee_link + gains) never reaches RL
-training — it is only assets-stage provenance plus an in-process held-out-eval USD
-swap. This module closes that gap for training: it registers a task *variant* that
+The stock Isaac task is Franka-specific. This module registers a task *variant* that
 subclasses the Franka Lift env cfg and swaps in the customer's robot articulation
-(spawn USD, init joint positions, actuator gains), registered POST-AppLauncher-
+(spawn USD, init joint positions, exact per-joint actuator gains), registered POST-AppLauncher-
 boot. The trainer ships this module into the Isaac container and runs the post-boot
 wrapper against ``NPA_BYO_ROBOT_TASK_ID``.
 
@@ -107,7 +104,7 @@ def _num_list(value: Any) -> list[float]:
             x = float(item)
         except (TypeError, ValueError):
             continue
-        if x == x:  # not NaN
+        if math.isfinite(x):
             out.append(x)
     return out
 
@@ -196,6 +193,27 @@ def robot_articulation_overrides(spec: dict[str, Any] | None) -> dict[str, Any]:
         overrides["effort_limit"] = round(
             _clamp(max(forces), EFFORT_MIN, EFFORT_MAX), 6
         )
+    force_lower = _num_list(spec.get("force_lower"))
+    force_upper = _num_list(spec.get("force_upper"))
+    if joint_names and all(
+        len(values) == len(joint_names) for values in (kp, kv, force_lower, force_upper)
+    ):
+        overrides["joint_actuators"] = [
+            {
+                "joint_name": name,
+                "stiffness": round(_clamp(kp[index], STIFFNESS_MIN, STIFFNESS_MAX), 6),
+                "damping": round(_clamp(kv[index], DAMPING_MIN, DAMPING_MAX), 6),
+                "effort_limit": round(
+                    _clamp(
+                        max(abs(force_lower[index]), abs(force_upper[index])),
+                        EFFORT_MIN,
+                        EFFORT_MAX,
+                    ),
+                    6,
+                ),
+            }
+            for index, name in enumerate(joint_names)
+        ]
 
     # Dedicated gripper drive: when the spec declares finger joints, give them their
     # OWN actuator group with a stiffness/effort FLOOR so the fingers can clamp AND
@@ -437,7 +455,9 @@ def _range_dict(value: Any) -> dict[str, tuple[float, float]]:
         pair = value.get(axis)
         if isinstance(pair, (list, tuple)) and len(pair) == 2:
             try:
-                out[axis] = (float(pair[0]), float(pair[1]))
+                parsed = (float(pair[0]), float(pair[1]))
+                if all(math.isfinite(item) for item in parsed):
+                    out[axis] = parsed
             except (TypeError, ValueError):
                 continue
     return out
@@ -458,13 +478,13 @@ def _scale_triple(value: Any) -> tuple[float, float, float] | None:
         return None
     if isinstance(value, (int, float)):
         s = float(value)
-        return (s, s, s) if s > 0 else None
+        return (s, s, s) if math.isfinite(s) and s > 0 else None
     if isinstance(value, (list, tuple)) and len(value) == 3:
         try:
             triple = (float(value[0]), float(value[1]), float(value[2]))
         except (TypeError, ValueError):
             return None
-        return triple if all(v > 0 for v in triple) else None
+        return triple if all(math.isfinite(v) and v > 0 for v in triple) else None
     return None
 
 
@@ -484,7 +504,9 @@ def task_config_overrides(task_cfg: dict[str, Any] | None) -> dict[str, Any]:
     action_scale = task_cfg.get("action_scale")
     if action_scale is not None:
         try:
-            out["action_scale"] = float(action_scale)
+            parsed = float(action_scale)
+            if math.isfinite(parsed):
+                out["action_scale"] = parsed
         except (TypeError, ValueError):
             pass
 
@@ -515,7 +537,9 @@ def task_config_overrides(task_cfg: dict[str, Any] | None) -> dict[str, Any]:
         val = task_cfg.get(key)
         if val is not None:
             try:
-                out[key] = float(val)
+                parsed = float(val)
+                if math.isfinite(parsed):
+                    out[key] = parsed
             except (TypeError, ValueError):
                 continue
 
@@ -529,10 +553,14 @@ def task_config_overrides(task_cfg: dict[str, Any] | None) -> dict[str, Any]:
     if dlw is not None:
         try:
             w = float(dlw)
-            if w > 0:
+            if math.isfinite(w) and w > 0:
                 out["dense_lift_weight"] = w
                 std = task_cfg.get("dense_lift_std")
-                out["dense_lift_std"] = float(std) if std is not None else 0.05
+                parsed_std = float(std) if std is not None else 0.05
+                if math.isfinite(parsed_std) and parsed_std > 0:
+                    out["dense_lift_std"] = parsed_std
+                else:
+                    out.pop("dense_lift_weight", None)
         except (TypeError, ValueError):
             pass
 
@@ -542,10 +570,14 @@ def task_config_overrides(task_cfg: dict[str, Any] | None) -> dict[str, Any]:
     if gsw is not None:
         try:
             w = float(gsw)
-            if w > 0:
+            if math.isfinite(w) and w > 0:
                 out["grasp_shaping_weight"] = w
                 std = task_cfg.get("grasp_shaping_std")
-                out["grasp_shaping_std"] = float(std) if std is not None else 0.06
+                parsed_std = float(std) if std is not None else 0.06
+                if math.isfinite(parsed_std) and parsed_std > 0:
+                    out["grasp_shaping_std"] = parsed_std
+                else:
+                    out.pop("grasp_shaping_weight", None)
         except (TypeError, ValueError):
             pass
 
@@ -558,10 +590,14 @@ def task_config_overrides(task_cfg: dict[str, Any] | None) -> dict[str, Any]:
     if ghw is not None:
         try:
             w = float(ghw)
-            if w > 0:
+            if math.isfinite(w) and w > 0:
                 out["grasp_hold_weight"] = w
                 std = task_cfg.get("grasp_hold_std")
-                out["grasp_hold_std"] = float(std) if std is not None else 0.05
+                parsed_std = float(std) if std is not None else 0.05
+                if math.isfinite(parsed_std) and parsed_std > 0:
+                    out["grasp_hold_std"] = parsed_std
+                else:
+                    out.pop("grasp_hold_weight", None)
         except (TypeError, ValueError):
             pass
 
@@ -769,6 +805,7 @@ def register(
     damping = overrides.get("damping")
     effort_limit = overrides.get("effort_limit")
     gripper_actuator = overrides.get("gripper_actuator")
+    joint_actuators = list(overrides.get("joint_actuators") or [])
     task_id = _task_id((spec or {}).get("name") or "robot")
 
     def _swap_prim_tail(prim_path: str, link: str) -> str:
@@ -1110,7 +1147,30 @@ def register(
                 robot_cfg.init_state.joint_pos = dict(init_joint_pos)
             actuators = getattr(robot_cfg, "actuators", None)
             if isinstance(actuators, dict):
+                if joint_actuators:
+                    from isaaclab.actuators import ImplicitActuatorCfg  # noqa: WPS433
+
+                    actuators.clear()
+                    for index, joint in enumerate(joint_actuators):
+                        exact_name = "^" + re.escape(str(joint["joint_name"])) + "$"
+                        exact_effort = float(joint["effort_limit"])
+                        actuators[f"robot_spec_joint_{index:02d}"] = (
+                            ImplicitActuatorCfg(
+                                joint_names_expr=[exact_name],
+                                stiffness=float(joint["stiffness"]),
+                                damping=float(joint["damping"]),
+                                effort_limit=exact_effort,
+                                effort_limit_sim=exact_effort,
+                            )
+                        )
+                    print(
+                        "ROBOT_JOINT_ACTUATORS "
+                        + json.dumps(joint_actuators, sort_keys=True),
+                        flush=True,
+                    )
                 for actuator in actuators.values():
+                    if joint_actuators:
+                        continue
                     # Widen joint patterns so an arbitrary arm's joints are actuated
                     # (the Franka groups key on Franka joint names).
                     if hasattr(actuator, "joint_names_expr"):
@@ -1135,7 +1195,11 @@ def register(
                 # change records + skips instead of crashing the (expensive) run. The
                 # catch-all group above still covers every joint, so an unmodelled
                 # extra joint (e.g. finger tips) stays actuated regardless.
-                if gripper_actuator and gripper_actuator.get("joint_names"):
+                if (
+                    not joint_actuators
+                    and gripper_actuator
+                    and gripper_actuator.get("joint_names")
+                ):
                     try:
                         from isaaclab.actuators import ImplicitActuatorCfg  # noqa: WPS433
 
@@ -1220,6 +1284,48 @@ def configure_convergence_action_noise(
     target = float(target_std)
     if not math.isfinite(target) or not 0.0 < target <= 1.0:
         raise ValueError("target_std must be finite and between zero and one")
+    # rsl-rl >= 5.0: the actor MLPModel keeps its noise in a Distribution module
+    # (std_type + std_param/log_std_param). Map that shape onto the legacy
+    # attribute names so one code path performs the exact same update.
+    distribution = getattr(policy, "distribution", None)
+    if distribution is not None and hasattr(distribution, "std_type"):
+        if "Heteroscedastic" in type(distribution).__name__:
+            raise RuntimeError(
+                "resume convergence does not support state-dependent action noise"
+            )
+        std_type = str(getattr(distribution, "std_type", ""))
+        if std_type == "scalar":
+            parameter_name = "std_param"
+        elif std_type == "log":
+            parameter_name = "log_std_param"
+        else:
+            raise RuntimeError(f"unsupported RSL-RL std_type: {std_type!r}")
+        noise_std_type = std_type
+        stored_value = math.log(target) if std_type == "log" else target
+        parameter = getattr(distribution, parameter_name, None)
+        if parameter is None or not hasattr(parameter, "detach"):
+            raise RuntimeError(
+                f"RSL-RL distribution lacks mutable {parameter_name} parameter"
+            )
+        detached = parameter.detach()
+        detached.fill_(stored_value)
+        parameter.requires_grad_(not freeze)
+        raw_values = detached.reshape(-1).tolist()
+        actual_values = [
+            math.exp(float(value)) if std_type == "log" else float(value)
+            for value in (raw_values if isinstance(raw_values, list) else [raw_values])
+        ]
+        if not actual_values or any(
+            not math.isclose(value, target, rel_tol=1.0e-6, abs_tol=1.0e-7)
+            for value in actual_values
+        ):
+            raise RuntimeError("RSL-RL action-noise convergence update did not persist")
+        return {
+            "noise_std_type": noise_std_type,
+            "target_std": target,
+            "parameter_count": len(actual_values),
+            "frozen": bool(freeze),
+        }
     if bool(getattr(policy, "state_dependent_std", False)):
         raise RuntimeError(
             "resume convergence does not support state-dependent action noise"
@@ -1321,6 +1427,8 @@ try:
         from omni.isaac.lab_rl.rsl_rl import RslRlVecEnvWrapper  # older layout
     from rsl_rl.runners import OnPolicyRunner
     env_cfg = parse_env_cfg(task, device="cuda:0", num_envs=NUM_ENVS)
+    from npa.workflows.sim2real.isaac_assets_compat import remap_moved_franka_usd
+    print("TASK_ROBOT_USD_EFFECTIVE", remap_moved_franka_usd(env_cfg), flush=True)
     # The scenario wrapper is the canonical stock-Franka path. Apply the exact
     # reward, object, and optimizer contract here so those settings cannot be
     # lost as provenance-only Hydra arguments on the bypassed train.py branch.
@@ -1356,6 +1464,8 @@ try:
     torch.manual_seed(SEED)
     print("ROBOT_SEED_APPLIED", SEED, flush=True)
     agent_cfg = load_cfg_from_registry(task, "rsl_rl_cfg_entry_point")
+    from npa.workflows.sim2real.isaac_assets_compat import migrate_rsl_rl_agent_cfg
+    agent_cfg = migrate_rsl_rl_agent_cfg(agent_cfg)
     acfg = agent_cfg.to_dict() if hasattr(agent_cfg, "to_dict") else dict(agent_cfg)
     acfg["max_iterations"] = ITERS
     acfg["num_steps_per_env"] = STEPS_PER_ENV
@@ -1424,10 +1534,39 @@ try:
         print("ROBOT_USD_MISMATCH (refusing silent stock fallback)", flush=True)
         os._exit(44)
     env = RslRlVecEnvWrapper(env)
+    actual_action_dim = int(getattr(env, "num_actions", 0) or 0)
+    if not actual_action_dim:
+        actual_action_dim = int(sum(env.unwrapped.action_manager.action_term_dim))
+    probe = env.get_observations()
+    probe_obs = probe[0] if isinstance(probe, tuple) else probe
+    if not torch.is_tensor(probe_obs):
+        probe_obs = probe_obs.get("policy")
+    actual_observation_dim = int(probe_obs.shape[-1])
+    expected_action_dim = int((spec or {}).get("expected_action_dim") or 0)
+    expected_observation_dim = int((spec or {}).get("expected_observation_dim") or 0)
+    dimensions = {
+        "embodiment_digest": str((spec or {}).get("embodiment_digest") or "stock_franka"),
+        "action": actual_action_dim,
+        "observation": actual_observation_dim,
+        "expected_action": expected_action_dim,
+        "expected_observation": expected_observation_dim,
+    }
+    print("ROBOT_DIMENSIONS " + json.dumps(dimensions, sort_keys=True), flush=True)
+    if expected_action_dim and actual_action_dim != expected_action_dim:
+        raise RuntimeError("training action dimension disagrees with RobotSpec")
+    if expected_observation_dim and actual_observation_dim != expected_observation_dim:
+        raise RuntimeError("training observation dimension disagrees with RobotSpec")
     runner = OnPolicyRunner(env, acfg, log_dir=OUT, device="cuda:0")
     resume_ckpt = os.environ.get("ROBOT_RESUME_CKPT_LOCAL", "").strip()
     if resume_ckpt and os.path.isfile(resume_ckpt):
-        runner.load(resume_ckpt)
+        try:
+            runner.load(resume_ckpt)
+        except Exception as exc:
+            raise RuntimeError(
+                "resume checkpoint cannot load for RobotSpec embodiment "
+                f"{dimensions['embodiment_digest']} with observation/action "
+                f"dimensions {actual_observation_dim}/{actual_action_dim}: {exc}"
+            ) from exc
         print("ROBOT_RESUME_LOADED", resume_ckpt, flush=True)
     if ENT_FINAL and ITERS > 1:
         exploration_iterations = max(1, min(ITERS - 1, int(round(ITERS * float(ENT_FRACTION)))))
@@ -1440,8 +1579,16 @@ try:
             raise RuntimeError("RSL-RL algorithm cannot apply the entropy curriculum")
         runner.alg.entropy_coef = float(ENT_FINAL)
         if CONVERGENCE_STD:
+            # rsl-rl >= 5.0 renamed alg.policy; the actor model carries the noise.
+            _policy_model = (
+                getattr(runner.alg, "policy", None)
+                or getattr(runner.alg, "actor_critic", None)
+                or getattr(runner.alg, "actor", None)
+            )
+            if _policy_model is None:
+                raise RuntimeError("RSL-RL algorithm exposes no policy/actor model")
             noise_audit = robotmod.configure_convergence_action_noise(
-                runner.alg.policy,
+                _policy_model,
                 target_std=float(CONVERGENCE_STD),
                 freeze=True,
             )

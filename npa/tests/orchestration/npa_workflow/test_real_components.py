@@ -477,3 +477,65 @@ def test_nurec_skypilot_task_has_no_echo_or_manifest_stub_stage() -> None:
     # An `echo` that merely announces a stage is fine; one that stands IN for a
     # stage is not, so assert the tool call count matches the advertised stages.
     assert run.count("npa workbench nurec") >= 6
+
+
+# ---------------------------------------------------------------------------------
+# Living-lab 16-zone neural-reconstruction digital twin (real nurec fan-out)
+# ---------------------------------------------------------------------------------
+LIVING_LAB_SPEC = resolve_npa_workflow_spec("living-lab-nurec-fanout.yaml")
+assert LIVING_LAB_SPEC is not None, "living-lab-nurec-fanout.yaml not found in any spec root"
+
+
+def _living_lab_states() -> dict:
+    return yaml.safe_load(LIVING_LAB_SPEC.read_text(encoding="utf-8"))["states"]
+
+
+def test_living_lab_has_exactly_16_gpu_shards_and_a_join() -> None:
+    states = _living_lab_states()
+    shards = [n for n in states if n.startswith("zone-")]
+    assert len(shards) == 16
+    assert list(states["living-lab-zones"]["parallel"]) == shards
+    assert states["join"]["needs"] == ["living-lab-zones"]
+
+
+def test_living_lab_every_shard_is_real_nurec_work_on_rtx_gpu() -> None:
+    spec = yaml.safe_load(LIVING_LAB_SPEC.read_text(encoding="utf-8"))
+    gpu = spec["resources"]["gpu"]
+    assert gpu["accelerators"] == "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"
+    assert "B200" not in gpu["accelerators"] and "H100" not in gpu["accelerators"]
+    for name, state in _living_lab_states().items():
+        if not name.startswith("zone-"):
+            continue
+        assert state["resources"] == "gpu", name
+        shell = state["run"]["shell"]
+        # Every shard runs the full real pipeline inside the NRE container.
+        assert "npa workbench nurec check" in shell
+        assert "npa workbench nurec fetch" in shell
+        assert "npa workbench nurec reconstruct" in shell
+        assert "npa workbench nurec render" in shell
+        assert "npa workbench nurec visualize" in shell
+        assert "npa workbench nurec finalize" in shell
+        # One GPU per shard: never a disguised single-GPU program.
+        assert "--world-size 1" in shell
+        # Novel view requires a non-zero rig offset.
+        assert "--rig-translation-offset" in shell and "--rig-rotation-offset" in shell
+        # --- flag-level correctness (validates cleanly, crashes on submit if
+        # drifted from the real nurec CLI) ----------------------------------
+        assert "--ncore-json" in shell and "--ncore-uri" not in shell
+        assert "--poses-component-group" in shell
+        assert shell.count("--camera-id") == 2  # reconstruct + render require it
+        assert "--artifact-path" in shell
+        assert 'visualize --input-uri "${ZU}"' in shell
+
+
+def test_living_lab_join_runs_the_real_module_and_publishes_a_twin() -> None:
+    join = _living_lab_states()["join"]
+    assert join["resources"] == "cpu"
+    shell = join["run"]["shell"]
+    assert "npa.workflows.living_lab" in shell and "join_living_lab_zones" in shell
+    outputs = {o["uri"] for o in join["outputs"]}
+    assert any("{{config.report_uri}}" in u for u in outputs)
+    assert any("{{config.panorama_uri}}" in u for u in outputs)
+    spec = yaml.safe_load(LIVING_LAB_SPEC.read_text(encoding="utf-8"))
+    assert spec["config"]["report_uri"].endswith("reports/digital_twin.json")
+    assert spec["config"]["panorama_uri"].endswith("reports/panorama.png")

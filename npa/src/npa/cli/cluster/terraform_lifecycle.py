@@ -38,6 +38,7 @@ from npa.cluster.gpu_health import (
     probe_gpu_health,
     validate_gpu_health,
 )
+from npa.cluster.gpu_workload_profile import resolve_gpu_workload_profile
 from npa.cluster_backends import get_backend
 from npa.cluster_backends.mk8s import (
     MK8sApplyRequest,
@@ -301,6 +302,14 @@ def up_cmd(
             "reservation selection. Equivalent to TF_VAR_capacity_block_group."
         ),
     ),
+    infiniband_fabric: str = typer.Option(
+        "",
+        "--infiniband-fabric",
+        help=(
+            "InfiniBand fabric required by NVSwitch GPU clusters "
+            "(overrides TF_VAR_infiniband_fabric)."
+        ),
+    ),
     gpu_nodes: int = typer.Option(
         -1,
         "--gpu-nodes",
@@ -335,6 +344,15 @@ def up_cmd(
         "",
         "--gpu-driver-mode",
         help="GPU driver strategy: auto, managed-image, or operator. Empty keeps tfvars/default auto.",
+    ),
+    gpu_workload_profile: str = typer.Option(
+        "",
+        "--gpu-workload-profile",
+        help=(
+            "Explicit GPU workload contract. 'rtx-rendering' selects RTX PRO 6000, "
+            "the supported single-GPU preset, GPU Operator drivers, and mandatory "
+            "GLX/EGL/Vulkan readiness validation."
+        ),
     ),
     managed_driver_preset: str = typer.Option(
         "",
@@ -423,6 +441,20 @@ def up_cmd(
         gpu_platform = topology.gpu_platform
         gpu_preset = topology.gpu_preset
         preemptible = topology.gpu_preemptible
+    try:
+        workload = resolve_gpu_workload_profile(
+            profile=gpu_workload_profile,
+            gpu_nodes=gpu_nodes,
+            gpu_platform=gpu_platform,
+            gpu_preset=gpu_preset,
+            gpu_driver_mode=gpu_driver_mode,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--gpu-workload-profile") from exc
+    gpu_nodes = workload.gpu_nodes
+    gpu_platform = workload.gpu_platform
+    gpu_preset = workload.gpu_preset
+    gpu_driver_mode = workload.gpu_driver_mode
     explicit_context = _apply_context_cluster_name(
         tfvars,
         context_name,
@@ -535,8 +567,9 @@ def up_cmd(
                 else None
             ),
             enable_gpu_cluster=_tfvar_bool(tfvars, env, "enable_gpu_cluster", False),
-            infiniband_fabric=str(
-                _tfvar_value(tfvars, env, "infiniband_fabric", "") or ""
+            infiniband_fabric=(
+                infiniband_fabric.strip()
+                or str(_tfvar_value(tfvars, env, "infiniband_fabric", "") or "")
             ),
             enable_filestore=(
                 _tfvar_bool(tfvars, env, "enable_filestore", False)
@@ -544,6 +577,12 @@ def up_cmd(
             ),
             existing_filestore=str(
                 _tfvar_value(tfvars, env, "existing_filestore", "") or ""
+            ),
+            filesystem_csi_chart_repository=str(
+                _tfvar_value(
+                    tfvars, env, "filesystem_csi_chart_repository", ""
+                )
+                or ""
             ),
             subnet_id=str(_tfvar_value(tfvars, env, "subnet_id", "") or ""),
             filestore_disk_size_gibibytes=int(
@@ -570,6 +609,7 @@ def up_cmd(
             gpu_health_timeout_minutes=validation_timeout,
             gpu_cuda_smoke=gpu_cuda_smoke,
             gpu_cuda_smoke_image=gpu_cuda_smoke_image,
+            gpu_workload_profile=workload.profile,
             mig=(
                 MigSpec(enabled=True, strategy=mig_strategy, config=mig_config)
                 if mig_enabled
@@ -771,6 +811,7 @@ def up_cmd(
             # explicitly so `--capacity-block-group` is not silently dropped by a
             # `capacity_block_group = ""` line in a checked-in tfvars file.
             *_capacity_block_group_var_args(capacity_block_group),
+            *_string_var_args("infiniband_fabric", infiniband_fabric),
             *_string_var_args(
                 "cluster_name", str(tfvars.get("cluster_name") or "npa-cluster")
             ),
@@ -1007,6 +1048,7 @@ def up_cmd(
                 gpu_health_stabilization_seconds=gpu_health_stabilization_seconds,
                 gpu_cuda_smoke=gpu_cuda_smoke,
                 gpu_cuda_smoke_image=gpu_cuda_smoke_image,
+                gpu_graphics_smoke=workload.graphics_smoke,
                 env=env,
             )
             typer.echo(
@@ -2644,7 +2686,19 @@ def _preflight_filestore_quota(
     existing_filestore = str(
         _tfvar_value(tfvars, env, "existing_filestore", "") or ""
     ).strip()
-    if not enable_filestore or existing_filestore:
+    if not enable_filestore and not existing_filestore:
+        return
+    chart_repository = str(
+        _tfvar_value(tfvars, env, "filesystem_csi_chart_repository", "") or ""
+    ).strip()
+    if not chart_repository:
+        raise typer.BadParameter(
+            "Shared filesystem CSI requires filesystem_csi_chart_repository when "
+            "enable_filestore or existing_filestore is set. Supply the operator-approved "
+            "Helm repository through terraform.tfvars or "
+            "TF_VAR_filesystem_csi_chart_repository before running apply."
+        )
+    if existing_filestore:
         return
     tenant_id = str(_tfvar_value(tfvars, env, "tenant_id", "") or "").strip()
     region = str(_tfvar_value(tfvars, env, "region", "") or "").strip()
@@ -2851,6 +2905,9 @@ def _preflight_whole_path_capacity(
             _tfvar_value(tfvars, env, "gpu_nodes_preset", "1gpu-24vcpu-218gb") or ""
         ),
         preemptible=_tfvar_bool(tfvars, env, "gpu_nodes_preemptible", False),
+        capacity_block_group=str(
+            _tfvar_value(tfvars, env, "capacity_block_group", "") or ""
+        ),
         cpu_disk_gib=int(_tfvar_value(tfvars, env, "cpu_disk_size", 128) or 128),
         gpu_disk_gib=int(_tfvar_value(tfvars, env, "gpu_disk_size", 1023) or 1023),
         public_node_ips=False,
@@ -2882,6 +2939,7 @@ def _preflight_whole_path_capacity(
         gpu_platform=requested.gpu_platform,
         gpu_preset=requested.gpu_preset,
         preemptible=requested.gpu_preemptible,
+        capacity_block_group=requested.capacity_block_group,
         cpu_disk_gib=requested.cpu_disk_gib,
         gpu_disk_gib=requested.gpu_disk_gib,
         public_node_ips=requested.public_node_ips,
@@ -2921,14 +2979,6 @@ def _preflight_gpu_capacity(
     gpu_nodes = int(_tfvar_value(tfvars, env, "gpu_nodes_count", 0) or 0)
     if gpu_nodes <= 0:
         return
-    # MIG's STRICT capacity-block-backed pool consumes the named reservation,
-    # not ordinary on-demand GPU quota. Reservation ownership/region/platform
-    # and remaining capacity are validated by the shared mk8s preflight above.
-    if (
-        _tfvar_bool(tfvars, env, "mig_enabled", False)
-        and str(_tfvar_value(tfvars, env, "capacity_block_group", "") or "").strip()
-    ):
-        return
     platform = str(
         _tfvar_value(tfvars, env, "gpu_nodes_platform", "gpu-rtx6000") or ""
     ).strip()
@@ -2944,6 +2994,31 @@ def _preflight_gpu_capacity(
     preemptible = _tfvar_bool(tfvars, env, "gpu_nodes_preemptible", False)
     required = gpu_nodes * _gpus_per_node(preset)
     capture = lambda args: _run_capture(args, env=env, check=False)  # noqa: E731 - passed through
+    capacity_block_group = str(
+        _tfvar_value(tfvars, env, "capacity_block_group", "") or ""
+    ).strip()
+    # A STRICT capacity-block-backed pool consumes the named reservation, not
+    # the ordinary on-demand GPU quota. For MIG the shared mk8s preflight used
+    # to be the only validator; the whole-path preflight now proves the block
+    # itself (owner tenant, region, platform, active state, remaining GPUs) for
+    # MIG and non-MIG STRICT pools alike before apply, so we do not also charge
+    # the ordinary GPU-family allowance. AUTO/omitted capacity stays covered by
+    # the on-demand GPU quota check below and may never fall back to it.
+    if capacity_block_group:
+        from npa.cli.cluster.capacity import capacity_block_group_error
+
+        message = capacity_block_group_error(
+            capture,
+            nebius_bin=nebius_bin,
+            block_group_id=capacity_block_group,
+            tenant_id=tenant_id,
+            region=region,
+            platform=platform,
+            required_gpus=required,
+        )
+        if message:
+            raise typer.BadParameter(message)
+        return
     message = gpu_capacity_error(
         capture,
         nebius_bin=nebius_bin,
@@ -3703,6 +3778,7 @@ def _validate_cluster(
     gpu_health_stabilization_seconds: int = DEFAULT_STABILIZATION_SECONDS,
     gpu_cuda_smoke: bool = True,
     gpu_cuda_smoke_image: str = DEFAULT_CUDA_SMOKE_IMAGE,
+    gpu_graphics_smoke: bool = False,
     env: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     resolved_env = dict(env or os.environ)
@@ -3746,6 +3822,7 @@ def _validate_cluster(
                     timeout_seconds=timeout_minutes * 60,
                     cuda_smoke=gpu_cuda_smoke,
                     cuda_smoke_image=gpu_cuda_smoke_image,
+                    graphics_smoke=gpu_graphics_smoke,
                 ),
                 evidence_path=kubeconfig_path.parent / "gpu-health.json",
                 on_status=lambda message: typer.echo(message),
@@ -3759,6 +3836,7 @@ def _validate_cluster(
             "total_gpus": final["total_gpus"],
             "driver_mode": driver.effective_mode,
             "cuda_smokes": gpu_report["cuda_smokes"],
+            "graphics_smokes": gpu_report["graphics_smokes"],
         }
     else:
         result = {}

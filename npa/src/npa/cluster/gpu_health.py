@@ -12,12 +12,16 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from npa.cluster.gpu_driver import gpus_per_node
+from npa.cluster.gpu_driver import gpus_per_node, is_nvswitch_topology
 
 DEFAULT_STABILIZATION_SECONDS = 120
 DEFAULT_POLL_SECONDS = 10
 DEFAULT_CUDA_SMOKE_IMAGE = (
     "nvcr.io/nvidia/k8s/cuda-sample:vectoradd-cuda12.5.0-ubuntu22.04"
+)
+DEFAULT_GRAPHICS_SMOKE_IMAGE = (
+    "ghcr.io/nebius/nebius-physical-ai/npa-sonic@sha256:"
+    "c9ba0996b28f54b013e36da689638b386a7ef9c0c8c4413fc4b3c72ff1a808bb"
 )
 _FABRIC_SUCCESS = frozenset({"complete", "completed", "success", "successful"})
 
@@ -47,9 +51,24 @@ class GpuHealthConfig:
     timeout_seconds: int = 3600
     cuda_smoke: bool = True
     cuda_smoke_image: str = DEFAULT_CUDA_SMOKE_IMAGE
+    graphics_smoke: bool = False
+    graphics_smoke_image: str = DEFAULT_GRAPHICS_SMOKE_IMAGE
+    # Declared pool topology, never learned from a readiness snapshot. An empty
+    # tuple keeps the existing uniform-preset contract.
+    expected_gpu_counts: tuple[int, ...] = ()
+    # Optional declared pool subset that requires Fabric Manager. None retains
+    # cluster-wide fabric checks; single-GPU guests can explicitly be excluded.
+    nvswitch_gpu_counts: tuple[int, ...] | None = None
+
+    def requires_nvswitch(self, gpu_count: int) -> bool:
+        if self.nvswitch_gpu_counts is not None:
+            return gpu_count in self.nvswitch_gpu_counts
+        return self.nvswitch
 
     @property
     def expected_gpus(self) -> int:
+        if self.expected_gpu_counts:
+            return sum(self.expected_gpu_counts)
         return self.expected_gpu_nodes * gpus_per_node(self.gpu_preset)
 
     def validate(self) -> None:
@@ -57,6 +76,32 @@ class GpuHealthConfig:
             raise ValueError("expected node counts cannot be negative")
         if self.expected_gpu_nodes > self.expected_nodes:
             raise ValueError("expected GPU nodes cannot exceed expected total nodes")
+        if self.expected_gpu_counts and (
+            len(self.expected_gpu_counts) != self.expected_gpu_nodes
+            or any(type(count) is not int or count <= 0 for count in self.expected_gpu_counts)
+        ):
+            raise ValueError(
+                "expected_gpu_counts must declare one positive integer per GPU node"
+            )
+        if self.expected_gpu_counts and is_nvswitch_topology(
+            platform=self.gpu_platform,
+            preset=f"{max(self.expected_gpu_counts)}gpu-declared",
+        ) and not self.nvswitch:
+            raise ValueError("declared multi-GPU SXM/NVL nodes require NVSwitch checks")
+        if self.nvswitch_gpu_counts is not None:
+            if not self.expected_gpu_counts or any(
+                type(count) is not int or count not in self.expected_gpu_counts
+                for count in self.nvswitch_gpu_counts
+            ):
+                raise ValueError("nvswitch_gpu_counts must be a declared GPU-count subset")
+            required_counts = {
+                count for count in self.expected_gpu_counts
+                if is_nvswitch_topology(
+                    platform=self.gpu_platform, preset=f"{count}gpu-declared"
+                )
+            }
+            if not required_counts.issubset(self.nvswitch_gpu_counts):
+                raise ValueError("NVSwitch subset cannot omit multi-GPU SXM/NVL nodes")
         if self.expected_gpu_nodes and self.expected_gpus <= 0:
             raise ValueError(
                 f"GPU preset {self.gpu_preset!r} does not encode a positive GPU count"
@@ -71,6 +116,12 @@ class GpuHealthConfig:
             raise ValueError("GPU health timeout must be positive")
         if self.cuda_smoke and not self.cuda_smoke_image.strip():
             raise ValueError("CUDA smoke image cannot be empty when smoke is enabled")
+        if self.graphics_smoke and self.driver_mode != "operator":
+            raise ValueError("graphics smoke requires the GPU Operator driver path")
+        if self.graphics_smoke and not self.graphics_smoke_image.strip():
+            raise ValueError(
+                "graphics smoke image cannot be empty when graphics smoke is enabled"
+            )
 
 
 def _run_json(
@@ -214,6 +265,22 @@ def _pod_errors(pods: list[dict[str, Any]], namespace: str) -> list[str]:
     return errors
 
 
+def _is_device_plugin_pod(pod: dict[str, Any]) -> bool:
+    """Recognize the managed-image plugin across old and current layouts."""
+    metadata = pod.get("metadata") or {}
+    labels = metadata.get("labels") or {}
+    containers = (pod.get("spec") or {}).get("containers") or []
+    candidates = [
+        metadata.get("name"),
+        labels.get("app"),
+        labels.get("app.kubernetes.io/name"),
+        *(container.get("name") for container in containers),
+    ]
+    return any(
+        "nvidia-device-plugin" in str(value or "").lower() for value in candidates
+    )
+
+
 def probe_gpu_health(
     capture: CaptureFn,
     *,
@@ -247,14 +314,28 @@ def probe_gpu_health(
         )
     total_gpus = sum(_allocatable_gpus(node) for node in gpu_nodes)
     if total_gpus != config.expected_gpus:
+        topology = (
+            str(list(config.expected_gpu_counts))
+            if config.expected_gpu_counts
+            else f"{config.expected_gpu_nodes}x{gpus_per_node(config.gpu_preset)}"
+        )
         errors.append(
             f"expected {config.expected_gpus} nvidia.com/gpu allocatable from "
-            f"{config.expected_gpu_nodes}x{gpus_per_node(config.gpu_preset)}, "
-            f"found {total_gpus}"
+            f"{topology}, found {total_gpus}"
+        )
+    gpu_counts = {_node_name(node): _allocatable_gpus(node) for node in gpu_nodes}
+    if config.expected_gpu_counts and sorted(gpu_counts.values()) != sorted(
+        config.expected_gpu_counts
+    ):
+        errors.append(
+            "GPU counts per node do not match declared distribution: "
+            f"expected {sorted(config.expected_gpu_counts)}, "
+            f"found {sorted(gpu_counts.values())}"
         )
     for node in gpu_nodes:
-        errors.extend(_node_condition_errors(node, nvswitch=config.nvswitch))
-        errors.extend(_fabric_metadata_errors(node, nvswitch=config.nvswitch))
+        nvswitch = config.requires_nvswitch(_allocatable_gpus(node))
+        errors.extend(_node_condition_errors(node, nvswitch=nvswitch))
+        errors.extend(_fabric_metadata_errors(node, nvswitch=nvswitch))
     missing_boot_ids = [
         _node_name(node) or "<unnamed>" for node in nodes if not _boot_id(node)
     ]
@@ -275,6 +356,22 @@ def probe_gpu_health(
         ["get", "pods", "-n", namespace, "-o", "json"],
     )
     pods = [item for item in pods_payload.get("items", []) if isinstance(item, dict)]
+    if config.driver_mode == "managed-image" and not pods:
+        # Current Nebius managed images install the device-plugin DaemonSet in
+        # kube-system; older images used a dedicated namespace. Accept only
+        # positively identified plugin pods, never arbitrary kube-system pods.
+        namespace = "kube-system (nvidia-device-plugin)"
+        pods_payload = _run_json(
+            capture,
+            kubectl_bin,
+            kubeconfig_path,
+            ["get", "pods", "-n", "kube-system", "-o", "json"],
+        )
+        pods = [
+            item
+            for item in pods_payload.get("items", [])
+            if isinstance(item, dict) and _is_device_plugin_pod(item)
+        ]
     errors.extend(_pod_errors(pods, namespace))
     return {
         "observed_at_monotonic": time.monotonic(),
@@ -283,6 +380,11 @@ def probe_gpu_health(
         "ready_nodes": len(ready_nodes),
         "expected_gpu_nodes": config.expected_gpu_nodes,
         "gpu_nodes": sorted(_node_name(node) for node in gpu_nodes),
+        "gpu_counts": gpu_counts,
+        "nvswitch_nodes": sorted(
+            name for name, count in gpu_counts.items()
+            if config.requires_nvswitch(count)
+        ),
         "expected_gpus": config.expected_gpus,
         "total_gpus": total_gpus,
         "driver_mode": config.driver_mode,
@@ -344,9 +446,21 @@ def _cuda_smoke_on_node(
     nvswitch: bool,
     sleep_fn: Callable[[float], None],
     monotonic_fn: Callable[[], float],
+    gpu_count: int = 1,
+    require_device_evidence: bool = False,
 ) -> dict[str, Any]:
     digest = hashlib.sha256(node_name.encode()).hexdigest()[:10]
     pod_name = f"npa-gpu-health-{digest}"
+    command = "/cuda-samples/vectorAdd && nvidia-smi -q"
+    if require_device_evidence:
+        command = (
+            "set -euo pipefail\n"
+            f"for device in $(seq 0 {gpu_count - 1}); do\n"
+            '  CUDA_VISIBLE_DEVICES="$device" /cuda-samples/vectorAdd\n'
+            '  printf "NPA_CUDA_DEVICE_%s_PASSED\\n" "$device"\n'
+            "done\n"
+            "nvidia-smi -q"
+        )
     manifest = {
         "apiVersion": "v1",
         "kind": "Pod",
@@ -370,8 +484,8 @@ def _cuda_smoke_on_node(
                     "name": "vectoradd",
                     "image": image,
                     "command": ["/bin/bash", "-c"],
-                    "args": ["/cuda-samples/vectorAdd && nvidia-smi -q"],
-                    "resources": {"limits": {"nvidia.com/gpu": 1}},
+                    "args": [command],
+                    "resources": {"limits": {"nvidia.com/gpu": gpu_count}},
                     "securityContext": {
                         "allowPrivilegeEscalation": False,
                         "capabilities": {"drop": ["ALL"]},
@@ -440,6 +554,16 @@ def _cuda_smoke_on_node(
                 f"CUDA vectorAdd on {node_name} exited successfully without "
                 "required 'Test PASSED' evidence"
             )
+        if require_device_evidence:
+            devices = re.findall(r"(?m)^NPA_CUDA_DEVICE_(\d+)_PASSED$", output)
+            if (
+                devices != [str(device) for device in range(gpu_count)]
+                or output.count("Test PASSED") != gpu_count
+            ):
+                raise GpuHealthError(
+                    f"CUDA vectorAdd on {node_name} lacks complete per-device "
+                    f"evidence for {gpu_count} assigned GPUs"
+                )
         fabric_errors = _fabric_errors_from_nvidia_smi(output) if nvswitch else []
         if fabric_errors:
             raise GpuHealthError(f"{node_name}: " + "; ".join(fabric_errors))
@@ -448,7 +572,161 @@ def _cuda_smoke_on_node(
             "pod": pod_name,
             "phase": phase,
             "vectoradd": "passed",
-            "fabric": "success" if nvswitch and "Fabric" in output else "not-exposed",
+            "tested_gpus": gpu_count,
+            "fabric": (
+                "not-required" if require_device_evidence and not nvswitch
+                else "success" if nvswitch and "Fabric" in output else "not-exposed"
+            ),
+        }
+    finally:
+        capture(
+            [
+                kubectl_bin,
+                "delete",
+                "pod",
+                pod_name,
+                "-n",
+                "default",
+                "--ignore-not-found=true",
+                "--wait=false",
+            ],
+            env=env,
+            check=False,
+        )
+
+
+def _graphics_smoke_on_node(
+    capture: CaptureFn,
+    *,
+    kubectl_bin: str,
+    kubeconfig_path: Path,
+    node_name: str,
+    image: str,
+    timeout_seconds: int,
+    sleep_fn: Callable[[float], None],
+    monotonic_fn: Callable[[], float],
+) -> dict[str, Any]:
+    """Prove operator-mounted GLX/EGL and enumerate a Vulkan NVIDIA device."""
+
+    digest = hashlib.sha256(node_name.encode()).hexdigest()[:10]
+    pod_name = f"npa-graphics-health-{digest}"
+    command = r"""
+set -euo pipefail
+python3 - <<'PY'
+import ctypes
+import os
+ctypes.CDLL("libGLX_nvidia.so.0")
+print("NPA_GLX_LOADED", flush=True)
+os._exit(0)
+PY
+python3 - <<'PY'
+import ctypes
+import os
+ctypes.CDLL("libEGL_nvidia.so.0")
+print("NPA_EGL_LOADED", flush=True)
+os._exit(0)
+PY
+vulkaninfo --summary
+""".strip()
+    manifest = {
+        "apiVersion": "v1",
+        "kind": "Pod",
+        "metadata": {
+            "name": pod_name,
+            "namespace": "default",
+            "labels": {"app.kubernetes.io/managed-by": "npa-gpu-health"},
+        },
+        "spec": {
+            "restartPolicy": "Never",
+            "nodeName": node_name,
+            "runtimeClassName": "nvidia",
+            "tolerations": [
+                {
+                    "key": "nvidia.com/gpu",
+                    "operator": "Exists",
+                    "effect": "NoSchedule",
+                }
+            ],
+            "containers": [
+                {
+                    "name": "graphics-readiness",
+                    "image": image,
+                    "command": ["/bin/bash", "-c"],
+                    "args": [command],
+                    "env": [
+                        {"name": "NVIDIA_VISIBLE_DEVICES", "value": "all"},
+                        {"name": "NVIDIA_DRIVER_CAPABILITIES", "value": "all"},
+                    ],
+                    "resources": {"limits": {"nvidia.com/gpu": 1}},
+                    "securityContext": {
+                        "allowPrivilegeEscalation": False,
+                        "capabilities": {"drop": ["ALL"]},
+                    },
+                }
+            ],
+        },
+    }
+    env = os.environ.copy()
+    env["KUBECONFIG"] = str(kubeconfig_path)
+    create = capture(
+        [kubectl_bin, "apply", "-f", "-"],
+        env=env,
+        input_text=json.dumps(manifest),
+        check=False,
+    )
+    if getattr(create, "returncode", 0) != 0:
+        detail = str(getattr(create, "stderr", "") or getattr(create, "stdout", ""))
+        raise GpuHealthError(
+            f"graphics readiness pod could not be created on GPU node: "
+            f"{detail.strip()[-1000:]}"
+        )
+    deadline = monotonic_fn() + timeout_seconds
+    phase = ""
+    try:
+        while monotonic_fn() <= deadline:
+            pod = _run_json(
+                capture,
+                kubectl_bin,
+                kubeconfig_path,
+                ["get", "pod", pod_name, "-n", "default", "-o", "json"],
+            )
+            phase = str((pod.get("status") or {}).get("phase") or "")
+            if phase in {"Succeeded", "Failed"}:
+                break
+            sleep_fn(min(2.0, max(0.0, deadline - monotonic_fn())))
+        logs = capture(
+            [kubectl_bin, "logs", pod_name, "-n", "default"],
+            env=env,
+            check=False,
+        )
+        output = str(getattr(logs, "stdout", "") or "")
+        required = {
+            "GLX": "NPA_GLX_LOADED" in output,
+            "EGL": "NPA_EGL_LOADED" in output,
+            "Vulkan instance": "Vulkan Instance Version" in output,
+            "Vulkan physical device": bool(re.search(r"(?m)^GPU[0-9]+:", output)),
+            "NVIDIA Vulkan device": "NVIDIA" in output,
+        }
+        missing = [name for name, present in required.items() if not present]
+        if phase != "Succeeded" or getattr(logs, "returncode", 0) != 0 or missing:
+            detail = (
+                ", ".join(missing) if missing else f"pod phase {phase or 'timeout'}"
+            )
+            raise GpuHealthError(
+                "graphics readiness failed on GPU node: "
+                + detail
+                + (f"; logs: {output[-1000:]}" if output else "")
+            )
+        return {
+            "node": node_name,
+            "pod": pod_name,
+            "phase": phase,
+            "glx": "loaded",
+            "egl": "loaded",
+            "vulkan_instance": "created",
+            "vulkan_physical_devices": len(re.findall(r"(?m)^GPU[0-9]+:", output)),
+            "nvidia_device": "enumerated",
+            "image": image,
         }
     finally:
         capture(
@@ -547,6 +825,7 @@ def validate_gpu_health(
         "observations": observations,
         "final_snapshot": final_snapshot,
         "cuda_smokes": [],
+        "graphics_smokes": [],
     }
     if fatal_error or last_errors or stable_since is None or not stabilized:
         message = fatal_error or (
@@ -570,7 +849,28 @@ def validate_gpu_health(
                         node_name=node_name,
                         image=config.cuda_smoke_image,
                         timeout_seconds=remaining,
-                        nvswitch=config.nvswitch,
+                        nvswitch=node_name in final_snapshot["nvswitch_nodes"],
+                        sleep_fn=sleep_fn,
+                        monotonic_fn=monotonic_fn,
+                        gpu_count=(
+                            final_snapshot["gpu_counts"][node_name]
+                            if config.expected_gpu_counts
+                            else 1
+                        ),
+                        require_device_evidence=bool(config.expected_gpu_counts),
+                    )
+                )
+        if config.graphics_smoke:
+            for node_name in final_snapshot.get("gpu_nodes") or []:
+                remaining = max(1, int(deadline - monotonic_fn()))
+                report["graphics_smokes"].append(
+                    _graphics_smoke_on_node(
+                        capture,
+                        kubectl_bin=kubectl_bin,
+                        kubeconfig_path=kubeconfig_path,
+                        node_name=node_name,
+                        image=config.graphics_smoke_image,
+                        timeout_seconds=remaining,
                         sleep_fn=sleep_fn,
                         monotonic_fn=monotonic_fn,
                     )

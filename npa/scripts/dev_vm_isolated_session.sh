@@ -35,7 +35,7 @@
 # EXAMPLE (isolated GPU submit via npa, never touching the shared checkout)
 #   S=$(dev_vm_isolated_session.sh start cursor/my-branch-02d7 gpu-run-1)
 #   dev_vm_isolated_session.sh exec gpu-run-1 \
-#     'npa workbench workflow submit npa/workflows/workbench/npa-workflows/adversarial-scenario-hardening.yaml \
+#     'npa workbench workflow submit workflows/testing/adversarial-scenario-hardening.yaml \
 #        --run-id gpu-run-1 --infra k8s/npa-rtxpro-mk8s --deploy-if-absent \
 #        --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY'
 #   dev_vm_isolated_session.sh stop gpu-run-1

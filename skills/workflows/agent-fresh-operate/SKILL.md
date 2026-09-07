@@ -34,19 +34,48 @@ For chat UX, API shapes, and Rerun iframe behavior, use `npa-agent`. For
 - `npa/scripts/agent_mature_verify_loop.sh` — bootstrap-first mature loop (existing agents; not fresh deploy)
 
 All `npa agent …` and `nebius` commands run on the **operator/dev VM** with
-`~/.npa/config.yaml` and `~/.npa/credentials.yaml`. Cloud agents sync the
-target branch to the dev VM before live tests.
+the selected NPA configuration root (`NPA_CONFIG_DIR`, default `~/.npa`).
+Use the authorized checkout and branch for live tests.
 
 ## Procedure
 
+For an explicitly authorized existing bucket in another project, save its exact
+`bucket`, `endpoint`, `owner_project_id`, and provider `bucket_id` in the selected
+project's `terraform_state` configuration before deploy. The agent verifies both
+projects belong to the selected tenant and the bucket's ID, name, and actual
+parent agree, then probes the exact Terraform state key. This binding authorizes
+data-plane use only: it creates no bucket or storage IAM grant and preserves the
+actual owner in backend evidence. Missing or mismatched bindings fail before
+Terraform. Without an explicit binding, the backend must exist in the compute
+project. Keep credential selection in the supported private credential store or
+process environment; do not represent external storage as newly owned resources.
+
+When reusing configured storage, agent bootstrap creates or verifies a custom
+group inside the compute project and an `editor` permit on that exact project
+for the attached `npa-agent` account. It does not add a tenant-wide editors
+membership. Creation IDs are journaled; rollback and last-agent cleanup verify
+exact ownership and dependencies before deleting only run-created bindings.
+Existing broad grants are not removed automatically.
+
 1. **Preconditions (dev VM).**
    ```bash
-   cd ~/nebius-physical-ai
-   git checkout <branch> && npa/.venv/bin/pip install -e npa -q
-   nebius profile activate "${NPA_NEBIUS_PROFILE:-npa-mk8s}"
-   export NPA_NEBIUS_PROFILE="${NPA_NEBIUS_PROFILE:-npa-mk8s}"
+   cd <authorized-checkout>
+   export NPA_CONFIG_DIR=<private-runtime-config-directory>
+   export NPA_OPERATION_JOURNAL_DIR=<private-operation-journal-directory>
+   export NPA_NEBIUS_PROFILE=<verified-profile>
    export NPA_SSH_KEY="${NPA_SSH_KEY:-$HOME/.ssh/id_ed25519}"
    ```
+
+   Bootstrap the authorized checkout's own virtualenv before operating it.
+   `NPA_CONFIG_DIR` selects local config, credentials, cluster state, agent auth,
+   workbench Terraform directories, and the default Terraform plugin cache.
+   Set it before importing NPA. Concurrent operators should use separate private
+   directories with the selected project stanza and authorized credentials. Provider
+   calls honor the selected profile per command; deploying an agent does not
+   activate or rewrite the host's shared default profile. Keep explicit
+   operation-journal and SkyPilot isolation and Fleet `work_root` settings when
+   using those runtimes. The operation journal has its own configuration override;
+   setting `NPA_CONFIG_DIR` alone does not relocate it.
 
    `NPA_SSH_KEY` is the SSH **private-key path** used after provisioning. It is
    not cloud-init key content and must never be passed as
@@ -70,6 +99,10 @@ target branch to the dev VM before live tests.
      --tenant-id <tenant-id> \
      --region us-central1
    ```
+   The default capacity gate reserves the canonical follow-on cluster as well as
+   the VM. Use `--agent-only` when this lifecycle intentionally creates only the
+   UI VM or when a separately managed cluster already satisfies the workload
+   plan; the flag still checks the VM's instance, disk, and public-IP capacity.
    Expect **compute PermissionDenied with VM SA attachment** on some cross-project
    profiles; npa retries apply without attached `service_account_id` and now emits
    a loud WARNING when it does — a VM without an attached SA cannot self-mint IAM
@@ -92,7 +125,7 @@ target branch to the dev VM before live tests.
 
 4. **Smoke gate (default “done” for fresh deploy).**
    ```bash
-   source ~/.npa/agents/<alias>/agent/auth.env
+   source "${NPA_CONFIG_DIR:-$HOME/.npa}/agents/<alias>/agent/auth.env"
    BASE="$(npa/.venv/bin/npa agent status --project <alias> --name agent --json \
      | npa/.venv/bin/python -c 'import json,sys; print(json.load(sys.stdin).get("public_url","").rstrip("/"))')"
    curl -sk -u "${AGENT_USER}:${AGENT_PASSWORD}" "${BASE}/api/models"
@@ -113,6 +146,131 @@ target branch to the dev VM before live tests.
    export NPA_AGENT_REGION=us-central1 NPA_NEBIUS_PROFILE=npa-mk8s
    bash npa/scripts/agent_fresh_setup_loop.sh
    ```
+
+## Preflight Before You Spend
+
+```bash
+npa/.venv/bin/npa agent preflight --project <alias> --name <name> [--agent-only]
+```
+
+Pass the **same `--name`** you will deploy. Capacity depends on it: an existing
+agent of that name already holds its public IP and needs no headroom, while a new
+name needs a free one. Preflighting the default `agent` and then deploying
+`--name something-else` is how a "capacity ready" report is followed immediately
+by a public-IP shortfall.
+
+`--agent-only` drops the reserved PAIDF cluster shape, so it reserves no cluster
+nodes and does not inspect mk8s. Use it when the operator can create a VM but
+cannot `resource.mk8scluster.list` in the target project.
+
+Read the `whole_path_capacity` diagnostic literally — it names the exact quota,
+required, used, limit, and shortfall. Two facts make it confusing:
+
+- **Public-IPv4 quota is tenant + region scoped, not per project.** Several
+  project aliases pointing into one tenant/region share one allowance, so
+  freeing capacity in "your" project may be impossible while a sibling project
+  holds the addresses. Audit with `nebius vpc allocation list --parent-id
+  <project-id>` and look for `state=ALLOCATED` with `used_by=null` — an
+  unattached public allocation is a leaked address still consuming quota.
+- **Placement follows the project's real region, not the stanza's `region`
+  field or `--region`.** A config stanza can claim `eu-north1` for a project that
+  actually lives in `us-central1`; npa resolves the real one. If a quota number
+  looks like it came from a different region than you expected, trust npa and
+  re-check the project's actual region before assuming a bug.
+
+### Deploying Into A Tenant That Needs A Non-Default Profile
+
+Quota reads are profile-scoped, and the profile comes from `NPA_NEBIUS_PROFILE` /
+`NEBIUS_PROFILE` — **not** from the target project's `nebius_profile` config
+field, which npa stores but does not load into the environment for you. Export it
+before preflight or deploy:
+
+```bash
+NPA_NEBIUS_PROFILE=<profile> npa agent preflight --project <alias> --name <name> --agent-only
+```
+
+Without it, the CLI queries whichever profile is active. If that profile cannot
+read the tenant but can read the configured project, preflight falls back to the
+project quota catalog and emits a `WARN` that the tenant aggregate remains
+unverified. A finite project shortfall is still a hard `FAIL`; unrelated quota
+query errors and an unreadable project fallback also fail closed. Distinguish a
+profile mismatch from intentionally project-scoped access in one command: if
+
+```bash
+nebius quotas quota-allowance list --parent-id <tenant> --all --profile <profile>
+```
+
+succeeds while the same call without `--profile` is denied, the profile is the
+issue, not capacity. `nebius profile list` plus a `nebius iam project get --id
+<project> --profile <p>` confirms which profile actually reaches the tenant.
+
+## Verifying A Deployed Agent
+
+`npa agent verify-live --project <alias> --name <name>` runs the smoke, CLI, and
+live e2e tiers against the real VM and prints `verify-live: ok`.
+
+Expect skips, not failures, on an `--agent-only` agent. Chat returns workflow
+YAML only after validation *and* planning succeed, and the Sim2Real template
+cannot plan a submit with no Kubernetes backend, so it declines with `a
+configured Kubernetes backend is required before Sim2Real submit`. That is
+correct behavior; templates that need no cluster (PAIDF, the generic
+`create_workflow` shapes) still emit runnable YAML on the same agent. Confirm the
+precondition with `GET /api/infra/backends` — `has_infra: false` and an empty
+`configured` list means cluster-backed templates cannot be exercised there.
+
+Preflight does not require a tenant-wide quota-list grant when the provider
+specifically denies that scope and the exact project's quota catalog remains
+readable. It reports `whole_path_capacity` as `WARN`: project-local restrictions
+were verified, but the provider still enforces the unseen tenant aggregate at
+apply time. A finite project allowance with insufficient headroom is a real
+capacity denial and remains `FAIL`. A malformed response, non-RBAC provider
+failure, unreadable project catalog, missing identity, or other unverified
+mutation prerequisite also remains `FAIL`; do not treat those as the scoped-IAM
+fallback.
+
+`ssh_egress` is a generic heuristic that probes the first public IP found in
+*any* saved agent record, so its "your Nebius agent VM" wording can name an
+unrelated — even deleted — VM. It never FAILs; do not read it as project-scoped
+evidence.
+
+## Stale Records vs Live VMs
+
+`npa agent list` and `npa agent status` render saved records. A record can
+survive its VM, so a listed `public_ip` and `https://<ip>/` URL are not proof the
+deployment exists. Confirm liveness before reusing or reporting one:
+
+```bash
+curl -sk -o /dev/null -w '%{http_code}\n' --max-time 8 "https://<ip>/healthz"
+npa/.venv/bin/npa agent bootstrap --project <alias> --name <name>   # NotFound => record only
+```
+
+A `Resource not found ... service compute` from bootstrap means the record is an
+orphan to clean up, not a VM to repair.
+
+## Pinned Nebius CLI On A Shared Dev VM
+
+NPA accepts only the CLI versions it has tested (`_TESTED_NEBIUS_CLI_VERSIONS` in
+`npa/src/npa/clients/nebius.py`, plus `nebius-cli` in
+`npa/src/npa/deploy/images.py`). Any other version fails every provider call with
+`Unsupported Nebius CLI <actual>`, which surfaces as several unrelated-looking
+preflight failures at once — quota, RBAC, and profile checks all report the same
+underlying refusal. Read the version line, not the individual checks.
+
+`npa/scripts/dev_vm_isolated_session.sh` isolates the worktree, venv, and tmux
+session, but **not** the Nebius CLI: it is resolved from `PATH` and the host copy
+is shared. When the host version is untested, install the tested one into a
+private prefix rather than overwriting the shared binary other runs depend on:
+
+```bash
+curl -fsSL https://storage.eu-north1.nebius.cloud/cli/install.sh \
+  -o /tmp/nebius-install.sh
+NEBIUS_INSTALL_FOLDER="$PWD/.tools/bin" NEBIUS_CLI_VERSION=<tested> \
+  bash /tmp/nebius-install.sh
+export PATH="$PWD/.tools/bin:$PATH"   # confirm with `nebius version`
+```
+
+The CLI reads the shared `~/.nebius/config.yaml`, so an existing authenticated
+profile keeps working through the private binary.
 
 ## Verify Tiers
 

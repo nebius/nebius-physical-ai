@@ -4,15 +4,17 @@ Use the single canonical spec and complete the operator runbook before submit:
 
 - [onboarding, preflight, submit, and remediation](../../../../docs/workbench/guides/sim2real-workflow.md)
 - [data and customer-asset contracts](../../../../docs/workbench/guides/sim2real-customer-assets.md)
+- [canonical RobotSpec and URDF example](../../../../docs/workbench/guides/sim2real-robot-spec.md)
 - [architecture and durable resume](../../../../docs/architecture/sim2real-compositional-workflow.md)
 
 Configured operators submit through the standard durable runtime:
 
 ```bash
 npa workbench workflow submit \
-  npa/workflows/workbench/npa-workflows/sim2real.yaml \
+  workflows/main/sim2real.yaml \
   --runtime --run-id <run-id> \
   --var bucket=<bucket> \
+  --var robot_spec_uri=<exact-s3-object-or-empty> \
   --var controller_image=<immutable-ref> \
   --var transfer_image=<immutable-ref> \
   --var envgen_image=<immutable-ref> \
@@ -46,6 +48,6 @@ window for archived callers and artifacts. They are lazy, are not called by the
 canonical workflow, and cannot materialize or submit its retired controller.
 
 The submit path fails before launch when storage, secret propagation, gated
-model access, the dedicated CPU capacity, Kueue/PriorityClass, Isaac cache PVC,
+model access, the dedicated CPU capacity, Isaac cache PVC,
 immutable images, or real image pulls are not ready. The linked runbook gives
 copy-paste setup, expected results, and remediation without duplicating it here.

@@ -99,7 +99,19 @@ _NON_STOCK_ARTIFACT_DISCOVERY_RE = re.compile(
     re.IGNORECASE,
 )
 
+_WORKFLOW_OPERATION_RULES = [
+    (
+        f"{operation}_workflow",
+        re.compile(
+            rf"^(?:please\s+)?{operation}\b[^\n]{{0,120}}\b(?:workflow|yaml|spec(?:ification)?)\b",
+            re.IGNORECASE,
+        ),
+    )
+    for operation in ("validate", "plan")
+]
+
 _INTENT_RULES: list[tuple[str, re.Pattern[str]]] = [
+    *_WORKFLOW_OPERATION_RULES,
     (
         # Embedded Foxglove viewer (MCAP / bag recordings). Kept ahead of the
         # rerun-oriented watch rules so "open foxglove" never routes to Rerun.
@@ -400,7 +412,10 @@ _INTENT_RULES: list[tuple[str, re.Pattern[str]]] = [
         "lancedb_capabilities",
         re.compile(
             r"\blancedb\b.{0,120}\b(?:support|supports|capabilit(?:y|ies)|expose|offers|import|backfill|view|query)\b"
-            r"|\b(?:support|supports|capabilit(?:y|ies)|expose|offers)\b.{0,120}\blancedb\b",
+            r"|\b(?:support|supports|capabilit(?:y|ies)|expose|offers)\b.{0,120}\blancedb\b"
+            # Same "what can <tool> do" phrasing the sibling tool rules accept;
+            # without it this turn fell through to the generic component reply.
+            r"|\b(?:can|could)\b.{0,80}\blancedb\b.{0,120}\b(?:do|run|import|query|backfill|view)\b",
             re.IGNORECASE,
         ),
     ),
@@ -462,7 +477,12 @@ _INTENT_RULES: list[tuple[str, re.Pattern[str]]] = [
         "component_capabilities",
         re.compile(
             r"\b(?:component|tool|workbench)\b.{0,120}\b(?:support|supports|capabilit(?:y|ies)|expose|offers)\b"
-            r"|\bwhat\b.{0,80}\b(?:does|can)\b.{0,80}\b(?:cosmos|lancedb|sonic|isaac(?:\s|-)?lab|lerobot|groot|token(?:\s|-)?factory|genesis|mjlab)\b.{0,80}\b(?:support|do|expose)\b",
+            r"|\bwhat\b.{0,80}\b(?:does|can)\b.{0,80}\b(?:cosmos|lancedb|sonic|isaac(?:\s|-)?lab|lerobot|groot|token(?:\s|-)?factory|genesis|mjlab)\b.{0,80}\b(?:support|do|expose)\b"
+            # "what components are available" answered from state instead of
+            # falling through to a paid model call. Scoped to the word
+            # "component" so tool-catalog turns still reach `tools_catalog`.
+            r"|\b(?:what|which|list|show)\b.{0,60}\bcomponents?\b"
+            r"|\bcomponents?\b.{0,80}\b(?:available|exist|offered)\b",
             re.IGNORECASE,
         ),
     ),
@@ -478,7 +498,9 @@ _INTENT_RULES: list[tuple[str, re.Pattern[str]]] = [
     (
         "tools_catalog",
         re.compile(
-            r"\b(tools?|toolref|tool refs?|workbench catalog|what can workbench do)\b",
+            # `toolRefs` is the repo's own plural, so it must match too: the
+            # bare `toolref` alternative failed the trailing word boundary.
+            r"\b(tools?|toolrefs?|tool refs?|workbench catalog|what can workbench do)\b",
             re.IGNORECASE,
         ),
     ),
@@ -507,6 +529,8 @@ _INTENT_RULES: list[tuple[str, re.Pattern[str]]] = [
 ]
 
 INTENT_APIS: dict[str, list[str]] = {
+    "validate_workflow": ["workflows/validate"],
+    "plan_workflow": ["workflows/validate", "workflows/plan"],
     "tenant_resources": ["resources"],
     "drive_sim2real": [
         "agent/sim2real/drive",
@@ -546,6 +570,12 @@ INTENT_APIS: dict[str, list[str]] = {
     "soperator": ["infra/soperator/validate", "infra/soperator/deploy", "infra/soperator/status/{name}", "tools"],
     "load_franka": ["sim-viz/load-franka-demo", "sim-viz/status"],
     "workflow_execute_guidance": ["workflows/validate", "workflows/plan", "workflows/submit", "tools"],
+    "foxglove_viewer": [
+        "foxglove/status",
+        "foxglove/config",
+        "foxglove/load-artifact",
+        "foxglove/convert-run",
+    ],
 }
 
 _DEFAULT_TOOL_IMAGE_TAGS: dict[str, tuple[str, str]] = {
@@ -557,7 +587,10 @@ _DEFAULT_TOOL_IMAGE_TAGS: dict[str, tuple[str, str]] = {
         "npa-lancedb",
         "cuda13-b300-0.30.3-sm80-sm90-sm100-sm103-sm120-20260803T031514Z",
     ),
-    "isaac-lab": ("npa-isaac-lab", "2.3.2.post1"),
+    "isaac-lab": (
+        "npa-isaac-lab",
+        "3.0.0b2.post1-sim2real-coherent-20260904",
+    ),
 }
 
 
@@ -720,6 +753,10 @@ def match_chat_intent(user_text: str) -> str | None:
     text = str(user_text or "").strip()
     if not text:
         return None
+    # Check the requested operation before inspecting words inside supplied YAML.
+    for intent, pattern in _WORKFLOW_OPERATION_RULES:
+        if pattern.search(text):
+            return intent
     lowered = _normalize_intent_text(text)
     metric_qualified = has_metric_resource_qualifier(lowered)
     if re.search(r"\b(soperator|slurm(?:[- ]on[- ]k(?:ubernetes|8s))?|slurm cluster|deploy\s+slurm|slurm\s+deploy)\b", text, re.IGNORECASE):
@@ -948,11 +985,13 @@ def format_tools_catalog(tool_refs: list[str], *, sample_size: int = 16) -> str:
 
 
 def _image_for_tool(tool: str) -> str:
-    from npa.deploy.images import execution_container_registry
+    from npa.deploy.images import container_image_for_tool
 
-    registry = execution_container_registry()
-    image_name, tag = _DEFAULT_TOOL_IMAGE_TAGS.get(tool, (f"npa-{tool}", "<tag>"))
-    return f"{registry.rstrip('/')}/{image_name}:{tag}"
+    _, tag = _DEFAULT_TOOL_IMAGE_TAGS.get(tool, (f"npa-{tool}", "<tag>"))
+    try:
+        return container_image_for_tool(tool, tag=tag)
+    except KeyError:
+        return f"ghcr.io/nebius/nebius-physical-ai/npa-{tool}:{tag}"
 
 
 def _format_tool_family_capabilities(name: str, tool_refs: list[str], *, prefixes: tuple[str, ...], bullets: list[str]) -> str:
@@ -980,7 +1019,7 @@ def format_cosmos_capabilities(tool_refs: list[str]) -> str:
             "**Setup + model staging**: `npa workbench cosmos check|fetch`.",
             "**Fine-tuning / post-training**: `npa workbench cosmos train` (serverless + runtime options).",
             "**Pipeline integration**: Cosmos augment via `workbench.cosmos2.transfer` and Token Factory reasoning paths.",
-            f"**Registry image default**: `{cosmos_image}` (override via `NPA_REGISTRY` if needed).",
+            f"**Registry image default**: `{cosmos_image}` (pass an explicit image for custom bytes).",
             "Use run-scoped S3 URIs for artifacts and keep credentials in `~/.npa/credentials.yaml`.",
         ],
     )
@@ -1284,7 +1323,7 @@ def format_cosmos3_setup() -> str:
 
 
 def format_onboard_solution() -> str:
-    registry = os.environ.get("NPA_REGISTRY", "").strip() or "<resolved-from-~/.npa/config.yaml>"
+    registry = os.environ.get("NPA_REGISTRY", "").strip() or "<your-registry>/<namespace>"
     byof_skill_path = BYOF_ONBOARD_SKILL_PATH
     registry_skill_path = OSS_SOLUTION_REGISTRY_ONBOARD_SKILL_PATH
     return "\n".join(
@@ -1644,6 +1683,26 @@ def apis_for_intent(intent: str) -> list[str]:
 #: which is a different file from the SkyPilot template of the same name, so the
 #: agent must lead with the spec-authoring skill rather than the SkyPilot one.
 KEYWORD_SKILL_RULES: tuple[tuple[tuple[str, ...], tuple[str, ...], str], ...] = (
+    (
+        ("approval",),
+        ("hugging face", "hf", "ngc", "catalog", "model", "dataset", "artifact"),
+        "access-approval",
+    ),
+    (
+        ("approve",),
+        ("hugging face", "hf", "ngc", "catalog", "model", "dataset", "artifact"),
+        "access-approval",
+    ),
+    (
+        ("access",),
+        ("hugging face", "hf", "ngc", "catalog", "gated"),
+        "access-approval",
+    ),
+    (
+        ("prepare",),
+        ("hugging face", "hf", "ngc", "catalog", "gated"),
+        "access-approval",
+    ),
     (("cosmos3",), ("workflow", "yaml", "spec"), "cosmos3-npa-workflow"),
     (("cosmos 3",), ("workflow", "yaml", "spec"), "cosmos3-npa-workflow"),
 )

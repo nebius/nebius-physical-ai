@@ -239,6 +239,8 @@ def test_adapt_robot_spec_for_isaac_swaps_mjcf_to_urdf() -> None:
         {"robot_source": "byo_urdf"},  # missing robot_uri
         {"robot_source": "genesis_builtin"},  # missing builtin_path
         {"preset": "ur5e", "kp": [1, 2, 3]},  # gains wrong length
+        {"preset": "ur5e", "home_qpos": [float("nan")] * 8},
+        {"preset": "ur5e", "gripper_open": float("inf")},
         {"robot_source": "byo_urdf", "robot_uri": "s3://b/arm.obj"},  # non-articulated
     ],
 )

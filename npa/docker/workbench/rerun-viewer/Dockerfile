@@ -15,6 +15,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     NPA_BAKED_PYTHON=/opt/rerun/venv/bin/python \
     NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA} \
     NPA_SKIP_EAGER_IMPORTS=1 \
+    NPA_LIGHT_WORKBENCH_TOOL=rerun-viewer \
     PYTHONPATH=/opt/npa/src \
     PYTHONUNBUFFERED=1 \
     RERUN_SDK_VERSION=${RERUN_SDK_VERSION}
@@ -58,6 +59,7 @@ RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.list \
     && chmod 0440 /etc/sudoers.d/99-npa-runtime-user \
     && install -d -m 0755 -o ubuntu -g ubuntu \
       /opt/npa/docker/workbench/rerun-viewer \
+      /opt/npa \
       /opt/rerun \
       /opt/rerun/venv \
     && chown ubuntu:ubuntu /workspace
@@ -67,6 +69,10 @@ COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa
 COPY --chown=ubuntu:ubuntu workflows /opt/npa/workflows
 COPY --chown=ubuntu:ubuntu docker/workbench/common/sim2real-viewer-requirements.txt \
     /opt/npa/sim2real-viewer-requirements.txt
+COPY --chown=ubuntu:ubuntu docker/workbench/common/sim2real-controller-requirements.txt \
+    /opt/npa/sim2real-controller-requirements.txt
+COPY --chown=ubuntu:ubuntu docker/workbench/common/sim2real-control-requirements.txt \
+    /opt/npa/sim2real-control-requirements.txt
 COPY --chown=ubuntu:ubuntu --chmod=0755 docker/workbench/rerun-viewer/entrypoint.sh \
     /opt/npa/docker/workbench/rerun-viewer/entrypoint.sh
 
@@ -79,6 +85,8 @@ RUN test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
     && python -m pip install --no-cache-dir "rerun-sdk==${RERUN_SDK_VERSION}" \
     && python -m pip install --no-cache-dir --no-deps \
       -r /opt/npa/sim2real-viewer-requirements.txt \
+      -r /opt/npa/sim2real-controller-requirements.txt \
+      -r /opt/npa/sim2real-control-requirements.txt \
     && python -m pip check \
     && python -c "import site; from pathlib import Path; Path(site.getsitepackages()[0], 'npa-exact-source.pth').write_text('/opt/npa/src\n', encoding='utf-8')" \
     && env -u PYTHONPATH python -c \

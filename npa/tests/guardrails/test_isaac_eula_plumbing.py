@@ -240,7 +240,11 @@ def test_no_user_facing_legacy_consent_or_privacy_defaults() -> None:
         '"PRIVACY_CONSENT": "Y"',
         "PRIVACY_CONSENT=Y",
     )
-    roots = (REPO_ROOT / "npa" / "src", REPO_ROOT / "npa" / "workflows")
+    roots = (
+        REPO_ROOT / "npa" / "src",
+        REPO_ROOT / "npa" / "workflows",
+        REPO_ROOT / "workflows",
+    )
     for root in roots:
         for path in root.rglob("*"):
             if not path.is_file() or path.suffix not in {".py", ".yaml", ".yml"}:

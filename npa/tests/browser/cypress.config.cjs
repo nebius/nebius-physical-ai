@@ -10,10 +10,6 @@ const { chromium } = require("playwright-core");
 const { PNG } = require("pngjs");
 
 const repoRoot = path.resolve(__dirname, "../..");
-const agentSourcePath = path.join(repoRoot, "src/npa/cli/agent.py");
-const agentUiPath = path.join(repoRoot, "src/npa/cli/agent_ui.html");
-const generatedDir = path.join(__dirname, ".generated");
-const generatedUiPath = path.join(generatedDir, "agent-ui.html");
 // Real @foxglove/embed browser build (devDependency) + the repo's glue module,
 // served exactly the way the agent VM serves them (/foxglove/sdk, /foxglove/app).
 const foxgloveSdkDir = path.join(__dirname, "node_modules/@foxglove/embed/dist");
@@ -22,56 +18,32 @@ const foxgloveHostModulePath = path.join(
   "src/npa/cli/assets/foxglove/npa-foxglove-host.js"
 );
 
-function extractPythonConstant(source, name, fallback) {
-  const re = new RegExp(`^${name}\\s*=\\s*"([^"]*)"`, "m");
-  const match = source.match(re);
-  return match ? match[1] : fallback;
-}
-
-function generateAgentUiHtml() {
-  const source = fs.readFileSync(agentSourcePath, "utf8");
-  const replacements = {
-    AGENT_UI_VERSION: extractPythonConstant(source, "AGENT_UI_VERSION", "dev"),
-    DEFAULT_AGENT_USER: extractPythonConstant(source, "DEFAULT_AGENT_USER", "npa"),
-    DEFAULT_LLM_MODEL: extractPythonConstant(source, "DEFAULT_LLM_MODEL", "nvidia/Cosmos3-Super-Reasoner"),
-  };
-  let html;
-  if (fs.existsSync(agentUiPath)) {
-    // Preferred: UI lives in agent_ui.html (normal braces, no f-string doubling).
-    html = fs.readFileSync(agentUiPath, "utf8");
-  } else {
-    const match = source.match(
-      /cat <<'HTML' \| sudo tee \/opt\/npa-agent\/ui\.html >\/dev\/null\n([\s\S]*?)\nHTML/
-    );
-    if (!match) {
-      throw new Error(`Unable to extract NPA agent UI from ${agentSourcePath} or ${agentUiPath}`);
-    }
-    html = match[1];
-    // Legacy inline heredoc lived inside a Python f-string.
-    html = html.replaceAll("{{", "{").replaceAll("}}", "}");
-    html = html.replace(/\\\\/g, "\\");
+function generateAgentUiHtml(leisaacEnabled = false) {
+  // Use the production renderer so the browser exercises the same strict
+  // server-configured flag as bootstrap. Only this test server has two routes.
+  const rendered = spawnSync(path.join(repoRoot, ".venv/bin/python"), [
+    "-c",
+    "from npa.cli.agent import rendered_agent_ui_html; " +
+      `print(rendered_agent_ui_html(leisaac_enabled=${leisaacEnabled ? "True" : "False"}))`,
+  ], { encoding: "utf8", maxBuffer: 4 * 1024 * 1024 });
+  if (rendered.status !== 0) {
+    throw new Error(`Unable to render NPA agent UI: ${rendered.error?.message || rendered.stderr || `exit ${rendered.status}`}`);
   }
-  if (html.includes("__NPA_AGENT_UI_HTML__")) {
-    throw new Error("UI heredoc is a placeholder; agent_ui.html is required");
-  }
-  for (const [name, value] of Object.entries(replacements)) {
-    html = html.replaceAll(`{${name}}`, value);
-  }
-  fs.mkdirSync(generatedDir, { recursive: true });
-  fs.writeFileSync(generatedUiPath, html, "utf8");
+  const html = rendered.stdout;
   return html;
 }
 
 function startMockServer(port) {
   const html = generateAgentUiHtml();
+  const leisaacHtml = generateAgentUiHtml(true);
   const server = http.createServer((req, res) => {
     const url = new URL(req.url || "/", `http://127.0.0.1:${port}`);
-    if (url.pathname === "/" || url.pathname === "/ui.html") {
+    if (["/", "/ui.html", "/ui-leisaac-enabled.html"].includes(url.pathname)) {
       res.writeHead(200, {
         "content-type": "text/html; charset=utf-8",
         "cache-control": "no-store",
       });
-      res.end(html);
+      res.end(url.pathname === "/ui-leisaac-enabled.html" ? leisaacHtml : html);
       return;
     }
     if (url.pathname === "/rerun/" || url.pathname === "/rerun") {

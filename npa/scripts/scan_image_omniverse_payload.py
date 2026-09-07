@@ -40,6 +40,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -255,30 +256,47 @@ def _require(tool: str) -> str:
     return path
 
 
-def _iter_crane_export(image: str):
+def _iter_crane_export(image: str, *, max_attempts: int = 4):
     """Stream the flattened filesystem of a remote image, member by member."""
     crane = _require("crane")
     command = [crane, "export", image, "-"]
-    process = subprocess.Popen(  # noqa: S603 - fixed argv
-        command, stdout=subprocess.PIPE
-    )
-    assert process.stdout is not None
-    try:
-        # r|* streams without seeking, so a multi-GB image never lands on disk.
-        with tarfile.open(fileobj=process.stdout, mode="r|*") as archive:
-            for member in archive:
-                yield member.name + ("/" if member.isdir() else "")
-    finally:
-        if process.stdout:
+    if max_attempts < 1:
+        raise ValueError("max_attempts must be positive")
+
+    for attempt in range(1, max_attempts + 1):
+        process = subprocess.Popen(  # noqa: S603 - fixed argv
+            command, stdout=subprocess.PIPE
+        )
+        assert process.stdout is not None
+        archive_error: tarfile.TarError | None = None
+        try:
+            # r|* streams without seeking, so a multi-GB image never lands on disk.
+            with tarfile.open(fileobj=process.stdout, mode="r|*") as archive:
+                for member in archive:
+                    yield member.name + ("/" if member.isdir() else "")
+        except tarfile.TarError as exc:
+            archive_error = exc
+        finally:
             process.stdout.close()
-        returncode = process.wait()
-    if returncode != 0:
-        raise subprocess.CalledProcessError(returncode, command)
+            returncode = process.wait()
+
+        if returncode == 0 and archive_error is None:
+            return
+        if attempt == max_attempts:
+            if returncode != 0:
+                raise subprocess.CalledProcessError(returncode, command) from archive_error
+            assert archive_error is not None
+            raise archive_error
+
+        # Registry exports are large enough to encounter transient 429s even after
+        # crane's internal retries. Restart the stream from byte zero; scan() ignores
+        # duplicate paths yielded by an interrupted attempt.
+        time.sleep(min(2 ** (attempt - 1), 30))
 
 
-def _iter_tarball(tarball: Path):
-    """Yield member names from a `docker save` tarball, including inside layer blobs."""
-    with tarfile.open(tarball, mode="r") as archive:
+def _iter_saved_image(fileobj, *, mode: str):
+    """Yield every outer and nested-layer path from a Docker/OCI image archive."""
+    with tarfile.open(fileobj=fileobj, mode=mode) as archive:
         for member in archive:
             name = member.name
             if not (
@@ -298,6 +316,36 @@ def _iter_tarball(tarball: Path):
             except tarfile.TarError:
                 # Not a tar (config JSON, manifest); the outer name was already yielded.
                 yield name
+
+
+def _iter_tarball(tarball: Path):
+    """Yield member names from a `docker save` tarball, including inside layer blobs."""
+    with tarball.open("rb") as handle:
+        yield from _iter_saved_image(handle, mode="r")
+
+
+def _iter_docker_save(image: str):
+    """Stream all local image layers without materialising a second image-sized file."""
+    docker = _require("docker")
+    command = [docker, "save", image]
+    process = subprocess.Popen(command, stdout=subprocess.PIPE)  # noqa: S603
+    assert process.stdout is not None
+    try:
+        yield from _iter_saved_image(process.stdout, mode="r|*")
+    finally:
+        process.stdout.close()
+        returncode = process.wait()
+    if returncode != 0:
+        raise subprocess.CalledProcessError(returncode, command)
+
+
+def _local_image_history(image: str) -> list[str]:
+    docker = _require("docker")
+    command = [docker, "history", "--no-trunc", "--format", "{{json .CreatedBy}}", image]
+    result = subprocess.run(command, capture_output=True, text=True, check=False)  # noqa: S603
+    if result.returncode != 0:
+        raise subprocess.CalledProcessError(result.returncode, command)
+    return [json.loads(line) for line in result.stdout.splitlines() if line.strip()]
 
 
 def _image_history(image: str) -> tuple[list[str], str | None]:
@@ -333,6 +381,7 @@ def scan(
     image: str | None,
     tarball: Path | None,
     *,
+    docker_image: str | None = None,
     max_report: int = 40,
     history_only: bool = False,
 ) -> ScanReport:
@@ -347,7 +396,11 @@ def scan(
     as a fast gate in front of an irreversible action, never as the proof itself -- the
     full scan is what the redistribution claim actually rests on.
     """
-    if tarball is not None:
+    if docker_image is not None:
+        report = ScanReport(image=docker_image, source="local-docker-stream")
+        entries = () if history_only else _iter_docker_save(docker_image)
+        history = _local_image_history(docker_image)
+    elif tarball is not None:
         report = ScanReport(image=str(tarball), source="tarball")
         entries = _iter_tarball(tarball)
         history: list[str] = []
@@ -358,7 +411,11 @@ def scan(
         entries = () if history_only else _iter_crane_export(image)
     report.history_only = history_only
 
+    seen_paths: set[str] = set()
     for path in entries:
+        if path in seen_paths:
+            continue
+        seen_paths.add(path)
         report.entries_scanned += 1
         if is_allowed(path):
             report.allowlisted_hits.append(_normalize(path))
@@ -388,6 +445,13 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         help="Scan a `docker save` tarball instead of a registry.",
     )
+    parser.add_argument(
+        "--docker-image",
+        help=(
+            "Scan every layer of a local Docker image through a streaming `docker save`; "
+            "no image-sized temporary archive is created."
+        ),
+    )
     parser.add_argument("--json", type=Path, help="Write the JSON report here.")
     parser.add_argument(
         "--history-only",
@@ -400,10 +464,16 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    if not args.image and not args.tarball:
-        parser.error("pass an image reference or --tarball")
+    selected = sum(bool(value) for value in (args.image, args.tarball, args.docker_image))
+    if selected != 1:
+        parser.error("pass exactly one image reference, --tarball, or --docker-image")
 
-    report = scan(args.image, args.tarball, history_only=args.history_only)
+    report = scan(
+        args.image,
+        args.tarball,
+        docker_image=args.docker_image,
+        history_only=args.history_only,
+    )
     payload = report.to_dict()
 
     print(f"image            {payload['image']}")

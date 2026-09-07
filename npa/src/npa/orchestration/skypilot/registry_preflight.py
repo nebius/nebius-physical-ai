@@ -52,9 +52,19 @@ class ImageReference:
     raw: str
 
     @property
+    def api_registry(self) -> str:
+        """Return the Registry v2 API host for the declared image registry."""
+
+        # ``docker.io`` is the canonical pull-name authority understood by
+        # container runtimes, while Docker Hub serves Registry v2 traffic from
+        # this distinct endpoint. Keep ``registry`` unchanged for credential
+        # matching and Kubernetes pull-secret checks.
+        return "registry-1.docker.io" if self.registry == "docker.io" else self.registry
+
+    @property
     def manifest_url(self) -> str:
         return (
-            f"https://{self.registry}/v2/{self.repository}/manifests/{self.reference}"
+            f"https://{self.api_registry}/v2/{self.repository}/manifests/{self.reference}"
         )
 
     @property
@@ -203,7 +213,7 @@ def fetch_image_config_metadata(
         if not selected:
             raise RegistryPreflightError("image index has no linux/amd64 manifest")
         selected_digest = str(selected.get("digest") or "")
-        selected_url = f"https://{reference.registry}/v2/{reference.repository}/manifests/{selected_digest}"
+        selected_url = f"https://{reference.api_registry}/v2/{reference.repository}/manifests/{selected_digest}"
         status, selected_headers, body = fetch(selected_url, headers, timeout)
         if not 200 <= status < 300:
             raise RegistryPreflightError(
@@ -222,7 +232,7 @@ def fetch_image_config_metadata(
     if not config_digest:
         raise RegistryPreflightError("image manifest contains no config digest")
     config_url = (
-        f"https://{reference.registry}/v2/{reference.repository}/blobs/{config_digest}"
+        f"https://{reference.api_registry}/v2/{reference.repository}/blobs/{config_digest}"
     )
     status, _, config_body = fetch(config_url, headers, timeout)
     if not 200 <= status < 300:
@@ -523,7 +533,7 @@ def _registry_host(value: str) -> str:
 
 
 def resolve_registry_credentials(
-    registry: str = "", *, mint: bool = True
+    registry: str = "", *, image: str = "", mint: bool = True
 ) -> tuple[str, str]:
     """Return explicit credentials scoped to the selected registry host.
 
@@ -532,6 +542,15 @@ def resolve_registry_credentials(
     server username/password through the documented environment.
     """
     del mint
+
+    if image:
+        from npa.deploy.images import is_official_public_image
+
+        # A stale credential can turn a valid anonymous GHCR pull into HTTP 403.
+        # Official releases are deliberately public, so never attach operator or
+        # legacy private-registry credentials to these exact package namespaces.
+        if is_official_public_image(image):
+            return "", ""
 
     import os
 
@@ -612,7 +631,9 @@ def check_image_pulls_with_credentials(
         )
         try:
             host = parse_image_reference(image).registry
-            username, password = resolve_registry_credentials(host, mint=mint)
+            username, password = resolve_registry_credentials(
+                host, image=image, mint=mint
+            )
         except (RegistryPreflightError, RuntimeError) as exc:
             operator_check = ImagePullCheck(
                 image=image,

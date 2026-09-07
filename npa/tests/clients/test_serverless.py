@@ -766,6 +766,8 @@ def test_create_job_builds_args_and_masks_extra_env(caplog) -> None:
     assert "--subnet-id" not in calls[0][0]
     _create_job(client, subnet_id="vpcsubnet-1")
     assert calls[1][0][calls[1][0].index("--subnet-id") + 1] == "vpcsubnet-1"
+    _create_job(client, preemptible=True)
+    assert "--preemptible" in calls[2][0]
     assert "MODE=smoke" in calls[0][0]
     assert calls[0][0].count("--env") >= 1
     assert calls[0][0].count("NPA_OUTPUT_PATH=s3://bucket/jobs/override/") == 1

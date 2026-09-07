@@ -45,6 +45,18 @@ def _runtime_commands(dockerfile_text: str) -> list[str]:
     return _entrypoints(dockerfile_text) or _cmds(dockerfile_text)
 
 
+def _build_contract_text(dockerfile: Path) -> str:
+    """Include copied common installers that materially construct the image."""
+
+    text = dockerfile.read_text(encoding="utf-8")
+    parts = [text]
+    common = WORKBENCH_DOCKER / "common"
+    for script in sorted(common.glob("*.sh")):
+        if script.name in text:
+            parts.append(script.read_text(encoding="utf-8"))
+    return "\n".join(parts)
+
+
 def _normalize_dockerfile(dockerfile_text: str) -> str:
     """Return a Dockerfile's instructions, one logical instruction per line.
 
@@ -251,9 +263,8 @@ def test_packaging_contract_file_exists() -> None:
 def test_images_that_install_npa_copy_forced_workflow_package_data() -> None:
     """Hatch metadata generation must see every force-included workflow YAML.
 
-    ``pyproject.toml`` force-includes files below ``workflows/``. A Dockerfile that
-    copies the project metadata and installs ``/opt/npa`` therefore cannot copy only
-    ``src/npa``: pip fails before it can build editable or regular package metadata.
+    The build hook includes the staged catalog below ``src/npa/workflows/``.
+    Dockerfiles installing ``/opt/npa`` must copy that package source directory.
     """
 
     missing: list[str] = []
@@ -271,7 +282,7 @@ def test_images_that_install_npa_copy_forced_workflow_package_data() -> None:
         if not installs_npa or "/opt/npa/pyproject.toml" not in instructions:
             continue
         if not re.search(
-            r"\bCOPY\b[^\n]*\b(?:npa/)?workflows\s+/opt/npa/workflows\b",
+            r"\bCOPY\b[^\n]*\b(?:npa/)?src(?:/npa)?\s+/opt/npa/src(?:/npa)?\b",
             instructions,
         ):
             missing.append(str(dockerfile.relative_to(ROOT)))
@@ -285,17 +296,30 @@ def test_declared_skypilot_images_enforce_the_versioned_build_contract() -> None
         if not version:
             continue
         dockerfile = WORKBENCH_DOCKER / item["dockerfile"]
-        text = dockerfile.read_text(encoding="utf-8")
+        dockerfile_text = dockerfile.read_text(encoding="utf-8")
+        text = _build_contract_text(dockerfile)
         assert version == "skypilot-0.12.2-v1", name
-        assert f'org.nebius.npa.skypilot-bootstrap-contract="{version}"' in text, name
+        assert (
+            f'org.nebius.npa.skypilot-bootstrap-contract="{version}"'
+            in dockerfile_text
+        ), name
         for package in ("openssh-server", "rsync", "sudo"):
             assert package in text, f"{name}: missing {package}"
         assert "NOPASSWD" in text or _final_user(text) in {None, "root", "0"}, name
-        entrypoints = _entrypoints(text)
+        entrypoints = _entrypoints(dockerfile_text)
         assert entrypoints, f"{name}: contract images need a forwarding entrypoint"
-        script_matches = re.findall(r'ENTRYPOINT\s+\["([^"]+)"\]', text)
+        script_matches = re.findall(r'ENTRYPOINT\s+\["([^"]+)"\]', dockerfile_text)
         assert script_matches, name
-        script = dockerfile.parent / Path(script_matches[-1]).name
+        entrypoint_path = script_matches[-1]
+        script = dockerfile.parent / Path(entrypoint_path).name
+        if not script.is_file():
+            copy_match = re.search(
+                rf"(?im)^COPY\s+(?:--\S+\s+)*(?P<src>\S+)\s+"
+                rf"{re.escape(entrypoint_path)}\s*$",
+                _normalize_dockerfile(dockerfile_text),
+            )
+            if copy_match:
+                script = ROOT / "npa" / copy_match.group("src")
         assert script.is_file(), f"{name}: entrypoint source not found: {script}"
         entrypoint_text = script.read_text(encoding="utf-8")
         assert (
@@ -439,6 +463,20 @@ def test_groot_passwordless_root_contract_is_mutation_sensitive() -> None:
         _validate_structured_passwordless_root_exemption(
             "groot", missing_rationale, source_texts=source_texts
         )
+
+
+def test_groot_uses_a_fixed_consistent_linux_headers_snapshot() -> None:
+    """GR00T must fix inherited headers without leaving dpkg inconsistent."""
+    text = (WORKBENCH_DOCKER / "groot" / "Dockerfile").read_text(encoding="utf-8")
+
+    assert "ARG GROOT_UBUNTU_SNAPSHOT=20260827T000000Z" in text
+    assert "ARG GROOT_LINUX_LIBC_DEV_VERSION=5.15.0-190.200" in text
+    assert "NPA_UBUNTU_SNAPSHOT=${GROOT_UBUNTU_SNAPSHOT}" in text
+    assert (
+        "NPA_LINUX_LIBC_DEV_VERSION=${GROOT_LINUX_LIBC_DEV_VERSION}" in text
+    )
+    assert '"linux-libc-dev=${GROOT_LINUX_LIBC_DEV_VERSION}"' in text
+    assert "dpkg --purge --force-depends linux-libc-dev" not in text
 
 
 def test_sim2real_control_root_exception_is_finite_and_task_scoped() -> None:
@@ -811,3 +849,22 @@ def test_packaging_doc_exists() -> None:
     assert "Packaging tiers" in text
     assert "Security baseline" in text
     assert "packaging-contract.yaml" in text
+
+
+def test_sim2real_control_requirement_sets_have_consistent_shared_pins() -> None:
+    """The control image installs both exact requirement sets in one pip call."""
+
+    requirement_files = (
+        WORKBENCH_DOCKER / "common" / "sim2real-controller-requirements.txt",
+        WORKBENCH_DOCKER / "common" / "sim2real-control-requirements.txt",
+    )
+    versions: dict[str, set[str]] = {}
+    for path in requirement_files:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            match = re.fullmatch(r"([A-Za-z0-9_.-]+)==([^\s;]+)", line.strip())
+            if match:
+                name = match.group(1).lower().replace("_", "-")
+                versions.setdefault(name, set()).add(match.group(2))
+
+    conflicts = {name: pins for name, pins in versions.items() if len(pins) > 1}
+    assert not conflicts, f"Sim2Real control requirement pin conflicts: {conflicts}"

@@ -10,12 +10,15 @@ from pathlib import Path
 import re
 from typing import Any
 
+from npa.workbench.gpu_classes import DATACENTER_HEADLESS, classify_gpu_target
+
 # Official NPA images use one public GHCR namespace. Immutable
 # ``dev-<full-git-sha>`` tags and supported release tags share each image package;
 # guarded promotion applies the release tag only to an already validated dev digest.
-# ``NPA_REGISTRY`` remains the generic operator execution override. Restricted and
-# build-your-own images must use an operator-controlled registry and are refused from
-# official GHCR.
+# ``NPA_REGISTRY`` remains the generic operator build/BYOF registry. Repository-owned
+# runtime defaults never consult it: a stale ambient or saved private registry must not
+# redirect supported public releases away from GHCR. Callers that intentionally select
+# custom bytes pass ``registry=`` (or a complete image reference) explicitly.
 PUBLIC_CONTAINER_REGISTRY_ENV = "NPA_PUBLIC_REGISTRY"
 DEFAULT_PUBLIC_CONTAINER_REGISTRY = "ghcr.io/nebius/nebius-physical-ai"
 
@@ -32,7 +35,9 @@ CONTENT_AGENTS_IMAGE_MANIFEST_RESOURCE = "content_agents_image_manifest.json"
 PUBLIC_RELEASE_MANIFEST_RESOURCE = "public_release_manifest.json"
 
 CONTAINER_IMAGE_NAMES = {
+    "openpi": "npa-openpi",
     "lerobot": "npa-lerobot",
+    "sim2real-control": "npa-sim2real-control",
     "lerobot-policy": "npa-lerobot-policy",
     "genesis": "npa-genesis",
     "isaac-lab": "npa-isaac-lab",
@@ -40,7 +45,10 @@ CONTAINER_IMAGE_NAMES = {
     "cosmos": "npa-cosmos",
     "cosmos2-transfer": "npa-cosmos2-transfer",
     "cosmos3": "npa-cosmos3",
+    "cosmos3-ray-serve": "npa-cosmos3-ray-serve",
     "cosmos3-serving": "npa-cosmos3-serving",
+    "cosmos3-super-benchmark": "npa-cosmos3-super-benchmark",
+    "cosmos3-nano-video": "npa-cosmos3-nano-video",
     "cosmos3-reason": "npa-cosmos3-reason",
     "cosmos-curate": "npa-cosmos-curate",
     "cosmos-evaluator": "npa-cosmos-evaluator",
@@ -49,6 +57,7 @@ CONTAINER_IMAGE_NAMES = {
     "sonic": "npa-sonic",
     "sonic-mujoco": "npa-sonic-mujoco",
     "retargeting": "npa-retargeting",
+    "robocasa": "npa-robocasa",
     "envgen": "npa-envgen",
     "reference-policy": "npa-reference-policy",
     "lerobot-vlm-rl": "npa-lerobot-vlm-rl",
@@ -61,6 +70,7 @@ CONTAINER_IMAGE_NAMES = {
     "wan2-2": "npa-wan2-2",
     "ltx2": "npa-ltx2",
     "alpamayo2-super": "npa-alpamayo2-super",
+    "curobo": "npa-curobo",
     "content-agents": "npa-content-agents",
 }
 
@@ -73,11 +83,17 @@ SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS: frozenset[str] = frozenset(
     {
         "cosmos2-transfer",
         "cosmos3",
+        "cosmos3-reason",
+        "cosmos3-super-benchmark",
         "cosmos-curate",
         "cosmos-evaluator",
         "content-agents",
         "fiftyone",
+        "groot",
+        "isaac-lab",
         "rerun-viewer",
+        "sim2real-control",
+        "envgen",
     }
 )
 
@@ -102,10 +118,12 @@ def requires_skypilot_bootstrap_runtime_probe(image: str) -> bool:
 
 
 # General public-registry refusal inventories. They intentionally describe the
-# redistribution decision, not a particular vendor payload. Both are empty now:
-# Cosmos3 serving is a zero-payload runtime bootstrap on a public Python base,
-# and sonic-mujoco is rebuilt independently without its quarantined parent.
-RESTRICTED_PUBLICATION_TOOLS: frozenset[str] = frozenset()
+# redistribution decision, not a particular vendor payload. The Cosmos3-Super
+# benchmark wrapper inherits the exact upstream vLLM-Omni runtime and therefore
+# remains build-your-own in an operator-controlled registry.
+RESTRICTED_PUBLICATION_TOOLS: frozenset[str] = frozenset(
+    {"cosmos3-super-benchmark", "cosmos3-nano-video"}
+)
 RESTRICTED_DERIVED_IMAGES: frozenset[str] = frozenset()
 
 # Compatibility exports for installed callers. New code uses the general names.
@@ -124,23 +142,36 @@ OMNIVERSE_RESTRICTED_DERIVED_IMAGES = RESTRICTED_DERIVED_IMAGES
 #
 # Remove a tool from this set in the same change that records its accepted image
 # digest and its payload-scan/GPU evidence — not before.
-UNVALIDATED_PUBLICATION_TOOLS: frozenset[str] = frozenset()
-VALIDATION_CANDIDATE_TOOLS: frozenset[str] = frozenset()
-PUBLICATION_QUARANTINE_TOOLS: frozenset[str] = frozenset()
+UNVALIDATED_PUBLICATION_TOOLS: frozenset[str] = frozenset({"openpi", "curobo"})
+VALIDATION_CANDIDATE_TOOLS: frozenset[str] = frozenset({"robocasa"})
+# Compatibility view used by publication callers and public imports. Derive it
+# from the two canonical validation-state inventories; never maintain it
+# independently.
+PUBLICATION_QUARANTINE_TOOLS: frozenset[str] = (
+    UNVALIDATED_PUBLICATION_TOOLS | VALIDATION_CANDIDATE_TOOLS
+)
 
 # Some newer operator/BYOF pins have not yet been promoted to the supported
 # anonymous channel. Public execution stays on the last accepted release while
 # an explicit custom registry resolves the newer supported-tool pin.
 PUBLIC_RELEASE_TAG_OVERRIDES: dict[str, str] = {
-    "cosmos2-transfer": "2.5.1-skypilot-ready-20260801T053000Z",
     "fiftyone": "1.15.0.post1",
-    "rerun-viewer": "0.31.4",
+    # 0.31.4 (plain) predates the bootstrap contract and cannot host a SkyPilot
+    # task: the container exits immediately, the provisioner's exec finds no
+    # ray-node container, and the stage retries forever. The 20260903 build is
+    # attested (org.nebius.npa.skypilot-bootstrap-contract=skypilot-0.12.2-v1)
+    # and anonymously pullable from GHCR.
+    "rerun-viewer": "0.31.4-sim2real-coherent-20260904",
 }
 
 # Release promotion for the rebuilt surfaces is bound to the exact manifests
 # whose filesystem/layers were scanned and whose advertised GPU capability ran.
 # A newly built dev tag must earn fresh evidence before this mapping changes.
 GPU_ACCEPTED_PUBLIC_IMAGE_SOURCES: dict[str, dict[str, str]] = {
+    "cosmos3-ray-serve": {
+        "development_sha": "56d8c4f3f05db7aa3b03323441a3e0d7b97ac8da",
+        "oci_digest": "sha256:6e42f553a0d14712dc1ed7fa42c72b0f083f4ae3f89b30eaf0e93cfdf64e820d",
+    },
     "cosmos3-serving": {
         "development_sha": "d854f6a76cd87ec05ad97ccde6d596f3329efa0e",
         "oci_digest": "sha256:3342bbe44bd1c00ebf05ab4c9d7286058a94bb5ce90b49b164b23604d3acf180",
@@ -148,6 +179,10 @@ GPU_ACCEPTED_PUBLIC_IMAGE_SOURCES: dict[str, dict[str, str]] = {
     "sonic-mujoco": {
         "development_sha": "5b5b5e69e9e686f8d5f305fd735a02f402f6da4b",
         "oci_digest": "sha256:2388d9e97269afaa414966e83a27f676a3f44d4271e9828c57bc13fbdce80f57",
+    },
+    "detection-training": {
+        "development_sha": "408700158b2e9cc9e9f6aad499e9d9c810bebeb1",
+        "oci_digest": "sha256:a09126491bd660f314b8f412df7238746dc2b063e5d5b7ca87bba7596dafcb0d",
     },
 }
 GPU_ACCEPTED_PUBLIC_IMAGE_DIGESTS: dict[str, str] = {
@@ -171,20 +206,25 @@ PUBLIC_REGISTRY_HOSTS = frozenset(
 )
 
 SUPPORTED_TOOL_VERSIONS = {
+    "openpi": "pi05-full-droid-rlds-cu128-unbuilt",
     # Default LeRobot image release. Selectable package versions and their
     # image tags live in lerobot_version_manifest.json.
     "lerobot": "cuda13-b300-0.5.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
+    "sim2real-control": "0.1.2-sim2real-coherent-20260904",
     "lerobot-policy": "0.1.1",
     "genesis": "cuda13-b300-0.4.6-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
-    "isaac-lab": "2.3.2.post1",
+    "isaac-lab": "3.0.0b2.post1-sim2real-coherent-20260904",
     "leisaac": "0.4.0-20260817T231825Z",
     "cosmos": "cu128-torch27-sm100-1.0.9-20260803T002017Z",
-    "cosmos2-transfer": "2.5.1-sam2-multigpu-20260817-r2",
+    "cosmos2-transfer": "2.5.1-sim2real-coherent-20260904",
     # Additive r2 release of cosmos-framework 1.2.2 (pinned commit 5e67049c) +
     # torch cu130. The immutable predecessor remains rollback provenance.
     # No weights baked; gated Cosmos3 checkpoints download at runtime.
     "cosmos3": "1.2.2-cu130-r6",
+    "cosmos3-ray-serve": "ray1-cu130",
     "cosmos3-serving": "0.2.0-oss",
+    "cosmos3-super-benchmark": "0.1.0",
+    "cosmos3-nano-video": "0.1.0",
     "cosmos3-reason": "cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
     "cosmos-curate": "0.1.2-skypilot-v1-20260813T164700Z",
     "cosmos-evaluator": "0.1.2-skypilot-v1-20260813T164700Z-r2",
@@ -193,23 +233,25 @@ SUPPORTED_TOOL_VERSIONS = {
     "sonic": "cuda13-b300-0.1.2-k8s-runtime-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
     "sonic-mujoco": "0.2.0-runtime",
     "retargeting": "0.1.1",
-    "envgen": "cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
+    "envgen": "0.1.2-sim2real-coherent-20260904",
+    "robocasa": "0.1.0",
     "reference-policy": "cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
     "lerobot-vlm-rl": "cuda13-b300-0.1.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
     "loop-eval": "cuda13-b300-0.1.3-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
-    "rerun-viewer": "0.31.4-skypilot-v1-20260815-review5-r2",
+    "rerun-viewer": "0.31.4-sim2real-coherent-20260904",
     # Tracks the pinned @foxglove/embed SDK release (npa.workbench.foxglove).
     "foxglove-embed": "0.58.0",
     # Lichtblick (MPL-2.0): OSS, Foxglove-compatible static web viewer bundle.
     "lichtblick": "1.26.0",
     "lancedb": "cuda13-b300-0.30.3-sm80-sm90-sm100-sm103-sm120-20260803T031514Z",
-    "detection-training": "bdd100k-golden-eval-smoke-20260614T210000Z",
+    "detection-training": "runtime-v1-20260905",
     # Public-eligible Wan source/CPU base; CUDA torch is operator-gated runtime fetch.
     "wan2-2": "2.2-ti2v5b-rtfetch-cu130-20260817",
     # LTX source and weights remain operator-entitled runtime fetches. This tag
     # resolves only to the zero-payload digest recorded in ltx2_image_manifest.json.
     "ltx2": "2.5-rtfetch-20260817",
     "alpamayo2-super": "0.1.0-cu128",
+    "curobo": "0.8.0-cuda13-b300-unbuilt",
     "content-agents": "0.5.2-npa2",
     "nebius-cli": "0.12.254",
     "terraform": "~> 0.5.201",
@@ -449,7 +491,12 @@ def sonic_image_variant_for_gpu(
             continue
         variant = str(rule.get("variant", ""))
         for match in rule.get("matches", []):
-            if str(match).lower() in normalized:
+            token = _normalize_gpu_target(str(match))
+            # The family name also occurs in datacenter GPU labels. Those must
+            # reach their model-specific rule, never the workstation default.
+            if token == "blackwell" and classify_gpu_target(normalized) == DATACENTER_HEADLESS:
+                continue
+            if token in normalized:
                 if not requested:
                     return variant
                 served = sonic_variant_workloads(variant)
@@ -457,8 +504,9 @@ def sonic_image_variant_for_gpu(
                     return variant
                 capable = sorted(
                     other
-                    for other in sonic_image_variants()
-                    if requested in sonic_variant_workloads(other)
+                    for other, entry in sonic_image_variants().items()
+                    if entry.get("status", "active") == "active"
+                    and requested in sonic_variant_workloads(other)
                 )
                 raise ValueError(
                     f"No published SONIC image serves workload {workload!r} on GPU "
@@ -471,9 +519,10 @@ def sonic_image_variant_for_gpu(
                     "different capability."
                 )
     raise ValueError(
-        f"Unsupported SONIC GPU target {gpu_target!r}. The only published active "
-        "variant is sonic-k8s-host-mounted on RTX PRO 6000 Blackwell Kubernetes "
-        "nodes with NVIDIA GPU Operator driver mounts. L40S/H100/H200 compute-only "
+        f"Unsupported SONIC GPU target {gpu_target!r}. Published selection supports "
+        "sonic-k8s-host-mounted on RTX PRO 6000 Blackwell Kubernetes nodes with "
+        "NVIDIA GPU Operator driver mounts, and sonic-mujoco-runtime-fetch for "
+        "B200 MuJoCo evaluation. L40S/H100/H200 compute-only "
         "variants are retired and quarantined; supply a separately validated custom "
         "image explicitly or choose gpu-rtx6000 on Kubernetes."
     )
@@ -535,8 +584,14 @@ def container_image_for_tool(
     image_variant: str | None = None,
     workload: str | None = None,
 ) -> str:
-    """Return the fully qualified image ref for a Workbench tool."""
-    resolved_registry = registry or execution_container_registry()
+    """Return a Workbench image, defaulting repository releases to public GHCR.
+
+    ``registry`` is an explicit custom-image choice. The default deliberately does not
+    inherit ``NPA_REGISTRY``: that variable is also used by BYOF/build automation and
+    legacy operator configuration, and allowing it to repoint supported runtime images
+    made otherwise-public workloads depend on private registry credentials.
+    """
+    resolved_registry = registry or DEFAULT_CONTAINER_REGISTRY
     if tool == "sonic":
         entry = sonic_image_entry(
             gpu_target=gpu_target,
@@ -609,6 +664,8 @@ def build_and_push_command(image: str) -> str:
     registry = ref.rsplit("/", 1)[0]
     tag = supported_tool_version(tool)
     return (
+        "npa/.venv/bin/python npa/src/npa/workflow_build.py "
+        "--stage-catalog --package-root npa && "
         f"docker buildx build --push -f {dockerfile} "
         f"-t {registry}/{image_name}:{tag} npa"
     )
@@ -635,7 +692,11 @@ def registry_from_env() -> str:
 
 
 def execution_container_registry() -> str:
-    """Resolve an operator override, otherwise the public GHCR release channel."""
+    """Resolve an operator build/BYOF registry, otherwise public GHCR.
+
+    Repository-owned runtime image defaults use :func:`container_image_for_tool`,
+    which intentionally does not call this compatibility helper.
+    """
     return registry_from_env() or DEFAULT_CONTAINER_REGISTRY
 
 
@@ -751,6 +812,19 @@ def is_official_container_registry(registry: str) -> bool:
     }
 
 
+def is_official_public_image(image: str) -> bool:
+    """Whether ``image`` belongs to an official anonymous NPA GHCR namespace."""
+
+    candidate = str(image or "").strip().removeprefix("docker:").lower()
+    return any(
+        candidate.startswith(f"{registry}/")
+        for registry in {
+            DEFAULT_PUBLIC_CONTAINER_REGISTRY.lower(),
+            public_container_registry().rstrip("/").lower(),
+        }
+    )
+
+
 def is_publicly_redistributable(tool: str) -> bool:
     """Whether a tool image may be published to a public/anonymous registry.
 
@@ -772,15 +846,18 @@ def omniverse_restricted_image_names() -> list[str]:
 
 
 def publicly_publishable_tools() -> list[str]:
-    """Return the workbench tools that are OSS-redistributable to a public registry.
+    """Return tools accepted for the supported anonymous release inventory.
 
-    Excludes anything in ``RESTRICTED_PUBLICATION_TOOLS``. The Isaac images now
-    fetch Isaac Sim / Isaac Lab at run time under the operator's own EULA
-    acceptance. Cosmos3 serving and SONIC MuJoCo have exact accepted public
-    development digests and GPU evidence recorded for their current releases.
+    Redistribution eligibility is necessary but not sufficient: tools remain out
+    while ``PUBLICATION_QUARANTINE_TOOLS`` records that their built-image or GPU
+    evidence is incomplete. The trusted build workflow can still create their
+    immutable development artifact directly from the public packaging contract.
     """
     return sorted(
-        tool for tool in CONTAINER_IMAGE_NAMES if is_publicly_redistributable(tool)
+        tool
+        for tool in CONTAINER_IMAGE_NAMES
+        if is_publicly_redistributable(tool)
+        and tool not in PUBLICATION_QUARANTINE_TOOLS
     )
 
 

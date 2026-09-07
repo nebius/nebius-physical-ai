@@ -1,4 +1,4 @@
-ARG BASE_IMAGE=npa-base:cuda13-b300-sm80-sm90-sm100-sm103-sm120-v2-latest
+ARG BASE_IMAGE=ghcr.io/nebius/nebius-physical-ai/npa-cosmos3-reason@sha256:e708aa32b9247eaedf1a7a5b0d82adbe65b95a9af50721b9d09fddbfd508bbc9
 FROM ${BASE_IMAGE}
 
 ARG COSMOS3_REASON_VERSION=cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z
@@ -7,7 +7,8 @@ ARG UBUNTU_SNAPSHOT=20260801T053000Z
 
 LABEL npa.tool="cosmos3-reason" \
       npa.version="${COSMOS3_REASON_VERSION}" \
-      org.opencontainers.image.revision="${NPA_SOURCE_SHA}"
+      org.opencontainers.image.revision="${NPA_SOURCE_SHA}" \
+      org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"
 
 ENV PYTHONUNBUFFERED=1 \
     NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA} \
@@ -38,7 +39,10 @@ COPY --chmod=0755 docker/workbench/common/workflow_runtime_entrypoint.sh \
 USER root
 
 # Do not recursively chown the inherited /opt/npa/venv: overlayfs would copy
-# the complete CUDA/PyTorch environment into this child layer.
+# the complete CUDA/PyTorch environment into this child layer. The public
+# parent also carries its historical editable NPA distribution; this child
+# supplies an exact-source .pth, so remove stale package metadata before pip
+# check instead of inheriting dependencies for unrelated tools.
 RUN mkdir -p /tmp/hf_home/cosmos-reason2 /tmp/hf_home/cosmos-reason2-2b \
     && find /opt/npa/src /opt/npa/workflows -type d -exec chmod a+rx {} + \
     && find /opt/npa/src /opt/npa/workflows -type f -exec chmod a+r {} + \
@@ -89,6 +93,8 @@ RUN apt-get update \
          python3 python3-venv python3-pip rsync curl openssh-client openssh-server \
          procps sudo netcat-openbsd \
     && rm -rf /var/lib/apt/lists/* \
+    && rm -f /etc/ssh/ssh_host_* \
+    && test -z "$(find /etc/ssh -maxdepth 1 -type f -name 'ssh_host_*' -print -quit)" \
     && printf 'ubuntu ALL=(ALL) NOPASSWD:ALL\n' > /etc/sudoers.d/99-npa-runtime-user \
     && chmod 0440 /etc/sudoers.d/99-npa-runtime-user \
     && mkdir -p /home/ubuntu && chown -R ubuntu:ubuntu /home/ubuntu \

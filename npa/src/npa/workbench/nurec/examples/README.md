@@ -8,7 +8,7 @@ The supported workflow authoring surface is the declarative `npa.workflow/v0.0.1
 spec:
 
 ```text
-npa/workflows/workbench/npa-workflows/nurec-reconstruct.yaml
+workflows/testing/nurec-reconstruct.yaml
 ```
 
 The spec runs each state in its own pod and hands artifacts over through S3. This
@@ -22,7 +22,7 @@ behavior #234 validated and documented.
 ## Rules
 
 - **One task per file.** A multi-stage pipeline belongs in
-  `npa/workflows/workbench/npa-workflows/` as an `npa.workflow/v0.0.1` spec.
+  `workflows/` as an `npa.workflow/v0.0.1` spec.
 - **Keep `${VAR}` placeholders.** Concrete registry ids, bucket names, run ids,
   access keys, and tokens must never be committed here.
 - This file must never move back under the retired raw SkyPilot workflow catalog.

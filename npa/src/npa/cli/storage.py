@@ -19,7 +19,7 @@ from npa.lifecycle_intent import OperationIntent, intent_boundary, json_stdout_c
 
 app = typer.Typer(
     name="storage",
-    help="Inspect and tear down npa-managed object storage.",
+    help="Inspect, configure, and tear down npa-managed object storage.",
     no_args_is_help=True,
 )
 
@@ -153,6 +153,87 @@ def list_buckets_cmd(
         typer.echo(f"{row['name'].ljust(width)}  {row['id']}{marker}")
     typer.echo("")
     typer.echo("Delete one with `npa storage bucket delete --name <bucket>`.")
+
+
+@bucket_app.command("cors")
+@intent_boundary(OperationIntent.MUTATE)
+@json_stdout_contract
+def configure_bucket_cors_cmd(
+    name: str = typer.Option(
+        "", "--name", help="Bucket name. Defaults to configured project storage."
+    ),
+    project: str = typer.Option(
+        "", "--project", "-p", help="NPA project alias holding the bucket."
+    ),
+    project_id: str = typer.Option(
+        "", "--project-id", help="Nebius project id holding the bucket."
+    ),
+    apply: bool = typer.Option(
+        False,
+        "--apply",
+        help="Apply the planned CORS update using Nebius bucket-admin credentials.",
+    ),
+    output_format: str = typer.Option(
+        "text", "--output", help="Output format: text or json."
+    ),
+) -> None:
+    """Check or configure the app.rerun.io browser CORS contract.
+
+    The default is read-only. ``--apply`` updates only the bucket CORS field,
+    preserving unrelated rules. This control-plane operation requires a Nebius
+    identity with bucket-administration permission; the scoped object key made
+    by ``npa configure`` is intentionally never used or elevated.
+    """
+
+    import json
+
+    from npa.clients.nebius import RERUN_BROWSER_CORS_RULE_ID, RERUN_BROWSER_ORIGIN
+    from npa.rerun import configure_browser_cors
+
+    if output_format not in {"text", "json"}:
+        raise typer.BadParameter("--output must be text or json")
+    try:
+        plan = configure_browser_cors(
+            target_bucket=name.strip(),
+            target_project=project or None,
+            target_project_id=project_id,
+            apply=apply,
+        )
+    except Exception as exc:
+        raise typer.BadParameter(
+            "Could not inspect or update bucket CORS with the active Nebius "
+            f"bucket-admin identity: {exc}"
+        ) from exc
+
+    if apply:
+        status = "updated" if plan.changed else "already_configured"
+    else:
+        status = "update_required" if plan.changed else "configured"
+    payload = {
+        "status": status,
+        "apply": apply,
+        "cors_rule_id": RERUN_BROWSER_CORS_RULE_ID,
+        "allowed_origin": RERUN_BROWSER_ORIGIN,
+        "preserved_rule_count": plan.preserved_rule_count,
+    }
+    if output_format == "json":
+        typer.echo(json.dumps(payload, indent=2, sort_keys=True))
+        return
+    if status == "update_required":
+        command = "npa storage bucket cors --apply"
+        if project:
+            command += f" --project {project}"
+        elif project_id:
+            command += f" --project-id {project_id}"
+        if name:
+            command += f" --name {name}"
+        typer.echo("Rerun browser CORS needs an additive bucket-admin update.")
+        typer.echo(f"Apply it with: `{command}`")
+        return
+    if status == "updated":
+        typer.echo("Configured and verified the Rerun browser CORS rule.")
+        return
+    typer.echo("Rerun browser CORS is already configured.")
 
 
 def _storage_service_account_record(

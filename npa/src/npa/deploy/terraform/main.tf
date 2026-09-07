@@ -35,6 +35,7 @@ resource "nebius_vpc_v1_security_group" "workbench" {
 }
 
 resource "nebius_vpc_v1_security_rule" "allow_ssh" {
+  count     = trimspace(var.ssh_cidr_block) == "" ? 0 : 1
   parent_id = nebius_vpc_v1_security_group.workbench.id
   name      = "allow-ssh"
   protocol  = "TCP"
@@ -47,13 +48,14 @@ resource "nebius_vpc_v1_security_rule" "allow_ssh" {
 }
 
 resource "nebius_vpc_v1_security_rule" "allow_server" {
+  count     = trimspace(var.application_cidr_block) == "" ? 0 : 1
   parent_id = nebius_vpc_v1_security_group.workbench.id
   name      = "allow-server"
   protocol  = "TCP"
   access    = "ALLOW"
 
   ingress = {
-    source_cidrs      = [var.ssh_cidr_block]
+    source_cidrs      = [var.application_cidr_block]
     destination_ports = distinct(concat([var.server_port], jsondecode(var.extra_ingress_ports)))
   }
 }
@@ -148,8 +150,6 @@ resource "nebius_compute_v1_instance" "workbench" {
     fiftyone_version = var.fiftyone_version
     s3_bucket        = var.s3_bucket
     s3_endpoint      = var.s3_endpoint
-    aws_access_key   = var.nebius_api_key
-    aws_secret_key   = var.nebius_secret_key
     nebius_region    = var.nebius_region
   })
 
@@ -183,7 +183,7 @@ resource "null_resource" "wait_for_cloud_init" {
   # Skipped with wait_for_ssh = false, for a machine that cannot open outbound
   # tcp/22 to a fresh public IP (corporate VPN / split tunnel). The VM still
   # finishes cloud-init on its own; the deploy just stops verifying it over SSH.
-  count      = var.wait_for_ssh ? 1 : 0
+  count      = var.wait_for_ssh && trimspace(var.ssh_cidr_block) != "" ? 1 : 0
   depends_on = [nebius_compute_v1_instance.workbench]
 
   triggers = {

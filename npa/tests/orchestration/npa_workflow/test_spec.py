@@ -15,7 +15,7 @@ from npa.orchestration.npa_workflow.predicates import evaluate_predicate
 from npa.orchestration.npa_workflow.tokens import TokenError, resolve_tokens
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
-SPECS = REPO_ROOT / "npa" / "workflows" / "workbench" / "npa-workflows"
+SPECS = REPO_ROOT / "workflows" / "testing"
 
 
 @pytest.mark.parametrize(
@@ -28,10 +28,12 @@ SPECS = REPO_ROOT / "npa" / "workflows" / "workbench" / "npa-workflows"
         "tokenfactory-cosmos-gate.yaml",
         "av-night-scene-hardening.yaml",
         "cosmos-synth-fanout-curation.yaml",
+        "robocasa-data-policy.yaml",
     ],
 )
 def test_example_specs_validate(name: str) -> None:
-    spec = load_spec(SPECS / name)
+    tier = "main" if name in {"sim2real.yaml", "paidf-cosmos3.yaml"} else "testing"
+    spec = load_spec(SPECS.parent / tier / name)
     validate_spec(spec)
     assert spec.api_version == "npa.workflow/v0.0.1"
 
@@ -48,6 +50,61 @@ def test_token_resolution() -> None:
 def test_token_unknown_config_raises() -> None:
     with pytest.raises(TokenError):
         resolve_tokens("{{config.missing}}", config={}, run={"id": "x"})
+
+
+@pytest.mark.parametrize(
+    "tool_ref",
+    ["workbench.byof.repo", "workbench.isaac_lab.byof_repo"],
+)
+def test_public_byof_toolrefs_default_new_auth_config_for_existing_specs(
+    tmp_path: Path, tool_ref: str
+) -> None:
+    spec_path = tmp_path / "existing-customer-byof.yaml"
+    spec_path.write_text(
+        f"""\
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: existing-customer-byof
+config:
+  repo_url: https://github.com/example/public.git
+  repo_ref: main
+  base_profile: ubuntu
+  base_image: ubuntu:22.04
+  build_command: ""
+  workload: container-verify
+  smoke_command: ""
+  solution_name: ""
+  capability_name: ""
+  smoke_artifact_name: ""
+  resource_profile_yaml: ""
+  task: Isaac-Cartpole-v0
+  iterations: "1"
+  num_envs: "1"
+  num_demos: "1"
+  output_root: ""
+  wait_timeout: "60"
+  poll_interval: "1"
+resources:
+  cpu:
+    cloud: kubernetes
+    cpus: 2
+initial: package
+states:
+  package:
+    toolRef: {tool_ref}
+    resources: cpu
+    terminal: true
+""",
+        encoding="utf-8",
+    )
+
+    spec = load_spec(spec_path)
+    validate_spec(spec)
+    plan = build_plan(spec, run_id="compat-defaults")
+    argv = plan.steps[0].argv
+    assert argv[argv.index("--repo-auth") + 1] == "none"
+    assert argv[argv.index("--repo-token-env") + 1] == ""
 
 
 def test_base64_token_transform_keeps_shell_metacharacters_as_data() -> None:
@@ -98,7 +155,7 @@ def test_named_loop_token_supports_safe_transform() -> None:
 
 
 def test_sim2real_plan_expands_loops() -> None:
-    spec = load_spec(SPECS / "sim2real.yaml")
+    spec = load_spec(SPECS.parent / "main" / "sim2real.yaml")
     plan = build_plan(spec, run_id="test-run", assume_decision="loop_back")
     states = [step.state for step in plan.steps]
     expected = int(spec.config["inner_iterations"]) * int(
@@ -117,7 +174,7 @@ def test_sim2real_plan_expands_loops() -> None:
 
 
 def test_sim2real_plan_promote_early_exit() -> None:
-    spec = load_spec(SPECS / "sim2real.yaml")
+    spec = load_spec(SPECS.parent / "main" / "sim2real.yaml")
     plan = build_plan(spec, run_id="test-run", assume_decision="promote_checkpoint")
     states = [step.state for step in plan.steps]
     assert states.count("stage-07-rollouts") == int(spec.config["inner_iterations"])
@@ -181,7 +238,7 @@ def test_tokenfactory_cosmos_gate_plan_expands_refinement_loop() -> None:
 def test_invalid_api_version() -> None:
     path = SPECS / "vlm-eval-single.yaml"
     text = path.read_text().replace("v0.0.1", "v9.9.9")
-    broken = SPECS.parent / "_tmp-broken.yaml"
+    broken = REPO_ROOT / "npa" / "workflows" / "workbench" / "_tmp-broken.yaml"
     broken.write_text(text)
     try:
         with pytest.raises(NpaWorkflowError, match="apiVersion"):

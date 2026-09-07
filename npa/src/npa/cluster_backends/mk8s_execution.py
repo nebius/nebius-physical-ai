@@ -129,6 +129,8 @@ def verify_cluster(
                 timeout_seconds=cluster.gpu_health_timeout_minutes * 60,
                 cuda_smoke=cluster.gpu_cuda_smoke,
                 cuda_smoke_image=cluster.gpu_cuda_smoke_image,
+                graphics_smoke=cluster.gpu_graphics_smoke,
+                graphics_smoke_image=cluster.gpu_graphics_smoke_image,
             ),
             evidence_path=evidence_path,
             on_status=on_status,

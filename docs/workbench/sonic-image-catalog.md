@@ -4,20 +4,34 @@ The machine-readable source of truth is
 `npa/src/npa/deploy/sonic_image_manifest.json`. Resolvers, workflow
 materializers, and publishers all consume that manifest.
 
-## Active image
+## Active images
 
-Only `sonic-k8s-host-mounted` is active and publicly publishable. It is the
+`sonic-k8s-host-mounted` and `sonic-mujoco-runtime-fetch` are active. The former is the
 scanned CUDA 13 runtime-fetch image for RTX PRO 6000 Blackwell Kubernetes nodes
 whose NVIDIA GPU Operator mounts driver-matched userspace:
 
 | Variant | Tag | Driver provisioning | Use for | Why |
 | --- | --- | --- | --- | --- |
-| `sonic-k8s-host-mounted` | `npa-sonic:0.1.2-k8s-runtime` | `host-mounted` | RTX PRO 6000 Blackwell on Kubernetes with the NVIDIA GPU Operator | The GPU Operator mounts driver-matched NVML, GL, and Vulkan libraries from the node, so the image must not carry conflicting driver libraries. |
+| `sonic-k8s-host-mounted` | `npa-sonic:cuda13-b300-0.1.2-k8s-runtime-sm80-sm90-sm100-sm103-sm120-20260803T034152Z` | `host-mounted` | RTX PRO 6000 Blackwell on Kubernetes with the NVIDIA GPU Operator | The GPU Operator mounts driver-matched NVML, GL, and Vulkan libraries from the node, so the image must not carry conflicting driver libraries. |
+| `sonic-mujoco-runtime-fetch` | `npa-sonic-mujoco:0.2.0-runtime` | `host-mounted` | MuJoCo checkpoint evaluation; B200 automatic selection or explicit variant | Isaac rendering and training are not published capabilities of this variant. |
 
-Use `${NPA_REGISTRY}/npa-sonic:<tag>` for a concrete registry reference:
+Resolvers intersect GPU selection with the requested workload. ONNX
+`sonic eval --backend container` requests `isaac-render`; choosing the MuJoCo
+variant fails before evaluation. MuJoCo's separate `mujoco-eval` entrypoint
+reads `SONIC_EVAL_CHECKPOINT_PATH`, not the ONNX/sidecar input contract. Passing
+`--container-arg mujoco-eval` does not adapt those inputs.
+
+Fine-tune and training callers request their own workload. A separately
+validated custom workflow `--image` can supply a runtime outside the published
+variants. Generic Blackwell labels containing B200 or B300 never change the
+requested accelerator into RTX PRO 6000.
+
+The supported image is in the public GHCR namespace; no registry environment
+variable or pull secret is required:
 
 ```bash
-export NPA_REGISTRY=ghcr.io/nebius/nebius-physical-ai
+docker manifest inspect \
+  ghcr.io/nebius/nebius-physical-ai/npa-sonic:<tag>
 ```
 
 It is the default only for supported RTX PRO Kubernetes routing. Select it
@@ -25,8 +39,7 @@ explicitly when useful:
 
 ```bash
 npa workbench workflow submit \
-  npa/workflows/workbench/npa-workflows/sonic-train.yaml \
-  --registry "${NPA_REGISTRY}" \
+  workflows/testing/sonic-train.yaml \
   --gpu-target gpu-rtx6000 \
   --image-variant sonic-k8s-host-mounted \
   --accelerators RTXPRO-6000-BLACKWELL-SERVER-EDITION:1
@@ -65,7 +78,7 @@ or mesh-fidelity validation claim.
 
 ```python
 sonic.submit_workflow(
-    Path("npa/workflows/workbench/npa-workflows/sonic-train.yaml"),
+    Path("workflows/testing/sonic-train.yaml"),
     run_id="sonic-smoke",
     registry="<your-registry>/<namespace>",
     gpu_target="gpu-rtx6000",

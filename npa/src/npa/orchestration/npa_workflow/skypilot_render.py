@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import shlex
 from dataclasses import dataclass, field
@@ -40,12 +41,16 @@ TOOL_REF_IMAGE_TOOL: dict[str, str] = {
     "workbench.cosmos3.generate_variants": "cosmos3",
     "workbench.cosmos3.prepare_video_input": "cosmos3",
     "workbench.cosmos3.checkpoint_eval": "cosmos3",
+    # The image's command-forwarding entrypoint runs only the CPU/S3 client for
+    # this toolRef; it does not start or reload the resident service model.
+    "workbench.cosmos3.ray_batch": "cosmos3-ray-serve",
     "workbench.cosmos3": "cosmos3-reason",
     "workbench.cosmos_curate": "cosmos-curate",
     "workbench.cosmos_evaluator": "cosmos-evaluator",
     "workbench.lancedb": "lancedb",
     "workbench.detection_training": "detection-training",
     "workbench.alpamayo2_super": "alpamayo2-super",
+    "workbench.curobo": "curobo",
     "workbench.fiftyone": "fiftyone",
     "workbench.rl": "isaac-lab",
     "workbench.isaac_lab": "isaac-lab",
@@ -78,6 +83,12 @@ SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
     # This entry explicitly disables the parent Cosmos3 hint: the public Nano
     # checkpoint is downloaded anonymously and this toolRef passes --no-guardrails.
     "workbench.cosmos3.text_to_image": (),
+    "workbench.cosmos3.super_benchmark": (
+        "HF_TOKEN",
+        "NPA_COSMOS3_ACCEPT_NVIDIA_SOFTWARE_LICENSE",
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+    ),
     "workbench.cosmos3": ("HF_TOKEN",),
     # Cosmos-Transfer2.5 downloads its guardrail checkpoints from a gated Hugging Face repo
     # before it will generate anything. Live job 286 got all the way into examples/inference.py
@@ -148,7 +159,10 @@ TOOL_REF_PIP_REQUIREMENTS: dict[str, tuple[tuple[str, str], ...]] = {
         ("python:av", "av>=12,<17"),
         ("python:PIL", "Pillow>=10,<12"),
     ),
-    "workflow.groot.emit_learning_mcap": (("python:av", "av>=12,<17"),),
+    "workflow.groot.emit_learning_mcap": (
+        ("python:av", "av>=12,<17"),
+        ("python:mcap", "mcap>=1.3,<2"),
+    ),
     "workflow.groot.emit_learning_rrd": (("python:av", "av>=12,<17"),),
     "workflow.groot.publish_learning": (("python:av", "av>=12,<17"),),
     "workbench.cosmos.fetch": (("huggingface-cli", "huggingface_hub[cli]>=0.23,<1.0"),),
@@ -576,6 +590,44 @@ def _contains_uid_zero_override(value: object) -> bool:
     return False
 
 
+def _with_writable_bootstrap_cache(task_config: Mapping[str, Any]) -> dict[str, Any]:
+    """Give SkyPilot's pre-task installers cache paths the image user can write.
+
+    Image-level XDG defaults may point into a baked, root-owned model directory.
+    SkyPilot creates its runtime before the task ``setup`` block can correct that
+    environment, so the override must live in the Kubernetes container spec.
+    Explicit per-container choices remain authoritative.
+    """
+
+    import copy
+
+    rendered = copy.deepcopy(dict(task_config))
+    pod_spec = (
+        rendered.setdefault("kubernetes", {})
+        .setdefault("pod_config", {})
+        .setdefault("spec", {})
+    )
+    containers = pod_spec.setdefault("containers", [])
+    container = next(
+        (item for item in containers if item.get("name") == "ray-node"), None
+    )
+    if container is None:
+        container = {"name": "ray-node"}
+        containers.append(container)
+    env = container.setdefault("env", [])
+    names = {str(item.get("name") or "") for item in env}
+    defaults = {
+        "XDG_CACHE_HOME": "/tmp/npa-skypilot-xdg-cache",
+        "UV_CACHE_DIR": "/tmp/npa-skypilot-uv-cache",
+    }
+    env.extend(
+        {"name": name, "value": value}
+        for name, value in defaults.items()
+        if name not in names
+    )
+    return rendered
+
+
 def tool_image_key(tool_ref: str) -> str | None:
     """Return the CONTAINER_IMAGE_NAMES key for a toolRef, if known."""
 
@@ -958,6 +1010,19 @@ def render_task_run_script(command: Sequence[str], *, preamble: str = "") -> str
         "  fi\n"
         "  export PYTHONPATH\n"
         "fi\n"
+        # Baked workflow images copy the source attested by NPA_IMAGE_SOURCE_SHA to
+        # /opt/npa/src. SkyPilot intentionally removes image-level PYTHONPATH while
+        # bootstrapping, so setup records that trusted path for the separate run shell.
+        "if [ -s /tmp/npa-baked-pythonpath ]; then\n"
+        '  npa_baked_pythonpath="$(cat /tmp/npa-baked-pythonpath)"\n'
+        '  if [ -d "$npa_baked_pythonpath" ]; then\n'
+        '    if [ -n "$PYTHONPATH" ]; then\n'
+        '      export PYTHONPATH="$npa_baked_pythonpath:$PYTHONPATH"\n'
+        "    else\n"
+        '      export PYTHONPATH="$npa_baked_pythonpath"\n'
+        "    fi\n"
+        "  fi\n"
+        "fi\n"
         'npa_python=""\n'
         "if [ -s /tmp/npa-python ]; then\n"
         '  npa_python="$(cat /tmp/npa-python)"\n'
@@ -1263,9 +1328,25 @@ def default_npa_setup() -> str:
         "        break\n"
         "    token = resp.get('NextContinuationToken')\n"
         "PY\n"
+        # Put the source tree first before attempting the editable install. A secure
+        # non-root workbench image may intentionally make /opt/venv/bin/npa
+        # immutable; the source-only overlay remains sufficient and reviewable.
+        '  if [ -n "$PYTHONPATH" ]; then\n'
+        '    PYTHONPATH="/tmp/npa-src-overlay/src:$PYTHONPATH"\n'
+        "  else\n"
+        "    PYTHONPATH=/tmp/npa-src-overlay/src\n"
+        "  fi\n"
+        "  export PYTHONPATH\n"
         # --no-deps FIRST: the overlay is the same distribution the image already has, so
         # resolving its requirements would only risk moving a pinned vendor stack.
-        "  npa_pip_install -e /tmp/npa-src-overlay --no-deps\n"
+        "  if ! npa_pip_install -e /tmp/npa-src-overlay --no-deps; then\n"
+        "    echo 'using isolated non-root npa overlay environment' >&2\n"
+        "    python3 -m venv --system-site-packages /tmp/npa-overlay-venv\n"
+        "    /tmp/npa-overlay-venv/bin/python -m pip install -q -e "
+        "/tmp/npa-src-overlay --no-deps\n"
+        '    PATH="/tmp/npa-overlay-venv/bin:$PATH"\n'
+        "    export PATH\n"
+        "  fi\n"
         # ... and WITH deps if the CLI still will not import. An image that installed npa with
         # its own curated `--no-deps` list leaves the overlay short of whatever that list
         # omitted: live job 309 died on `No module named 'paramiko'` after a clean overlay of a
@@ -1279,15 +1360,6 @@ def default_npa_setup() -> str:
         "  fi\n"
         # The overlay is the freshest tree, so it is the one worth putting on the import path.
         "  npa_record_src_root /tmp/npa-src-overlay\n"
-        # Same reason as the stage preamble: the install alone is not enough to
-        # displace a baked npa, so make the overlay explicit for the rest of setup too
-        # (the interpreter recorded below is checked with `import npa`).
-        '  if [ -n "$PYTHONPATH" ]; then\n'
-        '    PYTHONPATH="/tmp/npa-src-overlay/src:$PYTHONPATH"\n'
-        "  else\n"
-        "    PYTHONPATH=/tmp/npa-src-overlay/src\n"
-        "  fi\n"
-        "  export PYTHONPATH\n"
         "fi\n"
         # Record the interpreter that can actually import npa, i.e. the one pip just
         # installed into (it has npa AND its dependencies). Stage bodies use it via a
@@ -1504,6 +1576,11 @@ def render_setup_for_tool(
             # Probe the exact module they execute so a purpose-built image can
             # remain dependency-minimal without passing setup on a broken stage.
             probe_module = command[2]
+        baked_import = str(config.get("baked_npa_import") or probe_module).strip()
+        if not re.fullmatch(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*", baked_import):
+            raise NpaWorkflowError(
+                "config.baked_npa_import must be a dotted Python module name"
+            )
         return (
             "set -e\n"
             'npa_baked_python="${NPA_BAKED_PYTHON:-}"\n'
@@ -1518,14 +1595,19 @@ def render_setup_for_tool(
             '  echo "baked NPA interpreter is not executable: $npa_baked_python" >&2\n'
             "  exit 69\n"
             "fi\n"
+            'npa_baked_pythonpath=""\n'
+            "if [ -d /opt/npa/src ]; then\n"
+            '  npa_baked_pythonpath=/opt/npa/src\n'
+            '  export PYTHONPATH="$npa_baked_pythonpath${PYTHONPATH:+:$PYTHONPATH}"\n'
+            "fi\n"
             "\"$npa_baked_python\" - <<'PY'\n"
             "import importlib\n"
             "import os\n"
-            # toolRef stages use the generated npa shim and therefore probe the
-            # complete command tree. Raw ``python -m`` stages probe their exact
-            # module instead; importing the unrelated CLI would reject thin,
-            # purpose-built stage images even when their actual payload is sound.
-            f"importlib.import_module({probe_module!r})\n"
+            # Validate the actual application module declared by the workflow.
+            # Narrow stage images need not carry the full, unrelated CLI
+            # dependency closure. Raw module stages default to their executed
+            # module; other stages preserve the historical CLI contract.
+            f"importlib.import_module({baked_import!r})\n"
             "actual = os.environ.get('NPA_IMAGE_SOURCE_SHA', '').strip().lower()\n"
             "expected = os.environ.get('NPA_SIM2REAL_SOURCE_SHA', '').strip().lower()\n"
             "if len(actual) != 40 or actual != expected:\n"
@@ -1533,6 +1615,9 @@ def render_setup_for_tool(
             "print('immutable baked NPA runtime verified', actual)\n"
             "PY\n"
             "printf '%s\\n' \"$npa_baked_python\" > /tmp/npa-python\n"
+            'if [ -n "$npa_baked_pythonpath" ]; then\n'
+            "  printf '%s\\n' \"$npa_baked_pythonpath\" > /tmp/npa-baked-pythonpath\n"
+            "fi\n"
         )
     parts = [default_npa_setup()]
     parts.append(render_vendor_interpreter_setup(tool_vendor_interpreters(tool_ref)))
@@ -1797,6 +1882,12 @@ def build_skypilot_task_doc(
         "NPA_WORKFLOW_NAME": spec.name,
         "NPA_WORKFLOW_RUN_ID": run_id,
         "NPA_WORKFLOW_STATE": str(scheduler_task["name"]),
+        # Retain output roles for the shared raw/rendered SDK submission gate.
+        "NPA_EXECUTION_OUTPUTS": json.dumps([
+            {"uri": output["uri"], "kind": output.get("kind") or ("directory" if str(output["uri"]).endswith("/") else "file")}
+            for output in scheduler_task.get("outputs") or []
+            if str(output.get("uri") or "").startswith("s3://")
+        ], separators=(",", ":")),
     }
     attempt_id = str(options.execution_attempt_id or "").strip()
     if not attempt_id:
@@ -1906,9 +1997,19 @@ def build_skypilot_task_doc(
         # This renderer/planner value is authoritative.  SkyPilot's runtime
         # variables are independent evidence and the worker cross-checks them.
         envs["NPA_COSMOS_NODE_COUNT"] = str(num_nodes)
+    if (
+        str(scheduler_task.get("tool_ref") or "")
+        == "workbench.openpi.full_droid_prepare"
+    ):
+        # The image carries CUDA JAX for later GPU stages, but preparation is a
+        # CPU-only pod. Set this before the CLI imports JAX plugins; doing it in
+        # the prepare handler is too late once the command tree is imported.
+        envs["JAX_PLATFORMS"] = "cpu"
     if num_nodes > 1:
         doc["num_nodes"] = num_nodes
     task_config = normalize_task_config(scheduler_task.get("resources") or {})
+    if require_baked and cache_on_kubernetes:
+        task_config = _with_writable_bootstrap_cache(task_config)
     if image and task_config:
         from npa.orchestration.skypilot.image_bootstrap_contract import (
             is_trusted_npa_image,
@@ -2039,7 +2140,7 @@ def _inject_operator_registry_docker_secrets(
         resolve_registry_credentials,
     )
 
-    username, password = resolve_registry_credentials(server)
+    username, password = resolve_registry_credentials(server, image=image_id)
     if not username:
         return
     if materialize:

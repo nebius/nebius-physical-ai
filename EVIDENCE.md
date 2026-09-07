@@ -1680,7 +1680,7 @@ test_aggregate_gate_is_the_mean_not_the_pass_rate
 Object-store discovery uses a `Delimiter="/"` listing, which is the S3 equivalent of
 `find -mindepth 1 -maxdepth 1 -type d`, with the same fall-back branch.
 
-New spec `npa/workflows/workbench/npa-workflows/vlm-eval-loop.yaml` (twin of
+New spec `workflows/testing/vlm-eval-loop.yaml` (twin of
 `sim-to-real-loop.yaml`), registered as a `gpu` matrix case whose seeder plants **three**
 rollout directories so the aggregate has something to aggregate.
 
@@ -2310,7 +2310,7 @@ rather than papered over.
   report**: a run whose artifacts contain no readable text fails loudly instead of triaging
   nothing.
 * Two catalog toolRefs (`workbench.lerobot.policy_train`, `workbench.token_factory.triage`) and
-  the twin spec `npa-workflows/tokenfactory-train-triage.yaml`.
+  the twin spec `workflows/testing/tokenfactory-train-triage.yaml`.
 
 ### Defect: five toolRefs invoked bare `python`
 
@@ -2834,7 +2834,7 @@ warnings.warn(
 
 Every other retirement in this PR required a live twin first. This one is the exception, and the
 reason is the point: **a twin would have made the new surface the home of a legacy path.** The
-maintained loop already has a spec (`npa-workflows/sim2real-vlm-rl.yaml`) and a runbook for
+maintained loop already has a spec (then named `sim2real-vlm-rl.yaml`) and a runbook for
 reading without npa in the loop (`sim2real/runbook.yaml`).
 
 **Watching a bucket is not deprecated**, so `npa.workflows.sim_to_real_trigger` stays — and was
@@ -3113,7 +3113,7 @@ name and with the remedy:
 
 ```
 new raw SkyPilot task YAML(s) appeared in the retiring catalog: ['nurec-reconstruct.yaml'].
-Author an npa.workflow/v0.0.1 spec under npa/workflows/workbench/npa-workflows/ instead;
+Author an npa.workflow/v0.0.1 spec under workflows/ instead;
 if a raw template is genuinely required, add it to REMAINING with a reason.
 ```
 
@@ -3130,7 +3130,7 @@ variant should survive alongside its spec is #234's call to make, not this PR's 
 — but the tally now says it exists and why, which is the whole point of a machine-checked list.
 
 A third merge brought #235 and a second new template, `cosmos3-generate.yaml`, caught the same
-way and listed the same way. Its npa.workflow twin (`npa-workflows/cosmos3-generate.yaml`)
+way and listed the same way. Its npa.workflow twin (`workflows/testing/cosmos3-generate.yaml`)
 already exists, so retiring the raw one needs only a live run of that twin — which belongs with
 #235 rather than here.
 
@@ -3274,7 +3274,7 @@ Two lessons worth keeping, both cheap:
 ## R53. `cosmos3-generate.yaml` retired after its spec twin ran live
 
 The raw template added by #235 is gone. Its twin
-`npa/workflows/workbench/npa-workflows/cosmos3-generate.yaml` now has a live-submit-matrix case
+`workflows/testing/cosmos3-generate.yaml` now has a live-submit-matrix case
 (`tier="gpu"`, `image_tool="cosmos3"`) and reached terminal success through the same harness used
 for the rest of this retirement work:
 
@@ -3469,3 +3469,83 @@ Successful SkyPilot jobs cleaned up their managed resources automatically; no po
 377 remained after its pytest node completed. The earlier diagnostic pod was deleted, cancelled
 recovery jobs left no pods, no `npa-detection-training` resource was created, and the persistent
 `npa-lancedb` deployment was left untouched as required by the rotation contract.
+
+## R57. Token Factory batch inference — every path proven live except the one the platform blocks
+
+`batch-generate` / `batch-status` were validated against the real Token Factory API from an
+isolated worktree, venv, and tmux session on the shared dev VM. Batch execution is unavailable
+platform-side for the whole validation window, so this section separates what was proven live
+from what is pinned by unit tests, rather than implying end-to-end success.
+
+**Live, through the shipped CLI.** Submit returned in about 5 seconds and wrote the handle
+artifact next to the eventual output:
+
+```
+status: pending          operation_status: queued
+model: openai/gpt-oss-120b               prompt_count: 2
+completion_window: 24h   written_uri: <output-path>/batch_operation.json
+```
+
+`batch_operation.json` carries exactly the fields a later collect needs — `operation_id`,
+`operation_status`, `model`, `completion_window`, `prompt_count`, `result_uri`, `status`,
+`generated_at`. `batch-status --no-wait` against that handle re-reported the operation and
+recovered `prompt_count` and `model` from the operation itself, with no prompt file present.
+
+**Live failure paths, both exiting 1.** A model that serves real-time traffic but is not batch
+routable fails with the per-row reason read from the batch record's error file, not the empty
+string the operations API returns:
+
+```
+Error: batch operation <redacted> ended with status 'failed' with 2/2 rows rejected:
+Invalid request rows 2 of 2 exceed the 10% limit.
+Line:1 custom_id:e1 model "meta-llama/Llama-3.3-70B-Instruct" is not a known batch endpoint routing key
+Line:2 custom_id:e2 ... Model 'meta-llama/Llama-3.3-70B-Instruct' is not available for batch
+inference, even though it may serve real-time requests. Try another model, or run the same
+prompts through `npa workbench token-factory generate`.
+```
+
+A vision model is refused at submit, with the pointer to the real-time captioning path, and no
+artifact is written for a refused submit:
+
+```
+Error: starting batch inference failed: Token Factory request failed (400):
+{"detail":"Batch inference is only supported for text2text models"} Model
+'Qwen/Qwen2.5-VL-72B-Instruct' is not a text model. ... caption images with
+`npa workbench token-factory caption` instead.
+```
+
+**The drop-in claim, shown side by side.** The real-time path on the same prompt file produces
+the schema a batch stage is a substitute for:
+
+```
+{"completion": "ok", "id": "e1", "prompt": "Reply with exactly: ok"}
+{"completion": "Red", "id": "e2", "prompt": "Name one primary color. One word."}
+```
+
+**The blocked path, and why it is not this change.** `POST /v1/batches` returns
+`403 Creating new batch job is temporarily unavailable`, still true eight days after first
+observation. The 403 lands after schema validation — an empty body returns `422` naming the
+missing fields — but before resource validation, since a genuinely uploaded `input_file_id` is
+also refused, so it is a server-side switch rather than a property of the request. Adjacent
+surfaces on the same key stay healthy throughout: real-time chat on the batch model, file upload
+with `purpose=batch`, batch listing, redirected file downloads, and dataset create/delete. The
+datasets/operations route still accepts submissions and validates their rows (`total: 2,
+invalid: 0`) which then complete none. It is not the documented quota either: the limits are 10
+active batches and 100 submissions per hour, every batch record on the key was terminal when the
+403 was reproduced, and rate limiting surfaces as `429` with `x-ratelimit-*` headers, none of
+which were present. Batch listing defaults to a 10-record page, which makes a longer history look
+like it is sitting exactly at the active-batch limit; `limit=100` disproves that.
+
+**Therefore the success path is pinned by unit tests, not by a live run.** 24 tests in
+`npa/tests/workbench/test_token_factory_batch.py` pass, including the documented result row
+verbatim (`test_parse_batch_export_reads_the_standard_batch_row`), per-row error extraction
+(`test_parse_batch_export_records_a_per_row_error_with_its_message`), all three result wrappers
+(`test_batch_collect_parses_each_result_wrapper[response|body|result]`), output-file preference
+over dataset export, and the timeout that keeps the operation collectible. The redirect-following
+file download those paths depend on is proven live by the error-file reads above.
+
+Cleanup after validation: every batch record on the key is terminal, so nothing is queued or
+accruing cost; scratch datasets and batch-generated result/error files were deleted while the
+key's two pre-existing datasets were left untouched; the isolated worktree, venv, and tmux
+session were removed from the shared VM. Operation and request identifiers, the API key, and
+dataset identifiers are deliberately redacted; exact values remain in access-controlled evidence.

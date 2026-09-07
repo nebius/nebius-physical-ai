@@ -63,7 +63,7 @@ When you're ready to do it for real on an H100:
 
 ```bash
 npa workbench workflow submit \
-  npa/workflows/workbench/npa-workflows/sim2real.yaml \
+  workflows/main/sim2real.yaml \
   --run-id <run-id> \
   --var NPA_SIM2REAL_BUCKET=<your-bucket> \
   --var NPA_SIM2REAL_TRIGGER_DATASET_URI=s3://<your-bucket>/<trigger-prefix>/
@@ -115,7 +115,7 @@ you recorded in Genesis, or a [Reachy 2](reachy2-lerobot-policy.md) dataset.
 ## Dig deeper
 
 - **14-stage production loop:** [Sim-to-real workflow](sim2real-workflow.md) · [Data contracts](sim2real-data-contracts.md)
-- Canonical 14-stage YAML: `npa/workflows/workbench/npa-workflows/sim2real.yaml`
+- Canonical 14-stage YAML: `workflows/main/sim2real.yaml`
 - Generic loop semantics remain covered by a test-only fixture under
   `npa/tests/fixtures/npa-workflows/`; it is not an operator workflow.
 - Skill: `skills/workflows/sim-to-real/SKILL.md`

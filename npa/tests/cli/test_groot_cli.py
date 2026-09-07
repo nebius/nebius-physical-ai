@@ -1000,6 +1000,12 @@ def test_groot_container_dockerfile_pins_runtime_versions() -> None:
     assert "isaaclab[isaacsim,all]==" not in dockerfile
     assert "GROOT_MODEL_DIR=/opt/groot-data/models" in dockerfile
     assert "huggingface-cli download nvidia/GR00T-N1.7-3B" not in dockerfile
+    assert "NPA_SKIP_EAGER_IMPORTS=1" in dockerfile
+    assert "NPA_LIGHT_WORKBENCH_TOOL=groot" in dockerfile
+    assert "workbench groot finetune --help >/dev/null" in dockerfile
+    assert '"mcap>=1.3,<2"' in dockerfile
+    assert "from mcap.writer import Writer" in dockerfile
+    assert "make_reader(BytesIO(buffer.getvalue())).get_summary()" in dockerfile
     assert "--platform linux/amd64" in build_script
 
 
@@ -2257,9 +2263,6 @@ def _mock_groot_serverless_env(mocker):
             aws_secret_access_key="SECRET",
         ),
     )
-    mocker.patch(
-        "npa.cli.groot.resolve_container_registry", return_value="registry.example"
-    )
     image_for_tool = mocker.patch(
         "npa.cli.groot.container_image_for_tool",
         return_value="registry.example/npa-groot:smoke",
@@ -2281,9 +2284,6 @@ def test_groot_serverless_uses_shared_subnet_resolver(mocker) -> None:
             aws_access_key_id="AKIA",
             aws_secret_access_key="SECRET",
         ),
-    )
-    mocker.patch(
-        "npa.cli.groot.resolve_container_registry", return_value="registry.example"
     )
     mocker.patch(
         "npa.cli.groot.container_image_for_tool",
@@ -2400,9 +2400,7 @@ def test_groot_serverless_uses_shared_env_builder(mocker) -> None:
     assert kwargs["env"]["HF_HOME"] == "/tmp/hf_home"
     assert kwargs["extra_env"]["AWS_ACCESS_KEY_ID"] == "AKIA"
     assert kwargs["extra_env"]["AWS_SECRET_ACCESS_KEY"] == "SECRET"
-    image_for_tool.assert_called_once_with(
-        "groot", registry="registry.example", tag=GROOT_RUNTIME_VERSION
-    )
+    image_for_tool.assert_called_once_with("groot", tag=GROOT_RUNTIME_VERSION)
     assert kwargs["image"] == "registry.example/npa-groot:smoke"
 
 

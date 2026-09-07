@@ -1,0 +1,4 @@
+interface:
+  display_name: "Cosmos3 Native Ray Serve"
+  short_description: "Operate persistent batched Cosmos3-Nano serving"
+  default_prompt: "Use native Cosmos Framework Ray Serve to deploy or submit durable Cosmos3-Nano SDG batches."

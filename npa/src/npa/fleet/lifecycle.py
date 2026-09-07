@@ -992,6 +992,8 @@ def plan_fleet(
                     "gpu_health_stabilization_seconds"
                 ],
                 "gpu_cuda_smoke": backend_plan["gpu_cuda_smoke"],
+                "gpu_workload_profile": backend_plan["gpu_workload_profile"],
+                "gpu_graphics_smoke": backend_plan["gpu_graphics_smoke"],
                 "enable_filestore": backend_plan["enable_filestore"],
                 "filestore_disk_size_gibibytes": backend_plan[
                     "filestore_disk_size_gibibytes"

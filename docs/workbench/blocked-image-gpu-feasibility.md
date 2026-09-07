@@ -1,16 +1,16 @@
 # Can the blocked images support every Nebius GPU?
 
-Eight published images carry at least one `blocked` cell in the
+This analysis began on 2026-08-22 with eight published images carrying a
+`blocked` cell in the
 [image ↔ Nebius GPU compatibility matrix](image-gpu-compatibility-matrix.md):
 `npa-content-agents`, `npa-cosmos`, `npa-cosmos2-transfer`, `npa-cosmos3-serving`,
 `npa-groot`, `npa-isaac-lab`, `npa-leisaac`, and `npa-sonic`. This page evaluates,
-per image, whether that can be closed.
+per image, whether that can be closed. The linked matrix and accepted release
+records remain authoritative as images and validation results advance.
 
-A ninth row, `npa-sonic-mujoco`, still shows blocked cells on B200 and B300 in the
-matrix as written, but that is stale rather than substantive: its published digest
-has a recorded B200 rollout, and the cells are reconciled against that evidence in
-[#325](https://github.com/nebius/nebius-physical-ai/pull/325). It is treated as
-unblocked below.
+The separate `npa-sonic-mujoco` row now records verified B200 and RTX PRO 6000
+physics rollouts; B300 remains unverified. Those results validate the checkpoint
+adapter and simulator path, not learned-policy performance or Isaac rendering.
 
 The short answer is that "blocked" covers four different situations that need
 different remedies, and only some of them can be closed at all:
@@ -23,8 +23,8 @@ different remedies, and only some of them can be closed at all:
 | **Sizing.** The architecture is fine; the part does not have the memory the pinned configuration needs. | A different parallel decomposition, which is a serving-config decision. | `npa-cosmos3-serving` on L40S |
 
 Two constraints bound every answer below. Rasterized rendering cannot move to a
-datacenter part, and no published image runs on aarch64 `gpu-gb300`, because all
-30 are `linux/amd64`. "Every Nebius GPU" therefore means the five x86_64
+datacenter part, and this analysis covers the published `linux/amd64` images,
+not aarch64 `gpu-gb300`. "Every Nebius GPU" here means the six x86_64
 platforms: L40S, H100, H200, RTX PRO 6000, B200, and B300.
 
 ## Measured dependency coverage
@@ -45,7 +45,7 @@ Read with the compatibility rules from the matrix: SASS does not cross a CUDA
 major, but within a major it is forward compatible, so `sm_86` covers L40S
 (`sm_89`) and `sm_100` covers B300 (`sm_103`). None of the three carries PTX, so
 nothing here depends on driver JIT. Every one of these artifacts can reach all
-five platforms.
+six platforms.
 
 Coverage is necessary, never sufficient. flash-attn-4 ships `sm_120` SASS and
 still raises on `sm_120` because its epilogue needs TMA, which is the finding
@@ -98,7 +98,7 @@ B200 node with no rebuild.
 
 One caveat keeps this short of a whole-image claim: `groot eval --sim` delegates
 to Isaac Lab and inherits every Isaac constraint below. The honest target is
-headless inference and finetune on all five platforms, with the sim path
+headless inference and finetune on all six platforms, with the sim path
 following Isaac.
 
 ## `npa-cosmos` — possible, but it is a decision about an upstream gate
@@ -163,7 +163,7 @@ serving tier is wanted at all — not a packaging fix. Everything else about thi
 image is already strong: B200 and 8xH200 both have real generation runs behind
 them, and RTX PRO 6000 and B300 are supported at the same 8-GPU shape.
 
-## `npa-sonic` — partly, and it is queued behind an unrelated failure
+## `npa-sonic` — separate the runtime and workload
 
 Blocked on B200 and B300. The policy layer is not what blocks it:
 `npa.workbench.sonic.routing` already classifies `train`, `finetune`, and
@@ -179,23 +179,29 @@ runtime — a wrong image rather than a missing one. That is fixed here: every
 variant declares the workloads it serves, resolution intersects the GPU rule with
 the requested workload, and a fine-tune on a datacenter target now fails with a
 message naming the capability gap instead of substituting a different image.
+ONNX container evaluation likewise requests `isaac-render`, including when a
+variant is explicit. MuJoCo checkpoint evaluation remains a separate entrypoint
+with different inputs. Generic Blackwell labels containing B200/B300 cannot
+select the workstation image or accelerator. A custom workflow `--image`
+bypasses unavailable manifest defaults while retaining workload/GPU validation.
 `DEFAULT_GPU_TARGET` stays on RTX PRO 6000, because no published variant can
 fine-tune on a datacenter part yet.
 
-What still blocks the cell is an unrelated bug. SONIC's real fine-tune does not
-currently pass anywhere: on RTX PRO 6000, cold and warm, it reaches Isaac
+The 2026-08-03 runtime validation recorded an unrelated bug: on RTX PRO 6000,
+cold and warm, the tested SONIC fine-tune reached Isaac
 environment construction and then fails in Isaac's runtime-fetched URDF
 extension while opening the temporary G1 pelvis USD layer, before a learning step
-or a checkpoint. That failure has no recorded architecture dependence, and it is
-the smoke a new cell would have to pass. Fixing it comes first; only then is a
-compute-only datacenter variant worth building. Rendering stays on RT-core parts
+or a checkpoint. This historical failure is not a claim about every later
+runtime; the SONIC skill documents the separate B300 state-only path. Each
+candidate runtime still needs real learning steps and a checkpoint. Rendering stays on RT-core parts
 permanently, so `npa-sonic` can at best reach "supported (headless)" on B200 and
 B300.
 
 `npa-sonic-mujoco` was the predicted tractable subset — MuJoCo evaluation touches
 no Isaac at all — and it has since been published and validated exactly that way:
-its `0.2.0-runtime` digest ran a real Unitree G1 rollout on B200, EGL headless
-physics with no Omniverse and no RT-core rendering. It is no longer blocked, which
+its `0.2.0-runtime` digest ran Unitree G1 checkpoint-adapter dynamics on B200,
+with no Omniverse and no RT-core rendering. This is physics-path evidence, not
+learned-policy inference. It is no longer blocked on B200, which
 is the strongest available evidence that SONIC's datacenter problem is Isaac
 rather than the architecture.
 
@@ -223,9 +229,10 @@ GPU-backed physics. `npa workbench isaac-lab deploy` still requires RT cores,
 because a deployed workbench is the render surface.
 
 Whether headless RL then *works* on a datacenter part is still a vendor and
-driver question. The manifest
-attributes the block to the x86_64 CUDA 12.8 pin, and the measurements above
-show cu128 wheels are not the constraint — they carry `sm_100` and `sm_120`.
+driver question. Current main pins Isaac Lab `3.0.0b2.post1` with Isaac Sim
+`6.0.1.0`; its beta and validated RT-core guidance are documented in
+[Isaac Lab 3](isaac-lab-3.md). The following observations concern the older
+generation 2 stack and do not validate the generation 3 runtime.
 NVIDIA's own forum thread records headless Isaac Lab 2.3 running on a B200 DGX
 once the pre-built Isaac Lab container was used, with the camera path deadlocking
 when the PhysX GPU pipeline fell back to software. Isaac Sim 5.1 (Kit 107.3.3) is
@@ -238,7 +245,7 @@ x86_64 is a 17 KB stub containing a licence and metadata, with the extension
 content fetched by Kit at first run. Whether PhysX has GPU kernels for `sm_100`
 is answerable only by running it there.
 
-So the achievable end state is `supported (headless)` on B200 and B300 — never a
+The candidate end state is `supported (headless)` on B200 and B300 — never a
 full-capability cell, because the image's headline capability is rendering.
 
 ## `npa-leisaac` — no; two RT-core parts is the ceiling
@@ -288,7 +295,7 @@ against evidence their publication had already produced.
 What the measurements change is what is worth attempting and in what order: a
 `cu130` rebuild for Cosmos Transfer, a validation run for GR00T, an upstream
 decision for Cosmos Predict2, a serving-shape decision for Cosmos3-Super on L40S,
-a bug fix before SONIC, an L40S run to finish Content Agents, and no expectation
+an exact-runtime checkpoint validation for SONIC, an L40S run to finish Content Agents, and no expectation
 at all of rendering on a datacenter part.
 
 ## Reproducing the measurements
@@ -306,3 +313,29 @@ npa/.venv/bin/python npa/scripts/measure_extension_arches.py \
 # The torch wheel's own arch set, and the on-GPU capability check.
 npa/scripts/validate_blackwell_image.sh "$NPA_REGISTRY/npa-cosmos:<tag>" --target b200
 ```
+
+The offline scanner validates container and entry bounds before counting
+architecture headers, including compressed entries. Truncated containers,
+unknown entry kinds, and payloads extending past their container do not satisfy
+`--require`. This option requires the exact SASS architecture; PTX or same-major
+forward compatibility does not substitute for an explicit requirement.
+
+## Routing regression workload validation
+
+On 2026-09-07, the manifest-selected public MuJoCo runtime completed eight
+4,096-step Unitree G1 checkpoint-adapter episodes on an RTX PRO 6000 host.
+The full upstream checkpoint required its training metadata dependencies in a
+separate loader; all 55 extracted tensors (25,870,714 parameters) were verified
+identical before passing the plain state dictionary to the unchanged adapter.
+All 32,768 recorded state, velocity, and control samples were finite, producing
+34,742,707 bytes of compressed dynamics. An independent CUDA matrix kernel
+passed on the allocated GPU; MuJoCo physics itself used CPU `mj_step`.
+
+All eight long episodes recorded a fall. The adapter uses checkpoint-derived
+controls and primitive collision proxies, so these results do not demonstrate
+learned-policy inference, locomotion quality, mesh fidelity, or Isaac rendering.
+The opt-in regression is
+`npa/tests/e2e/test_sonic_image_workload_live.py`; it requires an explicitly
+preflighted owned runtime and private evidence configuration. This run changes
+no GPU compatibility cell. All three dependency-wheel measurements above were
+also reproduced with the hardened offline scanner.

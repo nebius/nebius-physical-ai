@@ -98,17 +98,22 @@ COPY docker/workbench/cosmos2-transfer/security-overrides.txt \
 # Python itself and the complete cu128 inference environment are exact-version or
 # lockfile pinned. `--no-editable` makes the venv independent of removed source-only
 # material while retaining the Apache source tree used for provenance and debugging.
+# Keep the BSD-2-Clause imageio-ffmpeg Python package while dropping its
+# wheel-bundled static FFmpeg; the final runtime supplies snapshot-pinned Ubuntu
+# FFmpeg and binds the package to that executable explicitly.
 RUN set -eux; \
     uv python install "${COSMOS_PYTHON_VERSION}"; \
     printf '%s\n' "${COSMOS_PYTHON_VERSION}" > .python-version; \
     uv sync --locked --no-dev --no-editable --extra=cu128 \
       --python "${COSMOS_PYTHON_VERSION}"; \
+    find .venv -type f -path '*/imageio_ffmpeg/binaries/ffmpeg*' -delete; \
+    test -z "$(find .venv -type f -path '*/imageio_ffmpeg/binaries/ffmpeg*' -print -quit)"; \
     uv pip install --python .venv/bin/python --no-deps \
       --requirement /tmp/cosmos2-security-overrides.txt; \
     uv pip uninstall --python .venv/bin/python sam2; \
     SAM2_BUILD_CUDA=0 uv pip install --python .venv/bin/python --no-deps \
       --no-build-isolation /opt/cosmos/meta-sam2; \
-    .venv/bin/python -c 'import defusedxml, importlib.metadata, msgpack, nltk, numpy; assert importlib.metadata.version("defusedxml") == "0.7.1"; assert importlib.metadata.version("nltk") == "3.10.0"; assert importlib.metadata.version("pip") == "26.2"; assert importlib.metadata.version("msgpack") == "1.2.1"; assert importlib.metadata.version("setuptools") == "83.0.0"; assert tuple(map(int, numpy.__version__.split(".")[:1])) >= (2,)'; \
+    .venv/bin/python -c 'import defusedxml, importlib.metadata, msgpack, nltk, numpy; assert importlib.metadata.version("defusedxml") == "0.7.1"; assert importlib.metadata.version("nltk") == "3.10.3"; assert importlib.metadata.version("pip") == "26.2"; assert importlib.metadata.version("msgpack") == "1.2.1"; assert importlib.metadata.version("setuptools") == "83.0.0"; assert tuple(map(int, numpy.__version__.split(".")[:1])) >= (2,)'; \
     .venv/bin/python -c 'import importlib.metadata, sam2; from sam2.build_sam import HF_MODEL_ID_TO_FILENAMES; assert importlib.metadata.version("SAM-2") == "1.0"; assert "facebook/sam2.1-hiera-tiny" in HF_MODEL_ID_TO_FILENAMES; assert not any((d.metadata.get("Name") or "").lower() == "sam2" for d in importlib.metadata.distributions())'; \
     .venv/bin/python -m pip --version; \
     rm -rf .venv/lib/python3.10/site-packages/matplotlib/mpl-data/sample_data; \
@@ -125,10 +130,13 @@ RUN set -eux; \
     test ! -e .venv/lib/python3.10/site-packages/matplotlib/mpl-data/sample_data; \
     test ! -e .venv/lib/python3.10/site-packages/skimage/data; \
     test ! -e .venv/lib/python3.10/site-packages/wandb/bin; \
+    find .venv -type f -path '*/imageio_ffmpeg/binaries/ffmpeg*' -delete; \
+    test -z "$(find .venv -type f \
+      -path '*/imageio_ffmpeg/binaries/ffmpeg*' -print -quit)"; \
     test "$(readlink -f .venv/bin/python)" = \
       "$(find "${UV_PYTHON_INSTALL_DIR}" -path '*/bin/python3.10' -type f -print -quit)"; \
     ! grep -q '/root' .venv/pyvenv.cfg; \
-    .venv/bin/python -c 'import importlib.metadata, flash_attn, scipy.linalg, torch, wandb; from transformers import SiglipModel; assert importlib.metadata.version("nltk") == "3.10.0"; assert importlib.metadata.version("defusedxml") == "0.7.1"; assert wandb.run is None; print(torch.__version__)'; \
+    .venv/bin/python -c 'import importlib.metadata, flash_attn, scipy.linalg, torch, wandb; from transformers import SiglipModel; assert importlib.metadata.version("nltk") == "3.10.3"; assert importlib.metadata.version("defusedxml") == "0.7.1"; assert wandb.run is None; print(torch.__version__)'; \
     base_site="$(find "${UV_PYTHON_INSTALL_DIR}" -path '*/lib/python3.10/site-packages' -type d -print -quit)"; \
     base_python="$(find "${UV_PYTHON_INSTALL_DIR}" -path '*/bin/python3.10' -type f -print -quit)"; \
     test -n "${base_site}"; \
@@ -166,6 +174,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     TORCH_HOME=/opt/cosmos/model-cache/torch \
     XDG_CACHE_HOME=/opt/cosmos/model-cache/xdg \
     TOKENIZERS_PARALLELISM=false \
+    IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg \
     UV_PYTHON_INSTALL_DIR=/opt/cosmos/uv-python
 
 # Upstream deliberately invokes `uvx hf ...` to download gated model files at
@@ -231,12 +240,19 @@ COPY docker/workbench/cosmos2-transfer/REDISTRIBUTION.md \
 # require CLI/viewer extras.
 ENV NPA_SKIP_EAGER_IMPORTS=1 \
     PYTHONPATH=/opt/npa/src \
-    NPA_BAKED_PYTHON=/opt/cosmos/cosmos-transfer2.5/.venv/bin/python
+    NPA_BAKED_PYTHON=/opt/cosmos/cosmos-transfer2.5/.venv/bin/python \
+    IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg
 
 # Deliberately shadow the global python3: SkyPilot and orchestrator-supplied
 # commands invoke python3; /usr/bin/python3 remains available to system tooling.
 RUN set -eux; \
     test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40; \
+    find /opt/cosmos/cosmos-transfer2.5/.venv \
+      -type f -path '*/imageio_ffmpeg/binaries/ffmpeg*' -delete; \
+    test -z "$(find /opt/cosmos/cosmos-transfer2.5/.venv \
+      -type f -path '*/imageio_ffmpeg/binaries/ffmpeg*' -print -quit)"; \
+    /opt/cosmos/cosmos-transfer2.5/.venv/bin/python -c \
+      'import imageio_ffmpeg; assert imageio_ffmpeg.get_ffmpeg_exe() == "/usr/bin/ffmpeg"'; \
     id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu; \
     ln -sfn /opt/npa/src/npa \
       /opt/cosmos/cosmos-transfer2.5/.venv/lib/python3.10/site-packages/npa; \
@@ -255,6 +271,8 @@ RUN set -eux; \
     chown -R ubuntu:ubuntu /opt/cosmos/model-cache /opt/cosmos2-transfer /opt/cosmos-data; \
     assert-no-forbidden-cosmos2-payload /opt/cosmos/cosmos-transfer2.5; \
     assert-no-forbidden-cosmos2-payload /opt/cosmos/meta-sam2; \
+    /opt/cosmos/cosmos-transfer2.5/.venv/bin/python -c \
+      'import imageio_ffmpeg; assert imageio_ffmpeg.get_ffmpeg_exe() == "/usr/bin/ffmpeg"'; \
     su ubuntu -s /bin/bash -c \
       '/opt/cosmos/cosmos-transfer2.5/.venv/bin/python -c "import sys, torch, flash_attn; from distutils.sysconfig import get_config_var; assert \"/root\" not in (sys._home or \"\"); get_config_var(\"prefix\")"'; \
     su ubuntu -s /bin/bash -c \

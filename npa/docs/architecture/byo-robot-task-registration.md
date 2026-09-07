@@ -1,23 +1,17 @@
 # BYO-Robot Task Registration (Isaac-Lab)
 
-_Status: design + opt-in scaffolding + task retargeting. Default behavior is
-byte-for-byte unchanged; the BYO-robot training path is gated behind
-`NPA_BYO_ROBOT_TASK=1`. `register()` now swaps the articulation **and** retargets
-the Franka-hardcoded ee_frame / action / command names onto the customer robot;
-the remaining blocker for a real custom robot is task/reward semantics (a gripper
-for the lift task) — see "Task retargeting" and `custom-asset-test-results.md`._
+_Status: implemented for the canonical two-finger Lift contract. Default behavior
+is byte-for-byte unchanged; Stage 2 enables `NPA_BYO_ROBOT_TASK=1` only for a
+validated non-stock `robot_spec_uri`. `register()` swaps the articulation,
+retargets frames/actions/commands, and applies exact ordered per-joint controls._
 
 ## Problem
 
-The Sim2Real RL inner loop trains by submitting an Isaac-Lab sibling Job that runs
-the stock RSL-RL trainer against `Isaac-Lift-Cube-Franka-v0`
-(`byo_isaac_trainer.py`), and evaluates against `EVAL_TASK`
-(`byo_isaac_eval.py`). A customer `robot_spec` / `robot_preset` is parsed,
-validated, and recorded at the assets stage, and a BYO robot USD can be swapped
-into the **in-process held-out eval** env (`engine._set_isaac_robot_usd`). But the
-**RL trainer and the on-cluster eval never consume `robot_spec`** — they always
-train and score a Franka. So "bring your own robot" is, for the part that matters
-(training the policy), cosmetic.
+The stock RSL-RL task is Franka-specific. A custom articulation therefore needs
+more than provenance: Stage 2 must resolve one trusted contract, and every Isaac
+consumer must use its USD, frames, joints, controls, task config, and dimensions.
+The canonical standard-runtime stages now carry that contract from rollout into
+PPO, validation, gold evaluation, and visualization.
 
 This doc describes how a customer `robot_spec` becomes a **registered Isaac-Lab
 task variant** that swaps the robot articulation into the Lift env, so the policy
@@ -58,8 +52,8 @@ The variant maps these onto the Lift task's `scene.robot` `ArticulationCfg`:
 |---|---|---|
 | resolved USD (`local_path`, or URDF→USD conversion) | `spawn = UsdFileCfg(usd_path=...)` | preserve `articulation_props`/`rigid_props`/`activate_contact_sensors` from the stock spawn |
 | `joint_names` + `home_qpos` | `init_state.joint_pos = {name: q}` | per-joint, not positional; falls back to `{".*": 0.0}` when names are absent |
-| `kp` / `kv` (per DOF) | one `ImplicitActuatorCfg` group, `stiffness`/`damping` | a single `.*` actuator group; per-joint splitting (arm vs. gripper) is a follow-up |
-| `force_upper` | actuator `effort_limit` | max abs effort across DOFs (conservative single value) |
+| `kp` / `kv` (per DOF) | one exact-name `ImplicitActuatorCfg` per ordered joint | values are bounded but never averaged across the embodiment |
+| `force_lower` / `force_upper` | matching per-joint `effort_limit` | maximum absolute bound for that joint; Isaac simulation and actuator limits stay equal |
 | `ee_link` | recorded; used by the eval/command frame | the Lift command frame references the ee body |
 
 A `stock_franka` spec produces **no overrides** (the helper returns an empty dict),
@@ -144,26 +138,19 @@ The robot_spec is passed to the container as `NPA_BYO_ROBOT_SPEC_JSON` (a compac
 JSON of the fields above plus the in-container USD path that the job stages from
 S3), mirroring how `NPA_GEN_FRICTION`/`NPA_GEN_MASS_SCALE` carry the physics.
 
-## Scope and explicit non-goals
+## Scope and explicit boundaries
 
 This establishes the **registration seam**: robot_spec reaches training, the
 variant loads the customer articulation, and training runs on it. It deliberately
 does **not** solve, and must not be claimed to solve:
 
-- **Per-joint actuator fidelity** — a single `.*` actuator group with one
-  stiffness/damping/effort value is a coarse approximation; arm-vs-gripper and
-  per-joint gains are a follow-up.
 - **Link/joint names must be real USD prims.** Retargeting propagates the declared
   `ee_link`/`base_link`/`joint_names`, but they must exist as prims in the staged
   USD. (On the UR10 USD, `tool0` is a URDF tf frame, not a rigid-body prim;
   `wrist_3_link` is the real last link — see `custom-asset-test-results.md`.)
-- **Task/reward semantics for a non-Franka arm** — link/joint *names* are now
-  retargeted, but the Lift reward and the **gripper-based grasp** are still
-  Franka-shaped. A gripperless arm is correctly reported `task_robot_compatible=false`
-  (it physically cannot lift); a genuinely different *manipulator* needs a gripper
-  declared (`gripper_joint_names` + open/close) and, for arbitrary tasks, a
-  customer-declarable task + reward (gap (e)). Swapping the USD + renaming links
-  does not by itself make the lift reward meaningful.
+- **Task support is intentionally narrow.** The canonical workflow accepts a
+  two-joint/two-finger parallel-jaw gripper for Lift. Gripperless, differently
+  actuated, and non-Lift task contracts fail in Stage 2 rather than degrading.
 - **Sim-to-real transfer** — domain randomization of robot dynamics, a held-out
   *dynamics* eval, a robot-deployable policy export, and a real-world success
   metric are all still required (see `CAPABILITY.md`, gaps b–e).

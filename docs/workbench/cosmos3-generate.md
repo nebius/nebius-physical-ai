@@ -11,7 +11,7 @@ declarative `npa.workflow` spec that all share one implementation.
 | Runner (single source of truth) | `npa/src/npa/workbench/cosmos/generate.py` |
 | CLI | `npa workbench cosmos3 generate` |
 | SDK | `npa.sdk.workbench.cosmos3.generate(...)` |
-| Workflow | `npa/workflows/workbench/npa-workflows/cosmos3-generate.yaml` |
+| Workflow | `workflows/testing/cosmos3-generate.yaml` |
 | `npa.workflow` toolRef | `workbench.cosmos3.generate` |
 | Golden eval | `npa.smoke.test_cosmos3_generate_functional` (`gpu-gated`) |
 
@@ -21,9 +21,8 @@ independent multi-variant PAIDF composition and its canonical artifact contract
 are documented in [PAIDF with Cosmos 3](guides/paidf-cosmos3.md).
 
 Modes: `text2image`, `image2image`, `text2video`, `image2video`, `video2video`.
-The last three
-condition on an input asset, so they require `--input-path` (a local path, an
-`http(s)` URL, or an `s3://` URI).
+`image2image`, `image2video`, and `video2video` require `--input-path` (a local
+path, an `http(s)` URL, or an `s3://` URI). Text modes need only the prompt.
 
 ## Weights are never in the image
 
@@ -31,15 +30,15 @@ The image ships the OpenMDW-1.1 `cosmos-framework` **source at a pinned commit**
 plus its cu130 inference environment. It contains **no model weights**, which is
 what makes it redistributable under the packaging contract's `public` class.
 
-Every gated artifact — the Cosmos 3 checkpoint, the Wan VAE it pulls, the
-guardrail models — downloads **at run time** with credentials the operator
-supplies, under the operator's own license acceptance:
+Model components download **at run time** under their upstream terms.
+Cosmos3-Nano is public and downloads anonymously. Guardrail weights are gated;
+private or gated checkpoint overrides also need the operator's own access.
 
 | Credential | When | Effect if missing |
 | --- | --- | --- |
 | `HF_TOKEN` (or the env named by `NPA_COSMOS3_HF_TOKEN_ENV`) | Optional for public `Cosmos3-Nano`; required when guardrails are on or for a gated/private checkpoint override | `generate` anonymously checks public assets and uses the token only where repository access requires it |
 | `NGC_API_KEY` (or `NPA_COSMOS3_NGC_API_KEY_ENV`) | Only when `NPA_COSMOS3_REQUIRE_NGC=1` | Same fail-fast, naming the NGC key |
-| neither | `--checkpoint` is a staged local/`s3://` path **and** `--no-guardrails` | Runs; the token check is skipped |
+| neither | Public Cosmos3-Nano or a staged checkpoint, guardrails explicitly disabled, and NGC access not required | No HF/NGC credential gate; S3 locations still require storage access |
 
 A run pulls more than the checkpoint from Hugging Face: with guardrails on (the
 default) it also fetches the gated `nvidia/Cosmos-Guardrail1`. So staging a
@@ -47,9 +46,8 @@ checkpoint on its own does **not** remove the token requirement — if it did, t
 preflight would pass and the run would still die mid-inference fetching the
 guardrail models, which is the failure the check exists to prevent.
 
-This is enforced in three places: `require_model_access` refuses to launch
-inference without the token, the build fails if a checkpoint file lands in a
-layer, and `verify_env.py` re-asserts the absence of weights inside the image.
+`require_model_access` requires an HF token when guardrails are enabled. The
+build and `verify_env.py` separately check that weights are absent from the image.
 
 Clearing the license for this repo's own gated guardrail model
 (`nvidia/Cosmos-Guardrail1`) does not clear the license for the *different*
@@ -152,21 +150,33 @@ print(result["output_kind"], result["artifact_uri"])
 
 ### Workflow
 
-`npa/workflows/workbench/npa-workflows/cosmos3-generate.yaml` runs the same stage
+`workflows/testing/cosmos3-generate.yaml` runs the same stage
 through the `workbench.cosmos3.generate` toolRef, which resolves to the
-`npa-cosmos3` image automatically:
+supported public `npa-cosmos3` image automatically. Complete
+[Workbench Getting Started](getting-started.md), including access checks,
+planning, exact-cluster verification, and image preflight. Submit with the same
+project, cluster, bucket, and config overrides:
 
 ```bash
-npa workbench workflow submit npa/workflows/workbench/npa-workflows/cosmos3-generate.yaml \
-  --infra k8s/<context> --registry <your-registry> \
-  --var bucket=<bucket> \
+npa workbench workflow submit workflows/testing/cosmos3-generate.yaml \
+  --project '<project-alias>' --infra 'k8s/<context>' \
+  --var 'bucket=<bucket>' --runtime \
   --secret-env HF_TOKEN --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY
 ```
 
-`--secret-env HF_TOKEN` is required when guardrails are enabled: the plan only *hints* the secret, and without
-it the stage fails fast on the credential preflight. The submit path also refuses
-to run when the task image's registry does not match the Docker credentials in
-`SKYPILOT_DOCKER_SERVER`.
+`--runtime` supervises the workflow to its terminal state. Secret values resolve
+from the private environment or selected project's NPA credential store; only
+their names belong in the command. `HF_TOKEN` needs guardrail-model access for
+the default run.
+
+Official NPA images pull anonymously; no Docker registry credentials are needed.
+Use `--registry` only to select intentional custom images. A private registry
+requires credentials for its exact host or a pre-created Kubernetes pull secret
+referenced by the workload. Use the same image override for preflight and submit.
+
+After success, inspect `generate.json` and the media at its `artifact_uri`.
+Confirm the requested mode, nonempty output, and usable decoded image or video;
+the manifest's guardrail setting alone does not prove effective safety screening.
 
 The older raw SkyPilot template for this path was retired after this spec reached
 a terminal live success through the submit matrix. Keep new workflow authoring on
@@ -205,14 +215,14 @@ The Runs & Artifacts panel also finds the run by name (`cosmos3-`), and
 
 ## Validated on real GPUs
 
-Verified on `npa-rtxpro-mk8s` (NVIDIA RTX PRO 6000 Blackwell Server Edition,
-sm_120) with `nvidia/Cosmos3-Nano`. The workflow path produced a non-blank
+Previously verified on NVIDIA RTX PRO 6000 Blackwell Server Edition
+(sm_120) with `nvidia/Cosmos3-Nano`. The workflow path produced a non-blank
 960x960 JPEG in S3 with `guardrails: true` and `weights_baked: false`:
 
 | Path | Result |
 | --- | --- |
 | Direct Kubernetes Job (image args) | generated + published |
-| `cosmos3-generate` npa.workflow via `workflow submit` | job 338 SUCCEEDED; `generated/generate.json` plus `generated/vision.jpg` |
+| `cosmos3-generate` npa.workflow via `workflow submit` | SUCCEEDED; `generated/generate.json` plus `generated/vision.jpg` |
 
 Notes from those runs: the cu130 wheel set works on sm_120 (no NATTEN/flash-attn
 kernel gap surfaced for text2image); the guardrail model, `Cosmos3-Nano`, and the
@@ -223,7 +233,7 @@ before generation starts.
 
 | Symptom | Cause |
 | --- | --- |
-| `Cosmos 3 weights are not baked into this image` | No HF token, or the token has not accepted the checkpoint's license. Accept it on the model page, or stage a checkpoint and pass it via `--checkpoint`. |
+| `Cosmos 3 guardrails are not baked into this image` | The default guardrails need an HF token with access to their gated repository. Run `npa workbench health access --capability cosmos3`; staging only the main checkpoint does not satisfy guardrail access. |
 | `the Cosmos 3 inference runtime is not present` | Running outside the image. Use `npa-cosmos3`, or point `COSMOS3_REPO` at a framework checkout with a built `.venv`. |
 | `mode ... conditions on an input image/video` | An `image2video` / `video2video` / `image2image` run without `--input-path`. |
 | `Found no NVIDIA driver` | The container reached real inference but has no GPU. Generation is GPU-only. |
@@ -232,7 +242,7 @@ before generation starts.
 
 For access checks before a run (`gh`/HF/NGC reachability) see
 `npa workbench cosmos check`. For the un-baked, clone-at-job-time text-to-image
-smoke, use `npa/workflows/workbench/npa-workflows/cosmos3-text-to-image.yaml`.
+smoke, use `workflows/testing/cosmos3-text-to-image.yaml`.
 
 ## Measured timing: Cosmos3-Super text2video on H200 and B200
 

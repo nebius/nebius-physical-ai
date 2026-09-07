@@ -113,6 +113,8 @@ def test_create_cluster_creates_cluster_then_node_group() -> None:
     assert info.id == "mk8scluster-a"
     assert info.node_group_id == "mk8snodegroup-a"
     assert calls[2][1:4] == ["mk8s", "cluster", "create"]
+    assert "--control-plane-endpoints-public-endpoint=true" in calls[2]
+    assert "--control-plane-endpoints-public-endpoint" not in calls[2]
     assert calls[3][1:4] == ["mk8s", "node-group", "create"]
     assert "--template-resources-platform" in calls[3]
     assert "--template-resources-preset" in calls[3]

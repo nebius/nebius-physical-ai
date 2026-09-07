@@ -3,12 +3,34 @@
 from __future__ import annotations
 
 import os
+import subprocess
 from collections.abc import Mapping
+from dataclasses import dataclass
+from typing import Callable, Literal
 
 # Ambient token env vars that make the bare CLI skip a real token exchange.
 AMBIENT_TOKEN_ENVS = ("NEBIUS_IAM_TOKEN", "NEBIUS_IAM_TOKEN_FILE")
 # Profile selectors, in priority order.
 PROFILE_ENVS = ("NPA_NEBIUS_PROFILE", "NEBIUS_PROFILE")
+
+ProfileFailureReason = Literal[
+    "",
+    "cli_unavailable",
+    "timeout",
+    "probe_error",
+    "identity_failed",
+    "token_mint_failed",
+]
+
+
+@dataclass(frozen=True)
+class ProfileVerification:
+    """Secret-free proof that a profile identifies and can mint an IAM token."""
+
+    profile: str
+    identity_verified: bool
+    iam_token_minted: bool
+    failure_reason: ProfileFailureReason = ""
 
 
 def strip_ambient_token_env(env: Mapping[str, str] | None = None) -> dict[str, str]:
@@ -34,3 +56,54 @@ def nebius_profile(env: Mapping[str, str] | None = None) -> str:
         if value:
             return value
     return ""
+
+
+def verify_profile(
+    profile: str = "",
+    *,
+    nebius_cli: str = "nebius",
+    env: Mapping[str, str] | None = None,
+    timeout: int = 30,
+    runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+) -> ProfileVerification:
+    """Verify identity and IAM minting while discarding both command outputs."""
+
+    clean_env = strip_ambient_token_env(env)
+    prefix = [
+        nebius_cli,
+        *(["--profile", profile] if profile else []),
+        "--no-browser",
+        "--no-check-update",
+    ]
+    common = {
+        "stdin": subprocess.DEVNULL,
+        "stdout": subprocess.DEVNULL,
+        "stderr": subprocess.DEVNULL,
+        "timeout": timeout,
+        "check": False,
+        "env": clean_env,
+    }
+    identity_verified = False
+    try:
+        identity = runner([*prefix, "iam", "whoami"], **common)
+        identity_verified = getattr(identity, "returncode", 1) == 0
+        minted = runner([*prefix, "iam", "get-access-token"], **common)
+    except FileNotFoundError:
+        return ProfileVerification(profile, identity_verified, False, "cli_unavailable")
+    except subprocess.TimeoutExpired:
+        return ProfileVerification(profile, identity_verified, False, "timeout")
+    except (OSError, subprocess.SubprocessError):
+        return ProfileVerification(profile, identity_verified, False, "probe_error")
+    iam_token_minted = getattr(minted, "returncode", 1) == 0
+    if not identity_verified:
+        failure_reason: ProfileFailureReason = "identity_failed"
+    elif not iam_token_minted:
+        failure_reason = "token_mint_failed"
+    else:
+        failure_reason = ""
+    return ProfileVerification(
+        profile,
+        identity_verified,
+        iam_token_minted,
+        failure_reason,
+    )

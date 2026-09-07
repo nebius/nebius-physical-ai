@@ -74,6 +74,11 @@ def test_overrides_full_mapping():
     assert ov["stiffness"] == 200.0
     assert ov["damping"] == 20.0
     assert ov["effort_limit"] == 80.0
+    assert ov["joint_actuators"] == [
+        {"joint_name": "j1", "stiffness": 100.0, "damping": 10.0, "effort_limit": 80.0},
+        {"joint_name": "j2", "stiffness": 200.0, "damping": 20.0, "effort_limit": 60.0},
+        {"joint_name": "j3", "stiffness": 300.0, "damping": 30.0, "effort_limit": 70.0},
+    ]
 
 
 def test_overrides_falls_back_to_zero_init_when_names_missing():

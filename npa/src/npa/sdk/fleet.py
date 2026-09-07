@@ -17,7 +17,9 @@ Example::
         projects=[
             ProjectSpec(name="a", clusters=[ClusterSpec(
                 name="cluster",
-                gpu_driver_mode="auto",  # managed image; operator is opt-in
+                # Use gpu_workload_profile="rtx-rendering" for RTX/Isaac
+                # rendering; it selects RTX PRO 6000 + operator graphics mounts.
+                gpu_driver_mode="auto",  # managed image remains the default
                 managed_driver_preset="cuda13.0",
                 cpu_nodes=NodePoolSpec(count=1, platform="cpu-d3", preset="48vcpu-192gb"),
                 gpu_nodes=NodePoolSpec(

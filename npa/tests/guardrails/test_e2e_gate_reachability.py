@@ -16,6 +16,15 @@ RUNNER_FILES = (
 # These specialized suites intentionally remain operator-invoked. The reason is
 # machine-reviewed here instead of letting an environment gate silently rot.
 MANUAL_GATES = {
+    "NPA_SONIC_IMAGE_WORKLOAD_LIVE": (
+        "real checkpoint dynamics requires an operator-preflighted owned GPU container and private evidence directory"
+    ),
+    "NPA_DETECTION_RUNTIME_LIVE": "real detector training and service restart require an operator-selected deployment",
+    "NPA_EXECUTION_PREFLIGHT_LIVE_CONFIG": "exact-prefix write verification requires an operator-selected private execution target",
+    "NPA_AGENT_IMPROVEMENT_LIVE": (
+        "requires a dedicated operator-selected queue, protected actual-check receipts "
+        "and independently obtained review evidence; shared-agent runners cannot synthesize these"
+    ),
     "NPA_BURST_E2E_IMAGE": "operator supplies the exact immutable burst validation image",
     "NPA_E2E_BURST": "full burst GPU coverage is an explicitly selected live suite",
     "NPA_BYOF_LIVE_CONTAINER": "BYOF executes third-party source only after operator review",
@@ -42,8 +51,14 @@ MANUAL_GATES = {
     "NPA_E2E_SERVERLESS_PROJECT": "serverless suite is reachable through e2e-serverless",
     "NPA_E2E_FORCE_NER": "optional fallback knob inside the reachable serverless tier",
     "NPA_E2E_MK8S_GPU_HEALTH": "fresh reserved mk8s GPU validation requires explicit operator authorization",
+    "NPA_E2E_MK8S_MIXED_GPU_HEALTH": (
+        "targets an operator-selected fresh mixed GPU cluster with an explicit per-node capacity plan"
+    ),
     "NPA_E2E_MK8S_FRESH_CLUSTER": "prevents accidentally targeting an existing or production-adjacent cluster",
     "NPA_E2E_MK8S_RESERVED_CAPACITY": "prevents silent fallback from reviewed reserved GPU capacity",
+    "NPA_E2E_MK8S_RTX_RENDERING": (
+        "targets an operator-selected retained RTX cluster and creates live graphics validation pods"
+    ),
     "NPA_TEST_GROOT_NGC_E2E": "gated NGC model access remains a product-specific manual test",
     "NPA_E2E_CLEAR_WORKBENCH_IMAGES": "optional negative-path knob, not a suite gate",
     "NPA_SRC_S3_URI": "runtime source-staging prerequisite, not an authorization gate",

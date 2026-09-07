@@ -156,6 +156,35 @@ def test_storage_client_uploads_and_downloads_directories(
     )
 
 
+@pytest.mark.parametrize(
+    "key",
+    [
+        "prefix/../../escape.txt",
+        "prefix/nested/../escape.txt",
+        "prefix/./escape.txt",
+        "prefix//tmp/escape.txt",
+        "prefix/nested\\escape.txt",
+        "other/escape.txt",
+    ],
+)
+def test_storage_client_rejects_unsafe_directory_object_keys(
+    tmp_path: Path, mock_s3, key: str
+) -> None:
+    paginator = mock_s3.get_paginator.return_value
+    paginator.paginate.return_value = [{"Contents": [{"Key": key}]}]
+    client = StorageClient(
+        endpoint_url="https://storage",
+        aws_access_key_id="key",
+        aws_secret_access_key="secret",
+    )
+
+    with pytest.raises(StorageError, match="outside|unsafe"):
+        client.download_directory("s3://bucket/prefix", str(tmp_path / "download"))
+
+    mock_s3.download_file.assert_not_called()
+    assert not (tmp_path / "escape.txt").exists()
+
+
 def test_storage_client_downloads_object_via_head_object_when_list_is_empty(
     tmp_path: Path, mock_s3
 ) -> None:
@@ -1278,7 +1307,12 @@ def test_nebius_agent_bootstrap_reuses_verified_storage_without_access_key_iam(
         "npa.clients.nebius.ensure_service_account",
         return_value="serviceaccount-agent",
     )
-    mocker.patch("npa.clients.nebius.ensure_editors_membership")
+    mocker.patch("npa.clients.agent_iam_binding.verify_agent_project_scope")
+    tenant_grant = mocker.patch("npa.clients.nebius.ensure_editors_membership")
+    project_grant = mocker.patch(
+        "npa.clients.agent_iam_binding.ensure_agent_project_binding",
+        return_value={"agent_iam_scope_id": "project", "agent_iam_role": "editor"},
+    )
     mocker.patch("npa.clients.nebius.get_iam_token", return_value="iam-token")
     full_bootstrap = mocker.patch("npa.clients.nebius.bootstrap_environment")
     list_keys = mocker.patch("npa.clients.nebius._list_access_key_metadata")
@@ -1294,6 +1328,10 @@ def test_nebius_agent_bootstrap_reuses_verified_storage_without_access_key_iam(
     assert result["service_account_id"] == "serviceaccount-agent"
     assert result["nebius_api_key"] == "configured-access"
     assert service_account.call_args.kwargs["allow_saved_fallback"] is False
+    assert result["agent_iam_scope_id"] == "project"
+    assert project_grant.call_args.kwargs["project_id"] == "project"
+    assert project_grant.call_args.kwargs["service_account_id"] == "serviceaccount-agent"
+    tenant_grant.assert_not_called()
     full_bootstrap.assert_not_called()
     list_keys.assert_not_called()
     create_key.assert_not_called()
@@ -1350,6 +1388,7 @@ def test_agent_bootstrap_removes_a_rolled_back_key_on_a_reused_account(
         raise NebiusError("provider failed after key creation")
 
     mocker.patch("npa.clients.nebius.bootstrap_environment", side_effect=bootstrap)
+    mocker.patch("npa.cli.agent_iam._verify_access_key_absent")
     delete_key = mocker.patch("npa.clients.nebius.delete_access_key")
     delete_account = mocker.patch("npa.clients.nebius.delete_service_account")
 
@@ -1983,6 +2022,63 @@ def test_nebius_public_ipv4_quota_best_effort_on_error(mocker) -> None:
 def test_nebius_public_ipv4_quota_requires_tenant_and_region() -> None:
     assert nebius.get_public_ipv4_quota("", "us-central1") == (None, None)
     assert nebius.get_public_ipv4_quota("tenant-x", "") == (None, None)
+
+
+def test_nebius_quota_reads_are_profile_scoped(mocker, monkeypatch) -> None:
+    """Quota reads must carry the selected profile like every other read here.
+
+    A tenant reachable only through a non-default profile answers
+    PermissionDenied without it. `list_quota_allowances` fails closed, so that
+    denial became "unverified mutation prerequisite" and blocked an agent deploy
+    the operator was entitled to make.
+    """
+    monkeypatch.setenv("NPA_NEBIUS_PROFILE", "other-tenant")
+    run_json = mocker.patch(
+        "npa.clients.nebius._run_json", return_value=_public_ip_quota_items()
+    )
+
+    nebius.get_public_ipv4_quota("tenant-x", "us-central1")
+    nebius.get_compute_instance_quota("tenant-x", "us-central1")
+    nebius.list_quota_allowances("tenant-x")
+
+    assert run_json.call_count == 3
+    for call in run_json.call_args_list:
+        argv = call.args[0]
+        assert argv[:2] == ["--profile", "other-tenant"], argv
+        # The profile is a global flag, so it must precede the subcommand.
+        assert argv[2:5] == ["quotas", "quota-allowance", "list"], argv
+
+    # An explicit profile overrides the ambient one.
+    nebius.list_quota_allowances("tenant-x", profile="explicit")
+    assert run_json.call_args_list[-1].args[0][:2] == ["--profile", "explicit"]
+
+
+def test_nebius_quota_reads_omit_profile_flag_when_unset(mocker, monkeypatch) -> None:
+    monkeypatch.delenv("NPA_NEBIUS_PROFILE", raising=False)
+    monkeypatch.delenv("NEBIUS_PROFILE", raising=False)
+    run_json = mocker.patch(
+        "npa.clients.nebius._run_json", return_value=_public_ip_quota_items()
+    )
+
+    nebius.list_quota_allowances("tenant-x")
+
+    assert run_json.call_args_list[-1].args[0][0] == "quotas"
+
+
+def test_nebius_quota_allowances_accept_project_parent(mocker) -> None:
+    run_json = mocker.patch(
+        "npa.clients.nebius._run_json", return_value={"items": []}
+    )
+
+    nebius.list_quota_allowances("project-test")
+
+    assert run_json.call_args.args[0][-3:] == ["--parent-id", "project-test", "--all"]
+
+
+def test_nebius_unauthorized_single_is_permission_denied() -> None:
+    assert nebius.is_permission_denied(
+        "rpc error: code = Unknown desc = UnauthorizedSingle"
+    )
 
 
 def _compute_instance_quota_items() -> dict:

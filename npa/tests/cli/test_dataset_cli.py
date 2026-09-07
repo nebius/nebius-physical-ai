@@ -90,7 +90,9 @@ def test_dataset_service_mode_parity(monkeypatch: Any, tmp_path: Path) -> None:
     import npa.cli.workbench.dataset as cli_module
     from npa.workbench.dataset.service import create_app
 
-    client = TestClient(create_app(auth_mode="none"))
+    client = TestClient(
+        create_app(auth_mode="none", allowed_local_roots=[tmp_path])
+    )
 
     def fake_request(method: str, endpoint: str, path: str, **kwargs: Any) -> dict[str, Any]:
         response = client.request(method, path, json=kwargs.get("payload"), params=kwargs.get("params"))
@@ -120,3 +122,41 @@ def test_dataset_service_mode_parity(monkeypatch: Any, tmp_path: Path) -> None:
     )
     assert result.exit_code == 0, result.output
     assert json.loads(result.output)["record_count"] == 2
+
+
+def test_dataset_service_storage_denial_is_a_command_error(
+    monkeypatch: Any, tmp_path: Path
+) -> None:
+    import npa.cli.workbench.dataset as cli_module
+    from npa.workbench.dataset.service import create_app
+
+    client = TestClient(create_app(auth_mode="none"))
+
+    def fake_request(method: str, url: str, **kwargs: Any):
+        return client.request(
+            method,
+            url.removeprefix("http://dataset.example"),
+            json=kwargs.get("json"),
+            params=kwargs.get("params"),
+        )
+
+    monkeypatch.setattr(cli_module.httpx, "request", fake_request)
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "dataset",
+            "ingest",
+            "--service",
+            "--endpoint",
+            "http://dataset.example",
+            "--input-path",
+            _raw(tmp_path),
+            "--output-path",
+            str(tmp_path / "store"),
+            "--dataset-id",
+            "scoped",
+        ],
+    )
+    assert result.exit_code == 1
+    assert "Dataset request failed (403)" in result.output

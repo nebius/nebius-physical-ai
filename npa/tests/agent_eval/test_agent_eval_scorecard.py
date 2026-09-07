@@ -159,7 +159,9 @@ def test_no_task_crashes():
     assert not crashed, crashed
 
 
-def test_operate_eval_mocked_round_trip_is_grounded(tmp_path: Path):
+def test_operate_eval_mocked_round_trip_is_grounded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     from npa.cli.agent_actions import summarize_observations
     from npa.workbench.insights.analytics import query_metrics
     from npa.workbench.insights.schemas import IngestRunRequest, QueryRequest
@@ -169,6 +171,7 @@ def test_operate_eval_mocked_round_trip_is_grounded(tmp_path: Path):
     fixture = tmp_path / "fixture"
     store = str(tmp_path / "store")
     empty_store = str(tmp_path / "empty-store")
+    monkeypatch.setenv("INSIGHTS_ALLOWED_LOCAL_ROOTS", str(tmp_path))
 
     def submit(observed_run_id: str) -> dict:
         fixture.mkdir()
@@ -253,7 +256,7 @@ def test_agent_eval_live_operate_round_trip():  # pragma: no cover - opt-in live
     prefix = f"agent-eval/{run_id}"
     store_uri = f"s3://{bucket}/{prefix}/store/"
     empty_store_uri = f"s3://{bucket}/{prefix}/empty/"
-    workflow_path = Path(__file__).parents[2] / "workflows/workbench/npa-workflows/insights-smoke.yaml"
+    workflow_path = Path(__file__).parents[3] / "workflows/testing/insights-smoke.yaml"
 
     def submit(observed_run_id: str) -> dict:
         npa_executable = str(Path(sys.executable).with_name("npa"))

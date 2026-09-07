@@ -555,13 +555,21 @@ def test_agent_chat_grounded_field(ctx: AgentLiveContext) -> None:
     assert isinstance(apis_used, list) and apis_used
 
 
+def _agent_has_kubernetes_backend(ctx: AgentLiveContext) -> bool:
+    """Report whether the deployment has a Kubernetes backend configured."""
+    response = ctx.get("/api/infra/backends")
+    response.raise_for_status()
+    return bool((response.json() or {}).get("has_infra"))
+
+
 @pytest.mark.parametrize(
-    ("prompt", "expected_template", "expected_config"),
+    ("prompt", "expected_template", "expected_config", "needs_kubernetes"),
     [
         (
             "create PAIDF YAML: fan out 4 robot clip variants on 4 GPUs with grade threshold 70%",
             "physical-ai-data-factory",
             {"n_augmentations": "4", "grade_threshold": "0.7"},
+            False,
         ),
         (
             "create sim-to-real YAML for Franka on Isaac with 5000 environments, "
@@ -569,6 +577,7 @@ def test_agent_chat_grounded_field(ctx: AgentLiveContext) -> None:
             "and 1 GPU",
             "sim2real",
             {"env_count": "5000", "inner_iterations": "3", "threshold": "0.8"},
+            True,
         ),
     ],
 )
@@ -577,6 +586,7 @@ def test_agent_chat_generates_grounded_parameterized_workflow_yaml(
     prompt: str,
     expected_template: str,
     expected_config: dict[str, str],
+    needs_kubernetes: bool,
 ) -> None:
     chat = ctx.post(
         "/api/chat",
@@ -588,6 +598,20 @@ def test_agent_chat_generates_grounded_parameterized_workflow_yaml(
     assert payload.get("ok") is True
     assert payload.get("grounded") is True
     workflow_yaml = str(payload.get("workflow_yaml") or "")
+    if not workflow_yaml and needs_kubernetes:
+        # Chat returns YAML only after validate *and* plan succeed, and the
+        # Sim2Real template cannot plan a submit without a Kubernetes backend.
+        # An `--agent-only` deployment has none, so declining is correct there
+        # and this assertion has no subject. Skip only on that exact pairing:
+        # the agent must name the backend as the reason *and* report no
+        # configured backend, so an empty YAML for any other cause still fails.
+        reason = str(payload.get("reply") or "")
+        declined_for_backend = "kubernetes backend is required" in reason.lower()
+        if declined_for_backend and not _agent_has_kubernetes_backend(ctx):
+            pytest.skip(
+                f"{expected_template} needs a Kubernetes backend to plan a submit; "
+                "this deployment reports none (agent-only)"
+            )
     assert workflow_yaml
     spec = yaml.safe_load(workflow_yaml)
     assert spec["apiVersion"] == "npa.workflow/v0.0.1"

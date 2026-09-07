@@ -528,6 +528,41 @@ def test_ambiguous_legacy_credentials_fail_closed_and_remain_recoverable(
     assert yaml.safe_load(path.read_text()) == original
 
 
+def test_location_only_legacy_storage_does_not_block_exact_project_write(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "credentials.yaml"
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "storage": {
+                    "bucket": "s3://ambient-bucket/",
+                    "endpoint_url": "https://storage.example.invalid",
+                },
+                "tokens": {"HF_TOKEN": "hf-preserved"},
+            }
+        )
+    )
+
+    write_project_credentials(
+        "project-new",
+        {
+            "storage": {
+                "bucket": "s3://project-owned/",
+                "aws_access_key_id": "project-access",
+                "aws_secret_access_key": "project-secret",
+            }
+        },
+        path=path,
+    )
+
+    stored = yaml.safe_load(path.read_text())
+    project = stored["project_credentials"]["projects"]["project-new"]
+    assert project["storage"]["bucket"] == "s3://project-owned/"
+    assert stored["storage"]["bucket"] == "s3://project-owned/"
+    assert stored["tokens"]["HF_TOKEN"] == "hf-preserved"
+
+
 def test_destructive_read_does_not_migrate_legacy_credentials(tmp_path: Path) -> None:
     path = tmp_path / "credentials.yaml"
     path.write_text(

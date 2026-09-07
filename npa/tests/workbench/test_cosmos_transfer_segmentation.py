@@ -79,6 +79,7 @@ def _fake_inference(monkeypatch, repo: Path, *, sidecars: dict[str, bytes] | Non
 
     monkeypatch.setattr(tx, "cosmos_transfer_repo", lambda: repo)
     monkeypatch.setattr(tx, "ensure_env", lambda _repo: Path("/usr/bin/python3"))
+    monkeypatch.setattr(tx, "prepare_guardrail_nltk_data", lambda **_kwargs: 0)
     monkeypatch.setenv("HF_TOKEN", "unit-test-placeholder")
     specs: list[dict] = []
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import subprocess
+from types import SimpleNamespace
 
 import pytest
 from typer.testing import CliRunner
@@ -29,11 +30,7 @@ runner = CliRunner()
 REPO_ROOT = Path(__file__).resolve().parents[3]
 OPENPI_FOUR_MODE_SPEC = (
     REPO_ROOT
-    / "npa"
-    / "workflows"
-    / "workbench"
-    / "npa-workflows"
-    / "openpi-pi05-four-mode.yaml"
+    / "workflows" / "testing" / "openpi-pi05-four-mode.yaml"
 )
 
 SPEC = {
@@ -112,10 +109,22 @@ def spec_path(tmp_path: Path) -> Path:
 
 
 @pytest.fixture()
-def sky_bin(tmp_path: Path) -> str:
+def sky_bin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
+    from npa.orchestration.skypilot import workflow as workflow_runtime
+
     path = tmp_path / "sky"
     path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     path.chmod(0o755)
+    # The fake executable has no API daemon. Keep the real health gate, but
+    # inspect its empty process namespace instead of an operator's host API.
+    proc_root = tmp_path / "proc"
+    proc_root.mkdir()
+    probe = workflow_runtime._probe_local_api_daemon_cwd
+    monkeypatch.setattr(
+        workflow_runtime,
+        "_probe_local_api_daemon_cwd",
+        lambda executable, **kwargs: probe(executable, proc_root=proc_root, **kwargs),
+    )
     return str(path)
 
 
@@ -318,6 +327,166 @@ def test_workflow_gpus_prints_the_export_line(
     assert "requestable per node 1" in result.output
 
 
+def test_workflow_gpus_explicit_cluster_wins_over_ambient_context(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, sky_bin: str
+) -> None:
+    monkeypatch.setenv("NPA_SKYPILOT_BIN", sky_bin)
+    monkeypatch.setenv("KUBECONTEXT", "unrelated-ambient-context")
+    kubeconfig = tmp_path / "kubeconfig"
+    kubeconfig.write_text("apiVersion: v1\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "npa.cluster.state.kubeconfig_file", lambda _cluster: kubeconfig
+    )
+    seen: dict[str, str] = {}
+
+    def discover_inventory(*, context: str):
+        seen["inventory_context"] = context
+        return type(
+            "Inventory",
+            (),
+            {
+                "to_dict": lambda self: {},
+                "ready_nodes": 0,
+                "eligible_gpu_nodes": 0,
+                "capacity": 0,
+                "allocatable": 0,
+                "products": (),
+            },
+        )()
+
+    def discover_catalog(*, context: str, sky_bin: str):
+        seen["catalog_context"] = context
+        return KubernetesGpuCatalog({}, context=context)
+
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.k8s_gpu_catalog.discover_kubernetes_gpu_inventory",
+        discover_inventory,
+    )
+    monkeypatch.setattr(
+        "npa.controller_ownership.verify_recorded_controller_owner", lambda: None
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.k8s_gpu_catalog.discover_kubernetes_gpu_catalog",
+        discover_catalog,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "gpus",
+            "--cluster",
+            "selected-cluster",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert seen == {
+        "inventory_context": "selected-cluster",
+        "catalog_context": "selected-cluster",
+    }
+
+
+def test_workflow_gpus_isolated_state_does_not_consult_shared_owner(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, sky_bin: str
+) -> None:
+    monkeypatch.setenv("NPA_SKYPILOT_BIN", sky_bin)
+    _stub_catalog(monkeypatch, CATALOG_OUTPUT)
+    monkeypatch.setattr(
+        "npa.controller_ownership.verify_recorded_controller_owner",
+        lambda: pytest.fail("isolated discovery consulted the shared owner"),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "gpus",
+            "--context",
+            "npa-cluster",
+            "--isolated-config-dir",
+            str(tmp_path / "sky-state"),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+
+
+def test_workflow_gpus_shared_state_still_rejects_another_owner_context(
+    monkeypatch: pytest.MonkeyPatch, sky_bin: str
+) -> None:
+    monkeypatch.setenv("NPA_SKYPILOT_BIN", sky_bin)
+    _stub_catalog(monkeypatch, CATALOG_OUTPUT)
+    monkeypatch.setattr(
+        "npa.controller_ownership.verify_recorded_controller_owner",
+        lambda: SimpleNamespace(context="another-context"),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "gpus",
+            "--context",
+            "npa-cluster",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 2, result.output
+    assert "Shared controller owner context does not match" in result.output
+
+
+def test_submit_isolated_state_skips_shared_owner_verification(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(
+        "npa.controller_ownership.verify_controller_owner",
+        lambda *_args: pytest.fail("isolated submit consulted the shared owner"),
+    )
+
+    workflow_cli._verify_submit_controller_owner(
+        project="project-alias",
+        context="task-context",
+        bind_controller=False,
+        isolated_config_dir=tmp_path / "sky-state",
+    )
+
+
+def test_submit_isolated_state_refuses_shared_controller_binding(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="cannot be combined"):
+        workflow_cli._verify_submit_controller_owner(
+            project="project-alias",
+            context="task-context",
+            bind_controller=True,
+            isolated_config_dir=tmp_path / "sky-state",
+        )
+
+
+def test_submit_shared_state_still_verifies_controller_owner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "npa.controller_ownership.verify_controller_owner",
+        lambda project, context: seen.append((project, context)),
+    )
+
+    workflow_cli._verify_submit_controller_owner(
+        project="project-alias",
+        context="task-context",
+        bind_controller=False,
+        isolated_config_dir=None,
+    )
+
+    assert seen == [("project-alias", "task-context")]
+
+
 def test_workflow_gpus_resolves_a_spec(
     monkeypatch: pytest.MonkeyPatch, spec_path: Path, sky_bin: str
 ) -> None:
@@ -364,6 +533,43 @@ def test_workflow_gpus_json_reports_the_exact_alias_resolution(
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
     assert payload["spec_resolutions"] == [
+        {
+            "requested": "RTXPRO6000:1",
+            "resolved": "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1",
+            "remapped": True,
+        }
+    ]
+
+
+def test_workflow_gpus_resolves_templated_accelerator_config(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, sky_bin: str
+) -> None:
+    monkeypatch.setenv("NPA_SKYPILOT_BIN", sky_bin)
+    _stub_catalog(monkeypatch, CATALOG_OUTPUT)
+    spec = yaml.safe_load(yaml.safe_dump(SPEC))
+    spec["config"].update({"gpu_type": "RTXPRO6000", "gpu_count": "1"})
+    spec["resources"]["gpu"]["accelerators"] = (
+        "{{config.gpu_type}}:{{config.gpu_count}}"
+    )
+    path = tmp_path / "templated-accelerator.yaml"
+    path.write_text(yaml.safe_dump(spec, sort_keys=False), encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "gpus",
+            "--context",
+            "npa-cluster",
+            "--spec",
+            str(path),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["spec_resolutions"] == [
         {
             "requested": "RTXPRO6000:1",
             "resolved": "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1",
@@ -613,6 +819,101 @@ def test_first_party_image_without_attestation_fails_instead_of_probing(
     assert excinfo.type.__name__ == "Exit"
 
 
+def test_registered_uncontracted_image_stops_after_pull_preflight(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    image = "ghcr.io/nebius/nebius-physical-ai/npa-retargeting:0.1.1"
+
+    def metadata_forbidden(*_args, **_kwargs):
+        raise AssertionError("uncontracted image reached bootstrap metadata lookup")
+
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.registry_preflight.fetch_image_config_metadata",
+        metadata_forbidden,
+    )
+
+    result = workflow_cli._preflight_image_bootstrap_contracts(
+        images=[image],
+        pull_checks=[ImagePullCheck(image=image, status="ok", http_status=200)],
+        context="exact-context",
+    )
+
+    assert result == []
+
+
+def test_image_bootstrap_observing_progress_preserves_exact_json(capsys) -> None:
+    digest = "sha256:" + "9" * 64
+
+    workflow_cli._emit_image_bootstrap_observing_progress(
+        digest=digest, timeout_seconds=0
+    )
+
+    assert capsys.readouterr().err == (
+        '{"apiVersion": "npa.image-bootstrap-progress/v1", '
+        f'"digest": "{digest}", "state": "observing", "timeout_seconds": 0}}\n'
+    )
+
+
+@pytest.mark.parametrize("runtime_probe_required", [True, False])
+def test_image_bootstrap_probe_paths_share_observing_progress_helper(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    runtime_probe_required: bool,
+) -> None:
+    digest = "sha256:" + "8" * 64
+    image = "registry.example.invalid/operator/image:tag"
+    immutable = image.rsplit(":", 1)[0] + "@" + digest
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.registry_preflight.resolve_registry_credentials",
+        lambda *_args, **_kwargs: ("iam", "opaque"),
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.registry_preflight.fetch_image_config_metadata",
+        lambda *_args, **_kwargs: (digest, {}),
+    )
+    monkeypatch.setattr(
+        "npa.deploy.images.requires_skypilot_bootstrap_runtime_probe",
+        lambda _image: runtime_probe_required,
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.image_bootstrap_contract.verify_attestation",
+        lambda **_kwargs: ImageContractEvidence(
+            image=immutable,
+            digest=digest,
+            contract_version=CONTRACT_VERSION,
+            state="incompatible",
+            source="oci_attestation",
+        ),
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.image_bootstrap_contract.probe_image_capabilities",
+        lambda **_kwargs: ImageContractEvidence(
+            image=immutable,
+            digest=digest,
+            contract_version=CONTRACT_VERSION,
+            state="compatible",
+            source="ephemeral_capability_probe",
+            cleanup="verified",
+        ),
+    )
+    progress: list[tuple[str, int]] = []
+    monkeypatch.setattr(
+        workflow_cli,
+        "_emit_image_bootstrap_observing_progress",
+        lambda *, digest, timeout_seconds: progress.append((digest, timeout_seconds)),
+    )
+
+    workflow_cli._preflight_image_bootstrap_contracts(
+        images=[image],
+        pull_checks=[ImagePullCheck(image=image, status="ok", digest=digest)],
+        context="exact-context",
+        observation_timeout_seconds=1800,
+    )
+
+    assert progress == [(digest, 1800)]
+
+
 def test_groot_label_and_label_backed_cache_cannot_bypass_runtime_probe(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -679,6 +980,94 @@ def test_groot_label_and_label_backed_cache_cannot_bypass_runtime_probe(
 
     assert calls == [(image, digest, "exact-context")]
     assert result[0]["source"] == "ephemeral_capability_probe"
+
+
+def test_runtime_bootstrap_probe_receives_declared_image_pull_secrets(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    digest = "sha256:" + "c" * 64
+    image = "registry-us.example/u000/npa-groot:0.1.0-sky1"
+    immutable = image.rsplit(":", 1)[0] + "@" + digest
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.registry_preflight.resolve_registry_credentials",
+        lambda *_args, **_kwargs: ("iam", "opaque"),
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.registry_preflight.fetch_image_config_metadata",
+        lambda *_args, **_kwargs: (digest, {}),
+    )
+    observed: dict[str, object] = {}
+
+    def probe(**kwargs):
+        observed.update(kwargs)
+        return ImageContractEvidence(
+            image=immutable,
+            digest=digest,
+            contract_version=CONTRACT_VERSION,
+            state="compatible",
+            source="ephemeral_capability_probe",
+            checks=("runtime_capabilities",),
+            cleanup="deleted",
+        )
+
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.image_bootstrap_contract.probe_image_capabilities",
+        probe,
+    )
+
+    workflow_cli._preflight_image_bootstrap_contracts(
+        images=[image],
+        pull_checks=[ImagePullCheck(image=image, status="ok", digest=digest)],
+        context="exact-context",
+        pull_secrets_by_image={image: ("operator-registry",)},
+    )
+
+    assert observed["image_pull_secrets"] == ("operator-registry",)
+
+
+def test_runtime_bootstrap_probe_receives_no_deadline_observation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    digest = "sha256:" + "d" * 64
+    image = "registry-us.example/u000/npa-groot:0.1.0-sky1"
+    immutable = image.rsplit(":", 1)[0] + "@" + digest
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.registry_preflight.resolve_registry_credentials",
+        lambda *_args, **_kwargs: ("iam", "opaque"),
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.registry_preflight.fetch_image_config_metadata",
+        lambda *_args, **_kwargs: (digest, {}),
+    )
+    observed: dict[str, object] = {}
+
+    def probe(**kwargs):
+        observed.update(kwargs)
+        return ImageContractEvidence(
+            image=immutable,
+            digest=digest,
+            contract_version=CONTRACT_VERSION,
+            state="compatible",
+            source="ephemeral_capability_probe",
+            checks=("runtime_capabilities",),
+            cleanup="verified",
+        )
+
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.image_bootstrap_contract.probe_image_capabilities",
+        probe,
+    )
+
+    workflow_cli._preflight_image_bootstrap_contracts(
+        images=[image],
+        pull_checks=[ImagePullCheck(image=image, status="ok", digest=digest)],
+        context="exact-context",
+        observation_timeout_seconds=0,
+    )
+
+    assert observed["observation_timeout_seconds"] == 0
 
 
 def test_preflight_is_skipped_when_disabled(
@@ -790,24 +1179,17 @@ def test_a_missing_workbench_image_carries_its_build_command(
     assert "docker login" in check.remedy
 
 
-def test_submit_preserves_an_existing_project_registry_override(
+def test_submit_ignores_an_existing_project_registry_override(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Legacy saved registry overrides remain effective without new configure writes.
-
-    Without this, preflight checked one registry while the run pulled from
-    another, and the build command it printed named the wrong destination.
-    """
+    """A stale saved private registry must not repoint public workload images."""
 
     monkeypatch.setattr(
         "npa.clients.config.resolve_container_registry",
         lambda project=None: "registry-us.example/u00proj",
     )
 
-    assert (
-        workflow_cli._resolve_submit_registry("", "test-rtx")
-        == "registry-us.example/u00proj"
-    )
+    assert workflow_cli._resolve_submit_registry("", "test-rtx") == ""
 
 
 def test_an_explicit_registry_still_wins(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -821,7 +1203,7 @@ def test_an_explicit_registry_still_wins(monkeypatch: pytest.MonkeyPatch) -> Non
     )
 
 
-def test_npa_registry_env_wins_over_project_config(
+def test_submit_ignores_npa_registry_env_for_public_workload_defaults(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("NPA_REGISTRY", "ghcr.io/nebius/nebius-physical-ai")
@@ -830,18 +1212,21 @@ def test_npa_registry_env_wins_over_project_config(
         lambda project=None: "registry-us.example/u00proj",
     )
 
-    assert (
-        workflow_cli._resolve_submit_registry("", "test-rtx")
-        == "ghcr.io/nebius/nebius-physical-ai"
-    )
+    assert workflow_cli._resolve_submit_registry("", "test-rtx") == ""
 
 
-def test_an_unreadable_config_falls_back_to_the_render_default(
+def test_submit_without_explicit_registry_defers_to_render_default_without_config(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def explode(project=None):  # noqa: ANN001 - test stub
-        raise RuntimeError("no config")
+    config_lookups: list[str | None] = []
 
-    monkeypatch.setattr("npa.clients.config.resolve_container_registry", explode)
+    def record_config_lookup(project=None):  # noqa: ANN001 - test stub
+        config_lookups.append(project)
+        return "registry.invalid/project"
+
+    monkeypatch.setattr(
+        "npa.clients.config.resolve_container_registry", record_config_lookup
+    )
 
     assert workflow_cli._resolve_submit_registry("", "p") == ""
+    assert config_lookups == []

@@ -40,6 +40,32 @@ DEFAULT_BACKOFF_CAP_SECONDS = 20.0
 DEFAULT_BACKOFF_MULTIPLIER = 2.0
 DEFAULT_BACKOFF_JITTER_RATIO = 0.20
 
+# A failed terminal queue row is evidence that an earlier launch with the same
+# logical name is over, not a workload that a resumed driver can safely adopt.
+# Keep this local to the launch boundary so callers do not need to import the
+# higher-level workflow runtime (which itself depends on this module).
+TERMINAL_FAILURE_JOB_STATUSES = frozenset(
+    {
+        "FAILED",
+        "FAIL",
+        "FAILED_PRECHECKS",
+        "FAILED_SETUP",
+        "FAILED_RUNTIME",
+        "FAILED_CONTROLLER",
+        "FAILED_NO_RESOURCE",
+        "CANCELLED",
+        "CANCELED",
+        "STOPPED",
+    }
+)
+
+
+def is_terminal_failure_job_status(status: str) -> bool:
+    """Return whether a managed-job status is an unsuccessful terminal state."""
+
+    upper = status.upper()
+    return upper in TERMINAL_FAILURE_JOB_STATUSES or upper.startswith("FAILED")
+
 
 class FailureCategory(str, Enum):
     """Stable machine-readable failure taxonomy."""
@@ -181,6 +207,8 @@ class ReconciliationEvidence:
     state: ReconciliationState
     job_id: str = ""
     status: str = ""
+    workload_observable: bool = False
+    workload_evidence: str = ""
     error: str = ""
 
     def to_dict(self) -> dict[str, Any]:
@@ -188,6 +216,8 @@ class ReconciliationEvidence:
             "state": self.state.value,
             "job_id": self.job_id,
             "status": self.status,
+            "workload_observable": self.workload_observable,
+            "workload_evidence": redact_text(self.workload_evidence)[:1000],
             "error": redact_text(self.error)[:1000],
         }
 
@@ -558,14 +588,45 @@ def run_launch_transaction(
         initial = reconcile()
         transaction.reconciliations.append(initial.to_dict())
         if initial.state is ReconciliationState.FOUND:
-            transaction.existence = "found"
-            transaction.state = LaunchState.ADOPTED
-            transaction.job_id = initial.job_id
-            transaction.recovery_decision = "adopt_existing"
-            if progress is not None:
-                progress(f"reconciliation adopted exact managed job {initial.job_id}")
-            checkpoint()
-            return transaction
+            if is_terminal_failure_job_status(initial.status):
+                # A prior failed/cancelled attempt cannot make progress and must
+                # not be presented to the runtime as a newly submitted job.  The
+                # reconciler will prefer any new viable row over this historical
+                # terminal row after launch.
+                transaction.existence = "absent"
+                transaction.recovery_decision = "relaunch_after_terminal_failure"
+                if progress is not None:
+                    progress(
+                        "reconciliation found terminal managed job "
+                        f"{initial.job_id} ({initial.status}); launching a new attempt"
+                    )
+                initial = ReconciliationEvidence(ReconciliationState.ABSENT)
+            else:
+                transaction.existence = "found"
+                transaction.job_id = initial.job_id
+                if not initial.workload_observable:
+                    transaction.state = LaunchState.INDETERMINATE
+                    transaction.reconciliation_error = (
+                        "the exact managed-job queue record has no scheduler or workload "
+                        "observability evidence"
+                    )
+                    transaction.recovery_decision = "block_unobservable_existing_record"
+                    transaction.operator_remedy = (
+                        "Treat this as a possible pre-submit phantom, not a healthy job. "
+                        "Inspect the run with `npa workbench workflow status`, cancel the "
+                        "exact stale run with `npa workbench workflow cancel`, repair the "
+                        "shared controller with `npa skypilot cleanup-controller`, and "
+                        "resume the same run ID."
+                    )
+                    checkpoint()
+                    _raise_result(transaction)
+                transaction.state = LaunchState.ADOPTED
+                transaction.job_id = initial.job_id
+                transaction.recovery_decision = "adopt_existing"
+                if progress is not None:
+                    progress(f"reconciliation adopted exact managed job {initial.job_id}")
+                checkpoint()
+                return transaction
         if initial.state is not ReconciliationState.ABSENT:
             transaction.existence = "indeterminate"
             transaction.reconciliation_error = initial.error
@@ -629,7 +690,38 @@ def run_launch_transaction(
             else:
                 after_success = reconcile()
                 transaction.reconciliations.append(after_success.to_dict())
-                if after_success.state is ReconciliationState.FOUND:
+                # `sky jobs launch --async` returns after the API request is
+                # accepted, before the managed-job row is necessarily visible.
+                # Reconcile the exact logical name under the existing finite
+                # launch-transaction deadline; never interpret temporary
+                # absence as permission for a second provider submission.
+                reconciliation_sequence = 0
+                while (
+                    (
+                        after_success.state is ReconciliationState.ABSENT
+                        or (
+                            after_success.state is ReconciliationState.FOUND
+                            and is_terminal_failure_job_status(after_success.status)
+                        )
+                    )
+                    and clock() < deadline
+                ):
+                    reconciliation_sequence += 1
+                    delay = recovery_policy.delay(
+                        reconciliation_sequence,
+                        random_value=random_source(),
+                    )
+                    if progress is not None:
+                        progress(
+                            "launch accepted; waiting for exact managed-job observability"
+                        )
+                    sleeper(delay)
+                    after_success = reconcile()
+                    transaction.reconciliations.append(after_success.to_dict())
+                if (
+                    after_success.state is ReconciliationState.FOUND
+                    and not is_terminal_failure_job_status(after_success.status)
+                ):
                     transaction.existence = "found"
                     transaction.state = LaunchState.SUBMITTED
                     transaction.job_id = after_success.job_id
@@ -645,7 +737,8 @@ def run_launch_transaction(
                 transaction.state = LaunchState.INDETERMINATE
                 transaction.existence = "indeterminate"
                 transaction.reconciliation_error = after_success.error or (
-                    "launch returned success but the exact managed job was not visible"
+                    "launch returned success but no non-terminal exact managed job "
+                    "became visible before the reconciliation deadline"
                 )
                 transaction.recovery_decision = "block_after_uncertain_success"
                 transaction.operator_remedy = (
@@ -661,8 +754,31 @@ def run_launch_transaction(
             transaction.reconciliations.append(after_failure.to_dict())
             if after_failure.state is ReconciliationState.FOUND:
                 transaction.existence = "found"
-                transaction.state = LaunchState.ADOPTED
                 transaction.job_id = after_failure.job_id
+                if not after_failure.workload_observable:
+                    transaction.state = (
+                        LaunchState.INTERRUPTED
+                        if category is FailureCategory.INTERRUPTED
+                        else LaunchState.TERMINAL_FAILURE
+                        if state is EvidenceState.TERMINAL
+                        else LaunchState.INDETERMINATE
+                    )
+                    transaction.reconciliation_error = (
+                        "launch failed and the exact queue record never became "
+                        "observable to the scheduler or workload runtime"
+                    )
+                    transaction.recovery_decision = (
+                        "reject_unobservable_queue_record_after_launch_failure"
+                    )
+                    transaction.operator_remedy = (
+                        "The queue row may have been allocated before controller file "
+                        "sync. Do not poll it as a submitted workload. Inspect and cancel "
+                        "the exact run with NPA commands, repair the shared controller, "
+                        "then resume the same run ID."
+                    )
+                    checkpoint()
+                    _raise_result(transaction)
+                transaction.state = LaunchState.ADOPTED
                 transaction.recovery_decision = "adopt_after_uncertain_launch"
                 if progress is not None:
                     progress(

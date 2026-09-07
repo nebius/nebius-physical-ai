@@ -638,16 +638,17 @@ def _pipeline_prefix(config: TriggerConfig, *, run_id: str) -> str:
 
 
 #: The single canonical workflow the watcher launches: the staged VLM-to-RL loop.
-DEFAULT_PIPELINE_SPEC = "workbench/npa-workflows/sim2real.yaml"
+DEFAULT_PIPELINE_SPEC = "workflows/main/sim2real.yaml"
 
 
 def _default_pipeline_spec() -> Path:
     """Resolve the shipped spec, from a checkout or an installed wheel alike."""
 
-    root = Path(__file__).resolve().parents[3]
-    path = root / "workflows" / DEFAULT_PIPELINE_SPEC
-    if not path.exists():
-        raise SimToRealTriggerError(f"sim2real workflow spec not found: {path}")
+    from npa.orchestration.npa_workflow.blueprints import resolve_npa_workflow_spec
+
+    path = resolve_npa_workflow_spec(Path(DEFAULT_PIPELINE_SPEC).name)
+    if path is None:
+        raise SimToRealTriggerError(f"sim2real workflow spec not found: {DEFAULT_PIPELINE_SPEC}")
     return path
 
 

@@ -62,7 +62,13 @@ def test_rerun_public_surface() -> None:
     """npa.rerun exposes hosted Rerun sharing commands."""
     from npa import rerun
 
-    assert rerun.__all__ == ["host", "share", "list_shares", "revoke"]
+    assert rerun.__all__ == [
+        "configure_browser_cors",
+        "host",
+        "share",
+        "list_shares",
+        "revoke",
+    ]
     for name in rerun.__all__:
         assert callable(getattr(rerun, name))
 
@@ -212,6 +218,12 @@ def test_network_ensure_ingress_parses_cli_style_ports(mocker) -> None:
 
     mock_ensure = mocker.patch("npa.network._ensure_ingress", return_value="ok")
 
-    assert network.ensure_ingress(vm="vm-id", ports="5151,8080") == "ok"
+    assert (
+        network.ensure_ingress(
+            vm="vm-id", ports="5151,8080", source="203.0.113.50/32"
+        )
+        == "ok"
+    )
     mock_ensure.assert_called_once()
     assert mock_ensure.call_args.kwargs["ports"] == [5151, 8080]
+    assert mock_ensure.call_args.kwargs["source"] == "203.0.113.50/32"

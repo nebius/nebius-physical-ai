@@ -20,8 +20,9 @@ Reconcile `docs/workbench/container-image-catalog.md` after the image name, pin,
 packaging classification, and publication intent are stable:
 
 - Add or update a table row only when the image is selected by
-  `publicly_publishable_tools()` and its exact resolved tag is anonymously
-  pullable. Do not list a build, private-registry artifact, or merely
+  `publicly_publishable_tools()` (which excludes publication quarantine) and its
+  exact resolved tag is anonymously pullable. Do not list a build,
+  private-registry artifact, or merely
   redistribution-eligible image as published.
 - For a new solution that remains BYOF-only, restricted, internal, deferred, or
   otherwise outside the public plan, do not force it into the public table.

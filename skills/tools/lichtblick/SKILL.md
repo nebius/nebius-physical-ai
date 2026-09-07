@@ -106,8 +106,8 @@ pipeline):
   fallback: `GET /` always returns `index.html`.
 - `--host` / `--port` control the bind (default `0.0.0.0:8080`).
 - The CLI resolves the `npa-lichtblick` image via
-  `npa.deploy.images.container_image_for_tool` (registry from
-  `resolve_container_registry`; never hardcode registry IDs) and emits the
+  `npa.deploy.images.container_image_for_tool` (the supported default is public
+  GHCR; a custom image must be explicit) and emits the
   container run command + viewer URL. Container launch itself is performed by the
   deploy/workflow path, mirroring how `rerun-viewer` is workflow-launched.
 

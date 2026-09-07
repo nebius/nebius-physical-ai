@@ -1527,3 +1527,21 @@ def test_log_heldout_cameras_time_aligns_views() -> None:
     for view in ("primary", "side", "overhead"):
         assert counts[f"/heldout/camera/env-a/{view}/camera"] == 2
     assert end_seconds == 3.0 + 2 * viz_module.ROLLOUT_FRAME_SECONDS
+
+
+def test_embodiment_summary_makes_custom_robot_parity_visible() -> None:
+    markdown = viz_module._embodiment_markdown(
+        {
+            "embodiment": {
+                "embodiment_digest": "a" * 64,
+                "expected_action_dim": 8,
+                "expected_observation_dim": 36,
+                "resolved_usd_uri": "s3://private-run/resolved/robot.usd",
+                "runtime_dimension_validation": "passed",
+            }
+        }
+    )
+    assert "a" * 64 in markdown
+    assert "Action dimension: `8`" in markdown
+    assert "Observation dimension: `36`" in markdown
+    assert "Runtime parity: `passed`" in markdown

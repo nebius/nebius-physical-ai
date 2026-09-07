@@ -11,7 +11,7 @@ workflow surface — there is no plan, no stage graph, no decision artifact, and
 nothing for a `toolRef` to describe.
 
 **If you need a second stage, you need a workflow.** Author an
-`npa.workflow/v0.0.1` spec under `npa/workflows/workbench/npa-workflows/` instead
+`npa.workflow/v0.0.1` spec under `workflows/` instead
 (`skills/workflows/author-npa-workflow/SKILL.md`). `submit-yaml` rejects
 multi-task documents, and a guardrail pins the example set so a pipeline cannot
 quietly grow here.

@@ -89,7 +89,7 @@ def prepared(tmp_path: Path) -> dict[str, object]:
     run_id = "prepared-run-1"
     project = "private-alias"
     project_infra = "k8s/private-context"
-    source = "a" * 64
+    source = base
     spec_sandbox = "/tmp/npa-private-evidence/sim2real.yaml"
     argv = [
         "npa/.venv/bin/npa",
@@ -203,6 +203,39 @@ def test_receipt_tampering_is_rejected(prepared: dict[str, object]) -> None:
             context=prepared["context"],
         )
     assert error.value.classification == "receipt_tampered"
+
+
+def test_receipt_binds_one_explicit_resume_retry(
+    prepared: dict[str, object],
+) -> None:
+    request = dict(prepared["request"])
+    request["action_id"] = "resume-prepared-run-2"
+    request["runtime_policy"] = {
+        "runtime": True,
+        "resume": True,
+        "max_wait_seconds": 0,
+        "retries": 1,
+    }
+    argv = list(request["argv"])
+    insert_at = argv.index("--max-wait-seconds")
+    argv[insert_at:insert_at] = ["--retries", "1"]
+    request["argv"] = argv
+    control = prepared["control"]
+    assert isinstance(control, Path)
+    request_path = control / "resume-action-request.json"
+    receipt_path = control / "resume-action-receipt.json"
+    request_path.write_text(json.dumps(request))
+    os.chmod(request_path, 0o600)
+
+    receipt = create_receipt_from_request(request_path, receipt_path)
+
+    assert receipt["runtime_policy"]["retries"] == 1
+    assert receipt["argv"].count("--retries") == 1
+    validate_receipt(
+        receipt_path,
+        requested_action_id="resume-prepared-run-2",
+        context=prepared["context"],
+    )
 
 
 def test_value_bearing_request_inside_agent_mount_is_rejected(
@@ -575,6 +608,48 @@ def test_compaction_preserves_prepared_action_and_durable_submit() -> None:
     assert "Typed action available: submit_prepared_workflow" not in checkpoint["content"]
     assert _prepared_action_consumed_state(messages[2:]) is True
     assert _submitted_workflow_state(messages[2:]) == (True, ["prepared-run-1"])
+
+
+def test_consumed_prepared_action_does_not_hide_new_action() -> None:
+    messages = [
+        {
+            "role": "user",
+            "content": f"{PREPARED_ACTION_MARKER}\nAction ID: action-1",
+        },
+        {
+            "role": "tool",
+            "content": json.dumps(
+                {
+                    "schema": "npa.sim2real.prepared_workflow_action.result.v1",
+                    "action_consumed": True,
+                }
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                f"{PREPARED_ACTION_MARKER}\n"
+                "Typed action available: submit_prepared_workflow. "
+                "Action ID: action-2."
+            ),
+        },
+    ]
+
+    assert _prepared_action_consumed_state(messages) is True
+    assert _prepared_action_consumed_state(messages, "action-1") is True
+    assert _prepared_action_consumed_state(messages, "action-2") is False
+
+    checkpoint_messages = [
+        {"role": "system", "content": "system"},
+        {"role": "user", "content": "task"},
+        *messages,
+        {"role": "assistant", "content": "x" * 20_000},
+    ]
+    _, checkpoint = _context_checkpoint(checkpoint_messages, max_recent_chars=512)
+    assert '"action_id":"action-2"' in checkpoint["content"]
+    assert '"available":true' in checkpoint["content"]
+    assert "Action ID: action-2." in checkpoint["content"]
+    assert "Action ID: action-2.." not in checkpoint["content"]
 
 
 @pytest.mark.parametrize("durable_state", ["finished", "indeterminate"])

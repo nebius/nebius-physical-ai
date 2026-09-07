@@ -32,6 +32,12 @@ device plugin/GFD `v0.19.3`, MIG Manager `v0.14.2`, exact per-node resources,
 and zero whole-GPU capacity/allocatable. See
 `docs/fleet-rtx-pro-6000-mig.md` and `npa/examples/fleet/rtxpro-mig.yaml`.
 
+RTX rendering without MIG uses the separate explicit cluster setting
+`gpu_workload_profile: rtx-rendering`. It selects RTX PRO 6000, the supported
+single-GPU preset, GPU Operator mounted drivers, and mandatory per-node
+GLX/EGL/Vulkan readiness. It does not alter the empty/default managed-image
+contract and cannot be generalized to NVSwitch targets.
+
 ## Spec (npa.fleet/v0.0.1)
 
 The version remains additive. A cluster without `backend` is the historical
@@ -56,6 +62,8 @@ region: us-central1
 profile: ""                  # ~/.nebius profile to authenticate as; "" = active
 project_prefix: "fleet1-test-"
 defaults:
+  # Replace the next two driver lines with
+  # gpu_workload_profile: rtx-rendering for RTX/Isaac rendering clusters.
   gpu_driver_mode: auto
   managed_driver_preset: cuda13.0
   allow_unsafe_nvswitch_operator: false

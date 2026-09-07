@@ -60,6 +60,7 @@ dependencies = [
     "rerun-sdk==0.31.4",
     # Formerly the `server` extra: FastAPI policy/eval + agent backend server.
     "fastapi~=0.136.1",
+    "python-multipart>=0.0.20",
 ]
 
 [project.optional-dependencies]
@@ -154,21 +155,26 @@ dev = [
 npa = "npa.cli.entry:main"
 
 [tool.npa.supported-tools]
+openpi = "pi05-full-droid-rlds-cu128-unbuilt"
 # Default LeRobot image release. Selectable package versions and their image tags
 # live in npa/src/npa/deploy/lerobot_version_manifest.json (0.5.1 + 0.6.0).
 lerobot = "cuda13-b300-0.5.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
+sim2real-control = "0.1.2-sim2real-coherent-20260904"
 lerobot-policy = "0.1.1"
 genesis = "cuda13-b300-0.4.6-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
-isaac-lab = "2.3.2.post1"
+isaac-lab = "3.0.0b2.post1-sim2real-coherent-20260904"
 leisaac = "0.4.0-20260817T231825Z"
 cosmos = "cu128-torch27-sm100-1.0.9-20260803T002017Z"
-cosmos2-transfer = "2.5.1-sam2-multigpu-20260817-r2"
+cosmos2-transfer = "2.5.1-sim2real-coherent-20260904"
 # Additive r5 image release for cosmos-framework 1.2.2 (pinned commit) + torch
 # cu130 with the attested SkyPilot bootstrap closure. The immutable
 # earlier tags remain provenance; r5 excludes wheel-bundled FFmpeg and keeps the
 # no-argv worker pod alive for SkyPilot bootstrap; weights stay out.
 cosmos3 = "1.2.2-cu130-r6"
+cosmos3-ray-serve = "ray1-cu130"
 cosmos3-serving = "0.2.0-oss"
+cosmos3-super-benchmark = "0.1.0"
+cosmos3-nano-video = "0.1.0"
 cosmos3-reason = "cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
 # Cosmos Curator: NVIDIA upstream checkout + GPU-free curation stage deps.
 cosmos-curate = "0.1.2-skypilot-v1-20260813T164700Z"
@@ -180,20 +186,22 @@ fiftyone = "1.15.0-post1-skypilot-v1-20260815-review5"
 sonic = "cuda13-b300-0.1.2-k8s-runtime-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
 sonic-mujoco = "0.2.0-runtime"
 retargeting = "0.1.1"
-envgen = "cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
+envgen = "0.1.2-sim2real-coherent-20260904"
+robocasa = "0.1.0"
 reference-policy = "cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
 lerobot-vlm-rl = "cuda13-b300-0.1.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
 loop-eval = "cuda13-b300-0.1.3-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
-rerun-viewer = "0.31.4-skypilot-v1-20260815-review5-r2"
+rerun-viewer = "0.31.4-sim2real-coherent-20260904"
 # Tracks the pinned @foxglove/embed SDK release (npa.workbench.foxglove).
 foxglove-embed = "0.58.0"
 # Lichtblick (MPL-2.0): OSS, Foxglove-compatible static web viewer bundle tag.
 lichtblick = "1.26.0"
 lancedb = "cuda13-b300-0.30.3-sm80-sm90-sm100-sm103-sm120-20260803T031514Z"
-detection-training = "bdd100k-golden-eval-smoke-20260614T210000Z"
+detection-training = "runtime-v1-20260905"
 wan2-2 = "2.2-ti2v5b-rtfetch-cu130-20260817"
 ltx2 = "2.5-rtfetch-20260817"
 alpamayo2-super = "0.1.0-cu128"
+curobo = "0.8.0-cuda13-b300-unbuilt"
 content-agents = "0.5.2-npa2"
 nebius-cli = "0.12.254"
 terraform = "~> 0.5.201"
@@ -215,8 +223,19 @@ reference-policy = "0.1.2"
 lerobot-vlm-rl = "0.1.1"
 loop-eval = "0.1.3"
 
+[tool.hatch.build]
+# The hook selects the current catalog; stale generated copies are never inputs.
+exclude = ["src/npa/workflows/main", "src/npa/workflows/testing"]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/npa"]
+
+[tool.hatch.build.hooks.custom]
+path = "src/npa/workflow_build.py"
+
+[tool.hatch.build.targets.sdist.force-include]
+# The wheel requires this git-ignored lockfile when rebuilt from an sdist.
+"src/npa/deploy/terraform/.terraform.lock.hcl" = "src/npa/deploy/terraform/.terraform.lock.hcl"
 
 [tool.hatch.build.targets.wheel.force-include]
 "src/npa/solutions/solutions.toml" = "npa/solutions/solutions.toml"
@@ -229,8 +248,6 @@ packages = ["src/npa"]
 "src/npa/deploy/terraform/.terraform.lock.hcl" = "npa/deploy/terraform/.terraform.lock.hcl"
 "src/npa/deploy/terraform/.terraform.lock.npa.json" = "npa/deploy/terraform/.terraform.lock.npa.json"
 "src/npa/smoke/golden_evals.yaml" = "npa/smoke/golden_evals.yaml"
-"workflows/workbench/npa-workflows/sim2real.yaml" = "npa/workflows/workbench/npa-workflows/sim2real.yaml"
-"workflows/workbench/npa-workflows/physical-ai-data-factory.yaml" = "npa/workflows/workbench/npa-workflows/physical-ai-data-factory.yaml"
 "src/npa/cli/agent_ui.html" = "npa/cli/agent_ui.html"
 "src/npa/assets/paidf_starter_video.json" = "npa/assets/paidf_starter_video.json"
 
@@ -265,6 +282,7 @@ addopts = "-v --tb=short"
 markers = [
     "e2e: end-to-end tests requiring real Nebius infrastructure (gated on NPA_INTEGRATION_E2E env var).",
     "e2e_serverless: serverless endpoint e2e tests requiring real Nebius Serverless AI infrastructure.",
+    "public_inputs: live workload uses public/generated inputs and does not require a Hugging Face account entitlement.",
     "e2e_skypilot: SkyPilot e2e tests requiring Nebius, MK8s, and SkyPilot-managed jobs.",
     "e2e_pipeline: pipeline composition e2e tests that submit multiple real Nebius Serverless AI Jobs.",
     "smoke: smoke tests that exercise CLI subprocess paths with local fakes.",

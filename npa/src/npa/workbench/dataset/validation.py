@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from npa.workbench.storage_scope import StorageAuthorizationError
+
 from .ingestion import compute_manifest_sha256
 from .schemas import (
     VALIDATION_REPORT_SCHEMA,
@@ -26,6 +28,8 @@ def validate_manifest(request: ValidateRequest) -> ValidateResponse:
     """Run schema + quality-metric checks and emit a validation report."""
     try:
         manifest = read_json_uri(request.input_uri)
+    except StorageAuthorizationError:
+        raise
     except FileNotFoundError as exc:
         raise DatasetValidationError(f"dataset manifest not found: {request.input_uri}") from exc
     except Exception as exc:

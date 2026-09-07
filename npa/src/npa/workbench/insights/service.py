@@ -6,9 +6,17 @@ import hmac
 import logging
 import os
 import platform
-from typing import Any
+from pathlib import Path
+from typing import Any, Sequence
 
 from fastapi import FastAPI, Header, HTTPException, Query, Request
+from fastapi.responses import JSONResponse
+
+from npa.workbench.storage_scope import (
+    StorageAuthorizationError,
+    StorageScope,
+    use_storage_scope,
+)
 
 from .analytics import (
     InsightsQueryError,
@@ -40,10 +48,26 @@ STORES: dict[str, dict[str, Any]] = {}
 LOGGER = logging.getLogger(__name__)
 
 
-def create_app(*, auth_mode: str | None = None, token: str | None = None) -> FastAPI:
+def create_app(
+    *,
+    auth_mode: str | None = None,
+    token: str | None = None,
+    allowed_s3_roots: Sequence[str] | None = None,
+    allowed_local_roots: Sequence[str | Path] | None = None,
+) -> FastAPI:
     """Create the insights FastAPI application."""
-    resolved_auth_mode = auth_mode or os.environ.get("INSIGHTS_AUTH_MODE", "none")
+    resolved_auth_mode = auth_mode or os.environ.get("INSIGHTS_AUTH_MODE", "token")
+    if resolved_auth_mode not in {"token", "none"}:
+        raise ValueError("INSIGHTS_AUTH_MODE must be 'token' or explicit 'none'")
     resolved_token = token if token is not None else os.environ.get("INSIGHTS_TOKEN", "")
+    storage_scope = (
+        StorageScope.from_env("INSIGHTS")
+        if allowed_s3_roots is None and allowed_local_roots is None
+        else StorageScope.from_config(
+            s3_roots=allowed_s3_roots or (),
+            local_roots=allowed_local_roots or (),
+        )
+    )
     app = FastAPI(title="NPA Insights")
     if resolved_auth_mode == "none":
         LOGGER.warning(
@@ -51,11 +75,20 @@ def create_app(*, auth_mode: str | None = None, token: str | None = None) -> Fas
             "without a token. Set INSIGHTS_AUTH_MODE=token and INSIGHTS_TOKEN."
         )
 
+    @app.middleware("http")
+    async def apply_storage_scope(request: Request, call_next):
+        with use_storage_scope(storage_scope):
+            return await call_next(request)
+
+    @app.exception_handler(StorageAuthorizationError)
+    async def storage_denied(_request: Request, exc: StorageAuthorizationError) -> JSONResponse:
+        return JSONResponse(status_code=403, content={"detail": str(exc)})
+
     async def require_auth(request: Request, authorization: str = Header(default="")) -> None:
         if resolved_auth_mode == "none":
             return
         if not resolved_token:
-            raise HTTPException(status_code=500, detail="INSIGHTS_TOKEN is not configured")
+            raise HTTPException(status_code=503, detail="INSIGHTS_TOKEN is not configured")
         if not hmac.compare_digest(authorization, f"Bearer {resolved_token}"):
             raise HTTPException(status_code=401, detail="invalid token")
 

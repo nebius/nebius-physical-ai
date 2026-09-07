@@ -37,23 +37,33 @@ def test_every_active_variant_declares_its_workloads() -> None:
         assert sonic_variant_workloads(variant)
 
 
-@pytest.mark.parametrize("workload", [FINETUNE, TRAIN])
-def test_datacenter_target_does_not_substitute_the_mujoco_variant(workload: str) -> None:
+@pytest.mark.parametrize("workload", [FINETUNE, TRAIN, ISAAC_RENDER])
+@pytest.mark.parametrize("target", ["gpu-b200", "NVIDIA B200 Blackwell", "blackwell-b200"])
+def test_datacenter_target_does_not_substitute_the_mujoco_variant(workload: str, target: str) -> None:
     with pytest.raises(ValueError) as excinfo:
-        sonic_image_variant_for_gpu("gpu-b200", workload=workload)
+        sonic_image_variant_for_gpu(target, workload=workload)
 
     message = str(excinfo.value)
     assert "sonic-mujoco-runtime-fetch" in message
     assert workload in message
     # The operator is told what to do instead of being handed a different image.
     assert "--image" in message
+    assert "sonic-l40s-baked" not in message
+    assert "sonic-mujoco-h100-mvp" not in message
 
 
-def test_mujoco_eval_still_resolves_on_a_datacenter_target() -> None:
+@pytest.mark.parametrize("target", ["gpu-b200", "NVIDIA B200 Blackwell", "blackwell-b200"])
+def test_mujoco_eval_still_resolves_on_a_datacenter_target(target: str) -> None:
     assert (
-        sonic_image_variant_for_gpu("gpu-b200", workload=MUJOCO_EVAL)
+        sonic_image_variant_for_gpu(target, workload=MUJOCO_EVAL)
         == "sonic-mujoco-runtime-fetch"
     )
+
+
+@pytest.mark.parametrize("workload", [None, FINETUNE, TRAIN, ISAAC_RENDER, MUJOCO_EVAL])
+def test_b300_family_name_does_not_select_workstation_image(workload: str | None) -> None:
+    with pytest.raises(ValueError, match="Unsupported SONIC GPU target"):
+        sonic_image_variant_for_gpu("blackwell-b300", workload=workload)
 
 
 @pytest.mark.parametrize("workload", [FINETUNE, TRAIN, ISAAC_RENDER, MUJOCO_EVAL])

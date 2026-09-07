@@ -2735,6 +2735,10 @@
         }
       }
       let activeChatSessionId = "default";
+      let chatSessionSelectionGeneration = 0;
+      let chatSessionMutationGeneration = 0;
+      let chatSessionMutationQueue = Promise.resolve();
+      const chatSessionSnapshotGenerations = new WeakMap();
       let chatSendInFlight = false;
       const chatQueue = [];
       let chatQueueDrain = null;
@@ -2743,6 +2747,11 @@
       let activeMainTab = "main";
       let chatDrawerOpen = false;
       const LEISAAC_CONTROL_READINESS_CONTRACT = "LEISAAC_CONTROL_READINESS_CONTRACT";
+      // Bootstrap renders this value from the operator's strict boolean config.
+      const LEISAAC_UI_ENABLED = {LEISAAC_UI_ENABLED};
+      function leisaacUiEnabled() {
+        return LEISAAC_UI_ENABLED === true;
+      }
       function updateChatQueueBadge() {
         const badge = document.getElementById("chatQueueBadge");
         if (!badge) return;
@@ -6427,6 +6436,7 @@
         setLeIsaacStreamState("Disconnected", "pending");
       }
       function ensureLeIsaacTab(status) {
+        if (!leisaacUiEnabled()) return;
         const tabs = document.querySelector(".main-tabs");
         const page = document.querySelector("main.page");
         if (!tabs || !page) return;
@@ -6654,6 +6664,7 @@
         };
       }
       async function refreshLeIsaacCapability(runId) {
+        if (!leisaacUiEnabled()) return null;
         const target = String(runId || "").trim();
         const mountedPanel = document.getElementById("panelLeIsaac");
         const mountedRun = String(
@@ -7138,6 +7149,14 @@
           (item) => String((item && item.id) || "") === selectedAccessProjectId,
         );
         const project = projectIndex >= 0 ? projects[projectIndex] : null;
+        const projectHint = document.getElementById("agentAccessProjectHint");
+        const bucketHint = document.getElementById("agentAccessBucketHint");
+        if (projectHint) projectHint.textContent = project
+          ? (projects.length === 1 ? "Only available project · selected: " : "Selected project: ") + String(project.name || project.id)
+          : "No project is available to select.";
+        if (bucketHint) bucketHint.textContent = selectedAccessBucketName
+          ? (accessProjectResources(project).length === 1 ? "Only available bucket · selected: " : "Selected bucket: ") + selectedAccessBucketName
+          : "No bucket is available in the selected project.";
         if (!project) {
           projectsHost.innerHTML = '<p class="hint">No project identity is visible to this agent.</p>';
           return;
@@ -7203,6 +7222,41 @@
           "</div>" +
           '<div class="access-resources">' + resourceHtml + "</div></article>";
       }
+      function syncAccessBrowseScope(activate) {
+        // The cards and the run browser must describe the same resource after
+        // an operator selects a new pair. Previously only the List button set
+        // this scope, leaving Discover and search pointed at the previous bucket.
+        // Initial hydration keeps independent first-page discovery; an explicit
+        // dropdown change immediately activates the operator's selected scope.
+        if (!activeArtifactBrowseScope && !activate) return;
+        const next = {
+          projectId: selectedAccessProjectId,
+          resourceBucket: selectedAccessBucketName,
+          unavailable: !selectedAccessProjectId,
+        };
+        const previous = activeArtifactBrowseScope;
+        if (previous && previous.projectId === next.projectId && previous.resourceBucket === next.resourceBucket) return;
+        // Changing storage scope supersedes pending run loads and refreshes,
+        // including demo mount continuations that resume after details abort.
+        selectedRunLoadGeneration += 1;
+        activeRunSelectionGeneration += 1;
+        cancelAccessAction(true);
+        runSearchRequestId += 1;
+        artifactLoadRequestId += 1;
+        if (artifactRunsAbortController) artifactRunsAbortController.abort();
+        activeArtifactBrowseScope = next;
+        discoveredArtifactRuns = [];
+        clearVisibleRunState(next.unavailable
+          ? "No project is available. Refresh access before listing artifacts."
+          : "Storage selection changed. List artifacts in the selected project and bucket.");
+        applyMergedRunSelectors("");
+        const status = document.getElementById("artifactDiscoverStatus");
+        if (status) status.textContent = next.unavailable
+          ? "No project is available. Refresh access before listing artifacts."
+          : "Selected project " + next.projectId +
+          (next.resourceBucket ? " · bucket " + next.resourceBucket : " · no bucket available") +
+          ". List artifacts to discover runs.";
+      }
       function selectAccessProject(projectId, options) {
         const opts = options || {};
         const projects = sortedAccessProjects(currentAccessReport);
@@ -7219,6 +7273,7 @@
         if (picker && picker.value !== requested) picker.value = requested;
         populateAccessBucketPicker(selected, !projectChanged);
         renderSelectedAccessProject();
+        syncAccessBrowseScope(!opts.renderOnly);
         return true;
       }
       function selectAccessBucket(bucketName) {
@@ -7233,6 +7288,7 @@
         const picker = document.getElementById("agentAccessBucketSelect");
         if (picker && picker.value !== requested) picker.value = requested;
         renderSelectedAccessProject();
+        syncAccessBrowseScope(true);
         return true;
       }
       function renderAccessReport(report) {
@@ -7308,6 +7364,7 @@
           persistAccessProjectId("");
           setAccessBucketPlaceholder("Select a project first");
           renderSelectedAccessProject();
+          syncAccessBrowseScope();
         }
         const errors = Array.isArray(report && report.errors) ? report.errors : [];
         if (errorsHost) {
@@ -7319,7 +7376,6 @@
       async function refreshAccess(force) {
         const invalidatedAction = cancelAccessAction(true);
         if (force && invalidatedAction) {
-          activeArtifactBrowseScope = null;
           discoveredArtifactRuns = [];
           applyMergedRunSelectors("");
           clearVisibleRunState("Access refreshed. Select a resource to list or read fresh artifacts.");
@@ -7652,7 +7708,7 @@
           () => refreshArtifactRuns("", { interactive: true }),
           "Discover artifact runs"
         );
-        bindClick("artifactLoadRunArtifacts", loadArtifactsForSelectedRun, "List run artifacts");
+        bindClick("artifactLoadRunArtifacts", completeSelectedArtifactInventory, "List run artifacts");
         bindClick("loadRerunViewer", () => loadRerunViewer(), "Reload Rerun data");
         bindClick("describeVisual", describeVisual, "Describe this");
         bindClick("openRerun", openRerunTab, "Open Rerun");
@@ -7764,9 +7820,15 @@
           const node = document.getElementById(id);
           if (node) {
             node.addEventListener("change", async () => {
-              const selectedRun = selectedRunIdFromUi();
+              // These controls filter the inventory currently on screen. Its
+              // verified source is more precise than a lightweight discovery
+              // option, which may not have a run reference yet.
+              const inventory = activeArtifactInventoryPage;
+              const selectedRun = inventory
+                ? String(inventory.run_ref || inventory.run_id || "")
+                : selectedRunIdFromUi();
               if (!selectedRun) return;
-              const selectedEntry = runEntryFromSelect(document.getElementById("runIdSelect")) ||
+              const selectedEntry = inventory || runEntryFromSelect(document.getElementById("runIdSelect")) ||
                 runEntryFromSelect(document.getElementById("stagesRunSelect"));
               // A filter/sort change only re-renders the inventory. Do not let
               // its asynchronous refresh auto-open the preferred object after
@@ -7774,6 +7836,7 @@
               // preview; that would silently replace the chosen evidence.
               await loadArtifactsForSelectedRun(selectedRun, null, selectedEntry, {
                 deferPreferredViewer: true,
+                reuseInventory: true,
               });
             });
           }
@@ -8202,41 +8265,59 @@
           select.appendChild(opt);
         }
       }
+      function chatSessionRefreshIsCurrent(generation) {
+        return generation === chatSessionSelectionGeneration && !chatSessionMutationGeneration;
+      }
       async function refreshChatSessions(activeId) {
+        const generation = chatSessionSelectionGeneration;
         const data = await apiJson("/api/chat/sessions");
-        activeChatSessionId = String(data.active_session_id || activeId || activeChatSessionId || "default");
+        if (!chatSessionRefreshIsCurrent(generation)) return data;
+        activeChatSessionId = String(activeId || data.active_session_id || activeChatSessionId || "default");
         updateChatSessionSelector(data.sessions, activeChatSessionId);
         return data;
       }
+      async function changeChatSession(sessionId, create) {
+        // Invalidate older discovery before any await, and block refreshes while
+        // the server is changing its active session. A second selection wins.
+        const generation = ++chatSessionSelectionGeneration;
+        chatSessionMutationGeneration = generation;
+        const previousMutation = chatSessionMutationQueue;
+        const mutationCompletion = {};
+        chatSessionMutationQueue = new Promise((resolve) => { mutationCompletion.resolve = resolve; });
+        try {
+          // Serialize server writes as well as local selection. Otherwise an
+          // older POST can save last and be restored by the next fresh GET.
+          await previousMutation;
+          if (generation !== chatSessionSelectionGeneration) return false;
+          if (chatQueueDrain) await chatQueueDrain;
+          if (generation !== chatSessionSelectionGeneration) return false;
+          const safeId = String(sessionId || "default").trim() || "default";
+          const path = create ? "/api/chat/sessions"
+            : "/api/chat/sessions/" + encodeURIComponent(safeId) + "/select";
+          const data = await apiJson(path, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(create ? { title: "New chat" } : {}),
+          });
+          if (generation !== chatSessionSelectionGeneration) return false;
+          // Also invalidate refreshes that started during this mutation.
+          chatSessionSelectionGeneration += 1;
+          const session = data.session || {};
+          activeChatSessionId = String(data.active_session_id || session.id || safeId);
+          updateChatSessionSelector(data.sessions, activeChatSessionId);
+          renderChatHistory(create ? [] : (session.chat_history || []));
+          showToast(create ? "New chat session ready" : "Loaded chat session", "success");
+          return create ? true : session;
+        } finally {
+          if (chatSessionMutationGeneration === generation) chatSessionMutationGeneration = 0;
+          mutationCompletion.resolve();
+        }
+      }
       async function selectChatSession(sessionId) {
-        // Wait for in-flight chat jobs so replies do not paint into the wrong session.
-        if (chatQueueDrain) await chatQueueDrain;
-        const safeId = String(sessionId || "default").trim() || "default";
-        const data = await apiJson("/api/chat/sessions/" + encodeURIComponent(safeId) + "/select", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({}),
-        });
-        const session = data.session || {};
-        activeChatSessionId = String(data.active_session_id || session.id || safeId);
-        updateChatSessionSelector(data.sessions, activeChatSessionId);
-        renderChatHistory(session.chat_history || []);
-        showToast("Loaded chat session", "success");
-        return session;
+        return changeChatSession(sessionId, false);
       }
       async function createNewChatSession() {
-        if (chatQueueDrain) await chatQueueDrain;
-        const data = await apiJson("/api/chat/sessions", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ title: "New chat" }),
-        });
-        const session = data.session || {};
-        activeChatSessionId = String(data.active_session_id || session.id || "default");
-        updateChatSessionSelector(data.sessions, activeChatSessionId);
-        renderChatHistory([]);
-        showToast("New chat session ready", "success");
-        return true;
+        return changeChatSession("default", true);
       }
       let lastAppliedDraftYaml = "";
       function setWorkflowYaml(text, validation) {
@@ -8448,6 +8529,22 @@
             }
             if (data && data.session_id) {
               activeChatSessionId = String(data.session_id);
+            }
+            if (data && Array.isArray(data.open_urls)) {
+              const allowedApprovalHosts = new Set([
+                "huggingface.co",
+                "catalog.ngc.nvidia.com",
+                "ngc.nvidia.com",
+                "docs.nvidia.com",
+              ]);
+              for (const rawUrl of data.open_urls) {
+                try {
+                  const approvalUrl = new URL(String(rawUrl));
+                  if (approvalUrl.protocol !== "https:" || !allowedApprovalHosts.has(approvalUrl.hostname)) continue;
+                  const opened = window.open(approvalUrl.href, "_blank", "noopener,noreferrer");
+                  if (opened) opened.opener = null;
+                } catch (_approvalUrlError) { /* invalid or blocked URL: reply retains clickable official links */ }
+              }
             }
             const reply = normalizeAssistantReply(data.reply || "");
             if (reply) {
@@ -8705,21 +8802,15 @@
         return copy;
       }
       let rerunCaptureBridge = null;
+      let rerunCapturePrimeGeneration = 0;
       function captureStreamWithFrameFallback(canvas) {
-        // A zero-rate canvas stream is useful only when the browser exposes a
-        // requestFrame-capable track. Partial implementations otherwise leave a
-        // static Rerun scene permanently idle, so replace them with a 30 fps stream.
-        const manual = canvas.captureStream(0);
-        const track = manual && manual.getVideoTracks && manual.getVideoTracks()[0];
-        if (track && typeof track.requestFrame === "function") return manual;
-        if (manual && manual.getTracks) {
-          manual.getTracks().forEach((item) => {
-            try { item.stop(); } catch (_err) { /* ignore */ }
-          });
-        }
+        // Rerun's non-preserved WebGL canvas needs a stream that stays active
+        // across presents. A zero-rate/requestFrame track can freeze the first
+        // in-canvas loading paint even though later environment frames are
+        // visible in the browser compositor.
         return canvas.captureStream(30);
       }
-      function stopRerunCaptureBridge() {
+      function disposeRerunCaptureBridge() {
         if (!rerunCaptureBridge) return;
         try {
           if (rerunCaptureBridge.stream && rerunCaptureBridge.stream.getTracks) {
@@ -8732,6 +8823,10 @@
           }
         } catch (_err) { /* ignore */ }
         rerunCaptureBridge = null;
+      }
+      function stopRerunCaptureBridge() {
+        rerunCapturePrimeGeneration += 1;
+        disposeRerunCaptureBridge();
       }
       function ensureRerunCaptureBridge(iframe, opts) {
         // Keep a live MediaStream→<video> mirror of the Rerun canvas. Sync WebGL
@@ -8752,7 +8847,9 @@
           ) {
             return rerunCaptureBridge;
           }
-          stopRerunCaptureBridge();
+          // Replacing a stale canvas must not cancel the mount-time primer: the
+          // iframe document can replace its canvas while Rerun WASM starts.
+          disposeRerunCaptureBridge();
           const stream = captureStreamWithFrameFallback(canvas);
           const video = document.createElement("video");
           video.setAttribute("playsinline", "");
@@ -8772,18 +8869,42 @@
           return null;
         }
       }
+      function primeRerunCaptureBridge(iframe, timeoutMs) {
+        // captureStream must be attached while Rerun is painting. Its WebGL
+        // canvas does not preserve the presented buffer, so a stream first
+        // created by a later Describe-this click can remain live yet never
+        // produce a decodable frame. Poll through iframe/WASM startup and keep
+        // the latest bridge through the whole startup window. Rerun can decode
+        // and paint its loading canvas, then replace that canvas when the real
+        // recording view is installed. Stopping at the first decoded frame
+        // leaves Describe-this attached to the detached loading canvas.
+        const generation = ++rerunCapturePrimeGeneration;
+        const deadline = Date.now() + Math.max(800, Number(timeoutMs || 12000));
+        const tick = () => {
+          if (generation !== rerunCapturePrimeGeneration) return;
+          const bridge = ensureRerunCaptureBridge(iframe);
+          // Keep following canvas replacements through the full startup window,
+          // even after the current canvas has produced a decodable video frame.
+          // ensureRerunCaptureBridge is a cheap identity check when it is stable.
+          if (Date.now() < deadline && iframe && !iframe.hidden) {
+            window.setTimeout(tick, 40);
+          }
+        };
+        tick();
+      }
       async function grabFromRerunCaptureBridge(timeoutMs, opts) {
         const budget = Math.max(200, Number(timeoutMs || 2500));
         const run = async () => {
           const iframe = document.getElementById("rerunFrame");
-          // Fresh stream avoids returning stale composited frames after canvas repaints (gray/splash).
-          let restarted = Boolean(opts && opts.forceRestart);
-          let bridge = ensureRerunCaptureBridge(iframe, { forceRestart: restarted });
+          // Preserve the mount-time stream unless a caller explicitly requests
+          // a restart. A live late-created track can expose the right canvas
+          // dimensions while never producing its first decodable video frame.
+          const forceRestart = Boolean(opts && opts.forceRestart);
+          let bridge = ensureRerunCaptureBridge(iframe, { forceRestart });
           if (!bridge || !bridge.video) return "";
           await playVideoSoon(bridge.video, Math.min(300, budget));
           const fallbackBudget = Math.min(1200, Math.max(400, Math.floor(budget / 3)));
           const deadline = Date.now() + Math.max(200, budget - fallbackBudget);
-          const restartAt = Date.now() + Math.max(120, Math.floor((budget - fallbackBudget) * 0.55));
           while (Date.now() < deadline) {
             try {
               const track = bridge.stream && bridge.stream.getVideoTracks && bridge.stream.getVideoTracks()[0];
@@ -8799,16 +8920,6 @@
                 }
               }
             } catch (_grabErr) { /* retry */ }
-            // Chromium can retain a captureStream track that is live but stops
-            // publishing after the WebGL canvas repaints.  Give the existing
-            // bridge a fair chance, then replace it within the same bounded
-            // budget instead of returning a false metadata-only result.
-            if (!restarted && Date.now() >= restartAt) {
-              restarted = true;
-              bridge = ensureRerunCaptureBridge(iframe, { forceRestart: true });
-              if (!bridge || !bridge.video) return "";
-              await playVideoSoon(bridge.video, Math.min(300, Math.max(100, deadline - Date.now())));
-            }
             await new Promise((r) => window.setTimeout(r, 80));
           }
           // Some headless/accelerated browsers expose a valid capture stream but
@@ -8974,8 +9085,10 @@
           const iframe = document.getElementById("rerunFrame");
           if (!iframe || iframe.hidden) return { dataUrl: "", quality: "missing" };
           const deadline = Date.now() + budget;
-          // Restart bridge so we never return frames composited before the latest canvas paint.
-          ensureRerunCaptureBridge(iframe, { forceRestart: true });
+          // Preserve the mount-time bridge. Replacing it here creates a stream
+          // after Rerun's non-preserved WebGL buffer was presented and cleared,
+          // which Chromium reports as live but never turns into a video frame.
+          ensureRerunCaptureBridge(iframe);
           let heavyAttempts = 0;
           while (Date.now() < deadline) {
             try {
@@ -9424,7 +9537,12 @@
         const runRef = String(activeArtifactRunRef || "").trim();
         const operation = foxgloveWebOperation;
         let staleOperationCancelled = false;
-        if (operation && (operation.runId !== runId || operation.runRef !== runRef)) {
+        // Discovery refreshes may replace an empty/legacy run_ref with the
+        // canonical reference for the same active run.  That is metadata
+        // normalization, not an operator selection change, and must not cancel
+        // a popup after its export request has already succeeded. Exact artifact
+        // opens verify the server's echoed key/source before navigation below.
+        if (operation && operation.runId !== runId) {
           operation.stale = true;
           if (operation.popup) {
             try { operation.popup.close(); } catch (_closeErr) { /* best effort */ }
@@ -9667,7 +9785,7 @@
             Date.now() - rerunRecordingActivatedAt < activationSettleMs
           ) return false;
           if (rerunViewerShowsBundleSplash(iframe)) return false;
-          const bridged = await grabFromRerunCaptureBridge(500, { forceRestart: true });
+          const bridged = await grabFromRerunCaptureBridge(500, { forceRestart: false });
           if (bridged) {
             lastRerunNonBlankAt = Date.now();
             return true;
@@ -9726,14 +9844,16 @@
           return false;
         }
       }
-      function scheduleRerunBundleUncover(iframe) {
+      function scheduleRerunBundleUncover(iframe, isCurrent = () => true) {
         // Uncover without blocking mount latency — poll in the background only.
         // Require non-blank canvas; do not uncover merely because DOM splash text is gone.
+        if (!isCurrent()) return Promise.resolve({ ok: false, superseded: true });
         if (safeHideRerunBundleCover(iframe)) {
           return Promise.resolve({ ok: true, immediate: true });
         }
         showRerunBundleCover("Opening viewer…", "Almost ready…");
-        return waitUntilRerunPastBundleSplash(iframe, 45000).then((past) => {
+        return waitUntilRerunPastBundleSplash(iframe, 45000, isCurrent).then((past) => {
+          if (!isCurrent()) return { ok: false, superseded: true };
           if (safeHideRerunBundleCover(iframe)) {
             return past;
           }
@@ -9747,13 +9867,14 @@
           return past;
         });
       }
-      async function waitUntilRerunPastBundleSplash(iframe, timeoutMs) {
+      async function waitUntilRerunPastBundleSplash(iframe, timeoutMs, isCurrent = () => true) {
         // Keep our cover up until Rerun's splash is gone AND pixels look non-blank
         // (async createImageBitmap probe — sync WebGL drawImage is often cleared).
         const timeout = Math.max(2000, Number(timeoutMs || 45000));
         const start = Date.now();
         let sawSplash = false;
         while (Date.now() - start < timeout) {
+          if (!isCurrent()) return { ok: false, superseded: true };
           const splash = rerunViewerShowsBundleSplash(iframe);
           if (splash) sawSplash = true;
           if (!splash && (await probeRerunCanvasContent(iframe))) {
@@ -9768,24 +9889,27 @@
           timedOut: true,
         };
       }
-      async function resolveRerunRecordingUrl() {
+      async function resolveRerunRecordingUrl(isCurrent = () => true) {
+        if (!isCurrent()) return "";
         if (!/^\/rerun\/recordings\/cap-[A-Za-z0-9_-]{43}\.rrd$/.test(RERUN_RECORDING_PATH)) {
           throw new Error("Rerun recording capability is unavailable");
         }
         const cacheBust = "?t=" + String(Date.now());
         const recordingUrl = location.origin + RERUN_RECORDING_PATH + cacheBust;
         const resp = await fetchWithTimeout(RERUN_RECORDING_PATH, { credentials: "include", method: "HEAD" }, 8000);
+        if (!isCurrent()) return "";
         if (!resp.ok) {
           throw new Error("Rerun recording not published yet");
         }
         setRerunBlobStatus(RERUN_BLOB_SUCCESS, "recording=capability");
         return recordingUrl;
       }
-      async function rerunIframeSrc(camera, runId) {
+      async function rerunIframeSrc(camera, runId, isCurrent = () => true) {
         const cam = String(camera || "workspace");
         let rrdUrl = "";
         try {
-          rrdUrl = await resolveRerunRecordingUrl();
+          rrdUrl = await resolveRerunRecordingUrl(isCurrent);
+          if (!isCurrent()) return "";
           // Still verify the authenticated blob path; the viewer itself loads
           // the unauthenticated recording copy because Rerun's WASM fetch path
           // does not reliably consume parent-created blob URLs across browsers.
@@ -9800,6 +9924,7 @@
           // so the fallback raised ReferenceError instead of returning a URL.
           rrdUrl = location.origin + "/api/sim-viz/rrd-blob?t=" + String(Date.now());
         }
+        if (!isCurrent()) return "";
         // Prefer the public recording copy; authenticated blob fetch remains the fallback.
         // Rerun parses path-only `/rerun/...` as host `rerun` → http://rerun/... (broken).
         if (rrdUrl.startsWith("/")) {
@@ -9968,7 +10093,11 @@
             : "Checking this run for a Rerun recording...";
       }
       function setRenderMode(mode, options) {
-        const next = String(mode || "rerun");
+        const requested = String(mode || "rerun");
+        // Status keeps artifact types (json/text/download), whereas the
+        // corresponding viewer tab is Data. Normalize before applying stale
+        // viewer guards so a refresh cannot turn a data preview into Rerun.
+        const next = ["json", "text", "download"].includes(requested) ? "data" : requested;
         const opts = options || {};
         if (opts.operator && next !== "foxglove") {
           foxglovePinnedArtifactSelection = null;
@@ -11114,14 +11243,13 @@
           const selectedResult = (data && data.selected_artifact) ||
             (data && data.export && data.export.selected_artifact) || {};
           // Artifact inventory refreshes legitimately replace card DOM nodes
-          // during a slow preparation. Staleness is the immutable run/ref
-          // selection, while the exact key is verified from the server echo
-          // below; DOM-node identity is not provenance.
+          // and normalize run_ref during a slow preparation. The stable user
+          // selection boundary is the active run; exact artifact identity is
+          // independently verified from the server echo below.
           if (
             operation.stale ||
             foxgloveWebOperation !== operation ||
-            String(activeRunId || "").trim() !== runId ||
-            String(activeArtifactRunRef || "").trim() !== runRef
+            String(activeRunId || "").trim() !== runId
           ) {
             try { popup.close(); } catch (_closeErr) { /* best effort */ }
             return false;
@@ -11158,10 +11286,7 @@
           void (async () => {
             try {
               await refreshArtifactRuns(runId);
-              if (
-                String(activeRunId || "").trim() !== runId ||
-                String(activeArtifactRunRef || "").trim() !== runRef
-              ) return;
+              if (String(activeRunId || "").trim() !== runId) return;
               await loadArtifactsForSelectedRun(runRef || runId, {
                 suppressPreferredAutoload: true,
               });
@@ -11382,17 +11507,21 @@
           iframe.addEventListener("error", onError, { once: true });
         });
       }
-      async function waitForRerunRenderSettle(iframe, timeoutMs) {
+      async function waitForRerunRenderSettle(iframe, timeoutMs, isCurrent = () => true) {
         const timeout = Math.max(1000, Number(timeoutMs || 8000));
         const start = Date.now();
         while (Date.now() - start < timeout) {
-          if (await probeRerunCanvasContent(iframe)) {
+          if (!isCurrent()) return;
+          const hasContent = await probeRerunCanvasContent(iframe);
+          if (!isCurrent()) return;
+          if (hasContent) {
             hideRerunBundleCover();
             return;
           }
           if (safeHideRerunBundleCover(iframe)) return;
           await new Promise((resolve) => window.setTimeout(resolve, 120));
         }
+        if (!isCurrent()) return;
         // Timed settle — still prefer non-blank; force only as last resort.
         if (!safeHideRerunBundleCover(iframe)) {
           if (!rerunViewerShowsBundleSplash(iframe) && rerunViewerHasCanvas(iframe)) {
@@ -11412,9 +11541,10 @@
         }
         return null;
       }
-      async function swapRerunRecordingInPlace(camera, runId) {
+      async function swapRerunRecordingInPlace(camera, runId, isCurrent = () => true) {
         // Soft-swap: reuse the already-started wasm viewer via WebHandle.add_receiver
         // so load-run does not pay "Loading application bundle" latency again.
+        if (!isCurrent()) return false;
         const iframe = document.getElementById("rerunFrame");
         if (!iframe || !rerunIframeLoaded || iframe.hidden || !iframe.getAttribute("src")) {
           return false;
@@ -11427,10 +11557,11 @@
         const mountKey = String(runId || activeRunId || camera || "workspace").trim() || "workspace";
         let recordingUrl = "";
         try {
-          recordingUrl = await resolveRerunRecordingUrl();
+          recordingUrl = await resolveRerunRecordingUrl(isCurrent);
         } catch (_err) {
           return false;
         }
+        if (!isCurrent()) return false;
         if (recordingUrl.startsWith("/")) {
           recordingUrl = location.origin + recordingUrl;
         }
@@ -11451,14 +11582,18 @@
           // Brief settle for display readiness (async pixel probe; not full Describe JPEG wait).
           const softDeadline = Date.now() + 4500;
           while (Date.now() < softDeadline) {
-            if (await probeRerunCanvasContent(iframe)) break;
+            const hasContent = await probeRerunCanvasContent(iframe);
+            if (!isCurrent()) return false;
+            if (hasContent) break;
             if (rerunViewerShowsBundleSplash(iframe)) {
               await new Promise((r) => window.setTimeout(r, 150));
               continue;
             }
             await new Promise((r) => window.setTimeout(r, 150));
           }
-          if (!(await probeRerunCanvasContent(iframe)) && rerunViewerShowsBundleSplash(iframe)) {
+          const hasContent = await probeRerunCanvasContent(iframe);
+          if (!isCurrent()) return false;
+          if (!hasContent && rerunViewerShowsBundleSplash(iframe)) {
             // Soft-swap did not clear splash — fall back to remount under cover.
             return false;
           }
@@ -11467,18 +11602,20 @@
           iframe.dataset.rerunRunKey = mountKey;
           iframe.dataset.rerunRecordingUrl = recordingUrl;
           if (!safeHideRerunBundleCover(iframe)) {
-            scheduleRerunBundleUncover(iframe).catch(() => { /* best-effort */ });
+            scheduleRerunBundleUncover(iframe, isCurrent).catch(() => { /* best-effort */ });
           }
           setRerunMountStatus(RERUN_MOUNT_SUCCESS, "soft-swap");
           return true;
         } catch (err) {
+          if (!isCurrent()) return false;
           console.warn("rerun soft-swap failed; falling back to remount", err);
           hideRerunBundleCover();
           return false;
         }
       }
-      async function mountRerunIframe(camera, runId) {
+      async function mountRerunIframe(camera, runId, isCurrent = () => true) {
         // Single-flight mount — overlapping remounts caused the Caching cover to loop.
+        if (!isCurrent()) return false;
         if (rerunMountInFlight) return rerunMountInFlight;
         rerunMountInFlight = (async () => {
         const iframe = document.getElementById("rerunFrame");
@@ -11487,9 +11624,10 @@
         // Always prefer soft-swap when wasm is alive — even for the same mountKey,
         // because the active per-load recording capability may have changed.
         if (rerunIframeLoaded && !iframe.hidden && iframe.getAttribute("src")) {
-          if (await swapRerunRecordingInPlace(camera, runId)) {
+          if (await swapRerunRecordingInPlace(camera, runId, isCurrent)) {
             return true;
           }
+          if (!isCurrent()) return false;
           if (mountedRerunRunKey === mountKey && lastRerunRecordingUrl) {
             // Keep live wasm when it is display-ready (past splash + non-blank canvas).
             if (rerunViewerLooksDisplayReady(iframe)) {
@@ -11518,25 +11656,35 @@
         } catch (warmErr) {
           console.warn("rerun bundle warm failed before mount", warmErr);
         }
-        const src = await rerunIframeSrc(camera, runId);
+        if (!isCurrent()) return false;
+        const src = await rerunIframeSrc(camera, runId, isCurrent);
+        if (!isCurrent()) return false;
         setRerunMountStatus("retrying", "navigating");
         showRerunBundleCover("Opening viewer…", "Almost ready…");
         rerunViewerAppReady = false;
         stopRerunCaptureBridge();
         iframe.hidden = false;
         iframe.src = src;
+        // Arm capture before the Rerun WASM canvas performs its first paints.
+        // The primer follows canvas replacement during iframe startup and
+        // leaves a decoded MediaStream bridge alive for Describe-this.
+        primeRerunCaptureBridge(iframe, 12000);
         rerunRecordingActivatedAt = Date.now();
         iframe.dataset.rerunRunKey = mountKey;
         hideRerunPlaceholder();
         await waitForIframeLoad(iframe, 12000);
-        // Start composited-frame bridge as soon as the canvas exists.
-        ensureRerunCaptureBridge(iframe);
+        if (!isCurrent()) return false;
+        // The mount-time primer continues until the stream decodes a frame.
+        primeRerunCaptureBridge(iframe, 12000);
         try {
-          lastRerunRecordingUrl = await resolveRerunRecordingUrl();
+          const recordingUrl = await resolveRerunRecordingUrl(isCurrent);
+          if (!isCurrent()) return false;
+          lastRerunRecordingUrl = recordingUrl;
           if (lastRerunRecordingUrl.startsWith("/")) {
             lastRerunRecordingUrl = location.origin + lastRerunRecordingUrl;
           }
         } catch (_urlErr) {
+          if (!isCurrent()) return false;
           lastRerunRecordingUrl = "";
         }
         rerunIframeLoaded = true;
@@ -11549,19 +11697,24 @@
         // else recomputes it. Observed on a real NuRec run.
         updateSimvizCta(lastSimVizStatus);
         // Uncover without blocking mount latency — splash polling stays in the background.
-        scheduleRerunBundleUncover(iframe).catch((err) => {
+        scheduleRerunBundleUncover(iframe, isCurrent).catch((err) => {
           console.warn("rerun splash uncover failed", err);
         });
         // Display-ready gate: async non-blank probe (DOM splash text alone is insufficient).
         const settleDeadline = Date.now() + 8000;
         while (Date.now() < settleDeadline) {
-          if (await probeRerunCanvasContent(iframe)) break;
+          const hasContent = await probeRerunCanvasContent(iframe);
+          if (!isCurrent()) return false;
+          if (hasContent) break;
           await new Promise((r) => window.setTimeout(r, 200));
         }
-        if (safeHideRerunBundleCover(iframe) || (await probeRerunCanvasContent(iframe))) {
+        if (!isCurrent()) return false;
+        const displayReady = safeHideRerunBundleCover(iframe) || (await probeRerunCanvasContent(iframe));
+        if (!isCurrent()) return false;
+        if (displayReady) {
           hideRerunBundleCover();
           setRerunMountStatus(RERUN_MOUNT_SUCCESS, "loaded");
-          waitForRerunRenderSettle(iframe, 6000).catch((err) => {
+          waitForRerunRenderSettle(iframe, 6000, isCurrent).catch((err) => {
             console.warn("rerun render settle probe failed", err);
           });
           return true;
@@ -11677,11 +11830,13 @@
           return false;
         });
       }
-      async function bestEffortMountRerun(camera, runId) {
+      async function bestEffortMountRerun(camera, runId, isCurrent = () => true) {
         try {
+          if (!isCurrent()) return false;
           const cam = String(camera || "workspace");
           const rid = String(runId || activeRunId || "").trim();
-          await mountRerunIframe(cam, rid);
+          await mountRerunIframe(cam, rid, isCurrent);
+          if (!isCurrent()) return false;
           // Do not force SUCCESS — trust mountRerunIframe / soft-swap status.
           const ok = lastRerunMountStatus === RERUN_MOUNT_SUCCESS;
           if (!ok) {
@@ -11689,6 +11844,7 @@
           }
           return ok;
         } catch (err) {
+          if (!isCurrent()) return false;
           console.warn("best-effort rerun mount failed", err);
           setRerunMountStatus("degraded", String(err && err.message ? err.message : err).slice(0, 120));
           return false;
@@ -12091,6 +12247,9 @@
       let activeArtifactRunRef = "";
       let activeArtifactInventoryRunId = "";
       let activeArtifactInventory = [];
+      let activeArtifactInventoryPage = null;
+      let activeArtifactInventoryRequestSource = "";
+      let activeArtifactInventoryComplete = false;
       let activeLearningArtifactContract = null;
       // Load the whole run list into the picker by default so every run shows
       // without the operator having to guess a search fragment. The server still
@@ -12186,10 +12345,77 @@
         const resolvedPrefix = String((run && run.resolved_prefix) || "").trim();
         return [sourceType, project, bucket, resolvedPrefix, runId].join("|");
       }
+      function artifactSourceGroupIdentity(run) {
+        return [
+          String((run && run.project_id) || "").trim(),
+          String((run && run.bucket) || "").trim(),
+          String((run && run.run_id) || "").trim(),
+        ].join("|");
+      }
+      function artifactSourceStableIdentity(run) {
+        return [
+          String((run && run.project_id) || "").trim(),
+          String((run && run.bucket) || "").trim(),
+          String((run && run.resolved_prefix) || "").trim(),
+          String((run && run.run_ref) || "").trim(),
+        ].join("|");
+      }
+      function compareArtifactSourcePreference(a, b) {
+        const activeRef = String(activeArtifactRunRef || "").trim();
+        const activeRun = String(activeRunId || "").trim();
+        const activeScore = (run) => Number(Boolean(
+          activeRef && String((run && run.run_ref) || "").trim() === activeRef &&
+          (!activeRun || String((run && run.run_id) || "").trim() === activeRun)
+        ));
+        const booleanScore = (run, field) => Number(run && run[field] === true);
+        const numericScore = (run, field) => Number((run && run[field]) || 0) || 0;
+        const comparisons = [
+          activeScore(b) - activeScore(a),
+          booleanScore(b, "has_viewable") - booleanScore(a, "has_viewable"),
+          booleanScore(b, "summary_complete") - booleanScore(a, "summary_complete"),
+          numericScore(b, "artifact_count") - numericScore(a, "artifact_count"),
+          String((b && b.last_modified) || "").localeCompare(String((a && a.last_modified) || "")),
+        ];
+        for (const result of comparisons) if (result) return result;
+        return artifactSourceStableIdentity(a).localeCompare(artifactSourceStableIdentity(b));
+      }
+      function consolidateArtifactRunSources(discoveredRuns) {
+        const groups = new Map();
+        for (const run of Array.isArray(discoveredRuns) ? discoveredRuns : []) {
+          const runId = String((run && run.run_id) || "").trim();
+          if (!runId) continue;
+          const key = artifactSourceGroupIdentity(run);
+          const values = groups.get(key) || [];
+          values.push(run);
+          groups.set(key, values);
+        }
+        const consolidated = [];
+        for (const values of groups.values()) {
+          const ranked = [...values].sort(compareArtifactSourcePreference);
+          const primary = Object.assign({}, ranked[0]);
+          // Keep alternate exact provenance internally. It remains a source
+          // option, never evidence that seed/demo media came from policy execution.
+          primary.alternate_sources = ranked.slice(1).map((source) => ({
+            run_id: String(source.run_id || ""),
+            run_ref: String(source.run_ref || ""),
+            project_id: String(source.project_id || ""),
+            bucket: String(source.bucket || ""),
+            resolved_prefix: String(source.resolved_prefix || ""),
+            source_selected: true,
+            has_viewable: source.has_viewable,
+            summary_complete: source.summary_complete,
+            artifact_count: Number(source.artifact_count || 0),
+            last_modified: String(source.last_modified || ""),
+          }));
+          consolidated.push(primary);
+        }
+        return consolidated;
+      }
       function mergeRunsLatestFirst(knownRuns, discoveredRuns) {
         const map = new Map();
         const discoveredByRunId = new Map();
-        for (const run of Array.isArray(discoveredRuns) ? discoveredRuns : []) {
+        const consolidatedDiscovered = consolidateArtifactRunSources(discoveredRuns);
+        for (const run of consolidatedDiscovered) {
           const runId = String((run && run.run_id) || "").trim();
           if (!runId) continue;
           const values = discoveredByRunId.get(runId) || [];
@@ -12204,7 +12430,8 @@
           const identity = String(
             forcedKey || runRef || runEntryIdentity(runId, sourceType, run)
           );
-          const prev = map.get(identity) || {
+          const existing = map.get(identity);
+          const prev = existing || {
             run_id: runId,
             entry_key: identity,
             run_ref: runRef,
@@ -12237,21 +12464,51 @@
           if (run && run.summary_complete === true) prev.summary_complete = true;
           else if (run && run.summary_complete === false && prev.summary_complete !== true) prev.summary_complete = false;
           if (run && run.artifact_count) prev.artifact_count = Number(run.artifact_count) || prev.artifact_count;
-          if (run && run.project_id) prev.project_id = String(run.project_id || "");
-          if (run && run.bucket) prev.bucket = String(run.bucket || "");
-          if (run && run.resolved_prefix) prev.resolved_prefix = String(run.resolved_prefix || "");
+          if (run && run.project_id && !(existing && source === "known")) prev.project_id = String(run.project_id || "");
+          if (run && run.bucket && !(existing && source === "known")) prev.bucket = String(run.bucket || "");
+          if (run && run.resolved_prefix && !(existing && source === "known")) prev.resolved_prefix = String(run.resolved_prefix || "");
           if (run && run.stage) prev.stage = String(run.stage || "");
           prev.entry_key = identity;
-          if (runRef) prev.run_ref = runRef;
+          if (runRef && !(existing && source === "known")) prev.run_ref = runRef;
+          if (run && Array.isArray(run.alternate_sources)) {
+            prev.alternate_sources = run.alternate_sources.map((item) => Object.assign({}, item));
+          }
           if (run && run.source_prefix) prev.source_prefix = String(run.source_prefix || "");
           prev.source = prev.source === "both" || (prev.source && prev.source !== source) ? "both" : source;
           map.set(identity, prev);
         };
-        for (const run of Array.isArray(discoveredRuns) ? discoveredRuns : []) ingest(run, "discovered");
+        for (const run of consolidatedDiscovered) ingest(run, "discovered");
         for (const run of Array.isArray(knownRuns) ? knownRuns : []) {
           const runId = String((run && run.run_id) || run || "").trim();
           const matches = discoveredByRunId.get(runId) || [];
-          const key = matches.length === 1
+          // A stock/demo viewer can briefly retain a newly selected artifact
+          // run's basename while its run-specific recording is still absent.
+          // That is not a third run source: exposing it beside the real S3
+          // prefixes creates a bogus `workflow history · stage demo` match and
+          // can route the operator back to the stock Franka recording.
+          const staleDemoAlias = runId !== "franka-demo" && matches.length > 0 &&
+            String((run && run.stage) || "").trim().toLowerCase() === "demo" &&
+            !String((run && run.run_ref) || "").trim();
+          if (staleDemoAlias) continue;
+          // A viewer-history row can already be bound to one of several S3
+          // sources for the same basename. Reuse that source identity instead
+          // of manufacturing a third `history:<run-id>` option.
+          const knownRunRef = String((run && run.run_ref) || "").trim();
+          const matchingRunRef = knownRunRef && matches.some((match) =>
+            String((match && match.run_ref) || "").trim() === knownRunRef ||
+            (Array.isArray(match && match.alternate_sources) && match.alternate_sources.some((alternate) =>
+              String((alternate && alternate.run_ref) || "").trim() === knownRunRef
+            ))
+          );
+          const matchedSource = matchingRunRef && matches.find((match) =>
+            String((match && match.run_ref) || "").trim() === knownRunRef ||
+            (Array.isArray(match && match.alternate_sources) && match.alternate_sources.some((alternate) =>
+              String((alternate && alternate.run_ref) || "").trim() === knownRunRef
+            ))
+          );
+          const key = matchedSource
+            ? String(matchedSource.run_ref || runId)
+            : matches.length === 1
             ? String(matches[0].run_ref || runId)
             : "history:" + runId;
           ingest(run, "known", key);
@@ -12360,6 +12617,12 @@
           const active = mergedRunsCache.find((item) => item.entry_key === activeRunEntryKey && item.run_id === rid);
           if (active) return active;
         }
+        if (activeArtifactRunRef && activeRunId === rid) {
+          const activeSource = mergedRunsCache.find((item) =>
+            String(item.run_ref || "") === activeArtifactRunRef && item.run_id === rid
+          );
+          if (activeSource) return activeSource;
+        }
         const matches = mergedRunsCache.filter((item) => String(item.run_id || "") === rid);
         return matches.length === 1 ? matches[0] : null;
       }
@@ -12381,6 +12644,11 @@
         activeRunResourceScope = null;
         autoLoadedPreferredKey = "";
         activeArtifactRender = "";
+        activeArtifactInventoryRunId = "";
+        activeArtifactInventory = [];
+        activeArtifactInventoryPage = null;
+        activeArtifactInventoryRequestSource = "";
+        activeArtifactInventoryComplete = false;
         currentLichtblickSimViz = null;
         const replacements = {
           runSummary: "Select a run to load its result.",
@@ -12411,8 +12679,16 @@
               String((run && run.run_id) || "").toLowerCase().includes(needle)
             );
         const result = document.getElementById("stagesRunSearchResult");
+        // Background discovery may refresh this picker after an exact lookup.
+        // Keep that lookup's actionable result until the operator changes the
+        // query or another run loads; generic search guidance must not erase it.
+        if (result && result.dataset.lookupQuery !== needle) {
+          delete result.dataset.lookupQuery;
+        }
         if (result && needle && activeRunId && !String(activeRunId).toLowerCase().includes(needle)) {
-          result.textContent = "Search results are separate from the currently loaded run " + activeRunId + ".";
+          if (!result.dataset.lookupQuery) {
+            result.textContent = "Search results are separate from the currently loaded run " + activeRunId + ".";
+          }
           current = "";
         } else if (result && !needle) {
           result.textContent = activeRunId ? "Currently loaded run: " + activeRunId + "." : "";
@@ -12528,6 +12804,12 @@
         let data = null;
         let cursor = "";
         try {
+          // Retain an unavailable scope after access loss. Dropping an empty
+          // project/bucket pair must not silently turn a scoped action into a
+          // tenant-wide discovery request.
+          if (scope.unavailable) {
+            throw new Error("No project is available to discover artifacts. Refresh access before retrying.");
+          }
           do {
             let url = "/api/artifacts/runs?limit=" + ARTIFACT_RUN_LIST_LIMIT + (q ? "&q=" + encodeURIComponent(q) : "");
             if (scope.projectId) url += "&project_id=" + encodeURIComponent(scope.projectId);
@@ -12849,12 +13131,33 @@
           actions.appendChild(rawToggle);
           host.appendChild(actions);
         }
-        if (!summary.has_recording) {
+        if (summary.has_recording === false) {
           const banner = document.createElement("div");
           banner.className = "no-recording";
           banner.textContent = "No RRD/MCAP recording; use the artifacts below";
           host.appendChild(banner);
         }
+      }
+      function artifactInventoryRequestSource(entry, selection) {
+        const source = entry || selection || {};
+        return JSON.stringify(["source_type", "run_id", "run_ref", "project_id", "bucket", "resolved_prefix"]
+          .map((field) => String(source[field] || "")));
+      }
+      function completeSelectedArtifactInventory() {
+        const requestedRun = selectedRunIdFromUi();
+        const selection = resolveRunSelection(requestedRun);
+        const entry = preferredRunEntry(selection.run_ref || selection.run_id);
+        // Discovery can omit provenance that the first inventory response
+        // resolves. Continue that exact displayed source only while the same
+        // original selection remains current; a changed discovery row must
+        // perform its own source lookup, even if its run basename is unchanged.
+        const inventory = activeArtifactInventoryPage &&
+          activeArtifactInventoryRequestSource === artifactInventoryRequestSource(entry, selection)
+          ? activeArtifactInventoryPage : null;
+        return loadArtifactsForSelectedRun(
+          inventory ? String(inventory.run_ref) : requestedRun,
+          null, inventory || entry, { completeInventory: true },
+        );
       }
       async function loadArtifactsForSelectedRun(explicitRunId, priorPage, explicitEntry, requestContext) {
         const viewerIntentRequestId = artifactLoadRequestId;
@@ -12873,10 +13176,26 @@
         // Older callers passed refresh-only options in the second slot. Keep
         // those options as request context while treating only an object with
         // an artifact array as a pagination seed.
-        const seededPage = priorPage && Array.isArray(priorPage.artifacts) ? priorPage : null;
+        let seededPage = priorPage && Array.isArray(priorPage.artifacts) ? priorPage : null;
         const context = requestContext && typeof requestContext === "object"
           ? requestContext
           : (priorPage && !seededPage && typeof priorPage === "object" ? priorPage : {});
+        const deferInventoryCompletion = context.deferInventoryCompletion === true;
+        const cachedInventoryMatches = activeArtifactInventoryPage &&
+          Boolean(runRef) &&
+          String(activeArtifactInventoryPage.run_id || "") === runId &&
+          String(activeArtifactInventoryPage.run_ref || "") === runRef &&
+          ["project_id", "bucket", "resolved_prefix"].every((field) =>
+            !entry || !Object.prototype.hasOwnProperty.call(entry, field) ||
+            String(entry[field] ?? "") === String(activeArtifactInventoryPage[field] ?? ""),
+          );
+        const cachedInventory = cachedInventoryMatches ? activeArtifactInventoryPage : null;
+        // The explicit List artifacts action resumes the already-rendered first
+        // page instead of fetching it again. A completed cache is also final.
+        if (!seededPage && context.completeInventory && cachedInventory &&
+            cachedInventory.pagination_complete !== true) {
+          seededPage = cachedInventory;
+        }
         // No path prefix: the server locates the run by id across the whole run root.
         const previous = seededPage ? seededPage.artifacts : [];
         const params = new URLSearchParams();
@@ -12900,18 +13219,28 @@
         const signal = context.signal || (localController && localController.signal);
         const requestIsCurrent = () => listRequestId === artifactListRequestId &&
           (!context.isCurrent || context.isCurrent());
-        let data = null;
-        let paginationPageCount = 0;
-        let paginationEmptyPageCount = 0;
-        let paginationDuplicateCount = 0;
+        let data = (context.reuseInventory || context.completeInventory) &&
+          cachedInventory && (context.reuseInventory || cachedInventory.pagination_complete === true)
+          ? cachedInventory
+          : null;
+        let paginationPageCount = data
+          ? Number(data.inventory_page_count || 1)
+          : (seededPage ? Number(seededPage.inventory_page_count || 1) : 0);
+        let paginationEmptyPageCount = data
+          ? Number(data.inventory_empty_page_count || 0)
+          : (seededPage ? Number(seededPage.inventory_empty_page_count || 0) : 0);
+        let paginationDuplicateCount = data
+          ? Number(data.inventory_duplicate_count || 0)
+          : (seededPage ? Number(seededPage.inventory_duplicate_count || 0) : 0);
         try {
+          if (!data) {
           const runSelector = runRef || runId;
           const firstPage = await apiJson(
             "/api/artifacts/run/" + encodeURIComponent(runSelector) + (query ? "?" + query : ""),
             signal ? { signal } : undefined
           );
           if (!requestIsCurrent()) return false;
-          paginationPageCount = 1;
+          paginationPageCount += 1;
           const selectedSource = {
             run_id: String(firstPage.run_id || runId).trim(),
             run_ref: String(firstPage.run_ref || runRef).trim(),
@@ -12924,6 +13253,15 @@
             !selectedSource.project_id || !Object.prototype.hasOwnProperty.call(firstPage, "resolved_prefix")
           ) {
             throw new Error("Artifact inventory response omitted exact run source provenance.");
+          }
+          // A resumed first-page inventory is already bound to one exact
+          // source. Validate its very first continuation before merging any
+          // retained objects; checking only later loop pages is too late.
+          if (seededPage && ["run_id", "run_ref", "project_id", "bucket", "resolved_prefix"].some(
+            (field) => !Object.prototype.hasOwnProperty.call(seededPage, field) ||
+              String(seededPage[field] ?? "") !== selectedSource[field],
+          )) {
+            throw new Error("Artifact inventory source changed during pagination; reload the selected run.");
           }
           const merged = new Map();
           const mergePage = (page) => {
@@ -12945,7 +13283,7 @@
           const seenCursors = new Set();
           let page = firstPage;
           let nextCursor = String(firstPage.next_cursor || "").trim();
-          while (nextCursor) {
+          while (nextCursor && !deferInventoryCompletion) {
             if (!requestIsCurrent() || (signal && signal.aborted)) return false;
             if (seenCursors.has(nextCursor)) {
               throw new Error("Artifact inventory pagination repeated a server cursor; reload the run before selecting media.");
@@ -12976,7 +13314,7 @@
             page = nextPage;
             nextCursor = String(nextPage.next_cursor || "").trim();
           }
-          if (page && page.truncated) {
+          if (!deferInventoryCompletion && page && page.truncated) {
             throw new Error("Artifact inventory is truncated but the server returned no continuation cursor.");
           }
           const sourceFields = {
@@ -12989,23 +13327,27 @@
             source_selected: true,
           };
           const artifacts = [...merged.values()].map((item) => Object.assign({}, item, sourceFields));
-          const preferred = selectPreferredArtifact(artifacts);
+          const inventoryComplete = !nextCursor;
+          // A partial page is useful for loading run identity and stage evidence,
+          // but it must never nominate a page-local artifact as the run-wide
+          // preferred recording. A later page may contain the RRD/MCAP.
+          const preferred = inventoryComplete ? selectPreferredArtifact(artifacts) : null;
           const roleCounts = artifacts.reduce((acc, item) => {
             const artifactRole = String((item && item.role) || "output");
             acc[artifactRole] = (acc[artifactRole] || 0) + 1;
             return acc;
           }, {});
           const hasRecording = artifacts.some((item) => ["rerun", "mcap"].includes(String((item && item.render) || "")));
-          const summary = Object.assign({}, firstPage.summary || {}, {
+          const summary = Object.assign({}, (seededPage && seededPage.summary) || {}, firstPage.summary || {}, {
             run_id: selectedSource.run_id,
             artifact_count: artifacts.length,
             output_artifact_count: Number(roleCounts.output || 0),
             input_artifact_count: Number(roleCounts.input || 0),
             metadata_artifact_count: Number(roleCounts.metadata || 0),
             total_bytes: artifacts.reduce((total, item) => total + Number((item && item.size) || 0), 0),
-            has_recording: hasRecording,
+            has_recording: inventoryComplete ? hasRecording : null,
           });
-          data = Object.assign({}, firstPage, {
+          data = Object.assign({}, seededPage || {}, firstPage, {
             run_id: selectedSource.run_id,
             run_ref: selectedSource.run_ref,
             bucket: selectedSource.bucket,
@@ -13014,20 +13356,27 @@
             artifacts,
             count: artifacts.length,
             preferred,
-            truncated: false,
-            next_cursor: "",
-            pagination_complete: true,
+            truncated: !inventoryComplete,
+            next_cursor: nextCursor,
+            pagination_complete: inventoryComplete,
             output_artifact_count: Number(roleCounts.output || 0),
             input_artifact_count: Number(roleCounts.input || 0),
             metadata_artifact_count: Number(roleCounts.metadata || 0),
             summary,
-            no_recording: !hasRecording,
-            recording_state: hasRecording ? "recording_available" : String(firstPage.recording_state || "no_recording"),
+            no_recording: inventoryComplete && !hasRecording,
+            recording_state: inventoryComplete
+              ? (hasRecording ? "recording_available" : String(firstPage.recording_state || "no_recording"))
+              : "Artifact inventory is still being scanned; use List artifacts to merge every page.",
+            inventory_page_count: paginationPageCount,
+            inventory_empty_page_count: paginationEmptyPageCount,
+            inventory_duplicate_count: paginationDuplicateCount,
           });
+          }
         } catch (err) {
           if (!requestIsCurrent() || (signal && signal.aborted)) return false;
           const searchResult = document.getElementById("stagesRunSearchResult");
           if (searchResult) {
+            searchResult.dataset.lookupQuery = runId.toLowerCase();
             const current = activeRunId ? " Currently loaded run remains " + activeRunId + "." : " No run is currently loaded.";
             searchResult.textContent = "Exact NPA run lookup failed for " + runId + ": " + String((err && err.message) || err) + "." + current;
           }
@@ -13041,10 +13390,22 @@
         activeRunEntryKey = String((entry && entry.entry_key) || runRef || "");
         syncRunChooserFields(runId, activeRunEntryKey || runRef);
         const searchResult = document.getElementById("stagesRunSearchResult");
-        if (searchResult) searchResult.textContent = "Loaded discovered NPA run: " + runId + ".";
+        if (searchResult) {
+          delete searchResult.dataset.lookupQuery;
+          searchResult.textContent = "Loaded discovered NPA run: " + runId + ".";
+        }
         const artifacts = Array.isArray(data.artifacts) ? data.artifacts : [];
         activeArtifactInventoryRunId = runId;
         activeArtifactInventory = artifacts;
+        const continuedCurrentInventory = seededPage && activeArtifactInventoryPage &&
+          ["run_id", "run_ref", "project_id", "bucket", "resolved_prefix"].every((field) =>
+            String(seededPage[field] ?? "") === String(activeArtifactInventoryPage[field] ?? ""),
+          );
+        if (data !== activeArtifactInventoryPage && !continuedCurrentInventory) {
+          activeArtifactInventoryRequestSource = artifactInventoryRequestSource(entry, selection);
+        }
+        activeArtifactInventoryPage = data;
+        activeArtifactInventoryComplete = data.pagination_complete === true;
         const contractCandidate = data && data.summary && data.summary.learning && data.summary.learning.artifact_contract;
         activeLearningArtifactContract = contractCandidate && contractCandidate.authoritative === true
           ? contractCandidate
@@ -13069,6 +13430,7 @@
         activeRunResourceScope = {
           run_id: runId,
           run_ref: runRef,
+          entry_key: activeRunEntryKey,
           bucket: String(data.bucket || (entry && entry.bucket) || ""),
           project_id: String(data.project_id || (entry && entry.project_id) || ""),
           resolved_prefix: String(data.resolved_prefix || ""),
@@ -13218,6 +13580,8 @@
             event.preventDefault();
             try {
               await runControlAction(loadMore, () => loadArtifactsForSelectedRun(runRef || runId, {
+                run_id: runId,
+                run_ref: runRef,
                 artifacts,
                 next_cursor: data.next_cursor,
                 resolved_prefix: data.resolved_prefix,
@@ -14309,8 +14673,15 @@
           });
         });
       }
-      async function refresh() {
+      async function refresh(options) {
+        const opts = options && typeof options === "object" ? options : {};
         const generation = ++refreshGeneration;
+        // Boot may reuse a session fetched before a newer local selection.
+        // Keep that fetch generation instead of granting the stale snapshot
+        // the generation current when refresh happens to consume it.
+        const chatGeneration = opts.session
+          ? chatSessionSnapshotGenerations.get(opts.session)
+          : chatSessionSelectionGeneration;
         try {
           const selectionGeneration = activeRunSelectionGeneration;
           const requestedRunId = String(activeRunId || "").trim();
@@ -14320,9 +14691,9 @@
           // Fetch independent state in parallel to cut UI-load and per-action latency
           // (was three sequential round-trips: session -> sim-assets -> sim-viz status).
           const [session, assets, simViz] = await Promise.all([
-            loadJson("/api/session"),
+            opts.session ? Promise.resolve(opts.session) : loadJson("/api/session"),
             loadJson("/api/sim-assets"),
-            loadJson(statusPath),
+            opts.simViz ? Promise.resolve(opts.simViz) : loadJson(statusPath),
           ]);
           if (generation !== refreshGeneration) return false;
           if (session && session.deployment) applyDeploymentIdentity(session.deployment);
@@ -14332,7 +14703,7 @@
             );
             setChatModels(session.llm.models, currentModel);
           }
-          if (session && session.chat_sessions) {
+          if (session && session.chat_sessions && chatSessionRefreshIsCurrent(chatGeneration)) {
             activeChatSessionId = String(session.active_chat_session_id || activeChatSessionId || "default");
             updateChatSessionSelector(session.chat_sessions, activeChatSessionId);
           }
@@ -14358,12 +14729,9 @@
           // An RRD discovered directly in object storage can have valid sim-viz
           // state without a separate workflow/run-detail record. Keep that
           // optional enrichment from aborting the status labels and viewer mount.
-          try {
-            await loadRunDetails(activeRunId);
-          } catch (runDetailErr) {
+          void loadRunDetails(activeRunId).catch((runDetailErr) => {
             console.warn("run detail enrichment unavailable", runDetailErr);
-          }
-          if (generation !== refreshGeneration) return false;
+          });
           renderAssetsSummary(assets);
           document.getElementById("simRunId").textContent = String(simViz.run_id || "-");
           document.getElementById("simStage").textContent = String(simViz.stage || "idle");
@@ -14558,15 +14926,45 @@
             source_label: runId === "franka-demo" ? "Local demo" : "Workflow history",
           }));
         }
-        if (currentRef) activeArtifactRunRef = currentRef;
-        if (currentRun && simViz && simViz.bucket) {
-          activeRunEntryKey = currentRef || runEntryIdentity(
-            currentRun, "artifact_storage", simViz
-          );
+        // Restored media already carries its exact storage identity. Keep it
+        // available before background discovery has hydrated the run cache.
+        const restoredRef = String((simViz && (simViz.artifact_run_ref || simViz.active_run_ref)) || "").trim();
+        const reportedRun = String((simViz && simViz.run_id) || "").trim();
+        const selectionMatches = currentRun === activeRunId &&
+          (!reportedRun || reportedRun === currentRun) &&
+          (!activeArtifactRunRef || activeArtifactRunRef === currentRef);
+        const restoreSource = selectionMatches && restoredRef &&
+          simViz.bucket && simViz.project_id &&
+          Object.prototype.hasOwnProperty.call(simViz, "resolved_prefix");
+        if (restoreSource) {
+          activeRunResourceScope = {
+            run_id: currentRun, run_ref: restoredRef, entry_key: currentRef,
+            bucket: String(simViz.bucket), project_id: String(simViz.project_id),
+            resolved_prefix: String(simViz.resolved_prefix || ""), source_selected: true,
+          };
         }
-        applyMergedRunSelectors(activeRunEntryKey || currentRef || currentRun);
+        if (selectionMatches) {
+          if (currentRef) activeArtifactRunRef = currentRef;
+          if (currentRun && simViz && simViz.bucket) {
+            activeRunEntryKey = currentRef || runEntryIdentity(
+              currentRun, "artifact_storage", simViz
+            );
+          }
+        }
+        applyMergedRunSelectors(activeRunEntryKey || activeArtifactRunRef || activeRunId);
       }
+      let selectedRunLoadGeneration = 0;
       async function loadSelectedRun(entryOrRunId) {
+        const generation = ++selectedRunLoadGeneration;
+        // Supersede status/session refreshes that captured the prior selection
+        // before this operator-driven load began. The selected run is applied
+        // only after its exact source resolves, but stale refreshes must not
+        // repaint the previous run while that lookup is in flight.
+        activeRunSelectionGeneration += 1;
+        const isCurrent = () => generation === selectedRunLoadGeneration;
+        return _loadSelectedRun(entryOrRunId, isCurrent);
+      }
+      async function _loadSelectedRun(entryOrRunId, isCurrent) {
         const supplied = entryOrRunId && typeof entryOrRunId === "object" ? entryOrRunId : null;
         const selection = supplied
           ? {
@@ -14582,6 +14980,7 @@
         let entry = supplied || preferredRunEntry(selection.entry_key || selection.run_ref || chosen);
         if (!entry) {
           await refreshArtifactRuns(chosen).catch(() => false);
+          if (!isCurrent()) return null;
           entry = preferredRunEntry(chosen);
         }
         // A pasted id absent from workflow history is treated as an artifact run:
@@ -14605,10 +15004,15 @@
         if (entry.source_type === "artifact_storage") {
           const searchResult = document.getElementById("stagesRunSearchResult");
           if (searchResult) {
+            searchResult.dataset.lookupQuery = chosen.toLowerCase();
             searchResult.textContent = "Checking exact discovered NPA run: " + chosen + "…" +
               (activeRunId ? " Currently loaded run remains " + activeRunId + " until lookup succeeds." : "");
           }
-          return loadArtifactsForSelectedRun(chosen, null, entry, { pendingSelection: true });
+          return loadArtifactsForSelectedRun(chosen, null, entry, {
+            pendingSelection: true,
+            isCurrent,
+            deferInventoryCompletion: true,
+          });
         }
         clearVisibleRunState("Loading " + chosen + "…");
         setActiveRunId(chosen);
@@ -14620,14 +15024,17 @@
             headers: { "content-type": "application/json" },
             body: JSON.stringify({}),
           });
+          if (!isCurrent()) return null;
           await loadRunDetails(chosen);
+          if (!isCurrent()) return null;
           if (data && data.sim_viz && (data.sim_viz.rrd_uri || data.sim_viz.rerun_ready)) {
-            await bestEffortMountRerun(String(data.sim_viz.camera || "workspace"), chosen);
+            await bestEffortMountRerun(String(data.sim_viz.camera || "workspace"), chosen, isCurrent);
           }
+          if (!isCurrent()) return null;
           await refresh();
           return data;
         }
-        return loadWorkflowHistoryRun(chosen, activeArtifactRunRef);
+        return loadWorkflowHistoryRun(chosen, activeArtifactRunRef, { isCurrent });
       }
       function normalizeStageStatus(value) {
         const raw = String(value || "status_unavailable").trim().toLowerCase();
@@ -15026,12 +15433,20 @@
       async function loadRunDetails(runId, options) {
         const target = String(runId || activeRunId || "").trim();
         const opts = options && typeof options === "object" ? options : {};
-        const entry = opts.entry || preferredRunEntry(target) || {};
+        const activeScope = activeRunResourceScope;
+        const scopeMatches = activeScope && activeScope.run_id === target &&
+          activeScope.run_ref && activeScope.run_ref === activeArtifactRunRef &&
+          (!activeScope.entry_key || activeScope.entry_key === activeRunEntryKey);
+        const entry = opts.entry || (scopeMatches ? activeScope : preferredRunEntry(target)) || {};
         const params = new URLSearchParams();
-        const resourceBucket = String(opts.resourceBucket || entry.bucket || "").trim();
-        const projectId = String(opts.projectId || entry.project_id || "").trim();
-        const resolvedPrefix = String(opts.resolvedPrefix || entry.resolved_prefix || "").trim();
-        const sourceSelected = Boolean(opts.sourceSelected || entry.bucket);
+        const resourceBucket = String(Object.prototype.hasOwnProperty.call(opts, "resourceBucket")
+          ? (opts.resourceBucket || "") : (entry.bucket || "")).trim();
+        const projectId = String(Object.prototype.hasOwnProperty.call(opts, "projectId")
+          ? (opts.projectId || "") : (entry.project_id || "")).trim();
+        const resolvedPrefix = String(Object.prototype.hasOwnProperty.call(opts, "resolvedPrefix")
+          ? (opts.resolvedPrefix || "") : (entry.resolved_prefix || "")).trim();
+        const sourceSelected = Object.prototype.hasOwnProperty.call(opts, "sourceSelected")
+          ? Boolean(opts.sourceSelected) : Boolean(entry.source_selected || entry.bucket);
         if (resourceBucket) params.set("resource_bucket", resourceBucket);
         if (projectId) params.set("project_id", projectId);
         if (resolvedPrefix) params.set("resolved_prefix", resolvedPrefix);
@@ -15060,7 +15475,9 @@
           if (requestId === runDetailsRequestId) runDetailsAbortController = null;
         }
       }
-      async function loadWorkflowHistoryRun(runId, runRef) {
+      async function loadWorkflowHistoryRun(runId, runRef, requestContext) {
+        const context = requestContext && typeof requestContext === "object" ? requestContext : {};
+        const isCurrent = typeof context.isCurrent === "function" ? context.isCurrent : () => true;
         const targetRunId = String(runId || "").trim();
         const targetRunRef = String(runRef || "").trim();
         const viewerIntentRequestId = artifactLoadRequestId;
@@ -15072,6 +15489,7 @@
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ run_id: targetRunId, run_ref: targetRunRef }),
         });
+        if (!isCurrent()) return null;
         syncRerunRecordingCapability(data && data.sim_viz);
         setActiveRunId(targetRunId);
         activeArtifactRunRef = String(data.run_ref || targetRunRef || "").trim();
@@ -15079,11 +15497,12 @@
         // LeIsaac capability. Never probe an arbitrary loaded run as a robot
         // session; that can turn a normal artifact selection into a slow,
         // misleading teleoperation failure.
-        await refreshLeIsaacCapability();
+        if (leisaacUiEnabled()) await refreshLeIsaacCapability();
         appendChat("assistant", "Loaded run context (workflow history) — **run_id**: `" + targetRunId + "`.");
         await loadRunDetails(targetRunId, {
           entry: preferredRunEntry(activeArtifactRunRef || targetRunId) || {},
         });
+        if (!isCurrent()) return null;
         if (
           !operatorMediaPreviewActive &&
           viewerIntentRequestId === artifactLoadRequestId &&
@@ -15097,6 +15516,10 @@
         return data;
       }
       async function loadRunData(explicitSelection) {
+        // The Viewer Load button can resolve directly from inventory without
+        // reaching loadSelectedRun; it still supersedes an older demo load.
+        selectedRunLoadGeneration += 1;
+        activeRunSelectionGeneration += 1;
         const requested = explicitSelection && typeof explicitSelection === "object" &&
           Object.prototype.hasOwnProperty.call(explicitSelection, "run_id")
           ? explicitSelection
@@ -15136,12 +15559,16 @@
               // WASM viewer mount. Viewer artifacts remain one click away and
               // their explicit load paths retain independent failure semantics.
               deferPreferredViewer: true,
+              // A direct run load is a status/timeline action. Do not make it
+              // wait for a six-figure frame inventory; the explicit artifact
+              // browser still follows every cursor before choosing preference.
+              deferInventoryCompletion: true,
             });
             if (loaded && activeArtifactInventory.length) {
-              const hasRecording = activeArtifactInventory.some((item) =>
+              const hasRecording = activeArtifactInventoryComplete && activeArtifactInventory.some((item) =>
                 ["rerun", "mcap"].includes(String((item && item.render) || ""))
               );
-              if (!hasRecording) {
+              if (activeArtifactInventoryComplete && !hasRecording) {
                 updateRenderedDataSummary({
                   run_id: runId,
                   preview_status: "no_previewable_recording",
@@ -15156,6 +15583,14 @@
               }
               return { run_id: runId, artifacts_loaded: true };
             }
+            // A newer inventory action (for example, clicking List artifacts
+            // while best-effort detail enrichment is still pending) returns
+            // false. That is supersession, not an artifact lookup failure, so
+            // never fall through to workflow/local loading and clear the newer
+            // selection.
+            if (loaded === false) {
+              return { run_id: runId, artifacts_loaded: false, superseded: true };
+            }
           } catch (_artifactErr) {
             // Workflow history/local runtime remains a valid fallback when the
             // exact artifact source is unavailable.
@@ -15167,13 +15602,16 @@
         const dataPromise = loadSelectedRun(
           preferredEntry || { run_id: runId, run_ref: runRef }
         );
+        const selectionGeneration = selectedRunLoadGeneration;
         const artifactsPromise = preferredEntry && preferredEntry.source_type === "workflow_history"
           ? loadArtifactsForSelectedRun(runRef || runId, null, exactEntry, {
               pendingSelection: true,
+              deferInventoryCompletion: true,
             }).catch(() => false)
           : Promise.resolve(false);
         const data = await dataPromise;
         await artifactsPromise;
+        if (selectionGeneration !== selectedRunLoadGeneration || data === null) return null;
         if (!(data && data.sim_viz && (data.sim_viz.rrd_uri || data.sim_viz.rerun_ready))) {
           updateRenderedDataSummary({
             run_id: runId,
@@ -15303,11 +15741,16 @@
         window.open(src, "_blank", "noopener");
       }
       async function restoreSession() {
+        const chatGeneration = chatSessionSelectionGeneration;
         const selectionGeneration = activeRunSelectionGeneration;
         try {
           const session = await loadJson("/api/session");
+          chatSessionSnapshotGenerations.set(session, chatGeneration);
           if (session && session.deployment) applyDeploymentIdentity(session.deployment);
-          activeChatSessionId = String(session.active_chat_session_id || activeChatSessionId || "default");
+          const restoreChat = chatSessionRefreshIsCurrent(chatGeneration);
+          if (restoreChat) {
+            activeChatSessionId = String(session.active_chat_session_id || activeChatSessionId || "default");
+          }
           if (session && session.sim_viz) {
             if (selectionGeneration === activeRunSelectionGeneration) {
               setActiveRunId(
@@ -15322,34 +15765,36 @@
             activeArtifactRender = String(session.sim_viz.artifact_render || activeArtifactRender || "");
             updateRenderedDataSummary(session.sim_viz);
           }
-          updateChatSessionSelector(session.chat_sessions, activeChatSessionId);
+          if (restoreChat) updateChatSessionSelector(session.chat_sessions, activeChatSessionId);
           if (session && session.llm) {
             const currentModel = String(
               (session.llm.model || session.llm.default_model || session.llm.default || "")
             );
             setChatModels(session.llm.models, currentModel);
           }
-          renderChatHistory(session.chat_history || []);
+          if (restoreChat) renderChatHistory(session.chat_history || []);
           const draft = session.workflow_draft;
           if (draft && draft.yaml) {
             setWorkflowYaml(draft.yaml, draft.validation || draft);
           }
+          return session;
         } catch (_err) {
           // Session restore is best-effort on first load.
+          return null;
         }
       }
-      async function ensureFrankaRerunLoaded() {
+      async function ensureFrankaRerunLoaded(simViz) {
         // Dedup concurrent callers (background boot mount + a Viewer-tab click) so the
         // wasm viewer is never mounted twice.
         if (rerunEnsureInFlight) return rerunEnsureInFlight;
-        rerunEnsureInFlight = _ensureFrankaRerunLoadedInner();
+        rerunEnsureInFlight = _ensureFrankaRerunLoadedInner(simViz);
         try {
           return await rerunEnsureInFlight;
         } finally {
           rerunEnsureInFlight = null;
         }
       }
-      async function _ensureFrankaRerunLoadedInner() {
+      async function _ensureFrankaRerunLoadedInner(prefetchedSimViz) {
         const explicitMediaSelected = () => operatorMediaPreviewActive;
         // Mobile browsers can't run the Rerun wasm 3D viewer — never mount it;
         // show a notice that points to the Voxel51 data view instead.
@@ -15357,7 +15802,7 @@
           showMobileRerunNotice(activeRunId);
           return "mobile";
         }
-        const simViz = await loadJson("/api/sim-viz/status");
+        const simViz = prefetchedSimViz || await loadJson("/api/sim-viz/status");
         // Boot-time Rerun warming can finish after an operator has opened a
         // media artifact. Preserve that newer explicit viewer choice instead
         // of repainting the pane when the stale warm/mount request resumes.
@@ -15415,13 +15860,14 @@
         const warmPromise = warmRerunBundle().catch((warmErr) => {
           console.warn("rerun bundle warm failed", warmErr);
         });
+        let restoredSession = null;
         try {
-          await restoreSession();
+          restoredSession = await restoreSession();
         } catch (_err) {
           // Session restore is best-effort on first paint.
         }
         try {
-          const refreshPromise = refresh().catch((err) => {
+          const refreshPromise = refresh({ session: restoredSession }).catch((err) => {
             console.warn("initial refresh failed", err);
           });
           // First paint only needs the newest bounded page. Operators can still
@@ -15445,7 +15891,7 @@
           // Boot resolves only the independently registered LeIsaac runtime.
           // The restored Rerun/artifact selection may be unrelated and must not
           // become a fake LeIsaac run or trigger a slow manifest miss.
-          refreshLeIsaacCapability().catch(() => null);
+          if (leisaacUiEnabled()) refreshLeIsaacCapability().catch(() => null);
           const accessPromise = refreshAccess(false).catch((accessErr) => {
             console.warn("access discovery failed", accessErr);
           });
@@ -15468,15 +15914,11 @@
             setStatus("Ready");
             showToast("Workbench ready", "success");
             void accessPromise;
-            // Pre-warm the Lichtblick SPA bundle so opening it later only swaps the data
-            // source (no first-load app download). Best-effort; needs the sidecar.
-            const lb = document.getElementById("lichtblickFrame");
-            if (lb && (!lb.getAttribute("src") || lb.getAttribute("src") === "about:blank")) {
-              lb.setAttribute("src", "/lichtblick/");
-            }
+            // Optional viewers mount when selected. Loading a hidden app here
+            // makes its runtime and dependencies part of unrelated chat startup.
             void artifactsPromise;
             await warmPromise;
-            const mountMode = await ensureFrankaRerunLoaded();
+            const mountMode = await ensureFrankaRerunLoaded(lastSimVizStatus);
             const iframe = document.getElementById("rerunFrame");
             if (["media", "pending-run", "placeholder", "mobile"].includes(mountMode)) {
               // No Rerun canvas to wait for (non-Rerun artifact, run not ready, no run,
@@ -15527,7 +15969,9 @@
           // mounted, keep its safety-critical capability, controller lease,
           // and mode requests pinned to that run until the operator explicitly
           // mounts a different LeIsaac run.
-          refreshLeIsaacCapability(leisaacPeriodicRefreshRunId()).catch(() => null);
+          if (leisaacUiEnabled()) {
+            refreshLeIsaacCapability(leisaacPeriodicRefreshRunId()).catch(() => null);
+          }
           // Skip only while the Rerun panel is the active (visible) tab — do not
           // kill chat/stages/model refresh for the rest of the session just because
           // the iframe was mounted in the background.
@@ -15544,6 +15988,7 @@
           sampleFrameStats,
           captureCanvasDataUrl,
           captureStreamWithFrameFallback,
+          primeRerunCaptureBridge,
           ensureRerunCaptureBridge,
           grabFromRerunCaptureBridge,
           pickBestIframeCanvas,
@@ -15552,10 +15997,25 @@
           captureMediaViewerFrame,
           previewArtifact,
           artifactContentUrl,
+          consolidateArtifactRunSources,
+          mergeRunsLatestFirst,
+          preferredRunEntry,
+          loadRunData,
+          setArtifactRunsForTest: (knownRuns, discoveredRuns, activeSource) => {
+            const active = activeSource && typeof activeSource === "object" ? activeSource : {};
+            activeRunId = String(active.run_id || "").trim();
+            activeArtifactRunRef = String(active.run_ref || "").trim();
+            activeRunEntryKey = String(active.entry_key || active.run_ref || "").trim();
+            knownAvailableRuns = Array.isArray(knownRuns) ? knownRuns.slice() : [];
+            discoveredArtifactRuns = Array.isArray(discoveredRuns) ? discoveredRuns.slice() : [];
+            return applyMergedRunSelectors(activeRunEntryKey || activeArtifactRunRef || activeRunId);
+          },
           captureDataPaneExcerpt,
           captureVisualContext,
           describeVisual,
           loadArtifact,
+          loadRunDetails,
+          updateRunSelector,
           setRenderMode,
           showRerunBundleCover,
           hideRerunBundleCover,
@@ -15571,6 +16031,8 @@
           lichtblickNeedsLayoutSeed,
           markLichtblickLayoutSeeded,
           requestTimeoutMs,
+          refreshChatSessions,
+          restoreSession,
           LICHTBLICK_LAYOUT_SEED_KEY,
           refreshLeIsaacCapability,
           leisaacPeriodicRefreshRunId,
@@ -15614,13 +16076,13 @@
           refresh,
           activeRunId: () => activeRunId,
           selectActiveRunId,
+          leisaacUiEnabled,
         };
         try {
-          // The tab is a persistent product surface, while a live simulator is
-          // optional. Mount its honest unavailable/retry state before any
-          // authenticated status or artifact request can block first paint.
-          leisaacCapability = unavailableLeIsaacStatus("");
-          ensureLeIsaacTab(leisaacCapability);
+          if (leisaacUiEnabled()) {
+            leisaacCapability = unavailableLeIsaacStatus("");
+            ensureLeIsaacTab(leisaacCapability);
+          }
           wireUi();
           setStatus("UI wired");
         } catch (err) {

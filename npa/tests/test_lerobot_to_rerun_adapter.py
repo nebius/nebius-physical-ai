@@ -2,14 +2,27 @@ from __future__ import annotations
 
 import importlib
 from pathlib import Path
+import shutil
 
 import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
-from npa.adapter.isaac_lab_lerobot import G1_BONE_PAIRS, G1_STATE_DIM, convert
-from npa.viz.adapters.lerobot_to_rerun import REPRESENTATIVE_JOINTS, lerobot_to_rerun, verify_rerun_entities
+from npa.adapter.isaac_lab_lerobot import (
+    G1_BONE_PAIRS,
+    G1_STATE_DIM,
+    LeRobotFeatureSpec,
+    WORKSPACE_VIEW_KEY,
+    convert,
+)
+from npa.viz.adapters.lerobot_to_rerun import (
+    REPRESENTATIVE_JOINTS,
+    _build_logical_blueprint,
+    lerobot_dataset_logical_to_rerun,
+    lerobot_to_rerun,
+    verify_rerun_entities,
+)
 from npa.viz.lerobot import VizDataError
 
 
@@ -190,3 +203,145 @@ def test_verify_rerun_entities_uses_fallback_counts_without_recording_loader(tmp
         ["input_dataset/episodes/episode_000000/state/dim_00"],
         fallback_counts=counts,
     ) == counts
+
+
+class _FakePanelState:
+    Hidden = "hidden"
+    Expanded = "expanded"
+
+
+class _FakeBlueprintApi:
+    PanelState = _FakePanelState
+
+    def __getattr__(self, name: str):
+        def construct(*args, **kwargs):
+            return {"kind": name, "children": list(args), **kwargs}
+
+        return construct
+
+
+def _view_nodes(node: object) -> list[dict]:
+    if not isinstance(node, dict):
+        return []
+    found = [node] if str(node.get("kind", "")).endswith("View") else []
+    for child in node.get("children", []):
+        found.extend(_view_nodes(child))
+    return found
+
+
+def test_logical_blueprint_without_cameras_opens_state_and_actions() -> None:
+    blueprint = _build_logical_blueprint(
+        _FakeBlueprintApi(),
+        [],
+        input_episode_indices=[],
+        rollout_episode_indices=[0, 1],
+    )
+    views = _view_nodes(blueprint)
+
+    assert not any(view["kind"] == "Spatial2DView" for view in views)
+    assert {view.get("name") for view in views} == {"State", "Policy actions", "VLM/VLA eval"}
+    assert next(view for view in views if view.get("name") == "State")["contents"] == [
+        "policy_rollout/episodes/episode_000000/state/**",
+        "policy_rollout/episodes/episode_000001/state/**",
+    ]
+    assert next(view for view in views if view.get("name") == "Policy actions")["contents"] == (
+        [
+            "policy_rollout/episodes/episode_000000/actions/**",
+            "policy_rollout/episodes/episode_000001/actions/**",
+        ]
+    )
+
+
+def test_logical_blueprint_with_cameras_keeps_images_and_signals_visible() -> None:
+    blueprint = _build_logical_blueprint(
+        _FakeBlueprintApi(),
+        ["observation.images.workspace"],
+        input_episode_indices=[0],
+        rollout_episode_indices=[1],
+    )
+    views = _view_nodes(blueprint)
+
+    assert [view.get("name") for view in views if view["kind"] == "Spatial2DView"] == [
+        "Input demos",
+        "Isaac environment — trained policy",
+    ]
+    assert next(view for view in views if view.get("name") == "Input demos")["contents"] == [
+        "input_dataset/episodes/episode_000000/camera/**"
+    ]
+    assert next(
+        view
+        for view in views
+        if view.get("name") == "Isaac environment — trained policy"
+    )["contents"] == ["policy_rollout/episodes/episode_000001/camera/**"]
+    assert {view.get("name") for view in views if view["kind"] == "TimeSeriesView"} == {
+        "State",
+        "Policy actions",
+        "VLM/VLA eval",
+    }
+
+
+def test_logical_blueprint_rollout_rgb_is_primary_and_omits_empty_eval() -> None:
+    blueprint = _build_logical_blueprint(
+        _FakeBlueprintApi(),
+        [WORKSPACE_VIEW_KEY],
+        input_episode_indices=[],
+        rollout_episode_indices=[0],
+        has_feedback=False,
+    )
+    views = _view_nodes(blueprint)
+
+    assert [view.get("name") for view in views if view["kind"] == "Spatial2DView"] == [
+        "Isaac environment — trained policy"
+    ]
+    assert {view.get("name") for view in views if view["kind"] == "TimeSeriesView"} == {
+        "State",
+        "Policy actions",
+    }
+    horizontal = blueprint["children"][0]
+    assert horizontal["column_shares"] == [4.0, 1.6]
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not installed")
+def test_logical_rerun_maps_each_real_rgb_video_to_its_episode_timeline(
+    tmp_path: Path,
+) -> None:
+    spec = LeRobotFeatureSpec(
+        state_names=["cart", "pole"],
+        action_names=["force"],
+        robot_type="cartpole",
+    )
+    raw = tmp_path / "raw"
+    for episode_index in range(2):
+        episode = raw / f"episode_{episode_index:06d}"
+        episode.mkdir(parents=True)
+        frame_count = 4
+        np.save(episode / "state.npy", np.zeros((frame_count, 2), dtype=np.float32))
+        np.save(episode / "actions.npy", np.zeros((frame_count, 1), dtype=np.float32))
+        pixels = np.zeros((frame_count, 32, 48, 3), dtype=np.uint8)
+        pixels[..., episode_index] = 180
+        pixels[:, 8:24, 18:30, 2] = 255
+        np.save(episode / "rgb.npy", pixels)
+    dataset = convert(raw, tmp_path / "lerobot", fps=10, spec=spec)
+    output = tmp_path / "isaac-rgb.rrd"
+
+    result = lerobot_dataset_logical_to_rerun(
+        dataset,
+        output,
+        input_episode_indices=[],
+        rollout_episode_indices=[0, 1],
+        feedback_by_episode={},
+        max_frames_per_episode=4,
+    )
+
+    assert result.entity_counts[
+        "/policy_rollout/episodes/episode_000000/camera/observation_images_workspace"
+    ] == 4
+    chunks = _recording_chunks(output)
+    assert _dynamic_row_count(
+        chunks,
+        "/policy_rollout/episodes/episode_000001/camera/observation_images_workspace",
+    ) == 4
+    paths = _entity_paths(chunks)
+    assert "/videos/episode_000000/observation_images_workspace" in paths
+    assert "/videos/episode_000001/observation_images_workspace" in paths
+    assert not any(path.startswith("/eval/") for path in paths)

@@ -6,10 +6,15 @@ import pytest
 from typer.testing import CliRunner
 
 from npa.cli.main import app
-from npa.clients.network import EnsureIngressResult, InstanceNetworkContext, NetworkIngressError
+from npa.clients.network import (
+    EnsureIngressResult,
+    InstanceNetworkContext,
+    NetworkIngressError,
+)
 
 
 runner = CliRunner()
+NARROW_SOURCE = "192.0.2.0/24"
 
 
 @dataclass(frozen=True)
@@ -40,14 +45,16 @@ def _result(case: RegisterCase) -> EnsureIngressResult:
         project_id="project-test",
         public_ip="203.0.113.10/32",
         ports=(case.port,),
-        source="0.0.0.0/0",
+        source=NARROW_SOURCE,
         tool=case.tool,
         security_groups=(),
     )
 
 
 def _patch_register_context(mocker, *, workbenches: dict | None = None):
-    mocker.patch("npa.cli.ingress.resolve_instance_network_context", return_value=_context())
+    mocker.patch(
+        "npa.cli.ingress.resolve_instance_network_context", return_value=_context()
+    )
     mocker.patch(
         "npa.cli.ingress.list_projects",
         return_value={"proj": {"workbenches": workbenches or {}}},
@@ -57,7 +64,9 @@ def _patch_register_context(mocker, *, workbenches: dict | None = None):
 
 
 @pytest.mark.parametrize("case", TOOL_CASES, ids=lambda case: case.tool)
-def test_register_byovm_writes_alias_and_ensures_ingress(mocker, case: RegisterCase) -> None:
+def test_register_byovm_writes_alias_and_ensures_ingress(
+    mocker, case: RegisterCase
+) -> None:
     write_config = _patch_register_context(mocker)
     ensure = mocker.patch("npa.cli.ingress.ensure_ingress", return_value=_result(case))
 
@@ -71,19 +80,26 @@ def test_register_byovm_writes_alias_and_ensures_ingress(mocker, case: RegisterC
             "demo",
             "--instance-id",
             "computeinstance-test",
+            "--source",
+            NARROW_SOURCE,
         ],
     )
 
     assert result.exit_code == 0
-    assert f"Registered {case.tool} BYOVM alias 'demo' in project 'proj'." in result.output
+    assert (
+        f"Registered {case.tool} BYOVM alias 'demo' in project 'proj'." in result.output
+    )
     assert f"Network ingress confirmed for port {case.port}" in result.output
     ensure.assert_called_once_with(
         vm_id="computeinstance-test",
         ports=(case.port,),
-        source="0.0.0.0/0",
+        source=NARROW_SOURCE,
+        allow_world_open=False,
         tool=case.tool,
     )
-    alias_config = write_config.call_args.args[0]["projects"]["proj"]["workbenches"]["demo"]
+    alias_config = write_config.call_args.args[0]["projects"]["proj"]["workbenches"][
+        "demo"
+    ]
     assert alias_config["alias"] == "demo"
     assert alias_config["endpoint"] == f"http://203.0.113.10:{case.port}"
     assert alias_config["runtime"] == "byovm"
@@ -115,6 +131,8 @@ def test_register_byovm_instance_get_failure_does_not_write_alias(mocker) -> Non
             "demo",
             "--instance-id",
             "computeinstance-missing",
+            "--source",
+            NARROW_SOURCE,
         ],
     )
 
@@ -124,7 +142,9 @@ def test_register_byovm_instance_get_failure_does_not_write_alias(mocker) -> Non
     ensure.assert_not_called()
 
 
-def test_register_byovm_existing_alias_overwrites_registration_fields_with_warning(mocker) -> None:
+def test_register_byovm_existing_alias_overwrites_registration_fields_with_warning(
+    mocker,
+) -> None:
     existing = {
         "endpoint": "http://old.example:9999",
         "runtime": "vm",
@@ -139,7 +159,10 @@ def test_register_byovm_existing_alias_overwrites_registration_fields_with_warni
         },
     }
     write_config = _patch_register_context(mocker, workbenches={"demo": existing})
-    mocker.patch("npa.cli.ingress.ensure_ingress", return_value=_result(RegisterCase("groot", 8082)))
+    mocker.patch(
+        "npa.cli.ingress.ensure_ingress",
+        return_value=_result(RegisterCase("groot", 8082)),
+    )
 
     result = runner.invoke(
         app,
@@ -151,12 +174,19 @@ def test_register_byovm_existing_alias_overwrites_registration_fields_with_warni
             "demo",
             "--instance-id",
             "computeinstance-test",
+            "--source",
+            NARROW_SOURCE,
         ],
     )
 
     assert result.exit_code == 0
-    assert "Warning: alias 'demo' already exists; overwriting BYOVM registration fields." in result.output
-    alias_config = write_config.call_args.args[0]["projects"]["proj"]["workbenches"]["demo"]
+    assert (
+        "Warning: alias 'demo' already exists; overwriting BYOVM registration fields."
+        in result.output
+    )
+    alias_config = write_config.call_args.args[0]["projects"]["proj"]["workbenches"][
+        "demo"
+    ]
     assert alias_config["endpoint"] == "http://203.0.113.10:8082"
     assert alias_config["runtime"] == "byovm"
     assert alias_config["project_id"] == "project-test"

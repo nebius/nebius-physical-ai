@@ -6,6 +6,8 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 from npa.workflows.sim2real import byo_isaac_policy_rollout as pr
 from npa.workflows.sim2real.isaac_job_payload import decode_compressed_bash_args
 
@@ -87,6 +89,16 @@ def test_build_rollout_manifest_keeps_primary_compatibility_and_named_views():
 def test_latest_checkpoint_uri_empty_inputs():
     assert pr.latest_checkpoint_uri("", "run") == ""
     assert pr.latest_checkpoint_uri("bucket", "") == ""
+
+
+def test_camera_coverage_tracks_decision_points_plus_terminal_frame():
+    assert pr._expected_camera_frame_count(
+        {
+            "decision_points": 32,
+            "horizon_steps": 300,
+            "rollout_stride": 1,
+        }
+    ) == 33
 
 
 def test_write_dryrun_rollouts_layout(tmp_path):
@@ -202,6 +214,30 @@ def test_build_isaac_rollout_job_manifest_shape():
         pr.ISAAC_ROLLOUT_SCRIPT
     )
     assert '"simulation_device": SIM_DEVICE' in pr.ISAAC_ROLLOUT_SCRIPT
+    assert "CAPTURE_STEPS = [" in pr.ISAAC_ROLLOUT_SCRIPT
+    assert '"expected_frames_per_view": len(CAPTURE_STEPS)' in (
+        pr.ISAAC_ROLLOUT_SCRIPT
+    )
+    assert '"sample_steps": SAMPLE_STEPS' in pr.ISAAC_ROLLOUT_SCRIPT
+
+
+def test_camera_coverage_counts_sampled_decisions_plus_terminal_frame():
+    capture = {
+        "decision_points": 8,
+        "horizon_steps": 300,
+        "rollout_stride": 1,
+    }
+    assert pr._expected_camera_frame_count(capture) == 9
+
+
+def test_camera_coverage_applies_stride_to_samples_but_always_keeps_terminal():
+    capture = {
+        "decision_points": 8,
+        "horizon_steps": 300,
+        "rollout_stride": 2,
+        "sample_steps": [0, 42, 85, 128, 170, 213, 256, 299],
+    }
+    assert pr._expected_camera_frame_count(capture) == 6
 
 
 def test_rollout_job_can_select_cpu_physics_without_releasing_gpu(
@@ -250,6 +286,74 @@ def test_untrained_job_manifest_skips_download():
     script = _manifest_script(m)
     assert "npa.workflows.sim2real.isaac_job_io download" not in script
     assert 'ROLLOUT_CKPT_LOCAL=""' in script
+
+
+def test_materialize_uses_declared_policy_capture_cadence(tmp_path, monkeypatch):
+    class _FakeS3:
+        def download_file(self, _bucket: str, _key: str, local: str) -> None:
+            Path(local).write_bytes(b"png")
+
+    class _FakeBoto3:
+        def client(self, *_args, **_kwargs):
+            return _FakeS3()
+
+    monkeypatch.setitem(sys.modules, "boto3", _FakeBoto3())
+    view_names = ("primary", "side", "overhead")
+    frames = {
+        view: [f"camera-{view}-{index:03d}.png" for index in range(9)]
+        for view in view_names
+    }
+    digest = "scenario-digest"
+    meta = {
+        "note": "rollout_ok_untrained",
+        "policy_trained": False,
+        "capture": {
+            "decision_points": 8,
+            "horizon_steps": 300,
+            "rollout_stride": 1,
+            "expected_frames_per_view": 9,
+        },
+        "camera_metadata": [{"name": view} for view in view_names],
+        "applied_scenarios": {
+            "records": [{"scenario_config_digest": digest, "applied_count": 1}]
+        },
+        "rollouts": [
+            {
+                "rollout_id": "rollout-0000",
+                "frames": frames["primary"],
+                "camera_views": frames,
+                "scenario": {"scenario_config_digest": digest},
+                "actions": [
+                    {
+                        "step": index,
+                        "simulator_ground_truth": {
+                            "scenario_config_digest": digest
+                        },
+                    }
+                    for index in range(8)
+                ],
+            }
+        ],
+    }
+
+    result = pr.materialize_rollout_dirs(
+        tmp_path,
+        meta,
+        "s3://bucket/rollouts",
+        checkpoint_uri="",
+        s3_endpoint="https://storage.example",
+    )
+    assert result == [str(tmp_path / "rollout-0000")]
+
+    meta["capture"]["expected_frames_per_view"] = 10
+    with pytest.raises(RuntimeError, match="camera coverage mismatch"):
+        pr.materialize_rollout_dirs(
+            tmp_path / "wrong",
+            meta,
+            "s3://bucket/rollouts",
+            checkpoint_uri="",
+            s3_endpoint="https://storage.example",
+        )
 
 
 def test_rollout_manifest_embeds_scenario_and_byo_robot_contract():

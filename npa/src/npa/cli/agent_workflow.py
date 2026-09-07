@@ -300,6 +300,8 @@ def _workflow_specs() -> dict[str, dict[str, Any]]:
                 {
                     "repo_url": "<repo-url>",
                     "repo_ref": "<repo-ref>",
+                    "repo_auth": "none",
+                    "repo_token_env": "GH_TOKEN",
                     "base_profile": "ubuntu",
                     "base_image": "",
                     "build_command": "",
@@ -883,174 +885,6 @@ def _workflow_specs() -> dict[str, dict[str, Any]]:
                 }
             ),
         },
-        "gpu-cross-region": {
-            "name": "sim2real-gpu-cross-region",
-            "description": (
-                "Tenant-scoped GPU workflow that runs stages across primary and "
-                "secondary project/region targets with containerized glue transforms."
-            ),
-            "config_runtime": OrderedDict(
-                {
-                    "prefix": "sim2real-cross-region/{{run.id}}",
-                    "tenant_id": "tenant-example",
-                    "project_primary": "project-primary",
-                    "project_secondary": "project-secondary",
-                    "region_primary": "us-central1",
-                    "region_secondary": "eu-north1",
-                    "improvement_local_path": "/tmp/{{run.id}}-improvement.json",
-                }
-            ),
-            "config_uri": OrderedDict(
-                {
-                    "rollouts_uri": "s3://{{config.bucket}}/{{config.prefix}}/rollouts/primary/",
-                    "normalized_rollouts_uri": "s3://{{config.bucket}}/{{config.prefix}}/rollouts/normalized/",
-                    "heldout_report_uri": "s3://{{config.bucket}}/{{config.prefix}}/eval/secondary/report.json",
-                    "improvement_report_uri": "s3://{{config.bucket}}/{{config.prefix}}/reports/improvement.json",
-                    "finalize_report_uri": "s3://{{config.bucket}}/{{config.prefix}}/reports/final.json",
-                }
-            ),
-            "resources": OrderedDict(
-                {
-                    "gpu-primary": OrderedDict(
-                        {
-                            "cloud": "kubernetes",
-                            "accelerators": "RTXPRO6000:1",
-                            "project_alias": "{{config.project_primary}}",
-                            "region": "{{config.region_primary}}",
-                        }
-                    ),
-                    "gpu-secondary": OrderedDict(
-                        {
-                            "cloud": "kubernetes",
-                            "accelerators": "RTXPRO6000:1",
-                            "project_alias": "{{config.project_secondary}}",
-                            "region": "{{config.region_secondary}}",
-                        }
-                    ),
-                    "container-glue": OrderedDict(
-                        {
-                            "cloud": "kubernetes",
-                            "cpus": 4,
-                            "memory": "16Gi",
-                            "image": "python:3.11-slim",
-                            "project_alias": "{{config.project_secondary}}",
-                            "region": "{{config.region_secondary}}",
-                        }
-                    ),
-                }
-            ),
-            "initial": "primary-rollout",
-            "states": OrderedDict(
-                {
-                    "primary-rollout": OrderedDict(
-                        {
-                            "description": "Run primary GPU rollout workload.",
-                            "run": OrderedDict(
-                                {"shell": "false # retired stub template"}
-                            ),
-                            "resources": "gpu-primary",
-                            "outputs": [
-                                OrderedDict(
-                                    {
-                                        "uri": "{{config.rollouts_uri}}manifest.json",
-                                        "schema": "npa.sim2real.action_rollout.v1",
-                                    }
-                                )
-                            ],
-                            "next": "transform-rollouts",
-                        }
-                    ),
-                    "transform-rollouts": OrderedDict(
-                        {
-                            "description": (
-                                "Contract adapter/validator stage that normalizes rollout artifacts "
-                                "across project/region boundaries."
-                            ),
-                            "resources": "container-glue",
-                            "toolRef": "workbench.data_transform.rollout_contract",
-                            "inputs": [
-                                OrderedDict(
-                                    {
-                                        "uri": "{{config.rollouts_uri}}manifest.json",
-                                        "schema": "npa.sim2real.action_rollout.v1",
-                                    }
-                                )
-                            ],
-                            "outputs": [
-                                OrderedDict(
-                                    {
-                                        "uri": "{{config.normalized_rollouts_uri}}manifest.json",
-                                        "schema": "npa.sim2real.rollout_manifest.v1",
-                                    }
-                                )
-                            ],
-                            "next": "secondary-eval",
-                        }
-                    ),
-                    "secondary-eval": OrderedDict(
-                        {
-                            "description": "Run secondary GPU held-out evaluation workload.",
-                            "run": OrderedDict(
-                                {"shell": "false # retired stub template"}
-                            ),
-                            "resources": "gpu-secondary",
-                            "inputs": [
-                                OrderedDict(
-                                    {
-                                        "uri": "{{config.normalized_rollouts_uri}}manifest.json",
-                                        "schema": "npa.sim2real.rollout_manifest.v1",
-                                    }
-                                )
-                            ],
-                            "outputs": [
-                                OrderedDict(
-                                    {
-                                        "uri": "{{config.heldout_report_uri}}",
-                                        "schema": "npa.sim2real.heldout_eval.v1",
-                                    }
-                                )
-                            ],
-                            "next": "summarize-improvement",
-                        }
-                    ),
-                    "summarize-improvement": OrderedDict(
-                        {
-                            "description": (
-                                "Compute and validate cross-region improvement contract payload "
-                                "for downstream reporting."
-                            ),
-                            "resources": "container-glue",
-                            "toolRef": "workbench.data_transform.improvement_summary",
-                            "outputs": [
-                                OrderedDict(
-                                    {
-                                        "uri": "{{config.improvement_report_uri}}",
-                                        "schema": "npa.sim2real.improvement_report.v1",
-                                    }
-                                )
-                            ],
-                            "next": "finalize",
-                        }
-                    ),
-                    "finalize": OrderedDict(
-                        {
-                            "description": "Finalize tenant-scoped cross-region run report.",
-                            "run": _real_finalize_run(),
-                            "resources": "gpu-secondary",
-                            "outputs": [
-                                OrderedDict(
-                                    {
-                                        "uri": "{{config.finalize_report_uri}}",
-                                        "schema": "npa.sim2real.e2e_report.v1",
-                                    }
-                                )
-                            ],
-                            "terminal": True,
-                        }
-                    ),
-                }
-            ),
-        },
         "rl-policy-success": {
             "name": "rl-policy-training-sim-success",
             "description": (
@@ -1357,7 +1191,7 @@ def _data_factory_spec() -> dict[str, Any]:
                 "appearance_blur_ksize": "7",
                 "appearance_max_dimension": "256",
                 "appearance_regions_json": "",
-                "caption_model": "Qwen/Qwen2.5-VL-72B-Instruct",
+                "caption_model": "MiniMaxAI/MiniMax-M3",
                 "vlm_backend": "api",
                 "max_images": "8",
                 "max_tokens": "512",
@@ -2900,22 +2734,9 @@ def _canonical_sim2real_spec(*, bucket: str, name: str | None) -> OrderedDict[st
     if _EMBEDDED_CANONICAL_SIM2REAL_YAML:
         payload = yaml.safe_load(_EMBEDDED_CANONICAL_SIM2REAL_YAML)
     else:
-        here = Path(__file__).resolve()
-        candidates = (
-            here.parents[3]
-            / "workflows"
-            / "workbench"
-            / "npa-workflows"
-            / "sim2real.yaml",
-            here.parents[1]
-            / "workflows"
-            / "workbench"
-            / "npa-workflows"
-            / "sim2real.yaml",
-        )
-        path = next(
-            (candidate for candidate in candidates if candidate.is_file()), None
-        )
+        from npa.orchestration.npa_workflow.blueprints import resolve_npa_workflow_spec
+
+        path = resolve_npa_workflow_spec("sim2real.yaml")
         if path is None:
             raise FileNotFoundError("canonical packaged sim2real.yaml is missing")
         payload = yaml.safe_load(path.read_text(encoding="utf-8"))
@@ -3953,6 +3774,45 @@ def plan_workflow_yaml_text(
         return _plan_with_npa(text, run_id=run_id, assume_decision=assume_decision)
     except ImportError:
         return _plan_lightweight(text, run_id=run_id, tool_refs=tool_refs)
+
+
+def evaluate_workflow_chat_request(
+    user_text: str,
+    draft: dict[str, Any],
+    *,
+    intent: str,
+    tool_refs: frozenset[str],
+) -> dict[str, Any]:
+    """Validate or plan the supplied/saved spec without regenerating or executing it."""
+    fenced = re.search(r"```(?:yaml|yml)\s*\n(.*?)```", user_text, re.DOTALL | re.IGNORECASE)
+    spec = fenced.group(1) if fenced else str(draft.get("yaml") or "")
+    if not spec.strip():
+        return {"ok": False, "reply": "Paste a YAML specification or draft one first."}
+    validation = validate_workflow_yaml_text(spec, tool_refs=tool_refs)
+    if not validation.get("ok"):
+        return {"ok": False, "validation": validation,
+                "reply": "**Workflow validation failed:** " + str(validation.get("error") or "invalid specification")}
+    name = str(validation.get("name") or "unnamed")
+    reply = f"**Workflow validation:** `valid`\n- **name**: `{name}`\n- **schema**: `{API_VERSION}`"
+    result: dict[str, Any] = {"ok": True, "validation": validation}
+    if intent == "plan_workflow":
+        plan = plan_workflow_yaml_text(spec, run_id="agent-chat-plan", tool_refs=tool_refs)
+        result["plan"] = plan
+        result["ok"] = bool(plan.get("ok"))
+        if plan.get("ok"):
+            steps = plan.get("steps") or []
+            reply += f"\n\n**Execution plan:** {len(steps)} step(s)\n"
+            reply += "\n".join(
+                f"{i}. `{step.get('state')}` — `{step.get('tool_ref') or step.get('toolRef') or 'run'}`"
+                for i, step in enumerate(steps, 1)
+            )
+            reply += "\n\nPlanning only; no workload was submitted or executed."
+        else:
+            reply += "\n\n**Planning failed:** " + str(plan.get("error") or "no executable plan")
+    else:
+        reply += "\n\nThe supplied specification was validated without changing the saved draft or executing a workload."
+    result["reply"] = reply
+    return result
 
 
 def format_workflow_chat_reply(

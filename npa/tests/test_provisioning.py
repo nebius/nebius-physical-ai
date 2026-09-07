@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -171,6 +172,28 @@ def test_provision_if_absent_dry_run_reports_actions(
         for action in result.actions
     )
     assert result.storage_bucket == "s3://bucket/checkpoints/"
+
+
+def test_provision_if_absent_dry_run_forwards_infiniband_fabric(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_runtime(tmp_path, monkeypatch)
+
+    result = provisioning.provision_if_absent(
+        project="proj",
+        kubeconfig=tmp_path / "missing-kubeconfig",
+        dry_run=True,
+        skip_s3=True,
+        gpu_nodes=1,
+        gpu_platform="gpu-b200-sxm",
+        gpu_preset="8gpu-160vcpu-1792gb",
+        gpu_driver_mode="managed-image",
+        capacity_block_group="capacityblockgroup-example",
+        infiniband_fabric="us-central1-b",
+    )
+
+    assert result.status == "ready"
+    assert any("provider_mutation=false" in action for action in result.actions)
 
 
 def test_provision_if_absent_preflight_uses_terraform_disk_overrides(
@@ -444,6 +467,38 @@ def test_fresh_cluster_uses_the_same_readiness_then_smoke_boundary(
     assert seen[2][1]["sky_bin"] == "/opt/npa/sky"
     assert seen[3][1]["sky_bin"] == "/opt/npa/sky"
     assert seen[3][1]["credentials_checked"] is True
+
+
+def test_skypilot_smoke_uses_the_accelerator_name_resolved_by_readiness(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_runtime(tmp_path, monkeypatch)
+    kubeconfig = tmp_path / "kubeconfig"
+    kubeconfig.write_text("apiVersion: v1\n", encoding="utf-8")
+    requested = "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"
+    resolved = "NVIDIA-RTX-PRO-6000-BLACKWELL-SERVER-EDITION:1"
+    seen: list[str] = []
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.k8s_gpu_catalog.wait_for_kubernetes_accelerators",
+        lambda *_args, **_kwargs: {
+            requested: SimpleNamespace(resolved=resolved),
+        },
+    )
+    monkeypatch.setattr(
+        "npa.cli.cluster.terraform_lifecycle._run_skypilot_smoke",
+        lambda *_args, **_kwargs: seen.append(_args[3]),
+    )
+
+    result = provisioning.provision_if_absent(
+        project="proj",
+        cluster_name="npa-cluster",
+        kubeconfig=kubeconfig,
+        sky_smoke=True,
+        accelerator=requested,
+    )
+
+    assert result.status == "ok"
+    assert seen == [resolved]
 
 
 def test_cached_smoke_without_accelerator_keeps_auto_detection(

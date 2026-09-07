@@ -1,0 +1,114 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+# CPU-only evidence for the installed SONIC accelerator routing logic. Provider
+# recognition and GPU execution are explicit inputs, never inferred from routing.
+# Submit with a run-scoped bucket override:
+#   npa workbench workflow submit sonic-b300-routing-evidence.yaml \
+#     --run-id <new-run-id> --var bucket=<configured-bucket> \
+#     --var tested_commit_sha=<git-sha>
+
+metadata:
+  name: sonic-b300-routing-evidence
+  description: >
+    Execute the checked-in SONIC accelerator resolver, fail closed unless b300
+    and gpu-b300-sxm resolve to B300:1, preserve comparison routes, and publish
+    a sanitized manifest, test report, and time-structured Rerun recording.
+
+config:
+  bucket: example-bucket
+  prefix: "sonic-b300-routing/{{run.id}}"
+  tested_commit_sha: unknown
+
+  # Live infrastructure assertions remain unverified unless the operator passes
+  # sanitized evidence from a separate exact one-GPU SONIC training run.
+  provider_accelerator: not-recorded
+  allocated_count: "0"
+  provider_recognition_status: unverified
+  scheduling_status: unverified
+  workload_status: unverified
+  terminal_status: not-recorded
+  job_evidence_digest: unavailable
+  image_digest: unavailable
+  workload_kind: not-recorded
+  output_kind: not-recorded
+  output_bytes: "0"
+  output_digest: unavailable
+  semantic_verification: not-recorded
+  output_verification_status: unverified
+  cleanup_status: unverified
+  pool_type: not-recorded
+
+  manifest_uri: "s3://{{config.bucket}}/{{config.prefix}}/manifest.json"
+  report_uri: "s3://{{config.bucket}}/{{config.prefix}}/test-report.json"
+  rrd_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/sonic-b300-routing.rrd"
+
+resources:
+  cpu:
+    cloud: kubernetes
+    cpus: 2
+    memory: 4Gi
+
+initial: verify-routing
+
+states:
+  verify-routing:
+    description: >
+      Run the installed SONIC resolver and publish fail-closed routing evidence.
+      This CPU stage is not SONIC training or policy execution.
+    resources: cpu
+    run:
+      argv:
+        - python3
+        - -m
+        - npa.workflows.sonic_routing_evidence
+        - --manifest-uri
+        - "{{config.manifest_uri}}"
+        - --report-uri
+        - "{{config.report_uri}}"
+        - --rrd-uri
+        - "{{config.rrd_uri}}"
+        - --run-id
+        - "{{run.id}}"
+        - --tested-commit-sha
+        - "{{config.tested_commit_sha}}"
+        - --provider-accelerator
+        - "{{config.provider_accelerator}}"
+        - --allocated-count
+        - "{{config.allocated_count}}"
+        - --provider-recognition-status
+        - "{{config.provider_recognition_status}}"
+        - --scheduling-status
+        - "{{config.scheduling_status}}"
+        - --workload-status
+        - "{{config.workload_status}}"
+        - --terminal-status
+        - "{{config.terminal_status}}"
+        - --job-evidence-digest
+        - "{{config.job_evidence_digest}}"
+        - --image-digest
+        - "{{config.image_digest}}"
+        - --workload-kind
+        - "{{config.workload_kind}}"
+        - --output-kind
+        - "{{config.output_kind}}"
+        - --output-bytes
+        - "{{config.output_bytes}}"
+        - --output-digest
+        - "{{config.output_digest}}"
+        - --semantic-verification
+        - "{{config.semantic_verification}}"
+        - --output-verification-status
+        - "{{config.output_verification_status}}"
+        - --cleanup-status
+        - "{{config.cleanup_status}}"
+        - --pool-type
+        - "{{config.pool_type}}"
+    outputs:
+      - uri: "{{config.manifest_uri}}"
+        schema: npa.sonic.routing_evidence.v1
+      - uri: "{{config.report_uri}}"
+        schema: npa.sonic.routing_test_report.v1
+      - uri: "{{config.rrd_uri}}"
+        schema: rerun.rrd
+    terminal: true

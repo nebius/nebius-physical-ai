@@ -1521,6 +1521,7 @@ def evaluate(
     run_id: str,
     phase: str,
     *,
+    robot_embodiment: str,
     base_model: str = "",
     baseline_checkpoint_uri: str = "",
     action_horizon: int = 16,
@@ -1544,7 +1545,12 @@ def evaluate(
         raise GrootVisualizationError(
             "evaluation refuses a split without leakage proof"
         )
-    embodiment = str(split.get("source", {}).get("embodiment") or "")
+    source_embodiment = str(split.get("source", {}).get("embodiment") or "")
+    embodiment = str(robot_embodiment or "").strip()
+    if not embodiment:
+        raise GrootVisualizationError(
+            "evaluation requires the workflow's explicit robot embodiment"
+        )
     with tempfile.TemporaryDirectory(prefix=f"npa-groot-{phase}-eval-") as tmp:
         root = Path(tmp)
         train_path = root / "train"
@@ -1680,6 +1686,10 @@ def evaluate(
         "checkpoint": checkpoint_artifact,
         "checkpoint_uri": resolved_checkpoint_uri,
         "engine": "NVIDIA Isaac-GR00T Gr00tPolicy.get_action",
+        "embodiment": {
+            "configured": embodiment,
+            "source": source_embodiment,
+        },
         "real_model_forward": True,
         "model_forward_calls": raw["forward_calls"],
         "episodes": raw["episode_count"],
@@ -1726,6 +1736,7 @@ def baseline_eval(
     baseline_checkpoint_uri: str,
     run_id: str,
     base_model: str,
+    robot_embodiment: str,
     **kwargs: Any,
 ) -> dict[str, Any]:
     return evaluate(
@@ -1735,6 +1746,7 @@ def baseline_eval(
         arrays_uri,
         run_id,
         "baseline",
+        robot_embodiment=robot_embodiment,
         base_model=base_model,
         baseline_checkpoint_uri=baseline_checkpoint_uri,
         **kwargs,
@@ -1747,6 +1759,7 @@ def posttrain_eval(
     output_uri: str,
     arrays_uri: str,
     run_id: str,
+    robot_embodiment: str,
     **kwargs: Any,
 ) -> dict[str, Any]:
     client = _s3_client(kwargs.get("s3_client"))
@@ -1782,6 +1795,7 @@ def posttrain_eval(
         arrays_uri,
         run_id,
         "posttrain",
+        robot_embodiment=robot_embodiment,
         expected_checkpoint_sha256=checkpoint_sha256,
         expected_checkpoint_step=checkpoint_step,
         **kwargs,
@@ -3649,6 +3663,7 @@ def build_parser() -> argparse.ArgumentParser:
     baseline.add_argument("--arrays-uri", required=True)
     baseline.add_argument("--baseline-checkpoint-uri", required=True)
     baseline.add_argument("--base-model", required=True)
+    baseline.add_argument("--robot-embodiment", required=True)
     baseline.add_argument("--run-id", required=True)
     baseline.add_argument("--action-horizon", type=int, default=16)
     baseline.add_argument("--evaluation-repeats", type=int, default=5)
@@ -3658,6 +3673,7 @@ def build_parser() -> argparse.ArgumentParser:
     posttrain.add_argument("--checkpoint-ref-uri", required=True)
     posttrain.add_argument("--output-uri", required=True)
     posttrain.add_argument("--arrays-uri", required=True)
+    posttrain.add_argument("--robot-embodiment", required=True)
     posttrain.add_argument("--run-id", required=True)
     posttrain.add_argument("--action-horizon", type=int, default=16)
     posttrain.add_argument("--evaluation-repeats", type=int, default=5)

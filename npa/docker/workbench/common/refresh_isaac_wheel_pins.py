@@ -16,8 +16,8 @@ index whose ``href`` carries the wheel's sha256 as a URL fragment, e.g.
 so the digest is published alongside the artifact and we can pin it without downloading
 4.5 GB of wheels.
 
-The package set is exactly ``isaacsim[all,extscache]`` plus ``isaacsim-kernel`` and
-``isaaclab`` — i.e. precisely what these images used to bake. It is deliberately not
+The package set is ``isaacsim[all,extscache]`` plus ``isaacsim-kernel``, ``isaaclab``,
+and any explicitly named proprietary transitive runtime packages. It is deliberately not
 trimmed: ``isaacsim-extscache-kit`` and ``-kit-sdk`` are 4.16 GB of the 4.46 GB total,
 so dropping the small optional members (ros1/ros2/test/benchmark/code-editor/cortex/
 example/template) would save ~3% of the download in exchange for a risk of subtle
@@ -185,6 +185,7 @@ def build_pin_file(
     isaac_lab_version: str = DEFAULT_ISAAC_LAB_VERSION,
     python_tag: str = DEFAULT_PYTHON_TAG,
     platform: str = DEFAULT_PLATFORM,
+    runtime_packages: tuple[tuple[str, str], ...] = (),
 ) -> str:
     wheels: list[tuple[str, str, Wheel]] = []
     for project in ISAAC_SIM_PACKAGES:
@@ -197,6 +198,11 @@ def build_pin_file(
         wheels.append(
             (project, isaac_lab_version, _select_wheel(project, entries, isaac_lab_version, python_tag, platform))
         )
+    for project, version in runtime_packages:
+        entries = _fetch_index(index_url, project)
+        wheels.append(
+            (project, version, _select_wheel(project, entries, version, python_tag, platform))
+        )
 
     lines = [
         "# GENERATED — do not edit by hand.",
@@ -208,11 +214,13 @@ def build_pin_file(
         "# be substituted. Every OSS transitive dependency is baked at build time from PyPI",
         "# instead (see install_isaac_runtime_base.sh), which is what keeps --no-deps honest.",
         "#",
-        "# Package set: isaacsim[all,extscache] + isaacsim-kernel + isaaclab (unabridged —",
+        "# Package set: isaacsim[all,extscache] + isaacsim-kernel + isaaclab plus",
+        "# explicitly listed proprietary transitive runtime dependencies (unabridged —",
         "# see the module docstring for why it is not trimmed).",
         f"# isaacsim  {isaac_sim_version}",
         f"# isaaclab  {isaac_lab_version}",
         f"# python    {python_tag}   platform {platform}",
+        *(f"# runtime   {project}=={version}" for project, version in runtime_packages),
         "",
     ]
     for project, version, wheel in wheels:
@@ -230,18 +238,32 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--platform", default=DEFAULT_PLATFORM)
     parser.add_argument("--output", type=Path, default=OUTPUT_PATH)
     parser.add_argument(
+        "--runtime-package",
+        action="append",
+        default=[],
+        metavar="NAME==VERSION",
+        help="Additional proprietary transitive wheel to fetch only at runtime.",
+    )
+    parser.add_argument(
         "--check",
         action="store_true",
         help="Exit non-zero if the committed file differs from a freshly resolved one.",
     )
     args = parser.parse_args(argv)
 
+    runtime_packages: list[tuple[str, str]] = []
+    for requirement in args.runtime_package:
+        name, separator, version = requirement.partition("==")
+        if not separator or not name or not version:
+            parser.error(f"invalid --runtime-package {requirement!r}; expected NAME==VERSION")
+        runtime_packages.append((name, version))
     rendered = build_pin_file(
         index_url=args.index_url,
         isaac_sim_version=args.isaacsim,
         isaac_lab_version=args.isaaclab,
         python_tag=args.python_tag,
         platform=args.platform,
+        runtime_packages=tuple(runtime_packages),
     )
     if args.check:
         if not args.output.is_file():

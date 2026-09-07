@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from npa.workbench.storage_scope import StorageAuthorizationError
+
 from .ingestion import compute_manifest_sha256, manifest_uri
 from .integrations import query_lancedb
 from .schemas import (
@@ -55,6 +57,8 @@ def _filter_records(
 def _read_manifest(input_uri: str) -> dict[str, Any]:
     try:
         manifest = read_json_uri(input_uri)
+    except StorageAuthorizationError:
+        raise
     except FileNotFoundError as exc:
         raise DatasetCurateError(f"dataset manifest not found: {input_uri}") from exc
     except Exception as exc:

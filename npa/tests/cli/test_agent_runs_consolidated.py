@@ -103,3 +103,83 @@ def test_client_consumes_incomplete_viewability_without_fabricating_false() -> N
     assert "run.summary_complete === false" in merge_fn
     assert 'bits.push("viewable")' in picker_fn
     assert 'bits.push("viewability unknown")' in picker_fn
+
+
+def test_client_omits_stale_stock_demo_alias_for_artifact_run() -> None:
+    """A stock viewer state relabeled with a real run id is not another source."""
+    ui = _embedded_ui_html()
+    merge_fn = ui.split("function mergeRunsLatestFirst")[1].split(
+        "function fillRunSelectOptionsRich"
+    )[0]
+
+    assert 'const staleDemoAlias = runId !== "franka-demo"' in merge_fn
+    assert 'String((run && run.stage) || "").trim().toLowerCase() === "demo"' in merge_fn
+    assert '!String((run && run.run_ref) || "").trim()' in merge_fn
+    assert "if (staleDemoAlias) continue;" in merge_fn
+
+
+def test_client_reuses_discovered_identity_for_bound_viewer_history() -> None:
+    """A history row bound to one of two S3 sources must not become a third row."""
+    ui = _embedded_ui_html()
+    merge_fn = ui.split("function mergeRunsLatestFirst")[1].split(
+        "function fillRunSelectOptionsRich"
+    )[0]
+
+    assert "const knownRunRef" in merge_fn
+    assert "const matchingRunRef = knownRunRef && matches.some" in merge_fn
+    assert "const matchedSource = matchingRunRef && matches.find" in merge_fn
+    assert "const key = matchedSource" in merge_fn
+    assert "? String(matchedSource.run_ref || runId)" in merge_fn
+
+
+def test_client_consolidates_aliases_only_within_project_bucket_run_boundary() -> None:
+    ui = _embedded_ui_html()
+    consolidate = ui.split("function consolidateArtifactRunSources", 1)[1].split(
+        "function mergeRunsLatestFirst", 1
+    )[0]
+    group_identity = ui.split("function artifactSourceGroupIdentity", 1)[1].split(
+        "function artifactSourceStableIdentity", 1
+    )[0]
+
+    assert "run.project_id" in group_identity
+    assert "run.bucket" in group_identity
+    assert "run.run_id" in group_identity
+    assert "resolved_prefix" not in group_identity
+    assert "const key = artifactSourceGroupIdentity(run)" in consolidate
+    assert "primary.alternate_sources" in consolidate
+    assert "source_selected: true" in consolidate
+
+
+def test_client_primary_source_preference_is_deterministic_and_active_first() -> None:
+    ui = _embedded_ui_html()
+    preference = ui.split("function compareArtifactSourcePreference", 1)[1].split(
+        "function consolidateArtifactRunSources", 1
+    )[0]
+
+    ordered_markers = [
+        "activeScore(b) - activeScore(a)",
+        'booleanScore(b, "has_viewable")',
+        'booleanScore(b, "summary_complete")',
+        'numericScore(b, "artifact_count")',
+        "b && b.last_modified",
+        "artifactSourceStableIdentity(a).localeCompare",
+    ]
+    positions = [preference.index(marker) for marker in ordered_markers]
+    assert positions == sorted(positions)
+    assert "activeArtifactRunRef" in preference
+    assert "activeRunId" in preference
+
+
+def test_pasted_basename_resolves_to_consolidated_exact_primary() -> None:
+    ui = _embedded_ui_html()
+    resolver = ui.split("function resolveStagesRunChoice", 1)[1].split(
+        "function resolveRunSelection", 1
+    )[0]
+    load_run = ui.split("async function loadRunData", 1)[1].split(
+        "async function selectCamera", 1
+    )[0]
+
+    assert "exact.length === 1" in resolver
+    assert "exact[0].run_ref || exact[0].run_id" in resolver
+    assert "preferredRunEntry(runRef || runId)" in load_run
+    assert "loadArtifactsForSelectedRun(runRef || runId, null, exactEntry" in load_run

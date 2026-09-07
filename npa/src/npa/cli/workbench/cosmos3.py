@@ -9,6 +9,8 @@ from typing import Optional
 
 import typer
 
+from npa.lifecycle_intent import json_stdout_contract
+from npa.cli.path_contract import validate_read_path, validate_write_path
 from npa.workbench.cosmos.text_to_image import DEFAULT_UV_GROUP
 from npa.workbench.cosmos.generate import (
     DEFAULT_MODE,
@@ -17,6 +19,18 @@ from npa.workbench.cosmos.generate import (
     GENERATE_MODES,
     Cosmos3GenerateError,
     generate_and_publish,
+)
+from npa.workbench.cosmos.ray_serve import (
+    DEFAULT_TOKEN_ENV as DEFAULT_RAY_TOKEN_ENV,
+    Cosmos3RayServeError,
+    service_health as ray_service_health,
+    submit_batch as submit_ray_batch,
+)
+from npa.workbench.cosmos.super_benchmark import (
+    PRIMARY_SUITE as SUPER_BENCHMARK_PRIMARY_SUITE,
+    TOPOLOGY_ORDER as SUPER_BENCHMARK_TOPOLOGIES,
+    Cosmos3SuperBenchmarkError,
+    run_benchmark as run_super_benchmark,
 )
 from npa.workflows.cosmos_split import (
     Cosmos3ReasonConfig,
@@ -29,6 +43,291 @@ app = typer.Typer(
     help="Cosmos3 omni-model generation and reasoning workflow contracts.",
     no_args_is_help=True,
 )
+
+
+@app.command("nano-video-augment")
+@json_stdout_contract
+def nano_video_augment_cmd(
+    input_path: str = typer.Option(..., "--input-path", help="Exact S3 source MP4; 832x480 at 24fps."),
+    output_path: str = typer.Option(..., "--output-path", help="Immutable S3 prefix for source, augmentation and comparison."),
+    prompt: str = typer.Option(..., "--prompt", help="Detailed target appearance while preserving source motion."),
+    seed: int = typer.Option(0, "--seed"),
+    negative_prompt: str = typer.Option("", "--negative-prompt"),
+    system_prompt: str = typer.Option("", "--system-prompt", help="Empty uses the explicit structural-transfer default."),
+    num_inference_steps: int = typer.Option(35, "--num-inference-steps"),
+    guidance_scale: float = typer.Option(3.0, "--guidance-scale"),
+    flow_shift: float = typer.Option(10.0, "--flow-shift"),
+    control_guidance: float = typer.Option(1.5, "--control-guidance"),
+    edge_threshold: str = typer.Option("medium", "--edge-threshold"),
+    chunk_frames: int = typer.Option(121, "--chunk-frames"),
+    max_sequence_length: int = typer.Option(4096, "--max-sequence-length"),
+    endpoint: str = typer.Option("", "--endpoint", help="Defaults to NPA_COSMOS3_VIDEO_ENDPOINT."),
+    token_env: str = typer.Option("NPA_COSMOS3_VIDEO_TOKEN", "--token-env"),
+    output_format: str = typer.Option("json", "--output-format"),
+) -> None:
+    """Augment every source interval with Cosmos3-Nano structural edge control."""
+    from npa.workbench.cosmos.nano_video_augment_client import submit_augmentation
+
+    try:
+        if output_format != "json":
+            raise ValueError("output-format must be json")
+        validate_read_path(input_path, tool="cosmos3 nano-video-augment", allow_hf=False)
+        validate_write_path(output_path, tool="cosmos3 nano-video-augment", required=True)
+        result = submit_augmentation(
+            input_path=input_path, output_path=output_path, prompt=prompt, seed=seed,
+            negative_prompt=negative_prompt, system_prompt=system_prompt,
+            num_inference_steps=num_inference_steps, guidance_scale=guidance_scale,
+            flow_shift=flow_shift, control_guidance=control_guidance,
+            edge_threshold=edge_threshold, chunk_frames=chunk_frames,
+            max_sequence_length=max_sequence_length, endpoint=endpoint, token_env=token_env,
+        )
+    except Exception as exc:
+        typer.echo(json.dumps({"status": "failed", "error_type": type(exc).__name__}))
+        raise typer.Exit(1) from exc
+    typer.echo(json.dumps(result))
+    if result["status"] != "succeeded":
+        raise typer.Exit(1)
+
+
+@app.command("nano-video-augment-recover")
+@json_stdout_contract
+def nano_video_augment_recover_cmd(
+    output_path: str = typer.Option(..., "--output-path", help="Original augmentation S3 prefix."),
+    endpoint: str = typer.Option("", "--endpoint"),
+    token_env: str = typer.Option("NPA_COSMOS3_VIDEO_TOKEN", "--token-env"),
+    output_format: str = typer.Option("json", "--output-format"),
+) -> None:
+    """Recover existing generation or retry publication without generating again."""
+    from npa.workbench.cosmos.nano_video_augment_client import recover_augmentation
+
+    try:
+        if output_format != "json":
+            raise ValueError("output-format must be json")
+        validate_write_path(output_path, tool="cosmos3 nano-video-augment-recover", required=True)
+        result = recover_augmentation(output_path=output_path, endpoint=endpoint, token_env=token_env)
+    except Exception as exc:
+        typer.echo(json.dumps({"status": "failed", "error_type": type(exc).__name__}))
+        raise typer.Exit(1) from exc
+    typer.echo(json.dumps(result))
+    if result["status"] != "succeeded":
+        raise typer.Exit(1)
+
+
+@app.command("nano-video-batch")
+@json_stdout_contract
+def nano_video_batch_cmd(
+    output_path: str = typer.Option(..., "--output-path", help="S3 prefix for verified videos and measurements."),
+    concurrency: int = typer.Option(..., "--concurrency", min=1, help="Concurrent complete 30-second generation requests."),
+    input_path: str = typer.Option("", "--input-path", help="Optional S3 JSON prompt object."),
+    endpoint: str = typer.Option("", "--endpoint", help="Defaults to NPA_COSMOS3_VIDEO_ENDPOINT."),
+    token_env: str = typer.Option("NPA_COSMOS3_VIDEO_TOKEN", "--token-env"),
+    output_format: str = typer.Option("json", "--output-format", help="Output format (json)."),
+) -> None:
+    """Run measured chunked video requests through the Nano vLLM-Omni Ray service."""
+    from npa.workbench.cosmos.nano_video import submit_batch
+
+    try:
+        if output_format != "json":
+            raise ValueError("output-format must be json")
+        validate_write_path(output_path, tool="cosmos3 nano-video-batch")
+        if input_path:
+            validate_read_path(input_path, tool="cosmos3 nano-video-batch")
+        result = submit_batch(output_path=output_path, concurrency=concurrency,
+                              input_path=input_path, endpoint=endpoint, token_env=token_env)
+    except Exception as exc:
+        # Runtime evidence retains operational diagnostics; public errors do not
+        # serialize exception strings that might include private endpoints.
+        typer.echo(json.dumps({"status": "failed", "error_type": type(exc).__name__}))
+        raise typer.Exit(1) from exc
+    typer.echo(json.dumps(result))
+    if result["status"] != "succeeded":
+        raise typer.Exit(1)
+
+
+@app.command("super-benchmark")
+def super_benchmark_cmd(
+    output_path: str = typer.Option(
+        ...,
+        "--output-path",
+        help="Absolute local directory or s3:// prefix for records and validated MP4s.",
+    ),
+    topologies: str = typer.Option(
+        ",".join(SUPER_BENCHMARK_TOPOLOGIES),
+        "--topologies",
+        help="Comma-separated ordered subset of 1x8,2x4,4x2,8x1.",
+    ),
+    attempts: int = typer.Option(24, "--attempts", min=1),
+    suite: str = typer.Option(
+        SUPER_BENCHMARK_PRIMARY_SUITE,
+        "--suite",
+        help=(
+            "Benchmark suite: primary (four concurrency-one cells), b200-full "
+            "(the exact ten-cell, 240-attempt public record), or h200-single-gpu "
+            "(one TP-1 service and 24 sequential requests; not a paper cell)."
+        ),
+    ),
+    gpu_family: str = typer.Option(
+        "B200",
+        "--gpu-family",
+        help="Required homogeneous GPU family: B200 or H200.",
+    ),
+    base_port: int = typer.Option(8100, "--base-port", min=1024, max=65527),
+    run_id: str = typer.Option("", "--run-id"),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Print the immutable benchmark plan without touching a GPU."
+    ),
+) -> None:
+    """Run a fixed Cosmos3-Super node benchmark or H200 single-GPU validation."""
+
+    try:
+        payload = run_super_benchmark(
+            output_path=output_path,
+            topologies=topologies,
+            attempts=attempts,
+            suite=suite,
+            gpu_family=gpu_family,
+            base_port=base_port,
+            run_id=run_id,
+            dry_run=dry_run,
+        )
+    except (Cosmos3SuperBenchmarkError, OSError, ValueError) as exc:
+        typer.echo(f"cosmos3 super-benchmark failed: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    typer.echo(json.dumps(payload, indent=2, sort_keys=True))
+
+
+@app.command("ray-batch")
+def ray_batch_cmd(
+    input_path: str = typer.Option(
+        ...,
+        "--input-path",
+        help="Local or s3:// JSON batch of Cosmos sample overrides.",
+    ),
+    output_path: str = typer.Option(
+        ..., "--output-path", help="Absolute local directory or s3:// output prefix."
+    ),
+    endpoint: str = typer.Option(
+        "",
+        "--endpoint",
+        help="Native Ray Serve endpoint; defaults to NPA_COSMOS3_RAY_ENDPOINT.",
+    ),
+    token_env: str = typer.Option(
+        DEFAULT_RAY_TOKEN_ENV,
+        "--token-env",
+        help="Environment variable containing the bearer token.",
+    ),
+    timeout: float = typer.Option(1800.0, "--timeout", min=1.0),
+    run_id: str = typer.Option(
+        "", "--run-id", help="Workflow run id recorded in provenance."
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Validate and print the request plan only."
+    ),
+) -> None:
+    """Submit a durable SDG batch through Cosmos Framework's native Ray Serve path."""
+
+    try:
+        payload = submit_ray_batch(
+            input_path=input_path,
+            output_path=output_path,
+            endpoint=endpoint,
+            token_env=token_env,
+            timeout=timeout,
+            run_id=run_id,
+            dry_run=dry_run,
+        )
+    except (Cosmos3RayServeError, OSError, ValueError) as exc:
+        typer.echo(f"cosmos3 ray-batch failed: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    typer.echo(json.dumps(payload, indent=2, sort_keys=True))
+
+
+@app.command("ray-health")
+def ray_health_cmd(
+    endpoint: str = typer.Option(
+        "",
+        "--endpoint",
+        help="Native Ray Serve endpoint; defaults to NPA_COSMOS3_RAY_ENDPOINT.",
+    ),
+    token_env: str = typer.Option(DEFAULT_RAY_TOKEN_ENV, "--token-env"),
+    timeout: float = typer.Option(30.0, "--timeout", min=1.0),
+) -> None:
+    """Check authenticated model readiness, not merely process liveness."""
+
+    try:
+        payload = ray_service_health(
+            endpoint=endpoint, token_env=token_env, timeout=timeout
+        )
+    except Cosmos3RayServeError as exc:
+        typer.echo(f"cosmos3 ray-health failed: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    typer.echo(json.dumps(payload, indent=2, sort_keys=True))
+
+
+@app.command("ray-serve")
+def ray_serve_cmd(
+    world_size: int = typer.Option(
+        1, "--world-size", min=1, help="GPUs assigned to one model replica."
+    ),
+    max_batch_size: int = typer.Option(4, "--max-batch-size", min=1),
+    batch_wait_timeout_s: float = typer.Option(0.05, "--batch-wait-timeout-s", min=0.0),
+    host: str = typer.Option("0.0.0.0", "--host"),
+    port: int = typer.Option(8000, "--port", min=1024, max=65535),
+    output_path: Path = typer.Option(Path("/outputs"), "--output-path"),
+    parallelism_preset: str = typer.Option("throughput", "--parallelism-preset"),
+    guardrails: bool = typer.Option(True, "--guardrails/--no-guardrails"),
+) -> None:
+    """Launch the persistent native Ray Serve model inside its GPU image."""
+
+    framework_python = os.environ.get(
+        "NPA_COSMOS3_FRAMEWORK_PYTHON",
+        "/opt/cosmos3/cosmos-framework/.venv/bin/python",
+    )
+    if not Path(framework_python).is_file():
+        typer.echo(
+            "cosmos3 ray-serve requires the npa-cosmos3-ray-serve image; "
+            f"framework interpreter not found: {framework_python}",
+            err=True,
+        )
+        raise typer.Exit(1)
+    env = dict(os.environ)
+    from npa.workbench.model_cache import (
+        RUNTIME_DOCKER,
+        RUNTIME_KUBERNETES,
+        model_cache_dirs,
+        model_cache_env,
+        resolve_model_cache_root,
+    )
+
+    cache_runtime = (
+        RUNTIME_KUBERNETES if env.get("KUBERNETES_SERVICE_HOST") else RUNTIME_DOCKER
+    )
+    cache_root = resolve_model_cache_root(env, runtime=cache_runtime)
+    if cache_root:
+        try:
+            for directory in model_cache_dirs(cache_root):
+                Path(directory).mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            typer.echo(f"cosmos3 ray-serve model cache is not writable: {exc}", err=True)
+            raise typer.Exit(1) from exc
+        env.update(model_cache_env(cache_root))
+    env.update(
+        {
+            "NPA_COSMOS3_RAY_WORLD_SIZE": str(world_size),
+            "NPA_COSMOS3_RAY_MAX_BATCH_SIZE": str(max_batch_size),
+            "NPA_COSMOS3_RAY_BATCH_WAIT_TIMEOUT_S": str(batch_wait_timeout_s),
+            "NPA_COSMOS3_RAY_HOST": host,
+            "NPA_COSMOS3_RAY_PORT": str(port),
+            "NPA_COSMOS3_RAY_OUTPUT_DIR": str(output_path),
+            "NPA_COSMOS3_RAY_PARALLELISM_PRESET": parallelism_preset,
+            "NPA_COSMOS3_RAY_GUARDRAILS": "true" if guardrails else "false",
+        }
+    )
+    os.execve(
+        framework_python,
+        [framework_python, "-m", "npa.workbench.cosmos.ray_server"],
+        env,
+    )
 
 
 @app.command("prepare-video-input")
