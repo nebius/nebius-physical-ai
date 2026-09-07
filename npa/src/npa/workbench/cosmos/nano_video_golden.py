@@ -8,6 +8,7 @@ import math
 import os
 from pathlib import Path
 import secrets
+import stat
 from typing import Any
 
 from npa.workbench.cosmos.nano_video import (
@@ -97,6 +98,18 @@ async def _generate(output: Path) -> dict[str, Any]:
             await asyncio.to_thread(runtime.process.wait)
 
 
+def _private_root(root: Path) -> Path:
+    root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    info = root.lstat()
+    if (
+        not stat.S_ISDIR(info.st_mode)
+        or info.st_uid != os.getuid()
+        or stat.S_IMODE(info.st_mode) & 0o077
+    ):
+        raise NanoVideoError("Golden output root must be an owned directory with mode 0700")
+    return root
+
+
 def main() -> int:
     os.umask(0o077)
     root = Path(
@@ -104,7 +117,7 @@ def main() -> int:
             "NPA_COSMOS3_GOLDEN_OUTPUT_ROOT", "/tmp/cosmos3-nano-video-golden"
         )
     )
-    root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    root = _private_root(root)
     output = root / secrets.token_hex(12)
     result: dict[str, Any] = {"status": "running", "run_directory": str(output)}
     write_json(root / "result.json", result)

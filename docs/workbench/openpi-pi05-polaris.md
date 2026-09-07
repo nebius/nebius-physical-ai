@@ -155,6 +155,14 @@ the pinned recipe's completion contract rather than exposing smoke-sized knobs:
 - eight nodes with exactly one RTX PRO 6000 GPU each, compute capability
   `12.0`, and `fsdp_devices=8`, which must produce a global `(1, 8)` JAX mesh.
 
+Dataset preparation uses the image's `npa-openpi-gcs` reader and an isolated,
+hash-locked Google Cloud Storage SDK. It reads public objects anonymously,
+binds downloads to their listed generation, verifies CRC32C and byte counts,
+and replaces local files atomically. Existing files are reused only after
+checksum verification. Remote path traversal, symlinks and special destination
+files fail closed. The legacy `--gsutil` option remains an explicit executable
+override; the image no longer bundles gsutil's vulnerable dependency closure.
+
 The pinned OpenPI RLDS wrapper rejects multi-process JAX even though its trainer
 and Orbax checkpoint manager are multi-host capable. The NPA adapter makes only
 the required input-side change: it initializes one JAX process per node, shards

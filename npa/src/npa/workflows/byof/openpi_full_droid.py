@@ -3102,7 +3102,10 @@ def build_parser() -> argparse.ArgumentParser:
     prepare.add_argument("--rrd-uri", required=True)
     prepare.add_argument("--milestone-manifest-uri", required=True)
     prepare.add_argument("--run-id", required=True)
-    prepare.add_argument("--gsutil", default="/opt/gsutil-venv/bin/gsutil")
+    prepare.add_argument(
+        "--gsutil", default="/usr/local/bin/npa-openpi-gcs",
+        help="Public GCS reader executable; accepts an explicit legacy gsutil override",
+    )
     prepare.set_defaults(func=_prepare)
 
     for command, kind in (("qualify", "qualification"), ("train", "full")):

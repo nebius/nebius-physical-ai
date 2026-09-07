@@ -64,11 +64,13 @@ def _patch_register_context(mocker, *, workbenches: dict | None = None):
 
 
 @pytest.mark.parametrize("case", TOOL_CASES, ids=lambda case: case.tool)
-def test_register_byovm_writes_alias_and_ensures_ingress(
+def test_register_byovm_writes_alias_with_tool_access_policy(
     mocker, case: RegisterCase
 ) -> None:
     write_config = _patch_register_context(mocker)
+    mocker.patch("npa.cli.fiftyone.write_config", write_config)
     ensure = mocker.patch("npa.cli.ingress.ensure_ingress", return_value=_result(case))
+    source_args = [] if case.tool == "fiftyone" else ["--source", NARROW_SOURCE]
 
     result = runner.invoke(
         app,
@@ -80,8 +82,7 @@ def test_register_byovm_writes_alias_and_ensures_ingress(
             "demo",
             "--instance-id",
             "computeinstance-test",
-            "--source",
-            NARROW_SOURCE,
+            *source_args,
         ],
     )
 
@@ -89,17 +90,21 @@ def test_register_byovm_writes_alias_and_ensures_ingress(
     assert (
         f"Registered {case.tool} BYOVM alias 'demo' in project 'proj'." in result.output
     )
-    assert f"Network ingress confirmed for port {case.port}" in result.output
-    ensure.assert_called_once_with(
-        vm_id="computeinstance-test",
-        ports=(case.port,),
-        source=NARROW_SOURCE,
-        allow_world_open=False,
-        tool=case.tool,
-    )
-    alias_config = write_config.call_args.args[0]["projects"]["proj"]["workbenches"][
-        "demo"
-    ]
+    if case.tool == "fiftyone":
+        ensure.assert_not_called()
+        assert "Network ingress confirmed" not in result.output
+    else:
+        assert f"Network ingress confirmed for port {case.port}" in result.output
+        ensure.assert_called_once_with(
+            vm_id="computeinstance-test",
+            ports=(case.port,),
+            source=NARROW_SOURCE,
+            allow_world_open=False,
+            tool=case.tool,
+        )
+    alias_config = {}
+    for call in write_config.call_args_list:
+        alias_config.update(call.args[0]["projects"]["proj"]["workbenches"]["demo"])
     assert alias_config["alias"] == "demo"
     assert alias_config["endpoint"] == f"http://203.0.113.10:{case.port}"
     assert alias_config["runtime"] == "byovm"
@@ -111,6 +116,33 @@ def test_register_byovm_writes_alias_and_ensures_ingress(
     assert alias_config["ssh"]["host"] == "203.0.113.10"
     if case.tool == "fiftyone":
         assert alias_config["app_port"] == 5151
+        assert alias_config["endpoint_strategy"] == "ssh_fallback"
+    else:
+        assert alias_config["endpoint_strategy"] == "public"
+
+
+@pytest.mark.parametrize("source_args", [
+    ["--source", NARROW_SOURCE],
+    ["--source", "0.0.0.0/0", "--allow-world-open"],
+    ["--allow-world-open"],
+])
+def test_fiftyone_registration_rejects_ingress_before_resolving_or_writing(
+    mocker, source_args,
+) -> None:
+    resolve = mocker.patch("npa.cli.ingress.resolve_instance_network_context")
+    write = mocker.patch("npa.cli.ingress.write_config")
+    private_write = mocker.patch("npa.cli.fiftyone.write_config")
+    ensure = mocker.patch("npa.cli.ingress.ensure_ingress")
+    result = runner.invoke(app, [
+        "workbench", "fiftyone", "register-byovm", "--alias", "demo",
+        "--instance-id", "computeinstance-test", *source_args,
+    ])
+    assert result.exit_code == 1
+    assert "FiftyOne app ingress is disabled" in result.output
+    resolve.assert_not_called()
+    write.assert_not_called()
+    private_write.assert_not_called()
+    ensure.assert_not_called()
 
 
 def test_register_byovm_instance_get_failure_does_not_write_alias(mocker) -> None:

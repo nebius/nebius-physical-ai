@@ -25,7 +25,7 @@ import time
 from typing import Any, Callable, Iterator
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 
 class PaidfInputError(RuntimeError):
@@ -797,6 +797,44 @@ def _run_ffmpeg(command: list[str], action: str) -> None:
         raise PaidfInputError(f"could not {action}: {detail}")
 
 
+def _https_origin(url: str) -> tuple[str, int]:
+    parsed = urlparse(url)
+    try:
+        if (
+            parsed.scheme != "https" or not parsed.hostname
+            or parsed.username is not None or parsed.password is not None
+        ):
+            raise ValueError("invalid HTTPS origin")
+        return parsed.hostname.lower(), parsed.port or 443
+    except ValueError as exc:
+        raise PaidfInputError("PAIDF starter downloads require an HTTPS URL without credentials") from exc
+
+
+class _StarterRedirectHandler(HTTPRedirectHandler):
+    """Keep authentication bound to the packaged source origin across redirects."""
+
+    def __init__(self, source_url: str, token: str) -> None:
+        self._origin = _https_origin(source_url)
+        self._token = token
+
+    def redirect_request(self, request, response, code, message, headers, newurl):
+        origin = _https_origin(newurl)
+        redirected = super().redirect_request(request, response, code, message, headers, newurl)
+        if redirected is not None:
+            redirected.remove_header("Authorization")
+            if self._token and origin == self._origin:
+                redirected.add_unredirected_header("Authorization", f"Bearer {self._token}")
+        return redirected
+
+
+def _open_starter_url(source_url: str, token: str):
+    handler = _StarterRedirectHandler(source_url, token)
+    request = Request(source_url)
+    if token:
+        request.add_unredirected_header("Authorization", f"Bearer {token}")
+    return build_opener(handler).open(request, timeout=30)
+
+
 def _fetch_starter(
     contract: dict[str, Any],
     *,
@@ -810,6 +848,7 @@ def _fetch_starter(
     digest = str(integrity["sha256"])
     size = int(integrity["byte_size"])
     source_url = str(contract["source"]["asset_url"])
+    _https_origin(source_url)
     root = cache_dir or _default_cache_dir()
     root.mkdir(parents=True, exist_ok=True)
     target = root / f"{contract['asset_id']}-{digest[:16]}.mp4"
@@ -824,7 +863,10 @@ def _fetch_starter(
             f"{acceptance_env}=1 before fetching"
         )
     token_env = str(delivery.get("authentication_environment_variable") or "HF_TOKEN")
-    token = os.environ.get(token_env, "").strip()
+    token = (
+        os.environ.get(token_env, "").strip()
+        if license_data.get("authentication_required") else ""
+    )
     if license_data.get("authentication_required") and not token:
         raise PaidfInputError(
             "the pinned PAIDF starter requires upstream authentication; configure "
@@ -856,15 +898,7 @@ def _fetch_starter(
             part = target.with_suffix(f".attempt-{attempt}.part")
             try:
                 with (
-                    urlopen(
-                        Request(
-                            source_url,
-                            headers=(
-                                {"Authorization": f"Bearer {token}"} if token else {}
-                            ),
-                        ),
-                        timeout=30,
-                    ) as response,
+                    _open_starter_url(source_url, token) as response,
                     part.open("wb") as handle,
                 ):
                     while chunk := response.read(1024 * 1024):

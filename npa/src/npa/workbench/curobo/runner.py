@@ -118,17 +118,20 @@ def _solve(planner, problem, *, benchmark_module=None, dynamics_model=None):
         return record
     interpolated = result.get_interpolated_plan()
     positions = _array(interpolated.position)
+    # Interpolation includes locked/mimic joints (Franka's fingers), while the
+    # kinematics model takes only active joints in its configured order.
+    kinematic_state = interpolated.reorder(planner.joint_names)
     fk = planner.kinematics.compute_kinematics(
         JointState.from_position(
-            interpolated.position.reshape(-1, positions.shape[1]),
-            joint_names=planner.joint_names,
+            kinematic_state.position.reshape(-1, len(planner.joint_names)),
+            joint_names=kinematic_state.joint_names,
         )
     )
     tool_positions = _array(
         fk.tool_poses.get_link_pose(planner.tool_frames[0]).position
     )
     trajectory = {
-        "joint_names": list(planner.joint_names),
+        "joint_names": list(interpolated.joint_names),
         "dt": float(interpolated.dt.item()),
         **{
             key: _array(getattr(interpolated, key)).tolist()

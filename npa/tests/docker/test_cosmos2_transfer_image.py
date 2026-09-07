@@ -99,13 +99,13 @@ def test_lfs_media_models_and_build_credentials_are_excluded() -> None:
         "sha256=83efa1c898e0fc5380fc0cabbf75164c52e3b5cbb45973710d75821928380c73"
         in overrides
     )
-    assert "setuptools-83.0.0-py3-none-any.whl" in overrides
+    assert "setuptools-84.0.0-py3-none-any.whl" in overrides
     assert (
-        "sha256=29b23c360f22f414dc7336bb39178cc7bcbf6021ed2733cde173f09dba19abb3"
+        "sha256=51a52592b3b99e102b609654876bd65f19f999935166d1352678931132b0c670"
         in overrides
     )
     assert "files.pythonhosted.org" in overrides
-    assert overrides.count("#sha256=") == 5
+    assert overrides.count("#sha256=") == 23
     assert re.search(
         r"uv pip install --python \.venv/bin/python --no-deps\s+\\\s+"
         r"--requirement /tmp/cosmos2-security-overrides\.txt",
@@ -117,7 +117,7 @@ def test_lfs_media_models_and_build_credentials_are_excluded() -> None:
     assert 'version("defusedxml") == "0.7.1"' in text
     assert 'version("pip") == "26.2"' in text
     assert 'version("msgpack") == "1.2.1"' in text
-    assert 'version("setuptools") == "83.0.0"' in text
+    assert 'version("setuptools") == "84.0.0"' in text
     assert ".venv/bin/python -m pip --version" in text
     assert 'importlib.util.find_spec("pip") is None' in text
     assert 'importlib.util.find_spec("setuptools") is None' in text

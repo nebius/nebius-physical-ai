@@ -781,6 +781,7 @@ def test_ssh_forwards_tokens_into_remote_environment(mocker) -> None:
     transport.open_session.return_value = channel
     remote_file = mocker.MagicMock()
     sftp = mocker.MagicMock()
+    sftp.lstat.return_value = SimpleNamespace(st_mode=stat.S_IFDIR | 0o700)
     sftp.open.return_value.__enter__.return_value = remote_file
     paramiko_client = mocker.MagicMock()
     paramiko_client.get_transport.return_value = transport
@@ -805,11 +806,13 @@ def test_ssh_forwards_tokens_into_remote_environment(mocker) -> None:
     remote_command = channel.exec_command.call_args.args[0]
     assert "hf-file" not in remote_command
     assert "ngc-file" not in remote_command
-    assert ". /tmp/.npa-env-abc123" in remote_command
-    assert "rm -f /tmp/.npa-env-abc123" in remote_command
+    assert ". /tmp/.npa-stage-abc123/payload" in remote_command
+    assert "rm -f -- /tmp/.npa-stage-abc123/payload" in remote_command
     assert "echo hello" in remote_command
-    sftp.open.assert_called_once_with("/tmp/.npa-env-abc123", "w")
-    sftp.chmod.assert_called_once_with("/tmp/.npa-env-abc123", 0o600)
+    sftp.mkdir.assert_called_once_with("/tmp/.npa-stage-abc123", mode=0o700)
+    sftp.open.assert_called_once_with("/tmp/.npa-stage-abc123/payload", "wx")
+    assert "rmdir -- /tmp/.npa-stage-abc123" in remote_command
+    sftp.chmod.assert_called_once_with("/tmp/.npa-stage-abc123/payload", 0o600)
     remote_env = remote_file.write.call_args.args[0]
     assert "export HF_TOKEN='hf-file'" in remote_env
     assert "export NGC_API_KEY='ngc-file'" in remote_env

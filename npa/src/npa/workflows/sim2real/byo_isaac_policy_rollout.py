@@ -40,6 +40,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from npa.clients.storage import safe_s3_download_target
 from npa.workflows.sim2real.camera_views import camera_metadata, camera_views_json
 from npa.workflows.sim2real.capture import capture_settings
 from npa.workflows.sim2real.isaac_job_payload import (
@@ -1025,7 +1026,7 @@ def materialize_rollout_dirs(
         ):
             raise RuntimeError("rollout lacks per-decision simulator ground truth")
         rid = roll["rollout_id"]
-        rdir = output_dir / rid
+        rdir = safe_s3_download_target(output_dir, rid, "")
         rdir.mkdir(parents=True, exist_ok=True)
         view_frames = {
             str(name): [str(frame) for frame in frames]
@@ -1056,8 +1057,10 @@ def materialize_rollout_dirs(
             dict.fromkeys(frame for frames in view_frames.values() for frame in frames)
         )
         for name in all_frames:
+            target = safe_s3_download_target(rdir, name, "")
+            target.parent.mkdir(parents=True, exist_ok=True)
             try:
-                s3.download_file(u.netloc, f"{base}/{rid}/{name}", str(rdir / name))
+                s3.download_file(u.netloc, f"{base}/{rid}/{name}", str(target))
             except Exception as exc:  # pragma: no cover - network
                 print(
                     f"byo_isaac_policy_rollout: frame download failed {rid}/{name}: {exc!r}",

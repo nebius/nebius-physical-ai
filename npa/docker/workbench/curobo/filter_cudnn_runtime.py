@@ -25,7 +25,7 @@ def filter_cudnn_runtime(site_packages: Path) -> dict:
     if len(distributions) != 1:
         raise ValueError("Expected exactly one installed cuDNN distribution")
     dist = distributions[0]
-    if dist.version != "9.13.0.50":
+    if dist.version != "9.20.0.48":
         raise ValueError("Review the cuDNN payload boundary before changing its version")
     dist_info = f"nvidia_cudnn_cu13-{dist.version}.dist-info"
     runtime_pattern = re.compile(r"nvidia/cudnn/lib/libcudnn\w*\.so(?:\.\d+)*")
