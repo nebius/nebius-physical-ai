@@ -21,7 +21,7 @@ from npa.clients.scoped_credentials import bucket_from_s3_uri
 DEFAULT_RERUN_BOOTSTRAP_IMAGE = "python:3.11-slim-bookworm"
 DEFAULT_RERUN_IMAGE = DEFAULT_RERUN_BOOTSTRAP_IMAGE
 DEFAULT_RERUN_VIEWER_TOOL = "rerun-viewer"
-DEFAULT_AWS_CLI_IMAGE = "amazon/aws-cli:2.22.12"
+DEFAULT_AWS_CLI_IMAGE = "amazon/aws-cli@sha256:b6aeb95d19d7f5a8cae4eb814cb16739b6b2a4f2f46f427ada6a8c9a20d9881d"
 DEFAULT_NAMESPACE = "default"
 DEFAULT_PORT = 9090
 # Rerun web viewer binds here; nginx sidecar exposes DEFAULT_PORT with cache headers.
@@ -29,7 +29,7 @@ RERUN_INTERNAL_WEB_PORT = 9091
 DEFAULT_GRPC_PORT = 9876
 # Browser gRPC origin for kubectl port-forward (must match forwarded local ports).
 DEFAULT_LOCAL_VIEWER_HOST = "127.0.0.1"
-DEFAULT_NGINX_IMAGE = "nginx:1.27-alpine"
+DEFAULT_NGINX_IMAGE = "nginx:1.30.4-alpine-slim@sha256:77da26c31397bf6694b4bf93275f5b40b0b120ba1b8f114264b603e592c561d6"
 # Browser-cache static wasm/js (~40 MiB) so refresh does not re-download the app bundle.
 RERUN_STATIC_CACHE_CONTROL = "public, max-age=604800, immutable"
 # 0.31.x embeds localhost gRPC URLs and lacks --cors-allow-origin; remote LoadBalancer
@@ -37,7 +37,7 @@ RERUN_STATIC_CACHE_CONTROL = "public, max-age=604800, immutable"
 DEFAULT_RERUN_SERVE_SDK_VERSION = "0.32.0"
 DEFAULT_S3_PREFIX = "sim2real-b"
 DEFAULT_CLUSTER_NAME = "npa-rtxpro-mk8s"
-DEFAULT_SERVICE_TYPE = "LoadBalancer"
+DEFAULT_SERVICE_TYPE = "ClusterIP"
 K8S_NAME_MAX_LEN = 63
 K8S_NAME_PREFIX = "npa-rerun"
 LEGACY_K8S_NAME_PREFIX = "npa-sim2real-rerun"
@@ -81,6 +81,20 @@ class RerunServeConfig:
     auth_user: str = ""
     auth_password: str = ""
 
+    def __post_init__(self) -> None:
+        if bool(self.auth_user) != bool(self.auth_password):
+            raise RerunServeError("Rerun authentication requires both username and password")
+        if self.auth_user and (
+            ":" in self.auth_user
+            or any(ord(c) < 32 or ord(c) == 127 for c in self.auth_user)
+        ):
+            raise RerunServeError("Rerun authentication username contains invalid characters")
+        if self.auth_password and (
+            "\x00" in self.auth_password
+            or len(self.auth_password.encode("utf-8")) > 72
+        ):
+            raise RerunServeError("Rerun password must contain no NUL and at most 72 UTF-8 bytes")
+
     @property
     def auth_enabled(self) -> bool:
         return bool(self.auth_password and self.auth_user)
@@ -91,13 +105,13 @@ class RerunServeConfig:
 
     @property
     def htpasswd_line(self) -> str:
-        """nginx basic-auth line using the {SHA} scheme (pure-Python, no apache2-utils)."""
-        import hashlib
+        """nginx basic-auth entry with a fresh bcrypt salt and work factor 12."""
+        import bcrypt
 
-        digest = base64.b64encode(
-            hashlib.sha1(self.auth_password.encode()).digest()
-        ).decode()
-        return f"{self.auth_user}:{{SHA}}{digest}\n"
+        if not self.auth_enabled:
+            raise RerunServeError("Cannot hash an empty Rerun authentication password")
+        digest = bcrypt.hashpw(self.auth_password.encode(), bcrypt.gensalt(rounds=12))
+        return f"{self.auth_user}:{digest.decode('ascii')}\n"
 
     @property
     def deployment_name(self) -> str:
@@ -404,6 +418,11 @@ http {{
             proxy_set_header Host $host;
             add_header Cache-Control "no-cache" always;{auth_lines}
         }}
+        location = /recording.rrd {{
+            alias /data/sim2real.rrd;
+            default_type application/octet-stream;
+            add_header Cache-Control "private, no-store" always;{auth_lines}
+        }}
     }}
 }}
 """
@@ -413,7 +432,7 @@ def _rerun_serve_command(config: RerunServeConfig) -> str:
     sdk_version = rerun_serve_sdk_version()
     base_cmd = (
         "rerun /data/sim2real.rrd --serve-web --web-viewer "
-        f"--web-viewer-port {RERUN_INTERNAL_WEB_PORT} --port {DEFAULT_GRPC_PORT} --bind 0.0.0.0 "
+        f"--web-viewer-port {RERUN_INTERNAL_WEB_PORT} --port {DEFAULT_GRPC_PORT} --bind 127.0.0.1 "
         f"{_rerun_remote_cors_flags(config.rerun_image)}"
     )
     if _rerun_image_has_preinstalled_cli(config.rerun_image):
@@ -427,13 +446,14 @@ def _rerun_serve_command(config: RerunServeConfig) -> str:
 def public_viewer_url(
     host: str, *, http_port: int, grpc_port: int = DEFAULT_GRPC_PORT
 ) -> str:
-    """Return a viewer URL whose gRPC origin matches the HTTP page host."""
+    """Return a viewer URL whose recording uses the authenticated HTTP origin."""
 
     host = host.strip()
     if not host:
         return ""
-    proxy = f"rerun+http://{host}:{grpc_port}/proxy"
-    return f"http://{host}:{http_port}/?url={quote(proxy, safe='')}"
+    del grpc_port  # Retained for callers of the historical public API.
+    recording = f"http://{host}:{http_port}/recording.rrd"
+    return f"http://{host}:{http_port}/?url={quote(recording, safe='')}"
 
 
 def local_viewer_url(
@@ -549,6 +569,12 @@ def build_rerun_serve_manifest(
     *,
     rrd_sync_token: str = "",
 ) -> dict[str, Any]:
+    if _normalize_service_type(config.service_type) != "ClusterIP":
+        raise RerunServeError(
+            "Rerun serves private ClusterIP endpoints only; use kubectl port-forward "
+            "or an operator-managed authenticated TLS ingress. Direct public HTTP "
+            "Services cannot protect recording data and credentials in transit."
+        )
     labels = {
         "app": config.deployment_name,
         "app.kubernetes.io/name": "npa-rerun-viewer",
@@ -682,7 +708,8 @@ test -s /data/sim2real.rrd
                                             "name": "nginx-config",
                                             "mountPath": "/etc/nginx/nginx.conf",
                                             "subPath": "nginx.conf",
-                                        }
+                                        },
+                                        {"name": "rrd-data", "mountPath": "/data", "readOnly": True},
                                     ]
                                     + (
                                         [
@@ -705,20 +732,14 @@ test -s /data/sim2real.rrd
                                     "image": config.rerun_image,
                                     "imagePullPolicy": "IfNotPresent",
                                     "command": ["/bin/sh", "-c", serve_command],
-                                    "ports": [
-                                        {
-                                            "name": "web-internal",
-                                            "containerPort": RERUN_INTERNAL_WEB_PORT,
-                                        },
-                                        {
-                                            "name": "grpc",
-                                            "containerPort": DEFAULT_GRPC_PORT,
-                                        },
-                                    ],
                                     "readinessProbe": {
-                                        "httpGet": {
-                                            "path": "/",
-                                            "port": RERUN_INTERNAL_WEB_PORT,
+                                        "exec": {
+                                            "command": [
+                                                "python", "-c",
+                                                "import urllib.request; "
+                                                "urllib.request.urlopen('http://127.0.0.1:"
+                                                f"{RERUN_INTERNAL_WEB_PORT}/', timeout=5).close()",
+                                            ]
                                         },
                                         "initialDelaySeconds": (
                                             15
@@ -785,11 +806,6 @@ test -s /data/sim2real.rrd
                     "selector": {"app.kubernetes.io/instance": config.deployment_name},
                     "ports": [
                         {"name": "http", "port": config.port, "targetPort": "http"},
-                        {
-                            "name": "grpc",
-                            "port": DEFAULT_GRPC_PORT,
-                            "targetPort": "grpc",
-                        },
                     ],
                 },
             },
@@ -901,13 +917,15 @@ def destroy_rerun_serve(
 ) -> RerunServeResult:
     runner = kubectl or _default_kubectl
     notify = progress or (lambda message: print(message, flush=True))
-    for kind in ("service", "deployment", "configmap", "secret"):
-        if kind == "secret":
-            name = config.secret_name
-        elif kind == "configmap":
-            name = config.nginx_configmap_name
-        else:
-            name = config.deployment_name
+    for kind, name in (
+        ("service", config.deployment_name),
+        ("deployment", config.deployment_name),
+        ("configmap", config.nginx_configmap_name),
+        ("secret", config.secret_name),
+        # Also remove a previous deployment's auth secret when current config
+        # has no password. Cleanup must not depend on remembering credentials.
+        ("secret", config.auth_secret_name),
+    ):
         notify(
             f"Deleting {kind}/{name} in namespace {config.namespace} "
             f"(wait={'true' if wait else 'false'}, "
@@ -1126,6 +1144,7 @@ def _port_forward_command(
     grpc_port: int = DEFAULT_GRPC_PORT,
     kubeconfig: str,
 ) -> str:
+    del grpc_port  # Recordings now share the authenticated HTTP endpoint.
     cmd = ["kubectl"]
     if kubeconfig:
         cmd.extend(["--kubeconfig", kubeconfig])
@@ -1136,7 +1155,6 @@ def _port_forward_command(
             namespace,
             f"deployment/{deployment_name}",
             f"{http_port}:{http_port}",
-            f"{grpc_port}:{grpc_port}",
         ]
     )
     return " ".join(cmd)

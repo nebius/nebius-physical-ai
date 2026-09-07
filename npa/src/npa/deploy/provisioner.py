@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import secrets
 import shutil
 import subprocess
 import sys
@@ -245,6 +246,7 @@ def _run(
     tf = _require_terraform()
     cmd = [tf] + args
     environment = _tf_env(cwd)
+    environment["NPA_SSH_TRUST_PYTHON"] = sys.executable
     environment.update(env_overrides or {})
     backend_context = _backend_context(cwd)
     if args and args[0] != "init" and _uses_remote_s3_backend(cwd) and backend_context is None:
@@ -540,6 +542,17 @@ def prepare_working_dir(
     """
     work_dir = _WORKBENCH_BASE / project / name
     work_dir.mkdir(parents=True, exist_ok=True)
+
+    # Persist the boot challenge across retries. It is public, but must remain
+    # bound to this deployment and never be regenerated on each apply.
+    nonce_file = work_dir / "ssh-trust.auto.tfvars.json"
+    if not nonce_file.exists():
+        try:
+            with nonce_file.open("x", encoding="utf-8") as handle:
+                os.fchmod(handle.fileno(), 0o600)
+                json.dump({"ssh_host_key_nonce": secrets.token_hex(32)}, handle)
+        except FileExistsError:
+            pass
 
     # Copy every file from the bundled Terraform directory.
     for src in _BUNDLED_TF_DIR.iterdir():

@@ -271,6 +271,10 @@ def test_ssh_connect_uses_paramiko_config(mocker) -> None:
     SSHClient(SSHConfig(host="host", user="ubuntu", key_path="~/key"))._connect()
 
     paramiko_client.set_missing_host_key_policy.assert_called_once()
+    import paramiko
+
+    assert isinstance(paramiko_client.set_missing_host_key_policy.call_args.args[0], paramiko.RejectPolicy)
+    paramiko_client.load_system_host_keys.assert_called_once_with()
     paramiko_client.connect.assert_called_once_with(
         hostname="host",
         username="ubuntu",
@@ -278,6 +282,30 @@ def test_ssh_connect_uses_paramiko_config(mocker) -> None:
         timeout=15,
         look_for_keys=False,
     )
+
+
+def test_ssh_explicit_known_hosts_takes_precedence_over_ambient(mocker, monkeypatch, tmp_path):
+    client = mocker.MagicMock()
+    mocker.patch("paramiko.SSHClient", return_value=client)
+    monkeypatch.setenv("NPA_SSH_KNOWN_HOSTS", str(tmp_path / "ambient"))
+    pinned = str(tmp_path / "verified")
+    SSHClient(SSHConfig(host="host", user="ubuntu", key_path="~/key"), known_hosts=pinned)._connect()
+    client.load_host_keys.assert_called_once_with(pinned)
+    client.load_system_host_keys.assert_not_called()
+
+
+def test_ssh_refuses_changed_host_before_credentials_are_staged(mocker):
+    import paramiko
+
+    client = mocker.MagicMock()
+    client.connect.side_effect = paramiko.SSHException("host key mismatch")
+    mocker.patch("paramiko.SSHClient", return_value=client)
+    ssh = SSHClient(SSHConfig(host="host", user="ubuntu", key_path="~/key", tokens={"HF_TOKEN": "test-token"}))
+    with pytest.raises(SSHError, match="Unknown or changed host keys are refused"):
+        ssh.run("true")
+    client.open_sftp.assert_not_called()
+    client.exec_command.assert_not_called()
+    client.close.assert_called_once()
 
 
 def test_ssh_connect_maps_errors(mocker) -> None:
@@ -451,6 +479,8 @@ def test_ssh_private_text_is_owner_only_before_secret_write(mocker) -> None:
             events.append("flush")
 
     sftp = mocker.MagicMock()
+    sftp.lstat.return_value.st_mode = 0o40700
+    sftp.mkdir.side_effect = lambda path, mode: events.append(("mkdir", path, mode))
     sftp.open.side_effect = lambda path, mode: (
         events.append(("open", path, mode)) or RemoteFile()
     )
@@ -464,11 +494,16 @@ def test_ssh_private_text_is_owner_only_before_secret_write(mocker) -> None:
         client.upload_private_text("SECRET-SENTINEL", "/tmp/private") == "/tmp/private"
     )
 
-    assert events[:3] == [
-        ("open", "/tmp/private", "wx"),
-        ("chmod", "/tmp/private", 0o600),
-        ("write", "SECRET-SENTINEL"),
+    directory = sftp.mkdir.call_args.args[0]
+    staged = directory + "/payload"
+    assert events[:4] == [
+        ("mkdir", directory, 0o700),
+        ("open", staged, "wx"),
+        ("chmod", staged, 0o600),
+        ("write", b"SECRET-SENTINEL"),
     ]
+    sftp.posix_rename.assert_called_once_with(staged, "/tmp/private")
+    sftp.rmdir.assert_called_once_with(directory)
     sftp.close.assert_called_once()
     paramiko_client.close.assert_called_once()
 

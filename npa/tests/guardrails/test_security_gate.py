@@ -9,6 +9,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+import yaml
 
 
 @pytest.fixture
@@ -489,3 +490,85 @@ def test_regression_reports_use_checkout_not_trusted_policy_location(security_mo
     with pytest.raises(ValueError, match="outside the checkout"):
         regression._private_output(checkout / "reports")
     assert not (checkout / "reports").exists()
+
+
+@pytest.mark.parametrize("declaration", [
+    "requests==2.19.1 --hash=sha256:" + "0" * 64,
+    "requests==2.19.1 --hash sha256:" + "0" * 64,
+    "requests==2.19.1\t# retained exact pin",
+    "requests==2.19.1 \\\n        --hash=sha256:" + "0" * 64,
+    "requests==2.19.1 --config-settings=setting=value",
+])
+def test_python_pins_survive_requirement_options(security_modules, tmp_path, declaration):
+    """Retain vulnerable pins written with supported pip options and comments.
+
+    Args:
+        security_modules: Checked-out gate and dependency modules.
+        tmp_path: Isolated dependency inventory directories.
+        declaration: Valid pip syntax that must not hide an exact version.
+    Returns:
+        None.
+    Raises:
+        AssertionError: A declared exact dependency disappears from scanning.
+    """
+    _, dependencies = security_modules
+    root = tmp_path / "source"
+    root.mkdir()
+    (root / "requirements.txt").write_text(declaration + "\n")
+    output = tmp_path / "report"
+    inventory = dependencies._inventory(root, output, tmp_path / "cache")
+    target = next(iter(inventory))
+    assert dependencies._expected_packages(output / "inputs" / target) == {("requests", "2.19.1")}
+
+
+@pytest.mark.parametrize("section", ["dependencies", "devDependencies", "optionalDependencies"])
+def test_npm_lock_rejects_changed_exact_resolution(security_modules, tmp_path, section):
+    """Reject a safe lock version that conceals a vulnerable exact declaration.
+
+    Args:
+        security_modules: Checked-out gate and dependency modules.
+        tmp_path: Isolated synthetic npm manifests.
+        section: Dependency scope carrying the contradictory exact version.
+    Returns:
+        None.
+    Raises:
+        AssertionError: A stale resolved lock version conceals the declared pin.
+    """
+    _, dependencies = security_modules
+    project = {section: {"minimist": "1.2.0"}}
+    (tmp_path / "package.json").write_text(json.dumps(project))
+    lock = {"lockfileVersion": 3, "packages": {
+        "": project, "node_modules/minimist": {"version": "1.2.8"},
+    }}
+    (tmp_path / "package-lock.json").write_text(json.dumps(lock))
+    with pytest.raises(ValueError, match="contradicts its exact version pin"):
+        dependencies._validate_npm_manifests(tmp_path)
+    lock["packages"]["node_modules/minimist"]["version"] = "1.2.0"
+    (tmp_path / "package-lock.json").write_text(json.dumps(lock))
+    dependencies._validate_npm_manifests(tmp_path)
+
+
+@pytest.mark.parametrize("result", ["success", "failure", "cancelled", "skipped", ""])
+def test_required_security_check_propagates_scanner_failure(monkeypatch, result):
+    """Fail the required runtime check unless its isolated scanner job passed.
+
+    Args:
+        monkeypatch: Supplies a GitHub job-result observation to the shell step.
+        result: Completed scanner status, including missing and skipped work.
+    Returns:
+        None.
+    Raises:
+        AssertionError: Scanner failure can become a passing required check.
+    """
+    workflow_path = Path(__file__).resolve().parents[3] / ".github/workflows/security-regression.yml"
+    workflow = yaml.safe_load(workflow_path.read_text())
+    job = workflow["jobs"]["security-regression"]
+    assert job["needs"] == "security-scanners"
+    assert job["if"] == "${{ always() }}"
+    assert "continue-on-error" not in job
+    prerequisite = job["steps"][0]
+    assert prerequisite["env"] == {"SCANNER_RESULT": "${{ needs.security-scanners.result }}"}
+    assert "if" not in prerequisite and "continue-on-error" not in prerequisite
+    monkeypatch.setenv("SCANNER_RESULT", result)
+    completed = subprocess.run(["bash", "-e", "-c", prerequisite["run"]], check=False)
+    assert (completed.returncode == 0) == (result == "success")

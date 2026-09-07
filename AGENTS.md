@@ -19,7 +19,7 @@ The source of truth is `skills/index.yaml`. The tree is organized as:
 - `skills/workflows/add-workbench-tool/SKILL.md`: add a new workbench tool end to end — implementation, CLI, SDK, toolRef catalog, container, tests, docs, and skill, in the order that keeps every CI gate green.
 - `skills/atomic/npa-cli-conventions/SKILL.md`: write or modify an npa CLI command or SDK function — registration, the `--input-path`/`--output-path` contract, output format, error handling and exit codes, the `resolve_typer_defaults`/`json_stdout_contract`/`intent_boundary` decorators, and config/credential access.
 - `skills/atomic/toolref-argv-contract/SKILL.md`: the contract that stops a workflow stage from rendering cleanly and then crashing in the pod — real flag names, literal-value rules, reachability, image routing.
-- `skills/atomic/pre-pr-validation/SKILL.md`: which of the six PR gates apply to a change, and the exact local command for each, cheapest first.
+- `skills/atomic/pre-pr-validation/SKILL.md`: which PR gates apply to a change, and the exact local command for each, cheapest first.
 - `skills/atomic/audit-container-docs/SKILL.md`: required catalog reconciliation when a workbench image or solution is added, removed, retagged, reclassified, published, or otherwise changed; it keeps the public-image table aligned with repository intent and anonymous GHCR state.
 - `skills/atomic/guardrail-failures/SKILL.md`: map a failing guardrail or CI gate to its cause and fix.
 - `skills/tools/`: concrete workbench and platform tools such as LeRobot, FiftyOne, Genesis, Isaac Lab, Cosmos, LanceDB, GR00T, SONIC, MJLab, Retargeting, SkyPilot, Scenario Gen, Dataset-of-record, Fleet, and Nebius infra.

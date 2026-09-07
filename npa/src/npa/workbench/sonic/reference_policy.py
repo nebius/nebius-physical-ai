@@ -1,8 +1,8 @@
 """Reference locomotion actor used by the in-job SONIC train runtime.
 
 This module imports ``torch`` at import time because the policy has to be a real
-``torch.nn.Module`` whose class is importable when ``sonic export`` unpickles the
-checkpoint. Import it lazily (inside a function) from anywhere that must stay
+``torch.nn.Module`` whose supported class is reconstructed when ``sonic export``
+loads a tensor state-dict checkpoint. Import it lazily from anywhere that must stay
 torch-free.
 
 The layout mirrors the Isaac Lab locomotion observation SONIC trains against for

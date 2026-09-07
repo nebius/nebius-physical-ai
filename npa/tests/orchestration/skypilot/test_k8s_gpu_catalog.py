@@ -74,6 +74,26 @@ def test_parse_can_scope_to_one_context() -> None:
     assert catalog.context == "npa-workbench-eu-north1"
 
 
+@pytest.mark.parametrize("heading", ["", "Context:\n", "Context: different\n"])
+def test_scoped_catalog_requires_the_exact_context_heading(heading: str) -> None:
+    output = heading + "GPU  REQUESTABLE_QTY_PER_NODE\nB200  1, 2, 4\n"
+
+    catalog = parse_kubernetes_gpu_catalog(output, context="selected-context")
+
+    assert catalog.is_empty
+
+
+def test_scoped_catalog_does_not_merge_an_unbound_table() -> None:
+    output = (
+        "GPU  REQUESTABLE_QTY_PER_NODE\nOTHER-GPU  1\n\n"
+        "Context: selected-context\nGPU  REQUESTABLE_QTY_PER_NODE\nB200  1\n"
+    )
+
+    catalog = parse_kubernetes_gpu_catalog(output, context="selected-context")
+
+    assert catalog.quantities_by_accelerator == {"B200": frozenset({1})}
+
+
 def test_parse_ignores_the_trailing_per_node_table() -> None:
     catalog = parse_kubernetes_gpu_catalog(LIVE_OUTPUT)
 

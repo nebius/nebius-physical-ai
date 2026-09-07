@@ -30,7 +30,7 @@ No published image or measured performance is claimed by this record.
   This avoids falsely claiming its older NumPy<2 package constraint is compatible
   with the current Pinocchio NumPy 2 runtime.
 - Baked runtime: digest-pinned NVIDIA CUDA 13 runtime base **without cuDNN**,
-  PyTorch CUDA 13 wheels, NVIDIA cuda-core/runtime, Warp, Pinocchio, Rerun and
+  PyTorch 2.13.0 CUDA 13 wheels, NVIDIA cuda-core/runtime, Warp, Pinocchio, Rerun and
   NPA. CUDA's Linux-specific supplement (section 2.3) permits redistribution of
   Linux components with unmodified object code; Attachment A also enumerates
   runtime/JIT libraries and runtime compilation headers. NVIDIA drivers are
@@ -82,14 +82,20 @@ No published image or measured performance is claimed by this record.
   Generated PyTorch ATen cuDNN operator headers are BSD-licensed and permitted
   only by their exact pinned wheel paths/content hashes, with the complete wheel
   notice retained; this grants no general CUDA/cuDNN SDK exemption.
+  The patched PyTorch wheel splits its upstream BSD license from 97 bundled
+  third-party notice files. The inventory binds every separate notice by its
+  exact path, size and SHA256; the verifier requires all of them, including
+  PyTorch's project license, in the final image. The 52 reviewed generated
+  operator headers and cuDNN 9.20.0.48 runtime/header inventories were refreshed
+  from the complete hash-verified upstream wheels.
   The trusted publication workflow runs this check before push and again on the
   pulled immutable digest, alongside the generic payload and security gates.
   The complete Python closure is version/hash locked. This record is an artifact
   classification, not evidence that an image has been built or scanned.
-- Other NVIDIA dependencies: cuSPARSELt 0.8.0 retains one header and its shared
+- Other NVIDIA dependencies: cuSPARSELt 0.8.1 retains one header and its shared
   library under its product supplement, which permits `.h` and `.so` files as
-  application components. NCCL 2.27.7 retains its header, library and full
-  BSD-3-Clause license, including the NVTX notice reference. NVSHMEM 3.3.24
+  application components. NCCL 2.29.7 retains its header, library and full
+  BSD-3-Clause license, including the NVTX notice reference. NVSHMEM 3.4.5
   includes 45 headers, a device archive, device bitcode and twelve shared
   libraries; all 59 payloads match its official CUDA 13 Linux distribution.
   Its product-specific supplement permits any SDK portion subject to the
@@ -114,8 +120,8 @@ Official sources: [cuRobo license](https://github.com/NVlabs/curobo/blob/8e734f3
 [CUDA EULA](https://docs.nvidia.com/cuda/eula/index.html),
 [cuDNN EULA and supplement](https://docs.nvidia.com/deeplearning/cudnn/backend/latest/reference/eula.html),
 [cuSPARSELt SLA](https://docs.nvidia.com/cuda/cusparselt/license.html),
-[NCCL release license](https://github.com/NVIDIA/nccl/blob/v2.27.7-1/LICENSE.txt),
-[NVSHMEM release manifest](https://developer.download.nvidia.com/compute/nvshmem/redist/redistrib_3.3.24.json),
+[NCCL release license](https://github.com/NVIDIA/nccl/blob/v2.29.7-1/LICENSE.txt),
+[NVSHMEM release manifest](https://developer.download.nvidia.com/compute/nvshmem/redist/redistrib_3.4.5.json),
 [NVSHMEM product license](https://developer.download.nvidia.com/compute/nvshmem/redist/libnvshmem/LICENSE.txt),
 [container license](https://gitlab.com/nvidia/container-images/cuda/-/blob/master/NGC-DL-CONTAINER-LICENSE).
 

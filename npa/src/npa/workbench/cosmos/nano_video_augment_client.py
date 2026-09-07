@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import re
+import stat
 import tempfile
 import time
 from typing import Any
@@ -63,6 +64,13 @@ def _private_root(output_path: str, *, fresh: bool) -> Path:
     if root.is_symlink():
         raise AugmentationClientError("recovery directory must not be a symlink")
     root.mkdir(mode=0o700, exist_ok=not fresh)
+    info = root.lstat()
+    if (
+        not stat.S_ISDIR(info.st_mode)
+        or info.st_uid != os.getuid()
+        or stat.S_IMODE(info.st_mode) & 0o077
+    ):
+        raise AugmentationClientError("recovery directory must be owned and private")
     return root
 
 

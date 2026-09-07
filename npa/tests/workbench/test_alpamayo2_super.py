@@ -16,7 +16,7 @@ from npa.workbench.alpamayo2_super.runtime import (
     Alpamayo2SuperRequest,
     run_inference,
 )
-from npa.workbench.alpamayo2_super.service import app as service_app, create_app
+from npa.workbench.alpamayo2_super.service import create_app
 
 
 def test_dry_run_is_revision_pinned_and_real_upstream_argv(tmp_path: Path) -> None:
@@ -71,9 +71,17 @@ def test_cli_and_api_share_dry_run_contract(tmp_path: Path) -> None:
     assert cli.exit_code == 0, cli.output
     assert json.loads(cli.output)["schema"] == ARTIFACT_SCHEMA
 
-    response = TestClient(service_app).post(
-        "/run", json={"output_path": str(tmp_path), "dry_run": True}
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(json.dumps({"samples": [{"clip_id": "sample", "t0_us": 1}]}))
+    service = create_app(
+        token="test-inference-credential", output_root=str(tmp_path / "service-outputs"),
+        manifest=str(manifest),
     )
+    with TestClient(service) as client:
+        response = client.post(
+            "/run", json={"output_path": "sample", "dry_run": True},
+            headers={"Authorization": "Bearer test-inference-credential"},
+        )
     assert response.status_code == 200
     assert response.json()["schema"] == ARTIFACT_SCHEMA
 

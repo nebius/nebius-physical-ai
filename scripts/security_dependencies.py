@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -32,8 +33,9 @@ def _run(arguments: list[str], directory: Path) -> None:
 
 def _exact_pins(text: str) -> list[str]:
     pins = []
-    for line in text.splitlines():
-        declaration = line.split(" #", 1)[0].strip().rstrip("\\").strip()
+    for line in text.replace("\\\n", "").splitlines():
+        declaration = re.split(r"\s+#", line, maxsplit=1)[0].strip()
+        declaration = re.split(r"\s+--(?:hash|config-settings)(?:=|\s)", declaration, maxsplit=1)[0]
         if not declaration or declaration.startswith(("#", "-")):
             continue
         try:
@@ -71,9 +73,13 @@ def _validate_npm_manifests(root: Path) -> None:
 
 def _require_direct_packages(project: dict, packages: dict, sections: tuple[str, ...]) -> None:
     for section in sections:
-        for name in project.get(section, {}):
-            if not packages.get(f"node_modules/{name}", {}).get("version"):
+        for name, declaration in project.get(section, {}).items():
+            version = packages.get(f"node_modules/{name}", {}).get("version")
+            if not version:
                 raise ValueError("npm package lock is missing a resolved direct dependency")
+            exact_version = re.fullmatch(r"\d+\.\d+\.\d+(?:-[\w.-]+)?(?:\+[\w.-]+)?", declaration)
+            if exact_version and version != declaration:
+                raise ValueError("npm resolved direct dependency contradicts its exact version pin")
 
 
 def _resolve_project(project: dict, output: Path, cache: Path) -> Path:

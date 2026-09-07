@@ -104,9 +104,97 @@ def test_pull_from_s3_downloads_objects(
 
     local = Path(server_module._pull_from_s3("s3://bucket/models/run"))
 
-    assert local.name == "bucket_models_run"
+    assert len(local.name) == 64
     assert mock_s3.download_file.call_count == 2
     mock_s3.get_paginator.assert_called_once_with("list_objects_v2")
+
+
+@pytest.mark.parametrize("relative", ["../escape", "nested/../../escape", "/escape"])
+def test_checkpoint_download_rejects_object_traversal_and_does_not_cache_partial_tree(
+    tmp_path, server_module, monkeypatch, mock_s3, relative
+):
+    from npa.clients.storage import StorageError
+
+    cache = tmp_path / "checkpoints"
+    monkeypatch.setattr(server_module, "CHECKPOINT_DIR", str(cache))
+    mock_s3.get_paginator.return_value.paginate.return_value = [{"Contents": [
+        {"Key": "models/run/config.json"}, {"Key": "models/run/" + relative}
+    ]}]
+    mock_s3.download_file.side_effect = lambda _b, _k, p: Path(p).write_bytes(b"config")
+
+    with pytest.raises(StorageError):
+        server_module._pull_from_s3("s3://bucket/models/run")
+
+    assert not list((cache / "s3_cache").iterdir())
+    assert not (tmp_path / "escape").exists()
+
+
+def test_checkpoint_cache_identity_does_not_alias_underscore_paths(
+    server_module, mock_s3
+):
+    mock_s3.get_paginator.return_value.paginate.return_value = [{"Contents": [
+        {"Key": "models/run/config.json"}
+    ]}]
+    mock_s3.download_file.side_effect = lambda _b, _k, p: Path(p).write_bytes(b"first")
+    first = server_module._pull_from_s3("s3://bucket/models/run")
+    mock_s3.get_paginator.return_value.paginate.return_value = [{"Contents": [
+        {"Key": "models_run/config.json"}
+    ]}]
+    mock_s3.download_file.side_effect = lambda _b, _k, p: Path(p).write_bytes(b"second")
+    second = server_module._pull_from_s3("s3://bucket/models_run")
+
+    assert first != second
+    assert (Path(first) / "config.json").read_bytes() == b"first"
+    assert (Path(second) / "config.json").read_bytes() == b"second"
+
+
+def test_concurrent_checkpoint_downloads_reuse_one_complete_published_tree(
+    server_module, mock_s3
+):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    ready = Barrier(2)
+    mock_s3.get_paginator.return_value.paginate.return_value = [{"Contents": [
+        {"Key": "models/run/config.json"}, {"Key": "models/run/weights.bin"}
+    ]}]
+
+    def download(_bucket, key, destination):
+        path = Path(destination)
+        # Different simulated snapshots must never merge into one cache tree.
+        path.write_text(path.parent.name)
+        if key.endswith("config.json"):
+            ready.wait()
+
+    mock_s3.download_file.side_effect = download
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(
+            server_module._pull_from_s3, ["s3://bucket/models/run"] * 2,
+        ))
+
+    assert results[0] == results[1]
+    published = Path(results[0])
+    assert (published / "config.json").read_text() == (published / "weights.bin").read_text()
+    assert list(published.parent.iterdir()) == [published]
+    assert mock_s3.download_file.call_count == 4
+
+
+def test_checkpoint_publication_does_not_mask_other_filesystem_errors(
+    server_module, mock_s3, monkeypatch
+):
+    mock_s3.get_paginator.return_value.paginate.return_value = [{"Contents": [
+        {"Key": "models/run/config.json"}
+    ]}]
+    mock_s3.download_file.side_effect = lambda _b, _k, path: Path(path).write_text("config")
+
+    def fail_rename(_source, destination):
+        destination.mkdir()
+        (destination / "config.json").write_text("other complete snapshot")
+        raise PermissionError("publication denied")
+
+    monkeypatch.setattr(Path, "rename", fail_rename)
+    with pytest.raises(PermissionError, match="publication denied"):
+        server_module._pull_from_s3("s3://bucket/models/run")
 
 
 def test_read_jobs_ignores_bad_json(tmp_path: Path, server_module, monkeypatch) -> None:

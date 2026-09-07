@@ -25,6 +25,7 @@ SOURCE_SHA="${NPA_VLLM_OMNI_SOURCE_SHA256:?missing pinned source checksum}"
 mkdir -p "${ROOT}"
 [ -w "${ROOT}" ] || fail "runtime root ${ROOT} is not writable by uid $(id -u)"
 if [ -f "${MARKER}" ] && [ -x "${VENV}/bin/vllm" ]; then
+  "${VENV}/bin/python" /opt/npa-cosmos3-serving/backport_setuptools_manifest.py
   export PATH="${VENV}/bin:${PATH}"
   exec "$@"
 fi
@@ -39,6 +40,8 @@ rm -rf "${VENV}"
 # every entry point referring to a deleted temporary interpreter.
 python -m venv "${VENV}"
 "${VENV}/bin/python" -m pip install --no-cache-dir --require-hashes --only-binary=:all: \
+  -r /opt/npa-cosmos3-serving/packaging-requirements.txt
+"${VENV}/bin/python" -m pip install --no-cache-dir --require-hashes --only-binary=:all: \
   --no-binary=antlr4-python3-runtime,openai-whisper -r "${LOCK}"
 site_packages="$("${VENV}/bin/python" -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
 cp /opt/npa-cosmos3-serving/hf_snapshot_pin.py "${site_packages}/sitecustomize.py"
@@ -49,8 +52,9 @@ curl -fL --retry 3 --proto '=https' --tlsv1.2 \
 echo "${SOURCE_SHA}  ${work}/vllm-omni.tar.gz" | sha256sum -c -
 mkdir "${work}/source"
 tar -xzf "${work}/vllm-omni.tar.gz" --strip-components=1 -C "${work}/source"
-VLLM_OMNI_TARGET_DEVICE=cuda VLLM_OMNI_VERSION_OVERRIDE=0.26.0 \
+VLLM_OMNI_TARGET_DEVICE=cuda VLLM_OMNI_VERSION_OVERRIDE=0.28.0 \
   "${VENV}/bin/python" -m pip install --no-cache-dir --no-deps "${work}/source"
+"${VENV}/bin/python" /opt/npa-cosmos3-serving/backport_setuptools_manifest.py
 "${VENV}/bin/python" -m pip check
 touch "${MARKER}"
 export PATH="${VENV}/bin:${PATH}"

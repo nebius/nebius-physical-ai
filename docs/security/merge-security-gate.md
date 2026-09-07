@@ -1,7 +1,10 @@
 # Security regression gate
 
 Every pull request, merge queue candidate (`merge_group`), and push to `main`
-runs **Security regression / security-regression**. A new finding fails the job
+runs **Security regression / security-regression**. This required job checks that
+the isolated **security-scanners** job passed before running the hostile-input
+and CPU checkpoint tests introduced on main. Failed, skipped, or cancelled scanner
+work cannot produce a passing required check. A new finding fails the scanner job
 with its file, rule or advisory, and remediation detail. Scanner, dependency
 resolution, malformed report, incomplete inventory, and source parsing failures
 also fail the job. There are no path filters or successful fallback results.
@@ -29,7 +32,9 @@ both scans; this gate measures regressions, not outstanding security debt.
 Candidate Bandit/zizmor ignore comments and configuration are disabled. Trivy
 receives isolated empty configuration and ignore files, so the image scan's
 OS-only settings do not hide application vulnerabilities. Python requirements
-with nonstandard filenames are normalized into explicit pip inventories. The
+with nonstandard filenames are normalized into explicit pip inventories, including
+pins with inline hashes and whitespace-separated comments. npm locks must retain
+resolved direct packages and agree with exact direct version pins. The
 core/development dependency closure is resolved with pinned uv, Python 3.12 and
 public PyPI metadata, with source builds disabled. Candidate application code,
 build hooks, npm scripts and dependencies are never installed or executed by

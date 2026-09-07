@@ -36,6 +36,9 @@ jobs:
 
 def _dependency_fixture(root: Path) -> None:
     _write_fixture(root, "requirements.txt", "requests==2.19.1\n")
+    hashed_pin = "requests==2.19.1 --hash=sha256:" + "0" * 64 + "\n"
+    _write_fixture(root, "hashed-requirements.txt", hashed_pin)
+    _write_fixture(root, "commented-requirements.txt", "requests==2.19.1\t# synthetic pin\n")
     lock = {
         "name": "synthetic-security-regression", "version": "1.0.0",
         "lockfileVersion": 3, "requires": True,
@@ -87,7 +90,9 @@ def _check_parse_failure(root: Path, output: Path) -> None:
 def _check_dependencies(root: Path, output: Path) -> dict:
     _dependency_fixture(root)
     findings = scan_dependencies(root, output / "dependencies", output / "cache")
-    for manifest, package in (("requirements.txt", "requests"), ("package-lock.json", "minimist")):
+    declarations = (("requirements.txt", "requests"), ("package-lock.json", "minimist"),
+                    ("hashed-requirements.txt", "requests"), ("commented-requirements.txt", "requests"))
+    for manifest, package in declarations:
         matched = [item for item in findings if item["path"] == manifest
                    and item["identity"].startswith(f"{package}==")]
         if not matched or regressions([], matched) != matched:
