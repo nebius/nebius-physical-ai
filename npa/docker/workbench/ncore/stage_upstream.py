@@ -65,6 +65,28 @@ def patch_numpy_sentinel(path: Path) -> None:
     )
 
 
+def patch_downsample_camera(path: Path) -> None:
+    """Select the current camera, not the last image's camera, when downsampling."""
+    original = (
+        "                    cameras[ncore_camera_id] = ColmapCamera(\n"
+        "                        camera_id=ncore_camera_id,\n"
+        "                        colmap_camera=self.scene_manager.cameras[imdata[k].camera_id],\n"
+        "                        image_path=parent_dir / image_root,\n"
+    )
+    source = path.read_text()
+    if source.count(original) != 1:
+        raise ValueError("NCore downsample camera source changed")
+    path.write_text(
+        source.replace(
+            original,
+            original.replace(
+                "colmap_camera=self.scene_manager.cameras[imdata[k].camera_id],",
+                "colmap_camera=camera,  # NPA: use the current downsample camera",
+            ),
+        )
+    )
+
+
 def stage(lock: dict, output: Path, archives: Path | None = None) -> None:
     for component in ("ncore", "pycolmap"):
         pin = lock[component]
@@ -104,6 +126,7 @@ def stage(lock: dict, output: Path, archives: Path | None = None) -> None:
         check=True,
     )
     patch_numpy_sentinel(output / "pycolmap" / "pycolmap" / "scene_manager.py")
+    patch_downsample_camera(output / "ncore/tools/data_converter/colmap/converter.py")
     # Preserve the exact patched source identity; no .git database or test data.
     inventory = {
         str(path.relative_to(output)): hashlib.sha256(path.read_bytes()).hexdigest()

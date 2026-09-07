@@ -20,6 +20,11 @@ and licensing/build metadata only. It applies NVIDIA's unmodified
 It also marks and applies one NPA compatibility edit to trueprice's unsigned
 invalid-point sentinel: `np.uint64(-1)` becomes `np.uint64(np.iinfo(np.uint64).max)`.
 This preserves the exact uint64 maximum value without NumPy 2's overflow error.
+It also marks one NPA correction in the official converter's downsample loop:
+each downsampled camera uses the loop's current camera calibration instead of
+the last registered image's camera. Downsampling remains enabled. The patch
+requires exactly one match of the pinned source context and fails on source
+drift. Original source/license pins remain unchanged.
 Every retained file's post-patch SHA-256 is recorded in
 `/opt/ncore/src/source-inventory.json`.
 The converter is NVIDIA's `//tools/data_converter/colmap:convert` **py_binary**,
@@ -92,6 +97,14 @@ never resolved into an automatic runtime image. Setup uses `/opt/venv/bin/python
 and does not install floating `nvidia-ncore` or overlay NPA source. The image
 exposes `NPA_NCORE_CONVERTER` for the CLI adapter and the actual
 `ncore.data.v4.SequenceLoaderV4` to the NPA interpreter.
+
+Conversion destinations are immutable, single-writer prefixes. A provider-atomic
+conditional put reserves `.npa-colmap-claim.json` before any sequence members are
+uploaded; `sequence.json` is published last. Occupied prefixes are rejected.
+Interrupted or ambiguous publication retains its permanent claim: retry with a
+fresh output prefix, never by deleting a claim or taking over an earlier writer.
+NuRec verifies the downloaded conversion inventory and claim before handoff.
+Existing sequences without COLMAP provenance remain supported.
 
 The final user is `ubuntu` (uid 1000). SkyPilot's Kubernetes bootstrap requires
 the recorded sudo exemption; no SSH service starts by default. The build proves

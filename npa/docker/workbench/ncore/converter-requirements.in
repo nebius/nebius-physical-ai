@@ -7,7 +7,7 @@ click==8.1.8
 tqdm==4.67.1
 debugpy==1.8.20
 dataclasses-json==0.6.7
-pillow==12.2.0
+pillow==12.3.0
 zarr==2.18.4
 numcodecs==0.15.1
 cbor2==5.9.0

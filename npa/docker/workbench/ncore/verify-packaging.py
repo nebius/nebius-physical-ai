@@ -3,6 +3,7 @@
 import hashlib
 import importlib.util
 import json
+import shutil
 from pathlib import Path
 import subprocess
 import sys
@@ -15,6 +16,8 @@ def main() -> None:
 
     assert SequenceLoaderV4 and npa
     assert sys.executable == "/opt/venv/bin/python"
+    for command in ("sh", "sudo", "sshd", "rsync", "service"):
+        assert shutil.which(command), f"bootstrap command absent from PATH: {command}"
     assert importlib.util.find_spec("torch") is None
     import numpy as np
     import pycolmap

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import shutil
 import stat
 import subprocess
@@ -96,6 +97,40 @@ class Storage:
     def __init__(self, source):
         self.source = source
         self.uploads = {}
+        self._s3 = self
+
+    @property
+    def s3(self):
+        return self
+
+    def get_paginator(self, name):
+        assert name == "list_objects_v2"
+        return self
+
+    def paginate(self, *, Bucket, Prefix):
+        base = f"s3://{Bucket}/"
+        yield {
+            "Contents": [
+                {"Key": uri[len(base) :]}
+                for uri in self.uploads
+                if uri.startswith(base + Prefix)
+            ]
+        }
+
+    def put_object(self, *, Bucket, Key, Body, ContentType, IfNoneMatch):
+        from botocore.exceptions import ClientError
+
+        assert IfNoneMatch == "*"
+        uri = f"s3://{Bucket}/{Key}"
+        if uri in self.uploads:
+            raise ClientError({"Error": {"Code": "PreconditionFailed"}}, "PutObject")
+        self.uploads[uri] = Body
+        return {"ETag": '"claim"'}
+
+    def put_bytes_conditional(self, *args, **kwargs):
+        from npa.clients.storage import StorageClient
+
+        return StorageClient.put_bytes_conditional(self, *args, **kwargs)
 
     def download_directory(self, uri, destination):
         shutil.copytree(self.source, destination, dirs_exist_ok=True)
@@ -348,6 +383,10 @@ def ncore_fixture(tmp_path, *, corruption=""):
                 "resolution": [4, 3],
                 "focal_length": [3, 3],
                 "principal_point": [2, 1.5],
+                "model_type": "opencv-pinhole",
+                "radial_coeffs": [0] * 6,
+                "tangential_coeffs": [0] * 2,
+                "thin_prism_coeffs": [0] * 4,
                 "target": "world",
             }
         },
@@ -510,3 +549,443 @@ def test_nre_discovers_sequence_meta_instead_of_conversion_report(tmp_path):
     (tmp_path / "conversion.json").write_text('{"status":"ok"}')
     (tmp_path / "npa-rig.json").write_text('{"reference_camera":"camera1"}')
     assert find_ncore_json(tmp_path) == portable
+
+
+def publication_request(tmp_path):
+    return colmap.ColmapConversionRequest(
+        input_path="s3://test-bucket/input/",
+        output_path="s3://test-bucket/output/",
+        cache_dir=tmp_path / "cache",
+        scratch_dir=tmp_path / "scratch",
+        rig_mode="preserve",
+        include_downsampled_images=False,
+    )
+
+
+def assert_published_inventory(storage, result):
+    report = json.loads(storage.uploads[result["conversion_uri"]])
+    for member in report["members"]:
+        payload = storage.uploads[result["output_path"] + member["path"]]
+        assert len(payload) == member["bytes"]
+        assert hashlib.sha256(payload).hexdigest() == member["sha256"]
+
+
+def test_republication_cannot_modify_committed_generation(monkeypatch, tmp_path):
+    storage, _ = fake_conversion(monkeypatch, tmp_path)
+    request = publication_request(tmp_path)
+    first = colmap.convert_colmap(request, storage_client=storage)
+    before = storage.uploads.copy()
+    attempts = []
+
+    def failed_replacement(source, uri):
+        attempts.append(uri)
+        if len(attempts) == 2:
+            raise OSError("private source diagnostic")
+        storage.uploads[uri] = b"different generation"
+
+    monkeypatch.setattr(storage, "upload_file", failed_replacement)
+    with pytest.raises(colmap.NcoreConversionError, match="destination|prefix"):
+        colmap.convert_colmap(request, storage_client=storage)
+    assert not attempts
+    assert storage.uploads == before
+    assert_published_inventory(storage, first)
+
+
+@pytest.mark.parametrize(
+    "existing", ["data.zarr.itar", "npa-rig.json", "sequence.json"]
+)
+def test_preexisting_unclaimed_destination_is_unchanged(
+    monkeypatch, tmp_path, existing
+):
+    storage, _ = fake_conversion(monkeypatch, tmp_path)
+    request = publication_request(tmp_path)
+    uri = request.output_path + existing
+    storage.uploads[uri] = b"previous generation"
+    before = storage.uploads.copy()
+    with pytest.raises(colmap.NcoreConversionError, match="destination|prefix"):
+        colmap.convert_colmap(request, storage_client=storage)
+    assert storage.uploads == before
+
+
+def test_interleaved_writers_have_one_atomic_winner(monkeypatch, tmp_path):
+    storage, _ = fake_conversion(monkeypatch, tmp_path)
+    request = publication_request(tmp_path)
+    put = storage.put_object
+    winners = []
+
+    def interleave(**kwargs):
+        # Both writers reached PutObject after inspecting an empty destination.
+        monkeypatch.setattr(storage, "put_object", put)
+        winners.append(colmap.convert_colmap(request, storage_client=storage))
+        return put(**kwargs)
+
+    monkeypatch.setattr(storage, "put_object", interleave)
+    with pytest.raises(colmap.NcoreConversionError, match="destination|prefix"):
+        colmap.convert_colmap(request, storage_client=storage)
+    assert len(winners) == 1
+    assert_published_inventory(storage, winners[0])
+
+
+def test_failed_publication_claim_is_not_reused(monkeypatch, tmp_path):
+    storage, _ = fake_conversion(monkeypatch, tmp_path)
+    request = publication_request(tmp_path)
+    upload = storage.upload_file
+
+    def fail(source, uri):
+        if uri.endswith("conversion.json"):
+            raise OSError("private source diagnostic")
+        upload(source, uri)
+
+    monkeypatch.setattr(storage, "upload_file", fail)
+    with pytest.raises(colmap.NcoreConversionError, match="publication") as error:
+        colmap.convert_colmap(request, storage_client=storage)
+    assert "private source" not in str(error.value)
+    assert request.output_path + "sequence.json" not in storage.uploads
+    before = storage.uploads.copy()
+    monkeypatch.setattr(storage, "upload_file", upload)
+    with pytest.raises(colmap.NcoreConversionError, match="fresh.*prefix"):
+        colmap.convert_colmap(request, storage_client=storage)
+    assert storage.uploads == before
+
+
+def write_inventory_fixture(root):
+    root.mkdir(parents=True, exist_ok=True)
+    meta = root / "sequence.json"
+    meta.write_text(
+        json.dumps({"version": "v4", "component_stores": [{"path": "data.zarr.itar"}]})
+    )
+    (root / "data.zarr.itar").write_bytes(b"synthetic generation A")
+    report = {
+        "schema_version": 1,
+        "status": "ok",
+        "engine": "nvidia-ncore-colmap",
+        "ncore_meta": meta.name,
+        "poses_component_group": "default",
+        "members": colmap._inventory(root, [meta, root / "data.zarr.itar"]),
+    }
+    (root / "conversion.json").write_text(json.dumps(report))
+    return root
+
+
+@pytest.mark.parametrize("remote", [False, True])
+@pytest.mark.parametrize(
+    "corruption", ["", "shard", "meta", "extra-rig", "missing", "report", "claim-only"]
+)
+def test_materialization_verifies_conversion_inventory(tmp_path, remote, corruption):
+    from npa.workbench.nurec.nurec import materialize_uri, NurecError
+
+    source = write_inventory_fixture(tmp_path / "source")
+    if corruption == "shard":
+        (source / "data.zarr.itar").write_bytes(b"synthetic generation B")
+    elif corruption == "meta":
+        (source / "sequence.json").write_text("{}")
+    elif corruption == "extra-rig":
+        (source / "npa-rig.json").write_text('{"reference_camera":"stale"}')
+    elif corruption == "missing":
+        (source / "data.zarr.itar").unlink()
+    elif corruption == "report":
+        (source / "conversion.json").write_text("private invalid report")
+    elif corruption == "claim-only":
+        (source / "conversion.json").unlink()
+        (source / ".npa-colmap-claim.json").write_text("{}")
+
+    class Download:
+        def download_path(self, uri, target):
+            shutil.copytree(source, target, dirs_exist_ok=True)
+
+    uri = "s3://test-bucket/input/" if remote else str(source)
+    if corruption:
+        with pytest.raises(
+            NurecError, match="conversion|inventory|publication"
+        ) as error:
+            materialize_uri(uri, tmp_path / "download", storage_client=Download())
+        assert "private invalid" not in str(error.value)
+        assert str(source) not in str(error.value)
+    else:
+        result = materialize_uri(uri, tmp_path / "download", storage_client=Download())
+        assert (result / "sequence.json").is_file()
+
+
+def test_materialization_preserves_non_colmap_sequences(tmp_path):
+    from npa.workbench.nurec.nurec import materialize_uri
+
+    source = tmp_path / "ordinary-ncore"
+    source.mkdir()
+    (source / "capture.json").write_text('{"version":"v4"}')
+    (source / "npa-rig.json").write_text('{"reference_camera":"camera1"}')
+    assert materialize_uri(str(source), tmp_path / "unused") == source
+
+
+@pytest.mark.parametrize("different_k", [False, True])
+def test_official_downsampling_preserves_each_camera_calibration(tmp_path, different_k):
+    pytest.importorskip("pycolmap")
+    converter = pytest.importorskip("tools.data_converter.colmap.converter")
+    from click.testing import CliRunner
+    from PIL import Image
+    import numpy as np
+    from ncore.data.v4 import IntrinsicsComponent, SequenceComponentGroupsReader
+    from upath import UPath
+
+    root = colmap_text_fixture(tmp_path / "capture")
+    second_k = "6 5 3 2" if different_k else "4 4 4 3"
+    (root / "sparse/0/cameras.txt").write_text(
+        "1 OPENCV 8 6 4 4 4 3 0.01 0.02 0.03 0.04\n"
+        f"2 OPENCV 8 6 {second_k} 0.05 0.06 0.07 0.08\n"
+    )
+    (root / "sparse/0/images.txt").write_text(
+        "1 1 0 0 0 0 0 0 1 frame1.png\n0 0 1\n"
+        "2 1 0 0 0 -1 0 0 1 frame2.png\n0 0 2\n"
+        "3 1 0 0 0 0 -1 0 2 frame3.png\n0 0 1\n"
+        "4 1 0 0 0 -1 -1 0 2 frame4.png\n0 0 2\n"
+    )
+    (root / "images_2").mkdir()
+    for index in (1, 2, 3, 4):
+        Image.new("RGB", (8, 6), (index * 50, 20, 50)).save(
+            root / f"images/frame{index}.png"
+        )
+        Image.new("RGB", (4, 3), (index * 50, 20, 50)).save(
+            root / f"images_2/frame{index}.png"
+        )
+    source = colmap.inspect_colmap_source(
+        root,
+        publication_request(tmp_path).model_copy(
+            update={"include_downsampled_images": True}
+        ),
+    )
+    out = tmp_path / "output"
+    result = CliRunner().invoke(
+        converter.cli,
+        [
+            "--root-dir",
+            str(root),
+            "--output-dir",
+            str(out),
+            "colmap-v4",
+            "--include-downsampled-images",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    meta = out / "capture/capture.json"
+    assert colmap.validate_ncore_sequence(meta, source) == source["counts"]
+    assert source["counts"] == {"cameras": 4, "images": 8, "poses": 8, "points": 2}
+    intrinsics = SequenceComponentGroupsReader([UPath(meta)]).open_component_readers(
+        IntrinsicsComponent.Reader
+    )["default"]
+    for camera_id, radial, tangential in (
+        ("camera1", [0.01, 0.02], [0.03, 0.04]),
+        ("camera2", [0.05, 0.06], [0.07, 0.08]),
+    ):
+        for suffix in ("", "_2"):
+            model = intrinsics.get_camera_model_parameters(camera_id + suffix)
+            np.testing.assert_allclose(model.radial_coeffs, [*radial, 0, 0, 0, 0])
+            np.testing.assert_allclose(model.tangential_coeffs, tangential)
+        np.testing.assert_allclose(
+            intrinsics.get_camera_model_parameters(camera_id + "_2").focal_length,
+            intrinsics.get_camera_model_parameters(camera_id).focal_length / 2,
+        )
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("model_type", "opencv-fisheye"),
+        ("radial_coeffs", [0.1, 0, 0, 0, 0, 0]),
+        ("tangential_coeffs", [0.1, 0]),
+        ("thin_prism_coeffs", [0.1, 0, 0, 0]),
+    ],
+)
+def test_validator_rejects_finite_but_wrong_intrinsic_model(tmp_path, field, value):
+    meta, source = ncore_fixture(tmp_path)
+    source["cameras"]["camera1"][field] = value
+    with pytest.raises(colmap.NcoreConversionError, match="calibration"):
+        colmap.validate_ncore_sequence(meta, source)
+
+
+@pytest.mark.parametrize(
+    "model,parameters,radial,tangential",
+    [
+        ("SIMPLE_PINHOLE", "3 2 1.5", [0] * 6, [0, 0]),
+        ("PINHOLE", "3 3 2 1.5", [0] * 6, [0, 0]),
+        ("SIMPLE_RADIAL", "3 2 1.5 0.01", [0.01, 0, 0, 0, 0, 0], [0, 0]),
+        ("RADIAL", "3 2 1.5 0.01 0.02", [0.01, 0.02, 0, 0, 0, 0], [0, 0]),
+        (
+            "OPENCV",
+            "3 3 2 1.5 0.01 0.02 0.03 0.04",
+            [0.01, 0.02, 0, 0, 0, 0],
+            [0.03, 0.04],
+        ),
+        (
+            "OPENCV_FISHEYE",
+            "3 3 2 1.5 0.01 0.02 0.03 0.04",
+            [0.01, 0.02, 0.03, 0.04],
+            None,
+        ),
+    ],
+)
+def test_all_supported_source_models_preserve_distortion(
+    tmp_path, model, parameters, radial, tangential
+):
+    pytest.importorskip("pycolmap")
+    converter = pytest.importorskip("tools.data_converter.colmap.converter")
+    from click.testing import CliRunner
+    import numpy as np
+
+    root = colmap_text_fixture(tmp_path / "capture")
+    (root / "sparse/0/cameras.txt").write_text(f"1 {model} 4 3 {parameters}\n")
+    source = colmap.inspect_colmap_source(root, publication_request(tmp_path))
+    calibration = source["cameras"]["camera1"]
+    assert calibration["colmap_camera_type"] == [
+        "SIMPLE_PINHOLE",
+        "PINHOLE",
+        "SIMPLE_RADIAL",
+        "RADIAL",
+        "OPENCV",
+        "OPENCV_FISHEYE",
+    ].index(model)
+    np.testing.assert_allclose(calibration["radial_coeffs"], radial)
+    if tangential is not None:
+        np.testing.assert_allclose(calibration["tangential_coeffs"], tangential)
+        assert calibration["thin_prism_coeffs"] == [0] * 4
+    out = tmp_path / "output"
+    result = CliRunner().invoke(
+        converter.cli,
+        [
+            "--root-dir",
+            str(root),
+            "--output-dir",
+            str(out),
+            "colmap-v4",
+            "--no-include-downsampled-images",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    meta = out / "capture/capture.json"
+    assert colmap.validate_ncore_sequence(meta, source) == source["counts"]
+    for index in range(len(radial)):
+        original = calibration["radial_coeffs"][index]
+        calibration["radial_coeffs"][index] += 0.1
+        with pytest.raises(colmap.NcoreConversionError, match="calibration"):
+            colmap.validate_ncore_sequence(meta, source)
+        calibration["radial_coeffs"][index] = original
+
+
+@pytest.mark.parametrize("fault", ["unsupported", "ambiguous", "legacy-race"])
+def test_claim_failures_never_publish_members(monkeypatch, tmp_path, fault):
+    storage, _ = fake_conversion(monkeypatch, tmp_path)
+    request = publication_request(tmp_path)
+    original = storage.put_object
+
+    def fail(**kwargs):
+        if fault == "unsupported":
+            raise NotImplementedError("private provider diagnostic")
+        result = original(**kwargs)
+        if fault == "ambiguous":
+            raise OSError("private provider diagnostic")
+        storage.uploads[request.output_path + "data.zarr.itar"] = b"legacy writer"
+        return result
+
+    monkeypatch.setattr(storage, "put_object", fail)
+    with pytest.raises(
+        colmap.NcoreConversionError, match="publication|destination"
+    ) as error:
+        colmap.convert_colmap(request, storage_client=storage)
+    assert "private provider" not in str(error.value)
+    assert request.output_path + "sequence.json" not in storage.uploads
+    assert request.output_path + "conversion.json" not in storage.uploads
+    if fault == "unsupported":
+        assert not storage.uploads
+    else:
+        before = storage.uploads.copy()
+        monkeypatch.setattr(storage, "put_object", original)
+        with pytest.raises(colmap.NcoreConversionError, match="fresh.*prefix"):
+            colmap.convert_colmap(request, storage_client=storage)
+        assert storage.uploads == before
+
+
+@pytest.mark.parametrize(
+    "corruption", ["", "missing-claim", "changed-claim", "changed-report"]
+)
+def test_claim_binds_published_inventory_before_materialization(
+    monkeypatch, tmp_path, corruption
+):
+    from npa.workbench.nurec.nurec import materialize_uri
+
+    storage, _ = fake_conversion(monkeypatch, tmp_path)
+    result = colmap.convert_colmap(
+        publication_request(tmp_path), storage_client=storage
+    )
+    root = tmp_path / "published"
+    root.mkdir()
+    for uri, payload in storage.uploads.items():
+        (root / uri.rsplit("/", 1)[-1]).write_bytes(payload)
+    if corruption == "missing-claim":
+        (root / colmap.PUBLICATION_CLAIM).unlink()
+    elif corruption == "changed-claim":
+        (root / colmap.PUBLICATION_CLAIM).write_text(
+            '{"schema_version":1,"report_sha256":"wrong"}'
+        )
+    elif corruption == "changed-report":
+        report = json.loads((root / colmap.CONVERSION_REPORT).read_text())
+        report["counts"]["images"] += 1
+        (root / colmap.CONVERSION_REPORT).write_text(json.dumps(report))
+    if corruption:
+        with pytest.raises(colmap.NcoreConversionError, match="inventory"):
+            materialize_uri(str(root), tmp_path / "unused")
+    else:
+        assert materialize_uri(str(root), tmp_path / "unused") == root
+        assert result["objects"] == len(storage.uploads)
+
+
+@pytest.mark.parametrize(
+    "corruption",
+    ["duplicate", "unsafe-path", "invalid-path-type", "unlisted-meta", "missing-rig"],
+)
+def test_inventory_rejects_invalid_or_incomplete_members(tmp_path, corruption):
+    root = write_inventory_fixture(tmp_path / "source")
+    path = root / colmap.CONVERSION_REPORT
+    report = json.loads(path.read_text())
+    if corruption == "duplicate":
+        report["members"].append(report["members"][0])
+    elif corruption == "unsafe-path":
+        report["members"][0]["path"] = "../private-source"
+    elif corruption == "invalid-path-type":
+        report["members"][0]["path"] = 7
+    elif corruption == "unlisted-meta":
+        report["members"] = [
+            item for item in report["members"] if item["path"] != "sequence.json"
+        ]
+    else:
+        report["poses_component_group"] = "npa_rig"
+    path.write_text(json.dumps(report))
+    with pytest.raises(colmap.NcoreConversionError, match="inventory") as error:
+        colmap.verify_conversion_inventory(root)
+    assert "private-source" not in str(error.value)
+
+
+def test_stale_local_metadata_cannot_complete_interrupted_remote_publication(
+    monkeypatch, tmp_path
+):
+    from npa.workbench.nurec.nurec import materialize_uri
+
+    storage, _ = fake_conversion(monkeypatch, tmp_path)
+    colmap.convert_colmap(publication_request(tmp_path), storage_client=storage)
+    target = tmp_path / "cache-destination"
+    target.mkdir()
+    for uri, payload in storage.uploads.items():
+        (target / uri.rsplit("/", 1)[-1]).write_bytes(payload)
+    previous = {path.name: path.read_bytes() for path in target.iterdir()}
+
+    class InterruptedDownload:
+        def download_path(self, uri, destination):
+            # The new prefix has every byte except its final discovery commit.
+            for name, payload in previous.items():
+                if name != "sequence.json":
+                    (Path(destination) / name).write_bytes(payload)
+
+    with pytest.raises(colmap.NcoreConversionError, match="inventory"):
+        materialize_uri(
+            "s3://test-bucket/interrupted/",
+            target,
+            storage_client=InterruptedDownload(),
+        )
+    assert {path.name: path.read_bytes() for path in target.iterdir()} == previous

@@ -17,6 +17,7 @@ ingestion path, and the images in that guide are not results from this workflow.
 | COLMAP model reader | [trueprice/pycolmap at fe7a7c45df803b6c391777e349f0d8d65d39d777](https://github.com/trueprice/pycolmap/tree/fe7a7c45df803b6c391777e349f0d8d65d39d777) | MIT; the reader and Python 3 patch pinned by NCore, distinct from the PyPI COLMAP bindings |
 | Reference capture | [NVIDIA PhysicalAI-NuRec-PPISP at 2521064a3af6ab1c1caa2ba1b01ddde7eecded69](https://huggingface.co/datasets/nvidia/PhysicalAI-NuRec-PPISP/tree/2521064a3af6ab1c1caa2ba1b01ddde7eecded69) | CC-BY-4.0 dataset, fetched only at runtime |
 | Reconstruction and rendering | `nvcr.io/nvidia/nre/nre-ga:26.04` | Proprietary NVIDIA NRE runtime with separate NGC access and terms |
+| Independent NuRec reader | `nvidia-ncore` 19.5.1, wheel SHA256 `a753f81470ba1b35567cbca26794a7f9ceefe04ec306b962a52dd18dc988fe29` | Official Apache-2.0 wheel fetched by immutable URL/hash at runtime in the existing NRE path; not baked into the converter image |
 
 The OSS addition is COLMAP conversion. It does not make NRE open source or add
 a new partner-roadmap tier. The `npa-ncore` development image is a validation
@@ -68,6 +69,12 @@ Each state runs in a separate pod. `workbench.nurec.convert_colmap` publishes
 including its trailing slash, is passed to the existing reconstruction command
 as `--ncore-uri`. No extra source-directory or `sequence/` suffix is appended
 by conversion.
+
+Use a fresh output prefix for each conversion. A provider-conditional permanent
+claim prevents overlapping writers or replacement of an earlier generation.
+Interrupted publication also requires a new prefix; claims do not expire or get
+taken over. NuRec verifies the complete file inventory, hashes and claim before
+opening a converted sequence, including when reusing a local download cache.
 
 Conversion independently reopens every output image, calibration, camera pose
 and sparse point, compares them with the source, checks finite geometry, and

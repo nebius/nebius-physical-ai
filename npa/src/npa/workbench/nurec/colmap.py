@@ -33,6 +33,7 @@ from npa.workbench.nurec.nurec import NurecError
 NCORE_REVISION = "59c698d206da92b406a4f72619fce3b3a2c64bfd"
 DEFAULT_CONVERTER = "/opt/ncore/bin/colmap-convert"
 CONVERSION_REPORT = "conversion.json"
+PUBLICATION_CLAIM = ".npa-colmap-claim.json"
 
 
 class NcoreConversionError(NurecError, NpaError):
@@ -289,6 +290,7 @@ def inspect_colmap_source(
                 "resolution": [int(camera.width), int(camera.height)],
                 "focal_length": [float(camera.fx), float(camera.fy)],
                 "principal_point": [float(camera.cx), float(camera.cy)],
+                **_source_distortion(camera),
                 "target": "world",
             },
         )
@@ -320,6 +322,7 @@ def inspect_colmap_source(
                 with Image.open(image_dir / original["frames"][0]["name"]) as image:
                     resolution = list(image.size)
                 cameras[f"{camera_id}_{factor}"] = {
+                    **original,
                     "frames": [
                         {
                             "name": frame["name"],
@@ -350,6 +353,36 @@ def inspect_colmap_source(
         "points_sha256": hashlib.sha256(retained.astype("<f4").tobytes()).hexdigest(),
         "source_points": len(xyz),
         "origin_points_filtered": len(xyz) - len(retained),
+    }
+
+
+def _source_distortion(camera: Any) -> dict[str, Any]:
+    """Map all six supported COLMAP models to the official V4 intrinsic schema."""
+    camera_type = int(camera.camera_type)
+    if camera_type == 5:
+        coefficients = {
+            "radial_coeffs": [camera.k1, camera.k2, camera.k3, camera.k4],
+        }
+    else:
+        coefficients = {
+            "radial_coeffs": [
+                camera.k1 if camera_type > 1 else 0,
+                camera.k2 if camera_type > 2 else 0,
+                0,
+                0,
+                0,
+                0,
+            ],
+            "tangential_coeffs": [camera.p1, camera.p2] if camera_type == 4 else [0, 0],
+            "thin_prism_coeffs": [0, 0, 0, 0],
+        }
+    return {
+        "colmap_camera_type": camera_type,
+        "model_type": "opencv-fisheye" if camera_type == 5 else "opencv-pinhole",
+        **{
+            name: _finite(value, "source distortion").astype(np.float32).tolist()
+            for name, value in coefficients.items()
+        },
     }
 
 
@@ -442,9 +475,39 @@ def validate_ncore_sequence(
             value = getattr(model, item.name)
             if isinstance(value, (np.ndarray, float, int)):
                 _finite(value, "calibration")
-        for name in ("resolution", "focal_length", "principal_point"):
-            if not np.allclose(
-                getattr(model, name), expected[name], rtol=1e-5, atol=1e-5
+        if (
+            model.type() != expected["model_type"]
+            or model.shutter_type.name != "GLOBAL"
+            or model.external_distortion_parameters is not None
+        ):
+            raise NcoreConversionError("source and NCore calibration model differ")
+        calibration_fields = [
+            "resolution",
+            "focal_length",
+            "principal_point",
+            "radial_coeffs",
+        ]
+        if expected["model_type"] == "opencv-pinhole":
+            calibration_fields.extend(["tangential_coeffs", "thin_prism_coeffs"])
+        else:
+            from ncore.impl.data.types import OpenCVFisheyeCameraModelParameters
+
+            # This bound depends on source resolution, K and all four source
+            # coefficients. Compute it from the source, never the output model.
+            expected = {
+                **expected,
+                "max_angle": OpenCVFisheyeCameraModelParameters.compute_max_angle(
+                    np.asarray(expected["resolution"], dtype=np.uint64),
+                    np.asarray(expected["focal_length"], dtype=np.float32),
+                    np.asarray(expected["principal_point"], dtype=np.float32),
+                    np.asarray(expected["radial_coeffs"], dtype=np.float32),
+                ),
+            }
+            calibration_fields.append("max_angle")
+        for name in calibration_fields:
+            actual = np.asarray(getattr(model, name))
+            if actual.shape != np.shape(expected[name]) or not np.allclose(
+                actual, expected[name], rtol=1e-5, atol=1e-7
             ):
                 raise NcoreConversionError("source and NCore calibration differ")
         timestamps = _finite(camera.frames_timestamps_us, "image timestamps")
@@ -547,6 +610,122 @@ def _inventory(root: Path, members: list[Path]) -> list[dict[str, Any]]:
         }
         for path in sorted(members)
     ]
+
+
+def _claim_destination(client: Any, base: str, report_sha256: str) -> None:
+    """Reserve an empty immutable prefix; claims are never removed or reused.
+
+    A failed/ambiguous publication requires a fresh output prefix. In particular,
+    do not expire claims: a paused original writer could resume after expiry.
+    """
+    from npa.clients.storage import StoragePreconditionFailed
+
+    parsed = urlparse(base)
+    prefix = parsed.path.lstrip("/") + "/"
+    claim_key = prefix + PUBLICATION_CLAIM
+
+    def occupied(*, claimed: bool = False) -> bool:
+        paginator = client.s3.get_paginator("list_objects_v2")
+        return any(
+            not claimed or item["Key"] != claim_key
+            for page in paginator.paginate(Bucket=parsed.netloc, Prefix=prefix)
+            for item in page.get("Contents", [])
+        )
+
+    unavailable = "COLMAP destination is occupied or claimed; use a fresh output prefix"
+    # Avoid even adding a claim to an existing legacy generation. This check is
+    # advisory: only the provider's conditional PutObject grants ownership.
+    if occupied():
+        raise NcoreConversionError(unavailable)
+    try:
+        client.put_bytes_conditional(
+            json.dumps({"schema_version": 1, "report_sha256": report_sha256}).encode(),
+            f"{base}/{PUBLICATION_CLAIM}",
+            if_none_match=True,
+            content_type="application/json",
+        )
+    except StoragePreconditionFailed as exc:
+        raise NcoreConversionError(unavailable) from exc
+    # Detect legacy/nonparticipating writes between the advisory check and claim.
+    # Retain the claim on any failure; no converter-owned member has been written.
+    if occupied(claimed=True):
+        raise NcoreConversionError(unavailable)
+
+
+def verify_conversion_inventory(root: Path) -> None:
+    """Verify a COLMAP handoff without importing NCore or invoking its reader.
+
+    Older, otherwise complete conversion reports remain verifiable without a
+    claim. Ordinary NuRec sequences without either sidecar remain supported.
+    """
+    report_path = root / CONVERSION_REPORT
+    claim_path = root / PUBLICATION_CLAIM
+    if not any(
+        path.exists() or path.is_symlink() for path in (report_path, claim_path)
+    ):
+        return
+    try:
+        files = set(_regular_files(root))
+        report = json.loads(report_path.read_text())
+        if (
+            not isinstance(report, dict)
+            or report["schema_version"] != 1
+            or report["status"] != "ok"
+            or report["engine"] != "nvidia-ncore-colmap"
+            or not isinstance(report["ncore_meta"], str)
+        ):
+            raise ValueError("invalid conversion report")
+        meta_name = _relative(report["ncore_meta"])
+        if len(meta_name.parts) != 1 or meta_name.suffix != ".json":
+            raise ValueError("invalid metadata name")
+        meta = root / meta_name
+        expected = {meta, *sequence_members(meta)}
+        if report["poses_component_group"] == "npa_rig":
+            expected.add(root / "npa-rig.json")
+        elif report["poses_component_group"] != "default":
+            raise ValueError("invalid poses group")
+        members = report["members"]
+        if not isinstance(members, list) or not members:
+            raise ValueError("missing inventory")
+        inventoried = set()
+        for item in members:
+            if not isinstance(item, dict) or not isinstance(item.get("path"), str):
+                raise ValueError("invalid inventory entry")
+            relative = _relative(item["path"])
+            path = root / relative
+            if len(relative.parts) != 1 or path in inventoried or path not in files:
+                raise ValueError("invalid inventory member")
+            if (
+                type(item["bytes"]) is not int
+                or path.stat().st_size != item["bytes"]
+                or _hash_file(path) != item["sha256"]
+            ):
+                raise ValueError("inventory bytes differ")
+            inventoried.add(path)
+        if inventoried != expected:
+            raise ValueError("incomplete inventory")
+        expected.add(report_path)
+        publication = report.get("publication")
+        if publication is not None and publication != {
+            "mode": "immutable-prefix-v1",
+            "claim": PUBLICATION_CLAIM,
+        }:
+            raise ValueError("unsupported publication")
+        if publication is not None or claim_path.exists():
+            claim = json.loads(claim_path.read_text())
+            if (
+                not isinstance(claim, dict)
+                or claim["schema_version"] != 1
+                or claim["report_sha256"] != _hash_file(report_path)
+            ):
+                raise ValueError("publication claim differs")
+            expected.add(claim_path)
+        if files != expected:
+            raise ValueError("mixed conversion generation")
+    except (ValueError, TypeError, KeyError, OSError, NcoreConversionError) as exc:
+        raise NcoreConversionError(
+            "COLMAP conversion inventory is incomplete or inconsistent"
+        ) from exc
 
 
 def _runtime_fingerprints() -> dict[str, str]:
@@ -702,6 +881,10 @@ def convert_colmap(
                 ),
                 "counts": counts,
                 "members": inventory,
+                "publication": {
+                    "mode": "immutable-prefix-v1",
+                    "claim": PUBLICATION_CLAIM,
+                },
                 "ncore_meta": meta.name,
                 "poses_component_group": "npa_rig"
                 if request.rig_mode == "derive"
@@ -715,8 +898,10 @@ def convert_colmap(
             )
             phase = "publication"
             base = request.output_path.rstrip("/")
+            _claim_destination(client, base, _hash_file(report_path))
             # Publish the discovery meta last, after every referenced byte and
-            # provenance document is durable. No hidden sequence/ subdirectory.
+            # provenance document is durable in our exclusively owned prefix.
+            # The permanent claim prevents replacement, even after partial failure.
             for member in [path for path in members if path != meta] + [
                 report_path,
                 meta,
@@ -731,7 +916,7 @@ def convert_colmap(
                 "conversion_sha256": _hash_file(report_path),
                 "counts": counts,
                 "poses_component_group": report["poses_component_group"],
-                "objects": len(members) + 1,
+                "objects": len(members) + 2,
             }
     except NcoreConversionError:
         raise

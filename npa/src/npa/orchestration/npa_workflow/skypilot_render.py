@@ -1432,6 +1432,15 @@ def default_npa_setup() -> str:
 #: not exist and silently fell back to this literal, so its "cannot drift" promise
 #: never actually engaged.)
 NUREC_RERUN_PIN = "rerun-sdk==0.31.4"
+# Keep the independent NuRec consumer stable when it reads newly converted V4
+# sequences. This official Apache-2.0 wheel is fetched at runtime, not rebaked
+# into NVIDIA's proprietary NRE image.
+NUREC_NCORE_PIN = (
+    "nvidia-ncore @ https://files.pythonhosted.org/packages/a0/c1/"
+    "4e417aca37daae1ced7515b3f24912245b35cea4696359c1ebb32127c665/"
+    "nvidia_ncore-19.5.1-py3-none-any.whl"
+    "#sha256=a753f81470ba1b35567cbca26794a7f9ceefe04ec306b962a52dd18dc988fe29"
+)
 
 
 def _sonic_deps_setup() -> str:
@@ -1698,7 +1707,7 @@ def render_setup_for_tool(
             "    return 1\n"
             "  fi\n"
             "}\n"
-            f"npa_nurec_pip 'huggingface_hub>=0.30' 'nvidia-ncore' '{NUREC_RERUN_PIN}' 'pillow>=10.0'\n"
+            f"npa_nurec_pip 'huggingface_hub>=0.30' '{NUREC_NCORE_PIN}' '{NUREC_RERUN_PIN}' 'pillow>=10.0'\n"
             '"$npa_nurec_py" -c \'import ncore, rerun; print("nurec runtime deps ready")\'\n'
         )
     return "".join(parts)

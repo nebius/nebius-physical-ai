@@ -88,6 +88,13 @@ def test_golden_is_honest_about_its_evidence() -> None:
     assert spec.golden_eval.status == "needs-image-update"
 
 
+def test_final_path_exposes_skypilot_bootstrap_service() -> None:
+    dockerfile = (PACKAGING / "Dockerfile").read_text()
+    final_path = dockerfile.split("ENV PATH=", 1)[1].split()[0].split(":")
+    assert "/usr/sbin" in final_path
+    assert "/sbin" in final_path
+
+
 @pytest.mark.parametrize(
     "argv",
     [
@@ -208,3 +215,71 @@ def test_reader_sentinel_keeps_unsigned_max_on_numpy2(tmp_path: Path) -> None:
     assert "np.uint64(-1)" not in source.read_text()
     with pytest.raises(ValueError, match="sentinel source changed"):
         _stager().patch_numpy_sentinel(source)
+
+
+DOWNSAMPLE_SOURCE = (
+    "                    cameras[ncore_camera_id] = ColmapCamera(\n"
+    "                        camera_id=ncore_camera_id,\n"
+    "                        colmap_camera=self.scene_manager.cameras[imdata[k].camera_id],\n"
+    "                        image_path=parent_dir / image_root,\n"
+)
+
+
+def test_downsample_patch_is_narrow_and_asserts_source_drift(tmp_path):
+    source = tmp_path / "converter.py"
+    original_camera = "colmap_camera=self.scene_manager.cameras[imdata[k].camera_id],\n"
+    source.write_text(original_camera + DOWNSAMPLE_SOURCE)
+    _stager().patch_downsample_camera(source)
+    assert source.read_text().startswith(original_camera)
+    assert (
+        "colmap_camera=camera,  # NPA: use the current downsample camera"
+        in source.read_text()
+    )
+    with pytest.raises(ValueError, match="downsample.*source changed"):
+        _stager().patch_downsample_camera(source)
+    source.write_text(DOWNSAMPLE_SOURCE * 2)
+    with pytest.raises(ValueError, match="downsample.*source changed"):
+        _stager().patch_downsample_camera(source)
+    assert source.read_text() == DOWNSAMPLE_SOURCE * 2
+
+
+def test_staging_records_postpatch_converter_inventory(monkeypatch, tmp_path):
+    module = _stager()
+    lock = {
+        "ncore": {"revision": "a" * 40},
+        "pycolmap": {
+            "revision": "b" * 40,
+            "patch": "deps/pycolmap/fix-python3-map.patch",
+        },
+    }
+    contents = {
+        "ncore": {
+            "tools/data_converter/colmap/converter.py": DOWNSAMPLE_SOURCE,
+            "deps/pycolmap/fix-python3-map.patch": "synthetic patch boundary",
+        },
+        "pycolmap": {"pycolmap/scene_manager.py": "INVALID_POINT3D = np.uint64(-1)\n"},
+    }
+    for component, files in contents.items():
+        buffer = io.BytesIO()
+        with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
+            for name, text in files.items():
+                member = tarfile.TarInfo(
+                    f"{component}-{lock[component]['revision']}/{name}"
+                )
+                member.size = len(text.encode())
+                archive.addfile(member, io.BytesIO(text.encode()))
+        payload = buffer.getvalue()
+        (tmp_path / f"{component}.tar.gz").write_bytes(payload)
+        lock[component]["sha256"] = hashlib.sha256(payload).hexdigest()
+    monkeypatch.setattr(module.subprocess, "run", lambda *args, **kwargs: None)
+    output = tmp_path / "staged"
+    module.stage(lock, output, tmp_path)
+    relative = "ncore/tools/data_converter/colmap/converter.py"
+    patched = (output / relative).read_bytes()
+    assert b"colmap_camera=camera," in patched
+    inventory = json.loads((output / "source-inventory.json").read_text())
+    assert inventory["files"][relative] == hashlib.sha256(patched).hexdigest()
+    assert (
+        inventory["files"][relative]
+        != hashlib.sha256(DOWNSAMPLE_SOURCE.encode()).hexdigest()
+    )

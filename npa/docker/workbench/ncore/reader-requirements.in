@@ -2,7 +2,7 @@
 # NCore V4 reader is available in this interpreter; the native converter has
 # its own NumPy 1.x venv. No pycolmap wheel, Torch, CUDA or NRE is installed.
 dataclasses-json==0.6.7
-pillow==12.2.0
+pillow==12.3.0
 zarr==2.18.4
 numcodecs==0.15.1
 cbor2==5.9.0

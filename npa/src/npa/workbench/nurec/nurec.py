@@ -32,6 +32,7 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -1986,6 +1987,7 @@ def materialize_uri(
         local = Path(source_uri)
         if not local.exists():
             raise NurecError(f"local source does not exist: {local}")
+        _verify_materialized_colmap(local)
         return local
 
     from npa.clients.storage import StorageClient
@@ -1994,11 +1996,36 @@ def materialize_uri(
     target = Path(destination)
     is_prefix = source_uri.endswith("/")
     if is_prefix:
-        target.mkdir(parents=True, exist_ok=True)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        # Verify a fresh download before copying into a reusable local cache.
+        # Old metadata must never complete an interrupted remote publication.
+        with tempfile.TemporaryDirectory(prefix="nurec-", dir=target.parent) as scratch:
+            downloaded = Path(scratch)
+            client.download_path(source_uri, str(downloaded))
+            _verify_materialized_colmap(downloaded)
+            shutil.copytree(downloaded, target, dirs_exist_ok=True)
     else:
         target.parent.mkdir(parents=True, exist_ok=True)
-    client.download_path(source_uri, str(target))
+        client.download_path(source_uri, str(target))
+    _verify_materialized_colmap(target)
     return target
+
+
+def _verify_materialized_colmap(path: Path) -> None:
+    from npa.workbench.nurec.colmap import (
+        CONVERSION_REPORT,
+        PUBLICATION_CLAIM,
+        verify_conversion_inventory,
+    )
+
+    root = path if path.is_dir() else path.parent
+    directories = {
+        sidecar.parent
+        for name in (CONVERSION_REPORT, PUBLICATION_CLAIM)
+        for sidecar in root.rglob(name)
+    }
+    for directory in sorted(directories):
+        verify_conversion_inventory(directory)
 
 
 def publish_ncore_sequence(

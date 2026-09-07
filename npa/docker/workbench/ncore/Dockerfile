@@ -2,7 +2,7 @@
 # CPU-only NVIDIA NCore COLMAP ingestion. Build context: npa/ from SOURCE_SHA.
 # Reuse the supported Python base and immutable Debian security snapshot pattern.
 FROM python:3.12.12-slim-bookworm@sha256:593bd06efe90efa80dc4eee3948be7c0fde4134606dd40d8dd8dbcade98e669c AS runtime-base
-ARG DEBIAN_SNAPSHOT=20260817T000000Z
+ARG DEBIAN_SNAPSHOT=20260906T183022Z
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_NO_CACHE_DIR=1
@@ -53,7 +53,7 @@ RUN /opt/venv/bin/python -m pip install --no-deps --no-build-isolation /opt/npa 
 FROM runtime-base
 ARG NPA_SOURCE_SHA
 ARG SOURCE_SHA=${NPA_SOURCE_SHA}
-ENV PATH=/opt/venv/bin:/opt/ncore/bin:/usr/local/bin:/usr/bin:/bin \
+ENV PATH=/opt/venv/bin:/opt/ncore/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     HOME=/home/ubuntu \
     NPA_NCORE_CONVERTER=/opt/ncore/bin/colmap-convert \
     NPA_NCORE_SOURCE_REVISION=59c698d206da92b406a4f72619fce3b3a2c64bfd \

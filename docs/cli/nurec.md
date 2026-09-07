@@ -5,13 +5,14 @@
 ```text
 Usage: npa workbench nurec [OPTIONS] COMMAND [ARGS]...
 
-NVIDIA Omniverse NuRec / Neural Reconstruction Engine: sensor recordings -> 3DGUT Gaussian reconstruction -> renderable USDZ -> novel-view renders. Requires an RT-core GPU (L40S or RTX PRO 6000
-Blackwell); never route the render path at H100/H200.
+NVIDIA Omniverse NuRec / Neural Reconstruction Engine: sensor recordings -> 3DGUT Gaussian reconstruction -> renderable USDZ -> novel-view renders. COLMAP ingestion uses Apache-2.0 NVIDIA NCore on
+CPU. Proprietary NRE reconstruction/rendering requires an RT-core GPU (L40S or RTX PRO 6000 Blackwell); never route the render path at H100/H200.
 
 Options
 --help  Show this message and exit.
 Commands
 check  Check NRE container access, dataset download rights, and GPU suitability.
+convert-colmap  Convert COLMAP using Apache-2.0 NVIDIA NCore; NRE is a separate downstream engine.
 fetch  Download and unpack the real NCore V4 shards for a scene.
 reconstruct  Train a 3DGUT Gaussian reconstruction and publish the renderable USDZ.
 render  Render novel views from a trained reconstruction with ``nre render``.
@@ -31,6 +32,7 @@ status  Summarize what a NuRec run prefix currently holds, stage by stage.
 | Command | Description |
 | --- | --- |
 | `check` | Check NRE container access, dataset download rights, and GPU suitability. |
+| `convert-colmap` | Convert COLMAP using Apache-2.0 NVIDIA NCore; NRE is a separate downstream engine. |
 | `fetch` | Download and unpack the real NCore V4 shards for a scene. |
 | `reconstruct` | Train a 3DGUT Gaussian reconstruction and publish the renderable USDZ. |
 | `render` | Render novel views from a trained reconstruction with ``nre render``. |

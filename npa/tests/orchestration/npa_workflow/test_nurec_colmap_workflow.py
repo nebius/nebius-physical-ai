@@ -19,6 +19,22 @@ ROOT = Path(__file__).resolve().parents[4]
 SPEC = ROOT / "workflows/testing/nurec-colmap-reconstruct.yaml"
 
 
+def test_nurec_consumer_fetches_immutable_ncore_reader() -> None:
+    from npa.orchestration.npa_workflow.skypilot_render import (
+        SkypilotRenderOptions,
+        render_setup_for_tool,
+    )
+
+    setup = render_setup_for_tool(
+        "workbench.nurec.rig_from_sequence",
+        config={},
+        options=SkypilotRenderOptions(),
+    )
+    assert "nvidia_ncore-19.5.1-py3-none-any.whl#sha256=" in setup
+    assert "a753f81470ba1b35567cbca26794a7f9ceefe04ec306b962a52dd18dc988fe29" in setup
+    assert "'nvidia-ncore'" not in setup
+
+
 @pytest.fixture
 def helpers(monkeypatch):
     path = ROOT / "npa/tests/e2e/npa_workflow_live_helpers.py"
