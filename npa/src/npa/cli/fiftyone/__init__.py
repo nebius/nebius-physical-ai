@@ -24,7 +24,6 @@ from rich.console import Console
 from npa.cli.fiftyone.forward import _wait_for_kubernetes_forward
 from npa.cli.fiftyone.review import register_review_augmented
 from npa.cli.ingress import (
-    ingress_source_option,
     register_byovm_alias,
     world_open_ack_option,
 )
@@ -1076,7 +1075,7 @@ def ensure_ingress_cmd(
         "-n",
         help="Workbench alias to repair. Defaults to the active workbench alias.",
     ),
-    source: str = ingress_source_option("Source CIDR allowed to reach the FiftyOne app."),
+    source: str = typer.Option("", "--source", help="Legacy ingress option; FiftyOne requires SSH access."),
     allow_world_open: bool = world_open_ack_option(),
 ) -> None:
     """Explain the authenticated local access route for FiftyOne."""
@@ -1088,7 +1087,7 @@ def register_byovm_cmd(
     alias: str = typer.Option(..., "--alias", help="Workbench alias to create or update."),
     instance_id: str = typer.Option(..., "--instance-id", help="Nebius compute instance ID."),
     port: int = typer.Option(DEFAULT_APP_PORT, "--port", help="FiftyOne HTTP app port."),
-    source: str = ingress_source_option("Source CIDR allowed to reach FiftyOne."),
+    source: str = typer.Option("", "--source", help="Legacy ingress option; FiftyOne requires SSH access."),
     allow_world_open: bool = world_open_ack_option(),
 ) -> None:
     """Register an existing VM for authenticated SSH access to FiftyOne."""

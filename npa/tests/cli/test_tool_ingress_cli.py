@@ -14,7 +14,6 @@ NARROW_SOURCE = "192.0.2.0/24"
 TOOL_CASES = [
     ("cosmos", 8081),
     ("groot", 8082),
-    ("fiftyone", 5151),
 ]
 
 
@@ -116,4 +115,31 @@ def test_tool_world_open_ingress_requires_acknowledgement(
 
     assert result.exit_code == 1
     assert "--allow-world-open" in result.output
+    ensure.assert_not_called()
+
+
+@pytest.mark.parametrize("workbenches", [
+    {"demo": {"instance_id": "computeinstance-test"}},
+    {"other": {"instance_id": "computeinstance-test"}},
+    {"demo": {"endpoint": "http://203.0.113.10"}},
+])
+@pytest.mark.parametrize("source_args", [
+    [],
+    ["--source", NARROW_SOURCE],
+    ["--source", "0.0.0.0/0"],
+    ["--source", "0.0.0.0/0", "--allow-world-open"],
+])
+def test_fiftyone_ingress_is_disabled_for_every_alias_and_source(
+    mocker, workbenches, source_args,
+) -> None:
+    _patch_projects(mocker, workbenches)
+    ensure = mocker.patch("npa.cli.ingress.ensure_ingress")
+
+    result = runner.invoke(
+        app, ["workbench", "fiftyone", "ensure-ingress", "-n", "demo", *source_args],
+    )
+
+    assert result.exit_code == 1
+    assert "FiftyOne app ingress is disabled" in result.output
+    assert "fiftyone open" in result.output
     ensure.assert_not_called()
