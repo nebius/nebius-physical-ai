@@ -6,7 +6,6 @@ import logging
 import json
 import os
 import re
-import selectors
 import shlex
 import shutil
 import subprocess
@@ -22,6 +21,7 @@ import httpx
 import typer
 from rich.console import Console
 
+from npa.cli.fiftyone.forward import _wait_for_kubernetes_forward
 from npa.cli.fiftyone.review import register_review_augmented
 from npa.cli.ingress import (
     ingress_source_option,
@@ -4016,34 +4016,6 @@ def datasets_list_cmd(
             f"media_type={dataset['media_type'] or '?'}  "
             f"persistent={dataset['persistent']}"
         )
-
-
-def _wait_for_kubernetes_forward(
-    proc: subprocess.Popen, local_port: int, remote_port: int, *, timeout: float = 10.0,
-) -> None:
-    """Wait for kubectl itself to confirm the requested local listener."""
-    if proc.stdout is None:
-        raise EndpointError("Kubernetes port-forward has no readiness output")
-    ready_line = f"Forwarding from 127.0.0.1:{local_port} -> {remote_port}".encode()
-    deadline = time.monotonic() + timeout
-    pending = b""
-    with selectors.DefaultSelector() as selector:
-        selector.register(proc.stdout, selectors.EVENT_READ)
-        while proc.poll() is None:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0 or not selector.select(remaining):
-                raise EndpointError("Kubernetes port-forward did not confirm its local listener")
-            chunk = os.read(proc.stdout.fileno(), 65536)
-            if not chunk:
-                break
-            lines = (pending + chunk).split(b"\n")
-            pending = lines.pop()
-            if any(line.strip() == ready_line for line in lines):
-                if proc.poll() is not None:
-                    break
-                os.set_blocking(proc.stdout.fileno(), False)
-                return
-    raise EndpointError("Kubernetes port-forward exited before confirming its local listener")
 
 
 @app.command("open")
