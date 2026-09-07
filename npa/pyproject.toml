@@ -120,6 +120,8 @@ sonic = [
 # standard (non-e2e) test suite collects without pulling in the GPU-heavy
 # extras (genesis, groot, sonic).
 dev = [
+    # Actual loopback HTTP regression coverage for deployed service boundaries.
+    "uvicorn>=0.52.4",
     # Test-only media runtime for the LeIsaac dataset/PAIDF integration tests.
     # Keep this explicit development dependency out of core and `full`; the
     # LeIsaac image separately removes and scans bundled static FFmpeg bytes.
@@ -137,6 +139,7 @@ dev = [
 
 [dependency-groups]
 dev = [
+    "uvicorn>=0.52.4",
     "fastapi~=0.136.1",
     # Mirrors project.optional-dependencies.dev for `uv sync --group dev`.
     "imageio-ffmpeg==0.6.0",
