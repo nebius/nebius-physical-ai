@@ -426,9 +426,10 @@ sudo usermod -aG docker {shlex.quote(ssh_user)} || true
     if server_config.get("gpu_count"):
         env_args["NPA_GPU_COUNT"] = str(server_config["gpu_count"])
     env_args.update(cache_env)
-    env_flags = " ".join(
-        f"--env {shlex.quote(key + '=' + str(value))}"
-        for key, value in env_args.items()
+    # A later env file retains the former --env override precedence without
+    # exposing shared credentials in either the SSH shell or Docker argv.
+    write_remote_docker_env_file(
+        ssh, "/opt/lerobot/container.env", env_args, owner=ssh_user
     )
     volume_flags = " ".join(
         [
@@ -452,7 +453,7 @@ sudo usermod -aG docker {shlex.quote(ssh_user)} || true
         f"sudo docker rm -f {shlex.quote(container_name)} >/dev/null 2>&1 || true\n"
         f"sudo docker run -d --gpus all --ipc=host --network host "
         f"--name {shlex.quote(container_name)} --restart unless-stopped "
-        f"--env-file /opt/lerobot/.env {env_flags} {volume_flags} "
+        f"--env-file /opt/lerobot/.env --env-file /opt/lerobot/container.env {volume_flags} "
         f"{shlex.quote(image_ref)}"
     )
     ssh.run_or_raise(run_cmd)

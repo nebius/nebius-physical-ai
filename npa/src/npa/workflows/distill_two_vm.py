@@ -34,7 +34,7 @@ from pathlib import Path
 from typing import Any
 
 from npa.clients.config import SSHConfig, write_config
-from npa.clients.env import render_shell_env_file
+from npa.clients.env import load_env_file_script, render_docker_env_file
 from npa.deploy.configurator import write_remote_env_file, write_remote_text_file
 from npa.clients.nebius import NebiusError, bootstrap_environment
 from npa.clients.ssh import SSHClient, SSHError, SSHHostKeyError
@@ -116,13 +116,13 @@ def _conda_activate(conda_env: str) -> str:
     that shell function (not the binary) because only the function can
     modify the current shell's PATH and environment variables.
 
-    Also sources ``/opt/lerobot/.env`` (written by cloud-init) so that
+    Also reads literal values from ``/opt/lerobot/.env`` (written by cloud-init) so that
     S3 credentials (``AWS_ACCESS_KEY_ID``, ``AWS_SECRET_ACCESS_KEY``,
     ``NEBIUS_S3_ENDPOINT``) are available to boto3 and npa commands
     running in the conda env.
     """
     return (
-        f'set -a && test -f /opt/lerobot/.env && . /opt/lerobot/.env; set +a && '
+        f"{load_env_file_script('/opt/lerobot/.env', required=False)} && "
         f'eval "$({_CONDA_BIN} shell.bash hook)" && '
         f'conda activate {conda_env} && '
     )
@@ -461,17 +461,17 @@ def _write_s3_env(
     try:
         # Read existing env file (may not exist on a fresh VM).
         code, existing_content, _ = ssh.run("cat /opt/lerobot/.env 2>/dev/null")
-        # Preserve existing shell syntax, replacing only the credential keys.
+        # Preserve other literal Docker-format entries, replacing credentials.
         retained = [
             line for line in existing_content.splitlines()
             if line.partition("=")[0].strip() not in s3_vars
         ] if code == 0 else []
-        env_content = "\n".join(retained) + "\n" + render_shell_env_file(s3_vars)
+        env_content = "\n".join(retained) + "\n" + render_docker_env_file(s3_vars)
         write_remote_text_file(
             ssh, "/opt/lerobot/.env", env_content,
             owner=ssh._config.user, mode="0600",
         )
-    except SSHError as exc:
+    except (SSHError, ValueError) as exc:
         raise TwoVMDistillError(
             f"[{label}] Failed to update /opt/lerobot/.env: {exc}"
         ) from exc

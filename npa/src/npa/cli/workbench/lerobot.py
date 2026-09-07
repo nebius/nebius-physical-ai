@@ -1,6 +1,7 @@
 """npa workbench lerobot — LeRobot training, evaluation, serving, and inference."""
 
 from __future__ import annotations
+
 import logging
 
 import json
@@ -18,6 +19,7 @@ from urllib.parse import urlparse
 import typer
 from rich.console import Console
 
+from npa.clients.env import load_env_file_script
 from npa.cli._error_formatting import format_error_for_user
 from npa.cli.path_contract import PathContractError, validate_read_path, validate_write_path
 from npa.clients.config import (
@@ -790,7 +792,7 @@ def _lerobot_train_container_command(
         "set -euo pipefail && "
         "cd /opt/lerobot && "
         "source /opt/lerobot/venv/bin/activate && "
-        "if [ -f /opt/lerobot/.env ]; then set -a && source /opt/lerobot/.env && set +a; fi && "
+        f"{load_env_file_script('/opt/lerobot/.env', required=False)} && "
         f"{training_env}"
         # The job env may point HF_HOME at the durable weight cache instead.
         'mkdir -p "${HF_HOME:-/tmp/hf_home}" && '
@@ -860,7 +862,7 @@ def _lerobot_profile_train_container_command(
 set -euo pipefail
 cd /opt/lerobot
 source /opt/lerobot/venv/bin/activate
-if [ -f /opt/lerobot/.env ]; then set -a && source /opt/lerobot/.env && set +a; fi
+{load_env_file_script('/opt/lerobot/.env', required=False)}
 export MUJOCO_GL=egl
 export PYOPENGL_PLATFORM=egl
 export HF_HOME="${{HF_HOME:-/tmp/hf_home}}"
@@ -1512,7 +1514,7 @@ def train(
 
     cmd = (
         f"source /opt/lerobot/venv/bin/activate && "
-        f"set -a && source /opt/lerobot/.env && set +a && "
+        f"{load_env_file_script('/opt/lerobot/.env')} && "
         f"export CUDA_VISIBLE_DEVICES={visible_devices} && "
         f"{training_env}"
         f"mkdir -p {status_dir} && "
@@ -1573,7 +1575,7 @@ def train(
                 console.print(f"[bold]Uploading checkpoint to {checkpoint_output_path}...[/bold]")
             upload_cmd = (
                 f"source /opt/lerobot/venv/bin/activate && "
-                f"set -a && source /opt/lerobot/.env && set +a && "
+                f"{load_env_file_script('/opt/lerobot/.env')} && "
                 f"{_remote_upload_dir_cmd(ckpt_path, checkpoint_output_path, training_config.checkpoint_s3.endpoint_url or cfg.storage.endpoint_url)}"
             )
             up_code, up_out, up_err = ssh.run(_runtime_exec_cmd(cfg, upload_cmd))
@@ -1601,7 +1603,7 @@ def train(
 
             upload_cmd = (
                 f"source /opt/lerobot/venv/bin/activate && "
-                f"set -a && source /opt/lerobot/.env && set +a && "
+                f"{load_env_file_script('/opt/lerobot/.env')} && "
                 f"python3 -c \""
                 f"import boto3, os, pathlib; "
                 f"s3 = boto3.client('s3', "
@@ -1677,7 +1679,7 @@ def eval_cmd(
         local_cache = _remote_cache_dir("checkpoint", checkpoint_ref)
         resolve_cmd = (
             f"source /opt/lerobot/venv/bin/activate && "
-            f"set -a && source /opt/lerobot/.env && set +a && "
+            f"{load_env_file_script('/opt/lerobot/.env')} && "
             f"{_remote_download_dir_cmd(checkpoint_ref, local_cache, cfg.storage.endpoint_url)}"
         )
         try:
@@ -1694,7 +1696,7 @@ def eval_cmd(
 
     cmd = (
         f"source /opt/lerobot/venv/bin/activate && "
-        f"set -a && source /opt/lerobot/.env && set +a && "
+        f"{load_env_file_script('/opt/lerobot/.env')} && "
         f"lerobot-eval "
         f"{eval_checkpoint_arg(resolved_checkpoint, version=remote_version)} "
         f"--env.type={env} "
@@ -1756,7 +1758,7 @@ def eval_cmd(
                 console.print(f"[bold]Uploading eval results to {output_path}...[/bold]")
             upload_cmd = (
                 f"source /opt/lerobot/venv/bin/activate && "
-                f"set -a && source /opt/lerobot/.env && set +a && "
+                f"{load_env_file_script('/opt/lerobot/.env')} && "
                 f"{_remote_upload_dir_cmd(eval_output_dir, output_path, cfg.storage.endpoint_url)}"
             )
             up_code, up_out, up_err = ssh.run(_runtime_exec_cmd(cfg, upload_cmd))
@@ -2830,7 +2832,7 @@ def benchmark_cmd(
 
             train_cmd = (
                 f"source /opt/lerobot/venv/bin/activate && "
-                f"set -a && source /opt/lerobot/.env && set +a && "
+                f"{load_env_file_script('/opt/lerobot/.env')} && "
                 f"export MUJOCO_GL=egl && export PYOPENGL_PLATFORM=egl && "
                 f"set -o pipefail && "
                 f"lerobot-train "
@@ -2935,7 +2937,7 @@ def benchmark_cmd(
         script_b64 = base64.b64encode(upload_script.encode()).decode()
         upload_cmd = (
             f"source /opt/lerobot/venv/bin/activate && "
-            f"set -a && source /opt/lerobot/.env && set +a && "
+            f"{load_env_file_script('/opt/lerobot/.env')} && "
             f"echo {script_b64} | base64 -d | python3"
         )
         try:
@@ -3135,7 +3137,7 @@ def profile_train_cmd(
                 _runtime_exec_cmd(
                     cfg,
                     f"source /opt/lerobot/venv/bin/activate && "
-                    f"set -a && source /opt/lerobot/.env && set +a && "
+                    f"{load_env_file_script('/opt/lerobot/.env')} && "
                     f"python3 -c \"from lerobot.datasets.lerobot_dataset import LeRobotDataset; "
                     f"LeRobotDataset('{ds}'); print('cached: {ds}')\"",
                 ),
@@ -3159,7 +3161,7 @@ def profile_train_cmd(
 
         cmd = (
             f"source /opt/lerobot/venv/bin/activate && "
-            f"set -a && source /opt/lerobot/.env && set +a && "
+            f"{load_env_file_script('/opt/lerobot/.env')} && "
             f"export MUJOCO_GL=egl && export PYOPENGL_PLATFORM=egl && "
             f"python3 /opt/lerobot/profile_train.py "
             f"--mode={mode} "
@@ -3223,7 +3225,7 @@ def profile_train_cmd(
         script_b64 = base64.b64encode(upload_script.encode()).decode()
         upload_cmd = (
             f"source /opt/lerobot/venv/bin/activate && "
-            f"set -a && source /opt/lerobot/.env && set +a && "
+            f"{load_env_file_script('/opt/lerobot/.env')} && "
             f"echo {script_b64} | base64 -d | python3"
         )
         try:

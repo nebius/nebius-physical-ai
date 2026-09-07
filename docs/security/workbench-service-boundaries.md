@@ -43,6 +43,34 @@ finish with mode `0600`; deployment installers explicitly set the owner and
 mode needed by each service. Credentials travel over SFTP, never in deployment
 command arguments.
 
+The agent's nginx password hash is generated with bcrypt at work factor 12 from protected stdin,
+then atomically installed as `root:www-data` with mode `0640`. Passwords must
+contain 1–72 UTF-8 bytes and no CR, LF, or NUL; longer values are rejected before
+deployment to prevent bcrypt truncation. The generated operator password meets
+this contract.
+
+Cosmos service environment updates use private staging and atomic replacement,
+including on restart. Hugging Face downloads inherit their token from the
+environment. LeRobot's Docker launch reads both its existing environment file
+and a second private file containing service overrides and shared credentials;
+those values no longer appear in process arguments.
+
+VM credential files use literal `KEY=value` data, matching Docker's environment
+file contract. Cosmos, FiftyOne, LeRobot, Genesis, and native VM login hooks read
+them without shell evaluation. Quotes, dollars, backticks, spaces, and equals
+signs remain part of the value. CR, LF, and NUL are rejected by the writers.
+Legacy hand-written files containing shell assignments, `export`, or shell
+quoting must be rewritten as literal data. New login hooks source only the
+root-owned loader program. Terraform does not reapply cloud-init changes to
+existing VMs: reprovision a native VM or replace its old profile and bashrc
+hooks with the trusted loader before reusing its credentials. Upgrading the
+local CLI alone does not replace those older login hooks.
+
+Standalone Lichtblick now binds to loopback by default. Its static server
+co-serves the selected MCAP without authentication. Use a verified SSH forward
+or authenticated proxy for remote access. Selecting a non-loopback `--host`
+explicitly publishes the artifact to clients that can reach that interface.
+
 ## Cosmos3 native Ray serving
 
 The native service requires Ray management authentication and starts its own

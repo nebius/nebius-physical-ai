@@ -1,6 +1,7 @@
 """npa workbench fiftyone - Voxel51 FiftyOne dataset curation app."""
 
 from __future__ import annotations
+
 import logging
 
 import json
@@ -21,6 +22,7 @@ import httpx
 import typer
 from rich.console import Console
 
+from npa.clients.env import load_env_file_script, render_docker_env_file
 from npa.cli.fiftyone.forward import _wait_for_kubernetes_forward
 from npa.cli.fiftyone.review import register_review_augmented
 from npa.cli.ingress import (
@@ -1297,14 +1299,10 @@ def _source_storage_env_script() -> str:
     return f"""\
 {_ensure_storage_env_permissions_script()}
 if [ -f /etc/npa-fiftyone/env ] && [ -r /etc/npa-fiftyone/env ]; then
-  set -a
-  . /etc/npa-fiftyone/env
-  set +a
+  {load_env_file_script('/etc/npa-fiftyone/env')}
 elif [ -f /opt/lerobot/.env ]; then
   if [ -r /opt/lerobot/.env ]; then
-    set -a
-    . /opt/lerobot/.env
-    set +a
+    {load_env_file_script('/opt/lerobot/.env')}
   else
     echo "WARNING: /opt/lerobot/.env exists but is not readable; S3 sources may fail" >&2
   fi
@@ -1343,8 +1341,9 @@ def _service_setup_script(
             "fi"
         )
     else:
+        dataset_env = render_docker_env_file({"FIFTYONE_DATASET_NAME": dataset_name}).rstrip("\n")
         dataset_update = (
-            f"printf '%s\\n' {shlex.quote(f'FIFTYONE_DATASET_NAME={dataset_name}')} "
+            f"printf '%s\\n' {shlex.quote(dataset_env)} "
             "| sudo tee -a /etc/npa-fiftyone/env >/dev/null"
         )
     dataset_update = dataset_update.replace("/etc/npa-fiftyone/env", '"$fiftyone_env_stage/env"')
@@ -1573,7 +1572,7 @@ def _build_load_dataset_command(
     format_literal = json.dumps(format_value)
     importer_source = _lerobot_importer_source() if format_value == DatasetFormat.lerobot.value else ""
     importer_source_literal = json.dumps(importer_source)
-    env_line = shlex.quote(f"FIFTYONE_DATASET_NAME={name}")
+    env_line = shlex.quote(render_docker_env_file({"FIFTYONE_DATASET_NAME": name}).rstrip("\n"))
     script = f"""\
 set -euo pipefail
 source {FIFTYONE_VENV}/bin/activate
@@ -1816,13 +1815,11 @@ def _build_container_load_dataset_command(
     format_literal = json.dumps(format_value)
     importer_source = _lerobot_importer_source() if format_value == DatasetFormat.lerobot.value else ""
     importer_source_literal = json.dumps(importer_source)
-    env_line = shlex.quote(f"FIFTYONE_DATASET_NAME={name}")
+    env_line = shlex.quote(render_docker_env_file({"FIFTYONE_DATASET_NAME": name}).rstrip("\n"))
     container_script = f"""\
 set -euo pipefail
 source {FIFTYONE_VENV}/bin/activate
-set -a
-. /etc/npa-fiftyone/env
-set +a
+{load_env_file_script('/etc/npa-fiftyone/env')}
 export FIFTYONE_DATABASE_DIR={FIFTYONE_CONTAINER_DB_DIR}
 export FIFTYONE_DEFAULT_DATASET_DIR={FIFTYONE_HOME}/datasets
 export FIFTYONE_DATASET_ZOO_DIR={FIFTYONE_HOME}/zoo/datasets

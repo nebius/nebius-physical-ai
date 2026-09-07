@@ -261,12 +261,26 @@ def test_legacy_distill_credentials_use_private_installer_and_preserve_env(monke
     ssh._config.user = "fixture"
     ssh.run.return_value = (0, "KEEP='quoted value'\nAWS_SECRET_ACCESS_KEY=old\n", "")
     install = mocker.patch.object(distill, "write_remote_text_file")
-    credential = "synthetic-value\nENVEOF\nfalse"
+    credential = "synthetic-value '$()' `literal`"
     distill._write_s3_env(ssh, {"nebius_secret_key": credential}, "fixture")
     content = install.call_args.args[2]
     assert "KEEP='quoted value'" in content
     assert "AWS_SECRET_ACCESS_KEY=old" not in content
-    assert "AWS_SECRET_ACCESS_KEY='synthetic-value\nENVEOF\nfalse'" in content
+    assert f"AWS_SECRET_ACCESS_KEY={credential}\n" in content
     assert install.call_args.kwargs == {"owner": "fixture", "mode": "0600"}
     assert all(credential not in call.args[0] for call in ssh.run.call_args_list)
     ssh.run_or_raise.assert_not_called()
+
+
+def test_legacy_distill_rejects_multiline_docker_credential_before_install(monkeypatch, mocker):
+    import importlib
+
+    monkeypatch.setenv("NPA_PROJECT_ID", "project-fixture")
+    monkeypatch.setenv("NPA_S3_BUCKET", "bucket-fixture")
+    distill = importlib.import_module("npa.workflows.distill_two_vm")
+    ssh = mocker.MagicMock()
+    ssh.run.return_value = (0, "KEEP=literal\n", "")
+    install = mocker.patch.object(distill, "write_remote_text_file")
+    with pytest.raises(distill.TwoVMDistillError, match="newline or NUL"):
+        distill._write_s3_env(ssh, {"nebius_secret_key": "synthetic\nINJECTED=1"}, "fixture")
+    install.assert_not_called()

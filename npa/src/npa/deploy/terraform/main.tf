@@ -142,15 +142,16 @@ resource "nebius_compute_v1_instance" "workbench" {
   }]
 
   cloud_init_user_data = templatefile("${path.module}/cloud_init.yaml.tpl", {
-    ssh_user         = var.ssh_user
-    ssh_public_key   = trimspace(file(pathexpand(var.ssh_public_key_path)))
-    workbench_type   = var.workbench_type
-    server_port      = var.server_port
-    lerobot_version  = var.lerobot_version
-    fiftyone_version = var.fiftyone_version
-    s3_bucket        = var.s3_bucket
-    s3_endpoint      = var.s3_endpoint
-    nebius_region    = var.nebius_region
+    literal_env_loader_b64 = filebase64("${path.module}/load_env.sh")
+    ssh_user               = var.ssh_user
+    ssh_public_key         = trimspace(file(pathexpand(var.ssh_public_key_path)))
+    workbench_type         = var.workbench_type
+    server_port            = var.server_port
+    lerobot_version        = var.lerobot_version
+    fiftyone_version       = var.fiftyone_version
+    s3_bucket              = var.s3_bucket
+    s3_endpoint            = var.s3_endpoint
+    nebius_region          = var.nebius_region
 
     ssh_host_key_nonce = var.ssh_host_key_nonce
   })

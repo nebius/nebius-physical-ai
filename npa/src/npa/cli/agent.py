@@ -799,6 +799,32 @@ def _agent_mobile_login_help_html() -> str:
     </details>"""
 
 
+def _agent_auth_setup_script(auth_user: str, auth_password: str) -> str:
+    """Install nginx's password hash privately, with no password in process argv."""
+    if (
+        not auth_user or auth_user.startswith("-") or ":" in auth_user
+        or any(ord(char) < 32 or ord(char) == 127 for char in auth_user)
+    ):
+        raise ValueError("Invalid agent authentication username")
+    if (
+        not auth_password or len(auth_password.encode("utf-8")) > 72
+        or any(char in auth_password for char in "\r\n\0")
+    ):
+        raise ValueError("Agent password must contain 1..72 UTF-8 bytes without CR, LF or NUL")
+    return f"""\
+(
+set -euo pipefail
+stage="$(sudo mktemp -d /etc/nginx/.npa-auth.XXXXXXXX)"
+trap 'sudo rm -rf -- "$stage"' EXIT
+sudo install -m 0600 /dev/null "$stage/auth"
+builtin printf '%s\\n' {shlex.quote(auth_password)} | sudo htpasswd -iBc -C 12 "$stage/auth" {shlex.quote(auth_user)}
+sudo chown root:www-data "$stage/auth"
+sudo chmod 0640 "$stage/auth"
+sudo mv -fT -- "$stage/auth" /etc/nginx/.npa-agent-htpasswd
+)
+"""
+
+
 def _bootstrap_agent_stack(
     *,
     host: str,
@@ -9061,7 +9087,7 @@ StartLimitIntervalSec=0
 [Install]
 WantedBy=multi-user.target
 UNIT
-sudo htpasswd -bc /etc/nginx/.npa-agent-htpasswd {shlex.quote(auth_user)} {shlex.quote(auth_password)}
+{_agent_auth_setup_script(auth_user, auth_password)}
 {https_ssl_setup}
 cat <<'NGINXLOG' | sudo tee /etc/nginx/conf.d/npa-agent-safe-log.conf >/dev/null
 # Deliberately use $uri, never $request or $request_uri: those include the

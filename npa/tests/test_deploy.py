@@ -109,6 +109,8 @@ def test_prepare_working_dir_copies_tf_files_and_writes_backend(
     bundled = tmp_path / "bundled"
     bundled.mkdir()
     (bundled / "main.tf").write_text("resource {}\n")
+    loader = (PACKAGE_ROOT / "src/npa/deploy/terraform/load_env.sh").read_bytes()
+    (bundled / "load_env.sh").write_bytes(loader)
     base = tmp_path / "workbenches"
     monkeypatch.setattr(provisioner, "_BUNDLED_TF_DIR", bundled)
     monkeypatch.setattr(provisioner, "_WORKBENCH_BASE", base)
@@ -123,6 +125,7 @@ def test_prepare_working_dir_copies_tf_files_and_writes_backend(
 
     assert work_dir == base / "project" / "name"
     assert (work_dir / "main.tf").read_text() == "resource {}\n"
+    assert (work_dir / "load_env.sh").read_bytes() == loader
     backend = (work_dir / "backend.tf").read_text()
     assert 'bucket = "state-bucket"' in backend
     assert 'key    = "npa/terraform-state/project/name/terraform.tfstate"' in backend
@@ -228,6 +231,7 @@ def test_agent_cloud_init_renders_without_s3_secrets(tmp_path: Path) -> None:
     config.write_text(
         f"""locals {{
   rendered = templatefile({json.dumps(str(template))}, {{
+    literal_env_loader_b64 = filebase64({json.dumps(str(template.parent / "load_env.sh"))})
     ssh_user = "ubuntu"
     ssh_public_key = "ssh-ed25519 AAAA operator: recovery # fixture"
     ssh_host_key_nonce = "{'a' * 64}"
@@ -290,6 +294,7 @@ def test_every_cloud_init_variant_omits_storage_secrets(
     config.write_text(
         f'''locals {{
   rendered = templatefile({json.dumps(str(template))}, {{
+    literal_env_loader_b64 = filebase64({json.dumps(str(template.parent / "load_env.sh"))})
     ssh_user = "ubuntu"
     ssh_public_key = "ssh-ed25519 AAAA fixture"
     ssh_host_key_nonce = "{'a' * 64}"
@@ -323,6 +328,22 @@ output "rendered" {{ value = local.rendered }}
     assert "AWS_ACCESS_KEY_ID=" not in rendered.stdout
     assert "AWS_SECRET_ACCESS_KEY=" not in rendered.stdout
 
+    raw = subprocess.run(
+        [terraform, "output", "-raw", "rendered"], cwd=tmp_path,
+        capture_output=True, text=True, check=True,
+    ).stdout
+    cloud_init = yaml.safe_load(raw)
+    if workbench_type == "agent":
+        assert "write_files" not in cloud_init
+    else:
+        import base64
+
+        loader = next(item for item in cloud_init["write_files"] if item["path"] == "/usr/local/lib/npa/load_env.sh")
+        assert loader["owner"] == "root:root"
+        assert loader["permissions"] == "0644"
+        assert loader["encoding"] == "b64"
+        assert base64.b64decode(loader["content"]) == (template.parent / "load_env.sh").read_bytes()
+
 
 def test_terraform_splits_and_fails_closed_ingress() -> None:
     main_tf = (PACKAGE_ROOT / "src/npa/deploy/terraform/main.tf").read_text()
@@ -334,7 +355,7 @@ def test_terraform_splits_and_fails_closed_ingress() -> None:
     app_rule = main_tf.split('resource "nebius_vpc_v1_security_rule" "allow_server"', 1)[1].split(
         'resource "nebius_vpc_v1_security_rule" "allow_egress"', 1
     )[0]
-    template_args = main_tf.split("cloud_init_user_data = templatefile", 1)[1].split(")", 1)[0]
+    template_args = main_tf.split("cloud_init_user_data = templatefile", 1)[1].split("\n  })", 1)[0]
 
     assert 'default     = ""' in variables_tf.split('variable "ssh_cidr_block"', 1)[1].split("}", 1)[0]
     assert 'default     = ""' in variables_tf.split('variable "application_cidr_block"', 1)[1].split("}", 1)[0]
@@ -452,9 +473,10 @@ def test_terraform_template_receives_workbench_type_and_versions() -> None:
     main_tf = (PACKAGE_ROOT / "src/npa/deploy/terraform/main.tf").read_text()
     variables_tf = (PACKAGE_ROOT / "src/npa/deploy/terraform/variables.tf").read_text()
 
-    assert "workbench_type   = var.workbench_type" in main_tf
-    assert "lerobot_version  = var.lerobot_version" in main_tf
-    assert "fiftyone_version = var.fiftyone_version" in main_tf
+    import re
+
+    for name in ("workbench_type", "lerobot_version", "fiftyone_version"):
+        assert re.search(rf"\b{name}\s*=\s*var\.{name}\b", main_tf)
     assert "secondary_disks = concat(" in main_tf
     assert 'device_id   = "npa-cosmos-data"' in main_tf
     assert 'device_id   = "npa-groot-data"' in main_tf
@@ -1177,6 +1199,7 @@ def test_deploy_lerobot_container_joins_the_shared_weight_cache(
     for name in ("NPA_MODEL_CACHE_HOST_PATH", "NPA_MODEL_CACHE_PVC", "NPA_MODEL_CACHE_DIR"):
         monkeypatch.delenv(name, raising=False)
     mocker.patch("npa.deploy.configurator.install_container_runtime")
+    write_env = mocker.patch("npa.deploy.configurator.write_remote_docker_env_file")
     ssh = mocker.MagicMock()
 
     configurator.deploy_lerobot_container(
@@ -1190,11 +1213,12 @@ def test_deploy_lerobot_container_joins_the_shared_weight_cache(
     run_cmd = commands[-1]
     assert "/var/lib/npa/model-cache" in install_cmd
     assert "-v /var/lib/npa/model-cache:/opt/npa-model-cache" in run_cmd
-    assert "HF_HOME=/opt/npa-model-cache/huggingface" in run_cmd
-    assert "TORCH_HOME=/opt/npa-model-cache/torch" in run_cmd
+    env_values = write_env.call_args.args[2]
+    assert env_values["HF_HOME"] == "/opt/npa-model-cache/huggingface"
+    assert env_values["TORCH_HOME"] == "/opt/npa-model-cache/torch"
     # The per-deploy directory stays authoritative for LeRobot's own datasets: it
     # may already hold them, and a deploy is not the place to move them silently.
-    assert "HF_LEROBOT_HOME=/opt/lerobot/hf_cache" in run_cmd
+    assert env_values["HF_LEROBOT_HOME"] == "/opt/lerobot/hf_cache"
     assert "-v /opt/lerobot/hf_cache:/opt/lerobot/hf_cache" in run_cmd
 
 
@@ -1202,6 +1226,7 @@ def test_deploy_lerobot_container_persists_the_hugging_face_cache(mocker) -> Non
     # HF_LEROBOT_HOME pointed at a directory that was never bind-mounted, and this
     # deploy runs `docker rm -f` first, so every deploy re-downloaded the datasets
     # and policy weights LeRobot pulls from Hugging Face.
+    write_env = mocker.patch("npa.deploy.configurator.write_remote_docker_env_file")
     ssh = mocker.MagicMock()
 
     configurator.deploy_lerobot_container(
@@ -1213,8 +1238,39 @@ def test_deploy_lerobot_container_persists_the_hugging_face_cache(mocker) -> Non
     commands = [call.args[0] for call in ssh.run_or_raise.call_args_list]
     assert any("/opt/lerobot/hf_cache" in command for command in commands)
     run_cmd = commands[-1]
-    assert "--env HF_LEROBOT_HOME=/opt/lerobot/hf_cache" in run_cmd
+    assert write_env.call_args.args[2]["HF_LEROBOT_HOME"] == "/opt/lerobot/hf_cache"
     assert "-v /opt/lerobot/hf_cache:/opt/lerobot/hf_cache" in run_cmd
+
+
+@pytest.mark.parametrize("shared", [{}, {"HF_TOKEN": "synthetic '$value' \\\" space", "NPA_SERVER_PORT": "9090"}])
+def test_lerobot_credentials_use_private_env_files_and_preserve_precedence(mocker, shared):
+    ssh = mocker.MagicMock()
+    write_text = mocker.patch("npa.deploy.configurator.write_remote_text_file")
+    configurator.deploy_lerobot_container(
+        ssh, image_ref="registry.example/lerobot:test", server_config={"shared_env": shared}
+    )
+    _, path, content = write_text.call_args.args
+    assert path == "/opt/lerobot/container.env"
+    assert write_text.call_args.kwargs == {"owner": "ubuntu", "mode": "0600"}
+    values = dict(line.split("=", 1) for line in content.splitlines())
+    for key, value in shared.items():
+        assert values[key] == value
+    assert values["NPA_SERVER_PORT"] == shared.get("NPA_SERVER_PORT", "8080")
+    commands = [call.args[0] for call in ssh.run_or_raise.call_args_list]
+    assert "--env-file /opt/lerobot/.env --env-file /opt/lerobot/container.env" in commands[-1]
+    assert "--env " not in commands[-1]
+    if shared:
+        assert shared["HF_TOKEN"] not in "\n".join(commands)
+
+
+def test_lerobot_invalid_secret_fails_before_stopping_existing_container(mocker):
+    ssh = mocker.MagicMock()
+    with pytest.raises(ValueError, match="newline"):
+        configurator.deploy_lerobot_container(
+            ssh, image_ref="registry.example/lerobot:test",
+            server_config={"shared_env": {"HF_TOKEN": "synthetic\nINJECTED=1"}},
+        )
+    assert not any("docker rm" in call.args[0] for call in ssh.run_or_raise.call_args_list)
 
 
 def test_deploy_server_runs_expected_remote_steps(mocker, tmp_path) -> None:

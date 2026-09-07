@@ -10,6 +10,11 @@ users:
 
 %{ if workbench_type != "agent" ~}
 write_files:
+  - path: /usr/local/lib/npa/load_env.sh
+    owner: root:root
+    permissions: "0644"
+    encoding: b64
+    content: ${literal_env_loader_b64}
 %{ if workbench_type == "fiftyone" ~}
   - path: /etc/apt/apt.conf.d/99npa-network
     permissions: "0644"
@@ -513,19 +518,18 @@ runcmd:
       . /opt/lerobot/venv/bin/activate
     fi
     if [ -f /opt/lerobot/.env ]; then
-      set -a
-      . /opt/lerobot/.env
-      set +a
+      . /usr/local/lib/npa/load_env.sh
+      npa_load_env_file /opt/lerobot/.env
     fi
     GLOBAL_EOF
     chmod 644 /etc/profile.d/lerobot.sh
 
     # Also add to user's .bashrc for non-login shells
-    echo 'set -a; source /opt/lerobot/.env; set +a' >> /home/${ssh_user}/.bashrc
+    echo '. /usr/local/lib/npa/load_env.sh; npa_load_env_file /opt/lerobot/.env' >> /home/${ssh_user}/.bashrc
     echo 'source /opt/lerobot/venv/bin/activate'    >> /home/${ssh_user}/.bashrc
 
     # Add to root's .bashrc as well
-    echo 'set -a; source /opt/lerobot/.env; set +a' >> /root/.bashrc
+    echo '. /usr/local/lib/npa/load_env.sh; npa_load_env_file /opt/lerobot/.env' >> /root/.bashrc
     echo 'source /opt/lerobot/venv/bin/activate'    >> /root/.bashrc
 
     # Headless EGL access requires the login user to be able to open the DRM nodes.

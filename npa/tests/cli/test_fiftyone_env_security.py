@@ -8,7 +8,20 @@ import sys
 
 import pytest
 
-from npa.cli.fiftyone import _service_setup_script
+from npa.cli.fiftyone import (
+    _build_container_load_dataset_command,
+    _build_load_dataset_command,
+    _service_setup_script,
+)
+
+
+@pytest.mark.parametrize("name", ["dataset\nAWS_ACCESS_KEY_ID=other", "dataset\rname", "dataset\0name"])
+def test_dataset_name_cannot_inject_service_environment(name):
+    with pytest.raises(ValueError, match="newline or NUL"):
+        _service_setup_script(5151, dataset_name=name)
+    for builder in (_build_load_dataset_command, _build_container_load_dataset_command):
+        with pytest.raises(ValueError, match="newline or NUL"):
+            builder(name, "s3://bucket/dataset")
 
 
 @pytest.mark.parametrize("fail_secret_write", [False, True])
