@@ -198,8 +198,7 @@ def test_source_inventory_requires_actual_directory_roots(recipe, subtree):
 
 def test_source_traversal_errors_are_not_silently_ignored(recipe, monkeypatch):
     original = os.scandir
-    hidden = recipe / "k8s-training/unreadable"
-    hidden.mkdir()
+    hidden = recipe / "modules/kuberay"
 
     def denied(path):
         if Path(path) == hidden:
@@ -209,6 +208,30 @@ def test_source_traversal_errors_are_not_silently_ignored(recipe, monkeypatch):
     monkeypatch.setattr(os, "scandir", denied)
     with pytest.raises(ValueError, match="Unreadable source"):
         validate_recipe_kuberay_compatibility(cluster(KubeRaySpec(True)), recipe / "k8s-training")
+
+
+@pytest.mark.parametrize("relative", [
+    "k8s-training/terraform.tfstate.d", "k8s-training/.terraform/terraform.tfstate",
+    "k8s-training/terraform.tfstate", "k8s-training/terraform.tfvars",
+    "k8s-training/unrecorded-empty", "modules/kuberay/unrecorded-empty",
+])
+def test_unrecorded_source_directories_fail_before_provider_and_replacement(recipe, tmp_path, monkeypatch, relative):
+    desired, destination, deploy = _isolated_deploy(recipe, tmp_path, monkeypatch)
+    (recipe / relative).mkdir(parents=True)
+    work = destination / "k8s-training"
+    cache = work / ".terraform/modules"
+    cache.mkdir(parents=True)
+    (cache / "modules.json").write_text("retained mapping")
+    (work / "terraform.tfvars").write_text("retained variables")
+    (work / "terraform.tfstate").write_text('{"serial":123}')
+    with pytest.raises(ValueError, match="Unexpected source directories"):
+        deploy()
+    with pytest.raises(ValueError, match="Unexpected source directories"):
+        E._prepare_install_dir(destination, recipe_root=recipe, region="us-central1",
+                               cluster=desired, ssh_public_key="ssh-test")
+    assert (cache / "modules.json").read_text() == "retained mapping"
+    assert (work / "terraform.tfvars").read_text() == "retained variables"
+    assert (work / "terraform.tfstate").read_text() == '{"serial":123}'
 
 
 @pytest.mark.parametrize("region", ["eu-north1", "us-central1"])

@@ -94,7 +94,10 @@ def validate_recipe_kuberay_compatibility(cluster: Any, recipe_dir: Path) -> Non
     validate_kuberay_recipe_inventory(recipe_dir)
 
 
-def _source_inventory(root: Path, *, materialized: bool = False) -> dict[str, str]:
+def _source_inventory(
+    root: Path, *, materialized: bool = False,
+    allowed_directories: set[str] | None = None,
+) -> dict[str, str]:
     """Hash regular source files only, rejecting special entries before reads."""
 
     actual = {}
@@ -123,6 +126,8 @@ def _source_inventory(root: Path, *, materialized: bool = False) -> dict[str, st
                     raise ValueError("Symlinks cannot honor the reviewed CPU KubeRay contract")
                 if not (stat.S_ISDIR(mode) or stat.S_ISREG(mode)):
                     raise ValueError("Special source entries cannot honor the reviewed CPU KubeRay contract")
+                if stat.S_ISDIR(mode) and allowed_directories is not None and relative not in allowed_directories:
+                    raise ValueError("Unexpected source directories cannot honor the reviewed CPU KubeRay contract")
                 if materialized and relative in runtime_dirs and stat.S_ISDIR(mode):
                     dirs.remove(name)
                 elif stat.S_ISREG(mode) and not (materialized and relative in excluded):
@@ -134,7 +139,13 @@ def validate_kuberay_recipe_inventory(recipe_dir: Path) -> None:
     contract = json.loads(
         Path(__file__).with_name("kuberay_recipe_contract.json").read_text()
     )
-    actual = _source_inventory(recipe_dir.parent)
+    directories = {
+        parent.as_posix()
+        for filename in contract
+        for parent in Path(filename).parents
+        if parent != Path(".")
+    }
+    actual = _source_inventory(recipe_dir.parent, allowed_directories=directories)
     if actual != contract:
         raise ValueError(
             "Selected k8s-training recipe cannot honor the reviewed CPU "

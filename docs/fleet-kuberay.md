@@ -132,7 +132,8 @@ Deploy checks the selected recipe before quota checks or project/network
 mutation. `kuberay_recipe_contract.json` binds the complete pristine
 `k8s-training/` and `modules/` source inventory by SHA-256, including placement,
 application wiring and templates. Added Terraform overrides, auto-loaded values,
-symlinks, special files and changed source files fail closed. Both source roots
+symlinks, special files, unrecorded directories (including empty ones) and changed
+source files fail closed. Directory names must be parents of the recorded files. Both source roots
 must be real directories. Use a pristine source directory;
 Fleet generates state, variables and region adjustments in its private copy.
 An older pinned recipe or upstream `main` without that exact inventory is
