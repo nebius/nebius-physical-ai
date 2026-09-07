@@ -39,7 +39,14 @@ describe("Artifact inventory cache provenance", () => {
       const cursor = new URL(req.url).searchParams.get("cursor");
       req.reply({ body: inventory(sourceA, cursor ? "page-two" : "page-one", cursor ? "" : "next-page") });
     }).as("resolvedInventory");
-    cy.get("#runIdSelect").select(sourceA.run_id);
+    cy.selectRunSource("#runIdSelect", {
+      runId: sourceA.run_id,
+      runRef: "",
+      projectId: sourceA.project_id,
+      bucket: sourceA.bucket,
+      resolvedPrefix: sourceA.resolved_prefix,
+      sourceType: sourceA.source_type,
+    });
     cy.wait("@resolvedInventory");
     cy.get("#artifactList").should("contain.text", "page-one.bin");
     cy.then(() => expect(inventoryRequests, "selection only fetches the first page").to.eq(1));
@@ -61,7 +68,7 @@ describe("Artifact inventory cache provenance", () => {
         const secondSource = requested.searchParams.get("resource_bucket") === sourceB.bucket;
         req.reply({ body: inventory(secondSource ? sourceB : sourceA, secondSource ? "source-b-only" : "source-a-only") });
       }).as("sourceInventory");
-      cy.get("#runIdSelect").select(sourceA.run_ref);
+      cy.selectRunSource("#runIdSelect", sourceA);
       cy.wait("@sourceInventory");
       cy.get("#artifactList").should("contain.text", "source-a-only.bin");
       cy.get("#artifactLoadRunArtifacts").click();
@@ -98,7 +105,7 @@ describe("Artifact inventory cache provenance", () => {
           req.reply({ body: inventory(sourceB, "must-not-merge") });
         }
       }).as("sourceInventory");
-      cy.get("#runIdSelect").select(sourceA.run_ref);
+      cy.selectRunSource("#runIdSelect", sourceA);
       cy.wait("@sourceInventory");
       cy.get("#artifactList").should("contain.text", "source-a-page-one.bin");
       cy.then(() => expect(inventoryRequests, "first page is lazy").to.eq(1));

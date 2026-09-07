@@ -26,7 +26,7 @@ if __name__ == "npa.cli.agent_stage_runtime":
         _agent_access_report,
         _agent_artifact_list_scope,
         _agent_s3_buckets,
-        _agent_s3_client,
+        _agent_artifact_s3_client,
         _artifact_discovery_prefix,
         _discovery_exclude_roots,
         _load_selected_run_artifacts,
@@ -313,7 +313,7 @@ def _artifact_backed_run_details(
         return None
     exact_prefix = _validated_resolved_prefix(resolved_prefix)
     try:
-        s3, settings = _agent_s3_client()
+        s3, settings = _agent_artifact_s3_client()
         artifacts = []
         run_bucket = settings["bucket"]
         access_report = _agent_access_report()

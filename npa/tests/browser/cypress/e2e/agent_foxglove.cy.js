@@ -8,13 +8,20 @@
  * handshake and records every command the UI sends.
  */
 
-import { NON_STOCK_RUN_ID, resolveLiveAgentConfig } from "../support/e2e";
+import { NON_STOCK_ARTIFACTS, NON_STOCK_RUN_ID, resolveLiveAgentConfig } from "../support/e2e";
 import { SceneUpdate as OfficialSceneUpdate } from "@foxglove/schemas/jsonschema";
 
 // The SDK requires an absolute embed URL (`new URL(src)`), exactly like a real
 // Foxglove deployment; the agent backend enforces the same rule.
 const MOCK_EMBED_SRC = `${Cypress.config("baseUrl")}/mock-foxglove-app/`;
 const MCAP_URL = "/foxglove/data/tok-session.mcap";
+const NON_STOCK_DISCOVERY_SOURCE = {
+  runId: NON_STOCK_RUN_ID,
+  projectId: "project-a",
+  bucket: "project-artifacts",
+  resolvedPrefix: "",
+  sourceType: "artifact_storage",
+};
 
 const RICH_TOPICS = {
   "/camera": "foxglove.CompressedImage",
@@ -475,7 +482,7 @@ describe("NPA agent UI — embedded Foxglove viewer", () => {
       cy.location("href").as(`exactArtifactTopUrl-${viewport.name}`);
       cy.get("#artifactRefreshRuns").click();
       cy.wait("@artifactRuns");
-      cy.get("#runIdSelect").select(NON_STOCK_RUN_ID);
+      cy.selectRunSource("#runIdSelect", NON_STOCK_DISCOVERY_SOURCE);
       cy.wait("@nonStockArtifactList");
       cy.get(`.artifact-card:has([data-key="${key}"])`)
         .as("exactArtifactCard")
@@ -592,7 +599,7 @@ describe("NPA agent UI — embedded Foxglove viewer", () => {
     cy.get("#tabRerun").click();
     cy.get("#artifactRefreshRuns").click();
     cy.wait("@artifactRuns");
-    cy.get("#runIdSelect").select(NON_STOCK_RUN_ID);
+    cy.selectRunSource("#runIdSelect", NON_STOCK_DISCOVERY_SOURCE);
     cy.wait("@nonStockArtifactList");
 
     let firstFrame;
@@ -630,6 +637,15 @@ describe("NPA agent UI — embedded Foxglove viewer", () => {
     let releaseExport;
     let originalCard;
     const runRef = "npa1_mock_non_stock";
+    const source = {
+      run_id: NON_STOCK_RUN_ID,
+      run_ref: runRef,
+      source_type: "artifact_storage",
+      source_label: "S3 artifacts",
+      bucket: "project-artifacts",
+      project_id: "project-a",
+      resolved_prefix: "",
+    };
     // This case requires one unchanged, fully qualified inventory source.
     // The shared discovery fixture intentionally starts with unresolved/different
     // provenance, which can legitimately require a new inventory lookup.
@@ -638,38 +654,50 @@ describe("NPA agent UI — embedded Foxglove viewer", () => {
       body: {
         ok: true,
         runs: [{
-          run_id: NON_STOCK_RUN_ID, run_ref: runRef,
-          source_type: "artifact_storage", source_label: "S3 artifacts",
-          bucket: "mock", project_id: "project-local", resolved_prefix: "",
+          ...source,
           has_viewable: true, last_modified: "2026-07-11T18:00:00Z",
         }],
         total_runs: 1, truncated: false,
         access: { status: "available", scope: "selected_resource" },
       },
-    }).as("artifactRuns");
+    }).as("rerenderArtifactRuns");
     const key = `${NON_STOCK_RUN_ID}/reports/sim2real.mcap`;
-    const s3Uri = `s3://mock/${key}`;
+    const s3Uri = `s3://${source.bucket}/${key}`;
     // Keep discovery and inventory bound to the same source so List artifacts
     // exercises a cache-backed rerender rather than a source reconciliation.
-    cy.intercept("GET", "/api/artifacts/runs*", {
-      runs: [{
-        run_id: NON_STOCK_RUN_ID,
-        run_ref: runRef,
-        source_type: "artifact_storage",
-        bucket: "mock",
-        project_id: "project-local",
-        resolved_prefix: "",
-        has_viewable: true,
-      }],
-      total_runs: 1,
-      truncated: false,
-    }).as("rerenderArtifactRuns");
+    cy.intercept(
+      "GET",
+      new RegExp(`/api/artifacts/run/(?:${NON_STOCK_RUN_ID}|${runRef})(?:\\?|$)`),
+      {
+        statusCode: 200,
+        body: {
+          ok: true,
+          ...source,
+          artifacts: NON_STOCK_ARTIFACTS.map((artifact) => ({
+            ...artifact,
+            s3_uri: `s3://${source.bucket}/${artifact.key}`,
+          })),
+          count: NON_STOCK_ARTIFACTS.length,
+          truncated: false,
+          pagination_complete: true,
+          next_cursor: "",
+        },
+      },
+    ).as("rerenderSourceInventory");
     const exported = exactArtifactExportResponse(
       NON_STOCK_RUN_ID,
       runRef,
       key,
       s3Uri,
     );
+    Object.assign(exported.selected_artifact, {
+      bucket: source.bucket,
+      resource_bucket: source.bucket,
+      project_id: source.project_id,
+      resolved_prefix: source.resolved_prefix,
+      s3_uri: s3Uri,
+    });
+    exported.export.selected_artifact = exported.selected_artifact;
     cy.intercept("POST", "/api/foxglove/export", (request) => {
       // The rerender must happen during preparation. A fixed response delay
       // can expire before the List click on CI, changing the resolved source
@@ -690,13 +718,20 @@ describe("NPA agent UI — embedded Foxglove viewer", () => {
     cy.get("#renderModeFoxglove").click();
     cy.wait("@foxgloveConfig");
     cy.get("#artifactRefreshRuns").click();
-    cy.wait("@artifactRuns");
-    cy.get("#runIdSelect").select(runRef);
-    cy.wait("@nonStockArtifactList").then(({ request }) => {
+    cy.wait("@rerenderArtifactRuns");
+    cy.selectRunSource("#runIdSelect", {
+      runId: NON_STOCK_RUN_ID,
+      runRef,
+      projectId: source.project_id,
+      bucket: source.bucket,
+      resolvedPrefix: "",
+      sourceType: "artifact_storage",
+    });
+    cy.wait("@rerenderSourceInventory").then(({ request }) => {
       const url = new URL(request.url);
       expect(url.pathname).to.eq(`/api/artifacts/run/${runRef}`);
-      expect(url.searchParams.get("resource_bucket")).to.eq("mock");
-      expect(url.searchParams.get("project_id")).to.eq("project-local");
+      expect(url.searchParams.get("resource_bucket")).to.eq(source.bucket);
+      expect(url.searchParams.get("project_id")).to.eq(source.project_id);
       expect(url.searchParams.get("source_selected")).to.eq("1");
     });
     cy.get(`button[data-action="open-foxglove-artifact"][data-key="${key}"]`)
@@ -708,7 +743,7 @@ describe("NPA agent UI — embedded Foxglove viewer", () => {
     // the immutable run/ref/key export remains in flight. It must not refetch
     // an inventory that is already complete.
     cy.get("#artifactLoadRunArtifacts").click();
-    cy.get("@nonStockArtifactList.all").should("have.length", 1);
+    cy.get("@rerenderSourceInventory.all").should("have.length", 1);
     cy.get(`button[data-action="open-foxglove-artifact"][data-key="${key}"]`).should(($card) => {
       expect($card[0], "the same selected MCAP has a replacement card").not.to.equal(originalCard);
       expect($card).to.have.attr("aria-busy", "true");
@@ -747,7 +782,7 @@ describe("NPA agent UI — embedded Foxglove viewer", () => {
     cy.get("#tabRerun").click();
     cy.get("#artifactRefreshRuns").click();
     cy.wait("@artifactRuns");
-    cy.get("#runIdSelect").select(NON_STOCK_RUN_ID);
+    cy.selectRunSource("#runIdSelect", NON_STOCK_DISCOVERY_SOURCE);
     cy.wait("@nonStockArtifactList");
     cy.get(`button[data-action="open-foxglove-artifact"][data-key="${key}"]`)
       .scrollIntoView()
@@ -819,7 +854,7 @@ describe("NPA agent UI — embedded Foxglove viewer", () => {
     cy.get("#tabRerun").click();
     cy.get("#artifactRefreshRuns").click();
     cy.wait("@artifactRuns");
-    cy.get("#runIdSelect").select(NON_STOCK_RUN_ID);
+    cy.selectRunSource("#runIdSelect", NON_STOCK_DISCOVERY_SOURCE);
     cy.wait("@nonStockArtifactList");
     cy.get(`button[data-action="open-foxglove-artifact"][data-key="${canonicalKey}"]`)
       .should("be.enabled")
@@ -881,7 +916,7 @@ describe("NPA agent UI — embedded Foxglove viewer", () => {
     cy.get("#tabRerun").click();
     cy.get("#artifactRefreshRuns").click();
     cy.wait("@artifactRuns");
-    cy.get("#runIdSelect").select(NON_STOCK_RUN_ID);
+    cy.selectRunSource("#runIdSelect", NON_STOCK_DISCOVERY_SOURCE);
     cy.wait("@nonStockArtifactList");
     cy.get(`button[data-action="open-foxglove-artifact"][data-key="${key}"]`)
       .should("be.enabled")
@@ -911,7 +946,7 @@ describe("NPA agent UI — embedded Foxglove viewer", () => {
     cy.get("#tabRerun").click();
     cy.get("#artifactRefreshRuns").click();
     cy.wait("@artifactRuns");
-    cy.get("#runIdSelect").select(NON_STOCK_RUN_ID);
+    cy.selectRunSource("#runIdSelect", NON_STOCK_DISCOVERY_SOURCE);
     cy.wait("@nonStockArtifactList");
     cy.get(`button[data-action="open-foxglove-artifact"][data-key="${key}"]`)
       .should("be.enabled")

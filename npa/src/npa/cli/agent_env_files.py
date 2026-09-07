@@ -199,7 +199,7 @@ def _write_agent_s3_env(
     secret_key: str,
     region: str,
 ) -> None:
-    """Stage S3 discovery credentials on the VM (read-only operator scope preferred)."""
+    """Stage the deployment/home S3 identity used for state and workflow writes."""
     if not (bucket.strip() and access_key.strip() and secret_key.strip()):
         return
     env_lines = [
@@ -222,8 +222,13 @@ def _write_agent_artifact_sources_env(
     ssh: SSHClient,
     *,
     artifact_sources: tuple[dict[str, str], ...] | list[dict[str, str]] = (),
+    bucket: str = "",
+    endpoint: str = "",
+    access_key: str = "",
+    secret_key: str = "",
+    region: str = "",
 ) -> None:
-    """Stage durable read selectors independently of S3 credentials."""
+    """Stage durable read selectors and their isolated S3 identity."""
     normalized_sources = normalize_configured_artifact_sources(artifact_sources)
     env_lines: list[str] = []
     if normalized_sources:
@@ -233,6 +238,16 @@ def _write_agent_artifact_sources_env(
             ).encode("utf-8")
         ).decode("ascii")
         env_lines.append(f"NPA_AGENT_ARTIFACT_SOURCES_B64={encoded_sources}")
+    if bucket.strip() and access_key.strip() and secret_key.strip():
+        env_lines.extend(
+            [
+                f"NPA_AGENT_ARTIFACT_S3_BUCKET={bucket.strip()}",
+                f"NPA_AGENT_ARTIFACT_S3_ENDPOINT={endpoint.strip()}",
+                f"NPA_AGENT_ARTIFACT_S3_ACCESS_KEY_ID={access_key.strip()}",
+                f"NPA_AGENT_ARTIFACT_S3_SECRET_ACCESS_KEY={secret_key.strip()}",
+                f"NPA_AGENT_ARTIFACT_S3_REGION={region.strip() or 'eu-north1'}",
+            ]
+        )
     env_lines.append("")
     _stage_private_text(
         ssh,

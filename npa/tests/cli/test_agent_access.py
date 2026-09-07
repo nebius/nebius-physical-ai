@@ -544,6 +544,12 @@ def test_selected_run_source_requires_complete_discovery_when_unqualified(
         runtime, "_agent_access_report", lambda: object(), raising=False
     )
     monkeypatch.setattr(
+        runtime, "_begin_agent_artifact_access", lambda: object(), raising=False
+    )
+    monkeypatch.setattr(
+        runtime, "_end_agent_artifact_access", lambda: None, raising=False
+    )
+    monkeypatch.setattr(
         runtime,
         "_agent_artifact_list_scope",
         lambda *_args, **_kwargs: (["accessible-bucket"], {}),
@@ -777,7 +783,9 @@ def test_access_cache_refresh_is_singleflight_after_expiry(monkeypatch) -> None:
         return report
 
     monkeypatch.setattr(
-        runtime, "_agent_s3_client_optional", lambda: (object(), {"bucket": ""})
+        runtime,
+        "_agent_artifact_s3_client_optional",
+        lambda: (object(), {"bucket": ""}),
     )
     monkeypatch.setattr(runtime, "discover_agent_access", discover)
     monkeypatch.setattr(runtime, "NPA_PROJECT_ALIAS", "test")
@@ -832,6 +840,23 @@ def test_exact_run_ref_authorization_checks_only_selected_project_and_bucket(
     )
     monkeypatch.setattr(
         runtime,
+        "find_run_sources_across_buckets",
+        lambda buckets, **kwargs: (
+            calls.append(("discover", buckets[0]))
+            or [
+                SimpleNamespace(
+                    run_id=kwargs["run_id"],
+                    bucket=buckets[0],
+                    project_id=kwargs["bucket_projects"][buckets[0]],
+                    resolved_prefix="nested/source",
+                )
+            ],
+            (),
+            True,
+        ),
+    )
+    monkeypatch.setattr(
+        runtime,
         "_agent_access_report",
         lambda **_kwargs: pytest.fail("exact authorization must not scan all projects"),
     )
@@ -850,6 +875,7 @@ def test_exact_run_ref_authorization_checks_only_selected_project_and_bucket(
         ("tenant", "tenant-test"),
         ("project", "selected-project"),
         ("probe", "selected-bucket"),
+        ("discover", "selected-bucket"),
     ]
     monkeypatch.setattr(
         runtime,
@@ -1033,6 +1059,22 @@ def test_exact_run_ref_authorization_allows_configured_deployment_bucket_fallbac
         "_agent_probe_bucket",
         lambda _s3, _bucket: BucketProbe("available", "available"),
     )
+    monkeypatch.setattr(
+        runtime,
+        "find_run_sources_across_buckets",
+        lambda buckets, **kwargs: (
+            [
+                SimpleNamespace(
+                    run_id=kwargs["run_id"],
+                    bucket=buckets[0],
+                    project_id=kwargs["bucket_projects"][buckets[0]],
+                    resolved_prefix="",
+                )
+            ],
+            (),
+            True,
+        ),
+    )
 
     run_ref = encode_run_ref("deployment-bucket", "", "run-one")
     assert runtime._authorize_exact_run_ref_source(
@@ -1082,6 +1124,62 @@ def test_exact_run_ref_authorization_fails_closed_on_wrong_project_bucket(
         )
 
 
+def test_exact_run_ref_authorization_rejects_owned_but_undiscovered_prefix(
+    monkeypatch,
+) -> None:
+    """A reversible run_ref cannot authorize an arbitrary path in an owned bucket."""
+    from npa.cli import agent_access_runtime as runtime
+
+    runtime._clear_exact_run_ref_source_authorizations()
+    monkeypatch.setenv("NEBIUS_TENANT_ID", "tenant-test")
+    monkeypatch.setenv("NEBIUS_PROJECT_ID", "deployment-project")
+    monkeypatch.setattr(
+        runtime,
+        "_agent_list_tenant_projects",
+        lambda _tenant: [_project("selected-project", "Selected")],
+    )
+    monkeypatch.setattr(
+        runtime,
+        "_agent_list_project_buckets",
+        lambda _project: [_bucket("resource-selected", "selected-bucket")],
+    )
+    monkeypatch.setattr(
+        runtime,
+        "_agent_probe_bucket",
+        lambda _s3, _bucket: BucketProbe("available", "available"),
+    )
+    monkeypatch.setattr(
+        runtime,
+        "find_run_sources_across_buckets",
+        lambda *_args, **_kwargs: (
+            [
+                SimpleNamespace(
+                    run_id="run-one",
+                    bucket="selected-bucket",
+                    project_id="selected-project",
+                    resolved_prefix="real/source",
+                )
+            ],
+            (),
+            True,
+        ),
+    )
+
+    with pytest.raises(HTTPException, match="was not discovered") as exc_info:
+        runtime._authorize_exact_run_ref_source(
+            s3=object(),
+            settings={},
+            run_id="run-one",
+            run_ref=encode_run_ref(
+                "selected-bucket", "caller/chosen", "run-one"
+            ),
+            resource_bucket="selected-bucket",
+            project_id="selected-project",
+            resolved_prefix="caller/chosen",
+        )
+    assert exc_info.value.status_code == 403
+
+
 def test_expired_access_cache_is_served_while_single_refresh_runs(monkeypatch) -> None:
     from npa.cli import agent_access_runtime as runtime
 
@@ -1113,6 +1211,65 @@ def test_expired_access_cache_is_served_while_single_refresh_runs(monkeypatch) -
             timeout=2,
         )
     assert runtime._agent_access_report() is fresh
+
+
+def test_artifact_access_never_leases_an_expired_report(monkeypatch) -> None:
+    from npa.cli import agent_access_runtime as runtime
+
+    stale = _discover()
+    fresh = _discover()
+    monkeypatch.setattr(runtime, "_discover_agent_access_report", lambda: fresh)
+    with runtime._AGENT_ACCESS_CONDITION:
+        runtime._AGENT_ACCESS_CACHE.update(
+            report=stale,
+            expires_at=0.0,
+            refreshing=False,
+            artifact_readers=0,
+        )
+
+    leased = runtime._begin_agent_artifact_access()
+    try:
+        assert leased is fresh
+    finally:
+        runtime._end_agent_artifact_access()
+
+
+def test_explicit_access_refresh_waiter_fails_when_inflight_refresh_fails(
+    monkeypatch,
+) -> None:
+    """Joining a failed refresh must not relabel the stale report as refreshed."""
+    from npa.cli import agent_access_runtime as runtime
+
+    stale = _discover()
+    waiting = threading.Event()
+    original_wait = runtime._AGENT_ACCESS_CONDITION.wait
+
+    def observed_wait(*args, **kwargs):
+        waiting.set()
+        return original_wait(*args, **kwargs)
+
+    monkeypatch.setattr(runtime._AGENT_ACCESS_CONDITION, "wait", observed_wait)
+    monkeypatch.setattr(runtime, "_invalidate_agent_artifact_discovery", lambda: None)
+    with runtime._AGENT_ACCESS_CONDITION:
+        runtime._AGENT_ACCESS_CACHE.update(
+            report=stale,
+            expires_at=time.monotonic() + 30,
+            refreshing=True,
+            last_refresh_succeeded=True,
+            artifact_readers=0,
+        )
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(runtime._agent_access_report, refresh=True)
+        assert waiting.wait(timeout=2)
+        runtime._finish_agent_access_refresh(None)
+        with pytest.raises(RuntimeError, match="refresh did not complete"):
+            future.result(timeout=2)
+
+    with runtime._AGENT_ACCESS_CONDITION:
+        assert runtime._AGENT_ACCESS_CACHE["report"] is stale
+        assert runtime._AGENT_ACCESS_CACHE["expires_at"] == 0.0
+        assert runtime._AGENT_ACCESS_CACHE["last_refresh_succeeded"] is False
 
 
 def test_artifact_search_completeness_rejects_partial_resource_access() -> None:
@@ -1203,13 +1360,60 @@ def test_access_refresh_invalidates_all_derived_artifact_state(monkeypatch) -> N
 
     runtime._finish_agent_access_refresh(_discover())
 
-    assert clears == [True, True]
+    assert clears == [True]
     assert runtime._AGENT_EXACT_SOURCE_ACCESS_CACHE == {}
     with pytest.raises(HTTPException) as stale:
         runtime._artifact_run_snapshot_page(
             cursor=cursor, context=context, limit=1, items=None
         )
     assert stale.value.status_code == 409
+
+
+def test_access_refresh_waits_for_artifact_reader_before_publishing(monkeypatch) -> None:
+    """An old report cannot repopulate derived caches after a refresh publishes."""
+    from npa.cli import agent_access_runtime as runtime
+
+    stale = _discover()
+    fresh = _discover()
+    with runtime._AGENT_ACCESS_CONDITION:
+        runtime._AGENT_ACCESS_CACHE.update(
+            report=stale,
+            expires_at=time.monotonic() + 30,
+            refreshing=False,
+            artifact_readers=0,
+        )
+    clears: list[str] = []
+    monkeypatch.setattr(
+        runtime, "_invalidate_agent_artifact_discovery", lambda: clears.append("clear")
+    )
+
+    assert runtime._begin_agent_artifact_access() is stale
+    with runtime._AGENT_ACCESS_CONDITION:
+        runtime._AGENT_ACCESS_CACHE["refreshing"] = True
+    finished = threading.Event()
+
+    def publish() -> None:
+        runtime._finish_agent_access_refresh(fresh)
+        finished.set()
+
+    thread = threading.Thread(target=publish)
+    thread.start()
+    try:
+        assert not finished.wait(timeout=0.05)
+        assert clears == []
+        with runtime._AGENT_ACCESS_CONDITION:
+            assert runtime._AGENT_ACCESS_CACHE["report"] is stale
+        runtime._end_agent_artifact_access()
+        assert finished.wait(timeout=2)
+        assert clears == ["clear"]
+        with runtime._AGENT_ACCESS_CONDITION:
+            assert runtime._AGENT_ACCESS_CACHE["report"] is fresh
+    finally:
+        with runtime._AGENT_ACCESS_CONDITION:
+            if int(runtime._AGENT_ACCESS_CACHE.get("artifact_readers") or 0):
+                runtime._AGENT_ACCESS_CACHE["artifact_readers"] = 0
+                runtime._AGENT_ACCESS_CONDITION.notify_all()
+        thread.join(timeout=2)
 
 
 @pytest.mark.parametrize(

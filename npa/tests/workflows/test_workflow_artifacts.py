@@ -12,6 +12,7 @@ from npa.workflows.artifacts import (
     Artifact,
     ArtifactDiscoveryError,
     ArtifactSource,
+    RunListPage,
     RunResolution,
     RunSummary,
     _merge_staging_resolutions,
@@ -22,7 +23,9 @@ from npa.workflows.artifacts import (
     decode_run_ref,
     download_s3_uri,
     encode_run_ref,
+    exclude_run_source_subtrees,
     find_run_artifacts,
+    find_run_artifacts_across_buckets,
     infer_run_id_from_artifact_key,
     find_run_artifact_page,
     list_all_run_prefixes,
@@ -34,7 +37,6 @@ from npa.workflows.artifacts import (
     list_runs,
     list_runs_at_prefix_across_buckets,
     list_runs_cached_sources,
-    prefer_complete_run_resolution,
     render_hint_for_object,
     resolve_run_artifact,
     resolve_run_artifacts,
@@ -42,7 +44,9 @@ from npa.workflows.artifacts import (
 )
 
 
-def test_complete_canonical_run_wins_over_same_id_one_file_overlay() -> None:
+def test_strict_superset_sources_remain_ambiguous_for_plain_run_id(
+    monkeypatch,
+) -> None:
     run_id = "paidf-run"
 
     def artifact(prefix: str, relative: str, size: int, render: str) -> Artifact:
@@ -88,15 +92,37 @@ def test_complete_canonical_run_wins_over_same_id_one_file_overlay() -> None:
         ],
     )
 
-    assert prefer_complete_run_resolution([overlay, canonical]) is canonical
-
-    divergent = RunResolution(
-        run_id,
-        "bucket",
-        "other",
-        [artifact("other", "reports/sim2real.rrd", 101, "rerun")],
+    monkeypatch.setattr(
+        "npa.workflows.artifacts.find_run_artifact_matches",
+        lambda *_args, **_kwargs: [overlay, canonical],
     )
-    assert prefer_complete_run_resolution([canonical, divergent]) is None
+
+    for resolve in (
+        lambda: resolve_run_artifacts(
+            ["bucket"],
+            base_prefix="",
+            run_ref_or_id=run_id,
+            s3=object(),
+        ),
+        lambda: find_run_artifacts(
+            "bucket",
+            base_prefix="",
+            run_id=run_id,
+            s3=object(),
+        ),
+        lambda: find_run_artifacts_across_buckets(
+            ["bucket"],
+            base_prefix="",
+            run_id=run_id,
+            s3=object(),
+        ),
+    ):
+        with pytest.raises(AmbiguousRunError) as exc_info:
+            resolve()
+        assert set(exc_info.value.references) == {
+            overlay.run_ref,
+            canonical.run_ref,
+        }
 
 
 def test_build_fiftyone_dataset_groups_variants_and_summarizes() -> None:
@@ -1248,8 +1274,8 @@ def test_find_run_artifacts_locates_root_level_run() -> None:
     ]
 
 
-def test_find_run_artifacts_merges_staging_inputs_with_authoritative_outputs() -> None:
-    """One run id may have staged inputs and a separate completed output root."""
+def test_find_run_artifacts_requires_source_for_staging_and_output_roots() -> None:
+    """Artifact roles cannot collapse two independently selectable prefixes."""
     run_id = "groot17-8gpu-20260806T024557Z-3dfb0270"
     layout = [
         (f"groot-1-7-finetune/{run_id}/source/runner.py", "2026-08-06T02:40:00+00:00"),
@@ -1258,27 +1284,15 @@ def test_find_run_artifacts_merges_staging_inputs_with_authoritative_outputs() -
         (f"{run_id}/manifest.json", "2026-08-06T03:02:00+00:00"),
     ]
 
-    artifacts = find_run_artifacts(
-        "bucket", base_prefix="", run_id=run_id, s3=_PrefixAwareS3(layout)
-    )
+    with pytest.raises(AmbiguousRunError) as exc_info:
+        find_run_artifacts(
+            "bucket", base_prefix="", run_id=run_id, s3=_PrefixAwareS3(layout)
+        )
 
-    assert {item.key for item in artifacts} == {key for key, _timestamp in layout}
-    assert {
-        item.role
-        for item in artifacts
-        if "/source/" in item.key or "/data/" in item.key
-    } == {"input"}
-    outputs = [item for item in artifacts if item.role == "output"]
-    assert {item.key for item in outputs} == {
-        f"{run_id}/checkpoints/model.safetensors",
-        f"{run_id}/manifest.json",
-    }
-    checkpoint = next(item for item in outputs if item.key.endswith(".safetensors"))
-    assert checkpoint.render == "download"
-    assert checkpoint.inline is False
+    assert len(exc_info.value.references) == 2
 
 
-def test_list_all_runs_groups_duplicate_run_namespaces_and_counts_outputs() -> None:
+def test_list_all_runs_preserves_staging_and_output_source_tuples() -> None:
     run_id = "groot17-8gpu-20260806T024557Z-3dfb0270"
     layout = [
         (f"groot-1-7-finetune/{run_id}/source/runner.py", "2026-08-06T02:40:00+00:00"),
@@ -1292,10 +1306,14 @@ def test_list_all_runs_groups_duplicate_run_namespaces_and_counts_outputs() -> N
     )
 
     matching = [run for run in page.runs if run.run_id == run_id]
-    assert len(matching) == 1
-    assert matching[0].artifact_count == 4
-    assert matching[0].output_artifact_count == 2
-    assert matching[0].input_artifact_count == 2
+    assert len(matching) == 2
+    assert {run.resolved_prefix for run in matching} == {
+        "",
+        "groot-1-7-finetune",
+    }
+    assert sorted(run.artifact_count for run in matching) == [2, 2]
+    assert sorted(run.output_artifact_count for run in matching) == [0, 2]
+    assert sorted(run.input_artifact_count for run in matching) == [0, 2]
 
 
 def test_staging_merge_deduplicates_same_source_and_preserves_started_at() -> None:
@@ -1338,10 +1356,14 @@ def test_staging_merge_deduplicates_same_source_and_preserves_started_at() -> No
         canonical_score=0,
     )
     merged_summaries = _merge_staging_summaries([primary, staging])
-    assert len(merged_summaries) == 1
-    assert merged_summaries[0].started_at == primary.started_at
-    assert merged_summaries[0].last_modified == primary.last_modified
-    assert merged_summaries[0].artifact_count == 2
+    assert len(merged_summaries) == 2
+    assert {item.resolved_prefix for item in merged_summaries} == {
+        "",
+        "groot-1-7-finetune",
+    }
+    assert next(
+        item for item in merged_summaries if item.resolved_prefix == ""
+    ).started_at == primary.started_at
 
 
 def test_staging_resolution_conflicts_remain_fail_closed() -> None:
@@ -1362,6 +1384,37 @@ def test_staging_resolution_conflicts_remain_fail_closed() -> None:
         RunResolution(run_id, "bucket", "", [conflicting]),
     ]
     assert _merge_staging_resolutions(matches) == matches
+
+
+def test_configured_source_subtree_filter_preserves_s3_prefix_case() -> None:
+    run_id = "case-run-20260907T000000Z"
+    upper = RunSummary(
+        run_id=run_id,
+        last_modified="2026-09-07T00:00:00+00:00",
+        artifact_count=1,
+        has_viewable=True,
+        bucket="bucket",
+        project_id="project",
+        resolved_prefix="Published/Runs",
+    )
+    lower = RunSummary(
+        run_id=run_id,
+        last_modified="2026-09-07T00:00:00+00:00",
+        artifact_count=1,
+        has_viewable=True,
+        bucket="bucket",
+        project_id="project",
+        resolved_prefix="published/runs",
+    )
+    page = RunListPage([upper, lower], False, 2, 10)
+
+    filtered = exclude_run_source_subtrees(
+        page,
+        (ArtifactSource("project", "bucket", "Published/Runs"),),
+    )
+
+    assert filtered.runs == [lower]
+    assert filtered.total_runs == 1
 
 
 def test_yaml_artifact_is_renderable_text_and_downloadable() -> None:
@@ -1834,6 +1887,27 @@ def test_direct_source_exact_query_preserves_complete_source_tuple() -> None:
         page.runs[0].resolved_prefix,
         page.runs[0].run_id,
     ) == (*source.identity, run_id)
+
+
+def test_direct_source_discovery_is_bounded_and_empty_query_is_incomplete() -> None:
+    parent = "published/runs"
+    layout = [
+        (f"{parent}/run-{index}/report.json", "2026-09-03T00:00:00Z")
+        for index in range(6)
+    ]
+    source = ArtifactSource("project-a", "bucket-a", parent)
+
+    page = list_runs_across_sources(
+        [source],
+        limit=2,
+        contains="not-inside-bounded-window",
+        s3=_PaginatedPrefixAwareS3(layout, page_size=1),
+    )
+
+    assert page.runs == []
+    assert page.truncated is True
+    assert page.discovery_complete is False
+    assert page.total_runs == 0
 
 
 def test_direct_sources_do_not_collapse_equal_bucket_prefix_across_projects() -> None:

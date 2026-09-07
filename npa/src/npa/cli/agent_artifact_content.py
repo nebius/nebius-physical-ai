@@ -285,7 +285,44 @@ def _artifact_content_response(
     source_selected: bool,
     download: bool = False,
 ):
-    s3, settings = _agent_s3_client()
+    """Authorize and open one artifact against a pinned access generation.
+
+    The returned streaming response already owns an opened S3 body, so the
+    lease may be released after this helper returns. Holding it through exact
+    source authorization, HEAD validation, and ``get_object`` prevents an old
+    request from repopulating an exact-source proof after access refresh has
+    published a new generation.
+    """
+    _begin_agent_artifact_access()
+    try:
+        return _artifact_content_response_with_access(
+            request,
+            run_id=run_id,
+            run_ref=run_ref,
+            key=key,
+            project_id=project_id,
+            resource_bucket=resource_bucket,
+            resolved_prefix=resolved_prefix,
+            source_selected=source_selected,
+            download=download,
+        )
+    finally:
+        _end_agent_artifact_access()
+
+
+def _artifact_content_response_with_access(
+    request: Request,
+    *,
+    run_id: str,
+    run_ref: str,
+    key: str,
+    project_id: str,
+    resource_bucket: str,
+    resolved_prefix: str | None,
+    source_selected: bool,
+    download: bool = False,
+):
+    s3, settings = _agent_artifact_s3_client()
     normalized_run, run_bucket, artifact = _exact_artifact_source(
         s3=s3,
         settings=settings,
@@ -537,16 +574,10 @@ def artifacts_download(
     requested_bucket = str(resource_bucket or "").strip()
     try:
         if requested_uri:
-            uri_bucket, uri_key = parse_s3_uri(requested_uri)
-            if requested_key and requested_key != uri_key:
-                raise HTTPException(
-                    status_code=400, detail="s3_uri and key do not match"
-                )
-            if requested_bucket and requested_bucket != uri_bucket:
-                raise HTTPException(
-                    status_code=400, detail="s3_uri and bucket do not match"
-                )
-            requested_bucket, requested_key = uri_bucket, uri_key
+            raise HTTPException(
+                status_code=400,
+                detail=_raw_artifact_uri_migration_detail("s3_uri"),
+            )
         if not requested_key:
             raise HTTPException(status_code=400, detail="key is required")
         return _artifact_content_response(

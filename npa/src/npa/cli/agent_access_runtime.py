@@ -59,7 +59,7 @@ if __name__ == "npa.cli.agent_access_runtime":
 
     NPA_PROJECT_ALIAS = ""
     _agent_command_env: Any = None
-    _agent_s3_client_optional: Any = None
+    _agent_artifact_s3_client_optional: Any = None
     _run_list_cache_clear: Any = None
     _safe_artifact_key: Any = None
 # NPA_EMBED_STANDALONE_END
@@ -78,6 +78,16 @@ _AGENT_ACCESS_CACHE: dict[str, Any] = {
     "report": None,
     "expires_at": 0.0,
     "refreshing": False,
+    # Waiters must distinguish a completed refresh from a failed one. Keeping
+    # an expired report is useful for ordinary stale-while-revalidate status
+    # reads, but an explicit refresh may never report that stale value as a
+    # newly refreshed authorization snapshot.
+    "last_refresh_succeeded": None,
+    # Artifact discovery takes a lease on the effective-access report. A
+    # successful refresh waits for those readers before publishing and clearing
+    # derived indexes, so a request that began with the old source set cannot
+    # repopulate a new-generation cache after the refresh.
+    "artifact_readers": 0,
 }
 _AGENT_EXACT_SOURCE_ACCESS_CACHE: dict[tuple[str, ...], float] = {}
 _AGENT_RUN_CURSOR_SNAPSHOTS: dict[str, dict[str, Any]] = {}
@@ -457,7 +467,7 @@ def _agent_probe_bucket(s3, bucket: str) -> "BucketProbe":
 
 
 def _discover_agent_access_report() -> "AgentAccessReport":
-    s3, settings = _agent_s3_client_optional()
+    s3, settings = _agent_artifact_s3_client_optional()
     primary = str(settings.get("bucket") or "").strip()
     configured = [primary] if primary else []
     for item in str(os.environ.get("NPA_AGENT_S3_BUCKETS", "")).split(","):
@@ -559,29 +569,78 @@ def _invalidate_agent_artifact_discovery() -> None:
         _run_list_cache_clear()
     _clear_artifact_run_cursor_snapshots()
     _clear_exact_run_ref_source_authorizations()
+    clear_foxglove_inventory = globals().get(
+        "_clear_foxglove_exact_artifact_inventory"
+    )
+    if callable(clear_foxglove_inventory):
+        clear_foxglove_inventory()
 
 
 def _finish_agent_access_refresh(report: "AgentAccessReport | None") -> None:
-    # A newly discovered source set makes cached run listings, exact-source
-    # proofs, and pagination snapshots stale. Invalidate them before publishing
-    # the report so no request can observe new authorization with old data.
-    if report is not None:
-        _invalidate_agent_artifact_discovery()
+    if report is None:
+        with _AGENT_ACCESS_CONDITION:
+            _AGENT_ACCESS_CACHE["last_refresh_succeeded"] = False
+            # A failed explicit refresh must not leave a still-live report
+            # available to authorization-sensitive readers. Ordinary access
+            # status may continue to display the stale report, but the next
+            # artifact operation must re-probe and fail closed on error.
+            _AGENT_ACCESS_CACHE["expires_at"] = 0.0
+            _AGENT_ACCESS_CACHE["refreshing"] = False
+            _AGENT_ACCESS_CONDITION.notify_all()
+        return
+
+    # Keep ``refreshing`` true while existing artifact readers drain. New
+    # readers wait in ``_begin_agent_artifact_access``; old readers finish using
+    # the report they leased. Only then invalidate and publish as one generation
+    # transition. This closes the unbounded stale-request race that two best-
+    # effort cache clears cannot close.
     with _AGENT_ACCESS_CONDITION:
-        if report is not None:
-            _AGENT_ACCESS_CACHE["report"] = report
-            _AGENT_ACCESS_CACHE["expires_at"] = (
-                time.monotonic() + _AGENT_ACCESS_CACHE_TTL_SECONDS
-            )
-    # Requests are intentionally allowed to finish against the previously
-    # published report while a background refresh runs. One of those requests
-    # can begin rebuilding a run page between the pre-publication invalidation
-    # above and the report swap. A second generation bump closes that race: old
-    # work cannot repopulate the cache after the new report becomes visible.
-    if report is not None:
-        _invalidate_agent_artifact_discovery()
+        _AGENT_ACCESS_CONDITION.wait_for(
+            lambda: int(_AGENT_ACCESS_CACHE.get("artifact_readers") or 0) == 0
+        )
+    _invalidate_agent_artifact_discovery()
     with _AGENT_ACCESS_CONDITION:
+        _AGENT_ACCESS_CACHE["report"] = report
+        _AGENT_ACCESS_CACHE["expires_at"] = (
+            time.monotonic() + _AGENT_ACCESS_CACHE_TTL_SECONDS
+        )
+        _AGENT_ACCESS_CACHE["last_refresh_succeeded"] = True
         _AGENT_ACCESS_CACHE["refreshing"] = False
+        _AGENT_ACCESS_CONDITION.notify_all()
+
+
+def _begin_agent_artifact_access() -> "AgentAccessReport":
+    """Lease one current report for a complete artifact operation.
+
+    Ordinary access polling may serve a stale report while it refreshes in the
+    background. Artifact discovery is authorization-sensitive, so it waits for
+    that refresh and pins the resulting report until its S3 index/snapshot has
+    been produced.
+    """
+    while True:
+        with _AGENT_ACCESS_CONDITION:
+            while bool(_AGENT_ACCESS_CACHE.get("refreshing")):
+                _AGENT_ACCESS_CONDITION.wait()
+            report = _AGENT_ACCESS_CACHE.get("report")
+            expires_at = float(_AGENT_ACCESS_CACHE.get("expires_at") or 0.0)
+            if isinstance(report, AgentAccessReport) and expires_at > time.monotonic():
+                _AGENT_ACCESS_CACHE["artifact_readers"] = (
+                    int(_AGENT_ACCESS_CACHE.get("artifact_readers") or 0) + 1
+                )
+                return report
+        # Artifact operations never treat a stale report as current. Perform a
+        # synchronous refresh outside the condition lock; failures propagate and
+        # fail closed instead of leasing the expired report.
+        _agent_access_report(refresh=True)
+
+
+def _end_agent_artifact_access() -> None:
+    """Release a report lease acquired by ``_begin_agent_artifact_access``."""
+    with _AGENT_ACCESS_CONDITION:
+        readers = int(_AGENT_ACCESS_CACHE.get("artifact_readers") or 0)
+        if readers <= 0:
+            raise RuntimeError("artifact access lease is not active")
+        _AGENT_ACCESS_CACHE["artifact_readers"] = readers - 1
         _AGENT_ACCESS_CONDITION.notify_all()
 
 
@@ -614,6 +673,8 @@ def _agent_access_report(*, refresh: bool = False) -> "AgentAccessReport":
         if bool(_AGENT_ACCESS_CACHE.get("refreshing")):
             while bool(_AGENT_ACCESS_CACHE.get("refreshing")):
                 _AGENT_ACCESS_CONDITION.wait()
+            if not bool(_AGENT_ACCESS_CACHE.get("last_refresh_succeeded")):
+                raise RuntimeError("agent access refresh did not complete")
             cached = _AGENT_ACCESS_CACHE.get("report")
             if isinstance(cached, AgentAccessReport):
                 return cached
@@ -671,6 +732,17 @@ def _agent_artifact_list_scope(report, resource_bucket: str = "", project_id: st
 
 
 def _resolve_selected_run_source(
+    **kwargs,
+) -> tuple[str, str, str]:
+    """Resolve a selected source while pinning the effective-access report."""
+    _begin_agent_artifact_access()
+    try:
+        return _resolve_selected_run_source_with_access(**kwargs)
+    finally:
+        _end_agent_artifact_access()
+
+
+def _resolve_selected_run_source_with_access(
     *,
     s3,
     settings,
@@ -739,14 +811,18 @@ def _selected_run_request(body: dict) -> tuple[str, str, str, bool]:
 
 
 def _load_selected_run_artifacts(**kwargs):
-    bucket, project, prefix = _resolve_selected_run_source(**kwargs)
-    artifacts = list_artifacts(
-        bucket,
-        run_id=validate_run_id(str(kwargs.get("run_id") or "")),
-        prefix=prefix,
-        s3=kwargs.get("s3"),
-    )
-    return bucket, project, prefix, artifacts
+    _begin_agent_artifact_access()
+    try:
+        bucket, project, prefix = _resolve_selected_run_source_with_access(**kwargs)
+        artifacts = list_artifacts(
+            bucket,
+            run_id=validate_run_id(str(kwargs.get("run_id") or "")),
+            prefix=prefix,
+            s3=kwargs.get("s3"),
+        )
+        return bucket, project, prefix, artifacts
+    finally:
+        _end_agent_artifact_access()
 
 
 def _artifact_source_metadata(report, bucket: str, key: str, run_id: str):
@@ -1000,6 +1076,57 @@ def _authorize_exact_run_ref_source(
                 403 if str(getattr(probe, "list_status", "")) == "denied" else 503
             ),
             detail="artifact bucket is not currently searchable",
+        )
+
+    # Project ownership plus bucket access does not prove a caller-provided
+    # parent prefix is a server-issued run source. Re-discover the run through
+    # the generic bounded index (without using the requested prefix as a probe)
+    # and require the complete source tuple to be present. Configured exact
+    # sources took the explicit owner-controlled branch above.
+    exclusions = globals().get("_discovery_exclude_roots")
+    excluded_roots = exclusions() if callable(exclusions) else set()
+    try:
+        discovered, source_errors, discovery_complete = (
+            find_run_sources_across_buckets(
+                [requested_bucket],
+                base_prefix=str((settings or {}).get("prefix") or ""),
+                run_id=requested_run,
+                exact_prefix=None,
+                exclude=excluded_roots,
+                bucket_projects={requested_bucket: requested_project},
+                s3=s3,
+            )
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="artifact run-source discovery could not be verified",
+        ) from exc
+    if source_errors or not discovery_complete:
+        raise HTTPException(
+            status_code=503,
+            detail="artifact run-source discovery was incomplete",
+        )
+    exact_sources = [
+        item
+        for item in discovered
+        if (
+            str(getattr(item, "run_id", "") or "") == requested_run
+            and str(getattr(item, "bucket", "") or "") == requested_bucket
+            and str(getattr(item, "project_id", "") or "") == requested_project
+            and str(getattr(item, "resolved_prefix", "") or "")
+            == requested_prefix
+        )
+    ]
+    if not exact_sources:
+        raise HTTPException(
+            status_code=403,
+            detail="artifact run source was not discovered for this access scope",
+        )
+    if len(exact_sources) > 1:
+        raise HTTPException(
+            status_code=409,
+            detail="artifact run source is ambiguous for this access scope",
         )
     _remember_exact_run_ref_source_authorization(
         run_id=requested_run,

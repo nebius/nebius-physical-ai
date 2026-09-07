@@ -458,6 +458,50 @@ class RunListPage:
         }
 
 
+def exclude_run_source_subtrees(
+    page: RunListPage,
+    sources: "list[ArtifactSource] | tuple[ArtifactSource, ...]",
+) -> RunListPage:
+    """Remove generic rows covered by exact sources, preserving S3 case.
+
+    Structural discovery exclusions are intentionally case-insensitive. S3
+    object keys are not, so configured source prefixes cannot share that
+    mechanism: excluding ``Published/Runs`` must not hide a distinct generic
+    source below ``published/runs``.
+    """
+    exact_sources = tuple(sources)
+
+    def _covered(run: RunSummary) -> bool:
+        path = "/".join(
+            part
+            for part in (
+                str(run.resolved_prefix or "").strip("/"),
+                str(run.run_id or "").strip("/"),
+            )
+            if part
+        )
+        for source in exact_sources:
+            if source.bucket != run.bucket:
+                continue
+            if source.project_id and run.project_id != source.project_id:
+                continue
+            prefix = str(source.resolved_prefix or "").strip("/")
+            if not prefix or path == prefix or path.startswith(prefix + "/"):
+                return True
+        return False
+
+    runs = [run for run in page.runs if not _covered(run)]
+    removed = len(page.runs) - len(runs)
+    return RunListPage(
+        runs=runs,
+        truncated=page.truncated,
+        total_runs=max(0, int(page.total_runs) - removed),
+        limit=page.limit,
+        discovery_complete=page.discovery_complete,
+        source_errors=page.source_errors,
+    )
+
+
 def _without_infrastructure_roots(page: RunListPage) -> RunListPage:
     """Remove infrastructure-only root rows from a fallback run page."""
     runs = [item for item in page.runs if not is_infrastructure_root(item.run_id)]
@@ -489,12 +533,11 @@ class RunResolution:
 def _merge_staging_resolutions(
     matches: list[RunResolution],
 ) -> list[RunResolution]:
-    """Attach input-only staging roots to one authoritative output root.
+    """De-duplicate repeated observations without crossing source tuples.
 
-    A submitted workflow can stage source and data below its workflow
-    namespace while the runner writes completed outputs at the bucket root.
-    Those are one run, not an ambiguous duplicate. Two roots that both contain
-    outputs remain separate and therefore fail closed.
+    Input/output roles are not proof that two prefixes share one authorization
+    identity. Distinct source tuples therefore remain distinct and force a
+    caller using a plain run id to select the server-issued tuple explicitly.
     """
 
     grouped: dict[tuple[str, str], list[RunResolution]] = {}
@@ -506,54 +549,10 @@ def _merge_staging_resolutions(
     return merged
 
 
-def prefer_complete_run_resolution(
-    matches: list[RunResolution],
-) -> RunResolution | None:
-    """Choose one provable strict-superset source, otherwise remain ambiguous.
-
-    Viewer/checkpoint publication must never hide a canonical run behind a
-    same-basename one-file mirror. Relative artifact identity and byte size let us
-    prove that such a mirror is a strict subset. Legitimate duplicate runs whose
-    overlapping bytes differ, or where neither inventory contains the other,
-    remain fail-closed and require the server-issued source-qualified ``run_ref``.
-    """
-
-    if len(matches) < 2:
-        return matches[0] if matches else None
-
-    def inventory(match: RunResolution) -> dict[str, tuple[int, str]]:
-        return {
-            str(artifact.relative_key or artifact.key): (
-                int(artifact.size),
-                str(artifact.render),
-            )
-            for artifact in match.artifacts
-        }
-
-    inventories = [(match, inventory(match)) for match in matches]
-    dominant: list[RunResolution] = []
-    for candidate, candidate_inventory in inventories:
-        if not candidate_inventory:
-            continue
-        strictly_larger = False
-        for other, other_inventory in inventories:
-            if other is candidate:
-                continue
-            if not other_inventory.items() <= candidate_inventory.items():
-                break
-            strictly_larger = strictly_larger or len(candidate_inventory) > len(
-                other_inventory
-            )
-        else:
-            if strictly_larger:
-                dominant.append(candidate)
-    return dominant[0] if len(dominant) == 1 else None
-
-
 def _merge_staging_resolution_group(
     matches: list[RunResolution],
 ) -> list[RunResolution]:
-    """Merge one bucket/run-id group without crossing authorization roots."""
+    """Merge duplicate observations of the same exact source only."""
     by_source: dict[tuple[str, str], RunResolution] = {}
     for match in matches:
         source_key = (match.source_prefix, match.run_id)
@@ -573,78 +572,24 @@ def _merge_staging_resolution_group(
             source_prefix=match.source_prefix,
             artifacts=sorted(artifacts.values(), key=lambda item: item.key),
         )
-    unique = list(by_source.values())
-    authoritative = [
-        match
-        for match in unique
-        if any(artifact.role == "output" for artifact in match.artifacts)
-    ]
-    staging = [
-        match
-        for match in unique
-        if match.artifacts
-        and all(artifact.role == "input" for artifact in match.artifacts)
-    ]
-    if len(authoritative) != 1 or len(authoritative) + len(staging) != len(unique):
-        return unique
-    primary = authoritative[0]
-    artifacts = {
-        artifact.key: artifact
-        for match in (*staging, primary)
-        for artifact in match.artifacts
-    }
-    return [
-        RunResolution(
-            run_id=primary.run_id,
-            bucket=primary.bucket,
-            source_prefix=primary.source_prefix,
-            artifacts=sorted(artifacts.values(), key=lambda item: item.key),
-        )
-    ]
+    return list(by_source.values())
 
 
 def _merge_staging_summaries(runs: list[RunSummary]) -> list[RunSummary]:
-    grouped: dict[tuple[str, str], list[RunSummary]] = {}
+    """De-duplicate repeated summaries without collapsing distinct sources."""
+    merged: dict[tuple[str, str, str, str], RunSummary] = {}
     for run in runs:
-        grouped.setdefault((run.bucket, run.run_id), []).append(run)
-    merged: list[RunSummary] = []
-    for same_id in grouped.values():
-        authoritative = [run for run in same_id if run.output_artifact_count > 0]
-        staging = [
-            run
-            for run in same_id
-            if run.output_artifact_count == 0 and run.input_artifact_count > 0
-        ]
-        if len(authoritative) != 1 or len(authoritative) + len(staging) != len(same_id):
-            merged.extend(same_id)
-            continue
-        primary = authoritative[0]
-        merged.append(
-            dataclass_replace(
-                primary,
-                last_modified=max(
-                    (run.last_modified for run in same_id if run.last_modified),
-                    default=primary.last_modified,
-                ),
-                started_at=min(
-                    (run.started_at for run in same_id if run.started_at),
-                    default=primary.started_at,
-                ),
-                artifact_count=sum(run.artifact_count for run in same_id),
-                has_viewable=any(run.has_viewable for run in same_id),
-                input_artifact_count=sum(run.input_artifact_count for run in same_id),
-                metadata_artifact_count=sum(
-                    run.metadata_artifact_count for run in same_id
-                ),
-                namespaces=tuple(
-                    dict.fromkeys(
-                        namespace for run in same_id for namespace in run.namespaces
-                    )
-                ),
-                canonical_score=sum(run.canonical_score for run in same_id),
-            )
+        identity = (
+            str(run.project_id or ""),
+            str(run.bucket or ""),
+            str(run.resolved_prefix or "").strip("/"),
+            str(run.run_id or ""),
         )
-    return merged
+        existing = merged.get(identity)
+        merged[identity] = (
+            _merge_same_run_summary(existing, run) if existing is not None else run
+        )
+    return list(merged.values())
 
 
 _RUN_REF_PREFIX = "npa1_"
@@ -1810,8 +1755,8 @@ def _list_artifact_run_index(
         for (parent, run_id), payload in summaries.items()
         if not needle or needle in run_id.lower()
     ]
-    # Keep one fail-closed implementation for the staging + authoritative
-    # output shape.  All other duplicate basenames remain source-qualified.
+    # Preserve every source tuple. Only duplicate observations of the exact
+    # same tuple may be consolidated.
     runs = _merge_staging_summaries(runs)
     runs.sort(
         key=lambda item: (
@@ -1874,8 +1819,19 @@ def list_run_prefixes(
     parent = str(prefix or "").strip().strip("/")
     needle = str(contains or "").strip().lower()
     excluded = _normalized_discovery_exclusions(exclude)
+    # Bound direct-parent discovery before scheduling per-run summary probes.
+    # One over-read is enough to prove truncation; a query that has no match
+    # inside this candidate window remains explicitly incomplete rather than
+    # walking an unbounded source or reporting a trustworthy empty result.
+    candidates = list_run_categories(
+        bucket,
+        base_prefix=parent,
+        max_results=limit + 1,
+        s3=s3,
+    )
+    source_truncated = len(candidates) > limit
     children = []
-    for child in list_run_categories(bucket, base_prefix=parent, s3=s3):
+    for child in candidates[:limit]:
         untrusted_run_id = child.rsplit("/", 1)[-1].strip()
         try:
             run_id = _validate_run_basename(untrusted_run_id)
@@ -1943,9 +1899,10 @@ def list_run_prefixes(
     total = len(summaries)
     return RunListPage(
         runs=summaries[:limit],
-        truncated=total > limit,
+        truncated=source_truncated or total > limit,
         total_runs=total,
         limit=limit,
+        discovery_complete=not source_truncated,
     )
 
 
@@ -2607,10 +2564,7 @@ def find_run_artifacts_across_buckets(
     if not matches:
         return "", []
     if len(matches) > 1:
-        complete = prefer_complete_run_resolution(matches)
-        if complete is None:
-            raise AmbiguousRunError(run_id, [item.run_ref for item in matches])
-        return complete.bucket, complete.artifacts
+        raise AmbiguousRunError(run_id, [item.run_ref for item in matches])
     return matches[0].bucket, matches[0].artifacts
 
 
@@ -2957,10 +2911,7 @@ def resolve_run_artifacts(
     if not matches:
         return None
     if len(matches) > 1:
-        complete = prefer_complete_run_resolution(matches)
-        if complete is None:
-            raise AmbiguousRunError(run_id, [item.run_ref for item in matches])
-        return complete
+        raise AmbiguousRunError(run_id, [item.run_ref for item in matches])
     return matches[0]
 
 
@@ -2981,10 +2932,7 @@ def find_run_artifacts(
     if not matches:
         return []
     if len(matches) > 1:
-        complete = prefer_complete_run_resolution(matches)
-        if complete is None:
-            raise AmbiguousRunError(run_id, [item.run_ref for item in matches])
-        return complete.artifacts
+        raise AmbiguousRunError(run_id, [item.run_ref for item in matches])
     return matches[0].artifacts
 
 

@@ -313,9 +313,11 @@ to obtain a new snapshot. This prevents a source refresh from skipping or
 duplicating rows during one traversal.
 
 When one run id is returned from multiple sources, select its complete
-server-issued `(project_id, resource_bucket, resolved_prefix)` tuple for exact
-lookup, artifact pagination, preview, download, and load. Bucket name or S3 URI
-alone is not an authorization selector.
+server-issued `(run_id, run_ref, project_id, resource_bucket, resolved_prefix,
+source_selected)` tuple for exact lookup, artifact pagination, preview,
+download, and load. Loading also requires the selected inventory `key`.
+`s3_uri` is returned as provenance only; neither it nor a bucket name is an
+authorization selector.
 
 ### Paging run artifacts
 

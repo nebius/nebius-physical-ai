@@ -2318,11 +2318,22 @@ def test_bootstrap_embeds_artifact_browser_and_endpoints() -> None:
     assert "Artifact summary only — FiftyOne did not run" in source
     assert 'id="voxelReview"' in source
     assert "data_role_label" in source
-    # Loading by run-relative key resolves a discovered object. An unscoped exact
-    # S3 URI receives the structured v2 migration error instead of guessing a run.
+    # Loading requires the inventory key and its complete server-issued source
+    # tuple. A raw S3 URI is provenance only and receives a stable migration error.
     assert "resolve_run_artifacts(" in source
-    assert '"contract_version": "npa.agent.load-artifact.v2"' in source
-    assert '"code": "run_id_required_for_s3_uri"' in source
+    assert '"contract_version": "npa.agent.load-artifact.v3"' in source
+    assert '"code": "raw_artifact_uri_not_supported"' in source
+    for field in (
+        "run_id",
+        "run_ref",
+        "key",
+        "project_id",
+        "resource_bucket",
+        "resolved_prefix",
+        "source_selected",
+    ):
+        assert f'"{field}"' in source
+    assert "s3_uri is provenance only" in source
     assert 'may_use_default_recording = payload_run in {"", "franka-demo"}' in source
     # Regression: #panelVoxel must be a SIBLING of #panelRerun, not nested inside
     # it. If nested, panelRerun.is-inactive (opacity:0) makes the whole Voxel tab
@@ -2597,8 +2608,13 @@ def test_bootstrap_visualize_run_selector_lists_discovered_runs() -> None:
     # Generic discovery feeds the discovered-runs set (server-search unions in).
     assert "discoveredArtifactRuns = [...runs];" in source
     assert '(cursor ? " · loading more…" : "")' in source
-    # The run selector is a UNION of known + discovered runs (does not clobber).
-    assert "mergeRunsLatestFirst(knownAvailableRuns, discoveredArtifactRuns)" in source
+    # The run selector is a UNION of known + discovered runs (does not clobber),
+    # but a forced access refresh quarantines persisted source tuples until the
+    # same exact tuple is rediscovered in the current UI generation.
+    assert "artifactSourceHistoryQuarantined = true;" in source
+    assert "const currentSourceHistory = knownAvailableRuns.filter" in source
+    assert "hasExactRunSource(discovered) && sameRunSource(run, discovered)" in source
+    assert "mergeRunsLatestFirst(currentSourceHistory, discoveredArtifactRuns)" in source
     assert 'fillRunSelectOptionsRich(document.getElementById("runIdSelect")' in source
 
 
@@ -6082,6 +6098,11 @@ def test_artifact_source_file_round_trip_survives_service_environment_reload(
     agent_module._write_agent_artifact_sources_env(
         FakeSSH(),
         artifact_sources=loaded,
+        bucket="bucket-exact",
+        endpoint="https://objects.example",
+        access_key="synthetic-artifact-access",
+        secret_key="synthetic-artifact-secret",
+        region="test-region",
     )
 
     env_line = next(
@@ -6091,6 +6112,12 @@ def test_artifact_source_file_round_trip_survives_service_environment_reload(
     )
     assert "project-exact" not in env_line
     assert "bucket-exact" not in env_line
+    assert "NPA_AGENT_ARTIFACT_S3_BUCKET=bucket-exact" in staged["content"]
+    assert "NPA_AGENT_ARTIFACT_S3_PREFIX=" not in staged["content"]
+    assert "NPA_AGENT_ARTIFACT_S3_ACCESS_KEY_ID=synthetic-artifact-access" in staged["content"]
+    assert "NPA_AGENT_ARTIFACT_S3_SECRET_ACCESS_KEY=synthetic-artifact-secret" in staged["content"]
+    assert "AWS_ACCESS_KEY_ID=" not in staged["content"]
+    assert "AWS_SECRET_ACCESS_KEY=" not in staged["content"]
     monkeypatch.setenv("NPA_AGENT_ARTIFACT_SOURCES_B64", env_line.split("=", 1)[1])
     assert runtime._configured_agent_artifact_sources() == (source,)
     assert str(staged["remote_path"]).startswith("/tmp/.npa-private-")
@@ -6297,7 +6324,7 @@ def test_bootstrap_reuses_persisted_artifact_sources_without_source_file() -> No
     ) == (source,)
 
 
-def test_bootstrap_refresh_applies_exact_artifact_source_credentials_last(
+def test_bootstrap_refresh_stages_artifact_reads_without_replacing_deployment_writes(
     monkeypatch, tmp_path
 ) -> None:
     import inspect
@@ -6475,7 +6502,16 @@ def test_bootstrap_refresh_applies_exact_artifact_source_credentials_last(
             "s3_secret_key",
             "service_account_id",
         )
-    ) == exact_tuple
+    ) == refreshed_tuple
+    assert tuple(
+        staged[key]
+        for key in (
+            "artifact_s3_bucket",
+            "artifact_s3_endpoint",
+            "artifact_s3_access_key",
+            "artifact_s3_secret_key",
+        )
+    ) == (exact_tuple[0], *exact_tuple[2:5])
     assert staged["artifact_sources"] == (source,)
 
 
