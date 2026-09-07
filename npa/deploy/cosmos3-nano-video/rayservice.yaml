@@ -25,6 +25,10 @@ spec:
               num_cpus: 2
   rayClusterConfig:
     rayVersion: "2.56.0"
+    # KubeRay 1.7 creates a separate per-cluster management Secret, injects it
+    # into head/workers, and authenticates the controller's dashboard requests.
+    authOptions:
+      mode: token
     enableInTreeAutoscaling: false
     headGroupSpec:
       rayStartParams:

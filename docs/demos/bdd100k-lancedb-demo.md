@@ -167,18 +167,17 @@ python npa/scripts/run_bdd100k_pipeline.py \
   --synthetic 5000
 
 # View results in FiftyOne
-npa workbench fiftyone deploy --public-ip
+npa workbench fiftyone deploy --runtime kubernetes
 npa workbench fiftyone status
 ```
 
 ### Accessing the FiftyOne Session
 
 ```bash
-# Public URL, no local tooling required for viewers
+# Check deployment readiness
 npa workbench fiftyone status
-# Public URL: http://<external-ip>:5151
 
-# Local access for operators who prefer a port-forward
+# Keep authenticated local forwarding running while reviewing
 npa workbench fiftyone open
 ```
 
@@ -228,5 +227,5 @@ This demo follows the three-layer workbench architecture described under [`docs/
 
 The runbook session loaded `bdd100k-real-data-demo` into FiftyOne with 3000 real
 BDD100K samples, CLIP embeddings, bounding boxes, scalar UDF fields, and the
-three saved views above. Run `npa workbench fiftyone status` for the public URL,
-or `npa workbench fiftyone open` for local access.
+three saved views above. Run `npa workbench fiftyone status` to check readiness,
+then `npa workbench fiftyone open` for authenticated local access.

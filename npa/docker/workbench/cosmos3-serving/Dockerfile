@@ -1,15 +1,15 @@
 # Zero-payload Cosmos3 serving bootstrap. Restricted/NVIDIA runtime bytes and
 # all gated models are delivered directly to the operator only at run time.
-ARG BASE_IMAGE=python:3.12.12-slim-bookworm@sha256:593bd06efe90efa80dc4eee3948be7c0fde4134606dd40d8dd8dbcade98e669c
+ARG BASE_IMAGE=python:3.12.14-slim-bookworm@sha256:782412e85d0f0984994c290652577d4018aff08145c85b262bb63dc0c7522254
 FROM ${BASE_IMAGE}
 
 ARG COSMOS3_SERVING_VERSION=0.2.0
-ARG VLLM_OMNI_REVISION=a4ea67a21b20054dacc6e83952f9bd407e8ee4e7
-ARG VLLM_OMNI_SOURCE_SHA256=2a4ca4d3d83417a88717767fcdfdc5cb214200c6957d26d70625f17f58954800
-ARG COSMOS3_CLOSURE_SHA256=9d9edf4dd685c329a36bde45ed05bf5e0d51a3d78cf764d91bedb031e1a94694
+ARG VLLM_OMNI_REVISION=eb11446b7f2e30ca582f8aff3afe12e9a2e66f6c
+ARG VLLM_OMNI_SOURCE_SHA256=a0380c02b403f3c71ba4360fd23fc2461ea8a84c28d5543b8ac4c08a31a97a3f
+ARG COSMOS3_CLOSURE_SHA256=c13b5b13868fa45bb125e0f7f32ec718bcb10e554ce34b85af944dbd4bafc6aa
 ARG COSMOS3_MODEL_REVISION=e0262be9d8f7586bc24c069a2aed2b665bdff266
 ARG COSMOS3_GUARDRAIL_REVISION=cf03c0395fac8c4de386c0bdab12cc4fc8d66362
-ARG DEBIAN_SNAPSHOT=20260817T000000Z
+ARG DEBIAN_SNAPSHOT=20260907T000000Z
 
 LABEL org.opencontainers.image.source="https://github.com/nebius/nebius-physical-ai" \
       org.opencontainers.image.licenses="Apache-2.0" \
@@ -37,15 +37,19 @@ ENV PYTHONUNBUFFERED=1 \
     NPA_COSMOS3_SERVE_GPUS=8
 
 USER root
+COPY --chmod=0644 docker/workbench/sonic/packaging-requirements.txt /opt/npa-cosmos3-serving/packaging-requirements.txt
 RUN sed -ri \
       -e "s|https?://deb.debian.org/debian-security|https://snapshot.debian.org/archive/debian-security/${DEBIAN_SNAPSHOT}|g" \
       -e "s|https?://deb.debian.org/debian|https://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}|g" \
       /etc/apt/sources.list.d/debian.sources \
     && printf 'Acquire::Check-Valid-Until "false";\n' >/etc/apt/apt.conf.d/99snapshot \
     && apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
        ca-certificates curl ffmpeg gcc g++ libgl1 libglib2.0-0 libgnutls30 libssl3 openssl \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && python -m pip install --no-cache-dir --require-hashes --only-binary=:all: \
+       -r /opt/npa-cosmos3-serving/packaging-requirements.txt
 
 COPY --chmod=0644 docker/workbench/cosmos3-serving/requirements.lock /opt/npa-cosmos3-serving/requirements.lock
 COPY docker/workbench/cosmos3-serving/runtime_bootstrap.sh /opt/npa-cosmos3-serving/runtime_bootstrap.sh
@@ -54,6 +58,7 @@ COPY docker/workbench/cosmos3-serving/smoke_serving.sh /opt/npa-cosmos3-serving/
 COPY --chmod=0644 docker/workbench/cosmos3-serving/access_preflight.py /opt/npa-cosmos3-serving/access_preflight.py
 COPY --chmod=0644 docker/workbench/cosmos3-serving/hf_snapshot_pin.py /opt/npa-cosmos3-serving/hf_snapshot_pin.py
 COPY --chmod=0644 docker/workbench/cosmos3-serving/prepare_guardrail_runtime.py /opt/npa-cosmos3-serving/prepare_guardrail_runtime.py
+COPY --chmod=0644 docker/workbench/cosmos3-serving/backport_setuptools_manifest.py /opt/npa-cosmos3-serving/backport_setuptools_manifest.py
 COPY --chmod=0644 docker/workbench/cosmos3-serving/verify_env.py /opt/npa-cosmos3-serving/verify_env.py
 
 RUN useradd -m -s /bin/bash -u 1000 ubuntu \

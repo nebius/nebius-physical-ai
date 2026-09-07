@@ -114,6 +114,54 @@ def test_cluster_failure_message_redacts_provider_secret() -> None:
     assert "<redacted>" in message
 
 
+@pytest.mark.parametrize(
+    ("stdout", "stderr", "code"),
+    [
+        ("[]", "", 1),
+        ("[]", "Permission denied", 0),
+        ("HTTP request failed", "", 0),
+        ('{"clusters": []}', "", 0),
+        ('[]\n{"error": "unavailable"}', "", 0),
+        ("[null]", "", 0),
+        ('[{"name": "other"}]', "", 0),
+        ('[{"name": "other", "status": []}]', "", 0),
+        ('[{"name": "other", "status": "UNKNOWN"}]', "", 0),
+        ('[{"name": "other", "status": "UP"}, {"name": "other", "status": "UP"}]', "", 0),
+    ],
+)
+def test_sky_cleanup_does_not_certify_failed_or_malformed_status(
+    monkeypatch, stdout: str, stderr: str, code: int,
+) -> None:
+    monkeypatch.setattr(
+        tf_mod, "_run_capture",
+        lambda *_args, **_kwargs: subprocess.CompletedProcess([], code, stdout, stderr),
+    )
+    monkeypatch.setattr(tf_mod.time, "sleep", lambda *_args: pytest.fail("unverified status must fail immediately"))
+    with pytest.raises(typer.BadParameter, match="SkyPilot cleanup"):
+        tf_mod._wait_for_sky_down("/opt/npa/sky", "validation", {})
+
+
+def test_sky_cleanup_requires_exact_structured_absence(monkeypatch) -> None:
+    rows = iter([
+        '[{"name": "validation", "status": "STOPPED"}]',
+        '[{"name": "validation-other", "status": "UP"}]',
+    ])
+    calls = []
+    pauses = []
+
+    def capture(command, **kwargs):
+        calls.append((command, kwargs))
+        return _completed(next(rows))
+
+    monkeypatch.setattr(tf_mod, "_run_capture", capture)
+    monkeypatch.setattr(tf_mod.time, "sleep", pauses.append)
+    tf_mod._wait_for_sky_down("/opt/npa/sky", "validation", {"KUBECONFIG": "selected"})
+    assert len(calls) == 2
+    assert pauses == [10]
+    assert all(command[-2:] == ["--output", "json"] for command, _kwargs in calls)
+    assert all(kwargs["env"]["KUBECONFIG"] == "selected" for _command, kwargs in calls)
+
+
 def test_skypilot_smoke_scopes_check_and_uses_explicit_binary(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -162,14 +210,19 @@ def test_skypilot_smoke_scopes_check_and_uses_explicit_binary(
     assert streams[2][2] == kubeconfig.parent
 
 
+@pytest.mark.parametrize("gpu", ["RTXPRO-6000-BLACKWELL-SERVER-EDITION", "B200", "H200"])
 def test_skypilot_auto_detection_uses_exact_context_config(
     monkeypatch: pytest.MonkeyPatch,
+    gpu: str,
 ) -> None:
     seen: list[tuple[list[str], Path | None]] = []
 
     def capture(cmd, **kwargs):  # noqa: ANN001
         seen.append((cmd, kwargs.get("cwd")))
-        return _completed("RTXPRO-6000-BLACKWELL-SERVER-EDITION  1  1 of 1 free\n")
+        return _completed(
+            "Context: other-cluster\nGPU  REQUESTABLE_QTY_PER_NODE\nOTHER-GPU  1\n\n"
+            f"Context: fleet-exact\nGPU  REQUESTABLE_QTY_PER_NODE\n{gpu}  1, 2, 4\n"
+        )
 
     monkeypatch.setattr(tf_mod, "_run_capture", capture)
     accelerator = tf_mod._detect_skypilot_gpu(
@@ -180,7 +233,7 @@ def test_skypilot_auto_detection_uses_exact_context_config(
         cwd=Path("/durable/sky"),
     )
 
-    assert accelerator == "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"
+    assert accelerator == f"{gpu}:1"
     assert seen == [
         (
             [
@@ -190,11 +243,97 @@ def test_skypilot_auto_detection_uses_exact_context_config(
                 'kubernetes.allowed_contexts=["fleet-exact"]',
                 "--infra",
                 "k8s/fleet-exact",
-                "--all",
             ],
             Path("/durable/sky"),
         )
     ]
+
+
+@pytest.mark.parametrize("output", [
+    "",
+    "B200  1  1 of 1 free\n",
+    "GPU  REQUESTABLE_QTY_PER_NODE\nB200  1\n",
+    "Context: other-cluster\nGPU  REQUESTABLE_QTY_PER_NODE\nB200  1\n",
+    "Context: fleet-exact\nGPU  REQUESTABLE_QTY_PER_NODE\nB200  0\n",
+    "Context: fleet-exact\nGPU  REQUESTABLE_QTY_PER_NODE\nB200  2, 4\n",
+])
+def test_skypilot_auto_detection_requires_exact_requestable_inventory(monkeypatch, output):
+    monkeypatch.setattr(tf_mod, "_run_capture", lambda *_args, **_kwargs: _completed(output))
+    with pytest.raises(typer.BadParameter, match="Unable to auto-detect"):
+        tf_mod._detect_skypilot_gpu("sky", "k8s/fleet-exact", {})
+
+
+def test_skypilot_auto_detection_requires_explicit_context(monkeypatch):
+    monkeypatch.setattr(tf_mod, "_run_capture", lambda *_args, **_kwargs: pytest.fail("ambient lookup"))
+    with pytest.raises(typer.BadParameter, match="exact Kubernetes context"):
+        tf_mod._detect_skypilot_gpu("sky", "k8s", {})
+
+
+def test_cluster_validation_uses_owned_api_and_selected_kubeconfig(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    from npa.orchestration.skypilot import k8s_gpu_catalog, local_api
+
+    selected = tmp_path / "selected-kubeconfig"
+    selected.write_text("apiVersion: v1\ncontexts: []\n")
+    ambient = tmp_path / "ambient-kubeconfig"
+    ambient.write_text("apiVersion: v1\ncontexts: []\n")
+    isolated = tmp_path / "isolated"
+    monkeypatch.setenv("KUBECONFIG", str(ambient))
+    monkeypatch.setenv("NPA_SKYPILOT_ISOLATED_CONFIG_DIR", str(isolated))
+    monkeypatch.delenv("SKYPILOT_API_SERVER_ENDPOINT", raising=False)
+    monkeypatch.delenv("SKYPILOT_GLOBAL_CONFIG", raising=False)
+    monkeypatch.setattr(tf_mod, "_require_bin", lambda value: value)
+    monkeypatch.setattr(k8s_gpu_catalog, "resolve_sky_bin", lambda value: Path(value))
+    starts = []
+    streams = []
+    monkeypatch.setattr(local_api, "ensure_isolated_api", lambda **kwargs: starts.append(kwargs))
+
+    def stream(cmd, **kwargs):
+        streams.append((cmd, kwargs["env"]))
+        if cmd[1] == "show-gpus":
+            return _completed("Context: selected-context\nGPU  REQUESTABLE_QTY_PER_NODE\nRTXPRO6000  1\n")
+        return _completed("Kubernetes: enabled [compute]\n" if cmd[1] == "check" else "")
+
+    monkeypatch.setattr(tf_mod, "_run_stream", stream)
+    monkeypatch.setattr(tf_mod, "_wait_for_sky_down", lambda *_args, **_kwargs: None)
+    tf_mod._run_skypilot_smoke(selected, "selected-context", "validation", "RTXPRO6000:1", sky_bin="/opt/npa/sky")
+    catalog = k8s_gpu_catalog.discover_kubernetes_gpu_catalog(
+        context="selected-context", kubeconfig=selected, sky_bin="/opt/npa/sky", runner=stream,
+    )
+    assert catalog.max_per_node("RTXPRO6000") == 1
+
+    assert len(starts) == 2
+    assert starts[0]["isolated_dir"] == starts[1]["isolated_dir"]
+    owned = starts[0]
+    assert isolated in owned["isolated_dir"].parents
+    assert owned["environment"]["KUBECONFIG"] == str(selected)
+    assert (Path(owned["environment"]["HOME"]) / ".kube/config").resolve() == selected
+    config = Path(owned["environment"]["SKYPILOT_GLOBAL_CONFIG"])
+    assert config.stat().st_mode & 0o777 == 0o600
+    assert "selected-context" in config.read_text()
+    endpoint = owned["environment"]["SKYPILOT_API_SERVER_ENDPOINT"]
+    assert endpoint.startswith("http://127.0.0.1:")
+    assert [cmd[1] for cmd, _env in streams] == ["check", "launch", "down", "show-gpus"]
+    assert all(env["SKYPILOT_API_SERVER_ENDPOINT"] == endpoint for _cmd, env in streams)
+    assert all(env["KUBECONFIG"] == str(selected) for _cmd, env in streams)
+
+
+def test_cluster_validation_refuses_ambient_api_before_any_sky_command(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    from npa.orchestration.skypilot import local_api
+
+    selected = tmp_path / "kubeconfig"
+    selected.write_text("apiVersion: v1\ncontexts: []\n")
+    monkeypatch.setenv("NPA_SKYPILOT_ISOLATED_CONFIG_DIR", str(tmp_path / "isolated"))
+    monkeypatch.setenv("SKYPILOT_API_SERVER_ENDPOINT", "http://127.0.0.1:46580")
+    monkeypatch.delenv("SKYPILOT_GLOBAL_CONFIG", raising=False)
+    monkeypatch.setattr(tf_mod, "_require_bin", lambda value: value)
+    monkeypatch.setattr(tf_mod, "_run_stream", lambda *_args, **_kwargs: pytest.fail("shared API command"))
+    monkeypatch.setattr(local_api, "ensure_isolated_api", lambda **_kwargs: pytest.fail("shared API startup"))
+    with pytest.raises(local_api.IsolatedApiError, match="different configured API endpoint"):
+        tf_mod._check_skypilot_kubernetes(selected, "selected-context", sky_bin="/opt/npa/sky")
 
 
 def test_explicit_context_is_the_terraform_resource_name() -> None:

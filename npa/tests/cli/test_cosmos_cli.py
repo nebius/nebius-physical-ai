@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import ast
 import base64
+import re
+import shlex
 from contextlib import contextmanager
 import json
 from pathlib import Path
@@ -1507,9 +1510,9 @@ def test_cosmos_install_command_installs_cu128_torch_before_cosmos_kernels() -> 
     flash_attn_install = (
         '/opt/cosmos/venv/bin/python -m pip install --no-deps "$flash_attn_wheel"'
     )
-    flash_attn_wheel = f'flash_attn_wheel="/tmp/flash_attn-{COSMOS_FLASH_ATTN_VERSION}-cp310-cp310-linux_x86_64.whl"'
+    flash_attn_wheel = f'flash_attn_wheel="$install_stage/flash_attn-{COSMOS_FLASH_ATTN_VERSION}-cp310-cp310-linux_x86_64.whl"'
     flash_attn_download = f'curl -L -o "$flash_attn_wheel" "{COSMOS_FLASH_ATTN_WHEEL_URL}"'
-    natten_wheel = f'natten_wheel="/tmp/natten-{COSMOS_NATTEN_VERSION}-cp310-cp310-linux_x86_64.whl"'
+    natten_wheel = f'natten_wheel="$install_stage/natten-{COSMOS_NATTEN_VERSION}-cp310-cp310-linux_x86_64.whl"'
     natten_download = f'curl -L -o "$natten_wheel" "{COSMOS_NATTEN_WHEEL_URL}"'
     natten_install = '/opt/cosmos/venv/bin/python -m pip install --no-deps "$natten_wheel"'
     cosmos_install = (
@@ -1525,7 +1528,7 @@ def test_cosmos_install_command_installs_cu128_torch_before_cosmos_kernels() -> 
         '-r "$cosmos_requirements"'
     )
     transformer_engine_wheel = (
-        'transformer_engine_wheel="/tmp/transformer_engine-'
+        'transformer_engine_wheel="$install_stage/transformer_engine-'
         f'{COSMOS_TRANSFORMER_ENGINE_VERSION}-cp310-cp310-linux_x86_64.whl"'
     )
     transformer_engine_download = (
@@ -1562,13 +1565,10 @@ def test_cosmos_install_command_installs_cu128_torch_before_cosmos_kernels() -> 
         < cmd.index(cosmos_install)
         < cmd.index(constraints)
         < cmd.index(dependency_install)
-        < cmd.index(flash_attn_wheel)
         < cmd.index(flash_attn_download)
         < cmd.index(flash_attn_install)
-        < cmd.index(natten_wheel)
         < cmd.index(natten_download)
         < cmd.index(natten_install)
-        < cmd.index(transformer_engine_wheel)
         < cmd.index(transformer_engine_download)
         < cmd.index(transformer_engine_install)
         < cmd.index(server_extras_install)
@@ -1586,6 +1586,13 @@ def test_cosmos_dockerfile_constrains_every_dependency_resolver_pass() -> None:
     assert dockerfile.count("-c /tmp/cosmos-cu128-constraints.txt") == 2
 
 
+def _service_values(command: str) -> dict[str, str]:
+    script = shlex.split(command)[-1]
+    encoded = re.search(r"values = json.loads\(base64.b64decode\((.+)\)\)", script)
+    assert encoded
+    return json.loads(base64.b64decode(ast.literal_eval(encoded.group(1))))
+
+
 def test_cosmos_install_command_uses_data_disk_for_models_and_cache() -> None:
     cmd = _build_install_command("nvidia/Cosmos-Test", 8080)
 
@@ -1594,10 +1601,10 @@ def test_cosmos_install_command_uses_data_disk_for_models_and_cache() -> None:
     assert "/opt/cosmos-data/outputs" in cmd
     assert "export HF_HOME=/opt/cosmos-data/hf_cache" in cmd
     assert "export HUGGINGFACE_HUB_CACHE=/opt/cosmos-data/hf_cache" in cmd
-    assert "COSMOS_DISABLE_SAFETY=0" in cmd
+    assert _service_values(cmd)["COSMOS_DISABLE_SAFETY"] == "0"
     assert "load_kwargs[\"safety_checker\"] = _NoOpSafetyChecker()" in cmd
-    assert "HF_TOKEN=%s" in cmd
-    assert "sudo tee -a /etc/npa-cosmos-server/env >/dev/null" in cmd
+    assert 'values["HF_TOKEN"] = os.environ["HF_TOKEN"]' in cmd
+    assert 'sudo mv -fT -- "$stage/env" /etc/npa-cosmos-server/env' in cmd
     assert "--local-dir /opt/cosmos-data/models/nvidia--Cosmos-Test" in cmd
 
 
@@ -1608,7 +1615,7 @@ def test_cosmos_install_command_allows_explicit_guardrail_opt_out() -> None:
         no_guardrails=True,
     )
 
-    assert "COSMOS_DISABLE_SAFETY=1" in cmd
+    assert _service_values(cmd)["COSMOS_DISABLE_SAFETY"] == "1"
 
 
 def test_cosmos_serve_builds_remote_restart_command(mocker) -> None:
@@ -1633,14 +1640,14 @@ def test_cosmos_serve_builds_remote_restart_command(mocker) -> None:
     assert result.exit_code == 0
     # first SSH call restarts the service with the refreshed server.py/env
     cmd = ssh.run_or_raise.call_args_list[0].args[0]
-    assert "COSMOS_MODEL_ID=nvidia/Cosmos-Test" in cmd
-    assert "COSMOS_SERVER_PORT=9090" in cmd
-    assert "COSMOS_DISABLE_SAFETY=0" in cmd
+    assert _service_values(cmd)["COSMOS_MODEL_ID"] == "nvidia/Cosmos-Test"
+    assert _service_values(cmd)["COSMOS_SERVER_PORT"] == "9090"
+    assert _service_values(cmd)["COSMOS_DISABLE_SAFETY"] == "0"
     assert "/opt/cosmos/server.py" in cmd
     assert "from fastapi import FastAPI, HTTPException" in cmd
     assert '@app.get("/jobs/{job_id}")' in cmd
-    assert "HF_TOKEN=%s" in cmd
-    assert "sudo tee -a /etc/npa-cosmos-server/env >/dev/null" in cmd
+    assert 'values["HF_TOKEN"] = os.environ["HF_TOKEN"]' in cmd
+    assert 'sudo mv -fT -- "$stage/env" /etc/npa-cosmos-server/env' in cmd
     assert "sudo systemctl restart npa-cosmos-server" in cmd
     # second SSH call loads the model so `serve` actually pre-warms it on vm runtime
     load_cmd = ssh.run_or_raise.call_args_list[1].args[0]
@@ -1668,7 +1675,7 @@ def test_cosmos_serve_allows_explicit_guardrail_opt_out(mocker) -> None:
 
     assert result.exit_code == 0
     cmd = ssh.run_or_raise.call_args_list[0].args[0]
-    assert "COSMOS_DISABLE_SAFETY=1" in cmd
+    assert _service_values(cmd)["COSMOS_DISABLE_SAFETY"] == "1"
 
 
 def test_cosmos_serve_maps_ssh_error(mocker) -> None:

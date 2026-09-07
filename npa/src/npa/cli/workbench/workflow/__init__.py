@@ -3358,10 +3358,12 @@ def _preflight_submit_gang_capacity(
         profile_num_nodes,
         resolve_resource_profile,
     )
+    from npa.orchestration.npa_workflow.skypilot_render import normalize_resources
     from npa.orchestration.skypilot.k8s_gpu_catalog import (
         discover_kubernetes_gpu_inventory,
         preflight_kubernetes_gpu_gang,
     )
+    from npa.orchestration.skypilot.resource_quantities import kubernetes_gpu_quantities
 
     checks: list[dict[str, object]] = []
     resolved_allowed_nodes = allowed_nodes
@@ -3391,7 +3393,11 @@ def _preflight_submit_gang_capacity(
                 config_path=config_path,
                 isolated_config_dir=isolated_config_dir,
             )
-        selected = str((accelerator_overrides or {}).get(accelerator) or accelerator)
+        effective = normalize_resources(
+            {**resolved, "cloud": "kubernetes"}, accelerator_overrides=accelerator_overrides,
+        )
+        selected = str(effective["accelerators"])
+        cpus, memory = kubernetes_gpu_quantities(effective, accelerator=selected)
         kubernetes = resolved.get("kubernetes")
         kubernetes = kubernetes if isinstance(kubernetes, Mapping) else {}
         pod_config = kubernetes.get("pod_config")
@@ -3403,8 +3409,8 @@ def _preflight_submit_gang_capacity(
             inventory,
             accelerator=selected,
             node_count=nodes,
-            cpus=resolved.get("cpus", 0),
-            memory=resolved.get("memory", 0),
+            cpus=cpus,
+            memory=memory,
             allowed_nodes=resolved_allowed_nodes,
             pod_spec=pod_spec,
         )

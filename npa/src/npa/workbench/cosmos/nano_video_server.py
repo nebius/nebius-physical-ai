@@ -169,7 +169,10 @@ class NanoVideoRuntime:
         )
         # Upstream inference does not need credentials when loading prestaged
         # weights with guardrails off. Keep the API secret in the parent only.
-        for name in ("HF_TOKEN", "HUGGING_FACE_HUB_TOKEN", "NPA_COSMOS3_VIDEO_TOKEN"):
+        for name in (
+            "HF_TOKEN", "HUGGING_FACE_HUB_TOKEN", "NPA_COSMOS3_VIDEO_TOKEN",
+            "RAY_AUTH_TOKEN", "RAY_AUTH_TOKEN_PATH", "RAY_AUTH_MODE",
+        ):
             environment.pop(name, None)
         logs = self.output_root / ".server-logs"
         logs.mkdir(exist_ok=True)
@@ -440,6 +443,9 @@ class NanoVideoRuntime:
 
 def app(args: dict[str, Any] | None = None) -> Any:
     """Ray Serve application builder; one ranked set gives least-outstanding routing."""
+    from .nano_video_auth import require_management_auth
+
+    require_management_auth()
     from ray import serve
 
     from .nano_video_router import LeastOutstandingRouter
@@ -503,8 +509,13 @@ def app(args: dict[str, Any] | None = None) -> Any:
 
 
 if __name__ == "__main__":
-    if sys.argv[1:] != ["--stage-weights"]:
-        raise SystemExit("Use Ray Serve's application builder or --stage-weights")
-    from .nano_video_stage import stage_weights
+    if sys.argv[1:] == ["--serve"]:
+        from .nano_video_auth import serve_local
 
-    stage_weights(Path(os.environ["NPA_COSMOS3_MODEL_PATH"]))
+        serve_local()
+    elif sys.argv[1:] == ["--stage-weights"]:
+        from .nano_video_stage import stage_weights
+
+        stage_weights(Path(os.environ["NPA_COSMOS3_MODEL_PATH"]))
+    else:
+        raise SystemExit("Use --serve, the authenticated Ray application builder, or --stage-weights")

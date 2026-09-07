@@ -1019,7 +1019,10 @@ def test_bootstrap_embeds_workflow_endpoints() -> None:
     assert '@app.get("/infra/soperator/status/{{name}}")' in source
     assert "agent-live-infra-plan" in source
     assert "pip install -e" in source
-    assert "deploy/cluster" in source
+    from npa.cli.agent_source_archive import _REQUIRED_ROOTS
+
+    assert "create_agent_source_archive" in source
+    assert "deploy/cluster" in _REQUIRED_ROOTS
     assert "_soperator_deploy_from_payload" in source
     assert "DEFAULT_SOLUTIONS_LIBRARY_REF" in source
     assert "_validate_immutable_solutions_library_ref" in source

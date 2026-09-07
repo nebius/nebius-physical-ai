@@ -736,9 +736,9 @@ def rerun_serve_command(
         ),
     ),
     service_type: str = typer.Option(
-        "loadbalancer",
+        "clusterip",
         "--service-type",
-        help="Kubernetes Service type: loadbalancer, nodeport, or clusterip.",
+        help="Private clusterip Service; use port-forward or an authenticated TLS ingress.",
     ),
     name: str = typer.Option(
         "",
@@ -836,17 +836,6 @@ def rerun_serve_command(
                 wait=destroy_wait,
             )
         else:
-            if (
-                service_type.strip().lower() in {"loadbalancer", "lb"}
-                and not dry_run
-                and not config.auth_enabled
-            ):
-                typer.echo(
-                    "Warning: LoadBalancer exposes the Rerun web viewer without auth. "
-                    "Pass --auth-user (and optionally --auth-password) to gate it, "
-                    "or restrict access at the network layer.",
-                    err=True,
-                )
             result = apply_rerun_serve(config, kubeconfig=resolved_kubeconfig)
     except Sim2RealRerunServeError as exc:
         typer.echo(f"Error: {exc}", err=True)
