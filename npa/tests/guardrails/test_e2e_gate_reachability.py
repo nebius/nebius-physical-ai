@@ -16,6 +16,9 @@ RUNNER_FILES = (
 # These specialized suites intentionally remain operator-invoked. The reason is
 # machine-reviewed here instead of letting an environment gate silently rot.
 MANUAL_GATES = {
+    "NPA_RAY_TRAIN_LIVE_CONFIG": (
+        "native Train CUDA recovery/cancellation requires an isolated operator-preflighted Ray Jobs runtime and S3 prefix"
+    ),
     "NPA_RAY_CLIP_ARCHIVE_LIVE_CONFIG": (
         "completed public CLIP result provenance and exact owned workload storage require private operator selection"
     ),
