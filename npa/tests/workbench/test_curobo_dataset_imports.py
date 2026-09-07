@@ -62,6 +62,22 @@ def test_scrubbed_pythonpath_loads_only_verified_raw_dataset(source_trees):
     assert all(path.read_bytes() == payload for path, payload in before.items())
 
 
+@pytest.mark.parametrize("changed_tail", [False, True])
+def test_dataset_hash_covers_the_complete_file(source_trees, monkeypatch, changed_tail):
+    _, dataset = source_trees
+    data = b"verified data\n" * 200_000 + b"final bytes\n"
+    expected = hashlib.sha256(data).hexdigest()
+    path = dataset / "robometrics/content/dataset/test.yaml"
+    path.write_bytes(data[:-1] + b"!" if changed_tail else data)
+    monkeypatch.setattr(runner, "DATASET_FILES", {"test": ("test.yaml", expected)})
+    if changed_tail:
+        with pytest.raises(CuroboError, match="YAML bytes"):
+            runner._benchmark_module()
+        assert "robometrics" not in sys.modules
+    else:
+        assert runner._benchmark_module().OBSERVED_DATA == data.decode()
+
+
 def test_ambient_import_path_cannot_shadow_verified_dataset(source_trees, tmp_path):
     _, dataset = source_trees
     shadow = tmp_path / "shadow"

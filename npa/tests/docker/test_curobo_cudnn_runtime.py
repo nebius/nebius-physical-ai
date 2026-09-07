@@ -61,6 +61,15 @@ def test_only_runtime_and_license_bytes_remain_identical(package):
     assert LIBRARY in recorded and LICENSE in recorded
 
 
+def test_retained_library_digest_covers_the_complete_file(package):
+    root, apply_filter, _, _ = package
+    data = b"\x7fELF" + b"synthetic runtime\n" * 200_000 + b"final bytes\n"
+    (root / LIBRARY).write_bytes(data)
+    report = apply_filter(root)
+    assert report["retained_sha256"][LIBRARY] == hashlib.sha256(data).hexdigest()
+    assert (root / LIBRARY).read_bytes() == data
+
+
 @pytest.mark.parametrize(
     "extra",
     ["nvidia/cudnn/include/unreviewed.hpp", "nvidia/cudnn/hidden/cudnn.h", "nvidia/other/cudnn.h"],

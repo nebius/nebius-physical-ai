@@ -81,8 +81,11 @@ def filter_cudnn_runtime(site_packages: Path) -> dict:
         csv.writer(stream).writerows(records)
     retained = {}
     for name in sorted(set(runtime) | {f"{dist_info}/licenses/License.txt"}):
+        digest = hashlib.sha256()
         with (root / name).open("rb") as stream:
-            retained[name] = hashlib.file_digest(stream, "sha256").hexdigest()
+            while chunk := stream.read(1024 * 1024):
+                digest.update(chunk)
+        retained[name] = digest.hexdigest()
     return {
         "schema_version": "npa.curobo.cudnn-runtime.v1",
         "version": dist.version,
