@@ -425,6 +425,36 @@ variable "mig_strategy" {
   }
 }
 
+variable "nebius_profile" {
+  description = "Explicit CLI profile for refreshable provider and Kubernetes authentication."
+  type        = string
+  default     = ""
+}
+
+variable "nebius_cli" {
+  description = "Nebius CLI executable used by Kubernetes credential exec plugins."
+  type        = string
+  default     = "nebius"
+}
+
+variable "gpu_operator_rtx_driver_profile" {
+  description = "Exact RTX rendering platform and preset for the marketplace driver selector."
+  type = object({
+    platform             = string
+    preset               = string
+    package_repositories = optional(map(string), {})
+  })
+  default = null
+
+  validation {
+    condition = var.gpu_operator_rtx_driver_profile == null ? true : (
+      can(regex("^gpu-rtx6000(-[a-z])?$", var.gpu_operator_rtx_driver_profile.platform)) &&
+      contains(["1gpu-24vcpu-218gb", "8gpu-192vcpu-1744gb"], var.gpu_operator_rtx_driver_profile.preset)
+    )
+    error_message = "The RTX driver profile requires an exact supported RTX PRO 6000 platform and preset."
+  }
+}
+
 variable "gpu_operator_version" {
   description = "Pinned NVIDIA GPU Operator Helm chart version for the custom-driver path."
   type        = string

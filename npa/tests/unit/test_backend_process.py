@@ -10,6 +10,7 @@ import pytest
 
 from npa.cluster_backends.process import (
     BackendCommandError,
+    isolate_terraform_providers,
     require_bin,
     run_capture,
     run_stream,
@@ -211,3 +212,77 @@ def test_terraform_plugin_cache_lock_serializes_threads(tmp_path: Path) -> None:
     assert not second_thread.is_alive()
     assert second_entered.is_set()
     assert (tmp_path / ".providers.npa-init.lock").stat().st_mode & 0o777 == 0o600
+
+
+@pytest.mark.parametrize("data_dir", [".terraform", "custom-data", "absolute"])
+def test_provider_snapshot_survives_later_cache_rewrite(tmp_path: Path, data_dir: str) -> None:
+    cache = tmp_path / "cache" / "package"
+    cache.mkdir(parents=True)
+    binary = cache / "terraform-provider-example"
+    binary.write_bytes(b"verified provider bytes")
+    binary.chmod(0o755)
+    workdir = tmp_path / "cluster"
+    configured = str(tmp_path / "absolute-data") if data_dir == "absolute" else data_dir
+    data = Path(configured) if Path(configured).is_absolute() else workdir / configured
+    providers = data / "providers"
+    package = providers / "registry.example.test" / "example" / "provider" / "1.0" / "linux_amd64"
+    package.parent.mkdir(parents=True)
+    package.symlink_to(cache, target_is_directory=True)
+    env = {"TF_PLUGIN_CACHE_DIR": str(cache.parent), "TF_DATA_DIR": configured}
+    with terraform_plugin_cache_lock(env):
+        isolate_terraform_providers(workdir, env)
+    # A different cluster's init may now replace or truncate the shared file.
+    binary.write_bytes(b"being downloaded again")
+    assert (package / binary.name).read_bytes() == b"verified provider bytes"
+    assert (package / binary.name).stat().st_mode & 0o777 == 0o755
+    assert not any(path.is_symlink() for path in providers.rglob("*"))
+    isolate_terraform_providers(workdir, env)
+    assert (package / binary.name).read_bytes() == b"verified provider bytes"
+    assert not list(data.glob(".npa-providers-*"))
+
+
+def test_provider_snapshot_copy_failure_preserves_initialized_tree(tmp_path: Path, monkeypatch) -> None:
+    from npa.cluster_backends import process
+
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    (cache / "provider").write_text("original")
+    providers = tmp_path / ".terraform" / "providers"
+    providers.mkdir(parents=True)
+    (providers / "package").symlink_to(cache, target_is_directory=True)
+
+    def failed_copy(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(process.shutil, "copytree", failed_copy)
+    with pytest.raises(OSError, match="disk full"):
+        isolate_terraform_providers(tmp_path, {})
+    assert (providers / "package" / "provider").read_text() == "original"
+    assert (providers / "package").is_symlink()
+    assert not list(providers.parent.glob(".npa-providers-*"))
+
+
+def test_provider_snapshot_publish_failure_restores_initialized_tree(tmp_path: Path, monkeypatch) -> None:
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    (cache / "provider").write_text("original")
+    providers = tmp_path / ".terraform" / "providers"
+    providers.mkdir(parents=True)
+    (providers / "package").symlink_to(cache, target_is_directory=True)
+    original_rename = Path.rename
+
+    def rename(path, target):
+        if path.name == "snapshot":
+            raise OSError("publish failed")
+        return original_rename(path, target)
+
+    monkeypatch.setattr(Path, "rename", rename)
+    with pytest.raises(OSError, match="publish failed"):
+        isolate_terraform_providers(tmp_path, {})
+    assert (providers / "package" / "provider").read_text() == "original"
+    assert not list(providers.parent.glob(".npa-providers-*"))
+
+
+def test_provider_snapshot_without_initialized_packages_is_noop(tmp_path: Path) -> None:
+    isolate_terraform_providers(tmp_path, {})
+    assert not (tmp_path / ".terraform").exists()

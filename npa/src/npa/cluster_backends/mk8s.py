@@ -132,6 +132,7 @@ def desired_state(cluster: MK8sDesired) -> dict[str, Any]:
         "gpu_workload_profile": cluster.gpu_workload_profile,
         "gpu_graphics_smoke": cluster.gpu_graphics_smoke,
         "gpu_graphics_smoke_image": cluster.gpu_graphics_smoke_image,
+        "gpu_driver_repositories_configured": bool(cluster.gpu_driver_package_repositories),
         "enable_filestore": cluster.enable_filestore,
         "filestore_disk_size_gibibytes": cluster.filestore_disk_size_gibibytes,
         "filestore_mount_path": cluster.filestore_mount_path,
