@@ -50,10 +50,15 @@ RUN git clone --filter=blob:none --no-checkout "${ALPAMAYO2_SOURCE_URL}" /opt/al
 # Upstream's lock is authoritative. uv's no-build-isolation declaration lets
 # flash-attn compile against the locked Torch 2.8/CUDA 12.8 environment for the
 # H100, B200, and RTX PRO 6000 architecture paths selected above.
+COPY docker/workbench/alpamayo2-super/security-upgrades-requirements.txt /tmp/alpamayo2-security-upgrades.txt
 RUN python3.12 -m venv /opt/uv \
     && /opt/uv/bin/pip install --no-cache-dir 'uv==0.11.15' \
     && cd /opt/alpamayo2 \
     && /opt/uv/bin/uv sync --locked --no-dev \
+    && /opt/uv/bin/uv pip install --python .venv/bin/python --no-deps --require-hashes \
+      -r /tmp/alpamayo2-security-upgrades.txt \
+    && /opt/uv/bin/uv pip check --python .venv/bin/python \
+    && rm -f /tmp/alpamayo2-security-upgrades.txt \
     && /opt/alpamayo2/.venv/bin/python - <<'PY'
 import torch
 flags = set(torch._C._cuda_getArchFlags().split())

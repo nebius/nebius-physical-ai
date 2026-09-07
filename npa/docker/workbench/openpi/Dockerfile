@@ -32,6 +32,7 @@ SHELL ["/bin/bash", "-lc"]
 USER root
 
 COPY docker/workbench/openpi/gcs-requirements.txt /tmp/gcs-requirements.txt
+COPY docker/workbench/openpi/security-upgrades-requirements.txt /tmp/openpi-security-upgrades.txt
 COPY src/npa/workflows/byof/openpi_gcs.py /opt/npa-openpi-gcs.py
 
 RUN rm -f /etc/apt/sources.list.d/*.list \
@@ -102,6 +103,8 @@ RUN python3 -m venv /opt/uv \
       'urllib3==2.7.0' \
     && /opt/uv/bin/uv pip install --python /opt/venv/bin/python --no-cache \
       'deepdiff==8.6.2' 'numpy==1.26.4' \
+    && /opt/uv/bin/uv pip install --python /opt/venv/bin/python --no-cache \
+      --no-deps --require-hashes -r /tmp/openpi-security-upgrades.txt \
     && rm -f /opt/venv/lib/python3.11/site-packages/wandb/bin/wandb-core \
     && /opt/venv/bin/python -c \
       'import boto3, importlib.metadata as m, numpy, os, tensorflow, torch, transformers, wandb; from transformers import GemmaForCausalLM; expected={"boto3":"1.42.91","botocore":"1.42.91","jmespath":"1.1.0","python-dateutil":"2.9.0.post0","s3transfer":"0.16.0","six":"1.17.0","urllib3":"2.7.0"}; assert all(m.version(k)==v for k,v in expected.items()), {k:m.version(k) for k in expected}; assert boto3.session.Session() is not None and m.version("deepdiff") == "8.6.2" and m.version("numpy") == "1.26.4" and m.version("tensorflow") == "2.15.0" and m.version("transformers") == "4.53.2"; assert os.environ["WANDB_MODE"] == "disabled" and GemmaForCausalLM and numpy is not None and tensorflow is not None and torch is not None and wandb is not None' \
@@ -127,7 +130,7 @@ RUN python3 -m venv /opt/uv \
     && build_hash="$(sha256sum /opt/byof/uv.lock | cut -d' ' -f1)" \
     && printf '{"schema":"npa.byof.build.v1","build_command_executed":true,"build_command_sha256":"%s"}\n' \
       "$build_hash" > /opt/byof/npa_build_metadata.json \
-    && rm -rf /tmp/uv-cache /tmp/gcs-requirements.txt
+    && rm -rf /tmp/uv-cache /tmp/gcs-requirements.txt /tmp/openpi-security-upgrades.txt
 
 RUN printf '%s\n' \
       '#include <cuda_runtime.h>' \

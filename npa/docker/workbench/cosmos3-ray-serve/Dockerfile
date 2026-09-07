@@ -62,7 +62,9 @@ USER ubuntu
 # replace the complete Ray Serve dependency closure and NLTK via
 # hash-verified packages. uv-managed environments
 # intentionally omit pip — use `uv pip install --python` instead of the
-# nonexistent `.venv/bin/pip`.  Do NOT use --frozen for the serve extra alone
+# nonexistent `.venv/bin/pip`. The image serves Python deployments and has no JVM;
+# remove Ray's unused Java worker bundle instead of distributing its old libraries.
+# Do NOT use --frozen for the serve extra alone
 # — that would silently keep the vulnerable pins.
 COPY --chown=ubuntu:ubuntu pyproject.toml /opt/npa/pyproject.toml
 COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa
@@ -71,6 +73,7 @@ COPY --chown=ubuntu:ubuntu docker/workbench/cosmos3-ray-serve/verify_env.py /opt
 COPY --chown=ubuntu:ubuntu --chmod=755 docker/workbench/cosmos3-ray-serve/entrypoint.sh /usr/local/bin/cosmos3-ray-serve-entrypoint
 COPY --chown=ubuntu:ubuntu --chmod=755 docker/workbench/cosmos3-ray-serve/smoke_functional.sh /opt/cosmos3-ray-serve/smoke_functional.sh
 COPY --chown=ubuntu:ubuntu docker/workbench/cosmos3-ray-serve/security-upgrades-requirements.txt /tmp/cosmos3-ray-security-upgrades-requirements.txt
+COPY --chown=ubuntu:ubuntu docker/workbench/sonic/packaging-requirements.txt /tmp/cosmos3-packaging-requirements.txt
 
 RUN cd /opt/cosmos3/cosmos-framework \
     && UV_CACHE_DIR=/tmp/uv-cache uv sync --frozen --inexact \
@@ -78,7 +81,10 @@ RUN cd /opt/cosmos3/cosmos-framework \
     && uv pip uninstall --python .venv/bin/python flash-attn flash-attn-3-nv \
     && uv pip install --python .venv/bin/python --no-deps --require-hashes \
        --requirement /tmp/cosmos3-ray-security-upgrades-requirements.txt \
+    && .venv/bin/python -c 'from pathlib import Path; import ray; p=Path(ray.__file__).parent / "jars" / "ray_dist.jar"; p.unlink(missing_ok=True)' \
     && uv pip check --python .venv/bin/python \
+    && .venv/bin/python -c 'from pathlib import Path; import subprocess; interpreters=sorted({p.resolve() for p in Path("/opt/uv/python").glob("*/bin/python3")}); assert interpreters; [subprocess.run(["uv","pip","install","--break-system-packages","--python",str(p),"--no-deps","--require-hashes","-r","/tmp/cosmos3-packaging-requirements.txt"],check=True) for p in interpreters]' \
+    && rm -f /tmp/cosmos3-packaging-requirements.txt \
     && test "$(.venv/bin/python -c 'import ray; print(ray.__version__)')" = "${COSMOS3_RAY_VERSION}" \
     && .venv/bin/python -c 'import importlib.metadata; assert importlib.metadata.version("nltk") == "3.10.3"' \
     && rm -rf /tmp/uv-cache \

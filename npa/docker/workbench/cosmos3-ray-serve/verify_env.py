@@ -40,6 +40,8 @@ def verify_accelerator_dependencies() -> None:
 
 def main() -> None:
     verify_accelerator_dependencies()
+    if (Path(ray.__file__).parent / "jars" / "ray_dist.jar").exists():
+        raise RuntimeError("unused Java worker bundle remains in Python serving image")
     from natten.functional import attention
 
     if not callable(attention):
