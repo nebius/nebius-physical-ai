@@ -253,6 +253,11 @@ class MK8sBackend:
     def apply(self, desired: MK8sDesired, request: MK8sApplyRequest) -> dict[str, Any]:
         desired = as_mk8s_desired(desired)
         if request.terraform_command:
+            if desired.kuberay and desired.kuberay.enabled:
+                raise ValueError(
+                    "KubeRay requires native mk8s recipe execution; legacy "
+                    "standalone Terraform state cannot honor this policy"
+                )
             if request.terraform_cwd is None or request.terraform_env is None:
                 raise ValueError(
                     "mk8s Terraform apply requires terraform_cwd and terraform_env"

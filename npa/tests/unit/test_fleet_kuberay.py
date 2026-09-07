@@ -138,6 +138,17 @@ def test_missing_recipe_cannot_pass_backend_preflight():
         MK8sBackend().preflight(as_mk8s_desired(cluster(KubeRaySpec(True))), MK8sApplyRequest())
 
 
+def test_legacy_execution_cannot_silently_ignore_kuberay(tmp_path):
+    request = MK8sApplyRequest(
+        terraform_command=("terraform", "apply"),
+        terraform_cwd=tmp_path,
+        terraform_env={},
+        command_runner=lambda *args, **kwargs: pytest.fail("legacy apply executed"),
+    )
+    with pytest.raises(ValueError, match="legacy standalone Terraform"):
+        MK8sBackend().apply(as_mk8s_desired(cluster(KubeRaySpec(True))), request)
+
+
 def test_real_terraform_template_decodes_requested_resource_values(recipe, tmp_path):
     terraform = shutil.which("terraform")
     if terraform is None:
