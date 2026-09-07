@@ -859,7 +859,9 @@ def _materialize_ncore(config: NurecConfig, ncore_uri: str) -> str:
     source = ncore_uri if ncore_uri.endswith("/") else f"{ncore_uri}/"
     local = materialize_uri(source, target)
     found = find_ncore_json(Path(local))
-    return str(found) if found else ""
+    if found is None:
+        raise NurecError("explicit NCore source has no usable sequence metadata")
+    return str(found)
 
 
 def _materialize_artifact(config: NurecConfig, artifact_uri: str) -> str:

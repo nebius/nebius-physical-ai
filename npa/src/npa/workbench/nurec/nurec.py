@@ -1496,7 +1496,7 @@ def find_ncore_json(scene_dir: Path) -> Path | None:
     for candidate in candidates:
         if candidate.name.split(".", 1)[0] in shard_stems:
             return candidate
-    return candidates[0] if candidates else None
+    return None
 
 
 def read_rig_sidecar(ncore_json: Path | str) -> dict[str, Any]:
@@ -1980,6 +1980,8 @@ def materialize_uri(
     in ``/tmp`` between them: the NCore sequence and the trained USDZ have to
     travel through S3. A local ``source_uri`` is returned as-is so the
     single-pod SkyPilot task keeps working without a round-trip.
+    Remote prefixes use a fresh generation alongside ``destination``; callers
+    must use the returned path. Existing generations are never overlaid.
     """
     if not source_uri:
         raise NurecError("source_uri is required")
@@ -1997,13 +1999,16 @@ def materialize_uri(
     is_prefix = source_uri.endswith("/")
     if is_prefix:
         target.parent.mkdir(parents=True, exist_ok=True)
-        # Verify a fresh download before copying into a reusable local cache.
-        # Old metadata must never complete an interrupted remote publication.
-        with tempfile.TemporaryDirectory(prefix="nurec-", dir=target.parent) as scratch:
-            downloaded = Path(scratch)
+        # Retain only this download as the returned generation. Overlaying an
+        # old cache can select a different, internally valid prior capture.
+        downloaded = Path(tempfile.mkdtemp(prefix=f"{target.name}-", dir=target.parent))
+        try:
             client.download_path(source_uri, str(downloaded))
             _verify_materialized_colmap(downloaded)
-            shutil.copytree(downloaded, target, dirs_exist_ok=True)
+        except Exception:
+            shutil.rmtree(downloaded)
+            raise
+        return downloaded
     else:
         target.parent.mkdir(parents=True, exist_ok=True)
         client.download_path(source_uri, str(target))

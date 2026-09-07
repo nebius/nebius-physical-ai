@@ -139,6 +139,9 @@ contract is documented in `docs/workbench/guides/nurec-colmap-reconstruct.md`.
 - `--input-path` takes an S3 ZIP or prefix; `--output-path` is the exact portable
   sequence prefix. Feed the same trailing-slash prefix to NRE's `--ncore-uri`.
   Use `--dataset-root struktur28 --rig-mode derive` and `npa_rig` poses.
+- Choose a fresh destination prefix for every publication attempt. The permanent
+  provider-conditional claim prevents overlapping writers and replacement; after
+  interruption, retry into a new prefix rather than deleting or expiring a claim.
 - The CPU image runs NVIDIA/ncore
   `59c698d206da92b406a4f72619fce3b3a2c64bfd`, with its pinned MIT
   trueprice/pycolmap reader. Scope the immutable development image override to
@@ -149,6 +152,15 @@ contract is documented in `docs/workbench/guides/nurec-colmap-reconstruct.md`.
 - Reopen every image/calibration/pose/point, compare full source counts and
   finite geometry, and retain hashes, source notices and CC-BY-4.0 attribution
   with runtime artifacts. No datasets or weights may be baked.
+- Compare the complete camera model and distortion coefficients, including each
+  downsampled camera, against source calibration. Matching counts and intrinsics
+  alone miss equal-intrinsics cameras with different distortion. Keep the
+  drift-checked upstream compatibility patches and post-patch source inventory.
+- Verify converted member hashes and the publication claim before the NuRec
+  reader opens a sequence. Return only the fresh download generation, never an
+  overlay into an old cache: even two valid inventories can select the wrong
+  capture after merging. Reject an explicit source without sequence metadata
+  instead of falling back to a previously fetched dataset.
 - NRE remains proprietary and separately gated. Keep its full native recipe
   (`max_epochs: "0"`) on the explicit RTX PRO 6000 profile; never remap to B200.
 - Live matrix: real executing `gpu` case, with complete hash-verified source

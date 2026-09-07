@@ -4,10 +4,26 @@ from __future__ import annotations
 
 import json
 
+import pytest
 from typer.testing import CliRunner
 
 from npa.cli.main import app
 from npa.workbench.nurec import colmap
+
+
+@pytest.mark.parametrize("has_unrelated_file", [False, True])
+def test_explicit_ncore_source_without_metadata_never_falls_back(
+    tmp_path, has_unrelated_file
+):
+    from npa.cli.nurec import _materialize_ncore
+    from npa.workbench.nurec.nurec import NurecConfig, NurecError
+
+    source = tmp_path / "explicit-source"
+    source.mkdir()
+    if has_unrelated_file:
+        (source / "other.json").write_text("{}")
+    with pytest.raises(NurecError, match="NCore.*metadata"):
+        _materialize_ncore(NurecConfig(cache_dir=tmp_path / "cache"), str(source))
 
 
 def test_colmap_help():

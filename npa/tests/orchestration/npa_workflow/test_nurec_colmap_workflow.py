@@ -17,6 +17,10 @@ from npa.orchestration.npa_workflow.submit_matrix import SUBMIT_LIVE_MATRIX
 
 ROOT = Path(__file__).resolve().parents[4]
 SPEC = ROOT / "workflows/testing/nurec-colmap-reconstruct.yaml"
+NRE_IMAGE = (
+    "nvcr.io/nvidia/nre/nre-ga@sha256:"
+    "97f43e7130c5636ce3e80ea3184d97f56a87fdd989b05cce42230881dbdea284"
+)
 
 
 def test_nurec_consumer_fetches_immutable_ncore_reader() -> None:
@@ -98,7 +102,7 @@ def test_cpu_converter_and_proprietary_rtx_stages_are_separate():
     for state in ("reconstruct", "render"):
         profile = resources[states[state]["resources"]]
         assert profile["accelerators"] == "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"
-        assert profile["image"] == "nvcr.io/nvidia/nre/nre-ga:26.04"
+        assert profile["image"] == NRE_IMAGE
     case = next(case for case in SUBMIT_LIVE_MATRIX if case.spec == SPEC.name)
     assert case.tier == "gpu" and not case.plan_only and not case.rotation_skip
     assert case.max_wait_seconds == 0
@@ -133,7 +137,7 @@ def test_render_keeps_converter_digest_and_nre_runtime_in_their_own_stages(
     assert tasks[0]["resources"]["image_id"] == "docker:" + converter
     assert "accelerators" not in tasks[0]["resources"]
     for task in tasks[1:3]:
-        assert task["resources"]["image_id"] == "docker:nvcr.io/nvidia/nre/nre-ga:26.04"
+        assert task["resources"]["image_id"] == "docker:" + NRE_IMAGE
         assert (
             task["resources"]["accelerators"]
             == "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"

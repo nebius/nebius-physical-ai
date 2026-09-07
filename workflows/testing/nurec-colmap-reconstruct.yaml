@@ -33,7 +33,8 @@ config:
   rig_mode: "derive"
   reference_camera: ""
 
-  nurec_image: "nvcr.io/nvidia/nre/nre-ga:26.04"
+  # Verified NVIDIA NRE 26.04 artifact; its proprietary terms are unchanged.
+  nurec_image: "nvcr.io/nvidia/nre/nre-ga@sha256:97f43e7130c5636ce3e80ea3184d97f56a87fdd989b05cce42230881dbdea284"
   config_name: "configs/experimental/3dgut/3dgut_colmap.yaml"
   mode: trainval
   # Zero preserves the native full recipe; it does not disable training.
@@ -71,7 +72,7 @@ resources:
     accelerators: RTXPRO-6000-BLACKWELL-SERVER-EDITION:1
     cpus: 8
     memory: 64Gi
-    image: "nvcr.io/nvidia/nre/nre-ga:26.04"
+    image: "nvcr.io/nvidia/nre/nre-ga@sha256:97f43e7130c5636ce3e80ea3184d97f56a87fdd989b05cce42230881dbdea284"
     kubernetes:
       pod_config:
         spec:
@@ -87,7 +88,7 @@ resources:
             # equivalent to SkyPilot's own `alias sudo=""` root path.
             # /usr/local/sbin is on the image's PATH and empty.
             - name: npa-sudo-shim
-              image: "nvcr.io/nvidia/nre/nre-ga:26.04"
+              image: "nvcr.io/nvidia/nre/nre-ga@sha256:97f43e7130c5636ce3e80ea3184d97f56a87fdd989b05cce42230881dbdea284"
               command:
                 - /bin/sh
                 - -c

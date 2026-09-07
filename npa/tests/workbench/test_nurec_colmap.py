@@ -989,3 +989,90 @@ def test_stale_local_metadata_cannot_complete_interrupted_remote_publication(
             storage_client=InterruptedDownload(),
         )
     assert {path.name: path.read_bytes() for path in target.iterdir()} == previous
+
+
+def test_new_capture_does_not_merge_a_previous_cached_capture(tmp_path):
+    from npa.clients.storage import StorageClient
+    from npa.workbench.nurec.nurec import find_ncore_json, materialize_uri
+
+    target = tmp_path / "cache"
+    old = write_inventory_fixture(target / "old")
+    metadata = json.dumps(
+        {"version": "v4", "component_stores": [{"path": "new.zarr.itar"}]}
+    ).encode()
+    objects = {
+        "new/capture/z-new.json": metadata,
+        "new/capture/new.zarr.itar": b"synthetic preconverted capture",
+    }
+
+    class MemoryS3:
+        def get_paginator(self, operation):
+            assert operation == "list_objects_v2"
+            return self
+
+        def paginate(self, *, Bucket, Prefix):
+            assert Bucket == "test-bucket"
+            yield {
+                "Contents": [{"Key": key} for key in objects if key.startswith(Prefix)]
+            }
+
+        def download_file(self, bucket, key, destination):
+            assert bucket == "test-bucket"
+            Path(destination).write_bytes(objects[key])
+
+    client = object.__new__(StorageClient)
+    client._s3 = MemoryS3()
+    staged = materialize_uri("s3://test-bucket/new/", target, storage_client=client)
+    found = find_ncore_json(staged)
+    assert found is not None
+    assert found.name == "z-new.json"
+    assert found.read_bytes() == metadata
+    assert not (staged / "old").exists()
+    assert (old / "sequence.json").exists()
+
+
+@pytest.mark.parametrize("claimed", [False, True])
+def test_empty_remote_prefix_never_returns_a_previous_cached_capture(tmp_path, claimed):
+    import hashlib
+
+    from npa.clients.storage import StorageClient
+    from npa.workbench.nurec.nurec import find_ncore_json, materialize_uri
+
+    cache = write_inventory_fixture(tmp_path / "cache")
+    if claimed:
+        report_path = cache / colmap.CONVERSION_REPORT
+        report = json.loads(report_path.read_text())
+        report["publication"] = {
+            "mode": "immutable-prefix-v1",
+            "claim": colmap.PUBLICATION_CLAIM,
+        }
+        report_path.write_text(json.dumps(report))
+        (cache / colmap.PUBLICATION_CLAIM).write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "report_sha256": hashlib.sha256(
+                        report_path.read_bytes()
+                    ).hexdigest(),
+                }
+            )
+        )
+    colmap.verify_conversion_inventory(cache)
+    previous = {path.name: path.read_bytes() for path in cache.iterdir()}
+
+    class EmptyS3:
+        def get_paginator(self, operation):
+            assert operation == "list_objects_v2"
+            return self
+
+        def paginate(self, *, Bucket, Prefix):
+            assert Bucket == "test-bucket"
+            assert Prefix == "empty/"
+            yield {}
+
+    client = object.__new__(StorageClient)
+    client._s3 = EmptyS3()
+    staged = materialize_uri("s3://test-bucket/empty/", cache, storage_client=client)
+    assert staged != cache
+    assert find_ncore_json(staged) is None
+    assert {path.name: path.read_bytes() for path in cache.iterdir()} == previous

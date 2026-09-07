@@ -25,6 +25,10 @@ candidate, with no accepted public release. Keep datasets, weights, and NRE out
 of its layers. Preserve upstream copyright/license notices and dataset
 attribution with runtime evidence; see [the attribution notice](../../../skills/NOTICE-NVIDIA-NCORE-COLMAP).
 
+The workflow pins the NRE 26.04 runtime and its initialization container to
+`sha256:97f43e7130c5636ce3e80ea3184d97f56a87fdd989b05cce42230881dbdea284`;
+the version label above is descriptive, not a mutable runtime selector.
+
 ## Full reference input
 
 The upstream object is `colmap/struktur28_colmap.zip`. Its SHA256 is
