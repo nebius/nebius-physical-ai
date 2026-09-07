@@ -8,6 +8,7 @@ or provider exception text. The target itself stays in owner-only runtime state.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from decimal import Decimal, InvalidOperation
 import json
 import os
 from typing import Any, Callable, Mapping, Sequence
@@ -395,6 +396,31 @@ def skypilot_output_destinations(documents: Sequence[Mapping[str, Any]]) -> dict
     return destinations
 
 
+def _skypilot_capacity_minimum(value: object, *, memory: bool = False) -> str:
+    """Translate an explicit SkyPilot scalar/minimum into a Kubernetes quantity.
+
+    SkyPilot's optional ``+`` means a lower bound; its resource API and
+    feasibility model measure scalar memory in GiB. Enforce that conservative
+    minimum without changing its provider request (some versions render decimal
+    ``G`` pod quantities). Omitted values impose no explicit minimum here,
+    rather than guessing provider defaults. Ratios and other unresolved forms
+    cannot establish a scalar GPU capacity requirement. Round fractional demand
+    up to the inventory's byte/millicore precision so it cannot be understated.
+    """
+    if value is None:
+        return "0"
+    try:
+        quantity = Decimal(str(value).strip().removesuffix("+"))
+    except (InvalidOperation, ValueError):
+        raise ExecutionPreflightError("gpu", "SkyPilot CPU and memory minima must be numeric, optionally ending in '+'", status="unknown") from None
+    if not quantity.is_finite() or quantity <= 0:
+        raise ExecutionPreflightError("gpu", "SkyPilot CPU and memory minima must be finite and positive")
+    numerator, denominator = quantity.as_integer_ratio()
+    scale = 1024**3 if memory else 1000
+    units = (numerator * scale + denominator - 1) // denominator
+    return str(units) if memory else f"{units}m"
+
+
 def preflight_skypilot_submission(
     documents: Sequence[dict[str, Any]], *, project: str = "", infra: str = "",
     extra_env: Mapping[str, str] | None = None,
@@ -589,7 +615,8 @@ def preflight_skypilot_submission(
                 raise ExecutionPreflightError("gpu", "global pod placement requires explicit task pod configuration", status="unknown")
             preflight_kubernetes_gpu_gang(discover_kubernetes_gpu_inventory(context=context),
                 accelerator=str(gpu), node_count=int(document.get("num_nodes") or 1),
-                cpus=resources.get("cpus", 0), memory=resources.get("memory", 0),
+                cpus=_skypilot_capacity_minimum(resources.get("cpus")),
+                memory=_skypilot_capacity_minimum(resources.get("memory"), memory=True),
                 allowed_nodes=allowed, pod_spec=pod_spec)
 
     report = verify_execution_target(target, gpu_check=gpu_check)
