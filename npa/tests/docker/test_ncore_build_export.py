@@ -27,6 +27,7 @@ def test_oci_export_preserves_attestations_without_pushing(tmp_path):
         f"#!{ROOT / 'npa/.venv/bin/python'}\n"
         "import json, os, sys\n"
         "from pathlib import Path\n"
+        "assert (Path(sys.argv[-1]) / 'src/npa/__init__.py').stat().st_mode & 0o004, 'non-root source unreadable'\n"
         "Path(os.environ['DOCKER_ARGV']).write_text(json.dumps(sys.argv[1:]))\n"
     )
     docker.chmod(0o755)
@@ -43,6 +44,7 @@ def test_oci_export_preserves_attestations_without_pushing(tmp_path):
         ],
         env={**os.environ, "PATH": f"{tools}:{os.environ['PATH']}", "DOCKER_ARGV": str(capture)},
         capture_output=True, text=True,
+        preexec_fn=lambda: os.umask(0o077),
     )
     assert result.returncode == 0, result.stderr
     argv = json.loads(capture.read_text())

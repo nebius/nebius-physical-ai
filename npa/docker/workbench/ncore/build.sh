@@ -32,7 +32,9 @@ NPA_PYTHON="${NPA_ROOT}/.venv/bin/python"
 # Export only committed files; unrelated dirty paths never enter the build.
 context="$(mktemp -d "${TMPDIR:-/tmp}/npa-ncore-context.XXXXXXXX")"
 trap 'rm -rf -- "$context"' EXIT
-git -C "$REPO_ROOT" archive "$SOURCE_SHA" npa/src/npa npa/docker/workbench/ncore | tar -x -C "$context"
+# Preserve committed public file modes even when the private evidence runner
+# uses umask 077; the surrounding temporary directory remains owner-only.
+git -C "$REPO_ROOT" archive "$SOURCE_SHA" npa/src/npa npa/docker/workbench/ncore | tar -x --same-permissions -C "$context"
 options=(--load --provenance=false)
 if [[ -n "$OCI_OUTPUT" ]]; then
   [[ "$OCI_OUTPUT" != *,* ]] || { echo 'OCI output path cannot contain commas' >&2; exit 2; }
