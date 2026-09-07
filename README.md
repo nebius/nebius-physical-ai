@@ -86,6 +86,8 @@ typed clients, callback wrappers, and their return values.
 
 ## Quickstart
 
+[Use Workbench with a coding agent](docs/workbench/agent-first-run.md).
+
 Three steps from a clone to a real result on Nebius.
 
 ### 1. Install `npa`
