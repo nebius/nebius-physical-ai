@@ -71,7 +71,8 @@ Use the SkyPilot-generated SSH alias to reach Jobs through one owned tunnel:
 
 ```bash
 export TRAIN_SOCKET="$HOME/.ssh/${TRAIN_CLUSTER}-jobs.sock"
-ssh -M -S "$TRAIN_SOCKET" -fNT -L 18265:127.0.0.1:8265 "$TRAIN_CLUSTER"
+ssh -M -S "$TRAIN_SOCKET" -fNT -o ExitOnForwardFailure=yes \
+  -L 18265:127.0.0.1:8265 "$TRAIN_CLUSTER"
 export RAY_API=http://127.0.0.1:18265
 # Install ray[default,train]==2.58.0 in your own client environment.
 ray job list --address "$RAY_API"

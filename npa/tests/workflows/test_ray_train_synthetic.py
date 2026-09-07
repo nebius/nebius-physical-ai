@@ -329,3 +329,81 @@ def test_live_cleanup_reconciles_lost_response_and_attempts_every_owned_job(tmp_
         assert errors == [{"job": "accepted-response-lost", "phase": "cancel", "error": "ConnectionError"}]
     else:
         assert not errors and "accepted-response-lost" in stopped
+
+
+@pytest.mark.parametrize("failure", ["listing_unavailable", "listing_omits_pending", "status_unavailable"])
+def test_exact_id_cleanup_does_not_depend_on_inventory(tmp_path, failure):
+    """Enumeration omissions and API outages must not suppress known-ID stop attempts."""
+    path = Path(__file__).parents[1] / "e2e/test_ray_train_synthetic_live.py"
+    spec = importlib.util.spec_from_file_location("train_live_cleanup_outages", path)
+    live = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(live)
+    stopped = []
+
+    class Client:
+        def list_jobs(self):
+            if failure == "listing_unavailable":
+                raise ConnectionError("injected enumeration outage")
+            return []
+
+        def get_job_status(self, job):
+            if failure == "status_unavailable" and job not in stopped:
+                raise ConnectionError("injected initial status outage")
+            return SimpleNamespace(is_terminal=lambda: job in stopped)
+
+        def stop_job(self, job):
+            stopped.append(job)
+
+        def get_job_logs(self, job):
+            return f"Stopped {job}"
+
+    assert not live._cancel_owned_jobs(Client(), ["accepted-response-lost", "second-owned"], tmp_path)
+    assert stopped == ["accepted-response-lost", "second-owned"]
+
+
+def test_documented_tunnel_fails_when_its_forward_cannot_bind():
+    """Keep OpenSSH's forwarding failure gate on the documented detached tunnel."""
+    guide = (EXAMPLE / "README.md").read_text()
+    tunnel = guide.split('ssh -M -S "$TRAIN_SOCKET"', 1)[1].split('export RAY_API=', 1)[0]
+    assert "-o ExitOnForwardFailure=yes" in tunnel
+
+
+@pytest.mark.parametrize("damage", ["missing_buffer", "missing_parameter", "wrong_shape", "nonfinite", "learning_rate", "momentum"])
+def test_damaged_sgd_checkpoint_cannot_claim_momentum_restoration(damage):
+    """Exercise real CPU SGD state; optional Torch is installed for reference validation."""
+    torch = pytest.importorskip("torch", reason="Reference checkpoint checks require optional matching Torch")
+    model = torch.nn.Linear(8, 1)
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.1, momentum=0.8)
+    model(torch.ones(4, 8)).square().sum().backward()
+    optimizer.step()
+    checkpoint = copy.deepcopy(optimizer.state_dict())
+    first = checkpoint["param_groups"][0]["params"][0]
+    if damage == "missing_buffer":
+        for state in checkpoint["state"].values():
+            state.pop("momentum_buffer")
+    elif damage == "missing_parameter":
+        checkpoint["state"].pop(first)
+    elif damage == "wrong_shape":
+        checkpoint["state"][first]["momentum_buffer"] = torch.zeros(2, 2)
+    elif damage == "nonfinite":
+        checkpoint["state"][first]["momentum_buffer"].fill_(float("nan"))
+    else:
+        checkpoint["param_groups"][0]["lr" if damage == "learning_rate" else "momentum"] = 0.5
+    restored = torch.optim.SGD(model.parameters(), lr=0.1, momentum=0.8)
+    restored.load_state_dict(checkpoint)
+    with pytest.raises(ValueError, match="Checkpoint optimizer"):
+        load("train").validate_optimizer_checkpoint(restored, model)
+
+
+def test_complete_sgd_checkpoint_restores_exact_momentum():
+    """A valid real optimizer checkpoint retains every buffer's exact bytes."""
+    torch = pytest.importorskip("torch", reason="Reference checkpoint checks require optional matching Torch")
+    model = torch.nn.Linear(8, 1)
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.1, momentum=0.8)
+    model(torch.ones(4, 8)).square().sum().backward()
+    optimizer.step()
+    restored = torch.optim.SGD(model.parameters(), lr=0.1, momentum=0.8)
+    restored.load_state_dict(copy.deepcopy(optimizer.state_dict()))
+    load("train").validate_optimizer_checkpoint(restored, model)
+    for parameter in model.parameters():
+        assert torch.equal(restored.state[parameter]["momentum_buffer"], optimizer.state[parameter]["momentum_buffer"])

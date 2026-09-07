@@ -37,10 +37,12 @@ def _cancel_owned_jobs(client, owned, evidence):
     errors = []
     for job in owned:
         try:
-            known = {detail.submission_id for detail in client.list_jobs()}
-            if job not in known:
-                continue
-            if not client.get_job_status(job).is_terminal():
+            status = client.get_job_status(job)
+        except Exception:
+            # A failed status request still requires an exact-ID stop attempt.
+            status = None
+        try:
+            if status is None or not status.is_terminal():
                 client.stop_job(job)
                 while not client.get_job_status(job).is_terminal():
                     time.sleep(1)
@@ -90,6 +92,7 @@ def test_native_train_cuda_recovery_artifacts_and_cancel():
     def preserve(job):
         log = evidence / f"{job}.log"
         _write_private(log, client.get_job_logs(job))
+        _write_private(evidence / f"{job}-native-status.json", client.get_job_info(job).json())
 
     try:
         for kind, extra in (("baseline", []), ("recovery", ["--fail-after-step", "8"])):
@@ -115,7 +118,11 @@ def test_native_train_cuda_recovery_artifacts_and_cancel():
             model.load_state_dict(state["model"])
             optimizer = torch.optim.SGD(model.parameters(), lr=0.1, momentum=0.8)
             optimizer.load_state_dict(state["optimizer"])
-            assert all("momentum_buffer" in value for value in optimizer.state.values())
+            assert set(optimizer.state) == set(model.parameters())
+            for parameter in model.parameters():
+                momentum = optimizer.state[parameter]["momentum_buffer"]
+                assert momentum.shape == parameter.shape and torch.isfinite(momentum).all()
+            assert optimizer.param_groups[0]["lr"] == 0.1 and optimizer.param_groups[0]["momentum"] == 0.8
             parameters = torch.cat([value.detach().flatten() for value in model.parameters()])
             assert hashlib.sha256(parameters.numpy().tobytes()).hexdigest() == report["parameter_sha256"]
             target = torch.arange(1, 9).reshape(8, 1) / 8 + 0.25

@@ -69,6 +69,28 @@ def validate_journal(journal: list[dict], recipe: dict) -> None:
         raise ValueError("Every worker must restore the committed failure checkpoint")
 
 
+def validate_optimizer_checkpoint(optimizer, model) -> None:
+    """Require complete SGD momentum and the constructor's expected hyperparameters."""
+    import torch
+
+    parameters = list(model.parameters())
+    groups = optimizer.param_groups
+    if len(groups) != 1 or len(groups[0]["params"]) != len(parameters):
+        raise ValueError("Checkpoint optimizer parameter groups differ")
+    if any(actual is not expected for actual, expected in zip(groups[0]["params"], parameters, strict=True)):
+        raise ValueError("Checkpoint optimizer parameter order differs")
+    if any(groups[0].get(key) != value for key, value in optimizer.defaults.items()):
+        raise ValueError("Checkpoint optimizer hyperparameters differ from the recipe")
+    if set(optimizer.state) != set(parameters):
+        raise ValueError("Checkpoint optimizer lacks per-parameter momentum state")
+    for parameter in parameters:
+        buffer = optimizer.state[parameter].get("momentum_buffer")
+        if (not isinstance(buffer, torch.Tensor) or buffer.shape != parameter.shape
+                or buffer.dtype != parameter.dtype or buffer.device != parameter.device
+                or not torch.isfinite(buffer).all().item()):
+            raise ValueError("Checkpoint optimizer momentum must be finite and match every parameter")
+
+
 def train_loop(recipe: dict) -> None:
     """Train each CUDA rank and report synchronized checkpoints through Ray Train."""
     import torch
@@ -98,9 +120,10 @@ def train_loop(recipe: dict) -> None:
             raise ValueError("Checkpoint recipe differs; choose a fresh run name")
         model.module.load_state_dict(state["model"])
         optimizer.load_state_dict(state["optimizer"])
+        validate_optimizer_checkpoint(optimizer, model.module)
         journal, restored_step = state["journal"], state["step"]
-        if len(journal) != restored_step or not optimizer.state:
-            raise ValueError("Checkpoint lacks complete journal or optimizer momentum")
+        if len(journal) != restored_step:
+            raise ValueError("Checkpoint lacks a complete journal")
     properties = torch.cuda.get_device_properties(device)
     fingerprint = hashlib.sha256(str(properties.uuid).encode()).hexdigest()
     for step in range(restored_step + 1, recipe["steps"] + 1):
@@ -176,8 +199,7 @@ def export_result(checkpoint, output: Path, recipe: dict, run_name: str) -> dict
         model.load_state_dict(state["model"])
         optimizer = torch.optim.SGD(model.parameters(), lr=recipe["learning_rate"], momentum=0.8)
         optimizer.load_state_dict(state["optimizer"])
-        if not optimizer.state:
-            raise ValueError("Reloaded optimizer has no momentum")
+        validate_optimizer_checkpoint(optimizer, model)
         x = torch.eye(8)
         target = torch.arange(1, 9).reshape(8, 1) / 8 + 0.25
         held_out_loss = torch.nn.functional.mse_loss(model(x), target).item()
