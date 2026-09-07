@@ -129,3 +129,14 @@ Run the relevant workflow/output tests, then:
 npa/.venv/bin/python -m pytest npa/tests/guardrails/test_skills_index.py -q
 npa/.venv/bin/python /home/ubuntu/.codex/skills/.system/skill-creator/scripts/quick_validate.py skills/workflows/emit-reviewable-rrd
 ```
+
+## Native Ray CLIP developer results
+
+For the existing CLIP example, use the local post-download converter
+`npa/workflows/workbench/ray-clip-development/report.py`; its README documents
+conversion, viewing and the committed live artifact test. This developer path
+uses native Ray Jobs and rsync, so no workflow output declaration or S3 upload is
+implied. Keep the RRD outside the checksummed input directory. Basic reports
+contain aggregate timings only; advanced reports also have shard indices and
+one coordinator clock. Never turn totals into synthetic stage intervals or
+assign an unrecorded timestamp to actor recovery.
