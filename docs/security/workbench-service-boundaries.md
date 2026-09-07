@@ -71,6 +71,12 @@ co-serves the selected MCAP without authentication. Use a verified SSH forward
 or authenticated proxy for remote access. Selecting a non-loopback `--host`
 explicitly publishes the artifact to clients that can reach that interface.
 
+Native FiftyOne also binds to loopback during its initial Terraform cloud-init,
+before SSH configuration runs. Its bootstrap installs the same patched database
+and dependency floors as the CLI installer and fails when application readiness
+fails. Existing native VMs need the secured installer or fresh provisioning;
+changing the template alone does not replace their running application.
+
 ## Cosmos3 native Ray serving
 
 The native service requires Ray management authentication and starts its own

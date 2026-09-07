@@ -7,6 +7,8 @@ already provisioned through the normal authenticated deployment path. An
 explicit isolated-pod transport instead requires kubeconfig, context, namespace,
 pod and exact pod_uid, with no host namespaces or mounts. These
 checks do not provision infrastructure or run model inference.
+Set native_fiftyone=true only for a freshly provisioned native FiftyOne target
+to additionally verify its initial service before any configurator replacement.
 """
 from __future__ import annotations
 
@@ -140,6 +142,35 @@ def _python(vm, name, source):
     result = json.loads(out)
     _record(vm, name + "-result", result)
     return result
+
+
+def test_native_fiftyone_cloud_init_listener_is_private(vm):
+    if not vm[1].get("native_fiftyone", False):
+        pytest.skip("requires a freshly provisioned native FiftyOne target")
+    result = _python(vm, "native-fiftyone", '''
+        import hashlib,json,pathlib,socket,subprocess,urllib.request
+        subprocess.run(['systemctl','is-active','--quiet','npa-fiftyone-app'],check=True)
+        values = dict(line.split('=',1) for line in pathlib.Path('/etc/npa-fiftyone/env').read_text().splitlines() if '=' in line)
+        assert values['FIFTYONE_DEFAULT_APP_ADDRESS']=='127.0.0.1'
+        port = int(values['FIFTYONE_DEFAULT_APP_PORT'])
+        with urllib.request.urlopen(f'http://127.0.0.1:{port}/',timeout=10) as response:
+            payload=response.read(); status=response.status
+        listeners = subprocess.check_output(['ss','-H','-ltn',f'sport = :{port}'],text=True).splitlines()
+        assert listeners
+        loopback_only = all(row.split()[3].rsplit(':',1)[0]=='127.0.0.1' for row in listeners)
+        interfaces = [ip for ip in subprocess.check_output(['hostname','-I'],text=True).split() if ':' not in ip and not ip.startswith('127.')]
+        assert interfaces
+        external_closed = True
+        for address in interfaces:
+            try:
+                with socket.create_connection((address,port),timeout=2):
+                    external_closed = False
+            except OSError:
+                pass
+        print(json.dumps({'service_active':True,'status':status,'bytes':len(payload),'sha256':hashlib.sha256(payload).hexdigest(),'loopback_only':loopback_only,'external_interfaces_closed':external_closed}))
+    ''')
+    assert result["service_active"] and result["status"] == 200 and result["bytes"] > 0
+    assert result["loopback_only"] and result["external_interfaces_closed"]
 
 
 def test_agent_bcrypt_private_staging_and_actual_nginx(vm):

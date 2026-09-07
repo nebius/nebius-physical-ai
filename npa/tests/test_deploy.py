@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import httpx
@@ -284,7 +285,7 @@ output "rendered" {{
     ["fiftyone", "lerobot", "lerobot-container", "cosmos", "genesis", "groot", "agent"],
 )
 def test_every_cloud_init_variant_omits_storage_secrets(
-    tmp_path: Path, workbench_type: str
+    tmp_path: Path, workbench_type: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     terraform = shutil.which("terraform")
     if terraform is None:
@@ -343,6 +344,60 @@ output "rendered" {{ value = local.rendered }}
         assert loader["permissions"] == "0644"
         assert loader["encoding"] == "b64"
         assert base64.b64decode(loader["content"]) == (template.parent / "load_env.sh").read_bytes()
+    if workbench_type == "fiftyone":
+        from types import SimpleNamespace
+
+        files = {item["path"]: item for item in cloud_init["write_files"]}
+        assert "FIFTYONE_DEFAULT_APP_ADDRESS=127.0.0.1" in files["/etc/npa-fiftyone/env"]["content"]
+        app_source = files["/opt/fiftyone/app.py"]["content"]
+        launched = {}
+
+        def launch_app(_dataset, **kwargs):
+            launched.update(kwargs)
+            return SimpleNamespace(close=lambda: launched.update(closed=True))
+
+        def stop_loop(_seconds):
+            raise RuntimeError("stop rendered application loop")
+
+        monkeypatch.setitem(sys.modules, "fiftyone", SimpleNamespace(launch_app=launch_app))
+        monkeypatch.setenv("FIFTYONE_DEFAULT_APP_ADDRESS", "0.0.0.0")
+        monkeypatch.setenv("FIFTYONE_DATASET_NAME", "")
+        monkeypatch.setattr("signal.signal", lambda *_args: None)
+        monkeypatch.setattr("time.sleep", stop_loop)
+        with pytest.raises(RuntimeError, match="stop rendered application loop"):
+            exec(compile(app_source, "rendered-fiftyone-app.py", "exec"), {})
+        assert launched["address"] == "127.0.0.1"
+        assert launched["closed"] is True
+        command = cloud_init["runcmd"][0]
+        assert '"default_app_address": "127.0.0.1"' in command
+        failed_readiness = command.split('echo "ERROR: FiftyOne app did not respond', 1)[1]
+        assert "exit 1" in failed_readiness
+        assert "exit 0" not in failed_readiness
+        readiness = "for _ in $(seq 1 120); do" + command.split("for _ in $(seq 1 120); do", 1)[1]
+        for response in (0, 1):
+            result = subprocess.run(
+                ["/bin/sh", "-c", f"curl() {{ return {response}; }}; sleep() {{ :; }}; systemctl() {{ :; }}; " + readiness],
+                text=True, capture_output=True, check=False,
+            )
+            assert result.returncode == response
+            assert ("NPA_FIFTYONE_APP_READY" in result.stdout) == (response == 0)
+
+
+def test_fiftyone_cloud_init_uses_the_verified_native_dependency_closure() -> None:
+    from npa.cli import fiftyone
+
+    template = (PACKAGE_ROOT / "src/npa/deploy/terraform/cloud_init.yaml.tpl").read_text()
+    native = template.split('%{ if workbench_type == "fiftyone" ~}')[2].split("%{ else ~}", 1)[0]
+    for requirement in ('"datasets>=5.0.1"', '"pillow>=12.3.0"', '"paramiko>=5.0.0"'):
+        assert requirement in native
+    assert fiftyone.FIFTYONE_MONGODB_VERSION in native
+    assert fiftyone.FIFTYONE_MONGODB_SHA256 in native
+    assert fiftyone.FIFTYONE_MONGOD_SHA256 in native
+    assert native.count("sha256sum -c -") == 2
+    assert '"$FIFTYONE_VENV/bin/python" -m pip check' in native
+    variables = (PACKAGE_ROOT / "src/npa/deploy/terraform/variables.tf").read_text()
+    version = variables.split('variable "fiftyone_version" {', 1)[1].split("}", 1)[0]
+    assert f'default     = "{fiftyone.FIFTYONE_VERSION}"' in version
 
 
 def test_terraform_splits_and_fails_closed_ingress() -> None:
