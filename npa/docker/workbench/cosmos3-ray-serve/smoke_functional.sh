@@ -14,13 +14,8 @@ from pathlib import Path
 print(Path(f"/proc/{sys.argv[1]}/stat").read_text().rsplit(")", 1)[1].split()[19])
 PY
 )"
-cleanup() {
-  result=$?
-  trap - EXIT
-  trap '' INT TERM
-  if [ -n "${server_pid:-}" ]; then
-    signal_error=0
-    /opt/npa/.venv/bin/python - "${server_pid}" "${work}/server-start.json" <<'PY' || signal_error=$?
+signal_smoke_server() {
+    /opt/npa/.venv/bin/python - "${server_pid}" "${work}/server-start.json" <<'PY'
 import json
 import os
 import select
@@ -33,27 +28,27 @@ identity_path = Path(sys.argv[2])
 try:
     descriptor = os.pidfd_open(pid)
 except ProcessLookupError:
+    sys.exit(0)
+try:
+    # Cancellation may arrive before the launcher records its birth. Wait
+    # for that record or exact pidfd exit, without following a reused PID.
+    while not identity_path.exists():
+        if select.select([descriptor], [], [], 0.05)[0]:
+            sys.exit(0)
+    identity = json.loads(identity_path.read_text())
+    assert identity["pid"] == pid
+    expected = identity["start_ticks"]
+    actual = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[19]
+    if actual == expected:
+        signal.pidfd_send_signal(descriptor, signal.SIGTERM)
+except (FileNotFoundError, ProcessLookupError):
     pass
-else:
-    try:
-        # Cancellation may arrive before the launcher records its birth. Wait
-        # for that record or exact pidfd exit, without following a reused PID.
-        while not identity_path.exists():
-            if select.select([descriptor], [], [], 0.05)[0]:
-                sys.exit(0)
-        identity = json.loads(identity_path.read_text())
-        assert identity["pid"] == pid
-        expected = identity["start_ticks"]
-        actual = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[19]
-        if actual == expected:
-            signal.pidfd_send_signal(descriptor, signal.SIGTERM)
-    except (FileNotFoundError, ProcessLookupError):
-        pass
-    finally:
-        os.close(descriptor)
+finally:
+    os.close(descriptor)
 PY
-    server_exit=0
-    wait "${server_pid}" || server_exit=$?
+}
+
+record_smoke_server_join() {
     /opt/npa/.venv/bin/python - "${work}" "${server_pid}" \
       "$$" "${parent_start_ticks}" \
       "${server_exit}" "${signal_error}" <<'PY'
@@ -73,6 +68,18 @@ identity = json.loads(start_file.read_text()) if start_file.exists() else {}
     "wait_exit_code": int(code), "state": "joined",
 }) + "\n")
 PY
+}
+
+cleanup() {
+  result=$?
+  trap - EXIT
+  trap '' INT TERM
+  if [ -n "${server_pid:-}" ]; then
+    signal_error=0
+    signal_smoke_server || signal_error=$?
+    server_exit=0
+    wait "${server_pid}" || server_exit=$?
+    record_smoke_server_join
     if [ "${signal_error}" -ne 0 ] && [ "${result}" -eq 0 ]; then result=1; fi
   fi
   exit "${result}"

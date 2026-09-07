@@ -237,27 +237,9 @@ def test_guardrail_preparation_failure_refuses_server_start(
     assert not credential.exists()
 
 
-def test_batch_ingress_keeps_json_body_after_ray_signature_rewrite(monkeypatch, tmp_path):
-    import inspect
+def _install_batch_ingress_modules(monkeypatch, ingress):
     import sys
     from types import ModuleType, SimpleNamespace
-
-    from fastapi import Depends, FastAPI
-    from fastapi.testclient import TestClient
-
-    from npa.workbench.cosmos import ray_server
-
-    class CapturedIngress(Exception):
-        pass
-
-    captured = {}
-
-    def ingress(api):
-        def capture(cls):
-            captured["router"] = cls(None)
-            raise CapturedIngress
-
-        return capture
 
     ray = ModuleType("ray")
     serve = ModuleType("ray.serve")
@@ -279,6 +261,24 @@ def test_batch_ingress_keeps_json_body_after_ray_signature_rewrite(monkeypatch, 
         "cosmos_framework.inference.ray.serve": upstream_serve,
     }.items():
         monkeypatch.setitem(sys.modules, name, module)
+
+
+def _capture_batch_router(monkeypatch, tmp_path):
+    from npa.workbench.cosmos import ray_server
+
+    class CapturedIngress(Exception):
+        pass
+
+    captured = {}
+
+    def ingress(api):
+        def capture(cls):
+            captured["router"] = cls(None)
+            raise CapturedIngress
+
+        return capture
+
+    _install_batch_ingress_modules(monkeypatch, ingress)
     monkeypatch.setenv("NPA_IMAGE_SOURCE_SHA", "a" * 40)
     monkeypatch.setenv("NPA_COSMOS3_RAY_TOKEN", "test-application-token")
     monkeypatch.setenv("HF_TOKEN", "test-model-token")
@@ -286,7 +286,14 @@ def test_batch_ingress_keeps_json_body_after_ray_signature_rewrite(monkeypatch, 
     with pytest.raises(CapturedIngress):
         ray_server._run_server()
 
-    router = captured["router"]
+    return captured["router"]
+
+
+def _rewritten_batch_api(router):
+    import inspect
+
+    from fastapi import Depends, FastAPI
+
     endpoint = type(router).batches
     signature = inspect.signature(endpoint)
     parameters = list(signature.parameters.values())
@@ -299,6 +306,13 @@ def test_batch_ingress_keeps_json_body_after_ray_signature_rewrite(monkeypatch, 
     ])
     api = FastAPI()
     api.post("/v1/batches")(endpoint)
+    return api
+
+
+def test_batch_ingress_keeps_json_body_after_ray_signature_rewrite(monkeypatch, tmp_path):
+    from fastapi.testclient import TestClient
+
+    api = _rewritten_batch_api(_capture_batch_router(monkeypatch, tmp_path))
     schema = api.openapi()["paths"]["/v1/batches"]["post"]
     assert "application/json" in schema["requestBody"]["content"]
     assert all(parameter["name"] != "body" for parameter in schema.get("parameters", []))

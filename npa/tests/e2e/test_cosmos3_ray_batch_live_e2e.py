@@ -24,22 +24,7 @@ from npa.workbench.cosmos import ray_serve
 pytestmark = pytest.mark.e2e
 
 
-def test_guarded_batch_publishes_two_decodable_samples_and_rejects_incomplete_response(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    prefix = os.environ.get("NPA_COSMOS3_RAY_LIVE_OUTPUT_URI", "").rstrip("/")
-    if not prefix:
-        pytest.skip("requires an operator-owned Cosmos Ray live output prefix")
-    assert prefix.startswith("s3://")
-    assert os.environ.get(ray_serve.DEFAULT_ENDPOINT_ENV)
-    assert os.environ.get(ray_serve.DEFAULT_TOKEN_ENV)
-    ready = ray_serve.service_health()
-    assert ready["status"] == "ready"
-    assert ready["guardrails"] is True
-    storage = StorageClient.from_environment()
-    request_id = uuid.uuid4().hex
-    root = prefix + "/" + request_id
+def _conditioning_uri(storage, tmp_path, root):
     # Exercise the real server's S3 staging and the client's implicit media
     # inference with an encoded extension, using only synthetic input pixels.
     conditioning = tmp_path / "conditioning.jpg"
@@ -49,6 +34,10 @@ def test_guarded_batch_publishes_two_decodable_samples_and_rejects_incomplete_re
     conditioning_uri = storage.upload_file(str(conditioning), root + "/conditioning.jpg")
     assert conditioning_uri.endswith(".jpg")
     encoded_conditioning_uri = conditioning_uri[:-4] + "%2Ejpg"
+    return encoded_conditioning_uri
+
+
+def _synthetic_request(request_id, encoded_conditioning_uri):
     request = {
         "model": "Cosmos3-Nano",
         "request_id": request_id,
@@ -70,18 +59,10 @@ def test_guarded_batch_publishes_two_decodable_samples_and_rejects_incomplete_re
             },
         ],
     }
-    local_request = tmp_path / "input.json"
-    local_request.write_text(json.dumps(request))
-    input_uri = storage.upload_file(str(local_request), root + "/input.json")
-    result = ray_serve.submit_batch(
-        input_path=input_uri,
-        output_path=root + "/outputs/",
-        storage_client=storage,
-    )
-    assert result["status"] == "completed"
-    assert result["request_id"] == request_id
-    assert result["guardrails"] is True
-    assert len(result["artifacts"]) == 2
+    return request
+
+
+def _published_records(storage, tmp_path, root, request, result):
     records = {}
     for name in ["request", "response", "provenance"]:
         path = tmp_path / (name + ".json")
@@ -93,6 +74,10 @@ def test_guarded_batch_publishes_two_decodable_samples_and_rejects_incomplete_re
     modes = {item["args"]["name"]: item["args"]["model_mode"]
              for item in result["structured_outputs"]}
     assert modes == {"red-cube": "text2image", "blue-cube": "image2image"}
+    return records
+
+
+def _verify_sample_images(storage, tmp_path, root, result):
     for index, artifact in enumerate(result["artifacts"]):
         path = tmp_path / f"sample-{index}.jpg"
         storage.download_file(
@@ -105,6 +90,9 @@ def test_guarded_batch_publishes_two_decodable_samples_and_rejects_incomplete_re
             image.load()
             assert image.width > 0 and image.height > 0
 
+
+
+def _reject_incomplete_response(monkeypatch, storage, root, input_uri, records):
     # Replay a malformed copy of the real response without another GPU call.
     # The response itself still declares both real successful samples.
     invalid = copy.deepcopy(records["response"])
@@ -122,3 +110,38 @@ def test_guarded_batch_publishes_two_decodable_samples_and_rejects_incomplete_re
             output_path=root + "/invalid/",
             storage_client=storage,
         )
+
+
+def test_guarded_batch_publishes_two_decodable_samples_and_rejects_incomplete_response(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prefix = os.environ.get("NPA_COSMOS3_RAY_LIVE_OUTPUT_URI", "").rstrip("/")
+    if not prefix:
+        pytest.skip("requires an operator-owned Cosmos Ray live output prefix")
+    assert prefix.startswith("s3://")
+    assert os.environ.get(ray_serve.DEFAULT_ENDPOINT_ENV)
+    assert os.environ.get(ray_serve.DEFAULT_TOKEN_ENV)
+    ready = ray_serve.service_health()
+    assert ready["status"] == "ready"
+    assert ready["guardrails"] is True
+    storage = StorageClient.from_environment()
+    request_id = uuid.uuid4().hex
+    root = prefix + "/" + request_id
+    conditioning_uri = _conditioning_uri(storage, tmp_path, root)
+    request = _synthetic_request(request_id, conditioning_uri)
+    local_request = tmp_path / "input.json"
+    local_request.write_text(json.dumps(request))
+    input_uri = storage.upload_file(str(local_request), root + "/input.json")
+    result = ray_serve.submit_batch(
+        input_path=input_uri,
+        output_path=root + "/outputs/",
+        storage_client=storage,
+    )
+    assert result["status"] == "completed"
+    assert result["request_id"] == request_id
+    assert result["guardrails"] is True
+    assert len(result["artifacts"]) == 2
+    records = _published_records(storage, tmp_path, root, request, result)
+    _verify_sample_images(storage, tmp_path, root, result)
+    _reject_incomplete_response(monkeypatch, storage, root, input_uri, records)

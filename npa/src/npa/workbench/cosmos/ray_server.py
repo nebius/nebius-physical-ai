@@ -23,7 +23,18 @@ from npa.workbench.storage_scope import StorageAuthorizationError, StorageScope
 
 
 def main() -> None:
-    """Load Cosmos3-Nano once and serve real dynamically batched generation."""
+    """Load Cosmos3-Nano once and serve real dynamically batched generation.
+
+    Args:
+        None; service configuration comes from environment variables.
+
+    Returns:
+        None; serves until the runtime stops.
+
+    Raises:
+        RuntimeError: Authentication, guarded startup, or service setup fails.
+        OSError: Private credential or tokenizer files cannot be created.
+    """
 
     token_file = _require_ray_authentication()
     try:

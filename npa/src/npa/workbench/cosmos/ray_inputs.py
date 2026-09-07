@@ -38,7 +38,17 @@ def _download_uri(target: AuthorizedUri) -> str:
 
 
 def validate_sample_s3_keys(raw: dict[str, Any]) -> None:
-    """Check the shared staging key contract before a client submits inference."""
+    """Check the shared staging key contract before a client submits inference.
+
+    Args:
+        raw: Native sample overrides whose supported conditioning fields are checked.
+
+    Returns:
+        None.
+
+    Raises:
+        StorageAuthorizationError: An S3 URI cannot identify its exact download key.
+    """
     for field in _INPUT_FIELDS:
         value: Any = raw
         for part in field:
@@ -57,6 +67,19 @@ def stage_sample_inputs(
     stage media into the service's allowed S3 roots; only those exact objects
     are downloaded into a fresh request directory. Defaults files are refused
     because upstream merges their contents into the sample after validation.
+
+    Args:
+        raw: Native sample overrides containing conditioning inputs.
+        destination: New private directory for authorized downloads.
+        scope: Explicit S3 roots the service permits reading.
+        storage_client: Optional storage transport; defaults to configured storage.
+
+    Returns:
+        A copied sample with authorized inputs replaced by staged local paths.
+
+    Raises:
+        StorageAuthorizationError: A sample requests an unsupported or unowned input.
+        OSError: The private destination cannot be created or written.
     """
     staged = copy.deepcopy(raw)
     inputs: list[tuple[dict[str, Any], str, Any]] = []
