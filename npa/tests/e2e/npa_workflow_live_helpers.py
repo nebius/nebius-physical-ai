@@ -1,4 +1,21 @@
-"""Shared helpers for live npa.workflow infra tests."""
+"""Shared helpers for live npa.workflow infra tests.
+
+``NPA_E2E_S3_PREFIX`` optionally selects the exact E2E root within the live
+bucket, replacing ``npa-workflow-e2e/{run_id}``. It is a key prefix, not a bucket
+URI. The workflow name is appended; no run ID is appended to an explicit root.
+Choose a fresh root for each invocation and keep it unchanged through readback.
+Only ASCII letters, digits, ``_``, ``-``, ``.`` and separating ``/`` are accepted;
+empty, ``.`` and ``..`` segments (including leading/trailing slashes) are rejected.
+Explicit values are never stripped, decoded, normalized or template-expanded.
+
+This scopes ``config.prefix``, its input seeds and COLMAP output verification.
+It does not rebase independent fixture/source URIs: Sim2Real trigger roots,
+dataset raw-sensor fixtures, insights fixture/run roots, operator-supplied SONIC
+or LeRobot sources, and the exported shared SONIC motion fixture constant are
+unchanged and may be outside this root. Other live-test modules may also use
+independent roots.
+Those paths require separate authorization; this is not a suite-wide S3 sandbox.
+"""
 
 from __future__ import annotations
 
@@ -21,6 +38,7 @@ from npa.orchestration.npa_workflow.submit_matrix import (
     selected_submit_cases,
 )
 
+# Legacy shared fixture API; intentionally not rebased by NPA_E2E_S3_PREFIX.
 SONIC_MOTION_FIXTURE_PREFIX = "npa-workflow-e2e/fixtures/sonic-motion-soma-g1/"
 NUREC_COLMAP_DATASET = "nvidia/PhysicalAI-NuRec-PPISP"
 NUREC_COLMAP_REVISION = "2521064a3af6ab1c1caa2ba1b01ddde7eecded69"
@@ -209,6 +227,23 @@ def live_bucket(e2e_project: str | None) -> str:
     return bucket
 
 
+def _live_s3_root(run_id: str) -> str:
+    """Resolve the root before any client creation, file write or seed timer."""
+    explicit = os.environ.get("NPA_E2E_S3_PREFIX")
+    if explicit is None:
+        return f"npa-workflow-e2e/{run_id}"
+    if not re.fullmatch(r"[A-Za-z0-9._/-]+", explicit) or any(
+        segment in {"", ".", ".."} for segment in explicit.split("/")
+    ):
+        # Do not echo the operator's potentially private selector in failures.
+        raise ValueError(
+            "NPA_E2E_S3_PREFIX must be a nonempty relative key prefix using "
+            "ASCII letters, digits, '.', '_', '-' and separating '/'; "
+            "empty or dot segments and bucket URIs are not allowed"
+        )
+    return explicit
+
+
 def seed_live_workflow_inputs(
     *,
     spec_name: str,
@@ -216,13 +251,13 @@ def seed_live_workflow_inputs(
     run_id: str,
     e2e_project: str | None = None,
 ) -> None:
-    """Stage each workflow's actual source inputs under its isolated S3 prefix."""
+    """Stage actual inputs; independent shared-root exceptions are listed above."""
 
     from io import BytesIO
 
     from npa.clients.project_credentials import s3_client_for_project
 
-    marker = f"npa-workflow-e2e/{run_id}/{spec_name.replace('.yaml', '')}"
+    marker = f"{_live_s3_root(run_id)}/{spec_name.replace('.yaml', '')}"
     client = s3_client_for_project(e2e_project, allow_host_creds=True)
 
     if spec_name == "nurec-colmap-reconstruct.yaml":
@@ -573,7 +608,7 @@ def seed_trigger_inbox_later(
 
     from npa.clients.project_credentials import s3_client_for_project
 
-    marker = f"npa-workflow-e2e/{run_id}/{spec_name.replace('.yaml', '')}"
+    marker = f"{_live_s3_root(run_id)}/{spec_name.replace('.yaml', '')}"
 
     def _seed() -> None:
         client = s3_client_for_project(e2e_project, allow_host_creds=True)
@@ -957,8 +992,8 @@ def assert_nurec_colmap_live_outputs(
 
     from npa.clients.project_credentials import s3_client_for_project
 
+    root = f"{_live_s3_root(run_id)}/nurec-colmap-reconstruct/"
     client = s3_client_for_project(e2e_project, allow_host_creds=True)
-    root = f"npa-workflow-e2e/{run_id}/nurec-colmap-reconstruct/"
     sequence = f"{root}ncore/sequence/"
 
     def read_json(key: str) -> dict:
@@ -1015,8 +1050,9 @@ def materialize_live_spec(
     bucket: str,
     run_id: str,
 ) -> Path:
-    """Copy a golden spec with the live bucket and a unique e2e prefix."""
+    """Copy a golden spec with the live bucket and chosen E2E root."""
 
+    marker = _live_s3_root(run_id)
     text = resolve_spec_path(name).read_text(encoding="utf-8")
     if name == "nurec-colmap-reconstruct.yaml":
         # This case proves CPU conversion followed by RTX reconstruction. Generic
@@ -1031,7 +1067,6 @@ def materialize_live_spec(
                     f"unset {variable} for the explicit CPU/RTX COLMAP workflow"
                 )
     text = text.replace("bucket: example-bucket", f"bucket: {bucket}")
-    marker = f"npa-workflow-e2e/{run_id}"
     # Keep per-spec prefix tokens but anchor runs under a shared e2e root.
     text = re.sub(
         r'(prefix:\s*")([^"]*)(")',

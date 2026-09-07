@@ -86,6 +86,13 @@ must fail the check. Keep matches and input policy private; investigate each
 finding against exact bytes and provenance before publication. A public upstream
 filename alone is not proof that a match is harmless.
 
+Distinguish reading embedded archives as stored from inspecting their unpacked
+members. The current complete-byte core does the former; supplemental source
+fixture review must state its actual unpacking coverage. An extracted member's
+hash cannot approve its compressed parent. Preserve exact record kinds and
+finding populations when applying reviewed content-bound policy; unsupported
+kinds and unresolved semantics remain unresolved, not new scanner exceptions.
+
 ## Refusal Conditions
 
 Stop before publication if any mandatory evidence is missing, a scan is

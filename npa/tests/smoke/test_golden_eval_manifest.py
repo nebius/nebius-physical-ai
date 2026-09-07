@@ -394,7 +394,9 @@ def test_every_manifest_entry_resolves_to_a_real_image() -> None:
             # Quarantine inventories do not promise a release exists. An
             # explicit full-SHA development tag must still resolve for testing.
             tag = "dev-" + "a" * 40 if name in PUBLICATION_QUARANTINE_TOOLS else None
-            ref = container_image_for_tool(name, registry="registry.example/test", tag=tag)
+            ref = container_image_for_tool(
+                name, registry="registry.example/test", tag=tag
+            )
         assert ref.rsplit("/", 1)[-1].startswith(spec.image + ":"), (
             f"{name}: manifest declares image {spec.image!r} but resolves to {ref!r}"
         )

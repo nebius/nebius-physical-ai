@@ -675,7 +675,9 @@ def test_image_tool_is_a_known_container_image(monkeypatch) -> None:
                     tool, registry="cr.example.invalid/reg", tag="dev-" + "0" * 40
                 )
             else:
-                image = container_image_for_tool(tool, registry="cr.example.invalid/reg")
+                image = container_image_for_tool(
+                    tool, registry="cr.example.invalid/reg"
+                )
             assert image.startswith("cr.example.invalid/reg/"), case.spec
 
 
