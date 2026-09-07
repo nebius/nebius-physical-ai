@@ -164,9 +164,12 @@ images:
       and CLI, adds proven missing worker prerequisites and pinned-source
       checkout support, and forwards orchestrator arguments. A separate writable
       /opt/npa-venv hosts NPA without modifying the pinned /app/.venv service.
-      Adds no model weights, data or credentials. Inherited NGC payload remains restricted;
-      complete built-layer licensing/security scans, exact-digest bootstrap
-      proof, and real native workflow acceptance are required before use.
+      Adds no model weights, data or credentials. The accepted operator-private
+      digest passed complete built-layer license/security/SBOM review,
+      exact-digest bootstrap, real RF-DETR inference, and complete native EVG
+      acceptance. The inherited NGC payload remains restricted; this evidence
+      does not grant redistribution rights, and every future digest must repeat
+      the gates.
   paidf-captioning-sky:
     dockerfile: paidf-captioning-sky/Dockerfile
     skypilot_bootstrap_contract: skypilot-0.12.2-v1
@@ -184,9 +187,12 @@ images:
       and CLI, adds proven missing worker prerequisites and pinned-source
       checkout support, and forwards orchestrator arguments. A separate writable
       /opt/npa-venv hosts NPA without modifying the pinned /app/.venv service.
-      Adds no model weights, data or credentials. Inherited NGC payload remains restricted;
-      complete built-layer licensing/security scans, exact-digest bootstrap
-      proof, and real native workflow acceptance are required before use.
+      Adds no model weights, data or credentials. The accepted operator-private
+      digest passed complete built-layer license/security/SBOM review,
+      exact-digest bootstrap, real B200 CUVID decoding, and complete native EVG
+      acceptance. The inherited NGC payload remains restricted; this evidence
+      does not grant redistribution rights, and every future digest must repeat
+      the gates.
   paidf-visual-qa-sky:
     dockerfile: paidf-visual-qa-sky/Dockerfile
     skypilot_bootstrap_contract: skypilot-0.12.2-v1
@@ -204,9 +210,12 @@ images:
       and CLI, adds proven missing worker prerequisites and pinned-source
       checkout support, and forwards orchestrator arguments. A separate writable
       /opt/npa-venv hosts NPA without modifying the pinned /app/.venv service.
-      Adds no model weights, data or credentials. Inherited NGC payload remains restricted;
-      complete built-layer licensing/security scans, exact-digest bootstrap
-      proof, and real native workflow acceptance are required before use.
+      Adds no model weights, data or credentials. The accepted operator-private
+      digest passed complete built-layer license/security/SBOM review,
+      exact-digest bootstrap, real B200 CUVID decoding, and qualified native EVG
+      protocol acceptance. The inherited NGC payload remains restricted; this
+      evidence does not grant redistribution rights, and every future digest
+      must repeat the gates.
   paidf-attribute-search-sky:
     dockerfile: paidf-attribute-search-sky/Dockerfile
     skypilot_bootstrap_contract: skypilot-0.12.2-v1
@@ -224,9 +233,12 @@ images:
       and CLI, adds proven missing worker prerequisites and pinned-source
       checkout support, and forwards orchestrator arguments. A separate writable
       /opt/npa-venv hosts NPA without modifying the pinned /app/.venv service.
-      Adds no model weights, data or credentials. Inherited NGC payload remains restricted;
-      complete built-layer licensing/security scans, exact-digest bootstrap
-      proof, and real native workflow acceptance are required before use.
+      Adds no model weights, data or credentials. The accepted operator-private
+      digest passed complete built-layer license/security/SBOM review,
+      exact-digest bootstrap, and native attribute search in the completed IAA
+      and EVG workflows. The inherited NGC payload remains restricted; this
+      evidence does not grant redistribution rights, and every future digest
+      must repeat the gates.
   paidf-image-edit-sky:
     dockerfile: paidf-image-edit-sky/Dockerfile
     skypilot_bootstrap_contract: skypilot-0.12.2-v1
@@ -242,8 +254,13 @@ images:
       for CVE-2026-48746. Adds sshd, rsync, sudo, and argument forwarding while
       preserving the upstream model runtime. An independent /opt/npa-venv
       hosts NPA so dependency installation cannot replace the vendor stack.
-      No weights or operator inputs are added. Private-registry-only pending complete dependency redistribution
-      review, built-byte security scanning, and real GPU acceptance.
+      No weights or operator inputs are added. The accepted operator-private
+      digest passed complete built-layer license/security/SBOM review,
+      exact-digest bootstrap, a real B200 CUDA check, and the complete native
+      IAA workflow. The resolved dependency closure remains private-registry-only
+      pending separate redistribution review; private access and workload
+      acceptance do not grant redistribution rights. Every future digest must
+      repeat the gates.
   paidf-event-video-sky:
     dockerfile: paidf-event-video-sky/Dockerfile
     skypilot_bootstrap_contract: skypilot-0.12.2-v1
@@ -259,8 +276,13 @@ images:
       preserving the upstream model runtime. Hash-pins the Apache-2.0 NLTK 3.10.3
       wheel to fix inherited CVE-2026-79675 and updates distribution kernel headers. An independent /opt/npa-venv
       hosts NPA so dependency installation cannot replace the vendor stack.
-      No weights or operator inputs are added. Private-registry-only pending complete dependency redistribution
-      review, built-byte security scanning, and real GPU acceptance.
+      No weights or operator inputs are added. The accepted operator-private
+      digest passed complete built-layer license/security/SBOM review,
+      exact-digest bootstrap, a real B200 CUDA check, and the complete native
+      EVG workflow. The resolved dependency closure remains private-registry-only
+      pending separate redistribution review; private access and workload
+      acceptance do not grant redistribution rights. Every future digest must
+      repeat the gates.
   paidf-anomalygen-sky:
     dockerfile: paidf-anomalygen-sky/Dockerfile
     skypilot_bootstrap_contract: skypilot-0.12.2-v1
@@ -275,8 +297,20 @@ images:
       redirects two pinned Cosmos framework run-ID calls to W&B's unchanged
       generator, preserving the NVIDIA OpenMDW-1.1 header. The installed
       dependency requirements and source-patch provenance are checked at build
-      time. The resolved dependency closure remains
-      private-registry-only pending a separate redistribution review.
+      time. The accepted operator-private digest passed exact-layer/rootfs
+      inventory, the repository fixed-CRITICAL policy, SPDX SBOM generation,
+      exact-digest bootstrap, offline CPU/runtime probes, and real B200
+      CUDA/FlashAttention/Triton plus four-case native attention checks. Review
+      found no baked gated model weights, credentials, or populated model cache;
+      retained public fixtures are classified separately. The same exact child
+      completed the full native DIG workflow on B200: all 15,000 training
+      iterations with early stopping disabled, evaluator-selected checkpoint
+      13,000, and all 30 requests accounted as 24 generated images plus six
+      text-guardrail blocks. The preset's face blur is not an image-content
+      classifier, so image guardrail enforcement remains false. The resolved
+      dependency closure remains private-registry-only pending a separate
+      redistribution review; neither private access nor acceptance grants
+      redistribution rights. Every future digest must repeat the gates.
   openpi:
     dockerfile: openpi/Dockerfile
     tier: job

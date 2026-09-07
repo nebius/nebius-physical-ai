@@ -1,14 +1,12 @@
 """Trigger config must reach the real watcher after submit --var overrides."""
 
-from dataclasses import asdict
 import hashlib
 import json
+from dataclasses import asdict
 from pathlib import Path
 
-import npa
 import pytest
 import yaml
-
 from npa.orchestration.npa_workflow.errors import NpaWorkflowError
 from npa.orchestration.npa_workflow.interpreter import _make_context, wait_for_trigger
 from npa.orchestration.npa_workflow.runtime import _workflow_identity, s3_trigger_waiter
@@ -19,8 +17,8 @@ from npa.orchestration.npa_workflow.submit import (
 )
 
 SHIPPED = (
-    Path(npa.__file__).resolve().parents[2]
-    / "workflows/workbench/npa-workflows/token-factory-trigger-watch.yaml"
+    Path(__file__).resolve().parents[4]
+    / "workflows/testing/token-factory-trigger-watch.yaml"
 )
 
 

@@ -212,9 +212,14 @@ not a model or data-path substitution.
 
 ### Native live validation evidence
 
-The [per-image Rerun evidence](paidf-image-evidence.md) binds six distinct IAA
-and EVG compatibility images to their completed runs and real visual outputs.
-The seventh AnomalyGen/DIG recording remains pending the full native workload.
+The [per-image Rerun evidence](paidf-image-evidence.md) reconciles exactly seven
+restricted compatibility images and their seven digest/run-bound recordings.
+The seven-image count is independently asserted against the packaging contract;
+it is not inferred from a public image catalog. The selected content-addressed
+AnomalyGen recording is
+`npa-paidf-anomalygen-sky-fb099f7b670fede587398c1d5374db7cb6a231bad0fc839432c9da49b6870074.rrd`.
+An earlier immutable DIG pair remains retained but superseded because its
+normalized upstream repository attribution did not match the pinned source.
 
 IAA completed all nine states on reserved B200 capacity from source
 `39120bc9b567d6400d4fe955988132ba1f6ce682`. The upstream attribute evaluator
@@ -271,8 +276,70 @@ samples observed zero compute utilization and resident memory; the earlier
 generation attempt separately recorded a 100% utilization peak and 86,774 MiB
 peak resident memory. Exact run locations remain in owner-only evidence.
 
-DIG image and full native acceptance remain pending; image and CPU protocol
-checks do not replace its fine-tuning and generation workload.
+DIG's operator-private image was built and published from
+`743d87df3a19fc0571d95c1d98b2bc53a2b438e9`, with runnable child digest
+`sha256:5aff3f4b40a4340ece2594c567ce8e5683a82ddc295c39d80588e228a13a28cf`.
+The distinct OCI index/config identities, 22-diff-ID/21-blob rootfs, 67,908-file
+and 10,673,751,967-byte inventory, 1,683-package SPDX SBOM, and retained
+security findings are recorded in the
+[container catalog](../container-image-catalog.md#external-paidf-runtime-images).
+All 1,924 weight-shaped candidates were reviewed; no gated runtime model
+weights, credential paths, or populated model-cache paths were accepted as
+payload. One JWT-shaped scanner match and six PEM blocks remain retained with
+their exact public-source classifications. The fixed-CRITICAL policy passed,
+which is not a zero-vulnerability claim.
+
+Bootstrap, isolated NPA installation, CUDA dependency imports, offline CPU
+`torchrun`, and W&B fresh, persisted-run, and retry probes passed. The same
+accepted image then passed actual B200 CUDA/FlashAttention/Triton checks and all
+four native causal/full attention cases at the same NPA source. FlashAttention
+maximum absolute error was `0.000273943`, Triton maximum absolute error was `0`,
+and maximum relative L2 was `0.00305612 < 0.015`. Training used default NATTEN
+`blackwell-fmha` with Q/K/V gradients; inference used default cuDNN. The
+diagnostic loaded no model weights and did not run a full model forward.
+
+Native DIG run `paidf-dig-15395d41fe18` completed all four logical states on the
+exact accepted B200 image. The durable resume reused the valid attempt-1
+`record-upstream` state from `743d87df3a19fc0571d95c1d98b2bc53a2b438e9`,
+which took 185 seconds. Attempt 8, bound to
+`ff198c6c289ee05ec5953e5968dc2c626ab27eee`, completed
+`prepare-base-checkpoints` in 1,002 seconds, `finetune` in 4,710 seconds, and
+`anomaly-infer` in 1,051 seconds. It did not rerun or relabel the preserved
+first state as attempt-8 work. A separate source-bound native validation replay
+returned `passed` after reopening the terminal artifacts.
+
+The unchanged fresh-finetune recipe reached exactly 15,000 iterations, with
+validation and checkpoint saves every 1,000 iterations, early stopping disabled,
+and no early-stop artifact. Evaluator-backed selection chose checkpoint 13,000,
+whose SHA-256 is
+`f54b720e786229395717f8a6bde9c8a2864735cddcada6f45d147cd5add04f65`;
+its selected score was `0.4711651623249054`, compared with terminal-checkpoint
+score `0.4695567297935487`. The retained trace contains 1,500 loss samples.
+Fifty-six run-bound B200 samples observed maxima of 100% utilization,
+40,688 MiB resident memory, and 945.84 W.
+All 30 request indices were accounted as 24 generated RGB images and six
+text-guardrail blocks. The 24 images total 605,744 bytes and have 24 native COCO
+annotations in one label file. The anomaly subtree contains 293 objects and
+3,541,820 bytes. The stable whole-run inventory contains 5,007 objects and
+157,040,084,602 bytes, including runtime-fetched checkpoints. Its media-manifest
+SHA-256 is
+`c8eb3b5da00dbfabf2ff3e4b3fd3f96b7d73a827e26227dbdf847127059fb115`;
+the labels SHA-256 is
+`b330be50a83692d05a5bdc692e4d84ff2e7645991d891b1eabe07d78e33d06e8`.
+The inference report measured 98.845 seconds across its internal model path,
+including 22.044 seconds of model initialization, 2.491 seconds of guardrail
+initialization, 74.264 seconds of generation (3.094 seconds per emitted image),
+and 6.452 seconds of guardrail work, inside the 1,051-second workflow-state wall
+time. Its upstream timing summary is 1,261 bytes with SHA-256
+`9c6738a56d9b2fc7d593b0d9b83e50497b1c601ba7fddbeba35bc046457ed5c3`.
+
+The real Qwen text guardrail was enabled, enforcing, and failed closed before
+generation on invalid results. Image enforcement remained false because the
+upstream image preset performs face blurring but has no image-content
+classifier. This is a recorded limitation, not an implied image safety gate.
+Gated checkpoints and data remain runtime fetches, and private acceptance does
+not grant redistribution rights. Day-0 USD preparation and PCBA real-alignment,
+B300 and RTX PRO 6000 acceptance, and live browser switching remain unverified.
 
 > **Want the from-zero runbook?** See
 > [physical-ai-data-factory-deploy.md](physical-ai-data-factory-deploy.md) for a

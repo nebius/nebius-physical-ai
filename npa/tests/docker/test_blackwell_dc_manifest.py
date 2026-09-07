@@ -151,7 +151,15 @@ def test_gpu_agnostic_entries_need_no_arch_validation(entries: list[dict]) -> No
 
 @pytest.mark.parametrize(
     "role",
-    ["image-edit", "event-video", "detection", "captioning", "visual-qa", "attribute-search"],
+    [
+        "anomalygen",
+        "image-edit",
+        "event-video",
+        "detection",
+        "captioning",
+        "visual-qa",
+        "attribute-search",
+    ],
 )
 def test_paidf_publication_stays_restricted_and_digest_bound(
     manifest: dict, entries: list[dict], role: str
@@ -168,7 +176,9 @@ def test_paidf_publication_stays_restricted_and_digest_bound(
     assert re.fullmatch(r"sha256:[0-9a-f]{64}", proof["validated_digest"])
     assert f"{name}@{proof['validated_digest']}" in catalog
     assert re.fullmatch(r"[0-9a-f]{40}", proof["source_commit"])
-    assert proof["skypilot_bootstrap_contract"] == contract["skypilot_bootstrap_contract"]
+    assert (
+        proof["skypilot_bootstrap_contract"] == contract["skypilot_bootstrap_contract"]
+    )
     assert "published_tag" not in entry and "published_registries" not in entry
     assert "published_registries" not in proof
 
@@ -201,7 +211,122 @@ def test_paidf_hardware_validation_keeps_actual_b200_and_workflow_scopes_separat
     if workflow == "IAA":
         assert "full nine-state native IAA workflow" in entry["notes"]
     else:
-        assert "all 12 logical stages and independent final acceptance" in entry["notes"]
+        assert (
+            "all 12 logical stages and independent final acceptance" in entry["notes"]
+        )
+
+
+def test_paidf_anomalygen_records_component_and_full_dig_proofs_separately(
+    manifest: dict, entries: list[dict]
+) -> None:
+    name = "npa-paidf-anomalygen-sky"
+    entry = next(item for item in entries if item["name"] == name)
+    proof = manifest["validation_evidence"][name]
+
+    assert entry["verdict"] == "ready" and entry["validation"] == "validated"
+    assert entry["measured_python"] == proof["measured_python"] == "3.13.15"
+    assert entry["measured_torch"] == proof["measured_torch"] == "2.13.0+cu132"
+    assert entry["measured_cuda"] == proof["measured_cuda"] == "13.2"
+    assert "measured_arch_list" not in entry and "measured_arch_list" not in proof, (
+        "the accepted probe executed on B200 but did not record the whole wheel arch list"
+    )
+
+    assert proof["oci_index_digest"] != proof["validated_digest"]
+    assert proof["config_digest"] not in {
+        proof["oci_index_digest"],
+        proof["validated_digest"],
+    }
+    assert proof["byte_audit_size"] == 757547
+    assert proof["sbom_size"] == 4282800 and proof["sbom_packages"] == 1683
+    for key in ("byte_audit_sha256", "sbom_sha256", "diagnostic_review_sha256"):
+        assert re.fullmatch(r"[0-9a-f]{64}", proof[key])
+    assert proof["vulnerability_inventory"] == {
+        "CRITICAL": {"total": 5, "with_fixed_version": 0},
+        "HIGH": {"total": 186, "with_fixed_version": 13},
+        "MEDIUM": {"total": 2173, "with_fixed_version": 90},
+        "LOW": {"total": 268, "with_fixed_version": 43},
+        "UNKNOWN": {"total": 3, "with_fixed_version": 2},
+    }
+    assert proof["fixed_critical_policy"] == "passed-without-new-ignore"
+
+    assert set(proof["validated_gpus"]) == {"B200"}
+    b200 = proof["validated_gpus"]["B200"]
+    assert b200["capability"] == "10.0" and b200["result"] == "passed"
+    assert b200["flash_attn_max_abs_error"] == pytest.approx(0.0002739429473876953)
+    assert b200["triton_max_abs_error"] == 0
+    assert b200["attention_cases"] == [
+        "train-causal",
+        "train-full",
+        "infer-causal",
+        "infer-full",
+    ]
+    assert b200["training_backend"] == "natten:blackwell-fmha"
+    assert b200["training_qkv_gradients"] is True
+    assert b200["inference_backend"] == "cudnn"
+    assert b200["largest_relative_l2_error"] == pytest.approx(0.0030561191545551937)
+    assert b200["largest_relative_l2_error"] < b200["relative_l2_limit"]
+    assert b200["model_weights_loaded"] is False
+    assert b200["full_model_forward_executed"] is False
+
+    run = proof["full_workflow_run"]
+    assert run["result"] == "passed"
+    assert run["run_id"] == "paidf-dig-15395d41fe18"
+    assert run["independent_native_validation"] == "passed"
+    assert re.fullmatch(r"[0-9a-f]{40}", run["runtime_source_commit"])
+    assert re.fullmatch(r"[0-9a-f]{40}", run["upstream_workflow_revision"])
+    states = run["states"]
+    assert {state: record["attempt"] for state, record in states.items()} == {
+        "record-upstream": 1,
+        "prepare-base-checkpoints": 8,
+        "finetune": 8,
+        "anomaly-infer": 8,
+    }
+    assert {state: record["duration_seconds"] for state, record in states.items()} == {
+        "record-upstream": 185,
+        "prepare-base-checkpoints": 1002,
+        "finetune": 4710,
+        "anomaly-infer": 1051,
+    }
+    assert states["record-upstream"]["source_commit"] == proof["source_commit"]
+    for state in ("prepare-base-checkpoints", "finetune", "anomaly-infer"):
+        assert states[state]["source_commit"] == run["runtime_source_commit"]
+    assert run["max_iterations"] == 15000
+    assert run["validation_interval"] == run["checkpoint_interval"] == 1000
+    assert run["early_stop_enabled"] is False
+    assert run["early_stop_artifact_count"] == 0
+    assert run["selected_checkpoint_iteration"] == 13000
+    assert re.fullmatch(r"[0-9a-f]{64}", run["selected_checkpoint_sha256"])
+    assert run["selected_checkpoint_score"] == pytest.approx(0.4711651623249054)
+    assert run["terminal_checkpoint_score"] == pytest.approx(0.4695567297935487)
+    assert run["selected_checkpoint_score"] > run["terminal_checkpoint_score"]
+    assert run["loss_sample_count"] == 1500
+    assert run["gpu_observation_samples"] == 56
+    assert run["gpu_utilization_percent_maximum"] == 100
+    assert run["gpu_memory_used_mib_maximum"] == 40688
+    assert run["gpu_power_watts_maximum"] == pytest.approx(945.84)
+    assert run["request_target"] == run["request_accounted"] == 30
+    assert run["generated_images"] == 24
+    assert run["guardrail_blocked"] == 6
+    assert run["generated_images"] + run["guardrail_blocked"] == 30
+    assert run["annotation_count"] == 24
+    assert run["media_total_bytes"] == 605744
+    assert run["output_object_count"] == 293
+    assert run["output_total_bytes"] == 3541820
+    assert run["run_inventory_object_count"] == 5007
+    assert run["run_inventory_total_bytes"] == 157040084602
+    assert run["inference_measured_total_seconds"] == pytest.approx(98.84547686576843)
+    assert run["model_init_seconds"] == pytest.approx(22.04356336593628)
+    assert run["guardrail_init_seconds"] == pytest.approx(2.491468906402588)
+    assert run["generation_seconds"] == pytest.approx(74.26396036148071)
+    assert run["generation_seconds_per_image"] == pytest.approx(3.094331681728363)
+    assert run["guardrail_seconds"] == pytest.approx(6.4521825313568115)
+    assert re.fullmatch(r"[0-9a-f]{64}", run["timing_summary_sha256"])
+    assert re.fullmatch(r"[0-9a-f]{64}", run["media_manifest_sha256"])
+    assert re.fullmatch(r"[0-9a-f]{64}", run["labels_sha256"])
+    assert run["text_guardrail_enforcing"] is True
+    assert run["image_guardrail_enforcing"] is False
+    assert "no image-content classifier" in run["image_guardrail_limitation"]
+    assert proof["full_workflow_acceptance"] == {"DIG": "passed"}
 
 
 @pytest.mark.parametrize("role", ["captioning", "visual-qa"])
@@ -213,8 +338,7 @@ def test_paidf_gpu_agnostic_video_clients_still_require_scheduled_cuvid(
     entry = next(item for item in entries if item["name"] == name)
     proof = manifest["validation_evidence"][name]
     workflow = yaml.safe_load(
-        (ROOT / "workflows/testing/paidf-event-video-generation.yaml")
-        .read_text()
+        (ROOT / "workflows/testing/paidf-event-video-generation.yaml").read_text()
     )
 
     assert entry["verdict"] == "not-applicable"
@@ -270,7 +394,9 @@ def test_published_tags_are_additive_and_arch_labelled(entries: list[dict]) -> N
                 SUPPORTED_TOOL_VERSIONS,
             )
 
-            tool = next(tool for tool, image in CONTAINER_IMAGE_NAMES.items() if image == name)
+            tool = next(
+                tool for tool, image in CONTAINER_IMAGE_NAMES.items() if image == name
+            )
             assert tag == SUPPORTED_TOOL_VERSIONS[tool]
             assert entry["published_digest"] == GPU_ACCEPTED_PUBLIC_IMAGE_DIGESTS[tool]
         else:

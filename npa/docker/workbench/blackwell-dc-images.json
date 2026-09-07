@@ -1,6 +1,6 @@
 {
   "format": "npa_blackwell_dc_image_manifest_v1",
-  "as_of": "2026-09-05T00:00:00Z",
+  "as_of": "2026-09-06T00:00:00Z",
   "registry_ref": "${NPA_REGISTRY}",
   "registry_note": "Resolve official public development and release tags through npa.deploy.images. Development tags are immutable full-SHA tags and release provenance is digest-bound.",
   "target": {
@@ -816,10 +816,13 @@
     {
       "name": "npa-paidf-anomalygen-sky",
       "dockerfile": "paidf-anomalygen-sky/Dockerfile",
-      "verdict": "unknown",
-      "validation": "pending-build",
-      "smoke": "Execute paidf-defect-image-generation.yaml through base checkpoint fetch, genuine AnomalyGen fine-tuning and inference; decode generated media and validate native labels/masks and checkpoint lineage.",
-      "notes": "Restricted operator-built image; exact upstream source and CUDA bases are pinned. No completed built artifact, observed wheel architecture set, or B200/B300 functional result is yet recorded. Do not infer compatibility from compilation flags."
+      "verdict": "ready",
+      "validation": "validated",
+      "smoke": "On the exact accepted image, verify B200 device capability and real CUDA/FlashAttention/Triton execution, then exercise the native Cosmos attention frontend in its default training and inference backends. Full workflow acceptance separately requires paidf-defect-image-generation.yaml through genuine AnomalyGen fine-tuning, inference, decoded media, native labels/masks and checkpoint lineage.",
+      "notes": "Restricted operator-private image; exact-layer/rootfs inventory, vulnerability policy, SPDX SBOM, SkyPilot bootstrap, isolated NPA installation, offline CPU/runtime probes, and real B200 CUDA plus four-case native attention checks passed. The diagnostic measured capability 10.0 and exercised default NATTEN blackwell-fmha training with Q/K/V gradients and default cuDNN inference. It loaded no model weights and ran no full model forward. The same exact image separately completed the full native DIG workload: 15,000 iterations with early stopping disabled and all 30 requests accounted. No B300 or RTX PRO 6000 acceptance is claimed, and no unmeasured architecture is inferred from build flags.",
+      "measured_python": "3.13.15",
+      "measured_torch": "2.13.0+cu132",
+      "measured_cuda": "13.2"
     },
     {
       "name": "npa-paidf-detection-sky",
@@ -1265,6 +1268,105 @@
       "full_workflow_acceptance": {
         "IAA": "passed",
         "EVG": "passed"
+      }
+    },
+    "npa-paidf-anomalygen-sky": {
+      "built": true,
+      "validated_digest": "sha256:5aff3f4b40a4340ece2594c567ce8e5683a82ddc295c39d80588e228a13a28cf",
+      "validated_registry_scope": "operator",
+      "source_commit": "743d87df3a19fc0571d95c1d98b2bc53a2b438e9",
+      "upstream_source_commit": "dbaf7d7d9003f048230f9026da5969e9e5931785",
+      "oci_index_digest": "sha256:c8e96df2ed5ef71427e075817649f5c80eef426b0148aa9c7b15e801ee0a7060",
+      "config_digest": "sha256:17f17fe9a5debdff93711a75e8a5910571b22c30cfa5d7e20dba88d112fe45e5",
+      "skypilot_bootstrap_contract": "skypilot-0.12.2-v1",
+      "payload_scan": "Generic exact-layer/rootfs inventory covered 22 diff IDs, 21 unique blobs, 67,908 files and 10,673,751,967 bytes. All 1,924 weight-shaped candidates were reviewed; no gated runtime model weights, credential paths or populated model-cache paths were accepted as payload. One JWT-shaped scanner match and six PEM blocks were retained and classified against exact public source.",
+      "byte_audit_sha256": "ce049048587669de54ec20f02c3b9832c76cfdb2cad5ba7854c9baef062d4d7e",
+      "byte_audit_size": 757547,
+      "sbom_sha256": "296731803937d2d20392da5671e53979c61099868c15f45ad47ace04dc5eb5dc",
+      "sbom_size": 4282800,
+      "sbom_packages": 1683,
+      "vulnerability_inventory": {
+        "CRITICAL": {"total": 5, "with_fixed_version": 0},
+        "HIGH": {"total": 186, "with_fixed_version": 13},
+        "MEDIUM": {"total": 2173, "with_fixed_version": 90},
+        "LOW": {"total": 268, "with_fixed_version": 43},
+        "UNKNOWN": {"total": 3, "with_fixed_version": 2}
+      },
+      "fixed_critical_policy": "passed-without-new-ignore",
+      "measured_python": "3.13.15",
+      "measured_torch": "2.13.0+cu132",
+      "measured_cuda": "13.2",
+      "validated_gpus": {
+        "B200": {
+          "capability": "10.0",
+          "result": "passed",
+          "flash_attn_version": "2.8.3",
+          "flash_attn_max_abs_error": 0.0002739429473876953,
+          "triton_version": "3.7.1",
+          "triton_max_abs_error": 0,
+          "attention_cases": ["train-causal", "train-full", "infer-causal", "infer-full"],
+          "training_backend": "natten:blackwell-fmha",
+          "training_qkv_gradients": true,
+          "inference_backend": "cudnn",
+          "largest_relative_l2_error": 0.0030561191545551937,
+          "relative_l2_limit": 0.015,
+          "model_weights_loaded": false,
+          "full_model_forward_executed": false
+        }
+      },
+      "diagnostic_review_sha256": "69b5f9e549b22bb87e468f46e019084fe0ef602583f26f5e7d1715953eb7b4da",
+      "hardware_run": "The exact accepted image and source passed B200 CUDA/FlashAttention/Triton checks and four native causal/full attention cases. Training exercised default NATTEN blackwell-fmha with Q/K/V gradients; inference exercised default cuDNN. This no-weight component diagnostic is separate from the full native DIG workload, which the same exact image subsequently completed on B200.",
+      "full_workflow_run": {
+        "run_id": "paidf-dig-15395d41fe18",
+        "result": "passed",
+        "independent_native_validation": "passed",
+        "runtime_source_commit": "ff198c6c289ee05ec5953e5968dc2c626ab27eee",
+        "upstream_workflow_revision": "e4c663cbbdcf159ad952751274c883c81d3ab4be",
+        "states": {
+          "record-upstream": {"attempt": 1, "source_commit": "743d87df3a19fc0571d95c1d98b2bc53a2b438e9", "duration_seconds": 185},
+          "prepare-base-checkpoints": {"attempt": 8, "source_commit": "ff198c6c289ee05ec5953e5968dc2c626ab27eee", "duration_seconds": 1002},
+          "finetune": {"attempt": 8, "source_commit": "ff198c6c289ee05ec5953e5968dc2c626ab27eee", "duration_seconds": 4710},
+          "anomaly-infer": {"attempt": 8, "source_commit": "ff198c6c289ee05ec5953e5968dc2c626ab27eee", "duration_seconds": 1051}
+        },
+        "max_iterations": 15000,
+        "validation_interval": 1000,
+        "checkpoint_interval": 1000,
+        "early_stop_enabled": false,
+        "early_stop_artifact_count": 0,
+        "selected_checkpoint_iteration": 13000,
+        "selected_checkpoint_sha256": "f54b720e786229395717f8a6bde9c8a2864735cddcada6f45d147cd5add04f65",
+        "selected_checkpoint_score": 0.4711651623249054,
+        "terminal_checkpoint_score": 0.4695567297935487,
+        "loss_sample_count": 1500,
+        "gpu_observation_samples": 56,
+        "gpu_utilization_percent_maximum": 100,
+        "gpu_memory_used_mib_maximum": 40688,
+        "gpu_power_watts_maximum": 945.84,
+        "request_target": 30,
+        "request_accounted": 30,
+        "generated_images": 24,
+        "guardrail_blocked": 6,
+        "annotation_count": 24,
+        "media_total_bytes": 605744,
+        "output_object_count": 293,
+        "output_total_bytes": 3541820,
+        "run_inventory_object_count": 5007,
+        "run_inventory_total_bytes": 157040084602,
+        "inference_measured_total_seconds": 98.84547686576843,
+        "model_init_seconds": 22.04356336593628,
+        "guardrail_init_seconds": 2.491468906402588,
+        "generation_seconds": 74.26396036148071,
+        "generation_seconds_per_image": 3.094331681728363,
+        "guardrail_seconds": 6.4521825313568115,
+        "timing_summary_sha256": "9c6738a56d9b2fc7d593b0d9b83e50497b1c601ba7fddbeba35bc046457ed5c3",
+        "media_manifest_sha256": "c8eb3b5da00dbfabf2ff3e4b3fd3f96b7d73a827e26227dbdf847127059fb115",
+        "labels_sha256": "b330be50a83692d05a5bdc692e4d84ff2e7645991d891b1eabe07d78e33d06e8",
+        "text_guardrail_enforcing": true,
+        "image_guardrail_enforcing": false,
+        "image_guardrail_limitation": "The upstream preset applies face blurring but has no image-content classifier."
+      },
+      "full_workflow_acceptance": {
+        "DIG": "passed"
       }
     },
     "npa-paidf-image-edit-sky": {

@@ -104,8 +104,49 @@ checks the installed dependency requirements, and records original, patched,
 generator, patcher and wheel hashes in the image's
 `/usr/local/share/npa/paidf-wandb-compatibility.json`.
 The recipe removes SSH host keys in the same layer that installs SSH.
-Final built-byte and native workload acceptance remain pending; the CUDA wheel
-build is unchanged.
+The operator-private image built from
+`743d87df3a19fc0571d95c1d98b2bc53a2b438e9` has runnable child digest
+`sha256:5aff3f4b40a4340ece2594c567ce8e5683a82ddc295c39d80588e228a13a28cf`.
+Its generic exact-layer/rootfs inventory covered 22 ordered diff IDs, 21 unique
+layer blobs, 67,908 files, and 10,673,751,967 bytes. All 1,924 weight-shaped
+candidates were reviewed; no gated runtime model weights, credential paths, or
+populated model-cache paths were accepted as image payload. The byte-audit
+record is 757,547 bytes with SHA-256
+`ce049048587669de54ec20f02c3b9832c76cfdb2cad5ba7854c9baef062d4d7e`.
+
+The 1,683-package SPDX SBOM is 4,282,800 bytes with SHA-256
+`296731803937d2d20392da5671e53979c61099868c15f45ad47ace04dc5eb5dc`.
+The complete vulnerability inventory remains nonempty: 5 CRITICAL, 186 HIGH,
+2,173 MEDIUM, 268 LOW, and 3 UNKNOWN findings; 0, 13, 90, 43, and 2 of those
+respective severities report a fixed version. The existing fixed-CRITICAL policy
+passed without a new ignore, which is not a zero-vulnerability claim. One
+JWT-shaped scanner match is an inert string in exact published scikit-image
+source, and six PEM blocks match public GnuTLS fixtures; those classifications
+do not establish equality of the containing binary or erase the original
+scanner findings.
+
+The exact image separately passed B200 CUDA, FlashAttention, Triton, and four
+native causal/full attention cases. It measured Python 3.13.15, Torch
+2.13.0+cu132, and CUDA 13.2. FlashAttention maximum absolute error was
+`0.000273943`, Triton maximum absolute error was `0`, and the largest attention
+relative L2 error was `0.00305612 < 0.015`. Training exercised NATTEN
+`blackwell-fmha` with Q/K/V gradients; inference exercised cuDNN. This diagnostic
+loaded no model weights and did not run a full model forward, so it remains
+separate from the full-workload acceptance.
+
+The same accepted child completed native DIG run `paidf-dig-15395d41fe18` on
+B200. Resume retained only the valid attempt-1 `record-upstream` state; attempt 8
+completed checkpoint preparation, all 15,000 training iterations with early
+stopping disabled, and generation. The evaluator selected checkpoint 13,000,
+and all 30 requests were accounted as 24 generated RGB images plus six enforcing
+text-guardrail blocks. The image preset performs face blurring but has no
+image-content classifier, so the terminal record correctly reports image
+guardrail enforcement as false.
+
+The resolved dependency closure remains restricted pending separate
+redistribution approval. A successful private build, authenticated pull, or
+workload does not grant public redistribution rights; the image remains outside
+NPA public GHCR. The CUDA wheel build is unchanged.
 
 The RF-DETR compatibility worker supports inference. It removes inherited
 W&B/torchtitan training tools and their unused system development toolchain

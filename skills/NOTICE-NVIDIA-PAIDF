@@ -90,9 +90,31 @@ Reference: https://github.com/nltk/nltk/security/advisories/GHSA-m4rf-3fr8-xwx3
 The original blueprint digest remains separately attributed in upstream.json.
 Reference: https://github.com/vllm-project/vllm/security/advisories/GHSA-94f4-hr76-p5j6
 Actual upstream
-bootstrap probes failed before generation. These source recipes do not claim
-built-byte security clearance or publication; the complete inherited dependency
-closure must be reviewed before any change to private-only redistribution.
+bootstrap probes failed before generation. Exact operator-private wrapper
+digests subsequently passed their recorded built-byte/security/SBOM and
+SkyPilot bootstrap gates, and the IAA/EVG digests passed their native workflows.
+Those acceptance results are digest-scoped and do not authorize redistribution;
+every rebuilt digest must repeat the gates. The complete inherited dependency
+closures remain restricted unless a separate redistribution review approves
+them.
+
+The accepted AnomalyGen runnable child is
+sha256:5aff3f4b40a4340ece2594c567ce8e5683a82ddc295c39d80588e228a13a28cf,
+built from NPA source 743d87df3a19fc0571d95c1d98b2bc53a2b438e9 and the
+pinned Apache-2.0 AnomalyGen revision above. Its generic exact-layer/rootfs
+inventory, nonempty security inventory, fixed-CRITICAL policy, SPDX SBOM,
+bootstrap, offline runtime checks, and B200 CUDA/native-attention component
+checks passed. All weight-shaped candidates were reviewed; no gated runtime
+model weights, credential paths, or populated model-cache paths were accepted as
+payload. Retained public-source fixtures remain separately classified. The same
+exact child completed native DIG run paidf-dig-15395d41fe18 on B200. Its durable
+resume retained the attempt-1 record-upstream result and completed preparation,
+all 15,000 training iterations with early stopping disabled, and inference in
+attempt 8. Evaluator selection chose checkpoint 13,000; all 30 requests were
+accounted as 24 generated images and six enforcing text-guardrail blocks. The
+upstream preset applies face blurring but has no image-content classifier, so
+image enforcement remains false. Neither workload acceptance nor private pull
+entitlement changes the restricted packaging classification.
 
 Runtime model snapshots are also pinned and remain outside published images:
 
@@ -182,11 +204,15 @@ then replaces ENTRYPOINT ["main"] with argument forwarding. The original
 service CLI remains /app/.venv/bin/main. NPA setup installs into a separate
 owner-writable /opt/npa-venv, with PATH preserved for login shells; it does not
 install dependencies into the vendor /app/.venv. These recipes add no model weights,
-datasets, credentials or recorded consent. The complete inherited image layers
-still require payload/license/security review; neither source inspection nor
-private registry access establishes permission to redistribute gated weights.
-They are excluded from NPA public publication and are not claimed built or
-functionally accepted merely because their source recipes exist.
+datasets, credentials or recorded consent. The accepted exact digests completed
+built-layer payload, license, security, and SBOM review, while redistribution
+approval for the inherited dependency closures remains pending; neither source
+inspection nor private registry access establishes permission to redistribute
+gated weights.
+They are excluded from NPA public publication. Accepted private digests and
+native IAA/EVG results are recorded in the container catalog; a source recipe by
+itself still proves neither built bytes nor functional acceptance, and future
+digests must repeat every gate.
 The detection wrapper additionally removes inherited W&B/torchtitan training
 tools and the unused system development toolchain through package-manager
 dependency handling. RF-DETR declares W&B in its optional logging extra; the
@@ -211,6 +237,20 @@ NPA's toolRef access closure probes each exact NGC parent repository under the
 operator's credential before submission. That proves pull entitlement only and
 does not grant redistribution rights. Runtime pullability and bootstrap must be
 proved separately against each operator-built wrapper's exact private digest.
+
+Exactly seven PAIDF compatibility images are in scope: AnomalyGen for DIG;
+image-edit and attribute-search for IAA; and event-video, detection, captioning,
+visual-qa, and the shared attribute-search image for EVG. All seven remain
+operator-private and restricted even after image/workflow acceptance. Rerun
+publication and artifact discovery are evidence-delivery steps, not license
+grants. The selected seventh DIG recording is stored under content-addressed
+filename
+npa-paidf-anomalygen-sky-fb099f7b670fede587398c1d5374db7cb6a231bad0fc839432c9da49b6870074.rrd and remains subject to the same
+upstream output and redistribution boundaries. The earlier immutable
+dd668be7ce2d1bd60a18b7c1b0e1a491253256f237959b67efcff9a0763e1075 RRD
+and c9fb26016ff5a64aef735176c049527fdbdae458bd5c0c21eb65bef3127ce338
+manifest remain retained but superseded because their normalized upstream
+repository attribution did not exactly match the pinned source.
 
 Gated weights remain runtime fetches under the operator's own upstream identity.
 Access credentials prove fetch authorization, not permission to redistribute

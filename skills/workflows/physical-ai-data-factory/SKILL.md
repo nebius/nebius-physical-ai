@@ -91,6 +91,37 @@ Text screening must be enforcing; the upstream image preset performs face
 blurring with no content classifier and truthfully records image enforcement
 as false. Keep the existing regular-file checkpoint handoff and NLTK behavior.
 
+The accepted operator-private AnomalyGen child is
+`sha256:5aff3f4b40a4340ece2594c567ce8e5683a82ddc295c39d80588e228a13a28cf`,
+built from NPA source `743d87df3a19fc0571d95c1d98b2bc53a2b438e9` and pinned
+Apache-2.0 upstream revision `dbaf7d7d9003f048230f9026da5969e9e5931785`.
+Its generic exact-layer/rootfs inventory, nonempty vulnerability inventory,
+fixed-CRITICAL policy, SPDX SBOM, bootstrap, offline CPU/runtime checks, and real
+B200 CUDA plus four native attention cases passed. Training exercised default
+NATTEN `blackwell-fmha` with Q/K/V gradients; inference exercised default cuDNN.
+The diagnostic loaded no model weights and ran no full model forward. Treat it
+as image/component evidence separate from the full-workload result. The same
+exact child completed native DIG run `paidf-dig-15395d41fe18` on B200. Resume
+retained attempt 1's valid `record-upstream` state; attempt 8 completed
+preparation, all 15,000 training iterations with early stopping disabled, and
+inference. The evaluator selected checkpoint 13,000, and all 30 requests were
+accounted as 24 generated images plus six enforcing text-guardrail blocks. The
+upstream preset applies face blurring but no image-content classifier, so image
+enforcement remains false. The resolved dependency closure remains restricted;
+private access and acceptance do not grant redistribution rights.
+
+The PAIDF compatibility inventory is exactly seven restricted images: DIG
+selects AnomalyGen; IAA selects image-edit and attribute-search; EVG selects
+event-video, detection, captioning, visual-qa, and the same attribute-search
+image. Six IAA/EVG recordings are verified. Do not claim the seventh until the
+DIG RRD hash/size, CLI+SDK reopening, durable readback, and protected artifact
+API run ID have all been independently verified. The completed evidence set
+satisfies those gates; its content-addressed DIG filename is
+`npa-paidf-anomalygen-sky-fb099f7b670fede587398c1d5374db7cb6a231bad0fc839432c9da49b6870074.rrd`.
+The earlier immutable DIG pair is retained but superseded because its
+normalized upstream repository attribution did not exactly match the pinned
+source.
+
 For the three native translations, use the generic workflow validate/plan/submit
 surface. Run `health access` for `paidf-dig`, `paidf-iaa`, `paidf-evg`, and the
 selected `paidf-label-*` capabilities before image preflight or GPU work. The

@@ -37,8 +37,8 @@ def _evidence(media: Path, media_type: str = "image") -> dict:
         "image_build_source_revision": "b" * 40,
         "runtime_source_revisions": ["b" * 40],
         "upstream_sources": [{
-            "repository": "https://github.com/NVIDIA-AI-Blueprints/physical-ai-data-factory",
-            "revision": "c" * 40, "license": "Apache-2.0",
+            "repository": "https://github.com/NVIDIA/physical-ai-data-factory",
+            "revision": "c" * 40, "license": "CC-BY-4.0 AND Apache-2.0",
             "adaptation": "NPA workflow adapters and factual Rerun conversion",
         }],
         "validation": {"status": "passed", "checks": [{"name": "output_decode", "status": "passed"}]},

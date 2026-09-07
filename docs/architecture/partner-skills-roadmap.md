@@ -4,7 +4,10 @@ Status: **partially landed**. `neural-reconstruction` (NuRec/NRE) and
 `video-data-augmentation` (as the `physical-ai-data-factory` blueprint) are
 implemented and validated end-to-end on Nebius + SkyPilot. Native PAIDF DIG
 Day-1 manual-ROI, IAA, and EVG specs are also implemented. IAA has completed
-native live acceptance; DIG and EVG acceptance remains in progress. The
+native live acceptance, as have EVG and DIG Day-1. DIG's accepted restricted
+image completed the unchanged 15,000-iteration training recipe and all 30
+generation requests on B200 after its built-byte, bootstrap, offline-runtime,
+and CUDA/native-attention gates passed. The
 [Workbench mapping and evidence](../workbench/guides/physical-ai-data-factory.md)
 distinguish those scopes from remaining roadmap capabilities.
 This document captures the onboarding analysis so it is not lost; each skill
@@ -90,7 +93,7 @@ plumbing.
 
 | Skill | Capability | Upstream | License | Lands when |
 | --- | --- | --- | --- | --- |
-| `defect-image-generation` | AOI defect SDG (usd2roi, image-edit, AnomalyGen; PCBA/metal/glass; Day 0/Day 1) | `physical-ai-defect-image-generation` | CC-BY-4.0 AND Apache-2.0 | Native `paidf-defect-image-generation.yaml` implements Day-1 manual-ROI fresh fine-tuning; its restricted image and B200 attention/CUDA probes are validated, while full DIG acceptance is pending. Day-0 USD and PCBA real-alignment remain roadmap work. |
+| `defect-image-generation` | AOI defect SDG (usd2roi, image-edit, AnomalyGen; PCBA/metal/glass; Day 0/Day 1) | `physical-ai-defect-image-generation` | CC-BY-4.0 AND Apache-2.0 | Native `paidf-defect-image-generation.yaml` implements and has passed Day-1 manual-ROI fresh fine-tuning and generation on B200: 15,000 iterations with early stopping disabled, evaluator-selected checkpoint 13,000, and 30/30 requests accounted. Day-0 USD and PCBA real-alignment remain roadmap work. |
 | `image-attribute-augmentation` | Qwen image editing, upstream attribute verification, pane postprocessing, and person attribute search | `NVIDIA/paidf-orchestration` IAA DAG | Apache-2.0 | Native `paidf-image-attribute-augmentation.yaml` completed all nine states on reserved B200 capacity; source, output hashes, and quality limitations are in the Workbench guide. |
 | `event-video-generation` | Cosmos3 video generation, detection/tracking, captioning, anomaly/person Visual QA, and attribute search | `NVIDIA/paidf-orchestration` EVG DAG | Apache-2.0 | Native `paidf-event-video-generation.yaml` completed all twelve logical stages on reserved B200 capacity; source, output hashes, partial-QA accounting, and quality limitations are in the Workbench guide. |
 | `video-data-augmentation` | Cosmos-Transfer augmentation + VLM auto-labeling | `physical-ai-video-data-augmentation` | CC-BY-4.0 AND Apache-2.0 | **Core path landed:** `workflows/testing/physical-ai-data-factory.yaml` (SkyPilot, no OSMO) implements real arbitrary-input annotate → augment → evaluate → re-label → curate → visualize with output-to-S3; optional upstream flow variants such as SeedVR2 super-resolution remain roadmap work |
@@ -107,7 +110,7 @@ upstream; NPA re-expresses the relevant one on SkyPilot.
 | `physical-ai-video-data-augmentation` (VDA) | annotate → augment → evaluate → re-label; Cosmos Transfer 2.5 + SeedVR2 SR + VLM/LLM NIMs; flows `auto_labeling` / `augmentation_and_al` / `e2e` / `e2e_super_resolution` | **High — it is the upstream of our blueprint** | `physical-ai-data-factory.yaml` is the NPA-native (SkyPilot, **no OSMO**) implementation of the core loop with real input conditioning and durable outputs. It directly informs the stage graph, model roles (Qwen VL / LLM, Cosmos Transfer 2.5, cosmos-reason), the promote/loop gate, and side-by-side evidence. | Reference spec for the shipped core path; optional SeedVR2/flow variants remain roadmap work |
 | `physical-ai-infrastructure-setup-and-resilient-scaling` | K8s (MicroK8s/AKS) + OSMO + NIM Operator setup, verify gates, resilient scaling, don't-over-deploy endpoints, model-cache warmup | **Medium-high (ops concepts)** | Maps onto Nebius Managed K8s + SkyPilot + vLLM/Token Factory serving. Adopt the verify-gate discipline, "deploy only referenced endpoints", and cache-warmup ideas. Skip the OSMO/Azure plumbing. | Ops guidance; overlaps `nebius-infra` + `skypilot-workflows` |
 | `physical-ai-neural-reconstruction` (NuRec/NRE) | sensor logs → NCore V4 → 3DGS train → renderable USDZ → novel-view / gRPC sensor sim | **Medium (adjacent, upstream data source)** | Not used by the video-augmentation blueprint today. Valuable as a *real-data source*: reconstruct real captures into re-renderable scenes, then feed rendered views as pipeline input (better than synthetic test clips). RT-core render → L40S / RTX PRO 6000. | **Implemented** as `neural-reconstruction` (tool + CLI + SkyPilot workflow + skill + tests) |
-| `physical-ai-defect-image-generation` (DIG) | AOI defect SDG via Cosmos AnomalyGen (Cosmos-Predict2) for PCBA / metal / glass; Day-0 / Day-1 | **Low-medium (adjacent domain)** | A sibling image-SDG blueprint rather than a stage of the VDA pipeline. | Native Day-1 manual-ROI spec implemented; full acceptance pending. Day-0 and real-alignment remain Tier C roadmap work. |
+| `physical-ai-defect-image-generation` (DIG) | AOI defect SDG via Cosmos AnomalyGen (Cosmos-Predict2) for PCBA / metal / glass; Day-0 / Day-1 | **Low-medium (adjacent domain)** | A sibling image-SDG blueprint rather than a stage of the VDA pipeline. | Native Day-1 manual-ROI spec, exact-image B200 component gates, and full native workload passed. Day-0 and real-alignment remain Tier C roadmap work. |
 
 Practical techniques worth adopting into the NPA blueprint from VDA (all
 SkyPilot-native, no OSMO):
@@ -123,8 +126,10 @@ SkyPilot-native, no OSMO):
   Cosmos Transfer 2.5 (augment), cosmos-reason (critic). We serve these on Token
   Factory / vLLM instead of in-cluster NIMs.
 
-Gating: DIG stays roadmap-only until a Nebius + SkyPilot implementation lands
-with tests. VDA and **NuRec are now materially implemented**.
+Gating: DIG Day-1 manual-ROI is materially implemented with tests, exact-image
+B200 component evidence, and full native workload acceptance. DIG Day-0 USD
+preparation and PCBA real-alignment remain roadmap-only. VDA and **NuRec are
+materially implemented**.
 
 ### NuRec implementation notes worth carrying forward
 
