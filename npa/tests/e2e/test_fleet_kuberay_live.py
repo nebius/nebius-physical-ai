@@ -124,16 +124,22 @@ def _verify_network_resources(run):
     assert json.loads(run("pvcs", ["get", "pvc", "-o", "json"]))["items"] == []
 
 
+def _create_worker_source_directory(run, execute):
+    allocate = "import tempfile; print(tempfile.mkdtemp(prefix='npa-cpu-proof-'))"
+    return run("create-source-directory", execute + ["python", "-c", allocate]).strip()
+
+
 def _verify_native_worker_job(run, head_pod, policy):
     pod_name = head_pod["metadata"]["name"]
     execute = ["exec", pod_name, "-c", "ray-head", "--"]
     run("ray-status", execute + ["ray", "status"])
     identity = "npa-cpu-proof-" + uuid.uuid4().hex
-    directory = "/tmp/" + identity
     source = Path(__file__).resolve().parents[2] / "examples/fleet/kuberay/verify_workers.py"
-    prepare = "import pathlib,sys; p=pathlib.Path(sys.argv[1]); p.mkdir(); (p/'verify_workers.py').write_text(sys.stdin.read())"
+    source_code = source.read_text()
+    prepare = "import pathlib,sys; (pathlib.Path(sys.argv[1])/'verify_workers.py').write_text(sys.stdin.read())"
+    directory = _create_worker_source_directory(run, execute)
     with _job_cleanup(run, execute, directory, identity):
-        run("stage", ["exec", "-i", pod_name, "-c", "ray-head", "--", "python", "-c", prepare, directory], source.read_text())
+        run("stage", ["exec", "-i", pod_name, "-c", "ray-head", "--", "python", "-c", prepare, directory], source_code)
         run("submit", execute + ["ray", "job", "submit", "--address", "http://127.0.0.1:8265", "--submission-id", identity,
                                  "--working-dir", directory, "--", "python", "verify_workers.py"])
         status = run("status", execute + ["ray", "job", "status", "--address", "http://127.0.0.1:8265", identity])

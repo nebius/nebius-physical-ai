@@ -656,7 +656,7 @@ def test_live_harness_records_real_command_failure_privately(live_harness, tmp_p
     assert data["stdout"] == "retained failure\n"
 
 
-def test_live_harness_cleanup_survives_stop_failure_and_keeps_primary(live_harness):
+def test_live_harness_cleanup_survives_stop_failure_and_keeps_primary(live_harness, tmp_path):
     calls = []
 
     def run(name, args):
@@ -665,11 +665,34 @@ def test_live_harness_cleanup_survives_stop_failure_and_keeps_primary(live_harne
             raise RuntimeError("job did not register")
 
     with pytest.raises(RuntimeError, match="Native proof and cleanup failures") as failure:
-        with live_harness._job_cleanup(run, [], "/tmp/owned-test", "owned-test"):
+        with live_harness._job_cleanup(run, [], str(tmp_path / "owned-test"), "owned-test"):
             raise ValueError("primary staging failure")
     assert calls == ["stop", "remove-source"]
     assert [str(error) for error in failure.value.args[1]] == ["primary staging failure", "job did not register"]
     assert isinstance(failure.value.__cause__, ValueError)
+
+
+def test_live_harness_allocates_distinct_private_worker_directories(live_harness, tmp_path, monkeypatch):
+    """Execute the remote allocator locally to verify exclusive private staging."""
+    monkeypatch.setenv("TMPDIR", str(tmp_path))
+
+    def run(name, arguments):
+        assert name == "create-source-directory"
+        result = subprocess.run([sys.executable, *arguments[1:]], check=True, capture_output=True, text=True)
+        return result.stdout
+
+    directories = []
+    try:
+        for _ in range(2):
+            directory = Path(live_harness._create_worker_source_directory(run, []))
+            directories.append(directory)
+            assert directory.parent == tmp_path
+            assert directory.name.startswith("npa-cpu-proof-")
+            assert directory.stat().st_mode & 0o777 == 0o700
+        assert directories[0] != directories[1]
+    finally:
+        for directory in directories:
+            shutil.rmtree(directory)
 
 
 def test_missing_recipe_cannot_pass_backend_preflight():

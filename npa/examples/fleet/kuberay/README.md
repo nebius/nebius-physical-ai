@@ -35,11 +35,13 @@ The optional live regression reads `NPA_FLEET_KUBERAY_LIVE_CONFIG`. It is unset 
 default, so ordinary test runs skip live access. To run it, set the variable to
 an owner-private JSON file containing `spec` (the one-target fleet YAML path),
 `kubeconfig` (the exact cluster credential path), and `evidence_dir` (a private
-directory with mode 0700). After deploying the cluster and observing all Ray pods
-ready, run from the repository root:
+directory with mode 0700). Live tests also require `NPA_INTEGRATION_E2E=1`; this
+shared gate is unset by default. After deploying the cluster and observing all
+Ray pods ready, run from the repository root:
 
 ```bash
-npa/.venv/bin/python -m pytest npa/tests/e2e/test_fleet_kuberay_live.py -q
+NPA_INTEGRATION_E2E=1 npa/.venv/bin/python -m pytest \
+  npa/tests/e2e/test_fleet_kuberay_live.py -q
 ```
 
 Stop remaining jobs and save needed output before `npa fleet destroy`. Verify
