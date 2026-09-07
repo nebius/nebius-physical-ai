@@ -88,7 +88,10 @@ def _integer(value, minimum=0):
 def _manifest(root):
     """Verify complete tree coverage before parsing any source report or image."""
     _require(root.is_dir() and not root.is_symlink(), "Input must be a regular result directory")
+    resolved_root = root.resolve(strict=True)
     paths = list(root.rglob("*"))
+    _require(all(p.resolve(strict=True).is_relative_to(resolved_root) for p in paths),
+             "Result artifact resolves outside the input directory")
     _require(all(not p.is_symlink() for p in paths), "Symlinks are not result artifacts")
     _require(all(p.is_dir() or p.is_file() for p in paths), "Nonregular result artifact")
     listed = {}

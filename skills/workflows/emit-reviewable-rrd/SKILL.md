@@ -127,7 +127,7 @@ Run the relevant workflow/output tests, then:
 
 ```bash
 npa/.venv/bin/python -m pytest npa/tests/guardrails/test_skills_index.py -q
-npa/.venv/bin/python /home/ubuntu/.codex/skills/.system/skill-creator/scripts/quick_validate.py skills/workflows/emit-reviewable-rrd
+npa/.venv/bin/python "${CODEX_HOME:-$HOME/.codex}/skills/.system/skill-creator/scripts/quick_validate.py" skills/workflows/emit-reviewable-rrd
 ```
 
 ## Native Ray CLIP developer results

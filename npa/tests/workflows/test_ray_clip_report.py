@@ -168,6 +168,34 @@ def test_advanced_uses_coordinator_clock_and_static_recovery(modules, advanced, 
     assert "shard_index" not in recovery.schema.names
 
 
+@pytest.mark.parametrize("artifact", ["report.json", "images"])
+def test_symlink_escape_is_rejected_before_reading_artifacts(modules, result, tmp_path, monkeypatch, artifact):
+    converter = modules[0]
+    external = tmp_path / "outside"
+    (result / artifact).rename(external)
+    (result / artifact).symlink_to(external, target_is_directory=external.is_dir())
+
+    def unexpected_read(path):
+        pytest.fail("Escaping result tree reached artifact hashing")
+
+    monkeypatch.setattr(converter, "_sha", unexpected_read)
+    output = tmp_path / "invalid.rrd"
+    with pytest.raises(ValueError, match="resolves outside the input directory"):
+        converter.convert(result, output, run_id="test")
+    assert not output.exists()
+    assert not list(tmp_path.glob(".clip-*.rrd"))
+
+
+def test_output_alias_into_input_tree_is_rejected(modules, result, tmp_path):
+    alias = tmp_path / "input-alias"
+    alias.symlink_to(result, target_is_directory=True)
+    before = modules[0]._manifest(result)
+    with pytest.raises(ValueError, match="outside the input tree"):
+        modules[0].convert(result, alias / "invalid.rrd", run_id="test")
+    assert not (result / "invalid.rrd").exists()
+    assert modules[0]._manifest(result) == before
+
+
 @pytest.mark.parametrize("damage", ["missing", "checksum", "duplicate", "traversal", "symlink", "extra", "partial"])
 def test_manifest_failures_publish_nothing(modules, result, tmp_path, damage):
     path = result / "SHA256SUMS"
