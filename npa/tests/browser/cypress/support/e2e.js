@@ -1367,14 +1367,17 @@ Cypress.Commands.add("selectRunSource", (selectSelector, source, options = {}) =
   }
   expect(expected, "run source selector has an identity field").not.to.be.empty;
 
-  return cy.get(`${selectSelector} option`).then(($options) => {
+  let selectedValue = "";
+  return cy.get(`${selectSelector} option`).should(($options) => {
     const matches = [...$options].filter((option) => expected.every(
       ([datasetKey, value]) => String(option.dataset[datasetKey] || "") === value
     ));
     const readable = expected.map(([key, value]) => `${key}=${value || "<empty>"}`).join(", ");
     expect(matches, `one option matches the exact run source tuple (${readable})`).to.have.length(1);
     expect(matches[0].value, "source-qualified option value").not.to.eq("");
-    cy.get(selectSelector).select(matches[0].value, { force: options.force !== false });
+    selectedValue = matches[0].value;
+  }).then(() => {
+    cy.get(selectSelector).select(selectedValue, { force: options.force !== false });
     return cy.get(`${selectSelector} option:checked`).should(($selected) => {
       expect($selected, "one exact run source remains selected").to.have.length(1);
       for (const [datasetKey, value] of expected) {
