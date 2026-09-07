@@ -73,14 +73,8 @@ def _inference_events(log):
     return events
 
 
-def _verify_result(directory, records, retained, logs, source_hashes):
-    """Reopen vectors and compare independent call, checkpoint and actor counts."""
-    import lancedb
-    import numpy as np
-    import pyarrow.parquet as pq
-
-    commits = _committed(directory)
-    report = json.loads((directory / "report.json").read_text())
+def _verify_runtime(report, source_hashes):
+    """Bind every model initialization and surviving GPU actor to shipped bytes."""
     fields = {"application.py": "application_sha256", "worker.py": "source_sha256",
               "validation.py": "validation_sha256", "npa_lancedb_bdd100k_udfs.py": "udf_sha256"}
     for filename, field in fields.items():
@@ -88,6 +82,14 @@ def _verify_result(directory, records, retained, logs, source_hashes):
         assert all(actor[field] == source_hashes[filename] for actor in report["model_initializations"])
     assert len({(actor["node_id"], tuple(actor["gpu_ids"])) for actor in report["final_actors"]}) == 2
     assert all(actor["cuda"] and actor["gpu_ids"] for actor in report["final_actors"])
+
+
+def _verify_vectors(directory, records):
+    """Reopen Parquet and Lance and compare their real normalized vectors."""
+    import lancedb
+    import numpy as np
+    import pyarrow.parquet as pq
+
     table = pq.read_table(directory / "embeddings.parquet")
     assert table["record_id"].to_pylist() == list(range(records))
     vectors = np.asarray(table["vector"].to_pylist())
@@ -96,6 +98,10 @@ def _verify_result(directory, records, retained, logs, source_hashes):
     lance = lancedb.connect(str(directory / "lance")).open_table("embeddings").to_arrow().sort_by("record_id")
     assert lance["record_id"].to_pylist() == list(range(records))
     np.testing.assert_array_equal(lance["vector"].to_pylist(), table["vector"].to_pylist())
+
+
+def _verify_measurements(commits, retained, report, logs):
+    """Compare current calls with original committed producer measurements."""
     for index, before in retained.items():
         assert commits[index] == before
     expected = sorted(set(commits) - set(retained))
@@ -117,26 +123,41 @@ def _verify_result(directory, records, retained, logs, source_hashes):
     for field, indices in (("inference_actor_seconds_sum", expected),
                            ("retained_checkpoint_inference_actor_seconds_sum", retained)):
         assert report[field] == pytest.approx(sum(commits[i]["receipt"]["inference"]["inference_seconds"] for i in indices))
+
+
+def _verify_result(directory, records, retained, logs, source_hashes):
+    """Reopen vectors and compare independent call, checkpoint and actor counts."""
+    commits = _committed(directory)
+    report = json.loads((directory / "report.json").read_text())
+    _verify_runtime(report, source_hashes)
+    _verify_vectors(directory, records)
+    _verify_measurements(commits, retained, report, logs)
     return report
 
 
-def test_native_clip_stop_resume_sparse_and_invalid_checkpoints(tmp_path):
-    """Stop after multiple commits, then prove full, sparse and zero-work resumes."""
+def _configuration():
+    """Require explicit private access to a preflighted native Jobs cluster."""
     if not (config_path := os.environ.get("NPA_RAY_CLIP_CHECKPOINT_LIVE_CONFIG")):
         pytest.skip("requires private preflighted native Ray Jobs configuration")
-    from ray.job_submission import JobSubmissionClient
-
     private_config = Path(config_path)
     assert private_config.is_file() and not private_config.is_symlink()
     assert private_config.stat().st_uid == os.getuid() and private_config.stat().st_mode & 0o077 == 0
-    config = json.loads(private_config.read_text())
-    token = uuid.uuid4().hex
+    return json.loads(private_config.read_text())
+
+
+def _evidence_directory(config, token):
+    """Isolate each invocation's immutable native evidence."""
     evidence_root = Path(config["evidence_dir"])
     evidence_root.mkdir(mode=0o700, parents=True, exist_ok=True)
     assert not evidence_root.is_symlink() and evidence_root.stat().st_uid == os.getuid()
     assert evidence_root.stat().st_mode & 0o077 == 0
     evidence = evidence_root / token
     evidence.mkdir(mode=0o700)
+    return evidence
+
+
+def _package_source(tmp_path, evidence):
+    """Ship one hashed application package to every native Job."""
     source = tmp_path / "source"
     source.mkdir()
     package = Path(__file__).parents[2]
@@ -146,117 +167,182 @@ def test_native_clip_stop_resume_sparse_and_invalid_checkpoints(tmp_path):
     shutil.copy2(package / "src/npa/workbench/lancedb/bdd100k_udfs.py", source / "npa_lancedb_bdd100k_udfs.py")
     source_hashes = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in source.iterdir()}
     _write_private(evidence / "source.json", json.dumps(source_hashes))
-    client = JobSubmissionClient(config["address"])
-    root = Path(config["remote_root"]) / token
-    assert root.is_absolute()
-    jobs = []
-    outputs, preserved = {}, set()
-    records, batch_size = 8192, 32
+    return source, source_hashes
 
-    def submit(name, directory):
+
+class _NativeJobs:
+    """Retain submissions and cleanup evidence across every live case."""
+
+    def __init__(self, config, source, source_hashes, evidence, token):
+        from ray.job_submission import JobSubmissionClient
+
+        self.config, self.source, self.source_hashes = config, source, source_hashes
+        self.evidence, self.token = evidence, token
+        self.client = JobSubmissionClient(config["address"])
+        self.root = Path(config["remote_root"]) / token
+        assert self.root.is_absolute()
+        self.jobs, self.outputs, self.preserved = [], {}, set()
+        self.records, self.batch_size = 8192, 32
+
+    def _submit(self, name, directory):
         """Use the upstream Jobs API with one unchanged source package."""
-        identifier = f"clip-resume-{token}-{name}"
-        jobs.append(identifier)
-        outputs[identifier] = directory
-        _write_private(evidence / f"{name}-submission.json", json.dumps({"job_id": identifier, "output_path": str(directory)}))
-        argv = ["python", "application.py", "--actors", "2", "--records", str(records),
-                "--batch-size", str(batch_size), "--output-path", str(directory)]
-        client.submit_job(submission_id=identifier, entrypoint=shlex.join(argv),
-                          runtime_env={"working_dir": str(source), "env_vars": {"RAY_DEDUP_LOGS": "0"}})
+        identifier = f"clip-resume-{self.token}-{name}"
+        self.jobs.append(identifier)
+        self.outputs[identifier] = directory
+        _write_private(self.evidence / f"{name}-submission.json", json.dumps({"job_id": identifier, "output_path": str(directory)}))
+        argv = ["python", "application.py", "--actors", "2", "--records", str(self.records),
+                "--batch-size", str(self.batch_size), "--output-path", str(directory)]
+        self.client.submit_job(submission_id=identifier, entrypoint=shlex.join(argv),
+                               runtime_env={"working_dir": str(self.source), "env_vars": {"RAY_DEDUP_LOGS": "0"}})
         return identifier
 
-    def finish(identifier, expected="SUCCEEDED"):
+    def _finish(self, identifier, expected="SUCCEEDED"):
         """Retain native status and logs, including honest terminal failures."""
-        while not client.get_job_status(identifier).is_terminal():
+        while not self.client.get_job_status(identifier).is_terminal():
             time.sleep(1)
-        details = client.get_job_info(identifier)
-        log = client.get_job_logs(identifier)
-        _write_private(evidence / f"{identifier}.log", log)
-        _write_private(evidence / f"{identifier}.json", json.dumps(vars(details), default=str, indent=2))
+        details = self.client.get_job_info(identifier)
+        log = self.client.get_job_logs(identifier)
+        _write_private(self.evidence / f"{identifier}.log", log)
+        _write_private(self.evidence / f"{identifier}.json", json.dumps(vars(details), default=str, indent=2))
         assert str(details.status) == expected
         return log
 
-    try:
-        partial = root / "partial"
-        interrupted = submit("interrupted", partial)
-        while client.get_job_logs(interrupted).count("RAY_CLIP_CHECKPOINT ") < 2:
-            assert not client.get_job_status(interrupted).is_terminal()
-            time.sleep(0.25)
-        assert client.stop_job(interrupted)
-        finish(interrupted, "STOPPED")
-        before = _download(config, partial, evidence / "interrupted")
-        preserved.add(interrupted)
-        committed = _committed(before)
-        assert 1 < len(committed) < records // batch_size
-        resumed = submit("resumed", partial)
-        logs = finish(resumed)
-        completed = _download(config, partial, evidence / "resumed")
-        preserved.add(resumed)
-        _verify_result(completed, records, committed, logs, source_hashes)
+    def _download_result(self, name, identifier, directory):
+        """Mark outputs preserved only after their actual download succeeds."""
+        output = _download(self.config, directory, self.evidence / name)
+        self.preserved.add(identifier)
+        return output
 
-        # Each boundary starts from a separate copy of the completed factual
-        # checkpoint tree. Never rewrite its identity, actor or timing receipts.
-        full = _committed(completed)
+    def _stop_for_cleanup(self, identifier, errors):
+        """Establish terminal state before attempting a partial-output snapshot."""
+        try:
+            self.client.stop_job(identifier)
+            while not self.client.get_job_status(identifier).is_terminal():
+                time.sleep(1)
+            return True
+        except Exception as error:
+            errors.append({"job_id": identifier, "operation": "stop", "error_type": type(error).__name__})
+            return False
+
+    def _status_for_cleanup(self, identifier, terminal, errors):
+        """Preserve the final native status even after a failed stop attempt."""
+        try:
+            details = self.client.get_job_info(identifier)
+            terminal = details.status.is_terminal()
+            _write_private(self.evidence / f"{identifier}-final.json", json.dumps(vars(details), default=str, indent=2))
+        except Exception as error:
+            errors.append({"job_id": identifier, "operation": "status", "error_type": type(error).__name__})
+        return terminal
+
+    def _logs_for_cleanup(self, identifier, errors):
+        """Preserve native failure logs independently of status-query success."""
+        try:
+            _write_private(self.evidence / f"{identifier}-final.log", self.client.get_job_logs(identifier))
+        except Exception as error:
+            errors.append({"job_id": identifier, "operation": "logs", "error_type": type(error).__name__})
+
+    def _snapshot_for_cleanup(self, identifier, terminal, errors):
+        """Recover partial output only when the corresponding Job is terminal."""
+        if not terminal or identifier in self.preserved:
+            return
+        try:
+            directory = self.outputs[identifier]
+            exists = _remote(self.config, f"import pathlib,json; print(json.dumps(pathlib.Path({str(directory)!r}).is_dir()))")
+            if json.loads(exists):
+                _download(self.config, directory, self.evidence / f"{identifier}-cleanup-snapshot")
+        except Exception as error:
+            errors.append({"job_id": identifier, "operation": "snapshot", "error_type": type(error).__name__})
+
+    def _cleanup(self, original_failure):
+        """Attempt every cleanup boundary without masking an original test failure."""
+        errors = []
+        for identifier in self.jobs:
+            terminal = self._stop_for_cleanup(identifier, errors)
+            terminal = self._status_for_cleanup(identifier, terminal, errors)
+            self._logs_for_cleanup(identifier, errors)
+            self._snapshot_for_cleanup(identifier, terminal, errors)
+        _write_private(self.evidence / "job-cleanup.json", json.dumps({"attempted": self.jobs, "errors": errors}))
+        if errors and not original_failure:
+            raise RuntimeError("Native Job cleanup failed; inspect private receipts")
+
+
+def _resume_partial(jobs):
+    """Stop a partial native run and validate its resumed result against saved bytes."""
+    partial = jobs.root / "partial"
+    interrupted = jobs._submit("interrupted", partial)
+    while jobs.client.get_job_logs(interrupted).count("RAY_CLIP_CHECKPOINT ") < 2:
+        assert not jobs.client.get_job_status(interrupted).is_terminal()
+        time.sleep(0.25)
+    assert jobs.client.stop_job(interrupted)
+    jobs._finish(interrupted, "STOPPED")
+    before = jobs._download_result("interrupted", interrupted, partial)
+    committed = _committed(before)
+    assert 1 < len(committed) < jobs.records // jobs.batch_size
+    resumed = jobs._submit("resumed", partial)
+    logs = jobs._finish(resumed)
+    completed = jobs._download_result("resumed", resumed, partial)
+    _verify_result(completed, jobs.records, committed, logs, jobs.source_hashes)
+    return partial, _committed(completed)
+
+
+def _prepare_boundary(config, partial, target, name, missing):
+    """Copy factual checkpoints without replacing their identity or provenance."""
+    code = (
+        "import pathlib,shutil\n"
+        f"source=pathlib.Path({str(partial)!r}); target=pathlib.Path({str(target)!r})\n"
+        "target.mkdir(parents=True)\n"
+        "shutil.copy2(source/'execution.json',target/'execution.json')\n"
+        "shutil.copytree(source/'shards',target/'shards')\n"
+    )
+    if name == "corrupt":
+        code += "(target/'shards/000004/embeddings.parquet').write_bytes(b'corrupt committed bytes')\n"
+    elif name == "uncommitted":
+        code += "(target/'shards/000003/commit.json').unlink()\n"
+        code += "(target/'shards/000003/embeddings.parquet').write_bytes(b'partial uncommitted bytes')\n"
+    else:
+        code += f"for i in {missing!r}: shutil.rmtree(target/'shards'/f'{{i:06d}}')\n"
+    _remote(config, code)
+
+
+def _verify_boundary(jobs, partial, full, name, missing):
+    """Prove each sparse, empty, uncommitted or corrupt checkpoint boundary."""
+    target = jobs.root / name
+    _prepare_boundary(jobs.config, partial, target, name, missing)
+    identifier = jobs._submit(name, target)
+    logs = jobs._finish(identifier, "FAILED" if name == "corrupt" else "SUCCEEDED")
+    output = jobs._download_result(name, identifier, target)
+    if name == "corrupt":
+        assert "Checkpoint data hash mismatch" in logs
+        assert _inference_events(logs) == []
+        assert not (output / "report.json").exists()
+        return
+    retained = {index: entry for index, entry in full.items() if index not in missing}
+    report = _verify_result(output, jobs.records, retained, logs, jobs.source_hashes)
+    assert report["concurrency_observation"]["participants"] == min(2, len(missing))
+    assert report["concurrent_actor_inference_observed"] == (len(missing) > 1)
+
+
+def test_native_clip_stop_resume_sparse_and_invalid_checkpoints(tmp_path):
+    """Stop after multiple commits, then prove full, sparse and zero-work resumes.
+
+    Args:
+        tmp_path: Pytest directory for the submitted source package.
+    Returns:
+        None.
+    Raises:
+        AssertionError: Native status, vectors, calls or checkpoint bytes differ.
+        RuntimeError: Native Job cleanup fails without an earlier test failure.
+        OSError: Private configuration, source or evidence cannot be accessed.
+    """
+    config = _configuration()
+    token = uuid.uuid4().hex
+    evidence = _evidence_directory(config, token)
+    source, source_hashes = _package_source(tmp_path, evidence)
+    jobs = _NativeJobs(config, source, source_hashes, evidence, token)
+    try:
+        partial, full = _resume_partial(jobs)
         cases = {"sparse": [1, 3], "single": [3], "zero": [], "uncommitted": [3], "corrupt": []}
         for name, missing in cases.items():
-            target = root / name
-            code = (
-                "import pathlib,shutil\n"
-                f"source=pathlib.Path({str(partial)!r}); target=pathlib.Path({str(target)!r})\n"
-                "target.mkdir(parents=True)\n"
-                "shutil.copy2(source/'execution.json',target/'execution.json')\n"
-                "shutil.copytree(source/'shards',target/'shards')\n"
-            )
-            if name == "corrupt":
-                code += "(target/'shards/000004/embeddings.parquet').write_bytes(b'corrupt committed bytes')\n"
-            elif name == "uncommitted":
-                code += "(target/'shards/000003/commit.json').unlink()\n"
-                code += "(target/'shards/000003/embeddings.parquet').write_bytes(b'partial uncommitted bytes')\n"
-            else:
-                code += f"for i in {missing!r}: shutil.rmtree(target/'shards'/f'{{i:06d}}')\n"
-            _remote(config, code)
-            identifier = submit(name, target)
-            log = finish(identifier, "FAILED" if name == "corrupt" else "SUCCEEDED")
-            output = _download(config, target, evidence / name)
-            preserved.add(identifier)
-            if name == "corrupt":
-                assert "Checkpoint data hash mismatch" in log
-                assert _inference_events(log) == []
-                assert not (output / "report.json").exists()
-            else:
-                retained = {i: entry for i, entry in full.items() if i not in missing}
-                report = _verify_result(output, records, retained, log, source_hashes)
-                assert report["concurrency_observation"]["participants"] == min(2, len(missing))
-                assert report["concurrent_actor_inference_observed"] == (len(missing) > 1)
+            _verify_boundary(jobs, partial, full, name, missing)
     finally:
-        original_failure = sys.exc_info()[0] is not None
-        cleanup_errors = []
-        for identifier in jobs:
-            terminal = False
-            try:
-                client.stop_job(identifier)  # Native stop is harmless for terminal Jobs.
-                while not client.get_job_status(identifier).is_terminal():
-                    time.sleep(1)
-                terminal = True
-            except Exception as error:
-                cleanup_errors.append({"job_id": identifier, "operation": "stop", "error_type": type(error).__name__})
-            try:
-                details = client.get_job_info(identifier)
-                terminal = details.status.is_terminal()
-                _write_private(evidence / f"{identifier}-final.json", json.dumps(vars(details), default=str, indent=2))
-            except Exception as error:
-                cleanup_errors.append({"job_id": identifier, "operation": "status", "error_type": type(error).__name__})
-            try:
-                _write_private(evidence / f"{identifier}-final.log", client.get_job_logs(identifier))
-            except Exception as error:
-                cleanup_errors.append({"job_id": identifier, "operation": "logs", "error_type": type(error).__name__})
-            if terminal and identifier not in preserved:
-                try:
-                    exists = _remote(config, f"import pathlib,json; print(json.dumps(pathlib.Path({str(outputs[identifier])!r}).is_dir()))")
-                    if json.loads(exists):
-                        _download(config, outputs[identifier], evidence / f"{identifier}-cleanup-snapshot")
-                except Exception as error:
-                    cleanup_errors.append({"job_id": identifier, "operation": "snapshot", "error_type": type(error).__name__})
-        _write_private(evidence / "job-cleanup.json", json.dumps({"attempted": jobs, "errors": cleanup_errors}))
-        if cleanup_errors and not original_failure:
-            raise RuntimeError("Native Job cleanup failed; inspect private receipts")
+        jobs._cleanup(original_failure=sys.exc_info()[0] is not None)

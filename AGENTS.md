@@ -14,6 +14,7 @@ The source of truth is `skills/index.yaml`. The tree is organized as:
 
 - `skills/workflows/`: workflow-level procedures such as sim-to-real, policy training, Cosmos3 inference, and reference SkyPilot workflows.
 - `skills/atomic/`: reusable actions and review conventions such as GPU selection, workflow submission, testing conventions, image build/push, Cosmos3 setup/troubleshooting, and agent visual feedback (Describe this).
+- `skills/atomic/contributions/SKILL.md`: required readability, documentation, and anti-pattern rules when writing or reviewing contributions, including workbench agent changes.
 - `skills/atomic/agent-visual-feedback/SKILL.md`: Describe-this multimodal feedback for Rerun / video / image / data viewers.
 - `skills/workflows/add-workbench-tool/SKILL.md`: add a new workbench tool end to end — implementation, CLI, SDK, toolRef catalog, container, tests, docs, and skill, in the order that keeps every CI gate green.
 - `skills/atomic/npa-cli-conventions/SKILL.md`: write or modify an npa CLI command or SDK function — registration, the `--input-path`/`--output-path` contract, output format, error handling and exit codes, the `resolve_typer_defaults`/`json_stdout_contract`/`intent_boundary` decorators, and config/credential access.

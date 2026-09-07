@@ -7,9 +7,11 @@ description: Use before pushing an npa change to pick which gates apply and run 
 
 Every pull request runs lint and docs drift, unit and browser tests, security
 regressions, harness guardrails, secret scanning, and confidentiality scanning.
-`Security regression / security-regression` is a required GitHub Actions check;
-its workflow must run on every PR so path filters cannot leave it pending.
-`image-security-scan` also applies to Docker and image-security changes.
+`Security regression / security-regression` requires both the scanner comparison
+and hostile-input runtime tests on every PR, merge queue candidate, and main push.
+Its workflow has no path filters. Verify actual required contexts in branch
+protection before claiming merge enforcement. `image-security-scan` also applies
+to Docker and image-security changes.
 
 All of them are reproducible locally. Run them in cost order so the cheap ones
 catch the common mistakes before you spend minutes on the full suite.
@@ -68,6 +70,7 @@ after every meaningful edit; save 5 and 6 for before you push.
 | A Dockerfile or image tag | `npa/.venv/bin/python npa/docker/workbench/check_tag_consistency.py`, plus `npa/tests/docker/` |
 | The complete-byte scanner, its dependencies, or publication wiring | `npa/tests/docker/test_image_byte*.py`, plus the actual native integration sequence in `.github/workflows/image-security-scan.yml`; hermetic protocol tests do not replace that native gate |
 | A `SKILL.md` or `skills/index.yaml` | `test_skills_index` and `test_develop_skills` |
+| Security gate code, scanner pins, or its workflow | Follow `docs/security/merge-security-gate.md`: run the actual scanner regression workload and full base/candidate comparison, plus `test_security_source` and `test_security_gate` |
 | Terraform or the agent deploy path | `test_terraform_provisioner_shell`, plus a real destroy/deploy cycle |
 | Docs only | Lint and `pytest --collect-only` as a smoke check |
 
