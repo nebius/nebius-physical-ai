@@ -93,6 +93,45 @@ def test_public_unrelated_workflow_has_no_approval_gate() -> None:
     }
 
 
+def test_ray_batch_plan_requires_native_guardrail_payload() -> None:
+    spec = SPEC.with_name("cosmos3-ray-batch.yaml")
+    result = RUNNER.invoke(
+        app, ["workbench", "workflow", "plan-spec", str(spec), "--json"]
+    )
+    assert result.exit_code == 0, result.output
+    requirements = json.loads(result.stdout)["access_requirements"]
+    assert requirements["hf"] == 1
+    assert requirements["ngc"] == 0
+    artifact = requirements["artifacts"][0]
+    assert artifact["artifact"] == "nvidia/Cosmos-Guardrail1"
+    assert artifact["revision"] == "d6d4bfa899a71454a700907664f3e88f503950cf"
+
+
+def test_ray_batch_refuses_execution_without_native_guardrail_access(
+    monkeypatch, tmp_path
+) -> None:
+    monkeypatch.setenv("NPA_ACCESS_APPROVAL_STATE_PATH", str(tmp_path / "state.json"))
+    monkeypatch.setattr(
+        "npa.clients.credentials.load_credentials",
+        lambda: SimpleNamespace(hf_token="", ngc_api_key=""),
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.run_workflow",
+        lambda *args, **kwargs: pytest.fail("access must block before runtime"),
+    )
+    result = RUNNER.invoke(
+        app,
+        ["workbench", "workflow", "run-spec", str(SPEC.with_name("cosmos3-ray-batch.yaml")),
+         "--execute", "--json"],
+    )
+    assert result.exit_code == 1
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "blocked"
+    assert payload["providers"][HF][0]["artifact"] == "nvidia/Cosmos-Guardrail1"
+    assert payload["providers"][HF][0]["status"] == "Pending"
+    assert payload["legal_assent_performed"] is False
+
+
 def test_enforcement_uses_explicit_project_scoped_credentials(
     monkeypatch, tmp_path: Path
 ) -> None:

@@ -43,6 +43,10 @@ the materializer preserves those checks and does not alter the upstream snapshot
 Missing access or an invalid cache prevents service startup. These assets are
 fetched at runtime and must never be baked into the image.
 
+The Ray batch toolRef uses the `cosmos3` access capability, matching the native
+server's pinned `Cosmos-Guardrail1` payload. Workflow execution requires that
+exact access probe to pass before starting the client.
+
 The service exposes authenticated `GET /health`, model-backed `GET /ready`,
 `GET /models`, `GET /system-info`, `POST /v1/batches`, and artifact retrieval at
 `GET /v1/artifacts/{path}`.
