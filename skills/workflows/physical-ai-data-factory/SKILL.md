@@ -578,6 +578,37 @@ npa workbench cosmos-curate curate-videos --input-dir ./clips --output-dir ./cur
   `workbench.nurec.visualize`, which the renderer pins to the prebuilt
   `npa-rerun-viewer` image. It never performs `pip install` at task runtime.
 
+## Immutable campaign reuse and provider derivatives
+
+The expensive source, generation, and evaluation stages are frozen once into an
+immutable base campaign (`npa.paidf.campaign.v1`), and every provider workshop
+becomes a derivative run that reads the base read-only and writes to its own
+prefix. The contracts live in `npa.workflows.paidf_campaign`
+(`docs/workbench/guides/paidf-campaign-reuse.md` is the runbook):
+
+- `build_partner_input` / `validate_partner_input` pin the base campaign ID,
+  manifest URI, and canonical digest; a derivative run cannot execute
+  `source`, `generation`, or `evaluation`, must declare a `curation`,
+  `observability`, or `simulation` role, credential *references* (never
+  values), and an output prefix separate from the base campaign.
+- `build_execution_receipt` / `build_partner_result` account for every
+  declared overlay stage and prove `source_mutated: false` with every output
+  under the derivative prefix.
+- Curation flows through provider-neutral candidates
+  (`npa.paidf.candidates.v1`), decisions (`npa.paidf.decisions.v1`), and
+  reconciliation (`npa.paidf.reconciliation.v1`). A decision provider is
+  exactly `name` plus a `curation` or `evaluation` role; each decision is
+  exactly `candidate_id`, `decision`, `evidence`, `reason`, and a
+  caller-supplied `decided_at` in `YYYY-MM-DDTHH:MM:SSZ` UTC-second form.
+  `accept` enters the training set, `reject` is dropped, and `review` is a
+  valid but unresolved state that is reported explicitly and never enters
+  accepted replacements. Provider exports reconcile by exact external ID and
+  every terminal row must carry a non-null decision state.
+- Regenerating any base stage creates a new campaign; existing campaigns are
+  never silently changed. This is a contract layer, not a provider plugin
+  system: provider execution stays in provider-specific code, and no live
+  second-provider integration is claimed until one runs.
+
 ## Testing (live-infra is a priority)
 
 Follow `skills/atomic/testing-conventions/SKILL.md` ("Live-Infra Testing Is A

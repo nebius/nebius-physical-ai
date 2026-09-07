@@ -12,7 +12,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from npa.cluster.gpu_driver import gpus_per_node
+from npa.cluster.gpu_driver import gpus_per_node, is_nvswitch_topology
 
 DEFAULT_STABILIZATION_SECONDS = 120
 DEFAULT_POLL_SECONDS = 10
@@ -53,9 +53,22 @@ class GpuHealthConfig:
     cuda_smoke_image: str = DEFAULT_CUDA_SMOKE_IMAGE
     graphics_smoke: bool = False
     graphics_smoke_image: str = DEFAULT_GRAPHICS_SMOKE_IMAGE
+    # Declared pool topology, never learned from a readiness snapshot. An empty
+    # tuple keeps the existing uniform-preset contract.
+    expected_gpu_counts: tuple[int, ...] = ()
+    # Optional declared pool subset that requires Fabric Manager. None retains
+    # cluster-wide fabric checks; single-GPU guests can explicitly be excluded.
+    nvswitch_gpu_counts: tuple[int, ...] | None = None
+
+    def requires_nvswitch(self, gpu_count: int) -> bool:
+        if self.nvswitch_gpu_counts is not None:
+            return gpu_count in self.nvswitch_gpu_counts
+        return self.nvswitch
 
     @property
     def expected_gpus(self) -> int:
+        if self.expected_gpu_counts:
+            return sum(self.expected_gpu_counts)
         return self.expected_gpu_nodes * gpus_per_node(self.gpu_preset)
 
     def validate(self) -> None:
@@ -63,6 +76,32 @@ class GpuHealthConfig:
             raise ValueError("expected node counts cannot be negative")
         if self.expected_gpu_nodes > self.expected_nodes:
             raise ValueError("expected GPU nodes cannot exceed expected total nodes")
+        if self.expected_gpu_counts and (
+            len(self.expected_gpu_counts) != self.expected_gpu_nodes
+            or any(type(count) is not int or count <= 0 for count in self.expected_gpu_counts)
+        ):
+            raise ValueError(
+                "expected_gpu_counts must declare one positive integer per GPU node"
+            )
+        if self.expected_gpu_counts and is_nvswitch_topology(
+            platform=self.gpu_platform,
+            preset=f"{max(self.expected_gpu_counts)}gpu-declared",
+        ) and not self.nvswitch:
+            raise ValueError("declared multi-GPU SXM/NVL nodes require NVSwitch checks")
+        if self.nvswitch_gpu_counts is not None:
+            if not self.expected_gpu_counts or any(
+                type(count) is not int or count not in self.expected_gpu_counts
+                for count in self.nvswitch_gpu_counts
+            ):
+                raise ValueError("nvswitch_gpu_counts must be a declared GPU-count subset")
+            required_counts = {
+                count for count in self.expected_gpu_counts
+                if is_nvswitch_topology(
+                    platform=self.gpu_platform, preset=f"{count}gpu-declared"
+                )
+            }
+            if not required_counts.issubset(self.nvswitch_gpu_counts):
+                raise ValueError("NVSwitch subset cannot omit multi-GPU SXM/NVL nodes")
         if self.expected_gpu_nodes and self.expected_gpus <= 0:
             raise ValueError(
                 f"GPU preset {self.gpu_preset!r} does not encode a positive GPU count"
@@ -275,14 +314,28 @@ def probe_gpu_health(
         )
     total_gpus = sum(_allocatable_gpus(node) for node in gpu_nodes)
     if total_gpus != config.expected_gpus:
+        topology = (
+            str(list(config.expected_gpu_counts))
+            if config.expected_gpu_counts
+            else f"{config.expected_gpu_nodes}x{gpus_per_node(config.gpu_preset)}"
+        )
         errors.append(
             f"expected {config.expected_gpus} nvidia.com/gpu allocatable from "
-            f"{config.expected_gpu_nodes}x{gpus_per_node(config.gpu_preset)}, "
-            f"found {total_gpus}"
+            f"{topology}, found {total_gpus}"
+        )
+    gpu_counts = {_node_name(node): _allocatable_gpus(node) for node in gpu_nodes}
+    if config.expected_gpu_counts and sorted(gpu_counts.values()) != sorted(
+        config.expected_gpu_counts
+    ):
+        errors.append(
+            "GPU counts per node do not match declared distribution: "
+            f"expected {sorted(config.expected_gpu_counts)}, "
+            f"found {sorted(gpu_counts.values())}"
         )
     for node in gpu_nodes:
-        errors.extend(_node_condition_errors(node, nvswitch=config.nvswitch))
-        errors.extend(_fabric_metadata_errors(node, nvswitch=config.nvswitch))
+        nvswitch = config.requires_nvswitch(_allocatable_gpus(node))
+        errors.extend(_node_condition_errors(node, nvswitch=nvswitch))
+        errors.extend(_fabric_metadata_errors(node, nvswitch=nvswitch))
     missing_boot_ids = [
         _node_name(node) or "<unnamed>" for node in nodes if not _boot_id(node)
     ]
@@ -327,6 +380,11 @@ def probe_gpu_health(
         "ready_nodes": len(ready_nodes),
         "expected_gpu_nodes": config.expected_gpu_nodes,
         "gpu_nodes": sorted(_node_name(node) for node in gpu_nodes),
+        "gpu_counts": gpu_counts,
+        "nvswitch_nodes": sorted(
+            name for name, count in gpu_counts.items()
+            if config.requires_nvswitch(count)
+        ),
         "expected_gpus": config.expected_gpus,
         "total_gpus": total_gpus,
         "driver_mode": config.driver_mode,
@@ -388,9 +446,21 @@ def _cuda_smoke_on_node(
     nvswitch: bool,
     sleep_fn: Callable[[float], None],
     monotonic_fn: Callable[[], float],
+    gpu_count: int = 1,
+    require_device_evidence: bool = False,
 ) -> dict[str, Any]:
     digest = hashlib.sha256(node_name.encode()).hexdigest()[:10]
     pod_name = f"npa-gpu-health-{digest}"
+    command = "/cuda-samples/vectorAdd && nvidia-smi -q"
+    if require_device_evidence:
+        command = (
+            "set -euo pipefail\n"
+            f"for device in $(seq 0 {gpu_count - 1}); do\n"
+            '  CUDA_VISIBLE_DEVICES="$device" /cuda-samples/vectorAdd\n'
+            '  printf "NPA_CUDA_DEVICE_%s_PASSED\\n" "$device"\n'
+            "done\n"
+            "nvidia-smi -q"
+        )
     manifest = {
         "apiVersion": "v1",
         "kind": "Pod",
@@ -414,8 +484,8 @@ def _cuda_smoke_on_node(
                     "name": "vectoradd",
                     "image": image,
                     "command": ["/bin/bash", "-c"],
-                    "args": ["/cuda-samples/vectorAdd && nvidia-smi -q"],
-                    "resources": {"limits": {"nvidia.com/gpu": 1}},
+                    "args": [command],
+                    "resources": {"limits": {"nvidia.com/gpu": gpu_count}},
                     "securityContext": {
                         "allowPrivilegeEscalation": False,
                         "capabilities": {"drop": ["ALL"]},
@@ -484,6 +554,16 @@ def _cuda_smoke_on_node(
                 f"CUDA vectorAdd on {node_name} exited successfully without "
                 "required 'Test PASSED' evidence"
             )
+        if require_device_evidence:
+            devices = re.findall(r"(?m)^NPA_CUDA_DEVICE_(\d+)_PASSED$", output)
+            if (
+                devices != [str(device) for device in range(gpu_count)]
+                or output.count("Test PASSED") != gpu_count
+            ):
+                raise GpuHealthError(
+                    f"CUDA vectorAdd on {node_name} lacks complete per-device "
+                    f"evidence for {gpu_count} assigned GPUs"
+                )
         fabric_errors = _fabric_errors_from_nvidia_smi(output) if nvswitch else []
         if fabric_errors:
             raise GpuHealthError(f"{node_name}: " + "; ".join(fabric_errors))
@@ -492,7 +572,11 @@ def _cuda_smoke_on_node(
             "pod": pod_name,
             "phase": phase,
             "vectoradd": "passed",
-            "fabric": "success" if nvswitch and "Fabric" in output else "not-exposed",
+            "tested_gpus": gpu_count,
+            "fabric": (
+                "not-required" if require_device_evidence and not nvswitch
+                else "success" if nvswitch and "Fabric" in output else "not-exposed"
+            ),
         }
     finally:
         capture(
@@ -765,9 +849,15 @@ def validate_gpu_health(
                         node_name=node_name,
                         image=config.cuda_smoke_image,
                         timeout_seconds=remaining,
-                        nvswitch=config.nvswitch,
+                        nvswitch=node_name in final_snapshot["nvswitch_nodes"],
                         sleep_fn=sleep_fn,
                         monotonic_fn=monotonic_fn,
+                        gpu_count=(
+                            final_snapshot["gpu_counts"][node_name]
+                            if config.expected_gpu_counts
+                            else 1
+                        ),
+                        require_device_evidence=bool(config.expected_gpu_counts),
                     )
                 )
         if config.graphics_smoke:

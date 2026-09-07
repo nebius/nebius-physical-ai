@@ -35,8 +35,8 @@ If it is older than 3.10 (or missing):
   [pyenv](https://github.com/pyenv/pyenv).
 - **Debian/Ubuntu:** the interpreter is usually current; also install the venv
   module (shipped separately): `sudo apt-get install -y python3 python3-venv`.
-- **Windows:** install from [python.org](https://www.python.org/downloads/)
-  (check "Add python.exe to PATH"), or from the Microsoft Store.
+- **Windows:** use the Debian/Ubuntu commands inside WSL2 Ubuntu. A native
+  Windows Python installation is not used by this setup.
 
 ## 2. Clone the repository and create a virtual environment
 
@@ -118,27 +118,8 @@ Actual removal requires both explicit flags:
 npa uninstall --remove-environment --yes
 ```
 
-NPA refuses system, conda, pipx, user-wide, externally managed, symlinked,
-arbitrary, dirty-overlapping, active, and identity-mismatched environments. The
-command writes a mode-0600 one-time receipt, prints and flushes the status path,
-then launches a base-Python helper outside the target. The helper waits for the
-parent process to exit and revalidates the exact realpath, device/inode,
-`pyvenv.cfg` digest, repository markers, nonce, and other-process use before
-descriptor-relative removal. Source, `.git`, credentials, user data, and
-unrelated caches are never in the plan.
-
-If deferred deletion fails, the target and failure receipt remain. While the
-environment still exists, inspect or retry with the exact commands printed in
-the receipt:
-
-```bash
-npa uninstall --status <receipt-id>
-npa uninstall --remove-environment --yes --retry <receipt-id>
-```
-
-Successful removal naturally removes that environment's `npa` executable; the
-receipt remains under `~/.npa/uninstall-receipts/` for direct inspection or for
-`npa uninstall --status` after reinstalling NPA.
+For removal safeguards, failure receipts, and retries, see
+[environment removal and recovery](teardown.md#repository-local-environment-removal-and-recovery).
 
 ## 4. Nebius CLI (required)
 

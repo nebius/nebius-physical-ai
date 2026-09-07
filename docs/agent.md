@@ -8,8 +8,10 @@ OpenAI-compatible provider, Sim Assets and Cameras panels, an
 embedded [Rerun](https://www.rerun.io) viewer for `.rrd` recordings, and
 draft/validate/plan/submit endpoints for `npa.workflow/v0.0.1` specs.
 
-It is **optional**. Workflows submit and run without it; the agent is where you
-go to look at what they produced.
+This deployment is optional. An existing coding agent can configure, submit,
+and inspect workflows through the terminal using the
+[first-run guide](workbench/agent-first-run.md). Deploy the browser workbench
+when you need its chat, workflow endpoints, or embedded viewers.
 
 These public defaults replace the models retired in the
 [August 2026 Token Factory notice](https://docs.tokenfactory.nebius.com/august-2026-deprecation-notice).
