@@ -56,8 +56,7 @@ class _RecordedStorage:
 
 
 def test_actual_s3_archive_restore_and_corruption(monkeypatch):
-    config_path = os.environ.get("NPA_RAY_CLIP_ARCHIVE_LIVE_CONFIG")
-    if not config_path:
+    if not (config_path := os.environ.get("NPA_RAY_CLIP_ARCHIVE_LIVE_CONFIG")):
         pytest.skip("requires private source provenance and preflighted owned workload storage")
     path = Path(config_path)
     assert path.stat().st_uid == os.getuid() and path.stat().st_mode & 0o077 == 0
