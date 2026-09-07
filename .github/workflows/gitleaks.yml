@@ -2,8 +2,12 @@ name: gitleaks
 
 on:
   pull_request:
+  merge_group:
   push:
     branches: [main]
+
+permissions:
+  contents: read
 
 concurrency:
   # Keep workflows independent, but let a newer commit supersede older work for
@@ -29,9 +33,12 @@ jobs:
       - name: Run gitleaks
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MERGE_BASE: ${{ github.event.merge_group.base_sha }}
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             scan_range="${{ github.event.pull_request.base.sha }}..HEAD"
+          elif [ "${{ github.event_name }}" = "merge_group" ]; then
+            scan_range="${MERGE_BASE}..HEAD"
           elif [ "${{ github.event_name }}" = "push" ]; then
             scan_range="${{ github.event.before }}..HEAD"
           else
