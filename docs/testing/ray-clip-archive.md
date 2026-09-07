@@ -64,6 +64,15 @@ preview input bytes and retrieval inventories, and verifies report hashes.
 Advanced results additionally require execution identity, complete committed
 shards and successful actor-cleanup evidence. A cancelled tree is insufficient.
 
+Before opening Lance, it validates the local manifest and transaction against
+the initial-version format emitted by the current recipe (LanceDB 0.30.2,
+Lance writer 4.0.0, data format 2.0). Every fragment must reference inventoried
+local data. Shallow clones, extra versions, indexes, deletions, external row
+metadata, branches, extensions and unknown metadata are unsupported and rejected
+before any Lance reader runs. This restriction prevents a restored table from
+silently depending on files outside its result tree. Keep the recipe's original
+Lance directory; use a separate copy for subsequent table edits.
+
 Archive freezes a private local copy, checks its formats, creates each
 `files/<relative-name>` object conditionally, and reads back exact bytes. It
 rescans the original tree, including file identity and modification metadata,

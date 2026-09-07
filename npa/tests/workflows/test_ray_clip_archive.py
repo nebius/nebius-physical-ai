@@ -10,6 +10,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import struct
 import sys
 import threading
 from types import SimpleNamespace
@@ -25,7 +26,7 @@ PREFIX = "s3://test-bucket/clip-test"
 def modules(monkeypatch):
     directory = Path(__file__).parents[2] / "workflows/workbench/ray-clip-development"
     monkeypatch.syspath_prepend(str(directory))
-    names = ("archive", "archive_inventory", "embed", "worker", "validation")
+    names = ("archive", "archive_inventory", "archive_lance", "embed", "worker", "validation")
     saved = {name: sys.modules.pop(name) for name in names if name in sys.modules}
     yield importlib.import_module("archive"), importlib.import_module("embed")
     for name in names:
@@ -562,3 +563,116 @@ def test_lance_schema_must_support_the_validated_vectors(modules, source, store,
     with pytest.raises(ValueError, match="schemas differ"):
         archive.restore(PREFIX, tmp_path / "unusable", _hash(manifest), store)
     assert not (tmp_path / "unusable").exists() and not list(tmp_path.glob(".clip-restore-*"))
+
+
+def _reject_before_lance_open(archive, source, store, tmp_path, operation, monkeypatch):
+    import lancedb
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Lance reader ran before validating local references")
+
+    monkeypatch.setattr(lancedb, "connect", forbidden)
+    if operation == "archive":
+        with pytest.raises(ValueError, match="Lance metadata"):
+            archive.archive(source, PREFIX, store)
+        assert not store.objects
+    else:
+        files = {name: {"size": len(data), "sha256": _hash(data)} for name, data in _bytes(source).items()}
+        manifest = archive.canonical({"schema": archive.SCHEMA, "format": "basic", "files": files})
+        store.objects.update({f"{PREFIX}/files/{name}": data for name, data in _bytes(source).items()})
+        store.objects[f"{PREFIX}/complete.json"] = manifest
+        with pytest.raises(ValueError, match="Lance metadata"):
+            archive.restore(PREFIX, tmp_path / "unusable", _hash(manifest), store)
+        assert not (tmp_path / "unusable").exists() and not list(tmp_path.glob(".clip-restore-*"))
+
+
+@pytest.mark.parametrize("operation", ["archive", "restore"])
+@pytest.mark.parametrize("local_decoy", [False, True])
+def test_shallow_lance_references_rejected_before_reader(modules, source, store, tmp_path,
+                                                        operation, local_decoy, monkeypatch):
+    import lancedb
+    import pyarrow.parquet as pq
+
+    archive, _ = modules
+    outside = tmp_path / "outside"
+    shutil.move(source / "lance", outside)
+    database = lancedb.connect(str(source / "lance"))
+    clone = database.clone_table("embeddings", str(outside / "embeddings.lance"), is_shallow=True)
+    expected = pq.read_table(source / "embeddings.parquet")
+    assert clone.schema.equals(expected.schema, check_metadata=False)
+    assert clone.to_arrow().to_pylist() == expected.to_pylist()
+    assert not list((source / "lance").rglob("data/*.lance"))
+    if local_decoy:
+        # Presence of plausible local data is insufficient to prove references.
+        shutil.copytree(outside / "embeddings.lance/data", source / "lance/embeddings.lance/data")
+    shutil.rmtree(outside)
+    # The invalid external dependency survived fixture setup; local decoys do not fix it.
+    with pytest.raises(Exception):
+        lancedb.connect(str(source / "lance")).open_table("embeddings").to_arrow()
+    _checksums(source)
+    _reject_before_lance_open(archive, source, store, tmp_path, operation, monkeypatch)
+
+
+@pytest.mark.parametrize("identifier", [1, 2**32, 2**64 - 1])
+def test_initial_lance_fragment_ids_are_contiguous_uint32(modules, source, identifier):
+    from archive_lance import _fragments
+
+    def integer(value):
+        encoded = bytearray()
+        while value >= 128:
+            encoded.append((value & 127) | 128)
+            value >>= 7
+        return bytes(encoded) + bytes([value])
+
+    path = next((source / "lance/embeddings.lance/data").glob("*.lance"))
+    name = path.name.encode()
+    data = (b"\x0a" + integer(len(name)) + name + b"\x12\x04\x00\x01\x02\x03"
+            + b"\x1a\x04\x00\x01\x02\x03\x20\x02\x30" + integer(path.stat().st_size))
+    fragment = b"\x12" + integer(len(data)) + data + b"\x20\x06"
+    prefix = "lance/embeddings.lance/"
+    files = {prefix + "data/" + path.name: {"size": path.stat().st_size}}
+    assert _fragments([fragment], files, prefix, 6)[1] == 0
+    with pytest.raises(ValueError, match="Lance metadata"):
+        _fragments([b"\x08" + integer(identifier) + fragment], files, prefix, 6)
+
+
+@pytest.mark.parametrize("operation", ["archive", "restore"])
+@pytest.mark.parametrize("mutation", [
+    "base_paths", "index", "reader_flags", "schema_metadata", "branch", "duplicate_version",
+    "unknown_field", "wrong_wire", "zero_field", "truncated_length", "overlong_integer",
+    "overflow_integer", "footer", "trailing", "transaction", "extra_version", "missing_data", "extra_index",
+])
+def test_lance_metadata_rejected_before_reader(modules, source, store, tmp_path, operation, mutation, monkeypatch):
+    archive, _ = modules
+    lance_root = source / "lance/embeddings.lance"
+    path = next((lance_root / "_versions").glob("*.manifest"))
+    content = path.read_bytes()
+    offset = struct.unpack("<Q", content[-16:-8])[0]
+    # Actual writer output plus independent protobuf wire records. Honest outer
+    # checksums alone must never authorize a Lance reader for these variants.
+    additions = {
+        "base_paths": b"\x92\x01\x00", "index": b"\x30\x00", "reader_flags": b"\x48\x01",
+        "schema_metadata": b"\x2a\x00", "branch": b"\xa2\x01\x00", "duplicate_version": b"\x18\x01",
+        "unknown_field": b"\xf8\x07\x01", "wrong_wire": b"\x1d\x00\x00\x00\x00",
+        "zero_field": b"\x00\x00", "truncated_length": b"\x92\x01\x80",
+        "overlong_integer": b"\x18\x81\x00", "overflow_integer": b"\x18" + b"\xff" * 9 + b"\x02",
+    }
+    if mutation in additions:
+        payload = content[offset + 4:-16] + additions[mutation]
+        path.write_bytes(content[:offset] + struct.pack("<I", len(payload)) + payload + content[-16:])
+    elif mutation == "footer":
+        path.write_bytes(content[:-8] + b"\x01" + content[-7:])
+    elif mutation == "trailing":
+        path.write_bytes(content[:-16] + b"unexpected" + content[-16:])
+    elif mutation == "transaction":
+        transaction = next((lance_root / "_transactions").glob("*.txn"))
+        transaction.write_bytes(transaction.read_bytes() + b"\x08\x01")
+    elif mutation == "extra_version":
+        (path.parent / "2.manifest").write_bytes(content)
+    elif mutation == "missing_data":
+        next((lance_root / "data").glob("*.lance")).unlink()
+    else:
+        (lance_root / "_indices").mkdir()
+        (lance_root / "_indices/unknown.idx").write_bytes(b"index")
+    _checksums(source)
+    _reject_before_lance_open(archive, source, store, tmp_path, operation, monkeypatch)

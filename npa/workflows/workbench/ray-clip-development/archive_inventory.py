@@ -111,6 +111,9 @@ def _lance_and_previews(root, table, files):
     import lancedb
     from PIL import Image
 
+    from archive_lance import validate_local_lance
+
+    validate_local_lance(root, files, len(table))
     database = lancedb.connect(str(root / "lance"))
     persisted = database.open_table("embeddings").to_arrow().sort_by("record_id")
     if not persisted.schema.equals(table.schema, check_metadata=False):
