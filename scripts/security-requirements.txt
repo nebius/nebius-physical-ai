@@ -1,0 +1,5 @@
+# Isolated scanner environment; never install the candidate application here.
+bandit==1.9.4
+zizmor==1.30.0
+uv==0.12.5
+packaging==26.0
