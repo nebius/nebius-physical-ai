@@ -5,6 +5,7 @@ entrypoint that drives the real component:
 
 * ``check``       - NGC container pullability, HF dataset download rights, RT-core GPU
 * ``fetch``       - download + unpack real NCore V4 shards from a PhysicalAI dataset
+* ``convert-colmap`` - Apache-2.0 NVIDIA NCore ingestion of S3 COLMAP captures
 * ``reconstruct`` - NRE 3DGUT training -> renderable ``usd-out/last.usdz`` + metrics
 * ``render``      - ``nre render`` novel views (rig-offset, NOT training views)
 * ``visualize``   - build ``reports/sim2real.rrd`` via the tested viz module
@@ -23,6 +24,8 @@ from pathlib import Path
 from typing import Any
 
 import typer
+
+from npa.lifecycle_intent import json_stdout_contract
 
 from npa.workbench.nurec.nurec import (
     DEFAULT_CONFIG_NAME,
@@ -54,8 +57,9 @@ app = typer.Typer(
     help=(
         "NVIDIA Omniverse NuRec / Neural Reconstruction Engine: sensor recordings "
         "-> 3DGUT Gaussian reconstruction -> renderable USDZ -> novel-view renders. "
-        "Requires an RT-core GPU (L40S or RTX PRO 6000 Blackwell); never route the "
-        "render path at H100/H200."
+        "COLMAP ingestion uses Apache-2.0 NVIDIA NCore on CPU. Proprietary NRE "
+        "reconstruction/rendering requires an RT-core GPU (L40S or RTX PRO 6000 "
+        "Blackwell); never route the render path at H100/H200."
     ),
     no_args_is_help=True,
 )
@@ -69,6 +73,9 @@ VIZ_APP_ID = "neural-reconstruction"
 class OutputFormat(str, Enum):
     text = "text"
     json = "json"
+
+    def __str__(self) -> str:
+        return self.value
 
 
 def _output(data: dict[str, Any], output: OutputFormat) -> None:
@@ -189,6 +196,98 @@ def check_cmd(
     )
     result = check_nurec_access(config, require_ngc=require_ngc, require_gpu=require_gpu)
     _finish_nurec_result(result.as_dict(), output)
+
+
+@app.command("convert-colmap")
+@json_stdout_contract
+def convert_colmap_cmd(
+    input_path: str = typer.Option(
+        ..., "--input-path", help="S3 COLMAP ZIP object or dataset prefix."
+    ),
+    output_path: str = typer.Option(
+        ...,
+        "--output-path",
+        help="Exact S3 destination for the self-contained NCore V4 sequence.",
+    ),
+    cache_dir: Path = typer.Option(
+        Path("/tmp/npa-ncore-cache"),
+        "--cache-dir",
+        help="Local source staging directory.",
+    ),
+    scratch_dir: Path = typer.Option(
+        Path("/tmp/npa-ncore-scratch"),
+        "--scratch-dir",
+        help="Local converter scratch directory.",
+    ),
+    dataset_root: str = typer.Option(
+        ".",
+        "--dataset-root",
+        help="Relative dataset directory; dot discovers exactly one reconstruction.",
+    ),
+    colmap_dir: str = typer.Option(
+        "sparse/0", "--colmap-dir", help="Relative COLMAP model directory."
+    ),
+    images_dir: str = typer.Option(
+        "images", "--images-dir", help="Relative images directory."
+    ),
+    masks_dir: str = typer.Option(
+        "",
+        "--masks-dir",
+        help="Relative masks directory; empty uses upstream discovery.",
+    ),
+    rig_mode: str = typer.Option(
+        "derive",
+        "--rig-mode",
+        help="derive adds the NRE rig edge; preserve keeps upstream poses.",
+    ),
+    reference_camera: str = typer.Option(
+        "",
+        "--reference-camera",
+        help="Reference camera for rig derivation; empty selects the longest trajectory.",
+    ),
+    include_downsampled_images: bool = typer.Option(
+        True,
+        "--include-downsampled-images/--no-include-downsampled-images",
+        help="Include available images_2/4/8 cameras, matching the official converter default.",
+    ),
+    output_format: OutputFormat = typer.Option(
+        OutputFormat.text, "--output-format", help="Output format: text or json."
+    ),
+) -> None:
+    """Convert COLMAP using Apache-2.0 NVIDIA NCore; NRE is a separate downstream engine."""
+    from pydantic import ValidationError
+    from npa.workbench.nurec.colmap import (
+        ColmapConversionRequest,
+        NcoreConversionError,
+        convert_colmap,
+    )
+
+    output = output_format
+    try:
+        request = ColmapConversionRequest(
+            input_path=input_path,
+            output_path=output_path,
+            cache_dir=cache_dir,
+            scratch_dir=scratch_dir,
+            dataset_root=dataset_root,
+            colmap_dir=colmap_dir,
+            images_dir=images_dir,
+            masks_dir=masks_dir,
+            rig_mode=rig_mode,
+            reference_camera=reference_camera,
+            include_downsampled_images=include_downsampled_images,
+        )
+        result = convert_colmap(request)
+    except ValidationError as exc:
+        # Pydantic's default str(exc) embeds input values; report field names only.
+        fields = sorted({str(error["loc"][0]) for error in exc.errors()})
+        result = {
+            "status": "failed",
+            "error": "Invalid conversion options: " + ", ".join(fields),
+        }
+    except NcoreConversionError as exc:
+        result = {"status": "failed", "error": str(exc)}
+    _finish_nurec_result(result, output)
 
 
 @app.command("fetch")

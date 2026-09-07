@@ -1,6 +1,6 @@
 ---
 name: neural-reconstruction
-description: Use when reconstructing real sensor captures into renderable 3D scenes with NVIDIA Omniverse NuRec / the Neural Reconstruction Engine (NRE) on Nebius — NCore V4 input, 3DGUT Gaussian training, renderable USDZ, novel-view rendering, and the Rerun recording the NPA agent displays. Also use when an NCore sequence will not load in NRE, when picking the GPU for a reconstruction, or when changing the nurec workbench tool, CLI, or SkyPilot workflow.
+description: Use when reconstructing real sensor captures into renderable 3D scenes with NVIDIA Omniverse NuRec / the Neural Reconstruction Engine (NRE) on Nebius — COLMAP source conversion to NCore V4, existing NCore V4 input, 3DGUT Gaussian training, renderable USDZ, novel-view rendering, and the Rerun recording the NPA agent displays. Also use when an NCore sequence will not load in NRE, when picking the GPU for a reconstruction, or when changing the nurec workbench tool, CLI, or SkyPilot workflow.
 ---
 
 # Neural Reconstruction (NuRec / NRE)
@@ -26,9 +26,13 @@ Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. Upstream licenses are
 Apache-2.0 and CC-BY-4.0. Trademarks (NVIDIA, Omniverse, NuRec, NRE, Isaac Sim,
 Cosmos) belong to NVIDIA. See `skills/NOTICE-NVIDIA-SKILLS`.
 
-NPA does not redistribute NVIDIA source or model weights. The capability drives
-the public NGC containers and public Hugging Face datasets from Nebius
-infrastructure, orchestrated by SkyPilot.
+The NCore conversion image packages pinned Apache-2.0 NVIDIA source and its
+MIT COLMAP reader; it contains no dataset, weights or proprietary NRE payload.
+NRE remains a separately licensed NGC runtime. The new COLMAP ingestion path is
+**not yet live validated** and has no accepted public image release. See
+`skills/NOTICE-NVIDIA-NCORE-COLMAP` and
+`docs/workbench/guides/nurec-colmap-reconstruct.md`. Existing preconverted-NCore
+results below do not validate the new conversion path.
 
 ## When To Use
 
@@ -84,6 +88,7 @@ Every stage is a real command; nothing here is a manifest stub.
 
 ```bash
 npa workbench nurec check       # NGC pullability + HF download rights + RT-core GPU
+npa workbench nurec convert-colmap # CPU: official Apache-2.0 COLMAP -> NCore V4
 npa workbench nurec fetch       # real NCore V4 shards + derived rig pose edge
 npa workbench nurec reconstruct # NRE 3DGUT training -> renderable USDZ + metrics
 npa workbench nurec render      # `nre render` novel views (rig offset, not training views)
@@ -95,11 +100,13 @@ npa workbench nurec status      # what a run prefix holds, stage by stage
 | Concern | Implementation |
 | --- | --- |
 | Pure logic + argv builders | `npa/src/npa/workbench/nurec/nurec.py` |
+| COLMAP ingestion + complete V4 verification | `npa/src/npa/workbench/nurec/colmap.py` |
 | NCore rig-pose derivation | `npa/src/npa/workbench/nurec/ncore_rig.py` |
 | CLI | `npa/src/npa/cli/nurec/__init__.py` |
-| SDK | `npa.sdk.workbench.nurec` (`check`, `fetch`, `reconstruct`, `render`, `visualize`, `finalize`, `status`); the framework-free API is re-exported from `npa.workbench.nurec` |
+| SDK | `npa.sdk.workbench.nurec` (`check`, `convert_colmap`, `fetch`, `reconstruct`, `render`, `visualize`, `finalize`, `status`); the framework-free API is re-exported from `npa.workbench.nurec` |
 | SkyPilot workflow | `npa/src/npa/workbench/nurec/examples/nurec-reconstruct.yaml` |
-| Declarative twin | `workflows/testing/nurec-reconstruct.yaml` |
+| Preconverted-NCore workflow | `workflows/testing/nurec-reconstruct.yaml` |
+| COLMAP source workflow (not yet live validated) | `workflows/testing/nurec-colmap-reconstruct.yaml` |
 | Rerun recording | `npa.workflows.data_factory_viz.build_run_rrd` |
 
 ## Input Data
@@ -116,6 +123,39 @@ can pull a byte. `npa workbench nurec check` reports `hf_dataset: gated` for
 those until it is accepted — it probes real download authorization, not just
 metadata visibility, because a gated repo still answers 200 for
 `/api/datasets/<id>`.
+
+### COLMAP source ingestion (not yet live validated)
+
+Use `workflows/testing/nurec-colmap-reconstruct.yaml` for original COLMAP images,
+camera calibration/poses and sparse points. Its five states are conversion ->
+existing NRE reconstruction -> render -> visualize -> finalize; the workflow
+owns the graph, with no separate Python orchestrator. The exact CLI/toolRef
+contract is documented in `docs/workbench/guides/nurec-colmap-reconstruct.md`.
+
+- Select the full `struktur28` directory in the PPISP ZIP pinned at
+  `2521064a3af6ab1c1caa2ba1b01ddde7eecded69`: 518 images, 3 cameras and 163,453
+  sparse source points. The separate `struktur28_auto` directory is not the
+  selected capture. Never replace the full source with that smaller variant.
+- `--input-path` takes an S3 ZIP or prefix; `--output-path` is the exact portable
+  sequence prefix. Feed the same trailing-slash prefix to NRE's `--ncore-uri`.
+  Use `--dataset-root struktur28 --rig-mode derive` and `npa_rig` poses.
+- The CPU image runs NVIDIA/ncore
+  `59c698d206da92b406a4f72619fce3b3a2c64bfd`, with its pinned MIT
+  trueprice/pycolmap reader. Scope the immutable development image override to
+  `workbench.nurec.convert_colmap`; no accepted/public availability is implied.
+- Preserve virtual per-camera **1 FPS** timestamps as photographic ordering,
+  not synchronized capture time. Sparse SfM points are not physical LiDAR.
+  Record upstream's near-origin point filtering and any derived rig changes.
+- Reopen every image/calibration/pose/point, compare full source counts and
+  finite geometry, and retain hashes, source notices and CC-BY-4.0 attribution
+  with runtime artifacts. No datasets or weights may be baked.
+- NRE remains proprietary and separately gated. Keep its full native recipe
+  (`max_epochs: "0"`) on the explicit RTX PRO 6000 profile; never remap to B200.
+- Live matrix: real executing `gpu` case, with complete hash-verified source
+  seeding and S3 conversion-member verification. Supply the development digest
+  through `NPA_E2E_IMAGE_OVERRIDE_NCORE`. Report actual numeric GPU results
+  before changing the pending validation status; older NuRec results do not
+  qualify.
 
 ## The rig -> world Pose Edge (the thing that breaks first)
 
@@ -241,7 +281,8 @@ yourself; do not invent a workbench command for it.
 | Get a Rerun recording the NPA agent will display | `npa workbench nurec visualize` |
 | Run all of the above on a GPU as one pipeline | `workflows/testing/nurec-reconstruct.yaml` |
 | Measure PSNR / SSIM / LPIPS | Already emitted -- `reconstruction/metrics.yaml`, and `gaussians/summary` in the `.rrd` |
-| Convert my *own* recording (drone, RGB-D, ROS 2 bag, ScanNet++) to NCore V4 | Upstream `ncore`. The workbench consumes NCore V4; it does not author it |
+| Convert a COLMAP reconstruction to NCore V4 | `npa workbench nurec convert-colmap` on CPU; not yet live validated |
+| Convert a non-COLMAP recording (drone, RGB-D, ROS 2 bag, ScanNet++) | Upstream `ncore`; these input-specific converters are not wired here |
 | Serve frames to CARLA / Isaac Sim / a custom simulator | Upstream `nre` (`serve-grpc`) -- not wired, see Limitations |
 | Render LiDAR sweeps from a USDZ | Upstream `nre` (`render-grpc --lidar`) -- not wired |
 | Extract individual 3D objects (cars, pedestrians) from a clip | Upstream `asset-harvester` -- not wired |
@@ -284,7 +325,7 @@ table; the rest were hit for real while landing this capability.
 | --- | --- | --- |
 | `402 Payment Required` pulling `nvcr.io/nvidia/nre/nre` | That repo needs an extra entitlement (upstream: `denied: requested access ...`) | Use the `-ga` channel, `nvcr.io/nvidia/nre/nre-ga:26.04`. `nurec check` reports `entitlement-required` |
 | `401`/`403` on a gated `nvidia/PhysicalAI-Autonomous-Vehicles*` override (upstream) | Gated dataset access is absent, or `HF_TOKEN` lacks `read` | Accept/request access on Hugging Face as the token owner, then re-run `nurec check`; the default `PhysicalAI-NuRec-PPISP` remains anonymous |
-| NRE will not load a clip: "not valid NCore V4" (upstream) | The recording was never converted | Convert with upstream `ncore` first; the workbench consumes NCore V4 only |
+| NRE will not load a clip: "not valid NCore V4" (upstream) | The recording was never converted | For COLMAP, use `nurec convert-colmap`; other source formats still need upstream conversion |
 | `KeyError: ('rig', 'world')` / no scene extent | The clip has camera poses but no rig edge -- NVIDIA's own COLMAP converter omits it | Automatic: `reconstruct` derives it. See the pose-edge section |
 | `Requested lidars not present in the data: dummy_lidar` | The recipe ships placeholder sensor ids | Automatic: the sequence's real ids are adopted |
 | `Requested cameras not present: camera_front_wide_120fov` | Same, for AV camera names | Automatic: same adoption path |
@@ -448,5 +489,5 @@ GPU with no H100/H200 reference, every stage in the YAML is a real
   workbench does neither. Asset Harvester always runs *before* USDZ packaging.
 - **No frame-cleanup pass.** Upstream `nurec-fixer` (DiffusionHarmonizer) and
   NRE's inline `--enable-difix` are both unwired and unverified here.
-- **Consumes NCore V4, does not author it.** Converting a novel sensor rig is
-  upstream `ncore` work.
+- **COLMAP ingestion is not yet live validated.** Other source-format converters
+  and novel sensor-rig integrations remain upstream `ncore` work.

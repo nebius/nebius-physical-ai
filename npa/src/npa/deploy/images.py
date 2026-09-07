@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 from typing import Any
 
 # Official NPA images use one public GHCR namespace. Immutable
@@ -70,6 +71,7 @@ CONTAINER_IMAGE_NAMES = {
     "alpamayo2-super": "npa-alpamayo2-super",
     "curobo": "npa-curobo",
     "content-agents": "npa-content-agents",
+    "ncore": "npa-ncore",
 }
 
 # Public-image publication must enforce the digest-bound SkyPilot bootstrap
@@ -86,6 +88,7 @@ SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS: frozenset[str] = frozenset(
         "cosmos-curate",
         "cosmos-evaluator",
         "content-agents",
+        "ncore",
         "fiftyone",
         "groot",
         "isaac-lab",
@@ -140,7 +143,7 @@ OMNIVERSE_RESTRICTED_DERIVED_IMAGES = RESTRICTED_DERIVED_IMAGES
 #
 # Remove a tool from this set in the same change that records its accepted image
 # digest and its payload-scan/GPU evidence — not before.
-UNVALIDATED_PUBLICATION_TOOLS: frozenset[str] = frozenset({"openpi", "curobo"})
+UNVALIDATED_PUBLICATION_TOOLS: frozenset[str] = frozenset({"openpi", "curobo", "ncore"})
 VALIDATION_CANDIDATE_TOOLS: frozenset[str] = frozenset({"robocasa"})
 # Compatibility view used by publication callers and public imports. Derive it
 # from the two canonical validation-state inventories; never maintain it
@@ -251,6 +254,8 @@ SUPPORTED_TOOL_VERSIONS = {
     "alpamayo2-super": "0.1.0-cu128",
     "curobo": "0.8.0-cuda13-b300-unbuilt",
     "content-agents": "0.5.2-npa2",
+    # Source packaging inventory only; no accepted public NCore release exists.
+    "ncore": "59c698d206da92b406a4f72619fce3b3a2c64bfd-unbuilt",
     "nebius-cli": "0.12.254",
     "terraform": "~> 0.5.201",
     "terraform-cli": "1.13.3",
@@ -510,6 +515,12 @@ def container_image_for_tool(
     made otherwise-public workloads depend on private registry credentials.
     """
     resolved_registry = registry or DEFAULT_CONTAINER_REGISTRY
+    if tool == "ncore" and tool in PUBLICATION_QUARANTINE_TOOLS and not tag:
+        raise ValueError(
+            "NCore has no accepted release image. Supply the validated immutable "
+            "image with --image-override workbench.nurec.convert_colmap=IMAGE@sha256:DIGEST "
+            "or explicitly select a dev-<full-source-sha> tag for validation."
+        )
     if tool == "sonic":
         entry = sonic_image_entry(gpu_target=gpu_target, image_variant=image_variant)
         image_name = str(entry["name"])
@@ -564,6 +575,16 @@ def build_and_push_command(image: str) -> str:
     tool = tool_for_image_name(image_name)
     if not tool:
         return ""
+    if tool == "ncore":
+        # The generic recipe omits the mandatory source revision and would build
+        # an unsupported release tag. This helper deliberately never publishes.
+        requested_tag = repository.partition(":")[2]
+        if not re.fullmatch(r"dev-[0-9a-f]{40}", requested_tag):
+            return ""
+        return (
+            "bash npa/docker/workbench/ncore/build.sh "
+            f"--source-sha {requested_tag.removeprefix('dev-')} --image {shlex.quote(ref)}"
+        )
     dockerfile = _workbench_dockerfile(tool)
     if not dockerfile:
         # Not every tool builds from npa/docker/workbench/<tool>/Dockerfile

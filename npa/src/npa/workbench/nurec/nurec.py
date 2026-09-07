@@ -1472,11 +1472,26 @@ def validate_fetch_provenance(
 def find_ncore_json(scene_dir: Path) -> Path | None:
     """Return the NCore V4 metadata JSON that sits next to the ``.zarr.itar`` shards.
 
-    NCore names the metadata ``<NAME>.json`` alongside ``<NAME>.zarr.itar``, so
-    prefer a JSON whose stem matches a shard; fall back to the shallowest JSON.
+    Prefer a valid V4 metadata document so conversion provenance and rig sidecars
+    cannot hide a renamed sequence. Retain the legacy shard-name fallback for
+    older exports whose metadata does not identify its format.
     """
     shard_stems = {path.name.split(".", 1)[0] for path in scene_dir.rglob("*.itar")}
     candidates = sorted(scene_dir.rglob("*.json"), key=lambda p: (len(p.parts), p.name))
+    # Conversion publishes a stable sequence.json alongside conversion.json and
+    # npa-rig.json. Its filename need not share the original shard stem: inspect
+    # V4 metadata before applying the legacy filename fallback.
+    for candidate in candidates:
+        try:
+            metadata = json.loads(candidate.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if (
+            isinstance(metadata, dict)
+            and metadata.get("version") == "v4"
+            and metadata.get("component_stores")
+        ):
+            return candidate
     for candidate in candidates:
         if candidate.name.split(".", 1)[0] in shard_stems:
             return candidate

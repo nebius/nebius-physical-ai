@@ -51,6 +51,7 @@ from .npa_workflow_live_helpers import (
     SUBMIT_LIVE_MATRIX,
     SubmitLiveCase,
     assert_no_credential_leakage,
+    assert_nurec_colmap_live_outputs,
     assume_decision_for,
     concurrency_overlaps,
     live_bucket,
@@ -332,6 +333,10 @@ def test_npa_workflow_submit_live_reaches_terminal(
                 extra_forbidden=forbidden_markers,
             )
             if last_status in TERMINAL_OK:
+                if case.spec == "nurec-colmap-reconstruct.yaml":
+                    assert_nurec_colmap_live_outputs(
+                        bucket=bucket, run_id=run_id, e2e_project=e2e_project
+                    )
                 return
             if _is_terminal_fail(last_status):
                 detail = (

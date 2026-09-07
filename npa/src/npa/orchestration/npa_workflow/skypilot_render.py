@@ -31,6 +31,7 @@ from npa.workbench.model_cache import (
 # SkyPilot's k8s apt-ssh runtime setup fails inside npa-cosmos. Use the default
 # SkyPilot image and stage npa via NPA_SRC_S3_URI (or an image override).
 TOOL_REF_IMAGE_TOOL: dict[str, str] = {
+    "workbench.nurec.convert_colmap": "ncore",
     # Visualization only needs the prebuilt pinned Rerun runtime, not NuRec.
     "workbench.nurec.visualize": "rerun-viewer",
     "workbench.vlm_eval": "cosmos",
@@ -1531,6 +1532,17 @@ def render_setup_for_tool(
 
     if not options.default_setup:
         return ""
+    if tool_ref == "workbench.nurec.convert_colmap":
+        # Conversion uses the committed CPU image and its two pinned interpreter
+        # closures. Do not run the NRE vendor-image dependency installer or overlay
+        # a floating PyPI nvidia-ncore onto the actual pinned source reader.
+        return (
+            "set -e\n"
+            "export PATH=/opt/venv/bin:/opt/ncore/bin:$PATH\n"
+            "/opt/venv/bin/python /opt/ncore/bin/verify-packaging.py\n"
+            "printf '%s' /opt/venv/bin/python > /tmp/npa-python\n"
+            "printf '%s' /opt/npa > /tmp/npa-src-root\n"
+        )
     if tool_ref.startswith("workbench.content_agents."):
         # The public Content Agents image deliberately carries only the narrow
         # module adapter used by its five toolRefs. Requiring the full ``npa``

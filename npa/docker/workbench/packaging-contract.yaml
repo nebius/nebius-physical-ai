@@ -402,6 +402,25 @@ images:
       operator-entitled assets use the standard runtime model cache. Guardrails
       default on and the API returns structured SampleOutputs plus hashed media.
     redistribution: public
+  ncore:
+    dockerfile: ncore/Dockerfile
+    tier: job
+    redistribution: public
+    skypilot_bootstrap_contract: skypilot-0.12.2-v1
+    passwordless_root_exemption: >-
+      SkyPilot Kubernetes bootstrap only. The final process is uid 1000; SSH
+      host keys are generated per container and no credentials are baked.
+    notes: >-
+      CPU-only official NVIDIA NCore COLMAP converter and V4 reader at
+      59c698d206da92b406a4f72619fce3b3a2c64bfd (Apache-2.0), with the MIT
+      trueprice/pycolmap reader at fe7a7c45df803b6c391777e349f0d8d65d39d777
+      and NVIDIA's Python 3 patch. The converter uses NumPy 1.x; NPA and the
+      actual NCore reader share a separate NumPy 2.x interpreter. No Torch,
+      CUDA, NRE, model, dataset or vendor test-data archives are baked.
+      Source archives and Python dependencies are hash-locked. SOURCE_SHA
+      identifies the committed NPA tree. Public-eligible but quarantined until
+      exact built-image scans and real conversion evidence are accepted;
+      no supported public release is declared. See ncore/REDISTRIBUTION.md.
   content-agents:
     dockerfile: content-agents/Dockerfile
     ovrtx_runtime_fetch: true

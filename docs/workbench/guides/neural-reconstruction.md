@@ -13,6 +13,11 @@ photographed:
 
 ![Novel views rendered from the trained Gaussians](../../assets/nurec-novel-views.png)
 
+For original COLMAP photographs, camera poses and sparse points, see the
+[new COLMAP ingestion workflow](nurec-colmap-reconstruct.md). That CPU NCore
+conversion path is **not yet live validated**; the results on this page apply
+to the existing preconverted-NCore input only.
+
 ## Ingredients
 
 | | |

@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# Same module and import roots as NVIDIA's //tools/data_converter/colmap:convert.
+# Exec preserves argv, exit status and signals, including all native Click flags.
+unset PYTHONHOME PYTHONPATH
+exec /opt/ncore/converter-venv/bin/python -m tools.data_converter.colmap.converter "$@"

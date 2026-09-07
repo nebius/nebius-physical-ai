@@ -22,6 +22,10 @@ from npa.orchestration.npa_workflow.submit_matrix import (
 )
 
 SONIC_MOTION_FIXTURE_PREFIX = "npa-workflow-e2e/fixtures/sonic-motion-soma-g1/"
+NUREC_COLMAP_DATASET = "nvidia/PhysicalAI-NuRec-PPISP"
+NUREC_COLMAP_REVISION = "2521064a3af6ab1c1caa2ba1b01ddde7eecded69"
+NUREC_COLMAP_MEMBER = "colmap/struktur28_colmap.zip"
+NUREC_COLMAP_SHA256 = "cf7ab7f100da66b2bf05b178ebcfa3a950e1bf2b1d7ff64a6c7a1e1f682afa8d"
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SPECS_DIR = REPO_ROOT / "workflows"
 # A tiny, valid 64x64 H.264/MP4 clip generated from ffmpeg's deterministic
@@ -212,7 +216,7 @@ def seed_live_workflow_inputs(
     run_id: str,
     e2e_project: str | None = None,
 ) -> None:
-    """Upload minimal S3 fixtures so Token Factory twins have real inputs."""
+    """Stage each workflow's actual source inputs under its isolated S3 prefix."""
 
     from io import BytesIO
 
@@ -220,6 +224,10 @@ def seed_live_workflow_inputs(
 
     marker = f"npa-workflow-e2e/{run_id}/{spec_name.replace('.yaml', '')}"
     client = s3_client_for_project(e2e_project, allow_host_creds=True)
+
+    if spec_name == "nurec-colmap-reconstruct.yaml":
+        _seed_nurec_colmap_source(client, bucket=bucket, prefix=marker)
+        return
 
     if spec_name == "paidf-cosmos3.yaml":
         body = base64.b64decode(_CONDITIONED_COSMOS_MP4_B64, validate=True)
@@ -880,6 +888,126 @@ def _seed_vlm_benchmark_dataset(client, *, bucket: str, marker: str) -> None:
     )
 
 
+def _download_nurec_colmap_archive(destination: Path) -> None:
+    """Fetch the complete public source at an immutable dataset revision."""
+    import shutil
+    from urllib.request import urlopen
+
+    url = (
+        f"https://huggingface.co/datasets/{NUREC_COLMAP_DATASET}/resolve/"
+        f"{NUREC_COLMAP_REVISION}/{NUREC_COLMAP_MEMBER}"
+    )
+    # This dataset is public; no operator token is forwarded to the download.
+    with urlopen(url) as source, destination.open("wb") as output:
+        shutil.copyfileobj(source, output)
+
+
+def _seed_nurec_colmap_source(client: Any, *, bucket: str, prefix: str) -> None:
+    """Upload the unchanged full ZIP and retain dataset attribution beside it."""
+    import hashlib
+    import tempfile
+
+    with tempfile.TemporaryDirectory(prefix="npa-colmap-source-") as directory:
+        archive = Path(directory) / "struktur28_colmap.zip"
+        supplied = os.environ.get("NPA_E2E_NUREC_COLMAP_ARCHIVE", "").strip()
+        if supplied:
+            archive = Path(supplied)
+        else:
+            _download_nurec_colmap_archive(archive)
+        digest = hashlib.sha256()
+        with archive.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(8 * 1024 * 1024), b""):
+                digest.update(chunk)
+        if digest.hexdigest() != NUREC_COLMAP_SHA256:
+            pytest.fail(
+                "COLMAP source archive differs from the pinned complete dataset"
+            )
+        client.upload_file(
+            str(archive), bucket, f"{prefix}/source/struktur28_colmap.zip"
+        )
+        attribution = {
+            "dataset": NUREC_COLMAP_DATASET,
+            "revision": NUREC_COLMAP_REVISION,
+            "member": NUREC_COLMAP_MEMBER,
+            "sha256": NUREC_COLMAP_SHA256,
+            "creator": "NVIDIA",
+            "license": "CC-BY-4.0",
+            "license_url": "https://creativecommons.org/licenses/by/4.0/",
+            "source_url": (
+                f"https://huggingface.co/datasets/{NUREC_COLMAP_DATASET}/tree/"
+                f"{NUREC_COLMAP_REVISION}"
+            ),
+            "changes": "Unmodified source archive; workflow converts the full struktur28 capture to NCore V4 and derives the NRE rig edge.",
+            "selected_capture": "struktur28",
+            "source_counts": {"images": 518, "cameras": 3, "points": 163453},
+        }
+        client.put_object(
+            Bucket=bucket,
+            Key=f"{prefix}/source/attribution.json",
+            Body=(json.dumps(attribution, indent=2) + "\n").encode(),
+            ContentType="application/json",
+        )
+
+
+def assert_nurec_colmap_live_outputs(
+    *, bucket: str, run_id: str, e2e_project: str | None = None
+) -> None:
+    """Verify durable conversion bytes and downstream completion after submit."""
+    import hashlib
+
+    from npa.clients.project_credentials import s3_client_for_project
+
+    client = s3_client_for_project(e2e_project, allow_host_creds=True)
+    root = f"npa-workflow-e2e/{run_id}/nurec-colmap-reconstruct/"
+    sequence = f"{root}ncore/sequence/"
+
+    def read_json(key: str) -> dict:
+        with client.get_object(Bucket=bucket, Key=key)["Body"] as body:
+            return json.load(body)
+
+    report = read_json(sequence + "conversion.json")
+    assert report["status"] == "ok"
+    assert report["engine"] == "nvidia-ncore-colmap"
+    assert report["converter"]["revision"] == "59c698d206da92b406a4f72619fce3b3a2c64bfd"
+    assert report["source"]["archive_sha256"] == NUREC_COLMAP_SHA256
+    assert report["options"]["dataset_root"] == "struktur28"
+    assert report["poses_component_group"] == "npa_rig"
+    assert report["counts"] == report["source"]["counts"]
+    counts = report["counts"]
+    assert counts["images"] == counts["poses"] == 518
+    assert counts["cameras"] == 3
+    assert counts["points"] > 0
+    assert counts["points"] + report["source"]["origin_points_filtered"] == 163453
+    meta = read_json(sequence + "sequence.json")
+    assert meta["version"] == "v4"
+    members = {item["path"]: item for item in report["members"]}
+    assert len(members) == len(report["members"]), "duplicate provenance members"
+    required = {"sequence.json", "npa-rig.json"}
+    required.update(store["path"] for store in meta["component_stores"])
+    assert required <= members.keys(), "incomplete sequence provenance"
+    for name, item in members.items():
+        assert name not in {"", ".", ".."} and "/" not in name and "\\" not in name
+        digest = hashlib.sha256()
+        size = 0
+        with client.get_object(Bucket=bucket, Key=sequence + name)["Body"] as body:
+            for chunk in iter(lambda: body.read(8 * 1024 * 1024), b""):
+                digest.update(chunk)
+                size += len(chunk)
+        assert size == item["bytes"], "published sequence member size differs"
+        assert digest.hexdigest() == item["sha256"], (
+            "published sequence member hash differs"
+        )
+    attribution = read_json(root + "source/attribution.json")
+    assert attribution["revision"] == NUREC_COLMAP_REVISION
+    assert attribution["license"] == "CC-BY-4.0"
+    final = read_json(root + "reports/final.json")
+    assert final["has_usdz"] and final["has_novel_views"] and final["has_rrd"]
+    for relative in ("reconstruction/metrics.yaml", "reports/sim2real.rrd"):
+        assert (
+            client.head_object(Bucket=bucket, Key=root + relative)["ContentLength"] > 0
+        )
+
+
 def materialize_live_spec(
     tmp_path: Path,
     name: str,
@@ -890,6 +1018,18 @@ def materialize_live_spec(
     """Copy a golden spec with the live bucket and a unique e2e prefix."""
 
     text = resolve_spec_path(name).read_text(encoding="utf-8")
+    if name == "nurec-colmap-reconstruct.yaml":
+        # This case proves CPU conversion followed by RTX reconstruction. Generic
+        # rotation overrides must not quietly turn it into a different workload.
+        for variable in (
+            "NPA_E2E_FORCE_ACCELERATORS",
+            "NPA_E2E_ACCELERATOR_REMAP",
+            "NPA_WORKFLOW_GPU_ACCELERATOR",
+        ):
+            if os.environ.get(variable, "").strip():
+                pytest.fail(
+                    f"unset {variable} for the explicit CPU/RTX COLMAP workflow"
+                )
     text = text.replace("bucket: example-bucket", f"bucket: {bucket}")
     marker = f"npa-workflow-e2e/{run_id}"
     # Keep per-spec prefix tokens but anchor runs under a shared e2e root.

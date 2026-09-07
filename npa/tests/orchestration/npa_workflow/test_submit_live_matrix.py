@@ -666,7 +666,16 @@ def test_image_tool_is_a_known_container_image(monkeypatch) -> None:
         assert image.startswith("cr.example.invalid/reg/"), case.spec
     for case in (c for c in SUBMIT_LIVE_MATRIX if c.image_overrides):
         for _tool_ref, tool in case.image_overrides:
-            image = container_image_for_tool(tool, registry="cr.example.invalid/reg")
+            if tool == "ncore":
+                # A development-only converter must not acquire an invented
+                # accepted image pin merely because it enters the live matrix.
+                with pytest.raises(ValueError, match="no accepted release image"):
+                    container_image_for_tool(tool, registry="cr.example.invalid/reg")
+                image = container_image_for_tool(
+                    tool, registry="cr.example.invalid/reg", tag="dev-" + "0" * 40
+                )
+            else:
+                image = container_image_for_tool(tool, registry="cr.example.invalid/reg")
             assert image.startswith("cr.example.invalid/reg/"), case.spec
 
 
