@@ -6,6 +6,8 @@ from __future__ import annotations
 import copy
 import importlib
 import json
+import shutil
+import subprocess
 from pathlib import Path
 import sys
 
@@ -195,7 +197,7 @@ def test_semantic_corruption_rejected_even_after_rehash(modules, result, tmp_pat
             rows[-1]["record_id"] = 0
         else:
             rows[0]["vector"] = {"nan": [float("nan")] * 512, "dimension": [1.0], "norm": [0.0] * 512}[damage]
-        pq.write_table(pa.Table.from_pylist(rows), result / "embeddings.parquet")
+        pq.write_table(pa.Table.from_pylist(rows, schema=None if damage == "dimension" else table.schema), result / "embeddings.parquet")
         report["parquet_sha256"] = converter._sha(result / "embeddings.parquet")
     elif damage == "image":
         (result / "images/000000-crop.png").write_bytes((result / "images/000001-crop.png").read_bytes())
@@ -332,4 +334,53 @@ def test_decoded_verification_rejects_writer_content_drift(modules, advanced, tm
     monkeypatch.setattr(converter, "_write", corrupt)
     with pytest.raises(ValueError, match="Decoded RRD"):
         converter.convert(advanced, tmp_path / "invalid.rrd", run_id="test")
+    assert not (tmp_path / "invalid.rrd").exists()
+
+
+@pytest.mark.parametrize("damage", ["string_vector", "report_list", "invalid_numeric_metric"])
+def test_cli_rejects_malformed_values_without_echo_or_traceback(modules, result, tmp_path, damage):
+    converter, embed, *_ = modules
+    sentinel = "synthetic-private-value-must-stay-private"
+    report = json.loads((result / "report.json").read_text())
+    if damage == "string_vector":
+        table = pq.read_table(result / "embeddings.parquet")
+        vectors = pa.array([[sentinel] * 512] * len(table), type=pa.list_(pa.string(), 512))
+        table = table.set_column(table.schema.get_field_index("vector"), "vector", vectors)
+        pq.write_table(table, result / "embeddings.parquet")
+        report["parquet_sha256"] = converter._sha(result / "embeddings.parquet")
+    elif damage == "report_list":
+        report = [sentinel]
+    else:
+        report["timings_seconds"]["application"] = {sentinel: sentinel}
+    _dump(result / "report.json", report)
+    embed.write_hashes(result)
+    output = tmp_path / "invalid.rrd"
+    run = subprocess.run([sys.executable, converter.__file__, "--input-path", str(result),
+                          "--output-path", str(output), "--run-id", "test"], capture_output=True, text=True)
+    assert run.returncode == 1
+    assert sentinel not in run.stdout + run.stderr
+    assert "Traceback" not in run.stderr
+    assert "CLIP report conversion failed" in run.stderr
+    assert not output.exists()
+
+
+@pytest.mark.parametrize("fixture_name", ["result", "advanced"])
+@pytest.mark.parametrize("damage", ["missing_table", "missing_data", "empty_manifest"])
+def test_lance_payload_is_required_even_after_manifest_refresh(modules, request, fixture_name, damage, tmp_path):
+    converter, embed, app, *_ = modules
+    root = request.getfixturevalue(fixture_name)
+    lance = root / "lance/embeddings.lance"
+    if damage == "missing_table":
+        shutil.rmtree(lance)
+    elif damage == "missing_data":
+        shutil.rmtree(lance / "data")
+    else:
+        for path in (lance / "_versions").glob("*.manifest"):
+            path.write_bytes(b"")
+    if fixture_name == "result":
+        embed.write_hashes(root)
+    else:
+        app._write_cleanup_artifacts(root, [], 1)
+    with pytest.raises(ValueError, match="Lance"):
+        converter.convert(root, tmp_path / "invalid.rrd", run_id="test")
     assert not (tmp_path / "invalid.rrd").exists()

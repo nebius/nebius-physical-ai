@@ -13,6 +13,7 @@ import re
 import tempfile
 
 import numpy as np
+import pyarrow as pa
 import pyarrow.parquet as pq
 from PIL import Image
 
@@ -35,9 +36,13 @@ _ADVANCED_TIMINGS = (
 )
 
 
+class _InvalidResult(ValueError):
+    """A safe, converter-authored validation message suitable for ordinary output."""
+
+
 def _require(condition, message):
     if not condition:
-        raise ValueError(message)
+        raise _InvalidResult(message)
 
 
 def _sha(path):
@@ -112,6 +117,8 @@ def _vectors(table, count):
     ids = table["record_id"].to_pylist()
     _require(all(type(i) is int for i in ids) and ids == list(range(count)),
              "Missing, duplicate, unordered or unexpected record IDs")
+    _require(table.schema.field("vector").type == pa.list_(pa.float32(), 512),
+             "CLIP vectors must use the producer's fixed 512-element float32 Arrow type")
     matrix = np.asarray(table["vector"].to_pylist(), dtype=np.float32)
     _require(matrix.shape == (count, 512) and np.isfinite(matrix).all(), "Invalid CLIP vector dimensions or values")
     _require(np.allclose(np.linalg.norm(matrix, axis=1), 1, atol=1e-4), "CLIP vectors are not normalized")
@@ -320,6 +327,11 @@ def _advanced(root, report, table, actors):
 def _load(root):
     manifest = _manifest(root)
     report = _json(root / "report.json")
+    _require(isinstance(report, dict), "CLIP report must be a JSON object")
+    lance = root / "lance" / "embeddings.lance"
+    for directory, pattern in (("data", "*.lance"), ("_versions", "*.manifest")):
+        _require(any(p.is_file() and p.stat().st_size > 0 for p in (lance / directory).glob(pattern)),
+                 "Missing nonempty Lance result data or version manifest")
     schema = report.get("schema_version")
     _require(schema in (None, "npa.ray-clip-development.v1"), "Unsupported CLIP report schema")
     advanced = schema is not None
@@ -348,6 +360,7 @@ def _load(root):
     return {"matrix": matrix, "frames": frames, "queries": queries, "actors": safe_actors,
             "timings": timings, "commits": commits, "events": events, "recovery": recovery,
             "provenance": {"producer": "application.py" if advanced else "embed.py",
+                           "converter_sha256": _sha(Path(__file__)),
                            "report_sha256": manifest["report.json"], "source_sha256": sources,
                            "input_manifest_sha256": _sha(root / "SHA256SUMS"),
                            "parquet_sha256": manifest["embeddings.parquet"],
@@ -505,8 +518,10 @@ def convert(input_path: Path, output_path: Path, *, run_id: str) -> dict:
     _require(not output.exists() and not output.is_symlink(), "Output already exists")
     try:
         data = _load(root)
-    except (KeyError, TypeError, IndexError, OSError, json.JSONDecodeError) as error:
-        raise ValueError("Incomplete or malformed persisted CLIP result") from error
+    except _InvalidResult:
+        raise
+    except (ValueError, KeyError, TypeError, IndexError, OSError, AttributeError, OverflowError) as error:
+        raise _InvalidResult("Incomplete or malformed persisted CLIP result") from error
     output.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary = tempfile.mkstemp(prefix=".clip-", suffix=".rrd", dir=output.parent)
     os.close(descriptor)
@@ -545,8 +560,10 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         result = convert(args.input_path, args.output_path, run_id=args.run_id)
-    except (ValueError, OSError) as error:
-        parser.exit(1, f"CLIP report conversion failed: {type(error).__name__}: {error}\n")
+    except _InvalidResult as error:
+        parser.exit(1, f"CLIP report conversion failed: {error}\n")
+    except (ValueError, OSError, RuntimeError):
+        parser.exit(1, "CLIP report conversion failed: recording could not be written or verified\n")
     print(json.dumps(result, sort_keys=True))
     return 0
 

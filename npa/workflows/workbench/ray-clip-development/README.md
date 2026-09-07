@@ -183,7 +183,7 @@ recorded coordinator observation and covers only its observed inference wave,
 including RPC edges. Worker clocks are never combined. Model loads and aggregate
 timings are static measurements; their intervals overlap and must not be added.
 Recovery lineage is static because the source records no recovery timestamp.
-Source hashes and model byte identities are retained; host, node, process,
+Application/converter source hashes and model byte identities are retained; host, node, process,
 allocation and imported-file identifiers are omitted.
 
 Missing final reports, partial/cancelled results, checksum gaps or corruption,
