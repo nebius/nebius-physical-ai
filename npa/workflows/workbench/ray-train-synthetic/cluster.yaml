@@ -5,7 +5,7 @@ resources:
   accelerators: B200:1
   cpus: 12
   memory: 48+
-  image_id: docker:docker.io/pytorch/pytorch@sha256:72f863fa1fe13d5d87a72d00db2c85fb2d43409ee08dd26bc469de4c8a28b427
+  image_id: docker:docker.io/pytorch/pytorch@sha256:db80a41f8428644cebcb3d75b0b62df334ab6c0e75785951eb25f48bfbd42407
   use_spot: false
 num_nodes: 2
 config:

@@ -121,10 +121,10 @@ def test_zero_gradient_with_real_momentum_still_proves_an_update(journal, recipe
         load("train").validate_journal(journal, recipe)
 
 
-@pytest.mark.parametrize("version", ["2.12.1+cpu", "2.13.0+cu130", "2.12.1"])
+@pytest.mark.parametrize("version", ["2.13.0+cpu", "2.12.1+cu130", "2.13.0"])
 def test_worker_rejects_torch_drift_before_training(version, monkeypatch, recipe):
     monkeypatch.setitem(sys.modules, "torch", SimpleNamespace(__version__=version))
-    with pytest.raises(RuntimeError, match="requires Torch 2.12.1\\+cu130"):
+    with pytest.raises(RuntimeError, match="requires Torch 2.13.0\\+cu130"):
         load("train").train_loop(recipe)
 
 
@@ -421,7 +421,7 @@ def test_live_endpoint_override_is_rejected_before_any_native_client_contact(tmp
     assert not (tmp_path / "evidence").exists()
 
 
-@pytest.mark.parametrize("torch_version", ["2.12.1+cu130", "2.13.0+cpu"])
+@pytest.mark.parametrize("torch_version", ["2.13.0+cu130", "2.13.0+cpu"])
 def test_driver_binds_descendant_state_clients_to_application_ray(tmp_path, monkeypatch, torch_version):
     """A Jobs driver must override inherited discovery settings for Train's actors."""
     import os
@@ -449,7 +449,7 @@ def test_driver_binds_descendant_state_clients_to_application_ray(tmp_path, monk
     monkeypatch.setitem(sys.modules, "artifacts", SimpleNamespace(
         storage=lambda _: (None, "synthetic/checkpoints"), publish=lambda *args: None))
     monkeypatch.setitem(sys.modules, "torch", SimpleNamespace(__version__=torch_version))
-    expected = ConnectionBoundary if torch_version == "2.12.1+cu130" else RuntimeError
+    expected = ConnectionBoundary if torch_version == "2.13.0+cu130" else RuntimeError
     with pytest.raises(expected):
         load("train").main(["--storage-path", "s3://synthetic/checkpoints", "--run-name", "regression",
                             "--output-dir", str(tmp_path / "export")])

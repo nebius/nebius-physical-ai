@@ -137,6 +137,9 @@ def test_native_train_cuda_recovery_artifacts_and_cancel():
             for row in state["journal"]:
                 assert len({rank["node_fingerprint"] for rank in row["ranks"]}) == 2
                 assert all("B200" in rank["device_name"] for rank in row["ranks"])
+                assert all(rank["torch_version"] == "2.13.0+cu130" for rank in row["ranks"])
+                assert all(rank["cuda_version"] == "13.0" for rank in row["ranks"])
+                assert all(rank["ray_version"] == "2.58.0" for rank in row["ranks"])
             if kind == "recovery":
                 assert report["recovery_steps"] == [0, 8]
             results[kind] = report

@@ -96,8 +96,8 @@ def validate_torch_runtime() -> None:
     """Reject environment drift in the Jobs driver and every newly started worker."""
     import torch
 
-    if torch.__version__ != "2.12.1+cu130":
-        raise RuntimeError("This training runtime requires Torch 2.12.1+cu130")
+    if torch.__version__ != "2.13.0+cu130":
+        raise RuntimeError("This training runtime requires Torch 2.13.0+cu130")
 
 
 def train_loop(recipe: dict) -> None:
@@ -156,6 +156,8 @@ def train_loop(recipe: dict) -> None:
         rank_evidence = {
             "rank": rank, "local_rank": context.get_local_rank(), "world_size": world,
             "device_type": device.type, "device_name": properties.name,
+            "torch_version": torch.__version__, "cuda_version": torch.version.cuda,
+            "ray_version": ray.__version__,
             "node_fingerprint": hashlib.sha256(ray.get_runtime_context().get_node_id().encode()).hexdigest(),
             "device_fingerprint": fingerprint,
             "parameter_sha256": hashlib.sha256(parameters.cpu().numpy().tobytes()).hexdigest(),

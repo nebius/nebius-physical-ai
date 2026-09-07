@@ -18,12 +18,14 @@ def main() -> None:
         "-r", str(Path(__file__).with_name("requirements.txt")),
     ], check=True)
     inspection = subprocess.check_output([interpreter, "-c", """
-import json, ray, torch, rerun
+import json, ray, torch, rerun, PIL
 assert ray.__version__ == '2.58.0'
-assert torch.__version__ == '2.12.1+cu130'
+assert torch.__version__ == '2.13.0+cu130'
+assert PIL.__version__ == '12.3.0'
 assert torch.cuda.device_count() >= 1
 print(json.dumps(dict(ray=ray.__version__, torch=torch.__version__,
-    cuda=torch.version.cuda, rerun=rerun.__version__, gpus=torch.cuda.device_count())))
+    cuda=torch.version.cuda, rerun=rerun.__version__, pillow=PIL.__version__,
+    gpus=torch.cuda.device_count())))
 """], text=True)
     receipt = json.loads(inspection)
     receipt["dependency_freeze"] = subprocess.check_output(
