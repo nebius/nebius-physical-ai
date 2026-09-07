@@ -1,5 +1,4 @@
-# Convert persisted native Ray CLIP results into a factual, portable Rerun recording.
-"""Review downloaded CLIP results without Ray, CUDA, model downloads, or a service."""
+"""Convert persisted Ray CLIP results into a factual, portable Rerun recording."""
 
 from __future__ import annotations
 
@@ -90,10 +89,10 @@ def _manifest(root):
     _require(root.is_dir() and not root.is_symlink(), "Input must be a regular result directory")
     resolved_root = root.resolve(strict=True)
     paths = list(root.rglob("*"))
-    _require(all(p.resolve(strict=True).is_relative_to(resolved_root) for p in paths),
+    _require(all(path.resolve(strict=True).is_relative_to(resolved_root) for path in paths),
              "Result artifact resolves outside the input directory")
-    _require(all(not p.is_symlink() for p in paths), "Symlinks are not result artifacts")
-    _require(all(p.is_dir() or p.is_file() for p in paths), "Nonregular result artifact")
+    _require(all(not path.is_symlink() for path in paths), "Symlinks are not result artifacts")
+    _require(all(path.is_dir() or path.is_file() for path in paths), "Nonregular result artifact")
     listed = {}
     for line in (root / "SHA256SUMS").read_text().splitlines():
         _require("  " in line, "Malformed checksum manifest")
@@ -104,12 +103,12 @@ def _manifest(root):
                  "Unsafe checksum manifest path")
         _require(name not in listed, "Duplicate checksum manifest entry")
         listed[name] = _hash(digest)
-    actual = {p.relative_to(root).as_posix() for p in paths if p.is_file()} - {"SHA256SUMS"}
+    actual = {path.relative_to(root).as_posix() for path in paths if path.is_file()} - {"SHA256SUMS"}
     _require(set(listed) == actual and listed, "Checksum manifest does not cover the complete result tree")
     for name, digest in listed.items():
         _require(_sha(root / name) == digest, "Artifact checksum mismatch")
     if "sha256.json" in listed:
-        _require(_json(root / "sha256.json") == {k: v for k, v in listed.items() if k != "sha256.json"},
+        _require(_json(root / "sha256.json") == {key: value for key, value in listed.items() if key != "sha256.json"},
                  "JSON checksum manifest disagrees")
     return listed
 
@@ -117,8 +116,8 @@ def _manifest(root):
 def _vectors(table, count):
     _require(set(table.column_names) == {"record_id", "input_sha256", "processed_sha256", "vector"},
              "Unexpected embedding table columns")
-    ids = table["record_id"].to_pylist()
-    _require(all(type(i) is int for i in ids) and ids == list(range(count)),
+    record_ids = table["record_id"].to_pylist()
+    _require(all(type(identifier) is int for identifier in record_ids) and record_ids == list(range(count)),
              "Missing, duplicate, unordered or unexpected record IDs")
     _require(table.schema.field("vector").type == pa.list_(pa.float32(), 512),
              "CLIP vectors must use the producer's fixed 512-element float32 Arrow type")
@@ -169,7 +168,7 @@ def _actors(report, advanced, sources):
                      "model_file_sha256": model_hashes,
                      "model_load_seconds": _number(actor["model_load_seconds"])})
     identity_keys = ("model_revision", "model_config_sha256", "model_file_sha256")
-    _require(all(all(a[k] == safe[0][k] for k in identity_keys) for a in safe),
+    _require(all(all(actor[key] == safe[0][key] for key in identity_keys) for actor in safe),
              "Actors disagree on model identity")
     return actors, safe
 
@@ -191,8 +190,8 @@ def _images(root, table, count):
         _require(image.mode == "RGB" and image.size == (448, 224 * len(frames)), "Invalid contact sheet")
         expected = Image.new("RGB", image.size)
         for row, pair in enumerate(frames):
-            for col, pixels in enumerate(pair):
-                expected.paste(Image.fromarray(pixels).resize((224, 224)), (224 * col, 224 * row))
+            for column, pixels in enumerate(pair):
+                expected.paste(Image.fromarray(pixels).resize((224, 224)), (224 * column, 224 * row))
         _require(np.array_equal(np.asarray(image), np.asarray(expected)), "Contact sheet disagrees with preview images")
     return frames
 
@@ -201,13 +200,13 @@ def _retrieval(root, report, matrix, advanced):
     queries = _json(root / "retrieval.json")
     count = len(matrix)
     expected = sorted({0, count // 4, count // 2, 3 * count // 4, count - 1}) if advanced else sorted({0, count // 2, count - 1})
-    _require(isinstance(queries, list) and [q["query_id"] for q in queries] == expected,
+    _require(isinstance(queries, list) and [query["query_id"] for query in queries] == expected,
              "Incomplete retrieval query coverage")
     for query in queries:
         query_id = _integer(query["query_id"])
         hits = query["top_ids"]
         _require(isinstance(hits, list) and len(hits) == min(5, count)
-                 and all(type(i) is int and 0 <= i < count for i in hits)
+                 and all(type(identifier) is int and 0 <= identifier < count for identifier in hits)
                  and len(set(hits)) == len(hits) and query_id in hits, "Invalid retrieval record IDs")
         # Check ranking with tolerance for tied/float32 scores without re-running the model.
         vectors = matrix.astype(np.float64)
@@ -221,19 +220,18 @@ def _retrieval(root, report, matrix, advanced):
         _require(report["retrieval_queries"] == len(queries), "Retrieval count disagrees")
     else:
         _require(report["retrieval"] == queries, "Retrieval report disagrees")
-    return [{"query_id": q["query_id"], "top_ids": q["top_ids"]} for q in queries]
+    return [{"query_id": query["query_id"], "top_ids": query["top_ids"]} for query in queries]
 
 
-def _advanced(root, report, table, actors):
-    """Verify shard materialization and preserve separate coordinator clock semantics."""
+def _execution_actors(root, report, actors):
     from application import FINGERPRINT_FIELDS
 
     fingerprint = _hash(report["execution_fingerprint"])
     _require(_json(root / "execution.json") == {"execution_fingerprint": fingerprint}, "Execution marker disagrees")
     _require(_json(root / "actor-cleanup.json") == {"errors": [], "attempted": report["gpu_actors"]},
              "Result has missing or failed actor cleanup")
-    instances = [a["instance_id"] for a in actors]
-    _require(all(isinstance(i, str) and i for i in instances) and len(set(instances)) == len(instances),
+    instances = [actor["instance_id"] for actor in actors]
+    _require(all(isinstance(identifier, str) and identifier for identifier in instances) and len(set(instances)) == len(instances),
              "Invalid actor identities")
     for actor in actors:
         identity = {field: actor[field] for field in FINGERPRINT_FIELDS}
@@ -241,50 +239,65 @@ def _advanced(root, report, table, actors):
         _require(actor["execution_fingerprint"] == fingerprint and actor["model_revision"] == report["model_revision"],
                  "Actor execution identity disagrees")
     final = report["final_actors"]
-    final_instances = [a["instance_id"] for a in final]
+    final_instances = [actor["instance_id"] for actor in final]
     participants = _integer(report["gpu_actors"], 1)
     _require(len(final_instances) == participants and len(set(final_instances)) == participants
-             and all(i in instances for i in final_instances), "Final actor membership disagrees")
+             and all(identifier in instances for identifier in final_instances), "Final actor membership disagrees")
     for actor in final:
         original = actors[instances.index(actor["instance_id"])]
         _require(all(value == actor.get(key) for key, value in original.items() if key != "inference_calls"),
                  "Final actor provenance disagrees")
         _integer(actor["inference_calls"])
+    return fingerprint, instances, final_instances, participants
+
+
+def _checkpoint(root, report, table, index, batch_size, fingerprint, instances):
+    path = root / "shards" / f"{index:06d}"
+    commit = _json(path / "commit.json")
+    shard = pq.read_table(path / "embeddings.parquet")
+    expected = table.slice(index * batch_size, batch_size)
+    _require(shard.equals(expected), "Committed shard differs from aggregate embeddings")
+    identity = {"record_ids": shard["record_id"].to_pylist(),
+                "input_hash": _canonical(shard["input_sha256"].to_pylist()),
+                "processed_hash": _canonical(shard["processed_sha256"].to_pylist()),
+                "source_sha256": report["source_sha256"], "model_revision": report["model_revision"],
+                "execution_fingerprint": fingerprint}
+    _require(commit["identity"] == identity and commit["rows"] == len(shard), "Checkpoint identity disagrees")
+    _require(commit["preprocessor"]["source_sha256"] == report["source_sha256"],
+             "Checkpoint preprocessor source identity disagrees")
+    _require(commit["parquet_sha256"] == _sha(path / "embeddings.parquet"), "Checkpoint hash disagrees")
+    measurement = commit["inference"]
+    _require(measurement["instance_id"] in instances, "Checkpoint references unknown actor")
+    start = _integer(measurement["start_monotonic_ns"])
+    end = _integer(measurement["end_monotonic_ns"])
+    seconds = _number(measurement["inference_seconds"])
+    _require(end >= start and math.isclose(seconds, (end - start) / 1e9, abs_tol=1e-9), "Invalid worker timing")
+    return {"rows": len(shard), "actor_index": instances.index(measurement["instance_id"]),
+            "inference_seconds": seconds, "preprocess_seconds": _number(commit["preprocess_seconds"]),
+            "parquet_sha256": _hash(commit["parquet_sha256"])}
+
+
+def _checkpoints(root, report, table, fingerprint, instances):
     count = _integer(report["shards"], 1)
     batch_size = _integer(report["batch_size"], 1)
     _require(count == math.ceil(len(table) / batch_size), "Shard count disagrees with dataset")
-    commits = []
-    for index in range(count):
-        path = root / "shards" / f"{index:06d}"
-        commit = _json(path / "commit.json")
-        shard = pq.read_table(path / "embeddings.parquet")
-        expected = table.slice(index * batch_size, batch_size)
-        _require(shard.equals(expected), "Committed shard differs from aggregate embeddings")
-        identity = {"record_ids": shard["record_id"].to_pylist(),
-                    "input_hash": _canonical(shard["input_sha256"].to_pylist()),
-                    "processed_hash": _canonical(shard["processed_sha256"].to_pylist()),
-                    "source_sha256": report["source_sha256"], "model_revision": report["model_revision"],
-                    "execution_fingerprint": fingerprint}
-        _require(commit["identity"] == identity and commit["rows"] == len(shard), "Checkpoint identity disagrees")
-        _require(commit["preprocessor"]["source_sha256"] == report["source_sha256"],
-                 "Checkpoint preprocessor source identity disagrees")
-        _require(commit["parquet_sha256"] == _sha(path / "embeddings.parquet"), "Checkpoint hash disagrees")
-        measurement = commit["inference"]
-        _require(measurement["instance_id"] in instances, "Checkpoint references unknown actor")
-        start = _integer(measurement["start_monotonic_ns"])
-        end = _integer(measurement["end_monotonic_ns"])
-        seconds = _number(measurement["inference_seconds"])
-        _require(end >= start and math.isclose(seconds, (end - start) / 1e9, abs_tol=1e-9), "Invalid worker timing")
-        commits.append({"rows": len(shard), "actor_index": instances.index(measurement["instance_id"]),
-                        "inference_seconds": seconds, "preprocess_seconds": _number(commit["preprocess_seconds"]),
-                        "parquet_sha256": _hash(commit["parquet_sha256"])})
-    _require(set(p.name for p in (root / "shards").iterdir()) == {f"{i:06d}" for i in range(count)},
+    commits = [_checkpoint(root, report, table, index, batch_size, fingerprint, instances)
+               for index in range(count)]
+    _require(set(path.name for path in (root / "shards").iterdir()) == {f"{index:06d}" for index in range(count)},
              "Unexpected shard checkpoint")
     for field, key in (("inference_actor_seconds_sum", "inference_seconds"),
                        ("preprocessing_task_seconds_sum", "preprocess_seconds")):
-        _require(math.isclose(report[field], sum(c[key] for c in commits), rel_tol=1e-9), "Shard timing sum disagrees")
+        _require(math.isclose(report[field], sum(commit[key] for commit in commits), rel_tol=1e-9), "Shard timing sum disagrees")
+    return commits
+
+
+def _coordinator_events(report, instances, final_instances, participants):
     observation = report["concurrency_observation"]
-    events, active, started, finished, overlap = [], set(), set(), set(), False
+    events = []
+    active = set()
+    started = set()
+    finished = set()
+    overlap = False
     previous = 0
     origin = None
     for event in observation["events"]:
@@ -311,6 +324,10 @@ def _advanced(root, report, table, actors):
     _require(not active and started == finished and len(started) == participants
              and observation["participants"] == participants and observation["overlap"] is overlap
              and report["concurrent_actor_inference_observed"] is overlap, "Incomplete concurrency observation")
+    return events
+
+
+def _recovery(root, report, actors, instances, final_instances, participants, commits):
     recovery = report["recovery"]
     safe_recovery = None
     if recovery is not None:
@@ -329,12 +346,45 @@ def _advanced(root, report, table, actors):
     else:
         _require(not (root / "recovery.json").exists() and len(actors) == participants, "Unexpected recovery evidence")
     remaining = commits[1:] if recovery is not None else commits
-    _require(all(instances[c["actor_index"]] in final_instances for c in remaining),
+    _require(all(instances[commit["actor_index"]] in final_instances for commit in remaining),
              "Checkpoint references an actor after its recorded replacement")
-    for actor in final:
-        observed_calls = sum(instances[c["actor_index"]] == actor["instance_id"] for c in commits)
+    for actor in report["final_actors"]:
+        observed_calls = sum(instances[commit["actor_index"]] == actor["instance_id"] for commit in commits)
         _require(actor["inference_calls"] == observed_calls, "Final inference calls disagree with committed shards")
-    return commits, events, safe_recovery
+    return safe_recovery
+
+
+def _advanced(root, report, table, actors):
+    """Verify shard materialization and preserve separate coordinator clock semantics."""
+    fingerprint, instances, final_instances, participants = _execution_actors(root, report, actors)
+    commits = _checkpoints(root, report, table, fingerprint, instances)
+    events = _coordinator_events(report, instances, final_instances, participants)
+    recovery = _recovery(root, report, actors, instances, final_instances, participants, commits)
+    return commits, events, recovery
+
+
+def _provenance(root, report, manifest, sources, advanced, count):
+    return {"producer": "application.py" if advanced else "embed.py",
+            "converter_sha256": _sha(Path(__file__)),
+            "report_sha256": manifest["report.json"], "source_sha256": sources,
+            "input_manifest_sha256": _sha(root / "SHA256SUMS"),
+            "parquet_sha256": manifest["embeddings.parquet"],
+            "vector_bytes_sha256": report["vector_bytes_sha256"],
+            "crop_policy": report["crop_policy"], "records": count,
+            "limitations": "Procedural images; no semantic accuracy claim. Dataset and shard indices are not time. "
+            "Rerun log_time/log_tick are converter logging metadata. "
+            "Timing totals overlap and are not additive. Coordinator time covers one observed wave with RPC edges; "
+            "worker clocks are not aligned. Recovery has no timestamp. The supplied run label is not Jobs status proof. "
+            "Lance files are checksum verified; this converter reads Parquet and saved retrieval results."}
+
+
+def _aggregate_identity(report, table, matrix):
+    _require(report["input_hash"] == _canonical(table["input_sha256"].to_pylist())
+             and report["processed_hash"] == _canonical(table["processed_sha256"].to_pylist()),
+             "Report input identity disagrees")
+    mean = np.asarray(report["mean_embedding"], dtype=np.float64)
+    _require(mean.shape == (512,) and np.array_equal(mean, matrix.mean(axis=0, dtype=np.float64)),
+             "Report mean embedding disagrees")
 
 
 def _load(root):
@@ -343,7 +393,7 @@ def _load(root):
     _require(isinstance(report, dict), "CLIP report must be a JSON object")
     lance = root / "lance" / "embeddings.lance"
     for directory, pattern in (("data", "*.lance"), ("_versions", "*.manifest")):
-        _require(any(p.is_file() and p.stat().st_size > 0 for p in (lance / directory).glob(pattern)),
+        _require(any(path.is_file() and path.stat().st_size > 0 for path in (lance / directory).glob(pattern)),
                  "Missing nonempty Lance result data or version manifest")
     schema = report.get("schema_version")
     _require(schema in (None, "npa.ray-clip-development.v1"), "Unsupported CLIP report schema")
@@ -360,58 +410,48 @@ def _load(root):
     if not advanced:
         preprocessors = report["preprocessors"]
         _require(isinstance(preprocessors, list) and preprocessors
-                 and all(p["source_sha256"] == sources["worker.py"] for p in preprocessors),
+                 and all(preprocessor["source_sha256"] == sources["worker.py"] for preprocessor in preprocessors),
                  "Preprocessor source identity disagrees")
     actors, safe_actors = _actors(report, advanced, sources)
-    timings = ({k: _number(report[k]) for k in _ADVANCED_TIMINGS} if advanced
-               else {k: _number(report["timings_seconds"][k]) for k in _BASIC_TIMINGS})
+    timings = ({key: _number(report[key]) for key in _ADVANCED_TIMINGS} if advanced
+               else {key: _number(report["timings_seconds"][key]) for key in _BASIC_TIMINGS})
     if advanced:
-        _require(report["input_hash"] == _canonical(table["input_sha256"].to_pylist())
-                 and report["processed_hash"] == _canonical(table["processed_sha256"].to_pylist()),
-                 "Report input identity disagrees")
-        mean = np.asarray(report["mean_embedding"], dtype=np.float64)
-        _require(mean.shape == (512,) and np.array_equal(mean, matrix.mean(axis=0, dtype=np.float64)),
-                 "Report mean embedding disagrees")
+        _aggregate_identity(report, table, matrix)
     frames = _images(root, table, count)
     queries = _retrieval(root, report, matrix, advanced)
     commits, events, recovery = _advanced(root, report, table, actors) if advanced else ([], [], None)
     return {"matrix": matrix, "frames": frames, "queries": queries, "actors": safe_actors,
             "timings": timings, "commits": commits, "events": events, "recovery": recovery,
-            "provenance": {"producer": "application.py" if advanced else "embed.py",
-                           "converter_sha256": _sha(Path(__file__)),
-                           "report_sha256": manifest["report.json"], "source_sha256": sources,
-                           "input_manifest_sha256": _sha(root / "SHA256SUMS"),
-                           "parquet_sha256": manifest["embeddings.parquet"],
-                           "vector_bytes_sha256": report["vector_bytes_sha256"],
-                           "crop_policy": report["crop_policy"], "records": count,
-                           "limitations": "Procedural images; no semantic accuracy claim. Dataset and shard indices are not time. "
-                           "Rerun log_time/log_tick are converter logging metadata. "
-                           "Timing totals overlap and are not additive. Coordinator time covers one observed wave with RPC edges; "
-                           "worker clocks are not aligned. Recovery has no timestamp. The supplied run label is not Jobs status proof. "
-                           "Lance files are checksum verified; this converter reads Parquet and saved retrieval results."}}
+            "provenance": _provenance(root, report, manifest, sources, advanced, count)}
+
+
+def _write_metadata(recording, data):
+    import rerun as rr
+    import rerun.blueprint as rrb
+
+    blueprint = rrb.Blueprint(rrb.Vertical(
+        rrb.Horizontal(rrb.Spatial2DView(origin="images/original"), rrb.Spatial2DView(origin="images/crop")),
+        rrb.Horizontal(rrb.TimeSeriesView(origin="vectors/norm"), rrb.TextDocumentView(origin="provenance/run")),
+    ), collapse_panels=True)
+    recording.send_blueprint(blueprint)
+    recording.log("provenance/run", rr.TextDocument(json.dumps(data["provenance"], sort_keys=True)), static=True)
+    for name, seconds in data["timings"].items():
+        recording.log("timings_seconds/" + name, rr.Scalars(seconds), static=True)
+    for actor in data["actors"]:
+        root = f"actors/{actor['actor_index']}"
+        recording.log(root + "/model", rr.TextDocument(json.dumps(actor, sort_keys=True)), static=True)
+        recording.log(root + "/model_load_seconds", rr.Scalars(actor["model_load_seconds"]), static=True)
+    if data["recovery"] is not None:
+        recording.log("recovery/checkpoint_replay", rr.TextDocument(json.dumps(data["recovery"], sort_keys=True)), static=True)
 
 
 def _write(path, data, run_id):
     import rerun as rr
-    import rerun.blueprint as rrb
 
     recording = rr.RecordingStream(APPLICATION_ID, recording_id=run_id)
     recording.save(path)
     try:
-        blueprint = rrb.Blueprint(rrb.Vertical(
-            rrb.Horizontal(rrb.Spatial2DView(origin="images/original"), rrb.Spatial2DView(origin="images/crop")),
-            rrb.Horizontal(rrb.TimeSeriesView(origin="vectors/norm"), rrb.TextDocumentView(origin="provenance/run")),
-        ), collapse_panels=True)
-        recording.send_blueprint(blueprint)
-        recording.log("provenance/run", rr.TextDocument(json.dumps(data["provenance"], sort_keys=True)), static=True)
-        for name, seconds in data["timings"].items():
-            recording.log("timings_seconds/" + name, rr.Scalars(seconds), static=True)
-        for actor in data["actors"]:
-            root = f"actors/{actor['actor_index']}"
-            recording.log(root + "/model", rr.TextDocument(json.dumps(actor, sort_keys=True)), static=True)
-            recording.log(root + "/model_load_seconds", rr.Scalars(actor["model_load_seconds"]), static=True)
-        if data["recovery"] is not None:
-            recording.log("recovery/checkpoint_replay", rr.TextDocument(json.dumps(data["recovery"], sort_keys=True)), static=True)
+        _write_metadata(recording, data)
         matrix = data["matrix"]
         recording.send_columns("vectors/norm", indexes=[rr.TimeColumn("record_id", sequence=np.arange(len(matrix)))],
                                columns=rr.Scalars.columns(scalars=np.linalg.norm(matrix, axis=1)), strict=True)
@@ -441,25 +481,27 @@ def _write(path, data, run_id):
         recording.disconnect()
 
 
-def _inspect(path, data, run_id):
-    """Decode every exported fact and require exact values, identity and index coverage."""
-    from rerun.recording import load_recording
+class _DecodedRecording:
+    """Keep payloads paired with source indices despite physical chunk ordering."""
 
-    recording = load_recording(path)
-    _require(recording.application_id() == APPLICATION_ID and recording.recording_id() == run_id,
-             "Decoded RRD recording identity differs")
-    chunks = {}
-    counts = {}
-    for chunk in recording.chunks():
-        entity = str(chunk.entity_path)
-        counts[entity] = counts.get(entity, 0) + chunk.num_rows
-        chunks.setdefault(entity, []).append(chunk.to_record_batch())
+    def __init__(self, path, run_id):
+        from rerun.recording import load_recording
 
-    def values(entity, column):
+        recording = load_recording(path)
+        _require(recording.application_id() == APPLICATION_ID and recording.recording_id() == run_id,
+                 "Decoded RRD recording identity differs")
+        self.chunks = {}
+        self.counts = {}
+        for chunk in recording.chunks():
+            entity = str(chunk.entity_path)
+            self.counts[entity] = self.counts.get(entity, 0) + chunk.num_rows
+            self.chunks.setdefault(entity, []).append(chunk.to_record_batch())
+
+    def values(self, entity, column):
         # Physical chunk iteration is not timeline ordered. Keep every payload paired
         # with its index; log_tick preserves source logging order for equal times.
         indexed, static = [], []
-        for batch in chunks.get("/" + entity, []):
+        for batch in self.chunks.get("/" + entity, []):
             timeline = next((name for name in ("record_id", "shard_index", "coordinator_elapsed")
                              if name in batch.schema.names), None)
             payload = batch.column(column).to_pylist()
@@ -472,64 +514,100 @@ def _inspect(path, data, run_id):
             ticks = batch.column("log_tick").to_pylist() if "log_tick" in batch.schema.names else [0] * len(payload)
             indexed.extend(zip(indices, ticks, payload, strict=True))
         _require(not (indexed and static), "Decoded RRD mixes static and temporal rows: " + entity)
-        return [row[2] for row in sorted(indexed, key=lambda row: row[:2])] if indexed else static
+        if indexed:
+            return [row[2] for row in sorted(indexed, key=lambda row: row[:2])]
+        return static
 
-    def documents(entity):
-        return [json.loads(row[0]) for row in values(entity, "TextDocument:text")]
+    def documents(self, entity):
+        return [json.loads(row[0]) for row in self.values(entity, "TextDocument:text")]
 
-    def scalars(entity, expected, timeline=None, indices=None):
-        observed = [row[0] for row in values(entity, "Scalars:scalars")]
+    def scalars(self, entity, expected, timeline=None, indices=None):
+        observed = [row[0] for row in self.values(entity, "Scalars:scalars")]
         _require(np.array_equal(observed, expected), "Decoded RRD scalar values differ: " + entity)
         if timeline is not None:
-            actual = values(entity, timeline)
+            actual = self.values(entity, timeline)
             if timeline == "coordinator_elapsed":
                 actual = [value.value for value in actual]
             _require(actual == indices, "Decoded RRD index coverage differs: " + entity)
 
-    matrix = data["matrix"]
-    indices = list(range(len(matrix)))
-    scalars("vectors/norm", np.linalg.norm(matrix, axis=1), "record_id", indices)
-    _require(documents("provenance/run") == [data["provenance"]], "Decoded RRD provenance differs")
-    tensor = values("vectors/embedding", "Tensor:data")
-    _require(values("vectors/embedding", "record_id") == indices
-             and all(len(row) == 1 and row[0]["shape"] == [512] for row in tensor)
-             and np.array_equal(np.asarray([row[0]["buffer"] for row in tensor], dtype=np.float32), matrix),
-             "Decoded RRD vectors differ")
+
+def _inspect_images(recording, frames):
     for column, kind in enumerate(("original", "crop")):
         entity = "images/" + kind
-        _require(values(entity, "record_id") == list(range(len(data["frames"]))), "Decoded RRD image indices differ")
-        buffers = values(entity, "Image:buffer")
-        formats = values(entity, "Image:format")
-        _require(len(buffers) == len(formats) == len(data["frames"]), "Decoded RRD image coverage differs")
+        _require(recording.values(entity, "record_id") == list(range(len(frames))), "Decoded RRD image indices differ")
+        buffers = recording.values(entity, "Image:buffer")
+        formats = recording.values(entity, "Image:format")
+        _require(len(buffers) == len(formats) == len(frames), "Decoded RRD image coverage differs")
         for index, (buffer, image_format) in enumerate(zip(buffers, formats, strict=True)):
-            pixels = data["frames"][index][column]
+            pixels = frames[index][column]
             expected_format = {"width": pixels.shape[1], "height": pixels.shape[0],
                                "pixel_format": None, "color_model": 2, "channel_datatype": 6}
             _require(image_format == [expected_format] and len(buffer) == 1
                      and bytes(buffer[0]) == pixels.tobytes(), "Decoded RRD image pixels differ")
-    _require(documents("retrieval/top_ids") == data["queries"]
-             and values("retrieval/top_ids", "record_id") == [q["query_id"] for q in data["queries"]],
+
+
+def _inspect_records(recording, data):
+    matrix = data["matrix"]
+    indices = list(range(len(matrix)))
+    recording.scalars("vectors/norm", np.linalg.norm(matrix, axis=1), "record_id", indices)
+    tensor = recording.values("vectors/embedding", "Tensor:data")
+    _require(recording.values("vectors/embedding", "record_id") == indices
+             and all(len(row) == 1 and row[0]["shape"] == [512] for row in tensor)
+             and np.array_equal(np.asarray([row[0]["buffer"] for row in tensor], dtype=np.float32), matrix),
+             "Decoded RRD vectors differ")
+    _inspect_images(recording, data["frames"])
+    _require(recording.documents("retrieval/top_ids") == data["queries"]
+             and recording.values("retrieval/top_ids", "record_id") == [query["query_id"] for query in data["queries"]],
              "Decoded RRD retrieval differs")
+
+
+def _inspect(path, data, run_id):
+    """Decode every exported fact and require exact values, identity and index coverage."""
+    recording = _DecodedRecording(path, run_id)
+    _inspect_records(recording, data)
+    _require(recording.documents("provenance/run") == [data["provenance"]], "Decoded RRD provenance differs")
     for name, seconds in data["timings"].items():
-        scalars("timings_seconds/" + name, [seconds])
+        recording.scalars("timings_seconds/" + name, [seconds])
     for actor in data["actors"]:
         entity = f"actors/{actor['actor_index']}"
-        _require(documents(entity + "/model") == [actor], "Decoded RRD model provenance differs")
-        scalars(entity + "/model_load_seconds", [actor["model_load_seconds"]])
+        _require(recording.documents(entity + "/model") == [actor], "Decoded RRD model provenance differs")
+        recording.scalars(entity + "/model_load_seconds", [actor["model_load_seconds"]])
     commits = data["commits"]
     if commits:
         indices = list(range(len(commits)))
-        scalars("checkpoints/materialized", [c["rows"] for c in commits], "shard_index", indices)
-        _require(documents("checkpoints/lineage") == commits, "Decoded RRD checkpoint lineage differs")
+        recording.scalars("checkpoints/materialized", [commit["rows"] for commit in commits], "shard_index", indices)
+        _require(recording.documents("checkpoints/lineage") == commits, "Decoded RRD checkpoint lineage differs")
         for name in ("inference_seconds", "preprocess_seconds"):
-            scalars("shards/" + name, [c[name] for c in commits], "shard_index", indices)
-    for actor_index in sorted({e["actor_index"] for e in data["events"]}):
-        events = [e for e in data["events"] if e["actor_index"] == actor_index]
-        scalars(f"concurrency/actors/{actor_index}/active", [e["active"] for e in events],
-                "coordinator_elapsed", [e["nanoseconds"] for e in events])
+            recording.scalars("shards/" + name, [commit[name] for commit in commits], "shard_index", indices)
+    for actor_index in sorted({event["actor_index"] for event in data["events"]}):
+        events = [event for event in data["events"] if event["actor_index"] == actor_index]
+        recording.scalars(f"concurrency/actors/{actor_index}/active", [event["active"] for event in events],
+                          "coordinator_elapsed", [event["nanoseconds"] for event in events])
     expected_recovery = [data["recovery"]] if data["recovery"] is not None else []
-    _require(documents("recovery/checkpoint_replay") == expected_recovery, "Decoded RRD recovery lineage differs")
-    return {"entity_rows": counts, "records": len(matrix), "decoded_provenance": "matched"}
+    _require(recording.documents("recovery/checkpoint_replay") == expected_recovery, "Decoded RRD recovery lineage differs")
+    return {"entity_rows": recording.counts, "records": len(data["matrix"]), "decoded_provenance": "matched"}
+
+
+def _publish_recording(root, output, data, run_id):
+    output.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary = tempfile.mkstemp(prefix=".clip-", suffix=".rrd", dir=output.parent)
+    os.close(descriptor)
+    path = Path(temporary)
+    try:
+        _write(path, data, run_id)
+        inspection = _inspect(path, data, run_id)
+        _manifest(root)
+        _require(_sha(root / "SHA256SUMS") == data["provenance"]["input_manifest_sha256"],
+                 "Input result changed during conversion")
+        digest = _sha(path)
+        with path.open("rb") as stream:
+            os.fsync(stream.fileno())
+        # Same-directory hard link provides atomic, no-overwrite publication under races.
+        os.link(path, output)
+    finally:
+        path.unlink(missing_ok=True)
+    return {"schema_version": "npa.ray-clip-rrd.v1", "application_id": APPLICATION_ID,
+            "recording_id": run_id, "rrd_sha256": digest, "source": data["provenance"], **inspection}
 
 
 def convert(input_path: Path, output_path: Path, *, run_id: str) -> dict:
@@ -558,25 +636,7 @@ def convert(input_path: Path, output_path: Path, *, run_id: str) -> dict:
     except (ValueError, KeyError, TypeError, IndexError, OSError, AttributeError, OverflowError,
             Image.DecompressionBombError) as error:
         raise _InvalidResult("Incomplete or malformed persisted CLIP result") from error
-    output.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, temporary = tempfile.mkstemp(prefix=".clip-", suffix=".rrd", dir=output.parent)
-    os.close(descriptor)
-    path = Path(temporary)
-    try:
-        _write(path, data, run_id)
-        inspection = _inspect(path, data, run_id)
-        _manifest(root)
-        _require(_sha(root / "SHA256SUMS") == data["provenance"]["input_manifest_sha256"],
-                 "Input result changed during conversion")
-        digest = _sha(path)
-        with path.open("rb") as stream:
-            os.fsync(stream.fileno())
-        # Same-directory hard link provides atomic, no-overwrite publication under races.
-        os.link(path, output)
-    finally:
-        path.unlink(missing_ok=True)
-    return {"schema_version": "npa.ray-clip-rrd.v1", "application_id": APPLICATION_ID,
-            "recording_id": run_id, "rrd_sha256": digest, "source": data["provenance"], **inspection}
+    return _publish_recording(root, output, data, run_id)
 
 
 def main(argv: list[str] | None = None) -> int:

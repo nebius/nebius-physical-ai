@@ -1,4 +1,3 @@
-# Validate factual Rerun conversion using explicit synthetic artifact fixtures.
 """These tests exercise real Parquet/PNG/RRD bytes, without claiming CUDA inference."""
 
 from __future__ import annotations
@@ -25,8 +24,8 @@ def modules(monkeypatch):
     directory = Path(__file__).parents[2] / "workflows/workbench/ray-clip-development"
     monkeypatch.syspath_prepend(str(directory))
     names = ("report", "embed", "application", "validation", "worker")
-    previous = {n: sys.modules.pop(n) for n in names if n in sys.modules}
-    loaded = [importlib.import_module(n) for n in names[:4]]
+    previous = {name: sys.modules.pop(name) for name in names if name in sys.modules}
+    loaded = [importlib.import_module(name) for name in names[:4]]
     yield loaded
     for name in names:
         sys.modules.pop(name, None)
@@ -44,7 +43,7 @@ def result(modules, tmp_path):
     root.mkdir()
     rows = embed.worker.preprocess_shard(list(range(6)))["rows"]
     for index, row in enumerate(rows):
-        row["vector"] = [float(i == index) for i in range(512)]
+        row["vector"] = [float(component == index) for component in range(512)]
     report = embed.save_results(root, rows, 6)
     sources = {name: "a" * 64 for name in embed.SOURCE_FILES}
     actor = {"source_sha256": sources, "model_revision": "b" * 40,
@@ -59,12 +58,7 @@ def result(modules, tmp_path):
     return root
 
 
-@pytest.fixture
-def advanced(modules, result):
-    converter, embed, application, validation = modules
-    root = result
-    basic = json.loads((root / "report.json").read_text())
-    table = pq.read_table(root / "embeddings.parquet")
+def _advanced_actor(converter, application, validation):
     actor = {field: "a" * 64 for field in converter._ADVANCED_SOURCES.values()}
     actor.update({"instance_id": "private-initial-instance", "execution_fingerprint": "e" * 64,
                   "model_revision": "b" * 40, "model_config_sha256": "d" * 64,
@@ -75,7 +69,11 @@ def advanced(modules, result):
                   "gpu_capability": [12, 0]})
     fingerprint = validation.canonical_hash({field: actor[field] for field in application.FINGERPRINT_FIELDS})
     actor["execution_fingerprint"] = fingerprint
-    replacement = {**actor, "instance_id": "private-replacement-instance"}
+    return actor
+
+
+def _advanced_checkpoints(root, table, actor, replacement, embed, validation):
+    fingerprint = actor["execution_fingerprint"]
     commits = []
     for index in range(3):
         path = root / "shards" / f"{index:06d}"
@@ -92,13 +90,26 @@ def advanced(modules, result):
                     "start_monotonic_ns": 1000000000, "end_monotonic_ns": 1200000000, "inference_seconds": 0.2}}
         _dump(path / "commit.json", commit)
         commits.append(commit)
+    return commits
+
+
+@pytest.fixture
+def advanced(modules, result):
+    converter, embed, application, validation = modules
+    root = result
+    basic = json.loads((root / "report.json").read_text())
+    table = pq.read_table(root / "embeddings.parquet")
+    actor = _advanced_actor(converter, application, validation)
+    fingerprint = actor["execution_fingerprint"]
+    replacement = {**actor, "instance_id": "private-replacement-instance"}
+    commits = _advanced_checkpoints(root, table, actor, replacement, embed, validation)
     recovery = {"old_instance": actor["instance_id"], "new_instance": replacement["instance_id"],
                 "checkpoint_reused": True, "model_reloaded": True, "replay_inference_calls": 0,
                 "parquet_sha256": commits[0]["parquet_sha256"]}
     queries = []
     for index in sorted({0, 1, 3, 4, 5}):
-        queries.append({"query_id": index, "top_ids": [index] + [i for i in range(6) if i != index][:4]})
-    report = {k: v for k, v in basic.items() if k in ("records", "lance_rows", "vector_bytes_sha256", "crop_policy")}
+        queries.append({"query_id": index, "top_ids": [index] + [candidate for candidate in range(6) if candidate != index][:4]})
+    report = {key: value for key, value in basic.items() if key in ("records", "lance_rows", "vector_bytes_sha256", "crop_policy")}
     report.update({field: "a" * 64 for field in converter._ADVANCED_SOURCES.values()})
     report.update({"schema_version": "npa.ray-clip-development.v1", "execution_fingerprint": fingerprint,
                    "input_hash": validation.canonical_hash(table["input_sha256"].to_pylist()),
@@ -114,21 +125,25 @@ def advanced(modules, result):
                    "concurrent_actor_inference_observed": False,
                    **{key: 0.5 for key in converter._ADVANCED_TIMINGS},
                    "preprocessing_task_seconds_sum": 0.3, "inference_actor_seconds_sum": 0.6})
+    _write_advanced_result(root, report, queries, application)
+    return root
+
+
+def _write_advanced_result(root, report, queries, application):
     _dump(root / "retrieval.json", queries)
     _dump(root / "report.json", report)
-    _dump(root / "execution.json", {"execution_fingerprint": fingerprint})
-    _dump(root / "recovery.json", recovery)
+    _dump(root / "execution.json", {"execution_fingerprint": report["execution_fingerprint"]})
+    _dump(root / "recovery.json", report["recovery"])
     _dump(root / "actor-cleanup.json", {"errors": [], "attempted": 1})
     application._write_cleanup_artifacts(root, [], 1)
     # Advanced producer has no JSON manifest.
     (root / "sha256.json").unlink()
     application._write_cleanup_artifacts(root, [], 1)
-    return root
 
 
 def _chunks(path, entity):
     from rerun.recording import load_recording
-    return [c.to_record_batch() for c in load_recording(path).chunks() if str(c.entity_path) == entity]
+    return [chunk.to_record_batch() for chunk in load_recording(path).chunks() if str(chunk.entity_path) == entity]
 
 
 @pytest.mark.parametrize("fixture_name", ["result", "advanced"])
@@ -140,13 +155,13 @@ def test_recording_decodes_source_indices_vectors_images_and_provenance(modules,
     assert receipt["records"] == 6
     assert receipt["entity_rows"]["/vectors/embedding"] == 6
     assert receipt["rrd_sha256"] == converter._sha(path)
-    norms = pa.concat_tables([pa.Table.from_batches([b]) for b in _chunks(path, "/vectors/norm")])
+    norms = pa.concat_tables([pa.Table.from_batches([batch]) for batch in _chunks(path, "/vectors/norm")])
     assert norms["record_id"].to_pylist() == list(range(6))
     assert norms["Scalars:scalars"].to_pylist() == [[1.0]] * 6
     vectors = _chunks(path, "/vectors/embedding")
-    assert sum(len(b) for b in vectors) == 6
+    assert sum(len(batch) for batch in vectors) == 6
     images = _chunks(path, "/images/crop")
-    assert [i for b in images for i in b.column("record_id").to_pylist()] == list(range(6))
+    assert [index for batch in images for index in batch.column("record_id").to_pylist()] == list(range(6))
     text = _chunks(path, "/provenance/run")[0].column("TextDocument:text")[0].as_py()[0]
     assert json.loads(text)["report_sha256"] == converter._sha(root / "report.json")
     assert b"private-node-do-not-export" not in path.read_bytes()
@@ -159,10 +174,10 @@ def test_advanced_uses_coordinator_clock_and_static_recovery(modules, advanced, 
     events = _chunks(path, "/concurrency/actors/1/active")
     ticks = [value.value for batch in events for value in batch.column("coordinator_elapsed")]
     assert ticks == [0, 300000000]
-    active = [v[0] for b in events for v in b.column("Scalars:scalars").to_pylist()]
+    active = [value[0] for batch in events for value in batch.column("Scalars:scalars").to_pylist()]
     assert active == [1.0, 0.0]
     shards = _chunks(path, "/checkpoints/materialized")
-    assert [i for b in shards for i in b.column("shard_index").to_pylist()] == [0, 1, 2]
+    assert [index for batch in shards for index in batch.column("shard_index").to_pylist()] == [0, 1, 2]
     recovery = _chunks(path, "/recovery/checkpoint_replay")[0]
     assert "coordinator_elapsed" not in recovery.schema.names
     assert "shard_index" not in recovery.schema.names
@@ -252,7 +267,7 @@ def test_semantic_corruption_rejected_even_after_rehash(modules, result, tmp_pat
 
 @pytest.mark.parametrize("damage", ["commit", "identity", "shard", "event", "recovery", "cleanup"])
 def test_advanced_corruption_rejected_after_rehash(modules, advanced, tmp_path, damage):
-    converter, _, app, *_ = modules
+    converter, _, application, *_ = modules
     root = advanced
     if damage == "commit":
         (root / "shards/000001/commit.json").unlink()
@@ -275,7 +290,7 @@ def test_advanced_corruption_rejected_after_rehash(modules, advanced, tmp_path, 
             _dump(root / "recovery.json", value["recovery"])
         _dump(path, value)
     # Refresh only the manifest, preserving intentionally damaged cleanup evidence.
-    lines = [f"{converter._sha(p)}  {p.relative_to(root)}\n" for p in sorted(root.rglob("*")) if p.is_file() and p.name != "SHA256SUMS"]
+    lines = [f"{converter._sha(path)}  {path.relative_to(root)}\n" for path in sorted(root.rglob("*")) if path.is_file() and path.name != "SHA256SUMS"]
     (root / "SHA256SUMS").write_text("".join(lines))
     with pytest.raises(ValueError):
         converter.convert(root, tmp_path / "invalid.rrd", run_id="test")
@@ -313,26 +328,26 @@ def test_retrieval_extra_fields_cannot_leak_into_recording(modules, result, tmp_
     embed.write_hashes(result)
     path = tmp_path / "report.rrd"
     converter.convert(result, path, run_id="test")
-    decoded = [json.loads(row[0]) for b in _chunks(path, "/retrieval/top_ids")
-               for row in b.column("TextDocument:text").to_pylist()]
+    decoded = [json.loads(row[0]) for batch in _chunks(path, "/retrieval/top_ids")
+               for row in batch.column("TextDocument:text").to_pylist()]
     assert all(set(query) == {"query_id", "top_ids"} for query in decoded)
 
 
 def test_reversed_recovery_lineage_is_rejected(modules, advanced, tmp_path):
-    converter, _, app, *_ = modules
+    converter, _, application, *_ = modules
     report = json.loads((advanced / "report.json").read_text())
     recovery = report["recovery"]
     recovery["old_instance"], recovery["new_instance"] = recovery["new_instance"], recovery["old_instance"]
     _dump(advanced / "report.json", report)
     _dump(advanced / "recovery.json", recovery)
-    app._write_cleanup_artifacts(advanced, [], 1)
+    application._write_cleanup_artifacts(advanced, [], 1)
     with pytest.raises(ValueError, match="recovery"):
         converter.convert(advanced, tmp_path / "invalid.rrd", run_id="test")
 
 
 @pytest.mark.parametrize("damage", ["weights", "fingerprint", "config"])
 def test_model_identity_cannot_be_invented(modules, advanced, tmp_path, damage):
-    converter, _, app, *_ = modules
+    converter, _, application, *_ = modules
     report = json.loads((advanced / "report.json").read_text())
     for actor in report["model_initializations"]:
         if damage == "weights":
@@ -342,7 +357,7 @@ def test_model_identity_cannot_be_invented(modules, advanced, tmp_path, damage):
         else:
             actor["model_config_sha256"] = "f" * 64
     _dump(advanced / "report.json", report)
-    app._write_cleanup_artifacts(advanced, [], 1)
+    application._write_cleanup_artifacts(advanced, [], 1)
     with pytest.raises(ValueError):
         converter.convert(advanced, tmp_path / "invalid.rrd", run_id="test")
 
@@ -366,7 +381,7 @@ def test_decoded_physical_chunks_preserve_timeline_coverage(modules, request, tm
         recording = original(path)
         rows = [(chunk.entity_path, chunk.to_record_batch().slice(index, 1))
                 for chunk in recording.chunks() for index in range(chunk.num_rows)]
-        index = next(i for i, (entity, _) in enumerate(rows) if str(entity) == "/vectors/embedding")
+        index = next(index for index, (entity, _) in enumerate(rows) if str(entity) == "/vectors/embedding")
         if damage == "duplicate":
             rows.append(rows[index])
         elif damage == "missing":
@@ -440,7 +455,7 @@ def test_cli_rejects_malformed_values_without_echo_or_traceback(modules, result,
 @pytest.mark.parametrize("fixture_name", ["result", "advanced"])
 @pytest.mark.parametrize("damage", ["missing_table", "missing_data", "empty_manifest"])
 def test_lance_payload_is_required_even_after_manifest_refresh(modules, request, fixture_name, damage, tmp_path):
-    converter, embed, app, *_ = modules
+    converter, embed, application, *_ = modules
     root = request.getfixturevalue(fixture_name)
     lance = root / "lance/embeddings.lance"
     if damage == "missing_table":
@@ -453,7 +468,7 @@ def test_lance_payload_is_required_even_after_manifest_refresh(modules, request,
     if fixture_name == "result":
         embed.write_hashes(root)
     else:
-        app._write_cleanup_artifacts(root, [], 1)
+        application._write_cleanup_artifacts(root, [], 1)
     with pytest.raises(ValueError, match="Lance"):
         converter.convert(root, tmp_path / "invalid.rrd", run_id="test")
     assert not (tmp_path / "invalid.rrd").exists()
@@ -461,7 +476,7 @@ def test_lance_payload_is_required_even_after_manifest_refresh(modules, request,
 
 @pytest.mark.parametrize("damage", ["killed_actor", "inference_calls"])
 def test_recovery_cannot_attribute_later_work_to_killed_actor(modules, advanced, tmp_path, damage):
-    converter, _, app, *_ = modules
+    converter, _, application, *_ = modules
     report = json.loads((advanced / "report.json").read_text())
     if damage == "killed_actor":
         path = advanced / "shards/000001/commit.json"
@@ -471,14 +486,14 @@ def test_recovery_cannot_attribute_later_work_to_killed_actor(modules, advanced,
     else:
         report["final_actors"][0]["inference_calls"] += 1
         _dump(advanced / "report.json", report)
-    app._write_cleanup_artifacts(advanced, [], 1)
+    application._write_cleanup_artifacts(advanced, [], 1)
     with pytest.raises(ValueError, match="replacement|inference calls"):
         converter.convert(advanced, tmp_path / "invalid.rrd", run_id="test")
 
 
 @pytest.mark.parametrize("damage", ["oversized_png", "duration_overflow"])
 def test_cli_normalizes_malformed_image_and_duration(modules, advanced, tmp_path, damage):
-    converter, _, app, *_ = modules
+    converter, _, application, *_ = modules
     if damage == "oversized_png":
         path = advanced / "preview.png"
         png = bytearray(path.read_bytes())
@@ -490,7 +505,7 @@ def test_cli_normalizes_malformed_image_and_duration(modules, advanced, tmp_path
         events = report["concurrency_observation"]["events"]
         events[-1]["monotonic_ns"] = events[0]["monotonic_ns"] + 2**63
         _dump(advanced / "report.json", report)
-    app._write_cleanup_artifacts(advanced, [], 1)
+    application._write_cleanup_artifacts(advanced, [], 1)
     output = tmp_path / "invalid.rrd"
     run = subprocess.run([sys.executable, converter.__file__, "--input-path", str(advanced),
                           "--output-path", str(output), "--run-id", "test"], capture_output=True, text=True)
@@ -506,7 +521,7 @@ def test_cli_normalizes_malformed_image_and_duration(modules, advanced, tmp_path
 @pytest.mark.parametrize("fixture_name", ["result", "advanced"])
 @pytest.mark.parametrize("damage", ["missing", "contradictory"])
 def test_preprocessor_identity_must_match_inference_source(modules, request, fixture_name, damage, tmp_path):
-    converter, embed, app, *_ = modules
+    converter, embed, application, *_ = modules
     root = request.getfixturevalue(fixture_name)
     path = root / ("report.json" if fixture_name == "result" else "shards/000001/commit.json")
     value = json.loads(path.read_text())
@@ -520,7 +535,7 @@ def test_preprocessor_identity_must_match_inference_source(modules, request, fix
     if fixture_name == "result":
         embed.write_hashes(root)
     else:
-        app._write_cleanup_artifacts(root, [], 1)
+        application._write_cleanup_artifacts(root, [], 1)
     with pytest.raises(ValueError, match="[Pp]reprocessor|malformed"):
         converter.convert(root, tmp_path / "invalid.rrd", run_id="test")
     assert not (tmp_path / "invalid.rrd").exists()

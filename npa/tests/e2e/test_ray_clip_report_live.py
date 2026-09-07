@@ -13,14 +13,7 @@ import pytest
 pytestmark = pytest.mark.e2e
 
 
-@pytest.mark.skipif(not os.environ.get("NPA_RAY_CLIP_RESULTS"), reason="Select real downloaded CLIP results explicitly")
-def test_real_cuda_results_convert_and_decode(tmp_path):
-    """Require CUDA actor evidence and independently verify actual RRD bytes."""
-    from rerun.recording import load_recording
-
-    root = Path(os.environ["NPA_RAY_CLIP_RESULTS"])
-    source = Path(__file__).parents[2] / "workflows/workbench/ray-clip-development/report.py"
-    report = json.loads((root / "report.json").read_text())
+def _require_cuda_actor_evidence(report):
     actors = report.get("actors", report.get("model_initializations"))
     assert actors
     for actor in actors:
@@ -30,6 +23,17 @@ def test_real_cuda_results_convert_and_decode(tmp_path):
         assert actor["model_load_seconds"] > 0
     final = report.get("final_actors", actors)
     assert sum(actor["inference_calls"] for actor in final) > 0
+
+
+@pytest.mark.skipif(not os.environ.get("NPA_RAY_CLIP_RESULTS"), reason="Select real downloaded CLIP results explicitly")
+def test_real_cuda_results_convert_and_decode(tmp_path):
+    """Require CUDA actor evidence and independently verify actual RRD bytes."""
+    from rerun.recording import load_recording
+
+    root = Path(os.environ["NPA_RAY_CLIP_RESULTS"])
+    source = Path(__file__).parents[2] / "workflows/workbench/ray-clip-development/report.py"
+    report = json.loads((root / "report.json").read_text())
+    _require_cuda_actor_evidence(report)
     output = tmp_path / "clip.rrd"
     converted = subprocess.run([sys.executable, str(source), "--input-path", str(root),
                                 "--output-path", str(output), "--run-id", "clip-live-validation"],
