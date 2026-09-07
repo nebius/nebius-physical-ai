@@ -19,9 +19,10 @@ import time
 
 
 def digest(path: Path) -> str:
-    """Return the SHA-256 of an artifact's exact bytes."""
-    with path.open("rb") as stream:
-        return hashlib.file_digest(stream, "sha256").hexdigest()
+    """Use the shared Python 3.10-compatible artifact checksum implementation."""
+    from artifacts import file_sha256
+
+    return file_sha256(path)
 
 
 def validate_recipe(recipe: dict) -> None:

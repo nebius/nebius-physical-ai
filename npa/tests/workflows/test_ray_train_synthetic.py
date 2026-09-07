@@ -1,6 +1,7 @@
 """Native Train reference contracts; synthetic fixtures never claim GPU execution."""
 
 import copy
+import hashlib
 import importlib.util
 import json
 from pathlib import Path
@@ -33,6 +34,16 @@ def load(name):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+@pytest.mark.parametrize("content", [b"", b"a\x00b\xff" * (1024 * 1024 + 1)], ids=["empty", "multi_chunk"])
+def test_artifact_hashing_supports_python310_and_multiple_chunks(tmp_path, monkeypatch, content):
+    monkeypatch.delattr(hashlib, "file_digest", raising=False)
+    path = tmp_path / "artifact.bin"
+    path.write_bytes(content)
+    expected = hashlib.sha256(content).hexdigest()
+    assert load("artifacts").file_sha256(path) == expected
+    assert load("train").digest(path) == expected
 
 
 @pytest.fixture
@@ -170,6 +181,11 @@ def test_complete_rrd_timeline_roundtrip(exported):
         artifacts_verified=4, optimizer_steps_decoded=4, metric_entities_decoded=5,
         checkpoint_events_decoded=2,
     )
+
+
+def test_downloaded_artifacts_can_be_inspected_without_python311_hashlib_api(exported, monkeypatch):
+    monkeypatch.delattr(hashlib, "file_digest", raising=False)
+    assert load("inspect_results").inspect(exported)["artifacts_verified"] == 4
 
 
 def test_checksum_corruption_is_rejected(exported):

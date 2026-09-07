@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import math
 from pathlib import Path
@@ -12,7 +11,7 @@ from pathlib import Path
 def inspect(directory: Path) -> dict:
     """Verify all exported bytes and every decoded optimizer metric against its journal."""
     from rerun.recording import load_recording
-    from artifacts import EXPORT_FILES
+    from artifacts import EXPORT_FILES, file_sha256
     from train import validate_journal, validate_recipe
 
     expected_files = EXPORT_FILES - {"SHA256SUMS"}
@@ -29,8 +28,7 @@ def inspect(directory: Path) -> dict:
         path = directory / name
         if path.is_symlink() or not path.is_file():
             raise ValueError("Exported artifact is missing or is a symlink")
-        with path.open("rb") as stream:
-            actual = hashlib.file_digest(stream, "sha256").hexdigest()
+        actual = file_sha256(path)
         if actual != expected:
             raise ValueError(f"Artifact hash mismatch: {name}")
         hashes[name] = actual

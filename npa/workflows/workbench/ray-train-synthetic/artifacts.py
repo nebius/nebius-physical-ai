@@ -11,6 +11,15 @@ from urllib.parse import urlsplit
 EXPORT_FILES = frozenset({"state.pt", "metrics.json", "metrics.rrd", "result.json", "SHA256SUMS"})
 
 
+def file_sha256(path: Path) -> str:
+    """Hash artifact bytes with bounded memory on every supported Python version."""
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def storage(uri: str):
     """Resolve an explicit unsigned destination using each process's AWS environment."""
     target = urlsplit(uri)
