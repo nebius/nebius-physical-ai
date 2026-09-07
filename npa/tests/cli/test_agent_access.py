@@ -1203,7 +1203,7 @@ def test_access_refresh_invalidates_all_derived_artifact_state(monkeypatch) -> N
 
     runtime._finish_agent_access_refresh(_discover())
 
-    assert clears == [True]
+    assert clears == [True, True]
     assert runtime._AGENT_EXACT_SOURCE_ACCESS_CACHE == {}
     with pytest.raises(HTTPException) as stale:
         runtime._artifact_run_snapshot_page(

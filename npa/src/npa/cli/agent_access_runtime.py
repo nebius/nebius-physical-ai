@@ -573,6 +573,14 @@ def _finish_agent_access_refresh(report: "AgentAccessReport | None") -> None:
             _AGENT_ACCESS_CACHE["expires_at"] = (
                 time.monotonic() + _AGENT_ACCESS_CACHE_TTL_SECONDS
             )
+    # Requests are intentionally allowed to finish against the previously
+    # published report while a background refresh runs. One of those requests
+    # can begin rebuilding a run page between the pre-publication invalidation
+    # above and the report swap. A second generation bump closes that race: old
+    # work cannot repopulate the cache after the new report becomes visible.
+    if report is not None:
+        _invalidate_agent_artifact_discovery()
+    with _AGENT_ACCESS_CONDITION:
         _AGENT_ACCESS_CACHE["refreshing"] = False
         _AGENT_ACCESS_CONDITION.notify_all()
 
