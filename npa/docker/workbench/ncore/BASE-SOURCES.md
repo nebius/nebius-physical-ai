@@ -3,12 +3,11 @@
 The published stage is `FROM scratch`. It contains one copy of an explicitly
 assembled filesystem, with one retained version of each Debian package. The
 Python base and the APT/source builders are build inputs, not published ancestry.
-Package managers, user/filesystem administration suites, curl and its protocol
-library closure, inherited pip/ensurepip, Python headers/static libraries,
-optional GUI/DB/interactive extensions, build trees, caches and test extensions
-are absent. The converter and its hash-locked runtime dependency environment are
-unchanged. Bootstrap keeps bash/sh, sudo, SSH, rsync, service and their actual
-shared-library dependencies.
+The bootstrap includes real APT, dpkg and curl, bash/sh, sudo, SSH, rsync,
+service and their required helpers and libraries. Inherited pip/ensurepip,
+Python headers/static libraries, optional GUI/DB/interactive extensions, build
+trees, populated caches and test extensions are absent. The converter and its
+hash-locked runtime dependency environment are unchanged.
 
 `base-source-lock.json` identifies the selected Debian files and CPython files by
 path, content hash or exact symlink, together with the .deb hash, signed package
@@ -17,12 +16,67 @@ metadata and copyright files, and `readelf` dependencies, including the pinned
 CPython ELF files. `assemble-root` copies only this selection, original notices,
 and enumerated clean-builder configuration. It writes static localhost entries;
 builder hostnames, resolver configuration, host keys and arbitrary `/etc` trees
-are never copied. The retained dpkg status identifies **partial package
-selections**, for SBOM tools; it does not promise an installed package manager.
+are never copied. The lock is the SBOM/source inventory of **selected loose
+files**, not a Debian installation database. The published dpkg database is
+empty: no selected partial package is falsely marked `install ok installed`.
+There are no invented package lists, conffile records or maintainer-script
+receipts. Actual APT/dpkg execution during worker initialization installs the
+required packages and writes their genuine status, lists and configuration.
+The publication verifier rejects nonempty dpkg status and inherited installation
+metadata. Do not copy the builder's status or `/var/lib/dpkg/info` into scratch.
+SBOM and vulnerability coverage must use the explicit lock and file inventory;
+an empty SBOM derived only from dpkg is not acceptable evidence.
 
 The final copy preserves sudo's mode and dynamic library replacement. Uid 1000
 can read the sources, notices and recipes. No term restricts modification,
 replacement, relinking or debugging of the covered libraries.
+
+## SkyPilot 0.12.2 bootstrap
+
+The [pinned Kubernetes template](https://github.com/skypilot-org/skypilot/blob/v0.12.2/sky/templates/kubernetes-ray.yml.j2)
+queries `dpkg -l`, always updates APT indexes, and installs its missing packages.
+Its runtime branch waits for real installed-package records for curl and patch;
+workers also wait for netcat. The
+[pinned provisioner](https://github.com/skypilot-org/skypilot/blob/v0.12.2/sky/provision/kubernetes/instance.py)
+then unconditionally runs `apt install openssh-server rsync -y`. An SSH-only
+smoke cannot validate these prerequisites. Both upstream files are hash-bound
+under `bootstrap.upstream` in the lock.
+
+| Baked selection | Bootstrap requirement |
+| --- | --- |
+| `apt`, `apt-get`, `apt-config`, `apt-key`, APT acquisition helpers, libapt-pkg/libapt-private, `gpgv` | Real package resolution, download, signed repository verification and installation |
+| dpkg/query/deb/split/divert/statoverride/trigger/maintscript helpers, update-alternatives, dpkg architecture tables, `diff`, `cmp`, tar | Real package queries, unpacking, conffile handling and maintainer scripts |
+| curl and its actual Debian library closure | HTTPS runtime download; linked protocol libraries remain necessary even for an HTTPS request |
+| `seq`, `whoami`, `tty`, `stty`, `uniq`, `chgrp`, `md5sum`, Debian `which`, `getent`, `locale`, `ldconfig`, `mountpoint`, `getopt` | Upstream shell operations and actual Debian package configuration/pre-installation checks |
+| Debian init helpers, one Perl interpreter and 35 core module/XS files | `deb-systemd-helper` during initial dpkg/APT configuration; selected from actual module and shared-object loading, without full perl-base modules or its duplicate versioned interpreter |
+| Debian profile, bash defaults, writable ubuntu `.profile`/`.bashrc`, `/etc/profile.d`, `/var/run` | Provisioner environment propagation and login-shell setup |
+
+The additional linked libraries are libapt-pkg/libapt-private, libcurl,
+libbrotlidec/libbrotlicommon, libgnutls, libhogweed/libnettle, libidn2, libldap/liblber,
+libnghttp2, libp11-kit, libpsl, librtmp, libsasl2, libseccomp, libssh2, libtasn1,
+libunistring, libmount and libblkid. Existing selected libraries satisfy their
+remaining ELF dependencies. Each is bound to actual pinned Debian bytes.
+
+APT retains only the clean builder's pinned Debian snapshot sources and validity
+configuration plus the public Debian signing keyring and CA trust. Empty writable
+APT/dpkg state directories are created. `90npa-bootstrap` disables recommended
+packages and translation indexes; required dependencies and signature checking
+remain enabled. This avoids unnecessary recommended services and certificate
+reconfiguration during SkyPilot's bounded upstream initialization. No NPA timeout
+or retry policy is added. Package indexes, downloaded `.deb` files and installed
+package state are runtime data and are never copied back into the public layer.
+The template still installs its own platform tools, including compiler/patch/FUSE
+packages, at runtime; they are not added to the baked NCore application closure.
+
+The opt-in `test_ncore_skypilot_bootstrap.py` probe executes the original template
+APT block and provisioner APT command as uid 1000 against a disposable copy of the
+selected root. It checks real readiness predicates, package lists, `apt-get check`
+and `dpkg --audit`. Supply `NPA_NCORE_BOOTSTRAP_ROOT` and
+`NPA_NCORE_SKYPILOT_SOURCE` (a directory containing the two hash-matching upstream
+files). The disposable root needs runtime device/DNS inputs and the standard
+`policy-rc.d` exit-101 policy to prevent automatic daemon starts. The separate SSH
+and full SkyPilot runtime checks remain necessary on the parent's exact image.
+Never run the mutating APT probe against `/public-root` before its scratch copy.
 
 ## Why source is or is not delivered
 
@@ -49,8 +103,9 @@ Examples established from actual Debian copyright/build records:
   `libuuid/src/Makemodule.am` selects BSD library/randutils code and public-domain
   MD5/SHA1/common inline helpers. Their original source headers and permission
   text are delivered as `UPSTREAM-NOTICE`, with archive/member hashes and exact
-  excerpt lengths in the lock. This avoids shipping the unrelated filesystem
-  test corpora from e2fsprogs and util-linux.
+  excerpt lengths in the lock. e2fsprogs source remains unnecessary. util-linux
+  now also supplies the required `mountpoint` check and libmount/libblkid, so its
+  actual GPL/LGPL source is delivered as well.
 - CPython's interpreter/stdlib are covered by its PSF and bundled notices.
   Inherited pip and ensurepip are removed before publication, so neither pip's
   source nor its vendored fixture corpus is delivered.

@@ -297,7 +297,7 @@ def test_published_filesystem_has_no_inherited_layers_or_base_pip():
     assert len({p["name"] for p in lock["debian_binaries"]}) == len(
         lock["debian_binaries"]
     )
-    assert not {"apt", "curl", "passwd", "perl-base", "gnupg2"} & {
+    assert not {"passwd", "gnupg2"} & {
         p["name"] for p in lock["debian_binaries"]
     }
 

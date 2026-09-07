@@ -106,6 +106,15 @@ The retained Debian and CPython files are bound to actual byte hashes and
 original copyright notices. Permissive components have a binary-specific
 `delivery: notice` decision; their unnecessary full source archives are absent.
 Inherited pip/ensurepip and optional Python build/test/GUI payloads are absent.
+Real APT/dpkg/curl and their checked helper/library closure are required by the
+pinned SkyPilot 0.12.2 startup and are baked bootstrap utilities. The published
+dpkg status is empty because selected loose package files are not configured
+Debian installations. The lock inventories those bytes; runtime APT writes real
+package status, lists and conffile metadata. No installed-package claims are
+fabricated to satisfy SkyPilot's readiness predicates. APT recommendations and
+translation indexes are disabled; required dependencies and repository signature
+checks remain enabled. See [BASE-SOURCES.md](BASE-SOURCES.md) for the exact
+bootstrap boundary and disposable-root upstream-command probe.
 The remaining covered binaries receive real preferred source and build/install
 scripts. GCC runtime exceptions do not waive standalone library source delivery.
 The three reviewed source transformations remove only identified optional

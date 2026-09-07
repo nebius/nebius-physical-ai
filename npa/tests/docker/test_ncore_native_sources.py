@@ -26,6 +26,7 @@ def test_every_retained_debian_binary_has_required_source_or_notice_delivery():
                 "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "ISC", "MIT",
                 "Zlib", "bzip2-1.0.6", "Beerware", "LicenseRef-Public-Domain",
                 "LicenseRef-MIT-SIPB", "LicenseRef-TCP-Wrappers",
+                "curl", "OLDAP-2.8", "LicenseRef-Debian-Cyrus-SASL2-selected",
             }
             assert grants
             assert not source["artifacts"]
@@ -40,6 +41,15 @@ def test_every_retained_debian_binary_has_required_source_or_notice_delivery():
     assert lock["notices"]
     assert lock["cpython_elf_files"]
     assert lock["debian_keyring_sha256"]
+
+
+def test_runtime_manylinux_wheels_have_glibc_compatibility_libraries():
+    lock = json.loads((PACKAGING / "base-source-lock.json").read_text())
+    glibc = next(p for p in lock["debian_binaries"] if p["name"] == "libc6")
+    files = {Path(item["path"]).name for item in glibc["files"]}
+    # Actual locked runtime wheel ELF dependencies, although these interfaces
+    # have been merged into libc in recent glibc releases.
+    assert {"libpthread.so.0", "libdl.so.2", "librt.so.1"} <= files
 
 
 def test_native_application_libraries_are_runtime_only():

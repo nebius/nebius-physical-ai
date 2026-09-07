@@ -12,7 +12,7 @@ RUN sed -ri \
     && printf 'Acquire::Check-Valid-Until "false";\n' >/etc/apt/apt.conf.d/99snapshot \
     && apt-get update && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends \
-      ca-certificates netcat-openbsd openssh-server procps rsync sudo \
+      ca-certificates curl netcat-openbsd openssh-server procps rsync sudo \
     && rm -rf /var/lib/apt/lists/* \
     && rm -f /etc/ssh/ssh_host_* \
     && useradd -m -s /bin/bash -u 1000 ubuntu \

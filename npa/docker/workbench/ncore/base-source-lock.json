@@ -856,6 +856,282 @@
       "filename": "debian-archive-keyring_2023.3+deb12u2.tar.xz",
       "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/d/debian-archive-keyring/debian-archive-keyring_2023.3+deb12u2.tar.xz",
       "sha256": "3a34aaa3d753246f65191f5c1f675680a525512611eaffc96092d452dc812ddc"
+    },
+    {
+      "path": "sources/debian/apt/2.6.1/apt_2.6.1.dsc",
+      "filename": "apt_2.6.1.dsc",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/a/apt/apt_2.6.1.dsc",
+      "sha256": "e258c1b9c24e1747100271db9d6e5af7127bd3ef812a69bdf63de263abfdc6fd"
+    },
+    {
+      "path": "sources/debian/apt/2.6.1/apt_2.6.1.tar.xz",
+      "filename": "apt_2.6.1.tar.xz",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/a/apt/apt_2.6.1.tar.xz",
+      "sha256": "86b888c901fa2e78f1bf52a2aaa2f400ff82a472b94ff0ac6631939ee68fa6fd"
+    },
+    {
+      "path": "sources/debian/diffutils/1:3.8-4/diffutils_3.8-4.dsc",
+      "filename": "diffutils_3.8-4.dsc",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/d/diffutils/diffutils_3.8-4.dsc",
+      "sha256": "783af1a151c2a0f42a8a427693cc4bb16037c0d17282d28672d906f2eab424b8"
+    },
+    {
+      "path": "sources/debian/diffutils/1:3.8-4/diffutils_3.8.orig.tar.xz",
+      "filename": "diffutils_3.8.orig.tar.xz",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/d/diffutils/diffutils_3.8.orig.tar.xz",
+      "sha256": "a6bdd7d1b31266d11c4f4de6c1b748d4607ab0231af5188fc2533d0ae2438fec"
+    },
+    {
+      "path": "sources/debian/diffutils/1:3.8-4/diffutils_3.8.orig.tar.xz.asc",
+      "filename": "diffutils_3.8.orig.tar.xz.asc",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/d/diffutils/diffutils_3.8.orig.tar.xz.asc",
+      "sha256": "500f423d0ffa8d28966d916ed5fc6b79fb160a20ed5cb74eeb1c94a30c340311"
+    },
+    {
+      "path": "sources/debian/diffutils/1:3.8-4/diffutils_3.8-4.debian.tar.xz",
+      "filename": "diffutils_3.8-4.debian.tar.xz",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/d/diffutils/diffutils_3.8-4.debian.tar.xz",
+      "sha256": "36abe3a3174c32c3646ca6bad212169a322409086c4a98f967bb9ad58f11c8d4"
+    },
+    {
+      "path": "sources/debian/gnupg2/2.2.40-1.1+deb12u2/gnupg2_2.2.40-1.1+deb12u2.dsc",
+      "filename": "gnupg2_2.2.40-1.1+deb12u2.dsc",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/g/gnupg2/gnupg2_2.2.40-1.1+deb12u2.dsc",
+      "sha256": "2424239219b00265dd99c5a2c5f9d50f9cafc15f0945946bb16ac1a50ec38310"
+    },
+    {
+      "path": "sources/debian/gnupg2/2.2.40-1.1+deb12u2/gnupg2_2.2.40.orig.tar.bz2",
+      "filename": "gnupg2_2.2.40.orig.tar.bz2",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/g/gnupg2/gnupg2_2.2.40.orig.tar.bz2",
+      "sha256": "1164b29a75e8ab93ea15033300149e1872a7ef6bdda3d7c78229a735f8204c28"
+    },
+    {
+      "path": "sources/debian/gnupg2/2.2.40-1.1+deb12u2/gnupg2_2.2.40.orig.tar.bz2.asc",
+      "filename": "gnupg2_2.2.40.orig.tar.bz2.asc",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/g/gnupg2/gnupg2_2.2.40.orig.tar.bz2.asc",
+      "sha256": "3907dc165299cd53c0b4aec862323c3bce6037c411600ec87dc5eed7a55eba4a"
+    },
+    {
+      "path": "sources/debian/gnupg2/2.2.40-1.1+deb12u2/gnupg2_2.2.40-1.1+deb12u2.debian.tar.xz",
+      "filename": "gnupg2_2.2.40-1.1+deb12u2.debian.tar.xz",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/g/gnupg2/gnupg2_2.2.40-1.1+deb12u2.debian.tar.xz",
+      "sha256": "398ad74f63d81edd9365df97129d05061829599bf50e72824576e1dda23fbe62"
+    },
+    {
+      "path": "sources/debian/gnutls28/3.7.9-2+deb12u7/gnutls28_3.7.9-2+deb12u7.dsc",
+      "filename": "gnutls28_3.7.9-2+deb12u7.dsc",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/g/gnutls28/gnutls28_3.7.9-2+deb12u7.dsc",
+      "sha256": "027b2f60e38add78ee611d099dbf34e977a6600d446cc39673534b736a182cb6"
+    },
+    {
+      "path": "sources/debian/gnutls28/3.7.9-2+deb12u6/gnutls28_3.7.9.orig.tar.xz",
+      "filename": "gnutls28_3.7.9.orig.tar.xz",
+      "url": "https://snapshot.debian.org/archive/debian-security/20260224T203152Z/pool/updates/main/g/gnutls28/gnutls28_3.7.9.orig.tar.xz",
+      "sha256": "aaa03416cdbd54eb155187b359e3ec3ed52ec73df4df35a0edd49429ff64d844"
+    },
+    {
+      "path": "sources/debian/gnutls28/3.7.9-2+deb12u6/gnutls28_3.7.9.orig.tar.xz.asc",
+      "filename": "gnutls28_3.7.9.orig.tar.xz.asc",
+      "url": "https://snapshot.debian.org/archive/debian-security/20260224T203152Z/pool/updates/main/g/gnutls28/gnutls28_3.7.9.orig.tar.xz.asc",
+      "sha256": "da4a96b14edd3cd44971a36ba1e976af1057e57a2d6c21b0cc7025c983ee84cc"
+    },
+    {
+      "path": "sources/debian/gnutls28/3.7.9-2+deb12u7/gnutls28_3.7.9-2+deb12u7.debian.tar.xz",
+      "filename": "gnutls28_3.7.9-2+deb12u7.debian.tar.xz",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/g/gnutls28/gnutls28_3.7.9-2+deb12u7.debian.tar.xz",
+      "sha256": "bcfcf396482ce7635df255abeff1c811321a84f016c95677db28f56908b25595"
+    },
+    {
+      "path": "sources/debian/nettle/3.8.1-2/nettle_3.8.1-2.dsc",
+      "filename": "nettle_3.8.1-2.dsc",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/n/nettle/nettle_3.8.1-2.dsc",
+      "sha256": "a437e204da67612efb656cab354835f358b44c077c5c0a46d6e8c30b5c0bddff"
+    },
+    {
+      "path": "sources/debian/nettle/3.8.1-2/nettle_3.8.1.orig.tar.gz",
+      "filename": "nettle_3.8.1.orig.tar.gz",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/n/nettle/nettle_3.8.1.orig.tar.gz",
+      "sha256": "364f3e2b77cd7dcde83fd7c45219c834e54b0c75e428b6f894a23d12dd41cbfe"
+    },
+    {
+      "path": "sources/debian/nettle/3.8.1-2/nettle_3.8.1.orig.tar.gz.asc",
+      "filename": "nettle_3.8.1.orig.tar.gz.asc",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/n/nettle/nettle_3.8.1.orig.tar.gz.asc",
+      "sha256": "71fe31c44728fdc144cbf12f30ca5d483992c17fd23afabe58f89d4201f66ddb"
+    },
+    {
+      "path": "sources/debian/nettle/3.8.1-2/nettle_3.8.1-2.debian.tar.xz",
+      "filename": "nettle_3.8.1-2.debian.tar.xz",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/n/nettle/nettle_3.8.1-2.debian.tar.xz",
+      "sha256": "8f1eae9c6afffe545de294140f33d53352261478268dafee5ef72d840e1b3d7b"
+    },
+    {
+      "path": "sources/debian/libidn2/2.3.3-1/libidn2_2.3.3-1.dsc",
+      "filename": "libidn2_2.3.3-1.dsc",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/libi/libidn2/libidn2_2.3.3-1.dsc",
+      "sha256": "13865e96a0fed8dcb82767db65c946b56ed44fc1806d80d407c512ded2a83984"
+    },
+    {
+      "path": "sources/debian/libidn2/2.3.3-1/libidn2_2.3.3.orig.tar.gz",
+      "filename": "libidn2_2.3.3.orig.tar.gz",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/libi/libidn2/libidn2_2.3.3.orig.tar.gz",
+      "sha256": "f3ac987522c00d33d44b323cae424e2cffcb4c63c6aa6cd1376edacbf1c36eb0"
+    },
+    {
+      "path": "sources/debian/libidn2/2.3.3-1/libidn2_2.3.3.orig.tar.gz.asc",
+      "filename": "libidn2_2.3.3.orig.tar.gz.asc",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/libi/libidn2/libidn2_2.3.3.orig.tar.gz.asc",
+      "sha256": "e8f2bdce5def6c239c2cc3220e808b19b14d3f7eb3a0e14851dd5c16fc9ad0ec"
+    },
+    {
+      "path": "sources/debian/libidn2/2.3.3-1/libidn2_2.3.3-1.debian.tar.xz",
+      "filename": "libidn2_2.3.3-1.debian.tar.xz",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/libi/libidn2/libidn2_2.3.3-1.debian.tar.xz",
+      "sha256": "b040c12276e1128394c2f84c97f7e45f340867fa9d0d0a0b9d8f043b1977db99"
+    },
+    {
+      "path": "sources/debian/rtmpdump/2.4+20151223.gitfa8646d.1-2/rtmpdump_2.4+20151223.gitfa8646d.1-2.dsc",
+      "filename": "rtmpdump_2.4+20151223.gitfa8646d.1-2.dsc",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/r/rtmpdump/rtmpdump_2.4+20151223.gitfa8646d.1-2.dsc",
+      "sha256": "a296819cd2ab5880b67ad963ef0867cb10e462f4403e52565aa863eb05bb1370"
+    },
+    {
+      "path": "sources/debian/rtmpdump/2.4+20151223.gitfa8646d.1-2/rtmpdump_2.4+20151223.gitfa8646d.1.orig.tar.gz",
+      "filename": "rtmpdump_2.4+20151223.gitfa8646d.1.orig.tar.gz",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/r/rtmpdump/rtmpdump_2.4+20151223.gitfa8646d.1.orig.tar.gz",
+      "sha256": "5c032f5c8cc2937eb55a81a94effdfed3b0a0304b6376147b86f951e225e3ab5"
+    },
+    {
+      "path": "sources/debian/rtmpdump/2.4+20151223.gitfa8646d.1-2/rtmpdump_2.4+20151223.gitfa8646d.1-2.debian.tar.xz",
+      "filename": "rtmpdump_2.4+20151223.gitfa8646d.1-2.debian.tar.xz",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/r/rtmpdump/rtmpdump_2.4+20151223.gitfa8646d.1-2.debian.tar.xz",
+      "sha256": "26d47de07d16285e4ca55b0828cbbf1ba35e671f9b3500a87e301fe755d26882"
+    },
+    {
+      "path": "sources/debian/libseccomp/2.5.4-1+deb12u1/libseccomp_2.5.4-1+deb12u1.dsc",
+      "filename": "libseccomp_2.5.4-1+deb12u1.dsc",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/libs/libseccomp/libseccomp_2.5.4-1+deb12u1.dsc",
+      "sha256": "0ab1448c7206ee928f97a24d04300cfd3bb26babb4238c82fb71f507b5148595"
+    },
+    {
+      "path": "sources/debian/libseccomp/2.5.4-1+deb12u1/libseccomp_2.5.4.orig.tar.gz",
+      "filename": "libseccomp_2.5.4.orig.tar.gz",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/libs/libseccomp/libseccomp_2.5.4.orig.tar.gz",
+      "sha256": "d82902400405cf0068574ef3dc1fe5f5926207543ba1ae6f8e7a1576351dcbdb"
+    },
+    {
+      "path": "sources/debian/libseccomp/2.5.4-1+deb12u1/libseccomp_2.5.4.orig.tar.gz.asc",
+      "filename": "libseccomp_2.5.4.orig.tar.gz.asc",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/libs/libseccomp/libseccomp_2.5.4.orig.tar.gz.asc",
+      "sha256": "af37e70eb422e6f983c1f135a3abb342c3b787716520b71bd774e4906003807f"
+    },
+    {
+      "path": "sources/debian/libseccomp/2.5.4-1+deb12u1/libseccomp_2.5.4-1+deb12u1.debian.tar.xz",
+      "filename": "libseccomp_2.5.4-1+deb12u1.debian.tar.xz",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/libs/libseccomp/libseccomp_2.5.4-1+deb12u1.debian.tar.xz",
+      "sha256": "665fc6ad1b9887207b0af1a293a2d7975e2df503a2618d1808b970081f9672f6"
+    },
+    {
+      "path": "sources/debian/libtasn1-6/4.19.0-2+deb12u1/libtasn1-6_4.19.0-2+deb12u1.dsc",
+      "filename": "libtasn1-6_4.19.0-2+deb12u1.dsc",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/libt/libtasn1-6/libtasn1-6_4.19.0-2+deb12u1.dsc",
+      "sha256": "54eabe8526f590a52771d99ce8c592d3edd549e98d84ea6649db473d528cc6ec"
+    },
+    {
+      "path": "sources/debian/libtasn1-6/4.19.0-2+deb12u1/libtasn1-6_4.19.0.orig.tar.gz",
+      "filename": "libtasn1-6_4.19.0.orig.tar.gz",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/libt/libtasn1-6/libtasn1-6_4.19.0.orig.tar.gz",
+      "sha256": "1613f0ac1cf484d6ec0ce3b8c06d56263cc7242f1c23b30d82d23de345a63f7a"
+    },
+    {
+      "path": "sources/debian/libtasn1-6/4.19.0-2+deb12u1/libtasn1-6_4.19.0.orig.tar.gz.asc",
+      "filename": "libtasn1-6_4.19.0.orig.tar.gz.asc",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/libt/libtasn1-6/libtasn1-6_4.19.0.orig.tar.gz.asc",
+      "sha256": "8410c0c004f3509c218a98b276b3308b9c46f48068e8b1a6d9ebfd61ea9f357a"
+    },
+    {
+      "path": "sources/debian/libtasn1-6/4.19.0-2+deb12u1/libtasn1-6_4.19.0-2+deb12u1.debian.tar.xz",
+      "filename": "libtasn1-6_4.19.0-2+deb12u1.debian.tar.xz",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/libt/libtasn1-6/libtasn1-6_4.19.0-2+deb12u1.debian.tar.xz",
+      "sha256": "878db2aeeb04e43a70750480a4f17498b7ed46fb5fe433acb6721b3e6d38088c"
+    },
+    {
+      "path": "sources/debian/libunistring/1.0-2/libunistring_1.0-2.dsc",
+      "filename": "libunistring_1.0-2.dsc",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/libu/libunistring/libunistring_1.0-2.dsc",
+      "sha256": "9b9a9d9d4cd1c2118df8cf5ca0dfb787d89afcd99400d7cd01b4c4e9b0bc1ae5"
+    },
+    {
+      "path": "sources/debian/libunistring/1.0-2/libunistring_1.0.orig.tar.xz",
+      "filename": "libunistring_1.0.orig.tar.xz",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/libu/libunistring/libunistring_1.0.orig.tar.xz",
+      "sha256": "5bab55b49f75d77ed26b257997e919b693f29fd4a1bc22e0e6e024c246c72741"
+    },
+    {
+      "path": "sources/debian/libunistring/1.0-2/libunistring_1.0.orig.tar.xz.asc",
+      "filename": "libunistring_1.0.orig.tar.xz.asc",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/libu/libunistring/libunistring_1.0.orig.tar.xz.asc",
+      "sha256": "c1c2ae60eb971593da92e65384a5f1b181717e7b9654854f139f350c6cbe235d"
+    },
+    {
+      "path": "sources/debian/libunistring/1.0-2/libunistring_1.0-2.debian.tar.xz",
+      "filename": "libunistring_1.0-2.debian.tar.xz",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/libu/libunistring/libunistring_1.0-2.debian.tar.xz",
+      "sha256": "e550d94935cd06eafb0defd7b5d7c914c7bb80a8e818a49efcf7675206572450"
+    },
+    {
+      "path": "sources/debian/perl/5.36.0-7+deb12u3/perl_5.36.0-7+deb12u3.dsc",
+      "filename": "perl_5.36.0-7+deb12u3.dsc",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/p/perl/perl_5.36.0-7+deb12u3.dsc",
+      "sha256": "ac13a1eb3d4bb63ca8c91a3695ad563b10792a3e0f2f8b74d9600625a98a68fb"
+    },
+    {
+      "path": "sources/debian/perl/5.36.0-7+deb12u3/perl_5.36.0.orig-regen-configure.tar.xz",
+      "filename": "perl_5.36.0.orig-regen-configure.tar.xz",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/p/perl/perl_5.36.0.orig-regen-configure.tar.xz",
+      "sha256": "10ac353bc5a933403afe60ed1817e7a456f99bdbcaf80c1cdb0eb3a08ea56d4e"
+    },
+    {
+      "path": "sources/debian/perl/5.36.0-7+deb12u3/perl_5.36.0.orig.tar.xz",
+      "filename": "perl_5.36.0.orig.tar.xz",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/p/perl/perl_5.36.0.orig.tar.xz",
+      "sha256": "0f386dccbee8e26286404b2cca144e1005be65477979beb9b1ba272d4819bcf0"
+    },
+    {
+      "path": "sources/debian/perl/5.36.0-7+deb12u3/perl_5.36.0-7+deb12u3.debian.tar.xz",
+      "filename": "perl_5.36.0-7+deb12u3.debian.tar.xz",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/p/perl/perl_5.36.0-7+deb12u3.debian.tar.xz",
+      "sha256": "5dfbe06b76fd23a4cc4aef586220845de535b245a9066ec0658eb60fbe21be1b"
+    },
+    {
+      "path": "sources/debian/base-files/12.4+deb12u15/base-files_12.4+deb12u15.dsc",
+      "filename": "base-files_12.4+deb12u15.dsc",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/b/base-files/base-files_12.4+deb12u15.dsc",
+      "sha256": "e531274d0c3916dacfe55bbd27148d775b004e1836bc2fbb01549f142d524e8c"
+    },
+    {
+      "path": "sources/debian/base-files/12.4+deb12u15/base-files_12.4+deb12u15.tar.xz",
+      "filename": "base-files_12.4+deb12u15.tar.xz",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/b/base-files/base-files_12.4+deb12u15.tar.xz",
+      "sha256": "9fb369194365fe9da74621da247ea70884fc3d1d9c063db310764ef0e43c02c5"
+    },
+    {
+      "path": "sources/debian/util-linux/2.38.1-5+deb12u3/util-linux_2.38.1-5+deb12u3.dsc",
+      "filename": "util-linux_2.38.1-5+deb12u3.dsc",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/u/util-linux/util-linux_2.38.1-5+deb12u3.dsc",
+      "sha256": "0fe5fcd2b83d0465e32ca5cb9d8319e9b6fbf14c9a69abfd7ea905e45fa90b67"
+    },
+    {
+      "path": "sources/debian/util-linux/2.38.1-5+deb12u3/util-linux_2.38.1.orig.tar.xz",
+      "filename": "util-linux_2.38.1.orig.tar.xz",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/u/util-linux/util-linux_2.38.1.orig.tar.xz",
+      "sha256": "60492a19b44e6cf9a3ddff68325b333b8b52b6c59ce3ebd6a0ecaa4c5117e84f"
+    },
+    {
+      "path": "sources/debian/util-linux/2.38.1-5+deb12u3/util-linux_2.38.1-5+deb12u3.debian.tar.xz",
+      "filename": "util-linux_2.38.1-5+deb12u3.debian.tar.xz",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/u/util-linux/util-linux_2.38.1-5+deb12u3.debian.tar.xz",
+      "sha256": "d46b85313f536fc4831a69ba3fa2c8160450b5b26c7c5dfafce4f078fe4f205c"
     }
   ],
   "debian_repositories": [
@@ -1657,10 +1933,14 @@
       "name": "util-linux",
       "version": "2.38.1-5+deb12u3",
       "source_index": "92d11a035571df011f06f28c61cb9825130ef1d92abb2f2e0525e8674dc44af8",
-      "artifacts": [],
-      "delivery": "notice",
-      "license_reason": "Only libuuid. libuuid/src/Makemodule.am enumerates BSD libuuid/randutils and public-domain md5/sha1 support; common inline c.h/all-io.h are public domain. No GPL util-linux programs or LGPL libblkid/libmount are selected. Original notices and BSD text are delivered.",
-      "license": "BSD-3-Clause AND LicenseRef-Public-Domain"
+      "artifacts": [
+        "0fe5fcd2b83d0465e32ca5cb9d8319e9b6fbf14c9a69abfd7ea905e45fa90b67",
+        "60492a19b44e6cf9a3ddff68325b333b8b52b6c59ce3ebd6a0ecaa4c5117e84f",
+        "d46b85313f536fc4831a69ba3fa2c8160450b5b26c7c5dfafce4f078fe4f205c"
+      ],
+      "delivery": "source",
+      "license": "GPL-2.0-or-later AND LGPL-2.1-or-later AND BSD-3-Clause",
+      "license_reason": "mountpoint is required by the usrmerge pre-installation check during real APT bootstrap. Its GPL binary and linked libmount/libblkid now require the actual util-linux source; the existing libuuid BSD notice is retained. No broader filesystem administration suite is copied."
     },
     {
       "id": "debian:xxhash@0.8.1-1",
@@ -1694,9 +1974,455 @@
       "delivery": "notice",
       "license_reason": "Only libz and original zlib notice.",
       "license": "Zlib"
+    },
+    {
+      "id": "debian:apt@2.6.1",
+      "kind": "debian-source",
+      "name": "apt",
+      "version": "2.6.1",
+      "source_index": "92d11a035571df011f06f28c61cb9825130ef1d92abb2f2e0525e8674dc44af8",
+      "artifacts": [
+        "e258c1b9c24e1747100271db9d6e5af7127bd3ef812a69bdf63de263abfdc6fd",
+        "86b888c901fa2e78f1bf52a2aaa2f400ff82a472b94ff0ac6631939ee68fa6fd"
+      ],
+      "license": "GPL-2.0-or-later",
+      "delivery": "source",
+      "license_reason": "APT command-line programs, acquisition methods and libapt-pkg/libapt-private required by the pinned SkyPilot package installation path."
+    },
+    {
+      "id": "debian:curl@7.88.1-10+deb12u15",
+      "kind": "debian-source",
+      "name": "curl",
+      "version": "7.88.1-10+deb12u15",
+      "source_index": "92d11a035571df011f06f28c61cb9825130ef1d92abb2f2e0525e8674dc44af8",
+      "artifacts": [],
+      "license": "curl",
+      "delivery": "notice",
+      "license_reason": "Unmodified Debian curl executable and libcurl shared library under the curl license. Separately linked covered libraries have their own delivered source."
+    },
+    {
+      "id": "debian:diffutils@1:3.8-4",
+      "kind": "debian-source",
+      "name": "diffutils",
+      "version": "1:3.8-4",
+      "source_index": "92d11a035571df011f06f28c61cb9825130ef1d92abb2f2e0525e8674dc44af8",
+      "artifacts": [
+        "783af1a151c2a0f42a8a427693cc4bb16037c0d17282d28672d906f2eab424b8",
+        "a6bdd7d1b31266d11c4f4de6c1b748d4607ab0231af5188fc2533d0ae2438fec",
+        "500f423d0ffa8d28966d916ed5fc6b79fb160a20ed5cb74eeb1c94a30c340311",
+        "36abe3a3174c32c3646ca6bad212169a322409086c4a98f967bb9ad58f11c8d4"
+      ],
+      "license": "GPL-3.0-or-later",
+      "delivery": "source",
+      "license_reason": "The real diff executable is a mandatory dpkg installation prerequisite."
+    },
+    {
+      "id": "debian:gnupg2@2.2.40-1.1+deb12u2",
+      "kind": "debian-source",
+      "name": "gnupg2",
+      "version": "2.2.40-1.1+deb12u2",
+      "source_index": "92d11a035571df011f06f28c61cb9825130ef1d92abb2f2e0525e8674dc44af8",
+      "artifacts": [
+        "2424239219b00265dd99c5a2c5f9d50f9cafc15f0945946bb16ac1a50ec38310",
+        "1164b29a75e8ab93ea15033300149e1872a7ef6bdda3d7c78229a735f8204c28",
+        "3907dc165299cd53c0b4aec862323c3bce6037c411600ec87dc5eed7a55eba4a",
+        "398ad74f63d81edd9365df97129d05061829599bf50e72824576e1dda23fbe62"
+      ],
+      "license": "GPL-3.0-or-later",
+      "delivery": "source",
+      "license_reason": "Only gpgv signature verification for authenticated APT repositories; no gpg key management, agents or keyservers."
+    },
+    {
+      "id": "debian:brotli@1.0.9-2",
+      "kind": "debian-source",
+      "name": "brotli",
+      "version": "1.0.9-2",
+      "source_index": "92d11a035571df011f06f28c61cb9825130ef1d92abb2f2e0525e8674dc44af8",
+      "artifacts": [],
+      "license": "MIT",
+      "delivery": "notice",
+      "license_reason": "Only libbrotlidec and libbrotlicommon shared libraries linked by curl, with original MIT notice."
+    },
+    {
+      "id": "debian:gnutls28@3.7.9-2+deb12u7",
+      "kind": "debian-source",
+      "name": "gnutls28",
+      "version": "3.7.9-2+deb12u7",
+      "source_index": "92d11a035571df011f06f28c61cb9825130ef1d92abb2f2e0525e8674dc44af8",
+      "artifacts": [
+        "027b2f60e38add78ee611d099dbf34e977a6600d446cc39673534b736a182cb6",
+        "aaa03416cdbd54eb155187b359e3ec3ed52ec73df4df35a0edd49429ff64d844",
+        "da4a96b14edd3cd44971a36ba1e976af1057e57a2d6c21b0cc7025c983ee84cc",
+        "bcfcf396482ce7635df255abeff1c811321a84f016c95677db28f56908b25595"
+      ],
+      "license": "LGPL-2.1-or-later",
+      "delivery": "source",
+      "license_reason": "libgnutls is a linked dependency of APT HTTPS acquisition and the retained curl protocol-library closure."
+    },
+    {
+      "id": "debian:nettle@3.8.1-2",
+      "kind": "debian-source",
+      "name": "nettle",
+      "version": "3.8.1-2",
+      "source_index": "92d11a035571df011f06f28c61cb9825130ef1d92abb2f2e0525e8674dc44af8",
+      "artifacts": [
+        "a437e204da67612efb656cab354835f358b44c077c5c0a46d6e8c30b5c0bddff",
+        "364f3e2b77cd7dcde83fd7c45219c834e54b0c75e428b6f894a23d12dd41cbfe",
+        "71fe31c44728fdc144cbf12f30ca5d483992c17fd23afabe58f89d4201f66ddb",
+        "8f1eae9c6afffe545de294140f33d53352261478268dafee5ef72d840e1b3d7b"
+      ],
+      "license": "LGPL-3.0-or-later",
+      "delivery": "source",
+      "license_reason": "libnettle and libhogweed runtime cryptography for GnuTLS; LGPL alternative selected."
+    },
+    {
+      "id": "debian:libidn2@2.3.3-1",
+      "kind": "debian-source",
+      "name": "libidn2",
+      "version": "2.3.3-1",
+      "source_index": "92d11a035571df011f06f28c61cb9825130ef1d92abb2f2e0525e8674dc44af8",
+      "artifacts": [
+        "13865e96a0fed8dcb82767db65c946b56ed44fc1806d80d407c512ded2a83984",
+        "f3ac987522c00d33d44b323cae424e2cffcb4c63c6aa6cd1376edacbf1c36eb0",
+        "e8f2bdce5def6c239c2cc3220e808b19b14d3f7eb3a0e14851dd5c16fc9ad0ec",
+        "b040c12276e1128394c2f84c97f7e45f340867fa9d0d0a0b9d8f043b1977db99"
+      ],
+      "license": "LGPL-3.0-or-later",
+      "delivery": "source",
+      "license_reason": "Runtime IDN library required by curl/GnuTLS; LGPL alternative, no GPL command-line utility."
+    },
+    {
+      "id": "debian:openldap@2.5.13+dfsg-5",
+      "kind": "debian-source",
+      "name": "openldap",
+      "version": "2.5.13+dfsg-5",
+      "source_index": "92d11a035571df011f06f28c61cb9825130ef1d92abb2f2e0525e8674dc44af8",
+      "artifacts": [],
+      "license": "OLDAP-2.8",
+      "delivery": "notice",
+      "license_reason": "Only libldap/liblber client libraries linked by curl; original OpenLDAP notices, no server or test tree."
+    },
+    {
+      "id": "debian:nghttp2@1.52.0-1+deb12u3",
+      "kind": "debian-source",
+      "name": "nghttp2",
+      "version": "1.52.0-1+deb12u3",
+      "source_index": "92d11a035571df011f06f28c61cb9825130ef1d92abb2f2e0525e8674dc44af8",
+      "artifacts": [],
+      "license": "MIT",
+      "delivery": "notice",
+      "license_reason": "Only the HTTP/2 shared library linked by curl, under the original MIT grant."
+    },
+    {
+      "id": "debian:p11-kit@0.24.1-2",
+      "kind": "debian-source",
+      "name": "p11-kit",
+      "version": "0.24.1-2",
+      "source_index": "92d11a035571df011f06f28c61cb9825130ef1d92abb2f2e0525e8674dc44af8",
+      "artifacts": [],
+      "license": "BSD-3-Clause",
+      "delivery": "notice",
+      "license_reason": "Selected libp11-kit shared library is BSD licensed; no proxy, trust module or command-line programs."
+    },
+    {
+      "id": "debian:libpsl@0.21.2-1",
+      "kind": "debian-source",
+      "name": "libpsl",
+      "version": "0.21.2-1",
+      "source_index": "92d11a035571df011f06f28c61cb9825130ef1d92abb2f2e0525e8674dc44af8",
+      "artifacts": [],
+      "license": "MIT",
+      "delivery": "notice",
+      "license_reason": "libpsl shared library and built-in public suffix data with original MIT notice."
+    },
+    {
+      "id": "debian:rtmpdump@2.4+20151223.gitfa8646d.1-2",
+      "kind": "debian-source",
+      "name": "rtmpdump",
+      "version": "2.4+20151223.gitfa8646d.1-2",
+      "source_index": "92d11a035571df011f06f28c61cb9825130ef1d92abb2f2e0525e8674dc44af8",
+      "artifacts": [
+        "a296819cd2ab5880b67ad963ef0867cb10e462f4403e52565aa863eb05bb1370",
+        "5c032f5c8cc2937eb55a81a94effdfed3b0a0304b6376147b86f951e225e3ab5",
+        "26d47de07d16285e4ca55b0828cbbf1ba35e671f9b3500a87e301fe755d26882"
+      ],
+      "license": "LGPL-2.1-or-later",
+      "delivery": "source",
+      "license_reason": "Debian libcurl links librtmp even for HTTPS; selected librtmp shared library, not the GPL rtmpdump executable."
+    },
+    {
+      "id": "debian:cyrus-sasl2@2.1.28+dfsg-10",
+      "kind": "debian-source",
+      "name": "cyrus-sasl2",
+      "version": "2.1.28+dfsg-10",
+      "source_index": "92d11a035571df011f06f28c61cb9825130ef1d92abb2f2e0525e8674dc44af8",
+      "artifacts": [],
+      "license": "LicenseRef-Debian-Cyrus-SASL2-selected",
+      "delivery": "notice",
+      "license_reason": "Selected libsasl2 client library required by libldap; original CMU license and attribution retained. No SASL database plugins."
+    },
+    {
+      "id": "debian:libseccomp@2.5.4-1+deb12u1",
+      "kind": "debian-source",
+      "name": "libseccomp",
+      "version": "2.5.4-1+deb12u1",
+      "source_index": "92d11a035571df011f06f28c61cb9825130ef1d92abb2f2e0525e8674dc44af8",
+      "artifacts": [
+        "0ab1448c7206ee928f97a24d04300cfd3bb26babb4238c82fb71f507b5148595",
+        "d82902400405cf0068574ef3dc1fe5f5926207543ba1ae6f8e7a1576351dcbdb",
+        "af37e70eb422e6f983c1f135a3abb342c3b787716520b71bd774e4906003807f",
+        "665fc6ad1b9887207b0af1a293a2d7975e2df503a2618d1808b970081f9672f6"
+      ],
+      "license": "LGPL-2.1-or-later",
+      "delivery": "source",
+      "license_reason": "Runtime seccomp library linked by APT acquisition methods."
+    },
+    {
+      "id": "debian:libssh2@1.10.0-3+deb12u1",
+      "kind": "debian-source",
+      "name": "libssh2",
+      "version": "1.10.0-3+deb12u1",
+      "source_index": "3220c4978ed66ed56d256dc4b077e96268506f14684f2169c40caabf93c462f5",
+      "artifacts": [],
+      "license": "BSD-3-Clause",
+      "delivery": "notice",
+      "license_reason": "Selected libssh2 shared library used by curl, with original BSD notices."
+    },
+    {
+      "id": "debian:libtasn1-6@4.19.0-2+deb12u1",
+      "kind": "debian-source",
+      "name": "libtasn1-6",
+      "version": "4.19.0-2+deb12u1",
+      "source_index": "92d11a035571df011f06f28c61cb9825130ef1d92abb2f2e0525e8674dc44af8",
+      "artifacts": [
+        "54eabe8526f590a52771d99ce8c592d3edd549e98d84ea6649db473d528cc6ec",
+        "1613f0ac1cf484d6ec0ce3b8c06d56263cc7242f1c23b30d82d23de345a63f7a",
+        "8410c0c004f3509c218a98b276b3308b9c46f48068e8b1a6d9ebfd61ea9f357a",
+        "878db2aeeb04e43a70750480a4f17498b7ed46fb5fe433acb6721b3e6d38088c"
+      ],
+      "license": "LGPL-2.1-or-later",
+      "delivery": "source",
+      "license_reason": "Runtime ASN.1 library linked by GnuTLS, not its GPL command-line tools."
+    },
+    {
+      "id": "debian:libunistring@1.0-2",
+      "kind": "debian-source",
+      "name": "libunistring",
+      "version": "1.0-2",
+      "source_index": "92d11a035571df011f06f28c61cb9825130ef1d92abb2f2e0525e8674dc44af8",
+      "artifacts": [
+        "9b9a9d9d4cd1c2118df8cf5ca0dfb787d89afcd99400d7cd01b4c4e9b0bc1ae5",
+        "5bab55b49f75d77ed26b257997e919b693f29fd4a1bc22e0e6e024c246c72741",
+        "c1c2ae60eb971593da92e65384a5f1b181717e7b9654854f139f350c6cbe235d",
+        "e550d94935cd06eafb0defd7b5d7c914c7bb80a8e818a49efcf7675206572450"
+      ],
+      "license": "LGPL-3.0-or-later",
+      "delivery": "source",
+      "license_reason": "Runtime Unicode library linked by GnuTLS/IDN; LGPL alternative selected."
+    },
+    {
+      "id": "debian:perl@5.36.0-7+deb12u3",
+      "kind": "debian-source",
+      "name": "perl",
+      "version": "5.36.0-7+deb12u3",
+      "source_index": "92d11a035571df011f06f28c61cb9825130ef1d92abb2f2e0525e8674dc44af8",
+      "artifacts": [
+        "ac13a1eb3d4bb63ca8c91a3695ad563b10792a3e0f2f8b74d9600625a98a68fb",
+        "10ac353bc5a933403afe60ed1817e7a456f99bdbcaf80c1cdb0eb3a08ea56d4e",
+        "0f386dccbee8e26286404b2cca144e1005be65477979beb9b1ba272d4819bcf0",
+        "5dfbe06b76fd23a4cc4aef586220845de535b245a9066ec0658eb60fbe21be1b"
+      ],
+      "license": "GPL-1.0-or-later",
+      "delivery": "source",
+      "license_reason": "Perl interpreter and the dynamically verified core module/XS closure of deb-systemd-helper for initial dpkg/apt maintainer scripts. GPL alternative with actual source. Full perl-base modules, duplicate versioned interpreter, Unicode tables and the full Perl distribution are not baked."
+    },
+    {
+      "id": "debian:base-files@12.4+deb12u15",
+      "kind": "debian-source",
+      "name": "base-files",
+      "version": "12.4+deb12u15",
+      "source_index": "92d11a035571df011f06f28c61cb9825130ef1d92abb2f2e0525e8674dc44af8",
+      "artifacts": [
+        "e531274d0c3916dacfe55bbd27148d775b004e1836bc2fbb01549f142d524e8c",
+        "9fb369194365fe9da74621da247ea70884fc3d1d9c063db310764ef0e43c02c5"
+      ],
+      "license": "GPL-2.0-or-later",
+      "delivery": "source",
+      "license_reason": "The Debian login profile sources /etc/profile.d for the SkyPilot provisioner environment. Original readable script and small Debian source/build package are delivered. No filesystem administration suite."
     }
   ],
   "debian_binaries": [
+    {
+      "name": "apt",
+      "version": "2.6.1",
+      "architecture": "amd64",
+      "source": "debian:apt@2.6.1",
+      "package_index": "9e0b5aabb2465b3d2e7a7fe27f9913846277833f7a2826e7767acccff5b588c5",
+      "sha256": "6ea03cbbc7a7bfcee601c9fb08d4e026fd522ede5350561f06867ad9c0a0fa6b",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/a/apt/apt_2.6.1_amd64.deb",
+      "files": [
+        {
+          "path": "usr/bin/apt",
+          "mode": 493,
+          "sha256": "44059b6dbfbc89c0748bcb6e630a4a9af6fe33ecbb87b8a45a9d3e88287eabec",
+          "elf": true
+        },
+        {
+          "path": "usr/bin/apt-config",
+          "mode": 493,
+          "sha256": "231139f082f153244419738c62d5cf7fa0152339f21b6cd0666a4c19c7abc660",
+          "elf": true
+        },
+        {
+          "path": "usr/bin/apt-get",
+          "mode": 493,
+          "sha256": "c2117516d26cc559ccbd16252778d8ab8cee1ceac4be60e9c975e5c4bbbb47fe",
+          "elf": true
+        },
+        {
+          "path": "usr/bin/apt-key",
+          "mode": 493,
+          "sha256": "88c43d1b6084db154eb111b0992084aad9b2442aeb1b626c6eed5f4ec3d65d07"
+        },
+        {
+          "path": "usr/lib/apt/apt-helper",
+          "mode": 493,
+          "sha256": "8e537ce90c872a6c41155300a19e3194d2a1216dc4b2ecefef09ee3985b4c7a4",
+          "elf": true
+        },
+        {
+          "path": "usr/lib/apt/methods/copy",
+          "mode": 493,
+          "sha256": "bb089de2ca278f191d3e338007cbd31f49a2bf7229cd1f223559459d1ef2f205",
+          "elf": true
+        },
+        {
+          "path": "usr/lib/apt/methods/file",
+          "mode": 493,
+          "sha256": "0bb0ab3bb8455bb978bf92a107e091f61d30fb5b8635f5e13c486f1c4ecfe3d9",
+          "elf": true
+        },
+        {
+          "path": "usr/lib/apt/methods/gpgv",
+          "mode": 493,
+          "sha256": "53e3de0179466aa9f6a014c49a7fc1a13a1cfec3466329d36202ce66c7a3eaf8",
+          "elf": true
+        },
+        {
+          "path": "usr/lib/apt/methods/http",
+          "mode": 493,
+          "sha256": "84b045df697f0b111ed712f64f30009b5c02218e96d3a65f8e76c7bbb6481f96",
+          "elf": true
+        },
+        {
+          "path": "usr/lib/apt/methods/https",
+          "mode": 511,
+          "link": "http"
+        },
+        {
+          "path": "usr/lib/apt/methods/rred",
+          "mode": 493,
+          "sha256": "1777edc0bcf91076080c4b987aa83cf3ec484127782b34c886b74d322f31db44",
+          "elf": true
+        },
+        {
+          "path": "usr/lib/apt/methods/rsh",
+          "mode": 493,
+          "sha256": "f4e10c5188c282719aaa76397e88efcf92c4325779d14236c1687074ad0cfdd8",
+          "elf": true
+        },
+        {
+          "path": "usr/lib/apt/methods/ssh",
+          "mode": 511,
+          "link": "rsh"
+        },
+        {
+          "path": "usr/lib/apt/methods/store",
+          "mode": 493,
+          "sha256": "46af945f0abb54a1a152dd7896850784e4578ad652edbe9a09aa65fe9ffc85ab",
+          "elf": true
+        },
+        {
+          "path": "usr/lib/x86_64-linux-gnu/libapt-private.so.0.0",
+          "mode": 511,
+          "link": "libapt-private.so.0.0.0"
+        },
+        {
+          "path": "usr/lib/x86_64-linux-gnu/libapt-private.so.0.0.0",
+          "mode": 420,
+          "sha256": "ef18dee859d453fc7154dd02a80a25066589e5c20080db0a3bff366f4f3243d5",
+          "elf": true
+        }
+      ],
+      "elf_files": [
+        {
+          "path": "usr/bin/apt",
+          "sha256": "44059b6dbfbc89c0748bcb6e630a4a9af6fe33ecbb87b8a45a9d3e88287eabec"
+        },
+        {
+          "path": "usr/bin/apt-config",
+          "sha256": "231139f082f153244419738c62d5cf7fa0152339f21b6cd0666a4c19c7abc660"
+        },
+        {
+          "path": "usr/bin/apt-get",
+          "sha256": "c2117516d26cc559ccbd16252778d8ab8cee1ceac4be60e9c975e5c4bbbb47fe"
+        },
+        {
+          "path": "usr/lib/apt/apt-helper",
+          "sha256": "8e537ce90c872a6c41155300a19e3194d2a1216dc4b2ecefef09ee3985b4c7a4"
+        },
+        {
+          "path": "usr/lib/apt/methods/copy",
+          "sha256": "bb089de2ca278f191d3e338007cbd31f49a2bf7229cd1f223559459d1ef2f205"
+        },
+        {
+          "path": "usr/lib/apt/methods/file",
+          "sha256": "0bb0ab3bb8455bb978bf92a107e091f61d30fb5b8635f5e13c486f1c4ecfe3d9"
+        },
+        {
+          "path": "usr/lib/apt/methods/gpgv",
+          "sha256": "53e3de0179466aa9f6a014c49a7fc1a13a1cfec3466329d36202ce66c7a3eaf8"
+        },
+        {
+          "path": "usr/lib/apt/methods/http",
+          "sha256": "84b045df697f0b111ed712f64f30009b5c02218e96d3a65f8e76c7bbb6481f96"
+        },
+        {
+          "path": "usr/lib/apt/methods/rred",
+          "sha256": "1777edc0bcf91076080c4b987aa83cf3ec484127782b34c886b74d322f31db44"
+        },
+        {
+          "path": "usr/lib/apt/methods/rsh",
+          "sha256": "f4e10c5188c282719aaa76397e88efcf92c4325779d14236c1687074ad0cfdd8"
+        },
+        {
+          "path": "usr/lib/apt/methods/store",
+          "sha256": "46af945f0abb54a1a152dd7896850784e4578ad652edbe9a09aa65fe9ffc85ab"
+        },
+        {
+          "path": "usr/lib/x86_64-linux-gnu/libapt-private.so.0.0.0",
+          "sha256": "ef18dee859d453fc7154dd02a80a25066589e5c20080db0a3bff366f4f3243d5"
+        }
+      ]
+    },
+    {
+      "name": "base-files",
+      "version": "12.4+deb12u15",
+      "architecture": "amd64",
+      "source": "debian:base-files@12.4+deb12u15",
+      "package_index": "9e0b5aabb2465b3d2e7a7fe27f9913846277833f7a2826e7767acccff5b588c5",
+      "sha256": "3eb1ea6d85488f488cc2a163b98ad640ef88cee4c79287cf14e361aaf6206f47",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/b/base-files/base-files_12.4+deb12u15_amd64.deb",
+      "elf_files": [],
+      "files": [
+        {
+          "path": "etc/profile",
+          "source_path": "usr/share/base-files/profile",
+          "sha256": "75656c9c0f960573c7530d29286d273f6cef68d9b17cfeb0d74c712860d56b74",
+          "mode": 420
+        }
+      ]
+    },
     {
       "name": "bash",
       "version": "5.2.15-2+b13",
@@ -1713,10 +2439,27 @@
       ],
       "files": [
         {
+          "path": "etc/bash.bashrc",
+          "mode": 420,
+          "sha256": "af4f09eb27cb7f140dfee7f3285574a68ca50ac1db2019652cef4196ee346307"
+        },
+        {
           "path": "usr/bin/bash",
           "mode": 493,
           "sha256": "55b89ab22bee4792a210f493a53fb066accd5d30b69837c28d98be5ff863efcf",
           "elf": true
+        },
+        {
+          "path": "home/ubuntu/.bashrc",
+          "source_path": "etc/skel/.bashrc",
+          "sha256": "afae8986f549c6403410e029f9cce7983311512d04b1f02af02e4ce0af0dd2bf",
+          "mode": 420
+        },
+        {
+          "path": "home/ubuntu/.profile",
+          "source_path": "etc/skel/.profile",
+          "sha256": "28b4a453b68dde64f814e94bab14ee651f4f162e15dd9920490aa1d49f05d2a4",
+          "mode": 420
         }
       ]
     },
@@ -2654,6 +3397,10 @@
           "sha256": "008f819498fe591f3cc920d543709347d8d14a139bb3482bc2cd8635c1b3162e"
         },
         {
+          "path": "usr/bin/chgrp",
+          "sha256": "bbee32e3ce054742f944124cd9859b4bf872e8d602f66e0f17c2838214e78aa0"
+        },
+        {
           "path": "usr/bin/chmod",
           "sha256": "623fdf73612f898ec829e529ffd143520fb617a75bca84e242030f48d2144645"
         },
@@ -2718,6 +3465,10 @@
           "sha256": "26b4d4643e3791f277ee734b162428347164435a20456643e5346bfffb60d1a9"
         },
         {
+          "path": "usr/bin/md5sum",
+          "sha256": "cedc25468f8df2346c58cd796c44a42560e08823890fc905b2454d0eea97426e"
+        },
+        {
           "path": "usr/bin/mkdir",
           "sha256": "ba74b1a15a5b9b7929a595f45103d7fbe722840b7211d313dd4872893f031fb9"
         },
@@ -2770,6 +3521,10 @@
           "sha256": "139377cd5fd9cdf4f6f049d09dc0a9e7113936790d65b82b7a25a0f147177024"
         },
         {
+          "path": "usr/bin/seq",
+          "sha256": "67ff4ae25eefd98243e80d9435b2c66954091e5f5dbcd134a42b611e54277ae2"
+        },
+        {
           "path": "usr/bin/sleep",
           "sha256": "4add4bb89d8ca0e3b1bd861130ddd7ae0fd9617a8055de0a38c8d2ca1ac95723"
         },
@@ -2780,6 +3535,10 @@
         {
           "path": "usr/bin/stat",
           "sha256": "98fd8d3f1823896aa2613a4d38e7059c82506206725918666091d08272d78e95"
+        },
+        {
+          "path": "usr/bin/stty",
+          "sha256": "93386dd640d063e6cf024f4aa5707162db19a89ecd0e9d4bb0240a56f382957f"
         },
         {
           "path": "usr/bin/tail",
@@ -2810,12 +3569,24 @@
           "sha256": "c79bf44242829108e323378531f4ac839513ca1fba45efd6583643526e1e9fd2"
         },
         {
+          "path": "usr/bin/tty",
+          "sha256": "ca27ae958bebe611fc2c3b097d216e5a7423c0dc7f317e9ab352fe307eeae298"
+        },
+        {
           "path": "usr/bin/uname",
           "sha256": "ed210303cc81299ad2bf8804d4a2f1e2853ad34f6307a3114b48444ceb6c60da"
         },
         {
+          "path": "usr/bin/uniq",
+          "sha256": "9960fd57f62c1ed283474722fde81d07aff25a6410256c8b5fefcedec1fe735b"
+        },
+        {
           "path": "usr/bin/wc",
           "sha256": "7480f7cb7110af0f45b6e04b50f8d1fb2c6392cf911cb3a28c516ef1b725823e"
+        },
+        {
+          "path": "usr/bin/whoami",
+          "sha256": "6ca7710f382d2d9e4026c2b2b4299775880e290915599ddd5d0c7d60076186a8"
         }
       ],
       "files": [
@@ -2835,6 +3606,12 @@
           "path": "usr/bin/cat",
           "mode": 493,
           "sha256": "008f819498fe591f3cc920d543709347d8d14a139bb3482bc2cd8635c1b3162e",
+          "elf": true
+        },
+        {
+          "path": "usr/bin/chgrp",
+          "mode": 493,
+          "sha256": "bbee32e3ce054742f944124cd9859b4bf872e8d602f66e0f17c2838214e78aa0",
           "elf": true
         },
         {
@@ -2934,6 +3711,12 @@
           "elf": true
         },
         {
+          "path": "usr/bin/md5sum",
+          "mode": 493,
+          "sha256": "cedc25468f8df2346c58cd796c44a42560e08823890fc905b2454d0eea97426e",
+          "elf": true
+        },
+        {
           "path": "usr/bin/mkdir",
           "mode": 493,
           "sha256": "ba74b1a15a5b9b7929a595f45103d7fbe722840b7211d313dd4872893f031fb9",
@@ -3012,6 +3795,12 @@
           "elf": true
         },
         {
+          "path": "usr/bin/seq",
+          "mode": 493,
+          "sha256": "67ff4ae25eefd98243e80d9435b2c66954091e5f5dbcd134a42b611e54277ae2",
+          "elf": true
+        },
+        {
           "path": "usr/bin/sleep",
           "mode": 493,
           "sha256": "4add4bb89d8ca0e3b1bd861130ddd7ae0fd9617a8055de0a38c8d2ca1ac95723",
@@ -3027,6 +3816,12 @@
           "path": "usr/bin/stat",
           "mode": 493,
           "sha256": "98fd8d3f1823896aa2613a4d38e7059c82506206725918666091d08272d78e95",
+          "elf": true
+        },
+        {
+          "path": "usr/bin/stty",
+          "mode": 493,
+          "sha256": "93386dd640d063e6cf024f4aa5707162db19a89ecd0e9d4bb0240a56f382957f",
           "elf": true
         },
         {
@@ -3072,9 +3867,21 @@
           "elf": true
         },
         {
+          "path": "usr/bin/tty",
+          "mode": 493,
+          "sha256": "ca27ae958bebe611fc2c3b097d216e5a7423c0dc7f317e9ab352fe307eeae298",
+          "elf": true
+        },
+        {
           "path": "usr/bin/uname",
           "mode": 493,
           "sha256": "ed210303cc81299ad2bf8804d4a2f1e2853ad34f6307a3114b48444ceb6c60da",
+          "elf": true
+        },
+        {
+          "path": "usr/bin/uniq",
+          "mode": 493,
+          "sha256": "9960fd57f62c1ed283474722fde81d07aff25a6410256c8b5fefcedec1fe735b",
           "elf": true
         },
         {
@@ -3082,6 +3889,35 @@
           "mode": 493,
           "sha256": "7480f7cb7110af0f45b6e04b50f8d1fb2c6392cf911cb3a28c516ef1b725823e",
           "elf": true
+        },
+        {
+          "path": "usr/bin/whoami",
+          "mode": 493,
+          "sha256": "6ca7710f382d2d9e4026c2b2b4299775880e290915599ddd5d0c7d60076186a8",
+          "elf": true
+        }
+      ]
+    },
+    {
+      "name": "curl",
+      "version": "7.88.1-10+deb12u15",
+      "architecture": "amd64",
+      "source": "debian:curl@7.88.1-10+deb12u15",
+      "package_index": "9e0b5aabb2465b3d2e7a7fe27f9913846277833f7a2826e7767acccff5b588c5",
+      "sha256": "0dd9b6bf7a0bd11af2d68a52ec44c2a223fa7c11f9104c36ce1047e1137d4a8f",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/c/curl/curl_7.88.1-10+deb12u15_amd64.deb",
+      "files": [
+        {
+          "path": "usr/bin/curl",
+          "mode": 493,
+          "sha256": "27125f0331490b7fbf4da11f2bd913ce1b94e071367b2fa8e535ce8c5526e29c",
+          "elf": true
+        }
+      ],
+      "elf_files": [
+        {
+          "path": "usr/bin/curl",
+          "sha256": "27125f0331490b7fbf4da11f2bd913ce1b94e071367b2fa8e535ce8c5526e29c"
         }
       ]
     },
@@ -3146,6 +3982,44 @@
           "mode": 493,
           "sha256": "78b6e84e2a38fc763e71506c25cea342c7d83ff7d655577b798552f523b67f03",
           "elf": true
+        },
+        {
+          "path": "usr/bin/which.debianutils",
+          "mode": 493,
+          "sha256": "7bdde142dc5cb004ab82f55adba0c56fc78430a6f6b23afd33be491d4c7c238b"
+        }
+      ]
+    },
+    {
+      "name": "diffutils",
+      "version": "1:3.8-4",
+      "architecture": "amd64",
+      "source": "debian:diffutils@1:3.8-4",
+      "package_index": "9e0b5aabb2465b3d2e7a7fe27f9913846277833f7a2826e7767acccff5b588c5",
+      "sha256": "8bdfedc14c1035e3750e9f055ac9c1ecd9b5d05d9e6dc6466c4e9237eef407dd",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/d/diffutils/diffutils_3.8-4_amd64.deb",
+      "files": [
+        {
+          "path": "usr/bin/cmp",
+          "mode": 493,
+          "sha256": "13b9e7eddee255a5a5b334cae7c6e844c16d205e92f7cd6d94617301e2ba84d5",
+          "elf": true
+        },
+        {
+          "path": "usr/bin/diff",
+          "mode": 493,
+          "sha256": "4de429713337777f44e9ef340176c2f1818c2fcfe0204ab27277595ff97dab77",
+          "elf": true
+        }
+      ],
+      "elf_files": [
+        {
+          "path": "usr/bin/cmp",
+          "sha256": "13b9e7eddee255a5a5b334cae7c6e844c16d205e92f7cd6d94617301e2ba84d5"
+        },
+        {
+          "path": "usr/bin/diff",
+          "sha256": "4de429713337777f44e9ef340176c2f1818c2fcfe0204ab27277595ff97dab77"
         }
       ]
     },
@@ -3159,16 +4033,136 @@
       "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/d/dpkg/dpkg_1.21.23_amd64.deb",
       "elf_files": [
         {
+          "path": "usr/bin/dpkg",
+          "sha256": "f6a5bac0fd35a14257805d305ab2c406099901a16cdf22a4d546e51c5f8fb70d"
+        },
+        {
+          "path": "usr/bin/dpkg-deb",
+          "sha256": "18454213ab4c274ebd877c1aaaa63813f0106ae56c52e2db8b63d9bda8297def"
+        },
+        {
+          "path": "usr/bin/dpkg-divert",
+          "sha256": "feacc04609a1add10a644d3fad043055c8e0df7d84076f058d5c6c1269c260f5"
+        },
+        {
+          "path": "usr/bin/dpkg-query",
+          "sha256": "532ef769e93554259b8de5a9af1915fc63c46207d6283fa28e242db15e238145"
+        },
+        {
+          "path": "usr/bin/dpkg-split",
+          "sha256": "7255cc3a79beea5ed43171b2eea3a0295a1bafebfcd5e6683d60b9fdf1d1cb5a"
+        },
+        {
+          "path": "usr/bin/dpkg-statoverride",
+          "sha256": "1203417563327402a0663c7c230c2e0850b9832582b166709f8b385489fbddae"
+        },
+        {
+          "path": "usr/bin/dpkg-trigger",
+          "sha256": "f0ecdfdc6b215a1190d49490a1efd5e8339c5197bfa9a5828ade7047e176692f"
+        },
+        {
+          "path": "usr/bin/update-alternatives",
+          "sha256": "5250cd3f2e953728b0bd8a89ce1f56e93d5d68df9d1f42f5107f9ef72c9e24ad"
+        },
+        {
           "path": "usr/sbin/start-stop-daemon",
           "sha256": "1c218ca7feb91c9c97b09e1c36d77a0d72e7f0ab11e86d39da1bd9238e1a61ac"
         }
       ],
       "files": [
         {
+          "path": "etc/dpkg/dpkg.cfg",
+          "mode": 420,
+          "sha256": "fead43b89af3ea5691c48f32d7fe1ba0f7ab229fb5d230f612d76fe8e6f5a015"
+        },
+        {
+          "path": "usr/bin/dpkg",
+          "mode": 493,
+          "sha256": "f6a5bac0fd35a14257805d305ab2c406099901a16cdf22a4d546e51c5f8fb70d",
+          "elf": true
+        },
+        {
+          "path": "usr/bin/dpkg-deb",
+          "mode": 493,
+          "sha256": "18454213ab4c274ebd877c1aaaa63813f0106ae56c52e2db8b63d9bda8297def",
+          "elf": true
+        },
+        {
+          "path": "usr/bin/dpkg-divert",
+          "mode": 493,
+          "sha256": "feacc04609a1add10a644d3fad043055c8e0df7d84076f058d5c6c1269c260f5",
+          "elf": true
+        },
+        {
+          "path": "usr/bin/dpkg-maintscript-helper",
+          "mode": 493,
+          "sha256": "ab44bb8f3454a2ef0991dcfd832c99e89747f6a9624ffc7095786530f627e2ff"
+        },
+        {
+          "path": "usr/bin/dpkg-query",
+          "mode": 493,
+          "sha256": "532ef769e93554259b8de5a9af1915fc63c46207d6283fa28e242db15e238145",
+          "elf": true
+        },
+        {
+          "path": "usr/bin/dpkg-realpath",
+          "mode": 493,
+          "sha256": "09b1ce7691980e7b78c9af5ad693451611c70a4b8b28c629590db7d71c90e5c3"
+        },
+        {
+          "path": "usr/bin/dpkg-split",
+          "mode": 493,
+          "sha256": "7255cc3a79beea5ed43171b2eea3a0295a1bafebfcd5e6683d60b9fdf1d1cb5a",
+          "elf": true
+        },
+        {
+          "path": "usr/bin/dpkg-statoverride",
+          "mode": 493,
+          "sha256": "1203417563327402a0663c7c230c2e0850b9832582b166709f8b385489fbddae",
+          "elf": true
+        },
+        {
+          "path": "usr/bin/dpkg-trigger",
+          "mode": 493,
+          "sha256": "f0ecdfdc6b215a1190d49490a1efd5e8339c5197bfa9a5828ade7047e176692f",
+          "elf": true
+        },
+        {
+          "path": "usr/bin/update-alternatives",
+          "mode": 493,
+          "sha256": "5250cd3f2e953728b0bd8a89ce1f56e93d5d68df9d1f42f5107f9ef72c9e24ad",
+          "elf": true
+        },
+        {
           "path": "usr/sbin/start-stop-daemon",
           "mode": 493,
           "sha256": "1c218ca7feb91c9c97b09e1c36d77a0d72e7f0ab11e86d39da1bd9238e1a61ac",
           "elf": true
+        },
+        {
+          "path": "usr/share/dpkg/abitable",
+          "mode": 420,
+          "sha256": "c9ed655f391a2dffdfee2070e9c4bd1f502ffff17d19abff21ba492ab643c919"
+        },
+        {
+          "path": "usr/share/dpkg/cputable",
+          "mode": 420,
+          "sha256": "f27de5a36ff605486cb16efe42b7dd98ce48266b89447161fd62c9e3997e1bd7"
+        },
+        {
+          "path": "usr/share/dpkg/ostable",
+          "mode": 420,
+          "sha256": "d7cf82a8325debc3ed63974c11d640ae205f017276654fbc939082a75034d40c"
+        },
+        {
+          "path": "usr/share/dpkg/sh/dpkg-error.sh",
+          "mode": 420,
+          "sha256": "ee1c4bfdd26d2d22f6af3aa1123e7f30e0c5983a5cc3af5bc3aaacab1da7bac1"
+        },
+        {
+          "path": "usr/share/dpkg/tupletable",
+          "mode": 420,
+          "sha256": "8e67a11365119686218b5a245c60fc62484050daf676c6e009d9a0a0e4265f0a"
         }
       ]
     },
@@ -3202,6 +4196,29 @@
           "mode": 493,
           "sha256": "d6348606af361a755aabde53f6c367b87850ad44600e2b1f895f3515366b894a",
           "elf": true
+        }
+      ]
+    },
+    {
+      "name": "gpgv",
+      "version": "2.2.40-1.1+deb12u2",
+      "architecture": "amd64",
+      "source": "debian:gnupg2@2.2.40-1.1+deb12u2",
+      "package_index": "9e0b5aabb2465b3d2e7a7fe27f9913846277833f7a2826e7767acccff5b588c5",
+      "sha256": "2966dc0a0b89caa65c3b4a386fa4ed0b6ca2239cd51ec40e6920507aedcdb14a",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/g/gnupg2/gpgv_2.2.40-1.1+deb12u2_amd64.deb",
+      "files": [
+        {
+          "path": "usr/bin/gpgv",
+          "mode": 493,
+          "sha256": "e82416f3ae002b63c0731f311519c55fc9e7d3c8bdadbd64239833298f09a2cf",
+          "elf": true
+        }
+      ],
+      "elf_files": [
+        {
+          "path": "usr/bin/gpgv",
+          "sha256": "e82416f3ae002b63c0731f311519c55fc9e7d3c8bdadbd64239833298f09a2cf"
         }
       ]
     },
@@ -3297,10 +4314,30 @@
       "elf_files": [],
       "files": [
         {
+          "path": "usr/bin/deb-systemd-helper",
+          "mode": 493,
+          "sha256": "a895d5f077651960b6ca4ed9c53f8b36eae422ae170f61c972d0c6579e9f8732"
+        },
+        {
+          "path": "usr/bin/deb-systemd-invoke",
+          "mode": 493,
+          "sha256": "f06db7d1c3440e1e3b4bcc890f22157f837e15992d20517d16c699de4a38bd7a"
+        },
+        {
+          "path": "usr/sbin/invoke-rc.d",
+          "mode": 493,
+          "sha256": "1d389fa6f6297e77b2ba1d2df4a6ec60f4d4d37815b727889f38ba602e713f77"
+        },
+        {
           "path": "usr/sbin/service",
           "mode": 493,
           "sha256": "9c6ba675e2c90ec70c58e252ae67a4705d63519c4a004bf7c66bebbfbc4282ff",
           "elf": false
+        },
+        {
+          "path": "usr/sbin/update-rc.d",
+          "mode": 493,
+          "sha256": "89667635d9a6796bcf64e0fabde441f094fe15f566cd2ca02961a5081f5c1813"
         }
       ]
     },
@@ -3329,6 +4366,34 @@
           "mode": 420,
           "sha256": "4b46c012b15c9753a3b86b05088782edc51a6627017144da85e0b95428d15869",
           "elf": true
+        }
+      ]
+    },
+    {
+      "name": "libapt-pkg6.0",
+      "version": "2.6.1",
+      "architecture": "amd64",
+      "source": "debian:apt@2.6.1",
+      "package_index": "9e0b5aabb2465b3d2e7a7fe27f9913846277833f7a2826e7767acccff5b588c5",
+      "sha256": "ccab743f6784b4cc7bd69e1810630edaf726cd69c1e735e39a16266d470bfdc0",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/a/apt/libapt-pkg6.0_2.6.1_amd64.deb",
+      "files": [
+        {
+          "path": "usr/lib/x86_64-linux-gnu/libapt-pkg.so.6.0",
+          "mode": 511,
+          "link": "libapt-pkg.so.6.0.0"
+        },
+        {
+          "path": "usr/lib/x86_64-linux-gnu/libapt-pkg.so.6.0.0",
+          "mode": 420,
+          "sha256": "12d1d6a5980e70084f464de916512da8f295a78dfd8bfb09b65ce178a48edf11",
+          "elf": true
+        }
+      ],
+      "elf_files": [
+        {
+          "path": "usr/lib/x86_64-linux-gnu/libapt-pkg.so.6.0.0",
+          "sha256": "12d1d6a5980e70084f464de916512da8f295a78dfd8bfb09b65ce178a48edf11"
         }
       ]
     },
@@ -3385,6 +4450,77 @@
           "mode": 420,
           "sha256": "b7f736521202c63a21cfa13b708588d1fa9811a04aa9651802a7c1bad20c59ed",
           "elf": true
+        }
+      ]
+    },
+    {
+      "name": "libblkid1",
+      "version": "2.38.1-5+deb12u3",
+      "architecture": "amd64",
+      "source": "debian:util-linux@2.38.1-5+deb12u3",
+      "package_index": "9e0b5aabb2465b3d2e7a7fe27f9913846277833f7a2826e7767acccff5b588c5",
+      "sha256": "5a083377f29191cafcdf0f91ec124349b4a7895b531556633a136e43c6d53943",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/u/util-linux/libblkid1_2.38.1-5+deb12u3_amd64.deb",
+      "elf_files": [
+        {
+          "path": "usr/lib/x86_64-linux-gnu/libblkid.so.1.1.0",
+          "sha256": "cc3d6ca965cab25eacb8d7d98f0b13be7c94a19583983fb864ba10163e5536b0"
+        }
+      ],
+      "files": [
+        {
+          "path": "usr/lib/x86_64-linux-gnu/libblkid.so.1",
+          "mode": 511,
+          "link": "libblkid.so.1.1.0"
+        },
+        {
+          "path": "usr/lib/x86_64-linux-gnu/libblkid.so.1.1.0",
+          "mode": 420,
+          "sha256": "cc3d6ca965cab25eacb8d7d98f0b13be7c94a19583983fb864ba10163e5536b0",
+          "elf": true
+        }
+      ]
+    },
+    {
+      "name": "libbrotli1",
+      "version": "1.0.9-2+b6",
+      "architecture": "amd64",
+      "source": "debian:brotli@1.0.9-2",
+      "package_index": "9e0b5aabb2465b3d2e7a7fe27f9913846277833f7a2826e7767acccff5b588c5",
+      "sha256": "563b4caec1aa5e876bd3355b36e7a38e1484baf5a293b48d1e8bd22db786e4d7",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/b/brotli/libbrotli1_1.0.9-2+b6_amd64.deb",
+      "files": [
+        {
+          "path": "usr/lib/x86_64-linux-gnu/libbrotlicommon.so.1",
+          "mode": 511,
+          "link": "libbrotlicommon.so.1.0.9"
+        },
+        {
+          "path": "usr/lib/x86_64-linux-gnu/libbrotlicommon.so.1.0.9",
+          "mode": 420,
+          "sha256": "d0dd623a89c3cd7c085757e41c940a39916a571a9b22b50bd736accd3f3aec53",
+          "elf": true
+        },
+        {
+          "path": "usr/lib/x86_64-linux-gnu/libbrotlidec.so.1",
+          "mode": 511,
+          "link": "libbrotlidec.so.1.0.9"
+        },
+        {
+          "path": "usr/lib/x86_64-linux-gnu/libbrotlidec.so.1.0.9",
+          "mode": 420,
+          "sha256": "928b2613f2d3d73f78bc05c81d79c04cef7e196564f733c0ffdf893602d83aaa",
+          "elf": true
+        }
+      ],
+      "elf_files": [
+        {
+          "path": "usr/lib/x86_64-linux-gnu/libbrotlicommon.so.1.0.9",
+          "sha256": "d0dd623a89c3cd7c085757e41c940a39916a571a9b22b50bd736accd3f3aec53"
+        },
+        {
+          "path": "usr/lib/x86_64-linux-gnu/libbrotlidec.so.1.0.9",
+          "sha256": "928b2613f2d3d73f78bc05c81d79c04cef7e196564f733c0ffdf893602d83aaa"
         }
       ]
     },
@@ -3450,6 +4586,49 @@
       ]
     },
     {
+      "name": "libc-bin",
+      "version": "2.36-9+deb12u14",
+      "architecture": "amd64",
+      "source": "debian:glibc@2.36-9+deb12u14",
+      "package_index": "9e0b5aabb2465b3d2e7a7fe27f9913846277833f7a2826e7767acccff5b588c5",
+      "sha256": "e667401af91fad95f15b3ebd25d1abd8373fd18b00dc32219678413170544e84",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/g/glibc/libc-bin_2.36-9+deb12u14_amd64.deb",
+      "files": [
+        {
+          "path": "usr/bin/getent",
+          "mode": 493,
+          "sha256": "1a8ece7c471cf0782699fbcbeaa10a21b6b6c9b7f775724c843144117fa85f5f",
+          "elf": true
+        },
+        {
+          "path": "usr/bin/locale",
+          "mode": 493,
+          "sha256": "57c967caaca706b9fbd121ddf4be72a34b437968add2b70ff19dfb257733b2c8",
+          "elf": true
+        },
+        {
+          "path": "usr/sbin/ldconfig",
+          "mode": 493,
+          "sha256": "9fe518ff7e31cbeb3b9f10595f06251d10a578b12ebfdbe5ac1854fa8e8def25",
+          "elf": true
+        }
+      ],
+      "elf_files": [
+        {
+          "path": "usr/bin/getent",
+          "sha256": "1a8ece7c471cf0782699fbcbeaa10a21b6b6c9b7f775724c843144117fa85f5f"
+        },
+        {
+          "path": "usr/bin/locale",
+          "sha256": "57c967caaca706b9fbd121ddf4be72a34b437968add2b70ff19dfb257733b2c8"
+        },
+        {
+          "path": "usr/sbin/ldconfig",
+          "sha256": "9fe518ff7e31cbeb3b9f10595f06251d10a578b12ebfdbe5ac1854fa8e8def25"
+        }
+      ]
+    },
+    {
       "name": "libc6",
       "version": "2.36-9+deb12u14",
       "architecture": "amd64",
@@ -3465,6 +4644,18 @@
         {
           "path": "usr/lib/x86_64-linux-gnu/libc.so.6",
           "sha256": "6b4a45352fd0c540a9c7c718f35ce8c8e46a4e482f9d3885a910c32d1a0e1421"
+        },
+        {
+          "path": "usr/lib/x86_64-linux-gnu/libdl.so.2",
+          "sha256": "95d521b2c39fd0333271b6fdcdddff878ae82001a304313a837b8e728ebe3cb1"
+        },
+        {
+          "path": "usr/lib/x86_64-linux-gnu/libpthread.so.0",
+          "sha256": "b93a680da8a05b939b235c1533572e7a2f6d3d8808bf70209997edc64ea5fedc"
+        },
+        {
+          "path": "usr/lib/x86_64-linux-gnu/librt.so.1",
+          "sha256": "41c72def458b8cfb6aab96a7dbada7454dd216d89aac65fb085eb52bead51def"
         },
         {
           "path": "usr/lib/x86_64-linux-gnu/libm.so.6",
@@ -3486,6 +4677,24 @@
           "path": "usr/lib/x86_64-linux-gnu/libc.so.6",
           "mode": 493,
           "sha256": "6b4a45352fd0c540a9c7c718f35ce8c8e46a4e482f9d3885a910c32d1a0e1421",
+          "elf": true
+        },
+        {
+          "path": "usr/lib/x86_64-linux-gnu/libdl.so.2",
+          "mode": 420,
+          "sha256": "95d521b2c39fd0333271b6fdcdddff878ae82001a304313a837b8e728ebe3cb1",
+          "elf": true
+        },
+        {
+          "path": "usr/lib/x86_64-linux-gnu/libpthread.so.0",
+          "mode": 420,
+          "sha256": "b93a680da8a05b939b235c1533572e7a2f6d3d8808bf70209997edc64ea5fedc",
+          "elf": true
+        },
+        {
+          "path": "usr/lib/x86_64-linux-gnu/librt.so.1",
+          "mode": 420,
+          "sha256": "41c72def458b8cfb6aab96a7dbada7454dd216d89aac65fb085eb52bead51def",
           "elf": true
         },
         {
@@ -3644,6 +4853,34 @@
           "mode": 420,
           "sha256": "5db18e8a8894ef4746eb8230855b638a5e52e782b2f10deede5f1dad846178bb",
           "elf": true
+        }
+      ]
+    },
+    {
+      "name": "libcurl4",
+      "version": "7.88.1-10+deb12u15",
+      "architecture": "amd64",
+      "source": "debian:curl@7.88.1-10+deb12u15",
+      "package_index": "9e0b5aabb2465b3d2e7a7fe27f9913846277833f7a2826e7767acccff5b588c5",
+      "sha256": "3042904de01f9c4fbdcf1452b8f81abedcf2b015f9b9deba109063322b5bd68b",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/c/curl/libcurl4_7.88.1-10+deb12u15_amd64.deb",
+      "files": [
+        {
+          "path": "usr/lib/x86_64-linux-gnu/libcurl.so.4",
+          "mode": 511,
+          "link": "libcurl.so.4.8.0"
+        },
+        {
+          "path": "usr/lib/x86_64-linux-gnu/libcurl.so.4.8.0",
+          "mode": 420,
+          "sha256": "02fbea31e63cd827ee61644851f1d336de6850a7df0f7af30ba74da97c4b99ab",
+          "elf": true
+        }
+      ],
+      "elf_files": [
+        {
+          "path": "usr/lib/x86_64-linux-gnu/libcurl.so.4.8.0",
+          "sha256": "02fbea31e63cd827ee61644851f1d336de6850a7df0f7af30ba74da97c4b99ab"
         }
       ]
     },
@@ -3811,6 +5048,34 @@
       ]
     },
     {
+      "name": "libgnutls30",
+      "version": "3.7.9-2+deb12u7",
+      "architecture": "amd64",
+      "source": "debian:gnutls28@3.7.9-2+deb12u7",
+      "package_index": "9e0b5aabb2465b3d2e7a7fe27f9913846277833f7a2826e7767acccff5b588c5",
+      "sha256": "30abec8c824feb1d2d7e9000a34083cccd19d139625e1b21547e3ac53b922f8e",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/g/gnutls28/libgnutls30_3.7.9-2+deb12u7_amd64.deb",
+      "files": [
+        {
+          "path": "usr/lib/x86_64-linux-gnu/libgnutls.so.30",
+          "mode": 511,
+          "link": "libgnutls.so.30.34.3"
+        },
+        {
+          "path": "usr/lib/x86_64-linux-gnu/libgnutls.so.30.34.3",
+          "mode": 420,
+          "sha256": "779b25d20249988bea2c1aa6bbeb218f5ae7ea8a9d30ce4f54ea37372965cc4b",
+          "elf": true
+        }
+      ],
+      "elf_files": [
+        {
+          "path": "usr/lib/x86_64-linux-gnu/libgnutls.so.30.34.3",
+          "sha256": "779b25d20249988bea2c1aa6bbeb218f5ae7ea8a9d30ce4f54ea37372965cc4b"
+        }
+      ]
+    },
+    {
       "name": "libgpg-error0",
       "version": "1.46-1",
       "architecture": "amd64",
@@ -3863,6 +5128,62 @@
           "mode": 420,
           "sha256": "850b2e9351a5aaffb92292c5b3e3d85ca21735d486714843d8b2870e9631e8bc",
           "elf": true
+        }
+      ]
+    },
+    {
+      "name": "libhogweed6",
+      "version": "3.8.1-2",
+      "architecture": "amd64",
+      "source": "debian:nettle@3.8.1-2",
+      "package_index": "9e0b5aabb2465b3d2e7a7fe27f9913846277833f7a2826e7767acccff5b588c5",
+      "sha256": "ed8185c28b2cb519744a5a462dcd720d3b332c9b88a1d0002eac06dc8550cb94",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/n/nettle/libhogweed6_3.8.1-2_amd64.deb",
+      "files": [
+        {
+          "path": "usr/lib/x86_64-linux-gnu/libhogweed.so.6",
+          "mode": 511,
+          "link": "libhogweed.so.6.6"
+        },
+        {
+          "path": "usr/lib/x86_64-linux-gnu/libhogweed.so.6.6",
+          "mode": 420,
+          "sha256": "480675ed8d58f9266ced954eb746c74a6c4ae3479bf5dccbcbc56ff0c814b9e4",
+          "elf": true
+        }
+      ],
+      "elf_files": [
+        {
+          "path": "usr/lib/x86_64-linux-gnu/libhogweed.so.6.6",
+          "sha256": "480675ed8d58f9266ced954eb746c74a6c4ae3479bf5dccbcbc56ff0c814b9e4"
+        }
+      ]
+    },
+    {
+      "name": "libidn2-0",
+      "version": "2.3.3-1+b1",
+      "architecture": "amd64",
+      "source": "debian:libidn2@2.3.3-1",
+      "package_index": "9e0b5aabb2465b3d2e7a7fe27f9913846277833f7a2826e7767acccff5b588c5",
+      "sha256": "d50716d5824083d667427817d506b45d3f59dc77e1ca52de000f3f62d4918afa",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/libi/libidn2/libidn2-0_2.3.3-1+b1_amd64.deb",
+      "files": [
+        {
+          "path": "usr/lib/x86_64-linux-gnu/libidn2.so.0",
+          "mode": 511,
+          "link": "libidn2.so.0.3.8"
+        },
+        {
+          "path": "usr/lib/x86_64-linux-gnu/libidn2.so.0.3.8",
+          "mode": 420,
+          "sha256": "864f32ec2dc74d90c51d389a02b30003465b84e2090bf940039c0cd4b41b8f63",
+          "elf": true
+        }
+      ],
+      "elf_files": [
+        {
+          "path": "usr/lib/x86_64-linux-gnu/libidn2.so.0.3.8",
+          "sha256": "864f32ec2dc74d90c51d389a02b30003465b84e2090bf940039c0cd4b41b8f63"
         }
       ]
     },
@@ -3979,6 +5300,49 @@
       ]
     },
     {
+      "name": "libldap-2.5-0",
+      "version": "2.5.13+dfsg-5",
+      "architecture": "amd64",
+      "source": "debian:openldap@2.5.13+dfsg-5",
+      "package_index": "9e0b5aabb2465b3d2e7a7fe27f9913846277833f7a2826e7767acccff5b588c5",
+      "sha256": "4b6c30f6554149c594628d945edc6003f0eea8d0cc1341638c0e71375db147ed",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/o/openldap/libldap-2.5-0_2.5.13+dfsg-5_amd64.deb",
+      "files": [
+        {
+          "path": "usr/lib/x86_64-linux-gnu/liblber-2.5.so.0",
+          "mode": 511,
+          "link": "liblber-2.5.so.0.1.8"
+        },
+        {
+          "path": "usr/lib/x86_64-linux-gnu/liblber-2.5.so.0.1.8",
+          "mode": 420,
+          "sha256": "64f183c14330855843841747ff1975ed87e767de2e2f1b1cc4d7abd2302cb7a9",
+          "elf": true
+        },
+        {
+          "path": "usr/lib/x86_64-linux-gnu/libldap-2.5.so.0",
+          "mode": 511,
+          "link": "libldap-2.5.so.0.1.8"
+        },
+        {
+          "path": "usr/lib/x86_64-linux-gnu/libldap-2.5.so.0.1.8",
+          "mode": 420,
+          "sha256": "062bb940f27b45cdcac5d3d66a727f441755b17f59842641ceaebaf990e1634d",
+          "elf": true
+        }
+      ],
+      "elf_files": [
+        {
+          "path": "usr/lib/x86_64-linux-gnu/liblber-2.5.so.0.1.8",
+          "sha256": "64f183c14330855843841747ff1975ed87e767de2e2f1b1cc4d7abd2302cb7a9"
+        },
+        {
+          "path": "usr/lib/x86_64-linux-gnu/libldap-2.5.so.0.1.8",
+          "sha256": "062bb940f27b45cdcac5d3d66a727f441755b17f59842641ceaebaf990e1634d"
+        }
+      ]
+    },
+    {
       "name": "liblz4-1",
       "version": "1.9.4-1",
       "architecture": "amd64",
@@ -4063,6 +5427,34 @@
       ]
     },
     {
+      "name": "libmount1",
+      "version": "2.38.1-5+deb12u3",
+      "architecture": "amd64",
+      "source": "debian:util-linux@2.38.1-5+deb12u3",
+      "package_index": "9e0b5aabb2465b3d2e7a7fe27f9913846277833f7a2826e7767acccff5b588c5",
+      "sha256": "f46e2d6b006951825adde9757790b6609d7c66c7700f9b68f3db913eaac323c3",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/u/util-linux/libmount1_2.38.1-5+deb12u3_amd64.deb",
+      "elf_files": [
+        {
+          "path": "usr/lib/x86_64-linux-gnu/libmount.so.1.1.0",
+          "sha256": "70c1da7f7a3d802c498f4938449bfc7a51877c46b16572d1a396901c032758bc"
+        }
+      ],
+      "files": [
+        {
+          "path": "usr/lib/x86_64-linux-gnu/libmount.so.1",
+          "mode": 511,
+          "link": "libmount.so.1.1.0"
+        },
+        {
+          "path": "usr/lib/x86_64-linux-gnu/libmount.so.1.1.0",
+          "mode": 420,
+          "sha256": "70c1da7f7a3d802c498f4938449bfc7a51877c46b16572d1a396901c032758bc",
+          "elf": true
+        }
+      ]
+    },
+    {
       "name": "libncursesw6",
       "version": "6.4-4",
       "architecture": "amd64",
@@ -4091,6 +5483,62 @@
       ]
     },
     {
+      "name": "libnettle8",
+      "version": "3.8.1-2",
+      "architecture": "amd64",
+      "source": "debian:nettle@3.8.1-2",
+      "package_index": "9e0b5aabb2465b3d2e7a7fe27f9913846277833f7a2826e7767acccff5b588c5",
+      "sha256": "45922e6e289ffd92f0f92d2bb9159e84236ff202d552a461bf10e5335b3f0261",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/n/nettle/libnettle8_3.8.1-2_amd64.deb",
+      "files": [
+        {
+          "path": "usr/lib/x86_64-linux-gnu/libnettle.so.8",
+          "mode": 511,
+          "link": "libnettle.so.8.6"
+        },
+        {
+          "path": "usr/lib/x86_64-linux-gnu/libnettle.so.8.6",
+          "mode": 420,
+          "sha256": "63f8ec7a41906ad65a800d27294cdbb34bf6c709252a575ed513a3c048d71019",
+          "elf": true
+        }
+      ],
+      "elf_files": [
+        {
+          "path": "usr/lib/x86_64-linux-gnu/libnettle.so.8.6",
+          "sha256": "63f8ec7a41906ad65a800d27294cdbb34bf6c709252a575ed513a3c048d71019"
+        }
+      ]
+    },
+    {
+      "name": "libnghttp2-14",
+      "version": "1.52.0-1+deb12u3",
+      "architecture": "amd64",
+      "source": "debian:nghttp2@1.52.0-1+deb12u3",
+      "package_index": "9e0b5aabb2465b3d2e7a7fe27f9913846277833f7a2826e7767acccff5b588c5",
+      "sha256": "5a5736cee57e51c1baed869979e6ecdbc6495e939e33203d6cfe3b6e5a149e3f",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/n/nghttp2/libnghttp2-14_1.52.0-1+deb12u3_amd64.deb",
+      "files": [
+        {
+          "path": "usr/lib/x86_64-linux-gnu/libnghttp2.so.14",
+          "mode": 511,
+          "link": "libnghttp2.so.14.24.1"
+        },
+        {
+          "path": "usr/lib/x86_64-linux-gnu/libnghttp2.so.14.24.1",
+          "mode": 420,
+          "sha256": "13a70f96a181a2b8d793f2561cb7857137f194130104ff39a1ff6b90eef280d3",
+          "elf": true
+        }
+      ],
+      "elf_files": [
+        {
+          "path": "usr/lib/x86_64-linux-gnu/libnghttp2.so.14.24.1",
+          "sha256": "13a70f96a181a2b8d793f2561cb7857137f194130104ff39a1ff6b90eef280d3"
+        }
+      ]
+    },
+    {
       "name": "libnsl2",
       "version": "1.3.0-2",
       "architecture": "amd64",
@@ -4115,6 +5563,34 @@
           "mode": 420,
           "sha256": "273019cf3199cbde4da8b77bf84d250697fc4cd610dec21664d55b31c6453f0f",
           "elf": true
+        }
+      ]
+    },
+    {
+      "name": "libp11-kit0",
+      "version": "0.24.1-2",
+      "architecture": "amd64",
+      "source": "debian:p11-kit@0.24.1-2",
+      "package_index": "9e0b5aabb2465b3d2e7a7fe27f9913846277833f7a2826e7767acccff5b588c5",
+      "sha256": "251330faddbf013f060fcdb41f4b0c037c8a6e89ba7c09b04bfcc4e3f0807b22",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/p/p11-kit/libp11-kit0_0.24.1-2_amd64.deb",
+      "files": [
+        {
+          "path": "usr/lib/x86_64-linux-gnu/libp11-kit.so.0",
+          "mode": 511,
+          "link": "libp11-kit.so.0.3.0"
+        },
+        {
+          "path": "usr/lib/x86_64-linux-gnu/libp11-kit.so.0.3.0",
+          "mode": 420,
+          "sha256": "a0a560ae54a793a11ab78d6ce12b902537932b2d7aab2352250391a035977ef1",
+          "elf": true
+        }
+      ],
+      "elf_files": [
+        {
+          "path": "usr/lib/x86_64-linux-gnu/libp11-kit.so.0.3.0",
+          "sha256": "a0a560ae54a793a11ab78d6ce12b902537932b2d7aab2352250391a035977ef1"
         }
       ]
     },
@@ -4456,6 +5932,113 @@
       ]
     },
     {
+      "name": "libpsl5",
+      "version": "0.21.2-1",
+      "architecture": "amd64",
+      "source": "debian:libpsl@0.21.2-1",
+      "package_index": "9e0b5aabb2465b3d2e7a7fe27f9913846277833f7a2826e7767acccff5b588c5",
+      "sha256": "4f0d35610204e4e754b057748719744114621f2f6f4202d846c314860a981afb",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/libp/libpsl/libpsl5_0.21.2-1_amd64.deb",
+      "files": [
+        {
+          "path": "usr/lib/x86_64-linux-gnu/libpsl.so.5",
+          "mode": 511,
+          "link": "libpsl.so.5.3.4"
+        },
+        {
+          "path": "usr/lib/x86_64-linux-gnu/libpsl.so.5.3.4",
+          "mode": 420,
+          "sha256": "20f0bf67e12445271935d9c05d9a9d8fd567046132c6873388eb1c0a8681c28e",
+          "elf": true
+        }
+      ],
+      "elf_files": [
+        {
+          "path": "usr/lib/x86_64-linux-gnu/libpsl.so.5.3.4",
+          "sha256": "20f0bf67e12445271935d9c05d9a9d8fd567046132c6873388eb1c0a8681c28e"
+        }
+      ]
+    },
+    {
+      "name": "librtmp1",
+      "version": "2.4+20151223.gitfa8646d.1-2+b2",
+      "architecture": "amd64",
+      "source": "debian:rtmpdump@2.4+20151223.gitfa8646d.1-2",
+      "package_index": "9e0b5aabb2465b3d2e7a7fe27f9913846277833f7a2826e7767acccff5b588c5",
+      "sha256": "e1f69020dc2c466e421ec6a58406b643be8b5c382abf0f8989011c1d3df91c87",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/r/rtmpdump/librtmp1_2.4+20151223.gitfa8646d.1-2+b2_amd64.deb",
+      "files": [
+        {
+          "path": "usr/lib/x86_64-linux-gnu/librtmp.so.1",
+          "mode": 420,
+          "sha256": "60631c5df675831d9e9338e5cf859f3df713f8b04571aaff1ca65c9287832cb8",
+          "elf": true
+        }
+      ],
+      "elf_files": [
+        {
+          "path": "usr/lib/x86_64-linux-gnu/librtmp.so.1",
+          "sha256": "60631c5df675831d9e9338e5cf859f3df713f8b04571aaff1ca65c9287832cb8"
+        }
+      ]
+    },
+    {
+      "name": "libsasl2-2",
+      "version": "2.1.28+dfsg-10",
+      "architecture": "amd64",
+      "source": "debian:cyrus-sasl2@2.1.28+dfsg-10",
+      "package_index": "9e0b5aabb2465b3d2e7a7fe27f9913846277833f7a2826e7767acccff5b588c5",
+      "sha256": "11ee190ad39f8d7af441d2c8347388b9449434c73acc67b4b372445ac4152efa",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/c/cyrus-sasl2/libsasl2-2_2.1.28+dfsg-10_amd64.deb",
+      "files": [
+        {
+          "path": "usr/lib/x86_64-linux-gnu/libsasl2.so.2",
+          "mode": 511,
+          "link": "libsasl2.so.2.0.25"
+        },
+        {
+          "path": "usr/lib/x86_64-linux-gnu/libsasl2.so.2.0.25",
+          "mode": 420,
+          "sha256": "0e214d8cc294d6ce547946b2b1145d394a06bba3aea7506f0f37b38d32d660bf",
+          "elf": true
+        }
+      ],
+      "elf_files": [
+        {
+          "path": "usr/lib/x86_64-linux-gnu/libsasl2.so.2.0.25",
+          "sha256": "0e214d8cc294d6ce547946b2b1145d394a06bba3aea7506f0f37b38d32d660bf"
+        }
+      ]
+    },
+    {
+      "name": "libseccomp2",
+      "version": "2.5.4-1+deb12u1",
+      "architecture": "amd64",
+      "source": "debian:libseccomp@2.5.4-1+deb12u1",
+      "package_index": "9e0b5aabb2465b3d2e7a7fe27f9913846277833f7a2826e7767acccff5b588c5",
+      "sha256": "108fe67957ca7cf9ba51d801118a1b37d404bea7b6e365025cd00779e9eca38d",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/libs/libseccomp/libseccomp2_2.5.4-1+deb12u1_amd64.deb",
+      "files": [
+        {
+          "path": "usr/lib/x86_64-linux-gnu/libseccomp.so.2",
+          "mode": 511,
+          "link": "libseccomp.so.2.5.4"
+        },
+        {
+          "path": "usr/lib/x86_64-linux-gnu/libseccomp.so.2.5.4",
+          "mode": 420,
+          "sha256": "df79d556924ecb71a946482802a0a0d584c30a7a25e564eccf19b7b72996bbbe",
+          "elf": true
+        }
+      ],
+      "elf_files": [
+        {
+          "path": "usr/lib/x86_64-linux-gnu/libseccomp.so.2.5.4",
+          "sha256": "df79d556924ecb71a946482802a0a0d584c30a7a25e564eccf19b7b72996bbbe"
+        }
+      ]
+    },
+    {
       "name": "libselinux1",
       "version": "3.4-1+b6",
       "architecture": "amd64",
@@ -4503,6 +6086,34 @@
           "mode": 420,
           "sha256": "2e6eef9a727f081f0d453b4e5e6cbd8b9ef8b6f86cbf7681cbad444d3b0b55c8",
           "elf": true
+        }
+      ]
+    },
+    {
+      "name": "libssh2-1",
+      "version": "1.10.0-3+deb12u1",
+      "architecture": "amd64",
+      "source": "debian:libssh2@1.10.0-3+deb12u1",
+      "package_index": "610da1862518c2a1f69e459b6b02b579ec328697b4594244765b231b450ccc4e",
+      "sha256": "fff72a194e493f88e100a2567e22472bb4ab828d429c2956965c6f2f134f1b3a",
+      "url": "https://snapshot.debian.org/archive/debian-security/20260906T183022Z/pool/updates/main/libs/libssh2/libssh2-1_1.10.0-3+deb12u1_amd64.deb",
+      "files": [
+        {
+          "path": "usr/lib/x86_64-linux-gnu/libssh2.so.1",
+          "mode": 511,
+          "link": "libssh2.so.1.0.1"
+        },
+        {
+          "path": "usr/lib/x86_64-linux-gnu/libssh2.so.1.0.1",
+          "mode": 420,
+          "sha256": "e481655791a9b75f4d5957e40101d7d0b5d9c13a18d1ca233731d03365ad0aec",
+          "elf": true
+        }
+      ],
+      "elf_files": [
+        {
+          "path": "usr/lib/x86_64-linux-gnu/libssh2.so.1.0.1",
+          "sha256": "e481655791a9b75f4d5957e40101d7d0b5d9c13a18d1ca233731d03365ad0aec"
         }
       ]
     },
@@ -4642,6 +6253,34 @@
       ]
     },
     {
+      "name": "libtasn1-6",
+      "version": "4.19.0-2+deb12u1",
+      "architecture": "amd64",
+      "source": "debian:libtasn1-6@4.19.0-2+deb12u1",
+      "package_index": "9e0b5aabb2465b3d2e7a7fe27f9913846277833f7a2826e7767acccff5b588c5",
+      "sha256": "2c27c613b69be248d09432839ea3d3382f6ee27fabaa65987aa2d884cd00afda",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/libt/libtasn1-6/libtasn1-6_4.19.0-2+deb12u1_amd64.deb",
+      "files": [
+        {
+          "path": "usr/lib/x86_64-linux-gnu/libtasn1.so.6",
+          "mode": 511,
+          "link": "libtasn1.so.6.6.3"
+        },
+        {
+          "path": "usr/lib/x86_64-linux-gnu/libtasn1.so.6.6.3",
+          "mode": 420,
+          "sha256": "139e933ac55f26bb80520fc63893ff2a528055fdf8058d8341bbd9d7bd762a5e",
+          "elf": true
+        }
+      ],
+      "elf_files": [
+        {
+          "path": "usr/lib/x86_64-linux-gnu/libtasn1.so.6.6.3",
+          "sha256": "139e933ac55f26bb80520fc63893ff2a528055fdf8058d8341bbd9d7bd762a5e"
+        }
+      ]
+    },
+    {
       "name": "libtinfo6",
       "version": "6.4-4",
       "architecture": "amd64",
@@ -4740,6 +6379,34 @@
           "mode": 420,
           "sha256": "99a5e38f8b45ec2729e5bc24d2d8e2f04d260a2455431a1f9d61f500b31060dd",
           "elf": true
+        }
+      ]
+    },
+    {
+      "name": "libunistring2",
+      "version": "1.0-2",
+      "architecture": "amd64",
+      "source": "debian:libunistring@1.0-2",
+      "package_index": "9e0b5aabb2465b3d2e7a7fe27f9913846277833f7a2826e7767acccff5b588c5",
+      "sha256": "d466bbfe011d764d793c1d9d777cad9c7cf65b938e11598f27408171ad95a951",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/libu/libunistring/libunistring2_1.0-2_amd64.deb",
+      "files": [
+        {
+          "path": "usr/lib/x86_64-linux-gnu/libunistring.so.2",
+          "mode": 511,
+          "link": "libunistring.so.2.2.0"
+        },
+        {
+          "path": "usr/lib/x86_64-linux-gnu/libunistring.so.2.2.0",
+          "mode": 420,
+          "sha256": "bc5951aa3d6eaba20ff9688efa3420dc95785aae3709ec48ff6df46d6f409ee5",
+          "elf": true
+        }
+      ],
+      "elf_files": [
+        {
+          "path": "usr/lib/x86_64-linux-gnu/libunistring.so.2.2.0",
+          "sha256": "bc5951aa3d6eaba20ff9688efa3420dc95785aae3709ec48ff6df46d6f409ee5"
         }
       ]
     },
@@ -5112,6 +6779,229 @@
       ]
     },
     {
+      "name": "perl-base",
+      "version": "5.36.0-7+deb12u3",
+      "architecture": "amd64",
+      "source": "debian:perl@5.36.0-7+deb12u3",
+      "package_index": "9e0b5aabb2465b3d2e7a7fe27f9913846277833f7a2826e7767acccff5b588c5",
+      "sha256": "8ec874926e211807cde71e1b0a2311d2534ab3539dffcb2c8553633f542efc1a",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/p/perl/perl-base_5.36.0-7+deb12u3_amd64.deb",
+      "files": [
+        {
+          "path": "usr/bin/perl",
+          "mode": 493,
+          "sha256": "f01fa7776dc21c9e4b5f60b2d231ca4d96dab958b8d06aff611cb1c16f871574",
+          "elf": true
+        },
+        {
+          "path": "usr/lib/x86_64-linux-gnu/perl-base/Carp.pm",
+          "mode": 420,
+          "sha256": "c6ef5860c36e82efcf2eeec6fa66dab54b39d46f6149def35b7dc03747773cf7"
+        },
+        {
+          "path": "usr/lib/x86_64-linux-gnu/perl-base/Carp/Heavy.pm",
+          "mode": 420,
+          "sha256": "18d60cdd00207b238ef28d11f55a6cc45119cfe0eaed19b85b17ac0e1f167f25"
+        },
+        {
+          "path": "usr/lib/x86_64-linux-gnu/perl-base/Cwd.pm",
+          "mode": 420,
+          "sha256": "bbe4069304d3596d24838ea03db375d4107f1eb65425d3efec06d699201835d1"
+        },
+        {
+          "path": "usr/lib/x86_64-linux-gnu/perl-base/Errno.pm",
+          "mode": 420,
+          "sha256": "5abe102f802d0a400b5a93d089e7e7b06c5e40b67c8dbdb9885609482f4e7b0c"
+        },
+        {
+          "path": "usr/lib/x86_64-linux-gnu/perl-base/Exporter.pm",
+          "mode": 420,
+          "sha256": "98e5e6fdc6e14139741dc91db55803b4edd60360fd5e65ce0682c2ee81ad0860"
+        },
+        {
+          "path": "usr/lib/x86_64-linux-gnu/perl-base/Exporter/Heavy.pm",
+          "mode": 420,
+          "sha256": "ee888b1e508a74d79d35d123b5aa352171ede62e05eac8b137a93ef93aa07c26"
+        },
+        {
+          "path": "usr/lib/x86_64-linux-gnu/perl-base/Fcntl.pm",
+          "mode": 420,
+          "sha256": "3f1771fbbfae12cd25acb38f91451791df6625a3eb9d20fc45bf34ae2a2fb7b3"
+        },
+        {
+          "path": "usr/lib/x86_64-linux-gnu/perl-base/File/Basename.pm",
+          "mode": 420,
+          "sha256": "9aeea43fda475ea4e2b75633b2e25528f45b2510c7df4809449fbf938de58bd8"
+        },
+        {
+          "path": "usr/lib/x86_64-linux-gnu/perl-base/File/Glob.pm",
+          "mode": 420,
+          "sha256": "6655a0ce9e781f127edf969333aed5dd858a6007fd3db5591b8d28b5b6457017"
+        },
+        {
+          "path": "usr/lib/x86_64-linux-gnu/perl-base/File/Path.pm",
+          "mode": 420,
+          "sha256": "5ed8eb2a8f5f1c3d40caec1f3104174880f8c653f87daa9927facaaa8e0cc9e5"
+        },
+        {
+          "path": "usr/lib/x86_64-linux-gnu/perl-base/File/Spec.pm",
+          "mode": 420,
+          "sha256": "74a9072da4d42b8c3fd4955a71e89f085d8ba14c41507e8f5bbebee7a7fbf2c5"
+        },
+        {
+          "path": "usr/lib/x86_64-linux-gnu/perl-base/File/Spec/Unix.pm",
+          "mode": 420,
+          "sha256": "8f8c36f5b5ea808f6392b53fa451204c38ed16dec6433bd7aec776405c21dbf9"
+        },
+        {
+          "path": "usr/lib/x86_64-linux-gnu/perl-base/File/Temp.pm",
+          "mode": 420,
+          "sha256": "1603c39f407ac8e20943852f7f9be6d30195d209a048477e62fcaecfd08688be"
+        },
+        {
+          "path": "usr/lib/x86_64-linux-gnu/perl-base/Getopt/Long.pm",
+          "mode": 420,
+          "sha256": "0987cacc3fc9a9557c913f60239043f298ccbb639c226d6177f040fef34fe95c"
+        },
+        {
+          "path": "usr/lib/x86_64-linux-gnu/perl-base/IO.pm",
+          "mode": 420,
+          "sha256": "c4b67c89af17aede223b6c8a0d8f90b5387695276d292be8c2c5c00e0e4a4de9"
+        },
+        {
+          "path": "usr/lib/x86_64-linux-gnu/perl-base/IO/Handle.pm",
+          "mode": 420,
+          "sha256": "2edbd1352e5d45a7367e2b9a1f8629a4d2afc641bccae5050cae3d5c8018f7af"
+        },
+        {
+          "path": "usr/lib/x86_64-linux-gnu/perl-base/IO/Seekable.pm",
+          "mode": 420,
+          "sha256": "5f3668e163030a8bd176f5c5450cd7fbfee8c909b8d6d7b7c39694579c34b49d"
+        },
+        {
+          "path": "usr/lib/x86_64-linux-gnu/perl-base/List/Util.pm",
+          "mode": 420,
+          "sha256": "a3c1db0757e795e87cbad99f15e932763671bb041f9a65e9b5063d764c91bb1f"
+        },
+        {
+          "path": "usr/lib/x86_64-linux-gnu/perl-base/Scalar/Util.pm",
+          "mode": 420,
+          "sha256": "a11bf11a40eda52ad200d2784333a720c5d4864e2552425f8e017ae8525f2204"
+        },
+        {
+          "path": "usr/lib/x86_64-linux-gnu/perl-base/SelectSaver.pm",
+          "mode": 420,
+          "sha256": "f6f2b9bf40423e54466311866dc9f67a1318396d2d162cf84722e28d715a0ca9"
+        },
+        {
+          "path": "usr/lib/x86_64-linux-gnu/perl-base/Symbol.pm",
+          "mode": 420,
+          "sha256": "4bd270e8d78b12b63366e5d66b1ff3b0800aba9fbccd89a57d90597dc52e6a10"
+        },
+        {
+          "path": "usr/lib/x86_64-linux-gnu/perl-base/XSLoader.pm",
+          "mode": 420,
+          "sha256": "49c4664510158655c9b603e3005c44f84d35d4f88cc8f04829e9a0f5803ad4e4"
+        },
+        {
+          "path": "usr/lib/x86_64-linux-gnu/perl-base/auto/Cwd/Cwd.so",
+          "mode": 420,
+          "sha256": "566097d282bc9061a202332553f3c2579d77c3e5ead2aeb615687aa7c5fda3b3",
+          "elf": true
+        },
+        {
+          "path": "usr/lib/x86_64-linux-gnu/perl-base/auto/Fcntl/Fcntl.so",
+          "mode": 420,
+          "sha256": "dbd33930970d8050c0ed5c9a208e2b77fb8b85d82b9afbdf80dbc82887b818c4",
+          "elf": true
+        },
+        {
+          "path": "usr/lib/x86_64-linux-gnu/perl-base/auto/File/Glob/Glob.so",
+          "mode": 420,
+          "sha256": "28ce9adbeea9acdb6b58838e4d27f0f07d976ff725fe36a36adb6055e36c1a04",
+          "elf": true
+        },
+        {
+          "path": "usr/lib/x86_64-linux-gnu/perl-base/auto/IO/IO.so",
+          "mode": 420,
+          "sha256": "48d09244380dcf280a6daf1733e79f45a4e1acf7de847bb64b00e8f47de3a73d",
+          "elf": true
+        },
+        {
+          "path": "usr/lib/x86_64-linux-gnu/perl-base/auto/List/Util/Util.so",
+          "mode": 420,
+          "sha256": "df4acec76462de7f511563f3348a188e232dafb5b93e0747fde760c450a07373",
+          "elf": true
+        },
+        {
+          "path": "usr/lib/x86_64-linux-gnu/perl-base/constant.pm",
+          "mode": 420,
+          "sha256": "5decbf923c0f5f065147a7a1a89fd351a26d5d5efd8799ba4ee992a1d00cd837"
+        },
+        {
+          "path": "usr/lib/x86_64-linux-gnu/perl-base/overload.pm",
+          "mode": 420,
+          "sha256": "e777f5a165a2430ba3ab9805c45a7a27c9b417bd5403b1c92b77a453471f2dfc"
+        },
+        {
+          "path": "usr/lib/x86_64-linux-gnu/perl-base/overloading.pm",
+          "mode": 420,
+          "sha256": "5387b33943963d2e47f05b3f37926f2d454f9ded33ca857e56ffb33b3adb999d"
+        },
+        {
+          "path": "usr/lib/x86_64-linux-gnu/perl-base/parent.pm",
+          "mode": 420,
+          "sha256": "8eb521a3af26eaefb34a168f6a79034b2e31840b25eb94477f0dc0468572e27b"
+        },
+        {
+          "path": "usr/lib/x86_64-linux-gnu/perl-base/strict.pm",
+          "mode": 420,
+          "sha256": "e6ab7416ca86e9f9195a4c86a893b96b9a20d9b4512c23c2d8683a58ea6c8e80"
+        },
+        {
+          "path": "usr/lib/x86_64-linux-gnu/perl-base/vars.pm",
+          "mode": 420,
+          "sha256": "4df4ccb7cb05495f7d7b47c472bae0c92ee7b82aae0a2b31c23ca7bff9504163"
+        },
+        {
+          "path": "usr/lib/x86_64-linux-gnu/perl-base/warnings.pm",
+          "mode": 420,
+          "sha256": "5ed5b961055c9ee30c3820e02a8811f4b3d4d45420adbc5842e42f80b2d3ed4f"
+        },
+        {
+          "path": "usr/lib/x86_64-linux-gnu/perl-base/warnings/register.pm",
+          "mode": 420,
+          "sha256": "962110d3faf3e55749a260d97edaf8a9d31293b0f33d2e7771663a9ef364aa94"
+        }
+      ],
+      "elf_files": [
+        {
+          "path": "usr/bin/perl",
+          "sha256": "f01fa7776dc21c9e4b5f60b2d231ca4d96dab958b8d06aff611cb1c16f871574"
+        },
+        {
+          "path": "usr/lib/x86_64-linux-gnu/perl-base/auto/Cwd/Cwd.so",
+          "sha256": "566097d282bc9061a202332553f3c2579d77c3e5ead2aeb615687aa7c5fda3b3"
+        },
+        {
+          "path": "usr/lib/x86_64-linux-gnu/perl-base/auto/Fcntl/Fcntl.so",
+          "sha256": "dbd33930970d8050c0ed5c9a208e2b77fb8b85d82b9afbdf80dbc82887b818c4"
+        },
+        {
+          "path": "usr/lib/x86_64-linux-gnu/perl-base/auto/File/Glob/Glob.so",
+          "sha256": "28ce9adbeea9acdb6b58838e4d27f0f07d976ff725fe36a36adb6055e36c1a04"
+        },
+        {
+          "path": "usr/lib/x86_64-linux-gnu/perl-base/auto/IO/IO.so",
+          "sha256": "48d09244380dcf280a6daf1733e79f45a4e1acf7de847bb64b00e8f47de3a73d"
+        },
+        {
+          "path": "usr/lib/x86_64-linux-gnu/perl-base/auto/List/Util/Util.so",
+          "sha256": "df4acec76462de7f511563f3348a188e232dafb5b93e0747fde760c450a07373"
+        }
+      ]
+    },
+    {
       "name": "procps",
       "version": "2:4.0.2-3",
       "architecture": "amd64",
@@ -5443,6 +7333,39 @@
           "mode": 420,
           "sha256": "8b85846791ab2c8a5463c83a5be3c043e2570d7448434d41398969ed47e3e6f2",
           "elf": false
+        }
+      ]
+    },
+    {
+      "name": "util-linux",
+      "version": "2.38.1-5+deb12u3",
+      "architecture": "amd64",
+      "source": "debian:util-linux@2.38.1-5+deb12u3",
+      "package_index": "9e0b5aabb2465b3d2e7a7fe27f9913846277833f7a2826e7767acccff5b588c5",
+      "sha256": "8eb241ff24b2e1ee9c0373f4fc9bc728b85bf5966c1496154df7da01c0e42f34",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/u/util-linux/util-linux_2.38.1-5+deb12u3_amd64.deb",
+      "elf_files": [
+        {
+          "path": "usr/bin/mountpoint",
+          "sha256": "23f872a069bfc5626f3dd94d2f1f61b478c2c07f5b07335efe5bfd3c2ae215ae"
+        },
+        {
+          "path": "usr/bin/getopt",
+          "sha256": "438e0b2a3e708e693c2574c7e59c63906ed533e08222bbeebdb0b1bc9e71cf9b"
+        }
+      ],
+      "files": [
+        {
+          "path": "usr/bin/mountpoint",
+          "mode": 493,
+          "sha256": "23f872a069bfc5626f3dd94d2f1f61b478c2c07f5b07335efe5bfd3c2ae215ae",
+          "elf": true
+        },
+        {
+          "path": "usr/bin/getopt",
+          "mode": 493,
+          "sha256": "438e0b2a3e708e693c2574c7e59c63906ed533e08222bbeebdb0b1bc9e71cf9b",
+          "elf": true
         }
       ]
     },
@@ -9683,6 +11606,155 @@
     {
       "path": "usr/share/doc/debian-archive-keyring/copyright",
       "sha256": "b32aecaae84643700a33bc9ee83fa9b36938d35aa7b61b5042092eca77ddb732"
+    },
+    {
+      "path": "usr/share/doc/apt/copyright",
+      "sha256": "b4701305243d8d746f4acaafe15d94f946251b05691bd6917fef41dd15e9ee12",
+      "mode": 420
+    },
+    {
+      "path": "usr/share/doc/curl/copyright",
+      "sha256": "a7c131b21e6e73b3b085a7d9f1637b68f5f92b832cc6f462e0c978fbe7841ccb",
+      "mode": 420
+    },
+    {
+      "path": "usr/share/doc/diffutils/copyright",
+      "sha256": "8654d7cc7cdae1f31bb67a3ce5bf35d512c0bdfffd071df757edc54153cc7930",
+      "mode": 420
+    },
+    {
+      "path": "usr/share/doc/gpgv/copyright",
+      "sha256": "84dab06b5c1baf3a7a45c3cdc5f98fb121234e98fdd6266c3f773d54fcdc4f54",
+      "mode": 420
+    },
+    {
+      "path": "usr/share/doc/libapt-pkg6.0/copyright",
+      "sha256": "b4701305243d8d746f4acaafe15d94f946251b05691bd6917fef41dd15e9ee12",
+      "mode": 420
+    },
+    {
+      "path": "usr/share/doc/libbrotli1/copyright",
+      "sha256": "24a64e5bb83d0960d1835696a1e23c0896ad6055b0ca47c66ab0eb9a766324b1",
+      "mode": 420
+    },
+    {
+      "path": "usr/share/doc/libc-bin/copyright",
+      "sha256": "40c7e1f2118531f038ca22999bd976901254e1bc5cd1b0f0211bdd064c599987",
+      "mode": 420
+    },
+    {
+      "path": "usr/share/doc/libcurl4/copyright",
+      "sha256": "a7c131b21e6e73b3b085a7d9f1637b68f5f92b832cc6f462e0c978fbe7841ccb",
+      "mode": 420
+    },
+    {
+      "path": "usr/share/doc/libgnutls30/copyright",
+      "sha256": "bb7e5c24b3e27bbba5671dd710d159a0066833bda4caa1d55d8027ffed539337",
+      "mode": 420
+    },
+    {
+      "path": "usr/share/doc/libhogweed6/copyright",
+      "sha256": "ca2ca597320220c00ef6dc0fe5d0d82025548d6d4ba80e85615eb691f9021f93",
+      "mode": 420
+    },
+    {
+      "path": "usr/share/doc/libidn2-0/copyright",
+      "sha256": "41702469f28e8ff406345e3d1dd0c741f11bdfca319264f67036efd6aaa79e4b",
+      "mode": 420
+    },
+    {
+      "path": "usr/share/doc/libldap-2.5-0/copyright",
+      "sha256": "b4081907f0d9a4110736fa6540dc8ca9d7d60a20878b5d78f84916cc04907bdc",
+      "mode": 420
+    },
+    {
+      "path": "usr/share/doc/libnettle8/copyright",
+      "sha256": "ca2ca597320220c00ef6dc0fe5d0d82025548d6d4ba80e85615eb691f9021f93",
+      "mode": 420
+    },
+    {
+      "path": "usr/share/doc/libnghttp2-14/copyright",
+      "sha256": "a34ae32a5eba61e535835a8de7c398f47e420247d339bc400a3b9c618ba29a3d",
+      "mode": 420
+    },
+    {
+      "path": "usr/share/doc/libp11-kit0/copyright",
+      "sha256": "ed139379f7c874f0ee75f3ddcc2e01091dd828d84ee1a0bdff6a1c5673ee6e58",
+      "mode": 420
+    },
+    {
+      "path": "usr/share/doc/libpsl5/copyright",
+      "sha256": "bbafb0cf52d34465fc69f5ffd22d724224f6a2f28402c88b045c69d88af06aaf",
+      "mode": 420
+    },
+    {
+      "path": "usr/share/doc/librtmp1/copyright",
+      "sha256": "4302abcc1ea1b6cbe8d19c79b892acf78878030220210707c19006828866207c",
+      "mode": 420
+    },
+    {
+      "path": "usr/share/doc/libsasl2-2/copyright",
+      "sha256": "5e77ddcac7fb682d696bc4b034dc2869e5a9011e8c2ed3c570ab8db0f4506931",
+      "mode": 420
+    },
+    {
+      "path": "usr/share/doc/libseccomp2/copyright",
+      "sha256": "6da0653a365b80ab31478dbfe9e7c358e80d58b6d2b52b4e16b4dbb42d7d9f5c",
+      "mode": 420
+    },
+    {
+      "path": "usr/share/doc/libssh2-1/copyright",
+      "sha256": "98978241c573785aa7c8504e399bb66cfb3c40c1f20507a0d3c7580bfbf9d8d4",
+      "mode": 420
+    },
+    {
+      "path": "usr/share/doc/libtasn1-6/copyright",
+      "sha256": "572ad60ad184d8f52c6dc66d83a61a68f137db560b3452ce00588c9ecf128a65",
+      "mode": 420
+    },
+    {
+      "path": "usr/share/doc/libunistring2/copyright",
+      "sha256": "0035f89e5317f3cec389383e8727788521b0fde3e75cea881fa0e92e1d48cb57",
+      "mode": 420
+    },
+    {
+      "path": "usr/share/doc/perl-base/copyright",
+      "sha256": "b52f3ca17b45473cb0da6ec46748949101fcf0dda1fd5d8b306e6c97fd41af4d",
+      "mode": 420
+    },
+    {
+      "path": "usr/share/doc/base-files/copyright",
+      "sha256": "fd7e4aae7e7b05f217bcf2d02322825c360e66c52c4c2f1b28d784d6297a1c23",
+      "mode": 420
+    },
+    {
+      "path": "usr/share/doc/util-linux/copyright",
+      "sha256": "30539a2df6a89d844f43c727505a3193a60515f8ec6cdede8cc515ed22941d1c",
+      "mode": 420
+    },
+    {
+      "path": "usr/share/doc/libmount1/copyright",
+      "sha256": "30539a2df6a89d844f43c727505a3193a60515f8ec6cdede8cc515ed22941d1c",
+      "mode": 420
+    },
+    {
+      "path": "usr/share/doc/libblkid1/copyright",
+      "sha256": "30539a2df6a89d844f43c727505a3193a60515f8ec6cdede8cc515ed22941d1c",
+      "mode": 420
     }
-  ]
+  ],
+  "bootstrap": {
+    "skypilot_version": "0.12.2",
+    "dpkg_state": "empty: selected loose files are not installed Debian packages; runtime APT/dpkg writes authentic installation metadata",
+    "upstream": [
+      {
+        "url": "https://raw.githubusercontent.com/skypilot-org/skypilot/v0.12.2/sky/templates/kubernetes-ray.yml.j2",
+        "sha256": "69df9e7c743f91a836a8a92fcdf9c64517a4358c9c9ffef0717ca81b4e4850cc"
+      },
+      {
+        "url": "https://raw.githubusercontent.com/skypilot-org/skypilot/v0.12.2/sky/provision/kubernetes/instance.py",
+        "sha256": "e56b1be53c1227ef5da1ea28a64987637744095ef46ac76e8f9a84838216322d"
+      }
+    ]
+  }
 }
