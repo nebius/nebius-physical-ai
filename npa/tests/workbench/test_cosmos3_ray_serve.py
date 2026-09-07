@@ -583,13 +583,18 @@ def test_native_default_frame_category_is_bound_before_publication(
     payload["batch_size"] = 1
     payload["outputs"] = payload["outputs"][:1]
     args = payload["outputs"][0]["args"]
-    args.update(model_mode=sample["model_mode"], num_frames=frames)
+    args.update(**sample, num_frames=frames)
 
     def set_files(frame_count):
         extension = "jpg" if frame_count == 1 else "mp4"
         path = f"request-safe/one/vision.{extension}"
-        payload["outputs"][0]["outputs"][0]["files"] = [path]
-        payload["artifacts"] = [_artifact(path, "one")]
+        files = [path] + [
+            f"request-safe/one/control_{hint}.{extension}"
+            for hint in ("edge", "blur", "depth", "seg", "wsm")
+            if sample.get(hint) is not None
+        ]
+        payload["outputs"][0]["outputs"][0]["files"] = files
+        payload["artifacts"] = [_artifact(path, "one") for path in files]
 
     set_files(frames)
     assert _submit(source, str(tmp_path / "valid"))["status"] == "completed"
@@ -609,25 +614,32 @@ def test_native_default_frame_category_is_bound_before_publication(
     assert not (tmp_path / "invalid").exists()
 
 
-@pytest.mark.parametrize("override", [{}, {"num_frames": None}])
-def test_custom_defaults_require_explicit_frame_count_before_inference(
-    tmp_path: Path, transport, override
+@pytest.mark.parametrize("override", [{}, {"num_frames": None}, {"num_frames": 1}])
+@pytest.mark.parametrize("mode", ["text2image", "reasoner"])
+def test_custom_defaults_are_not_trusted_for_output_binding(
+    tmp_path: Path, transport, override, mode
 ):
     source = tmp_path / "batch.json"
     _batch(
-        source, samples=[{"name": "one", "defaults_file": "custom.json", **override}]
+        source,
+        samples=[
+            {
+                "name": "one",
+                "model_mode": mode,
+                "defaults_file": "custom.json",
+                **override,
+            }
+        ],
     )
     _, post, get = transport
-    with pytest.raises(Cosmos3RayServeError, match="defaults_file requires explicit"):
+    with pytest.raises(Cosmos3RayServeError, match="defaults_file cannot be bound"):
         _submit(source, str(tmp_path / "out"))
     post.assert_not_called()
     get.assert_not_called()
 
 
 @pytest.mark.parametrize("frames", [1, 9])
-def test_explicit_frames_override_custom_defaults_and_single_wsm(
-    tmp_path: Path, transport, frames
-):
+def test_explicit_frames_override_single_wsm(tmp_path: Path, transport, frames):
     source = tmp_path / "batch.json"
     _batch(
         source,
@@ -636,7 +648,6 @@ def test_explicit_frames_override_custom_defaults_and_single_wsm(
                 "name": "one",
                 "model_mode": "text2image",
                 "num_frames": frames,
-                "defaults_file": "custom.json",
                 "wsm": {},
             }
         ],
@@ -645,10 +656,12 @@ def test_explicit_frames_override_custom_defaults_and_single_wsm(
     payload["batch_size"] = 1
     payload["outputs"] = payload["outputs"][:1]
     payload["outputs"][0]["args"]["num_frames"] = frames
+    payload["outputs"][0]["args"]["wsm"] = {}
     extension = "jpg" if frames == 1 else "mp4"
     path = f"request-safe/one/vision.{extension}"
-    payload["outputs"][0]["outputs"][0]["files"] = [path]
-    payload["artifacts"] = [_artifact(path, "one")]
+    files = [path, f"request-safe/one/control_wsm.{extension}"]
+    payload["outputs"][0]["outputs"][0]["files"] = files
+    payload["artifacts"] = [_artifact(path, "one") for path in files]
     assert _submit(source, str(tmp_path / "out"))["status"] == "completed"
 
 
@@ -663,3 +676,77 @@ def test_invalid_numeric_binding_fails_before_inference(
         _submit(source, str(tmp_path / "out"))
     post.assert_not_called()
     get.assert_not_called()
+
+
+@pytest.mark.parametrize("hint", ["edge", "blur", "depth", "seg", "wsm"])
+@pytest.mark.parametrize("frames", [1, 9])
+@pytest.mark.parametrize("destination", ["local", "s3"])
+def test_requested_control_cannot_disappear_from_both_manifests(
+    tmp_path: Path, transport, hint, frames, destination
+):
+    source = tmp_path / "batch.json"
+    sample = {
+        "name": "one",
+        "model_mode": "video2video",
+        "num_frames": frames,
+        "vision_path": "https://example.org/input.mp4",
+        hint: {},
+        "show_control_condition": False,
+    }
+    _batch(source, samples=[sample])
+    payload, _, get = transport
+    payload["batch_size"] = 1
+    payload["outputs"] = payload["outputs"][:1]
+    payload["outputs"][0]["args"].update(sample)
+    extension = "jpg" if frames == 1 else "mp4"
+    files = [
+        f"request-safe/one/{stem}.{extension}" for stem in ["vision", f"control_{hint}"]
+    ]
+    payload["outputs"][0]["outputs"][0]["files"] = files
+    payload["artifacts"] = [_artifact(path, "one") for path in files]
+    assert _submit(source, str(tmp_path / "valid"))["status"] == "completed"
+    get.reset_mock()
+    files.pop()
+    payload["artifacts"].pop()
+    storage = Mock()
+    output = (
+        str(tmp_path / "invalid")
+        if destination == "local"
+        else "s3://test-bucket/invalid/"
+    )
+    with pytest.raises(Cosmos3RayServeError, match="missing a requested control"):
+        _submit(source, output, storage_client=storage)
+    get.assert_not_called()
+    storage.upload_directory.assert_not_called()
+    assert not (tmp_path / "invalid").exists()
+
+
+@pytest.mark.parametrize(
+    "returned_hints", [{}, {"depth": {}}, {"edge": {}, "depth": {}}]
+)
+def test_response_cannot_change_the_requested_transfer_hint_set(
+    tmp_path: Path, transport, returned_hints
+):
+    source = tmp_path / "batch.json"
+    _batch(source, samples=[{"name": "one", "model_mode": "text2image", "edge": {}}])
+    payload, _, get = transport
+    payload["batch_size"] = 1
+    payload["outputs"] = payload["outputs"][:1]
+    payload["outputs"][0]["args"].update(returned_hints)
+    payload["artifacts"] = payload["artifacts"][:1]
+    with pytest.raises(Cosmos3RayServeError, match="different transfer hints"):
+        _submit(source, str(tmp_path / "out"))
+    get.assert_not_called()
+
+
+def test_transfer_dispatch_precedes_reasoner_file_contract(tmp_path: Path, transport):
+    source = tmp_path / "batch.json"
+    _batch(source, samples=[{"name": "one", "model_mode": "reasoner", "edge": {}}])
+    payload, _, _ = transport
+    payload["batch_size"] = 1
+    payload["outputs"] = payload["outputs"][:1]
+    payload["outputs"][0]["args"].update(model_mode="reasoner", edge={})
+    files = ["request-safe/one/vision.jpg", "request-safe/one/control_edge.jpg"]
+    payload["outputs"][0]["outputs"][0]["files"] = files
+    payload["artifacts"] = [_artifact(path, "one") for path in files]
+    assert _submit(source, str(tmp_path / "out"))["status"] == "completed"

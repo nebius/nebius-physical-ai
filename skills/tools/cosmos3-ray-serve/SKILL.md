@@ -92,13 +92,15 @@ sample name before downloading. An omitted request ID is generated before POST
 and retained in `request.json`. Require one successful native `SampleOutputs`
 per name and exact, unique artifact coverage of its declared files within
 `request_id/sample/`. Ordinary samples require `vision.jpg` or `vision.mp4`
-according to resolved frame count; reasoner samples require `reasoner_text.txt`.
-Control/debug files remain part of the verified file set. Failed/skipped samples,
+according to resolved frame count; reasoner samples without transfer hints require
+`reasoner_text.txt`. Require `control_<hint>` with the same media extension for
+every requested non-null transfer hint and bind the returned hint set. Debug files
+remain part of the verified file set. Failed/skipped samples,
 unsafe paths and incomplete manifests must never become completed publications.
 Use `num_outputs=1` and distinct named samples on this native Serve path.
 Image/video category is bound to explicit frames or the pinned mode/WSM defaults.
-Ordinary samples with `defaults_file` require an explicit `num_frames`; reasoner
-samples retain their text output contract.
+Inline sample overrides: `defaults_file` is rejected because hidden server-local
+defaults cannot be bound to the client's requested output contract.
 
 Run `npa/tests/e2e/test_cosmos3_ray_batch_live_e2e.py` with
 `NPA_INTEGRATION_E2E=1`, the configured service endpoint/token, and

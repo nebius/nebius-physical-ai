@@ -292,13 +292,9 @@ def _prepare_client_request(request: RayBatchRequest) -> RayBatchRequest:
                 "native Ray batches require num_outputs=1 per sample"
             )
         normalized = {**sample, **binding.model_dump(exclude_unset=True)}
-        if (
-            sample.get("defaults_file") is not None
-            and binding.num_frames is None
-            and _requested_mode(normalized) != "reasoner"
-        ):
+        if sample.get("defaults_file") is not None:
             raise Cosmos3RayServeError(
-                "custom defaults_file requires explicit num_frames for output binding"
+                "custom defaults_file cannot be bound by this client; inline sample overrides"
             )
         samples.append(normalized)
     return request.model_copy(update={"samples": samples})
@@ -380,7 +376,14 @@ def _validate_batch_response(
             raise Cosmos3RayServeError(f"sample {name} returned invalid num_frames")
         # Native temporal compression can round a requested video length up.
         # Bind the category even when the caller uses native frame defaults.
-        if mode != "reasoner" and _requested_image(sample, mode) != (frames == 1):
+        hints = _active_hints(sample)
+        if _active_hints(args) != hints:
+            raise Cosmos3RayServeError(
+                f"sample {name} returned different transfer hints"
+            )
+        # Native generation dispatches transfer before reasoner when hints exist.
+        text_output = mode == "reasoner" and not hints
+        if not text_output and _requested_image(sample, mode) != (frames == 1):
             raise Cosmos3RayServeError(
                 f"sample {name} returned a different frame category"
             )
@@ -410,13 +413,22 @@ def _validate_batch_response(
                 sample_files.add(path)
         primary = (
             "reasoner_text.txt"
-            if mode == "reasoner"
+            if text_output
             else ("vision.jpg" if frames == 1 else "vision.mp4")
         )
         if f"{request.request_id}/{name}/{primary}" not in sample_files:
             raise Cosmos3RayServeError(
                 f"sample {name} is missing its primary output file"
             )
+        extension = ".jpg" if frames == 1 else ".mp4"
+        for hint in hints:
+            if (
+                f"{request.request_id}/{name}/control_{hint}{extension}"
+                not in sample_files
+            ):
+                raise Cosmos3RayServeError(
+                    f"sample {name} is missing a requested control output file"
+                )
 
     actual: dict[str, str] = {}
     for artifact in response.artifacts:
@@ -431,6 +443,14 @@ def _validate_batch_response(
     return response
 
 
+def _active_hints(sample: dict[str, Any]) -> set[str]:
+    return {
+        key
+        for key in ("edge", "blur", "depth", "seg", "wsm")
+        if sample.get(key) is not None
+    }
+
+
 def _requested_image(sample: dict[str, Any], mode: str) -> bool:
     """Resolve the pinned defaults' frame category without trusting the response."""
 
@@ -438,16 +458,11 @@ def _requested_image(sample: dict[str, Any], mode: str) -> bool:
         return sample["num_frames"] == 1
     # args.py applies the single-WSM transfer default (101 frames) after mode
     # defaults, unless num_frames was explicitly supplied. Null hints are inactive.
-    hints = {
-        key
-        for key in ("edge", "blur", "depth", "seg", "wsm")
-        if sample.get(key) is not None
-    }
-    if hints == {"wsm"}:
+    if _active_hints(sample) == {"wsm"}:
         return False
     # Image defaults resolve to one frame; all ordinary video/action defaults
-    # resolve to multiple frames. Custom defaults need explicit frames above.
-    return mode in {"text2image", "image2image"}
+    # resolve to multiple frames. Reasoner starts at one before transfer defaults.
+    return mode in {"text2image", "image2image", "reasoner"}
 
 
 def _requested_mode(sample: dict[str, Any]) -> Any:

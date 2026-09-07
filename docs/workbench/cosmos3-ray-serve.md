@@ -86,8 +86,8 @@ result for every requested sample name. It also binds the sampling mode, supplie
 seed and requested image/video frame category. Failed, skipped, duplicate,
 foreign or incomplete results fail before any artifact download or publication.
 Frame category includes the pinned mode defaults and single-WSM transfer default.
-For ordinary samples using `defaults_file`, supply `num_frames` explicitly so the
-client can bind the expected output without reading a server-local defaults file.
+Inline sample overrides instead of using `defaults_file`: server-local defaults
+can introduce output-affecting settings that the client cannot independently bind.
 Each declared file must have exactly one
 matching artifact entry under that request and sample's directory; downloaded
 bytes must then match its size and SHA-256.
@@ -95,8 +95,11 @@ bytes must then match its size and SHA-256.
 File coverage follows the pinned framework's
 [output writer](https://github.com/NVIDIA/cosmos-framework/blob/5e67049cd94acb667786f1e6dd0dab821cb90c97/cosmos_framework/inference/inference.py):
 ordinary samples require `vision.jpg` for one resolved frame or `vision.mp4` for
-multiple frames, while reasoner samples require `reasoner_text.txt`. Declared
-control and debug files are preserved and verified too. The native Serve path
+multiple frames, while reasoner samples without transfer hints require
+`reasoner_text.txt`. Transfer samples also require `control_<hint>.jpg` or `.mp4`
+for every requested non-null `edge`, `blur`, `depth`, `seg` or `wsm` hint. The
+returned hint set must match the request. Declared debug files are preserved and
+verified too. The native Serve path
 requires `num_outputs=1` per named sample; request several named samples for
 several outputs. Use a new request ID for new inference; the service reserves
 each request directory once.
