@@ -542,6 +542,15 @@ def _prepare_install_dir(
     ``k8s-training`` copy where terraform must run.
     """
 
+    # Bind opt-in KubeRay to the pristine source before the existing, reviewed
+    # region/filesystem materialization patches or any local-state mutation.
+    kuberay_tfvars = (
+        render_tfvars(
+            cluster, ssh_public_key=ssh_public_key,
+            recipe_dir=recipe_root / _K8S_TRAINING_SUBDIR,
+        )
+        if cluster.kuberay and cluster.kuberay.enabled else None
+    )
     install_dir.mkdir(parents=True, exist_ok=True)
     workdir = install_dir / _K8S_TRAINING_SUBDIR
     modules_dst = install_dir / _MODULES_SUBDIR
@@ -677,6 +686,7 @@ def _prepare_install_dir(
         )
 
     (workdir / "terraform.tfvars").write_text(
+        kuberay_tfvars if kuberay_tfvars is not None else
         render_tfvars(cluster, ssh_public_key=ssh_public_key, recipe_dir=workdir)
     )
     return workdir

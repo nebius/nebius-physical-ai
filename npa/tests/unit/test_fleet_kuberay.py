@@ -1,9 +1,12 @@
 """The CPU RayCluster contract must reach actual resources, or fail before apply."""
 
 from dataclasses import replace
+import importlib.util
 import json
+from pathlib import Path
 import shutil
 import subprocess
+import sys
 
 import pytest
 import yaml
@@ -114,6 +117,10 @@ def test_disable_replaces_default_policy_and_explicit_envelope_works():
     ("modules/kuberay/main.tf", 'policy_types = ["Ingress"]', 'policy_types = []'),
     ("modules/kuberay/files/ray-values-cpu.yaml.tftpl", 'rayVersion: "2.58.0"', 'rayVersion: "2.46.0"'),
     ("modules/kuberay/files/ray-values-cpu.yaml.tftpl", "${worker_cpus}", "2"),
+    ("k8s-training/main.tf", "platform = local.cpu_nodes_platform", 'platform = "cpu-different"'),
+    ("k8s-training/locals.tf", "cpu_nodes_platform", "changed_platform"),
+    ("modules/cloud-init/k8s-cloud-init.tftpl", "package_update: true", "package_update: false"),
+    ("modules/o11y/versions.tf", "terraform", "changed"),
 ])
 def test_recipe_mutants_refused_before_any_cloud_mutation(recipe, path, old, new, monkeypatch):
     target = recipe / path
@@ -131,6 +138,83 @@ def test_recipe_mutants_refused_before_any_cloud_mutation(recipe, path, old, new
         L.deploy_fleet(declaration, work_root=recipe.parent / "state")
     with pytest.raises(ValueError, match="reviewed CPU KubeRay contract"):
         render_tfvars(desired, recipe_dir=recipe / "k8s-training")
+
+
+@pytest.mark.parametrize("path,content", [
+    ("k8s-training/override.tf", 'module "kuberay" { cpu_cluster = null }'),
+    ("k8s-training/extra_override.tf.json", '{"module":{"kuberay":{"cpu_cluster":null}}}'),
+    ("modules/kuberay/override.tf", 'resource "kubernetes_network_policy_v1" "cpu_cluster" { count = 0 }'),
+    ("modules/o11y/extra.tf", 'resource "terraform_data" "unexpected" {}'),
+    ("k8s-training/terraform.tfvars.json", '{"kuberay_cpu_cluster":null}'),
+    ("k8s-training/extra.auto.tfvars", "kuberay_cpu_cluster = null"),
+    ("k8s-training/extra.auto.tfvars.json", '{"enable_kuberay_cluster":false}'),
+])
+def test_additional_effective_recipe_inputs_are_rejected(recipe, path, content, tmp_path):
+    (recipe / path).write_text(content)
+    destination = tmp_path / "must-not-materialize"
+    with pytest.raises(ValueError, match="reviewed CPU KubeRay contract"):
+        L._prepare_install_dir(destination, recipe_root=recipe, region="eu-north1",
+                               cluster=cluster(KubeRaySpec(True)), ssh_public_key="ssh-test")
+    assert not destination.exists()
+
+
+def test_recipe_symlink_is_rejected_even_when_bytes_match(recipe):
+    path = recipe / "modules/kuberay/main.tf"
+    saved = recipe.parent / "saved.tf"
+    path.rename(saved)
+    path.symlink_to(saved)
+    with pytest.raises(ValueError, match="Symlinks"):
+        validate_recipe_kuberay_compatibility(cluster(KubeRaySpec(True)), recipe / "k8s-training")
+
+
+@pytest.mark.parametrize("region", ["eu-north1", "us-central1"])
+def test_materialization_validates_pristine_recipe_and_preserves_owned_state(recipe, tmp_path, region):
+    destination = tmp_path / "installation"
+    state = destination / "k8s-training/terraform.tfstate"
+    state.parent.mkdir(parents=True)
+    state.write_text('{"serial":123}')
+    work = L._prepare_install_dir(destination, recipe_root=recipe, region=region,
+                                  cluster=cluster(KubeRaySpec(True)), ssh_public_key="ssh-test")
+    assert state.read_text() == '{"serial":123}'
+    assert "enable_kuberay_cluster   = true" in (work / "terraform.tfvars").read_text()
+    domain = "api.eu.nebius.cloud:443" if region.startswith("eu") else "api.nebius.cloud:443"
+    assert domain in (work / "provider.tf").read_text()
+    validate_recipe_kuberay_compatibility(cluster(KubeRaySpec(True)), recipe / "k8s-training")
+
+
+@pytest.fixture
+def live_harness():
+    path = Path(__file__).parents[1] / "e2e/test_fleet_kuberay_live.py"
+    definition = importlib.util.spec_from_file_location("kuberay_live_harness", path)
+    module = importlib.util.module_from_spec(definition)
+    definition.loader.exec_module(module)
+    return module
+
+
+def test_live_harness_records_real_command_failure_privately(live_harness, tmp_path):
+    with pytest.raises(AssertionError, match="probe failed"):
+        live_harness._record_command(tmp_path, "probe", [sys.executable, "-c", "print('retained failure'); raise SystemExit(7)"])
+    receipt = tmp_path / "probe.json"
+    assert receipt.stat().st_mode & 0o777 == 0o600
+    data = json.loads(receipt.read_text())
+    assert data["exit_code"] == 7
+    assert data["stdout"] == "retained failure\n"
+
+
+def test_live_harness_cleanup_survives_stop_failure_and_keeps_primary(live_harness):
+    calls = []
+
+    def run(name, args):
+        calls.append(name)
+        if name == "stop":
+            raise RuntimeError("job did not register")
+
+    with pytest.raises(RuntimeError, match="Native proof and cleanup failures") as failure:
+        with live_harness._job_cleanup(run, [], "/tmp/owned-test", "owned-test"):
+            raise ValueError("primary staging failure")
+    assert calls == ["stop", "remove-source"]
+    assert [str(error) for error in failure.value.args[1]] == ["primary staging failure", "job did not register"]
+    assert isinstance(failure.value.__cause__, ValueError)
 
 
 def test_missing_recipe_cannot_pass_backend_preflight():

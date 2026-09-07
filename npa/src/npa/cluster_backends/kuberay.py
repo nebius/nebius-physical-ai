@@ -78,8 +78,9 @@ def validate_recipe_kuberay_compatibility(cluster: Any, recipe_dir: Path) -> Non
     """Require reviewed module wiring and safety bytes before any cloud mutation.
 
     Alternate recipe revisions are deliberately unsupported unless their KubeRay
-    contract matches the reviewed vendored files. Declarations alone cannot prove
-    that an application actually consumes the requested values.
+    complete source inventory matches the reviewed vendored recipe. In particular,
+    an additional Terraform override or auto-loaded variable file can change the
+    effective configuration without changing an existing file.
     """
 
     validate_kuberay(cluster)
@@ -88,11 +89,19 @@ def validate_recipe_kuberay_compatibility(cluster: Any, recipe_dir: Path) -> Non
     contract = json.loads(
         Path(__file__).with_name("kuberay_recipe_contract.json").read_text()
     )
-    for relative, expected in contract.items():
-        path = recipe_dir.parent / relative
-        if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != expected:
-            raise ValueError(
-                "Selected k8s-training recipe cannot honor the reviewed CPU "
-                "KubeRay contract. Use the vendored recipe; unsupported pinned, "
-                "upstream or local recipes are rejected before provisioning."
-            )
+    root = recipe_dir.parent
+    actual = {}
+    for subtree in (root / "k8s-training", root / "modules"):
+        if subtree.is_symlink():
+            raise ValueError("Symlinks cannot honor the reviewed CPU KubeRay contract")
+        for path in subtree.rglob("*"):
+            if path.is_symlink():
+                raise ValueError("Symlinks cannot honor the reviewed CPU KubeRay contract")
+            if path.is_file():
+                actual[path.relative_to(root).as_posix()] = hashlib.sha256(path.read_bytes()).hexdigest()
+    if actual != contract:
+        raise ValueError(
+            "Selected k8s-training recipe cannot honor the reviewed CPU "
+            "KubeRay contract. Use the pristine vendored recipe; unsupported "
+            "pinned, upstream or local recipes are rejected before provisioning."
+        )

@@ -109,9 +109,12 @@ native status/logs. It creates no cloud infrastructure itself.
 ## Recipe compatibility
 
 Deploy checks the selected recipe before quota checks or project/network
-mutation. `kuberay_recipe_contract.json` binds the reviewed root declarations,
-application wiring, child module and active CPU template by SHA-256. An older
-pinned recipe, upstream `main` or local override without those exact bytes fails
-closed. Omitted/disabled KubeRay does not impose this requirement. Updating the
+mutation. `kuberay_recipe_contract.json` binds the complete pristine
+`k8s-training/` and `modules/` source inventory by SHA-256, including placement,
+application wiring and templates. Added Terraform overrides, auto-loaded values,
+symlinks and changed source files fail closed. Use a pristine source directory;
+Fleet generates state, variables and region adjustments in its private copy.
+An older pinned recipe or upstream `main` without that exact inventory is
+unsupported. Omitted/disabled KubeRay does not impose this requirement. Updating the
 contract requires reviewing the effective resources and repeating live proof;
 merely declaring Terraform variables is insufficient.
