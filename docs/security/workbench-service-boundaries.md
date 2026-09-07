@@ -171,3 +171,19 @@ special files fail packaging. Deployed bundles carry an inventory of their
 archived bytes so an agent can forward its source without Git metadata; every
 file must still match its recorded hash. The remote installer stages bundles and
 credentials in private directories before atomic installation.
+
+## Verified workflow execution
+
+Unchanged project-credential lookups preserve the exact file bytes used to
+verify an isolated SkyPilot runtime and retain owner-only permissions. Adding
+an alias, migrating proven legacy ownership, or rotating credentials still
+updates the store; a runtime verified against different credentials refuses
+reuse until its owned state is reconciled.
+
+GPU capacity checks translate SkyPilot resource requests before comparing them
+with Kubernetes inventory. They include GPU CPU/memory defaults and conservative
+fractional rounding. The supported SkyPilot Kubernetes template emits memory
+with decimal `G`, after normalizing input suffixes; checks use those executor
+units. GPU memory ratios and explicit `instance_type` shapes are not proven by
+this boundary and fail closed; use explicit absolute `cpus` and `memory`
+requests. Native Kubernetes quantities retain their own parsing rules.

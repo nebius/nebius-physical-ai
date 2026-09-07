@@ -556,6 +556,7 @@ def preflight_skypilot_submission(
         from npa.orchestration.skypilot.k8s_gpu_catalog import (
             discover_kubernetes_gpu_inventory, preflight_kubernetes_gpu_gang,
         )
+        from npa.orchestration.skypilot.resource_quantities import kubernetes_gpu_quantities
         if native_documents:
             from npa.orchestration.skypilot.native_preflight import verify_native_nebius_submission
 
@@ -587,9 +588,10 @@ def preflight_skypilot_submission(
                 isinstance(container, Mapping) and container.get("resources") for container in global_pod.get("containers") or []
             ):
                 raise ExecutionPreflightError("gpu", "global pod placement requires explicit task pod configuration", status="unknown")
+            cpus, memory = kubernetes_gpu_quantities(resources, accelerator=str(gpu))
             preflight_kubernetes_gpu_gang(discover_kubernetes_gpu_inventory(context=context),
                 accelerator=str(gpu), node_count=int(document.get("num_nodes") or 1),
-                cpus=resources.get("cpus", 0), memory=resources.get("memory", 0),
+                cpus=cpus, memory=memory,
                 allowed_nodes=allowed, pod_spec=pod_spec)
 
     report = verify_execution_target(target, gpu_check=gpu_check)
