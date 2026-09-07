@@ -135,6 +135,13 @@ def validate_local_lance(root, files, rows):
     _config(manifest.get(16, []))
     paths, maximum = _fragments(manifest.get(2, []), files, prefix, rows)
     _require(_one(manifest, 11) == maximum)
+    for path in paths:
+        _require(files[path]["size"] >= 8)
+        with (root / path).open("rb") as data:
+            data.seek(-8, 2)
+            major, minor, magic = struct.unpack("<HH4s", data.read())
+            # Lance 4.0.0 reader.rs maps both physical versions to logical V2_0.
+            _require(magic == b"LANC" and (major, minor) in {(0, 3), (2, 0)})
 
     transaction_name = _one(manifest, 12, b"")
     _require(re.fullmatch(rb"0-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\.txn", transaction_name) is not None)

@@ -636,11 +636,23 @@ def test_initial_lance_fragment_ids_are_contiguous_uint32(modules, source, ident
         _fragments([b"\x08" + integer(identifier) + fragment], files, prefix, 6)
 
 
+@pytest.mark.parametrize("physical_version", [(0, 3), (2, 0)])
+def test_lance_logical_v2_footer_aliases_are_readable(modules, source, physical_version):
+    import lancedb
+    from archive_lance import validate_local_lance
+
+    data = next((source / "lance/embeddings.lance/data").glob("*.lance"))
+    data.write_bytes(data.read_bytes()[:-8] + struct.pack("<HH4s", *physical_version, b"LANC"))
+    inventory = {name: {"size": len(content)} for name, content in _bytes(source).items()}
+    validate_local_lance(source, inventory, 6)
+    assert len(lancedb.connect(str(source / "lance")).open_table("embeddings").to_arrow()) == 6
+
+
 @pytest.mark.parametrize("operation", ["archive", "restore"])
 @pytest.mark.parametrize("mutation", [
     "base_paths", "index", "reader_flags", "schema_metadata", "branch", "duplicate_version",
     "unknown_field", "wrong_wire", "zero_field", "truncated_length", "overlong_integer",
-    "overflow_integer", "footer", "trailing", "transaction", "extra_version", "missing_data", "extra_index",
+    "overflow_integer", "footer", "data_footer", "trailing", "transaction", "extra_version", "missing_data", "extra_index",
 ])
 def test_lance_metadata_rejected_before_reader(modules, source, store, tmp_path, operation, mutation, monkeypatch):
     archive, _ = modules
@@ -662,6 +674,9 @@ def test_lance_metadata_rejected_before_reader(modules, source, store, tmp_path,
         path.write_bytes(content[:offset] + struct.pack("<I", len(payload)) + payload + content[-16:])
     elif mutation == "footer":
         path.write_bytes(content[:-8] + b"\x01" + content[-7:])
+    elif mutation == "data_footer":
+        data = next((lance_root / "data").glob("*.lance"))
+        data.write_bytes(data.read_bytes()[:-8] + struct.pack("<HH4s", 2, 2, b"LANC"))
     elif mutation == "trailing":
         path.write_bytes(content[:-16] + b"unexpected" + content[-16:])
     elif mutation == "transaction":
