@@ -281,7 +281,7 @@ def _try_get_ssh_config(**overrides: str):
 
 
 def _remote_bash(script: str) -> str:
-    return f"bash -lc {shlex.quote(script)}"
+    return f"bash -c {shlex.quote(script)}"
 
 
 def _run_fiftyone_command(
@@ -291,15 +291,17 @@ def _run_fiftyone_command(
     stream: bool = False,
     label: str | None = None,
 ) -> tuple[int, str, str]:
-    """Run a FiftyOne remote command, accepting the app-ready marker as success.
+    """Run a command, accepting an exact terminal readiness marker as success.
 
     FiftyOne can leave child processes or systemd restart work racing with the
     parent shell. In practice Paramiko may report a nonzero status even after
     the command printed the explicit ready marker and the app is healthy. The
-    marker is the command-level success contract for these scripts.
+    marker is the command-level success contract for these scripts. Diagnostic
+    logs may contain earlier markers, so only a final standalone marker counts.
     """
     code, out, err = ssh.run(command, stream=stream)
-    if code == 0 or FIFTYONE_READY_MARKER in out:
+    final_line = out.rstrip().splitlines()[-1] if out.strip() else ""
+    if code == 0 or final_line == FIFTYONE_READY_MARKER:
         return code, out, err
     # Mirror SSHClient.run_or_raise: never echo the command back (FiftyOne
     # install scripts can carry credentials inline). Surface the step label,
@@ -1445,7 +1447,7 @@ for _ in $(seq 1 {FIFTYONE_READY_ATTEMPTS}); do
 done
 sudo systemctl --no-pager status {FIFTYONE_SERVICE} || true
 echo "WARNING: FiftyOne app did not respond on port {port} before readiness timeout" >&2
-exit 0
+exit 1
 """
 
 
@@ -1798,7 +1800,7 @@ if systemctl cat {FIFTYONE_SERVICE} >/dev/null 2>&1; then
   done
   sudo systemctl --no-pager status {FIFTYONE_SERVICE} || true
   echo "WARNING: FiftyOne app did not respond on port ${{app_port}} before restart readiness timeout" >&2
-  exit 0
+  exit 1
 fi
 """
     return _remote_bash(script)
@@ -2041,7 +2043,7 @@ for _ in $(seq 1 {FIFTYONE_READY_ATTEMPTS}); do
 done
 sudo docker logs --tail 100 {FIFTYONE_CONTAINER_NAME} || true
 echo "WARNING: FiftyOne container did not respond before restart readiness timeout" >&2
-exit 0
+exit 1
 """
     return _remote_bash(host_script)
 

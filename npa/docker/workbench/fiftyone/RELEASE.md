@@ -31,3 +31,7 @@ process and update supported image metadata together after publication.
 The existing non-root SkyPilot prerequisites and bundled MongoDB/Brain path are
 retained. The earlier bootstrap correction added sudo, SSH and rsync and replaced
 the bare Bash entrypoint with command passthrough.
+
+The candidate also updates the Python base security release and installs the
+hash-locked packaging tools in both Python environments, so the global pip and
+wheel copies cannot retain older vulnerable versions.

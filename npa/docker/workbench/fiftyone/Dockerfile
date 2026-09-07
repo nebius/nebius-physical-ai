@@ -1,6 +1,6 @@
-# Digest pinned 2026-06-02. Tag: python:3.11-slim-trixie
+# Digest pinned to the maintained Python security release.
 # To update: re-resolve via registry API and update digest below.
-FROM python:3.11-slim-trixie@sha256:a3ab0b966bc4e91546a033e22093cb840908979487a9fc0e6e38295747e49ac0
+FROM python:3.11.16-slim-trixie@sha256:9534e5a8e315485d4061ed659af0fd78a284c015f9b73661b41d6bab25604534
 
 ARG FIFTYONE_VERSION=1.21.0
 ARG BOTO3_VERSION=1.43.6
@@ -32,6 +32,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PATH=/opt/fiftyone/venv/bin:$PATH \
     PYTHONUNBUFFERED=1
 
+COPY --chmod=0644 docker/workbench/sonic/packaging-requirements.txt /opt/npa-packaging-requirements.txt
+
 RUN apt-get update \
     && apt-get upgrade -y --no-install-recommends \
     && apt-get install -y --no-install-recommends \
@@ -58,7 +60,9 @@ RUN apt-get update \
       'PasswordAuthentication no' \
       'PermitRootLogin no' \
       > /etc/ssh/sshd_config.d/99-npa-container.conf \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && python -m pip install --no-cache-dir --require-hashes --only-binary=:all: \
+      -r /opt/npa-packaging-requirements.txt
 
 # SkyPilot invokes apt and service through sudo. Restricting executable names
 # would be cosmetic because apt can install arbitrary root code; this grant is
@@ -84,7 +88,8 @@ WORKDIR /opt/fiftyone
 # Replace any wheel-provided database binary before this installation layer is
 # committed, so an older executable cannot survive in an ancestor layer.
 RUN python -m venv "${FIFTYONE_VENV}" \
-    && python -m pip install --upgrade pip setuptools wheel \
+    && python -m pip install --no-cache-dir --require-hashes --only-binary=:all: \
+      -r /opt/npa-packaging-requirements.txt \
     && python -m pip install --no-cache-dir \
       "fiftyone==${FIFTYONE_VERSION}" \
       "boto3==${BOTO3_VERSION}" \

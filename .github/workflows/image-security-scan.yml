@@ -220,7 +220,7 @@ jobs:
             image: nvidia/cuda:13.0.2-base-ubuntu24.04@sha256:2ab6381d970b211fb93853796dc6707eb8a72575a375c422b17cf4d8b2641701
             purge_linux_libc_dev: false
           - name: python-3-11-slim-trixie
-            image: python:3.11-slim-trixie@sha256:a3ab0b966bc4e91546a033e22093cb840908979487a9fc0e6e38295747e49ac0
+            image: python:3.11.16-slim-trixie@sha256:9534e5a8e315485d4061ed659af0fd78a284c015f9b73661b41d6bab25604534
             purge_linux_libc_dev: false
     steps:
       - name: Resolve scan target
