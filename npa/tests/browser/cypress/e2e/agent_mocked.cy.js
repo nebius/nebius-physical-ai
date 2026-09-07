@@ -3662,6 +3662,484 @@ describe("NPA agent UI with mocked APIs", () => {
   });
 });
 
+describe("NPA agent durable artifact discovery journeys", () => {
+  it("recovers a cold searched run, traverses every artifact page, and loads its exact RRD source", () => {
+    const runId = "cold-restart-artifact-run";
+    const runRef = "npa1_cold_restart_artifact_run";
+    const projectId = "project-a";
+    const bucket = "project-artifacts";
+    const resolvedPrefix = "durable-workflow-runs";
+    const unknownKey = `${resolvedPrefix}/${runId}/reports/result.future`;
+    const rrdKey = `${resolvedPrefix}/${runId}/reports/review.rrd`;
+    const capabilityPath = `/rerun/recordings/cap-${"C".repeat(43)}.rrd`;
+    let artifactLoaded = false;
+
+    cy.installAgentApiMocks();
+    cy.intercept("GET", "/api/artifacts/runs*", (req) => {
+      const url = new URL(req.url);
+      const query = String(url.searchParams.get("q") || "");
+      if (!query) {
+        req.alias = "coldIncompleteDiscovery";
+        req.reply({
+          statusCode: 200,
+          body: {
+            ok: true,
+            runs: [],
+            total_runs: null,
+            total_runs_scope: "unavailable",
+            observed_run_count: 0,
+            observed_match_count: 0,
+            query_complete: false,
+            pagination_complete: false,
+            next_cursor: "",
+            access: { status: "partial", scope: "partial_tenant" },
+          },
+        });
+        return;
+      }
+      expect(query).to.eq("cold-restart");
+      req.alias = "coldRunSearch";
+      req.reply({
+        statusCode: 200,
+        body: {
+          ok: true,
+          runs: [{
+            run_id: runId,
+            run_ref: runRef,
+            project_id: projectId,
+            bucket,
+            resolved_prefix: resolvedPrefix,
+            source_type: "artifact_storage",
+            source_label: "S3 artifacts",
+            summary_complete: false,
+            has_viewable: null,
+          }],
+          total_runs: null,
+          total_runs_scope: "unavailable",
+          observed_run_count: 1,
+          observed_match_count: 1,
+          query_complete: false,
+          pagination_complete: false,
+          next_cursor: "",
+          access: { status: "partial", scope: "partial_tenant" },
+        },
+      });
+    });
+    cy.intercept("GET", `/api/artifacts/run/${runRef}*`, (req) => {
+      const url = new URL(req.url);
+      expect(url.searchParams.get("project_id")).to.eq(projectId);
+      expect(url.searchParams.get("resource_bucket")).to.eq(bucket);
+      expect(url.searchParams.get("resolved_prefix")).to.eq(resolvedPrefix);
+      expect(url.searchParams.get("source_selected")).to.eq("1");
+      const cursor = String(url.searchParams.get("cursor") || "");
+      const common = {
+        ok: true,
+        run_id: runId,
+        run_ref: runRef,
+        project_id: projectId,
+        bucket,
+        resolved_prefix: resolvedPrefix,
+      };
+      if (!cursor) {
+        req.alias = "coldInventoryPageOne";
+        req.reply({
+          statusCode: 200,
+          body: {
+            ...common,
+            artifacts: [{
+              key: unknownKey,
+              s3_uri: `s3://${bucket}/${unknownKey}`,
+              render: "download",
+              role: "output",
+              size: 31,
+            }],
+            truncated: true,
+            pagination_complete: false,
+            next_cursor: "cold-inventory-page-two",
+          },
+        });
+        return;
+      }
+      expect(cursor).to.eq("cold-inventory-page-two");
+      req.alias = "coldInventoryPageTwo";
+      req.reply({
+        statusCode: 200,
+        body: {
+          ...common,
+          artifacts: [{
+            key: rrdKey,
+            s3_uri: `s3://${bucket}/${rrdKey}`,
+            render: "rerun",
+            role: "output",
+            size: 4096,
+          }],
+          truncated: false,
+          pagination_complete: true,
+          next_cursor: "",
+        },
+      });
+    });
+    cy.intercept("POST", "/api/sim-viz/load-artifact", (req) => {
+      expect(req.body).to.deep.eq({
+        run_id: runId,
+        run_ref: runRef,
+        project_id: projectId,
+        resource_bucket: bucket,
+        resolved_prefix: resolvedPrefix,
+        source_selected: true,
+        key: rrdKey,
+        s3_uri: "",
+      });
+      artifactLoaded = true;
+      req.alias = "coldRrdLoad";
+      req.reply({
+        statusCode: 200,
+        body: {
+          ok: true,
+          render: "rerun",
+          run_ref: runRef,
+          artifact_uri: `s3://${bucket}/${rrdKey}`,
+          sim_viz: {
+            ...SIM_VIZ,
+            run_id: runId,
+            active_run_id: runId,
+            stage: "artifact-loaded",
+            artifact_render: "rerun",
+            artifact_key: rrdKey,
+            artifact_run_ref: runRef,
+            project_id: projectId,
+            resource_bucket: bucket,
+            bucket,
+            resolved_prefix: resolvedPrefix,
+            artifact_preview_url: capabilityPath,
+            artifact_download_url: capabilityPath,
+            rerun_ready: true,
+          },
+        },
+      });
+    });
+    cy.intercept("GET", "/api/sim-viz/status*", (req) => {
+      const requestedRun = new URL(req.url).searchParams.get("run_id") || "";
+      if (!artifactLoaded || requestedRun !== runId) {
+        req.reply({ statusCode: 200, body: SIM_VIZ });
+        return;
+      }
+      req.alias = "coldRrdStatus";
+      req.reply({
+        statusCode: 200,
+        body: {
+          ...SIM_VIZ,
+          run_id: runId,
+          active_run_id: runId,
+          stage: "artifact-loaded",
+          artifact_render: "rerun",
+          artifact_key: rrdKey,
+          artifact_run_ref: runRef,
+          project_id: projectId,
+          resource_bucket: bucket,
+          bucket,
+          resolved_prefix: resolvedPrefix,
+          artifact_preview_url: capabilityPath,
+          artifact_download_url: capabilityPath,
+          rerun_ready: true,
+        },
+      });
+    });
+
+    cy.visit("/");
+    cy.wait("@coldIncompleteDiscovery");
+    cy.get("#rerunBundleCover", { timeout: 20000 }).should("have.attr", "hidden");
+    cy.get("#artifactDiscoverStatus")
+      .should("contain.text", "discovery incomplete")
+      .and("not.contain.text", "total 0");
+
+    cy.get("#tabRerun").click();
+    cy.get("#artifactPrefix").clear().type("cold-restart", { delay: 0 });
+    cy.wait("@coldRunSearch");
+    cy.get(`#runIdSelect option[value="${runRef}"]`)
+      .should("have.length", 1)
+      .and("have.attr", "data-run-id", runId);
+    cy.get("#artifactDiscoverStatus")
+      .should("contain.text", "matching in bounded index 1")
+      .and("contain.text", "discovery incomplete");
+
+    cy.get("#runIdSelect").select(runRef);
+    cy.wait("@coldInventoryPageOne");
+    cy.get("#artifactList .artifact-card[data-render='download']")
+      .should("contain.text", unknownKey)
+      .within(() => {
+        cy.get("button[data-action='load-artifact']").should("not.exist");
+        cy.get("button[data-action='download-artifact']")
+          .should("have.attr", "data-run-ref", runRef)
+          .and("have.attr", "data-project-id", projectId)
+          .and("have.attr", "data-bucket", bucket)
+          .and("have.attr", "data-resolved-prefix", resolvedPrefix);
+      });
+    cy.get("#artifactLoadRunArtifacts").click();
+    cy.wait("@coldInventoryPageTwo");
+    cy.wait("@coldRrdLoad");
+    cy.get("#artifactList")
+      .should("contain.text", "2 artifacts")
+      .and("contain.text", "2 inventory pages merged");
+    cy.get(`#artifactList button[data-action="load-artifact"][data-key="${rrdKey}"]`)
+      .should("have.attr", "data-run-ref", runRef)
+      .and("have.attr", "data-project-id", projectId)
+      .and("have.attr", "data-bucket", bucket)
+      .and("have.attr", "data-resolved-prefix", resolvedPrefix);
+
+    cy.window().then((win) => win.__NPA_AGENT_TEST__.refresh());
+    cy.wait("@coldRrdStatus").then(({ request, response }) => {
+      expect(new URL(request.url).searchParams.get("run_id")).to.eq(runId);
+      expect(response.body).to.deep.include({
+        run_id: runId,
+        artifact_run_ref: runRef,
+        artifact_key: rrdKey,
+        project_id: projectId,
+        resource_bucket: bucket,
+        resolved_prefix: resolvedPrefix,
+        rerun_ready: true,
+      });
+    });
+    cy.get("#simRunId").should("have.text", runId);
+    cy.get("#renderedDataSummary").should("contain.text", rrdKey);
+    cy.get("#rerunFrame").should("not.have.attr", "hidden");
+    cy.get("#rerunFrame").should("have.attr", "data-rerun-run-key", runId);
+    cy.get("#rerunFrame")
+      .invoke("attr", "data-rerun-recording-url")
+      .should("include", capabilityPath);
+  });
+
+  it("invalidates a stale selected source after access refresh and loads only the refreshed tuple", () => {
+    const runId = "access-refreshed-run";
+    const projectId = "project-a";
+    const oldSource = {
+      run_ref: "npa1_access_source_before",
+      bucket: "artifacts-before-refresh",
+      resolved_prefix: "runs-before-refresh",
+    };
+    const newSource = {
+      run_ref: "npa1_access_source_after",
+      bucket: "artifacts-after-refresh",
+      resolved_prefix: "runs-after-refresh",
+    };
+    const oldKey = `${oldSource.resolved_prefix}/${runId}/review.rrd`;
+    const newKey = `${newSource.resolved_prefix}/${runId}/review.rrd`;
+    const capabilityPath = `/rerun/recordings/cap-${"D".repeat(43)}.rrd`;
+    let accessRefreshed = false;
+    let oldLoads = 0;
+    let newLoads = 0;
+
+    const accessReport = (source) => ({
+      apiVersion: "npa.agent.access/v1",
+      identity: {
+        deployment_project_id: projectId,
+        deployment_project_name: "Synthetic project",
+      },
+      status: "partial",
+      scope: "partial_tenant",
+      capabilities: {},
+      projects: [{
+        id: projectId,
+        name: "Synthetic project",
+        deployment_project: true,
+        status: "available",
+        capabilities: {
+          artifact_discovery: { status: "available", reason: "Fixture listing is available." },
+          artifact_read: { status: "available", reason: "Fixture reads are available." },
+          workflow_submission: { status: "available", reason: "Fixture home project." },
+        },
+        resources: [{
+          type: "object_storage_bucket",
+          id: `resource-${source.run_ref}`,
+          name: source.bucket,
+          project_id: projectId,
+          capabilities: {
+            artifact_discovery: { status: "available", reason: "Fixture listing is available." },
+            artifact_read: { status: "available", reason: "Fixture reads are available." },
+          },
+        }],
+      }],
+      errors: [],
+    });
+    const runRow = (source) => ({
+      run_id: runId,
+      run_ref: source.run_ref,
+      project_id: projectId,
+      bucket: source.bucket,
+      resolved_prefix: source.resolved_prefix,
+      source_type: "artifact_storage",
+      source_label: "S3 artifacts",
+      summary_complete: true,
+      has_viewable: true,
+      artifact_count: 1,
+    });
+
+    cy.installAgentApiMocks();
+    cy.intercept("GET", "/api/access*", (req) => {
+      const refresh = new URL(req.url).searchParams.get("refresh") === "true";
+      if (refresh) accessRefreshed = true;
+      req.alias = refresh ? "accessTupleAfter" : "accessTupleBefore";
+      req.reply({ statusCode: 200, body: accessReport(refresh ? newSource : oldSource) });
+    });
+    cy.intercept("GET", "/api/artifacts/runs*", (req) => {
+      const url = new URL(req.url);
+      const requestedProject = url.searchParams.get("project_id") || "";
+      const requestedBucket = url.searchParams.get("resource_bucket") || "";
+      if (!requestedBucket) {
+        req.alias = "unscopedTupleDiscovery";
+        req.reply({
+          statusCode: 200,
+          body: {
+            ok: true,
+            runs: [],
+            total_runs: null,
+            observed_run_count: 0,
+            query_complete: false,
+            pagination_complete: false,
+            next_cursor: "",
+          },
+        });
+        return;
+      }
+      expect(requestedProject).to.eq(projectId);
+      const expected = accessRefreshed ? newSource : oldSource;
+      expect(requestedBucket).to.eq(expected.bucket);
+      req.alias = accessRefreshed ? "newTupleRuns" : "oldTupleRuns";
+      req.reply({
+        statusCode: 200,
+        body: {
+          ok: true,
+          runs: [runRow(expected)],
+          total_runs: 1,
+          query_complete: true,
+          pagination_complete: true,
+          next_cursor: "",
+        },
+      });
+    });
+    cy.intercept(
+      "GET",
+      new RegExp(`/api/artifacts/run/(?:${oldSource.run_ref}|${newSource.run_ref})(?:\\?|$)`),
+      (req) => {
+        const requestedRef = decodeURIComponent(new URL(req.url).pathname.split("/").pop());
+        const source = requestedRef === newSource.run_ref ? newSource : oldSource;
+        const key = source === newSource ? newKey : oldKey;
+        const url = new URL(req.url);
+        expect(url.searchParams.get("project_id")).to.eq(projectId);
+        expect(url.searchParams.get("resource_bucket")).to.eq(source.bucket);
+        expect(url.searchParams.get("resolved_prefix")).to.eq(source.resolved_prefix);
+        expect(url.searchParams.get("source_selected")).to.eq("1");
+        req.alias = source === newSource ? "newTupleInventory" : "oldTupleInventory";
+        req.reply({
+          statusCode: 200,
+          body: {
+            ok: true,
+            ...runRow(source),
+            artifacts: [{
+              key,
+              s3_uri: `s3://${source.bucket}/${key}`,
+              render: "rerun",
+              role: "output",
+              size: 2048,
+            }],
+            truncated: false,
+            pagination_complete: true,
+            next_cursor: "",
+          },
+        });
+      },
+    );
+    cy.intercept("POST", "/api/sim-viz/load-artifact", (req) => {
+      const source = req.body.run_ref === newSource.run_ref ? newSource : oldSource;
+      const key = source === newSource ? newKey : oldKey;
+      expect(req.body).to.deep.eq({
+        run_id: runId,
+        run_ref: source.run_ref,
+        project_id: projectId,
+        resource_bucket: source.bucket,
+        resolved_prefix: source.resolved_prefix,
+        source_selected: true,
+        key,
+        s3_uri: "",
+      });
+      if (source === newSource) newLoads += 1;
+      else oldLoads += 1;
+      req.alias = source === newSource ? "newTupleLoad" : "oldTupleLoad";
+      req.reply({
+        statusCode: 200,
+        body: {
+          ok: true,
+          render: "rerun",
+          run_ref: source.run_ref,
+          sim_viz: {
+            ...SIM_VIZ,
+            run_id: runId,
+            active_run_id: runId,
+            stage: "artifact-loaded",
+            artifact_render: "rerun",
+            artifact_key: key,
+            artifact_run_ref: source.run_ref,
+            project_id: projectId,
+            resource_bucket: source.bucket,
+            bucket: source.bucket,
+            resolved_prefix: source.resolved_prefix,
+            artifact_preview_url: capabilityPath,
+            artifact_download_url: capabilityPath,
+            rerun_ready: true,
+          },
+        },
+      });
+    });
+
+    cy.visit("/");
+    cy.wait("@accessTupleBefore");
+    cy.wait("@unscopedTupleDiscovery");
+    cy.get("#rerunBundleCover", { timeout: 20000 }).should("have.attr", "hidden");
+    cy.get('#agentAccessProjects button[data-access-action="list"]').click();
+    cy.wait("@oldTupleRuns");
+    cy.get("#tabRerun").click();
+    cy.get("#runIdSelect").select(oldSource.run_ref);
+    cy.wait("@oldTupleInventory");
+    cy.wait("@oldTupleLoad");
+    cy.get("#simRunId").should("have.text", runId);
+    cy.then(() => {
+      expect(oldLoads, "old source loaded once before refresh").to.eq(1);
+      expect(newLoads, "new source has not loaded before refresh").to.eq(0);
+    });
+
+    cy.get("#tabMain").click();
+    cy.get("#agentAccessRefresh").click();
+    cy.wait("@accessTupleAfter");
+    cy.get("#agentAccessBucketSelect").should("have.value", newSource.bucket);
+    cy.window().its("__NPA_AGENT_TEST__.activeRunId").invoke("call").should("eq", "");
+    cy.get("#runSummary").should("have.text", "Select a run to load its result.");
+    cy.get("#artifactList").should("contain.text", "Select a run to list its artifacts");
+    cy.get(`#runIdSelect option[value="${oldSource.run_ref}"]`).should("not.exist");
+    cy.then(() => expect(oldLoads, "refresh does not replay the stale source").to.eq(1));
+
+    cy.get("#tabRerun").click();
+    cy.get("#artifactRefreshRuns").click();
+    cy.wait("@newTupleRuns");
+    cy.get(`#runIdSelect option[value="${newSource.run_ref}"]`)
+      .should("have.length", 1)
+      .and("have.attr", "data-bucket", newSource.bucket)
+      .and("have.attr", "data-resolved-prefix", newSource.resolved_prefix);
+    cy.get("#runIdSelect").select(newSource.run_ref);
+    cy.wait("@newTupleInventory");
+    cy.wait("@newTupleLoad");
+    cy.get(`#artifactList button[data-action="load-artifact"][data-key="${newKey}"]`)
+      .should("have.attr", "data-run-ref", newSource.run_ref)
+      .and("have.attr", "data-bucket", newSource.bucket)
+      .and("have.attr", "data-resolved-prefix", newSource.resolved_prefix);
+    cy.get("#artifactList").should("not.contain.text", oldKey);
+    cy.get("#renderedDataSummary").should("contain.text", newKey);
+    cy.then(() => {
+      expect(oldLoads, "stale tuple is never reloaded").to.eq(1);
+      expect(newLoads, "refreshed tuple loads once").to.eq(1);
+    });
+  });
+});
+
 describe("NPA agent preferred-recording mount handoff", () => {
   it("replaces an in-flight page-boot mount with the selected run capability", () => {
     const runId = "boot-handoff-run";

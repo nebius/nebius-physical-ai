@@ -298,6 +298,43 @@ class ArtifactListPage:
 
 
 @dataclass(frozen=True)
+class ArtifactSource:
+    """One authorized direct run-parent in durable artifact storage.
+
+    ``resolved_prefix`` is the exact directory *above* run ids.  Keeping the
+    owning project alongside the bucket matters even when a provider happens to
+    expose equal bucket names through one credential scope: authorization and
+    ambiguity are defined by the complete source tuple, not by bucket name.
+    """
+
+    project_id: str
+    bucket: str
+    resolved_prefix: str = ""
+
+    def __post_init__(self) -> None:
+        project_id = str(self.project_id or "").strip()
+        bucket = str(self.bucket or "").strip()
+        resolved_prefix = _validate_source_prefix(self.resolved_prefix)
+        if (
+            not project_id
+            or len(project_id) > 255
+            or "/" in project_id
+            or "\\" in project_id
+            or any(ord(char) < 33 for char in project_id)
+        ):
+            raise ArtifactDiscoveryError("artifact source project_id is invalid")
+        if not _SAFE_BUCKET_RE.fullmatch(bucket):
+            raise ArtifactDiscoveryError("artifact source bucket is invalid")
+        object.__setattr__(self, "project_id", project_id)
+        object.__setattr__(self, "bucket", bucket)
+        object.__setattr__(self, "resolved_prefix", resolved_prefix)
+
+    @property
+    def identity(self) -> tuple[str, str, str]:
+        return (self.project_id, self.bucket, self.resolved_prefix)
+
+
+@dataclass(frozen=True)
 class RunSummary:
     run_id: str
     last_modified: str
@@ -1839,7 +1876,11 @@ def list_run_prefixes(
     excluded = _normalized_discovery_exclusions(exclude)
     children = []
     for child in list_run_categories(bucket, base_prefix=parent, s3=s3):
-        run_id = child.rsplit("/", 1)[-1].strip()
+        untrusted_run_id = child.rsplit("/", 1)[-1].strip()
+        try:
+            run_id = _validate_run_basename(untrusted_run_id)
+        except ArtifactDiscoveryError:
+            continue
         if (
             not run_id
             or is_infrastructure_root(run_id)
@@ -1928,10 +1969,230 @@ def list_all_run_prefixes(
     )
 
 
+def _run_source_identity(run: RunSummary) -> tuple[str, str, str, str]:
+    return (run.project_id, run.bucket, run.resolved_prefix, run.run_id)
+
+
+def _merge_same_run_summary(first: RunSummary, second: RunSummary) -> RunSummary:
+    """Merge repeated observations of one exact source without double-counting."""
+    if _run_source_identity(first) != _run_source_identity(second):
+        raise ArtifactDiscoveryError("cannot merge different artifact run sources")
+    preferred = max(
+        (first, second),
+        key=lambda item: (
+            bool(item.summary_complete),
+            item.artifact_count,
+            item.canonical_score,
+            item.last_modified,
+        ),
+    )
+    started = [value for value in (first.started_at, second.started_at) if value]
+    if first.has_viewable is True or second.has_viewable is True:
+        has_viewable: bool | None = True
+    elif any(
+        item.summary_complete and item.has_viewable is False for item in (first, second)
+    ):
+        has_viewable = False
+    elif first.has_viewable is None or second.has_viewable is None:
+        has_viewable = None
+    else:
+        has_viewable = False
+    return dataclass_replace(
+        preferred,
+        last_modified=max(first.last_modified, second.last_modified),
+        started_at=min(started) if started else "",
+        artifact_count=max(first.artifact_count, second.artifact_count),
+        has_viewable=has_viewable,
+        summary_complete=first.summary_complete or second.summary_complete,
+        output_artifact_count=max(
+            first.output_artifact_count, second.output_artifact_count
+        ),
+        input_artifact_count=max(
+            first.input_artifact_count, second.input_artifact_count
+        ),
+        metadata_artifact_count=max(
+            first.metadata_artifact_count, second.metadata_artifact_count
+        ),
+        namespaces=tuple(dict.fromkeys((*first.namespaces, *second.namespaces))),
+        canonical_score=max(first.canonical_score, second.canonical_score),
+    )
+
+
+def _run_summary_sort_key(run: RunSummary) -> tuple[Any, ...]:
+    return (
+        run.started_at or run.last_modified,
+        run.run_id.lower(),
+        run.canonical_score,
+        run.artifact_count,
+        run.last_modified,
+        run.project_id,
+        run.bucket,
+        run.resolved_prefix,
+    )
+
+
+def merge_run_list_pages(
+    pages: "list[RunListPage] | tuple[RunListPage, ...]",
+    *,
+    limit: int,
+) -> RunListPage:
+    """Merge bounded pages by complete source identity.
+
+    When every input is exhaustive, ``total_runs`` is an exact de-duplicated
+    total.  Otherwise it is only the number of distinct rows actually observed;
+    ``truncated``/``discovery_complete`` keep callers from presenting that count
+    as a global total.
+    """
+    if limit <= 0:
+        raise ArtifactDiscoveryError("limit must be > 0")
+    page_list = list(pages)
+    merged: dict[tuple[str, str, str, str], RunSummary] = {}
+    source_errors: list[dict[str, str]] = []
+    seen_errors: set[tuple[tuple[str, str], ...]] = set()
+    for page in page_list:
+        for run in page.runs:
+            identity = _run_source_identity(run)
+            existing = merged.get(identity)
+            merged[identity] = (
+                _merge_same_run_summary(existing, run) if existing is not None else run
+            )
+        for error in page.source_errors:
+            normalized = {str(key): str(value) for key, value in error.items()}
+            identity = tuple(sorted(normalized.items()))
+            if identity not in seen_errors:
+                seen_errors.add(identity)
+                source_errors.append(normalized)
+    ordered = sorted(merged.values(), key=_run_summary_sort_key, reverse=True)
+    total = len(ordered)
+    truncated = (
+        any(page.truncated or not page.discovery_complete for page in page_list)
+        or total > limit
+    )
+    return RunListPage(
+        runs=ordered[:limit],
+        truncated=truncated,
+        total_runs=total,
+        limit=limit,
+        discovery_complete=all(page.discovery_complete for page in page_list),
+        source_errors=tuple(source_errors),
+    )
+
+
 # --- Multi-bucket discovery ---------------------------------------------------
 # The agent may be configured with several buckets. Discovery spans only the
 # primary and explicitly configured extras; it never enumerates unrelated buckets
 # merely because the credentials happen to be able to see them.
+
+
+def list_runs_across_sources(
+    sources: "list[ArtifactSource] | tuple[ArtifactSource, ...]",
+    *,
+    limit: int = 50,
+    contains: str = "",
+    exclude: "set[str] | None" = None,
+    s3=None,
+) -> RunListPage:
+    """Discover immediate runs below authorized direct-parent sources.
+
+    Unlike generic bucket discovery, an ``ArtifactSource`` explicitly says its
+    prefix is already the directory above run ids.  That makes timestamp-less
+    ids discoverable without guessing whether the prefix is a category
+    container.  Every returned row retains the full project/bucket/prefix tuple.
+    """
+    if limit <= 0:
+        raise ArtifactDiscoveryError("limit must be > 0")
+    if s3 is None:
+        raise ArtifactDiscoveryError("s3 client is required")
+    unique_sources: list[ArtifactSource] = []
+    seen_sources: set[tuple[str, str, str]] = set()
+    for source in sources:
+        if not isinstance(source, ArtifactSource):
+            raise ArtifactDiscoveryError(
+                "direct artifact discovery requires ArtifactSource values"
+            )
+        if source.identity in seen_sources:
+            continue
+        seen_sources.add(source.identity)
+        unique_sources.append(source)
+    if not unique_sources:
+        return RunListPage(runs=[], truncated=False, total_runs=0, limit=limit)
+    excluded = _normalized_discovery_exclusions(exclude)
+
+    def _runs_for_source(source: ArtifactSource) -> RunListPage:
+        if _path_in_non_run_tree(source.resolved_prefix, excluded):
+            return RunListPage(
+                runs=[],
+                truncated=True,
+                total_runs=0,
+                limit=limit,
+                discovery_complete=False,
+                source_errors=(
+                    {
+                        "project_id": source.project_id,
+                        "bucket": source.bucket,
+                        "resolved_prefix": source.resolved_prefix,
+                        "code": "artifact_source_not_searchable",
+                        "message": "The configured artifact source is not a searchable run parent.",
+                    },
+                ),
+            )
+        try:
+            page = list_run_prefixes(
+                source.bucket,
+                prefix=source.resolved_prefix,
+                limit=limit,
+                contains=contains,
+                exclude=exclude,
+                s3=s3,
+            )
+        except (ArtifactDiscoveryError, ClientError, BotoCoreError):
+            return RunListPage(
+                runs=[],
+                truncated=True,
+                total_runs=0,
+                limit=limit,
+                discovery_complete=False,
+                source_errors=(
+                    {
+                        "project_id": source.project_id,
+                        "bucket": source.bucket,
+                        "resolved_prefix": source.resolved_prefix,
+                        "code": "artifact_discovery_unavailable",
+                        "message": "Run discovery is unavailable for this artifact source.",
+                    },
+                ),
+            )
+        return dataclass_replace(
+            page,
+            runs=[
+                dataclass_replace(
+                    run,
+                    project_id=source.project_id,
+                    bucket=source.bucket,
+                    resolved_prefix=source.resolved_prefix,
+                    namespaces=(source.resolved_prefix,),
+                )
+                for run in page.runs
+            ],
+        )
+
+    from concurrent.futures import ThreadPoolExecutor
+
+    max_workers = min(len(unique_sources), RUN_DISCOVERY_MAX_WORKERS)
+    if max_workers <= 1:
+        pages = [_runs_for_source(unique_sources[0])]
+    else:
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            pages = list(pool.map(_runs_for_source, unique_sources))
+    merged = merge_run_list_pages(pages, limit=limit)
+    # Direct sources are disjoint by their complete tuple, so successful source
+    # totals can be summed even when an individual page was limit-truncated.
+    observed_total = sum(page.total_runs for page in pages)
+    return dataclass_replace(
+        merged,
+        total_runs=observed_total,
+        truncated=merged.truncated or observed_total > limit,
+    )
 
 
 def list_accessible_buckets(
@@ -2042,7 +2303,7 @@ def list_all_runs_across_buckets(
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
             results = list(pool.map(_runs_for_bucket, bucket_list))
 
-    merged: dict[tuple[str, str, str], RunSummary] = {}
+    merged: dict[tuple[str, str, str, str], RunSummary] = {}
     discovery_complete = True
     any_bucket_truncated = False
     total = 0
@@ -2061,7 +2322,7 @@ def list_all_runs_across_buckets(
         if source_error is not None:
             source_errors.append(source_error)
         for run in runs:
-            merged[(run.bucket, run.resolved_prefix, run.run_id)] = run
+            merged[_run_source_identity(run)] = run
     ordered = sorted(
         merged.values(),
         key=lambda item: (
@@ -2149,7 +2410,7 @@ def list_runs_at_prefix_across_buckets(
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
             results = list(pool.map(_runs_for_bucket, bucket_list))
 
-    merged: dict[tuple[str, str, str], RunSummary] = {}
+    merged: dict[tuple[str, str, str, str], RunSummary] = {}
     total = 0
     discovery_complete = True
     any_bucket_truncated = False
@@ -2161,7 +2422,7 @@ def list_runs_at_prefix_across_buckets(
         if source_error is not None:
             source_errors.append(source_error)
         for run in runs:
-            merged[(run.bucket, run.resolved_prefix, run.run_id)] = run
+            merged[_run_source_identity(run)] = run
     ordered = sorted(
         merged.values(),
         key=lambda item: (
@@ -2261,23 +2522,56 @@ def list_runs_cached_multi(
             s3=s3,
         )
 
-    now = time.monotonic()
-    with _RUN_LIST_LOCK:
-        entry = _RUN_LIST_CACHE.get(key)
-    if entry is not None:
-        ts, page = entry
-        if now - ts < ttl:
-            return page
-        _schedule_run_list_refresh(key, _compute, sync=refresh_sync)
-        if refresh_sync:
-            with _RUN_LIST_LOCK:
-                entry = _RUN_LIST_CACHE.get(key)
-            return entry[1] if entry else page
-        return page
-    page = _compute()
-    with _RUN_LIST_LOCK:
-        _RUN_LIST_CACHE[key] = (time.monotonic(), page)
-    return page
+    return _cached_run_list_page(
+        key,
+        _compute,
+        ttl=float(ttl),
+        refresh_sync=refresh_sync,
+    )
+
+
+def list_runs_cached_sources(
+    sources: "list[ArtifactSource] | tuple[ArtifactSource, ...]",
+    *,
+    limit: int = 50,
+    contains: str = "",
+    exclude: "set[str] | None" = None,
+    s3=None,
+    ttl: "float | None" = None,
+    refresh_sync: bool = False,
+) -> RunListPage:
+    """Cache discovery for explicit direct-parent source tuples."""
+    if ttl is None:
+        ttl = DEFAULT_RUN_LIST_TTL
+    source_list = tuple(sources)
+    if any(not isinstance(source, ArtifactSource) for source in source_list):
+        raise ArtifactDiscoveryError(
+            "direct artifact discovery requires ArtifactSource values"
+        )
+    key = (
+        "__sources__",
+        _s3_cache_identity(s3),
+        tuple(sorted(source.identity for source in source_list)),
+        int(limit),
+        tuple(sorted(exclude or ())),
+        str(contains or ""),
+    )
+
+    def _compute() -> RunListPage:
+        return list_runs_across_sources(
+            source_list,
+            limit=limit,
+            contains=contains,
+            exclude=exclude,
+            s3=s3,
+        )
+
+    return _cached_run_list_page(
+        key,
+        _compute,
+        ttl=float(ttl),
+        refresh_sync=refresh_sync,
+    )
 
 
 def find_run_artifacts_across_buckets(
@@ -2332,43 +2626,107 @@ def find_run_artifacts_across_buckets(
 # work, it does not approximate counts or ordering.
 DEFAULT_RUN_LIST_TTL = 30.0
 _RUN_LIST_CACHE: "dict[tuple, tuple[float, RunListPage]]" = {}
-_RUN_LIST_INFLIGHT: "set[tuple]" = set()
+_RUN_LIST_INFLIGHT: "dict[tuple, tuple[int, threading.Event]]" = {}
 _RUN_LIST_LOCK = threading.Lock()
+_RUN_LIST_GENERATION = 0
 
 
 def _run_list_cache_clear() -> None:
-    """Drop all cached run-list pages (test/maintenance helper)."""
+    """Invalidate cached pages, including results from older in-flight work."""
+    global _RUN_LIST_GENERATION
     with _RUN_LIST_LOCK:
+        _RUN_LIST_GENERATION += 1
         _RUN_LIST_CACHE.clear()
-        _RUN_LIST_INFLIGHT.clear()
 
 
 def _schedule_run_list_refresh(
     key: tuple, compute: "Callable[[], RunListPage]", *, sync: bool = False
 ) -> "threading.Thread | None":
-    """Refresh a stale cache entry. Runs in a daemon thread unless ``sync``."""
-
-    def _run() -> None:
-        try:
-            page = compute()
-        except Exception:  # noqa: BLE001 - background refresh must never raise
-            page = None
-        finally:
-            with _RUN_LIST_LOCK:
-                if page is not None:
-                    _RUN_LIST_CACHE[key] = (time.monotonic(), page)
-                _RUN_LIST_INFLIGHT.discard(key)
+    """Refresh one entry, waiting for equivalent in-flight work when requested."""
 
     with _RUN_LIST_LOCK:
-        if key in _RUN_LIST_INFLIGHT:
-            return None
-        _RUN_LIST_INFLIGHT.add(key)
+        generation = _RUN_LIST_GENERATION
+        existing = _RUN_LIST_INFLIGHT.get(key)
+        if existing is not None and existing[0] == generation:
+            event = existing[1]
+            owner = False
+            token = existing
+        else:
+            event = threading.Event()
+            token = (generation, event)
+            _RUN_LIST_INFLIGHT[key] = token
+            owner = True
+    if not owner:
+        if sync:
+            event.wait()
+        return None
+
+    def _run() -> None:
+        page: RunListPage | None = None
+        failure: Exception | None = None
+        try:
+            page = compute()
+        except Exception as exc:  # noqa: BLE001 - async refresh degrades to stale
+            failure = exc
+        finally:
+            with _RUN_LIST_LOCK:
+                if page is not None and generation == _RUN_LIST_GENERATION:
+                    _RUN_LIST_CACHE[key] = (time.monotonic(), page)
+                if _RUN_LIST_INFLIGHT.get(key) == token:
+                    _RUN_LIST_INFLIGHT.pop(key, None)
+            event.set()
+        if failure is not None and sync:
+            raise failure
+
     if sync:
         _run()
         return None
     thread = threading.Thread(target=_run, name="npa-runlist-refresh", daemon=True)
     thread.start()
     return thread
+
+
+def _cached_run_list_page(
+    key: tuple,
+    compute: "Callable[[], RunListPage]",
+    *,
+    ttl: float,
+    refresh_sync: bool,
+) -> RunListPage:
+    """Serve one cached page, with an optionally authoritative sync refresh."""
+    now = time.monotonic()
+    with _RUN_LIST_LOCK:
+        entry = _RUN_LIST_CACHE.get(key)
+        generation = _RUN_LIST_GENERATION
+    if entry is None:
+        page = compute()
+        with _RUN_LIST_LOCK:
+            if generation == _RUN_LIST_GENERATION:
+                _RUN_LIST_CACHE[key] = (time.monotonic(), page)
+        return page
+
+    timestamp, stale_page = entry
+    if not refresh_sync and now - timestamp < ttl:
+        return stale_page
+
+    _schedule_run_list_refresh(key, compute, sync=refresh_sync)
+    if not refresh_sync:
+        return stale_page
+
+    with _RUN_LIST_LOCK:
+        refreshed = _RUN_LIST_CACHE.get(key)
+    if refreshed is not None and refreshed[0] > timestamp:
+        return refreshed[1]
+
+    # An already-running asynchronous refresh may have failed or been invalidated
+    # while this caller waited. A synchronous request must not silently return the
+    # stale (notably empty) page, so retry once as the foreground owner.
+    _schedule_run_list_refresh(key, compute, sync=True)
+    with _RUN_LIST_LOCK:
+        refreshed = _RUN_LIST_CACHE.get(key)
+    if refreshed is not None and refreshed[0] > timestamp:
+        return refreshed[1]
+    return stale_page
 
 
 def list_runs_cached(
@@ -2387,7 +2745,8 @@ def list_runs_cached(
     """TTL + stale-while-revalidate wrapper over :func:`list_runs` /
     :func:`list_all_runs`.
 
-    - Fresh cache hit (age < ``ttl``): returned immediately, no S3 calls.
+    - Fresh cache hit (age < ``ttl``): returned immediately unless an explicit
+      synchronous refresh was requested.
     - Stale cache hit: the cached page is returned immediately AND a single
       background refresh is scheduled (``refresh_sync`` forces it inline, for
       tests) so the next caller sees fresh data.
@@ -2419,23 +2778,12 @@ def list_runs_cached(
             )
         return list_runs(bucket, prefix=prefix, limit=limit, contains=contains, s3=s3)
 
-    now = time.monotonic()
-    with _RUN_LIST_LOCK:
-        entry = _RUN_LIST_CACHE.get(key)
-    if entry is not None:
-        ts, page = entry
-        if now - ts < ttl:
-            return page
-        _schedule_run_list_refresh(key, _compute, sync=refresh_sync)
-        if refresh_sync:
-            with _RUN_LIST_LOCK:
-                entry = _RUN_LIST_CACHE.get(key)
-            return entry[1] if entry else page
-        return page
-    page = _compute()
-    with _RUN_LIST_LOCK:
-        _RUN_LIST_CACHE[key] = (time.monotonic(), page)
-    return page
+    return _cached_run_list_page(
+        key,
+        _compute,
+        ttl=float(ttl),
+        refresh_sync=refresh_sync,
+    )
 
 
 def _cached_server_discovered_run_summary(

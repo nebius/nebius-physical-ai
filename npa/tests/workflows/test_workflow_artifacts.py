@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from datetime import datetime, timezone
 from pathlib import Path
+import threading
 
 import pytest
 
@@ -9,6 +11,7 @@ from npa.workflows.artifacts import (
     AmbiguousRunError,
     Artifact,
     ArtifactDiscoveryError,
+    ArtifactSource,
     RunResolution,
     RunSummary,
     _merge_staging_resolutions,
@@ -27,8 +30,10 @@ from npa.workflows.artifacts import (
     list_artifacts,
     list_artifacts_page,
     list_run_categories,
+    list_runs_across_sources,
     list_runs,
     list_runs_at_prefix_across_buckets,
+    list_runs_cached_sources,
     prefer_complete_run_resolution,
     render_hint_for_object,
     resolve_run_artifact,
@@ -60,7 +65,9 @@ def test_complete_canonical_run_wins_over_same_id_one_file_overlay() -> None:
         "canonical",
         [
             canonical_rrd,
-            artifact("canonical", "cosmos_augmented/a/augmented_video.mp4", 200, "video"),
+            artifact(
+                "canonical", "cosmos_augmented/a/augmented_video.mp4", 200, "video"
+            ),
             artifact("canonical", "grade/quality_disposition.json", 50, "json"),
         ],
     )
@@ -1761,6 +1768,301 @@ def test_explicit_prefix_discovery_searches_all_accessible_project_buckets() -> 
         ("bucket-a", "project-a"),
         ("bucket-b", "project-b"),
     }
+
+
+def test_cold_direct_source_discovers_timestamp_less_run_and_native_artifacts() -> None:
+    run_id = "paidf-iaa-efeb0a24d86a"
+    parent = "durable/workflow-runs"
+    s3 = _PrefixAwareS3(
+        [
+            (f"{parent}/{run_id}/reports/image-edit.rrd", "2026-09-03T00:00:00Z"),
+            (f"{parent}/{run_id}/reports/future.blobx", "2026-09-03T00:00:01Z"),
+        ]
+    )
+    source = ArtifactSource("project-a", "bucket-a", parent)
+
+    discovered = list_runs_across_sources([source], limit=100, s3=s3)
+
+    assert discovered.discovery_complete is True
+    assert discovered.truncated is False
+    assert discovered.total_runs == 1
+    assert [item.run_id for item in discovered.runs] == [run_id]
+    assert discovered.runs[0].resolved_prefix == parent
+    assert discovered.runs[0].project_id == "project-a"
+    assert "reports" not in {item.run_id for item in discovered.runs}
+
+    first = list_artifacts_page(
+        source.bucket,
+        run_id,
+        prefix=source.resolved_prefix,
+        page_size=1,
+        s3=s3,
+    )
+    second = list_artifacts_page(
+        source.bucket,
+        run_id,
+        prefix=source.resolved_prefix,
+        cursor=first.next_cursor,
+        page_size=1,
+        s3=s3,
+    )
+    combined = [*first.artifacts, *second.artifacts]
+    assert first.truncated is True and first.next_cursor
+    assert second.truncated is False and second.next_cursor == ""
+    assert {item.render for item in combined} == {"rerun", "download"}
+
+
+def test_direct_source_exact_query_preserves_complete_source_tuple() -> None:
+    run_id = "paidf-dig-15395d41fe18"
+    parent = "published/runs"
+    source = ArtifactSource("project-a", "bucket-a", parent)
+    s3 = _PrefixAwareS3(
+        [(f"{parent}/{run_id}/reports/anomaly.rrd", "2026-09-03T00:00:00Z")]
+    )
+
+    page = list_runs_across_sources(
+        [source],
+        limit=100,
+        contains=run_id,
+        s3=s3,
+    )
+
+    assert len(page.runs) == 1
+    assert (
+        page.runs[0].project_id,
+        page.runs[0].bucket,
+        page.runs[0].resolved_prefix,
+        page.runs[0].run_id,
+    ) == (*source.identity, run_id)
+
+
+def test_direct_sources_do_not_collapse_equal_bucket_prefix_across_projects() -> None:
+    run_id = "paidf-evg-e5938e6d2c96"
+    parent = "published/runs"
+    s3 = _PrefixAwareS3(
+        [(f"{parent}/{run_id}/reports/event-video.rrd", "2026-09-03T00:00:00Z")]
+    )
+    sources = [
+        ArtifactSource("project-a", "shared-bucket", parent),
+        ArtifactSource("project-b", "shared-bucket", parent),
+    ]
+
+    page = list_runs_across_sources(sources, limit=100, s3=s3)
+
+    assert page.total_runs == 2
+    assert {
+        (item.project_id, item.bucket, item.resolved_prefix, item.run_id)
+        for item in page.runs
+    } == {
+        ("project-a", "shared-bucket", parent, run_id),
+        ("project-b", "shared-bucket", parent, run_id),
+    }
+
+
+def test_direct_source_failure_preserves_partial_rows_and_incomplete_semantics(
+    monkeypatch,
+) -> None:
+    import npa.workflows.artifacts as A
+
+    sources = [
+        ArtifactSource("project-a", "bucket-a", "published/runs"),
+        ArtifactSource("project-b", "bucket-b", "published/runs"),
+    ]
+
+    def fake_list(bucket, **_kwargs):
+        if bucket == "bucket-b":
+            raise ArtifactDiscoveryError("unavailable")
+        return A.RunListPage(
+            [A.RunSummary("visible-run", "2026-09-03T00:00:00Z", 1, True)],
+            False,
+            1,
+            100,
+        )
+
+    monkeypatch.setattr(A, "list_run_prefixes", fake_list)
+
+    page = A.list_runs_across_sources(sources, limit=100, s3=object())
+
+    assert [item.run_id for item in page.runs] == ["visible-run"]
+    assert page.runs[0].project_id == "project-a"
+    assert page.discovery_complete is False
+    assert page.truncated is True
+    assert page.total_runs == 1
+    assert page.source_errors == (
+        {
+            "project_id": "project-b",
+            "bucket": "bucket-b",
+            "resolved_prefix": "published/runs",
+            "code": "artifact_discovery_unavailable",
+            "message": "Run discovery is unavailable for this artifact source.",
+        },
+    )
+
+
+def test_direct_source_sync_refresh_replaces_fresh_empty_cache() -> None:
+    import npa.workflows.artifacts as A
+
+    A._run_list_cache_clear()
+    run_id = "paidf-iaa-efeb0a24d86a"
+    parent = "published/runs"
+    source = ArtifactSource("project-a", "bucket-a", parent)
+    s3 = _PrefixAwareS3([])
+    try:
+        initial = list_runs_cached_sources([source], limit=100, s3=s3)
+        assert initial.runs == []
+        s3._keys.append(
+            (f"{parent}/{run_id}/reports/image-edit.rrd", "2026-09-03T00:00:00Z")
+        )
+
+        refreshed = list_runs_cached_sources(
+            [source],
+            limit=100,
+            s3=s3,
+            refresh_sync=True,
+        )
+
+        assert [item.run_id for item in refreshed.runs] == [run_id]
+    finally:
+        A._run_list_cache_clear()
+
+
+def test_direct_source_sync_refresh_waits_for_inflight_refresh(monkeypatch) -> None:
+    import npa.workflows.artifacts as A
+
+    A._run_list_cache_clear()
+    source = ArtifactSource("project-a", "bucket-a", "published/runs")
+    empty = A.RunListPage([], False, 0, 100)
+    fresh = A.RunListPage(
+        [
+            A.RunSummary(
+                "paidf-dig-15395d41fe18",
+                "2026-09-03T00:00:00Z",
+                1,
+                True,
+                bucket=source.bucket,
+                project_id=source.project_id,
+                resolved_prefix=source.resolved_prefix,
+            )
+        ],
+        False,
+        1,
+        100,
+    )
+    background_started = threading.Event()
+    release_background = threading.Event()
+    sync_schedule_started = threading.Event()
+    call_lock = threading.Lock()
+    calls = 0
+
+    def fake_discovery(*_args, **_kwargs):
+        nonlocal calls
+        with call_lock:
+            calls += 1
+            call_number = calls
+        if call_number == 1:
+            return empty
+        background_started.set()
+        assert release_background.wait(timeout=5)
+        return fresh
+
+    monkeypatch.setattr(A, "list_runs_across_sources", fake_discovery)
+    original_schedule = A._schedule_run_list_refresh
+
+    def tracked_schedule(key, compute, *, sync=False):
+        if sync:
+            sync_schedule_started.set()
+        return original_schedule(key, compute, sync=sync)
+
+    monkeypatch.setattr(A, "_schedule_run_list_refresh", tracked_schedule)
+    try:
+        assert A.list_runs_cached_sources([source], limit=100, s3=object()) is empty
+        assert (
+            A.list_runs_cached_sources(
+                [source], limit=100, s3=object(), ttl=0, refresh_sync=False
+            )
+            is empty
+        )
+        assert background_started.wait(timeout=5)
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            result = pool.submit(
+                A.list_runs_cached_sources,
+                [source],
+                limit=100,
+                s3=object(),
+                refresh_sync=True,
+            )
+            assert sync_schedule_started.wait(timeout=5)
+            try:
+                with pytest.raises(FutureTimeoutError):
+                    result.result(timeout=0.2)
+            finally:
+                release_background.set()
+            assert result.result(timeout=5) is fresh
+        assert calls == 2
+    finally:
+        release_background.set()
+        A._run_list_cache_clear()
+
+
+def test_cache_clear_rejects_result_from_older_inflight_generation(monkeypatch) -> None:
+    import npa.workflows.artifacts as A
+
+    A._run_list_cache_clear()
+    source = ArtifactSource("project-a", "bucket-a", "published/runs")
+
+    def result(run_id: str) -> A.RunListPage:
+        runs = []
+        if run_id:
+            runs = [
+                A.RunSummary(
+                    run_id,
+                    "2026-09-03T00:00:00Z",
+                    1,
+                    True,
+                    bucket=source.bucket,
+                    project_id=source.project_id,
+                    resolved_prefix=source.resolved_prefix,
+                )
+            ]
+        return A.RunListPage(runs, False, len(runs), 100)
+
+    background_started = threading.Event()
+    release_background = threading.Event()
+    calls = 0
+
+    def fake_discovery(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return result("")
+        if calls == 2:
+            background_started.set()
+            assert release_background.wait(timeout=5)
+            return result("stale-run")
+        return result("fresh-run")
+
+    monkeypatch.setattr(A, "list_runs_across_sources", fake_discovery)
+    try:
+        A.list_runs_cached_sources([source], limit=100, s3=object())
+        A.list_runs_cached_sources(
+            [source], limit=100, s3=object(), ttl=0, refresh_sync=False
+        )
+        assert background_started.wait(timeout=5)
+        with A._RUN_LIST_LOCK:
+            completion = next(iter(A._RUN_LIST_INFLIGHT.values()))[1]
+
+        A._run_list_cache_clear()
+        refreshed = A.list_runs_cached_sources([source], limit=100, s3=object())
+        assert [item.run_id for item in refreshed.runs] == ["fresh-run"]
+
+        release_background.set()
+        assert completion.wait(timeout=5)
+        retained = A.list_runs_cached_sources([source], limit=100, s3=object())
+        assert [item.run_id for item in retained.runs] == ["fresh-run"]
+        assert calls == 3
+    finally:
+        release_background.set()
+        A._run_list_cache_clear()
 
 
 # --- Multi-bucket discovery ---------------------------------------------------

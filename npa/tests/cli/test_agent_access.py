@@ -350,8 +350,7 @@ def test_access_model_is_embedded_with_api_ui_and_read_boundary() -> None:
     assert "accessible_artifact_buckets(_agent_access_report())" in runtime
     assert "def _resolve_accessible_run_artifact(" in runtime
     assert (
-        "cross-project s3_uri requires a run_id and exact discovered artifact"
-        in runtime
+        "s3_uri requires a run_id and exact discovered artifact membership" in runtime
     )
     assert 'id="agentAccessPanel"' in ui_source
     assert 'id="agentAccessProjectSelect"' in ui_source
@@ -494,6 +493,38 @@ def test_cross_project_object_read_requires_exact_run_membership(monkeypatch) ->
             key="category/run-a/report.json",
             bucket="other-bucket",
         )
+
+
+def test_configured_bucket_uri_still_requires_discovered_membership(
+    monkeypatch,
+) -> None:
+    from npa.cli import agent_access_runtime as runtime
+
+    calls: list[dict[str, object]] = []
+
+    def resolve(**kwargs):
+        calls.append(kwargs)
+        return "configured-bucket", "runs/run-a/report.json", "run-a"
+
+    monkeypatch.setattr(runtime, "_resolve_accessible_run_artifact", resolve)
+    with pytest.raises(HTTPException, match="requires a run_id"):
+        runtime._authorize_agent_artifact_uri(
+            s3=object(),
+            settings={"bucket": "configured-bucket"},
+            uri="s3://configured-bucket/runs/run-a/report.json",
+        )
+
+    assert runtime._authorize_agent_artifact_uri(
+        s3=object(),
+        settings={"bucket": "configured-bucket"},
+        uri="s3://configured-bucket/runs/run-a/report.json",
+        run_id="run-a",
+    ) == ("configured-bucket", "runs/run-a/report.json", "run-a")
+    assert len(calls) == 1
+    assert calls[0]["settings"] == {"bucket": "configured-bucket"}
+    assert calls[0]["run_id"] == "run-a"
+    assert calls[0]["key"] == "runs/run-a/report.json"
+    assert calls[0]["bucket"] == "configured-bucket"
 
 
 def test_selected_run_source_requires_complete_discovery_when_unqualified(
@@ -1082,6 +1113,103 @@ def test_expired_access_cache_is_served_while_single_refresh_runs(monkeypatch) -
             timeout=2,
         )
     assert runtime._agent_access_report() is fresh
+
+
+def test_artifact_search_completeness_rejects_partial_resource_access() -> None:
+    from npa.cli import agent_access_runtime as runtime
+
+    assert runtime._artifact_search_scope_complete(_discover()) is True
+
+    def probe(bucket_name: str) -> BucketProbe:
+        if bucket_name == "bucket-b":
+            return BucketProbe("denied", "denied", "Permission denied.")
+        return _available_probe(bucket_name)
+
+    partial = _discover(probe_bucket=probe)
+    assert partial.status == "partial"
+    assert runtime._artifact_search_scope_complete(partial) is False
+
+
+def test_run_cursor_pages_an_immutable_query_and_source_snapshot() -> None:
+    from npa.cli import agent_access_runtime as runtime
+
+    runtime._clear_artifact_run_cursor_snapshots()
+    context = runtime._artifact_run_snapshot_context(
+        {
+            "q": "paidf",
+            "sources": [["project-a", "bucket-a", "physical-ai-data-factory"]],
+        }
+    )
+    first, cursor, metadata = runtime._artifact_run_snapshot_page(
+        cursor="",
+        context=context,
+        limit=2,
+        items=["run-a", "run-b", "run-c", "run-d"],
+        metadata={"query_complete": True},
+    )
+    assert first == ["run-a", "run-b"]
+    assert cursor
+    assert metadata == {"query_complete": True}
+
+    # A later mutable discovery result must not alter an in-flight traversal.
+    second, next_cursor, second_metadata = runtime._artifact_run_snapshot_page(
+        cursor=cursor,
+        context=context,
+        limit=2,
+        items=["replacement"],
+        metadata={"query_complete": False},
+    )
+    assert second == ["run-c", "run-d"]
+    assert next_cursor == ""
+    assert second_metadata == {"query_complete": True}
+
+
+def test_run_cursor_rejects_scope_change_and_access_refresh() -> None:
+    from npa.cli import agent_access_runtime as runtime
+
+    runtime._clear_artifact_run_cursor_snapshots()
+    context = runtime._artifact_run_snapshot_context({"q": "", "sources": ["a"]})
+    _first, cursor, _metadata = runtime._artifact_run_snapshot_page(
+        cursor="", context=context, limit=1, items=["run-a", "run-b"]
+    )
+
+    changed = runtime._artifact_run_snapshot_context({"q": "", "sources": ["b"]})
+    with pytest.raises(HTTPException) as mismatch:
+        runtime._artifact_run_snapshot_page(
+            cursor=cursor, context=changed, limit=1, items=None
+        )
+    assert mismatch.value.status_code == 409
+
+    runtime._clear_artifact_run_cursor_snapshots()
+    with pytest.raises(HTTPException) as stale:
+        runtime._artifact_run_snapshot_page(
+            cursor=cursor, context=context, limit=1, items=None
+        )
+    assert stale.value.status_code == 409
+
+
+def test_access_refresh_invalidates_all_derived_artifact_state(monkeypatch) -> None:
+    from npa.cli import agent_access_runtime as runtime
+
+    runtime._clear_artifact_run_cursor_snapshots()
+    context = runtime._artifact_run_snapshot_context({"q": "", "sources": ["a"]})
+    _first, cursor, _metadata = runtime._artifact_run_snapshot_page(
+        cursor="", context=context, limit=1, items=["run-a", "run-b"]
+    )
+    with runtime._AGENT_ACCESS_LOCK:
+        runtime._AGENT_EXACT_SOURCE_ACCESS_CACHE[("proof",)] = time.monotonic() + 30
+    clears: list[bool] = []
+    monkeypatch.setattr(runtime, "_run_list_cache_clear", lambda: clears.append(True))
+
+    runtime._finish_agent_access_refresh(_discover())
+
+    assert clears == [True]
+    assert runtime._AGENT_EXACT_SOURCE_ACCESS_CACHE == {}
+    with pytest.raises(HTTPException) as stale:
+        runtime._artifact_run_snapshot_page(
+            cursor=cursor, context=context, limit=1, items=None
+        )
+    assert stale.value.status_code == 409
 
 
 @pytest.mark.parametrize(

@@ -1120,6 +1120,12 @@ from agent_backend.foxglove_cloud import (
     ensure_recording_and_layout_from_credentials,
 )
 from agent_backend.foxglove_routes import FoxgloveDeps, register_foxglove_routes
+from agent_backend.artifact_routes import (
+    artifact_run_snapshot_scope,
+    build_artifact_run_detail_response,
+    build_artifact_run_list_response,
+    decide_artifact_run_lookup,
+)
 from agent_backend.leisaac import load_manifest_artifact
 from agent_backend.leisaac_routes import LeIsaacDeps, register_leisaac_routes
 from agent_backend.trajectory import goal_episode_boundary
@@ -6682,9 +6688,9 @@ def artifacts_runs(
     prefix: str = "", limit: int = 50, q: str = "", cursor: str = "",
     resource_bucket: str = "", project_id: str = "",
 ):
-    # q is a case-insensitive substring filter over a bounded, cached discovery
-    # index. Response metadata says whether that source index was complete; a
-    # bounded observed match count is never represented as a global total.
+    # The first page builds a bounded S3-backed index before applying q. Further
+    # pages traverse an immutable server-side snapshot bound to this exact
+    # authorized source/query context, so refreshes cannot skip or duplicate rows.
     try:
         s3, settings = _agent_s3_client()
         access_report = _agent_access_report()
@@ -6695,105 +6701,96 @@ def artifacts_runs(
         )
         query = str(q or "").strip()
         page_size = max(1, min(int(limit), 500))
-        offset = _artifact_run_cursor_offset(cursor)
         discovery_limit = 10_000
+        configured_sources = tuple(
+            ArtifactSource(
+                project_id=source["project_id"],
+                bucket=source["bucket"],
+                resolved_prefix=source["resolved_prefix"],
+            )
+            for source in _configured_agent_artifact_sources()
+            if source["bucket"] in buckets
+            and bucket_projects.get(source["bucket"]) == source["project_id"]
+        )
+        configured_buckets = {{source.bucket for source in configured_sources}}
+        generic_buckets = [
+            bucket for bucket in buckets if bucket not in configured_buckets
+        ]
 
         def _page_response(page, *, effective_prefix: str):
-            # The bounded discovery page is intentionally cached without the
-            # search term.  A query only filters that already-discovered index;
-            # making ``q`` part of the cache key caused every distinct browser
-            # fragment to repeat the same full multi-bucket object walk.
-            indexed = page.runs
-            if query:
-                needle = query.lower()
-                indexed = [item for item in indexed if needle in item.run_id.lower()]
-            source_complete = bool(not page.truncated and page.discovery_complete)
-            observed_match_count = len(indexed)
-            end = min(offset + page_size, len(indexed))
-            visible = indexed[offset:end]
-            has_more = end < len(indexed)
-            next_cursor = _artifact_run_cursor(end) if has_more else ""
-            return {{
-                "ok": True,
-                "contract": ARTIFACT_DISCOVERY_CONTRACT,
+            scope_complete = bool(selected_scope.get("bucket")) or (
+                _artifact_selected_scope_complete(access_report, selected_scope)
+            )
+            if prefix:
+                source_tuples = [
+                    (bucket_projects.get(bucket, ""), bucket, effective_prefix)
+                    for bucket in buckets
+                ]
+            else:
+                source_tuples = [source.identity for source in configured_sources]
+                source_tuples.extend(
+                    (bucket_projects.get(bucket, ""), bucket, effective_prefix)
+                    for bucket in generic_buckets
+                )
+            snapshot_scope = artifact_run_snapshot_scope(
+                query=query.lower(),
+                prefix=effective_prefix,
+                resource_scope=selected_scope,
+                source_tuples=source_tuples,
+            )
+            snapshot_context = _artifact_run_snapshot_context(snapshot_scope)
+            return build_artifact_run_list_response(
+                page,
+                query=query,
+                page_size=page_size,
+                cursor=cursor,
+                snapshot_context=snapshot_context,
+                snapshot_page=_artifact_run_snapshot_page,
+                effective_scope_complete=scope_complete,
+                response_context={{
                 "bucket": settings["bucket"],
                 "buckets": buckets,
                 "resource_scope": selected_scope,
                 "prefix": effective_prefix,
                 "base_prefix": settings.get("prefix", ""),
-                "query": query,
                 "summary_mode": "artifact_index",
                 "namespace": "npa_workflow_artifact_run",
                 "namespace_help": "Searches discovered NPA workflow/artifact runs; Codex maintenance job IDs are a separate operator-local namespace.",
                 "access": access_diagnostics,
-                "runs": [item.to_dict() for item in visible],
-                "count": len(visible),
-                "count_scope": "page",
-                "total_runs": observed_match_count if source_complete else None,
-                "total_runs_scope": (
-                    "filtered_global" if query and source_complete
-                    else "global" if source_complete
-                    else "unavailable"
-                ),
-                "observed_run_count": int(page.total_runs),
-                "observed_match_count": observed_match_count,
-                "query_complete": source_complete,
-                "limit": page_size,
-                "cursor": cursor,
-                "next_cursor": next_cursor,
-                "truncated": bool(has_more or page.truncated or not page.discovery_complete),
-                "pagination_complete": bool(
-                    not has_more and not page.truncated and page.discovery_complete
-                ),
-                "source_errors": [dict(item) for item in page.source_errors],
-            }}
-        configured_page = (
-            _configured_exact_run_page(s3, query, discovery_limit=discovery_limit)
-            if not prefix
-            else None
-        )
-        if configured_page is not None:
-            return _page_response(
-                configured_page, effective_prefix=settings.get("prefix", "")
+                }},
             )
         if prefix:
             effective_prefix = _artifact_discovery_prefix(settings, prefix)
-            # Cached (TTL + stale-while-revalidate): the run list is polled on every
-            # page load; walking a category's objects each time made the UI show
-            # "no runs" for seconds. The cache serves a warm result instantly and
-            # refreshes in the background, so only the first load pays the S3 walk.
-            page = list_runs_cached_multi(
-                buckets,
-                prefix=effective_prefix,
-                base_prefix=settings.get("prefix", ""),
-                limit=discovery_limit,
-                contains="",
-                bucket_projects=bucket_projects,
-                lightweight=True,
-                s3=s3,
+            page = None if cursor else list_runs_cached_multi(
+                buckets, prefix=effective_prefix,
+                base_prefix=settings.get("prefix", ""), limit=discovery_limit,
+                contains="", bucket_projects=bucket_projects, lightweight=True,
+                s3=s3, refresh_sync=bool(query),
             )
             return _page_response(page, effective_prefix=effective_prefix)
-        # No user prefix: discover runs generically across ALL bucket roots.
-        # Runs live under <base>/<category>/<run_id>/... (base from config, e.g.
-        # "checkpoints") AND directly at the bucket root <category>/<run_id>/...
-        # (e.g. scenario-gen-smoke/..., physical-ai-data-factory/...). list_all_runs
-        # enumerates category folders under both roots and merges them, so every
-        # workflow's runs show without hardcoding any workflow path. Cached the same
-        # way (the no-prefix walk is the slowest and the default UI view).
         base = settings.get("prefix", "")
-        # Discover across every access-report bucket (not just the configured one).
-        # Never enumerate every credential-readable bucket: the tenant access report
-        # is the bounded, policy-qualified source of artifact storage locations.
-        page = list_runs_cached_multi(
-            buckets,
-            base_prefix=base,
-            limit=discovery_limit,
-            exclude=_discovery_exclude_roots(),
-            contains="",
-            bucket_projects=bucket_projects,
-            lightweight=True,
-            s3=s3,
-        )
+        if cursor:
+            page = None
+        else:
+            pages = []
+            if configured_sources:
+                pages.append(list_runs_cached_sources(
+                    configured_sources, limit=discovery_limit, contains="",
+                    exclude=_discovery_exclude_roots(), s3=s3,
+                    refresh_sync=bool(query),
+                ))
+            if generic_buckets:
+                pages.append(list_runs_cached_multi(
+                    generic_buckets, base_prefix=base, limit=discovery_limit,
+                    exclude=_discovery_exclude_roots(), contains="",
+                    bucket_projects=bucket_projects, lightweight=True, s3=s3,
+                    refresh_sync=bool(query),
+                ))
+            page = (
+                pages[0]
+                if len(pages) == 1
+                else merge_run_list_pages(pages, limit=discovery_limit)
+            )
         return _page_response(page, effective_prefix=base)
     except HTTPException:
         raise
@@ -6893,8 +6890,24 @@ def artifacts_for_run(
                 access_report, resource_bucket, project_id
             )
             access_diagnostics = _agent_access_diagnostics(access_report)
-        search_buckets = [resource_bucket] if resource_bucket else allowed_buckets
         requested_prefix = _validated_resolved_prefix(resolved_prefix or prefix)
+        configured_sources = ()
+        if access_report is not None and not resource_bucket and not requested_prefix:
+            configured_sources = tuple(
+                source
+                for source in _configured_agent_artifact_sources()
+                if source["bucket"] in allowed_buckets
+                and bucket_projects.get(source["bucket"]) == source["project_id"]
+            )
+        configured_buckets = {{source["bucket"] for source in configured_sources}}
+        search_buckets = (
+            [resource_bucket]
+            if resource_bucket
+            else [
+                bucket for bucket in allowed_buckets
+                if bucket not in configured_buckets
+            ]
+        )
         matches, source_errors, discovery_complete = find_run_sources_across_buckets(
             search_buckets,
             base_prefix=settings.get("prefix", ""),
@@ -6906,6 +6919,24 @@ def artifacts_for_run(
             bucket_projects=bucket_projects,
             s3=s3,
         )
+        if configured_sources:
+            configured_matches, configured_errors, configured_complete = (
+                _find_configured_exact_run_sources(
+                    s3, normalized_run, sources=configured_sources
+                )
+            )
+            matches.extend(configured_matches)
+            source_errors = tuple([*source_errors, *configured_errors])
+            discovery_complete = bool(discovery_complete and configured_complete)
+        matches = list({{
+            (item.project_id, item.bucket, item.resolved_prefix, item.run_id): item
+            for item in matches
+        }}.values())
+        matches.sort(
+            key=lambda item: (
+                item.project_id, item.bucket, item.resolved_prefix, item.run_id
+            )
+        )
         if resource_bucket:
             matches = [item for item in matches if item.bucket == resource_bucket]
         if project_id:
@@ -6914,93 +6945,24 @@ def artifacts_for_run(
             matches = [item for item in matches if item.resolved_prefix == requested_prefix]
         elif source_selected:
             matches = [item for item in matches if not item.resolved_prefix]
-        search_complete = bool(
-            discovery_complete
-            and not source_errors
-            and (
-                resource_bucket
-                or (
-                    access_report is not None
-                    and _artifact_search_scope_complete(access_report)
-                )
-            )
+        decision = decide_artifact_run_lookup(
+            run_id=normalized_run,
+            matches=matches,
+            source_errors=source_errors,
+            discovery_complete=discovery_complete,
+            effective_scope_complete=bool(resource_bucket) or bool(
+                access_report is not None
+                and _artifact_search_scope_complete(access_report)
+            ),
+            exact_source_authorized=exact_source_request,
+            access=access_diagnostics,
         )
-        if not matches:
-            code = "run_not_discovered" if search_complete else "artifact_search_incomplete"
-            status_code = 404 if search_complete else 503
-            message = (
-                "No discovered NPA workflow/artifact run has this identifier. "
-                "Identifiers under /home/ubuntu/codex-runs are Codex maintenance job IDs, not NPA run IDs."
-                if search_complete
-                else "The run could not be resolved because one or more tenant artifact sources are inaccessible or incomplete."
-            )
+        if decision.selected is None:
             return JSONResponse(
-                status_code=status_code,
-                content={{
-                    "ok": False,
-                    "error": {{"code": code, "message": message}},
-                    "run_id": normalized_run,
-                    "namespace": "npa_workflow_artifact_run",
-                    "access": access_diagnostics,
-                    "source_errors": [dict(item) for item in source_errors],
-                }},
+                status_code=decision.status_code,
+                content=decision.body,
             )
-        exact_selection = bool(resource_bucket and (requested_prefix or source_selected))
-        if not exact_selection and not search_complete:
-            return JSONResponse(
-                status_code=503,
-                content={{
-                    "ok": False,
-                    "error": {{
-                        "code": "artifact_search_incomplete",
-                        "message": "The run could not be selected uniquely because artifact discovery was incomplete.",
-                    }},
-                    "run_id": normalized_run,
-                    "namespace": "npa_workflow_artifact_run",
-                    "access": access_diagnostics,
-                    "source_errors": [dict(item) for item in source_errors],
-                }},
-            )
-        if len(matches) > 1:
-            try:
-                resolutions = [
-                    RunResolution(
-                        run_id=normalized_run,
-                        bucket=item.bucket,
-                        source_prefix=item.resolved_prefix,
-                        artifacts=list_artifacts(
-                            item.bucket,
-                            normalized_run,
-                            prefix=item.resolved_prefix,
-                            s3=s3,
-                        ),
-                    )
-                    for item in matches
-                ]
-                complete = prefer_complete_run_resolution(resolutions)
-            except Exception:  # noqa: BLE001 - ambiguity remains the safe fallback
-                complete = None
-            if complete is None:
-                return JSONResponse(
-                    status_code=409,
-                    content={{
-                        "ok": False,
-                        "error": {{
-                            "code": "ambiguous_run_id",
-                            "message": "This run ID exists in multiple artifact sources; select a project, bucket, and resolved prefix.",
-                        }},
-                        "run_id": normalized_run,
-                        "sources": [item.to_dict() for item in matches],
-                        "access": access_diagnostics,
-                    }},
-                )
-            matches = [
-                item
-                for item in matches
-                if item.bucket == complete.bucket
-                and item.resolved_prefix == complete.source_prefix
-            ]
-        selected = matches[0]
+        selected = decision.selected
         run_bucket = selected.bucket
         artifact_prefix = selected.resolved_prefix
         page = list_artifacts_page(
@@ -7038,31 +7000,23 @@ def artifacts_for_run(
                 resolved_prefix=artifact_prefix,
                 artifacts=page.artifacts,
             )
-        return {{
-            "ok": True,
-            "contract": ARTIFACT_DISCOVERY_CONTRACT,
-            "bucket": run_bucket,
-            "project_id": str(bucket_projects.get(run_bucket) or ""),
-            "prefix": artifact_prefix,
-            "resolved_prefix": artifact_prefix,
-            "base_prefix": settings.get("prefix", ""),
-            "run_id": normalized_run,
-            "run_ref": selected.run_ref,
-            "pagination": {{
-                "contract": "one_native_s3_page",
-                "max_objects": 1000,
-                "continue_with": ["next_cursor", "resolved_prefix", "resource_bucket", "source_selected"],
+        return build_artifact_run_detail_response(
+            selected=selected,
+            artifact_page=page,
+            project_id=str(selected.project_id or bucket_projects.get(run_bucket) or ""),
+            base_prefix=settings.get("prefix", ""),
+            access=access_diagnostics,
+            preferred=preferred,
+            response_context={{
+                "source_resolution_complete": decision.source_resolution_complete,
+                "output_artifact_count": role_counts["output"],
+                "input_artifact_count": role_counts["input"],
+                "metadata_artifact_count": role_counts["metadata"],
+                "summary": summary,
+                "no_recording": not bool(summary.get("has_recording")),
+                "recording_state": str(summary.get("recording_state") or ""),
             }},
-            "preferred": preferred.to_dict() if preferred else None,
-            "access": access_diagnostics,
-            **page.to_dict(),
-            "output_artifact_count": role_counts["output"],
-            "input_artifact_count": role_counts["input"],
-            "metadata_artifact_count": role_counts["metadata"],
-            "summary": summary,
-            "no_recording": not bool(summary.get("has_recording")),
-            "recording_state": str(summary.get("recording_state") or ""),
-        }}
+        )
     except AmbiguousRunError as exc:
         raise HTTPException(
             status_code=409,
@@ -10748,25 +10702,6 @@ def bootstrap_cmd(
         s3_secret_key,
         service_account_id,
     ) = _resolve_agent_storage_credentials(project, record)
-    (
-        s3_bucket,
-        s3_prefix,
-        s3_endpoint,
-        s3_access_key,
-        s3_secret_key,
-        service_account_id,
-    ) = _resolve_configured_artifact_storage_credentials(
-        artifact_sources,
-        deployment_project_id=project_id,
-        current=(
-            s3_bucket,
-            s3_prefix,
-            s3_endpoint,
-            s3_access_key,
-            s3_secret_key,
-            service_account_id,
-        ),
-    )
     if not service_account_id:
         service_account_id = _resolve_agent_service_account_id(project, record)
     agent_credentials: dict[str, str] | None = None
@@ -10855,6 +10790,28 @@ def bootstrap_cmd(
                     }
                 }
             )
+    # Credential refresh resolves the deployment identity first. The persisted
+    # exact artifact source is the final data-plane selection and must not be
+    # overwritten by refreshed deployment-project storage credentials.
+    (
+        s3_bucket,
+        s3_prefix,
+        s3_endpoint,
+        s3_access_key,
+        s3_secret_key,
+        service_account_id,
+    ) = _resolve_configured_artifact_storage_credentials(
+        artifact_sources,
+        deployment_project_id=project_id,
+        current=(
+            s3_bucket,
+            s3_prefix,
+            s3_endpoint,
+            s3_access_key,
+            s3_secret_key,
+            service_account_id,
+        ),
+    )
     operation = current_operation()
     resuming = str(record.get("setup_state") or "") in {
         "remote_bootstrap_pending",

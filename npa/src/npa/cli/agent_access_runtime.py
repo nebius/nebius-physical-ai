@@ -8,8 +8,10 @@ the deployment CLI/bootstrap template from becoming the access domain model.
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
+import secrets
 import shutil
 import subprocess
 import threading
@@ -48,7 +50,6 @@ if __name__ == "npa.cli.agent_access_runtime":
         s3_uri_in_configured_buckets,
     )
     from npa.workflows.artifacts import (
-        RunListPage,
         decode_run_ref,
         find_run_sources_across_buckets,
         list_artifacts,
@@ -70,6 +71,8 @@ if __name__ == "npa.cli.agent_access_runtime":
 _AGENT_NEBIUS_TIMEOUT_SECONDS = 15.0
 _AGENT_ACCESS_CACHE_TTL_SECONDS = 30.0
 _AGENT_EXACT_SOURCE_ACCESS_TTL_SECONDS = 30.0
+_AGENT_RUN_CURSOR_TTL_SECONDS = 300.0
+_AGENT_RUN_CURSOR_MAX_SNAPSHOTS = 64
 _MAX_ARTIFACT_MEMBERSHIP_BUCKETS = 32
 _AGENT_ACCESS_CACHE: dict[str, Any] = {
     "report": None,
@@ -77,8 +80,11 @@ _AGENT_ACCESS_CACHE: dict[str, Any] = {
     "refreshing": False,
 }
 _AGENT_EXACT_SOURCE_ACCESS_CACHE: dict[tuple[str, ...], float] = {}
+_AGENT_RUN_CURSOR_SNAPSHOTS: dict[str, dict[str, Any]] = {}
+_AGENT_RUN_CURSOR_GENERATION = 0
 _AGENT_ACCESS_LOCK = threading.Lock()
 _AGENT_ACCESS_CONDITION = threading.Condition(_AGENT_ACCESS_LOCK)
+_AGENT_RUN_CURSOR_LOCK = threading.Lock()
 _AMBIENT_NEBIUS_TOKEN_KEYS = frozenset(
     {
         "NEBIUS_IAM_TOKEN",
@@ -90,47 +96,224 @@ _AMBIENT_NEBIUS_TOKEN_KEYS = frozenset(
 )
 
 
-def _artifact_run_cursor(offset: int) -> str:
-    return (
-        base64.urlsafe_b64encode(str(max(0, int(offset))).encode("ascii"))
-        .decode("ascii")
-        .rstrip("=")
-    )
+def _artifact_run_cursor(snapshot_id: str, offset: int) -> str:
+    payload = json.dumps(
+        {"v": 1, "s": str(snapshot_id), "o": max(0, int(offset))},
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
 
 
-def _artifact_run_cursor_offset(cursor: str) -> int:
+def _artifact_run_cursor_parts(cursor: str) -> tuple[str, int]:
     value = str(cursor or "").strip()
     if not value:
-        return 0
+        return "", 0
     try:
         padded = value + ("=" * (-len(value) % 4))
-        offset = int(base64.urlsafe_b64decode(padded.encode("ascii")).decode("ascii"))
+        payload = json.loads(
+            base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8")
+        )
+        if not isinstance(payload, dict) or payload.get("v") != 1:
+            raise ValueError("unsupported cursor")
+        snapshot_id = str(payload.get("s") or "").strip()
+        offset = int(payload.get("o"))
     except Exception as exc:
         raise HTTPException(status_code=400, detail="invalid run-list cursor") from exc
-    if offset < 0:
+    if (
+        not snapshot_id
+        or len(snapshot_id) > 128
+        or any(
+            character
+            not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_"
+            for character in snapshot_id
+        )
+        or offset < 0
+    ):
         raise HTTPException(status_code=400, detail="invalid run-list cursor")
-    return offset
+    return snapshot_id, offset
+
+
+def _artifact_run_snapshot_context(value: Any) -> str:
+    """Return a stable, non-reversible identity for one authorized list scope."""
+    encoded = json.dumps(
+        value, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _clear_artifact_run_cursor_snapshots() -> None:
+    """Invalidate pagination whenever effective source authorization changes."""
+    global _AGENT_RUN_CURSOR_GENERATION
+    with _AGENT_RUN_CURSOR_LOCK:
+        _AGENT_RUN_CURSOR_GENERATION += 1
+        _AGENT_RUN_CURSOR_SNAPSHOTS.clear()
+
+
+def _artifact_run_snapshot_page(
+    *,
+    cursor: str,
+    context: str,
+    limit: int,
+    items: list[Any] | tuple[Any, ...] | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> tuple[list[Any], str, dict[str, Any]]:
+    """Page through an immutable, bounded server-side discovery snapshot.
+
+    A cursor is deliberately tied to both the original query/source tuple and
+    the access generation. This prevents a refreshed or reordered source index
+    from silently skipping or duplicating runs halfway through traversal.
+    """
+    page_size = max(1, min(int(limit), 500))
+    normalized_context = str(context or "").strip()
+    if not normalized_context:
+        raise ValueError("run-list snapshot context is required")
+    now_mono = time.monotonic()
+    with _AGENT_RUN_CURSOR_LOCK:
+        expired = [
+            key
+            for key, snapshot in _AGENT_RUN_CURSOR_SNAPSHOTS.items()
+            if float(snapshot.get("expires_at") or 0.0) <= now_mono
+        ]
+        for key in expired:
+            _AGENT_RUN_CURSOR_SNAPSHOTS.pop(key, None)
+
+        if cursor:
+            snapshot_id, offset = _artifact_run_cursor_parts(cursor)
+            snapshot = _AGENT_RUN_CURSOR_SNAPSHOTS.get(snapshot_id)
+            if (
+                not snapshot
+                or int(snapshot.get("generation", -1)) != _AGENT_RUN_CURSOR_GENERATION
+                or snapshot.get("context") != normalized_context
+            ):
+                raise HTTPException(
+                    status_code=409,
+                    detail="run-list cursor is stale for the current access scope; restart pagination",
+                )
+        else:
+            if items is None:
+                raise ValueError("run-list snapshot items are required")
+            snapshot_id = secrets.token_urlsafe(18)
+            offset = 0
+            snapshot = {
+                "generation": _AGENT_RUN_CURSOR_GENERATION,
+                "context": normalized_context,
+                "items": tuple(items),
+                "metadata": dict(metadata or {}),
+                "expires_at": now_mono + _AGENT_RUN_CURSOR_TTL_SECONDS,
+            }
+            _AGENT_RUN_CURSOR_SNAPSHOTS[snapshot_id] = snapshot
+            while len(_AGENT_RUN_CURSOR_SNAPSHOTS) > _AGENT_RUN_CURSOR_MAX_SNAPSHOTS:
+                oldest = min(
+                    _AGENT_RUN_CURSOR_SNAPSHOTS,
+                    key=lambda key: float(
+                        _AGENT_RUN_CURSOR_SNAPSHOTS[key].get("expires_at") or 0.0
+                    ),
+                )
+                _AGENT_RUN_CURSOR_SNAPSHOTS.pop(oldest, None)
+
+        frozen_items = list(snapshot.get("items") or ())
+        if offset > len(frozen_items):
+            raise HTTPException(status_code=400, detail="invalid run-list cursor")
+        end = min(offset + page_size, len(frozen_items))
+        next_cursor = (
+            _artifact_run_cursor(snapshot_id, end) if end < len(frozen_items) else ""
+        )
+        return (
+            frozen_items[offset:end],
+            next_cursor,
+            dict(snapshot.get("metadata") or {}),
+        )
 
 
 def _artifact_search_scope_complete(report) -> bool:
     payload = report.to_dict() if hasattr(report, "to_dict") else report
     if not isinstance(payload, dict):
         return False
-    project_discovery = (payload.get("capabilities") or {}).get(
-        "project_discovery"
-    ) or {}
-    if project_discovery.get("status") != "available":
+    capabilities = payload.get("capabilities") or {}
+    if (
+        payload.get("status") != "available"
+        or (capabilities.get("project_discovery") or {}).get("status") != "available"
+        or (capabilities.get("artifact_discovery") or {}).get("status") != "available"
+    ):
+        return False
+    projects = payload.get("projects") or []
+    if not isinstance(projects, list):
+        return False
+    for project in projects:
+        if not isinstance(project, dict) or project.get("status") != "available":
+            return False
+        project_capabilities = project.get("capabilities") or {}
+        for capability in (
+            "storage_resource_discovery",
+            "artifact_discovery",
+            "artifact_read",
+        ):
+            if (project_capabilities.get(capability) or {}).get(
+                "status"
+            ) != "available":
+                return False
+        resources = project.get("resources") or []
+        if not isinstance(resources, list):
+            return False
+        for resource in resources:
+            if not isinstance(resource, dict):
+                return False
+            resource_capabilities = resource.get("capabilities") or {}
+            if (resource_capabilities.get("artifact_discovery") or {}).get(
+                "status"
+            ) != "available" or (resource_capabilities.get("artifact_read") or {}).get(
+                "status"
+            ) != "available":
+                return False
+    return True
+
+
+def _artifact_selected_scope_complete(report, scope: dict[str, str]) -> bool:
+    """Say whether a caller-selected project/source was exhaustively verified."""
+    selected = dict(scope or {})
+    project_id = str(selected.get("project_id") or "").strip()
+    bucket = str(selected.get("bucket") or "").strip()
+    if not project_id:
+        return _artifact_search_scope_complete(report)
+    payload = report.to_dict() if hasattr(report, "to_dict") else report
+    if not isinstance(payload, dict):
+        return False
+    project = next(
+        (
+            item
+            for item in payload.get("projects") or []
+            if isinstance(item, dict)
+            and str(item.get("id") or "").strip() == project_id
+        ),
+        None,
+    )
+    if not isinstance(project, dict):
+        return False
+    capabilities = project.get("capabilities") or {}
+    if any(
+        (capabilities.get(name) or {}).get("status") != "available"
+        for name in (
+            "storage_resource_discovery",
+            "artifact_discovery",
+            "artifact_read",
+        )
+    ):
+        return False
+    resources = [
+        item
+        for item in project.get("resources") or []
+        if isinstance(item, dict)
+        and (not bucket or str(item.get("name") or "").strip() == bucket)
+    ]
+    if bucket and not resources:
         return False
     return all(
-        isinstance(project, dict)
-        and (
-            (
-                (project.get("capabilities") or {}).get("storage_resource_discovery")
-                or {}
-            ).get("status")
-            == "available"
-        )
-        for project in payload.get("projects") or []
+        (resource.get("capabilities") or {}).get("artifact_discovery", {}).get("status")
+        == "available"
+        and (resource.get("capabilities") or {}).get("artifact_read", {}).get("status")
+        == "available"
+        for resource in resources
     )
 
 
@@ -331,13 +514,16 @@ def _configured_agent_artifact_source_matches(
     )
 
 
-def _find_configured_exact_run_sources(s3, run_id: str):
+def _find_configured_exact_run_sources(s3, run_id: str, *, sources=None):
     """Probe only durable exact sources for one validated run identifier."""
     normalized_run = validate_run_id(run_id)
     matches = []
     source_errors: list[dict[str, str]] = []
     complete = True
-    for source in _configured_agent_artifact_sources():
+    effective_sources = (
+        _configured_agent_artifact_sources() if sources is None else tuple(sources)
+    )
+    for source in effective_sources:
         bucket = source["bucket"]
         project = source["project_id"]
         found, errors, source_complete = find_run_sources_across_buckets(
@@ -367,28 +553,20 @@ def _find_configured_exact_run_sources(s3, run_id: str):
     return list(unique.values()), tuple(source_errors), complete
 
 
-def _configured_exact_run_page(s3, query: str, *, discovery_limit: int):
-    """Return the fail-closed durable-default page for an exact UI query."""
-    if len(str(query or "").strip()) < 20:
-        return None
-    try:
-        exact_run = validate_run_id(query)
-    except Exception:
-        return None
-    if not _configured_agent_artifact_sources():
-        return None
-    runs, errors, complete = _find_configured_exact_run_sources(s3, exact_run)
-    return RunListPage(
-        runs=runs,
-        truncated=not complete,
-        total_runs=len(runs),
-        limit=discovery_limit,
-        discovery_complete=complete,
-        source_errors=errors,
-    )
+def _invalidate_agent_artifact_discovery() -> None:
+    """Drop every artifact view derived from an older effective-access report."""
+    if callable(_run_list_cache_clear):
+        _run_list_cache_clear()
+    _clear_artifact_run_cursor_snapshots()
+    _clear_exact_run_ref_source_authorizations()
 
 
 def _finish_agent_access_refresh(report: "AgentAccessReport | None") -> None:
+    # A newly discovered source set makes cached run listings, exact-source
+    # proofs, and pagination snapshots stale. Invalidate them before publishing
+    # the report so no request can observe new authorization with old data.
+    if report is not None:
+        _invalidate_agent_artifact_discovery()
     with _AGENT_ACCESS_CONDITION:
         if report is not None:
             _AGENT_ACCESS_CACHE["report"] = report
@@ -409,9 +587,9 @@ def _refresh_agent_access_in_background() -> None:
 
 def _agent_access_report(*, refresh: bool = False) -> "AgentAccessReport":
     now_mono = time.monotonic()
+    if refresh:
+        _invalidate_agent_artifact_discovery()
     with _AGENT_ACCESS_CONDITION:
-        if refresh:
-            _AGENT_EXACT_SOURCE_ACCESS_CACHE.clear()
         cached = _AGENT_ACCESS_CACHE.get("report")
         expires_at = float(_AGENT_ACCESS_CACHE.get("expires_at") or 0.0)
         if not refresh and isinstance(cached, AgentAccessReport):
@@ -581,8 +759,6 @@ def _artifact_source_metadata(report, bucket: str, key: str, run_id: str):
 def _agent_access_api_response(refresh: bool = False):
     try:
         report = _agent_access_report(refresh=bool(refresh))
-        if refresh:
-            _run_list_cache_clear()
         return {
             "ok": True,
             **report.to_dict(),
@@ -923,12 +1099,10 @@ def _resolve_accessible_run_artifact(
 
 def _authorize_agent_artifact_uri(*, s3, settings, uri: str, run_id: str = ""):
     bucket, key = parse_s3_uri(uri)
-    if bucket in _configured_agent_s3_buckets(settings):
-        return bucket, _safe_artifact_key(key), str(run_id or "").strip()
     if not str(run_id or "").strip():
         raise HTTPException(
             status_code=400,
-            detail="cross-project s3_uri requires a run_id and exact discovered artifact",
+            detail="s3_uri requires a run_id and exact discovered artifact membership",
         )
     return _resolve_accessible_run_artifact(
         s3=s3,
