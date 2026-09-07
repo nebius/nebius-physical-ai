@@ -516,6 +516,14 @@ def reconstruct_cmd(
         extra_overrides=override,
     )
     resolved_json = ncore_json or _materialize_ncore(config, ncore_uri) or _discover_ncore_json(config)
+    if resolved_json:
+        from npa.workbench.nurec.nurec import verify_ncore_input
+
+        try:
+            verify_ncore_input(resolved_json)
+        except NurecError as exc:
+            _finish_nurec_result({"status": "failed", "errors": [str(exc)]}, output)
+            return
     if resolved_json and not (lidar_id and camera_id):
         # The shipped recipes carry PLACEHOLDER sensor ids that only match
         # NVIDIA-internal data, so on a real capture NRE aborts with

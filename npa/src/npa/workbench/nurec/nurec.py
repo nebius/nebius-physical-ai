@@ -1592,6 +1592,7 @@ def reconstruct_scene(
     timeout: float | None = None,
 ) -> NurecReconstructResult:
     """Train a 3DGUT Gaussian reconstruction and collect its USDZ + metrics."""
+    verify_ncore_input(ncore_json)
     env = dict(environ if environ is not None else os.environ)
     run = runner or subprocess.run
     out_dir = config.resolved_out_dir
@@ -2014,6 +2015,23 @@ def materialize_uri(
         client.download_path(source_uri, str(target))
     _verify_materialized_colmap(target)
     return target
+
+
+def verify_ncore_input(ncore_json: Path | str) -> None:
+    """Check converted local inputs before sensor discovery or NRE execution.
+
+    Legacy sequences without conversion sidecars retain their existing path.
+    Only the selected sequence directory is checked, not unrelated captures.
+    """
+    root = Path(ncore_json).parent
+    if not any(
+        path.exists() or path.is_symlink()
+        for path in (root / "conversion.json", root / ".npa-colmap-claim.json")
+    ):
+        return
+    from npa.workbench.nurec.colmap import verify_conversion_inventory
+
+    verify_conversion_inventory(root)
 
 
 def _verify_materialized_colmap(path: Path) -> None:
