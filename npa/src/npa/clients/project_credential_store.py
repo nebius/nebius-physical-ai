@@ -188,11 +188,12 @@ def project_credential_record(
         result = deepcopy(dict(record)) if isinstance(record, Mapping) else {}
         if result and alias:
             aliases = sorted({*(str(item) for item in result.get("aliases", []) if item), alias})
-            result["aliases"] = aliases
-            result["project_id"] = exact
-            result["updated_at"] = _now()
-            projects[exact] = deepcopy(result)
-            root["projects"] = projects
+            if aliases != result.get("aliases") or result.get("project_id") != exact:
+                result["aliases"] = aliases
+                result["project_id"] = exact
+                result["updated_at"] = _now()
+                projects[exact] = deepcopy(result)
+                root["projects"] = projects
         document["project_credentials"] = root
         _compatibility_views(document, root)
         return document
@@ -208,7 +209,7 @@ def project_credential_record(
         saved = saved_projects.get(exact)
         return deepcopy(dict(saved)) if isinstance(saved, Mapping) else {}
     if target.exists():
-        update_private_yaml(target, update)
+        update_private_yaml(target, update, skip_if_unchanged=True)
     return result
 
 

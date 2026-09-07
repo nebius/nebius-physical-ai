@@ -70,6 +70,15 @@ tier. Treat success without all three artifacts as failure.
 
 ## Diagnose
 
+For HTTP serving, configure `NPA_ALPAMAYO2_SUPER_TOKEN` as a deployment secret
+and `NPA_ALPAMAYO2_SUPER_OUTPUT_ROOT` as an operator-owned local `0700`
+directory or authorized S3 prefix. All operational routes require bearer
+authentication; keep transport private or terminate HTTPS. HTTP clients can
+select samples and inference controls, but cannot change the pinned model,
+dataset revision, or startup snapshot of `NPA_ALPAMAYO2_SUPER_MANIFEST`.
+Their `output_path` is a result label, and the server creates a fresh prefix
+under its configured root. Trusted CLI/SDK customization remains available.
+
 - 401/403 before GPU allocation: accept the dataset agreement with the same HF
   account or replace the rejected token; do not add an NPA bypass boolean.
 - CUDA OOM: confirm one trajectory sample, ten diffusion steps, and no competing
@@ -105,6 +114,7 @@ npa/.venv/bin/python ~/.codex/skills/.system/skill-creator/scripts/quick_validat
   skills/tools/alpamayo2-super
 npa/.venv/bin/python -m pytest \
   npa/tests/workbench/test_alpamayo2_super.py \
+  npa/tests/workbench/test_alpamayo2_super_service_security.py \
   npa/tests/guardrails/test_skills_index.py \
   npa/tests/orchestration/npa_workflow/test_catalog_doc_sync.py -q
 ```

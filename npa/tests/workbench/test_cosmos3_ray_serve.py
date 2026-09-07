@@ -41,6 +41,56 @@ def test_batch_requires_unique_named_samples() -> None:
         RayBatchRequest(samples=[{"name": "../../escape"}])
 
 
+@pytest.mark.parametrize("mode", ["", "none", "disabled", "false"])
+def test_server_rejects_disabled_management_auth_before_runtime_import(
+    monkeypatch: pytest.MonkeyPatch, mode: str
+) -> None:
+    from npa.workbench.cosmos.ray_server import main
+
+    monkeypatch.setenv("RAY_AUTH_MODE", mode)
+    with pytest.raises(RuntimeError, match="requires RAY_AUTH_MODE=token"):
+        main()
+
+
+def test_server_enables_management_auth_without_reusing_application_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import os
+
+    from npa.workbench.cosmos.ray_server import _require_ray_authentication
+
+    monkeypatch.delenv("RAY_AUTH_MODE", raising=False)
+    monkeypatch.delenv("RAY_AUTH_TOKEN", raising=False)
+    monkeypatch.setenv("RAY_AUTH_TOKEN_PATH", "operator-token-file")
+    monkeypatch.setenv("NPA_COSMOS3_RAY_TOKEN", "application-test-credential")
+    token_file = _require_ray_authentication()
+    try:
+        assert os.environ["RAY_AUTH_MODE"] == "token"
+        assert "RAY_AUTH_TOKEN" not in os.environ
+        assert os.environ["RAY_AUTH_TOKEN_PATH"] == str(token_file)
+        assert token_file.stat().st_mode & 0o777 == 0o600
+        assert len(token_file.read_bytes()) >= 32
+        assert token_file.read_text() != "application-test-credential"
+    finally:
+        token_file.unlink()
+
+
+def test_server_removes_management_credential_when_runtime_fails(monkeypatch, tmp_path):
+    from npa.workbench.cosmos import ray_server
+
+    credential = tmp_path / "credential"
+    credential.write_text("private test credential")
+    monkeypatch.setattr(ray_server, "_require_ray_authentication", lambda: credential)
+
+    def fail():
+        raise RuntimeError("runtime failed")
+
+    monkeypatch.setattr(ray_server, "_run_server", fail)
+    with pytest.raises(RuntimeError, match="runtime failed"):
+        ray_server.main()
+    assert not credential.exists()
+
+
 def test_load_batch_accepts_list_shorthand(tmp_path: Path) -> None:
     path = tmp_path / "batch.json"
     path.write_text('[{"name":"one","prompt":"cube"}]', encoding="utf-8")

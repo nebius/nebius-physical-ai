@@ -6,20 +6,33 @@ import asyncio
 import hashlib
 import hmac
 import os
+import secrets
 import subprocess
+import tempfile
 import uuid
 from pathlib import Path
 from typing import Any, cast
 
+from npa.workbench.cosmos.ray_inputs import stage_sample_inputs
 from npa.workbench.cosmos.ray_serve import (
     RayArtifact,
     RayBatchRequest,
     RayBatchResponse,
 )
+from npa.workbench.storage_scope import StorageAuthorizationError, StorageScope
 
 
 def main() -> None:
     """Load Cosmos3-Nano once and serve real dynamically batched generation."""
+
+    token_file = _require_ray_authentication()
+    try:
+        _run_server()
+    finally:
+        token_file.unlink(missing_ok=True)
+
+
+def _run_server() -> None:
 
     import fastapi
     import ray
@@ -51,6 +64,9 @@ def main() -> None:
     host = os.environ.get("NPA_COSMOS3_RAY_HOST", "0.0.0.0")
     port = _env_int("NPA_COSMOS3_RAY_PORT", 8000, minimum=1024)
     token = os.environ.get("NPA_COSMOS3_RAY_TOKEN", "")
+    input_scope = StorageScope.from_config(
+        s3_roots=os.environ.get("NPA_COSMOS3_RAY_ALLOWED_S3_ROOTS", "").split(",")
+    )
     if not token:
         raise RuntimeError(
             "NPA_COSMOS3_RAY_TOKEN is required; unauthenticated GPU serving is refused"
@@ -194,7 +210,14 @@ def main() -> None:
 
             samples = []
             for raw in request.samples:
-                sample = OmniSampleOverrides.model_validate(raw)
+                try:
+                    staged = await asyncio.to_thread(
+                        stage_sample_inputs, raw,
+                        request_root / "inputs" / str(raw["name"]), scope=input_scope,
+                    )
+                except StorageAuthorizationError as exc:
+                    raise fastapi.HTTPException(status_code=400, detail=str(exc)) from exc
+                sample = OmniSampleOverrides.model_validate(staged)
                 sample.output_dir = request_root / str(raw["name"])
                 sample.download(sample.output_dir / "inputs")
                 samples.append(sample)
@@ -208,8 +231,8 @@ def main() -> None:
             for sample, result in zip(samples, outputs, strict=True):
                 for output in result.outputs:
                     for relative in output.files:
-                        path = output_root / relative
-                        if not path.is_file():
+                        path = (output_root / relative).resolve()
+                        if request_root not in path.parents or not path.is_file():
                             raise RuntimeError(
                                 f"Cosmos output file is missing: {relative}"
                             )
@@ -245,10 +268,32 @@ def main() -> None:
                 )
             return FileResponse(path)
 
-    ray.init()
-    ray.serve.start(http_options={"host": host, "port": port})
-    app = cast(ray.serve.Deployment, NpaCosmosRouter).bind(model)
-    ray.serve.run(app, name="npa_cosmos3_ray_serve", route_prefix="/", blocking=True)
+    # Own this service's runtime instead of joining an ambient RAY_ADDRESS.
+    # Inference does not need the management dashboard or Jobs HTTP API.
+    ray.init(address="local", include_dashboard=False, _node_ip_address="127.0.0.1")
+    try:
+        ray.serve.start(http_options={"host": host, "port": port})
+        app = cast(ray.serve.Deployment, NpaCosmosRouter).bind(model)
+        ray.serve.run(app, name="npa_cosmos3_ray_serve", route_prefix="/", blocking=True)
+    finally:
+        ray.shutdown()
+
+
+def _require_ray_authentication() -> Path:
+    """Configure Ray's management boundary before importing its runtime."""
+    mode = os.environ.get("RAY_AUTH_MODE", "token")
+    if mode != "token":
+        raise RuntimeError("Cosmos Ray serving requires RAY_AUTH_MODE=token")
+    # This service owns its local cluster. Use a fresh owner-only credential,
+    # without reusing the application token or an operator's ~/.ray token.
+    # A path keeps the credential itself out of inherited environment dumps.
+    with tempfile.NamedTemporaryFile(prefix="npa-ray-auth-", delete=False) as token:
+        token.write(secrets.token_urlsafe(32).encode("ascii"))
+        token.flush()
+    os.environ.pop("RAY_AUTH_TOKEN", None)
+    os.environ["RAY_AUTH_TOKEN_PATH"] = token.name
+    os.environ["RAY_AUTH_MODE"] = "token"
+    return Path(token.name)
 
 
 def _env_bool(name: str, default: bool) -> bool:

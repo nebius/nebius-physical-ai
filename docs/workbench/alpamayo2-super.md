@@ -56,6 +56,30 @@ Successful inference publishes `result.json` (pins and provenance),
 `trajectory.json` (the predicted ego trajectory), and `trajectory.png` (the
 calibrated-camera visualization).
 
+## Serve inference
+
+The image's `serve` entrypoint requires `NPA_ALPAMAYO2_SUPER_TOKEN` and
+`NPA_ALPAMAYO2_SUPER_OUTPUT_ROOT` at startup. Supply the token through the
+deployment's secret configuration. Set the output root to an operator-owned
+local directory with mode `0700`, or an authorized S3 bucket/prefix. Use a
+private network or an HTTPS proxy when exposing the service beyond localhost.
+Every operational endpoint, including `/health`, requires
+`Authorization: Bearer <service-token>`.
+
+HTTP requests use the repository-pinned model and dataset revisions. The
+server snapshots `NPA_ALPAMAYO2_SUPER_MANIFEST` at startup, defaulting to the
+image's validation manifest. A request cannot replace that manifest or select
+model code. Set `sample_index` and the usual inference controls in `/run`.
+The optional `output_path` is a short result label containing only letters,
+digits, underscores and hyphens; each request receives a new unique prefix
+beneath the configured output root. Absolute paths and S3 destinations belong
+in deployment configuration. The trusted CLI and SDK retain their operator
+model and destination options.
+
+`dry_run: true` validates this HTTP preparation path and returns the pinned
+upstream invocation without downloading data or running inference. It does
+not establish GPU or model correctness.
+
 ## Build and release gate
 
 Build from the repository root. A local build automatically runs the payload

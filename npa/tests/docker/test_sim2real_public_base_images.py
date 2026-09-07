@@ -5,9 +5,26 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from packaging.version import Version
+
 
 ROOT = Path(__file__).resolve().parents[3]
 WORKBENCH = ROOT / "npa" / "docker" / "workbench"
+
+
+def test_generic_torch_images_require_patched_versions_and_complete_dependency_checks():
+    for relative, floors in (
+        ("base/cuda13-b300/Dockerfile", {
+            "TORCH_VERSION": "2.13.0", "TORCHVISION_VERSION": "0.28.0",
+            "TORCHAUDIO_VERSION": "2.11.0",
+        }),
+        ("cosmos-curate/Dockerfile", {"TORCH_VERSION": "2.13.0"}),
+    ):
+        text = (WORKBENCH / relative).read_text()
+        for variable, minimum in floors.items():
+            pin = re.search(rf"^ARG {variable}=(\S+)$", text, re.MULTILINE)
+            assert pin and Version(pin.group(1)) >= Version(minimum), relative
+        assert text.index("python -m pip check") > text.rindex("python -m pip install"), relative
 
 
 def _default_base(relative: str) -> str:

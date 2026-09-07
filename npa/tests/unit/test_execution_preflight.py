@@ -368,7 +368,10 @@ def test_single_node_gpu_preflight_rejects_wrong_product(provider, monkeypatch):
     )
     inventory = KubernetesGpuInventory(
         "unit-context", 1, 1, 1, 1, ("NVIDIA-B200",), {}, nodes=(
-            KubernetesGpuNode("unit-node", True, True, ("NVIDIA-B200",), 1, 1, 0, 1, free_pod_slots=1),
+            KubernetesGpuNode(
+                "unit-node", True, True, ("NVIDIA-B200",), 1, 1, 0, 1,
+                free_cpu_millis=4000, free_memory_bytes=16 * 10**9, free_pod_slots=1,
+            ),
         ),
     )
     monkeypatch.setattr("npa.orchestration.skypilot.k8s_gpu_catalog.discover_kubernetes_gpu_inventory", lambda **kwargs: inventory)
@@ -379,7 +382,10 @@ def test_single_node_gpu_preflight_rejects_wrong_product(provider, monkeypatch):
     with pytest.raises(UnsatisfiableAcceleratorError):
         _preflight_submit_gang_capacity(spec, context="unit-context")
     spec.resources["gpu"]["accelerators"] = "B200:1"
-    assert _preflight_submit_gang_capacity(spec, context="unit-context")[0]["node_count"] == 1
+    verified = _preflight_submit_gang_capacity(spec, context="unit-context")[0]
+    assert verified["node_count"] == 1
+    assert verified["cpus_per_node"] == 4
+    assert verified["memory_bytes_per_node"] == 16 * 10**9
 
 
 def test_bdd_planner_directory_roles_probe_exact_denied_training_child(provider):
@@ -425,6 +431,59 @@ def raw_task(**env):
             "envs": {"NPA_OUTPUT_PATH": "s3://unit-output/task/raw-output",
                      "AWS_ACCESS_KEY_ID": "yaml-access", "AWS_SECRET_ACCESS_KEY": "yaml-secret",
                      "AWS_ENDPOINT_URL": "https://storage.eu-west1.nebius.cloud", **env}, "run": "true"}
+
+
+@pytest.mark.parametrize("boundary", ["profile", "rendered"])
+@pytest.mark.parametrize("shortfall", ["", "cpu", "memory"])
+def test_sky_resource_units_preserve_exact_gpu_capacity_checks(
+    provider, configured, monkeypatch, boundary, shortfall,
+):
+    from npa.cli.workbench.workflow import _preflight_submit_gang_capacity
+    from npa.execution_preflight import preflight_skypilot_submission
+    from npa.orchestration.npa_workflow.skypilot_render import normalize_resources
+    from npa.orchestration.skypilot.k8s_gpu_catalog import (
+        KubernetesGpuInventory, KubernetesGpuNode, UnsatisfiableAcceleratorError,
+    )
+
+    inventory = KubernetesGpuInventory(
+        "unit-context", 1, 1, 1, 1, ("NVIDIA-B200",), {}, nodes=(
+            KubernetesGpuNode(
+                "unit-node", True, True, ("NVIDIA-B200",), 1, 1, 0, 1,
+                free_cpu_millis=8000 - int(shortfall == "cpu"),
+                free_memory_bytes=32 * 10**9 - int(shortfall == "memory"),
+                free_pod_slots=1,
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.k8s_gpu_catalog.discover_kubernetes_gpu_inventory",
+        lambda **kwargs: inventory,
+    )
+    profile = {"cloud": "kubernetes", "accelerators": "B200:1", "cpus": 8, "memory": 32}
+    document = raw_task()
+    document["resources"].update(normalize_resources(profile))
+    spec = SimpleNamespace(
+        states={"train": SimpleNamespace(name="train", resources="gpu")},
+        resources={"gpu": profile}, config={},
+    )
+
+    def verify():
+        if boundary == "profile":
+            return _preflight_submit_gang_capacity(spec, context="unit-context")
+        return preflight_skypilot_submission([document], project="unit", infra="k8s/unit-context")
+
+    if shortfall:
+        with pytest.raises((UnsatisfiableAcceleratorError, ExecutionPreflightError)):
+            verify()
+        assert not provider.s3.calls
+    else:
+        verified = verify()
+        if boundary == "profile":
+            assert verified[0]["cpus_per_node"] == 8
+            assert verified[0]["memory_bytes_per_node"] == 32 * 10**9
+        else:
+            assert verified[1]["checks"]["gpu"] == "pass"
+            assert provider.s3.calls
 
 
 def test_raw_production_environment_supplies_exact_principal(provider, configured):
