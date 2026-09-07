@@ -33,6 +33,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1
 
 COPY --chmod=0644 docker/workbench/sonic/packaging-requirements.txt /opt/npa-packaging-requirements.txt
+COPY --chmod=0644 docker/workbench/curobo/remove_scikit_image_recipe.py /opt/npa-remove-scikit-image-recipe.py
 
 RUN apt-get update \
     && apt-get upgrade -y --no-install-recommends \
@@ -98,6 +99,9 @@ RUN python -m venv "${FIFTYONE_VENV}" \
       "pyarrow==${PYARROW_VERSION}" \
       "pillow==${PILLOW_VERSION}" \
       "paramiko==5.0.0" \
+      "scikit-image==0.26.0" \
+    && python /opt/npa-remove-scikit-image-recipe.py \
+      --site-packages "$(python -c 'import sysconfig; print(sysconfig.get_path("purelib"))')" \
     && curl --fail --location --silent --show-error \
       -o /tmp/mongodb.tgz "https://fastdl.mongodb.org/linux/mongodb-linux-x86_64-ubuntu2204-${MONGODB_VERSION}.tgz" \
     && echo "${MONGODB_SHA256}  /tmp/mongodb.tgz" | sha256sum -c - \
