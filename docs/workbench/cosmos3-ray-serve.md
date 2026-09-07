@@ -84,8 +84,11 @@ persists that ID in `request.json`. It requires the supported response schema,
 the supported framework revision, the requested model and ID, and one successful
 result for every requested sample name. It also binds the sampling mode, supplied
 seed and requested image/video frame category. Failed, skipped, duplicate,
-foreign or incomplete results fail before any
-artifact download or publication. Each declared file must have exactly one
+foreign or incomplete results fail before any artifact download or publication.
+Frame category includes the pinned mode defaults and single-WSM transfer default.
+For ordinary samples using `defaults_file`, supply `num_frames` explicitly so the
+client can bind the expected output without reading a server-local defaults file.
+Each declared file must have exactly one
 matching artifact entry under that request and sample's directory; downloaded
 bytes must then match its size and SHA-256.
 

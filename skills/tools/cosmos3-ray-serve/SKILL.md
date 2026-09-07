@@ -96,6 +96,9 @@ according to resolved frame count; reasoner samples require `reasoner_text.txt`.
 Control/debug files remain part of the verified file set. Failed/skipped samples,
 unsafe paths and incomplete manifests must never become completed publications.
 Use `num_outputs=1` and distinct named samples on this native Serve path.
+Image/video category is bound to explicit frames or the pinned mode/WSM defaults.
+Ordinary samples with `defaults_file` require an explicit `num_frames`; reasoner
+samples retain their text output contract.
 
 Run `npa/tests/e2e/test_cosmos3_ray_batch_live_e2e.py` with
 `NPA_INTEGRATION_E2E=1`, the configured service endpoint/token, and

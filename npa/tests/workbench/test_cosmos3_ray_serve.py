@@ -555,6 +555,103 @@ def test_native_numeric_coercion_is_applied_before_identity_binding(
     assert type(sent["num_frames"]) is int
 
 
+@pytest.mark.parametrize("destination", ["local", "s3"])
+@pytest.mark.parametrize("override", [{}, {"num_frames": None}])
+@pytest.mark.parametrize(
+    ("sample", "frames"),
+    [
+        ({"model_mode": "text2image"}, 1),
+        ({"model_mode": "image2image"}, 1),
+        ({"model_mode": "text2video"}, 189),
+        ({"model_mode": "image2video"}, 189),
+        ({"model_mode": "video2video"}, 189),
+        ({"model_mode": "audio_image2video"}, 189),
+        ({"model_mode": "forward_dynamics"}, 189),
+        ({"model_mode": "inverse_dynamics"}, 189),
+        ({"model_mode": "wam"}, 189),
+        ({"model_mode": "text2image", "wsm": {}, "edge": None}, 101),
+        ({"model_mode": "text2image", "wsm": {}, "edge": {}}, 1),
+        ({"model_mode": "text2image", "wsm": None}, 1),
+    ],
+)
+def test_native_default_frame_category_is_bound_before_publication(
+    tmp_path: Path, transport, destination, override, sample, frames
+):
+    source = tmp_path / "batch.json"
+    _batch(source, samples=[{"name": "one", **sample, **override}])
+    payload, _, get = transport
+    payload["batch_size"] = 1
+    payload["outputs"] = payload["outputs"][:1]
+    args = payload["outputs"][0]["args"]
+    args.update(model_mode=sample["model_mode"], num_frames=frames)
+
+    def set_files(frame_count):
+        extension = "jpg" if frame_count == 1 else "mp4"
+        path = f"request-safe/one/vision.{extension}"
+        payload["outputs"][0]["outputs"][0]["files"] = [path]
+        payload["artifacts"] = [_artifact(path, "one")]
+
+    set_files(frames)
+    assert _submit(source, str(tmp_path / "valid"))["status"] == "completed"
+    get.reset_mock()
+    args["num_frames"] = 9 if frames == 1 else 1
+    set_files(args["num_frames"])
+    storage = Mock()
+    output = (
+        str(tmp_path / "invalid")
+        if destination == "local"
+        else "s3://test-bucket/invalid/"
+    )
+    with pytest.raises(Cosmos3RayServeError, match="different frame category"):
+        _submit(source, output, storage_client=storage)
+    get.assert_not_called()
+    storage.upload_directory.assert_not_called()
+    assert not (tmp_path / "invalid").exists()
+
+
+@pytest.mark.parametrize("override", [{}, {"num_frames": None}])
+def test_custom_defaults_require_explicit_frame_count_before_inference(
+    tmp_path: Path, transport, override
+):
+    source = tmp_path / "batch.json"
+    _batch(
+        source, samples=[{"name": "one", "defaults_file": "custom.json", **override}]
+    )
+    _, post, get = transport
+    with pytest.raises(Cosmos3RayServeError, match="defaults_file requires explicit"):
+        _submit(source, str(tmp_path / "out"))
+    post.assert_not_called()
+    get.assert_not_called()
+
+
+@pytest.mark.parametrize("frames", [1, 9])
+def test_explicit_frames_override_custom_defaults_and_single_wsm(
+    tmp_path: Path, transport, frames
+):
+    source = tmp_path / "batch.json"
+    _batch(
+        source,
+        samples=[
+            {
+                "name": "one",
+                "model_mode": "text2image",
+                "num_frames": frames,
+                "defaults_file": "custom.json",
+                "wsm": {},
+            }
+        ],
+    )
+    payload, _, _ = transport
+    payload["batch_size"] = 1
+    payload["outputs"] = payload["outputs"][:1]
+    payload["outputs"][0]["args"]["num_frames"] = frames
+    extension = "jpg" if frames == 1 else "mp4"
+    path = f"request-safe/one/vision.{extension}"
+    payload["outputs"][0]["outputs"][0]["files"] = [path]
+    payload["artifacts"] = [_artifact(path, "one")]
+    assert _submit(source, str(tmp_path / "out"))["status"] == "completed"
+
+
 @pytest.mark.parametrize("field", ["seed", "num_frames", "num_outputs"])
 def test_invalid_numeric_binding_fails_before_inference(
     tmp_path: Path, transport, field

@@ -291,7 +291,16 @@ def _prepare_client_request(request: RayBatchRequest) -> RayBatchRequest:
             raise Cosmos3RayServeError(
                 "native Ray batches require num_outputs=1 per sample"
             )
-        samples.append({**sample, **binding.model_dump(exclude_unset=True)})
+        normalized = {**sample, **binding.model_dump(exclude_unset=True)}
+        if (
+            sample.get("defaults_file") is not None
+            and binding.num_frames is None
+            and _requested_mode(normalized) != "reasoner"
+        ):
+            raise Cosmos3RayServeError(
+                "custom defaults_file requires explicit num_frames for output binding"
+            )
+        samples.append(normalized)
     return request.model_copy(update={"samples": samples})
 
 
@@ -369,14 +378,9 @@ def _validate_batch_response(
         frames = args.get("num_frames")
         if type(frames) is not int or frames < 1:
             raise Cosmos3RayServeError(f"sample {name} returned invalid num_frames")
-        requested_frames = sample.get("num_frames")
         # Native temporal compression can round a requested video length up.
-        # It must still preserve whether the caller requested an image or video.
-        if (
-            mode != "reasoner"
-            and requested_frames is not None
-            and (requested_frames == 1) != (frames == 1)
-        ):
+        # Bind the category even when the caller uses native frame defaults.
+        if mode != "reasoner" and _requested_image(sample, mode) != (frames == 1):
             raise Cosmos3RayServeError(
                 f"sample {name} returned a different frame category"
             )
@@ -425,6 +429,25 @@ def _validate_batch_response(
             "artifact manifest does not exactly cover the requested sample outputs"
         )
     return response
+
+
+def _requested_image(sample: dict[str, Any], mode: str) -> bool:
+    """Resolve the pinned defaults' frame category without trusting the response."""
+
+    if sample.get("num_frames") is not None:
+        return sample["num_frames"] == 1
+    # args.py applies the single-WSM transfer default (101 frames) after mode
+    # defaults, unless num_frames was explicitly supplied. Null hints are inactive.
+    hints = {
+        key
+        for key in ("edge", "blur", "depth", "seg", "wsm")
+        if sample.get(key) is not None
+    }
+    if hints == {"wsm"}:
+        return False
+    # Image defaults resolve to one frame; all ordinary video/action defaults
+    # resolve to multiple frames. Custom defaults need explicit frames above.
+    return mode in {"text2image", "image2image"}
 
 
 def _requested_mode(sample: dict[str, Any]) -> Any:
