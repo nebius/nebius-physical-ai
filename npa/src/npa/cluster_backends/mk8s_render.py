@@ -23,6 +23,9 @@ from npa.cluster.gpu_driver import (
     recipe_driver_tfvars,
     resolve_gpu_driver_strategy,
 )
+from npa.cluster_backends.kuberay import (
+    validate_kuberay, validate_recipe_kuberay_compatibility,
+)
 from npa.cluster_backends.mig import (
     GPU_DEVICE_PLUGIN_VERSION,
     GPU_DRIVER_VERSION,
@@ -175,6 +178,7 @@ def render_tfvars(
     apply time; everything here maps to the recipe's own variable names.
     """
 
+    validate_kuberay(cluster)
     cpu = cluster.cpu_nodes
     gpu = cluster.gpu_nodes
     lines: list[str] = [
@@ -198,6 +202,7 @@ def render_tfvars(
     mig = cluster.mig
     mig_enabled = bool(mig and mig.enabled)
     if recipe_dir is not None:
+        validate_recipe_kuberay_compatibility(cluster, recipe_dir)
         validate_recipe_mig_compatibility(cluster, recipe_dir)
         validate_recipe_rtx_compatibility(cluster, recipe_dir)
     if cluster.gpu_workload_profile:
@@ -308,12 +313,21 @@ def render_tfvars(
         'previous_default_storage_class_name = "compute-csi-default-sc" }'
     )
 
-    # Keep the fleet cheap and quiet: no observability/logging/ray/gatekeeper.
+    # Observability and applications remain opt-in.
     lines.append("enable_nebius_o11y_agent = false")
     lines.append("enable_grafana           = false")
     lines.append("enable_prometheus        = false")
     lines.append("collectK8sClusterMetrics = false")
-    lines.append("enable_kuberay_cluster   = false")
+    kuberay = cluster.kuberay
+    if kuberay is not None and kuberay.enabled:
+        lines.append("enable_kuberay_cluster   = true")
+        lines.append("kuberay_cpu_cluster = " + json.dumps({
+            "worker_replicas": kuberay.worker_replicas,
+            "worker_cpus": kuberay.worker_cpus,
+            "worker_memory_gib": kuberay.worker_memory_gib,
+        }))
+    else:
+        lines.append("enable_kuberay_cluster   = false")
     lines.append("enable_kuberay_service   = false")
     lines.append("enable_opa_gatekeeper    = false")
     # loki has no default in the recipe; it must be set explicitly.

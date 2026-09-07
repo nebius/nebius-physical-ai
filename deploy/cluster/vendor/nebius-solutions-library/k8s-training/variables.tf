@@ -586,3 +586,26 @@ variable "k8s_rbac_bindings" {
     error_message = "When k8s_rbac_bindings.enabled is true, set at least one cluster_role_bindings or namespace_role_bindings entry."
   }
 }
+
+# NPA opt-in fixed CPU RayCluster. The legacy vendor modes remain separate.
+variable "kuberay_cpu_cluster" {
+  description = "Reviewed NPA CPU RayCluster settings; null preserves vendor behavior."
+  type = object({
+    worker_replicas   = number
+    worker_cpus       = number
+    worker_memory_gib = number
+  })
+  default = null
+
+  validation {
+    condition = var.kuberay_cpu_cluster == null ? true : (
+      var.enable_kuberay_cluster && !var.enable_kuberay_service &&
+      var.kuberay_min_gpu_replicas == 0 && var.kuberay_max_gpu_replicas == 0 &&
+      var.kuberay_cpu_worker_image == null && var.kuberay_gpu_worker_image == null &&
+      var.kuberay_cpu_resources == null && var.kuberay_gpu_resources == null &&
+      var.kuberay_min_cpu_replicas == 0 && var.kuberay_max_cpu_replicas == 0 &&
+      var.kuberay_serve_config_v2 == null && var.cpu_nodes_fixed_count > 0
+    )
+    error_message = "kuberay_cpu_cluster requires enable_kuberay_cluster, CPU nodes, and no legacy worker/image/resource or RayService configuration."
+  }
+}

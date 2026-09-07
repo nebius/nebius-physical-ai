@@ -78,6 +78,7 @@ from npa.soperator.lifecycle import (
 from npa.cluster_backends.quotas import preflight_region, shortfall_message
 from npa.fleet.spec import ClusterSpec, FleetSpec, ObjectStorageSpec, ProjectSpec
 from npa.cluster_backends.mk8s_render import (
+    validate_recipe_kuberay_compatibility,
     validate_recipe_mig_compatibility,
     validate_recipe_rtx_compatibility,
 )
@@ -1298,6 +1299,7 @@ def plan_fleet(
                 ],
                 "k8s_version": backend_plan["k8s_version"],
                 "mig": backend_plan["mig"],
+                **({"kuberay": backend_plan["kuberay"]} if cluster.kuberay else {}),
             }
             if cluster.backend_explicit:
                 planned_cluster["backend"] = "mk8s"
@@ -1447,6 +1449,14 @@ def deploy_fleet(
                 "object_storage requires at least one selected mk8s target in its "
                 "project; soperator-only storage reconciliation is unsupported"
             )
+    for project, cluster in spec.cluster_targets():
+        if not _project_in_scope(project, selected_projects, selected_prefix):
+            continue
+        if selected_clusters and cluster.name not in selected_clusters:
+            continue
+        _mk8s_execution.validate_kuberay_installation(
+            cluster, fleet_root / project.key() / cluster.name,
+        )
     for project, cluster in spec.cluster_targets():
         if not _project_in_scope(project, selected_projects, selected_prefix):
             continue
@@ -1769,6 +1779,13 @@ def _deploy_mk8s_fleet(
         for cluster in project.clusters:
             if only_clusters and cluster.name not in only_clusters:
                 continue
+            validate_recipe_kuberay_compatibility(
+                cluster, recipe_root / _K8S_TRAINING_SUBDIR
+            )
+            _mk8s_execution.validate_kuberay_installation(
+                cluster, fleet_root / project.key() / cluster.name,
+                recipe_dir=recipe_root / _K8S_TRAINING_SUBDIR,
+            )
             validate_recipe_mig_compatibility(
                 cluster, recipe_root / _K8S_TRAINING_SUBDIR
             )
