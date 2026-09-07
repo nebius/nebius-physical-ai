@@ -102,6 +102,32 @@ def test_every_restarted_rank_must_restore_exact_committed_step(journal, recipe)
         load("train").validate_journal(journal, recipe)
 
 
+def test_zero_gradient_with_real_momentum_still_proves_an_update(journal, recipe):
+    """An exact stationary gradient can retain the previous SGD momentum."""
+    torch = pytest.importorskip("torch")
+    parameter = torch.nn.Parameter(torch.tensor([1.0]))
+    optimizer = torch.optim.SGD([parameter], lr=0.1, momentum=0.8)
+    parameter.grad = torch.ones_like(parameter)
+    optimizer.step()
+    before = parameter.detach().clone()
+    parameter.grad.zero_()
+    optimizer.step()
+    journal[1]["gradient_norm"] = parameter.grad.norm().item()
+    journal[1]["parameter_delta"] = (parameter.detach() - before).norm().item()
+    assert journal[1]["gradient_norm"] == 0 and journal[1]["parameter_delta"] > 0
+    load("train").validate_journal(journal, recipe)
+    journal[1]["parameter_delta"] = 0
+    with pytest.raises(ValueError, match="No optimizer progress"):
+        load("train").validate_journal(journal, recipe)
+
+
+@pytest.mark.parametrize("version", ["2.12.1+cpu", "2.13.0+cu130", "2.12.1"])
+def test_worker_rejects_torch_drift_before_training(version, monkeypatch, recipe):
+    monkeypatch.setitem(sys.modules, "torch", SimpleNamespace(__version__=version))
+    with pytest.raises(RuntimeError, match="requires Torch 2.12.1\\+cu130"):
+        load("train").train_loop(recipe)
+
+
 @pytest.fixture
 def exported(tmp_path, journal, recipe):
     """Write real RRD from explicit fixture values, with a clearly fake checkpoint."""
@@ -395,7 +421,8 @@ def test_live_endpoint_override_is_rejected_before_any_native_client_contact(tmp
     assert not (tmp_path / "evidence").exists()
 
 
-def test_driver_binds_descendant_state_clients_to_application_ray(tmp_path, monkeypatch):
+@pytest.mark.parametrize("torch_version", ["2.12.1+cu130", "2.13.0+cpu"])
+def test_driver_binds_descendant_state_clients_to_application_ray(tmp_path, monkeypatch, torch_version):
     """A Jobs driver must override inherited discovery settings for Train's actors."""
     import os
 
@@ -421,10 +448,12 @@ def test_driver_binds_descendant_state_clients_to_application_ray(tmp_path, monk
     monkeypatch.setitem(sys.modules, "ray.train.torch", SimpleNamespace(TorchConfig=object, TorchTrainer=object))
     monkeypatch.setitem(sys.modules, "artifacts", SimpleNamespace(
         storage=lambda _: (None, "synthetic/checkpoints"), publish=lambda *args: None))
-    with pytest.raises(ConnectionBoundary):
+    monkeypatch.setitem(sys.modules, "torch", SimpleNamespace(__version__=torch_version))
+    expected = ConnectionBoundary if torch_version == "2.12.1+cu130" else RuntimeError
+    with pytest.raises(expected):
         load("train").main(["--storage-path", "s3://synthetic/checkpoints", "--run-name", "regression",
                             "--output-dir", str(tmp_path / "export")])
-    assert connected == [(selected, selected)]
+    assert connected == ([(selected, selected)] if expected is ConnectionBoundary else [])
 
 
 @pytest.mark.parametrize("damage", ["missing_buffer", "missing_parameter", "wrong_shape", "nonfinite", "learning_rate", "momentum"])

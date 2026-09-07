@@ -66,6 +66,8 @@ Ray **2.58.0** with Train V2, Arrow **23.0.1**, NumPy **2.4.6** and Rerun
 The image digest and the separately recorded dependency freeze identify different
 parts of the runtime; this is not a fully hash-locked transitive installation.
 There is no model download or external training dataset.
+The Jobs driver and every new or restarted training worker also check the exact
+Torch version before training, so environment drift after preparation fails closed.
 
 Use the SkyPilot-generated SSH alias to reach Jobs through one owned tunnel:
 
@@ -105,6 +107,8 @@ ray job logs --address "$RAY_API" train-baseline
 The default 32 steps train distinct deterministic shards with SGD momentum.
 Every step records globally reduced loss, gradient norm, parameter change,
 applied learning rate, synchronized samples/second and actual CUDA rank evidence.
+An exact-zero gradient is valid when SGD momentum still produces a measured
+parameter update; every recorded step must retain that update evidence.
 Every fourth step, plus the last, saves the full journal and model/optimizer.
 Export reloads the checkpoint, checks held-out improvement and matches its
 parameters against the final CUDA-rank hashes. These measurements demonstrate

@@ -17,7 +17,8 @@ Preflight the selected project's exact workload bucket and prefix; do not use a
 different project's Terraform-state or trajectory bucket as training storage.
 
 The pins are application Ray 2.58.0 / Train V2, Torch 2.12.1+cu130 in the
-digest-pinned upstream PyTorch image, and Rerun 0.31.4. Keep application Ray
+digest-pinned upstream PyTorch image, and Rerun 0.31.4. The driver and every new
+or restarted worker enforce the Torch pin at run time. Keep application Ray
 separate from SkyPilot's management environment and reserved ports. Pure Python
 source changes use native Jobs `--working-dir`; native ABI changes require a
 compatible prepared environment. There is no model or external dataset download.

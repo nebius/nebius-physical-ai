@@ -49,7 +49,8 @@ def validate_journal(journal: list[dict], recipe: dict) -> None:
         for key in ("loss", "gradient_norm", "parameter_delta", "samples_per_second", "learning_rate"):
             if not math.isfinite(row[key]) or row[key] < 0:
                 raise ValueError(f"Invalid {key}")
-        if row["parameter_delta"] <= 0 or row["gradient_norm"] <= 0:
+        # SGD momentum can move parameters even when this step's gradient is zero.
+        if row["parameter_delta"] <= 0:
             raise ValueError("No optimizer progress")
         if row["samples_per_second"] <= 0 or row["learning_rate"] != recipe["learning_rate"]:
             raise ValueError("Throughput or applied learning rate mismatch")
@@ -91,8 +92,17 @@ def validate_optimizer_checkpoint(optimizer, model) -> None:
             raise ValueError("Checkpoint optimizer momentum must be finite and match every parameter")
 
 
+def validate_torch_runtime() -> None:
+    """Reject environment drift in the Jobs driver and every newly started worker."""
+    import torch
+
+    if torch.__version__ != "2.12.1+cu130":
+        raise RuntimeError("This training runtime requires Torch 2.12.1+cu130")
+
+
 def train_loop(recipe: dict) -> None:
     """Train each CUDA rank and report synchronized checkpoints through Ray Train."""
+    validate_torch_runtime()
     import torch
     import torch.distributed as dist
     import ray
@@ -292,6 +302,7 @@ def main(argv: list[str] | None = None) -> None:
 
     if ray.__version__ != "2.58.0":
         raise RuntimeError("This reference requires Ray 2.58.0 and Train V2")
+    validate_torch_runtime()
     # Train's detached cleanup actor uses the State API without an address.
     # Propagate the selected application GCS so it cannot discover management Ray.
     ray.init(address=address, runtime_env={"env_vars": {
