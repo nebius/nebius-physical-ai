@@ -80,6 +80,26 @@ run_setup_check "create temporary venv" python3 -m venv "$VENV_DIR"
 run_setup_check "install npa from local source" bash -c \
   'cd "$1" && "$2/bin/python" -m pip install .' bash "$PROJECT_DIR" "$VENV_DIR"
 
+run_setup_check "installed literal environment loader" "$VENV_DIR/bin/python" - <<'PY'
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+
+from npa.clients import env
+
+assert Path(env.__file__).resolve().is_relative_to(Path(sys.prefix).resolve())
+with tempfile.TemporaryDirectory() as directory:
+    marker = Path(directory) / "must-not-execute"
+    value = f"literal '$HOME' $(touch {marker}) `touch {marker}` \\\" spaces  "
+    data = Path(directory) / "env"
+    data.write_text(env.render_docker_env_file({"NPA_LITERAL": value}))
+    command = env.load_env_file_script(str(data)) + " && printf '%s' \"$NPA_LITERAL\""
+    result = subprocess.run(["/bin/sh", "-c", command], check=True, capture_output=True, text=True)
+    assert result.stdout == value
+    assert not marker.exists()
+PY
+
 if [[ -x "$NPA_BIN" ]]; then
   record_pass "npa binary exists in venv"
 else

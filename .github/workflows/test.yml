@@ -78,7 +78,7 @@ jobs:
         # Lance dataloaders. Installing torch also activates SONIC ONNX export
         # tests, so install their supported extra after selecting CPU wheels.
         run: |
-          pip install --index-url https://download.pytorch.org/whl/cpu torch==2.12.1
+          pip install --index-url https://download.pytorch.org/whl/cpu torch==2.13.0
           pip install -e "npa[sonic]"
           python -c "import torch, onnx, onnxscript, onnxruntime; assert torch.version.cuda is None"
 

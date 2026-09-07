@@ -192,12 +192,32 @@ immutable `dev-<full-git-sha>` channel; the supported tag remains explicitly
 `-unbuilt` until byte scans, anonymous pull, and the eight-node RTX PRO 6000
 qualification are recorded together.
 
+The OpenPI candidate source also isolates its hash-locked public GCS reader
+from the training environment. It replaces the legacy gsutil dependency
+closure with the maintained Google Cloud Storage SDK and verifies object
+generations, checksums and destination paths during dataset preparation.
+This source change does not qualify or republish an existing image digest.
+
+The FiftyOne candidate now requires loopback access through verified SSH or
+Kubernetes port-forwarding. Published tags retain their original bytes until a
+validated replacement is promoted; redeploy existing public listeners using the
+updated deployment path. See the [FiftyOne access guidance](../../skills/tools/fiftyone/SKILL.md).
+
 FiftyOne is the remaining public-release tag override for an unpromoted worker
 candidate: public execution selects the verified `1.15.0.post1`, while an
 explicit custom registry can select the newer supported worker pin. Cosmos
 Transfer and Rerun now select their published coherent Sim2Real releases.
 Private availability and redistribution eligibility do not establish public
 release membership.
+
+The source security candidates update FiftyOne to 1.21.0 with MongoDB 7.0.40,
+and update the SONIC MuJoCo evaluator to the hash-locked Torch 2.13 closure
+on a patched Python base. The Cosmos3 native Ray candidate selects the pinned
+framework's supported Torch 2.13 CUDA 13 group, including its matching NATTEN
+extension, and removes inherited attention binaries from the older Torch ABI.
+The Cosmos3 serving bootstrap also uses a patched Python base and verified
+runtime installation tools. These source changes do not republish or qualify
+the existing supported image digests listed above.
 
 ## Intentionally not published as separate images
 

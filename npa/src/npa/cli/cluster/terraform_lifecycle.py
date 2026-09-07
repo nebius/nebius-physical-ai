@@ -4017,6 +4017,11 @@ def _skypilot_context(
     )
 
     config_override = exact_kubernetes_context_config(context)
+    from npa.orchestration.skypilot.k8s_gpu_catalog import kubernetes_sky_environment
+
+    env = kubernetes_sky_environment(
+        context=context, kubeconfig=kubeconfig_path, sky_executable=sky
+    )
     return sky, env, config_override
 
 
@@ -4129,16 +4134,22 @@ def _detect_skypilot_gpu(
     config_override: str = "",
     cwd: Path | None = None,
 ) -> str:
-    cmd = [sky, "show-gpus", "--infra", infra, "--all"]
+    from npa.orchestration.skypilot.k8s_gpu_catalog import (
+        context_from_infra,
+        parse_kubernetes_gpu_catalog,
+    )
+
+    context = context_from_infra(infra)
+    if not context:
+        raise typer.BadParameter("GPU validation requires an exact Kubernetes context")
+    cmd = [sky, "show-gpus", "--infra", infra]
     if config_override:
         cmd[2:2] = ["--config", config_override]
     result = _run_capture(cmd, cwd=cwd, env=env, timeout=300)
-    for line in result.stdout.splitlines():
-        if "RTX" not in line.upper() or "6000" not in line:
-            continue
-        columns = [column for column in re.split(r"\s{2,}", line.strip()) if column]
-        if columns:
-            return f"{columns[0]}:1"
+    catalog = parse_kubernetes_gpu_catalog(result.stdout, context=context)
+    for name in sorted(catalog.quantities_by_accelerator, key=str.casefold):
+        if 1 in catalog.quantities_by_accelerator[name]:
+            return f"{name}:1"
     raise typer.BadParameter(
         "Unable to auto-detect a Kubernetes GPU for SkyPilot; pass --sky-gpus"
     )
@@ -4158,11 +4169,35 @@ def _wait_for_sky_down(
     cwd: Path | None = None,
 ) -> None:
     for _ in range(30):
-        cmd = [sky, "status", "--refresh"]
+        cmd = [sky, "status", "--refresh", "--output", "json"]
         if config_override:
             cmd[2:2] = ["--config", config_override]
         result = _run_capture(cmd, cwd=cwd, env=env, timeout=120, check=False)
-        if cluster_name not in result.stdout:
+        if result.returncode != 0 or (result.stderr or "").strip():
+            raise typer.BadParameter(
+                "SkyPilot cleanup status failed; remote absence is unverified"
+            )
+        try:
+            rows = json.loads(result.stdout)
+        except (ValueError, TypeError):
+            raise typer.BadParameter(
+                "SkyPilot cleanup returned malformed status; remote absence is unverified"
+            ) from None
+        if not isinstance(rows, list) or any(
+            not isinstance(row, dict)
+            or not isinstance(row.get("name"), str)
+            or not row["name"].strip()
+            or not isinstance(row.get("status"), str)
+            or row.get("status") not in {"INIT", "UP", "STOPPED"}
+            for row in rows
+        ):
+            raise typer.BadParameter(
+                "SkyPilot cleanup returned an unexpected status schema"
+            )
+        names = [row["name"] for row in rows]
+        if len(set(names)) != len(names):
+            raise typer.BadParameter("SkyPilot cleanup status contains ambiguous identities")
+        if cluster_name not in names:
             return
         time.sleep(10)
     raise typer.BadParameter(

@@ -19,6 +19,9 @@ MANUAL_GATES = {
     "NPA_RAY_CLIP_ARCHIVE_LIVE_CONFIG": (
         "completed public CLIP result provenance and exact owned workload storage require private operator selection"
     ),
+    "NPA_VM_SECURITY_LIVE": (
+        "mutates credentials and services on an operator-selected dedicated VM or UID-verified isolated CPU Pod"
+    ),
     "NPA_SONIC_IMAGE_WORKLOAD_LIVE": (
         "real checkpoint dynamics requires an operator-preflighted owned GPU container and private evidence directory"
     ),

@@ -71,7 +71,7 @@ COPY --chmod=0444 src/npa/solutions/wan2_2/dependency_closure.py /opt/npa/wan2-2
 # remove only third-party caches, and scan the stable source bytes instead.
 RUN python -m venv /opt/wan-base \
     && /opt/wan-base/bin/python -m pip install --no-cache-dir --upgrade \
-      "pip==26.1.2" "setuptools==83.0.0" "wheel==0.46.2" \
+      "pip==26.2" "setuptools==83.0.0" "wheel==0.46.2" \
     && /opt/wan-base/bin/python -m pip install --no-cache-dir \
       --no-binary imageio-ffmpeg \
       --constraint /opt/npa/wan2-2/baked-constraints.txt \

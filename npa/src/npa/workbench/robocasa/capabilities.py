@@ -25,6 +25,7 @@ import numpy as np
 from pathlib import Path
 from typing import Any
 
+from npa.clients.storage import safe_s3_download_target
 from npa.workbench.robocasa.schemas import (
     DEFAULT_ENV_ID,
     RoboCasaRunRequest,
@@ -597,7 +598,9 @@ def _download_s3_tree(uri: str, destination: Path) -> Path:
             key = str(item["Key"])
             if key.endswith("/"):
                 continue
-            target = destination / key.removeprefix(prefix.rstrip("/") + "/")
+            target = safe_s3_download_target(
+                destination, key, prefix.rstrip("/") + "/"
+            )
             target.parent.mkdir(parents=True, exist_ok=True)
             client.download_file(bucket, key, str(target))
             count += 1

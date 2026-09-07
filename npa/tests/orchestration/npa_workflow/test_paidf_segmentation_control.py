@@ -206,7 +206,13 @@ def test_submit_capacity_preflight_uses_resolved_paidf_gang_and_free_nodes(
     from npa.cli.workbench.workflow import _preflight_submit_gang_capacity
     from npa.orchestration.skypilot import k8s_gpu_catalog as gpu_catalog
 
-    def node(name: str, *, free: int = 1) -> gpu_catalog.KubernetesGpuNode:
+    # SkyPilot renders this profile's memory request as decimal Kubernetes G.
+    # Exact capacity must fit; a binary-Gi estimate would reject both nodes.
+    requested_memory_bytes = 128 * 1000**3
+
+    def node(
+        name: str, *, free: int = 1, memory_bytes: int = requested_memory_bytes
+    ) -> gpu_catalog.KubernetesGpuNode:
         return gpu_catalog.KubernetesGpuNode(
             name=name,
             ready=True,
@@ -219,7 +225,7 @@ def test_submit_capacity_preflight_uses_resolved_paidf_gang_and_free_nodes(
             allocatable_cpu_millis=64_000,
             free_cpu_millis=64_000,
             allocatable_memory_bytes=256 * 1024**3,
-            free_memory_bytes=256 * 1024**3,
+            free_memory_bytes=memory_bytes,
             allocatable_pods=110,
             free_pod_slots=110,
         )
@@ -258,7 +264,7 @@ def test_submit_capacity_preflight_uses_resolved_paidf_gang_and_free_nodes(
             "compatible_free_nodes": 2,
             "selected_nodes": ["gpu-a", "gpu-b"],
             "cpus_per_node": 16.0,
-            "memory_bytes_per_node": 128 * 1024**3,
+            "memory_bytes_per_node": requested_memory_bytes,
             "allowed_nodes": [],
             "state": "augment",
             "profile": "gpu",
@@ -272,6 +278,22 @@ def test_submit_capacity_preflight_uses_resolved_paidf_gang_and_free_nodes(
             **{
                 **inventory.__dict__,
                 "nodes": (node("gpu-a"), node("gpu-b", free=0)),
+            }
+        ),
+    )
+    with pytest.raises(gpu_catalog.UnsatisfiableAcceleratorError, match="requires 2"):
+        _preflight_submit_gang_capacity(spec, context="task-scoped-context")
+
+    monkeypatch.setattr(
+        gpu_catalog,
+        "discover_kubernetes_gpu_inventory",
+        lambda *, context: gpu_catalog.KubernetesGpuInventory(
+            **{
+                **inventory.__dict__,
+                "nodes": (
+                    node("gpu-a"),
+                    node("gpu-b", memory_bytes=requested_memory_bytes - 1),
+                ),
             }
         ),
     )
