@@ -35,6 +35,14 @@ exports the complete cache-variable family before model initialization. Mount a
 memory-backed volume at `/dev/shm` sized for Ray's object store and the selected
 batch profile. Runtime weights must never be copied into a derived image.
 
+Before starting Ray, guarded serving prepares the pinned Guardrail1 tokenizer
+subtree through the shared Cosmos materializer. It verifies the revision-scoped
+cache and gives NLTK a regular-file data directory through `NLTK_DATA`. Hub
+snapshot symlinks are incompatible with NLTK 3.10.3's enforced path checks;
+the materializer preserves those checks and does not alter the upstream snapshot.
+Missing access or an invalid cache prevents service startup. These assets are
+fetched at runtime and must never be baked into the image.
+
 The service exposes authenticated `GET /health`, model-backed `GET /ready`,
 `GET /models`, `GET /system-info`, `POST /v1/batches`, and artifact retrieval at
 `GET /v1/artifacts/{path}`.

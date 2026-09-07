@@ -51,6 +51,12 @@ Configuration is explicit: `--world-size` sets GPUs per replica;
 `--parallelism-preset` is the Cosmos placement preset; and
 `--guardrails/--no-guardrails` is the explicit safety posture.
 
+Guarded startup reuses the pinned Cosmos tokenizer materializer before Ray/NLTK
+imports. Keep its verified regular-file `NLTK_DATA` cache at runtime; never bake
+it or disable NLTK path enforcement to permit Hub snapshot symlinks. Missing
+entitlement or invalid cache content must refuse startup. The shared materializer
+is the source of truth for the Guardrail1 revision and cache validation.
+
 Use authenticated `GET /ready`, and verify that the exact image checks the native
 Serve application and model replicas. Earlier implementations returned HTTP 200
 while weights were still loading. Require the selected application to be

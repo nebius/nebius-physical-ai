@@ -169,12 +169,70 @@ def test_server_removes_management_credential_when_runtime_fails(monkeypatch, tm
     credential = tmp_path / "credential"
     credential.write_text("private test credential")
     monkeypatch.setattr(ray_server, "_require_ray_authentication", lambda: credential)
+    monkeypatch.setenv("NPA_COSMOS3_RAY_GUARDRAILS", "false")
 
     def fail():
         raise RuntimeError("runtime failed")
 
     monkeypatch.setattr(ray_server, "_run_server", fail)
     with pytest.raises(RuntimeError, match="runtime failed"):
+        ray_server.main()
+    assert not credential.exists()
+
+
+def test_guarded_server_prepares_verified_tokenizer_before_runtime(monkeypatch, tmp_path):
+    import os
+
+    from npa.workbench.cosmos import ray_server, transfer
+
+    credential = tmp_path / "credential"
+    credential.write_text("private test credential")
+    monkeypatch.setattr(ray_server, "_require_ray_authentication", lambda: credential)
+    monkeypatch.setenv("HF_TOKEN", "unit-test-placeholder")
+    monkeypatch.setenv("HF_HOME", str(tmp_path / "hf"))
+    monkeypatch.setenv("NPA_COSMOS3_RAY_GUARDRAILS", "true")
+    monkeypatch.setenv("NLTK_DATA", "/operator/tokenizers")
+    prepared = []
+
+    def prepare(*, hf_home):
+        prepared.append(hf_home)
+
+    def run():
+        assert prepared == [str(tmp_path / "hf")]
+        assert os.environ["NLTK_DATA"].split(os.pathsep) == [
+            str(transfer._guardrail_nltk_data_path(str(tmp_path / "hf"))),
+            "/operator/tokenizers",
+        ]
+
+    monkeypatch.setattr(transfer, "prepare_guardrail_nltk_data", prepare)
+    monkeypatch.setattr(ray_server, "_run_server", run)
+    ray_server.main()
+    assert not credential.exists()
+
+
+@pytest.mark.parametrize("missing_token", [True, False])
+def test_guardrail_preparation_failure_refuses_server_start(
+    monkeypatch, tmp_path, missing_token
+):
+    from npa.workbench.cosmos import ray_server, transfer
+
+    credential = tmp_path / "credential"
+    credential.write_text("private test credential")
+    monkeypatch.setattr(ray_server, "_require_ray_authentication", lambda: credential)
+    monkeypatch.setenv("NPA_COSMOS3_RAY_GUARDRAILS", "true")
+    monkeypatch.setenv("HF_TOKEN", "" if missing_token else "unit-test-placeholder")
+    monkeypatch.setenv("NLTK_DATA", "/operator/tokenizers")
+
+    def denied(**kwargs):
+        assert not missing_token, "missing credentials must refuse before download"
+        raise transfer.GuardrailNLTKDataError("access_denied", "upstream denied")
+
+    def unexpected_start():
+        pytest.fail("guardrail failure must refuse before importing the GPU runtime")
+
+    monkeypatch.setattr(transfer, "prepare_guardrail_nltk_data", denied)
+    monkeypatch.setattr(ray_server, "_run_server", unexpected_start)
+    with pytest.raises(RuntimeError, match="HF_TOKEN is required|upstream denied"):
         ray_server.main()
     assert not credential.exists()
 

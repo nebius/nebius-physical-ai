@@ -27,9 +27,37 @@ def main() -> None:
 
     token_file = _require_ray_authentication()
     try:
+        _prepare_guardrail_tokenizer()
         _run_server()
     finally:
         token_file.unlink(missing_ok=True)
+
+
+def _prepare_guardrail_tokenizer() -> None:
+    """Reuse the pinned regular-file tokenizer cache before importing NLTK.
+
+    NLTK's enforced path checks reject Hub snapshot symlinks. The shared Cosmos
+    materializer preserves that boundary and verifies cached bytes on reuse.
+    Setting NLTK_DATA before Ray starts also configures its model workers.
+    """
+    if not _env_bool("NPA_COSMOS3_RAY_GUARDRAILS", True):
+        return
+    if not os.environ.get("HF_TOKEN", "").strip():
+        raise RuntimeError(
+            "HF_TOKEN is required when Cosmos guardrails are enabled; "
+            "no tokenizer download was attempted"
+        )
+    from npa.workbench.cosmos.transfer import (
+        _guardrail_nltk_data_path,
+        prepare_guardrail_nltk_data,
+    )
+
+    hf_home = os.environ.get("HF_HOME", str(Path.home() / ".cache" / "huggingface"))
+    prepare_guardrail_nltk_data(hf_home=hf_home)
+    safe_data = str(_guardrail_nltk_data_path(hf_home))
+    os.environ["NLTK_DATA"] = os.pathsep.join(
+        part for part in (safe_data, os.environ.get("NLTK_DATA", "")) if part
+    )
 
 
 def _run_server() -> None:
