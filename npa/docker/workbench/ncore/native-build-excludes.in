@@ -1,0 +1,2 @@
+# Pythran's NumPy dependency is supplied by our exact source-built wheel.
+numpy

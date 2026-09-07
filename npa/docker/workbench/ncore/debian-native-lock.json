@@ -1,0 +1,115 @@
+{
+  "schema": 1,
+  "snapshot": "20260906T183022Z",
+  "packages": [
+    {
+      "package": "libgcc-s1",
+      "version": "12.2.0-14+deb12u1",
+      "source": "gcc-12",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/g/gcc-12/libgcc-s1_12.2.0-14+deb12u1_amd64.deb",
+      "sha256": "3016e62cb4b7cd8038822870601f5ed131befe942774d0f745622cc77d8a88f7",
+      "libraries": {
+        "/lib/x86_64-linux-gnu/libgcc_s.so.1": "2bd1552c47799ef67e701e81d4383061fd76059868e446e63560f0dd0d5ec14e"
+      }
+    },
+    {
+      "package": "libgfortran5",
+      "version": "12.2.0-14+deb12u1",
+      "source": "gcc-12",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/g/gcc-12/libgfortran5_12.2.0-14+deb12u1_amd64.deb",
+      "sha256": "63d38775d20c425c1f00914b52167ae0e3b4639facdb0aa734877279fb716fbb",
+      "libraries": {
+        "/usr/lib/x86_64-linux-gnu/libgfortran.so.5.0.0": "59811b6f7cff9cc414fcca4f5c29deaed251d410a2384602f323cf011a845877"
+      }
+    },
+    {
+      "package": "libgomp1",
+      "version": "12.2.0-14+deb12u1",
+      "source": "gcc-12",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/g/gcc-12/libgomp1_12.2.0-14+deb12u1_amd64.deb",
+      "sha256": "48fec46bda7f5b1638b9e959889bfbc20491247d402d120bb152687eb48143d7",
+      "libraries": {
+        "/usr/lib/x86_64-linux-gnu/libgomp.so.1.0.0": "f9a9ad78a8dc39c0e90a265ffa551fae6c92a40f360889b44a7e141f9a2adfb1"
+      }
+    },
+    {
+      "package": "libquadmath0",
+      "version": "12.2.0-14+deb12u1",
+      "source": "gcc-12",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/g/gcc-12/libquadmath0_12.2.0-14+deb12u1_amd64.deb",
+      "sha256": "3f0c9a4c730da2fdab001cae596625438598fd2996d29d888feeb4c1cdc9011f",
+      "libraries": {
+        "/usr/lib/x86_64-linux-gnu/libquadmath.so.0.0.0": "8c3e12967a5e6dccb0dc2a2b92f415d76ab2b90bea645eb5ec8a01531d01cefb"
+      }
+    },
+    {
+      "package": "libstdc++6",
+      "version": "12.2.0-14+deb12u1",
+      "source": "gcc-12",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/g/gcc-12/libstdc++6_12.2.0-14+deb12u1_amd64.deb",
+      "sha256": "5cd3171216d4ab0fc911cfe9c35509bf2dd8f47761c43b7f6a4296701551a24d",
+      "libraries": {
+        "/usr/lib/x86_64-linux-gnu/libstdc++.so.6.0.30": "e7848e32af4932840ba775169041759a2a8dd5a008af360e5c55bce506eebcf4"
+      }
+    },
+    {
+      "package": "libc6",
+      "version": "2.36-9+deb12u14",
+      "source": "glibc",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/g/glibc/libc6_2.36-9+deb12u14_amd64.deb",
+      "sha256": "ba4f88f73dbc3ae9055f3c20f4523bfdbaf1ad13ff95e258924f77d20b4fbedf",
+      "libraries": {
+        "/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2": "02bcda52c1a5dfc236f94d9e5255b4a0e26347d8a372a5223b650e31f291ce3c",
+        "/lib/x86_64-linux-gnu/libBrokenLocale.so.1": "396d2c69186ca1500f3d48e4b85e3e59dfba230f41cfa95fb5969af93b2fe51f",
+        "/lib/x86_64-linux-gnu/libanl.so.1": "d9d868e705f427bbb31bdab9e7b8b65bb76642f52a445aecf2708be8f849e1a4",
+        "/lib/x86_64-linux-gnu/libc.so.6": "6b4a45352fd0c540a9c7c718f35ce8c8e46a4e482f9d3885a910c32d1a0e1421",
+        "/lib/x86_64-linux-gnu/libc_malloc_debug.so.0": "49c5f946d6101ac51079fe234f0bf6f406a89ffd295309158ded4fa1f685b0c2",
+        "/lib/x86_64-linux-gnu/libdl.so.2": "95d521b2c39fd0333271b6fdcdddff878ae82001a304313a837b8e728ebe3cb1",
+        "/lib/x86_64-linux-gnu/libm.so.6": "7f2ca87f652f56b094462474b076749e90e689d0ecb9cb63c7679820b271b4e7",
+        "/lib/x86_64-linux-gnu/libmemusage.so": "3b244ea54ca889a8df507119e6837f93268d04f51348673eaaa8b68342e082d0",
+        "/lib/x86_64-linux-gnu/libmvec.so.1": "1d3a6cfc6a5699b323adf25b53b62e128447661ae8ea1d46de88d0743a9599c5",
+        "/lib/x86_64-linux-gnu/libnsl.so.1": "60d61ad427637c39f7ad032b08eb97039eef67728f05cad4bc9a458904dbe68c",
+        "/lib/x86_64-linux-gnu/libnss_compat.so.2": "e6a08716672405ae77a94df3128a1a570ac7d7a8381d3e769740d093a94c479e",
+        "/lib/x86_64-linux-gnu/libnss_dns.so.2": "6a6a0a97f4a88153581ce0dbf4f1e74e317156508bc50699cd2168a3189773d4",
+        "/lib/x86_64-linux-gnu/libnss_files.so.2": "2981d2bd2e3082d0acc96e6150594cacac55da17b638282d5e8b0ed45b81d213",
+        "/lib/x86_64-linux-gnu/libnss_hesiod.so.2": "f1eba71fd6cf80de888491b0c2893803799d62f373dd345e51be12711568aab3",
+        "/lib/x86_64-linux-gnu/libpcprofile.so": "e7c74b7df8d877d010747de206a504c9957b5889c1cbe1367bfa885c0eca5b34",
+        "/lib/x86_64-linux-gnu/libpthread.so.0": "b93a680da8a05b939b235c1533572e7a2f6d3d8808bf70209997edc64ea5fedc",
+        "/lib/x86_64-linux-gnu/libresolv.so.2": "ac3924c6cdb26cdfff10fec2ab2748705c83931b39c7f6e638a2b31ae34d420b",
+        "/lib/x86_64-linux-gnu/librt.so.1": "41c72def458b8cfb6aab96a7dbada7454dd216d89aac65fb085eb52bead51def",
+        "/lib/x86_64-linux-gnu/libthread_db.so.1": "da02d175416aecb8170057c381f62f5852abd71bc5bddce2e1e523e3f15bb08a",
+        "/lib/x86_64-linux-gnu/libutil.so.1": "bc5d8f67c3b3c6eea14e9d9f389cd4bc6034e4db9314849d7d5a5d756df0a9ca"
+      }
+    },
+    {
+      "package": "libblas3",
+      "version": "3.11.0-2",
+      "source": "lapack",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/l/lapack/libblas3_3.11.0-2_amd64.deb",
+      "sha256": "9aae8058b8d02b800bdafc5b340614df1442a2d2abbc2d351947c0fdd67aa08a",
+      "libraries": {
+        "/usr/lib/x86_64-linux-gnu/blas/libblas.so.3.11.0": "8d5488a64515f34451bd893877d813c342efdd0e98962e16b21e25095cd1e2af"
+      }
+    },
+    {
+      "package": "liblapack3",
+      "version": "3.11.0-2",
+      "source": "lapack",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/l/lapack/liblapack3_3.11.0-2_amd64.deb",
+      "sha256": "4cb4ba9c36ee0242d91c8bcd69286db59a6a0c86f8c522b72f5eb0053e127d7d",
+      "libraries": {
+        "/usr/lib/x86_64-linux-gnu/lapack/liblapack.so.3.11.0": "72db5f4e45b7d85c756f1dcba10220bc843239c2b40ffcdd7da5d3c728a0ccac"
+      }
+    },
+    {
+      "package": "zlib1g",
+      "version": "1:1.2.13.dfsg-1",
+      "source": "zlib",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/z/zlib/zlib1g_1.2.13.dfsg-1_amd64.deb",
+      "sha256": "d7dd1d1411fedf27f5e27650a6eff20ef294077b568f4c8c5e51466dc7c08ce4",
+      "libraries": {
+        "/lib/x86_64-linux-gnu/libz.so.1.2.13": "7e2a72b4c4b38c61e6962de6e3f4a5e9ae692e732c68deead10a7ce2135a7f68"
+      }
+    }
+  ]
+}

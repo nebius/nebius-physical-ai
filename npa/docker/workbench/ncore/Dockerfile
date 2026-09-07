@@ -14,6 +14,7 @@ RUN sed -ri \
     && apt-get update && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends \
       ca-certificates curl netcat-openbsd openssh-server patch procps rsync sudo \
+      libblas3 liblapack3 libgfortran5 libquadmath0 libgomp1 \
     && rm -rf /var/lib/apt/lists/* \
     && rm -f /etc/ssh/ssh_host_* \
     && useradd -m -s /bin/bash -u 1000 ubuntu \
@@ -25,7 +26,31 @@ RUN sed -ri \
       >/etc/ssh/sshd_config.d/npa.conf \
     && install -d -o ubuntu -g ubuntu /workspace /home/ubuntu/.cache
 
+# Optional read-only BuildKit named context for already verified source archives.
+# Default builds fetch the same hash-pinned public bytes.
+FROM scratch AS native-source-cache
+FROM runtime-base AS native-builder
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      g++ gfortran gpg make nasm ninja-build pkg-config libblas-dev liblapack-dev zlib1g-dev \
+    && rm -rf /var/lib/apt/lists/*
+COPY docker/workbench/ncore/assemble_native_sources.py docker/workbench/ncore/native_build_support.py docker/workbench/ncore/build_ffmpeg.py \
+     docker/workbench/ncore/native-source-lock.json docker/workbench/ncore/native-*-build.lock /build/
+RUN --mount=type=bind,from=native-source-cache,target=/source-cache \
+    python /build/assemble_native_sources.py --lock /build/native-source-lock.json \
+      --cache /source-cache --output /opt/ncore/native-sources
+RUN gpg --dearmor </opt/ncore/native-sources/ffmpeg-devel.asc >/build/ffmpeg-release.gpg \
+    && gpgv --keyring /build/ffmpeg-release.gpg /opt/ncore/native-sources/ffmpeg-8.1.1.tar.xz.asc \
+      /opt/ncore/native-sources/ffmpeg-8.1.1.tar.xz \
+    && python /build/build_ffmpeg.py
+COPY docker/workbench/ncore/build_native.py /build/
+RUN python /build/build_native.py converter
+RUN python /build/build_native.py reader \
+    && cp /build/build_native.py /build/build_ffmpeg.py /build/native_build_support.py /build/assemble_native_sources.py /build/native-*-build.lock /opt/ncore/native-sources/
+
 FROM runtime-base AS assembled
+COPY --from=native-builder /opt/ncore /opt/ncore
+COPY --from=native-builder /build/ncore-native/wheels /build/native-wheels
+RUN printf '%s\n' /opt/ncore/ffmpeg/lib >/etc/ld.so.conf.d/ncore-ffmpeg.conf && ldconfig
 COPY docker/workbench/ncore/source-lock.json docker/workbench/ncore/stage_upstream.py /build/
 RUN python -B /build/stage_upstream.py --lock /build/source-lock.json --output /opt/ncore/src
 
@@ -36,9 +61,11 @@ RUN python -m pip install --require-hashes -r /build/build-requirements.lock \
     && python -m venv --without-pip /opt/ncore/converter-venv \
     && python -m venv --without-pip /opt/venv \
     && python -m pip --python /opt/ncore/converter-venv install --require-hashes -r /build/build-requirements.lock \
-    && python -m pip --python /opt/ncore/converter-venv install --no-build-isolation --require-hashes -r /build/converter-requirements.lock \
+    && python -m pip --python /opt/ncore/converter-venv install --no-deps --no-index /build/native-wheels/converter/*.whl \
+    && python -m pip --python /opt/ncore/converter-venv install --no-binary=numpy,scipy,av --no-build-isolation --require-hashes -r /build/converter-requirements.lock \
     && python -m pip --python /opt/venv install --require-hashes -r /build/build-requirements.lock \
-    && python -m pip --python /opt/venv install --no-build-isolation --require-hashes -r /build/npa-requirements.lock \
+    && python -m pip --python /opt/venv install --no-deps --no-index /build/native-wheels/reader/*.whl \
+    && python -m pip --python /opt/venv install --no-binary=numpy,scipy,av --no-build-isolation --require-hashes -r /build/npa-requirements.lock \
     && printf '%s\n' /opt/ncore/src/ncore /opt/ncore/src/pycolmap /opt/ncore/src/pycolmap/pycolmap \
       >/opt/ncore/converter-venv/lib/python3.12/site-packages/ncore-source.pth \
     && printf '%s\n' /opt/ncore/src/ncore /opt/ncore/src/pycolmap /opt/ncore/src/pycolmap/pycolmap \
@@ -61,10 +88,14 @@ ENV PATH=/opt/venv/bin:/opt/ncore/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/
 COPY --from=assembled /opt/ncore /opt/ncore
 COPY --from=assembled /opt/venv /opt/venv
 COPY --from=assembled /opt/npa /opt/npa
+COPY --from=assembled /etc/ld.so.conf.d/ncore-ffmpeg.conf /etc/ld.so.conf.d/ncore-ffmpeg.conf
+COPY --chmod=0644 docker/workbench/ncore/Dockerfile docker/workbench/ncore/debian-native-lock.json docker/workbench/ncore/NATIVE-SOURCES.md /opt/ncore/native-sources/
+RUN chmod -R a+rX /opt/ncore/native-sources && ldconfig
 COPY --from=assembled /build/*requirements.lock /usr/share/doc/npa-ncore/
 COPY --from=assembled /opt/ncore/src/ncore/LICENSE /usr/share/doc/npa-ncore/LICENSE-APACHE-2.0
 COPY docker/workbench/ncore/source-lock.json docker/workbench/ncore/REDISTRIBUTION.md /usr/share/doc/npa-ncore/
 COPY --chmod=0755 docker/workbench/ncore/colmap-convert /opt/ncore/bin/colmap-convert
+COPY --chmod=0755 docker/workbench/ncore/verify_native.py /opt/ncore/bin/verify_native.py
 COPY --chmod=0755 docker/workbench/ncore/verify-packaging.py /opt/ncore/bin/verify-packaging.py
 COPY --chmod=0755 docker/workbench/ncore/entrypoint.sh /opt/ncore/bin/entrypoint.sh
 # Tests run the actual SSH service lifecycle under the final uid, then remove
@@ -76,7 +107,10 @@ RUN /opt/venv/bin/python -c 'import os,re; assert re.fullmatch("[0-9a-f]{40}", o
     && test -z "$(find /etc/ssh -name 'ssh_host_*' -print -quit)"
 USER ubuntu
 WORKDIR /workspace
-RUN /opt/venv/bin/python /opt/ncore/bin/verify-packaging.py
+RUN /opt/venv/bin/python /opt/ncore/bin/verify-packaging.py \
+    && /opt/venv/bin/python /opt/ncore/bin/verify_native.py >/tmp/native-reader.json \
+    && /opt/ncore/converter-venv/bin/python /opt/ncore/bin/verify_native.py >/tmp/native-converter.json \
+    && sudo mv /tmp/native-reader.json /tmp/native-converter.json /opt/ncore/native-sources/
 LABEL org.opencontainers.image.source="https://github.com/nebius/nebius-physical-ai" \
       org.opencontainers.image.revision="${SOURCE_SHA}" \
       org.opencontainers.image.licenses="Apache-2.0 AND MIT" \

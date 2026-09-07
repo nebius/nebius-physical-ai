@@ -1,0 +1,405 @@
+{
+  "schema": 1,
+  "scope": "Source-built PyAV/FFmpeg and both NumPy/SciPy pairs, plus their Debian native runtime sources; not a whole-image source-delivery attestation.",
+  "components": [
+    {
+      "name": "av",
+      "version": "17.1.0",
+      "kind": "sdist",
+      "artifacts": [
+        {
+          "filename": "av-17.1.0.tar.gz",
+          "url": "https://files.pythonhosted.org/packages/5e/e3/477fa20578c284abeda08d91b63ee9abaebc93445d8feeb989d3d444bae1/av-17.1.0.tar.gz",
+          "sha256": "7f1e71ff621b66253333926f948e00faae11d855b2442133c65128bca64cdeb3"
+        }
+      ]
+    },
+    {
+      "name": "numpy",
+      "version": "1.26.4",
+      "kind": "sdist",
+      "artifacts": [
+        {
+          "filename": "numpy-1.26.4.tar.gz",
+          "url": "https://files.pythonhosted.org/packages/65/6e/09db70a523a96d25e115e71cc56a6f9031e7b8cd166c1ac8438307c14058/numpy-1.26.4.tar.gz",
+          "sha256": "2a02aba9ed12e4ac4eb3ea9421c420301a0c6460d9830d74a9df87efa4912010"
+        }
+      ]
+    },
+    {
+      "name": "numpy",
+      "version": "2.5.3",
+      "kind": "sdist",
+      "artifacts": [
+        {
+          "filename": "numpy-2.5.3.tar.gz",
+          "url": "https://files.pythonhosted.org/packages/13/01/11703282db468b85f6f7b8c7f22d058de5970d5c7e60a3a8aaa313c3de36/numpy-2.5.3.tar.gz",
+          "sha256": "df2d5874ff183595a4ba404edd04f6bd9b5505c1d7708573f6a6c17489a67563"
+        }
+      ]
+    },
+    {
+      "name": "scipy",
+      "version": "1.15.2",
+      "kind": "sdist",
+      "artifacts": [
+        {
+          "filename": "scipy-1.15.2.tar.gz",
+          "url": "https://files.pythonhosted.org/packages/b7/b9/31ba9cd990e626574baf93fbc1ac61cf9ed54faafd04c479117517661637/scipy-1.15.2.tar.gz",
+          "sha256": "cd58a314d92838f7e6f755c8a2167ead4f27e1fd5c1251fd54289569ef3495ec"
+        }
+      ]
+    },
+    {
+      "name": "scipy",
+      "version": "1.18.1",
+      "kind": "sdist",
+      "artifacts": [
+        {
+          "filename": "scipy-1.18.1.tar.gz",
+          "url": "https://files.pythonhosted.org/packages/7e/74/66de6258867beb2ef08f35f9f2ac017a52cacd5081714d239ff1a442d458/scipy-1.18.1.tar.gz",
+          "sha256": "52c4b7422442aba924d03ad4019852b08a92e64ea187b933135687bfe2747307"
+        }
+      ]
+    },
+    {
+      "name": "gcc-12",
+      "version": "12.2.0-14+deb12u1",
+      "kind": "debian-source",
+      "artifacts": [
+        {
+          "filename": "gcc-12_12.2.0-14+deb12u1.dsc",
+          "url": "https://snapshot.debian.org/archive/debian-security/20260906T183022Z/pool/updates/main/g/gcc-12/gcc-12_12.2.0-14+deb12u1.dsc",
+          "sha256": "3aed0b189189c744dc9f4b74798a51d3e512ea85e492568db788a927c88e20ba"
+        },
+        {
+          "filename": "gcc-12_12.2.0.orig.tar.gz",
+          "url": "https://snapshot.debian.org/archive/debian-security/20260906T183022Z/pool/updates/main/g/gcc-12/gcc-12_12.2.0.orig.tar.gz",
+          "sha256": "b8298be16aeeb96a889c6afed0a8e2241b47452e89cc81fe65ea849d5c740fcb"
+        },
+        {
+          "filename": "gcc-12_12.2.0-14+deb12u1.debian.tar.xz",
+          "url": "https://snapshot.debian.org/archive/debian-security/20260906T183022Z/pool/updates/main/g/gcc-12/gcc-12_12.2.0-14+deb12u1.debian.tar.xz",
+          "sha256": "59f7f7763a0c355e3f27ff9e7ac80d06382b29939361a87e7b139226bfe7402e"
+        }
+      ]
+    },
+    {
+      "name": "glibc",
+      "version": "2.36-9+deb12u14",
+      "kind": "debian-source",
+      "artifacts": [
+        {
+          "filename": "glibc_2.36-9+deb12u14.dsc",
+          "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/g/glibc/glibc_2.36-9+deb12u14.dsc",
+          "sha256": "cfe1f0b8dc1fa211ce5a45b3725cc38b29f88667f1140ebdca6de35cf9c6f1fd"
+        },
+        {
+          "filename": "glibc_2.36.orig.tar.xz",
+          "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/g/glibc/glibc_2.36.orig.tar.xz",
+          "sha256": "a543c02070d46ccaf866957efd13f10c924daa74c86a90a0254db09a92a708ee"
+        },
+        {
+          "filename": "glibc_2.36-9+deb12u14.debian.tar.xz",
+          "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/g/glibc/glibc_2.36-9+deb12u14.debian.tar.xz",
+          "sha256": "cf4ac9cd98185452cae3ef34e2e4ee12753e3d93fd0c62c61396d4a47eec902f"
+        }
+      ]
+    },
+    {
+      "name": "zlib",
+      "version": "1:1.2.13.dfsg-1",
+      "kind": "debian-source",
+      "artifacts": [
+        {
+          "filename": "zlib_1.2.13.dfsg-1.dsc",
+          "url": "https://snapshot.debian.org/archive/debian-security/20260906T183022Z/pool/updates/main/z/zlib/zlib_1.2.13.dfsg-1.dsc",
+          "sha256": "3fa1e6b2fc525062aa88207dda52fed8e045373c809d362fe8a2bfbf7cf515a8"
+        },
+        {
+          "filename": "zlib_1.2.13.dfsg.orig.tar.bz2",
+          "url": "https://snapshot.debian.org/archive/debian-security/20260906T183022Z/pool/updates/main/z/zlib/zlib_1.2.13.dfsg.orig.tar.bz2",
+          "sha256": "71feb7947e3c00ef125f83b79a4e529bde31171e5babe48b391f06758d1ab0a1"
+        },
+        {
+          "filename": "zlib_1.2.13.dfsg-1.debian.tar.xz",
+          "url": "https://snapshot.debian.org/archive/debian-security/20260906T183022Z/pool/updates/main/z/zlib/zlib_1.2.13.dfsg-1.debian.tar.xz",
+          "sha256": "f66cf3d4f2d7defcd4d1fd1fb0a11ee39f1e01b42ec7d059c9dc5c1695133c44"
+        }
+      ]
+    },
+    {
+      "name": "lapack",
+      "version": "3.11.0-2",
+      "kind": "debian-source",
+      "artifacts": [
+        {
+          "filename": "lapack_3.11.0-2.dsc",
+          "sha256": "664d828b9015f9d7db00dd53d42ee7ae0b30e90725fa5300fce35a833ecd5ecf",
+          "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/l/lapack/lapack_3.11.0-2.dsc"
+        },
+        {
+          "filename": "lapack_3.11.0.orig.tar.gz",
+          "sha256": "4b9ba79bfd4921ca820e83979db76ab3363155709444a787979e81c22285ffa9",
+          "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/l/lapack/lapack_3.11.0.orig.tar.gz"
+        },
+        {
+          "filename": "lapack_3.11.0-2.debian.tar.xz",
+          "sha256": "36825c7cb768267fe7d322145a4160d4e564a21730b16d78a59090102cc35dfd",
+          "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/l/lapack/lapack_3.11.0-2.debian.tar.xz"
+        }
+      ]
+    },
+    {
+      "name": "ffmpeg",
+      "version": "8.1.1",
+      "kind": "upstream-source",
+      "artifacts": [
+        {
+          "filename": "ffmpeg-8.1.1.tar.xz",
+          "url": "https://ffmpeg.org/releases/ffmpeg-8.1.1.tar.xz",
+          "sha256": "b6863adde98898f42602017462871b5f6333e65aec803fdd7a6308639c52edf3"
+        },
+        {
+          "filename": "ffmpeg-8.1.1.tar.xz.asc",
+          "url": "https://ffmpeg.org/releases/ffmpeg-8.1.1.tar.xz.asc",
+          "sha256": "34e2109f97bededb42a3cb5e7b9a7bb67dd6fe4749a7bce630ec1c833caa2b37"
+        },
+        {
+          "filename": "ffmpeg-devel.asc",
+          "url": "https://ffmpeg.org/ffmpeg-devel.asc",
+          "sha256": "397b3becedcd5a98769967ff1ff8501ddc89f8368b8f766e4701377d7dbaabe5"
+        }
+      ],
+      "release_signer": "FCF986EA15E6E293A5644F10B4322F04D67658D8"
+    },
+    {
+      "name": "beniget",
+      "version": "0.4.2.post1",
+      "kind": "build-tool-source",
+      "artifacts": [
+        {
+          "filename": "beniget-0.4.2.post1.tar.gz",
+          "url": "https://files.pythonhosted.org/packages/2e/27/5bb01af8f2860d431b98d0721b96ff2cea979106cae3f2d093ec74f6400c/beniget-0.4.2.post1.tar.gz",
+          "sha256": "a0258537e65e7e14ec33a86802f865a667f949bb6c73646d55e42f7c45a052ae"
+        }
+      ]
+    },
+    {
+      "name": "beniget",
+      "version": "0.5.0",
+      "kind": "build-tool-source",
+      "artifacts": [
+        {
+          "filename": "beniget-0.5.0.tar.gz",
+          "url": "https://files.pythonhosted.org/packages/31/a9/cf7c2317da1f5034fdebe84555e14a474b3297ef2d03ad148ff02fef2e3a/beniget-0.5.0.tar.gz",
+          "sha256": "e7af11fa8ec7de3d3eb3d98b1e722d15d44017d8b35d8aa11d54f6719b312f22"
+        }
+      ]
+    },
+    {
+      "name": "cython",
+      "version": "3.0.12",
+      "kind": "build-tool-source",
+      "artifacts": [
+        {
+          "filename": "cython-3.0.12.tar.gz",
+          "url": "https://files.pythonhosted.org/packages/5a/25/886e197c97a4b8e254173002cdc141441e878ff29aaa7d9ba560cd6e4866/cython-3.0.12.tar.gz",
+          "sha256": "b988bb297ce76c671e28c97d017b95411010f7c77fa6623dd0bb47eed1aee1bc"
+        }
+      ]
+    },
+    {
+      "name": "cython",
+      "version": "3.2.4",
+      "kind": "build-tool-source",
+      "artifacts": [
+        {
+          "filename": "cython-3.2.4.tar.gz",
+          "url": "https://files.pythonhosted.org/packages/91/85/7574c9cd44b69a27210444b6650f6477f56c75fee1b70d7672d3e4166167/cython-3.2.4.tar.gz",
+          "sha256": "84226ecd313b233da27dc2eb3601b4f222b8209c3a7216d8733b031da1dc64e6"
+        }
+      ]
+    },
+    {
+      "name": "gast",
+      "version": "0.6.0",
+      "kind": "build-tool-source",
+      "artifacts": [
+        {
+          "filename": "gast-0.6.0.tar.gz",
+          "url": "https://files.pythonhosted.org/packages/3c/14/c566f5ca00c115db7725263408ff952b8ae6d6a4e792ef9c84e77d9af7a1/gast-0.6.0.tar.gz",
+          "sha256": "88fc5300d32c7ac6ca7b515310862f71e6fdf2c029bbec7c66c0f5dd47b6b1fb"
+        }
+      ]
+    },
+    {
+      "name": "gast",
+      "version": "0.7.0",
+      "kind": "build-tool-source",
+      "artifacts": [
+        {
+          "filename": "gast-0.7.0.tar.gz",
+          "url": "https://files.pythonhosted.org/packages/91/f6/e73969782a2ecec280f8a176f2476149dd9dba69d5f8779ec6108a7721e6/gast-0.7.0.tar.gz",
+          "sha256": "0bb14cd1b806722e91ddbab6fb86bba148c22b40e7ff11e248974e04c8adfdae"
+        }
+      ]
+    },
+    {
+      "name": "meson",
+      "version": "1.8.3",
+      "kind": "build-tool-source",
+      "artifacts": [
+        {
+          "filename": "meson-1.8.3.tar.gz",
+          "url": "https://files.pythonhosted.org/packages/9f/6d/4a56b546aa2bbaadba90a017afc5ba43c7fa61831db64f20a953747ea145/meson-1.8.3.tar.gz",
+          "sha256": "f118aa910fc0a137cc2dd0122232dbf82153d9a12fb5b0f5bb64896f6a157abf"
+        }
+      ]
+    },
+    {
+      "name": "meson-python",
+      "version": "0.15.0",
+      "kind": "build-tool-source",
+      "artifacts": [
+        {
+          "filename": "meson_python-0.15.0.tar.gz",
+          "url": "https://files.pythonhosted.org/packages/a2/3b/276b596824a0820987fdcc7721618453b4f9a8305fe20b611a00ac3f948e/meson_python-0.15.0.tar.gz",
+          "sha256": "fddb73eecd49e89c1c41c87937cd89c2d0b65a1c63ba28238681d4bd9484d26f"
+        }
+      ]
+    },
+    {
+      "name": "meson-python",
+      "version": "0.19.0",
+      "kind": "build-tool-source",
+      "artifacts": [
+        {
+          "filename": "meson_python-0.19.0.tar.gz",
+          "url": "https://files.pythonhosted.org/packages/32/98/7fe5d1bf741c03c6eea04b6245737dbd79657d4f9200e82fcbb4cc12637b/meson_python-0.19.0.tar.gz",
+          "sha256": "9959d198aa69b57fcfd354a34518c6f795b781a73ed0656f4d01660160cc2553"
+        }
+      ]
+    },
+    {
+      "name": "packaging",
+      "version": "26.3",
+      "kind": "build-tool-source",
+      "artifacts": [
+        {
+          "filename": "packaging-26.3.tar.gz",
+          "url": "https://files.pythonhosted.org/packages/7d/fa/3944b40b07da9ce895c0e6303a5ab7d53da063554f534556b134a54d6093/packaging-26.3.tar.gz",
+          "sha256": "94edc256424af38762eb31306eed28beb9f0efc50a8837492c9d6fd6004aed79"
+        }
+      ]
+    },
+    {
+      "name": "pip",
+      "version": "26.1.2",
+      "kind": "build-tool-source",
+      "artifacts": [
+        {
+          "filename": "pip-26.1.2.tar.gz",
+          "url": "https://files.pythonhosted.org/packages/01/91/47e7d486260f618783899587af63ccf7980fb60245c3e63dd4571c6b57ad/pip-26.1.2.tar.gz",
+          "sha256": "f49cd134c61cf2fd75e0ce2676db03e4054504a5a4986d00f8299ae632dc4605"
+        }
+      ]
+    },
+    {
+      "name": "ply",
+      "version": "3.11",
+      "kind": "build-tool-source",
+      "artifacts": [
+        {
+          "filename": "ply-3.11.tar.gz",
+          "url": "https://files.pythonhosted.org/packages/e5/69/882ee5c9d017149285cab114ebeab373308ef0f874fcdac9beb90e0ac4da/ply-3.11.tar.gz",
+          "sha256": "00c7c1aaa88358b9c765b6d3000c6eec0ba42abca5351b095321aef446081da3"
+        }
+      ]
+    },
+    {
+      "name": "pybind11",
+      "version": "2.13.6",
+      "kind": "build-tool-source",
+      "artifacts": [
+        {
+          "filename": "pybind11-2.13.6.tar.gz",
+          "url": "https://files.pythonhosted.org/packages/d2/c1/72b9622fcb32ff98b054f724e213c7f70d6898baa714f4516288456ceaba/pybind11-2.13.6.tar.gz",
+          "sha256": "ba6af10348c12b24e92fa086b39cfba0eff619b61ac77c406167d813b096d39a"
+        }
+      ]
+    },
+    {
+      "name": "pybind11",
+      "version": "3.0.4",
+      "kind": "build-tool-source",
+      "artifacts": [
+        {
+          "filename": "pybind11-3.0.4.tar.gz",
+          "url": "https://files.pythonhosted.org/packages/cc/f0/35145a3c3baffeef55d4b8324caa33abaa8fa56ab345ecd4b2211d09163e/pybind11-3.0.4.tar.gz",
+          "sha256": "3286b59c8a774b9ee650169302dd5a4eedc30a8617905a0560dd8ee44775130c"
+        }
+      ]
+    },
+    {
+      "name": "pyproject-metadata",
+      "version": "0.12.1",
+      "kind": "build-tool-source",
+      "artifacts": [
+        {
+          "filename": "pyproject_metadata-0.12.1.tar.gz",
+          "url": "https://files.pythonhosted.org/packages/4f/76/1cae539918a7b1746d624c2f01560b793c22cd8c081157505bb9bbf0e34d/pyproject_metadata-0.12.1.tar.gz",
+          "sha256": "8809a4df6fe08279b39a8890669506ed3158e0617855ac9aff098fcbe772ae4c"
+        }
+      ]
+    },
+    {
+      "name": "pythran",
+      "version": "0.17.0",
+      "kind": "build-tool-source",
+      "artifacts": [
+        {
+          "filename": "pythran-0.17.0.tar.gz",
+          "url": "https://files.pythonhosted.org/packages/34/2d/4ac363a2eecd68c372b058d1b95a5f262c70776e107619cdcb5a4b68e1a3/pythran-0.17.0.tar.gz",
+          "sha256": "3b77d6d970a6cf5b448facc7d4f6229c3e73909ac27ea2480c843afdadbad0fb"
+        }
+      ]
+    },
+    {
+      "name": "pythran",
+      "version": "0.19.0",
+      "kind": "build-tool-source",
+      "artifacts": [
+        {
+          "filename": "pythran-0.19.0.tar.gz",
+          "url": "https://files.pythonhosted.org/packages/bb/a3/03098a8a5d2c9f801c227cf941d85976934f5f47307ef3d819734370acdc/pythran-0.19.0.tar.gz",
+          "sha256": "18a096daa8b4bbe3ace06ce5d7325be5ff57aec4cf67b91834cf1b757b3e5392"
+        }
+      ]
+    },
+    {
+      "name": "setuptools",
+      "version": "83.0.0",
+      "kind": "build-tool-source",
+      "artifacts": [
+        {
+          "filename": "setuptools-83.0.0.tar.gz",
+          "url": "https://files.pythonhosted.org/packages/34/26/f5d29e25ffdb535afef2d35cdb55b325298f96debd670da4c325e08d70f4/setuptools-83.0.0.tar.gz",
+          "sha256": "025bccbbf0fa05b6192bc64ae1e7b16e001fd6d6d4d5de03c97b1c1ade523bef"
+        }
+      ]
+    },
+    {
+      "name": "wheel",
+      "version": "0.46.2",
+      "kind": "build-tool-source",
+      "artifacts": [
+        {
+          "filename": "wheel-0.46.2.tar.gz",
+          "url": "https://files.pythonhosted.org/packages/9b/92/3a64fa9639b8e290fe8630d8067a66f7c5510845c6d73686ad880c9b04d9/wheel-0.46.2.tar.gz",
+          "sha256": "3d79e48fde9847618a5a181f3cc35764c349c752e2fe911e65fa17faab9809b0"
+        }
+      ]
+    }
+  ]
+}

@@ -46,7 +46,7 @@ trueprice reader; NPA independently reads the source model before conversion.
 `build-requirements.lock` enumerate every Python distribution and accepted
 archive/wheel hashes. Wheel license and dist-info records are retained in both
 environments, including bundled-library notices. The direct converter/reader
-closure includes NumPy and SciPy (BSD-3-Clause, with their bundled BLAS notices),
+closure includes NumPy and SciPy (BSD-3-Clause, built against Debian BLAS/LAPACK),
 Pillow (MIT-CMU and bundled codec notices), Click (BSD-3-Clause), tqdm
 (MIT/MPL-2.0), debugpy (MIT, with vendored debugger notices), dataclasses-json
 (MIT), Zarr (MIT), numcodecs (MIT, with bundled codec notices), cbor2 (MIT),
@@ -59,10 +59,23 @@ the top-level OCI license label describes NPA/NCore/trueprice, not every library
 Public distribution must retain all included notices and satisfy applicable
 source-offer obligations for the exact distro and bundled binary components.
 
-No model weights, capture photographs, datasets, vendor test-data archives,
+PyAV 17.1.0, both NumPy/SciPy pairs, and unmodified official FFmpeg 8.1.1
+are source built. FFmpeg disables GPL/nonfree code and external autodetection;
+its shared libraries remain replaceable. The readable
+`/opt/ncore/native-sources/` annex accompanies these components with exact source
+archives, original notices, recipes, locks, configuration and verification
+receipts. See [native source provenance](NATIVE-SOURCES.md). This scoped annex
+does not establish source completeness for all other Python/OS components or
+superseded ancestor-layer bytes; whole-image source and recipient-delivery
+verification remain mandatory before publication.
+
+No model weights, runtime capture photographs or datasets,
 NRE/Kit/Isaac payloads, CUDA, Torch, credentials, `.git`, or acceptance records
 are downloaded or installed by the image build. Operator captures enter only
 at runtime; their dataset terms and resulting output attribution remain separate.
+The complete OSS source archives retain their upstream software test fixtures;
+these are source-delivery material, not packaged NVIDIA capture datasets or
+functional workload evidence.
 
 ## Integration and build contract
 

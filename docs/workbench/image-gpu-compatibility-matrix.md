@@ -95,6 +95,7 @@ The detection-training stack row and detector GPU results [7] and [28]–[31] de
 | `npa-sonic-mujoco` | unverified | unverified (headless) | **verified** [accepted records](#accepted-release-evidence) | **verified** [accepted records](#accepted-release-evidence) | unverified |
 | `npa-groot` | supported | supported | **verified** [accepted records](#accepted-release-evidence) (inference) | unverified | unverified |
 | `npa-cosmos-curate` | CPU | CPU | CPU | CPU | CPU |
+| `npa-ncore` (unpublished ingestion candidate) | CPU | CPU | CPU | CPU | CPU |
 | `npa-cosmos-evaluator` | CPU | CPU | CPU | CPU | CPU |
 | `npa-sim2real-control` | CPU | CPU | CPU | CPU | CPU |
 | `npa-fiftyone` | CPU | CPU | CPU | CPU | CPU |
@@ -110,6 +111,12 @@ The detection-training stack row and detector GPU results [7] and [28]–[31] de
 **blocked** — an upstream dependency does not support the architecture. Reason and tracking link are in the manifest's per-image fields or `known_gaps`.
 **CPU** — CPU-only image. It runs on a host with any of these GPUs; only node-pool scheduling matters.
 **not built** — the Dockerfile is in tree but no image has been built, so no cell has any evidence behind it. Reading the Dockerfile is not evidence.
+
+`npa-ncore` packages CPU-only COLMAP ingestion, not NRE or a CUDA runtime.
+Its [source-capture workflow](guides/nurec-colmap-reconstruct.md) uses a separate,
+proprietary NRE consumer on RTX PRO 6000; CPU compatibility does not make that
+rendering workflow portable to B200/B300. Public release and full live-workflow
+acceptance remain pending for the ingestion candidate.
 
 ### Rendering is not portable across these columns
 
