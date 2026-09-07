@@ -114,6 +114,15 @@ skills:
         path: npa/docker/workbench/packaging-contract.yaml
       - type: file_exists
         path: npa/src/npa/deploy/images.py
+  - name: contributions
+    category: atomic
+    when_to_use: "Write or review NPA contributions, including workbench agent changes, for readability, documentation, and prohibited anti-patterns."
+    path: skills/atomic/contributions/SKILL.md
+    smoke:
+      - type: file_exists
+        path: CONTRIBUTING.md
+      - type: file_exists
+        path: skills/atomic/contributions/SKILL.md
   - name: cosmos3-codebase-nav
     category: atomic
     when_to_use: "Navigate NPA Cosmos3 integration, Nano vLLM-Omni diffusion, and upstream Cosmos framework files."
