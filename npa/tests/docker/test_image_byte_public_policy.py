@@ -1,4 +1,5 @@
 import copy
+import json
 import sys
 from pathlib import Path
 
@@ -9,6 +10,34 @@ sys.path.insert(0, str(ROOT / "npa/tests/docker"))
 sys.path.insert(0, str(ROOT / "npa/scripts"))
 from image_byte_scan import public_native_policy as P  # noqa: E402
 from test_image_byte_adjudication import W, record  # noqa: E402
+
+
+def test_complete_shipped_catalog_compiles_with_all_bound_proofs(tmp_path, monkeypatch):
+    """Check the real evidence graph with the production proof validator."""
+    catalog = json.loads(
+        (ROOT / "npa/scripts/image_byte_scan/public_policies/curobo-v2.json").read_text()
+    )
+    loaded = set()
+    reviewer = object.__new__(P.FreshPolicyReview)
+
+    def bound_source(path, expected):
+        data = path.read_bytes()
+        assert W.sha(data) == expected
+        loaded.add(path)
+        return data
+
+    monkeypatch.setattr(reviewer, "_public_source", bound_source)
+    tmp_path.chmod(0o700)
+    with W.authorized_roots(tmp_path, ROOT):
+        entries = P.compile_catalog(
+            catalog, catalog["detector_identity"], reviewer._proof
+        )
+    assert len(entries) == len(catalog["entries"]) > 0
+    assert loaded == {
+        ROOT / entry[kind]["path"]
+        for entry in catalog["entries"]
+        for kind in ("public_provenance", "semantic_proof")
+    }
 
 
 def fixture():

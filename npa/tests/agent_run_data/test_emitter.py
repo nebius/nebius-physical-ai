@@ -190,6 +190,48 @@ def test_success_upload_is_collected_only_with_read_after_write(dataset_env: Non
     assert "private-bucket" not in json.dumps(payload)
 
 
+@pytest.mark.parametrize("value", [
+    "docker run -p 127.0.0.1::8080 example",
+    "127.0.0.1:8080:8000",
+    "127.0.0.1::1",
+    "[2001:db8::1]:8080",
+    'command={"publish": "127.0.0.1::8080"}',
+    r'command={\"publish\": \"127.0.0.1::8080\"}',
+])
+def test_address_redaction_reaches_a_fixed_point(value: str) -> None:
+    result = redact({value: {"command": value}})
+    assert redact(result) == result
+    assert "127.0.0.1" not in json.dumps(result)
+    assert "2001:db8::1" not in json.dumps(result)
+    assert "<address-ref>" in json.dumps(result)
+
+
+@pytest.mark.parametrize("value", ["999.999.999.999", "09:30:00", "build1:tag"])
+def test_invalid_addresses_and_times_remain_data(value: str) -> None:
+    assert redact(value) == value
+
+
+def test_docker_address_survives_outbox_delivery_privacy_check(dataset_env: None) -> None:
+    s3 = FakeS3()
+    s3.fail_writes = True
+    events = _trajectory()
+    events[0]["arguments"] = {"command": "docker run -p 127.0.0.1::8080 example"}
+    status, _ = _emit(FakeStorage(s3), episode_id="docker-address", events=events)
+    assert status == CollectionStatus.PENDING
+    files = list(Path(os.environ["NPA_AGENT_DATASET_OUTBOX"]).glob("*.json"))
+    assert len(files) == 1
+    frozen = files[0].read_bytes()
+    assert b"127.0.0.1" not in frozen
+    s3.fail_writes = False
+    flushed = flush_outbox(
+        storage=FakeStorage(s3), active_tenant_id="tenant-test", active_bucket="test-bucket"
+    )
+    assert flushed == ["docker-address"]
+    payload = _episode_payloads(s3)[0]
+    assert redact(payload["trajectory"]) == payload["trajectory"]
+    assert payload["trajectory"][0]["arguments"]["command"].startswith("docker run -p <address-ref>")
+
+
 def test_deterministic_idempotent_key_uses_episode_start_date(dataset_env: None) -> None:
     s3 = FakeS3()
     storage = FakeStorage(s3)

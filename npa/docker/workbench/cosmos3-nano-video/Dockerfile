@@ -15,6 +15,7 @@ RUN uv pip install --system --no-cache -r /opt/npa/requirements.txt \
 COPY src/npa/workbench/cosmos/nano_video.py \
      src/npa/workbench/cosmos/nano_video_augment.py \
      src/npa/workbench/cosmos/nano_video_server.py \
+     src/npa/workbench/cosmos/nano_video_auth.py \
      src/npa/workbench/cosmos/nano_video_router.py \
      src/npa/workbench/cosmos/nano_video_stage.py /opt/npa/npa/workbench/cosmos/
 COPY src/npa/workbench/cosmos/nano_video_golden.py /opt/npa/npa/workbench/cosmos/nano_video_golden.py
@@ -38,6 +39,6 @@ USER 10001:10001
 WORKDIR /opt/npa
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s \
-  CMD python -c 'import ray; ray.init(address="auto", logging_level="ERROR"); ray.shutdown()'
+  CMD python -c 'import os,http.client; c=http.client.HTTPConnection("127.0.0.1",8000,timeout=8); c.request("GET","/health",headers={"Authorization":"Bearer "+os.environ["NPA_COSMOS3_VIDEO_TOKEN"]}); r=c.getresponse(); assert r.status == 200'
 ENTRYPOINT []
-CMD ["serve", "run", "npa.workbench.cosmos.nano_video_server:app"]
+CMD ["python", "-m", "npa.workbench.cosmos.nano_video_server", "--serve"]
