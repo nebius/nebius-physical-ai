@@ -3,10 +3,13 @@
 
 from concurrent.futures import Future, ThreadPoolExecutor
 import importlib
+import io
 import json
+import os
 from pathlib import Path
 import sys
 import threading
+import tarfile
 from types import SimpleNamespace
 
 import pytest
@@ -202,3 +205,70 @@ def test_missing_overlap_still_fails_for_a_real_multi_actor_wave(session):
     run.barrier.status.remote = lambda: {"participants": 2, "overlap": False, "events": []}
     with pytest.raises(ValueError, match="never overlapped"):
         run._check_concurrency()
+
+
+@pytest.fixture
+def live_helpers():
+    """Load the manual gate without enabling its remote runtime prerequisite."""
+    source = Path(__file__).parents[1] / "e2e/test_ray_clip_checkpoint_live.py"
+    spec = importlib.util.spec_from_file_location("checkpoint_live_receipts", source)
+    live = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(live)
+    return live
+
+
+def test_live_receipts_are_writable_private_and_immutable(tmp_path, live_helpers):
+    """Exercise actual receipt I/O before allocating any live validation GPUs."""
+    receipt = tmp_path / "receipt.json"
+    previous = os.umask(0)
+    try:
+        live_helpers._write_private(receipt, '{"actual_call_count": 3}')
+    finally:
+        os.umask(previous)
+    assert receipt.stat().st_mode & 0o777 == 0o600
+    with pytest.raises(FileExistsError):
+        live_helpers._write_private(receipt, "replacement")
+    assert json.loads(receipt.read_text()) == {"actual_call_count": 3}
+
+
+def test_live_startup_failure_preserves_native_evidence_and_partial_output(tmp_path, monkeypatch, live_helpers):
+    """An early terminal failure must retain logs, status and its partial files."""
+    status = SimpleNamespace(is_terminal=lambda: True)
+    stopped, remote_calls = [], []
+    client = SimpleNamespace(
+        submit_job=lambda **kwargs: None,
+        get_job_status=lambda identifier: status,
+        get_job_logs=lambda identifier: "model startup failed",
+        get_job_info=lambda identifier: SimpleNamespace(status=status),
+        stop_job=lambda identifier: stopped.append(identifier),
+    )
+    monkeypatch.setitem(sys.modules, "ray.job_submission", SimpleNamespace(JobSubmissionClient=lambda address: client))
+    config = tmp_path / "config.json"
+    config.write_text(json.dumps({"evidence_dir": str(tmp_path / "evidence"), "remote_root": "/synthetic-output", "address": "unused"}))
+    config.chmod(0o600)
+    monkeypatch.setenv("NPA_RAY_CLIP_CHECKPOINT_LIVE_CONFIG", str(config))
+    archive = io.BytesIO()
+    with tarfile.open(fileobj=archive, mode="w") as stream:
+        item = tarfile.TarInfo("result/partial.txt")
+        content = b"incomplete fixture; no inference"
+        item.size, item.mode = len(content), 0o644
+        stream.addfile(item, io.BytesIO(content))
+
+    def remote(config, code):
+        """Expose a synthetic partial tree through the same binary download path."""
+        remote_calls.append(code)
+        return b"true" if "is_dir()" in code else archive.getvalue()
+
+    monkeypatch.setattr(live_helpers, "_remote", remote)
+    with pytest.raises(AssertionError):
+        live_helpers.test_native_clip_stop_resume_sparse_and_invalid_checkpoints(tmp_path)
+    assert len(stopped) == 1 and len(remote_calls) == 2
+    evidence, = (tmp_path / "evidence").iterdir()
+    log, = evidence.glob("*-final.log")
+    receipt, = evidence.glob("*-final.json")
+    partial, = evidence.glob("*-cleanup-snapshot/result/partial.txt")
+    assert log.read_text() == "model startup failed"
+    assert "status" in json.loads(receipt.read_text())
+    assert partial.read_bytes() == content
+    assert json.loads((evidence / "job-cleanup.json").read_text())["errors"] == []
+    assert all(path.stat().st_mode & 0o777 == 0o600 for path in evidence.rglob("*") if path.is_file())

@@ -26,7 +26,7 @@ pytestmark = [pytest.mark.e2e, pytest.mark.gpu, pytest.mark.timeout(0)]
 
 def _write_private(path, content):
     """Keep logs and receipts owner-only even with a permissive caller umask."""
-    with path.open("x", opener=lambda p, flags: os.open(p, flags, 0o600)) as stream:
+    with open(path, "x", opener=lambda p, flags: os.open(p, flags, 0o600)) as stream:
         stream.write(content)
 
 
@@ -150,12 +150,14 @@ def test_native_clip_stop_resume_sparse_and_invalid_checkpoints(tmp_path):
     root = Path(config["remote_root"]) / token
     assert root.is_absolute()
     jobs = []
+    outputs, preserved = {}, set()
     records, batch_size = 8192, 32
 
     def submit(name, directory):
         """Use the upstream Jobs API with one unchanged source package."""
         identifier = f"clip-resume-{token}-{name}"
         jobs.append(identifier)
+        outputs[identifier] = directory
         _write_private(evidence / f"{name}-submission.json", json.dumps({"job_id": identifier, "output_path": str(directory)}))
         argv = ["python", "application.py", "--actors", "2", "--records", str(records),
                 "--batch-size", str(batch_size), "--output-path", str(directory)]
@@ -183,11 +185,13 @@ def test_native_clip_stop_resume_sparse_and_invalid_checkpoints(tmp_path):
         assert client.stop_job(interrupted)
         finish(interrupted, "STOPPED")
         before = _download(config, partial, evidence / "interrupted")
+        preserved.add(interrupted)
         committed = _committed(before)
         assert 1 < len(committed) < records // batch_size
         resumed = submit("resumed", partial)
         logs = finish(resumed)
         completed = _download(config, partial, evidence / "resumed")
+        preserved.add(resumed)
         _verify_result(completed, records, committed, logs, source_hashes)
 
         # Each boundary starts from a separate copy of the completed factual
@@ -214,6 +218,7 @@ def test_native_clip_stop_resume_sparse_and_invalid_checkpoints(tmp_path):
             identifier = submit(name, target)
             log = finish(identifier, "FAILED" if name == "corrupt" else "SUCCEEDED")
             output = _download(config, target, evidence / name)
+            preserved.add(identifier)
             if name == "corrupt":
                 assert "Checkpoint data hash mismatch" in log
                 assert _inference_events(log) == []
@@ -227,12 +232,31 @@ def test_native_clip_stop_resume_sparse_and_invalid_checkpoints(tmp_path):
         original_failure = sys.exc_info()[0] is not None
         cleanup_errors = []
         for identifier in jobs:
+            terminal = False
             try:
-                if not client.get_job_status(identifier).is_terminal():
-                    client.stop_job(identifier)
-                    finish(identifier, "STOPPED")
+                client.stop_job(identifier)  # Native stop is harmless for terminal Jobs.
+                while not client.get_job_status(identifier).is_terminal():
+                    time.sleep(1)
+                terminal = True
             except Exception as error:
-                cleanup_errors.append({"job_id": identifier, "error_type": type(error).__name__})
+                cleanup_errors.append({"job_id": identifier, "operation": "stop", "error_type": type(error).__name__})
+            try:
+                details = client.get_job_info(identifier)
+                terminal = details.status.is_terminal()
+                _write_private(evidence / f"{identifier}-final.json", json.dumps(vars(details), default=str, indent=2))
+            except Exception as error:
+                cleanup_errors.append({"job_id": identifier, "operation": "status", "error_type": type(error).__name__})
+            try:
+                _write_private(evidence / f"{identifier}-final.log", client.get_job_logs(identifier))
+            except Exception as error:
+                cleanup_errors.append({"job_id": identifier, "operation": "logs", "error_type": type(error).__name__})
+            if terminal and identifier not in preserved:
+                try:
+                    exists = _remote(config, f"import pathlib,json; print(json.dumps(pathlib.Path({str(outputs[identifier])!r}).is_dir()))")
+                    if json.loads(exists):
+                        _download(config, outputs[identifier], evidence / f"{identifier}-cleanup-snapshot")
+                except Exception as error:
+                    cleanup_errors.append({"job_id": identifier, "operation": "snapshot", "error_type": type(error).__name__})
         _write_private(evidence / "job-cleanup.json", json.dumps({"attempted": jobs, "errors": cleanup_errors}))
         if cleanup_errors and not original_failure:
             raise RuntimeError("Native Job cleanup failed; inspect private receipts")
