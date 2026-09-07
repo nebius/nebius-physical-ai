@@ -37,6 +37,10 @@ Enabled deployments require the default local Terraform workspace without
 and destination symlinks while preserving exact state/backup and provider caches.
 Retained backend metadata is unsupported; require managed implicit local state.
 The module manifest is rebuilt from the reviewed recipe before Terraform init.
+Historical opt-in provenance survives disabled/omitted policy reapply. Teardown
+checks the same effective-input restrictions and recorded materialized digest,
+then requires empty managed state before removing recovery files. Preserve state
+on refusal or incomplete teardown; missing provenance needs a reviewed reapply.
 See `docs/fleet-kuberay.md` and
 `npa/examples/fleet/kuberay/cpu-raycluster.yaml` for the one-entry fleet and native
 Ray Jobs journey. The separate CPU template pins Ray 2.58, disables autoscaling

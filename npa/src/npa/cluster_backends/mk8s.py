@@ -18,7 +18,7 @@ from npa.cluster_backends.mk8s_model import (
     as_mk8s_desired,
 )
 from npa.cluster_backends.mk8s_render import render_tfvars
-from npa.cluster_backends.kuberay import validate_kuberay_execution_inputs, validate_recipe_kuberay_compatibility
+from npa.cluster_backends.kuberay import validate_recipe_kuberay_compatibility
 
 
 @dataclass(frozen=True)
@@ -177,11 +177,13 @@ class MK8sBackend:
             if recipe is None:
                 raise ValueError("KubeRay preflight requires the selected recipe")
             validate_recipe_kuberay_compatibility(desired, recipe)
-            if request.fleet_root is not None and request.project is not None:
-                validate_kuberay_execution_inputs(
-                    desired,
-                    workdir=request.fleet_root / request.project.key() / desired.name / "k8s-training",
-                )
+        if request.fleet_root is not None and request.project is not None:
+            from npa.cluster_backends.mk8s_execution import validate_kuberay_installation
+
+            validate_kuberay_installation(
+                desired, request.fleet_root / request.project.key() / desired.name,
+                recipe_dir=recipe,
+            )
         result: dict[str, Any] = {
             "backend": self.name,
             "required": True,
@@ -267,6 +269,13 @@ class MK8sBackend:
                 raise ValueError(
                     "mk8s Terraform apply requires terraform_cwd and terraform_env"
                 )
+            from npa.cluster_backends.mk8s_execution import validate_kuberay_installation
+
+            guarded = validate_kuberay_installation(
+                desired, request.terraform_cwd.parent, environ=request.terraform_env,
+            )
+            if guarded.kuberay and guarded.kuberay.enabled:
+                raise ValueError("A KubeRay-managed installation requires native mk8s recipe execution")
             from npa.cluster_backends.process import run_stream
 
             (request.command_runner or run_stream)(

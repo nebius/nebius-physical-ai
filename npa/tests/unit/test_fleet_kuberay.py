@@ -3,6 +3,7 @@
 from dataclasses import replace
 import importlib.util
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -13,6 +14,7 @@ import yaml
 
 from npa.cluster_backends.kuberay import (
     KubeRaySpec, RAY_IMAGE, RAY_VERSION, validate_recipe_kuberay_compatibility,
+    kuberay_materialized_digest, validate_kuberay_destroyed_state,
 )
 from npa.cluster_backends.mk8s import MK8sApplyRequest, MK8sBackend
 from npa.cluster_backends import mk8s_execution as E
@@ -168,6 +170,47 @@ def test_recipe_symlink_is_rejected_even_when_bytes_match(recipe):
         validate_recipe_kuberay_compatibility(cluster(KubeRaySpec(True)), recipe / "k8s-training")
 
 
+@pytest.mark.parametrize("relative", ["k8s-training/override.tf", "modules/kuberay/extra.tf"])
+def test_special_source_fails_before_provider_or_retained_file_mutation(recipe, tmp_path, monkeypatch, relative):
+    desired, destination, deploy = _isolated_deploy(recipe, tmp_path, monkeypatch)
+    work = destination / "k8s-training"
+    cache = work / ".terraform/modules"
+    cache.mkdir(parents=True)
+    (cache / "modules.json").write_text("retained cache")
+    (work / "terraform.tfvars").write_text("retained variables")
+    os.mkfifo(recipe / relative)
+    with pytest.raises(ValueError, match="Special source entries"):
+        deploy()
+    with pytest.raises(ValueError, match="Special source entries"):
+        E._prepare_install_dir(destination, recipe_root=recipe, region="us-central1",
+                               cluster=desired, ssh_public_key="ssh-test")
+    assert (work / "terraform.tfvars").read_text() == "retained variables"
+    assert (cache / "modules.json").read_text() == "retained cache"
+
+
+@pytest.mark.parametrize("subtree", ["k8s-training", "modules"])
+def test_source_inventory_requires_actual_directory_roots(recipe, subtree):
+    shutil.rmtree(recipe / subtree)
+    (recipe / subtree).write_text("not a directory")
+    with pytest.raises(ValueError, match="Source roots must be directories"):
+        validate_recipe_kuberay_compatibility(cluster(KubeRaySpec(True)), recipe / "k8s-training")
+
+
+def test_source_traversal_errors_are_not_silently_ignored(recipe, monkeypatch):
+    original = os.scandir
+    hidden = recipe / "k8s-training/unreadable"
+    hidden.mkdir()
+
+    def denied(path):
+        if Path(path) == hidden:
+            raise PermissionError("synthetic unreadable source directory")
+        return original(path)
+
+    monkeypatch.setattr(os, "scandir", denied)
+    with pytest.raises(ValueError, match="Unreadable source"):
+        validate_recipe_kuberay_compatibility(cluster(KubeRaySpec(True)), recipe / "k8s-training")
+
+
 @pytest.mark.parametrize("region", ["eu-north1", "us-central1"])
 def test_materialization_validates_pristine_recipe_and_preserves_owned_state(recipe, tmp_path, region):
     destination = tmp_path / "installation"
@@ -275,6 +318,39 @@ def test_actual_execution_environment_is_checked_before_state_or_terraform(recip
     )
     assert result["status"] == "error"
     assert "TF_CLI_ARGS" in result["error"]
+
+
+@pytest.mark.parametrize("policy", [None, KubeRaySpec(), KubeRaySpec(True)])
+def test_deploy_binds_current_materialization_before_first_terraform_command(recipe, tmp_path, monkeypatch, policy):
+    desired = as_mk8s_desired(cluster(policy))
+    project = E.MK8sProjectIdentity(project_key="example")
+    root = tmp_path / "state"
+    install = root / project.key() / desired.name
+    if not policy or not policy.enabled:
+        install.mkdir(parents=True)
+        E._write_env_sidecar(install, {"kuberay_managed": True, "kuberay_materialized_sha256": "old"})
+    monkeypatch.setattr(E, "_cluster_tf_env", lambda *a, **kw: dict(os.environ))
+    observed = []
+
+    def first_command(*a, **kw):
+        saved = E._load_env_sidecar(install)
+        assert saved["kuberay_managed"] is True
+        assert saved["kuberay_materialized_sha256"] == kuberay_materialized_digest(install)
+        observed.append(saved)
+        raise RuntimeError("synthetic initialization failure")
+
+    monkeypatch.setattr(E, "_tf_run", first_command)
+    result = E._deploy_one_cluster(
+        spec=E.MK8sExecutionScope(fleet_name="ray"), project=project, cluster=desired,
+        project_id="project-test", project_created=False, subnet_id="subnet-test",
+        region="us-central1", tenant_id="tenant-test", ssh_public_key="ssh-test",
+        fleet_root=root, recipe_root=recipe, terraform_bin="terraform",
+        nebius_bin="nebius", timeout_minutes=120, on_status=None,
+    )
+    assert result["status"] == "error"
+    assert result["error"] == "synthetic initialization failure"
+    assert len(observed) == 1
+    assert E._load_env_sidecar(install)["kuberay_managed"] is True
 
 
 @pytest.mark.parametrize("relative", [
@@ -388,6 +464,163 @@ def live_harness():
     module = importlib.util.module_from_spec(definition)
     definition.loader.exec_module(module)
     return module
+
+
+def _destroy_fixture(tmp_path, monkeypatch, policy=None):
+    desired = as_mk8s_desired(cluster(policy))
+    project = E.MK8sProjectIdentity(project_key="example", project_id="project-test")
+    root = tmp_path / "state"
+    install = root / project.key() / desired.name
+    work = install / "k8s-training"
+    work.mkdir(parents=True)
+    (install / "modules").mkdir()
+    (work / "main.tf").write_text('resource "terraform_data" "owned" { input = "owned synthetic value" }')
+    (work / "terraform.tfvars").write_text("")
+    saved = {
+        "backend": "mk8s", "cluster_name": desired.name, "project_id": "project-test",
+        "tenant_id": "tenant-test", "region": "us-central1", "context": "test-ray-context",
+        "cluster_id": "cluster-test", "kuberay_managed": True,
+        "kuberay_materialized_sha256": kuberay_materialized_digest(install),
+    }
+    E._write_env_sidecar(install, saved)
+    monkeypatch.setattr(E, "_cluster_tf_env", lambda *a, **kw: dict(os.environ))
+    monkeypatch.setattr(E, "_run_capture", lambda *a, **kw: pytest.fail("provider fallback must not run"))
+    kwargs = dict(
+        spec=E.MK8sExecutionScope(fleet_name="ray", tenant_id="tenant-test", region="us-central1"),
+        project=project, cluster=desired, fleet_root=root, terraform_bin="terraform",
+        nebius_bin="nebius", timeout_minutes=120, on_status=None,
+    )
+    return install, work, kwargs
+
+
+@pytest.mark.parametrize("policy", [None, KubeRaySpec()])
+def test_legacy_apply_cannot_bypass_historical_opt_in(tmp_path, monkeypatch, policy):
+    _, work, kwargs = _destroy_fixture(tmp_path, monkeypatch, policy)
+    request = MK8sApplyRequest(
+        terraform_command=("terraform", "apply"), terraform_cwd=work, terraform_env={},
+        command_runner=lambda *a, **kw: pytest.fail("legacy Terraform must not run"),
+    )
+    with pytest.raises(ValueError, match="requires native mk8s"):
+        MK8sBackend().apply(kwargs["cluster"], request)
+
+
+@pytest.mark.parametrize("policy", [None, KubeRaySpec(), KubeRaySpec(True)])
+@pytest.mark.parametrize("actual_env", [False, True])
+def test_destroy_refuses_overrides_even_when_desired_policy_omitted(tmp_path, monkeypatch, policy, actual_env):
+    install, work, kwargs = _destroy_fixture(tmp_path, monkeypatch, policy)
+    (work / "terraform.tfstate").write_text('{"version":4,"resources":[]}')
+    if actual_env:
+        monkeypatch.setattr(E, "_cluster_tf_env", lambda *a, **kw: {"TF_CLI_ARGS_destroy": "-target=terraform_data.missing"})
+    else:
+        monkeypatch.setenv("TF_CLI_ARGS_destroy", "-target=terraform_data.missing")
+    monkeypatch.setattr(E, "_tf_run", lambda *a, **kw: pytest.fail("Terraform must not run"))
+    before = (install / E._ENV_SIDECAR).read_bytes()
+    result = E._destroy_one_cluster(**kwargs)
+    assert result["status"] == "destroy-incomplete"
+    assert "TF_CLI_ARGS" in result["errors"][0]
+    assert (install / E._ENV_SIDECAR).read_bytes() == before
+    assert (work / "terraform.tfstate").exists()
+
+
+@pytest.mark.parametrize("mutation", ["main.tf", "terraform.tfvars", "modules/extra.tf", "missing-digest", "invalid-marker"])
+def test_destroy_refuses_unbound_materialization_without_fallback(tmp_path, monkeypatch, mutation):
+    install, work, kwargs = _destroy_fixture(tmp_path, monkeypatch)
+    if mutation in ("missing-digest", "invalid-marker"):
+        saved = E._load_env_sidecar(install)
+        if mutation == "missing-digest":
+            saved.pop("kuberay_materialized_sha256")
+        else:
+            saved["kuberay_managed"] = "true"
+        E._write_json_file(install / E._ENV_SIDECAR, saved)
+    else:
+        target = install / mutation if mutation.startswith("modules/") else work / mutation
+        target.write_text("changed effective input")
+    monkeypatch.setattr(E, "_tf_run", lambda *a, **kw: pytest.fail("Terraform must not run"))
+    result = E._destroy_one_cluster(**kwargs)
+    assert result["status"] == "destroy-incomplete"
+    assert install.exists()
+
+
+@pytest.mark.parametrize("policy", [None, KubeRaySpec()])
+def test_disabled_reapply_and_sidecar_rewrites_preserve_historical_protection(recipe, tmp_path, monkeypatch, policy):
+    install, work, _ = _destroy_fixture(tmp_path, monkeypatch, policy)
+    (work / ".terraform.tfstate.lock.info").write_text("retained lock")
+    E._prepare_install_dir(install, recipe_root=recipe, region="us-central1",
+                           cluster=as_mk8s_desired(cluster(policy)), ssh_public_key="ssh-test")
+    assert "enable_kuberay_cluster   = false" in (work / "terraform.tfvars").read_text()
+    assert (work / ".terraform.tfstate.lock.info").read_text() == "retained lock"
+    E._write_env_sidecar(install, {"status": "provisioning"})
+    assert E._load_env_sidecar(install)["kuberay_managed"] is True
+    monkeypatch.setenv("TF_CLI_ARGS_apply", "-var-file=override.tfvars")
+    with pytest.raises(ValueError, match="TF_CLI_ARGS"):
+        E._prepare_install_dir(install, recipe_root=recipe, region="us-central1",
+                               cluster=as_mk8s_desired(cluster(policy)), ssh_public_key="ssh-test")
+
+
+@pytest.mark.parametrize("payload", [None, "{", "[]", '{}', '{"version":4,"resources":{}}',
+                                     '{"version":4,"resources":[{}]}',
+                                     '{"version":4,"resources":[{"mode":"managed","instances":[]}]}'])
+def test_destroy_state_postcondition_fails_closed(tmp_path, payload):
+    if payload is not None:
+        (tmp_path / "terraform.tfstate").write_text(payload)
+    with pytest.raises((OSError, ValueError)):
+        validate_kuberay_destroyed_state(tmp_path)
+
+
+def test_materialized_digest_excludes_only_exact_runtime_paths(tmp_path, monkeypatch):
+    install, work, _ = _destroy_fixture(tmp_path, monkeypatch)
+    initial = kuberay_materialized_digest(install)
+    for name in ("terraform.tfstate", "terraform.tfstate.backup", ".terraform.lock.hcl", ".terraform.tfstate.lock.info"):
+        (work / name).write_text("runtime")
+    (work / ".terraform/providers").mkdir(parents=True)
+    (work / ".terraform/providers/cache").symlink_to(tmp_path / "external-cache")
+    receipts = work / "filesystem-csi-validation/.state"
+    receipts.mkdir(parents=True)
+    (receipts / "receipt").write_text("runtime")
+    assert kuberay_materialized_digest(install) == initial
+    (install / "modules/terraform.tfstate").write_text("nested source")
+    assert kuberay_materialized_digest(install) != initial
+
+
+@pytest.mark.parametrize("partial", [False, True])
+def test_native_destroy_preserves_recovery_until_state_is_empty(tmp_path, monkeypatch, partial):
+    terraform = shutil.which("terraform")
+    if terraform is None:
+        pytest.skip("terraform required for native teardown regression")
+    install, work, kwargs = _destroy_fixture(tmp_path, monkeypatch)
+    for command in ([terraform, "init", "-input=false"], [terraform, "apply", "-auto-approve", "-input=false"]):
+        run = subprocess.run(command, cwd=work, text=True, capture_output=True)
+        assert run.returncode == 0, run.stderr + run.stdout
+    from npa.cluster import state as S
+    monkeypatch.setattr(S, "CLUSTERS_DIR", tmp_path / "identities")
+    S.save_cluster_state(S.ClusterState(
+        name="test-ray-context", cluster_id="cluster-test", project_id="project-test",
+        region="us-central1", node_count=1, node_platform="cpu-d3", node_preset="16vcpu-64gb",
+        k8s_version="1.34", subnet_id="subnet-test", created_at="2026-01-01T00:00:00Z",
+    ))
+    receipt = tmp_path / "native-destroy-receipt.json"
+    wrapper = tmp_path / "terraform-probe"
+    # Fault injection: an otherwise successful command can leave managed state.
+    # All product validation, native Terraform execution and recovery I/O stay real.
+    wrapper.write_text(
+        f"#!{sys.executable}\nimport json,subprocess,sys\nfrom pathlib import Path\n"
+        f"args=[{terraform!r},*sys.argv[1:]]\n"
+        f"if sys.argv[1]=='destroy' and {partial!r}: args.append('-target=terraform_data.missing')\n"
+        "result=subprocess.run(args)\n"
+        "if sys.argv[1]=='destroy':\n"
+        f" Path({str(receipt)!r}).write_text(json.dumps({{'exit_code':result.returncode,'state':json.loads(Path('terraform.tfstate').read_text())}}))\n"
+        "raise SystemExit(result.returncode)\n"
+    )
+    wrapper.chmod(0o700)
+    kwargs["terraform_bin"] = str(wrapper)
+    result = E._destroy_one_cluster(**kwargs)
+    proof = json.loads(receipt.read_text())
+    assert proof["exit_code"] == 0
+    remaining = [r for r in proof["state"]["resources"] if r["mode"] == "managed"]
+    assert bool(remaining) is partial
+    assert result["status"] == ("destroy-incomplete" if partial else "destroyed")
+    assert install.exists() is partial
+    assert (S.load_cluster_state("test-ray-context") is not None) is partial
 
 
 def test_live_harness_records_real_command_failure_privately(live_harness, tmp_path):

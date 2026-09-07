@@ -116,15 +116,27 @@ Retain the project and unrelated infrastructure. The native live regression is
 kubeconfig, checks actual deployed resources, submits worker work and observes
 native status/logs. It creates no cloud infrastructure itself.
 
+Once an installation has opted in, NPA retains that provenance through later
+disabled or omitted KubeRay settings. Teardown rejects inherited Terraform
+overrides and requires the materialized recipe and generated variables to match
+the recorded deployment digest. It rebuilds cached module mappings before
+initialization and verifies that canonical local state has no managed resources
+before removing recovery files. Refusal, unreadable state or incomplete teardown
+retains the installation for recovery. An installation without recorded deployment
+provenance needs a successful reapply of the reviewed recipe before teardown;
+do not discard or edit its state to bypass this check.
+
 ## Recipe compatibility
 
 Deploy checks the selected recipe before quota checks or project/network
 mutation. `kuberay_recipe_contract.json` binds the complete pristine
 `k8s-training/` and `modules/` source inventory by SHA-256, including placement,
 application wiring and templates. Added Terraform overrides, auto-loaded values,
-symlinks and changed source files fail closed. Use a pristine source directory;
+symlinks, special files and changed source files fail closed. Both source roots
+must be real directories. Use a pristine source directory;
 Fleet generates state, variables and region adjustments in its private copy.
 An older pinned recipe or upstream `main` without that exact inventory is
-unsupported. Omitted/disabled KubeRay does not impose this requirement. Updating the
+unsupported. Installations that have never opted in retain the existing default
+behavior. Updating the
 contract requires reviewing the effective resources and repeating live proof;
 merely declaring Terraform variables is insufficient.

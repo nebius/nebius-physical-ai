@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import re
+import stat
 from typing import Any
 
 RAY_VERSION = "2.58.0"
@@ -90,25 +91,75 @@ def validate_recipe_kuberay_compatibility(cluster: Any, recipe_dir: Path) -> Non
     if cluster.kuberay is None or not cluster.kuberay.enabled:
         return
     validate_kuberay_execution_inputs(cluster)
+    validate_kuberay_recipe_inventory(recipe_dir)
+
+
+def _source_inventory(root: Path, *, materialized: bool = False) -> dict[str, str]:
+    """Hash regular source files only, rejecting special entries before reads."""
+
+    actual = {}
+    excluded = {
+        *(f"k8s-training/{name}" for name in KUBERAY_STATE_FILES),
+        "k8s-training/.terraform.lock.hcl", "k8s-training/.terraform.tfstate.lock.info",
+    }
+    runtime_dirs = {"k8s-training/.terraform", "k8s-training/filesystem-csi-validation/.state"}
+
+    def unreadable(error: OSError) -> None:
+        raise ValueError("Unreadable source cannot honor the reviewed CPU KubeRay contract") from error
+
+    for subtree in (root / "k8s-training", root / "modules"):
+        try:
+            mode = subtree.lstat().st_mode
+        except FileNotFoundError as exc:
+            raise ValueError("Missing source root cannot honor the reviewed CPU KubeRay contract") from exc
+        if not stat.S_ISDIR(mode):
+            raise ValueError("Source roots must be directories for the reviewed CPU KubeRay contract")
+        for directory, dirs, files in os.walk(subtree, followlinks=False, onerror=unreadable):
+            for name in [*dirs, *files]:
+                path = Path(directory) / name
+                relative = path.relative_to(root).as_posix()
+                mode = path.lstat().st_mode
+                if stat.S_ISLNK(mode):
+                    raise ValueError("Symlinks cannot honor the reviewed CPU KubeRay contract")
+                if not (stat.S_ISDIR(mode) or stat.S_ISREG(mode)):
+                    raise ValueError("Special source entries cannot honor the reviewed CPU KubeRay contract")
+                if materialized and relative in runtime_dirs and stat.S_ISDIR(mode):
+                    dirs.remove(name)
+                elif stat.S_ISREG(mode) and not (materialized and relative in excluded):
+                    actual[relative] = hashlib.sha256(path.read_bytes()).hexdigest()
+    return actual
+
+
+def validate_kuberay_recipe_inventory(recipe_dir: Path) -> None:
     contract = json.loads(
         Path(__file__).with_name("kuberay_recipe_contract.json").read_text()
     )
-    root = recipe_dir.parent
-    actual = {}
-    for subtree in (root / "k8s-training", root / "modules"):
-        if subtree.is_symlink():
-            raise ValueError("Symlinks cannot honor the reviewed CPU KubeRay contract")
-        for path in subtree.rglob("*"):
-            if path.is_symlink():
-                raise ValueError("Symlinks cannot honor the reviewed CPU KubeRay contract")
-            if path.is_file():
-                actual[path.relative_to(root).as_posix()] = hashlib.sha256(path.read_bytes()).hexdigest()
+    actual = _source_inventory(recipe_dir.parent)
     if actual != contract:
         raise ValueError(
             "Selected k8s-training recipe cannot honor the reviewed CPU "
             "KubeRay contract. Use the pristine vendored recipe; unsupported "
             "pinned, upstream or local recipes are rejected before provisioning."
         )
+
+
+def kuberay_materialized_digest(install_dir: Path) -> str:
+    inventory = _source_inventory(install_dir, materialized=True)
+    return hashlib.sha256(json.dumps(inventory, sort_keys=True).encode()).hexdigest()
+
+
+def validate_kuberay_destroyed_state(workdir: Path) -> None:
+    """A successful command cannot justify discarding nonempty recovery state."""
+
+    state = workdir / "terraform.tfstate"
+    if not stat.S_ISREG(state.lstat().st_mode):
+        raise ValueError("KubeRay teardown requires a regular canonical state file")
+    data = json.loads(state.read_text())
+    if not isinstance(data, dict) or data.get("version") != 4 or not isinstance(data.get("resources"), list):
+        raise ValueError("KubeRay teardown state is missing or malformed; recovery state retained")
+    for resource in data["resources"]:
+        if not isinstance(resource, dict) or resource.get("mode") != "data":
+            raise ValueError("KubeRay teardown still has managed or unrecognized resources; recovery state retained")
 
 
 def validate_kuberay_execution_inputs(
@@ -141,6 +192,10 @@ def validate_kuberay_execution_inputs(
         if path.is_symlink():
             raise ValueError("KubeRay installation entries must not be symlinks")
         name = path.name
+        if name == "errored.tfstate":
+            raise ValueError("KubeRay requires recovery of errored.tfstate before continuing")
+        if not (path.is_file() or path.is_dir()):
+            raise ValueError("KubeRay installation entries must be regular files or directories")
         if name.startswith("terraform.tfstate"):
             if name not in KUBERAY_STATE_FILES or not path.is_file():
                 raise ValueError("KubeRay requires exact regular Terraform state and backup files")

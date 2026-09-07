@@ -21,7 +21,11 @@ from npa.cluster.gpu_driver import (
     resolve_gpu_driver_strategy,
 )
 from npa.cluster.gpu_health import GpuHealthConfig, validate_gpu_health
-from npa.cluster_backends.kuberay import KUBERAY_STATE_FILES, validate_kuberay_execution_inputs
+from npa.cluster_backends.kuberay import (
+    KUBERAY_STATE_FILES, KubeRaySpec, kuberay_materialized_digest,
+    validate_kuberay_destroyed_state, validate_kuberay_execution_inputs,
+    validate_kuberay_recipe_inventory,
+)
 from npa.cluster_backends.process import (
     _redact as _redact_output,
     isolate_terraform_providers,
@@ -391,6 +395,11 @@ def _load_json_file(path: Path | None) -> dict[str, Any]:
 
 
 def _write_env_sidecar(install_dir: Path, data: dict[str, Any]) -> None:
+    previous = _load_env_sidecar(install_dir) or {}
+    if previous.get("kuberay_managed") is True:
+        data = {**data, "kuberay_managed": True}
+        if "kuberay_materialized_sha256" not in data and "kuberay_materialized_sha256" in previous:
+            data["kuberay_materialized_sha256"] = previous["kuberay_materialized_sha256"]
     _write_json_file(install_dir / _ENV_SIDECAR, data)
 
 
@@ -526,6 +535,36 @@ def _load_env_sidecar(install_dir: Path) -> dict[str, str] | None:
     return data or None
 
 
+def _kuberay_execution_cluster(cluster: MK8sDesired, install_dir: Path) -> MK8sDesired:
+    """Historical opt-in keeps protecting state when desired policy is omitted."""
+
+    saved = _load_env_sidecar(install_dir) or {}
+    if "kuberay_managed" in saved and type(saved["kuberay_managed"]) is not bool:
+        raise ValueError("KubeRay recovery provenance is malformed")
+    if saved.get("kuberay_managed") is True:
+        return replace(cluster, kuberay=KubeRaySpec(enabled=True))
+    return cluster
+
+
+def validate_kuberay_installation(
+    cluster: MK8sDesired, install_dir: Path, *, recipe_dir: Path | None = None,
+    environ: dict[str, str] | None = None,
+) -> MK8sDesired:
+    guarded = _kuberay_execution_cluster(cluster, install_dir)
+    validate_kuberay_execution_inputs(
+        guarded, workdir=install_dir / _K8S_TRAINING_SUBDIR, environ=environ,
+    )
+    if guarded.kuberay and guarded.kuberay.enabled and recipe_dir is not None:
+        validate_kuberay_recipe_inventory(recipe_dir)
+    return guarded
+
+
+def _reset_kuberay_module_cache(workdir: Path) -> None:
+    modules_cache = workdir / ".terraform/modules"
+    if modules_cache.exists():
+        shutil.rmtree(modules_cache)
+
+
 def _prepare_install_dir(
     install_dir: Path,
     *,
@@ -553,20 +592,22 @@ def _prepare_install_dir(
         if cluster.kuberay and cluster.kuberay.enabled else None
     )
     workdir = install_dir / _K8S_TRAINING_SUBDIR
-    validate_kuberay_execution_inputs(cluster, workdir=workdir)
+    guarded = validate_kuberay_installation(
+        cluster, install_dir, recipe_dir=recipe_root / _K8S_TRAINING_SUBDIR,
+    )
+    protected = bool(guarded.kuberay and guarded.kuberay.enabled)
     install_dir.mkdir(parents=True, exist_ok=True)
     # Terraform trusts cached source-to-directory mappings. Rebuild those from
     # the reviewed recipe; keep initialized provider caches and state intact.
-    modules_cache = workdir / ".terraform/modules"
-    if kuberay_tfvars is not None and modules_cache.exists():
-        shutil.rmtree(modules_cache)
+    if protected:
+        _reset_kuberay_module_cache(workdir)
     modules_dst = install_dir / _MODULES_SUBDIR
     # Refresh recipe files but preserve any existing terraform state/plugins.
     if workdir.exists():
         for item in workdir.iterdir():
             preserve_state = (
-                item.name in KUBERAY_STATE_FILES
-                if kuberay_tfvars is not None else item.name.startswith("terraform.tfstate")
+                item.name in KUBERAY_STATE_FILES or item.name == ".terraform.tfstate.lock.info"
+                if protected else item.name.startswith("terraform.tfstate")
             )
             if preserve_state or item.name == ".terraform":
                 continue
@@ -2258,7 +2299,7 @@ def _deploy_one_cluster(
             profile=profile,
             recipe_dir=workdir,
         )
-        validate_kuberay_execution_inputs(cluster, workdir=workdir, environ=env)
+        guarded = validate_kuberay_installation(cluster, install_dir, environ=env)
         # Written before apply so ``destroy`` can reconstruct TF_VAR_* even if
         # apply fails midway. Project network ownership is recorded separately.
         # ``status`` starts as "provisioning" and becomes "deployed" only after
@@ -2278,6 +2319,11 @@ def _deploy_one_cluster(
             ),
             "status": "provisioning",
         }
+        if guarded.kuberay and guarded.kuberay.enabled:
+            sidecar.update(
+                kuberay_managed=True,
+                kuberay_materialized_sha256=kuberay_materialized_digest(install_dir),
+            )
         _write_env_sidecar(install_dir, sidecar)
         _log(
             on_status,
@@ -2629,15 +2675,41 @@ def _destroy_one_cluster(
     # authenticates as the wrong tenant's principal.
     profile = profile or str(saved.get("profile") or "")
     workdir = install_dir / _K8S_TRAINING_SUBDIR
-    env = _cluster_tf_env(
-        nebius_bin,
-        tenant_id=str(saved.get("tenant_id") or spec.tenant_id),
-        project_id=project_id,
-        region=str(saved.get("region") or spec.region),
-        subnet_id=subnet_id,
-        profile=profile,
-        recipe_dir=workdir,
-    )
+
+    def refused(reason: str) -> dict[str, Any]:
+        return {
+            "project_key": project.key(), "cluster_name": cluster.name,
+            "status": "destroy-incomplete", "errors": [reason],
+            "retry_command": retry_command, "install_dir": str(install_dir),
+            **log_metadata,
+        }
+
+    # Refusal must never enter the provider fallback or discard recovery state.
+    # The retained recipe, variables, workspace and actual execution environment
+    # all affect what a zero-exit Terraform destroy means.
+    try:
+        guarded = validate_kuberay_installation(cluster, install_dir)
+        protected = bool(guarded.kuberay and guarded.kuberay.enabled)
+        if protected:
+            expected = saved.get("kuberay_materialized_sha256")
+            if not isinstance(expected, str) or not re.fullmatch(r"[0-9a-f]{64}", expected):
+                raise ValueError("KubeRay teardown needs validated deployment provenance; reapply the reviewed recipe first")
+            if kuberay_materialized_digest(install_dir) != expected:
+                raise ValueError("KubeRay materialized inputs changed; recovery state retained")
+        env = _cluster_tf_env(
+            nebius_bin,
+            tenant_id=str(saved.get("tenant_id") or spec.tenant_id),
+            project_id=project_id,
+            region=str(saved.get("region") or spec.region),
+            subnet_id=subnet_id,
+            profile=profile,
+            recipe_dir=workdir,
+        )
+        validate_kuberay_execution_inputs(guarded, workdir=workdir, environ=env)
+        if protected:
+            _reset_kuberay_module_cache(workdir)
+    except (OSError, ValueError, RuntimeError) as exc:
+        return refused(f"teardown inputs could not be verified: {exc}")
     _log(
         on_status,
         f"[{label}] terraform destroy" + (f" (-> {log_path})" if log_path else ""),
@@ -2759,6 +2831,12 @@ def _destroy_one_cluster(
             "install_dir": str(install_dir),
             **log_metadata,
         }
+
+    if protected:
+        try:
+            validate_kuberay_destroyed_state(workdir)
+        except (OSError, ValueError) as exc:
+            return refused(f"teardown completion could not be verified: {exc}")
 
     # Terraform is the authoritative owner of all recipe resources. Only after
     # its successful destroy may the exact global cluster identity and local
