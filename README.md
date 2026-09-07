@@ -333,6 +333,7 @@ npa/docker/workbench/lerobot/build.sh --registry "$NPA_REGISTRY" --push
 | [Blackwell compatibility](docs/workbench/blackwell-datacenter-image-compatibility.md) | B200 / B300 build, tag, and validation runbook |
 | [SONIC image catalog](docs/workbench/sonic-image-catalog.md) | Manifest-driven SONIC variant routing per GPU |
 | [Image reproducibility](docs/security/image-reproducibility.md) | The two-tag strategy (`cuda12`, `cuda13-b300`) and how tags are pinned |
+| [Merge security gate](docs/security/merge-security-gate.md) | Reproduce source, workflow and dependency regression checks before contributing |
 
 Each image declares a `redistribution` class in the packaging contract. Public
 images may be mirrored to GHCR; restricted images remain private. Some public
