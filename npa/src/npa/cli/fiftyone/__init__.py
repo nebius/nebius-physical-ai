@@ -6,6 +6,7 @@ import logging
 import json
 import os
 import re
+import selectors
 import shlex
 import shutil
 import subprocess
@@ -23,12 +24,8 @@ from rich.console import Console
 
 from npa.cli.fiftyone.review import register_review_augmented
 from npa.cli.ingress import (
-    ensure_alias_ingress,
-    ensure_deploy_ingress,
-    ingress_summary,
     ingress_source_option,
     register_byovm_alias,
-    resolve_deploy_instance_id,
     world_open_ack_option,
 )
 from npa.cli.path_contract import (
@@ -134,7 +131,10 @@ console = Console(stderr=True)
 _project_alias: str = ""
 _workbench_name: str = ""
 
-FIFTYONE_VERSION = "1.15.0"
+FIFTYONE_VERSION = "1.21.0"
+FIFTYONE_MONGODB_VERSION = "7.0.40"
+FIFTYONE_MONGODB_SHA256 = "e4b3d7a11818f983d897ec9fcbf25779a6e122f0e7b7e25fa4ab8ac5d78a5a89"
+FIFTYONE_MONGOD_SHA256 = "3c9271a5dbcaa2adf7cebd7de65d524a780b463e5a9085106adcd140930fc696"
 FIFTYONE_HOME = "/opt/fiftyone"
 FIFTYONE_CONTAINER_DB_DIR = f"{FIFTYONE_HOME}/container-db"
 FIFTYONE_VENV = f"{FIFTYONE_HOME}/venv"
@@ -146,7 +146,7 @@ FIFTYONE_K8S_PUBLIC_URL_ANNOTATION = "npa.nebius.com/public-url"
 FIFTYONE_K8S_SERVICE_TYPE_ANNOTATION = "npa.nebius.com/service-type"
 FIFTYONE_K8S_EXTERNAL_IP_TIMEOUT_SEC = 300
 DEFAULT_APP_PORT = 5151
-DEFAULT_APP_ADDRESS = "0.0.0.0"
+DEFAULT_APP_ADDRESS = "127.0.0.1"
 DEFAULT_CPU_PLATFORM = "cpu-d3"
 DEFAULT_CPU_PRESET = "4vcpu-16gb"
 DEFAULT_CPU_IMAGE_FAMILY = "ubuntu24.04-driverless"
@@ -237,9 +237,9 @@ def _normalize_app_address(address: str) -> str:
     normalized = (address or DEFAULT_APP_ADDRESS).strip()
     if not normalized:
         _fail("--address must not be empty")
-    if not re.fullmatch(r"[A-Za-z0-9_.:-]+", normalized):
-        _fail("--address must be a single host or IP address")
-    return normalized
+    if normalized not in {"127.0.0.1", "localhost"}:
+        _fail("FiftyOne requires loopback binding; use --address 127.0.0.1 and `fiftyone open`.")
+    return "127.0.0.1"
 
 
 def _confirm_or_exit(prompt: str) -> None:
@@ -1077,19 +1077,8 @@ def ensure_ingress_cmd(
     source: str = ingress_source_option("Source CIDR allowed to reach the FiftyOne app."),
     allow_world_open: bool = world_open_ack_option(),
 ) -> None:
-    """Ensure public ingress for the saved FiftyOne BYOVM alias."""
-    try:
-        result = ensure_alias_ingress(
-            tool="fiftyone",
-            port=DEFAULT_APP_PORT,
-            project_alias=_project_alias or None,
-            name=name or _workbench_name or None,
-            source=source,
-            allow_world_open=allow_world_open,
-        )
-    except (ConfigError, NetworkIngressError) as exc:
-        _fail(str(exc))
-    typer.echo(ingress_summary(result, DEFAULT_APP_PORT))
+    """Explain the authenticated local access route for FiftyOne."""
+    _fail("FiftyOne app ingress is disabled; use `fiftyone open` over SSH.")
 
 
 @app.command("register-byovm")
@@ -1100,9 +1089,11 @@ def register_byovm_cmd(
     source: str = ingress_source_option("Source CIDR allowed to reach FiftyOne."),
     allow_world_open: bool = world_open_ack_option(),
 ) -> None:
-    """Register an existing VM as a FiftyOne BYOVM alias and ensure ingress."""
+    """Register an existing VM for authenticated SSH access to FiftyOne."""
+    if source or allow_world_open:
+        _fail("FiftyOne app ingress is disabled; register the VM and use `fiftyone open`.")
     try:
-        register_byovm_alias(
+        result = register_byovm_alias(
             tool="fiftyone",
             alias=alias,
             instance_id=instance_id,
@@ -1112,6 +1103,9 @@ def register_byovm_cmd(
             allow_world_open=allow_world_open,
             warn=console.print,
         )
+        write_config({"projects": {result.project_alias: {"workbenches": {
+            alias: {"endpoint_strategy": "ssh_fallback", "service_port": port},
+        }}}})
     except (ConfigError, NetworkIngressError) as exc:
         _fail(str(exc))
 
@@ -1174,7 +1168,8 @@ def _compute_selection(
 
 def _endpoint_for_port(endpoint: str, host: str, port: int) -> str:
     parsed = urlparse(endpoint or "")
-    scheme = parsed.scheme or "http"
+    # The stock app speaks HTTP inside the authenticated SSH transport.
+    scheme = "http"
     hostname = parsed.hostname or host
     if not hostname:
         hostname = "localhost"
@@ -1214,7 +1209,7 @@ def _browser_url_for_strategy(url: str, endpoint_strategy: str) -> str:
 
 
 def _browser_url_for_config(cfg: WorkbenchConfig, url: str) -> str:
-    return _browser_url_for_strategy(url, getattr(cfg, "endpoint_strategy", "public"))
+    return _browser_url_for_strategy(url, "ssh_fallback")
 
 
 def _graphql_url(base_url: str) -> str:
@@ -1265,7 +1260,7 @@ if dataset_name:
     except Exception as exc:
         print(f"Could not load dataset {dataset_name!r}: {exc}", flush=True)
 
-address = os.environ.get("FIFTYONE_DEFAULT_APP_ADDRESS", "0.0.0.0")
+address = "127.0.0.1"
 port = int(os.environ.get("FIFTYONE_DEFAULT_APP_PORT", "5151"))
 session = fo.launch_app(
     dataset,
@@ -1351,6 +1346,7 @@ def _service_setup_script(
             f"printf '%s\\n' {shlex.quote(f'FIFTYONE_DATASET_NAME={dataset_name}')} "
             "| sudo tee -a /etc/npa-fiftyone/env >/dev/null"
         )
+    dataset_update = dataset_update.replace("/etc/npa-fiftyone/env", '"$fiftyone_env_stage/env"')
     return f"""\
 service_user="$(id -un)"
 was_active="false"
@@ -1386,8 +1382,12 @@ fi
 if [ -z "$nebius_s3_endpoint" ]; then
   nebius_s3_endpoint="$aws_endpoint_url"
 fi
-sudo mkdir -p /etc/npa-fiftyone
-sudo tee /etc/npa-fiftyone/env >/dev/null <<'ENV'
+sudo install -d -m 0755 /etc/npa-fiftyone
+(
+fiftyone_env_stage="$(sudo mktemp -d /etc/npa-fiftyone/.env.XXXXXXXX)"
+trap 'sudo rm -rf -- "$fiftyone_env_stage"' EXIT
+sudo install -m 0600 /dev/null "$fiftyone_env_stage/env"
+sudo tee "$fiftyone_env_stage/env" >/dev/null <<'ENV'
 FIFTYONE_DEFAULT_APP_ADDRESS={address}
 FIFTYONE_DEFAULT_APP_PORT={port}
 FIFTYONE_DATABASE_DIR={FIFTYONE_HOME}/db
@@ -1397,14 +1397,16 @@ FIFTYONE_MODEL_ZOO_DIR={FIFTYONE_HOME}/zoo/models
 FIFTYONE_DO_NOT_TRACK=true
 ENV
 {dataset_update}
-if [ -n "$aws_access_key_id" ]; then printf '%s\\n' "AWS_ACCESS_KEY_ID=$aws_access_key_id" | sudo tee -a /etc/npa-fiftyone/env >/dev/null; fi
-if [ -n "$aws_secret_access_key" ]; then printf '%s\\n' "AWS_SECRET_ACCESS_KEY=$aws_secret_access_key" | sudo tee -a /etc/npa-fiftyone/env >/dev/null; fi
-if [ -n "$aws_endpoint_url" ]; then printf '%s\\n' "AWS_ENDPOINT_URL=$aws_endpoint_url" | sudo tee -a /etc/npa-fiftyone/env >/dev/null; fi
-if [ -n "$nebius_s3_endpoint" ]; then printf '%s\\n' "NEBIUS_S3_ENDPOINT=$nebius_s3_endpoint" | sudo tee -a /etc/npa-fiftyone/env >/dev/null; fi
-if [ -n "$nebius_s3_bucket" ]; then printf '%s\\n' "NEBIUS_S3_BUCKET=$nebius_s3_bucket" | sudo tee -a /etc/npa-fiftyone/env >/dev/null; fi
-if [ -n "$nebius_region" ]; then printf '%s\\n' "NEBIUS_REGION=$nebius_region" | sudo tee -a /etc/npa-fiftyone/env >/dev/null; fi
-sudo chown "$service_user:$service_user" /etc/npa-fiftyone/env
-sudo chmod 600 /etc/npa-fiftyone/env
+if [ -n "$aws_access_key_id" ]; then printf '%s\\n' "AWS_ACCESS_KEY_ID=$aws_access_key_id" | sudo tee -a "$fiftyone_env_stage/env" >/dev/null; fi
+if [ -n "$aws_secret_access_key" ]; then printf '%s\\n' "AWS_SECRET_ACCESS_KEY=$aws_secret_access_key" | sudo tee -a "$fiftyone_env_stage/env" >/dev/null; fi
+if [ -n "$aws_endpoint_url" ]; then printf '%s\\n' "AWS_ENDPOINT_URL=$aws_endpoint_url" | sudo tee -a "$fiftyone_env_stage/env" >/dev/null; fi
+if [ -n "$nebius_s3_endpoint" ]; then printf '%s\\n' "NEBIUS_S3_ENDPOINT=$nebius_s3_endpoint" | sudo tee -a "$fiftyone_env_stage/env" >/dev/null; fi
+if [ -n "$nebius_s3_bucket" ]; then printf '%s\\n' "NEBIUS_S3_BUCKET=$nebius_s3_bucket" | sudo tee -a "$fiftyone_env_stage/env" >/dev/null; fi
+if [ -n "$nebius_region" ]; then printf '%s\\n' "NEBIUS_REGION=$nebius_region" | sudo tee -a "$fiftyone_env_stage/env" >/dev/null; fi
+sudo chown "$service_user:$service_user" "$fiftyone_env_stage/env"
+sudo chmod 600 "$fiftyone_env_stage/env"
+sudo mv -T -- "$fiftyone_env_stage/env" /etc/npa-fiftyone/env
+)
 sudo tee /etc/systemd/system/{FIFTYONE_SERVICE}.service >/dev/null <<UNIT
 [Unit]
 Description=NPA FiftyOne App
@@ -1428,7 +1430,7 @@ WantedBy=multi-user.target
 UNIT
 sudo systemctl daemon-reload
 sudo systemctl enable {FIFTYONE_SERVICE}
-if [ "$was_active" = "true" ] && [ "$current_port" = "{port}" ] && [ "$current_address" = "{address}" ]; then
+if [ "${{fiftyone_env_rebuilt:-false}}" != "true" ] && [ "$was_active" = "true" ] && [ "$current_port" = "{port}" ] && [ "$current_address" = "{address}" ]; then
   echo "FiftyOne already running on {address}:{port}"
 else
   sudo systemctl reset-failed {FIFTYONE_SERVICE} || true
@@ -1462,15 +1464,45 @@ sudo apt-get update
 sudo apt-get install -y build-essential curl ffmpeg git python3 python3-dev python3-pip python3-venv
 sudo mkdir -p {FIFTYONE_HOME} {FIFTYONE_HOME}/datasets {FIFTYONE_HOME}/db {FIFTYONE_HOME}/zoo/datasets {FIFTYONE_HOME}/zoo/models
 sudo chown -R "$USER:$USER" {FIFTYONE_HOME}
+fiftyone_env_rebuilt=false
 if [ ! -x {FIFTYONE_VENV}/bin/python ] || ! {FIFTYONE_VENV}/bin/python - <<'PY' >/dev/null 2>&1
 from importlib import metadata
-raise SystemExit(0 if metadata.version("fiftyone") == "{FIFTYONE_VERSION}" else 1)
+from packaging.version import Version
+valid = metadata.version("fiftyone") == "{FIFTYONE_VERSION}"
+valid = valid and Version(metadata.version("datasets")) >= Version("5.0.1")
+valid = valid and Version(metadata.version("pillow")) >= Version("12.3.0")
+valid = valid and Version(metadata.version("paramiko")) >= Version("5.0.0")
+import hashlib
+binary = metadata.distribution("fiftyone-db").locate_file("fiftyone/db/bin/mongod")
+digest = hashlib.sha256()
+with binary.open("rb") as stream:
+    for block in iter(lambda: stream.read(1024 * 1024), b""):
+        digest.update(block)
+valid = valid and digest.hexdigest() == "{FIFTYONE_MONGOD_SHA256}"
+raise SystemExit(0 if valid else 1)
 PY
 then
   rm -rf {FIFTYONE_VENV}
   python3 -m venv {FIFTYONE_VENV}
   {FIFTYONE_VENV}/bin/python -m pip install --upgrade pip setuptools wheel
-  {FIFTYONE_VENV}/bin/python -m pip install "fiftyone=={FIFTYONE_VERSION}" boto3 datasets huggingface_hub pyarrow pillow
+  {FIFTYONE_VENV}/bin/python -m pip install "fiftyone=={FIFTYONE_VERSION}" boto3 "datasets>=5.0.1" huggingface_hub pyarrow "pillow>=12.3.0" "paramiko>=5.0.0"
+  (
+    mongodb_tmp="$(mktemp -d)"
+    trap 'rm -rf -- "$mongodb_tmp"' EXIT
+    curl --fail --location --silent --show-error -o "$mongodb_tmp/mongodb.tgz" "https://fastdl.mongodb.org/linux/mongodb-linux-x86_64-ubuntu2204-{FIFTYONE_MONGODB_VERSION}.tgz"
+    echo "{FIFTYONE_MONGODB_SHA256}  $mongodb_tmp/mongodb.tgz" | sha256sum -c -
+    tar xzf "$mongodb_tmp/mongodb.tgz" -C "$mongodb_tmp"
+    mongodb_bin="$({FIFTYONE_VENV}/bin/python -c 'from importlib import metadata; print(metadata.distribution("fiftyone-db").locate_file("fiftyone/db/bin/mongod"))')"
+    mkdir -p "$(dirname "$mongodb_bin")" {FIFTYONE_HOME}/mongodb-notices
+    install -m 0755 "$mongodb_tmp/mongodb-linux-x86_64-ubuntu2204-{FIFTYONE_MONGODB_VERSION}/bin/mongod" "$mongodb_bin"
+    for notice in LICENSE-Community.txt MPL-2 THIRD-PARTY-NOTICES; do
+      install -m 0444 "$mongodb_tmp/mongodb-linux-x86_64-ubuntu2204-{FIFTYONE_MONGODB_VERSION}/$notice" {FIFTYONE_HOME}/mongodb-notices/
+    done
+    echo "{FIFTYONE_MONGOD_SHA256}  $mongodb_bin" | sha256sum -c -
+    "$mongodb_bin" --version
+  )
+  {FIFTYONE_VENV}/bin/python -m pip check
+  fiftyone_env_rebuilt=true
 fi
 cat > {FIFTYONE_HOME}/app.py <<'PY'
 {app_py}
@@ -1510,6 +1542,10 @@ def _build_container_launch_command(port: int) -> str:
     script = f"""\
 set -euo pipefail
 sudo docker inspect -f '{{{{.State.Running}}}}' {FIFTYONE_CONTAINER_NAME} | grep -q true
+if ! sudo docker inspect -f '{{{{range .Config.Env}}}}{{{{println .}}}}{{{{end}}}}' {FIFTYONE_CONTAINER_NAME} | grep -qx 'FIFTYONE_DEFAULT_APP_ADDRESS=127.0.0.1'; then
+  echo "Redeploy FiftyOne to apply loopback-only access before using this container." >&2
+  exit 1
+fi
 for _ in $(seq 1 {FIFTYONE_READY_ATTEMPTS}); do
   if curl -fsS http://127.0.0.1:{port}/ >/dev/null; then
     echo "FiftyOne container already running on port {port}"
@@ -1695,14 +1731,22 @@ def download_s3(uri: str) -> Path:
 
 
 def load_lerobot():
-    importer_path = Path("/tmp/npa_fiftyone_lerobot_importer.py")
-    importer_path.write_text(LEROBOT_IMPORTER_SOURCE)
-    if str(importer_path.parent) not in sys.path:
-        sys.path.insert(0, str(importer_path.parent))
+    import importlib.util
+    import tempfile
 
-    from npa_fiftyone_lerobot_importer import import_lerobot_dataset
-
-    return import_lerobot_dataset(NAME, SOURCE, DATASETS_DIR)
+    with tempfile.TemporaryDirectory(prefix="npa-fiftyone-") as private_directory:
+        importer_path = Path(private_directory) / "npa_fiftyone_lerobot_importer.py"
+        importer_path.write_text(LEROBOT_IMPORTER_SOURCE, encoding="utf-8")
+        spec = importlib.util.spec_from_file_location("_npa_fiftyone_lerobot_importer", importer_path)
+        if spec is None or spec.loader is None:
+            raise RuntimeError("Unable to load the bundled LeRobot importer")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        try:
+            spec.loader.exec_module(module)
+            return module.import_lerobot_dataset(NAME, SOURCE, DATASETS_DIR)
+        finally:
+            sys.modules.pop(spec.name, None)
 
 
 if FORMAT == "lerobot":
@@ -1932,14 +1976,22 @@ def download_s3(uri: str) -> Path:
 
 
 def load_lerobot():
-    importer_path = Path("/tmp/npa_fiftyone_lerobot_importer.py")
-    importer_path.write_text(LEROBOT_IMPORTER_SOURCE)
-    if str(importer_path.parent) not in sys.path:
-        sys.path.insert(0, str(importer_path.parent))
+    import importlib.util
+    import tempfile
 
-    from npa_fiftyone_lerobot_importer import import_lerobot_dataset
-
-    return import_lerobot_dataset(NAME, SOURCE, DATASETS_DIR)
+    with tempfile.TemporaryDirectory(prefix="npa-fiftyone-") as private_directory:
+        importer_path = Path(private_directory) / "npa_fiftyone_lerobot_importer.py"
+        importer_path.write_text(LEROBOT_IMPORTER_SOURCE, encoding="utf-8")
+        spec = importlib.util.spec_from_file_location("_npa_fiftyone_lerobot_importer", importer_path)
+        if spec is None or spec.loader is None:
+            raise RuntimeError("Unable to load the bundled LeRobot importer")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        try:
+            spec.loader.exec_module(module)
+            return module.import_lerobot_dataset(NAME, SOURCE, DATASETS_DIR)
+        finally:
+            sys.modules.pop(spec.name, None)
 
 
 if FORMAT == "lerobot":
@@ -2083,33 +2135,19 @@ def _resolve_byovm_deploy_target(
 
 
 def _build_restart_command(port: int) -> str:
-    script = f"""\
-set -euo pipefail
-{_service_stop_override_script()}
-if ! systemctl cat {FIFTYONE_SERVICE} >/dev/null 2>&1; then
-  echo "FiftyOne systemd service {FIFTYONE_SERVICE} is not installed" >&2
-  exit 1
-fi
-sudo systemctl reset-failed {FIFTYONE_SERVICE} || true
-sudo systemctl restart {FIFTYONE_SERVICE}
-for _ in $(seq 1 {FIFTYONE_READY_ATTEMPTS}); do
-  if curl -fsS http://127.0.0.1:{port}/ >/dev/null; then
-    echo {FIFTYONE_READY_MARKER}
-    exit 0
-  fi
-  sleep 1
-done
-sudo systemctl --no-pager status {FIFTYONE_SERVICE} || true
-echo "FiftyOne app did not respond on port {port} before restart readiness timeout" >&2
-exit 1
-"""
-    return _remote_bash(script)
+    return _remote_bash(
+        "set -euo pipefail\nfiftyone_env_rebuilt=true\n" + _service_setup_script(port)
+    )
 
 
 def _build_container_restart_command(port: int) -> str:
     script = f"""\
 set -euo pipefail
 sudo docker inspect {FIFTYONE_CONTAINER_NAME} >/dev/null
+if ! sudo docker inspect -f '{{{{range .Config.Env}}}}{{{{println .}}}}{{{{end}}}}' {FIFTYONE_CONTAINER_NAME} | grep -qx 'FIFTYONE_DEFAULT_APP_ADDRESS=127.0.0.1'; then
+  echo "Redeploy FiftyOne to apply loopback-only access before restarting this container." >&2
+  exit 1
+fi
 sudo docker restart {FIFTYONE_CONTAINER_NAME} >/dev/null
 for _ in $(seq 1 {FIFTYONE_READY_ATTEMPTS}); do
   if curl -fsS http://127.0.0.1:{port}/ >/dev/null; then
@@ -2348,7 +2386,7 @@ def handle_stop(signum, frame):
 signal.signal(signal.SIGINT, handle_stop)
 signal.signal(signal.SIGTERM, handle_stop)
 
-address = os.environ.get("FIFTYONE_DEFAULT_APP_ADDRESS", "{address}")
+address = "127.0.0.1"
 port = int(os.environ.get("FIFTYONE_DEFAULT_APP_PORT", "{port}"))
 dataset_name = os.environ.get("FIFTYONE_DATASET_NAME", "").strip()
 dataset = fo.load_dataset(dataset_name) if dataset_name and dataset_name in fo.list_datasets() else None
@@ -2374,6 +2412,8 @@ def _kubernetes_manifest(
     image_pull_secret: str,
 ) -> dict[str, Any]:
     address = _normalize_app_address(address)
+    if service_type != "ClusterIP":
+        _fail("FiftyOne supports ClusterIP with authenticated port-forward access only.")
     labels = {
         "app": name,
         "app.kubernetes.io/name": name,
@@ -2412,7 +2452,12 @@ def _kubernetes_manifest(
                                         {"name": "FIFTYONE_DO_NOT_TRACK", "value": "true"},
                                     ],
                                     "readinessProbe": {
-                                        "httpGet": {"path": "/", "port": "http"},
+                                        "exec": {"command": [
+                                            f"{FIFTYONE_VENV}/bin/python", "-c",
+                                            "import http.client; "
+                                            f"c=http.client.HTTPConnection('127.0.0.1',{port},timeout=4); "
+                                            "c.request('GET','/'); assert c.getresponse().status == 200",
+                                        ]},
                                         "initialDelaySeconds": 20,
                                         "periodSeconds": 15,
                                         "timeoutSeconds": 5,
@@ -2524,7 +2569,7 @@ def _save_k8s_workbench_state(
     address = _normalize_app_address(address)
     project = _project_alias or cluster_name
     workbench = _workbench_name or "fiftyone"
-    endpoint = public_url or f"http://{name}.{namespace}.svc.cluster.local:{port}"
+    endpoint = f"http://127.0.0.1:{port}"
     write_config(
         {
             "default_project": project,
@@ -2536,7 +2581,7 @@ def _save_k8s_workbench_state(
                             "workbench_type": "fiftyone",
                             "runtime": WorkbenchRuntime.kubernetes.value,
                             "endpoint": endpoint,
-                            "endpoint_strategy": "public" if public_url else "cluster",
+                            "endpoint_strategy": "kubernetes_port_forward",
                             "service_port": port,
                             "app_port": port,
                             "app_address": address,
@@ -2574,14 +2619,9 @@ def _deploy_kubernetes_fiftyone(
     output: OutputFormat,
 ) -> None:
     address = _normalize_app_address(address)
-    service_type = "LoadBalancer" if public_ip else "ClusterIP"
-    if public_ip and not dry_run:
-        typer.echo(
-            "Warning: --public-ip exposes the FiftyOne app via a public LoadBalancer. FiftyOne has "
-            "no built-in authentication, so anyone who reaches the address gets full read/write access "
-            "to the loaded datasets. Restrict access at the network layer or keep it ClusterIP.",
-            err=True,
-        )
+    service_type = "ClusterIP"
+    if public_ip and not destroy:
+        _fail("FiftyOne does not permit unauthenticated public exposure; use `fiftyone open`.")
     resolved_kubeconfig = _resolve_required_kubeconfig(cluster_name=cluster_name, kubeconfig=kubeconfig)
     if destroy:
         _kubectl(["delete", "service", name, "-n", namespace, "--ignore-not-found=true"], dry_run=dry_run, kubeconfig=resolved_kubeconfig)
@@ -2602,35 +2642,11 @@ def _deploy_kubernetes_fiftyone(
         typer.echo(json.dumps(manifest, indent=2, sort_keys=True))
         return
 
-    service_exists = _k8s_get_json("service", name, namespace=namespace, kubeconfig=resolved_kubeconfig) is not None
-    deployment_exists = _k8s_get_json("deployment", name, namespace=namespace, kubeconfig=resolved_kubeconfig) is not None
-    if not service_exists or not deployment_exists:
-        _kubectl(["apply", "-f", "-"], stdin=json.dumps(manifest), kubeconfig=resolved_kubeconfig)
-    else:
-        _patch_k8s_service_type(
-            name=name,
-            namespace=namespace,
-            service_type=service_type,
-            kubeconfig=resolved_kubeconfig,
-        )
+    # Reconcile the pod command too: an old deployment may still bind publicly.
+    _kubectl(["apply", "-f", "-"], stdin=json.dumps(manifest), kubeconfig=resolved_kubeconfig)
     _kubectl(["rollout", "status", f"deployment/{name}", "-n", namespace, "--timeout=900s"], kubeconfig=resolved_kubeconfig)
 
     public_url = ""
-    if public_ip:
-        _, public_url = _wait_for_external_ip(
-            name=name,
-            namespace=namespace,
-            kubeconfig=resolved_kubeconfig,
-            port=port,
-        )
-        _patch_k8s_service_type(
-            name=name,
-            namespace=namespace,
-            service_type=service_type,
-            kubeconfig=resolved_kubeconfig,
-            public_url=public_url,
-        )
-
     _save_k8s_workbench_state(
         cluster_name=cluster_name,
         kubeconfig=resolved_kubeconfig,
@@ -2647,7 +2663,7 @@ def _deploy_kubernetes_fiftyone(
         "name": name,
         "namespace": namespace,
         "service_type": service_type,
-        "cluster_url": f"http://{name}.{namespace}.svc.cluster.local:{port}",
+        "local_access": f"npa workbench fiftyone open --local-port {port}",
         "public_url": public_url,
         "app_address": address,
     }
@@ -2668,7 +2684,7 @@ def _k8s_status_payload(
         return None
     deployment = _k8s_get_json("deployment", name, namespace=namespace, kubeconfig=resolved_kubeconfig)
     service_type = str(service.get("spec", {}).get("type") or "ClusterIP")
-    public_url = _k8s_public_url(service, port=port) if service_type == "LoadBalancer" else ""
+    public_url = ""
     ready_replicas = int((deployment or {}).get("status", {}).get("readyReplicas") or 0)
     desired_replicas = int((deployment or {}).get("spec", {}).get("replicas") or 0)
     status = "RUNNING" if ready_replicas > 0 and (desired_replicas == 0 or ready_replicas >= desired_replicas) else "PENDING"
@@ -2680,6 +2696,7 @@ def _k8s_status_payload(
         "name": name,
         "service_type": service_type,
         "public_url": public_url,
+        "requires_redeploy": service_type != "ClusterIP",
         "local_access": f"npa workbench fiftyone open --local-port {port}",
         "ready_replicas": ready_replicas,
         "desired_replicas": desired_replicas,
@@ -2726,12 +2743,12 @@ def _emit_k8s_status(payload: dict[str, Any], *, output: OutputFormat) -> None:
         typer.echo(json.dumps(payload, indent=2))
         return
     service_type = payload["service_type"]
-    if service_type == "LoadBalancer":
-        typer.echo("Service type:  LoadBalancer")
-        typer.echo(f"Public URL:    {payload.get('public_url') or '<pending>'}")
+    if service_type != "ClusterIP":
+        typer.echo(f"Service type:  {service_type}")
+        typer.echo("Redeploy required: replace legacy public exposure with loopback access.")
     else:
         typer.echo("Service type:  ClusterIP (internal only)")
-        typer.echo("Local access:  run `npa workbench fiftyone open`")
+    typer.echo("Local access:  run `npa workbench fiftyone open`")
     typer.echo(f"Status:        {payload['status']}")
 
 
@@ -2776,7 +2793,7 @@ def deploy_cmd(
     health_check_mode: HealthCheckMode = typer.Option(
         HealthCheckMode.auto,
         "--health-check-mode",
-        help="Health check mode: public, ssh, or auto. BYOVM auto tries public briefly, then SSH.",
+        help="Compatibility option; FiftyOne readiness always uses verified SSH.",
     ),
     verify_env: bool = typer.Option(
         False,
@@ -2787,7 +2804,7 @@ def deploy_cmd(
     address: str = typer.Option(
         DEFAULT_APP_ADDRESS,
         "--address",
-        help="FiftyOne app bind address. Use 0.0.0.0 for a public endpoint.",
+        help="FiftyOne loopback bind address; access it with `fiftyone open`.",
     ),
     preemptible: bool = typer.Option(True, "--preemptible/--no-preemptible", help="Preemptible GPU instance."),
     runtime: WorkbenchRuntime = typer.Option(
@@ -2798,7 +2815,7 @@ def deploy_cmd(
     public_ip: bool = typer.Option(
         False,
         "--public-ip/--no-public-ip",
-        help="Expose the FiftyOne App via a LoadBalancer Service with a public IP.",
+        help="Unsupported for FiftyOne; use authenticated localhost port-forwarding.",
     ),
     cluster_name: str = typer.Option(
         FIFTYONE_K8S_DEFAULT_CLUSTER,
@@ -3254,11 +3271,7 @@ def deploy_cmd(
         effective_count=byovm_effective_gpu_count or None,
         visible_devices=byovm_visible_devices,
     )
-    initial_endpoint_strategy = (
-        saved_wb_cfg.endpoint_strategy
-        if skip_infra and saved_wb_cfg is not None
-        else "public"
-    )
+    initial_endpoint_strategy = "ssh_fallback"
     workbench_config: dict[str, Any] = {
         "endpoint": endpoint,
         "gpu_platform": byovm_fields.get("gpu_platform", platform),
@@ -3444,51 +3457,17 @@ def deploy_cmd(
                 mark_app_status(APP_STATUS_PROVISIONED)
 
         step += 1
-        console.print(f"  [{step}/{total_steps}] HTTP check on {endpoint}...")
+        console.print(f"  [{step}/{total_steps}] Checking loopback HTTP readiness over SSH...")
         app_ready = False
         if not dry_run:
-            health_note = ""
-            if health_check_mode == HealthCheckMode.ssh:
-                app_ready = health_check_ssh(
-                    ssh,
-                    port,
-                    path="/",
-                    retries=FIFTYONE_HEALTH_RETRIES,
-                    backoff=FIFTYONE_HEALTH_BACKOFF_SEC,
-                )
-            else:
-                if health_check_mode == HealthCheckMode.auto and byovm:
-                    app_ready = _app_health_check(
-                        endpoint,
-                        retries=FIFTYONE_AUTO_PUBLIC_HEALTH_RETRIES,
-                        backoff=FIFTYONE_HEALTH_BACKOFF_SEC,
-                    )
-                else:
-                    app_ready = _app_health_check(endpoint)
-                if (
-                    not app_ready
-                    and health_check_mode == HealthCheckMode.auto
-                    and byovm
-                    and health_check_ssh(
-                        ssh,
-                        port,
-                        path="/",
-                        retries=FIFTYONE_HEALTH_RETRIES,
-                        backoff=FIFTYONE_HEALTH_BACKOFF_SEC,
-                    )
-                ):
-                    app_ready = True
-                    health_note = f"Public port {port} unreachable; service healthy via SSH on {vm_ip}."
+            app_ready = health_check_ssh(
+                ssh, port, path="/", retries=FIFTYONE_HEALTH_RETRIES,
+                backoff=FIFTYONE_HEALTH_BACKOFF_SEC,
+            )
             if app_ready:
                 app_ready = True
                 console.print("    FiftyOne app is reachable")
-                if health_note:
-                    console.print(f"    {health_note}")
-                endpoint_strategy = (
-                    "ssh_fallback"
-                    if byovm and (health_check_mode == HealthCheckMode.ssh or bool(health_note))
-                    else "public"
-                )
+                endpoint_strategy = "ssh_fallback"
                 recorded_endpoint_strategy = endpoint_strategy
                 write_config({
                     "projects": {
@@ -3519,20 +3498,6 @@ def deploy_cmd(
                 pass
         if dry_run or app_ready:
             mark_app_status(APP_STATUS_HEALTHY)
-        if app_ready and not dry_run:
-            ensure_deploy_ingress(
-                tool="fiftyone",
-                port=port,
-                alias=wb_name,
-                instance_id=resolve_deploy_instance_id(
-                    tf_outputs=tf_outputs,
-                    project_alias=proj_alias,
-                    name=wb_name,
-                ),
-                source=str(merged_vars.get("application_cidr_block", "")),
-                allow_world_open=str(merged_vars.get("allow_world_open_application", "false")).lower() == "true",
-                warn=console.print,
-            )
 
     step += 1
     console.print(f"  [{step}/{total_steps}] Updating config status ({proj_alias}/{wb_name})...")
@@ -3544,7 +3509,7 @@ def deploy_cmd(
     console.print(f"  FiftyOne: {_browser_url_for_strategy(endpoint, recorded_endpoint_strategy)}")
     console.print(f"  SSH:      ssh -i {ssh_key} {ssh_user}@{vm_ip}")
     console.print("")
-    console.print(f"  Try: npa workbench fiftyone -p {proj_alias} -n {wb_name} launch")
+    console.print(f"  Try: npa workbench fiftyone -p {proj_alias} -n {wb_name} open")
 
     if output == OutputFormat.json:
         typer.echo(json.dumps({
@@ -3570,7 +3535,7 @@ def launch_cmd(
     address: str = typer.Option(
         DEFAULT_APP_ADDRESS,
         "--address",
-        help="FiftyOne app bind address. Use 0.0.0.0 for a public endpoint.",
+        help="FiftyOne loopback bind address; access it with `fiftyone open`.",
     ),
     output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
 ) -> None:
@@ -3913,6 +3878,12 @@ def load_dataset_cmd(
     )
 
     try:
+        _run_fiftyone_command(
+            ssh,
+            _build_container_launch_command(int(cfg.service_port or DEFAULT_APP_PORT))
+            if _is_container_runtime(cfg)
+            else _build_launch_command(int(cfg.service_port or DEFAULT_APP_PORT)),
+        )
         _, out, err = _run_fiftyone_command(
             ssh,
             command,
@@ -3993,7 +3964,7 @@ def datasets_list_cmd(
     cfg = _get_ssh_config()
     url = _endpoint_for_port(cfg.endpoint, cfg.ssh.host, port)
     try:
-        with service_endpoint(cfg, default_port=port, endpoint=url, service_port=port) as active:
+        with service_endpoint(cfg, default_port=port, endpoint=url, service_port=port, require_ssh=True) as active:
             resp = httpx.post(
                 _graphql_url(active.url),
                 json={
@@ -4045,6 +4016,34 @@ def datasets_list_cmd(
         )
 
 
+def _wait_for_kubernetes_forward(
+    proc: subprocess.Popen, local_port: int, remote_port: int, *, timeout: float = 10.0,
+) -> None:
+    """Wait for kubectl itself to confirm the requested local listener."""
+    if proc.stdout is None:
+        raise EndpointError("Kubernetes port-forward has no readiness output")
+    ready_line = f"Forwarding from 127.0.0.1:{local_port} -> {remote_port}".encode()
+    deadline = time.monotonic() + timeout
+    pending = b""
+    with selectors.DefaultSelector() as selector:
+        selector.register(proc.stdout, selectors.EVENT_READ)
+        while proc.poll() is None:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0 or not selector.select(remaining):
+                raise EndpointError("Kubernetes port-forward did not confirm its local listener")
+            chunk = os.read(proc.stdout.fileno(), 65536)
+            if not chunk:
+                break
+            lines = (pending + chunk).split(b"\n")
+            pending = lines.pop()
+            if any(line.strip() == ready_line for line in lines):
+                if proc.poll() is not None:
+                    break
+                os.set_blocking(proc.stdout.fileno(), False)
+                return
+    raise EndpointError("Kubernetes port-forward exited before confirming its local listener")
+
+
 @app.command("open")
 def open_app_cmd(
     local_port: int = typer.Option(DEFAULT_APP_PORT, "--local-port", help="Local port to forward to."),
@@ -4056,7 +4055,33 @@ def open_app_cmd(
     """Port-forward the FiftyOne App to localhost and open it in the browser."""
     if local_port < 1024 or local_port > 65535:
         _fail("--local-port must be between 1024 and 65535")
-    cluster_name, kubeconfig, namespace, service_name, _ = _k8s_options_from_config(
+    cfg = _try_get_ssh_config()
+    if cfg is not None:
+        remote_port = int(cfg.service_port or urlparse(cfg.endpoint).port or DEFAULT_APP_PORT)
+        from npa.clients.endpoint import _close_process, _open_ssh_forward, _wait_for_ssh_forward
+
+        try:
+            proc = _open_ssh_forward(cfg, local_port, remote_port)
+            try:
+                _wait_for_ssh_forward(proc, local_port, remote_port)
+                if proc.poll() is not None:
+                    raise EndpointError("The verified SSH forward did not start")
+                url = _browser_url_for_strategy(f"http://127.0.0.1:{local_port}", "ssh_fallback")
+                typer.echo(f"FiftyOne App: {url}")
+                try:
+                    webbrowser.open(url)
+                except Exception:
+                    logging.getLogger(__name__).debug("Unable to open local browser", exc_info=True)
+                while proc.poll() is None:
+                    time.sleep(0.25)
+            finally:
+                _close_process(proc)
+        except KeyboardInterrupt:
+            pass
+        except EndpointError as exc:
+            _fail(str(exc))
+        return
+    cluster_name, kubeconfig, namespace, service_name, remote_port = _k8s_options_from_config(
         cluster_name=cluster_name,
         kubeconfig=kubeconfig,
         namespace=namespace,
@@ -4066,31 +4091,36 @@ def open_app_cmd(
     resolved_kubeconfig = _resolve_required_kubeconfig(cluster_name=cluster_name, kubeconfig=kubeconfig)
     url = f"http://localhost:{local_port}"
     cmd = _kubectl_command(
-        ["port-forward", "-n", namespace, f"svc/{service_name}", f"{local_port}:{DEFAULT_APP_PORT}"],
+        ["port-forward", "--address", "127.0.0.1", "-n", namespace, f"svc/{service_name}", f"{local_port}:{remote_port}"],
         kubeconfig=resolved_kubeconfig,
     )
-    typer.echo(f"FiftyOne App: {url}")
     try:
-        webbrowser.open(url)
-    except Exception:
-        logging.getLogger(__name__).debug("suppressed exception", exc_info=True)
-    try:
-        proc = subprocess.Popen(cmd)
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     except FileNotFoundError:
         _fail("kubectl is not installed or not on PATH")
     try:
+        _wait_for_kubernetes_forward(proc, local_port, remote_port)
+        typer.echo(f"FiftyOne App: {url}")
+        try:
+            webbrowser.open(url)
+        except Exception:
+            logging.getLogger(__name__).debug("Unable to open local browser", exc_info=True)
         while proc.poll() is None:
             time.sleep(0.25)
+            # kubectl logs each forwarded connection; drain its pipe so a long
+            # browser session cannot stall when the pipe buffer fills.
+            try:
+                os.read(proc.stdout.fileno(), 65536)
+            except BlockingIOError:
+                continue
     except KeyboardInterrupt:
         pass
+    except EndpointError as exc:
+        _fail(str(exc))
     finally:
-        if proc.poll() is None:
-            proc.terminate()
-            try:
-                proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                proc.wait(timeout=5)
+        from npa.clients.endpoint import _close_process
+
+        _close_process(proc)
 
 
 @app.command("status")
@@ -4127,7 +4157,7 @@ def status_cmd(
     url = _endpoint_for_port(cfg.endpoint, cfg.ssh.host, port)
 
     try:
-        with service_endpoint(cfg, default_port=port, endpoint=url, service_port=port) as active:
+        with service_endpoint(cfg, default_port=port, endpoint=url, service_port=port, require_ssh=True) as active:
             resp = httpx.get(active.url, timeout=5.0)
             active_url = active.url
     except EndpointError as exc:

@@ -30,20 +30,21 @@ Nebius** — open in a browser, no install.
 One SkyPilot YAML runs the whole chain on Nebius Managed Kubernetes: raw frames
 in object storage → LanceDB ingest → CPU enrichment → CLIP embeddings on H100 →
 failure-mode views → a detector per view on H100 → per-view evaluation → the
-FiftyOne review app on a public URL.
+FiftyOne review app through authenticated local forwarding.
 
 ## Run of show (about 8 minutes)
 
 ### 0. Before the meeting — bring the FiftyOne app up
 
 ```bash
-# Expose the review app to external viewers (LoadBalancer public IP)
-npa workbench fiftyone deploy --public-ip
-npa workbench fiftyone status        # prints: Public URL: http://<external-ip>:5151
+# Deploy the review app with a loopback listener
+npa workbench fiftyone deploy --runtime kubernetes
+npa workbench fiftyone status
+npa workbench fiftyone open          # keep this port-forward running
 ```
 
-Open that URL in a browser tab and have it ready on the shared screen. (Operators
-who prefer a local tunnel can use `npa workbench fiftyone open` instead.)
+Keep the local browser tab ready on the shared screen. The App is an operator
+interface; grant SSH or Kubernetes port-forward access only to authorized reviewers.
 
 If you have no live cluster, play the prebuilt video
 ([assets/bdd100k/bdd100k-demo.mp4](assets/bdd100k/bdd100k-demo.mp4)) and use the
@@ -135,7 +136,7 @@ There are three options, in increasing order of "live":
    ```bash
    npa/.venv/bin/pip install playwright
    npa/.venv/bin/python -m playwright install --with-deps chromium
-   # then drive http://<fiftyone-public-ip>:5151 and record the context;
+   # then drive http://127.0.0.1:5151 and record the context;
    # FiftyOne saved views are URL-addressable: ?view=rider-train,
    # ?view=nighttime-person-train, ?view=distant-person-train
    ```

@@ -198,6 +198,11 @@ closure with the maintained Google Cloud Storage SDK and verifies object
 generations, checksums and destination paths during dataset preparation.
 This source change does not qualify or republish an existing image digest.
 
+The FiftyOne candidate now requires loopback access through verified SSH or
+Kubernetes port-forwarding. Published tags retain their original bytes until a
+validated replacement is promoted; redeploy existing public listeners using the
+updated deployment path. See the [FiftyOne access guidance](../../skills/tools/fiftyone/SKILL.md).
+
 FiftyOne is the remaining public-release tag override for an unpromoted worker
 candidate: public execution selects the verified `1.15.0.post1`, while an
 explicit custom registry can select the newer supported worker pin. Cosmos
