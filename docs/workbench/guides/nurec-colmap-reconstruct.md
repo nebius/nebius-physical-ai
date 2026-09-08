@@ -88,9 +88,53 @@ The reference camera defaults to the longest trajectory; this supplies NRE's
 required rig edge without claiming that independently photographed cameras
 formed a measured synchronized rig.
 
-Reconstruction keeps the full native
-`configs/experimental/3dgut/3dgut_colmap.yaml` recipe: `max_epochs: "0"` preserves
-the upstream default, with `world_size: "1"`. Rendering uses a nonzero rig
+Reconstruction selects all discovered cameras. With the default native
+`configs/experimental/3dgut/3dgut_colmap.yaml` recipe and a derived rig, selecting
+multiple cameras switches its background initializer to the supported native
+`accumulated_point_cloud` config group. The recipe's `sfm_point_cloud` initializer
+asserts that the complete data source has exactly one camera; setting a separate
+initializer camera list does not satisfy that assertion.
+
+Before launching NRE, the public NCore V4 reader exports every sparse point's
+world XYZ and original uint8 RGB to `initialization/ncore-sfm.ply` under the
+reconstruction output directory. It requires nonempty finite world geometry and
+one valid RGB triplet per point, matches the conversion point inventory, and
+verifies the unchanged conversion inventory before and after export. It never
+writes into the converted sequence. NRE applies its own world-to-NRE transform.
+There is no point subsampling, image resizing, calibration change, or synthesized
+LiDAR. The initializer's point count equals the complete exported count, and its
+optional random near/far point counts are deliberately zero to retain the
+existing SfM initialization's source-point-only behavior. This is an
+initialization choice, not a training budget change.
+
+The remaining native recipe and training budget are retained: `max_epochs: "0"`
+preserves the native 30,000 samples per epoch and one epoch, with
+`world_size: "1"`. Single-camera selections retain native SfM initialization.
+Repeatable `--camera-id` and `--override dataset.camera_ids=[...]` selections
+remain explicit subsets; multi-camera subsets use all source points. A custom
+recipe or explicit background initialization override leaves initializer
+selection with the caller, who must choose a compatible native configuration.
+Explicit training overrides also remain intact.
+
+`reconstruct --dry-run --ncore-json <staged-sequence.json>` reports the actual
+planned native arguments without writing a PLY or launching NRE. Converted
+captures obtain the point count from their verified inventory; older NCore
+captures without a conversion report require the public NCore reader even for
+planning. Real export requires that reader in the executing Python environment.
+The reconstruction JSON and published `initialization/ncore-sfm.json` retain the
+recipe, configured image, selected cameras, source metadata/conversion hashes,
+decoded component counts, and exported PLY hash. An image digest in the runtime
+configuration binds this evidence to that image; a version tag alone does not.
+
+The native parsed configuration records effective recipe settings. The USDZ's
+`data_info.json` copies the input sequence metadata; it proves available data,
+not train/validation split membership or which frames were sampled during
+training. The separately exported ground truth also represents input frames.
+Neither an available-frame count nor the 30,000-sample recipe establishes that
+each of the 518 images contributed a training sample. Retain split and sampler
+evidence from the real native run before making that stronger claim.
+
+Rendering uses a nonzero rig
 offset. Both GPU stages explicitly request
 `RTXPRO-6000-BLACKWELL-SERVER-EDITION:1`; B200, H100 and H200 cannot run this
 RT-core path.

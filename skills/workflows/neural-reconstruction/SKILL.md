@@ -229,6 +229,29 @@ capture shape:
 The default recipe already composes `options/artifact: default` (which is what
 sets `checkpoint.artifact.enabled`, i.e. the renderable USDZ), MCMC
 densification, SfM-point-cloud initialization, and disables difix/mesh/ground.
+For a derived-rig capture with multiple selected cameras, NPA replaces only the
+background initializer through the native
+`model/gaussians/initialization@model.layers.background.initialization=accumulated_point_cloud`
+config group. The native SfM initializer asserts one camera on the entire data
+source; restricting an initialization-only camera list cannot fix it. Keep all
+discovered cameras, export all verified NCore world XYZ and uint8 RGB points to
+the reconstruction output's `initialization/ncore-sfm.ply`, and let NRE apply
+its world-to-NRE transform. Match the complete point count and disable optional
+random near/far seed points to preserve source-point-only initialization.
+Never mutate the conversion generation or change the native training budget.
+Single-camera selections retain native SfM; custom recipes and explicit
+initialization overrides remain the caller's responsibility. The dry run shows
+the planned native arguments without writing initialization artifacts.
+
+Retain `initialization/ncore-sfm.json` with the source/conversion and PLY hashes,
+selected cameras, count, and recipe/image identity. Native `parsed.yaml` records
+effective configuration, while USDZ `data_info.json` is input sequence metadata.
+Available frames and exported ground truth do not establish split membership or
+actual sampled training frames. Require separate native split/sampler evidence
+before claiming that every source image participated in training. The COLMAP
+multi-camera path still requires a real full RTX run after integration; offline
+PLY tests do not validate native reconstruction quality.
+
 Enumerate what a given release actually ships with:
 
 ```bash

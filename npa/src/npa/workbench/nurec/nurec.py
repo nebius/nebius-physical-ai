@@ -759,6 +759,7 @@ class NurecReconstructResult:
     command: tuple[str, ...] = ()
     output_uri: str = ""
     errors: tuple[str, ...] = ()
+    initialization: dict[str, Any] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -771,6 +772,7 @@ class NurecReconstructResult:
             "parsed_config_path": self.parsed_config_path,
             "metrics_path": self.metrics_path,
             "metrics": dict(self.metrics),
+            "initialization": dict(self.initialization),
             "gt_dir": self.gt_dir,
             "command": list(self.command),
             "output_uri": self.output_uri,
@@ -1592,7 +1594,13 @@ def reconstruct_scene(
     timeout: float | None = None,
 ) -> NurecReconstructResult:
     """Train a 3DGUT Gaussian reconstruction and collect its USDZ + metrics."""
+    from npa.workbench.nurec.ncore_initialization import (
+        export_initialization,
+        plan_initialization,
+    )
+
     verify_ncore_input(ncore_json)
+    config, initialization = plan_initialization(config, ncore_json)
     env = dict(environ if environ is not None else os.environ)
     run = runner or subprocess.run
     out_dir = config.resolved_out_dir
@@ -1613,8 +1621,10 @@ def reconstruct_scene(
             parsed_config_path="",
             metrics_path="",
             command=tuple(command),
+            initialization=initialization,
         )
 
+    initialization = export_initialization(ncore_json, initialization)
     out_dir.mkdir(parents=True, exist_ok=True)
     result = _run(command, env=_nre_env(config, env), run=run, timeout=timeout)
     if result.returncode != 0:
@@ -1628,6 +1638,7 @@ def reconstruct_scene(
             parsed_config_path="",
             metrics_path="",
             command=tuple(command),
+            initialization=initialization,
             errors=(
                 f"NRE reconstruction failed (exit {result.returncode}): "
                 f"{_sanitize(result, config, env)}",
@@ -1683,6 +1694,7 @@ def reconstruct_scene(
         gt_dir=gt_dir,
         command=tuple(command),
         errors=tuple(errors),
+        initialization=initialization,
     )
 
 
