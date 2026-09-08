@@ -3,7 +3,8 @@
 Every Workbench container image against every Nebius GPU platform, and — separately — which of those cells has actually been run on real hardware.
 
 **Last measured:** see the dated runs and exact-digest records below.
-**Publication/evidence reconciliation:** 2026-09-05; no new GPU execution in this audit.
+**Publication/evidence reconciliation:** 2026-09-08. New development-image
+workloads are distinguished from the older accepted-release records below.
 
 Two things are deliberately kept apart here, because conflating them is how "Blackwell ready" claims go wrong:
 
@@ -43,7 +44,7 @@ Two compatibility rules govern every cell:
 | `npa-lerobot-policy` | `0.1.1` | 2.12.1+cu130 | `sm_75 sm_80 sm_86 sm_90 sm_100 sm_120` | yes |
 | `npa-lancedb` | `…-0.30.3-…-20260803T031514Z` | 2.12.1+cu130 | `sm_75 sm_80 sm_86 sm_90 sm_100 sm_120` | yes |
 | `npa-detection-training` | `bdd100k-golden-eval-smoke-20260614T210000Z` | 2.12.1+cu130 | `sm_75 sm_80 sm_86 sm_90 sm_100 sm_120` | yes |
-| `npa-robocasa` | `0.1.0` (validation candidate, not yet built) | CUDA 12.4 base (no torch baked) | `sm_80 sm_90` (cu124 wheels stop at sm_90) | no |
+| `npa-robocasa` | `dev-8493d5af4c20eb8fec4bb4949dd8e29b5ed8a096` | measured 2.13.0+cu130 | exact GPU workload measured on `sm_120`; full wheel SASS inventory not captured by this runtime probe | unmeasured |
 | `npa-cosmos3` | historical `1.2.2-cu130-r2` measurement (index `sha256:c65712832f6a…`); current default is `1.2.2-cu130-r6` | 2.10.0+cu130 | `sm_75 sm_80 sm_86 sm_90 sm_100 sm_120` + `compute_120` PTX | yes |
 | `npa-cosmos3-ray-serve` | `dev-56d8c4f3f05db7aa3b03323441a3e0d7b97ac8da` (index `sha256:6e42f553a0d1…`) | 2.10.0+cu130 | `sm_75 sm_80 sm_86 sm_90 sm_100 sm_120` + `compute_120` PTX | yes |
 | `npa-cosmos3-reason` | `…-3.0.1-…-20260803T034152Z` | 2.9.0+cu130 | `sm_75 sm_80 sm_86 sm_90 sm_100 sm_120` + `compute_120` PTX | yes |
@@ -69,16 +70,16 @@ The detection-training stack row and detector GPU results [7] and [28]–[31] de
 | `npa-lerobot-policy` | supported | supported | supported | supported | supported |
 | `npa-lancedb` | supported | **verified** [26] | **verified** [27] | **verified** [24] | **verified** [25] |
 | `npa-detection-training` | supported | **verified** [29] | **verified** [30] | **verified** [28] | **verified** [31] |
-| `npa-robocasa` | supported (cu124) | supported (cu124) | blocked (needs cu130) | blocked (needs cu130) | blocked (needs cu130) |
+| `npa-robocasa` (public development) | unverified | unverified | **verified simulation/export** [development records](#public-development-evidence); NVIDIA EGL/GLX required | unverified | unverified |
 | `npa-cosmos3` | supported | supported | **verified** [accepted records](#accepted-release-evidence) (r6) | supported | supported |
 | `npa-cosmos3-serving` (public zero-payload bootstrap) | blocked (8-GPU memory floor) | historical predecessor only; current digest unverified | unverified (8 GPUs) | **verified** [accepted records](#accepted-release-evidence) (8 GPUs) | unverified (8 GPUs) |
-| `npa-cosmos3-super-benchmark` (operator-private) | blocked (8-GPU benchmark contract) | supported (8 GPUs) | supported (8 GPUs) | **verified** [private benchmark record](#accepted-release-evidence) | supported (8 GPUs) |
+| `npa-cosmos3-super-benchmark` (public development) | unverified | unverified | unverified | **verified single-video generation** [development records](#public-development-evidence); full benchmark pending | unverified |
 | `npa-cosmos3-nano-video` (operator-private) | not validated | not validated | not validated | **verified** [67] | not validated |
 | `npa-cosmos3-ray-serve` | supported | supported | **verified** [66] | **verified** [65] | supported (same-major `sm_100` coverage; not measured) |
 | `npa-content-agents` | supported (RT cores) | blocked (no RT cores) | **verified** [64] | blocked (no RT cores) | blocked (no RT cores) |
 | `npa-wan2-2` | supported | supported | **verified** [accepted records](#accepted-release-evidence) | **historical evidence** [61]; current distributed path unqualified | supported |
 | `npa-ltx2` | unverified runtime | unverified runtime | **verified** [accepted records](#accepted-release-evidence) | unverified runtime | unverified runtime |
-| `npa-openpi` | blocked (RTX-only runtime contract) | blocked (RTX-only runtime contract) | pending exact-digest full-DROID qualification | blocked (`sm_120`-only probe/runtime contract) | blocked (`sm_120`-only probe/runtime contract) |
+| `npa-openpi` (public development) | unverified | unverified | development workload pending; full-DROID qualification separate | `sm_100` probe packaged; exact-digest workload unverified | unverified |
 | `npa-curobo` | unbuilt; not validated | unbuilt; not validated | unbuilt; not validated | unbuilt; not validated | unbuilt; not validated |
 | `npa-alpamayo2-super` | supported | supported | **verified** [63] | **verified** [62] | supported (same-major `sm_100` coverage; not measured) |
 | `npa-cosmos3-reason` | supported | **verified** [38] | **verified** [43] | **verified** [36] | **verified** [37] |
@@ -209,6 +210,24 @@ The job runs non-root with dropped capabilities and a read-only root filesystem.
 
 The original READY-set images were also tested before rebuild. The historical `npa-lancedb:0.30.3` CLIP path fails on a current transformers return type and is superseded by the corrected image in runs 24–27. The superseded `npa-lerobot:0.5.1` failed a torchcodec/FFmpeg mismatch, and the superseded Cosmos3 Reason image lacked the functional smoke module. The rebuilt SONIC image passes its native-SASS controls and reaches real environment construction after fixing two undeclared upstream dependencies, but both cold and warm fine-tune attempts fail inside Isaac's runtime-fetched URDF extension while opening a temporary pelvis USD layer, before a checkpoint. Those failures are recorded in `validation_evidence`; they were not converted into verified cells. The Cosmos kernel runs are not generated-video claims: checkpoint-backed Predict2 Video2World was attempted again during the extensive run and remains unverified because the available Hugging Face identity received HTTP 403 for NVIDIA's gated checkpoint.
 
+## Public development evidence
+
+These 2026-09-08 runs apply only to the stated public development digests.
+They do not promote the fixed supported tags or transfer historical benchmark
+results to newly built bytes. Full references, publication checks and remaining
+qualification are recorded in the [publication report](image-publication-audit-20260907.md).
+
+| Image digest | Measured hardware | Actual workload |
+| --- | --- | --- |
+| Super `sha256:7797b5ada0e7f32dec924c52d52a58b04560608b12f31c42e78521edb3127ff6` | one B200, capability 10.0 | TP1 BF16 video, 1280×720, 189 frames, 24 fps, 35 inference steps; complete decode and storage readback. Full eight-GPU benchmark and single-H200 suite remain unqualified. |
+| RoboCasa `sha256:538c531f26e282af9463f149a6d93ab9a8cd92b24004b38cac381c0289ffe257` | one RTX PRO 6000, capability 12.0 | 256-step kitchen simulation with state/actions, two camera arrays and a decoded 12.8-second MP4; nine verified objects. No task-success or policy-training claim. |
+
+RoboCasa's successful worker had qualified NVIDIA Operator EGL/GLX libraries.
+The same image failed before scene creation on a managed-driver worker with
+CUDA but without those graphics libraries. Follow the
+[driver strategy](mk8s-gpu-driver-strategy.md); CUDA availability does not prove
+the graphics path, and an RTX result does not qualify datacenter Blackwell.
+
 ## Accepted release evidence
 
 These are existing workload records reconciled with the released digests on
@@ -225,7 +244,7 @@ Other dated measurements above remain tied to the tags they actually ran.
 | `npa-sonic-mujoco:0.2.0-runtime`, `sha256:2388d9e97269afaa414966e83a27f676a3f44d4271e9828c57bc13fbdce80f57` | B200 | real Unitree G1 MuJoCo rollout; 64 finite steps, fall rate 0 | `npa/src/npa/deploy/sonic_image_manifest.json` |
 | `npa-sonic-mujoco:0.2.0-runtime`, same accepted digest above | one RTX PRO 6000 | 2026-08-31 real G1 MuJoCo physics rollout with a minimal checkpoint and finite metrics; this verifies the evaluation path, not a trained policy’s performance | `npa/docker/workbench/blackwell-dc-images.json` |
 | `npa-cosmos3-serving:0.2.0-oss`, `sha256:3342bbe44bd1c00ebf05ab4c9d7286058a94bb5ce90b49b164b23604d3acf180` | eight B200s | guarded service boot, readiness, real video inference and H.264 decode | `npa/docker/workbench/blackwell-dc-images.json` |
-| `npa-cosmos3-super-benchmark` (operator-private) | eight B200s | full four-cell benchmark, 96/96 technically valid MP4s; this wrapper remains restricted and excluded from public release | `npa/docker/workbench/blackwell-dc-images.json` |
+| historical `npa-cosmos3-super-benchmark` operator wrapper | eight B200s | historical full four-cell benchmark, 96/96 technically valid MP4s; this does not qualify the replacement public bootstrap | `npa/docker/workbench/blackwell-dc-images.json` |
 
 LTX and Cosmos3 serving carry no GPU runtime in their public bootstrap layers;
 these results cover their operator-fetched runtime on the listed hardware.

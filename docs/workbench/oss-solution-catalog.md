@@ -96,6 +96,16 @@ unique and must be tested with its own upstream-named capabilities.
 > the maintained surface. See `skills/tools/robocasa/SKILL.md` and
 > `workflows/testing/robocasa-smoke.yaml`.
 
+The historical BYOF results above are separate from the **2026-09-08 public
+development image**: `npa-robocasa:dev-8493d5af4c20eb8fec4bb4949dd8e29b5ed8a096`,
+digest `sha256:538c531f26e282af9463f149a6d93ab9a8cd92b24004b38cac381c0289ffe257`.
+Its native authenticated service completed 256 real random-action simulation
+steps on an RTX PRO 6000 with qualified NVIDIA EGL/GLX. Finite state/actions,
+two changing camera arrays, and a 256-frame MP4 were exported; all nine objects
+passed storage readback. Final reward was zero. This validates useful
+simulation/export, with ACT training, policy evaluation and other hardware
+remaining unqualified. See the [image record](../../npa/docker/workbench/robocasa/README.md).
+
 ### OpenPI
 
 | Capability | Status | Upstream basis |

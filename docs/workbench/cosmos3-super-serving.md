@@ -13,16 +13,25 @@ production workflow:
 [`cosmos3-super-b200-benchmark.yaml`](../../workflows/testing/cosmos3-super-b200-benchmark.yaml)
 or
 [`cosmos3-super-h200-benchmark.yaml`](../../workflows/testing/cosmos3-super-h200-benchmark.yaml).
-That recipe intentionally runs the upstream `vllm/vllm-omni:cosmos3` image at
-its recorded digest, rather than this NPA bootstrap image, so a new measurement
-preserves the public benchmark's software boundary.
-The YAML spells out the equivalent `docker.io/vllm/...` pull reference so image
-preflight can verify the Docker Hub artifact before GPU submission. Because the
-upstream image lacks `sshd` and `rsync`, SkyPilot cannot use it directly. Build
-`npa/docker/workbench/cosmos3-super-benchmark` into an operator-controlled
-registry and pass its immutable digest as `runtime_image`; the wrapper inherits
-the exact upstream digest and adds only the reviewed worker-bootstrap packages.
-It is intentionally excluded from the public image catalog.
+The historical benchmark used the pinned upstream `vllm/vllm-omni:cosmos3`
+runtime with an operator-private SkyPilot wrapper. The current
+`cosmos3-super-benchmark` recipe instead builds a public bootstrap with no vendor
+runtime or weights in its layers. It downloads the pinned serving closure at
+execution. These are different image bytes; historical benchmark measurements
+do not qualify the replacement.
+
+The verified public development reference is
+`ghcr.io/nebius/nebius-physical-ai/npa-cosmos3-super-benchmark:dev-638560022d44443f42a1469af5ac5a26ca398712`,
+digest `sha256:7797b5ada0e7f32dec924c52d52a58b04560608b12f31c42e78521edb3127ff6`.
+It passed trusted publication gates and one complete B200 TP1 BF16 video:
+1280×720, 189 frames, 24 fps and 35 inference steps, with full decode and storage
+readback. The replacement's primary four-cell benchmark, expanded ten-cell
+`b200-full` suite and separate single-H200 qualification remain pending.
+Use its exact digest as `runtime_image` and launch the workload through its
+`--runtime` entrypoint; see the
+[wrapper guide](../../npa/docker/workbench/cosmos3-super-benchmark/README.md).
+Anonymous public pulls need no registry pull secret. The historical private
+wrapper remains an explicitly separate reproduction option.
 
 For a one-H200 runtime/plumbing proof, use
 [`cosmos3-super-h200-single-gpu.yaml`](../../workflows/testing/cosmos3-super-h200-single-gpu.yaml).
@@ -51,11 +60,12 @@ resolution is bound to the exact public development digest that passed its
 layer/history scan and real guarded eight-GPU serving acceptance. A new digest
 must earn the same evidence before promotion.
 
-The old `vllm/vllm-omni` parent is prohibited because its built filesystem
-contained the NVIDIA Deep Learning Container license. A source rebuild also
-proved insufficient: its CUDA Python closure includes `cuda-bindings` under the
-NVIDIA Software License (v. May 12, 2021), whose downstream-terms requirements
-are not established by anonymous GHCR. The public image therefore carries only
+This bootstrap's byte contract rejects the old `vllm/vllm-omni` parent, whose
+built filesystem contained the NVIDIA Deep Learning Container license. The
+earlier source rebuild also left unresolved downstream distribution obligations
+for `cuda-bindings` under the NVIDIA Software License (v. May 12, 2021).
+These are the reviewed artifact's packaging boundaries, not a universal ban on
+redistributing proprietary CUDA components. The public image therefore carries only
 the digest-pinned official Python base, bootstrap scripts, and a hash-locked
 package manifest. The operator reviews those upstream terms and opts into the
 runtime download with
@@ -64,12 +74,14 @@ that value.
 
 ## Weights are never in the image
 
-The bootstrap carries no checkpoint or serving-runtime bytes. The
-`Cosmos3-Super` checkpoint, the guardrail models, and every other gated artifact
-download **at run time** with the operator's own Hugging Face token, under that
-operator's own license acceptance. That is the same posture `npa-cosmos3` holds,
-and the reason the built image carries no gated weight bytes to redistribute.
-Credentials are used only for authenticated access probes and runtime downloads.
+The bootstrap carries no checkpoint or serving-runtime bytes. The selected
+`Cosmos3-Super` checkpoint downloads **at runtime** and is publicly accessible
+without a Hugging Face token. Separately gated guardrail models require access
+to their actual repositories and revisions under the operator's account.
+That access handles the corresponding upstream gate without another local
+model-consent prompt. Credentials are used only for the access probes and
+downloads that require them; a public checkpoint download does not establish
+acceptance of unrelated SDK terms.
 
 `verify_env.py` proves the exact manifest checksum and absence of serving
 modules in the final image. `scan_image_cosmos3_serving_payload.py` independently
@@ -329,12 +341,12 @@ guardrails disabled, and a 5400-second synchronous endpoint timeout. One
 validated warmup per service runs before the measurement window and is not
 counted.
 
-Before provisioning, verify the operator's Hugging Face and S3 access, then the
-specific Cosmos3 serving entitlement:
+Before provisioning, verify storage access and probe an actual payload at the
+pinned public model revision. Probe any separately selected gated guardrail
+repository with the operator's authorized credential:
 
 ```bash
-npa workbench health preflight --checks hf,s3 --json
-npa workbench health access --capability cosmos3-serving --json
+npa workbench health preflight --checks s3 --json
 npa workbench workflow validate-spec \
   workflows/testing/cosmos3-super-b200-benchmark.yaml
 # Or validate the H200 recipe:
@@ -342,9 +354,12 @@ npa workbench workflow validate-spec \
   workflows/testing/cosmos3-super-h200-benchmark.yaml
 ```
 
-After reviewing the runtime terms, submit with the run-scoped exact value
-`NPA_COSMOS3_ACCEPT_NVIDIA_SOFTWARE_LICENSE=YES`, `HF_TOKEN`, and S3 credentials
-through `--secret-env`. Override the placeholder bucket and select the exact
+The replacement benchmark wrapper defaults noninteractively to authorized
+runtime delivery when `NPA_COSMOS3_ACCEPT_NVIDIA_SOFTWARE_LICENSE` is unset.
+Explicit `NO` refuses before fetch; empty or other values fail closed. No
+acceptance is baked or persisted. Pass runtime overrides, any required
+`HF_TOKEN`, and S3 credentials through `--secret-env`. The public model itself
+does not require a token. Override the placeholder bucket and select the exact
 existing Kubernetes context; do not put either value in the committed spec.
 Add `--var suite=b200-full` to the B200 submission to select all ten cells.
 
@@ -448,7 +463,7 @@ services increase node throughput while increasing request latency.
 ## Historical baseline (quarantined predecessor; not release evidence)
 
 The measurements below describe the former vendor-based image only. That image
-is prohibited from public publication and this section is not acceptance
+has not met the public packaging contract and this section is not acceptance
 evidence for the zero-payload release. New evidence must name the exact public
 development digest built from this architecture.
 
