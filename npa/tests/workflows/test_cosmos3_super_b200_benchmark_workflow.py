@@ -29,7 +29,9 @@ def test_workflow_is_fixed_full_node_primary_sweep() -> None:
         "imagePullSecrets"
     ] == [{"name": "{{config.image_pull_secret}}"}]
     wrapper = REPO_ROOT / "npa/docker/workbench/cosmos3-super-benchmark/Dockerfile"
-    assert IMAGE in wrapper.read_text(encoding="utf-8")
+    wrapper_source = wrapper.read_text(encoding="utf-8")
+    assert IMAGE not in wrapper_source
+    assert "npa-cosmos3-serving@sha256:3342bbe44bd1c00ebf05ab4c9d7286058a94bb5ce90b49b164b23604d3acf180" in wrapper_source
     assert raw["config"]["topologies"] == "1x8,2x4,4x2,8x1"
     assert raw["config"]["attempts"] == "24"
     assert raw["config"]["suite"] == "primary"
@@ -52,7 +54,7 @@ def test_workflow_is_fixed_full_node_primary_sweep() -> None:
     assert WORKLOAD["guardrails"] is False
 
 
-def test_workflow_renders_exact_vendor_digest_and_real_command(monkeypatch) -> None:
+def test_workflow_renders_exact_configured_digest_and_real_command(monkeypatch) -> None:
     monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/npa-src")
     wrapper = "registry.example.invalid/operator/npa-cosmos3-super-benchmark@sha256:" + (
         "1" * 64
@@ -78,8 +80,8 @@ def test_workflow_renders_exact_vendor_digest_and_real_command(monkeypatch) -> N
     assert "--suite primary" in docs[1]["run"]
     assert "--gpu-family B200" in docs[1]["run"]
     hints = secret_env_hints_for_plan(plan.steps)
-    assert "HF_TOKEN" in hints
-    assert "NPA_COSMOS3_ACCEPT_NVIDIA_SOFTWARE_LICENSE" in hints
+    assert "HF_TOKEN" not in hints
+    assert "NPA_COSMOS3_ACCEPT_NVIDIA_SOFTWARE_LICENSE" not in hints
 
 
 def test_workflow_can_select_complete_b200_suite(monkeypatch) -> None:

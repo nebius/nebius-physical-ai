@@ -9,8 +9,6 @@ spec:
   template:
     spec:
       restartPolicy: OnFailure
-      imagePullSecrets:
-        - name: cosmos3-nano-video-registry
       securityContext:
         runAsUser: 10001
         runAsGroup: 10001
@@ -27,7 +25,7 @@ spec:
               drop: [ALL]
             seccompProfile:
               type: RuntimeDefault
-          command: [python, -c]
+          command: [/usr/local/bin/npa-cosmos3-nano-bootstrap, python, -c]
           args:
             - >-
               import os, runpy;
@@ -35,6 +33,12 @@ spec:
               os.makedirs('/shared/outputs', exist_ok=True);
               runpy.run_module('npa.workbench.cosmos.nano_video_stage', run_name='__main__')
           env:
+            - name: NPA_COSMOS3_ACCEPT_NVIDIA_SOFTWARE_LICENSE
+              valueFrom:
+                secretKeyRef:
+                  name: cosmos3-nano-video-runtime
+                  key: license-acceptance
+                  optional: true
             - name: NPA_COSMOS3_MODEL_PATH
               value: /shared/models/Cosmos3-Nano
             - name: HF_HOME
@@ -51,6 +55,9 @@ spec:
               cpu: "4"
               memory: 16Gi
           volumeMounts:
+            - name: shared
+              mountPath: /opt/npa-cosmos3-serving/runtime
+              subPath: runtime
             - name: runtime-tmp
               mountPath: /tmp
             - name: shared

@@ -27,6 +27,7 @@ import zipfile
 from npa.workflows.byof.openpi import (
     OPENPI_TERMS_ACCEPTED_VALUE,
     OPENPI_TERMS_ENV,
+    require_openpi_terms,
 )
 
 SOURCE_REF = "15a9616a00943ada6c20a0f158e3adb39df2ccac"
@@ -50,7 +51,7 @@ class OpenPIPipelineError(RuntimeError):
 
 def _redistribution_evidence(*, trained_checkpoint: bool = False) -> dict[str, str]:
     evidence = {
-        "runtime_image": "restricted_private_operator_registry",
+        "runtime_image": "separately_classified_digest_pinned_runtime",
         "openpi_source": SOURCE_LICENSE,
         "base_checkpoint": "runtime_only_not_redistributed",
         "dataset": "private_operator_object_storage_only",
@@ -165,7 +166,8 @@ def _terms_refusal() -> dict[str, object]:
         "exit_code": 64,
         "checkpoint_fetch_started": False,
         "model_import_started": False,
-        "required_env": OPENPI_TERMS_ENV,
+        "control_env": OPENPI_TERMS_ENV,
+        "acceptance_policy": "default_with_explicit_opt_out",
         "accepted_value": OPENPI_TERMS_ACCEPTED_VALUE,
         "acceptance_persisted": False,
     }
@@ -204,6 +206,7 @@ def _write_terms_refusal_diagnostic(
     diagnostic_root_uri: str = "",
     stage: str,
     attempt_id: str | None = None,
+    reason: str = "operator_opt_out",
 ) -> tuple[str, dict[str, object]]:
     """Publish refusal evidence separately while preserving write-once success."""
 
@@ -220,6 +223,7 @@ def _write_terms_refusal_diagnostic(
         "stage": stage,
         "declared_success_output_uri": output_uri,
         "diagnostic_uri": diagnostic_uri,
+        "reason": reason,
     }
     _write_json_uri(diagnostic_uri, refusal)
     return diagnostic_uri, refusal
@@ -230,22 +234,27 @@ def _gate_or_exit(
 ) -> None:
     """Exit 64 before any OpenPI/JAX import or checkpoint access."""
 
-    if os.environ.get(OPENPI_TERMS_ENV) == OPENPI_TERMS_ACCEPTED_VALUE:
+    try:
+        require_openpi_terms()
+    except ValueError as exc:
+        reason = str(exc)
+    else:
         return
     _diagnostic_uri, refusal = _write_terms_refusal_diagnostic(
         output_uri,
         diagnostic_root_uri=diagnostic_root_uri,
         stage=stage,
+        reason=reason,
     )
     print(json.dumps(refusal, sort_keys=True), flush=True)
     raise SystemExit(64)
 
 
 def _require_parent_acceptance() -> None:
-    if os.environ.get(OPENPI_TERMS_ENV) != OPENPI_TERMS_ACCEPTED_VALUE:
-        raise OpenPIPipelineError(
-            f"{OPENPI_TERMS_ENV}={OPENPI_TERMS_ACCEPTED_VALUE} is required for this accepted run"
-        )
+    try:
+        require_openpi_terms()
+    except ValueError as exc:
+        raise OpenPIPipelineError(str(exc)) from exc
 
 
 def validate_actions(actions: object, *, label: str) -> dict[str, object]:
@@ -882,7 +891,7 @@ def _direct(args: argparse.Namespace) -> int:
             "fetch_seconds": round(checkpoint_seconds, 3),
             "weights_baked": False,
         },
-        "terms": {"forwarded": True, "persisted": False, "scope": "this_run_only"},
+        "terms": {"forwarded": OPENPI_TERMS_ENV in os.environ, "persisted": False, "scope": "this_run_only"},
         "observation_schema": {
             "exterior_image": {"shape": list(IMAGE_SHAPE), "dtype": "uint8"},
             "wrist_image": {"shape": list(IMAGE_SHAPE), "dtype": "uint8"},
@@ -1461,7 +1470,7 @@ def _train(args: argparse.Namespace) -> int:
         },
         "memory": _memory_stats(jax.devices()[0]),
         "hardware": hardware,
-        "terms": {"forwarded": True, "persisted": False},
+        "terms": {"forwarded": OPENPI_TERMS_ENV in os.environ, "persisted": False},
         "limitations": [
             "tiny_data_optimizer_smoke_is_not_convergence",
             "no_physical_franka_task_success_claim",
@@ -1677,7 +1686,7 @@ def _evaluate(args: argparse.Namespace) -> int:
         "timings_seconds": {"total": round(time.perf_counter() - started, 3)},
         "memory": _memory_stats(jax.devices()[0]),
         "hardware": hardware,
-        "terms": {"forwarded": True, "persisted": False},
+        "terms": {"forwarded": OPENPI_TERMS_ENV in os.environ, "persisted": False},
         "limitations": [
             "offline_heldout_evaluation_is_not_robot_success",
             "tiny_dataset_metrics_are_operational_not_statistical",
@@ -1690,12 +1699,12 @@ def _evaluate(args: argparse.Namespace) -> int:
 
 
 def _negative_gate(args: argparse.Namespace) -> int:
-    """Live-probe the missing-acceptance child before any accepted checkpoint fetch."""
+    """Probe an explicit opt-out before any accepted checkpoint fetch."""
 
     _require_parent_acceptance()
     _validate_runtime_image(args.runtime_image)
     child_env = dict(os.environ)
-    child_env.pop(OPENPI_TERMS_ENV, None)
+    child_env[OPENPI_TERMS_ENV] = "NO"
     command = [
         sys.executable,
         "-m",

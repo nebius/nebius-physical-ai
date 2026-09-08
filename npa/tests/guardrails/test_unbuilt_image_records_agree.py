@@ -27,6 +27,8 @@ from npa.deploy.images import (
     SUPPORTED_TOOL_VERSIONS,
     UNVALIDATED_PUBLICATION_TOOLS,
     VALIDATION_CANDIDATE_TOOLS,
+    development_image_for_tool,
+    publicly_publishable_tools,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -110,9 +112,14 @@ def test_fixed_tag_candidates_remain_in_the_publication_quarantine() -> None:
     for tool in VALIDATION_CANDIDATE_TOOLS:
         version = str(SUPPORTED_TOOL_VERSIONS[tool])
         assert version and not version.endswith(UNBUILT_TAG_SUFFIX), tool
-        build = REPO_ROOT / "npa" / "docker" / "workbench" / tool / "build.sh"
-        assert build.is_file(), tool
-        assert version in build.read_text(encoding="utf-8"), tool
+        # Fixed historical pins may remain while replacement bytes use the
+        # trusted full-SHA development builder. No build script should have to
+        # retag unqualified bytes with that historical supported-version string.
+        image = development_image_for_tool(tool, git_sha="b" * 40)
+        assert image == f"ghcr.io/nebius/nebius-physical-ai/npa-{tool}:dev-{'b' * 40}"
+        assert tool not in publicly_publishable_tools()
+        dockerfile = REPO_ROOT / "npa" / "docker" / "workbench" / tool / "Dockerfile"
+        assert dockerfile.is_file(), tool
 
 
 def test_pending_build_never_carries_a_confident_verdict() -> None:

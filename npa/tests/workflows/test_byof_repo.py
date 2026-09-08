@@ -36,7 +36,7 @@ def _accepted_wan_base_args(module) -> list[str]:
 
 def test_openpi_terms_fail_before_registry_or_build(monkeypatch, capsys) -> None:
     module = _load_module()
-    monkeypatch.delenv("NPA_OPENPI_ACCEPT_GEMMA_TERMS", raising=False)
+    monkeypatch.setenv("NPA_OPENPI_ACCEPT_GEMMA_TERMS", "NO")
     monkeypatch.setattr(
         module,
         "resolve_container_registry",
@@ -65,20 +65,37 @@ def test_openpi_terms_fail_before_registry_or_build(monkeypatch, capsys) -> None
     assert "Gemma Prohibited Use Policy" in output["error"]
 
 
-@pytest.mark.parametrize("value", ["yes", "TRUE", "1", "YES "])
-def test_openpi_terms_gate_requires_exact_yes(monkeypatch, value) -> None:
+@pytest.mark.parametrize("value", ["accepted", "invalid", "2"])
+def test_openpi_terms_gate_rejects_invalid_values(monkeypatch, value) -> None:
     from npa.workflows.byof.openpi import require_openpi_terms
 
     monkeypatch.setenv("NPA_OPENPI_ACCEPT_GEMMA_TERMS", value)
-    with pytest.raises(ValueError, match="OpenPI pi0.5 requires scoped"):
+    with pytest.raises(ValueError, match="invalid runtime acceptance value"):
         require_openpi_terms()
 
 
-def test_openpi_terms_gate_accepts_scoped_yes(monkeypatch) -> None:
+@pytest.mark.parametrize("value", ["Y", "yes", "TRUE", "1", "YES "])
+def test_openpi_terms_gate_accepts_affirmative_values(monkeypatch, value) -> None:
     from npa.workflows.byof.openpi import require_openpi_terms
 
-    monkeypatch.setenv("NPA_OPENPI_ACCEPT_GEMMA_TERMS", "YES")
+    monkeypatch.setenv("NPA_OPENPI_ACCEPT_GEMMA_TERMS", value)
     require_openpi_terms()
+
+
+def test_openpi_terms_default_needs_no_token_or_persisted_acceptance() -> None:
+    from npa.workflows.byof.openpi import require_openpi_terms
+
+    environment = {}
+    require_openpi_terms(environment)
+    assert environment == {}
+
+
+@pytest.mark.parametrize("value", ["", "N", "no", "0", "FALSE"])
+def test_openpi_terms_explicit_opt_out(value) -> None:
+    from npa.workflows.byof.openpi import require_openpi_terms
+
+    with pytest.raises(ValueError, match="explicitly opted out"):
+        require_openpi_terms({"NPA_OPENPI_ACCEPT_GEMMA_TERMS": value})
 
 
 def test_run_sanitizes_stale_nebius_tokens(monkeypatch) -> None:

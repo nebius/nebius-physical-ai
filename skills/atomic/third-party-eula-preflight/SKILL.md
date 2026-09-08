@@ -62,16 +62,23 @@ workflow. Keep restricted weights out of image layers regardless of access.
 
 ## OpenPI pi0.5 Reference
 
-OpenPI's public Polaris checkpoint is fetched anonymously from GCS, but it
-contains Gemma-derived material governed by the Gemma Terms of Use and Gemma
-Prohibited Use Policy. NPA's OpenPI product policy is explicit opt-in: require
-the exact run-scoped `NPA_OPENPI_ACCEPT_GEMMA_TERMS=YES` value before an OpenPI
-image build or checkpoint fetch. This is not a Hugging Face credential proxy or
-an Isaac default. Forward it only as a runtime secret, never render it into YAML
-or persist it in an image, repository file, credential store, checkpoint, or
-dataset. A separate invalid-value workload must exit before importing the model
-or starting checkpoint access, and must run before any accepted checkpoint
-fetch. Acceptance covers only the two named Gemma policies.
+OpenPI's public Polaris checkpoint is fetched anonymously from GCS and contains
+Gemma-derived material. The [Gemma Terms of Use](https://ai.google.dev/gemma/terms)
+bind use of the covered material regardless of its acquisition source and
+incorporate the Gemma Prohibited Use Policy. NPA's OpenPI runtime defaults to
+authorized noninteractive execution under those two named policies. Do not
+require a Hugging Face token for that public GCS download or ask the operator to
+repeat acceptance through a local boolean.
+
+The existing `NPA_OPENPI_ACCEPT_GEMMA_TERMS` variable remains an optional runtime
+choice: unset permits execution; empty, `N`, `NO`, `0`, and `FALSE` opt out;
+`Y`, `YES`, `1`, and `TRUE` permit execution. Values are case-insensitive and
+unknown values fail as invalid. Forward an explicit choice only as a runtime
+secret. Never render acceptance into YAML or persist it in an image, repository
+file, credential store, checkpoint, or dataset. Test opt-out and invalid-value
+refusals before checkpoint access. This default does not cover unrelated SDK,
+privacy, telemetry or dataset agreements. A selected gated HF model still needs
+its own exact-revision entitlement probe.
 
 ## Isaac Reference
 
@@ -104,7 +111,7 @@ that would turn an explicit empty opt-out back into acceptance.
 ## Guardrails
 
 - Keep explicit opt-out refusal strict and early.
-- Keep the OpenPI pi0.5 exact-value negative gate strict and runtime-only.
+- Keep OpenPI pi0.5 opt-out and invalid-value refusals strict and runtime-only.
 - For gated runtime weights, test every required upstream access probe before
   provisioning and test that no bypass or duplicate consent flag exists.
 - Test both paths: unset acceptance defaults to `Y`, and explicit opt-out refuses

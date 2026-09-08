@@ -5,7 +5,7 @@ metadata:
   name: openpi-pi05-four-mode
   description: >
     Consume the immutable OpenPI BYOF image built by byof-openpi.yaml, prove the
-    missing-terms gate before checkpoint access, run direct Polaris inference,
+    explicit opt-out gate before checkpoint access, run direct Polaris inference,
     validate an upstream WebSocket server through a ClusterIP Service and
     separate client pod, perform real pi0.5 LoRA optimizer work, and evaluate
     the exact reloaded checkpoint on a disjoint held-out split.
@@ -138,7 +138,7 @@ initial: negative_terms_gate
 states:
   negative_terms_gate:
     description: >
-      In the live digest-pinned image, remove acceptance from a child process
+      In the live digest-pinned image, set an explicit opt-out in a child process
       and require exit 64 plus proof that model import/checkpoint fetch never
       started. The accepted parent proceeds only after that probe passes.
     toolRef: workbench.openpi.negative_terms_gate

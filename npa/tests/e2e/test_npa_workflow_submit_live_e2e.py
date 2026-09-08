@@ -167,6 +167,9 @@ def _secret_env_args(case: SubmitLiveCase) -> list[str]:
             # Required secrets must be present; silent omission caused empty-stderr
             # terminal FAILED statuses in live runs.
             pytest.skip(f"{name} required for live submit of {case.spec}")
+    for name in case.optional_secret_envs:
+        if name in os.environ and name not in case.secret_envs:
+            args.extend(["--secret-env", name])
     # Optional BYOF registries use caller-supplied standard Docker credentials.
     for name in (
         "SKYPILOT_DOCKER_SERVER",

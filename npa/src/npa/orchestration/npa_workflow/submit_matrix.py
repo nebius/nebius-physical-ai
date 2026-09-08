@@ -68,6 +68,9 @@ class SubmitLiveCase:
     #: much slower than the rest (a 8 GB image pull plus GPU training) so the whole
     #: runtime tier does not have to run with the slowest case's deadline.
     max_wait_seconds: int = 0
+    #: Forward explicit optional credentials or runtime choices without making
+    #: their absence skip a case. Preserve present-empty choices for validation.
+    optional_secret_envs: tuple[str, ...] = ()
 
 
 SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
@@ -284,11 +287,10 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
         "cosmos3-super-b200-benchmark.yaml",
         "gpu",
-        secret_envs=(
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        optional_secret_envs=(
             "HF_TOKEN",
             "NPA_COSMOS3_ACCEPT_NVIDIA_SOFTWARE_LICENSE",
-            "AWS_ACCESS_KEY_ID",
-            "AWS_SECRET_ACCESS_KEY",
         ),
         notes=(
             "Real full-node 8xB200 primary sweep in the immutable public vLLM-Omni "
@@ -299,11 +301,10 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
         "cosmos3-super-h200-benchmark.yaml",
         "gpu",
-        secret_envs=(
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        optional_secret_envs=(
             "HF_TOKEN",
             "NPA_COSMOS3_ACCEPT_NVIDIA_SOFTWARE_LICENSE",
-            "AWS_ACCESS_KEY_ID",
-            "AWS_SECRET_ACCESS_KEY",
         ),
         notes=(
             "Real full-node 8xH200 primary sweep in the same immutable vLLM-Omni "
@@ -314,11 +315,10 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
         "cosmos3-super-h200-single-gpu.yaml",
         "gpu",
-        secret_envs=(
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        optional_secret_envs=(
             "HF_TOKEN",
             "NPA_COSMOS3_ACCEPT_NVIDIA_SOFTWARE_LICENSE",
-            "AWS_ACCESS_KEY_ID",
-            "AWS_SECRET_ACCESS_KEY",
         ),
         notes=(
             "Real isolated one-H200 TP-1 validation in the immutable vLLM-Omni "
@@ -918,7 +918,7 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
         "byof-openpi.yaml",
         "multi",
-        secret_envs=("NPA_OPENPI_ACCEPT_GEMMA_TERMS",),
+        optional_secret_envs=("NPA_OPENPI_ACCEPT_GEMMA_TERMS",),
         plan_only=True,
         plan_only_justification="delegated BYOF execution is covered by its dedicated live onboarding tier",
         notes="OpenPI Polaris B200 inference; covered by test_byof_openpi_polaris_live_e2e.py.",
@@ -926,10 +926,10 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
         "openpi-pi05-full-droid-finetune.yaml",
         "multi",
+        optional_secret_envs=("NPA_OPENPI_ACCEPT_GEMMA_TERMS",),
         secret_envs=(
             "AWS_ACCESS_KEY_ID",
             "AWS_SECRET_ACCESS_KEY",
-            "NPA_OPENPI_ACCEPT_GEMMA_TERMS",
         ),
         plan_only=True,
         plan_only_justification=(
@@ -943,10 +943,10 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
         "openpi-pi05-four-mode.yaml",
         "multi",
+        optional_secret_envs=("NPA_OPENPI_ACCEPT_GEMMA_TERMS",),
         secret_envs=(
             "AWS_ACCESS_KEY_ID",
             "AWS_SECRET_ACCESS_KEY",
-            "NPA_OPENPI_ACCEPT_GEMMA_TERMS",
         ),
         plan_only=True,
         plan_only_justification=(

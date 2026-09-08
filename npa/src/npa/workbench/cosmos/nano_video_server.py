@@ -441,11 +441,31 @@ class NanoVideoRuntime:
         }
 
 
+def _replica_count(args: dict[str, Any] | None) -> int:
+    value = (args or {}).get(
+        "num_replicas", os.environ.get("NPA_COSMOS3_VIDEO_REPLICAS", "16")
+    )
+    if isinstance(value, bool) or not str(value).isdigit() or int(value) < 1:
+        raise ValueError("Nano num_replicas must be a positive integer")
+    return int(value)
+
+
 def app(args: dict[str, Any] | None = None) -> Any:
-    """Ray Serve application builder; one ranked set gives least-outstanding routing."""
+    """Build authenticated Nano replicas with least-outstanding routing.
+
+    Args:
+        args: Optional num_replicas; otherwise use NPA_COSMOS3_VIDEO_REPLICAS or 16.
+
+    Returns:
+        The bound Ray Serve application.
+
+    Raises:
+        ValueError: Administrative authentication or the replica count is invalid.
+    """
     from .nano_video_auth import require_management_auth
 
     require_management_auth()
+    replicas = _replica_count(args)
     from ray import serve
 
     from .nano_video_router import LeastOutstandingRouter
@@ -454,7 +474,7 @@ def app(args: dict[str, Any] | None = None) -> Any:
 
     @serve.deployment(
         name="Cosmos3NanoVideo",
-        num_replicas=16,
+        num_replicas=replicas,
         max_ongoing_requests=1,
         ray_actor_options={"num_gpus": 1, "num_cpus": 2},
         request_router_config={"request_router_class": LeastOutstandingRouter},

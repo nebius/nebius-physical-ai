@@ -211,6 +211,7 @@ jobs:
           npa/.venv/bin/python -m pytest \
             npa/tests/docker/test_packaging_contract.py \
             npa/tests/docker/test_image_payload_scan.py \
+            npa/tests/docker/test_public_registry_destination.py \
             npa/tests/docker/test_isaac_bootstrap.py \
             npa/tests/docker/test_ltx_runtime_bootstrap.py \
             npa/tests/docker/test_ltx_image_payload_scan.py \
@@ -261,7 +262,7 @@ jobs:
             --native-receipt "$scan_root/native/dependencies.json" \
             --output-dir "$scan_root/integration-checks"
 
-      - name: Prove destination cannot expose unvalidated tagged bytes
+      - name: Prove destination cannot expose existing private bytes
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -279,19 +280,14 @@ jobs:
             if [ "$visibility" = public ]; then
               echo "Existing package is already public." >> "$GITHUB_STEP_SUMMARY"
             elif [ "$visibility" = private ]; then
-              # A failed first publication can leave private, untagged OCI
-              # attestations behind after its exact tagged image version is deleted.
-              # Those referrers must not prevent a clean retry, but a private package
-              # containing any tagged image could expose unvalidated bytes when the
-              # successful retry switches the package to public below.
+              # Untagged versions can contain arbitrary images addressable by
+              # digest. Package visibility exposes all versions, so a retry must
+              # first clean up only separately verified, exact run-owned bytes.
               versions="$(mktemp)"
-              gh api --paginate --slurp "${package_api}/versions?per_page=100" | jq 'add' > "$versions"
-              tagged_count="$(jq '[.[] | select((.metadata.container.tags // []) | length > 0)] | length' "$versions")"
-              if [ "$tagged_count" != 0 ]; then
-                echo "::error::Private destination contains tagged versions; refusing a visibility change"
-                exit 1
-              fi
-              echo "Private destination contains no tagged image versions; exact pushed-byte gates and visibility verification apply." >> "$GITHUB_STEP_SUMMARY"
+              gh api --paginate --slurp "${package_api}/versions?per_page=100" > "$versions"
+              npa/.venv/bin/python npa/scripts/public_registry_destination.py \
+                --versions-json "$versions"
+              echo "Private destination contains no existing versions; exact pushed-byte gates and visibility verification apply." >> "$GITHUB_STEP_SUMMARY"
             else
               echo "::error::Unsupported destination visibility: $visibility"
               exit 1
@@ -383,6 +379,7 @@ jobs:
           # the mandatory layer-by-layer payload scan.
           docker buildx prune --all --force
           docker save --output "$RUNNER_TEMP/${TOOL}.tar" "$IMAGE"
+          sha256sum "$RUNNER_TEMP/${TOOL}.tar" | cut -d' ' -f1 > "$RUNNER_TEMP/${TOOL}-archive.sha256"
           npa/.venv/bin/python npa/scripts/scan_image_omniverse_payload.py \
             --tarball "$RUNNER_TEMP/${TOOL}.tar" \
             --json "$RUNNER_TEMP/${TOOL}-payload.json"
@@ -413,6 +410,12 @@ jobs:
               --public-native-policy-sha256 "$CUROBO_PUBLIC_NATIVE_POLICY_SHA256"
             rm -f "$phase/image.tar"
           fi
+          if [[ "$TOOL" == openpi || "$TOOL" == robocasa ]]; then
+            npa/.venv/bin/python "npa/docker/workbench/${TOOL}/verify_image.py" \
+              --docker-save "$RUNNER_TEMP/${TOOL}.tar" \
+              --expected-image-id "$(docker image inspect --format '{{.Id}}' "$IMAGE")" \
+              --json "$RUNNER_TEMP/${TOOL}-tool-payload.json"
+          fi
           if [ "$TOOL" = ltx2 ]; then
             npa/.venv/bin/python npa/scripts/scan_image_ltx_payload.py \
               --docker-save "$RUNNER_TEMP/${TOOL}.tar" \
@@ -423,7 +426,7 @@ jobs:
               --docker-save "$RUNNER_TEMP/${TOOL}.tar" \
               --output "$RUNNER_TEMP/${TOOL}-wan-payload.json"
           fi
-          if [ "$TOOL" = cosmos3-serving ]; then
+          if [[ "$TOOL" == cosmos3-serving || "$TOOL" == cosmos3-nano-video || "$TOOL" == cosmos3-super-benchmark ]]; then
             npa/.venv/bin/python npa/scripts/scan_image_cosmos3_serving_payload.py \
               --tarball "$RUNNER_TEMP/${TOOL}.tar" \
               --json "$RUNNER_TEMP/${TOOL}-cosmos3-serving-payload.json"
@@ -497,6 +500,24 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Preserve sanitized pre-publication receipt
+        id: receipt-pre
+        if: contains(fromJSON('["curobo","openpi","robocasa","cosmos3-nano-video","cosmos3-super-benchmark"]'), matrix.tool)
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p "$RUNNER_TEMP/public-image-receipts"
+          receipt_args=()
+          if [ "$TOOL" = curobo ]; then
+            receipt_args+=(--curobo-byte-gate-root "$CUROBO_BYTE_GATE_ROOT")
+          fi
+          npa/.venv/bin/python npa/scripts/public_image_validation_receipt.py \
+            --tool "$TOOL" --source-sha "$DEVELOPMENT_SHA" --phase pre \
+            --image-id "$(docker image inspect --format '{{.Id}}' "$IMAGE")" \
+            --runner-temp "$RUNNER_TEMP" \
+            --output "$RUNNER_TEMP/public-image-receipts/${TOOL}-pre.json" \
+            "${receipt_args[@]}"
 
       - name: Push only after every pre-publication gate passes
         id: push
@@ -575,6 +596,7 @@ jobs:
             payload_attempt=$((payload_attempt + 1))
             sleep 5
           done
+          sha256sum "$RUNNER_TEMP/${TOOL}-pushed.tar" | cut -d' ' -f1 > "$RUNNER_TEMP/${TOOL}-pushed-archive.sha256"
           if [ "$TOOL" = curobo ]; then
             npa/.venv/bin/python npa/docker/workbench/curobo/verify_image.py \
               --docker-save "$RUNNER_TEMP/${TOOL}-pushed.tar" \
@@ -602,6 +624,12 @@ jobs:
               --public-native-policy-sha256 "$CUROBO_PUBLIC_NATIVE_POLICY_SHA256"
             rm -f "$phase/image.tar"
           fi
+          if [[ "$TOOL" == openpi || "$TOOL" == robocasa ]]; then
+            npa/.venv/bin/python "npa/docker/workbench/${TOOL}/verify_image.py" \
+              --docker-save "$RUNNER_TEMP/${TOOL}-pushed.tar" \
+              --expected-image-id "$(docker image inspect --format '{{.Id}}' "$exact")" \
+              --json "$RUNNER_TEMP/${TOOL}-pushed-tool-payload.json"
+          fi
           if [ "$TOOL" = ltx2 ]; then
             npa/.venv/bin/python npa/scripts/scan_image_ltx_payload.py \
               --docker-save "$RUNNER_TEMP/${TOOL}-pushed.tar" \
@@ -612,7 +640,7 @@ jobs:
               --docker-save "$RUNNER_TEMP/${TOOL}-pushed.tar" \
               --output "$RUNNER_TEMP/${TOOL}-pushed-wan-payload.json"
           fi
-          if [ "$TOOL" = cosmos3-serving ]; then
+          if [[ "$TOOL" == cosmos3-serving || "$TOOL" == cosmos3-nano-video || "$TOOL" == cosmos3-super-benchmark ]]; then
             npa/.venv/bin/python npa/scripts/scan_image_cosmos3_serving_payload.py \
               --tarball "$RUNNER_TEMP/${TOOL}-pushed.tar" \
               --json "$RUNNER_TEMP/${TOOL}-pushed-cosmos3-serving-payload.json"
@@ -656,6 +684,36 @@ jobs:
           rm -f "$RUNNER_TEMP/${TOOL}-pushed.tar"
           echo "Validated public development digest: $DIGEST" >> "$GITHUB_STEP_SUMMARY"
           echo "The dev tag is public; later deletion cannot revoke prior downloads." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Preserve sanitized post-publication receipt
+        id: receipt-post
+        if: contains(fromJSON('["curobo","openpi","robocasa","cosmos3-nano-video","cosmos3-super-benchmark"]'), matrix.tool)
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p "$RUNNER_TEMP/public-image-receipts"
+          receipt_args=()
+          if [ "$TOOL" = curobo ]; then
+            receipt_args+=(--curobo-byte-gate-root "$CUROBO_BYTE_GATE_ROOT")
+          fi
+          receipt_args+=(--digest "$DIGEST")
+          npa/.venv/bin/python npa/scripts/public_image_validation_receipt.py \
+            --tool "$TOOL" --source-sha "$DEVELOPMENT_SHA" --phase post \
+            --image-id "$(docker image inspect --format '{{.Id}}' "$IMAGE")" \
+            --runner-temp "$RUNNER_TEMP" \
+            --output "$RUNNER_TEMP/public-image-receipts/${TOOL}-post.json" \
+            "${receipt_args[@]}"
+
+      - name: Upload sanitized exact-image validation receipts
+        if: always() && (steps.receipt-pre.outcome == 'success' || steps.receipt-post.outcome == 'success') && contains(fromJSON('["curobo","openpi","robocasa","cosmos3-nano-video","cosmos3-super-benchmark"]'), matrix.tool)
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: public-image-validation-${{ matrix.tool }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/public-image-receipts/*.json
+          if-no-files-found: error
+          overwrite: false
 
   cleanup-requested:
     needs: resolve

@@ -329,10 +329,12 @@ class _TrainingTelemetryJournal:
 
 
 def _require_terms() -> None:
-    if os.environ.get("NPA_OPENPI_ACCEPT_GEMMA_TERMS") != "YES":
-        raise OpenPIPipelineError(
-            "full-DROID pi0.5 fine-tuning requires exact run-scoped Gemma terms acceptance"
-        )
+    from npa.workflows.byof.openpi import require_openpi_terms
+
+    try:
+        require_openpi_terms()
+    except ValueError as exc:
+        raise OpenPIPipelineError(str(exc)) from exc
 
 
 def _run(
@@ -1050,7 +1052,7 @@ def _prepare(args: argparse.Namespace) -> int:
             "optimizer_steps": EXPECTED_STEPS,
             "normalization_max_frames": NORM_MAX_FRAMES,
         },
-        "terms": {"forwarded": True, "persisted": False},
+        "terms": {"forwarded": "NPA_OPENPI_ACCEPT_GEMMA_TERMS" in os.environ, "persisted": False},
         "timings_seconds": {"total": round(time.perf_counter() - started, 3)},
     }
     result["rerun"] = _publish_preparation_rrd(
@@ -3037,7 +3039,7 @@ def _fine_tune(args: argparse.Namespace) -> int:
             milestone_publisher.published[key]
             for key in sorted(milestone_publisher.published)
         ],
-        "terms": {"forwarded": True, "persisted": False},
+        "terms": {"forwarded": "NPA_OPENPI_ACCEPT_GEMMA_TERMS" in os.environ, "persisted": False},
         "timings_seconds": {"total": round(time.perf_counter() - started, 3)},
         "limitations": [
             "offline_training_does_not_prove_physical_robot_success",

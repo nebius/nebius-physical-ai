@@ -39,6 +39,7 @@ def test_h200_single_gpu_workflow_preserves_exact_isolated_contract() -> None:
 
 def test_h200_single_gpu_workflow_renders_tp1_command(monkeypatch) -> None:
     monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/npa-src")
+    monkeypatch.delenv("NPA_COSMOS3_ACCEPT_NVIDIA_SOFTWARE_LICENSE", raising=False)
     wrapper = "registry.example.invalid/operator/npa-cosmos3-super-benchmark@sha256:" + (
         "3" * 64
     )
@@ -62,5 +63,4 @@ def test_h200_single_gpu_workflow_renders_tp1_command(monkeypatch) -> None:
     assert "--suite h200-single-gpu" in task["run"]
     assert "--attempts 24" in task["run"]
     hints = secret_env_hints_for_plan(plan.steps)
-    assert "HF_TOKEN" in hints
-    assert "NPA_COSMOS3_ACCEPT_NVIDIA_SOFTWARE_LICENSE" in hints
+    assert hints == ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY")

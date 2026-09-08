@@ -168,6 +168,13 @@ def test_dockerfile_provides_golden_eval_entrypoint(name: str) -> None:
     sources, dests = _copy_directives(text)
     command = spec.golden_eval.command
 
+    if command.startswith("npa-cosmos3-nano-bootstrap "):
+        wrapper = "docker/workbench/cosmos3-nano-video/runtime_bootstrap.sh"
+        assert wrapper in sources
+        assert "/usr/local/bin/npa-cosmos3-nano-bootstrap" in dests
+        assert 'exec "$@"' in (REPO_ROOT / "npa" / wrapper).read_text()
+        command = command.removeprefix("npa-cosmos3-nano-bootstrap ")
+
     if command.startswith("python -m npa."):
         module = command.split("python -m ", 1)[1].split()[0]
         module_file = "src/" + module.replace(".", "/") + ".py"

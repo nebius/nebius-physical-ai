@@ -42,8 +42,10 @@ For live validation also load `skills/atomic/gpu-selection/SKILL.md`,
 3. Before any public push, run the repository packaging/license guards and
    inspect the locally built artifact, including layers, history, and OCI config.
    Refuse credentials, secrets, customer data, live infrastructure identifiers,
-   gated weights/data, proprietary SDK/runtime payloads, or cached EULA
-   acceptance anywhere in the artifact.
+   gated weights/data, SDK/runtime payloads without an applicable redistribution
+   grant, or cached EULA acceptance anywhere in the artifact. Proprietary
+   components require exact-file grant and notice evidence; their ownership
+   label alone neither permits nor forbids distribution.
 4. Require policy-approved, digest-pinned bases/dependencies or an existing
    documented packaging exception. Enforce the non-root runtime and packaging
    contract. When SkyPilot needs the bootstrap contract, prove the behavior and
@@ -65,8 +67,11 @@ For live validation also load `skills/atomic/gpu-selection/SKILL.md`,
 9. On failure, delete only the exact run-owned development version after
    matching package, tag, and digest. Never infer ownership from a name or delete
    a shared/release digest. Record that deletion cannot revoke prior downloads.
-   Retain a successful dev tag only when the documented release policy requires
-   it to preserve the release's shared digest/provenance.
+   Retain a successful dev tag only when the documented release or development
+   policy requires its exact digest/provenance to remain usable. A documented
+   public development result needs all pre-publication gates and a successful
+   substantive workload on that digest; retaining it does not grant supported
+   release status or substitute for a larger qualification matrix.
 
 ## Verify What A Scanner Actually Reads
 

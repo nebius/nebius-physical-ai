@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
+import subprocess
+import sys
 from types import SimpleNamespace
 
 import numpy as np
@@ -23,14 +26,41 @@ SPEC = (
 DIGEST_IMAGE = "registry.example.invalid/openpi@sha256:" + "a" * 64
 
 
+@pytest.mark.parametrize(
+    ("choice", "expected_code", "reason"),
+    [
+        (None, 0, ""), ("YES", 0, ""), (" y ", 0, ""), ("true", 0, ""),
+        ("1", 0, ""), ("", 64, "explicit opt-out"),
+        ("NO", 64, "explicit opt-out"), ("false", 64, "explicit opt-out"),
+        ("0", 64, "explicit opt-out"), ("invalid", 64, "invalid runtime acceptance"),
+    ],
+)
+def test_standalone_server_terms_gate_needs_no_npa_package(
+    tmp_path: Path, choice: str | None, expected_code: int, reason: str
+) -> None:
+    runtime_env = dict(os.environ)
+    runtime_env.pop("NPA_OPENPI_ACCEPT_GEMMA_TERMS", None)
+    if choice is not None:
+        runtime_env["NPA_OPENPI_ACCEPT_GEMMA_TERMS"] = choice
+    result = subprocess.run(
+        [sys.executable, "-I", "-S", "-c", service._server_terms_program()],
+        cwd=tmp_path, env=runtime_env, capture_output=True, text=True, check=False,
+    )
+
+    assert result.returncode == expected_code, result.stderr
+    assert reason in result.stderr
+    assert not result.stdout
+
+
+@pytest.mark.parametrize("choice", ["NO", "", "invalid"])
 def test_terms_gate_exits_before_openpi_import_or_checkpoint_fetch(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, choice: str
 ) -> None:
     import sys
 
     output = tmp_path / "success.json"
     diagnostics = tmp_path / "attempt-diagnostics"
-    monkeypatch.delenv("NPA_OPENPI_ACCEPT_GEMMA_TERMS", raising=False)
+    monkeypatch.setenv("NPA_OPENPI_ACCEPT_GEMMA_TERMS", choice)
     before = {
         name for name in sys.modules if name == "openpi" or name.startswith("openpi.")
     }
@@ -58,6 +88,7 @@ def test_terms_gate_exits_before_openpi_import_or_checkpoint_fetch(
     )
     assert refusal["declared_success_output_uri"] == str(output)
     assert refusal["stage"] == "direct"
+    assert ("invalid runtime acceptance value" in refusal["reason"]) == (choice == "invalid")
     after = {
         name for name in sys.modules if name == "openpi" or name.startswith("openpi.")
     }
@@ -80,7 +111,7 @@ def test_service_terms_refusal_writes_only_attempt_diagnostic(
 ) -> None:
     success = tmp_path / "service-success.json"
     diagnostic_root = tmp_path / "service-diagnostics"
-    monkeypatch.delenv("NPA_OPENPI_ACCEPT_GEMMA_TERMS", raising=False)
+    monkeypatch.setenv("NPA_OPENPI_ACCEPT_GEMMA_TERMS", "NO")
 
     assert (
         service._run(
@@ -222,9 +253,9 @@ def test_action_contract_requires_finite_float64_t_by_eight() -> None:
         pipeline.validate_actions(invalid, label="test")
 
 
-def test_redistribution_boundary_keeps_images_and_artifacts_private() -> None:
+def test_redistribution_boundary_separates_runtime_classification_from_artifacts() -> None:
     assert pipeline._redistribution_evidence(trained_checkpoint=True) == {
-        "runtime_image": "restricted_private_operator_registry",
+        "runtime_image": "separately_classified_digest_pinned_runtime",
         "openpi_source": "Apache-2.0",
         "base_checkpoint": "runtime_only_not_redistributed",
         "dataset": "private_operator_object_storage_only",
@@ -286,7 +317,7 @@ def test_service_is_clusterip_digest_pinned_probed_and_cross_pod() -> None:
     compile(service._server_hardware_program(), "openpi-server-hardware", "exec")
     server_shell = server_container["command"][2]
     assert (
-        server_shell.index('test "$NPA_OPENPI_ACCEPT_GEMMA_TERMS"')
+        server_shell.index('OpenPI Gemma checkpoint access refused')
         < (server_shell.index("NPA_OPENPI_SERVER_HARDWARE="))
         < server_shell.index("download.maybe_download")
         < server_shell.index("serve_policy.py")
@@ -1077,7 +1108,10 @@ def test_service_cleanup_refuses_foreign_pod_before_deleting_anything() -> None:
     assert api.deleted == []
 
 
-def test_four_mode_spec_plans_complete_lineage_and_configurable_resources() -> None:
+def test_four_mode_spec_plans_complete_lineage_and_configurable_resources(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("NPA_OPENPI_ACCEPT_GEMMA_TERMS", raising=False)
     spec = load_spec(SPEC)
     plan = build_plan(spec, run_id="openpi-four-mode-plan")
     assert [step.tool_ref for step in plan.steps] == [
@@ -1088,7 +1122,7 @@ def test_four_mode_spec_plans_complete_lineage_and_configurable_resources() -> N
         "workbench.openpi.train",
         "workbench.openpi.evaluate",
     ]
-    assert secret_env_hints_for_plan(plan.steps) == ("NPA_OPENPI_ACCEPT_GEMMA_TERMS",)
+    assert secret_env_hints_for_plan(plan.steps) == ()
     gpu = plan.steps[0].resources_profile
     assert gpu["accelerators"] == "B200:1"
     assert gpu["image"] == "registry.example.invalid/openpi@sha256:" + "0" * 64

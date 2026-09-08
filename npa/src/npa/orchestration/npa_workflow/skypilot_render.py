@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import shlex
 from dataclasses import dataclass, field
@@ -69,9 +70,10 @@ TOOL_REF_IMAGE_TOOL: dict[str, str] = {
 }
 
 OPENPI_TERMS_ENV = "NPA_OPENPI_ACCEPT_GEMMA_TERMS"
+COSMOS3_TERMS_ENV = "NPA_COSMOS3_ACCEPT_NVIDIA_SOFTWARE_LICENSE"
 
 SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
-    "workbench.openpi": (OPENPI_TERMS_ENV,),
+    "workbench.openpi": (),
     "workbench.token_factory": ("NEBIUS_TOKEN_FACTORY_KEY",),
     "workbench.vlm_eval": (),
     # Attribute verification generates and answers its questions on Token Factory.
@@ -83,9 +85,9 @@ SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
     # This entry explicitly disables the parent Cosmos3 hint: the public Nano
     # checkpoint is downloaded anonymously and this toolRef passes --no-guardrails.
     "workbench.cosmos3.text_to_image": (),
+    # Public checkpoint and runtime-authorized vendor delivery need no token
+    # or repeated local acceptance. Explicit runtime choices remain hintable.
     "workbench.cosmos3.super_benchmark": (
-        "HF_TOKEN",
-        "NPA_COSMOS3_ACCEPT_NVIDIA_SOFTWARE_LICENSE",
         "AWS_ACCESS_KEY_ID",
         "AWS_SECRET_ACCESS_KEY",
     ),
@@ -887,6 +889,16 @@ def render_run_preamble_for_tool(tool_ref: str, *, config: Mapping[str, Any]) ->
     start here rather than in ``setup:``, because SkyPilot runs setup and run as separate
     shells — a server started in setup is gone by the time the command runs.
     """
+
+    if tool_ref == "workbench.cosmos3.super_benchmark":
+        # SkyPilot replaces ENTRYPOINT. Materialize the replacement image's
+        # operator runtime here; historical operator images already contain vLLM.
+        return (
+            "if [ -f /opt/npa-cosmos3-serving/bootstrap-source-sha256s.txt ]; then\n"
+            "  /usr/local/bin/npa-cosmos3-super-benchmark-entrypoint --runtime /bin/true\n"
+            '  export PATH="/opt/npa-cosmos3-serving/runtime/venv/bin:$PATH"\n'
+            "fi\n"
+        )
 
     content_agents_pythonpath = (
         'if [ -n "$PYTHONPATH" ]; then\n'
@@ -1702,27 +1714,47 @@ def render_setup_for_tool(
     return "".join(parts)
 
 
+def _openpi_runtime_terms_hint(step: PlanStep) -> tuple[str, ...]:
+    """Preserve an explicit runtime choice without requiring repeated acceptance."""
+
+    tool_ref = step.tool_ref or ""
+    openpi = tool_ref.startswith("workbench.openpi.") or tool_ref == "workbench.openpi"
+    byof_openpi = tool_ref == "workbench.byof.repo" and any(
+        value == "openpi" or "pi05_droid_jointpos_polaris" in value
+        for value in step.argv
+    )
+    if (openpi or byof_openpi) and OPENPI_TERMS_ENV in os.environ:
+        return (OPENPI_TERMS_ENV,)
+    return ()
+
+
 def secret_env_hints_for_plan(steps: Sequence[PlanStep]) -> tuple[str, ...]:
-    """Collect recommended ``--secret-env`` names for a planned workflow."""
+    """Collect recommended runtime-secret names for a planned workflow.
+
+    Args:
+        steps: Planned tool invocations to inspect.
+
+    Returns:
+        Required credentials and explicitly selected optional runtime choices.
+
+    Raises:
+        None.
+    """
 
     hints: list[str] = []
     seen: set[str] = set()
     for step in steps:
         tool_ref = step.tool_ref or ""
-        if tool_ref == "workbench.byof.repo" and any(
-            value == "openpi" or "pi05_droid_jointpos_polaris" in value
-            for value in step.argv
-        ):
-            if OPENPI_TERMS_ENV not in seen:
-                seen.add(OPENPI_TERMS_ENV)
-                hints.append(OPENPI_TERMS_ENV)
         matches = [
             (prefix, names)
             for prefix, names in SECRET_ENV_HINTS.items()
             if tool_ref == prefix or tool_ref.startswith(prefix + ".")
         ]
         names = max(matches, key=lambda item: len(item[0]))[1] if matches else ()
-        for name in names:
+        optional = _openpi_runtime_terms_hint(step)
+        if tool_ref == "workbench.cosmos3.super_benchmark" and COSMOS3_TERMS_ENV in os.environ:
+            optional += (COSMOS3_TERMS_ENV,)
+        for name in (*optional, *names):
             if name not in seen:
                 seen.add(name)
                 hints.append(name)

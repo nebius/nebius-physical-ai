@@ -16,7 +16,7 @@ often-quoted 4 fps recommendation applies to reasoner inputs. Only BF16 is
 officially tested. This recipe deliberately retains a stricter **300-frame
 per-request ceiling**.
 
-The [baked diffusion pipeline](https://github.com/vllm-project/vllm-omni/blob/9c1b7504b178afcf541867c1a2d30db48c69cda8/vllm_omni/diffusion/models/cosmos3/pipeline_cosmos3.py)
+The [runtime-fetched diffusion pipeline](https://github.com/vllm-project/vllm-omni/blob/eb11446b7f2e30ca582f8aff3afe12e9a2e66f6c/vllm_omni/diffusion/models/cosmos3/pipeline_cosmos3.py)
 rounds non-transfer frame counts upward to `4k+1`; 300 would become 301. At 24 fps
 and 832×480, the rollout requests **297, 297, and 137 frames**. The first request
 is text-to-video. Subsequent requests upload the previous segment as MP4 and
@@ -153,17 +153,30 @@ not applicable while still passing driver, device-plugin and CUDA checks.
 The mixed live health test verifies the declared total, node-count distribution,
 stability and CUDA on every GPU ordinal before serving begins.
 
-The Dockerfile extends `vllm/vllm-omni:cosmos3`, pinned to manifest digest
-`sha256:6d2630c7d637b699557573f2c3fee8df5d4d0cd718977aa22549ed6a6ef30587`.
-The Dockerfile pins that index's Linux AMD64 manifest,
-`sha256:970dee6658ea223f615b2438ce41e47f1d5322225482546e6e6bc5d8134f757c`.
-The extension supplies Ray Serve, FFmpeg and the NPA adapters. It preserves the
-diffusion engine and adds no model weights, task or customer data, credentials
-or acceptance state. The inherited image contains public vendor test fixtures
-and example media. Its vendor runtime makes this an **operator-private** image;
-the NPA public publisher excludes it. Build and push only to the operator's own
-registry, then deploy the verified immutable image digest.
+The replacement Dockerfile inherits the accepted public `npa-cosmos3-serving`
+bootstrap at `sha256:3342bbe44bd1c00ebf05ab4c9d7286058a94bb5ce90b49b164b23604d3acf180`.
+The image overlays the reviewed current serving recipe, verifies its 11 effective
+bootstrap files, and upgrades Debian packages from a pinned snapshot. CUDA,
+vLLM-Omni, and Ray are hash-locked runtime fetches. The image contains NPA
+adapters and public bootstrap dependencies, with no inherited vendor runtime,
+fixtures, model weights, customer media, or acceptance state. Public development
+publication requires complete built-layer security/payload scans. Use the verified
+immutable development digest; historical acceptance below does not qualify these
+replacement bytes for supported release promotion.
 
+For one GPU, use the [standalone image entrypoint](../../docker/workbench/cosmos3-nano-video/README.md)
+with `NPA_COSMOS3_VIDEO_REPLICAS=1`. Its default remains 16. The application builder
+accepts `num_replicas`, which takes precedence over that environment variable.
+A standalone run can validate continuation and augmentation without claiming the
+full 16-replica scheduling matrix.
+
+The CPU staging Job first materializes the runtime cache under a filesystem lock.
+The head and workers reuse `/opt/npa-cosmos3-serving/runtime` from the shared PVC's
+`runtime` subdirectory. Selected runtime delivery defaults noninteractively to
+`YES` at launch, without baking or persisting acceptance. The optional private
+Secret `cosmos3-nano-video-runtime`, key `license-acceptance`, can explicitly set
+`NO` to decline before fetch. Empty or invalid values fail closed. Models remain in a separate read-only mount. Guardrails are off,
+so the runtime does not request unused gated guardrail blocklists.
 The staging Job is the single writer of the shared model cache. It downloads
 the pinned Nano revision once, verifies all diffusion and VAE tensor dtypes as
 BF16, hashes the staged files, and atomically publishes `READY.json`. Replicas
@@ -208,9 +221,9 @@ and checks that sound remains disabled; CLI parsing alone is insufficient.
    injects it into the head and workers, and authenticates its dashboard requests.
    Do not override `RAY_AUTH_*` in the pod templates or reuse the inference token.
 3. Apply [shared-pvc.yaml](shared-pvc.yaml) after NPA installs its shared-filesystem
-   CSI driver. Create the API token Secret and operator-private registry pull
-   Secret, then run the weight staging
-   Job to completion. Run the RayService only after the immutable cache is ready.
+   CSI driver. Create the API token Secret and, if overriding the runtime delivery
+   default, the optional runtime Secret. Run the runtime and weight staging Job
+   to completion. Run the RayService only after the immutable cache is ready.
 4. Require all 16 model replicas to be healthy, confirm B200 placement, and
    verify both the API and Ray dashboard reject unauthenticated requests. Expose access through an
    authenticated private route or a local port-forward.
@@ -277,6 +290,9 @@ retry an upload**.
 
 ## Measured B200 acceptance
 
+These historical results apply to the recorded former vendor-runtime image.
+They are not qualification of the replacement public development image.
+
 The measurements below are retained evidence from the September 6 deployment.
 Subsequent PR maintenance reconciled current main and hardened failed-start
 cleanup and loopback readiness against ambient proxies. Those lifecycle changes
@@ -318,6 +334,9 @@ The private image scan retained 218 HIGH and six unfixed CRITICAL findings, with
 Exact resource identities, private endpoints, registry coordinates and generated artifacts remain in access-controlled runtime storage. This README includes measurements and generic configuration only.
 
 ## Measured full-source augmentation
+
+These historical results apply to the former vendor-runtime image, separately
+from any new exact-digest public development validation.
 
 Eleven complete variants were generated from the same task-generated warehouse
 robot video. The selected 30-second result changes the bright clean scene into

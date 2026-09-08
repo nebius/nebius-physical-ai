@@ -1,33 +1,22 @@
-# Operator-private runtime
+# Public bootstrap with runtime-fetched Nano components
 
-The pinned upstream `vllm/vllm-omni:cosmos3` image includes a vendor runtime.
-This derived image is restricted to the owning operator's registry and is
-excluded from NPA's public publishing plan. The added adapter source is NPA
-source; its license does not change the redistribution terms of inherited
-image layers.
-
-The model is delivered directly to the operator at runtime from
-[NVIDIA's pinned Cosmos3-Nano release](https://huggingface.co/nvidia/Cosmos3-Nano/tree/7a312c868bcce8e40b3eb40861300a9d0ba3fde1),
-under its [OpenMDW 1.1 terms](https://openmdw.ai/license/1.1).
-The extension adds no model weights, task or customer media, credentials or
-populated caches. The inherited upstream image includes public vendor fixtures
-and example media; those bytes remain part of its restricted runtime. The shared
-model cache is runtime storage and must not enter a build context or be published
-as a derived image.
-
-Review the six artifact boundaries separately:
+The replacement image inherits the accepted public `npa-cosmos3-serving`
+bootstrap. It does not inherit any layer from the former
+`vllm/vllm-omni:cosmos3` vendor image. CUDA, vLLM, Ray, models, upstream fixture
+media, and populated caches are absent from the image's build closure. The
+complete built archive must pass the serving payload and mandatory security
+scanners before an immutable development digest is published.
 
 | Boundary | Scope and policy |
 | --- | --- |
-| Source | NPA adapters and the pinned [vLLM-Omni source](https://github.com/vllm-project/vllm-omni/blob/9c1b7504b178afcf541867c1a2d30db48c69cda8/LICENSE) use Apache-2.0. These source licenses do not establish rights for every inherited binary. |
-| Baked runtime | The digest-pinned vendor image, its CUDA/cuDNN and other installed components, and the added Ray/FFmpeg dependencies remain an operator-private runtime. Public availability of the base is not a redistribution grant for all its layers. Preserve the component notices; do not publish this image outside the owning organization without separately establishing those rights. |
-| Weights | The pinned Nano model materials use OpenMDW-1.1 and are fetched anonymously at runtime. No model weights enter the Docker build; enabling gated guardrails requires separate access to their exact selected payloads. |
-| Data | The extension bakes no task/customer media or dataset. Inherited vendor fixtures remain covered by their own applicable notices. Operators supply source media they are entitled to process. |
-| Runtime caches | A single CPU staging Job populates shared persistent storage under a lock, checks BF16 tensors and hashes, and atomically publishes `READY.json`. Serving replicas consume the checkpoint offline from a read-only mount. Credentials and acceptance state must never be stored in or beside this cache. |
-| Outputs | [OpenMDW-1.1](https://openmdw.ai/license/1-1/) imposes no restrictions or obligations on use, modification or sharing of generated outputs. Rights associated with source media and other third-party materials remain separate. Keep output artifacts and their provenance in operator-controlled runtime storage. |
+| Source | NPA adapters and runtime-fetched [vLLM-Omni source](https://github.com/vllm-project/vllm-omni/blob/eb11446b7f2e30ca582f8aff3afe12e9a2e66f6c/LICENSE) use Apache-2.0. |
+| Baked runtime | The accepted Python/Debian bootstrap and added Debian packages retain their component notices. Serving and Ray dependencies are hash-locked recipes, fetched after launch under their own terms. |
+| Weights | [Cosmos3-Nano](https://huggingface.co/nvidia/Cosmos3-Nano/tree/7a312c868bcce8e40b3eb40861300a9d0ba3fde1) uses OpenMDW-1.1 and is fetched anonymously at its pinned revision. Disabled guardrails need no guardrail checkpoint. Enabling gated components requires their separate actual entitlement. |
+| Data | No task/customer data, vendor fixture, or example media is baked. Operators supply source media they are entitled to process. |
+| Runtime caches | The CPU staging Job populates the writable serving/Ray cache and stages the checkpoint with BF16 checks, file hashes, and atomic READY.json. Serving replicas read the model offline; credentials and acceptance values never enter the cache or image. |
+| Outputs | [OpenMDW-1.1](https://openmdw.ai/license/1-1/) imposes no restrictions on generated outputs. Input-media rights remain separate. Keep artifacts and provenance in operator storage. |
 
-The restricted classification is enforced by both `packaging-contract.yaml`
-and `RESTRICTED_PUBLICATION_TOOLS`; it is not relaxed by an internal registry or
-by a successful capability test. Existing scan and B200 measurements apply to
-their recorded immutable image digests. A source update does not refresh those
-artifact scans or establish evidence for replacement image bytes.
+NVIDIA software acceptance authorizes the operator's runtime use; it is not a
+grant to redistribute the fetched runtime. Public development validation of one
+GPU does not establish the historical 16-replica acceptance matrix on replacement
+bytes. Supported release promotion still requires its own exact-digest evidence.

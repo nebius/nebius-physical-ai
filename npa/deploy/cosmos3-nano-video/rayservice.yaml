@@ -44,8 +44,6 @@ spec:
                   - matchExpressions:
                       - key: nvidia.com/gpu.count
                         operator: DoesNotExist
-          imagePullSecrets:
-            - name: cosmos3-nano-video-registry
           securityContext:
             runAsUser: 10001
             runAsGroup: 10001
@@ -69,6 +67,12 @@ spec:
                   cpu: "4"
                   memory: 16Gi
               env:
+                - name: NPA_COSMOS3_ACCEPT_NVIDIA_SOFTWARE_LICENSE
+                  valueFrom:
+                    secretKeyRef:
+                      name: cosmos3-nano-video-runtime
+                      key: license-acceptance
+                      optional: true
                 - name: NVIDIA_VISIBLE_DEVICES
                   value: void
                 - name: CUDA_VISIBLE_DEVICES
@@ -91,6 +95,9 @@ spec:
                 - name: OMP_NUM_THREADS
                   value: "2"
               volumeMounts: &shared-mounts
+                - name: shared
+                  mountPath: /opt/npa-cosmos3-serving/runtime
+                  subPath: runtime
                 - name: shared
                   mountPath: /models
                   subPath: models
@@ -115,8 +122,6 @@ spec:
             labels:
               app: cosmos3-nano-video-worker
           spec:
-            imagePullSecrets:
-              - name: cosmos3-nano-video-registry
             securityContext:
               runAsUser: 10001
               runAsGroup: 10001
@@ -154,6 +159,12 @@ spec:
                     memory: 64Gi
                     nvidia.com/gpu: "1"
                 env:
+                  - name: NPA_COSMOS3_ACCEPT_NVIDIA_SOFTWARE_LICENSE
+                    valueFrom:
+                      secretKeyRef:
+                        name: cosmos3-nano-video-runtime
+                        key: license-acceptance
+                        optional: true
                   - name: NPA_COSMOS3_MODEL_PATH
                     value: /models/Cosmos3-Nano
                   - name: NPA_COSMOS3_VIDEO_OUTPUT_ROOT
@@ -172,6 +183,9 @@ spec:
                   - name: OMP_NUM_THREADS
                     value: "2"
                 volumeMounts:
+                  - name: shared
+                    mountPath: /opt/npa-cosmos3-serving/runtime
+                    subPath: runtime
                   - name: shared
                     mountPath: /models
                     subPath: models

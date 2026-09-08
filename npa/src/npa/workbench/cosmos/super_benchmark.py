@@ -1,7 +1,8 @@
 """Reproducible single-node B200/H200 serving benchmark for Cosmos3-Super.
 
-The benchmark runs inside the immutable public vLLM-Omni Cosmos3 image.  It
-starts independent loopback services on disjoint GPU sets, validates one warmup
+The benchmark records its selected immutable vLLM-Omni runtime separately from
+the historical vendor-image default. It starts loopback services on disjoint
+GPU sets, validates one warmup
 per service, and then measures a fixed production cell.  Only the prompt hashes
 are recorded; prompt text remains in the operator's runtime model cache.
 """
@@ -13,6 +14,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import shutil
 import signal
 import statistics
@@ -237,6 +239,25 @@ def _schema_version(
     return f"npa.cosmos3-super.{gpu_family.lower()}-{suffix}.v1"
 
 
+def _runtime_image() -> str:
+    image = os.environ.get("NPA_COSMOS3_BENCHMARK_RUNTIME_IMAGE", IMAGE)
+    if not re.fullmatch(r"[a-zA-Z0-9._:/-]+@sha256:[0-9a-f]{64}", image):
+        raise Cosmos3SuperBenchmarkError(
+            "NPA_COSMOS3_BENCHMARK_RUNTIME_IMAGE must be an immutable image digest"
+        )
+    return image
+
+
+def _require_runtime_terms() -> None:
+    value = os.environ.get("NPA_COSMOS3_ACCEPT_NVIDIA_SOFTWARE_LICENSE", "YES")
+    if value == "NO":
+        raise Cosmos3SuperBenchmarkError("NVIDIA runtime delivery was explicitly declined")
+    if value != "YES":
+        raise Cosmos3SuperBenchmarkError(
+            "NPA_COSMOS3_ACCEPT_NVIDIA_SOFTWARE_LICENSE must be YES or NO"
+        )
+
+
 def benchmark_plan(
     *,
     output_path: str,
@@ -283,7 +304,7 @@ def benchmark_plan(
         "schema_version": _schema_version(family, suite=parse_suite(suite)),
         "status": "planned",
         "model": {"id": MODEL_ID, "revision": MODEL_REVISION},
-        "runtime_image": IMAGE,
+        "runtime_image": _runtime_image(),
         "gpu": {
             "family": family,
             "node_gpu_count": max(
@@ -1103,11 +1124,7 @@ def run_benchmark(
     plan["run_id"] = run_id
     if dry_run:
         return plan
-    if os.environ.get("NPA_COSMOS3_ACCEPT_NVIDIA_SOFTWARE_LICENSE") != "YES":
-        raise Cosmos3SuperBenchmarkError(
-            "set NPA_COSMOS3_ACCEPT_NVIDIA_SOFTWARE_LICENSE=YES for this run after "
-            "reviewing the vLLM-Omni container's NVIDIA runtime terms"
-        )
+    _require_runtime_terms()
     family = _normalize_gpu_family(gpu_family)
     gpu = _require_gpu_family(family, expected_count=int(plan["gpu"]["node_gpu_count"]))
     prompt, negative, prompt_hashes = _load_anchor_prompts()

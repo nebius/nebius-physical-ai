@@ -115,12 +115,14 @@ def test_retired_manual_gate_surfaces_do_not_return() -> None:
                 assert marker not in text, f"retired manual gate {marker!r} in {path}"
 
 
-def test_openpi_product_policy_keeps_its_scoped_runtime_gate() -> None:
+def test_openpi_public_delivery_defaults_preserve_runtime_opt_out() -> None:
     text = SKILL.read_text(encoding="utf-8")
     assert "## OpenPI pi0.5 Reference" in text
-    assert "NPA_OPENPI_ACCEPT_GEMMA_TERMS=YES" in text
-    assert "before any accepted checkpoint" in text
-    assert "Forward it only as a runtime secret" in text
+    assert "NPA_OPENPI_ACCEPT_GEMMA_TERMS" in text
+    assert "unset permits execution" in text
+    assert "opt-out and invalid-value" in text
+    assert "choice only as a runtime" in text
+    assert "Do not\nrequire a Hugging Face token for that public GCS download" in text
 
     workflow = REPO_ROOT / "workflows/testing/byof-openpi.yaml"
     assert "NPA_OPENPI_ACCEPT_GEMMA_TERMS" in workflow.read_text(encoding="utf-8")

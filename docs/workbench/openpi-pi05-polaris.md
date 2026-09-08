@@ -33,25 +33,33 @@ over a canonical manifest of GCS object names, generations, sizes, MD5 values,
 and CRC32C values. The public GCS source is opened anonymously; the workload
 does not probe or require Google application credentials.
 
-OpenPI source is Apache-2.0. The CUDA base/runtime retains NVIDIA's upstream
-license terms. This BYOF result stays in the operator's private project registry
-and is not classified for public redistribution. Checkpoint weights, input
-frames, and robot state are not baked into it. The checkpoint contains
-Gemma-derived material: before any image build or checkpoint fetch, the
-operator must review the
+OpenPI source is Apache-2.0. The maintained image uses a CUDA runtime base and
+retains NVIDIA's applicable runtime terms; its development compiler stage is not
+a final-image ancestor. Public development images must pass the exact-image
+publication gates before use. An operator-built BYOF image requires its own
+classification. Checkpoint weights, input frames, and robot state are not baked.
+The checkpoint contains Gemma-derived material governed by the
 [Gemma Terms of Use](https://ai.google.dev/gemma/terms) and
-[Gemma Prohibited Use Policy](https://ai.google.dev/gemma/prohibited_use_policy),
-then provide the exact run-scoped gate:
+[Gemma Prohibited Use Policy](https://ai.google.dev/gemma/prohibited_use_policy).
+Those terms bind by use, including derivatives acquired from another source.
+NPA defaults to noninteractive runtime use for the public Polaris GCS checkpoint;
+it does not require a Hugging Face token for an anonymously served artifact.
+To opt out before model imports or checkpoint access:
 
 ```bash
-export NPA_OPENPI_ACCEPT_GEMMA_TERMS=YES
+export NPA_OPENPI_ACCEPT_GEMMA_TERMS=NO
 ```
 
-NPA forwards that value through SkyPilot's secret channel. The four-mode
-server places it in an ephemeral Kubernetes Secret referenced by the server
-pod, then deletes and independently verifies that Secret absent. Acceptance is
-not a workflow default, image environment variable, build argument, repository
-file, or project credential. No other agreement is inferred from it.
+Unset the variable to resume the product default. `Y`, `YES`, `1`, and `TRUE`
+also permit runtime use; empty, `N`, `NO`, `0`, and `FALSE` opt out. Values are
+case-insensitive with surrounding whitespace ignored; other values fail as
+invalid. No acceptance value is written to an image, workflow configuration,
+build argument, or saved credential. An explicitly supplied value uses the
+runtime secret channel; the four-mode server's ephemeral Secret is removed and
+its absence verified during cleanup. This policy covers the two named Gemma
+policies, never unrelated SDK, dataset, privacy, or telemetry terms. It does not
+change redistribution rights, and a selected gated HF model still requires
+access to that exact upstream repository.
 
 ## Request, response, and service contract
 
@@ -295,7 +303,6 @@ NPA_E2E_PROJECT=<project-alias> \
 NPA_E2E_S3_BUCKET=<existing-project-bucket> \
 NPA_BYOF_S3_ENDPOINT=https://storage.<bucket-region>.nebius.cloud \
 NPA_BYOF_OPENPI_REGISTRY=<operator-registry>/<namespace> \
-NPA_OPENPI_ACCEPT_GEMMA_TERMS=YES \
 npa/.venv/bin/python -m pytest -q -s \
   npa/tests/e2e/test_byof_openpi_polaris_live_e2e.py
 ```
@@ -354,7 +361,6 @@ npa/.venv/bin/npa workbench workflow submit \
   --var 'service_cleanup_timeout_seconds=180' \
   --var 'service_api_timeout_seconds=30' \
   --var 'service_http_timeout_seconds=30' \
-  --secret-env NPA_OPENPI_ACCEPT_GEMMA_TERMS \
   --secret-env AWS_ACCESS_KEY_ID \
   --secret-env AWS_SECRET_ACCESS_KEY
 

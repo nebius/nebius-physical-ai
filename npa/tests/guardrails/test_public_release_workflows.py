@@ -97,7 +97,7 @@ def test_prepublication_gates_run_before_the_public_dev_push() -> None:
         "test_packaging_contract.py",
         "npa.guardrails.confidentiality",
         "gitleaks detect",
-        "Prove destination cannot expose unvalidated tagged bytes",
+        "Prove destination cannot expose existing private bytes",
         "scan_image_omniverse_payload.py",
         "scan_image_ltx_payload.py",
         "scan_image_wan_payload.py",
@@ -192,11 +192,12 @@ def test_post_push_and_promotion_gates_are_digest_bound() -> None:
         "scan_image_cosmos3_ray_serve_payload.py", text.index("Verify pushed bytes")
     )
     assert pushed_scan < visibility < anonymous
-    prepush = text.index("Prove destination cannot expose unvalidated tagged bytes")
+    prepush = text.index("Prove destination cannot expose existing private bytes")
     push = text.index("Push only after every pre-publication gate passes")
     assert prepush < push
-    assert "Private destination contains tagged versions" in text[prepush:push]
-    assert "tagged_count" in text[prepush:push]
+    assert "public_registry_destination.py" in text[prepush:push]
+    assert '--versions-json "$versions"' in text[prepush:push]
+    assert ".metadata.container.tags" not in text[prepush:push]
     verify = text[text.index("Verify pushed bytes") :]
     assert "pushed-payload-attempt-${payload_attempt}.log" in verify
     assert "anonymous-manifest-attempt-${anonymous_attempt}.log" in verify
@@ -206,15 +207,16 @@ def test_post_push_and_promotion_gates_are_digest_bound() -> None:
 
 
 def test_post_push_payload_scan_binds_remote_digest_to_local_full_tar() -> None:
-    text = PUBLISH.read_text(encoding="utf-8")
-    post_push = text[text.index("Verify pushed bytes") :]
+    steps = _spec(PUBLISH)["jobs"]["build-development"]["steps"]
+    post_push = next(step["run"] for step in steps if step.get("name", "").startswith("Verify pushed bytes"))
 
     assert 'docker pull "$exact"' in post_push
-    # Two calls bind the pulled digest to the local image; the third binds the
-    # independent cuRobo archive verifier to that same inspected remote image.
-    assert post_push.count("docker image inspect --format '{{.Id}}'") == 3
-    assert ('test "$(docker image inspect --format \'{{.Id}}\' "$exact")" = \\\n'
-            '                "$(docker image inspect --format \'{{.Id}}\' "$IMAGE")"') in post_push
+    # Two calls bind the pulled digest to the local image; each graph verifier
+    # branch also receives that independently inspected remote identity.
+    assert post_push.count("docker image inspect --format '{{.Id}}'") == 4
+    normalized = " ".join(post_push.replace("\\\n", "").split())
+    assert ('test "$(docker image inspect --format \'{{.Id}}\' "$exact")" = '
+            '"$(docker image inspect --format \'{{.Id}}\' "$IMAGE")"') in normalized
     assert '--expected-image-id "$(docker image inspect --format \'{{.Id}}\' "$exact")"' in post_push
     assert 'docker save --output "$RUNNER_TEMP/${TOOL}-pushed.tar" "$exact"' in post_push
     assert '--tarball "$RUNNER_TEMP/${TOOL}-pushed.tar"' in post_push

@@ -1,0 +1,8 @@
+# Exact Linux x86_64 runtime wheels inspected against their full license bytes.
+# cuDNN development files are removed in the same installation RUN.
+nvidia-cudnn-cu12==9.10.2.21 \
+    --hash=sha256:949452be657fa16687d0930933f032835951ef0892b37d2d53824d1a84dc97a8
+nvidia-nccl-cu12==2.27.5 \
+    --hash=sha256:ad730cf15cb5d25fe849c6e6ca9eb5b76db16a80f13f425ac68d8e2e55624457
+nvidia-nvshmem-cu12==3.2.5 \
+    --hash=sha256:e076957d5cc72e51061a04f2d46f55df477be53e8a55d0d621be08f7aefe1d00

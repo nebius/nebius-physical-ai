@@ -983,7 +983,10 @@ print(json.dumps({
     }
 
 
-def test_openpi_polaris_spec_plans_real_b200_serving() -> None:
+def test_openpi_polaris_spec_plans_real_b200_serving(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("NPA_OPENPI_ACCEPT_GEMMA_TERMS", raising=False)
     plan = build_plan(load_spec(OPENPI_SPEC), run_id="openpi-polaris-render")
     assert len(plan.steps) == 1
     step = plan.steps[0]
@@ -996,7 +999,7 @@ def test_openpi_polaris_spec_plans_real_b200_serving() -> None:
     assert "pi05_droid_jointpos_polaris" in rendered
     assert "WebsocketPolicyServer" in rendered
     assert "B200:1" in OPENPI_SPEC.read_text(encoding="utf-8")
-    assert secret_env_hints_for_plan(plan.steps) == ("NPA_OPENPI_ACCEPT_GEMMA_TERMS",)
+    assert secret_env_hints_for_plan(plan.steps) == ()
     profile = resolve_byof_profile_path(str(config["resource_profile_yaml"]))
     profile_text = profile.read_text(encoding="utf-8")
     assert "accelerators: B200:1" in profile_text
@@ -1301,9 +1304,9 @@ def test_openpi_artifact_wait_keeps_live_gpu_until_object_exists(
 def test_openpi_polaris_live_b200_all_four_modes(
     e2e_project: str | None,
 ) -> None:
-    assert os.environ.get("NPA_OPENPI_ACCEPT_GEMMA_TERMS") == "YES", (
-        "scoped Gemma terms acceptance must be forwarded for this OpenPI run"
-    )
+    from npa.workflows.byof.openpi import require_openpi_terms
+
+    require_openpi_terms()
     assert not os.environ.get("NPA_BYOF_OPENPI_REUSE_IMAGE", "").strip(), (
         "the canonical gate must build and push; use the runner manually for reuse debugging"
     )
@@ -1378,7 +1381,7 @@ def test_openpi_polaris_live_b200_all_four_modes(
     print(json.dumps({"openpi_build_evidence": build_byte_evidence}, sort_keys=True))
 
     negative_env = dict(env)
-    negative_env.pop("NPA_OPENPI_ACCEPT_GEMMA_TERMS", None)
+    negative_env["NPA_OPENPI_ACCEPT_GEMMA_TERMS"] = "NO"
     negative_proc = _run_byof(
         _smoke_command(
             planned=planned,
@@ -1538,7 +1541,7 @@ def test_openpi_polaris_live_b200_all_four_modes(
     assert direct["runtime_image"] == image
     assert direct["checkpoint"]["weights_baked"] is False
     assert direct["redistribution"]["runtime_image"] == (
-        "restricted_private_operator_registry"
+        "separately_classified_digest_pinned_runtime"
     )
     assert direct["checkpoint"]["provenance"]["object_count"] == 27
     _assert_float64_trajectory(direct["trajectory"])
@@ -1547,7 +1550,7 @@ def test_openpi_polaris_live_b200_all_four_modes(
     assert serve["status"] == "passed"
     assert serve["runtime_image"] == image
     assert serve["redistribution"]["runtime_image"] == (
-        "restricted_private_operator_registry"
+        "separately_classified_digest_pinned_runtime"
     )
     assert serve["topology"]["service_type"] == "ClusterIP"
     assert serve["topology"]["public_ingress"] is False

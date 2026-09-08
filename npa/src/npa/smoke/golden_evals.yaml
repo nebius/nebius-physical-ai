@@ -44,13 +44,14 @@ containers:
         RLDS 1.0.1 recipe across an eight-process JAX FSDP mesh.
     safety:
       runs_as: ubuntu
-      base_image: nvidia/cuda:12.8.1-cudnn-devel-ubuntu24.04
+      base_image: nvidia/cuda:12.8.1-runtime-ubuntu24.04 (digest pinned, no cuDNN SDK ancestry)
       network: public DROID and pi0.5 runtime fetches plus operator S3
       external_fetch: [gcs-droid-runtime, gcs-openpi-weights-runtime, s3-runtime]
       notes: >-
         Pinned Apache-2.0 source and dependencies are baked. Weights, DROID
         records, credentials, terms acceptance, trained checkpoints, and caches
-        remain runtime-only. Gemma terms acceptance is required per run.
+        remain runtime-only. Gemma terms apply on use; authorized execution defaults
+        to no repeated local prompt and preserves explicit opt-outs.
     golden_eval:
       kind: container-smoke
       command: >-
@@ -463,13 +464,14 @@ containers:
         topologies and strict technical validation of every generated video.
     safety:
       runs_as: ubuntu
-      base_image: exact digest-pinned vllm/vllm-omni Cosmos3 runtime
+      base_image: accepted public Cosmos serving bootstrap with reviewed current runtime recipe
       network: loopback OpenAI-compatible service plus Hugging Face model fetch
-      external_fetch: [huggingface-model-and-prompt-assets]
+      external_fetch: [pinned-runtime-closure, huggingface-model-and-prompt-assets]
       notes: >-
-        Operator-private wrapper containing no model weights or credentials.
-        Runtime requires explicit NVIDIA software-license acceptance and gated
-        model access. The golden eval starts the real single-GPU topology,
+        Public development bootstrap containing no vendor runtime, weights or
+        credentials. Runtime-only authorized software delivery defaults without
+        repeated local acceptance; explicit opt-out is preserved. Public model
+        access requires no artificial token. The golden eval starts the real single-GPU topology,
         generates the fixed BF16 video, fully decodes it, and applies the same
         geometry, frame-count, blank-frame, and basic-motion checks as the
         eight-GPU benchmark; the full four-topology sweep remains the release
@@ -477,8 +479,7 @@ containers:
     golden_eval:
       kind: entrypoint-smoke
       command: >-
-        bash -lc 'set -euo pipefail; test "${NPA_COSMOS3_ACCEPT_NVIDIA_SOFTWARE_LICENSE:-}" = YES;
-        test -n "${HF_TOKEN:-${HUGGING_FACE_HUB_TOKEN:-}}"; out=/tmp/cosmos3-super-golden;
+        npa-cosmos3-super-benchmark-entrypoint --runtime bash -c 'set -euo pipefail; out=/tmp/cosmos3-super-golden;
         mkdir -p "$out"; root=$(python -c "from huggingface_hub import snapshot_download;
         print(snapshot_download(\"nvidia/Cosmos3-Super\", revision=\"e0262be9d8f7586bc24c069a2aed2b665bdff266\",
         allow_patterns=[\"assets/example_t2v_prompt.json\",\"assets/negative_prompt.json\"]))");
@@ -526,11 +527,11 @@ containers:
         and clean-prefix chunked video-to-video rollout.
     safety:
       runs_as: "10001:10001"
-      base_image: digest-pinned vllm/vllm-omni Cosmos3 vendor runtime
+      base_image: accepted public Cosmos serving bootstrap with reviewed current runtime recipe
       network: loopback diffusion API; offline verified model cache
-      external_fetch: []
+      external_fetch: [pinned-runtime-closure]
       notes: >-
-        Restricted image for an operator-controlled registry. Model weights and
+        Public runtime-fetch bootstrap. Vendor libraries, model weights and
         credentials remain runtime-only. Guardrails are explicitly off; use
         requires authorized model/software access. This eval starts one B200
         diffusion runtime, generates all three chunks, fully decodes all four
@@ -543,7 +544,7 @@ containers:
     golden_eval:
       kind: container-smoke
       module: npa.workbench.cosmos.nano_video_golden
-      command: python -m npa.workbench.cosmos.nano_video_golden
+      command: npa-cosmos3-nano-bootstrap python -m npa.workbench.cosmos.nano_video_golden
       artifact: /tmp/cosmos3-nano-video-golden/result.json
       serverless_gpu: b200
       gpu: required
@@ -854,21 +855,21 @@ containers:
         with video artifacts.
     safety:
       runs_as: ubuntu
-      base_image: nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04
+      base_image: nvidia/cuda:13.0.2-base-ubuntu24.04 (digest pinned, no base cuDNN)
       network: FastAPI service on :8791 (/health, /system-info, /run, /status); kitchen assets download at run time
-      external_fetch: [pypi, github, huggingface, s3]
+      external_fetch: [huggingface-kitchen-assets, s3]
       notes: >-
-        Bakes MIT RoboCasa (v1.0 tag) and robosuite (pinned commit), with
-        MuJoCo 3.3.1 / Gymnasium 0.29.1 on a CUDA 12.4/cuDNN development base.
-        The dependency closure is not hash-locked; inherited-layer rights and
-        exact-image qualification remain unresolved. Kitchen assets are NOT baked and download at
-        run time. No model weights, credentials, or accepted terms are baked.
-        The golden eval exercises health + system-info; real task registration,
-        EGL reset, and rollout are exercised by the capability run path.
+        Hash-pinned MIT RoboCasa/robosuite sources and dependency closure contain
+        reviewed cuDNN shared runtimes and retained notices, with no cuDNN SDK
+        ancestry. Bundled source assets retain CC BY/Apache/BSD attribution;
+        large kitchen archives download at pinned revisions during runtime.
+        No weights, credentials or acceptance state are baked. This golden eval
+        checks health and system-info only; separate real EGL kitchen rollout
+        and trajectory/video export are required for development qualification.
     golden_eval:
       kind: server-smoke
       module: npa.smoke.test_robocasa_functional
-      command: python /app/smoke_functional.py
+      command: python -m npa.smoke.test_robocasa_functional
       serverless_gpu: h100
       gpu: optional
       timeout_seconds: 300

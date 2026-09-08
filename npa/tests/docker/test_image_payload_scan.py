@@ -192,7 +192,12 @@ def test_openpi_uses_system_ffmpeg_without_bundled_payload() -> None:
     assert "rm -f /opt/venv/lib/python3.11/site-packages/wandb/bin/wandb-core" in dockerfile
     assert "import boto3, importlib.metadata as m, numpy, os, tensorflow" in dockerfile
     assert "import importlib.metadata as m, numpy, rerun" in dockerfile
-    assert "rm -rf /opt/nvidia/nsight-compute" in dockerfile
+    stages = [line for line in dockerfile.splitlines() if line.startswith("FROM ")]
+    assert len(stages) == 2
+    assert "12.8.1-devel-ubuntu24.04@sha256:" in stages[0]
+    assert stages[0].endswith(" AS probe-build")
+    assert "12.8.1-runtime-ubuntu24.04@sha256:" in stages[1]
+    assert "cudnn-devel" not in dockerfile
     assert "test ! -e /opt/nvidia/nsight-compute" in dockerfile
     for pin in (
         "'jax==0.6.2'",
@@ -200,11 +205,12 @@ def test_openpi_uses_system_ffmpeg_without_bundled_payload() -> None:
         "'jax-cuda12-plugin==0.6.2'",
         "'jax-cuda12-pjrt==0.6.2'",
         "'ml-dtypes==0.5.1'",
-        "'nvidia-cudnn-cu12==9.10.2.21'",
-        "'nvidia-nccl-cu12==2.27.5'",
-        "'nvidia-nvshmem-cu12==3.2.5'",
     ):
         assert pin in dockerfile
+    vendor_lock = (REPO_ROOT / "npa/docker/workbench/openpi/vendor-requirements.txt").read_text()
+    for pin in ("nvidia-cudnn-cu12==9.10.2.21", "nvidia-nccl-cu12==2.27.5", "nvidia-nvshmem-cu12==3.2.5"):
+        assert pin in vendor_lock
+    assert "--no-deps --require-hashes -r /tmp/openpi-vendor-requirements.txt" in dockerfile
     assert "pi05-full-droid-rlds-cu128-jax062-nccl2275-rerun0314" in dockerfile
     assert "'rerun-sdk==0.31.4'" in dockerfile
     assert "'numpy==1.26.4'" in dockerfile

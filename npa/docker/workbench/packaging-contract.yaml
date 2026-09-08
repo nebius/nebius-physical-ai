@@ -153,14 +153,16 @@ images:
     passwordless_root_exemption: "SkyPilot Kubernetes bootstrap only; the final runtime user is non-root, no sshd service is enabled by default, and no credentials are baked into the image."
     redistribution: public
     notes: >-
-      Bakes pinned Apache-2.0 OpenPI source, its frozen RLDS/JAX dependency
-      environment, and an SM120 probe on a CUDA/cuDNN development base. Exact
-      inherited-layer and installed-wheel redistribution rights remain to be
-      established; public metadata does not waive publication quarantine. Gemma
-      and pi0.5 weights, DROID records, terms acceptance, credentials, trained
-      checkpoints, and populated caches are runtime-only. Built-image byte and
-      layer scanning plus an eight-node RTX PRO 6000 qualification are required
-      before release promotion.
+      Bakes pinned Apache-2.0 OpenPI source and its reviewed RLDS/JAX runtime
+      on a digest-pinned CUDA 12.8.1 runtime base without cuDNN SDK ancestry.
+      The separate compiler stage contributes NPA SM100/SM120 probes and the
+      expressly redistributable Linux cuobjdump. Installed cuDNN SDK headers
+      are removed before layer creation; all inherited layers must match the
+      reviewed runtime/notice inventory. Gemma/pi0.5 weights, DROID records,
+      acceptance state, credentials and trained checkpoints remain runtime-only.
+      Exact-image pre-publication gates precede a public development push;
+      four-mode functionality and eight-node full-DROID qualification are
+      separate development and supported-release evidence boundaries.
   lerobot:
     dockerfile: lerobot/Dockerfile
     tier: service
@@ -193,16 +195,16 @@ images:
     ports: [8791]
     redistribution: public
     notes: >-
-      Bakes MIT RoboCasa source (v1.0 tag) and robosuite (pinned commit), with
-      MuJoCo 3.3.1 / Gymnasium 0.29.1 on a CUDA 12.4/cuDNN development base.
-      The mutable base/source tags and floating dependencies do not establish an
-      immutable BYOF closure. Inherited-layer redistribution review and exact
-      service-image qualification remain outstanding. Kitchen assets (textures,
-      fixtures, objects) are NOT baked and download at run time under the
-      operator's own network access. No model weights, credentials, or accepted
-      terms are baked. Built-image byte/layer scanning is mandatory before
-      publication. Workflow toolRefs are service clients and therefore run in
-      the standard task image; this service image grants no passwordless sudo.
+      Bakes hash-pinned MIT RoboCasa/robosuite source archives, MuJoCo 3.3.1,
+      Gymnasium 0.29.1, the complete NPA package and a locked CUDA 13/PyTorch
+      runtime on a digest-pinned base with no inherited cuDNN SDK. The cuDNN
+      wheel is filtered before committing its layer. Bundled source assets
+      retain RoboCasa CC BY 4.0 attribution and the selected robot Apache/BSD
+      notices; large kitchen archives are fetched at pinned revisions at runtime.
+      No weights, credentials or acceptance state are baked. Exact-layer,
+      security and real trajectory/export evidence remain mandatory; the
+      separately documented LeRobot ACT subset is not a trained-policy claim.
+      Workflow toolRefs remain service clients; this service image grants no sudo.
   wan2-2:
     dockerfile: wan2-2/Dockerfile
     tier: job
@@ -372,28 +374,32 @@ images:
     dockerfile: cosmos3-super-benchmark/Dockerfile
     tier: interactive
     notes: >-
-      Operator-private SkyPilot wrapper derived from the exact digest-pinned
-      vllm/vllm-omni Cosmos3 benchmark image. It adds only openssh-server,
-      rsync, sudo, a non-root runtime user, and the reviewed SkyPilot bootstrap
-      attestation. The inherited vendor runtime is never published through the
-      NPA public release channel; models remain operator-entitled runtime
-      downloads.
-    redistribution: restricted
+      Public SkyPilot wrapper derived from the accepted digest-pinned
+      cosmos3-serving bootstrap image. CUDA, vLLM-Omni and model payloads are
+      fetched into the operator's runtime cache; no historical vendor-container
+      layers or fixtures are inherited. Exact-image payload, security and
+      bootstrap checks precede development publication. Fixed benchmark and
+      hardware qualification remain required for supported release promotion.
+    redistribution: public
     skypilot_bootstrap_contract: skypilot-0.12.2-v1
+    passwordless_root_exemption: >-
+      SkyPilot Kubernetes bootstrap requires passwordless sudo for its non-root
+      ubuntu worker. The image forwards bootstrap commands, starts no default
+      SSH daemon, removes build-time host keys, and contains no credentials.
   cosmos3-nano-video:
     dockerfile: cosmos3-nano-video/Dockerfile
     tier: service
     final_user: "10001:10001"
     ports: [8000]
     notes: >-
-      Operator-private Ray Serve extension of the digest-pinned
-      vllm/vllm-omni:cosmos3 runtime for BF16 Cosmos3-Nano diffusion video.
-      Adds Ray Serve, FFmpeg and NPA rollout/serving adapters. One shared
-      runtime staging job fetches and verifies the immutable model; replicas
-      consume it offline and read-only. Inherited vendor runtime is excluded
-      from the public release channel. No Cosmos model checkpoints or credentials
-      are baked; inherited public vendor fixtures are documented.
-    redistribution: restricted
+      Public Ray Serve bootstrap based on the accepted cosmos3-serving image.
+      The pinned CUDA/vLLM-Omni and Ray closures are installed only at runtime.
+      Shared staging fetches the immutable model and runtime for replicas;
+      no vendor-container ancestry, model checkpoints, vendor fixtures or
+      credentials are baked. Exact-image absence/security checks precede
+      development publication; new digest capability evidence is separate from
+      the historical private service and supported release qualification.
+    redistribution: public
   cosmos3-ray-serve:
     dockerfile: cosmos3-ray-serve/Dockerfile
     tier: service

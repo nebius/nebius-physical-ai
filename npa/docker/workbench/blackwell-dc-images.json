@@ -55,24 +55,26 @@
     {
       "name": "npa-cosmos3-nano-video",
       "dockerfile": "cosmos3-nano-video/Dockerfile",
-      "verdict": "ready",
-      "validation": "validated",
+      "verdict": "unknown",
+      "validation": "pending-build",
       "smoke": "Run the live Nano video acceptance: one 30-second 480p BF16 rollout followed by eight complete concurrent requests on B200, with frame decode, actual latency, device VRAM and fanout evidence.",
-      "notes": "Operator-private pinned vLLM-Omni diffusion runtime with Ray Serve. Validated on B200 only: sixteen BF16 TP=1 replicas and one 30-second 480p video followed by eight complete concurrent videos, with guardrails and audio off. B300 and other GPU families remain unvalidated. See npa/deploy/cosmos3-nano-video/README.md for measured timings and limitations.",
-      "redistribution": "restricted",
-      "torch": "2.11.0+cu130",
-      "measured_torch": "2.11.0+cu130",
-      "measured_arch_list": [
-        "sm_75",
-        "sm_80",
-        "sm_86",
-        "sm_90",
-        "sm_100",
-        "sm_120"
-      ],
-      "validated_tag": "dev-826b1730f64c1fae2fb6a4280c312f280b6648ad",
-      "validated_digest": "sha256:f78b7a0cc8d32b8a201eec8702510244d6996ae949bbc3373bde9daad7766e97",
-      "validated_registry_scope": "operator"
+      "notes": "Replacement public bootstrap contains no vendor runtime or model weights. New exact-digest continuation and augmentation validation is required on B200. The historical operator digest and its 16-replica measurements are retained separately and do not qualify replacement bytes. B300 and other GPU families remain unvalidated.",
+      "redistribution": "public",
+      "torch": "runtime-fetched pinned Cosmos serving closure",
+      "historical_operator_validation": {
+        "measured_torch": "2.11.0+cu130",
+        "measured_arch_list": [
+          "sm_75",
+          "sm_80",
+          "sm_86",
+          "sm_90",
+          "sm_100",
+          "sm_120"
+        ],
+        "validated_tag": "dev-826b1730f64c1fae2fb6a4280c312f280b6648ad",
+        "validated_digest": "sha256:f78b7a0cc8d32b8a201eec8702510244d6996ae949bbc3373bde9daad7766e97",
+        "validated_registry_scope": "operator"
+      }
     },
     {
       "name": "npa-base",
@@ -271,12 +273,13 @@
       "validation": "pending-build",
       "redistribution": "public",
       "source_compiled_extensions": [
-        "npa-openpi-sm120-probe"
+        "npa-openpi-sm120-probe",
+        "npa-openpi-sm100-probe"
       ],
       "smoke": "the pinned full-DROID pi0.5 recipe completes 100,000 steps with global batch 256 across an eight-process JAX mesh and publishes a content-hashed checkpoint manifest",
-      "port_blocker": "The production image intentionally compiles its native hardware probe only for sm_120 and the full-DROID runtime refuses any device other than compute capability 12.0. A B200/B300 build must add the matching architecture and retain a separate real full-recipe qualification.",
+      "port_blocker": "The candidate compiles separate sm_100 and sm_120 probes. Physical execution and the corresponding real workload still require exact-digest qualification; no B300 support is inferred. Full-DROID qualification retains its separate eight-node sm_120 scope.",
       "upstream_tracking": "https://github.com/Physical-Intelligence/openpi",
-      "notes": "This integration is scoped to eight RTX PRO 6000 one-GPU nodes. CUDA-major compatibility is not inferred across sm_120 and datacenter Blackwell sm_100/sm_103, and no B200 prerequisite run is needed for the requested RTX PRO training."
+      "notes": "Planned public development validation covers direct inference, cross-pod serving, LoRA optimizer updates and held-out evaluation on the selected hardware. This is separate from the supported full-DROID eight-RTX-PRO-6000-node training recipe and is not convergence or physical robot success evidence."
     },
     {
       "name": "npa-alpamayo2-super",
@@ -701,18 +704,20 @@
       "name": "npa-cosmos3-super-benchmark",
       "dockerfile": "cosmos3-super-benchmark/Dockerfile",
       "build_script": "cosmos3-super-benchmark/build.sh",
-      "redistribution": "restricted",
-      "verdict": "ready",
-      "validation": "validated",
-      "torch": "inherited from exact vllm/vllm-omni:cosmos3 upstream digest",
+      "redistribution": "public",
+      "verdict": "unknown",
+      "validation": "pending-build",
+      "torch": "runtime-fetched pinned Cosmos serving closure",
       "source_compiled_extensions": [],
       "smoke": "full four-cell B200 serving benchmark with strict MP4 validity",
-      "notes": "Operator-private wrapper around the pinned upstream benchmark runtime; adds only the SkyPilot worker bootstrap surface and is excluded from public publication. The exact private digest completed the full four-cell B200 sweep with 96/96 technically valid MP4s and reproduced the expected higher-throughput/higher-latency ordering as service count increased.",
-      "validated_digest": "sha256:df755667ee290717f843b4f565be487787ea5297a85d262317c274f894085a68",
-      "validated_registry_scope": "operator",
-      "measured_arch_list": [
-        "sm_100"
-      ]
+      "notes": "Replacement public SkyPilot bootstrap fetches its pinned vendor runtime and model at execution. New exact-digest TP1 generation establishes development functionality only; full fixed-topology benchmark qualification remains required for supported promotion. Historical operator digest evidence does not qualify these replacement bytes.",
+      "historical_operator_validation": {
+        "validated_digest": "sha256:df755667ee290717f843b4f565be487787ea5297a85d262317c274f894085a68",
+        "validated_registry_scope": "operator",
+        "measured_arch_list": [
+          "sm_100"
+        ]
+      }
     },
     {
       "name": "npa-cosmos3-ray-serve",
@@ -782,12 +787,12 @@
       "build_script": "robocasa/build.sh",
       "verdict": "blocked",
       "validation": "pending-build",
-      "torch": "Dockerfile requests torch 2.12.1 and torchvision 0.27.1 from PyPI; built CUDA/SM closure unverified",
+      "torch": "Hash-locked torch 2.13.0+cu130 and torchvision 0.28.0+cu130; built CUDA/SM closure unverified",
       "source_compiled_extensions": [],
       "smoke": "Gymnasium task registration, kitchen asset availability, headless EGL reset, random rollout with video",
-      "notes": "Candidate source uses a mutable CUDA 12.4/cuDNN development base and separately installs Torch from PyPI. The base tag alone does not establish the installed Torch CUDA runtime or SM support. RoboCasa/robosuite source is MIT; kitchen assets are runtime downloads. Inherited-layer redistribution review and exact-image GPU evidence remain outstanding. Prior BYOF results do not qualify these service bytes.",
-      "blocked_reason": "No accepted exact-image packaging, inherited-layer rights, or physical GPU qualification; service package COPY closure also omits imported npa packages",
-      "upstream_tracking": "Verify complete installed runtime and package closure, then qualify each intended GPU family"
+      "notes": "The recipe pins a CUDA 13.0.2 base without cuDNN, filters the exact cuDNN wheel to runtime libraries and notices in the installation layer, and installs the full NPA service package. RoboCasa/robosuite code is MIT; bundled RoboCasa assets are CC-BY-4.0, with separate Apache/BSD robot notices. Large kitchen archives are revision-pinned runtime downloads. Exact-image byte and physical GPU evidence remain outstanding. A real kitchen trajectory export can qualify that public development capability; ACT and supported GPU promotion require separate evidence.",
+      "blocked_reason": "No accepted exact-image inherited-layer scans or physical GPU qualification for this pinned recipe",
+      "upstream_tracking": "Verify the built closure and real kitchen trajectory/video export, then qualify each intended supported GPU family and policy capability"
     },
     {
       "name": "npa-curobo",

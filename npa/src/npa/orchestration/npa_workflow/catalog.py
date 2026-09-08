@@ -1044,7 +1044,7 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
         name="workbench.openpi.negative_terms_gate",
         description=(
             "Live-probe OpenPI's fail-closed terms gate in a child environment with "
-            "acceptance removed, before any accepted checkpoint fetch."
+            "an explicit NO opt-out, before any checkpoint fetch."
         ),
         argv_template=[
             *_OPENPI_VENDOR_PIPELINE,

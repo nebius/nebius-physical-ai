@@ -117,33 +117,29 @@ def requires_skypilot_bootstrap_runtime_probe(image: str) -> bool:
     }
 
 
-# General public-registry refusal inventories. They intentionally describe the
-# redistribution decision, not a particular vendor payload. The Cosmos3-Super
-# benchmark wrapper inherits the exact upstream vLLM-Omni runtime and therefore
-# remains build-your-own in an operator-controlled registry.
-RESTRICTED_PUBLICATION_TOOLS: frozenset[str] = frozenset(
-    {"cosmos3-super-benchmark", "cosmos3-nano-video"}
-)
+# General public-registry refusal inventories remain enforced for future
+# restricted packaging. The replacement Cosmos wrappers fetch their vendor
+# runtimes directly into operator caches; historical vendor-based bytes have
+# no publication approval from this source classification.
+RESTRICTED_PUBLICATION_TOOLS: frozenset[str] = frozenset()
 RESTRICTED_DERIVED_IMAGES: frozenset[str] = frozenset()
 
 # Compatibility exports for installed callers. New code uses the general names.
 OMNIVERSE_RESTRICTED_TOOLS = RESTRICTED_PUBLICATION_TOOLS
 OMNIVERSE_RESTRICTED_DERIVED_IMAGES = RESTRICTED_DERIVED_IMAGES
 
-# Candidates marked public in the packaging contract without an accepted
-# built/GPU-validated artifact yet.
-#
-# This is a different question from `RESTRICTED_PUBLICATION_TOOLS`, and conflating
-# them would be wrong in both directions: candidate intent does not prove that
-# every inherited layer has completed redistribution review. Publishing
-# an image without passing payload scans and GPU qualification would hand out a
-# claim we have not earned, so publish_public refuses them by name rather than relying
-# on the push failing because the tag happens not to exist.
-#
-# Remove a tool from this set in the same change that records its accepted image
-# digest and its payload-scan/GPU evidence — not before.
-UNVALIDATED_PUBLICATION_TOOLS: frozenset[str] = frozenset({"openpi", "curobo"})
-VALIDATION_CANDIDATE_TOOLS: frozenset[str] = frozenset({"robocasa"})
+# Candidates eligible for reviewed public development builds but lacking an
+# accepted supported-release digest and its complete qualification evidence.
+# Eligibility still requires actual inherited-layer licensing/security checks.
+# The unbuilt-version and fixed-historical-version inventories both prevent
+# supported promotion; neither turns a development build into a release.
+# Remove a tool only when its accepted release digest and qualification are recorded.
+UNVALIDATED_PUBLICATION_TOOLS: frozenset[str] = frozenset(
+    {"openpi", "curobo"}
+)
+VALIDATION_CANDIDATE_TOOLS: frozenset[str] = frozenset(
+    {"robocasa", "cosmos3-nano-video", "cosmos3-super-benchmark"}
+)
 # Compatibility view used by publication callers and public imports. Derive it
 # from the two canonical validation-state inventories; never maintain it
 # independently.

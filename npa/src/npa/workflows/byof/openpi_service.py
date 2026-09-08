@@ -7,7 +7,6 @@ import base64
 import hashlib
 import json
 import math
-import os
 import re
 import shlex
 import time
@@ -17,6 +16,7 @@ import urllib.request
 from npa.workflows.byof.openpi import (
     OPENPI_TERMS_ACCEPTED_VALUE,
     OPENPI_TERMS_ENV,
+    require_openpi_terms,
 )
 from npa.workflows.byof.openpi_pipeline import (
     ACTION_DIM,
@@ -275,6 +275,20 @@ print("NPA_OPENPI_CLIENT_RESULT=" + encoded, flush=True)
 """.strip()
 
 
+def _server_terms_program() -> str:
+    """Apply the runtime default before importing the standalone upstream server."""
+
+    return f'''import os
+import sys
+
+choice = os.environ.get({OPENPI_TERMS_ENV!r}, "YES").strip().upper()
+if choice not in {{"Y", "YES", "1", "TRUE"}}:
+    reason = "explicit opt-out" if choice in {{"", "N", "NO", "0", "FALSE"}} else "invalid runtime acceptance value"
+    print("OpenPI Gemma checkpoint access refused: " + reason, file=sys.stderr)
+    raise SystemExit(64)
+'''
+
+
 def _server_hardware_program() -> str:
     """Self-contained GPU proof for a server image that does not embed NPA."""
 
@@ -367,7 +381,7 @@ print("NPA_OPENPI_SERVER_HARDWARE=" + encoded, flush=True)
 def _redirect_policy_cache_to_durable_storage(deployment: dict[str, Any]) -> None:
     """Send the policy checkpoint to the operator's weight cache when there is one.
 
-    `OPENPI_DATA_HOME` is where the gated Gemma-derived checkpoint lands, and it was
+    `OPENPI_DATA_HOME` is where the runtime-fetched Gemma derivative lands, and it was
     backed by an ``emptyDir``: a Deployment replaces its pod on every rollout, image
     change and node drain, so the download was paid again each time on a GPU that is
     already running. With a claim configured it moves to the shared cache like every
@@ -457,7 +471,8 @@ def build_manifests(
         _server_hardware_program()
     )
     server_shell = (
-        'set -euo pipefail; test "$NPA_OPENPI_ACCEPT_GEMMA_TERMS" = "YES" || exit 64; '
+        "set -euo pipefail; /opt/venv/bin/python -c "
+        + shlex.quote(_server_terms_program()) + "; "
         f"{hardware_probe}; "
         f"/opt/venv/bin/python -m http.server {SERVER_DIAGNOSTICS_PORT} "
         "--bind 0.0.0.0 --directory /tmp >/tmp/npa-openpi-diagnostics.log 2>&1 & "
@@ -1305,11 +1320,14 @@ def _delete_and_verify(
 
 
 def _run(args: argparse.Namespace) -> int:
-    if os.environ.get(OPENPI_TERMS_ENV) != OPENPI_TERMS_ACCEPTED_VALUE:
+    try:
+        require_openpi_terms()
+    except ValueError as exc:
         _diagnostic_uri, refusal = _write_terms_refusal_diagnostic(
             args.output_uri,
             diagnostic_root_uri=args.terms_diagnostic_root_uri,
             stage="serve",
+            reason=str(exc),
         )
         print(json.dumps(refusal, sort_keys=True), flush=True)
         return 64

@@ -46,6 +46,10 @@ SUPPORTED_CAPABILITIES = {
 
 ROBOCASA_EMBODIMENT = "PandaOmron"
 ROBOCASA_OBJECT_REGISTRIES = ("objaverse",)
+ROBOCASA_ASSET_REVISIONS = {
+    "robocasa/robocasa-assets": "1b92c3d02ca4354984fec961357db0bff7b32166",
+    "nvidia/PhysicalAI-Kitchen-Assets": "420a04af939c34873e6839a586b70844baf28aab",
+}
 
 
 class RoboCasaError(RuntimeError):
@@ -155,7 +159,7 @@ def system_info() -> RoboCasaSystemInfo:
 def _download_assets() -> None:
     """Download the RoboCasa kitchen assets (textures, fixtures, objects).
 
-    Assets are NOT baked into the image and download at runtime from the
+    Large kitchen archives are not baked and download at runtime from the
     operator's entitled Hugging Face identity. This mirrors the upstream
     ``download_kitchen_assets.py`` registry but skips its interactive prompt so
     it can run inside the service. Missing assets are the usual cause of a
@@ -168,8 +172,8 @@ def _download_assets() -> None:
     """
     try:
         from huggingface_hub import hf_hub_download
-        from zipfile import ZipFile
         from pathlib import Path as _Path
+        from npa.workbench.robocasa.asset_archives import extract_asset_archive
 
         # Locate the package WITHOUT importing its eager object catalog.
         assets_root = _Path(_assets_root())
@@ -223,12 +227,10 @@ def _download_assets() -> None:
                 repo_id=repo_id,
                 repo_type="dataset",
                 filename=filename,
-                revision="main",
+                revision=ROBOCASA_ASSET_REVISIONS[repo_id],
             )
             dest = assets_root if extract_to == "." else assets_root / extract_to
-            dest.mkdir(parents=True, exist_ok=True)
-            with ZipFile(zip_path, "r") as zf:
-                zf.extractall(path=dest)
+            extract_asset_archive(_Path(zip_path), dest)
 
         for repo_id, filename, extract_to, marker_dir in standard:
             marker_path = assets_root / marker_dir
@@ -803,17 +805,33 @@ def kitchen_policy_eval(
     return result
 
 
-def _write_video(frames: list[Any], path: Path) -> Path | None:
-    """Write frames to an MP4 using imageio's ffmpeg backend when available."""
+def _write_video(frames: list[Any], path: Path) -> Path:
+    """Encode actual frames with the pinned PyAV runtime; fail on missing output."""
     if not frames:
-        return None
-    try:
-        import imageio
+        raise RoboCasaError("RoboCasa produced no frames for its required video")
+    import av
 
-        imageio.mimsave(path, frames, fps=20)
+    first = np.asarray(frames[0])
+    if first.ndim != 3 or first.shape[2] != 3 or first.dtype != np.uint8:
+        raise RoboCasaError("RoboCasa video frames must be uint8 RGB images")
+    try:
+        with av.open(str(path), mode="w") as video:
+            stream = video.add_stream("mpeg4", rate=20)
+            stream.width, stream.height = first.shape[1], first.shape[0]
+            stream.pix_fmt = "yuv420p"
+            for frame in frames:
+                array = np.asarray(frame)
+                if array.shape != first.shape or array.dtype != np.uint8:
+                    raise RoboCasaError("RoboCasa video frame dimensions or dtype changed")
+                for packet in stream.encode(av.VideoFrame.from_ndarray(array, format="rgb24")):
+                    video.mux(packet)
+            for packet in stream.encode():
+                video.mux(packet)
+        if not path.is_file() or path.stat().st_size == 0:
+            raise ValueError("video encoder produced no artifact")
         return path
-    except Exception:  # pragma: no cover - ffmpeg backend may be absent.
-        return None
+    except (OSError, ValueError, av.FFmpegError) as exc:
+        raise RoboCasaError("RoboCasa video encoding failed") from exc
 
 
 def _sha256_file(path: Path) -> str:
@@ -924,6 +942,7 @@ def _execution_provenance(
         "schema": "npa.robocasa.execution_provenance.v1",
         "generator": "robocasa",
         "simulator": "mujoco",
+        "requested_asset_revisions": dict(ROBOCASA_ASSET_REVISIONS),
         "capability": request.capability,
         "environment_ids": [str(item) for item in env_ids],
         "execution_path": (

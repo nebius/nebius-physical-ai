@@ -1,110 +1,90 @@
-# npa-robocasa: RoboCasa kitchen-task simulation as a first-class workbench tool.
-#
-# Built independently on the CUDA 12.4 base that the live-accepted RoboCasa BYOF
-# evidence used (nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04), NOT on the
-# purpose-built SONIC MuJoCo application image. RoboCasa and robosuite are
-# MIT; accepted BYOF results do not qualify this first-class image's bytes.
-#
-# What IS baked (inherited-layer redistribution review remains outstanding):
-#   * CUDA 12.4/cuDNN development Ubuntu 22.04 base
-#   * RoboCasa source at the v1.0 tag (MIT; tag is not an immutable commit pin)
-#   * robosuite at the pinned commit (MIT)
-#   * MuJoCo 3.3.1, Gymnasium 0.29.1, and the OSS Python closure
-#
-# What is NOT baked:
-#   * Kitchen assets (textures, fixtures, objects) — downloaded at run time by
-#     the documented download_kitchen_assets script under the operator's own
-#     network access. No model weights are baked.
-#   * Any credentials, tokens, or EULA acceptance.
-ARG BASE_IMAGE=nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04
-FROM --platform=linux/amd64 ${BASE_IMAGE}
+# Pinned RoboCasa simulation service; large kitchen archives remain runtime fetches.
+FROM nvidia/cuda:13.0.2-base-ubuntu24.04@sha256:2ab6381d970b211fb93853796dc6707eb8a72575a375c422b17cf4d8b2641701
 
-ARG ROBOCASA_REPO_URL=https://github.com/robocasa/robocasa.git
-ARG ROBOCASA_REPO_REF=v1.0
-ARG ROBOSUITE_COMMIT=85abee228d1c43ab1939bce33028099945d453b4
+ARG NPA_SOURCE_SHA
 ARG ROBOCASA_VERSION=0.1.0
-
 LABEL npa.tool="robocasa" \
       npa.version="${ROBOCASA_VERSION}" \
-      npa.base_image="${BASE_IMAGE}" \
-      npa.runtime_user="ubuntu" \
-      npa.cuda_architectures="sm80,sm90,sm100,sm103,sm120"
+      org.opencontainers.image.revision="${NPA_SOURCE_SHA}" \
+      org.opencontainers.image.licenses="MIT AND Apache-2.0 AND BSD-3-Clause AND CC-BY-4.0"
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PIP_BREAK_SYSTEM_PACKAGES=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
     MUJOCO_GL=egl \
     PYOPENGL_PLATFORM=egl \
     NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics \
     ROBOCASA_PORT=8791 \
-    PYTHONPATH=/app \
-    NUMBA_CACHE_DIR=/tmp/numba_cache \
-    PATH=/opt/robocasa/venv/bin:$PATH
+    ROBOCASA_AUTH_MODE=token \
+    NPA_BAKED_PYTHON=/opt/npa-venv/bin/python \
+    NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA} \
+    NUMBA_CACHE_DIR=/workspace/.cache/numba \
+    HF_HOME=/workspace/.cache/huggingface \
+    PATH=/opt/npa-venv/bin:${PATH}
 
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 USER root
-
-# System deps for EGL rendering and the Python build toolchain.
-RUN apt-get update \
-    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-        python3 python3-dev python3-pip python3-venv build-essential git \
-        software-properties-common ca-certificates curl \
-        fuse netcat-openbsd pciutils procps wget \
-        libegl1 libgl1 libglvnd0 libegl1-mesa-dev \
-    && add-apt-repository -y ppa:deadsnakes/ppa \
+RUN [[ "$NPA_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+RUN rm -f /etc/apt/sources.list.d/*.list \
     && apt-get update \
-    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-        python3.12 python3.12-dev python3.12-venv \
-    && rm -rf /var/lib/apt/lists/* \
-    && python3.12 -m venv /opt/robocasa/venv
+    && apt-get upgrade -y --no-install-recommends \
+    && apt-get install -y --no-install-recommends \
+       ca-certificates curl python3.12 python3.12-venv \
+       libegl1 libgl1 libglvnd0 libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/* /var/cache/apt/* \
+    && python3.12 -m venv /opt/npa-venv
 
-WORKDIR /opt/robocasa
+COPY docker/workbench/robocasa/requirements.lock /opt/robocasa-requirements.lock
+COPY docker/workbench/robocasa/policy-requirements.lock /opt/robocasa-policy-requirements.lock
+COPY docker/workbench/curobo/filter_cudnn_runtime.py /opt/filter_cudnn_runtime.py
+# The base has no cuDNN. Filter the exact wheel before its installation layer
+# exists, retaining the unmodified runtime libraries and every license notice.
+RUN pip install --no-cache-dir --no-compile --require-hashes \
+      --extra-index-url https://download.pytorch.org/whl/cu130 \
+      -r /opt/robocasa-requirements.lock \
+    && mkdir -p /usr/share/doc/npa-robocasa \
+    && python /opt/filter_cudnn_runtime.py > /usr/share/doc/npa-robocasa/cudnn-runtime.json \
+    && pip install --no-cache-dir --no-compile --no-deps --require-hashes \
+      -r /opt/robocasa-policy-requirements.lock
 
-# Preserve selected BYOF version constraints; this is not a hash-locked closure.
-# RoboCasa requires Gymnasium 0.29.1. LeRobot's broad environment dependency
-# requests Gymnasium >=1.1.1, but exact-checkpoint ACT inference uses neither
-# LeRobot environment wrappers nor that newer API. Keep RoboCasa's known-good
-# pin and install only the LeRobot policy package here.
-RUN python -m pip install --no-cache-dir --upgrade pip "setuptools>=71,<81" wheel \
-    && python -m pip install --no-cache-dir \
-        "git+https://github.com/ARISE-Initiative/robosuite.git@${ROBOSUITE_COMMIT}" \
-    && python -m pip install --no-cache-dir \
-        numpy==2.2.5 numba==0.61.2 scipy==1.15.3 mujoco==3.3.1 pygame Pillow \
-        "opencv-python-headless>=4.9,<4.14" pyyaml pynput tqdm termcolor "imageio[ffmpeg]" \
-        h5py lxml hidapi "gymnasium==0.29.1" huggingface_hub \
-        "fastapi==0.136.1" "uvicorn[standard]==0.38.0" "pydantic==2.13.4" \
-        "boto3==1.42.9" "httpx>=0.27" \
-        "datasets>=4.0.0,<5.0.0" "accelerate>=1.10.0,<2.0.0" \
-        "packaging>=24.2,<26.0" "einops>=0.8.0,<0.9.0" \
-        "draccus==0.10.0" "safetensors>=0.4.3,<1.0.0" \
-        "av>=15.0.0,<16.0.0" "jsonlines>=4.0.0,<5.0.0" \
-        "deepdiff>=7.0.1,<9.0.0" "diffusers>=0.27.2,<0.36.0" \
-        "pyserial>=3.5,<4.0" \
-    && python -m pip install --no-cache-dir --no-deps "lerobot==0.5.1" \
-    && python -m pip install --no-cache-dir --upgrade \
-        "torch==2.12.1" "torchvision==0.27.1"
+# The shared CUDA 13 wheel closure needs NVSHMEM's product supplement and
+# third-party notices in addition to the wheel's embedded CUDA agreement.
+RUN curl --fail --location https://developer.download.nvidia.com/compute/nvshmem/redist/libnvshmem/LICENSE.txt \
+      -o /usr/share/doc/npa-robocasa/NVSHMEM-LICENSE.txt \
+    && echo '43a87c0ff94ce3196011ff75e17fbee96933c9e1d511557659ece8a326f95e8f  /usr/share/doc/npa-robocasa/NVSHMEM-LICENSE.txt' | sha256sum -c -
 
-# Install source without resolving its dependencies a second time.
-RUN git clone --depth 1 --branch ${ROBOCASA_REPO_REF} \
-      ${ROBOCASA_REPO_URL} /opt/robocasa/source \
-    && python -m pip install --no-cache-dir --no-deps -e /opt/robocasa/source
+# Preserve upstream code, bundled asset bytes, README credits and notices. The
+# separate trainer extras are excluded; the selected ACT subset is documented.
+RUN curl --fail --location https://codeload.github.com/ARISE-Initiative/robosuite/tar.gz/85abee228d1c43ab1939bce33028099945d453b4 \
+      -o /tmp/robosuite.tar.gz \
+    && echo '2369a5c3385bf122eeff3362e7f70aacf1d10436e860d12026ecd10b37c152cd  /tmp/robosuite.tar.gz' | sha256sum -c - \
+    && mkdir -p /opt/robosuite/source \
+    && tar -xzf /tmp/robosuite.tar.gz --strip-components=1 -C /opt/robosuite/source \
+    && pip install --no-cache-dir --no-compile --no-deps --no-build-isolation -e /opt/robosuite/source \
+    && curl --fail --location https://codeload.github.com/robocasa/robocasa/tar.gz/8f3c96ec8d1bfcd8126cad2bca887da98d30e997 \
+      -o /tmp/robocasa.tar.gz \
+    && echo '1893328b5222ac0443287e593c161c696c77e3f8018f6d9f6bd900871d2caad3  /tmp/robocasa.tar.gz' | sha256sum -c - \
+    && mkdir -p /opt/robocasa/source \
+    && tar -xzf /tmp/robocasa.tar.gz --strip-components=1 -C /opt/robocasa/source \
+    && pip install --no-cache-dir --no-compile --no-deps --no-build-isolation -e /opt/robocasa/source \
+    && rm /tmp/robosuite.tar.gz /tmp/robocasa.tar.gz
 
-# Fail the image build if the exact held-out evaluator import path is incomplete.
-RUN python -c "import gymnasium; assert gymnasium.__version__ == '0.29.1'; from lerobot.policies.act.modeling_act import ACTPolicy; from lerobot.configs.policies import PreTrainedConfig; from lerobot.policies.factory import make_pre_post_processors"
+# Install the real NPA package, including the service's clients/storage and CLI
+# path validation imports; a synthetic namespace containing one tool is incomplete.
+COPY pyproject.toml README.md /opt/npa-src/
+COPY src/npa /opt/npa-src/src/npa
+RUN pip install --no-cache-dir --no-compile --no-deps --no-build-isolation /opt/npa-src \
+    && python -c "import gymnasium; assert gymnasium.__version__ == '0.29.1'; from lerobot.policies.act.modeling_act import ACTPolicy; from lerobot.configs.policies import PreTrainedConfig; from lerobot.policies.factory import make_pre_post_processors; from npa.workbench.robocasa.service import create_app; assert create_app().title == 'NPA RoboCasa'" \
+    && rm -rf /root/.cache /tmp/pip-*
 
-# Copy the shared workbench implementation into the image.
-RUN mkdir -p /app/npa/workbench
-RUN touch /app/npa/__init__.py /app/npa/workbench/__init__.py
-COPY src/npa/workbench/robocasa /app/npa/workbench/robocasa
-COPY src/npa/smoke/test_robocasa_functional.py /app/smoke_functional.py
+COPY --chmod=0444 docker/workbench/robocasa/REDISTRIBUTION.md docker/workbench/robocasa/ASSET-NOTICES.md docker/workbench/robocasa/LICENSE-APACHE-2.0 docker/workbench/robocasa/LICENSE-SAWYER /usr/share/doc/npa-robocasa/
+RUN (id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu) \
+    && install -d -m 0755 -o ubuntu -g ubuntu /workspace /workspace/.cache \
+    && chown -R ubuntu:ubuntu /opt/robocasa/source/robocasa/models/assets
 
-RUN id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu \
-    && chown -R ubuntu:ubuntu /app /opt/robocasa
-
-EXPOSE 8791
-
+WORKDIR /workspace
 USER ubuntu
-
+EXPOSE 8791
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-  CMD python3 -c "import os,urllib.request; p=os.environ.get('ROBOCASA_PORT','8791'); urllib.request.urlopen(f'http://127.0.0.1:{p}/health', timeout=3)" || exit 1
-
+  CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8791/health', timeout=3)"]
 CMD ["uvicorn", "npa.workbench.robocasa.service:app", "--host", "0.0.0.0", "--port", "8791"]

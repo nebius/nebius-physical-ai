@@ -52,6 +52,41 @@ def test_kuberay_explicit_separate_secret_is_accepted(monkeypatch):
     auth.require_management_auth()
 
 
+@pytest.mark.parametrize("environment,args,expected", [
+    (None, None, 16), ("1", None, 1), ("16", {"num_replicas": 2}, 2),
+])
+def test_builder_applies_replica_selection(monkeypatch, environment, args, expected):
+    monkeypatch.setenv("RAY_AUTH_MODE", "token")
+    monkeypatch.setenv("RAY_AUTH_TOKEN", "synthetic-management-secret")
+    monkeypatch.delenv("NPA_COSMOS3_VIDEO_REPLICAS", raising=False)
+    if environment is not None:
+        monkeypatch.setenv("NPA_COSMOS3_VIDEO_REPLICAS", environment)
+    captured = {}
+
+    def deployment(**options):
+        captured.update(options)
+        return lambda cls: SimpleNamespace(bind=lambda: captured)
+
+    ray = ModuleType("ray")
+    ray.serve = SimpleNamespace(deployment=deployment, ingress=lambda api: lambda cls: cls)
+    monkeypatch.setitem(sys.modules, "ray", ray)
+    router = ModuleType("npa.workbench.cosmos.nano_video_router")
+    router.LeastOutstandingRouter = type("LeastOutstandingRouter", (), {})
+    monkeypatch.setitem(sys.modules, router.__name__, router)
+    application = server.app(args)
+    assert application["num_replicas"] == expected
+    assert application["ray_actor_options"]["num_gpus"] == 1
+    assert application["max_ongoing_requests"] == 1
+
+
+@pytest.mark.parametrize("value", [0, -1, True, 1.5, "auto", ""])
+def test_builder_rejects_invalid_replica_selection(monkeypatch, value):
+    monkeypatch.setenv("RAY_AUTH_MODE", "token")
+    monkeypatch.setenv("RAY_AUTH_TOKEN", "synthetic-management-secret")
+    with pytest.raises(ValueError, match="positive integer"):
+        server.app({"num_replicas": value})
+
+
 @pytest.mark.parametrize("kind", ["public", "symlink", "fifo", "empty"])
 def test_unsafe_or_empty_management_file_is_rejected(tmp_path, monkeypatch, kind):
     path = tmp_path / "token"

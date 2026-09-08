@@ -34,10 +34,10 @@ config:
     rm /tmp/npa-openpi-sm100.cu
   workload: solution-smoke
   smoke_command: |
-    test "${NPA_OPENPI_ACCEPT_GEMMA_TERMS:-}" = "YES" || {
+    /opt/venv/bin/python -c 'import os, sys; value = os.environ.get("NPA_OPENPI_ACCEPT_GEMMA_TERMS", "YES").strip().upper(); sys.exit(0 if value in {"Y", "YES", "1", "TRUE"} else 64)' || {
       printf '%s\n' '{"schema":"npa.workbench.openpi.terms-gate.v1","status":"refused","exit_code":64,"checkpoint_fetch_started":false,"model_import_started":false}' \
         > "${NPA_SMOKE_OUTPUT_DIR}/openpi_terms_gate.json"
-      echo "OpenPI checkpoint access requires scoped Gemma terms acceptance" >&2
+      echo "OpenPI runtime use was opted out or has an invalid Gemma acceptance value" >&2
       exit 64
     }
     export OPENPI_DATA_HOME="/workspace/openpi-cache/${NPA_BYOF_RUN_ID}"
@@ -73,9 +73,6 @@ config:
         "pi05_droid_jointpos_polaris_direct_infer",
         "pi05_droid_jointpos_polaris_served_infer",
     }
-
-    if os.environ.get("NPA_OPENPI_ACCEPT_GEMMA_TERMS") != "YES":
-        raise SystemExit("scoped Gemma terms acceptance was not forwarded")
 
     output_dir = Path(os.environ["NPA_SMOKE_OUTPUT_DIR"])
     output_dir.mkdir(parents=True, exist_ok=True)

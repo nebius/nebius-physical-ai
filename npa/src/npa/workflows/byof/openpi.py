@@ -1,8 +1,8 @@
 """OpenPI BYOF runtime-access contract.
 
-OpenPI's pi0.5 checkpoints contain Gemma-derived weights. Acceptance is an
-operator decision scoped to a run: it must never be rendered into workflow
-YAML, embedded in an image, or persisted in project credentials.
+OpenPI's public pi0.5 checkpoint contains Gemma-derived weights. The product
+defaults to runtime use under the named terms, which bind by conduct. An explicit
+opt-out stops access; no acceptance is embedded in images or saved credentials.
 """
 
 from __future__ import annotations
@@ -30,14 +30,27 @@ def is_openpi_request(
 
 
 def require_openpi_terms(env: dict[str, str] | None = None) -> None:
-    """Fail closed unless the operator explicitly accepted both named policies."""
+    """Apply OpenPI's runtime default and reject an explicit opt-out.
+
+    Args:
+        env: Runtime environment, or the current process environment when omitted.
+
+    Returns:
+        None when the default or an affirmative value permits runtime use.
+
+    Raises:
+        ValueError: The operator opted out or supplied an invalid value.
+    """
 
     runtime_env = os.environ if env is None else env
-    if runtime_env.get(OPENPI_TERMS_ENV) != OPENPI_TERMS_ACCEPTED_VALUE:
-        raise ValueError(
-            "OpenPI pi0.5 requires scoped operator acceptance before image build "
-            "or checkpoint download. Review the Gemma Terms of Use "
-            f"({GEMMA_TERMS_URL}) and Gemma Prohibited Use Policy "
-            f"({GEMMA_PROHIBITED_USE_URL}), then set "
-            f"{OPENPI_TERMS_ENV}={OPENPI_TERMS_ACCEPTED_VALUE} for this run only."
-        )
+    value = runtime_env.get(OPENPI_TERMS_ENV, OPENPI_TERMS_ACCEPTED_VALUE).strip().upper()
+    if value in {"Y", "YES", "1", "TRUE"}:
+        return
+    reason = "was explicitly opted out" if value in {"", "N", "NO", "0", "FALSE"} else "has an invalid runtime acceptance value"
+    raise ValueError(
+        f"OpenPI pi0.5 {reason}; checkpoint access has not started. "
+        f"Gemma Terms of Use ({GEMMA_TERMS_URL}) and Gemma Prohibited Use Policy "
+        f"({GEMMA_PROHIBITED_USE_URL}) apply to runtime use. To resume, unset "
+        f"{OPENPI_TERMS_ENV} or set {OPENPI_TERMS_ENV}={OPENPI_TERMS_ACCEPTED_VALUE} "
+        "for this run only. This does not grant redistribution rights."
+    )

@@ -41,6 +41,39 @@ def test_plan_pins_primary_contract() -> None:
     assert plan["schema_version"] == benchmark.SCHEMA_VERSION
 
 
+def test_replacement_runtime_digest_is_recorded_without_changing_workload(monkeypatch):
+    expected = "ghcr.io/example/npa-cosmos3-super-benchmark@sha256:" + "a" * 64
+    historical = benchmark.benchmark_plan(output_path="/tmp/results", topologies="1x8")
+    monkeypatch.setenv("NPA_COSMOS3_BENCHMARK_RUNTIME_IMAGE", expected)
+    replacement = benchmark.benchmark_plan(output_path="/tmp/results", topologies="1x8")
+    assert replacement["runtime_image"] == expected
+    historical.pop("runtime_image")
+    replacement.pop("runtime_image")
+    assert replacement == historical
+
+
+@pytest.mark.parametrize("image", ["example/image:latest", "", "repo@sha256:abc"])
+def test_replacement_runtime_requires_immutable_digest(monkeypatch, image):
+    monkeypatch.setenv("NPA_COSMOS3_BENCHMARK_RUNTIME_IMAGE", image)
+    with pytest.raises(benchmark.Cosmos3SuperBenchmarkError, match="immutable image"):
+        benchmark.benchmark_plan(output_path="/tmp/results", topologies="1x8")
+
+
+@pytest.mark.parametrize("selection", [None, "YES"])
+def test_selected_runtime_defaults_to_noninteractive_delivery(monkeypatch, selection):
+    if selection is not None:
+        monkeypatch.setenv("NPA_COSMOS3_ACCEPT_NVIDIA_SOFTWARE_LICENSE", selection)
+    benchmark._require_runtime_terms()
+
+
+@pytest.mark.parametrize("selection", ["NO", "", "yes", "invalid"])
+def test_explicit_runtime_opt_out_or_invalid_value_stops_before_gpu(monkeypatch, selection):
+    monkeypatch.setenv("NPA_COSMOS3_ACCEPT_NVIDIA_SOFTWARE_LICENSE", selection)
+    monkeypatch.setattr(benchmark, "_require_gpu_family", lambda *a, **kw: pytest.fail("GPU"))
+    with pytest.raises(benchmark.Cosmos3SuperBenchmarkError, match="declined|YES or NO"):
+        benchmark.run_benchmark(output_path="/tmp/results", topologies="1x8")
+
+
 def test_h200_plan_changes_only_hardware_identity() -> None:
     b200 = benchmark.benchmark_plan(
         output_path="s3://example-bucket/b200/", topologies="1x8,2x4,4x2,8x1"
@@ -101,10 +134,10 @@ def test_h200_single_gpu_plan_is_tp1_and_explicitly_not_a_paper_cell() -> None:
     ],
 )
 def test_h200_single_gpu_suite_rejects_scope_drift(
-    kwargs: dict, message: str
+    kwargs: dict, message: str, tmp_path: Path
 ) -> None:
     options = {
-        "output_path": "/tmp/results",
+        "output_path": str(tmp_path / "results"),
         "topologies": "1x1",
         "attempts": 24,
         "gpu_family": "H200",
@@ -178,9 +211,11 @@ def test_public_prompt_asset_normalizes_only_terminal_newline() -> None:
         ({"topologies": "1x8,8x1"}, "fixes topologies"),
     ],
 )
-def test_full_suite_rejects_contract_drift(kwargs: dict, message: str) -> None:
+def test_full_suite_rejects_contract_drift(
+    kwargs: dict, message: str, tmp_path: Path
+) -> None:
     options = {
-        "output_path": "/tmp/results",
+        "output_path": str(tmp_path / "results"),
         "topologies": "1x8,2x4,4x2,8x1",
         "attempts": 24,
         "suite": "b200-full",
@@ -190,17 +225,17 @@ def test_full_suite_rejects_contract_drift(kwargs: dict, message: str) -> None:
         benchmark.benchmark_plan(**options)
 
 
-def test_plan_rejects_unqualified_gpu_family() -> None:
+def test_plan_rejects_unqualified_gpu_family(tmp_path: Path) -> None:
     with pytest.raises(benchmark.Cosmos3SuperBenchmarkError, match="choose from"):
         benchmark.benchmark_plan(
-            output_path="/tmp/results", topologies="1x8", gpu_family="H100"
+            output_path=str(tmp_path / "results"), topologies="1x8", gpu_family="H100"
         )
 
 
-def test_plan_rejects_uneven_service_distribution() -> None:
+def test_plan_rejects_uneven_service_distribution(tmp_path: Path) -> None:
     with pytest.raises(benchmark.Cosmos3SuperBenchmarkError, match="divide evenly"):
         benchmark.benchmark_plan(
-            output_path="/tmp/results", topologies="8x1", attempts=23
+            output_path=str(tmp_path / "results"), topologies="8x1", attempts=23
         )
 
 

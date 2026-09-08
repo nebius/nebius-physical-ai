@@ -1,6 +1,16 @@
 # Public image publication audit — 2026-09-07
 
-The claim is correct about the current public release inventory: **32 of 37
+The findings below record the September 7 baseline. The subsequent publication
+work replaces the Cosmos inherited vendor containers with runtime-fetch
+bootstraps, replaces OpenPI/RoboCasa cuDNN development ancestry, pins the
+RoboCasa closure, and repairs its package import defect. These replacement
+sources are eligible for guarded public development builds; they remain outside
+the supported-release selection pending qualification. Historical tags, scan
+results and private runtime evidence do not qualify the replacement bytes.
+
+## September 7 baseline
+
+The claim was correct about the audited public release inventory: **32 of 37
 canonical images are selected for publication, and all 32 accepted release tags
 resolve anonymously to their recorded digests**. It needs a narrower statement
 about the other five: four anonymous probes received HTTP 403, which cannot

@@ -83,8 +83,11 @@ pip download --no-deps --no-binary :all: <pkg>   # then read the sdist metadata
 npa/.venv/bin/python -c "import importlib.metadata as m; print(m.metadata('<pkg>')['License'])"
 ```
 
-A package whose `License` field literally reads *"NVIDIA Proprietary Software"*
-settles the question regardless of what the GitHub repo's badge says.
+A package whose `License` field reads *"NVIDIA Proprietary Software"* requires
+the applicable vendor grant to be checked separately from the GitHub source
+license. Proprietary ownership alone does not prohibit redistribution: CUDA and
+cuDNN enumerate redistribution permissions and conditions. Identify the exact
+files, versions, notices and applicable grant before deciding what may be baked.
 
 ### 3. Ask the redistribution question explicitly
 

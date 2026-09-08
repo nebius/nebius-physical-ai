@@ -99,6 +99,20 @@ def test_openpi_runtime_acceptance_uses_secret_channel(monkeypatch) -> None:
     ]
 
 
+def test_openpi_unset_default_requires_no_secret(monkeypatch) -> None:
+    module = _load_module()
+    monkeypatch.delenv("NPA_OPENPI_ACCEPT_GEMMA_TERMS", raising=False)
+    assert module.resolve_secret_envs([], solution_name="openpi") == []
+
+
+@pytest.mark.parametrize("value", ["", "NO", "invalid"])
+def test_openpi_opt_out_is_not_dropped_before_remote_default(monkeypatch, value) -> None:
+    module = _load_module()
+    monkeypatch.setenv("NPA_OPENPI_ACCEPT_GEMMA_TERMS", value)
+    with pytest.raises(ValueError, match="OpenPI pi0.5"):
+        module.resolve_secret_envs([], solution_name="openpi")
+
+
 def test_one_solutions_operator_answers_do_not_widen_anothers(monkeypatch) -> None:
     """Vendor answers are per-image, and a shared tuple made them global.
 

@@ -20,7 +20,9 @@ REAL_RUNTIME = nano_video_server.NanoVideoRuntime
 
 def command_source() -> str:
     argv = shlex.split(load_manifest()["cosmos3-nano-video"].golden_eval.command)
-    assert argv == ["python", "-m", "npa.workbench.cosmos.nano_video_golden"]
+    assert argv == [
+        "npa-cosmos3-nano-bootstrap", "python", "-m", "npa.workbench.cosmos.nano_video_golden"
+    ]
     return Path(nano_video_golden.__file__).read_text()
 
 

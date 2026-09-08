@@ -93,6 +93,10 @@ def resolve_secret_envs(
     """
 
     names = list(explicit if explicit is not None else DEFAULT_SECRET_ENVS)
+    if solution_name.strip() == "openpi":
+        from npa.workflows.byof.openpi import require_openpi_terms
+
+        require_openpi_terms()
     # Operator acceptance is runtime state, not workflow configuration. Always
     # carry an explicitly set gate through SkyPilot's redacted secret channel,
     # even when a caller supplies an otherwise explicit secret allowlist.

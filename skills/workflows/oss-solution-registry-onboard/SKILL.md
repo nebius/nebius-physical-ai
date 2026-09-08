@@ -264,9 +264,12 @@ requests must be finite `float64[T>=5,8]`. Training and held-out evaluation must
 consume machine-verifiably disjoint samples, and evaluation must consume the
 exact independently read-back training checkpoint.
 
-This checkpoint contains Gemma-derived material. Require the exact run-scoped
-`NPA_OPENPI_ACCEPT_GEMMA_TERMS=YES` gate before build or download; forward it
-only through the secret channel and never bake/persist it. The image contains
+This checkpoint contains Gemma-derived material and its terms apply on use.
+Authorized noninteractive execution needs no repeated local acceptance or
+artificial HF token for public GCS delivery. `NPA_OPENPI_ACCEPT_GEMMA_TERMS` is
+an optional runtime choice: explicit negative/empty values opt out and invalid
+values fail before download. Forward an explicit choice only at runtime; never
+bake or persist acceptance state. The image contains
 the pinned Apache-2.0 source and CUDA/JAX runtime, not checkpoint bytes. A tiny
 deterministic compatible dataset is valid only for the real optimizer and
 held-out offline operational gate. It is not convergence evidence. Do not claim

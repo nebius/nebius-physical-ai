@@ -144,18 +144,59 @@ image (`public` | `restricted`), enforced by
   releases are bound to exact public development digests with accepted real-GPU
   evidence.
 
-The quarantined OpenPI and RoboCasa candidates still inherit `cudnn-devel`
-bases. Their `public` metadata is publication intent, not proof that every
-inherited SDK file may be redistributed. Review the exact installed payload and
-its bundled terms against the [cuDNN supplement](https://docs.nvidia.com/deeplearning/cudnn/backend/latest/reference/eula.html)
-before promotion; runtime model acceptance does not resolve that image boundary.
-RoboCasa v1.0 and the selected robosuite commit use MIT licenses with separate
-MuJoCo Apache-2.0 notices, rather than the Apache-only description in older
-packaging records. Its Dockerfile selects a source tag, a base tag, and several
-floating dependencies, so accepted BYOF results do not establish an immutable
-dependency closure or qualify the separate first-class service image. See the
-[RoboCasa source license](https://github.com/robocasa/robocasa/blob/v1.0/LICENSE)
-and [pinned robosuite license](https://github.com/ARISE-Initiative/robosuite/blob/85abee228d1c43ab1939bce33028099945d453b4/LICENSE).
+The replacement OpenPI and RoboCasa recipes use digest-pinned CUDA runtime
+bases without inherited cuDNN SDK layers. Their installed cuDNN wheels are
+filtered before the installation layer is committed; exact-layer verifiers
+require the reviewed unmodified shared libraries, notices and narrowly identified
+open-source Torch adapters. OpenPI's compiler is a separate build stage; only
+NPA's CUDA probes and the expressly redistributable Linux `cuobjdump` cross
+that boundary. The [CUDA agreement](https://docs.nvidia.com/cuda/eula/index.html)
+and [cuDNN supplement](https://docs.nvidia.com/deeplearning/cudnn/backend/latest/reference/eula.html)
+must be read with the included version-specific notices. A proprietary license
+label alone neither permits nor prohibits redistribution.
+
+The Nano video and Super benchmark replacement recipes inherit the accepted
+zero-payload Cosmos serving bootstrap. CUDA/vLLM components and model weights
+are fetched into the operator's runtime cache. This change does not authorize
+redistributing the historical vendor-container layers. All five candidates
+remain outside the supported-release selection until their corresponding
+qualification is accepted. Reviewed `dev-<full-source-SHA>` builds can be public
+after the pre-publication gates; substantive validation then runs on that exact
+public digest before any supported promotion.
+
+RoboCasa and robosuite code use MIT licenses. Bundled RoboCasa source assets
+carry CC BY 4.0 attribution; the selected robot assets retain their Apache/BSD
+notices. Larger simulation assets are fetched at runtime from pinned revisions.
+The complete installed NPA package replaces the broken partial package copy.
+See each candidate's Dockerfile, redistribution record and asset notices for
+the precise source and dependency boundary.
+
+## Public development evidence and retention
+
+Before building, the publisher refuses every nonempty private destination,
+including untagged versions: those images remain addressable by digest, and
+changing package visibility would expose them too. The complete paginated
+inventory must be well formed. Retry cleanup requires separate proof that each
+removed version belongs to the failed run; an untagged version is not presumed
+to be a harmless attestation.
+
+The trusted publisher writes sanitized receipts for cuRobo, OpenPI, RoboCasa,
+Nano video and Super benchmark with `npa/scripts/public_image_validation_receipt.py`.
+The helper summarizes prior successful checks; it executes no scanner and grants
+no publication permission. The pre-publication receipt follows the image scans
+and SBOM. The post-publication receipt follows exact-digest verification,
+attestations and anonymous access. Receipts retain validated hashes, coverage
+counts and status values; raw reports, finding text and confidentiality policy
+stay private. The saved archive manifest and registry manifest may serialize
+layers differently, so their digests remain distinct and config/layer identity
+binds the inspected bytes.
+
+A development tag with successful substantive workload evidence may remain
+public when its immutable reference, source SHA, digest, tested scope and
+limitations are recorded in the publication report. Preserve such documented
+development results so their pull references remain usable. This policy does
+not promote them to supported release tags or change accepted release digests.
+Failed builds still follow the exact-owned-version cleanup policy.
 
 ## Manual gate audit (2026-08-16)
 
@@ -173,7 +214,7 @@ Neither mechanism grants redistribution rights or enables privacy/telemetry.
 | GR00T deployment | `nvidia/GR00T-N1.7-3B`, `nvidia/Cosmos-Reason2-2B` | Both runtime dependencies are probed before every deploy/update path. Gated access is determined only by the operator's HF token and actual upstream permission; there is no skip or NPA terms flag. |
 | Cosmos and Physical AI Data Factory | `nvidia/Cosmos-Transfer2.5-2B`, `nvidia/Cosmos-Reason2-2B`, `nvidia/Cosmos-Reason2-8B`, `nvidia/Cosmos-Reason1-7B`, `nvidia/Cosmos3-Nano`, `nvidia/Cosmos-Guardrail1`, `nvidia/Cosmos-1.0-Guardrail`, `nvidia/Cosmos-1.0-Diffusion-7B-Text2World` | Weights stay out of image layers. Public repositories may be fetched anonymously; gated repositories require a successful upstream HF probe with the operator's token. Deploy has no bypass or duplicate consent flag. |
 | Other runtime-fetched NVIDIA assets | `nvidia/GEAR-SONIC`, `nvidia/PhysicalAI-NuRec-PPISP`; NuRec NRE runtime | Public HF assets remain anonymous. NuRec's NGC-hosted NRE runtime requires a real `NGC_API_KEY` repository probe; no local EULA boolean substitutes for vendor access. |
-| OpenPI / Gemma | `pi05_droid_jointpos_polaris` | The exact operator-confirmed `NPA_OPENPI_ACCEPT_GEMMA_TERMS=YES` value is forwarded only to accepted runtime jobs; refusal is attempt-scoped, and acceptance, weights, and credentials are never baked or persisted. |
+| OpenPI / Gemma | `pi05_droid_jointpos_polaris` | Public GCS delivery requires no artificial HF token or repeated local acceptance. Authorized noninteractive execution is the default; an explicit negative/empty runtime choice opts out and invalid values fail before model fetch. Acceptance state, weights and credentials are never baked. Gemma terms still apply. |
 | Other non-NVIDIA comparison surfaces | `Wan-AI/Wan2.2-TI2V-5B`, LeRobot, Qwen, self-hosted Llama | No local terms boolean or interactive confirmation duplicates upstream entitlement; external vendor terms still apply at the source. |
 | Separate controls retained | privacy/telemetry, image redistribution classification, third-party dataset delivery | Privacy and telemetry remain independently off by default. Packaging contracts and built-image scans still control redistribution. The public PAIDF starter asset remains `acceptance_required: false`; its generic third-party dataset-license mechanism is separate from NVIDIA image/model access. |
 

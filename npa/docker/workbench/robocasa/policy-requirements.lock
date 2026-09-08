@@ -1,0 +1,5 @@
+# Policy-only wheel: its complete trainer/environment dependency set is not
+# installed. The reviewed subset and compatibility limits are documented in
+# REDISTRIBUTION.md and checked by the exact ACT import probe during the build.
+lerobot==0.5.1 \
+    --hash=sha256:bbd11021023fde0947b6d1ff1c52fe91c86a28ab09a96359892f3ef7e8866862

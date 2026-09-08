@@ -14,6 +14,7 @@ from npa.orchestration.npa_workflow.blueprints import (
 from npa.orchestration.npa_workflow.spec import load_spec
 from npa.orchestration.npa_workflow.submit_matrix import (
     SUBMIT_LIVE_MATRIX,
+    SubmitLiveCase,
     gpu_submit_cases,
     one_shot_submit_cases,
     runtime_submit_cases,
@@ -37,6 +38,11 @@ def _load_live_argv():
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
+
+
+def _load_live_submit(monkeypatch):
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[3]))
+    return importlib.import_module("tests.e2e.test_npa_workflow_submit_live_e2e")
 
 
 def test_force_accelerators_on_cpu_profiles() -> None:
@@ -373,7 +379,10 @@ def test_real_cosmos_cases_seed_an_actual_input_video(
     assert body[4:8] == b"ftyp"
 
 
-def test_matrix_cases_declare_every_secret_the_renderer_hints_at() -> None:
+@pytest.mark.parametrize("runtime_choice", [None, "NO"])
+def test_matrix_cases_declare_every_secret_the_renderer_hints_at(
+    monkeypatch, runtime_choice: str | None,
+) -> None:
     """A missing secret_env makes the CLI print an advisory line before its JSON.
 
     That line broke ``json.loads(result.output)`` in the harness and reported a
@@ -385,6 +394,11 @@ def test_matrix_cases_declare_every_secret_the_renderer_hints_at() -> None:
     from npa.orchestration.npa_workflow.skypilot_render import secret_env_hints_for_plan
 
     helpers = _load_live_helpers()
+    for name in ("NPA_COSMOS3_ACCEPT_NVIDIA_SOFTWARE_LICENSE", "NPA_OPENPI_ACCEPT_GEMMA_TERMS"):
+        if runtime_choice is None:
+            monkeypatch.delenv(name, raising=False)
+        else:
+            monkeypatch.setenv(name, runtime_choice)
     missing: list[str] = []
     for case in SUBMIT_LIVE_MATRIX:
         path = resolve_npa_workflow_spec(case.spec)
@@ -396,7 +410,8 @@ def test_matrix_cases_declare_every_secret_the_renderer_hints_at() -> None:
             assume_decision=helpers.assume_decision_for(case.spec) or None,
         )
         hints = set(secret_env_hints_for_plan(plan.steps))
-        gap = sorted(hints - set(case.secret_envs))
+        declared = set(case.secret_envs) | set(case.optional_secret_envs)
+        gap = sorted(hints - declared)
         if gap:
             missing.append(f"{case.spec}: {gap}")
     assert not missing, (
@@ -553,6 +568,95 @@ def test_wan_submit_cases_need_storage_but_not_hf_or_runtime_consent(spec: str) 
         "AWS_ACCESS_KEY_ID",
         "AWS_SECRET_ACCESS_KEY",
     }
+
+
+@pytest.mark.parametrize(
+    ("spec", "choice_env"),
+    [
+        ("cosmos3-super-b200-benchmark.yaml", "NPA_COSMOS3_ACCEPT_NVIDIA_SOFTWARE_LICENSE"),
+        ("cosmos3-super-h200-benchmark.yaml", "NPA_COSMOS3_ACCEPT_NVIDIA_SOFTWARE_LICENSE"),
+        ("cosmos3-super-h200-single-gpu.yaml", "NPA_COSMOS3_ACCEPT_NVIDIA_SOFTWARE_LICENSE"),
+        ("byof-openpi.yaml", "NPA_OPENPI_ACCEPT_GEMMA_TERMS"),
+        ("openpi-pi05-full-droid-finetune.yaml", "NPA_OPENPI_ACCEPT_GEMMA_TERMS"),
+        ("openpi-pi05-four-mode.yaml", "NPA_OPENPI_ACCEPT_GEMMA_TERMS"),
+    ],
+)
+@pytest.mark.parametrize("choice", [None, "", "NO", "YES", "invalid"])
+def test_public_runtime_matrix_forwards_only_explicit_optional_choices(
+    monkeypatch, spec: str, choice_env: str, choice: str | None,
+) -> None:
+    case = next(case for case in SUBMIT_LIVE_MATRIX if case.spec == spec)
+    assert choice_env not in case.secret_envs
+    assert "HF_TOKEN" not in case.secret_envs
+    for name in case.secret_envs:
+        monkeypatch.setenv(name, "test-required-value")
+    for name in (*case.optional_secret_envs, "HF_TOKEN"):
+        monkeypatch.delenv(name, raising=False)
+    if choice is not None:
+        monkeypatch.setenv(choice_env, choice)
+
+    args = _load_live_submit(monkeypatch)._secret_env_args(case)
+
+    expected = [*case.secret_envs]
+    if choice is not None:
+        expected.append(choice_env)
+    assert args == [part for name in expected for part in ("--secret-env", name)]
+
+
+def test_optional_secrets_preserve_existing_case_positional_fields() -> None:
+    case = SubmitLiveCase("unit.yaml", "cpu", (), True)
+
+    assert case.requires_token_factory is True
+    assert case.optional_secret_envs == ()
+
+
+def test_super_matrix_forwards_optional_hf_and_still_requires_storage(monkeypatch) -> None:
+    case = next(case for case in SUBMIT_LIVE_MATRIX if case.spec == "cosmos3-super-b200-benchmark.yaml")
+    submit = _load_live_submit(monkeypatch)
+    for name in case.secret_envs:
+        monkeypatch.setenv(name, "test-required-value")
+    monkeypatch.setenv("HF_TOKEN", "test-optional-value")
+    monkeypatch.delenv("NPA_COSMOS3_ACCEPT_NVIDIA_SOFTWARE_LICENSE", raising=False)
+
+    args = submit._secret_env_args(case)
+
+    assert args[-2:] == ["--secret-env", "HF_TOKEN"]
+    assert "test-optional-value" not in args
+    monkeypatch.delenv("AWS_SECRET_ACCESS_KEY")
+    with pytest.raises(pytest.skip.Exception, match="AWS_SECRET_ACCESS_KEY required"):
+        submit._secret_env_args(case)
+
+
+@pytest.mark.parametrize(
+    "choice_env",
+    ["NPA_COSMOS3_ACCEPT_NVIDIA_SOFTWARE_LICENSE", "NPA_OPENPI_ACCEPT_GEMMA_TERMS"],
+)
+def test_requested_empty_runtime_choice_fails_credential_resolution(
+    monkeypatch, choice_env: str,
+) -> None:
+    from types import SimpleNamespace
+
+    from npa.clients.credentials import CredentialsConfig
+    from npa.orchestration.npa_workflow import submit_credentials
+
+    monkeypatch.setattr(
+        submit_credentials, "resolve_project_storage",
+        lambda project: SimpleNamespace(
+            aws_access_key_id="", aws_secret_access_key="",
+            endpoint_url="", checkpoint_bucket="",
+        ),
+    )
+    monkeypatch.setattr(
+        submit_credentials, "load_credentials",
+        lambda **kwargs: CredentialsConfig(),
+    )
+
+    resolved = submit_credentials.resolve_submit_credentials(
+        requested=(choice_env,), environ={choice_env: ""},
+    )
+
+    assert resolved.missing == (choice_env,)
+    assert choice_env not in resolved.secret_values
 
 
 # --------------------------------------------------------------- runtime cases

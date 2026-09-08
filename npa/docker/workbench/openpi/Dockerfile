@@ -1,6 +1,15 @@
 # Apache-2.0 OpenPI source and pinned RLDS/JAX runtime. Gemma/pi0.5 weights,
 # DROID data, credentials, terms acceptance, and populated caches are absent.
-FROM nvidia/cuda:12.8.1-cudnn-devel-ubuntu24.04@sha256:24c8e3581ea6330038b0d374920721983312627f8adbfcf390bdb4b399d280ed
+# The compiler stage contributes NPA probes and unmodified Linux cuobjdump,
+# covered by CUDA 12.8.1 supplement 2.3. Its SDK layers are not runtime ancestors.
+FROM nvidia/cuda:12.8.1-devel-ubuntu24.04@sha256:520292dbb4f755fd360766059e62956e9379485d9e073bbd2f6e3c20c270ed66 AS probe-build
+COPY docker/workbench/openpi/cuda_probe.cu /tmp/npa-openpi-probe.cu
+RUN nvcc -O2 -arch=sm_120 -DEXPECTED_MAJOR=12 /tmp/npa-openpi-probe.cu -o /npa-openpi-sm120-probe \
+    && nvcc -O2 -arch=sm_100 -DEXPECTED_MAJOR=10 /tmp/npa-openpi-probe.cu -o /npa-openpi-sm100-probe \
+    && cuobjdump --list-elf /npa-openpi-sm120-probe | grep -q sm_120 \
+    && cuobjdump --list-elf /npa-openpi-sm100-probe | grep -q sm_100
+
+FROM nvidia/cuda:12.8.1-runtime-ubuntu24.04@sha256:ebef3c171eeef0298e4eb2e4be843105edf3b8b0ac45e0b43acee358e8046867
 
 ARG OPENPI_SOURCE_URL=https://github.com/Physical-Intelligence/openpi.git
 ARG OPENPI_SOURCE_REF=15a9616a00943ada6c20a0f158e3adb39df2ccac
@@ -33,8 +42,10 @@ USER root
 
 COPY docker/workbench/openpi/gcs-requirements.txt /tmp/gcs-requirements.txt
 COPY docker/workbench/openpi/security-upgrades-requirements.txt /tmp/openpi-security-upgrades.txt
+COPY docker/workbench/openpi/vendor-requirements.txt /tmp/openpi-vendor-requirements.txt
 COPY docker/workbench/openpi/backport_protobuf_json.py /opt/npa-openpi-backport-protobuf.py
 COPY docker/workbench/openpi/verify_protobuf_json.py /opt/npa-openpi-verify-protobuf.py
+COPY docker/workbench/openpi/filter_cudnn_runtime.py /opt/npa-openpi-filter-cudnn-runtime.py
 COPY src/npa/workflows/byof/openpi_gcs.py /opt/npa-openpi-gcs.py
 
 RUN rm -f /etc/apt/sources.list.d/*.list \
@@ -47,7 +58,9 @@ RUN rm -f /etc/apt/sources.list.d/*.list \
     && rm -rf /var/lib/apt/lists/* /var/cache/apt/* \
     && (id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu) \
     && printf '%s\n' 'ubuntu ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/npa-runtime \
-    && chmod 0440 /etc/sudoers.d/npa-runtime
+    && chmod 0440 /etc/sudoers.d/npa-runtime \
+    && printf '%s\n' 'PasswordAuthentication no' 'PermitRootLogin no' \
+      > /etc/ssh/sshd_config.d/00-npa.conf
 
 RUN git clone --filter=blob:none --no-checkout "${OPENPI_SOURCE_URL}" /opt/byof \
     && git -C /opt/byof checkout --detach "${OPENPI_SOURCE_REF}" \
@@ -81,9 +94,8 @@ RUN python3 -m venv /opt/uv \
       'jax-cuda12-plugin==0.6.2' \
       'jax-cuda12-pjrt==0.6.2' \
       'ml-dtypes==0.5.1' \
-      'nvidia-cudnn-cu12==9.10.2.21' \
-      'nvidia-nccl-cu12==2.27.5' \
-      'nvidia-nvshmem-cu12==3.2.5' \
+    && /opt/uv/bin/uv pip install --python /opt/venv/bin/python --no-cache \
+      --no-deps --require-hashes -r /tmp/openpi-vendor-requirements.txt \
     && /opt/venv/bin/python -c \
       'import importlib.metadata as m; expected={"jax":"0.6.2","jaxlib":"0.6.2","jax-cuda12-plugin":"0.6.2","jax-cuda12-pjrt":"0.6.2","ml-dtypes":"0.5.1","nvidia-cublas-cu12":"12.6.4.1","nvidia-cuda-cupti-cu12":"12.6.80","nvidia-cuda-nvcc-cu12":"12.9.41","nvidia-cuda-nvrtc-cu12":"12.6.77","nvidia-cuda-runtime-cu12":"12.6.77","nvidia-cudnn-cu12":"9.10.2.21","nvidia-cufft-cu12":"11.3.0.4","nvidia-cusolver-cu12":"11.7.1.2","nvidia-cusparse-cu12":"12.5.4.2","nvidia-nccl-cu12":"2.27.5","nvidia-nvjitlink-cu12":"12.6.85","nvidia-nvshmem-cu12":"3.2.5"}; assert all(m.version(k)==v for k,v in expected.items()), {k:m.version(k) for k in expected}' \
     && /opt/venv/bin/python -c \
@@ -134,17 +146,21 @@ RUN python3 -m venv /opt/uv \
     && build_hash="$(sha256sum /opt/byof/uv.lock | cut -d' ' -f1)" \
     && printf '{"schema":"npa.byof.build.v1","build_command_executed":true,"build_command_sha256":"%s"}\n' \
       "$build_hash" > /opt/byof/npa_build_metadata.json \
-    && rm -rf /tmp/uv-cache /tmp/gcs-requirements.txt /tmp/openpi-security-upgrades.txt
-
-RUN printf '%s\n' \
-      '#include <cuda_runtime.h>' \
-      '#include <cstdio>' \
-      'int main(){int n=0;if(cudaGetDeviceCount(&n)!=cudaSuccess)return 2;if(n!=1)return 3;cudaDeviceProp p{};if(cudaGetDeviceProperties(&p,0)!=cudaSuccess||p.major!=12||p.minor!=0)return 4;std::printf("devices=%d cc=12.0\\n",n);return 0;}' \
-      > /tmp/npa-openpi-sm120.cu \
-    && nvcc -O2 -arch=sm_120 /tmp/npa-openpi-sm120.cu -o /usr/local/bin/npa-openpi-sm120-probe \
-    && rm -f /tmp/npa-openpi-sm120.cu \
-    && rm -rf /opt/nvidia/nsight-compute \
+    && mkdir -p /usr/share/doc/npa-openpi \
+    && /opt/venv/bin/python /opt/npa-openpi-filter-cudnn-runtime.py \
+      > /usr/share/doc/npa-openpi/cudnn-runtime.json \
+    && curl --fail --location https://developer.download.nvidia.com/compute/nvshmem/redist/libnvshmem/LICENSE.txt \
+      -o /usr/share/doc/npa-openpi/NVSHMEM-LICENSE.txt \
+    && echo '43a87c0ff94ce3196011ff75e17fbee96933c9e1d511557659ece8a326f95e8f  /usr/share/doc/npa-openpi/NVSHMEM-LICENSE.txt' | sha256sum -c - \
+    && chmod 0444 /usr/share/doc/npa-openpi/NVSHMEM-LICENSE.txt \
+    && rm -rf /tmp/uv-cache /tmp/gcs-requirements.txt /tmp/openpi-security-upgrades.txt /tmp/openpi-vendor-requirements.txt \
     && test ! -e /opt/nvidia/nsight-compute
+
+COPY --from=probe-build /npa-openpi-sm120-probe /usr/local/bin/npa-openpi-sm120-probe
+COPY --from=probe-build /npa-openpi-sm100-probe /usr/local/bin/npa-openpi-sm100-probe
+COPY --from=probe-build /usr/local/cuda/bin/cuobjdump /usr/local/bin/cuobjdump
+RUN cuobjdump --list-elf /usr/local/bin/npa-openpi-sm120-probe | grep -q sm_120 \
+    && cuobjdump --list-elf /usr/local/bin/npa-openpi-sm100-probe | grep -q sm_100
 
 COPY pyproject.toml README.md /opt/npa-src/
 COPY src/npa /opt/npa-src/src/npa
@@ -172,5 +188,17 @@ RUN install -d -m 0755 -o ubuntu -g ubuntu \
 VOLUME ["/workspace/.cache/openpi"]
 WORKDIR /opt/byof
 USER ubuntu
+RUN /usr/local/bin/openpi-entrypoint /bin/sh -ec \
+    'test "$(id -u)" -ne 0; test -w /tmp; test -w "$HOME"; \
+     test "$#" -eq 3; test "$1" = "two words"; test -z "$2"; test "$3" = "--flag"; \
+     command -v rsync; command -v service; test -x /usr/sbin/sshd; sudo -n true; \
+     sudo -n install -d -m 0755 /run/sshd; sudo -n ssh-keygen -A; \
+     sudo -n /usr/sbin/sshd -t; \
+     sudo -n /usr/sbin/sshd -T | grep -qx "passwordauthentication no"; \
+     sudo -n /usr/sbin/sshd -T | grep -qx "permitrootlogin no"; \
+     sudo -n service ssh start; sudo -n service ssh status; \
+     sudo -n service ssh stop; sudo -n rm -f /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub; \
+     test -z "$(find /etc/ssh -maxdepth 1 -name "ssh_host_*" -print -quit)"' \
+    bootstrap-probe 'two words' '' '--flag'
 ENTRYPOINT ["openpi-entrypoint"]
 CMD ["bash"]

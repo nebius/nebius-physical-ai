@@ -46,6 +46,7 @@ def test_h200_workflow_is_fixed_full_node_primary_sweep() -> None:
 
 def test_h200_workflow_renders_family_and_real_command(monkeypatch) -> None:
     monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/npa-src")
+    monkeypatch.delenv("NPA_COSMOS3_ACCEPT_NVIDIA_SOFTWARE_LICENSE", raising=False)
     wrapper = "registry.example.invalid/operator/npa-cosmos3-super-benchmark@sha256:" + (
         "2" * 64
     )
@@ -67,5 +68,4 @@ def test_h200_workflow_renders_family_and_real_command(monkeypatch) -> None:
     assert "--attempts 24" in docs[1]["run"]
     assert "--suite primary" in docs[1]["run"]
     hints = secret_env_hints_for_plan(plan.steps)
-    assert "HF_TOKEN" in hints
-    assert "NPA_COSMOS3_ACCEPT_NVIDIA_SOFTWARE_LICENSE" in hints
+    assert hints == ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY")

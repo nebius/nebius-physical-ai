@@ -1,6 +1,6 @@
 ---
 name: cosmos3-super-benchmark
-description: Reproduce, operate, validate, or troubleshoot the fixed Cosmos3-Super eight-GPU benchmark or isolated single-H200 TP-1 validation through an operator-private wrapper of the immutable upstream vLLM-Omni image.
+description: Reproduce, operate, validate, or troubleshoot the fixed Cosmos3-Super eight-GPU benchmark or isolated single-H200 TP-1 validation through an immutable runtime image with explicit source and digest provenance.
 ---
 
 # Cosmos3-Super B200/H200 Benchmark
@@ -10,7 +10,7 @@ Use this skill for the production benchmark in
 `workflows/testing/cosmos3-super-h200-benchmark.yaml`.
 It is different from Cosmos Framework native Ray Serve (`cosmos3-ray-serve`):
 this workload runs the upstream vLLM-Omni synchronous video endpoint through an
-operator-private SkyPilot wrapper. The default `primary` suite measures four
+SkyPilot wrapper with an explicit immutable runtime digest. The default `primary` suite measures four
 independent-service arrangements on one complete
 B200 or H200 node. The `b200-full` suite reproduces the public machine-readable
 ten-cell B200 record and its 240 measured attempts.
@@ -24,12 +24,15 @@ independent one-GPU services on a complete node.
 
 ## Fixed contract
 
-- Upstream runtime: `vllm/vllm-omni:cosmos3` at index digest
+- Historical benchmark runtime: `vllm/vllm-omni:cosmos3` at index digest
   `sha256:6d2630c7d637b699557573f2c3fee8df5d4d0cd718977aa22549ed6a6ef30587`.
-  The `cosmos3-super-benchmark` Dockerfile inherits that digest and adds the
-  SkyPilot bootstrap closure. The workflow selects the operator's immutable
-  wrapper through `runtime_image` and its registry pull Secret through
-  `image_pull_secret`; the checked-in image value is a placeholder.
+  The replacement `cosmos3-super-benchmark` Dockerfile instead inherits the
+  accepted public `cosmos3-serving` bootstrap and fetches the pinned serving
+  runtime after launch. This replacement does not reproduce those historical
+  bytes. Supply its exact digest through `NPA_COSMOS3_BENCHMARK_RUNTIME_IMAGE`
+  when running the fixed benchmark; the default preserves the historical image
+  identity. A mutable tag or malformed override is rejected. See the image's
+  [runtime guide](../../../npa/docker/workbench/cosmos3-super-benchmark/README.md).
 - Model: `nvidia/Cosmos3-Super` at revision
   `e0262be9d8f7586bc24c069a2aed2b665bdff266`.
 - Arrangements, in order: one 8-GPU hybrid service; two TP-4 services; four
@@ -60,31 +63,38 @@ Load and follow `skills/atomic/health-preflight/SKILL.md`,
 Run the exact access gates before provisioning:
 
 ```bash
-npa/.venv/bin/npa workbench health preflight --checks hf,s3 --json
-npa/.venv/bin/npa workbench health access --capability cosmos3-serving --json
+npa/.venv/bin/npa workbench health preflight --checks s3 --json
 npa/.venv/bin/npa workbench workflow validate-spec \
   workflows/testing/cosmos3-super-<gpu>-benchmark.yaml
 ```
 
-The operator must independently review the runtime terms and pass
-`NPA_COSMOS3_ACCEPT_NVIDIA_SOFTWARE_LICENSE=YES` at submit time. Never commit,
-persist, or bake acceptance, credentials, model weights, prompt text, generated
-clips, or runtime caches.
+Probe a real payload file at the pinned model revision before GPU work. Public
+Cosmos3-Super weights need no HF token. If separately gated assets are selected,
+verify their actual repository entitlement; do not add an HF acceptance boolean.
+
+Review the selected runtime terms. Its wrapper and benchmark default to
+noninteractive delivery when `NPA_COSMOS3_ACCEPT_NVIDIA_SOFTWARE_LICENSE` is
+unset. Explicit `NO` refuses before fetch/GPU work; `YES` permits it; empty or
+other values fail closed. No acceptance is baked into image config or persisted.
+Keep credentials, model weights, prompt text, generated clips, and runtime caches
+out of commits.
 
 ## Run
 
 Submit the shipped spec through `npa workbench workflow submit`, selecting the
-operator's exact Kubernetes context and bucket. Pass the acceptance value,
+operator's exact Kubernetes context and bucket. Pass any runtime opt-out, required
 `HF_TOKEN`, and S3 credentials through `--secret-env`; never render their values
 into YAML or logs. Set `--var runtime_image=<operator-image@sha256:digest>` and
-`--var image_pull_secret=<pull-secret-name>` to the verified private wrapper and
-its existing registry pull Secret. The wrapper preserves the upstream runtime
-digest; its inherited component rights have not been established for NPA public
-redistribution, so it remains excluded from the public image plan. Runtime
-acceptance and a successful benchmark do not change that classification.
-Use the recipe for the intended hardware. The resource profile
-must remain `B200:8` or `H200:8`, must keep the 32-GiB `/dev/shm`, and must retain
-the exact inherited runtime. The H200 path sets PyTorch expandable segments
+`--var image_pull_secret=<pull-secret-name>` to the verified historical private wrapper and
+its existing registry pull Secret when using the historical private wrapper.
+An anonymously pullable public development digest does not require registry
+credentials. Runtime acceptance and successful generation do not establish
+supported release qualification. When using the replacement public image,
+explicitly launch the workload through its runtime bootstrap entrypoint with
+`--runtime` and record its exact digest; do not describe it as the historical inherited runtime.
+Use the recipe for the intended hardware. The eight-GPU resource profile must
+remain `B200:8` or `H200:8` and retain the 32-GiB `/dev/shm`.
+The H200 path sets PyTorch expandable segments
 for the lower-memory one-GPU service cell; B200 behavior is unchanged.
 
 The command starts services sequentially and refuses to open a cell's measured

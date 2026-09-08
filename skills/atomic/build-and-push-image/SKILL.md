@@ -32,8 +32,9 @@ Repeat after catalog edits. The generated `main/` and `testing/` copies under
    disagree. Build restricted images only into an operator-controlled registry;
    neither a private package nor a development tag changes licensing. Historical
    image classifications do not establish the eligibility of replacement bytes.
-   The current catalog, for example, records `cosmos3-super-benchmark` as
-   restricted; always re-read that classification before a build.
+   The replacement Cosmos wrappers use runtime-fetch packaging; their historical
+   restricted vendor-container bytes remain ineligible. Always read the current
+   classification and the exact selected artifact before a build.
 4. Run every pre-publication security, packaging, payload, provenance, SBOM,
    vulnerability, secret, non-root, base-pin, and bootstrap-contract gate before
    pushing the public development tag.
