@@ -30,6 +30,7 @@ RUN rm -f /etc/apt/sources.list.d/*.list \
     && apt-get upgrade -y --no-install-recommends \
     && apt-get install -y --no-install-recommends \
        ca-certificates curl python3.12 python3.12-venv \
+       gcc libc6-dev linux-libc-dev python3.12-dev \
        libegl1 libgl1 libglvnd0 libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/* /var/cache/apt/* \
     && python3.12 -m venv /opt/npa-venv
