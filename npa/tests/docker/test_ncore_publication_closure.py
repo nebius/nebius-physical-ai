@@ -1,6 +1,7 @@
 """Prove source population, executed guards, config history and keyring refusals."""
 
 import copy
+import importlib.util
 import io
 import json
 import os
@@ -148,9 +149,9 @@ def test_npa_loader_compiles_compared_commit_without_reading_cached_bytecode(tmp
                         subprocess.CompletedProcess([], 0, b"result = 'reviewed'\n"))
     verified = process._CommittedNpaImports(SHA).find_spec("npa.example")
     path.write_bytes(b"raise RuntimeError('changed after comparison')\n")
-    namespace = {}
-    exec(verified.loader.get_code("npa.example"), namespace)
-    assert namespace["result"] == "reviewed"
+    module = importlib.util.module_from_spec(importlib.util.spec_from_loader("npa.example", verified.loader))
+    verified.loader.exec_module(module)
+    assert module.result == "reviewed"
     with pytest.raises(ValueError, match="committed_host_import_required"):
         process._CommittedNpaImports(SHA).find_spec("npa.example")
 
