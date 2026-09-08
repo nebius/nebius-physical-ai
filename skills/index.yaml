@@ -32,6 +32,16 @@ licenses:
     applies_to:
       - neural-reconstruction
 skills:
+  - name: ray-train-synthetic
+    category: tools
+    when_to_use: "Run native Ray Train distributed CUDA synthetic regression, S3 checkpoints, optimizer recovery and factual Rerun metrics."
+    path: skills/tools/ray-train-synthetic/SKILL.md
+    smoke:
+      - type: file_exists
+        path: npa/workflows/workbench/ray-train-synthetic/train.py
+      - type: workflow_yaml
+        paths:
+          - npa/workflows/workbench/ray-train-synthetic/cluster.yaml
   - name: curobo
     category: tools
     when_to_use: "Run, validate or review cuRobo V2 Franka pose planning and full motion benchmarks on CUDA with factual RRD artifacts."
