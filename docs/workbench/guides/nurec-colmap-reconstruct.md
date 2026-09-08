@@ -226,9 +226,16 @@ to preserve CPU conversion and the explicit RTX resource request.
 After terminal success the matrix checks all conversion-member hashes and
 sizes against S3, the full source counts, attribution, and downstream final
 accounting, metrics and RRD presence. These checks complement the converter's
-full V4 decode; they do not establish rendering quality. Before marking the
-feature live validated, retain exact-image scan evidence, independently reopen
-the sequence, parsed NRE metrics, USDZ and RRD, decode the novel-view images,
-and visually inspect the results. Record numeric outcomes without publishing
-live infrastructure identifiers. Those GPU and image acceptance results remain
-pending.
+full V4 decode; they do not establish rendering quality. The RRD retains the
+producer's effective frame selection, resize and JPEG quality settings in
+`provenance/rrd_review`. Readback derives the selected camera/frame identities
+from the ordered source render paths, requires each selected identity exactly
+once, and compares JPEG bytes independently re-encoded from the source renders
+using those settings. Deliberately sampled recordings remain valid; missing or
+duplicate review frames fail readback even when every camera still has an image.
+
+Before marking the feature live validated, retain exact-image scan evidence,
+independently reopen the sequence, parsed NRE metrics, USDZ and RRD, decode the
+novel-view images, and visually inspect the results. Record numeric outcomes
+without publishing live infrastructure identifiers. Those GPU and image
+acceptance results remain pending.

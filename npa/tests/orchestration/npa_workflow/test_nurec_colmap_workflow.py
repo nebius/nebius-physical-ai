@@ -712,12 +712,200 @@ def test_live_rrd_rejects_decodable_stale_frame_pixels(helpers, downstream_run):
         helpers._assert_nurec_rrd(downstream_run, downstream_run.name, frames)
 
 
+def _rrd_chunk(entity, batch):
+    """Wrap a decoded batch so row mutations retain the real RRD column types."""
+    from types import SimpleNamespace
+
+    return SimpleNamespace(entity_path=entity, to_record_batch=lambda: batch)
+
+
+def _nurec_row_chunks(root):
+    """Split real novel-view chunks into rows while preserving all other evidence."""
+    from rerun.recording import load_recording
+
+    chunks = []
+    for chunk in load_recording(root / "reports/sim2real.rrd").chunks():
+        if not str(chunk.entity_path).startswith("/novel_view/"):
+            chunks.append(chunk)
+            continue
+        batch = chunk.to_record_batch()
+        chunks.extend(
+            _rrd_chunk(chunk.entity_path, batch.slice(index, 1))
+            for index in range(batch.num_rows)
+        )
+    return chunks
+
+
+def _damage_nurec_frame_rows(chunks, damage):
+    """Alter frame coverage without changing surviving pixels or provenance."""
+    import pyarrow as pa
+
+    target = next(
+        chunk for chunk in chunks if str(chunk.entity_path) == "/novel_view/camera1"
+    )
+    if damage == "missing_one":
+        return [chunk for chunk in chunks if chunk is not target]
+    if damage == "one_per_camera":
+        return [
+            chunk for chunk in chunks
+            if not str(chunk.entity_path).startswith("/novel_view/")
+            or chunk.to_record_batch().column("frame").to_pylist() == [0]
+        ]
+    if damage == "duplicate_chunk":
+        return chunks + [target]
+    batch = target.to_record_batch().take(pa.array([0, 0]))
+    return [
+        _rrd_chunk(chunk.entity_path, batch) if chunk is target else chunk
+        for chunk in chunks
+    ]
+
+
+@pytest.mark.parametrize(
+    "damage, message",
+    [
+        ("missing_one", "identities differ"),
+        ("one_per_camera", "identities differ"),
+        ("duplicate_chunk", "duplicate RRD camera/frame identity"),
+        ("duplicate_row", "duplicate RRD camera/frame identity"),
+    ],
+)
+def test_live_rrd_rejects_incomplete_or_repeated_frame_rows(
+    helpers, downstream_run, damage, message
+):
+    """Reject damaged coverage even when every camera retains valid source pixels.
+
+    Args:
+        helpers: Live readback helpers.
+        downstream_run: Synthetic two-camera run with two frames per camera.
+        damage: Decoded row mutation to apply.
+        message: Expected coverage failure.
+    Returns:
+        None.
+    Raises:
+        AssertionError: Damaged coverage passes or intact coverage fails.
+    """
+    _write_proof_rrd(downstream_run)
+    chunks = _nurec_row_chunks(downstream_run)
+    frames = helpers._assert_nurec_novel_media(downstream_run)
+    helpers._assert_nurec_rrd_frames(downstream_run, list(reversed(chunks)), frames)
+    damaged = _damage_nurec_frame_rows(chunks, damage)
+    assert {str(chunk.entity_path) for chunk in damaged} == {
+        str(chunk.entity_path) for chunk in chunks
+    }
+    with pytest.raises(AssertionError, match=message):
+        helpers._assert_nurec_rrd_frames(downstream_run, damaged, frames)
+
+
+def _write_sampled_nurec_rrd(root, monkeypatch, cap, *, reorder=False):
+    """Produce an uneven camera inventory with explicit existing review settings."""
+    from PIL import Image
+
+    from npa.workflows import data_factory_viz as viz
+
+    for index in range(2, 30):
+        Image.new("RGB", (32, 24), (index * 5, 40, 60)).save(
+            root / f"novel_views/camera1/{index:06}.png"
+        )
+    if reorder:
+        source = root / "novel_views/camera1/000001.png"
+        source.rename(source.with_name("z-frame-000001.png"))
+    with monkeypatch.context() as producer:
+        producer.setattr(viz, "RRD_MAX_FRAMES_PER_ENTITY", cap)
+        producer.setattr(viz, "RRD_MAX_FRAME_DIM", 16)
+        producer.setattr(viz, "RRD_JPEG_QUALITY", 41)
+        _write_proof_rrd(root)
+    # Readback can run in a different process with different environment values.
+    monkeypatch.setattr(viz, "RRD_MAX_FRAMES_PER_ENTITY", 2)
+    monkeypatch.setattr(viz, "RRD_MAX_FRAME_DIM", 0)
+    monkeypatch.setattr(viz, "RRD_JPEG_QUALITY", 95)
+
+
+@pytest.mark.parametrize(
+    "cap, reorder, selected",
+    [
+        (24, False, set(range(30)) - set(range(4, 30, 5))),
+        (30, False, set(range(30))),
+        (31, False, set(range(30))),
+        (7, False, {0, 4, 8, 12, 17, 21, 25}),
+        (1, False, {0}),
+        (0, False, set(range(30))),
+        (-1, False, set(range(30))),
+        (3, True, {0, 11, 21}),
+    ],
+)
+def test_live_rrd_accepts_exact_producer_selection_settings(
+    helpers, downstream_run, monkeypatch, cap, reorder, selected
+):
+    """Preserve sampled recordings and source path ordering across reader settings.
+
+    Args:
+        helpers: Live readback helpers.
+        downstream_run: Synthetic source run.
+        monkeypatch: Scoped producer and reader settings overrides.
+        cap: Existing visualization frame selection setting.
+        reorder: Whether source path order differs from numeric frame order.
+        selected: Independently specified expected camera1 identities.
+    Returns:
+        None.
+    Raises:
+        AssertionError: Selection, JPEG settings, or complete readback differs.
+    """
+    _write_sampled_nurec_rrd(downstream_run, monkeypatch, cap, reorder=reorder)
+    chunks = _nurec_row_chunks(downstream_run)
+    identities = {
+        (camera, index) for camera, index, _ in helpers._nurec_rrd_frame_rows(chunks)
+    }
+    camera2 = {0} if cap == 1 else {0, 1}
+    assert identities == {("camera1", index) for index in selected} | {
+        ("camera2", index) for index in camera2
+    }
+    frames = helpers._assert_nurec_novel_media(downstream_run)
+    helpers._assert_nurec_rrd(downstream_run, downstream_run.name, frames)
+
+
+@pytest.mark.parametrize("replace", [False, True])
+def test_live_rrd_rejects_unsampled_source_frame(
+    helpers, downstream_run, monkeypatch, replace
+):
+    """Reject extra or substituted identities even with genuine source JPEG bytes.
+
+    Args:
+        helpers: Live readback helpers.
+        downstream_run: Synthetic source run.
+        monkeypatch: Scoped visualization settings overrides.
+        replace: Whether to preserve the sampled recording's row count.
+    Returns:
+        None.
+    Raises:
+        AssertionError: An unsampled source frame passes readback.
+    """
+    _write_sampled_nurec_rrd(downstream_run, monkeypatch, 0)
+    extra = next(
+        chunk for chunk in _nurec_row_chunks(downstream_run)
+        if str(chunk.entity_path) == "/novel_view/camera1"
+        and chunk.to_record_batch().column("frame").to_pylist() == [1]
+    )
+    _write_sampled_nurec_rrd(downstream_run, monkeypatch, 3)
+    chunks = _nurec_row_chunks(downstream_run)
+    if replace:
+        chunks = [
+            chunk for chunk in chunks
+            if str(chunk.entity_path) != "/novel_view/camera1"
+            or chunk.to_record_batch().column("frame").to_pylist() != [10]
+        ]
+    chunks.append(extra)
+    frames = helpers._assert_nurec_novel_media(downstream_run)
+    with pytest.raises(AssertionError, match="identities differ"):
+        helpers._assert_nurec_rrd_frames(downstream_run, chunks, frames)
+
+
 @pytest.mark.parametrize(
     "entity",
     [
         "/provenance/source",
         "/provenance/conversion",
         "/provenance/rig",
+        "/provenance/rrd_review",
         "/novel_view/camera2",
     ],
 )

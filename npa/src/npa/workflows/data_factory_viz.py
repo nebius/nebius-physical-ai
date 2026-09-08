@@ -1122,6 +1122,16 @@ def _load_nurec_docs(local: Path, stage_log: list[str]) -> dict[str, str]:
         docs = _load_ncore_manifest_docs(local, stage_log)
     docs.update(_load_nurec_metrics_docs(local, stage_log))
     docs.update(_load_novel_view_docs(local, stage_log))
+    if (local / "novel_views").is_dir():
+        docs["provenance/rrd_review"] = _json_block(
+            "Novel-view review settings",
+            {
+                "schema": "npa.nurec.rrd-review.v1",
+                "max_frames_per_entity": RRD_MAX_FRAMES_PER_ENTITY,
+                "max_frame_dim": RRD_MAX_FRAME_DIM,
+                "jpeg_quality": RRD_JPEG_QUALITY,
+            },
+        )
     return docs
 
 

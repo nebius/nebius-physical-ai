@@ -1168,43 +1168,57 @@ def _assert_nurec_rrd_lineage(local: Path, chunks: list) -> None:
     }, "RRD lacks the capture/render summaries"
 
 
-def _nurec_review_image_bytes(local: Path) -> dict[tuple[str, int], bytes]:
+def _nurec_rrd_review_settings(chunks: list) -> dict:
+    """Read the producer's effective settings without using the reader's env."""
+    settings = _nurec_rrd_document(chunks, "/provenance/rrd_review")
+    assert isinstance(settings, dict), "invalid RRD review settings"
+    assert settings.get("schema") == "npa.nurec.rrd-review.v1", (
+        "unsupported RRD review settings schema"
+    )
+    for name in ("max_frames_per_entity", "max_frame_dim", "jpeg_quality"):
+        assert type(settings.get(name)) is int, "invalid RRD review setting"
+    return settings
+
+
+def _nurec_selected_frame_identities(local: Path, settings: dict) -> set[tuple[str, int]]:
+    """Derive the intended review identities from ordered source render paths."""
+    from npa.workflows.data_factory_viz import _frame_index, _grouped_images, _subsample
+
+    selected = set()
+    for camera, paths in _grouped_images(local / "novel_views").items():
+        for path in _subsample(paths, settings["max_frames_per_entity"]):
+            selected.add((camera, _frame_index(path.stem)))
+    return selected
+
+
+def _nurec_review_image_bytes(
+    local: Path, settings: dict
+) -> dict[tuple[str, int], bytes]:
     """Independently derive this workflow's JPEG review bytes from its renders."""
     import io
 
     from PIL import Image
 
-    from npa.workflows.data_factory_viz import (
-        RRD_JPEG_QUALITY,
-        RRD_MAX_FRAME_DIM,
-        _frame_index,
-        _grouped_images,
-    )
+    from npa.workflows.data_factory_viz import _frame_index, _grouped_images
 
     images = {}
+    max_dim = settings["max_frame_dim"]
     for camera, paths in _grouped_images(local / "novel_views").items():
         for path in paths:
             key = (camera, _frame_index(path.stem))
             assert key not in images, "duplicate rendered camera/frame identity"
             with Image.open(path) as source:
                 rgb = source.convert("RGB")
-                if RRD_MAX_FRAME_DIM > 0 and max(rgb.size) > RRD_MAX_FRAME_DIM:
-                    rgb.thumbnail((RRD_MAX_FRAME_DIM, RRD_MAX_FRAME_DIM))
+                if max_dim > 0 and max(rgb.size) > max_dim:
+                    rgb.thumbnail((max_dim, max_dim))
                 encoded = io.BytesIO()
-                rgb.save(encoded, format="JPEG", quality=RRD_JPEG_QUALITY)
+                rgb.save(encoded, format="JPEG", quality=settings["jpeg_quality"])
             images[key] = encoded.getvalue()
     return images
 
 
-def _assert_nurec_rrd_frames(
-    local: Path, chunks: list, expected: dict[str, set[int]]
-) -> None:
-    import io
-
-    from PIL import Image
-
-    source_images = _nurec_review_image_bytes(local)
-    observed: dict[str, set[int]] = {}
+def _nurec_rrd_frame_rows(chunks: list) -> Iterable[tuple[str, int, bytes]]:
+    """Decode each image row without collapsing repeated camera/frame identities."""
     for chunk in chunks:
         entity = str(chunk.entity_path)
         if not entity.startswith("/novel_view/"):
@@ -1220,18 +1234,35 @@ def _assert_nurec_rrd_frames(
             batch.column("frame").to_pylist(),
             strict=True,
         ):
-            assert row and index in expected.get(camera, set()), (
-                "RRD frame absent from source"
-            )
-            assert bytes(row[0]) == source_images[(camera, index)], (
-                "RRD image bytes differ from this run's rendered frame"
-            )
-            with Image.open(io.BytesIO(bytes(row[0]))) as image:
-                image.load()
-                assert min(image.size) > 0
-            observed.setdefault(camera, set()).add(index)
-    assert observed.keys() == expected.keys(), (
-        "RRD is missing rendered camera image entities"
+            assert row and len(row) == 1, "RRD frame requires exactly one image"
+            yield camera, index, bytes(row[0])
+
+
+def _assert_nurec_rrd_frames(
+    local: Path, chunks: list, expected: dict[str, set[int]]
+) -> None:
+    """Require every selected source image exactly once with matching JPEG bytes."""
+    import io
+
+    from PIL import Image
+
+    settings = _nurec_rrd_review_settings(chunks)
+    selected = _nurec_selected_frame_identities(local, settings)
+    source_images = _nurec_review_image_bytes(local, settings)
+    observed = set()
+    for camera, index, encoded in _nurec_rrd_frame_rows(chunks):
+        identity = (camera, index)
+        assert index in expected.get(camera, set()), "RRD frame absent from source"
+        assert identity not in observed, "duplicate RRD camera/frame identity"
+        assert encoded == source_images[identity], (
+            "RRD image bytes differ from this run's rendered frame"
+        )
+        with Image.open(io.BytesIO(encoded)) as image:
+            image.load()
+            assert min(image.size) > 0
+        observed.add(identity)
+    assert observed == selected, (
+        "RRD camera/frame identities differ from the selected rendered frames"
     )
 
 
