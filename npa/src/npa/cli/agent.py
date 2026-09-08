@@ -10908,7 +10908,7 @@ def bootstrap_cmd(
         help="Disable HTTPS on port 443 (customer access uses http://IP:agent-port only).",
     ),
 ) -> None:
-    """Re-bootstrap agent UI/backend/nginx without replacing its VM.
+    """Re-bootstrap agent UI/backend/nginx on an existing VM (refresh without Terraform).
 
     Args:
         project: Configured project alias containing the Agent record.
