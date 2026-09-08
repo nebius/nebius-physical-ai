@@ -4,7 +4,9 @@ from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import importlib
 import json
+import os
 from pathlib import Path
+import stat
 import threading
 
 import pytest
@@ -103,6 +105,83 @@ def test_concurrent_initializers_publish_one_complete_runtime(fake_runtime):
         paths = list(pool.map(prepare, range(4)))
     assert len(set(paths)) == len(calls) == 1
     assert not list(cache.glob("*.partial*"))
+
+
+@pytest.mark.parametrize("dangling", [False, True])
+def test_runtime_rejects_cache_symlinks_before_install(fake_runtime, dangling):
+    module, pin, cache, calls = fake_runtime
+    outside = cache.parent / "outside"
+    if not dangling:
+        outside.mkdir(mode=0o700)
+    cache.symlink_to(outside, target_is_directory=True)
+    with pytest.raises(
+        module.NcoreRuntimeError, match="cache directory is not private"
+    ):
+        module.ensure_runtime(lock_path=pin, cache_root=cache)
+    assert calls == []
+    if dangling:
+        assert not outside.exists()
+    else:
+        assert not list(outside.iterdir())
+
+
+@pytest.mark.parametrize("mode", [0o755, 0o770, 0o777])
+def test_runtime_rejects_nonprivate_cache_without_changing_it(fake_runtime, mode):
+    module, pin, cache, calls = fake_runtime
+    cache.mkdir(mode=mode)
+    cache.chmod(mode)
+    with pytest.raises(
+        module.NcoreRuntimeError, match="cache directory is not private"
+    ):
+        module.ensure_runtime(lock_path=pin, cache_root=cache)
+    assert stat.S_IMODE(cache.stat().st_mode) == mode
+    assert calls == [] and not list(cache.iterdir())
+
+
+@pytest.mark.parametrize("kind", ["symlink", "hardlink", "fifo", "public-mode"])
+def test_runtime_rejects_unsafe_lock_before_reusing_generation(fake_runtime, kind):
+    module, pin, cache, calls = fake_runtime
+    module.ensure_runtime(lock_path=pin, cache_root=cache)
+    mutex = next(cache.glob("*.lock"))
+    assert stat.S_IMODE(mutex.stat().st_mode) == 0o600
+    mutex.unlink()
+    outside = cache.parent / "unrelated"
+    outside.write_bytes(b"unchanged")
+    outside.chmod(0o600)
+    if kind == "symlink":
+        mutex.symlink_to(outside)
+    elif kind == "hardlink":
+        os.link(outside, mutex)
+    elif kind == "fifo":
+        os.mkfifo(mutex, 0o600)
+    else:
+        mutex.write_bytes(b"")
+        mutex.chmod(0o644)
+    with pytest.raises(module.NcoreRuntimeError, match="runtime cache lock"):
+        module.ensure_runtime(lock_path=pin, cache_root=cache)
+    assert outside.read_bytes() == b"unchanged" and len(calls) == 1
+
+
+@pytest.mark.parametrize("kind", ["symlink", "fifo", "malformed"])
+def test_runtime_rejects_invalid_ready_marker_without_reading_other_files(
+    fake_runtime, kind
+):
+    module, pin, cache, calls = fake_runtime
+    ready = module.ensure_runtime(lock_path=pin, cache_root=cache)
+    marker = ready / module.READY_MARKER
+    contents = marker.read_bytes()
+    marker.unlink()
+    outside = cache.parent / "outside-marker"
+    outside.write_bytes(contents)
+    if kind == "symlink":
+        marker.symlink_to(outside)
+    elif kind == "fifo":
+        os.mkfifo(marker, 0o600)
+    else:
+        marker.write_text("[]")
+    with pytest.raises(module.NcoreRuntimeError, match="cache integrity"):
+        module.ensure_runtime(lock_path=pin, cache_root=cache)
+    assert outside.read_bytes() == contents and len(calls) == 1
 
 
 def test_install_failure_never_publishes_ready_or_raw_diagnostics(

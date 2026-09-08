@@ -8,6 +8,7 @@ contents must never be copied into a published image or shared with other users.
 from __future__ import annotations
 
 import base64
+from contextlib import contextmanager
 import csv
 import fcntl
 import hashlib
@@ -17,12 +18,14 @@ from pathlib import Path
 import platform
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
 import urllib.parse
 
 from npa._public_https import download_public_https
+from npa.workbench.ncore_staging import PrivateStagingError, private_directory
 
 
 RUNTIME_LOCK = Path("/usr/share/doc/npa-ncore/runtime-lock.json")
@@ -288,49 +291,121 @@ def relocate_scripts(stage: Path, ready: Path) -> None:
                 csv.writer(stream).writerows(rows)
 
 
-def ensure_runtime(
-    *, lock_path: Path = RUNTIME_LOCK, cache_root: Path | None = None
-) -> Path:
-    lock = read_lock(lock_path)
-    verify_platform()
+@contextmanager
+def _runtime_lock(path: Path):
+    # The cache is private; a separate regular inode coordinates publication
+    # across processes without following stale links into other files.
+    descriptor = None
+    try:
+        try:
+            descriptor = os.open(
+                path,
+                os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
+                0o600,
+            )
+            info = os.fstat(descriptor)
+            if (
+                not stat.S_ISREG(info.st_mode)
+                or info.st_uid != os.geteuid()
+                or stat.S_IMODE(info.st_mode) != 0o600
+                or info.st_nlink != 1
+            ):
+                raise NcoreRuntimeError(
+                    "NCore runtime cache lock is not private and regular"
+                )
+            fcntl.flock(descriptor, fcntl.LOCK_EX)
+        except OSError:
+            raise NcoreRuntimeError("NCore runtime cache lock is unavailable") from None
+        yield
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+
+def _runtime_key() -> str:
     identity = {
         "lock_sha256": RUNTIME_LOCK_SHA256,
         "source_sha256": source_identity(),
         "python": sys.version,
         "source_roots": SOURCE_ROOTS,
     }
-    key = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
-    cache = (cache_root or cache_directory()).resolve()
-    cache.mkdir(parents=True, exist_ok=True, mode=0o700)
+    return hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
+
+
+def _read_generation_marker(ready: Path) -> dict:
+    descriptor = os.open(
+        ready / READY_MARKER, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
+    )
+    with os.fdopen(descriptor, "rb") as stream:
+        info = os.fstat(stream.fileno())
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or info.st_uid != os.geteuid()
+            or info.st_nlink != 1
+        ):
+            raise ValueError("runtime marker must be an owned regular file")
+        return json.load(stream)
+
+
+def _verify_generation(ready: Path, key: str) -> None:
+    try:
+        info = ready.lstat()
+        if (
+            not stat.S_ISDIR(info.st_mode)
+            or info.st_uid != os.geteuid()
+            or stat.S_IMODE(info.st_mode) != 0o700
+        ):
+            raise ValueError("runtime generation must be private")
+        receipt = _read_generation_marker(ready)
+        if receipt["key"] != key or receipt["files"] != _files(ready):
+            raise ValueError("changed runtime generation")
+    except (OSError, ValueError, KeyError, TypeError):
+        raise NcoreRuntimeError("NCore runtime cache integrity check failed") from None
+
+
+def _install_generation(cache: Path, ready: Path, key: str, lock: dict) -> None:
+    stage = Path(tempfile.mkdtemp(prefix=f"{key}.partial-", dir=cache))
+    try:
+        install_runtime(stage, lock)
+        verify_runtime(stage)
+        relocate_scripts(stage, ready)
+        (stage / READY_MARKER).write_text(
+            json.dumps({"key": key, "files": _files(stage)}, sort_keys=True) + "\n"
+        )
+        stage.rename(ready)
+    except Exception:
+        shutil.rmtree(stage)
+        raise NcoreRuntimeError("NCore runtime preparation failed") from None
+
+
+def ensure_runtime(
+    *, lock_path: Path = RUNTIME_LOCK, cache_root: Path | None = None
+) -> Path:
+    """Reuse or atomically install a hash-verified runtime under private ownership.
+
+    Args:
+        lock_path: Reviewed artifact lock bound to the embedded SHA256.
+        cache_root: Optional private cache parent; defaults to operator cache settings.
+    Returns:
+        Complete verified generation containing the runtime interpreter.
+    Raises:
+        NcoreRuntimeError: Platform, path, lock, installation, or integrity checks fail.
+    """
+    lock = read_lock(lock_path)
+    verify_platform()
+    key = _runtime_key()
+    try:
+        cache = private_directory(cache_root or cache_directory())
+    except PrivateStagingError:
+        raise NcoreRuntimeError(
+            "NCore runtime cache directory is not private"
+        ) from None
     ready = cache / key
-    # Separate lock inode survives atomic directory publication. flock works
-    # across processes as well as threads on a POSIX cache volume.
-    with (cache / f"{key}.lock").open("a") as mutex:
-        fcntl.flock(mutex, fcntl.LOCK_EX)
-        if ready.exists():
-            try:
-                if ready.is_symlink():
-                    raise ValueError("runtime generation must be a directory")
-                receipt = json.loads((ready / READY_MARKER).read_bytes())
-                if receipt["key"] != key or receipt["files"] != _files(ready):
-                    raise ValueError("changed runtime generation")
-            except (OSError, ValueError, KeyError) as exc:
-                raise NcoreRuntimeError(
-                    "NCore runtime cache integrity check failed"
-                ) from exc
-            return ready
-        stage = Path(tempfile.mkdtemp(prefix=f"{key}.partial-", dir=cache))
-        try:
-            install_runtime(stage, lock)
-            verify_runtime(stage)
-            relocate_scripts(stage, ready)
-            (stage / READY_MARKER).write_text(
-                json.dumps({"key": key, "files": _files(stage)}, sort_keys=True) + "\n"
-            )
-            stage.rename(ready)
-        except Exception as exc:
-            shutil.rmtree(stage)
-            raise NcoreRuntimeError("NCore runtime preparation failed") from exc
+    with _runtime_lock(cache / f"{key}.lock"):
+        if ready.exists() or ready.is_symlink():
+            _verify_generation(ready, key)
+        else:
+            _install_generation(cache, ready, key, lock)
     return ready
 
 

@@ -63,7 +63,12 @@ There is no replacement licensing claim for those third-party bundled bytes.
 Cache precedence is `NPA_NCORE_RUNTIME_CACHE`, then
 `NPA_MODEL_CACHE_DIR/ncore/runtime`, then
 `${XDG_CACHE_HOME:-$HOME/.cache}/npa/ncore/runtime`. The selected POSIX directory
-must be writable by the worker and private to the operator. This is ephemeral
+must belong to the worker with mode `0700`. Directory traversal rejects symlinks,
+foreign owners, and writable ancestors except root-owned sticky directories.
+Identity locks must be singly linked regular files owned by the worker with
+mode `0600`; ready generations must retain private ownership and a regular,
+non-symlinked receipt. Existing permissions are never changed automatically.
+This is ephemeral
 unless the operator explicitly mounts durable storage; no PVC is provisioned.
 A POSIX filesystem that supports `flock` and atomic same-directory rename is
 required. Do not use an object-store mount without those semantics.
