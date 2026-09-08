@@ -91,6 +91,12 @@ Foxglove viewer. This diagram describes workflow execution; the
 [Ray development guide](docs/testing/fast-source-iteration.md) covers direct
 development with native Ray Jobs.
 
+The [daily dev VM test guide](docs/testing/dev-vm-daily.md) covers the daily and
+manual GitHub workflow, pinned SSH access, and private network setup. Set
+`NPA_DAILY_NETWORK=tailscale` with `NPA_DAILY_TAILSCALE_CLIENT_ID` and
+`NPA_DAILY_TAILSCALE_AUDIENCE` for a VM behind a Tailscale subnet router;
+network access otherwise defaults to `direct`.
+
 Python and HTTP coverage varies by tool. The
 [CLI / SDK walkthrough](docs/workbench/cli-sdk-yaml-walkthrough.md) explains
 typed clients, callback wrappers, and their return values.

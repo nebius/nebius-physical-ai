@@ -44,7 +44,6 @@ Optional repository **variables** (not secrets) forwarded to the run:
 | `NPA_E2E_REGISTRY` | Optional explicit custom registry for live workflow cases; defaults to public GHCR releases |
 | `NPA_DAILY_E2E_SHARDS` | Days to spread the S3 e2e suite over (default 7) |
 | `NPA_DAILY_ENABLE_GPU` | Set to `1` to have `e2e-daily` also run one rotating real-GPU workflow submit |
-| `NPA_DAILY_RUNNER` | GitHub host used to reach the VM; defaults to `macos-15`. Set to `ubuntu-latest` only after verifying its network can reach the SSH endpoint. Manual dispatch can override this with `runner_label`. |
 | `NPA_DAILY_AGENT_GPU_E2E` | Set to `1` with `gpu-daily` to run the agent-confirmed self-hosted VLM proof instead of the rotating case; requires a deployed agent record |
 
 The dev VM must already have `git`, `python3`, and `make`, plus a reachable git
@@ -52,13 +51,68 @@ remote and valid `~/.npa` credentials. The runner script uses a dedicated CI
 checkout (`~/npa-ci-daily` by default) with its own venv, so it never disturbs
 the shared dev clone or other agents' worktrees.
 
+## Private network access
+
+A laptop's SSH connection can work through a VPN or subnet router even when the
+VM's address is unreachable from GitHub. The daily workflow uses an Ubuntu
+hosted runner. Set these repository variables when the VM needs Tailscale:
+
+| Variable | Value |
+| --- | --- |
+| `NPA_DAILY_NETWORK` | `tailscale` for the private route; defaults to `direct` for a reachable public endpoint |
+| `NPA_DAILY_TAILSCALE_CLIENT_ID` | Client ID from the Tailscale OIDC trust credential; required in `tailscale` mode |
+| `NPA_DAILY_TAILSCALE_AUDIENCE` | Audience from the same credential; required in `tailscale` mode |
+
+The client ID and audience are not secrets. The workflow uses GitHub's temporary
+OIDC identity with Tailscale's native token discovery, so no Tailscale auth key
+or OAuth secret is needed. Missing federation settings fail before SSH access.
+The pinned Tailscale archive is checksum-verified, the ephemeral node keeps its
+identity in memory, and cleanup logs it out and stops the daemon even after a
+test failure. Authentication output stays in an owner-private temporary
+directory that cleanup removes; it is never uploaded as an artifact. Tokens
+are read from the process environment and are not expanded into command arguments.
+
+A Tailscale admin must complete this setup once:
+
+1. Add `tag:npa-daily` to the tailnet's `tagOwners` with the appropriate admin
+   owner. Grant that tag access only to the VM's exact destination and TCP SSH
+   port. Use the private values corresponding to `DEV_VM_SSH_HOST` and
+   `DEV_VM_SSH_PORT`; do not commit them to this repository. Ensure existing
+   broad grants do not give this tag additional access.
+2. Confirm the subnet router is online and its route covering the VM is
+   approved. The CI client enables `--accept-routes`. This does not require
+   installing Tailscale on the VM itself when an existing subnet router reaches it.
+3. Create an **OpenID Connect** credential in the Tailscale admin console's
+   **Trust credentials** page. Select GitHub's issuer
+   `https://token.actions.githubusercontent.com`, the `auth_keys` write scope,
+   and `tag:npa-daily`. Permit preauthorized ephemeral nodes so scheduled jobs
+   do not wait for manual device approval.
+4. Restrict the subject to
+   `repo:nebius/nebius-physical-ai:ref:refs/heads/main` and add a `workflow_ref`
+   custom claim equal to
+   `nebius/nebius-physical-ai/.github/workflows/dev-vm-daily-tests.yml@refs/heads/main`.
+   For validation before merge, use a separate temporary credential restricted
+   to the exact reviewed branch in both claims, then remove it after validation.
+   Do not use a wildcard that admits arbitrary branches or pull requests.
+5. Copy the generated client ID and audience into the repository variables above,
+   set `NPA_DAILY_NETWORK=tailscale`, and manually dispatch the daily workflow
+   with `test_tier=e2e-daily` on the trusted ref. Verify both the network connection
+   and the remote test step before relying on the schedule.
+
+Tailscale documents the trust setup and native token discovery in
+[Workload identity federation](https://tailscale.com/docs/features/workload-identity-federation).
+If authentication fails, inspect that credential's error in the admin console.
+If authentication passes but SSH times out, verify the subnet route and the
+tag's destination/port grant. A host-key mismatch requires independently
+re-verifying the VM's host key before updating the pinned secret.
+
 ## Schedule
 
 The workflow runs daily at `07:00 UTC` and can also be triggered manually via
 **Run workflow** (`workflow_dispatch`). Change the `cron` line to match the
 operator's off-peak window.
 
-There is no pull-request trigger. The GitHub host only performs SSH transport;
+There is no pull-request trigger. The GitHub host performs network and SSH setup;
 the tests still execute in the isolated Linux checkout on the operator VM.
 If an SSH connection times out before authentication, check reachability from
 the selected GitHub runner network. A successful connection from an operator's

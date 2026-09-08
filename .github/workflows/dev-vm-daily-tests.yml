@@ -41,13 +41,6 @@ on:
         description: "Branch, tag, or sha to test on the dev VM"
         type: string
         default: main
-      runner_label:
-        description: "GitHub host used for the SSH connection"
-        type: choice
-        default: macos-15
-        options:
-          - macos-15
-          - ubuntu-latest
 
 # The tier the daily schedule runs. `e2e-daily` runs the >= 4-step workflow
 # coverage gate, plans every npa.workflow spec, checks every image is reachable
@@ -56,6 +49,7 @@ on:
 # (that path provisions real GPUs and can leak spend unattended).
 env:
   SCHEDULED_TEST_TIER: e2e-daily
+  NPA_DAILY_NETWORK: ${{ vars.NPA_DAILY_NETWORK || 'direct' }}
 
 permissions:
   contents: read
@@ -66,8 +60,11 @@ concurrency:
 
 jobs:
   dev-vm-tests:
-    runs-on: ${{ inputs.runner_label || vars.NPA_DAILY_RUNNER || 'macos-15' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 300
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
@@ -116,6 +113,59 @@ jobs:
           echo "tier=$tier" >> "$GITHUB_OUTPUT"
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
           echo "Effective tier=$tier ref=$ref (event=$EVENT_NAME)"
+
+      - name: Connect to the dev VM network
+        env:
+          NPA_DAILY_TAILSCALE_CLIENT_ID: ${{ vars.NPA_DAILY_TAILSCALE_CLIENT_ID }}
+          NPA_DAILY_TAILSCALE_AUDIENCE: ${{ vars.NPA_DAILY_TAILSCALE_AUDIENCE }}
+        run: |
+          case "$NPA_DAILY_NETWORK" in
+            direct) exit 0 ;;
+            tailscale) ;;
+            *) echo "::error::NPA_DAILY_NETWORK must be direct or tailscale."; exit 1 ;;
+          esac
+          for name in NPA_DAILY_TAILSCALE_CLIENT_ID NPA_DAILY_TAILSCALE_AUDIENCE \
+                      ACTIONS_ID_TOKEN_REQUEST_TOKEN ACTIONS_ID_TOKEN_REQUEST_URL; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::Missing $name. See docs/testing/dev-vm-daily.md#private-network-access."
+              exit 1
+            fi
+          done
+
+          umask 077
+          network_dir="${RUNNER_TEMP:?}/npa-daily-tailscale"
+          mkdir "$network_dir"
+          version=1.94.2
+          archive="tailscale_${version}_amd64.tgz"
+          curl --fail --silent --show-error --location \
+            "https://pkgs.tailscale.com/stable/$archive" -o "$network_dir/$archive"
+          (cd "$network_dir" && printf '%s  %s\n' \
+            c6f99a5d774c7783b56902188d69e9756fc3dddfb08ac6be4cb2585f3fecdc32 \
+            "$archive" | sha256sum --check --status)
+          tar -xzf "$network_dir/$archive" -C "$network_dir" --strip-components=1
+          sudo systemd-run --unit=npa-daily-tailscale --service-type=exec \
+            --property=UMask=0077 --property=StandardOutput=null --property=StandardError=null \
+            "$network_dir/tailscaled" --state=mem: --statedir="$network_dir/state" \
+            --socket="$network_dir/tailscaled.sock"
+          while [ ! -S "$network_dir/tailscaled.sock" ]; do
+            sudo systemctl is-active --quiet npa-daily-tailscale
+            sleep 0.2
+          done
+          # Native discovery reads GitHub's OIDC token from the environment.
+          # Never expand that token into argv or publish authentication output.
+          # The runner owns the private log; sudo only elevates the client.
+          # shellcheck disable=SC2024
+          if ! sudo --preserve-env=ACTIONS_ID_TOKEN_REQUEST_TOKEN,ACTIONS_ID_TOKEN_REQUEST_URL \
+            "$network_dir/tailscale" --socket="$network_dir/tailscaled.sock" up \
+            --client-id="${NPA_DAILY_TAILSCALE_CLIENT_ID}?ephemeral=true&preauthorized=true" \
+            --audience="$NPA_DAILY_TAILSCALE_AUDIENCE" --advertise-tags=tag:npa-daily \
+            --hostname="npa-daily-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            --accept-routes --accept-dns=false --shields-up \
+            > "$network_dir/auth.log" 2>&1; then
+            echo "::error::Tailscale authentication failed. Check the federated identity's error in the Tailscale admin console."
+            exit 1
+          fi
+          echo "Private network connected; subnet routes enabled."
 
       - name: Configure SSH access to the dev VM
         env:
@@ -220,3 +270,18 @@ jobs:
       - name: Clean up SSH key
         if: always()
         run: rm -f ~/.ssh/dev_vm_key
+
+      - name: Disconnect from the dev VM network
+        if: always()
+        run: |
+          network_dir="${RUNNER_TEMP:?}/npa-daily-tailscale"
+          cleanup_failed=0
+          if [ -d "$network_dir" ]; then
+            if sudo systemctl is-active --quiet npa-daily-tailscale; then
+              sudo "$network_dir/tailscale" --socket="$network_dir/tailscaled.sock" logout \
+                > /dev/null 2>&1 || true
+              sudo systemctl stop npa-daily-tailscale || cleanup_failed=1
+            fi
+            sudo rm -rf -- "$network_dir"
+          fi
+          exit "$cleanup_failed"
