@@ -250,9 +250,15 @@ jobs:
           umask 077
           scan_root="$(mktemp -d "$RUNNER_TEMP/curobo-byte-gate.XXXXXXXX")"
           echo "CUROBO_BYTE_GATE_ROOT=$scan_root" >> "$GITHUB_ENV"
+          # Dedicated runners may cache the public Go archive. The existing
+          # helper still verifies its pinned hash, notices, version and modules.
+          toolchain_args=()
+          if [ -n "${NPA_CUROBO_GO_TOOLCHAIN_ARCHIVE:-}" ]; then
+            toolchain_args=(--toolchain-archive "$NPA_CUROBO_GO_TOOLCHAIN_ARCHIVE")
+          fi
           npa/.venv/bin/python npa/scripts/image_byte_scan/go_helper/build.py \
             --analysis-root "$scan_root" --trusted-root "$GITHUB_WORKSPACE" \
-            --output-dir "$scan_root/tools"
+            --output-dir "$scan_root/tools" "${toolchain_args[@]}"
           npa/.venv/bin/python npa/scripts/image_byte_scan/prepare.py dependencies \
             --analysis-root "$scan_root" --trusted-root "$GITHUB_WORKSPACE" \
             --output-dir "$scan_root/native"

@@ -17,6 +17,7 @@ PUBLISH = ROOT / ".github/workflows/publish-public-images.yml"
 SECURITY = ROOT / ".github/workflows/image-security-scan.yml"
 PRE = "Enforce runtime, revision, bootstrap, config, and history contracts"
 POST = "Verify pushed bytes, revision, payload, visibility, and anonymous pull"
+PREPARE = "Prepare and test the cuRobo complete-byte scanner"
 
 
 def steps():
@@ -53,7 +54,12 @@ with open(os.environ["GATE_LOG"], "a") as handle:
     handle.write(json.dumps({"operation": operation, "argv": args}) + "\n")
 if os.environ.get("FAIL_OPERATION") == operation:
     raise SystemExit(17)
-if script == "verify_image.py":
+if operation in {"build.py", "dependencies", "real_helper_checks.py"}:
+    assert option("--trusted-root") == os.environ["GITHUB_WORKSPACE"]
+    root = pathlib.Path(option("--analysis-root"))
+    assert root.is_relative_to(pathlib.Path(os.environ["RUNNER_TEMP"]))
+    assert stat.S_IMODE(root.stat().st_mode) == 0o700
+elif script == "verify_image.py":
     assert pathlib.Path(option("--docker-save")).read_bytes() == b"saved image"
     assert option("--expected-image-id") == "sha256:" + "a" * 64
     pathlib.Path(option("--json")).write_text(json.dumps({"valid": True, "expected_image_id": option("--expected-image-id")}))
@@ -119,6 +125,38 @@ print(json.loads(pathlib.Path(sys.argv[3]).read_text())["expected_image_id"])
         "FAIL_OPERATION": "",
     }
     return checkout, runtime, analysis, env
+
+
+@pytest.mark.parametrize("cache", ["unset", "empty", "provided"])
+@pytest.mark.parametrize("failure", ["", "build.py", "dependencies", "real_helper_checks.py"])
+def test_native_preparation_forwards_optional_cache_without_skipping_gates(
+    shell_environment, cache, failure,
+):
+    checkout, runtime, _, env = shell_environment
+    env.pop("NPA_CUROBO_GO_TOOLCHAIN_ARCHIVE", None)
+    archive = checkout / "verified cache $(touch unexpected).tar.gz"
+    if cache != "unset":
+        env["NPA_CUROBO_GO_TOOLCHAIN_ARCHIVE"] = str(archive) if cache == "provided" else ""
+    env["GITHUB_ENV"] = str(runtime / "job.env")
+    env["FAIL_OPERATION"] = failure
+    result = subprocess.run(
+        ["bash", "-c", named(PREPARE)["run"]], cwd=checkout, env=env,
+        capture_output=True, text=True, check=False,
+    )
+    calls = [json.loads(line) for line in Path(env["GATE_LOG"]).read_text().splitlines()]
+    order = ["build.py", "dependencies", "real_helper_checks.py"]
+    assert result.returncode == (17 if failure else 0), result.stderr
+    assert [call["operation"] for call in calls] == (
+        order[:order.index(failure) + 1] if failure else order
+    )
+    args = calls[0]["argv"]
+    if cache == "provided":
+        assert args[-2:] == ["--toolchain-archive", str(archive)]
+    else:
+        assert "--toolchain-archive" not in args
+    assert all("--toolchain-archive" not in call["argv"] for call in calls[1:])
+    assert not (checkout / "unexpected").exists()
+    assert Path(env["GITHUB_ENV"]).read_text().startswith("CUROBO_BYTE_GATE_ROOT=")
 
 
 @pytest.mark.parametrize("step_name,phase,suffix", [(PRE, "pre", ""), (POST, "post", "-pushed")])
