@@ -83,6 +83,12 @@ arguments before cleanup. This is a coherent image and capability release, not
 a claim that the complete 14-stage workflow ran; the canonical run was blocked
 before launch because the required hosted Cosmos3 model was stopped upstream.
 
+This historical set predates the current MiniMax-compatible Stage 8/9 evaluator
+contract. It remains anonymously pullable, but cannot run the current canonical
+Sim2Real workflow with its MiniMax-M3 default. Select a newer coherent image set
+for that workflow; the [operator runbook](guides/sim2real-workflow.md#5-buildpush-once-and-prove-the-exact-image-pulls)
+explains explicit Cosmos 3 selection and the baked evaluator compatibility check.
+
 ## 2026-09-02 private-registry isolation audit
 
 All 31 accepted release tags and recorded digests resolved through anonymous
