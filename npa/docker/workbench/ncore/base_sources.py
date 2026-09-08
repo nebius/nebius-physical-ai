@@ -36,6 +36,14 @@ SOURCE_DOWNLOAD_HOSTS = frozenset(
     {"archive.ubuntu.com", "raw.githubusercontent.com", "snapshot.debian.org"}
 )
 SOURCE_ANNEX = "opt/ncore/base-sources"
+# BuildKit's OCI exporter retains the WORKDIR no-op as a canonical empty tar.
+# Bind both decoded bytes and stored bytes; arbitrary gzip metadata is not empty.
+EMPTY_OCI_DIFF_ID = (
+    "sha256:5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef"
+)
+EMPTY_OCI_BLOB_SHA256 = (
+    "4f4fb700ef54461cfa02571ae0db9a0dc1e0cdb5577484a6d75e68dc38e8acc1"
+)
 
 
 def digest(value: bytes) -> str:
@@ -750,7 +758,9 @@ def assemble(
     return verify_artifacts(lock, output, native, metadata)
 
 
-def _assemble_artifact(item: dict, target: Path, caches: list[Path], offline: bool) -> None:
+def _assemble_artifact(
+    item: dict, target: Path, caches: list[Path], offline: bool
+) -> None:
     if item.get("delivery") == "native" or target.exists():
         _verify_artifact(item, target)
         return
@@ -936,6 +946,23 @@ def _verify_source_delivery(lock: dict, files: dict) -> None:
             raise ValueError(f"missing or changed delivered source: {path}")
 
 
+def _verify_assembled_layer_boundary(layers: list[dict]) -> None:
+    if len(layers) == 1:
+        return
+    if len(layers) == 2:
+        tail = layers[1]
+        if (
+            tail["diff_id"] == EMPTY_OCI_DIFF_ID
+            and tail["blob_sha256"]
+            in {EMPTY_OCI_BLOB_SHA256, EMPTY_OCI_DIFF_ID.removeprefix("sha256:")}
+            and tail["files"] == {}
+            and tail["debian_packages"] == []
+            and tail["python_packages"] == []
+        ):
+            return
+    raise ValueError("scratch publication must contain exactly one assembled layer")
+
+
 def verify_coverage(lock: dict, inv: dict, native: Path) -> dict:
     """Fail on unknown package identities or ELF bytes, including ancestors."""
     validate_delivery(lock)
@@ -945,8 +972,8 @@ def verify_coverage(lock: dict, inv: dict, native: Path) -> dict:
         "base_diff_ids"
     ]:
         raise ValueError("digest-pinned base layers changed")
-    if lock.get("schema") == 2 and len(inv["layers"]) != 1:
-        raise ValueError("scratch publication must contain exactly one assembled layer")
+    if lock.get("schema") == 2:
+        _verify_assembled_layer_boundary(inv["layers"])
     debian = {
         (p["name"], p["version"], p["architecture"]): p for p in lock["debian_binaries"]
     }

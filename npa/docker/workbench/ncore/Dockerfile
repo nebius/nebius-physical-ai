@@ -2,7 +2,9 @@
 # CPU NCore converter/V4 reader. Build context: committed npa/ from SOURCE_SHA.
 FROM python:3.12.12-slim-bookworm@sha256:593bd06efe90efa80dc4eee3948be7c0fde4134606dd40d8dd8dbcade98e669c AS runtime-base
 ARG DEBIAN_SNAPSHOT=20260906T183022Z
-ENV DEBIAN_FRONTEND=noninteractive \
+# The base's CPython source-build key is unused by this recipe. Debian source
+# authentication uses its independently hash-pinned archive keyring.
+ENV GPG_KEY="" DEBIAN_FRONTEND=noninteractive \
     PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_NO_CACHE_DIR=1
 RUN sed -ri \

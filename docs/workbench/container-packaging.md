@@ -4,6 +4,10 @@ Canonical contract for packaging workbench containers correctly, securely, and
 with the right runtime features exposed. Machine-readable rules live in
 `npa/docker/workbench/packaging-contract.yaml` (enforced by unit tests).
 
+NCore development images use the [attested OCI publication path](ncore-oci-publication.md)
+to preserve the exact buildx index through local gates and anonymous readback.
+NCore remains quarantined pending its independent RTX acceptance.
+
 ## SkyPilot worker bootstrap contract
 
 Every workflow image must satisfy version `skypilot-0.12.2-v1`: a usable

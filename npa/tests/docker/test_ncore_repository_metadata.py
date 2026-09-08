@@ -1,6 +1,7 @@
 """Separate authenticated build inputs from source verified in final image bytes."""
 
 import copy
+import gzip
 import importlib.util
 import io
 import json
@@ -175,7 +176,13 @@ def _inventory(sources, tmp_path, files, extra_layers=()):
     entries["config.json"] = json.dumps(
         {
             "rootfs": {
-                "diff_ids": ["sha256:" + sources.digest(raw) for raw in layers],
+                "diff_ids": [
+                    "sha256:"
+                    + sources.digest(
+                        gzip.decompress(raw) if raw.startswith(b"\x1f\x8b") else raw
+                    )
+                    for raw in layers
+                ],
             }
         }
     ).encode()
@@ -430,6 +437,76 @@ def test_extra_layer_cannot_hide_delivery_changes(sources, delivery, tmp_path):
     lock, annex, _, _ = delivery
     files = _published_files(sources, lock, annex)
     inv = _inventory(sources, tmp_path, files, (_tar({"unrelated": b"extra layer"}),))
+    with pytest.raises(ValueError, match="exactly one assembled layer"):
+        sources.verify_coverage(lock, inv, annex)
+
+
+@pytest.mark.parametrize(
+    "empty",
+    [
+        bytes(1024),
+        bytes.fromhex(
+            "1f8b08000000000000ff621805a360148c5800080000ffff2eafb5ef00040000"
+        ),
+    ],
+)
+def test_canonical_oci_workdir_noop_preserves_every_physical_layer(
+    sources, delivery, tmp_path, empty
+):
+    lock, annex, _, _ = delivery
+    files = _published_files(sources, lock, annex)
+    inv = _inventory(sources, tmp_path, files, (empty,))
+    result = sources.verify_coverage(lock, inv, annex)
+    assert result["inventoried_layers"] == inv["counts"]["layers"] == 2
+    assert inv["counts"]["layer_entries"] == inv["counts"]["final_entries"]
+
+
+@pytest.mark.parametrize("extras", [(bytes(1536),), (bytes(1024), bytes(1024))])
+def test_empty_layer_padding_and_additional_layers_are_not_exempt(
+    sources, delivery, tmp_path, extras
+):
+    lock, annex, _, _ = delivery
+    inv = _inventory(sources, tmp_path, _published_files(sources, lock, annex), extras)
+    with pytest.raises(ValueError, match="exactly one assembled layer"):
+        sources.verify_coverage(lock, inv, annex)
+
+
+def test_empty_decoded_layer_cannot_carry_gzip_filename_metadata(
+    sources, delivery, tmp_path
+):
+    lock, annex, _, _ = delivery
+    compressed = io.BytesIO()
+    with gzip.GzipFile(
+        fileobj=compressed, filename="unexpected-metadata", mode="wb", mtime=0
+    ) as stream:
+        stream.write(bytes(1024))
+    inv = _inventory(
+        sources,
+        tmp_path,
+        _published_files(sources, lock, annex),
+        (compressed.getvalue(),),
+    )
+    assert inv["layers"][1]["diff_id"] == sources.EMPTY_OCI_DIFF_ID
+    with pytest.raises(ValueError, match="exactly one assembled layer"):
+        sources.verify_coverage(lock, inv, annex)
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("files", {"unexpected": {"size": 0}}),
+        ("debian_packages", [{"name": "unexpected"}]),
+        ("python_packages", [{"name": "unexpected"}]),
+    ],
+)
+def test_canonical_empty_hash_cannot_override_nonempty_inventory(
+    sources, delivery, tmp_path, field, value
+):
+    lock, annex, _, _ = delivery
+    inv = _inventory(
+        sources, tmp_path, _published_files(sources, lock, annex), (bytes(1024),)
+    )
+    inv["layers"][1][field] = value
     with pytest.raises(ValueError, match="exactly one assembled layer"):
         sources.verify_coverage(lock, inv, annex)
 

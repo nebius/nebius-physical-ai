@@ -9,6 +9,13 @@ Python headers/static libraries, optional GUI/DB/interactive extensions, build
 trees, populated caches and test extensions are absent. The converter and its
 hash-locked runtime dependency environment are unchanged.
 
+The OCI exporter may retain one additional `WORKDIR /workspace` no-op layer.
+The source verifier permits only its exact canonical 1,024 zero decoded bytes
+and exact stored gzip bytes (or those same uncompressed zeros in a Docker save).
+It rejects extra entries, altered gzip headers, padding and further layers.
+Both physical layers remain in the graph, inventory counts and complete-byte
+scan; this does not permit another filesystem payload or builder ancestry.
+
 `base-source-lock.json` identifies the selected Debian files and CPython files by
 path, content hash or exact symlink, together with the .deb hash, signed package
 index and source identity. The list was derived from the actual pinned .deb
