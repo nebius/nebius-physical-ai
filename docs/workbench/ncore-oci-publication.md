@@ -42,6 +42,19 @@ optional `INFRA_DENYLIST`. These values never become Docker build arguments or c
 environment variables. Keep their provisioning outside source files and command
 logs. Do not upload the analysis directory as a public CI artifact.
 
+The CLI emits flushed stderr markers such as
+`NCore OCI phase=byte-scan status=begin`, followed by `status=pass` or
+`status=failure`. Only fixed, allowlisted action and phase identifiers appear;
+exception text, subprocess output, paths and policy matches remain private.
+Phases distinguish source and provenance checks, byte and payload scans,
+image and component security, bootstrap, registry transfer, visibility and
+anonymous verification. The anonymous verification phase includes a second
+`byte-scan`. On failure, the innermost phase fails first, followed by its
+enclosing phases. A begin marker without a terminal marker means the phase
+did not report completion. Pass requires the phase's checks to return
+successfully; an evidence file alone is insufficient. The existing stdout
+success marker and mandatory publication gates are unchanged.
+
 An operator with an existing exact-literal policy can instead supply
 `--policy-mode exact-literals --literal-inventory <private-file>` to each
 command. The nonempty owner-only JSON inventory must be inside the analysis

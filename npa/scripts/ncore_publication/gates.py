@@ -9,6 +9,7 @@ from image_byte_scan import core as W
 from npa.deploy import images
 from npa.deploy.publish_public import _TRIVY_CONTAINER_IMAGE
 from . import artifact, bootstrap, components, provenance
+from .diagnostics import phase, run_phase
 from .process import guard_command, guard_snapshot, verify_guard_execution
 from .process import ROOT, PYTHON, committed_source, file_sha, public_environment, run, write_json
 
@@ -100,28 +101,38 @@ def verify(args, directory, build):
     Raises:
         ValueError, OSError, ImportError: A required gate or integration is absent.
     """
-    eligibility(args.source_sha)
-    W.require(committed_source(args.source_sha) == build["context_sha256"], "build_context_changed")
-    source_guards(directory, args.source_sha)
+    with phase("source-binding"):
+        eligibility(args.source_sha)
+        W.require(committed_source(args.source_sha) == build["context_sha256"], "build_context_changed")
+    run_phase("source-guards", source_guards, directory, args.source_sha)
     archive = args.analysis_root / "build/image.oci.tar"
     digest = build["image_digest"]
-    graph, verification = artifact.inspect(archive, digest)
-    W.require(verification["archive_sha256"] == build["archive_sha256"], "build_archive_changed")
-    index, config, blobs = artifact.documents(archive, digest, graph)
-    sbom = provenance.verify(index, config, blobs, graph, args.source_sha)
-    write_json(directory / "buildx.spdx.json", sbom)
-    byte_scan(args, directory, archive, digest, verification)
-    artifact.inspection_archives(archive, digest, graph, directory)
-    provenance.shipped_source(directory / "rootfs.tar", args.source_sha)
-    _source_delivery(args, directory)
-    _payload(directory)
-    _payload_history(directory, graph)
-    _security(directory, graph)
-    _selected_base(directory, digest, graph)
-    components.verify(directory, digest, graph, args.source_sha)
-    bootstrap.verify(directory, graph["image_config_digest"], args.bootstrap_source)
-    artifact.assert_unchanged(archive, verification)
-    W.require(committed_source(args.source_sha) == build["context_sha256"], "source_changed_during_gates")
+    graph, verification = _graph_provenance(args, directory, build, archive)
+    run_phase("byte-scan", byte_scan, args, directory, archive, digest, verification)
+    run_phase("inspection-archives", artifact.inspection_archives, archive, digest, graph, directory)
+    run_phase("shipped-source", provenance.shipped_source, directory / "rootfs.tar", args.source_sha)
+    run_phase("source-delivery", _source_delivery, args, directory)
+    run_phase("payload", _payload, directory)
+    run_phase("payload-history", _payload_history, directory, graph)
+    run_phase("image-security", _security, directory, graph)
+    run_phase("selected-base", _selected_base, directory, digest, graph)
+    run_phase("components", components.verify, directory, digest, graph, args.source_sha)
+    run_phase("bootstrap", bootstrap.verify, directory, graph["image_config_digest"], args.bootstrap_source)
+    with phase("source-recheck"):
+        artifact.assert_unchanged(archive, verification)
+        W.require(committed_source(args.source_sha) == build["context_sha256"], "source_changed_during_gates")
+    return graph, verification
+
+
+def _graph_provenance(args, directory, build, archive):
+    digest = build["image_digest"]
+    with phase("oci-graph"):
+        graph, verification = artifact.inspect(archive, digest)
+        W.require(verification["archive_sha256"] == build["archive_sha256"], "build_archive_changed")
+    with phase("provenance"):
+        index, config, blobs = artifact.documents(archive, digest, graph)
+        sbom = provenance.verify(index, config, blobs, graph, args.source_sha)
+        write_json(directory / "buildx.spdx.json", sbom)
     return graph, verification
 
 

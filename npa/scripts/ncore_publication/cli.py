@@ -7,6 +7,7 @@ import tarfile
 
 from image_byte_scan import core as W, prepare as P
 from . import artifact, registry
+from .diagnostics import phase, run_phase
 from .process import ROOT, PYTHON, committed_source, file_sha, public_environment, run, write_json
 from .process import committed_npa_imports
 
@@ -200,7 +201,7 @@ def _build_metadata(path):
         os.close(fd)
 
 
-def _check_or_publish(args):
+def _build_receipt(args):
     from . import gates
 
     build = W.bound_json(P.binding(args.analysis_root / "build/build.json"))
@@ -209,8 +210,15 @@ def _check_or_publish(args):
               and build["image"] == gates.eligibility(args.source_sha), "build_receipt_source")
     metadata = W.bound_json(build["metadata"])
     W.require(metadata["containerimage.digest"] == build["image_digest"], "build_metadata_digest")
+    return build
+
+
+def _check_or_publish(args):
+    from . import gates
+
+    build = run_phase("build-receipt", _build_receipt, args)
     args.output_dir.mkdir(mode=0o700)
-    graph, verification = gates.verify(args, args.output_dir, build)
+    graph, verification = run_phase("prepublication", gates.verify, args, args.output_dir, build)
     write_json(args.output_dir / "prepublication.json", {
         "status": "pass", "source_sha": args.source_sha,
         "image_digest": build["image_digest"], "archive_sha256": build["archive_sha256"],
@@ -219,7 +227,7 @@ def _check_or_publish(args):
     if args.action == "publish":
         transfer = args.output_dir / "transfer"
         transfer.mkdir(mode=0o700)
-        registry.transfer(args, transfer, build, graph, verification)
+        run_phase("registry-transfer", registry.transfer, args, transfer, build, graph, verification)
 
 
 def main(argv=None):
@@ -235,9 +243,9 @@ def main(argv=None):
     os.umask(0o077)
     try:
         args = _parser().parse_args(argv)
-        with (W.cancellation_scope(), W.authorized_roots(args.analysis_root, ROOT),
+        with (phase(args.action), W.cancellation_scope(), W.authorized_roots(args.analysis_root, ROOT),
               committed_npa_imports(args.source_sha)):
-            _inputs(args)
+            run_phase("inputs", _inputs, args)
             if args.action == "prepare":
                 _prepare(args)
             elif args.action == "build":
@@ -246,6 +254,7 @@ def main(argv=None):
                 _check_or_publish(args)
         print("NCore OCI operation passed; release acceptance and quarantine are unchanged")
         return 0
-    except W.INPUT_ERRORS:
+    except (Exception, KeyboardInterrupt):
+        # Unexpected library errors can also contain private paths or process output.
         print("NCore OCI operation failed; inspect private evidence")
         return 1

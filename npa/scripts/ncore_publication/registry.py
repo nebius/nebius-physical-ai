@@ -5,11 +5,13 @@ import subprocess
 
 from image_byte_scan import core as W
 from . import artifact
+from .diagnostics import phase, run_phase
 from .process import ROOT, public_environment, run, write_json
 
 PACKAGE_API = "/orgs/nebius/packages/container/nebius-physical-ai%2Fnpa-ncore"
 
 
+@phase("registry-tag-lookup")
 def _observed(reference, output, authfile):
     argv = ["skopeo", "inspect", "--raw", "--authfile", str(authfile), "docker://" + reference]
     result = subprocess.run(argv, cwd=ROOT, capture_output=True, check=False, env=public_environment())
@@ -58,9 +60,9 @@ def transfer(args, directory, build, graph, verification):
         observed = _observed(image, directory / "before-copy.json", args.authfile)
         _require_equal_or_absent(observed, digest)
         if observed is None:
-            _copy(args, directory, image, digest, archive, verification)
-    _public_visibility(directory, image, digest, graph)
-    _readback(args, directory, image, digest, graph)
+            run_phase("registry-copy", _copy, args, directory, image, digest, archive, verification)
+    run_phase("registry-visibility", _public_visibility, directory, image, digest, graph)
+    run_phase("anonymous-verification", _readback, args, directory, image, digest, graph)
     artifact.assert_unchanged(archive, verification)
     return digest
 
@@ -105,17 +107,19 @@ def _readback(args, directory, image, digest, graph):
     # Explicit no-creds and an empty auth file prohibit fallback to Docker or
     # containers credential helpers; every blob is downloaded, not only HEADed.
     archive = directory / "anonymous.oci.tar"
-    run(["skopeo", "copy", "--all", "--preserve-digests", "--src-no-creds",
-         "--src-authfile", str(auth), "docker://" + image,
-         "oci-archive:" + str(archive)], directory / "anonymous-copy.log", env=public_environment())
-    observed_graph, verification = artifact.inspect(archive, digest)
-    for key in ("image_manifest_digest", "image_config_digest"):
-        W.require(observed_graph[key] == graph[key], "anonymous_image_identity_changed")
-    W.require(observed_graph["receipt"]["blobs"] == graph["receipt"]["blobs"], "anonymous_graph_changed")
-    _anonymous_tag(directory, image, digest, auth)
+    with phase("anonymous-copy"):
+        run(["skopeo", "copy", "--all", "--preserve-digests", "--src-no-creds",
+             "--src-authfile", str(auth), "docker://" + image,
+             "oci-archive:" + str(archive)], directory / "anonymous-copy.log", env=public_environment())
+    with phase("anonymous-graph"):
+        observed_graph, verification = artifact.inspect(archive, digest)
+        for key in ("image_manifest_digest", "image_config_digest"):
+            W.require(observed_graph[key] == graph[key], "anonymous_image_identity_changed")
+        W.require(observed_graph["receipt"]["blobs"] == graph["receipt"]["blobs"], "anonymous_graph_changed")
+    run_phase("anonymous-tag-check", _anonymous_tag, directory, image, digest, auth)
     from .gates import byte_scan
 
-    byte_scan(args, directory, archive, digest, verification)
+    run_phase("byte-scan", byte_scan, args, directory, archive, digest, verification)
     write_json(directory / "published.json", {
         "image_digest": digest, "platform_digest": graph["image_manifest_digest"],
         "config_digest": graph["image_config_digest"], "graph": graph["receipt"]["blobs"],
