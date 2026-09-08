@@ -82,8 +82,9 @@ out of commits.
 ## Run
 
 Submit the shipped spec through `npa workbench workflow submit`, selecting the
-operator's exact Kubernetes context and bucket. Pass any runtime opt-out, required
-`HF_TOKEN`, and S3 credentials through `--secret-env`; never render their values
+operator's exact Kubernetes context and bucket. Pass any runtime opt-out, an
+`HF_TOKEN` only when the selected assets require gated access, and S3 credentials
+through `--secret-env`; never render their values
 into YAML or logs. Set `--var runtime_image=<operator-image@sha256:digest>` and
 `--var image_pull_secret=<pull-secret-name>` to the verified historical private wrapper and
 its existing registry pull Secret when using the historical private wrapper.

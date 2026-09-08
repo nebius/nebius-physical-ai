@@ -114,7 +114,7 @@ flowchart TB
 | `cosmos` | `cu128-torch27-sm100-1.0.9-20260803T002017Z` | container-smoke | version; model load; single inference (safety on) | required | gpu-gated |
 | `cosmos2-transfer` | `2.5.1-sim2real-coherent-20260904` | container-smoke | procedural input; four real diffusion steps; decoded, numerically validated output MP4; guardrails enabled | required | gpu-gated |
 | `cosmos3` | `1.2.2-cu130-r6` | container-smoke | real Cosmos 3 text2image generation; decodable image; guardrails on | required | gpu-gated |
-| `cosmos3-nano-video` | operator-controlled immutable image | container-smoke | real BF16 TP=1 diffusion; three-chunk rollout with V2V continuations; four fully decoded MP4s; 30-second 480p result and measured memory/latency | required | gpu-gated |
+| `cosmos3-nano-video` | explicit immutable development image | container-smoke | real BF16 TP=1 diffusion; three-chunk rollout with V2V continuations; four fully decoded MP4s; 30-second 480p result and measured memory/latency | required | gpu-gated |
 | `cosmos3-reason` | `cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z` | container-smoke | CUDA; real Reason VLM pass | optional | gpu-gated |
 | `sonic` | `0.1.2` | entrypoint-smoke | `/entrypoint.sh smoke`; GPU proofs; JSON artifact | required | gpu-gated |
 | `retargeting` | `0.1.1` | container-smoke | validate_motion_lib on synthetic motion | none | ready |
@@ -351,8 +351,12 @@ Run these inside the corresponding built image (or via
 - `cosmos3` — `npa workbench cosmos3 generate --help` (job entrypoint; the eval
   itself runs a real text2image generation and needs an operator HF token, since
   the image bakes no weights)
-- `cosmos3-nano-video` — `python -m npa.workbench.cosmos.nano_video_golden` inside its
-  restricted image on an NPA mk8s B200. It requires the pinned BF16 weights and
+- `cosmos3-nano-video` — `python -m npa.workbench.cosmos.nano_video_golden` inside an
+  explicitly selected immutable public development image on an NPA mk8s B200.
+  The [measured development validation](../../npa/deploy/cosmos3-nano-video/README.md#measured-public-development-validation)
+  exercised the SDK/CLI continuation and augmentation paths; it does not claim
+  execution of this separate golden entrypoint. The golden command requires the
+  pinned BF16 weights and
   verified `READY.json` on a read-only model-cache mount selected by
   `NPA_COSMOS3_MODEL_PATH`, starts the real
   diffusion runtime with guardrails off, generates
