@@ -1000,23 +1000,291 @@ def _seed_nurec_colmap_source(client: Any, *, bucket: str, prefix: str) -> None:
         )
 
 
-def assert_nurec_colmap_live_outputs(
-    *, bucket: str, run_id: str, e2e_project: str | None = None
-) -> None:
-    """Verify durable conversion bytes and downstream completion after submit."""
+def _nurec_s3_json(client: Any, bucket: str, key: str) -> dict:
+    with client.get_object(Bucket=bucket, Key=key)["Body"] as body:
+        return json.load(body)
+
+
+def _download_nurec_proof(client: Any, bucket: str, root: str, local: Path) -> None:
+    """Fetch the published outputs, including every novel-view image and video."""
+    from npa.clients.storage import safe_s3_download_target
+    from npa.workflows.data_factory_viz import IMAGE_SUFFIXES
+
+    keys = [
+        root + relative
+        for relative in (
+            "reconstruction/last.usdz",
+            "reconstruction/metrics.yaml",
+            "reconstruction/parsed.yaml",
+            "reports/sim2real.rrd",
+            "reports/final.json",
+            "source/attribution.json",
+            "ncore/sequence/conversion.json",
+            "ncore/sequence/npa-rig.json",
+        )
+    ]
+    for page in client.get_paginator("list_objects_v2").paginate(
+        Bucket=bucket, Prefix=root + "novel_views/"
+    ):
+        keys.extend(
+            item["Key"]
+            for item in page.get("Contents", [])
+            if Path(item["Key"]).suffix.lower() in IMAGE_SUFFIXES | {".mp4"}
+        )
+    for key in keys:
+        target = safe_s3_download_target(local, key, root)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        client.download_file(bucket, key, str(target))
+        assert target.stat().st_size > 0, "empty NuRec proof artifact"
+
+
+def _assert_nurec_usdz(path: Path) -> None:
+    """Check package bytes and reopen the USD stage without requiring NRE/GPU."""
+    import zipfile
+
+    try:
+        from pxr import Usd
+    except ImportError:
+        pytest.fail(
+            "NuRec live output readback requires usd-core in the test environment"
+        )
+    with zipfile.ZipFile(path) as package:
+        members = package.infolist()
+        assert members, "USDZ has no members"
+        assert package.testzip() is None, "USDZ member CRC differs"
+        assert Path(members[0].filename).suffix.lower() in {".usd", ".usda", ".usdc"}
+        assert all(m.compress_type == zipfile.ZIP_STORED for m in members), (
+            "compressed USDZ"
+        )
+        assert members[0].file_size > 0, "empty USD root layer"
+    stage = Usd.Stage.Open(str(path))
+    assert stage, "USDZ root layer cannot be opened"
+    assert any(stage.Traverse()), "USDZ has no scene prims"
+
+
+def _assert_nurec_quality_metrics(path: Path) -> dict[str, float]:
+    """Require finite validation measurements using NRE's actual YAML formats."""
+    import math
+
+    import yaml
+
+    from npa.workbench.nurec.nurec import parse_metrics_yaml
+
+    assert isinstance(yaml.safe_load(path.read_text()), dict), (
+        "invalid NRE metrics document"
+    )
+    metrics = parse_metrics_yaml(path)
+    required = {
+        name: metrics.get(name) for name in ("test/psnr", "test/ssim", "test/lpips")
+    }
+    assert all(
+        value is not None and math.isfinite(value) for value in required.values()
+    ), "NRE quality metrics are missing or nonfinite"
+    assert required["test/psnr"] > 0, "NRE PSNR must be positive"
+    assert 0 < required["test/ssim"] <= 1, "NRE SSIM is outside its meaningful range"
+    assert required["test/lpips"] >= 0, "NRE LPIPS is negative"
+    return required
+
+
+def _assert_nurec_novel_media(local: Path) -> dict[str, set[int]]:
+    """Fully decode every published novel-view frame and video."""
+    import av
+    from PIL import Image
+
+    from npa.workflows.data_factory_viz import _frame_index, _grouped_images
+
+    groups = _grouped_images(local / "novel_views")
+    assert groups, "NuRec published no novel-view image frames"
+    for paths in groups.values():
+        for path in paths:
+            with Image.open(path) as image:
+                image.load()
+                assert min(image.size) > 0, "empty novel-view image"
+    for path in sorted((local / "novel_views").rglob("*.mp4")):
+        count = 0
+        with av.open(str(path)) as video:
+            assert video.streams.video, "novel-view MP4 has no video stream"
+            for frame in video.decode(video=0):
+                pixels = frame.to_ndarray(format="rgb24")
+                assert pixels.size > 0, "empty novel-view video frame"
+                count += 1
+        assert count > 0, "novel-view MP4 has no decoded frames"
+    return {
+        name: {_frame_index(path.stem) for path in paths}
+        for name, paths in groups.items()
+    }
+
+
+def _nurec_rrd_document(chunks: list, entity: str) -> dict:
+    texts = []
+    for chunk in chunks:
+        if str(chunk.entity_path) != entity:
+            continue
+        batch = chunk.to_record_batch()
+        if "TextDocument:text" in batch.schema.names:
+            texts.extend(
+                row[0] for row in batch.column("TextDocument:text").to_pylist() if row
+            )
+    assert len(texts) == 1, "RRD lacks a unique required provenance/metrics document"
+    match = re.search(r"```json\s*\n(.*?)\n```", texts[0], re.DOTALL)
+    assert match, "RRD document has no JSON payload"
+    return json.loads(match.group(1))
+
+
+def _assert_nurec_rrd_lineage(local: Path, chunks: list) -> None:
     import hashlib
 
-    from npa.clients.project_credentials import s3_client_for_project
+    for entity, relative, required in (
+        ("source", "source/attribution.json", {"revision", "sha256", "license"}),
+        (
+            "conversion",
+            "ncore/sequence/conversion.json",
+            {"engine", "counts", "source", "converter"},
+        ),
+        (
+            "rig",
+            "ncore/sequence/npa-rig.json",
+            {"reference_camera", "pose_count", "poses_component_group"},
+        ),
+    ):
+        path = local / relative
+        source = json.loads(path.read_text())
+        decoded = _nurec_rrd_document(chunks, f"/provenance/{entity}")
+        assert required <= decoded.keys(), (
+            "RRD lineage document omits required capture facts"
+        )
+        assert (
+            decoded["artifact_sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
+        ), "RRD lineage is not bound to this run's source artifact bytes"
+        for key, value in decoded.items():
+            if key == "artifact_sha256":
+                continue
+            if isinstance(value, dict):
+                assert all(source[key][name] == item for name, item in value.items())
+            else:
+                assert source[key] == value, "RRD lineage differs from source artifact"
+    assert {"/pipeline/1_ncore", "/pipeline/3_novel_views"} <= {
+        str(chunk.entity_path) for chunk in chunks
+    }, "RRD lacks the capture/render summaries"
 
-    root = f"{_live_s3_root(run_id)}/nurec-colmap-reconstruct/"
-    client = s3_client_for_project(e2e_project, allow_host_creds=True)
-    sequence = f"{root}ncore/sequence/"
 
-    def read_json(key: str) -> dict:
-        with client.get_object(Bucket=bucket, Key=key)["Body"] as body:
-            return json.load(body)
+def _nurec_review_image_bytes(local: Path) -> dict[tuple[str, int], bytes]:
+    """Independently derive this workflow's JPEG review bytes from its renders."""
+    import io
 
-    report = read_json(sequence + "conversion.json")
+    from PIL import Image
+
+    from npa.workflows.data_factory_viz import (
+        RRD_JPEG_QUALITY,
+        RRD_MAX_FRAME_DIM,
+        _frame_index,
+        _grouped_images,
+    )
+
+    images = {}
+    for camera, paths in _grouped_images(local / "novel_views").items():
+        for path in paths:
+            key = (camera, _frame_index(path.stem))
+            assert key not in images, "duplicate rendered camera/frame identity"
+            with Image.open(path) as source:
+                rgb = source.convert("RGB")
+                if RRD_MAX_FRAME_DIM > 0 and max(rgb.size) > RRD_MAX_FRAME_DIM:
+                    rgb.thumbnail((RRD_MAX_FRAME_DIM, RRD_MAX_FRAME_DIM))
+                encoded = io.BytesIO()
+                rgb.save(encoded, format="JPEG", quality=RRD_JPEG_QUALITY)
+            images[key] = encoded.getvalue()
+    return images
+
+
+def _assert_nurec_rrd_frames(
+    local: Path, chunks: list, expected: dict[str, set[int]]
+) -> None:
+    import io
+
+    from PIL import Image
+
+    source_images = _nurec_review_image_bytes(local)
+    observed: dict[str, set[int]] = {}
+    for chunk in chunks:
+        entity = str(chunk.entity_path)
+        if not entity.startswith("/novel_view/"):
+            continue
+        camera = entity.removeprefix("/novel_view/")
+        batch = chunk.to_record_batch()
+        assert "EncodedImage:blob" in batch.schema.names, (
+            "RRD novel view has no image data"
+        )
+        assert "frame" in batch.schema.names, "RRD novel view has no frame timeline"
+        for row, index in zip(
+            batch.column("EncodedImage:blob").to_pylist(),
+            batch.column("frame").to_pylist(),
+            strict=True,
+        ):
+            assert row and index in expected.get(camera, set()), (
+                "RRD frame absent from source"
+            )
+            assert bytes(row[0]) == source_images[(camera, index)], (
+                "RRD image bytes differ from this run's rendered frame"
+            )
+            with Image.open(io.BytesIO(bytes(row[0]))) as image:
+                image.load()
+                assert min(image.size) > 0
+            observed.setdefault(camera, set()).add(index)
+    assert observed.keys() == expected.keys(), (
+        "RRD is missing rendered camera image entities"
+    )
+
+
+def _assert_nurec_rrd(
+    local: Path, recording_id: str, frames: dict[str, set[int]]
+) -> None:
+    import subprocess
+    import sys
+
+    import yaml
+    from rerun.recording import load_recording
+
+    path = local / "reports/sim2real.rrd"
+    verified = subprocess.run(
+        [str(Path(sys.executable).with_name("rerun")), "rrd", "verify", str(path)],
+        capture_output=True,
+        check=False,
+    )
+    assert verified.returncode == 0, "Rerun rejected the published recording"
+    recording = load_recording(path)
+    assert recording.application_id() == "neural-reconstruction", (
+        "wrong RRD application"
+    )
+    assert recording.recording_id() == recording_id, "wrong RRD run identity"
+    chunks = list(recording.chunks())
+    _assert_nurec_rrd_lineage(local, chunks)
+    _assert_nurec_rrd_frames(local, chunks, frames)
+    assert _nurec_rrd_document(chunks, "/gaussians/summary") == yaml.safe_load(
+        (local / "reconstruction/metrics.yaml").read_text()
+    ), "RRD Gaussian metrics differ from the published NRE metrics"
+
+
+def _assert_nurec_downstream_proof(local: Path, *, recording_id: str) -> None:
+    import yaml
+
+    attribution = json.loads((local / "source/attribution.json").read_text())
+    assert attribution["revision"] == NUREC_COLMAP_REVISION
+    assert attribution["sha256"] == NUREC_COLMAP_SHA256
+    assert attribution["license"] == "CC-BY-4.0"
+    final = json.loads((local / "reports/final.json").read_text())
+    assert final["has_usdz"] and final["has_novel_views"] and final["has_rrd"]
+    _assert_nurec_usdz(local / "reconstruction/last.usdz")
+    _assert_nurec_quality_metrics(local / "reconstruction/metrics.yaml")
+    recipe = yaml.safe_load((local / "reconstruction/parsed.yaml").read_text())
+    assert isinstance(recipe, dict) and recipe.get("dataset"), (
+        "missing resolved NRE dataset recipe"
+    )
+    frames = _assert_nurec_novel_media(local)
+    _assert_nurec_rrd(local, recording_id, frames)
+
+
+def _assert_nurec_conversion_report(report: dict) -> None:
+    """Keep the full source-count and immutable converter checks independent."""
     assert report["status"] == "ok"
     assert report["engine"] == "nvidia-ncore-colmap"
     assert report["converter"]["revision"] == "59c698d206da92b406a4f72619fce3b3a2c64bfd"
@@ -1029,8 +1297,14 @@ def assert_nurec_colmap_live_outputs(
     assert counts["cameras"] == 3
     assert counts["points"] > 0
     assert counts["points"] + report["source"]["origin_points_filtered"] == 163453
-    meta = read_json(sequence + "sequence.json")
-    assert meta["version"] == "v4"
+
+
+def _assert_nurec_conversion_members(
+    client: Any, bucket: str, sequence: str, report: dict, meta: dict
+) -> None:
+    """Hash every declared sequence member after publication."""
+    import hashlib
+
     members = {item["path"]: item for item in report["members"]}
     assert len(members) == len(report["members"]), "duplicate provenance members"
     required = {"sequence.json", "npa-rig.json"}
@@ -1048,14 +1322,41 @@ def assert_nurec_colmap_live_outputs(
         assert digest.hexdigest() == item["sha256"], (
             "published sequence member hash differs"
         )
-    attribution = read_json(root + "source/attribution.json")
-    assert attribution["revision"] == NUREC_COLMAP_REVISION
-    assert attribution["license"] == "CC-BY-4.0"
-    final = read_json(root + "reports/final.json")
-    assert final["has_usdz"] and final["has_novel_views"] and final["has_rrd"]
-    for relative in ("reconstruction/metrics.yaml", "reports/sim2real.rrd"):
-        assert (
-            client.head_object(Bucket=bucket, Key=root + relative)["ContentLength"] > 0
+
+
+def assert_nurec_colmap_live_outputs(
+    *, bucket: str, run_id: str, e2e_project: str | None = None
+) -> None:
+    """Read back conversion and independently decode the downstream artifacts.
+
+    Args:
+        bucket: Private run artifact bucket.
+        run_id: Live matrix run identifier.
+        e2e_project: Optional credential scope.
+
+    Returns:
+        None.
+
+    Raises:
+        AssertionError: Artifact bytes or decoded evidence are incomplete/invalid.
+    """
+    import tempfile
+
+    from npa.clients.project_credentials import s3_client_for_project
+
+    root = f"{_live_s3_root(run_id)}/nurec-colmap-reconstruct/"
+    client = s3_client_for_project(e2e_project, allow_host_creds=True)
+    sequence = f"{root}ncore/sequence/"
+    report = _nurec_s3_json(client, bucket, sequence + "conversion.json")
+    _assert_nurec_conversion_report(report)
+    meta = _nurec_s3_json(client, bucket, sequence + "sequence.json")
+    assert meta["version"] == "v4"
+    _assert_nurec_conversion_members(client, bucket, sequence, report, meta)
+    with tempfile.TemporaryDirectory(prefix="npa-colmap-readback-") as directory:
+        local = Path(directory)
+        _download_nurec_proof(client, bucket, root, local)
+        _assert_nurec_downstream_proof(
+            local, recording_id=root.rstrip("/").split("/")[-1]
         )
 
 

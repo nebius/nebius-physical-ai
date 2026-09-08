@@ -105,7 +105,7 @@ containers:
     safety:
       runs_as: ubuntu
       base_image: python:3.12.12-slim-bookworm
-      network: none for the packaging check; source and Python wheels fetched at build
+      network: source fetched at build; packaging check fetches locked Python dependencies on a cold runtime
       external_fetch: [github-ncore-build, github-trueprice-pycolmap-build, pypi-build]
       notes: >-
         Apache-2.0 converter and reader, MIT trueprice reader, no model/data/NRE

@@ -76,7 +76,9 @@
     "poses_verified": null,
     "finite_geometry": null,
     "rig_mode": null,
-    "poses_component_group": null
+    "poses_component_group": null,
+    "camera_frame_counts": null,
+    "camera_frame_inventory_sha256": null
   },
   "rtx_proof": {
     "status": null,
@@ -100,6 +102,37 @@
     "render_bytes": null,
     "decoded_frames": null,
     "finite_pixels": null,
-    "novel_view": null
+    "novel_view": null,
+    "training_input": {
+      "inventory_report_sha256": null,
+      "parsed_config_sha256": null,
+      "native_recipe_sha256": null,
+      "datasource_summary_sha256": null,
+      "split_report_sha256": null,
+      "native_recipe": null,
+      "native_epochs": null,
+      "resolved_epochs": null,
+      "native_samples_per_epoch": null,
+      "resolved_samples_per_epoch": null,
+      "native_recipe_completed": null,
+      "loaded_camera_frame_counts": null,
+      "eligible_training_camera_frame_counts": null,
+      "validation_camera_frame_counts": null,
+      "covered_camera_frame_counts": null,
+      "source_frame_inventory_sha256": null,
+      "covered_frame_inventory_sha256": null,
+      "independent_frame_readback": null
+    },
+    "rrd": {
+      "report_sha256": null,
+      "sha256": null,
+      "bytes": null,
+      "decoded_rows": null,
+      "decoded_frames": null,
+      "conversion_report_sha256": null,
+      "source_inventory_sha256": null,
+      "lineage_verified": null,
+      "frame_artifacts_verified": null
+    }
   }
 }

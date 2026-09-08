@@ -35,8 +35,9 @@ IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
 #: Run sub-directories materialized from S3 before building a recording. Covers
 #: both producers: the data-factory blueprint (input/cosmos_augmented/
 #: cosmos_control/labeled_*/configs/grade/curation) and the NuRec
-#: neural-reconstruction workflow (ncore/reconstruction/novel_views). Missing
-#: subtrees are skipped.
+#: neural-reconstruction workflow (source/ncore/reconstruction/novel_views).
+#: Only source attribution is fetched; the original capture archive is not
+#: needed to visualize the converted run. Missing subtrees are skipped.
 RUN_SUBDIRS = (
     "input",
     "cosmos_augmented",
@@ -46,6 +47,7 @@ RUN_SUBDIRS = (
     "configs",
     "grade",
     "curation",
+    "source",
     "ncore",
     "reconstruction",
     "novel_views",
@@ -1031,12 +1033,100 @@ def _read_yaml(path: Path) -> Any:
         return None
 
 
-def _load_nurec_docs(local: Path, stage_log: list[str]) -> dict[str, str]:
-    """Build the neural-reconstruction stage docs for the Rerun panel.
+_COLMAP_LINEAGE_ARTIFACTS = (
+    (
+        "source",
+        "source/attribution.json",
+        "COLMAP source attribution",
+        "dataset revision sha256 creator license selected_capture source_counts",
+    ),
+    (
+        "conversion",
+        "ncore/sequence/conversion.json",
+        "COLMAP to NCore conversion",
+        "",
+    ),
+    (
+        "rig",
+        "ncore/sequence/npa-rig.json",
+        "NCore rig derivation",
+        "status reference_camera pose_count cameras already_present poses_component_group "
+        "copied_dynamic_edges copied_static_edges",
+    ),
+)
 
-    Every entry is optional, so a data-factory run (which has none of these
-    artifacts) gets an empty dict and is completely unaffected.
-    """
+
+def _lineage_fields(payload: dict, names: str) -> dict:
+    return {name: payload[name] for name in names.split() if name in payload}
+
+
+def _read_lineage(path: Path) -> dict | None:
+    if not path.exists():
+        return None
+    payload = _read_json(path)
+    if not isinstance(payload, dict) or not payload:
+        raise DataFactoryVizError(f"NuRec lineage is unreadable: {path.name}")
+    return payload
+
+
+def _colmap_conversion_lineage(report: dict) -> dict:
+    """Keep conversion facts without embedding source filenames or private paths."""
+    payload = _lineage_fields(
+        report,
+        "schema_version status engine counts poses_component_group time_mapping point_filter",
+    )
+    payload["source"] = _lineage_fields(
+        report.get("source", {}), "archive_sha256 counts origin_points_filtered"
+    )
+    payload["converter"] = _lineage_fields(
+        report.get("converter", {}), "revision target runtime_sha256 license"
+    )
+    return payload
+
+
+def _load_colmap_docs(local: Path, stage_log: list[str]) -> dict[str, str]:
+    """Bind COLMAP capture, conversion and derived rig facts to their source bytes."""
+    if not any(
+        (local / name).exists()
+        for name in ("source/attribution.json", "ncore/sequence/conversion.json")
+    ):
+        return {}
+    docs: dict[str, str] = {}
+    for entity, relative, title, fields in _COLMAP_LINEAGE_ARTIFACTS:
+        path = local / relative
+        report = _read_lineage(path)
+        if report is None:
+            continue
+        payload = (
+            _colmap_conversion_lineage(report)
+            if entity == "conversion"
+            else _lineage_fields(report, fields)
+        )
+        payload["artifact_sha256"] = _sha256_path(path)
+        docs[f"provenance/{entity}"] = _json_block(title, payload)
+    if docs:
+        docs["pipeline/1_ncore"] = (
+            "## NCore input capture\n\n"
+            "_Capture counts describe conversion input/output, not NRE training coverage. "
+            "Photographic ordering is not synchronized capture time; sparse SfM points "
+            "are not physical LiDAR._\n\n" + "\n".join(docs.values())
+        )
+        stage_log.append("ncore: COLMAP capture lineage recorded from run artifacts")
+    return docs
+
+
+def _load_nurec_docs(local: Path, stage_log: list[str]) -> dict[str, str]:
+    """Describe actual NuRec artifacts, including either input capture format."""
+    docs = _load_colmap_docs(local, stage_log)
+    if not docs:
+        docs = _load_ncore_manifest_docs(local, stage_log)
+    docs.update(_load_nurec_metrics_docs(local, stage_log))
+    docs.update(_load_novel_view_docs(local, stage_log))
+    return docs
+
+
+def _load_ncore_manifest_docs(local: Path, stage_log: list[str]) -> dict[str, str]:
+    """Describe the preconverted-NCore fetch manifest when present."""
     docs: dict[str, str] = {}
 
     # Stage 1 — the real capture that was reconstructed, plus how the rig frame
@@ -1068,6 +1158,12 @@ def _load_nurec_docs(local: Path, stage_log: list[str]) -> dict[str, str]:
             f"{len(manifest.get('camera_ids') or [])} camera(s))"
         )
 
+    return docs
+
+
+def _load_nurec_metrics_docs(local: Path, stage_log: list[str]) -> dict[str, str]:
+    """Describe the metrics emitted by NRE validation."""
+    docs: dict[str, str] = {}
     # Stage 2 — the trained Gaussian reconstruction and its real quality metrics.
     metrics = _read_yaml(local / "reconstruction" / "metrics.yaml")
     if isinstance(metrics, dict):
@@ -1092,6 +1188,12 @@ def _load_nurec_docs(local: Path, stage_log: list[str]) -> dict[str, str]:
         else:
             stage_log.append("reconstruct: metrics recorded")
 
+    return docs
+
+
+def _load_novel_view_docs(local: Path, stage_log: list[str]) -> dict[str, str]:
+    """Describe the rendered novel-view frames and videos."""
+    docs: dict[str, str] = {}
     # Stage 3 — novel views rendered from the trained scene.
     novel_root = local / "novel_views"
     if novel_root.is_dir():
@@ -1172,7 +1274,12 @@ def _materialize_run(input_uri: str, dest: Path, *, storage_client: "StorageClie
     root = input_uri.rstrip("/")
     for sub in RUN_SUBDIRS:
         try:
-            client.download_path(f"{root}/{sub}/", str(dest / sub))
+            if sub == "source":
+                client.download_file(
+                    f"{root}/source/attribution.json", str(dest / "source/attribution.json")
+                )
+            else:
+                client.download_path(f"{root}/{sub}/", str(dest / sub))
         except Exception:
             # Optional subtrees (labeled_*) may not exist; input/augmented drive the recording.
             continue

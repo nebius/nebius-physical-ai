@@ -493,6 +493,9 @@ def validate_ncore_accepted_image_manifest(payload: Any) -> dict[str, Any]:
     equal(proof, "rendered_usdz_sha256", proof["usdz_sha256"])
     for field in ("trained_scene_reopened", "finite_pixels", "novel_view"):
         equal(proof, field, True)
+    from npa.deploy.ncore_acceptance import validate_full_input_proof
+
+    validate_full_input_proof(conversion, proof)
     return payload
 
 

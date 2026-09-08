@@ -48,6 +48,20 @@ class FakeS3:
         self.reads.append(Key)
         return {"ContentLength": len(self.objects[Key])}
 
+    def get_paginator(self, name):
+        assert name == "list_objects_v2"
+        return self
+
+    def paginate(self, *, Bucket, Prefix):
+        assert Bucket == BUCKET
+        yield {
+            "Contents": [{"Key": key} for key in self.objects if key.startswith(Prefix)]
+        }
+
+    def download_file(self, bucket, key, filename):
+        with self.get_object(Bucket=bucket, Key=key)["Body"] as body:
+            Path(filename).write_bytes(body.read())
+
 
 @pytest.fixture
 def helpers(monkeypatch, tmp_path):
@@ -214,14 +228,25 @@ def _unit_colmap_outputs(helpers, root, client):
         {"has_usdz": True, "has_novel_views": True, "has_rrd": True}
     ).encode()
     client.objects[prefix + "reconstruction/metrics.yaml"] = b"unit: true"
+    client.objects[prefix + "reconstruction/parsed.yaml"] = b"unit: true"
+    client.objects[prefix + "reconstruction/last.usdz"] = b"unit fixture, not a USDZ"
+    client.objects[prefix + "novel_views/camera1/000000.png"] = b"unit frame fixture"
     client.objects[prefix + "reports/sim2real.rrd"] = b"unit fixture, not a real RRD"
     return sequence
 
 
-def test_colmap_readback_uses_same_root_for_every_artifact(helpers, root, storage):
+def test_colmap_readback_uses_same_root_for_every_artifact(
+    helpers, root, storage, monkeypatch
+):
     client, _ = storage
     _unit_colmap_outputs(helpers, root, client)
+    # Actual format readback is exercised in test_nurec_colmap_workflow; this
+    # fixture isolates legacy/explicit object-root routing across every download.
+    decode = Mock()
+    monkeypatch.setattr(helpers, "_assert_nurec_downstream_proof", decode)
     helpers.assert_nurec_colmap_live_outputs(bucket=BUCKET, run_id=RUN_ID)
+    decode.assert_called_once()
+    assert decode.call_args.kwargs == {"recording_id": "nurec-colmap-reconstruct"}
     assert set(client.reads) == set(client.objects)
     assert client.writes == []
 
