@@ -25,6 +25,34 @@ Three-tier contract:
 - **YAML / agent**: `apiVersion: npa.fleet/v0.0.1` spec; workflow
   `toolRef: infra.fleet.deploy` (config key `fleet_spec`).
 
+### Opt-in CPU RayCluster
+
+Use `kuberay: {enabled: true, worker_replicas: 2, worker_cpus: 2,
+worker_memory_gib: 4}` in a cluster/default profile for a fixed CPU worker group.
+The shared backend validates strict types, explicit CPU placement and the exact
+reviewed recipe before provisioning. `KubeRaySpec` is exported by `npa.sdk.fleet`.
+A disabled block replaces enabled defaults atomically. Omitted policy remains off.
+Enabled deployments require the default local Terraform workspace without
+`TF_CLI_ARGS*` or `TF_DATA_DIR` overrides. Reapply rejects extra effective inputs
+and destination symlinks while preserving exact state/backup and provider caches.
+Retained backend metadata is unsupported; require managed implicit local state.
+The module manifest is rebuilt from the reviewed recipe before Terraform init.
+Historical opt-in provenance survives disabled/omitted policy reapply. Teardown
+checks the same effective-input restrictions and recorded materialized digest,
+then requires empty managed state before removing recovery files. Preserve state
+on refusal or incomplete teardown; missing provenance needs a reviewed reapply.
+See `docs/fleet-kuberay.md` and
+`npa/examples/fleet/kuberay/cpu-raycluster.yaml` for the one-entry fleet and native
+Ray Jobs journey. The separate CPU template pins Ray 2.58, disables autoscaling
+and bundled monitoring, uses non-root pods and installs namespace ingress
+isolation. GPU workers, RayService, arbitrary images and alternate recipe bytes
+are unsupported; do not recreate a Jobs submitter/controller or enable the old
+privileged vendor template. Preserve application outputs before owned teardown.
+Run `npa/tests/e2e/test_fleet_kuberay_live.py` with
+`NPA_FLEET_KUBERAY_LIVE_CONFIG` pointing at an owner-private JSON object with
+`spec`, `kubeconfig`, and `evidence_dir`. It inspects deployed values and executes
+real deterministic work on every Ray worker through native Jobs status/logs.
+
 ### Verify an existing shared filesystem
 
 Run `npa fleet verify-storage --spec <private-fleet.yaml> --output json` to

@@ -42,6 +42,7 @@ Example::
 
 from __future__ import annotations
 
+from npa.cluster_backends.kuberay import KubeRaySpec
 from npa.fleet.lifecycle import (
     deploy_fleet as deploy,
     destroy_fleet as destroy,
@@ -130,6 +131,7 @@ __all__ = [
     "NodePoolSpec",
     "ObjectStorageSpec",
     "MigSpec",
+    "KubeRaySpec",
     "MigVerificationReport",
     "verify_mig_cluster",
     "wait_for_mig_ready",

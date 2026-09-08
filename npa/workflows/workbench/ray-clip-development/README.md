@@ -29,6 +29,11 @@ On Kubernetes, proving distinct physical workers additionally requires mapping
 Ray node addresses to pod IPs and the pods' assigned Kubernetes nodes. The audit
 uses that separate platform evidence for its one-worker and two-worker claims.
 
+For optional private S3 retention after downloading a completed result, see
+[Archive completed Ray CLIP results](../../../../docs/testing/ray-clip-archive.md).
+The companion verifies immutable publication and restore on CPU; the local
+rsync workflow remains usable on its own.
+
 The pod preparation receipt separates dependency installation, model download
 and weight hashing, and `cuda_environment_inspection_seconds`. That last phase
 includes the CUDA/version probe and `pip freeze`; it is not model-download time.
@@ -66,6 +71,12 @@ verifies the committed Parquet hash and skips a second inference/write. Other
 shards continue normally. `recovery.json` reports a new actor instance, model
 reload and zero inference calls for the reused checkpoint. This is explicit
 application checkpointing; Ray does not promise exactly-once external writes.
+
+For an interrupted driver Job, see [resume a partial checkpoint tree](../../../../docs/testing/ray-clip-checkpoint-resume.md).
+The manual live gate requires `NPA_RAY_CLIP_CHECKPOINT_LIVE_CONFIG` to name an
+owner-only JSON configuration for a preflighted native Ray Jobs cluster, as
+described in that guide. Without this variable the live gate is skipped.
+It covers validated reuse of later shards and current versus retained timings.
 
 Change the visible line to `CROP_POLICY = "right"` and rerun:
 

@@ -18,6 +18,7 @@ from npa.cluster_backends.mk8s_model import (
     as_mk8s_desired,
 )
 from npa.cluster_backends.mk8s_render import render_tfvars
+from npa.cluster_backends.kuberay import validate_recipe_kuberay_compatibility
 
 
 @dataclass(frozen=True)
@@ -108,6 +109,7 @@ def desired_state(cluster: MK8sDesired) -> dict[str, Any]:
     )
     return {
         "backend": "mk8s",
+        **({"kuberay": cluster.kuberay.plan()} if cluster.kuberay else {}),
         "name": cluster.name,
         "cpu_nodes": cluster.cpu_count(),
         "cpu_platform": cluster.cpu_nodes.platform if cluster.cpu_nodes else "",
@@ -168,6 +170,20 @@ class MK8sBackend:
         self, desired: MK8sDesired, request: MK8sApplyRequest
     ) -> dict[str, Any]:
         desired = as_mk8s_desired(desired)
+        recipe = request.recipe_dir or (
+            request.recipe_root / "k8s-training" if request.recipe_root else None
+        )
+        if desired.kuberay and desired.kuberay.enabled:
+            if recipe is None:
+                raise ValueError("KubeRay preflight requires the selected recipe")
+            validate_recipe_kuberay_compatibility(desired, recipe)
+        if request.fleet_root is not None and request.project is not None:
+            from npa.cluster_backends.mk8s_execution import validate_kuberay_installation
+
+            validate_kuberay_installation(
+                desired, request.fleet_root / request.project.key() / desired.name,
+                recipe_dir=recipe,
+            )
         result: dict[str, Any] = {
             "backend": self.name,
             "required": True,
@@ -244,10 +260,22 @@ class MK8sBackend:
     def apply(self, desired: MK8sDesired, request: MK8sApplyRequest) -> dict[str, Any]:
         desired = as_mk8s_desired(desired)
         if request.terraform_command:
+            if desired.kuberay and desired.kuberay.enabled:
+                raise ValueError(
+                    "KubeRay requires native mk8s recipe execution; legacy "
+                    "standalone Terraform state cannot honor this policy"
+                )
             if request.terraform_cwd is None or request.terraform_env is None:
                 raise ValueError(
                     "mk8s Terraform apply requires terraform_cwd and terraform_env"
                 )
+            from npa.cluster_backends.mk8s_execution import validate_kuberay_installation
+
+            guarded = validate_kuberay_installation(
+                desired, request.terraform_cwd.parent, environ=request.terraform_env,
+            )
+            if guarded.kuberay and guarded.kuberay.enabled:
+                raise ValueError("A KubeRay-managed installation requires native mk8s recipe execution")
             from npa.cluster_backends.process import run_stream
 
             (request.command_runner or run_stream)(

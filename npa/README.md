@@ -286,5 +286,11 @@ running. Without an override, Make prefers the contributor environment
 `npa/.venv/bin/python`, then `python3` on `PATH`. Live and GPU tests are
 deselected from `make test`; `make test-e2e` is the explicit live-infrastructure
 target and needs the relevant credentials and resources.
+For the real Cosmos Ray batch check, set `NPA_COSMOS3_RAY_LIVE_OUTPUT_URI`
+to an operator-owned S3 prefix; it has no default. The check requires an existing
+authenticated GPU service and writes two synthetic images plus their provenance.
+See the [Cosmos Ray live-check instructions](../docs/workbench/cosmos3-ray-serve.md)
+for the remaining environment variables and the exact test command.
+
 See [CONTRIBUTING.md](../CONTRIBUTING.md) for the full test layout and PR
 conventions (branch → PR → squash, one approval, never self-approve).

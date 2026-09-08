@@ -47,6 +47,9 @@ from npa.cluster.gpu_health import (
     DEFAULT_STABILIZATION_SECONDS,
 )
 from npa.cluster.gpu_workload_profile import resolve_gpu_workload_profile
+from npa.cluster_backends.kuberay import (
+    KubeRaySpec, kuberay_spec_from_mapping, validate_kuberay,
+)
 from npa.fleet.mig import (
     MIG_KUBERNETES_VERSION,
     RTX_PRO_6000_BOOT_DISK_GIB,
@@ -87,6 +90,7 @@ _MK8S_ENVELOPE_FIELDS = {
     "gpu_workload_profile",
     "gpu_driver_package_repositories",
     "mig",
+    "kuberay",
 }
 
 
@@ -239,6 +243,7 @@ class ClusterSpec:
     gpu_graphics_smoke: bool = False
     gpu_graphics_smoke_image: str = DEFAULT_GRAPHICS_SMOKE_IMAGE
     gpu_driver_package_repositories: dict[str, str] = field(default_factory=dict)
+    kuberay: KubeRaySpec | None = None
 
     def __post_init__(self) -> None:
         gpu = self.gpu_nodes
@@ -312,6 +317,10 @@ class ClusterSpec:
         return self.cpu_nodes.count if self.cpu_nodes else 0
 
     def validate(self) -> None:
+        try:
+            validate_kuberay(self)
+        except ValueError as exc:
+            raise FleetSpecError(str(exc)) from exc
         backend = self.backend_name()
         if backend not in {"mk8s", "soperator"}:
             raise FleetSpecError(
@@ -608,11 +617,10 @@ def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any
 
     result = copy.deepcopy(base)
     for key, value in (override or {}).items():
-        # ``mig`` is an atomic policy block. This allows a cluster to disable an
-        # enabled default with ``mig: {enabled: false}`` without inheriting the
-        # default strategy/config into an invalid hybrid policy.
+        # Policy blocks replace defaults atomically, so an explicit disable
+        # cannot inherit settings from an enabled MIG or KubeRay default.
         if (
-            key != "mig"
+            key not in {"mig", "kuberay"}
             and isinstance(value, dict)
             and isinstance(result.get(key), dict)
         ):
@@ -643,7 +651,8 @@ def _cluster_from(
     enable_gpu = data.get("enable_gpu_cluster", None)
     try:
         mig = mig_spec_from_mapping(data.get("mig"))
-    except MigSpecError as exc:
+        kuberay = kuberay_spec_from_mapping(data.get("kuberay"))
+    except ValueError as exc:
         raise FleetSpecError(str(exc)) from exc
     return ClusterSpec(
         name=_slug(str(data.get("name", "cluster"))) or "cluster",
@@ -686,6 +695,7 @@ def _cluster_from(
         gpu_workload_profile=str(data.get("gpu_workload_profile", "") or ""),
         gpu_driver_package_repositories=data.get("gpu_driver_package_repositories", {}),
         mig=mig,
+        kuberay=kuberay,
         backend="mk8s",
         backend_explicit=backend_explicit,
     )

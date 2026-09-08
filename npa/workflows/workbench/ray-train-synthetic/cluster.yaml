@@ -1,0 +1,24 @@
+# Guarded native Train development example; SkyPilot owns one service task.
+name: train-synthetic
+resources:
+  cloud: kubernetes
+  accelerators: B200:1
+  cpus: 12
+  memory: 48+
+  image_id: docker:docker.io/pytorch/pytorch@sha256:db80a41f8428644cebcb3d75b0b62df334ab6c0e75785951eb25f48bfbd42407
+  use_spot: false
+num_nodes: 2
+config:
+  kubernetes:
+    networking: portforward
+    pod_config:
+      spec:
+        serviceAccountName: default
+        automountServiceAccountToken: false
+file_mounts:
+  /opt/npa-ray-train-bootstrap: ./cluster
+setup: |
+  set -euo pipefail
+  /usr/bin/python3.12 /opt/npa-ray-train-bootstrap/prepare.py
+run: |
+  bash /opt/npa-ray-train-bootstrap/start.sh

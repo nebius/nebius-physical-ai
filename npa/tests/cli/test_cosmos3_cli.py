@@ -304,3 +304,21 @@ def test_cosmos3_ray_serve_wires_standard_model_cache(tmp_path, monkeypatch) -> 
         cache / "cosmos3/downloads"
     )
     assert (cache / "huggingface/hub").is_dir()
+
+
+def test_cosmos3_ray_batch_invalid_response_exits_without_completed_output(tmp_path, mocker) -> None:
+    batch = tmp_path / "batch.json"
+    batch.write_text('{"samples":[{"name":"one","model_mode":"text2image"}]}')
+    mocker.patch(
+        "npa.workbench.cosmos.ray_serve._request_json",
+        return_value={"schema_version": "unsupported"},
+    )
+    destination = tmp_path / "out"
+    result = runner.invoke(app, [
+        "workbench", "cosmos3", "ray-batch", "--input-path", str(batch),
+        "--output-path", str(destination), "--endpoint", "http://service.invalid:8000",
+    ])
+    assert result.exit_code == 1
+    assert "unsupported Cosmos3 Ray response schema" in result.output
+    assert "completed" not in result.stdout
+    assert not destination.exists()
